@@ -1,0 +1,3 @@
+[submodule "dx"]
+	path = dx
+	url = git@github.com:devvir/monorepo-dx.git

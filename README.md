@@ -1,0 +1,3 @@
+# TradeBot
+
+BitMEX trading bot.

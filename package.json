@@ -1,0 +1,11 @@
+{
+  "name": "tradebot-monorepo",
+  "version": "0.1.0",
+  "description": "BitMEX Trading Bot",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "services/*",
+    "dx"
+  ]
+}

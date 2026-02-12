@@ -1,0 +1,24 @@
+#!/bin/bash
+
+# *****************************************************************************
+# COPY THIS FILE TO THE ROOT OF YOUR PROJECT WITH ANY NAME OF YOUR CHOOSING
+#
+# EDIT ENV VARS DEFINED BELOW AS NEEDED (ONLY IF YOU DO NOT USE DEFAULT PATHS)
+# *****************************************************************************
+
+# Infrastructure orchestration entry point
+# Delegates to npm script `dx` for actual logic
+
+# Update path if DX is not mounted on ./dx
+DX_DIR="$(dirname "$0")/dx"
+
+# Optional: Customize services and modules directories
+# Set these to use directories different from ./services and ./modules
+# Uncomment and update as needed:
+# export DX_SERVICES_DIR="$(dirname "$0")/services"
+# export DX_MODULES_DIR="$(dirname "$0")/modules"
+
+cd "$DX_DIR" || exit 1
+
+# Route all commands through dx entry point
+npm run dx -- "${@}" 2>&1 | sed "s/npm run dx/$(basename "$0")/g"
