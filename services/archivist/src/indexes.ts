@@ -34,17 +34,6 @@ const TABLE_INDEX_DEFINITIONS: Record<string, IndexDefinition> = {
     spec: { symbol: 1, id: 1, side: 1 },
     options: { unique: true },
   },
-  orderBookL2_25: {
-    spec: { symbol: 1, id: 1, side: 1 },
-    options: { unique: true },
-  },
-
-  // OrderBook10 - keys: ["symbol"]
-  // This is a snapshot, only one document per symbol at a time
-  orderBook10: {
-    spec: { symbol: 1, timestamp: 1 },
-    options: { unique: true },
-  },
 
   // Trade - keys: [] but has trdMatchID (GUID) which is unique per trade
   trade: {

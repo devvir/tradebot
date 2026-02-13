@@ -11,10 +11,69 @@ networks:
     name: ${COMPOSE_PROJECT_NAME:-reader}-network
 
 services:
-  feed:
+  feed-global:
     extends:
       file: ../../services/feed/docker/compose.yml
       service: feed
+    environment:
+      FEED_ROLE: GLOBAL
+    ports:
+      - "${FEED_GLOBAL_PORT:-3010}:3000"
+    depends_on:
+      - rabbitmq
+
+  feed-lv-1:
+    extends:
+      file: ../../services/feed/docker/compose.yml
+      service: feed
+    environment:
+      FEED_ROLE: LOW_VOLUME_1
+    ports:
+      - "${FEED_LOW_VOLUME_1_PORT:-3011}:3000"
+    depends_on:
+      - rabbitmq
+
+  feed-lv-2:
+    extends:
+      file: ../../services/feed/docker/compose.yml
+      service: feed
+    environment:
+      FEED_ROLE: LOW_VOLUME_2
+    ports:
+      - "${FEED_LOW_VOLUME_2_PORT:-3012}:3000"
+    depends_on:
+      - rabbitmq
+
+  feed-lv-3:
+    extends:
+      file: ../../services/feed/docker/compose.yml
+      service: feed
+    environment:
+      FEED_ROLE: LOW_VOLUME_3
+    ports:
+      - "${FEED_LOW_VOLUME_3_PORT:-3013}:3000"
+    depends_on:
+      - rabbitmq
+
+  feed-hv:
+    extends:
+      file: ../../services/feed/docker/compose.yml
+      service: feed
+    environment:
+      FEED_ROLE: HIGH_VOLUME
+    ports:
+      - "${FEED_HIGH_VOLUME_PORT:-3014}:3000"
+    depends_on:
+      - rabbitmq
+
+  feed-bitcoin:
+    extends:
+      file: ../../services/feed/docker/compose.yml
+      service: feed
+    environment:
+      FEED_ROLE: BITCOIN
+    ports:
+      - "${FEED_BITCOIN_PORT:-3015}:3000"
     depends_on:
       - rabbitmq
 

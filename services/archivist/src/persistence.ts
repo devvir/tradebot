@@ -1,66 +1,33 @@
-import { Db, Collection } from 'mongodb';
+import { Db, MongoError } from 'mongodb';
 import amqp from 'amqplib';
 import logger from './logger';
 import { getCollectionName, extractMinimalAttributes } from './mongodb';
 import { getIndexForCollection } from './indexes';
 
 // Track which collections have had their indexes ensured
-const checkedCollections = new Set<string>();
+const indexedCollections = new Set<string>();
 
 /**
  * Ensure unique indexes exist for a collection
  * Only checks once per collection per service lifetime
  */
-const ensureIndexes = async (
-  collection: Collection,
-  collectionName: string
-): Promise<void> => {
-  // Skip if already checked
-  if (checkedCollections.has(collectionName)) {
-    return;
-  }
-
-  const indexDef = getIndexForCollection(collectionName);
-  if (! indexDef) {
-    logger.debug({ collectionName }, 'No index definition for collection');
-    checkedCollections.add(collectionName);
-    return;
-  }
+const ensureIndexedCollection = async (db: Db, collectionName: string): Promise<void> => {
+  let collection;
+  const { spec, options } = getIndexForCollection(collectionName)!;
 
   try {
-    // Check if index already exists
-    const existingIndexes = await collection.indexes();
-    const indexKeys = Object.keys(indexDef.spec);
+    collection = await db.listCollections({ name: collectionName }).hasNext()
+        ? await db.collection(collectionName)
+        : await db.createCollection(collectionName);
 
-    const indexExists = existingIndexes.some((idx) => {
-      const keys = Object.keys(idx.key);
-      return (
-        keys.length === indexKeys.length &&
-        keys.every((key) => indexKeys.includes(key))
-      );
-    });
+    await collection.createIndex(spec, options);
 
-    if (! indexExists) {
-      await collection.createIndex(indexDef.spec, indexDef.options);
-      logger.info(
-        { collectionName, index: indexDef.spec },
-        'Created unique index'
-      );
-    } else {
-      logger.debug(
-        { collectionName, index: indexDef.spec },
-        'Index already exists'
-      );
-    }
-
-    checkedCollections.add(collectionName);
+    logger.info({ collectionName, spec }, 'Ensured unique index');
   } catch (error) {
-    logger.error(
-      { error, collectionName },
-      'Failed to ensure index, continuing without it'
-    );
-    // Mark as checked anyway to avoid repeated attempts
-    checkedCollections.add(collectionName);
+    if (! (error instanceof MongoError) || error.code !== 11000) {
+      indexedCollections.delete(collectionName);
+      logger.error({ error, collectionName }, 'Failed to ensure index, will retry');
+    }
   }
 };
 
@@ -72,7 +39,7 @@ export const startConsuming = async (
 ): Promise<void> => {
   try {
     const exchangeName = 'bitmex-data';
-    const queueName = 'bitmex-data-archivist';
+    const queueName = 'bitmex-feed';
 
     await channel.assertExchange(exchangeName, 'topic', { durable: true });
     await channel.assertQueue(queueName, { durable: true });
@@ -90,7 +57,10 @@ export const startConsuming = async (
         const collection = db.collection(collectionName);
 
         // Ensure indexes exist for this collection
-        await ensureIndexes(collection, collectionName);
+        if (! indexedCollections.has(collectionName)) {
+            indexedCollections.add(collectionName);
+            await ensureIndexedCollection(db, collectionName);
+        }
 
         // Extract API version from message metadata
         const apiVersion = (data._apiVersion as string) || null;
@@ -115,7 +85,7 @@ export const startConsuming = async (
       } catch (error) {
         if (
           error instanceof Error &&
-          (error as { code?: string }).code === 'E11000'
+          (error as { code?: number }).code === 11000
         ) {
           logger.debug({ error }, 'Duplicate document, skipping');
           channel.ack(msg);

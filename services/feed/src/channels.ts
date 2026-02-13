@@ -9,8 +9,6 @@
 export const KNOWN_CHANNELS = [
   // Symbol-required channels - market data
   'orderBookL2',
-  'orderBookL2_25',
-  'orderBook10',
   'quote',
   'quoteBin1m',
   'quoteBin5m',
@@ -35,12 +33,10 @@ export const KNOWN_CHANNELS = [
 
 /**
  * Channels that require a symbol parameter for subscription
- * All other channels are global and don't require symbols
+ * All other channels are global or optional symbol, and don't require symbols
  */
 export const SYMBOL_REQUIRED_CHANNELS = [
   'orderBookL2',
-  'orderBookL2_25',
-  'orderBook10',
   'quote',
   'quoteBin1m',
   'quoteBin5m',
@@ -52,7 +48,6 @@ export const SYMBOL_REQUIRED_CHANNELS = [
   'tradeBin1h',
   'tradeBin1d',
   'liquidation',
-  'instrument',
   'funding',
   'settlement',
 ] as const;

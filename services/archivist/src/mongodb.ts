@@ -22,13 +22,17 @@ export const connectMongoDB = async (url: string, dbName: string): Promise<Mongo
 
 export const getCollectionName = (data: Record<string, unknown>): string => {
   const table = data.table as string;
-  // Exception: instrument channel always uses a single collection (global channel)
-  if (table === 'instrument') {
-    return table;
+
+  // Only high-volume channels get symbol-segregated collections
+  const SYMBOL_SEGREGATED = ['orderBookL2', 'quote', 'trade'];
+
+  if (SYMBOL_SEGREGATED.includes(table)) {
+    const dataArray = data.data as Array<{ symbol?: string }>;
+    const symbol = dataArray?.[0]?.symbol;
+    if (symbol) return `${table}_${symbol}`;
   }
-  const dataArray = data.data as Array<{ symbol?: string }>;
-  const symbol = dataArray && dataArray[0] && dataArray[0].symbol ? dataArray[0].symbol : null;
-  return symbol ? `${table}_${symbol}` : table;
+
+  return table;
 };
 
 export const extractMinimalAttributes = (

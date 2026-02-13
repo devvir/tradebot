@@ -1,12 +1,18 @@
 import https from 'https';
 import logger from './logger';
 import { KNOWN_CHANNELS, SYMBOL_REQUIRED_CHANNELS } from './channels';
+import { filterChannelsByRole, filterSymbolsByRole } from './config';
+import type { FeedRole } from './config';
 
 // Re-export channel constants for convenience
 export { KNOWN_CHANNELS, SYMBOL_REQUIRED_CHANNELS, GLOBAL_CHANNELS } from './channels';
 
-export const fetchAllSymbols = (): Promise<string[]> => {
-  return new Promise((resolve, reject) => {
+/**
+ * Fetch all active symbols from BitMEX, filtered by patterns and role.
+ * Returns the symbols this service instance should handle.
+ */
+export const fetchAllSymbols = async (patterns: string[], role: FeedRole): Promise<string[]> => {
+  const raw = await new Promise<string[]>((resolve, reject) => {
     const req = https.get('https://www.bitmex.com/api/v1/instrument/active', (res) => {
       let data = '';
 
@@ -30,6 +36,8 @@ export const fetchAllSymbols = (): Promise<string[]> => {
 
     req.on('error', reject);
   });
+
+  return filterSymbolsByRole(filterSymbolsByPatterns(raw, patterns), role);
 };
 
 /**
@@ -67,6 +75,13 @@ export const filterSymbolsByPatterns = (symbols: string[], patterns: string[]): 
  */
 export const filterChannelsByPatterns = (patterns: string[]): string[] => {
   return KNOWN_CHANNELS.filter((channel) => matchesPatterns(channel, patterns));
+};
+
+/**
+ * Resolve channel patterns to concrete channels this service instance should handle.
+ */
+export const resolveChannels = (patterns: string[], role: FeedRole): string[] => {
+  return filterChannelsByRole(filterChannelsByPatterns(patterns), role);
 };
 
 export const buildSubscriptionTopics = (channels: string[], symbols: string[]): string[] => {

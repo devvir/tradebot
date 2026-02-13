@@ -1,28 +1,28 @@
 # Pending Review
 # Feed Service - Connects to BitMEX and publishes to queue
-# Generic, reusable service. Can run multiple instances pointing to same queue.
+# Generic, reusable service. Multiple instances with different FEED_ROLE values.
 
 services:
   feed:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    container_name: ${COMPOSE_PROJECT_NAME:-.}-feed
 
     environment:
       # BitMEX Connection (testnet or live)
       BITMEX_TESTNET: ${BITMEX_TESTNET:-false}
 
-      # Queue Connection (NOT coupled to rabbitmq service)
-      RABBITMQ_URL: ${FEED_RABBITMQ_URL:-amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672}
+      # Queue Connection - pass credentials separately for URL encoding
+      RABBITMQ_URL: ${FEED_RABBITMQ_URL:-}
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASS: ${RABBITMQ_PASS:-guest}
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
 
-      # Subscriptions
-      FEED_CHANNELS: ${FEED_CHANNELS:-trade,orderBookL2_25}
+      # Role-based channel/symbol selection
+      FEED_ROLE: ${FEED_ROLE:-NONE}
+      FEED_CHANNELS: ${FEED_CHANNELS:-trade,orderBookL2}
       FEED_SYMBOLS: ${FEED_SYMBOLS:-XBTUSD}
-
-      # Multi-instance coordination
-      FEED_REPLICA_INDEX: ${FEED_REPLICA_INDEX:-0}
-      FEED_REPLICA_COUNT: ${FEED_REPLICA_COUNT:-1}
 
       # Reconnect delays
       FEED_RECONNECT_DELAY_MS: ${FEED_RECONNECT_DELAY_MS:-5000}
@@ -35,9 +35,6 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV: ${APP_ENV:-production}
       TZ: ${TZ:-UTC}
-
-    ports:
-      - "${FEED_PORT:-3001}:3000"
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]

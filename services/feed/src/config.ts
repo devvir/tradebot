@@ -1,18 +1,21 @@
-// Pending Review
 import logger from './logger';
+import type { Config, FeedRole } from './types';
+export type { Config, FeedRole } from './types';
 
-export interface Config {
-  bitmexWsUrl: string;
-  rabbitmqUrl: string;
-  channels: string[];
-  channelPatterns: string[];
-  symbols: string[];
-  symbolPatterns: string[];
-  healthPort: number;
-  reconnectDelayMs: number;
-  maxReconnectDelayMs: number;
-  messageTtlMs: number;
-}
+const buildRabbitMQUrl = (): string => {
+  // If RABBITMQ_URL is provided, use it directly
+  if (process.env.RABBITMQ_URL) {
+    return process.env.RABBITMQ_URL;
+  }
+
+  // Otherwise, build from separate credentials with URL encoding
+  const user = encodeURIComponent(process.env.RABBITMQ_USER || 'guest');
+  const pass = encodeURIComponent(process.env.RABBITMQ_PASS || 'guest');
+  const host = process.env.RABBITMQ_HOST || 'rabbitmq';
+  const port = process.env.RABBITMQ_PORT || '5672';
+
+  return `amqp://${user}:${pass}@${host}:${port}`;
+};
 
 const BITMEX_WS_URLS = {
   live: 'wss://www.bitmex.com/realtime',
@@ -21,18 +24,57 @@ const BITMEX_WS_URLS = {
 
 export const usesTestnet = () => [undefined, '', '1', 'on', 'true'].includes(
   process.env.BITMEX_TESTNET?.toLowerCase()
-)
+);
+
+/**
+ * Channels each role is allowed to handle.
+ * Used to pre-filter the env-provided channel list per role.
+ */
+const ROLE_CHANNELS: Record<Exclude<FeedRole, 'NONE'>, string[]> = {
+  GLOBAL: ['insurance', 'announcement', 'chat', 'publicNotifications', 'connected', 'instrument'],
+  LOW_VOLUME_1: ['quoteBin1m', 'quoteBin5m', 'quoteBin1h', 'quoteBin1d'],
+  LOW_VOLUME_2: ['tradeBin1m', 'tradeBin5m', 'tradeBin1h', 'tradeBin1d'],
+  LOW_VOLUME_3: ['liquidation', 'funding', 'settlement'],
+  HIGH_VOLUME: ['orderBookL2', 'quote', 'trade'],
+  BITCOIN: ['orderBookL2', 'quote', 'trade'],
+};
+
+/**
+ * Pre-filter resolved channels to only those this role handles.
+ * NONE role handles any and all channels.
+ */
+export const filterChannelsByRole = (channels: string[], role: FeedRole): string[] => {
+  if (role === 'NONE') return channels;
+  return channels.filter((ch) => ROLE_CHANNELS[role].includes(ch));
+};
+
+/**
+ * Pre-filter resolved symbols by role (if role !== 'NONE').
+ */
+export const filterSymbolsByRole = (symbols: string[], role: FeedRole): string[] => {
+  switch (role) {
+    case 'HIGH_VOLUME':
+      return symbols.filter((s) => ! s.startsWith('XBT'));
+    case 'BITCOIN':
+      return symbols.filter((s) => s.startsWith('XBT'));
+    default:
+      return symbols;
+  }
+};
 
 export const loadConfig = (): Config => {
   const env = usesTestnet() ? 'testnet' : 'live';
   const bitmexWsUrl = BITMEX_WS_URLS[env] || BITMEX_WS_URLS.live;
+  const role = (process.env.FEED_ROLE || 'GLOBAL').toUpperCase() as FeedRole;
 
   logger.info(`BitMEX WebSocket: ${bitmexWsUrl}`);
+  logger.info({ role }, 'Starting with feed role');
 
   return {
     bitmexWsUrl,
-    rabbitmqUrl: process.env.RABBITMQ_URL || 'amqp://guest:guest@localhost:5672',
-    channels: (process.env.FEED_CHANNELS || 'trade,orderBookL2_25').split(','),
+    rabbitmqUrl: buildRabbitMQUrl(),
+    role,
+    channels: (process.env.FEED_CHANNELS || 'trade,orderBookL2').split(','),
     channelPatterns: [],
     symbols: (process.env.FEED_SYMBOLS || 'XBTUSD').split(','),
     symbolPatterns: [],
@@ -40,6 +82,8 @@ export const loadConfig = (): Config => {
     reconnectDelayMs: parseInt(process.env.FEED_RECONNECT_DELAY_MS || '5000', 10),
     maxReconnectDelayMs: parseInt(process.env.FEED_MAX_RECONNECT_DELAY_MS || '60000', 10),
     messageTtlMs: parseInt(process.env.FEED_MESSAGE_TTL || '1800000', 10),
+    batchSizeChannels: 10,
+    batchDelayMs: 3000,
   };
 };
 

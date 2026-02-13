@@ -1,8 +1,9 @@
 import 'dotenv/config';
 import WebSocket from 'ws';
 import logger from './logger';
-import { Config, loadConfig, validateConfig } from './config';
-import { fetchAllSymbols, filterSymbolsByPatterns, filterChannelsByPatterns, matchesPatterns, buildSubscriptionTopics } from './bitmex';
+import { loadConfig, validateConfig } from './config';
+import type { Config } from './config';
+import { fetchAllSymbols, resolveChannels, buildSubscriptionTopics } from './bitmex';
 import { connectRabbitMQ, publishToQueue, RabbitMQConnection } from './rabbitmq';
 import { startHealthCheck } from './health';
 import type { FeedState, HealthState } from './types';
@@ -39,15 +40,14 @@ const connectBitMEX = (): void => {
     logger.info({ topicCount: topics.length }, 'Subscribing to topics in batches');
 
     // BitMEX has limits on subscriptions - batch them to avoid issues
-    const batchSize = 20;
-    for (let i = 0; i < topics.length; i += batchSize) {
-      const batch = topics.slice(i, i + batchSize);
+    for (let i = 0; i < topics.length; i += config.batchSizeChannels) {
+      const batch = topics.slice(i, i + config.batchSizeChannels);
       setTimeout(() => {
         if (state.ws && state.ws.readyState === WebSocket.OPEN) {
           logger.debug({ batch: batch.length, total: topics.length }, 'Sending subscription batch');
           state.ws.send(JSON.stringify({ op: 'subscribe', args: batch }));
         }
-      }, i / batchSize * 100); // 100ms delay between batches
+      }, (i / config.batchSizeChannels) * config.batchDelayMs);
     }
 
     // Start heartbeat: ping every 30 seconds to keep connection alive
@@ -85,26 +85,6 @@ const connectBitMEX = (): void => {
         }
         logger.debug('Received info message');
         return;
-      }
-
-      // Handle new instruments from the instrument channel
-      if (data.table === 'instrument' && data.action === 'insert') {
-        const dataArray = (data.data as Array<{ symbol?: string }>) || [];
-        const newSymbols = dataArray
-          .map((inst) => inst.symbol)
-          .filter((symbol): symbol is string => Boolean(symbol))
-          .filter((symbol) => matchesPatterns(symbol, config.symbolPatterns));
-
-        if (newSymbols.length > 0) {
-          logger.info({ newSymbols }, 'New instruments match patterns, subscribing');
-          config.symbols = Array.from(new Set([...config.symbols, ...newSymbols]));
-
-          // Subscribe to channels for new symbols
-          const newTopics = buildSubscriptionTopics(config.channels, newSymbols);
-          if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-            state.ws.send(JSON.stringify({ op: 'subscribe', args: newTopics }));
-          }
-        }
       }
 
       if (data.table && data.action) {
@@ -196,48 +176,43 @@ const main = async (): Promise<void> => {
 
     validateConfig(config);
 
-    // Filter channels matching the patterns
-    logger.info({ patterns: config.channelPatterns }, 'Filtering channels by patterns...');
-    config.channels = filterChannelsByPatterns(config.channelPatterns);
-    logger.info({ patterns: config.channelPatterns, matched: config.channels.length, channels: config.channels }, 'Matched channels against patterns');
+    // Resolve channels and symbols for this instance
+    config.channels = resolveChannels(config.channelPatterns, config.role);
+    logger.info({ role: config.role, channels: config.channels }, 'Resolved channels');
 
     if (config.channels.length === 0) {
-      logger.error({ patterns: config.channelPatterns }, 'No channels matched the given patterns');
-      process.exit(1);
+      logger.warn({ role: config.role }, 'No channels for this role, idling');
+      startHealthCheck(config.healthPort, getHealthState);
+      return;
     }
 
-    // Fetch symbols matching the patterns
-    logger.info({ patterns: config.symbolPatterns }, 'Fetching all active symbols from BitMEX REST API...');
     try {
-      const allSymbols = await fetchAllSymbols();
-      config.symbols = filterSymbolsByPatterns(allSymbols, config.symbolPatterns);
-      logger.info({ patterns: config.symbolPatterns, matched: config.symbols.length }, 'Matched symbols against patterns');
+      config.symbols = await fetchAllSymbols(config.symbolPatterns, config.role);
+      logger.info({ role: config.role, symbols: config.symbols.length }, 'Resolved symbols');
     } catch (error) {
       logger.error({ error }, 'Failed to fetch symbols, exiting');
       process.exit(1);
     }
 
-    if (config.symbols.length === 0) {
-      logger.error({ patterns: config.symbolPatterns }, 'No symbols matched the given patterns');
-      process.exit(1);
+    if (config.symbols.length === 0 && config.role !== 'GLOBAL') {
+      logger.warn({ role: config.role }, 'No symbols for this role, idling');
+      startHealthCheck(config.healthPort, getHealthState);
+      return;
     }
 
-    // Build subscription topics and validate
+    // Build subscription topics
     const topics = buildSubscriptionTopics(config.channels, config.symbols);
     if (topics.length === 0) {
-      logger.error({
-        channelPatterns: config.channelPatterns,
-        symbolPatterns: config.symbolPatterns,
-        channels: config.channels,
-        symbols: config.symbols
-      }, 'No subscription topics generated from the given channel and symbol patterns');
-      process.exit(1);
+      logger.warn({ role: config.role }, 'No subscription topics, idling');
+      startHealthCheck(config.healthPort, getHealthState);
+      return;
     }
 
     logger.info({
+      role: config.role,
       channels: config.channels.length,
       symbols: config.symbols.length,
-      subscriptions: topics.length
+      subscriptions: topics.length,
     }, 'Will subscribe to topics');
 
     await connectWithRetry();

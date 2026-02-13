@@ -1,3 +1,4 @@
+# Pending Review
 # Archivist Service - Consumes from queue and persists to MongoDB
 # Generic, reusable service. Deduplicates and archives data.
 
@@ -9,11 +10,20 @@ services:
     container_name: ${COMPOSE_PROJECT_NAME:-.}-archivist
 
     environment:
-      # Queue Connection
-      RABBITMQ_URL: ${ARCHIVIST_RABBITMQ_URL:-amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672}
+      # Queue Connection - pass credentials separately for URL encoding
+      RABBITMQ_URL: ${ARCHIVIST_RABBITMQ_URL:-}
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASS: ${RABBITMQ_PASS:-guest}
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
 
-      # Database Connection
-      MONGODB_URL: ${ARCHIVIST_MONGODB_URL:-mongodb://${MONGODB_USER:-root}:${MONGODB_PASS:-password}@mongodb:27017/?authSource=admin}
+      # Database Connection - pass credentials separately for URL encoding
+      MONGODB_URL: ${ARCHIVIST_MONGODB_URL:-}
+      MONGODB_USER: ${MONGODB_USER:-root}
+      MONGODB_PASS: ${MONGODB_PASS:-password}
+      MONGODB_HOST: ${MONGODB_HOST:-mongodb}
+      MONGODB_PORT: ${MONGODB_PORT:-27017}
+      MONGODB_AUTH_SOURCE: ${MONGODB_AUTH_SOURCE:-admin}
       MONGODB_DB: ${MONGODB_DB:-tradebot}
 
       # Batch Processing
@@ -26,7 +36,7 @@ services:
       TZ: ${TZ:-UTC}
 
     ports:
-      - "${ARCHIVIST_PORT:-3002}:3000"
+      - "${ARCHIVIST_PORT:-3110}:3000"
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]

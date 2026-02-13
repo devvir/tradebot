@@ -20,6 +20,13 @@ export const connectRabbitMQ = async (url: string): Promise<RabbitMQConnection> 
       logger.warn('RabbitMQ connection closed');
     });
 
+    // Ensure exchange, queue, and binding exist before publishing
+    const exchangeName = 'bitmex-data';
+    const queueName = 'bitmex-feed';
+    await channel.assertExchange(exchangeName, 'topic', { durable: true });
+    await channel.assertQueue(queueName, { durable: true });
+    await channel.bindQueue(queueName, exchangeName, '#');
+
     logger.info('Connected to RabbitMQ');
     return { connection, channel };
   } catch (error) {
@@ -41,8 +48,6 @@ export const publishToQueue = async (
   try {
     const exchangeName = 'bitmex-data';
     const routingKey = `${data.table}`;
-
-    await channel.assertExchange(exchangeName, 'topic', { durable: true });
     const messageBuffer = Buffer.from(JSON.stringify(data));
 
     const publishOptions: amqp.Options.Publish = { persistent: true };
@@ -50,7 +55,7 @@ export const publishToQueue = async (
       publishOptions.expiration = ttlMs.toString();
     }
 
-    // Use sendToQueue with callback to handle backpressure
+    // Publish to exchange; queue was asserted during connection
     const canContinue = channel.publish(exchangeName, routingKey, messageBuffer, publishOptions);
 
     // If buffer is full, wait for drain event

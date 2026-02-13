@@ -53,7 +53,23 @@ const shutdown = async (): Promise<void> => {
   process.exit(0);
 };
 
-const connectWithRetry = async (maxRetries = 10, delayMs = 3000): Promise<void> => {
+const connectMongoWithRetry = async (maxRetries = 10, delayMs = 5000): Promise<void> => {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      state.mongoConnection = await connectMongoDB(config.mongodbUrl, config.mongodbDb);
+      logger.info('Successfully connected to MongoDB');
+      return;
+    } catch (error) {
+      logger.warn({ error, attempt: i + 1, maxRetries }, 'Failed to connect to MongoDB, retrying...');
+      if (i < maxRetries - 1) {
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
+    }
+  }
+  throw new Error(`Failed to connect to MongoDB after ${maxRetries} attempts`);
+};
+
+const connectRabbitMQWithRetry = async (maxRetries = 10, delayMs = 3000): Promise<void> => {
   for (let i = 0; i < maxRetries; i++) {
     try {
       state.rabbitmqConnection = await connectRabbitMQ(config.rabbitmqUrl);
@@ -76,12 +92,15 @@ const main = async (): Promise<void> => {
     config = loadConfig();
     validateConfig(config);
 
-    state.mongoConnection = await connectMongoDB(config.mongodbUrl, config.mongodbDb);
-    await connectWithRetry();
+    // Connect to MongoDB first - must succeed before consuming messages
+    await connectMongoWithRetry();
+
+    // Connect to RabbitMQ
+    await connectRabbitMQWithRetry();
 
     await startConsuming(
       state.rabbitmqConnection!.channel,
-      state.mongoConnection.db,
+      state.mongoConnection!.db,
       config.batchSize,
       onMessageProcessed
     );
