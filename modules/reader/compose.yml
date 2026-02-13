@@ -1,0 +1,27 @@
+# Reader Module Compose
+# Includes: rabbitmq (queue), mongodb (storage)
+# Extends: feed (data fetcher), archivist (data archiver) with module-specific dependencies
+
+include:
+  - path: ../../services/rabbitmq/docker/compose.yml
+  - path: ../../services/mongodb/docker/compose.yml
+
+networks:
+  default:
+    name: ${COMPOSE_PROJECT_NAME:-reader}-network
+
+services:
+  feed:
+    extends:
+      file: ../../services/feed/docker/compose.yml
+      service: feed
+    depends_on:
+      - rabbitmq
+
+  archivist:
+    extends:
+      file: ../../services/archivist/docker/compose.yml
+      service: archivist
+    depends_on:
+      - rabbitmq
+      - mongodb

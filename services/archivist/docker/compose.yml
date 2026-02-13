@@ -1,0 +1,38 @@
+# Archivist Service - Consumes from queue and persists to MongoDB
+# Generic, reusable service. Deduplicates and archives data.
+
+services:
+  archivist:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: ${COMPOSE_PROJECT_NAME:-.}-archivist
+
+    environment:
+      # Queue Connection
+      RABBITMQ_URL: ${ARCHIVIST_RABBITMQ_URL:-amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672}
+
+      # Database Connection
+      MONGODB_URL: ${ARCHIVIST_MONGODB_URL:-mongodb://${MONGODB_USER:-root}:${MONGODB_PASS:-password}@mongodb:27017/?authSource=admin}
+      MONGODB_DB: ${MONGODB_DB:-tradebot}
+
+      # Batch Processing
+      ARCHIVIST_BATCH_SIZE: ${ARCHIVIST_BATCH_SIZE:-100}
+      ARCHIVIST_BATCH_TIMEOUT_MS: ${ARCHIVIST_BATCH_TIMEOUT_MS:-5000}
+
+      # Runtime
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV: ${APP_ENV:-production}
+      TZ: ${TZ:-UTC}
+
+    ports:
+      - "${ARCHIVIST_PORT:-3002}:3000"
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    restart: ${ARCHIVIST_RESTART_POLICY:-unless-stopped}

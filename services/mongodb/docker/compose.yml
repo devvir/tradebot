@@ -1,0 +1,37 @@
+# MongoDB Service - Data Persistence
+# Provides persistent storage. Can be shared across services/modules.
+
+services:
+  mongodb:
+    image: ${MONGODB_IMAGE:-mongo:7}
+    container_name: ${COMPOSE_PROJECT_NAME:-.}-mongodb
+
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGODB_USER:-root}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_PASS:-password}
+      TZ: ${TZ:-UTC}
+
+    ports:
+      - "${MONGODB_PORT:-27018}:27017"
+
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+    volumes:
+      - mongodb-data:/data/db
+      - mongodb-config:/data/configdb
+
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+
+    restart: ${MONGODB_RESTART_POLICY:-unless-stopped}
+
+volumes:
+  mongodb-data:
+  mongodb-config:

@@ -24,6 +24,22 @@ Covers:
 - Making decisions about service dependencies
 - Refactoring the project structure
 
+### [docker.md](docker.md)
+
+**Docker Compose composition strategy for reusable services and modules.**
+
+Covers:
+- How to use `include` for generic infrastructure services
+- How to use `extends` for module-specific service configurations
+- Service dependency management without coupling
+- Merge rules and composition patterns
+- Reference implementation in the reader module
+
+**Read this before:**
+- Creating a new module
+- Deciding how to wire services together
+- Adding dependencies between services
+
 ## Quick Reference
 
 **Key Principle:** Services are independent, infrastructure-like units that are composed into modules. They communicate via environment variables and message queues, not direct function calls. A service succeeds on its own terms regardless of whether anything uses it.
