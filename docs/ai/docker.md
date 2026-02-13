@@ -1,5 +1,3 @@
-<!-- Pending Review -->
-
 # Docker Compose Strategy
 
 ## Service Reusability and Composition

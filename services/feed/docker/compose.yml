@@ -1,4 +1,3 @@
-# Pending Review
 # Feed Service - Connects to BitMEX and publishes to queue
 # Generic, reusable service. Multiple instances with different FEED_ROLE values.
 
@@ -39,8 +38,8 @@ services:
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
       interval: 30s
-      timeout: 5s
-      retries: 3
+      timeout: 10s
+      retries: 5
       start_period: 10s
 
     restart: ${FEED_RESTART_POLICY:-unless-stopped}

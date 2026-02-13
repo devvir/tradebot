@@ -1,5 +1,3 @@
-// Pending Review
-
 import type { MongoClient, Db } from 'mongodb';
 import type { Connection, Channel } from 'amqplib';
 

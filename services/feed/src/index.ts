@@ -4,7 +4,7 @@ import logger from './logger';
 import { loadConfig, validateConfig } from './config';
 import type { Config } from './config';
 import { fetchAllSymbols, resolveChannels, buildSubscriptionTopics } from './bitmex';
-import { connectRabbitMQ, publishToQueue, RabbitMQConnection } from './rabbitmq';
+import { connectWithRetry, publishToQueue, RabbitMQConnection } from './rabbitmq';
 import { startHealthCheck } from './health';
 import type { FeedState, HealthState } from './types';
 
@@ -147,21 +147,10 @@ const shutdown = async (): Promise<void> => {
   process.exit(0);
 };
 
-const connectWithRetry = async (maxRetries = 10, delayMs = 3000): Promise<void> => {
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      rabbitmqConnection = await connectRabbitMQ(config.rabbitmqUrl);
-      state.channel = rabbitmqConnection.channel;
-      logger.info('Successfully connected to RabbitMQ');
-      return;
-    } catch (error) {
-      logger.warn({ error, attempt: i + 1, maxRetries }, 'Failed to connect to RabbitMQ, retrying...');
-      if (i < maxRetries - 1) {
-        await new Promise(resolve => setTimeout(resolve, delayMs));
-      }
-    }
-  }
-  throw new Error(`Failed to connect to RabbitMQ after ${maxRetries} attempts`);
+const handleRabbitMQReconnect = (conn: RabbitMQConnection): void => {
+  logger.info('RabbitMQ reconnected successfully');
+  rabbitmqConnection = conn;
+  state.channel = conn.channel;
 };
 
 const main = async (): Promise<void> => {
@@ -215,7 +204,12 @@ const main = async (): Promise<void> => {
       subscriptions: topics.length,
     }, 'Will subscribe to topics');
 
-    await connectWithRetry();
+    rabbitmqConnection = await connectWithRetry(
+      config.rabbitmqUrl,
+      handleRabbitMQReconnect,
+      () => { state.channel = null; }
+    );
+    state.channel = rabbitmqConnection.channel;
 
     connectBitMEX();
     state.reconnectDelay = config.reconnectDelayMs;

@@ -1,4 +1,3 @@
-// Pending Review
 import logger from './logger';
 
 export interface Config {

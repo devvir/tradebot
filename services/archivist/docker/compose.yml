@@ -1,4 +1,3 @@
-# Pending Review
 # Archivist Service - Consumes from queue and persists to MongoDB
 # Generic, reusable service. Deduplicates and archives data.
 
