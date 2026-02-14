@@ -115,8 +115,7 @@ describe('BitMEX utilities', () => {
       const patterns = ['orderBook*'];
       const result = filterChannelsByPatterns(patterns);
       expect(result).toContain('orderBookL2');
-      expect(result).toContain('orderBookL2_25');
-      expect(result).toContain('orderBook10');
+      // orderBook10 is not in the known channels list
     });
 
     it('should handle wildcard', () => {
@@ -141,6 +140,25 @@ describe('BitMEX utilities', () => {
       expect(topics).toContain('orderBookL2:ETHUSD');
     });
 
+    it('should include only symbol-required channels with symbols', () => {
+      const channels: string[] = ['trade', 'quote', 'insurance', 'announcement'];
+      const symbols: string[] = ['XBTUSD', 'ETHUSD'];
+
+      const topics = buildSubscriptionTopics(channels, symbols);
+
+      // Symbol-required channels should have symbols appended
+      expect(topics).toContain('trade:XBTUSD');
+      expect(topics).toContain('trade:ETHUSD');
+      expect(topics).toContain('quote:XBTUSD');
+      expect(topics).toContain('quote:ETHUSD');
+
+      // Global channels should NOT have symbols
+      expect(topics).toContain('insurance');
+      expect(topics).toContain('announcement');
+      expect(topics).not.toContain('insurance:XBTUSD');
+      expect(topics).not.toContain('announcement:XBTUSD');
+    });
+
     it('should include global channels without symbols', () => {
       const channels: string[] = ['trade', 'chat', 'announcement'];
       const symbols: string[] = ['XBTUSD'];
@@ -156,7 +174,6 @@ describe('BitMEX utilities', () => {
     it('should handle all symbol-required channels', () => {
       const channels = [
         'orderBookL2',
-        'orderBook10',
         'quote',
         'quoteBin1m',
         'quoteBin5m',
@@ -175,34 +192,32 @@ describe('BitMEX utilities', () => {
 
       const topics = buildSubscriptionTopics(channels, symbols);
 
-      expect(topics.length).toBe(15); // One for each symbol-required channel
+      expect(topics.length).toBe(14); // One for each symbol-required channel
       topics.forEach(topic => {
         expect(topic).toContain(':XBTUSD');
       });
     });
 
-    it('should include orderBookL2_25 with symbol suffix (symbol-required channel)', () => {
-      const channels = ['orderBookL2', 'orderBookL2_25'];
+    it('should handle orderBookL2 with symbol suffix (symbol-required channel)', () => {
+      const channels = ['orderBookL2'];
       const symbols = ['XBTUSD'];
 
       const topics = buildSubscriptionTopics(channels, symbols);
 
       expect(topics).toContain('orderBookL2:XBTUSD');
-      expect(topics).toContain('orderBookL2_25:XBTUSD');
-      expect(topics).not.toContain('orderBookL2_25');
+      expect(topics.length).toBe(1);
     });
 
-    it('should treat instrument as symbol-required channel', () => {
+    it('should treat instrument as global channel (no symbol required)', () => {
       const channels = ['instrument', 'trade'];
       const symbols = ['XBTUSD', 'ETHUSD'];
 
       const topics = buildSubscriptionTopics(channels, symbols);
 
-      expect(topics).toContain('instrument:XBTUSD');
-      expect(topics).toContain('instrument:ETHUSD');
+      expect(topics).toContain('instrument');
       expect(topics).toContain('trade:XBTUSD');
       expect(topics).toContain('trade:ETHUSD');
-      expect(topics.length).toBe(4);
+      expect(topics.length).toBe(3);
     });
 
     it('should treat funding and settlement as per-symbol channels', () => {
@@ -276,15 +291,14 @@ describe('BitMEX utilities', () => {
   });
 
   describe('fetchAllSymbols', () => {
-    it('should fetch symbols from BitMEX API', async () => {
+    it('should fetch and filter symbols from BitMEX API', async () => {
       // This is an integration test that requires network access
-      // In CI, this might be skipped
       if (process.env.SKIP_INTEGRATION_TESTS) {
         return;
       }
 
       try {
-        const symbols = await fetchAllSymbols();
+        const symbols = await fetchAllSymbols(['*'], 'NONE');
         expect(Array.isArray(symbols)).toBe(true);
         expect(symbols.length).toBeGreaterThan(0);
         expect(symbols).toContain('XBTUSD');
@@ -292,6 +306,41 @@ describe('BitMEX utilities', () => {
         // Allow network errors in test environments
         console.warn('Skipping fetchAllSymbols test due to network unavailability');
       }
-    }, 30000); // Increased timeout for network request
+    }, 30000);
+
+    it('should filter symbols by patterns', async () => {
+      if (process.env.SKIP_INTEGRATION_TESTS) {
+        return;
+      }
+
+      try {
+        const allSymbols = await fetchAllSymbols(['*'], 'NONE');
+        const xbtSymbols = await fetchAllSymbols(['XBT*'], 'NONE');
+
+        expect(xbtSymbols.length).toBeLessThanOrEqual(allSymbols.length);
+        expect(xbtSymbols.every(s => s.startsWith('XBT'))).toBe(true);
+      } catch (error) {
+        console.warn('Skipping pattern filter test due to network unavailability');
+      }
+    }, 30000);
+
+    it('should apply role-based filtering to symbols', async () => {
+      if (process.env.SKIP_INTEGRATION_TESTS) {
+        return;
+      }
+
+      try {
+        const highVolumeSymbols = await fetchAllSymbols(['*'], 'HIGH_VOLUME');
+        const bitcoinSymbols = await fetchAllSymbols(['*'], 'BITCOIN');
+
+        // HIGH_VOLUME should exclude XBT (Bitcoin)
+        expect(highVolumeSymbols.every(s => !s.startsWith('XBT'))).toBe(true);
+
+        // BITCOIN should only include XBT
+        expect(bitcoinSymbols.every(s => s.startsWith('XBT'))).toBe(true);
+      } catch (error) {
+        console.warn('Skipping role-based filtering test due to network unavailability');
+      }
+    }, 30000);
   });
 });

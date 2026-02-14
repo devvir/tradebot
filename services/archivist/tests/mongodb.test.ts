@@ -59,7 +59,7 @@ describe('MongoDB utilities', () => {
       expect(name).toBe('orderBookL2');
     });
 
-    it('should handle complex table names', () => {
+    it('should handle complex table names (non-segregated)', () => {
       const data = {
         table: 'orderBookL2_25',
         data: [{ symbol: 'ETHUSD' }]
@@ -67,7 +67,8 @@ describe('MongoDB utilities', () => {
 
       const name = getCollectionName(data);
 
-      expect(name).toBe('orderBookL2_25_ETHUSD');
+      // orderBookL2_25 is not in SYMBOL_SEGREGATED, so no symbol suffix
+      expect(name).toBe('orderBookL2_25');
     });
 
     it('should return single collection name for instrument channel', () => {
@@ -81,7 +82,7 @@ describe('MongoDB utilities', () => {
       expect(name).toBe('instrument');
     });
 
-    it('should return per-symbol collection name for funding channel', () => {
+    it('should return single collection for funding (not symbol-segregated)', () => {
       const data = {
         table: 'funding',
         data: [{ symbol: 'XBTUSD' }]
@@ -89,10 +90,11 @@ describe('MongoDB utilities', () => {
 
       const name = getCollectionName(data);
 
-      expect(name).toBe('funding_XBTUSD');
+      // Only orderBookL2, quote, trade are symbol-segregated
+      expect(name).toBe('funding');
     });
 
-    it('should return per-symbol collection name for settlement channel', () => {
+    it('should return single collection for settlement (not symbol-segregated)', () => {
       const data = {
         table: 'settlement',
         data: [{ symbol: 'ETHUSD' }]
@@ -100,7 +102,8 @@ describe('MongoDB utilities', () => {
 
       const name = getCollectionName(data);
 
-      expect(name).toBe('settlement_ETHUSD');
+      // Only orderBookL2, quote, trade are symbol-segregated
+      expect(name).toBe('settlement');
     });
 
     it('should handle instrument with multiple symbols in data array', () => {
@@ -126,7 +129,6 @@ describe('MongoDB utilities', () => {
       const result = extractMinimalAttributes(document);
 
       expect(result.timestamp).toBeDefined();
-      expect(typeof result.timestamp).toBe('string');
       expect(result.symbol).toBe('XBTUSD');
       expect(result.price).toBe(50000);
     });

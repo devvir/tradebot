@@ -92,8 +92,8 @@ describe('Config utilities', () => {
       const config = loadConfig();
 
       expect(config.bitmexWsUrl).toBe('wss://www.bitmex.com/realtime');
-      expect(config.rabbitmqUrl).toBe('amqp://guest:guest@localhost:5672');
-      expect(config.channels).toEqual(['trade', 'orderBookL2_25']);
+      expect(config.rabbitmqUrl).toBe('amqp://guest:guest@rabbitmq:5672');
+      expect(config.channels).toEqual(['trade', 'orderBookL2']);
       expect(config.symbols).toEqual(['XBTUSD']);
     });
 

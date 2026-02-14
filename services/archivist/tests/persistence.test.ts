@@ -64,12 +64,12 @@ describe('Message persistence', () => {
       );
 
       expect(mockChannel.assertQueue).toHaveBeenCalledWith(
-        'bitmex-data-worker',
+        'bitmex-feed',
         { durable: true }
       );
 
       expect(mockChannel.bindQueue).toHaveBeenCalledWith(
-        'bitmex-data-worker',
+        'bitmex-feed',
         'bitmex-data',
         '#'
       );
@@ -89,7 +89,7 @@ describe('Message persistence', () => {
       await startConsuming(mockChannel, mockDb, 100, onMessageProcessed);
 
       expect(mockChannel.consume).toHaveBeenCalledWith(
-        'bitmex-data-worker',
+        'bitmex-feed',
         expect.any(Function)
       );
     });
@@ -186,7 +186,7 @@ describe('Message persistence', () => {
       };
 
       const error = new Error('E11000 duplicate key error');
-      (error as any).code = 'E11000';
+      (error as any).code = 11000;
       mockCollection.insertMany.mockRejectedValueOnce(error);
 
       const consumeCallback = mockChannel.consume.mock.calls[0][1];

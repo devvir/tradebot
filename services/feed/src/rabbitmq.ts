@@ -88,7 +88,6 @@ export const connectRabbitMQ = async (
 
     setupDisconnectHandlers(conn);
 
-    logger.info('Connected to RabbitMQ');
     return conn;
   } catch (error) {
     logger.error({ error }, 'Failed to connect to RabbitMQ');
@@ -159,7 +158,7 @@ export const publishToQueue = async (
 
   try {
     const exchangeName = 'bitmex-data';
-    const routingKey = `${data.table}`;
+    const routingKey = data.symbol ? `${data.table}.${data.symbol}` : `${data.table}`;
     const messageBuffer = Buffer.from(JSON.stringify(data));
 
     const publishOptions: amqp.Options.Publish = { persistent: true };

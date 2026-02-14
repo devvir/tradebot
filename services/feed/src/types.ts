@@ -40,3 +40,12 @@ export interface HealthState {
   wsConnected: boolean;
   lastMessageTime: number;
 }
+export interface HealthCheckResult {
+  isHealthy: boolean;
+  statusCode: number;
+  body: {
+    status: string;
+    wsConnected: boolean;
+    lastMessage: number;
+  };
+}

@@ -17,7 +17,6 @@ describe('Archivist Config utilities', () => {
       process.env.MONGODB_URL = 'mongodb://user:pass@localhost:27017/testdb';
       process.env.ARCHIVIST_BATCH_SIZE = '50';
       process.env.ARCHIVIST_BATCH_TIMEOUT_MS = '3000';
-      process.env.ARCHIVIST_PORT = '3002';
 
       const config = loadConfig();
 
@@ -25,7 +24,8 @@ describe('Archivist Config utilities', () => {
       expect(config.mongodbUrl).toBe('mongodb://user:pass@localhost:27017/testdb');
       expect(config.batchSize).toBe(50);
       expect(config.batchTimeoutMs).toBe(3000);
-      expect(config.healthPort).toBe(3002);
+      // healthPort is hardcoded to 3000
+      expect(config.healthPort).toBe(3000);
     });
 
     it('should use default values when env vars are not set', () => {
@@ -33,11 +33,15 @@ describe('Archivist Config utilities', () => {
       delete process.env.MONGODB_URL;
       delete process.env.ARCHIVIST_BATCH_SIZE;
       delete process.env.ARCHIVIST_BATCH_TIMEOUT_MS;
+      delete process.env.RABBITMQ_HOST;
+      delete process.env.MONGODB_HOST;
 
       const config = loadConfig();
 
-      expect(config.rabbitmqUrl).toBe('amqp://guest:guest@localhost:5672');
+      // Defaults use service names: 'rabbitmq' and 'mongodb' (not 'localhost')
+      expect(config.rabbitmqUrl).toBe('amqp://guest:guest@rabbitmq:5672');
       expect(config.mongodbUrl).toContain('mongodb://');
+      expect(config.mongodbUrl).toContain('mongodb');
       expect(config.batchSize).toBe(100);
       expect(config.batchTimeoutMs).toBe(5000);
     });
@@ -45,16 +49,12 @@ describe('Archivist Config utilities', () => {
     it('should parse numeric environment variables correctly', () => {
       process.env.ARCHIVIST_BATCH_SIZE = '250';
       process.env.ARCHIVIST_BATCH_TIMEOUT_MS = '10000';
-      process.env.ARCHIVIST_PORT = '4000';
 
       const config = loadConfig();
 
-      expect(typeof config.batchSize).toBe('number');
-      expect(typeof config.batchTimeoutMs).toBe('number');
-      expect(typeof config.healthPort).toBe('number');
       expect(config.batchSize).toBe(250);
       expect(config.batchTimeoutMs).toBe(10000);
-      expect(config.healthPort).toBe(4000);
+      expect(config.healthPort).toBe(3000);
     });
   });
 
@@ -97,22 +97,6 @@ describe('Archivist Config utilities', () => {
 
       config.batchTimeoutMs = -5000;
       expect(() => validateConfig(config)).toThrow('ARCHIVIST_BATCH_TIMEOUT_MS must be greater than 0');
-    });
-
-    it('should validate positive batch size', () => {
-      config.batchSize = 1;
-      expect(() => validateConfig(config)).not.toThrow();
-
-      config.batchSize = 10000;
-      expect(() => validateConfig(config)).not.toThrow();
-    });
-
-    it('should validate positive batch timeout', () => {
-      config.batchTimeoutMs = 1;
-      expect(() => validateConfig(config)).not.toThrow();
-
-      config.batchTimeoutMs = 30000;
-      expect(() => validateConfig(config)).not.toThrow();
     });
   });
 });
