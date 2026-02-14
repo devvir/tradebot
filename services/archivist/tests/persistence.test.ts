@@ -7,9 +7,6 @@ jest.mock('amqplib');
 const mockGetCollectionName = mongodb.getCollectionName as jest.MockedFunction<
   typeof mongodb.getCollectionName
 >;
-const mockExtractMinimalAttributes = mongodb.extractMinimalAttributes as jest.MockedFunction<
-  typeof mongodb.extractMinimalAttributes
->;
 
 describe('Message persistence', () => {
   let mockChannel: any;
@@ -39,12 +36,6 @@ describe('Message persistence', () => {
     };
 
     mockGetCollectionName.mockReturnValue('trade_XBTUSD');
-    mockExtractMinimalAttributes.mockReturnValue({
-      symbol: 'XBTUSD',
-      price: 50000,
-      timestamp: Date.now(),
-      _apiVersion: '2.0.0'
-    });
   });
 
   afterEach(() => {
@@ -53,9 +44,9 @@ describe('Message persistence', () => {
 
   describe('startConsuming', () => {
     it('should setup exchange, queue, and binding', async () => {
-      const onMessageProcessed = jest.fn();
+      const onStoreMsg = jest.fn();
 
-      await startConsuming(mockChannel, mockDb, 100, onMessageProcessed);
+      await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
 
       expect(mockChannel.assertExchange).toHaveBeenCalledWith(
         'bitmex-data',
@@ -76,17 +67,17 @@ describe('Message persistence', () => {
     });
 
     it('should set prefetch to batch size', async () => {
-      const onMessageProcessed = jest.fn();
+      const onStoreMsg = jest.fn();
 
-      await startConsuming(mockChannel, mockDb, 50, onMessageProcessed);
+      await startConsuming(mockChannel, mockDb, 50, onStoreMsg);
 
       expect(mockChannel.prefetch).toHaveBeenCalledWith(50);
     });
 
     it('should start consuming from queue', async () => {
-      const onMessageProcessed = jest.fn();
+      const onStoreMsg = jest.fn();
 
-      await startConsuming(mockChannel, mockDb, 100, onMessageProcessed);
+      await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
 
       expect(mockChannel.consume).toHaveBeenCalledWith(
         'bitmex-feed',
@@ -95,9 +86,9 @@ describe('Message persistence', () => {
     });
 
     it('should handle null message gracefully', async () => {
-      const onMessageProcessed = jest.fn();
+      const onStoreMsg = jest.fn();
 
-      await startConsuming(mockChannel, mockDb, 100, onMessageProcessed);
+      await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
 
       const consumeCallback = mockChannel.consume.mock.calls[0][1];
       await consumeCallback(null);
@@ -107,16 +98,15 @@ describe('Message persistence', () => {
     });
 
     it('should process valid message', async () => {
-      const onMessageProcessed = jest.fn();
+      const onStoreMsg = jest.fn();
 
-      await startConsuming(mockChannel, mockDb, 100, onMessageProcessed);
+      await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
 
       const message = {
         content: Buffer.from(JSON.stringify({
           table: 'trade',
           action: 'insert',
-          data: [{ symbol: 'XBTUSD', price: 50000 }],
-          _apiVersion: '2.0.0'
+          data: [{ symbol: 'XBTUSD', price: 50000 }]
         }))
       };
 
@@ -126,56 +116,15 @@ describe('Message persistence', () => {
 
       expect(mockGetCollectionName).toHaveBeenCalled();
       expect(mockDb.collection).toHaveBeenCalledWith('trade_XBTUSD');
-      expect(mockExtractMinimalAttributes).toHaveBeenCalled();
       expect(mockCollection.insertMany).toHaveBeenCalled();
-      expect(onMessageProcessed).toHaveBeenCalled();
+      expect(onStoreMsg).toHaveBeenCalled();
       expect(mockChannel.ack).toHaveBeenCalledWith(message);
     });
 
-    it('should include API version in stored documents', async () => {
-      const onMessageProcessed = jest.fn();
-
-      await startConsuming(mockChannel, mockDb, 100, onMessageProcessed);
-
-      const message = {
-        content: Buffer.from(JSON.stringify({
-          table: 'quote',
-          action: 'insert',
-          data: [{ symbol: 'ETHUSD', bidPrice: 2500 }],
-          _apiVersion: '2.0.0'
-        }))
-      };
-
-      mockGetCollectionName.mockReturnValue('quote_ETHUSD');
-      mockExtractMinimalAttributes.mockReturnValue({
-        symbol: 'ETHUSD',
-        bidPrice: 2500,
-        timestamp: Date.now(),
-        _apiVersion: '2.0.0'
-      });
-
-      const consumeCallback = mockChannel.consume.mock.calls[0][1];
-      await consumeCallback(message);
-
-      // Verify extractMinimalAttributes was called with API version
-      expect(mockExtractMinimalAttributes).toHaveBeenCalledWith(
-        expect.objectContaining({ symbol: 'ETHUSD' }),
-        '2.0.0'
-      );
-
-      // Verify the returned document includes API version
-      expect(mockCollection.insertMany).toHaveBeenCalledWith(
-        expect.arrayContaining([
-          expect.objectContaining({ _apiVersion: '2.0.0' })
-        ]),
-        { ordered: false }
-      );
-    });
-
     it('should handle duplicate key error', async () => {
-      const onMessageProcessed = jest.fn();
+      const onStoreMsg = jest.fn();
 
-      await startConsuming(mockChannel, mockDb, 100, onMessageProcessed);
+      await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
 
       const message = {
         content: Buffer.from(JSON.stringify({
@@ -198,9 +147,9 @@ describe('Message persistence', () => {
     });
 
     it('should requeue message on transient error', async () => {
-      const onMessageProcessed = jest.fn();
+      const onStoreMsg = jest.fn();
 
-      await startConsuming(mockChannel, mockDb, 100, onMessageProcessed);
+      await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
 
       const message = {
         content: Buffer.from(JSON.stringify({
@@ -222,9 +171,9 @@ describe('Message persistence', () => {
     });
 
     it('should handle messages with no data array', async () => {
-      const onMessageProcessed = jest.fn();
+      const onStoreMsg = jest.fn();
 
-      await startConsuming(mockChannel, mockDb, 100, onMessageProcessed);
+      await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
 
       const message = {
         content: Buffer.from(JSON.stringify({

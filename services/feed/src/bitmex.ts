@@ -37,7 +37,7 @@ export const fetchAllSymbols = async (patterns: string[], role: FeedRole): Promi
     req.on('error', reject);
   });
 
-  return filterSymbolsByRole(filterSymbolsByPatterns(raw, patterns), role);
+  return filterSymbolsByPatterns(filterSymbolsByRole(raw, role), patterns);
 };
 
 /**
@@ -73,15 +73,16 @@ export const filterSymbolsByPatterns = (symbols: string[], patterns: string[]): 
 /**
  * Filter channels by patterns
  */
-export const filterChannelsByPatterns = (patterns: string[]): string[] => {
-  return KNOWN_CHANNELS.filter((channel) => matchesPatterns(channel, patterns));
+export const filterChannelsByPatterns = (channels: string[], patterns: string[]): string[] => {
+  return channels.filter((channel) => matchesPatterns(channel, patterns));
 };
 
 /**
  * Resolve channel patterns to concrete channels this service instance should handle.
  */
 export const resolveChannels = (patterns: string[], role: FeedRole): string[] => {
-  return filterChannelsByRole(filterChannelsByPatterns(patterns), role);
+  const roleChannels = filterChannelsByRole([...KNOWN_CHANNELS], role);
+  return filterChannelsByPatterns(roleChannels, patterns);
 };
 
 export const buildSubscriptionTopics = (channels: string[], symbols: string[]): string[] => {

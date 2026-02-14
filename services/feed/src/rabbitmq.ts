@@ -1,5 +1,6 @@
 import amqp from 'amqplib';
 import logger from './logger';
+import { BitmexWSMessage } from './types';
 
 export interface RabbitMQConnection {
   connection: amqp.Connection & { close(): Promise<void> };
@@ -108,7 +109,9 @@ const scheduleReconnect = (): void => {
       const newConnection = await connectRabbitMQ(reconnectUrl!, onReconnectCallback!, onChannelInvalidatedCallback!);
       onReconnectCallback!(newConnection);
     } catch (error) {
-      logger.error({ error }, 'RabbitMQ reconnection failed, will retry');
+      logger.error({ error }, 'RabbitMQ reconnection failed, retrying...');
+      reconnectTimeout = null;
+      scheduleReconnect();
     }
   }, 5000);
 };
@@ -123,7 +126,6 @@ export const connectWithRetry = async (
   for (let i = 0; i < maxRetries; i++) {
     try {
       const connection = await connectRabbitMQ(url, onReconnect, onChannelInvalidated);
-      logger.info('Successfully connected to RabbitMQ');
       return connection;
     } catch (error) {
       logger.warn({ error, attempt: i + 1, maxRetries }, 'Failed to connect to RabbitMQ, retrying...');
@@ -137,7 +139,7 @@ export const connectWithRetry = async (
 
 export const publishToQueue = async (
   channel: amqp.Channel | null,
-  data: Record<string, unknown>,
+  data: BitmexWSMessage,
   ttlMs?: number
 ): Promise<void> => {
   if (! channel) {
@@ -158,7 +160,7 @@ export const publishToQueue = async (
 
   try {
     const exchangeName = 'bitmex-data';
-    const routingKey = data.symbol ? `${data.table}.${data.symbol}` : `${data.table}`;
+    const routingKey = data.data[0]?.symbol ? `${data.table}.${data.data[0].symbol}` : data.table;
     const messageBuffer = Buffer.from(JSON.stringify(data));
 
     const publishOptions: amqp.Options.Publish = { persistent: true };

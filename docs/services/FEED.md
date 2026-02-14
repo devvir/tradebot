@@ -537,3 +537,90 @@ The service logs:
 - `state.apiVersion` (most recent API version seen)
 
 **Monitoring strategy:** Query health endpoint periodically; check logs for errors; alert on stale `lastMessageTime`.
+
+## Dynamic Subscription Management
+
+The Feed service listens for subscription management commands via RabbitMQ on the `feed-commands` exchange. This allows dynamic subscription and unsubscription without restarting the service.
+
+### Command Message Format
+
+Send JSON messages to the `feed-commands` direct exchange:
+
+```json
+{
+  "command": "subscribe|unsubscribe|resubscribe",
+  "channel": "<channel_name>", // e.g. "instrument", "ordeBookL2:XBTUSD"
+}
+```
+
+### Commands
+
+**Subscribe**: Attempt to subscribe to a Bitmex channel.
+
+```json
+{
+  "command": "subscribe",
+  "channel": "orderBookL2:XBTUSD",
+}
+```
+
+Result: Service sends `{"op": "subscribe", "args": ["orderBookL2:XBTUSD"]}` to BitMEX WebSocket
+
+**Unsubscribe**: Remove a channel/symbol subscription and tell BitMEX to stop streaming it.
+
+```json
+{
+  "command": "unsubscribe",
+  "channel": "orderBookL2:XBTUSD",
+}
+```
+
+Result: Service sends `{"op": "unsubscribe", "args": ["orderBookL2:XBTUSD"]}` to BitMEX WebSocket
+
+**Resubscribe**: Unsubscribe then immediately subscribe.
+
+```json
+{
+  "command": "resubscribe",
+  "channel": "orderBookL2:XBTUSD",
+}
+```
+
+Result: Service unsubscribes then subscribes to get fresh snapshot
+
+### Global Channels
+
+Some channels don't require symbols (like `insurance`, `announcement`):
+
+```json
+{
+  "command": "subscribe",
+  "channel": "insurance"
+}
+```
+
+Result: Service sends `{"op": "subscribe", "args": ["insurance"]}` to BitMEX WebSocket
+
+### Implementation
+
+- **Location**: `src/commands.ts`
+- **Integration**: Minimal—one import and one function call in `index.ts`
+- **Isolation**: Completely separate from core feed logic
+
+### Example: Sending Commands from Another Service
+
+```typescript
+import amqp from 'amqplib';
+
+const conn = await amqp.connect('amqp://localhost');
+const channel = await conn.createChannel();
+
+await channel.assertExchange('feed-commands', 'fanout', { durable: true });
+
+const command = {
+  command: 'subscribe',
+  channel: 'trade:ETHUSD',
+};
+
+channel.publish('feed-commands', '', Buffer.from(JSON.stringify(command)));
+```

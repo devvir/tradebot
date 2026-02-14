@@ -1,4 +1,4 @@
-import { buildSubscriptionTopics, fetchAllSymbols, globToRegex, matchesPatterns, filterSymbolsByPatterns, filterChannelsByPatterns } from '../src/bitmex';
+import { buildSubscriptionTopics, fetchAllSymbols, globToRegex, matchesPatterns, filterSymbolsByPatterns, filterChannelsByPatterns, KNOWN_CHANNELS } from '../src/bitmex';
 
 describe('BitMEX utilities', () => {
   describe('globToRegex', () => {
@@ -86,14 +86,14 @@ describe('BitMEX utilities', () => {
   describe('filterChannelsByPatterns', () => {
     it('should filter channels by exact match', () => {
       const patterns = ['trade', 'quote'];
-      const result = filterChannelsByPatterns(patterns);
+      const result = filterChannelsByPatterns([...KNOWN_CHANNELS], patterns);
       expect(result).toContain('trade');
       expect(result).toContain('quote');
     });
 
     it('should filter channels by glob pattern', () => {
       const patterns = ['quote*'];
-      const result = filterChannelsByPatterns(patterns);
+      const result = filterChannelsByPatterns([...KNOWN_CHANNELS], patterns);
       expect(result).toContain('quote');
       expect(result).toContain('quoteBin1m');
       expect(result).toContain('quoteBin5m');
@@ -103,7 +103,7 @@ describe('BitMEX utilities', () => {
 
     it('should support trade channels with glob', () => {
       const patterns = ['trade*'];
-      const result = filterChannelsByPatterns(patterns);
+      const result = filterChannelsByPatterns([...KNOWN_CHANNELS], patterns);
       expect(result).toContain('trade');
       expect(result).toContain('tradeBin1m');
       expect(result).toContain('tradeBin5m');
@@ -113,14 +113,14 @@ describe('BitMEX utilities', () => {
 
     it('should match orderBook channels', () => {
       const patterns = ['orderBook*'];
-      const result = filterChannelsByPatterns(patterns);
+      const result = filterChannelsByPatterns([...KNOWN_CHANNELS], patterns);
       expect(result).toContain('orderBookL2');
       // orderBook10 is not in the known channels list
     });
 
     it('should handle wildcard', () => {
       const patterns = ['*'];
-      const result = filterChannelsByPatterns(patterns);
+      const result = filterChannelsByPatterns([...KNOWN_CHANNELS], patterns);
       expect(result.length).toBeGreaterThan(0);
     });
   });

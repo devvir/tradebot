@@ -4,9 +4,7 @@
 
 The Archivist service is a message consumer that consumes BitMEX market data from a RabbitMQ message queue, deduplicates records based on domain-specific unique constraints, and persists the data to MongoDB for long-term storage and analysis.
 
-The service acts as a throughput-focused ingestion pipeline: it receives messages as quickly as the queue can deliver them, routes them to appropriate collections based on their channel and symbol, applies domain-specific unique indexes to prevent duplicates, and writes data in batches for efficiency. The Archivist has built-in knowledge of BitMEX message structure and data semantics—it knows which fields identify unique records in each channel, how to partition high-volume channels by symbol, and how to enrich messages with metadata.
-
-It makes no assumptions about how data will be used downstream.
+The service acts as a transparent ingestion pipeline: it receives messages as quickly as the queue can deliver them, routes them to appropriate collections, stores each message with a deduplication hash, and deduplicates across multiple publishers via a unique index.
 
 ## Extended Definition
 
@@ -20,14 +18,13 @@ The Archivist service provides a self-contained data archival capability:
    - Maintains a configurable prefetch window to control backpressure
 
 2. **Deduplicates Records**
-   - Creates unique MongoDB indexes on each collection based on the data domain (e.g., trade ID, order book composite key)
-   - Automatically silences duplicate key errors (error code 11000) when records with identical unique keys arrive
-   - Treats duplicate insertion attempts as idempotent—a duplicate is simply acknowledged and discarded
+   - Creates a unique index on the `_hash` field (computed from message data items' timestamps, action, and data count)
+   - Automatically silences duplicate key errors (error code 11000) when identical messages arrive from multiple publishers
+   - Treats duplicate delivery as idempotent—acknowledged and discarded
 
 3. **Persists to MongoDB**
-   - Routes incoming data to collection tables based on the message's `table` field and (for high-volume channels) the symbol
-   - Enriches documents with metadata: API version, action type, and message timestamp for replay capability
-   - Performs batch insertions to optimize database throughput
+   - Routes incoming messages to collection tables based on the message's `table` field and (for high-volume channels) the symbol
+   - Stores the complete message (table, action, data array, keys, types) as-is
    - Tracks insertion health via message counters
 
 4. **Provides Observability**
@@ -40,9 +37,10 @@ The Archivist service provides a self-contained data archival capability:
 The Archivist embodies these principles:
 
 - **Infrastructure-like**: The service doesn't validate downstream usage. It writes what it receives and lets MongoDB handle uniqueness constraints.
-- **Passive deduplication**: Rather than actively tracking which records have been seen (which would require memory and logic), deduplication happens as a side effect of unique index constraints. Duplicates silently fail at insert time.
+- **Transparent storage**: Messages are stored exactly as received from BitMEX. A `timestamp` field is extracted to the root level for indexing, and a `_hash` is computed for deduplication, but no other modification happens.
+- **Hash-based deduplication**: The _hash combines message timestamp (minimum across data array), action, and data count. Identical messages from different publishers produce identical hashes and trigger duplicate key errors.
 - **No ordering guarantees**: The service makes no promise to insert messages in order. It processes them as they arrive, so derived data may be out of order relative to real-world events.
-- **Decoupled from producers**: If the feed service publishes duplicates, or republishes the same data twice, the Archivist simply absorbs it via its index constraints.
+- **Decoupled from producers**: Multiple feed service instances can publish the same message without causing duplicates—the _hash index deduplicates across publishers.
 
 ### Collection Mapping Strategy
 
@@ -85,7 +83,7 @@ This ordering is deliberate: MongoDB must be ready before consuming messages, be
 
 ### Core Functions
 
-#### `startConsuming(channel, db, batchSize, onMessageProcessed)`
+#### `startConsuming(channel, db, batchSize, onStoreMsg)`
 
 The primary consumption loop. This function sets up the message consumer and processes each message.
 
@@ -97,10 +95,10 @@ The primary consumption loop. This function sets up the message consumer and pro
 5. Enter the consume callback loop:
    - Parse incoming JSON
    - Extract `table` and symbol for collection routing
-   - Extract API version, action, and timestamp for metadata
+   - Extract minimum timestamp from data array and compute deduplication hash
+   - Store entire message with root-level `timestamp` and `_hash` fields
    - Ensure collection indexes are created (once per collection per service lifetime)
    - Extract minimal attributes from each document in the message's `data` array
-   - Enrich with `_action`, `_messageTimestamp`, and `_apiVersion` metadata
    - Attempt bulk insertion with `ordered: false` (continue on individual failures)
    - Handle duplicate key errors (code 11000) by acknowledging and moving on
    - For other errors, negative acknowledge (nack) with `requeue=true` to retry
@@ -141,18 +139,6 @@ Indexes are based on BitMEX API documentation and data structure:
 - **funding**: `{timestamp, symbol}` (time-series unique)
 - **settlement**: `{timestamp, symbol}` (time-series unique)
 
-#### `extractMinimalAttributes(document, apiVersion)`
-
-Extracts and minimally enriches a document from the incoming data array.
-
-**Logic:**
-- Copy the document
-- If no `timestamp` field exists, add current ISO timestamp
-- If API version is provided, add `_apiVersion` metadata field
-- Return enriched document
-
-**Why minimal?** The service aims to preserve data exactly as received from BitMEX, adding only necessary metadata (timestamps, version info) for replay and schema tracking.
-
 #### `getHealthState()`
 
 Returns current health metrics.
@@ -191,8 +177,7 @@ Determine collection name (using symbol-segregation logic)
 Ensure indexes on collection (once per collection)
     ↓
 For each document in data array:
-    - Extract minimal attributes
-    - Enrich with _action, _messageTimestamp, _apiVersion
+    - Store as-is
     ↓
 insertMany with ordered=false
     ↓
@@ -219,13 +204,7 @@ On success: ACK message
 
 **Why this approach?** Reordering would require buffering, state management, and complex timing logic. The service assumes downstream consumers handle temporal analysis and will sort by timestamp when needed.
 
-#### API Version Changes
 
-**Scenario**: BitMEX updates its API schema mid-stream, and documents contain different fields.
-
-**Handling**: The service captures the API version from the incoming message's `_apiVersion` field and stores it in each document. Consumers can group documents by API version if schema-aware processing is needed.
-
-**Why track it?** Different API versions may have different schemas. Storing the version allows query-time filtering: "Give me only records for API version X."
 
 #### Collection Creation
 
@@ -291,12 +270,7 @@ Unique indexes ensure deduplication without maintaining in-memory state. The dat
 
 **Trade-off:** Unique indexes slow down *writes* slightly (extra constraint check) but provide data integrity guarantees. The service prioritizes correctness over raw write speed.
 
-#### Metadata Enrichment
 
-The service adds `_action`, `_messageTimestamp`, and `_apiVersion` fields to every document. This is lightweight but enables:
-- Replay analysis (which records came from which message)
-- Schema versioning (which API versions produced which records)
-- Action tracking (insert, update, delete semantics from BitMEX)
 
 ### Monitoring
 

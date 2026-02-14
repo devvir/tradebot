@@ -5,6 +5,7 @@ services:
   mongodb:
     image: ${MONGODB_IMAGE:-mongo:7}
     container_name: ${COMPOSE_PROJECT_NAME:-.}-mongodb
+    command: mongod --quiet --setParameter logLevel=0
 
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGODB_USER:-root}

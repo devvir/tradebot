@@ -1,5 +1,6 @@
 import { MongoClient, Db } from 'mongodb';
 import logger from './logger';
+import type { BitmexWSMessage } from './types';
 
 export interface MongoDBConnection {
   client: MongoClient;
@@ -20,7 +21,7 @@ export const connectMongoDB = async (url: string, dbName: string): Promise<Mongo
   }
 };
 
-export const getCollectionName = (data: Record<string, unknown>): string => {
+export const getCollectionName = (data: BitmexWSMessage): string => {
   const table = data.table as string;
 
   // Only high-volume channels get symbol-segregated collections
@@ -33,22 +34,4 @@ export const getCollectionName = (data: Record<string, unknown>): string => {
   }
 
   return table;
-};
-
-export const extractMinimalAttributes = (
-  document: Record<string, unknown>,
-  apiVersion?: string | null
-): Record<string, unknown> => {
-  const result = { ...document };
-
-  if (!result.timestamp) {
-    result.timestamp = new Date().toISOString();
-  }
-
-  // Include API version for schema versioning and forward compatibility
-  if (apiVersion) {
-    result._apiVersion = apiVersion;
-  }
-
-  return result;
 };

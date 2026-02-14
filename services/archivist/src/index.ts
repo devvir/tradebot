@@ -25,7 +25,7 @@ const getHealthState = (): HealthState => {
   };
 };
 
-const onMessageProcessed = (): void => {
+const onStoreMsg = (): void => {
   state.messagesProcessed++;
   state.lastProcessedTime = Date.now();
 
@@ -102,7 +102,7 @@ const main = async (): Promise<void> => {
       state.rabbitmqConnection!.channel,
       state.mongoConnection!.db,
       config.batchSize,
-      onMessageProcessed
+      onStoreMsg
     );
 
     startHealthCheck(config.healthPort, getHealthState);
