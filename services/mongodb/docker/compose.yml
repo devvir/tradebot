@@ -1,11 +1,16 @@
 # MongoDB Service - Data Persistence
 # Provides persistent storage. Can be shared across services/modules.
+#
+# Cache Size:
+# By default, MongoDB's WiredTiger allocates 50% of available system memory as cache.
+# This is automatically capped here to prevent OOM kills on memory-constrained systems.
+# For ~4GB of data, 2GB cache is optimal. Adjust MONGODB_CACHE_SIZE_GB if needed.
 
 services:
   mongodb:
     image: ${MONGODB_IMAGE:-mongo:7}
     container_name: ${COMPOSE_PROJECT_NAME:-.}-mongodb
-    command: mongod --quiet --setParameter logLevel=0
+    command: mongod --quiet --setParameter logLevel=0 --wiredTigerCacheSizeGB=${MONGODB_CACHE_SIZE_GB:-2}
 
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGODB_USER:-root}

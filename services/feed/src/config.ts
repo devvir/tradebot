@@ -74,9 +74,9 @@ export const loadConfig = (): Config => {
     bitmexWsUrl,
     rabbitmqUrl: buildRabbitMQUrl(),
     role,
-    channels: (process.env.FEED_CHANNELS || 'trade,orderBookL2').split(','),
+    channels: process.env.FEED_CHANNELS?.split(',') || [],
     channelPatterns: [],
-    symbols: (process.env.FEED_SYMBOLS || 'XBTUSD').split(','),
+    symbols: process.env.FEED_SYMBOLS?.split(',') || [],
     symbolPatterns: [],
     healthPort: 3000,
     reconnectDelayMs: parseInt(process.env.FEED_RECONNECT_DELAY_MS || '5000', 10),
@@ -94,11 +94,6 @@ export const validateConfig = (config: Config): void => {
   if (! config.rabbitmqUrl) {
     throw new Error('RABBITMQ_URL is required');
   }
-  if (config.channelPatterns.length === 0) {
-    throw new Error('At least one channel pattern must be configured');
-  }
-  if (config.symbolPatterns.length === 0) {
-    throw new Error('At least one symbol pattern must be configured');
-  }
+
   logger.info({ config }, 'Configuration validated');
 };

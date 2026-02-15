@@ -604,7 +604,7 @@ Result: Service sends `{"op": "subscribe", "args": ["insurance"]}` to BitMEX Web
 ### Implementation
 
 - **Location**: `src/commands.ts`
-- **Integration**: Minimal—one import and one function call in `index.ts`
+- **Integration**: Minimal footprint in the rest of the service
 - **Isolation**: Completely separate from core feed logic
 
 ### Example: Sending Commands from Another Service
@@ -619,7 +619,7 @@ await channel.assertExchange('feed-commands', 'fanout', { durable: true });
 
 const command = {
   command: 'subscribe',
-  channel: 'trade:ETHUSD',
+  channel: 'trade:ETHUSD', // Accepts array of channels as well
 };
 
 channel.publish('feed-commands', '', Buffer.from(JSON.stringify(command)));
