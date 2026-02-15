@@ -7,21 +7,20 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
 
+    ports:
+      - "${FEED_PORT:-}:3000"
+
     environment:
       # BitMEX Connection (testnet or live)
       BITMEX_TESTNET: ${BITMEX_TESTNET:-false}
 
-      # Queue Connection - pass credentials separately for URL encoding
-      RABBITMQ_URL: ${FEED_RABBITMQ_URL:-}
-      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
-      RABBITMQ_PASS: ${RABBITMQ_PASS:-guest}
-      RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
-      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
+      # Queue Connection
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
 
       # Role-based channel/symbol selection
       FEED_ROLE: ${FEED_ROLE:-NONE}
-      FEED_CHANNELS: ${FEED_CHANNELS:-trade,orderBookL2}
-      FEED_SYMBOLS: ${FEED_SYMBOLS:-XBTUSD}
+      FEED_SYMBOLS: ${FEED_SYMBOLS:-}
+      FEED_CHANNELS: ${FEED_CHANNELS:-}
 
       # Reconnect delays
       FEED_RECONNECT_DELAY_MS: ${FEED_RECONNECT_DELAY_MS:-5000}
@@ -43,3 +42,6 @@ services:
       start_period: 10s
 
     restart: ${FEED_RESTART_POLICY:-unless-stopped}
+
+    depends_on:
+      - rabbitmq

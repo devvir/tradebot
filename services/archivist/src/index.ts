@@ -56,16 +56,19 @@ const shutdown = async (): Promise<void> => {
 const connectMongoWithRetry = async (maxRetries = 10, delayMs = 5000): Promise<void> => {
   for (let i = 0; i < maxRetries; i++) {
     try {
-      state.mongoConnection = await connectMongoDB(config.mongodbUrl, config.mongodbDb);
+      state.mongoConnection = await connectMongoDB(config.mongodbUrl);
       logger.info('Successfully connected to MongoDB');
+
       return;
     } catch (error) {
       logger.warn({ error, attempt: i + 1, maxRetries }, 'Failed to connect to MongoDB, retrying...');
+
       if (i < maxRetries - 1) {
         await new Promise(resolve => setTimeout(resolve, delayMs));
       }
     }
   }
+
   throw new Error(`Failed to connect to MongoDB after ${maxRetries} attempts`);
 };
 

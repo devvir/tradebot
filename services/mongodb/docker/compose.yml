@@ -8,17 +8,17 @@
 
 services:
   mongodb:
-    image: ${MONGODB_IMAGE:-mongo:7}
+    image: mongo:7
     container_name: ${COMPOSE_PROJECT_NAME:-.}-mongodb
     command: mongod --quiet --setParameter logLevel=0 --wiredTigerCacheSizeGB=${MONGODB_CACHE_SIZE_GB:-2}
 
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGODB_USER:-root}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_PASS:-password}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_PASS:-root}
       TZ: ${TZ:-UTC}
 
     ports:
-      - "${MONGODB_PORT:-27018}:27017"
+      - "${MONGODB_PORT:-}:27017"
 
     ulimits:
       nofile:

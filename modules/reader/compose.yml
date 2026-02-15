@@ -1,14 +1,11 @@
-# Reader Module Compose
-# Includes: rabbitmq (queue), mongodb (storage)
-# Extends: feed (data fetcher), archivist (data archiver) with module-specific dependencies
+# Reader Module
+# Includes: rabbitmq (queue), mongodb (storage), archivist (data archiver)
+# Extends: feed (data fetcher, multiple instances)
 
 include:
   - path: ../../services/rabbitmq/docker/compose.yml
   - path: ../../services/mongodb/docker/compose.yml
-
-networks:
-  default:
-    name: ${COMPOSE_PROJECT_NAME:-reader}-network
+  - path: ../../services/archivist/docker/compose.yml
 
 services:
   feed-global:
@@ -17,10 +14,6 @@ services:
       service: feed
     environment:
       FEED_ROLE: GLOBAL
-    ports:
-      - "${FEED_GLOBAL_PORT:-3010}:3000"
-    depends_on:
-      - rabbitmq
 
   feed-lv-1:
     extends:
@@ -28,10 +21,6 @@ services:
       service: feed
     environment:
       FEED_ROLE: LOW_VOLUME_1
-    ports:
-      - "${FEED_LOW_VOLUME_1_PORT:-3011}:3000"
-    depends_on:
-      - rabbitmq
 
   feed-lv-2:
     extends:
@@ -39,10 +28,6 @@ services:
       service: feed
     environment:
       FEED_ROLE: LOW_VOLUME_2
-    ports:
-      - "${FEED_LOW_VOLUME_2_PORT:-3012}:3000"
-    depends_on:
-      - rabbitmq
 
   feed-lv-3:
     extends:
@@ -50,10 +35,6 @@ services:
       service: feed
     environment:
       FEED_ROLE: LOW_VOLUME_3
-    ports:
-      - "${FEED_LOW_VOLUME_3_PORT:-3013}:3000"
-    depends_on:
-      - rabbitmq
 
   feed-hv:
     extends:
@@ -61,10 +42,6 @@ services:
       service: feed
     environment:
       FEED_ROLE: HIGH_VOLUME
-    ports:
-      - "${FEED_HIGH_VOLUME_PORT:-3014}:3000"
-    depends_on:
-      - rabbitmq
 
   feed-bitcoin:
     extends:
@@ -72,15 +49,7 @@ services:
       service: feed
     environment:
       FEED_ROLE: BITCOIN
-    ports:
-      - "${FEED_BITCOIN_PORT:-3015}:3000"
-    depends_on:
-      - rabbitmq
 
-  archivist:
-    extends:
-      file: ../../services/archivist/docker/compose.yml
-      service: archivist
-    depends_on:
-      - rabbitmq
-      - mongodb
+networks:
+  default:
+    name: ${COMPOSE_PROJECT_NAME:-reader}-network

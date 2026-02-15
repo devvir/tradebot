@@ -3,7 +3,7 @@
 
 services:
   rabbitmq:
-    image: ${RABBITMQ_IMAGE:-rabbitmq:3.12-management-alpine}
+    image: rabbitmq:3.12-management-alpine
     container_name: ${COMPOSE_PROJECT_NAME:-.}-rabbitmq
 
     environment:
@@ -12,8 +12,8 @@ services:
       TZ: ${TZ:-UTC}
 
     ports:
-      - "${RABBITMQ_AMQP_PORT:-9672}:5672"
-      - "${RABBITMQ_MGMT_PORT:-19672}:15672"
+      - "${RABBITMQ_AMQP_PORT:-}:5672"
+      - "${RABBITMQ_MGMT_PORT:-}:15672"
 
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq

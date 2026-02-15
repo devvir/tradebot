@@ -231,9 +231,8 @@ When services are composed into a module (e.g., the "reader" module), they are w
 
 ```bash
 # In modules/reader/.env or docker-compose environment block
-FEED_RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
-ARCHIVIST_RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
-ARCHIVIST_MONGODB_URL=mongodb://root:password@mongodb:27017
+RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+MONGODB_URL=mongodb://root:password@mongodb:27017
 ```
 
 Each service reads these variables and knows how to reach the services it depends on.

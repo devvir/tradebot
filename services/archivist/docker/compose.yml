@@ -9,21 +9,9 @@ services:
     container_name: ${COMPOSE_PROJECT_NAME:-.}-archivist
 
     environment:
-      # Queue Connection - pass credentials separately for URL encoding
-      RABBITMQ_URL: ${ARCHIVIST_RABBITMQ_URL:-}
-      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
-      RABBITMQ_PASS: ${RABBITMQ_PASS:-guest}
-      RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
-      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
-
-      # Database Connection - pass credentials separately for URL encoding
-      MONGODB_URL: ${ARCHIVIST_MONGODB_URL:-}
-      MONGODB_USER: ${MONGODB_USER:-root}
-      MONGODB_PASS: ${MONGODB_PASS:-password}
-      MONGODB_HOST: ${MONGODB_HOST:-mongodb}
-      MONGODB_PORT: ${MONGODB_PORT:-27017}
-      MONGODB_AUTH_SOURCE: ${MONGODB_AUTH_SOURCE:-admin}
-      MONGODB_DB: ${MONGODB_DB:-tradebot}
+      # Dependencies (queue and database)
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
+      MONGODB_URL: ${MONGODB_URL:-mongodb://root:root@mongodb:27017/tradebot?authSource=admin}
 
       # Batch Processing
       ARCHIVIST_BATCH_SIZE: ${ARCHIVIST_BATCH_SIZE:-100}
@@ -35,7 +23,7 @@ services:
       TZ: ${TZ:-UTC}
 
     ports:
-      - "${ARCHIVIST_PORT:-3110}:3000"
+      - "${ARCHIVIST_PORT:-}:3000"
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
@@ -45,3 +33,7 @@ services:
       start_period: 10s
 
     restart: ${ARCHIVIST_RESTART_POLICY:-unless-stopped}
+
+    depends_on:
+      - mongodb
+      - rabbitmq

@@ -2,21 +2,6 @@ import logger from './logger';
 import type { Config, FeedRole } from './types';
 export type { Config, FeedRole } from './types';
 
-const buildRabbitMQUrl = (): string => {
-  // If RABBITMQ_URL is provided, use it directly
-  if (process.env.RABBITMQ_URL) {
-    return process.env.RABBITMQ_URL;
-  }
-
-  // Otherwise, build from separate credentials with URL encoding
-  const user = encodeURIComponent(process.env.RABBITMQ_USER || 'guest');
-  const pass = encodeURIComponent(process.env.RABBITMQ_PASS || 'guest');
-  const host = process.env.RABBITMQ_HOST || 'rabbitmq';
-  const port = process.env.RABBITMQ_PORT || '5672';
-
-  return `amqp://${user}:${pass}@${host}:${port}`;
-};
-
 const BITMEX_WS_URLS = {
   live: 'wss://www.bitmex.com/realtime',
   testnet: 'wss://testnet.bitmex.com/realtime',
@@ -72,7 +57,7 @@ export const loadConfig = (): Config => {
 
   return {
     bitmexWsUrl,
-    rabbitmqUrl: buildRabbitMQUrl(),
+    rabbitmqUrl: process.env.RABBITMQ_URL || 'amqp://guest:guest@rabbitmq:5672',
     role,
     channels: process.env.FEED_CHANNELS?.split(',') || [],
     channelPatterns: [],

@@ -7,16 +7,20 @@ export interface MongoDBConnection {
   db: Db;
 }
 
-export const connectMongoDB = async (url: string, dbName: string): Promise<MongoDBConnection> => {
+export const connectMongoDB = async (url: string): Promise<MongoDBConnection> => {
+  logger.info('Connecting to MongoDB...');
+
   try {
-    logger.info('Connecting to MongoDB...');
     const client = new MongoClient(url);
+    const db = client.db();
+
     await client.connect();
-    const db = client.db(dbName);
-    logger.info({ database: dbName }, 'Connected to MongoDB');
+
+    logger.info({ url }, 'Connected to MongoDB');
+
     return { client, db };
   } catch (error) {
-    logger.error({ error }, 'Failed to connect to MongoDB');
+    logger.error({ error, url }, 'Failed to connect to MongoDB');
     throw error;
   }
 };
