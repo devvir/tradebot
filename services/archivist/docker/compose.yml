@@ -4,8 +4,10 @@
 services:
   archivist:
     build:
-      context: ..
-      dockerfile: docker/Dockerfile
+      context: ../../..
+      dockerfile: docker/node.Dockerfile
+      args:
+        SERVICE_NAME: archivist
     container_name: ${COMPOSE_PROJECT_NAME:-.}-archivist
 
     environment:

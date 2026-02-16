@@ -18,4 +18,4 @@ Thumbs.db
 
 # Builds/Deps
 **/node_modules/
-services/*/dist/
+services/**/dist/

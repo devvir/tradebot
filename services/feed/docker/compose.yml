@@ -4,8 +4,10 @@
 services:
   feed:
     build:
-      context: ..
-      dockerfile: docker/Dockerfile
+      context: ../../..
+      dockerfile: docker/node.Dockerfile
+      args:
+        SERVICE_NAME: feed
 
     ports:
       - "${FEED_PORT:-}:3000"

@@ -1,0 +1,43 @@
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+
+# Node.js artifacts
+node_modules/
+dist/
+coverage/
+
+# Build artifacts & caches
+*.tsbuildinfo
+.turbo/
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Documentation
+docs/
+README.md
+
+# Development tools & config
+.prettier*
+.eslint*
+.github/
+
+# CI/CD
+.gitlab-ci.yml
+.travis.yml
+
+# Other
+TODO.md
+LICENSE

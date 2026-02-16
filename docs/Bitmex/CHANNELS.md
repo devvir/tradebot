@@ -9,8 +9,8 @@ This document lists all available BitMEX WebSocket channels and details the extr
 | Channel                | Parameter(s) Required to Identify | Notes |
 |------------------------|------------------------------------|-------|
 | orderBookL2            | symbol                             | e.g. XBTUSD |
-| orderBookL2_25         | symbol                             | e.g. XBTUSD |
-| orderBook10            | symbol                             | e.g. XBTUSD |
+| orderBookL2_25         | symbol                             | e.g. XBTUSD, not used |
+| orderBook10            | symbol                             | e.g. XBTUSD, not used |
 | quote                  | symbol                             | e.g. XBTUSD |
 | quoteBin1m             | symbol                             | e.g. XBTUSD |
 | quoteBin5m             | symbol                             | e.g. XBTUSD |
