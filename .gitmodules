@@ -2,3 +2,7 @@
 	path = dx
 	url = git@github.com:devvir/monorepo-dx.git
 	branch = main
+[submodule "packages/rabbitmq"]
+	path = packages/rabbitmq
+	url = git@github.com:devvir/rabbitmq.git
+	branch = main
