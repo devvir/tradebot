@@ -115,13 +115,14 @@ Clients send subscription messages to the server:
 
 #### Subscription Patterns
 
-Clients can subscribe using wildcards:
+Clients subscribe using exact patterns (channel and symbol):
 - `orderBookL2:XBTUSD` - specific channel and symbol
-- `orderBookL2:*` - specific channel, all symbols
-- `*:XBTUSD` - all channels, specific symbol
-- `*` - all channels, all symbols (rarely used, high bandwidth)
 
-**Server routing:** For each incoming market update, the service matches the channel and symbol against all active client subscriptions, and forwards only to matching clients.
+**Note:** Wildcard subscriptions (e.g., `orderBookL2:*` for all symbols) are intentionally not supported.
+The real BitMEX API does not provide wildcard subscriptions—all subscriptions must be explicit.
+This service maintains API fidelity by requiring explicit `channel:symbol` subscriptions only.
+
+**Server routing:** For each incoming market update, the service matches the channel and symbol against all active client subscriptions, and forwards only to matching clients with exact subscription matches.
 
 ### In-Memory State
 
@@ -240,18 +241,17 @@ Processes subscription requests from a client.
 
 **Inputs:**
 - `socket`: WebSocket connection
-- `args`: Array of subscription strings (e.g., `["orderBookL2:XBTUSD", "trade:*"]`)
+- `args`: Array of subscription strings (e.g., `["orderBookL2:XBTUSD", "trade:ETHUSD"]`)
 
 **Logic:**
 1. For each subscription string in args:
-   - Validate format (should match `channel:symbol`)
-   - Resolve wildcards (e.g., `orderBookL2:*` → all known symbols for `orderBookL2`, if any)
+   - Validate format (must match `channel:symbol`, e.g., `orderBookL2:XBTUSD`)
    - Add to client's subscription set
    - Register in subscription index
 2. For each subscription, fetch and send current snapshot:
    - Lookup snapshot in in-memory store
    - If exists, send to client with action `snapshot`
-   - If not exists, wait (with timeout) or send empty snapshot
+   - If not exists, defer delivery (snapshot will be published by Feed and sent when available)
 3. Send subscription confirmation to client
 4. Future updates matching this subscription will be broadcast to this client
 
@@ -295,8 +295,12 @@ Consumes raw deltas and atomic messages from the `bitmex-data` exchange.
 **Flow:**
 1. Bind to `bitmex-data` exchange with routing key `#` (all topics)
 2. For each received message:
-   - Extract `table` (channel), `symbol`
-   - Lookup all clients subscribed to this `channel:symbol` (or matching wildcard patterns) using subscription index
+   - Extract `table` (channel), `symbol`, `action`, and `timestamp`
+   - **For deltas** (action = insert/update/delete):
+     - If no snapshot exists yet for this channel:symbol pair, **drop the delta** (BitMEX warns that deltas may arrive before subscription confirmation)
+     - If snapshot exists and delta timestamp is older than snapshot timestamp, **drop the delta** (out-of-order message)
+   - **For snapshots** (action = snapshot), accept and store
+   - Lookup all clients subscribed to exact `channel:symbol` using subscription index
    - For each subscribed client, send message to WebSocket
 3. Continue consuming until shutdown
 
@@ -335,22 +339,35 @@ When a client subscribes to `orderBookL2:XBTUSD`:
    - Lookup `orderBookL2:XBTUSD` in snapshots map
    - If found, send immediately to client
 
-2. **Timeout if not yet received:**
-   - If snapshot not found, set a timer (e.g., 5 seconds)
-   - While waiting, buffer any incoming deltas for this subscription
-   - If snapshot arrives before timeout, send it, then flush buffered deltas
-   - If timeout expires, send empty snapshot or error message to client
-
-3. **Out-of-order handling:**
-   - If deltas arrive before snapshot, buffer them
-   - When snapshot arrives, send snapshot, then send buffered deltas in order
-   - Client sees consistent state progression
+2. **Defer if snapshot not yet available:**
+   - If snapshot not found, defer delivery to the client
+   - The client subscription is active and will receive future updates
+   - The snapshot will be sent to the client when it arrives (from Feed/Snapshots service)
+   - See "Snapshot Subscription Flow" section below for details on how snapshot availability is ensured
 
 ### Connection Keep-Alive
 
-**Server-to-client ping:** Every 30 seconds (configurable), send a WebSocket ping frame. Client responds with pong. If no pong received within timeout (e.g., 10 seconds), disconnect the client.
+**Server-to-client ping:** Every 30 seconds, send a WebSocket ping frame. Client responds with pong.
 
 **Rationale:** Keeps idle connections alive and detects stale/dead clients so server can clean up resources.
+
+### Snapshot Subscription Flow (Future Implementation)
+
+**Overview:** Currently, bitmex-ws depends on Feed/Snapshots to proactively publish snapshots. A future enhancement will implement intelligent snapshot availability tracking to ensure snapshots are requested when needed.
+
+**Design (not yet implemented):**
+- When a client subscribes to a channel:symbol, check if there is an active subscription to BitMEX for that channel:symbol
+- If no active subscription exists:
+  - Send a subscription request to Feed service via the `feed-commands` RabbitMQ exchange
+  - Feed will subscribe to BitMEX and eventually publish a snapshot
+  - bitmex-ws sends the snapshot to the client once Feed publishes it
+- If subscription is active:
+  - If snapshot is available in-memory, send immediately
+  - If snapshot is not available, request Feed to re-subscribe (in case of missed snapshot)
+- Maintain a keep-alive mechanism to verify Feed subscriptions are still active
+- Track pending snapshots to ensure clients waiting for snapshots are notified when they arrive
+
+This design ensures that clients always eventually receive snapshots they request, even if Feed hasn't subscribed yet.
 
 ### Scalability & Isolation
 

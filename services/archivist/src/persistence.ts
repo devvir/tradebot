@@ -4,8 +4,7 @@ import logger from './logger';
 import { getCollectionName } from './mongodb';
 import type { BitmexWSMessage } from './types';
 
-const exchangeName = 'bitmex-data';
-const queueName = 'bitmex-feed';
+const queueName = 'archivist';
 
 // Track which collections have had their indexes ensured
 const indexedCollections = new Set<string>();
@@ -38,9 +37,7 @@ export const startConsuming = async (
   onStoreMsg: () => void
 ): Promise<void> => {
   try {
-    await channel.assertExchange(exchangeName, 'topic', { durable: true });
     await channel.assertQueue(queueName, { durable: true });
-    await channel.bindQueue(queueName, exchangeName, '#');
 
     logger.info({ queue: queueName }, 'Consuming from queue');
     await channel.prefetch(batchSize);
@@ -67,18 +64,16 @@ const consume = async (channel: amqp.Channel, db: Db, onStoreMsg: () => void): P
           await ensureIndexedCollection(db, collectionName);
       }
 
-      if (data.data?.length) { // Ignore empty messages (should never happen, though)
-        const minTimestamp = data.data.reduce(
-            (min, d) => d.timestamp < min ? d.timestamp : min,
-            data.data[0].timestamp
-        );
+      const minTimestamp = data.data.reduce(
+          (min, d) => d.timestamp < min ? d.timestamp : min,
+          data.data[0]?.timestamp
+      ) ?? new Date().toISOString();
 
-        const hash = `${minTimestamp}_${data.action}_${data.data.length}`;
+      const hash = `${minTimestamp}_${data.action}_${data.data.length}`;
 
-        await collection.insertOne({ ...data, _hash: hash } as any);
+      await collection.insertOne({ ...data, _hash: hash } as any);
 
-        onStoreMsg();
-      }
+      onStoreMsg();
     } catch (e) {
       if (! (e instanceof MongoError) || e.code !== 11000) {
         logger.error({ e }, 'Error processing message');

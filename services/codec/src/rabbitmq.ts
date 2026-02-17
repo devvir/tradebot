@@ -1,4 +1,4 @@
-import { keepAlive, Broker } from '@devvir/rabbitmq';
+import { keepAlive, Broker } from '../../../packages/rabbitmq';
 import logger from './logger';
 
 /**

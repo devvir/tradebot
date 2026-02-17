@@ -1,5 +1,5 @@
 import type { MongoClient, Db } from 'mongodb';
-import type { Connection, Channel } from 'amqplib';
+import type { Broker } from '../../../packages/rabbitmq';
 
 /**
  * BitMEX WebSocket message structure as received from BitMEX API
@@ -29,14 +29,9 @@ export interface MongoDBConnection {
   db: Db;
 }
 
-export interface RabbitMQConnection {
-  connection: Connection;
-  channel: Channel;
-}
-
 export interface ArchivistState {
   mongoConnection: MongoDBConnection | null;
-  rabbitmqConnection: RabbitMQConnection | null;
+  broker: Broker | null;
   isShuttingDown: boolean;
   messagesProcessed: number;
   lastProcessedTime: number;

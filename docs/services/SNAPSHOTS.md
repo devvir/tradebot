@@ -23,36 +23,31 @@ The Snapshots service provides a self-contained state aggregation capability:
    - Initializes snapshots from the first received message of that type (or bootstrap from `snapshot` action messages from BitMEX)
    - Updates snapshots reactively as new messages arrive
 
-3. **Deduplicates Processing**
-   - Tracks recently processed messages by ID (in-memory set, short time window) to handle duplicates gracefully
-   - Silently discards duplicate messages (same ID seen within the dedup window)
-   - No persistence of dedup state—relies on short-window assumption: duplicates only occur in seconds-long intervals, not hours
-
-4. **Aggregates Delta-Based Channels**
+3. **Aggregates Delta-Based Channels**
    - For channels like `orderBookL2` and quote-like channels: interprets `insert`, `update`, `delete` actions as deltas
    - Applies deltas to the existing snapshot: new entries inserted, existing entries updated/overwritten, entries deleted
    - Interpolates missing fields from previous snapshot when necessary (e.g., if an update only contains ID and side, fill in price, size from previous state)
    - Handles out-of-order messages by reapplying deltas against the most recent known snapshot (idempotent reconciliation)
    - Non-aggregated channels are silently ignored (e.g., `trade`, `liquidation`, `funding`—these don't require aggregation and are left for other consumers)
 
-5. **Publishes Aggregated Snapshots**
+4. **Publishes Aggregated Snapshots**
    - Publishes snapshots to the `bitmex-snapshots` topic exchange with routing key `snapshot:channel:symbol` (e.g., `snapshot:orderBookL2:XBTUSD`)
    - Each snapshot is enriched with aggregation metadata: `_snapshotId` (version of the snapshot), `_processedAt` timestamp
    - Snapshots are published when the service processes relevant deltas for that channel/symbol
    - Downstream consumers (Bitmex-WS, potential future aggregators) can independently subscribe to these snapshots without affecting Feed or each other
 
-7. **Provides Observability**
+5. **Provides Observability**
    - Exposes a health check endpoint reporting connection status and aggregation metrics
    - Logs snapshot updates at configurable intervals (e.g., "Updated 15 snapshots in last 10 seconds")
-   - Tracks state on snapshots maintained, messages processed, and deduplicated count
+   - Tracks state on snapshots maintained and messages processed
 
 ### Design Philosophy
 
-The Snapshots embodies these principles:
+The Snapshots service embodies these principles:
 
 - **Isolation of concerns**: Aggregation happens here and nowhere else. Feed publishes raw data, Snapshots aggregates state and publishes snapshots, Bitmex-WS and other consumers independently subscribe to what they need.
 - **Eventual consistency**: Snapshots may temporarily be out of order if messages arrive out of sequence. However, the service corrects itself as later messages arrive, so the snapshot converges to the true state.
-- **Ephemeral deduplication**: Duplicate tracking happens in-memory with a short TTL. The assumption is that duplicates (if any) occur within seconds of the original message, not hours later.
+- **No deduplication needed**: Feed service is the single publisher of data—it does not produce duplicates. Therefore, Snapshots does not implement deduplication. If duplicates ever occur (e.g., from a feed implementation change), they will be idempotently applied to snapshots (applying the same update twice has no effect).
 - **Stateless publication**: Once a snapshot is published, the service forgets about it. Persistence and re-consumption are RabbitMQ's job.
 - **Selective consumption**: The service only subscribes to topics for channels that require aggregation, leaving other data untouched for other consumers.
 
@@ -106,11 +101,10 @@ The service tracks processed messages to prevent duplicate aggregation:
 2. Validate configuration (required fields, sensible ranges)
 3. Connect to RabbitMQ with retry logic (up to 10 retries, 3-second intervals)
 4. Assert `bitmex-data` exchange (source) and `bitmex-snapshots` exchange (sink)
-5. Assert source queue and bind to `bitmex-data` exchange with routing key `#` (catch-all)
+5. Assert source queue and bind to `bitmex-data` exchange with routing key `channel.*` for aggregated channels
 6. Initialize in-memory snapshot store (empty map, keyed by `channel:symbol`)
-7. Initialize in-memory dedup set (empty set)
-8. Initialize health check endpoint
-9. Start consuming messages
+7. Initialize health check endpoint
+8. Start consuming messages
 
 **Graceful shutdown:**
 - On `SIGTERM` or `SIGINT`, set `isShuttingDown` flag
@@ -121,7 +115,7 @@ The service tracks processed messages to prevent duplicate aggregation:
 
 ### Core Functions
 
-#### `startConsuming(channel, dedupWindow)`
+#### `startConsuming()`
 
 The primary consumption loop. This function sets up the message consumer and processes each message.
 
@@ -129,8 +123,6 @@ The primary consumption loop. This function sets up the message consumer and pro
 1. Assert source queue bound to `bitmex-data` exchange with selective routing (only aggregation-needed channels)
 2. Enter consume callback loop:
    - Parse incoming JSON message
-   - Check dedup set: if present, acknowledge and skip
-   - Add ID to dedup set
    - Extract `table` (channel), `symbol`, and `action` from message
    - Route to appropriate aggregation handler based on channel type
    - Aggregate snapshot
@@ -140,14 +132,8 @@ The primary consumption loop. This function sets up the message consumer and pro
 
 **Error handling:**
 - **Parse errors**: Negative acknowledge and requeue
-- **Dedup set lookup**: Always succeeds (set operation)
 - **Aggregation errors**: Log and negative acknowledge (operator intervention needed)
 - **Publish errors**: Negative acknowledge and requeue
-
-**Dedup eviction:**
-- Maintain a timestamp map alongside the dedup set
-- Periodically (e.g., every 30 seconds) scan for entries older than `dedupWindow` (default 60 seconds)
-- Remove aged entries from both set and timestamp map
 
 #### `aggregateSnapshot(channel, snapshot, message)`
 
@@ -209,13 +195,3 @@ snapshots = {
 **Key design decision:** Snapshots are keyed by `channel:symbol`, allowing fast lookup and update. Updates are idempotent—overwriting the same key is safe.
 
 **Memory footprint:** Depends on channel depth (order book size, number of symbols). For typical trading pairs (hundreds of symbols) and order book depths (thousands of orders), expect 10s of MB to low 100s of MB.
-
-### Dedup Window Configuration
-
-The dedup window determines how long an ID is tracked before eviction from the dedup set.
-
-**Default:** 60 seconds
-
-**Rationale:** BitMEX websocket reconnects typically replay messages within a few seconds. 60 seconds provides a comfortable margin while remaining efficient in memory.
-
-**Configuration:** `SNAPSHOTS_DEDUP_WINDOW_SECONDS` env var.

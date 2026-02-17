@@ -10,5 +10,11 @@
   "private": true,
   "keywords": ["tradebot", "types"],
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  }
 }

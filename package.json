@@ -4,10 +4,16 @@
   "description": "BitMEX Trading Bot",
   "private": true,
   "type": "module",
+  "scripts": {
+    "build": "tsc -b"
+  },
   "workspaces": [
     "packages/*",
     "shared/*",
     "services/*",
     "dx"
-  ]
+  ],
+  "devDependencies": {
+    "typescript": "^5.3.0"
+  }
 }

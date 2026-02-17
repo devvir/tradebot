@@ -9,7 +9,6 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "declaration": true,
-    "declarationMap": true,
     "sourceMap": true,
     "noImplicitAny": true,
     "strictNullChecks": true,
@@ -21,11 +20,14 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noImplicitReturns": true,
-    "noFallthroughCasesInSwitch": true,
-    "baseUrl": ".",
-    "paths": {
-      "@devvir/rabbitmq": ["packages/rabbitmq/src"],
-      "@tradebot/types": ["shared/types/src"]
-    }
-  }
+    "noFallthroughCasesInSwitch": true
+  },
+  "files": [],
+  "references": [
+    { "path": "shared/types" },
+    { "path": "packages/rabbitmq" },
+    { "path": "services/feed" },
+    { "path": "services/archivist" },
+    { "path": "services/codec" }
+  ]
 }

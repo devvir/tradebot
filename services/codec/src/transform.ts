@@ -1,5 +1,5 @@
-import type { Broker } from '@devvir/rabbitmq';
-import type { BitmexWSMessage } from '@tradebot/types';
+import type { Broker } from '../../../packages/rabbitmq';
+import type { BitmexWSMessage } from '../../../shared/types';
 import logger from './logger';
 
 const consumerQueueName = 'bitmex-feed';

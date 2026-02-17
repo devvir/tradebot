@@ -1,4 +1,4 @@
-import type { Broker } from '@devvir/rabbitmq';
+import type { Broker } from '../../../packages/rabbitmq';
 
 export interface CodecState {
   rabbitmqBroker: Broker | null;

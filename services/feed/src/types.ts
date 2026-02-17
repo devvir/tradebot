@@ -1,5 +1,5 @@
 import WebSocket from 'ws';
-import type { Channel } from 'amqplib';
+import type { Broker } from '../../../packages/rabbitmq';
 
 /**
  * BitMEX WebSocket message structure as received from BitMEX API
@@ -26,7 +26,7 @@ export interface BitmexWSMessage extends BitmexRawMessage {
 
 export interface FeedState {
   ws: WebSocket | null;
-  channel: Channel | null;
+  broker: Broker | null;
   reconnectDelay: number;
   isShuttingDown: boolean;
   lastMessageTime: number;

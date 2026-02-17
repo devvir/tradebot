@@ -1,29 +1,29 @@
-import amqp from 'amqplib';
+import { keepAlive, Broker } from '../../../packages/rabbitmq';
 import logger from './logger';
 
-export interface RabbitMQConnection {
-  connection: any;
-  channel: amqp.Channel;
-}
+/**
+ * Creates and configures a RabbitMQ broker for the archivist service.
+ * Sets up the necessary topology: archivist queue for consuming messages.
+ *
+ * Connection lifecycle events (connect/disconnect/reconnect/errors) are logged
+ * by the broker, so the service doesn't need to handle them.
+ */
+export const connectRabbitMQ = async (url: string): Promise<Broker> => {
+  logger.info('Setting up RabbitMQ broker...');
 
-export const connectRabbitMQ = async (url: string): Promise<RabbitMQConnection> => {
-  try {
-    logger.info('Connecting to RabbitMQ...');
-    const connection = await amqp.connect(url);
-    const channel = await connection.createChannel();
+  // Connect with unlimited retries (broker logs all connection events)
+  const broker = await keepAlive(url);
 
-    connection.on('error', (err: Error) => {
-      logger.error({ err }, 'RabbitMQ connection error');
-    });
+  // Declare topology
+  await broker.declares({
+    queues: {
+      'archivist': {
+        durable: true,
+      },
+    },
+  });
 
-    connection.on('close', () => {
-      logger.warn('RabbitMQ connection closed');
-    });
+  logger.info('RabbitMQ topology declared');
 
-    logger.info('Connected to RabbitMQ');
-    return { connection, channel };
-  } catch (error) {
-    logger.error({ error }, 'Failed to connect to RabbitMQ');
-    throw error;
-  }
+  return broker;
 };

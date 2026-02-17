@@ -1,5 +1,4 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { Broker } from '@devvir/rabbitmq';
 
 describe('RabbitMQ integration', () => {
   describe('Broker topology', () => {

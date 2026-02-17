@@ -4,7 +4,7 @@
   "description": "BitMEX WebSocket reader service",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -b",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
     "test": "vitest run",
@@ -20,6 +20,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@devvir/rabbitmq": "workspace:*",
     "amqplib": "^0.10.3",
     "dotenv": "^16.3.1",
     "pino": "^8.14.1",

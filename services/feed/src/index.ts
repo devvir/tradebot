@@ -4,7 +4,7 @@ import WebSocket from 'ws';
 import logger from './logger';
 import { loadConfig, validateConfig, type Config } from './config';
 import { fetchAllSymbols, resolveChannels, buildSubscriptionTopics } from './bitmex';
-import { connectWithRetry, publishToQueue, RabbitMQConnection } from './rabbitmq';
+import { connectRabbitMQ } from './rabbitmq';
 import { startHealthCheck } from './health';
 import { subscribeToTopics } from './subscriptions';
 import { setupCommandListener } from './commands';
@@ -21,7 +21,7 @@ import {
 
 let state: FeedState = {
   ws: null,
-  channel: null,
+  broker: null,
   reconnectDelay: 0,
   isShuttingDown: false,
   lastMessageTime: Date.now(),
@@ -30,7 +30,6 @@ let state: FeedState = {
 };
 
 let config: Config;
-let rabbitmqConnection: RabbitMQConnection | null = null;
 
 // Event emitter for subscription lifecycle events
 const subscriptionEvents = new EventEmitter();
@@ -145,9 +144,13 @@ const handleMessage = async (message: Buffer): Promise<void> => {
     const rawMessage = data as BitmexRawMessage;
 
     if (rawMessage.table && rawMessage.action) {
-      if (state.channel) {
+      if (state.broker) {
         const enrichedData: BitmexWSMessage = { ...rawMessage, _apiVersion: state.apiVersion || undefined };
-        await publishToQueue(state.channel, enrichedData, config.messageTtlMs);
+        const exchange = state.broker.getExchange('bitmex-data');
+        if (exchange) {
+          const routingKey = rawMessage.data[0]?.symbol ? `${rawMessage.table}.${rawMessage.data[0].symbol}` : rawMessage.table;
+          exchange.publish(enrichedData, routingKey, { persistent: true, expiration: config.messageTtlMs?.toString() });
+        }
       }
     } else {
       logger.warn({ data }, 'Received unexpected message format');
@@ -197,22 +200,13 @@ const shutdown = async (): Promise<void> => {
     state.ws.close();
   }
 
-  if (rabbitmqConnection?.channel) {
-    await rabbitmqConnection.channel.close();
-  }
-
-  if (rabbitmqConnection?.connection) {
-    await rabbitmqConnection.connection.close();
+  if (state.broker) {
+    await state.broker.disconnect();
   }
 
   process.exit(0);
 };
 
-const handleRabbitMQReconnect = (conn: RabbitMQConnection): void => {
-  logger.info('RabbitMQ reconnected successfully');
-  rabbitmqConnection = conn;
-  state.channel = conn.channel;
-};
 
 /**
  * Load configuration and prepare for resolution
@@ -259,19 +253,19 @@ const shouldStartIdleMode = (cfg: Config): string | null => {
 };
 
 /**
- * Connect to RabbitMQ and set up channel
+ * Connect to RabbitMQ and set up broker
  */
 const initializeRabbitMQ = async (cfg: Config): Promise<void> => {
-  rabbitmqConnection = await connectWithRetry(
-    cfg.rabbitmqUrl,
-    handleRabbitMQReconnect,
-    () => { state.channel = null; }
-  );
+  state.broker = await connectRabbitMQ(cfg.rabbitmqUrl);
 
   logger.info('Successfully connected to RabbitMQ');
-  state.channel = rabbitmqConnection.channel;
 
-  await setupCommandListener(rabbitmqConnection.channel, state, subscriptionEvents, config);
+  const channel = state.broker.getChannel();
+  if (! channel) {
+    throw new Error('Failed to get channel from broker');
+  }
+
+  await setupCommandListener(channel, state, subscriptionEvents, config);
 };
 
 /**

@@ -13,16 +13,18 @@ WORKDIR /app
 # Copy entire monorepo (respects .dockerignore)
 COPY . .
 
+# Enable corepack and install pnpm
+RUN corepack enable
+
 # Install all dependencies (including dev dependencies for build)
-RUN npm ci
+RUN pnpm install
 
 # Build argument to specify which service to build
 ARG SERVICE_NAME
 RUN test -n "$SERVICE_NAME" || (echo "SERVICE_NAME build arg is required" && exit 1)
 
-# Build the specific service
-WORKDIR /app/services/${SERVICE_NAME}
-RUN npm run build
+# Build all packages and services from root
+RUN pnpm run build
 
 # ============================================================================
 # Production Stage - Minimal runtime image
@@ -31,6 +33,7 @@ FROM node:${NODE_VERSION}
 
 # Node.js heap memory limit (in MB, default 2GB)
 ARG NODE_MEMORY_MB=2048
+ENV NODE_MEMORY_MB=${NODE_MEMORY_MB}
 
 # Build argument (must redeclare after FROM)
 ARG SERVICE_NAME
@@ -41,16 +44,14 @@ RUN apk add --no-cache dumb-init curl
 
 WORKDIR /app
 
-# Copy npm files, built service, and local shared dependencies
-COPY package*.json ./
-COPY packages/ ./packages/
-COPY shared/ ./shared/
-COPY services/${SERVICE_NAME}/package*.json ./services/${SERVICE_NAME}/
-COPY --from=builder /app/services/${SERVICE_NAME}/dist ./services/${SERVICE_NAME}/dist
+# Enable corepack
+RUN corepack enable
 
-# Install third-party dependencies for the specific service
+# Copy the pre-built workspace (preserves structure needed for relative imports)
+COPY --from=builder /app .
+
+# Set working directory to service
 WORKDIR /app/services/${SERVICE_NAME}
-RUN npm ci --omit=dev
 
 # Expose health check port (standard across all services)
 EXPOSE 3000

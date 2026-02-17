@@ -12,6 +12,7 @@
 node_modules/
 dist/
 coverage/
+tsconfig.tsbuildinfo
 
 # Build artifacts & caches
 *.tsbuildinfo

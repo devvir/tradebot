@@ -8,7 +8,7 @@ import type { ArchivistState, HealthState } from './types';
 
 let state: ArchivistState = {
   mongoConnection: null,
-  rabbitmqConnection: null,
+  broker: null,
   isShuttingDown: false,
   messagesProcessed: 0,
   lastProcessedTime: Date.now(),
@@ -19,7 +19,7 @@ let config: Config;
 const getHealthState = (): HealthState => {
   return {
     mongoConnected: state.mongoConnection !== null,
-    mqConnected: state.rabbitmqConnection !== null,
+    mqConnected: state.broker?.getState() === 'connected',
     messagesProcessed: state.messagesProcessed,
     lastProcessedTime: state.lastProcessedTime,
   };
@@ -38,12 +38,8 @@ const shutdown = async (): Promise<void> => {
   logger.info('Shutting down gracefully...');
   state.isShuttingDown = true;
 
-  if (state.rabbitmqConnection?.channel) {
-    await state.rabbitmqConnection.channel.close();
-  }
-
-  if (state.rabbitmqConnection?.connection) {
-    await (state.rabbitmqConnection.connection as any).close();
+  if (state.broker) {
+    await state.broker.disconnect();
   }
 
   if (state.mongoConnection?.client) {
@@ -72,22 +68,6 @@ const connectMongoWithRetry = async (maxRetries = 10, delayMs = 5000): Promise<v
   throw new Error(`Failed to connect to MongoDB after ${maxRetries} attempts`);
 };
 
-const connectRabbitMQWithRetry = async (maxRetries = 10, delayMs = 3000): Promise<void> => {
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      state.rabbitmqConnection = await connectRabbitMQ(config.rabbitmqUrl);
-      logger.info('Successfully connected to RabbitMQ');
-      return;
-    } catch (error) {
-      logger.warn({ error, attempt: i + 1, maxRetries }, 'Failed to connect to RabbitMQ, retrying...');
-      if (i < maxRetries - 1) {
-        await new Promise(resolve => setTimeout(resolve, delayMs));
-      }
-    }
-  }
-  throw new Error(`Failed to connect to RabbitMQ after ${maxRetries} attempts`);
-};
-
 const main = async (): Promise<void> => {
   try {
     logger.info('Starting Archivist Service...');
@@ -99,10 +79,17 @@ const main = async (): Promise<void> => {
     await connectMongoWithRetry();
 
     // Connect to RabbitMQ
-    await connectRabbitMQWithRetry();
+    state.broker = await connectRabbitMQ(config.rabbitmqUrl);
+
+    logger.info('Successfully connected to RabbitMQ');
+
+    const channel = state.broker.getChannel();
+    if (! channel) {
+      throw new Error('Failed to get channel from broker');
+    }
 
     await startConsuming(
-      state.rabbitmqConnection!.channel,
+      channel,
       state.mongoConnection!.db,
       config.batchSize,
       onStoreMsg
