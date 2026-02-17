@@ -130,18 +130,15 @@ Example: If resolving to 50 symbols and 6 symbol-required channels plus 5 global
 2. Store original channel and symbol patterns
 3. Validate configuration (required fields, sensible ranges)
 4. Resolve channels by pattern and role
-5. If no channels for this role, warn and transition to idle (health check only)
-6. Fetch symbols from BitMEX API—if failure, exit (symbols are required)
-7. If no symbols for this role (after filtering), warn and transition to idle
-8. Build subscription topics from resolved channels and symbols
-9. If no topics, warn and transition to idle
-10. Connect to RabbitMQ with retry logic (up to 10 retries, 3-second intervals)
-11. Store channel and connection reference
-12. Initiate BitMEX WebSocket connection
-13. Initialize health check endpoint
-14. Service is now active
+5. Fetch symbols from BitMEX API—if failure, exit (symbols are required)
+6. Build subscription topics from resolved channels and symbols
+7. Connect to RabbitMQ with retry logic (up to 10 retries, 3-second intervals)
+8. Store channel and connection reference
+9. Initiate BitMEX WebSocket connection
+10. Initialize health check endpoint
+11. Service is now active
 
-This ordering is deliberate: configuration must be valid, symbols must be available, and RabbitMQ must be ready before attempting WebSocket connection. If any step fails (except for role-based idle scenarios), the service exits with an error code.
+This ordering is deliberate: configuration must be valid, symbols must be available, and RabbitMQ must be ready before attempting WebSocket connection. If any step fails, the service exits with an error code.
 
 **Graceful shutdown:**
 - On `SIGTERM` or `SIGINT`, set `isShuttingDown` flag
@@ -349,9 +346,6 @@ Continue to next message
 - Don't attempt WebSocket connection
 - Still start the health check endpoint
 - Service runs indefinitely without consuming or publishing
-- Operator recognizes idle state from logs and can adjust configuration
-
-**Why tolerate idle instances?** In a declarative deployment system (e.g., Kubernetes), you might define N Feed instances, but only some have matching configuration. It's simpler to let them idle than to conditionally deploy instances.
 
 #### Symbol Set Changes
 

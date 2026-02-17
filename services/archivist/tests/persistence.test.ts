@@ -1,10 +1,12 @@
+import { vi, describe, it, expect, beforeEach, afterEach, type MockedFunction } from 'vitest';
 import { startConsuming } from '../src/persistence';
 import * as mongodb from '../src/mongodb';
+import { MongoError } from 'mongodb';
 
-jest.mock('../src/mongodb');
-jest.mock('amqplib');
+vi.mock('../src/mongodb');
+vi.mock('amqplib');
 
-const mockGetCollectionName = mongodb.getCollectionName as jest.MockedFunction<
+const mockGetCollectionName = mongodb.getCollectionName as MockedFunction<
   typeof mongodb.getCollectionName
 >;
 
@@ -15,59 +17,50 @@ describe('Message persistence', () => {
 
   beforeEach(() => {
     mockCollection = {
-      insertMany: jest.fn().mockResolvedValue({ insertedCount: 1 })
+      insertOne: vi.fn().mockResolvedValue({ insertedCount: 1 }),
+      createIndex: vi.fn().mockResolvedValue('_hash_1')
     };
 
     mockDb = {
-      collection: jest.fn().mockReturnValue(mockCollection)
+      collection: vi.fn().mockReturnValue(mockCollection),
+      listCollections: vi.fn().mockReturnValue({
+        hasNext: vi.fn().mockResolvedValue(true)
+      }),
+      createCollection: vi.fn().mockResolvedValue(mockCollection)
     };
 
     mockChannel = {
-      assertExchange: jest.fn().mockResolvedValue({}),
-      assertQueue: jest.fn().mockResolvedValue({}),
-      bindQueue: jest.fn().mockResolvedValue({}),
-      prefetch: jest.fn().mockResolvedValue({}),
-      consume: jest.fn((_queue, callback) => {
+      assertQueue: vi.fn().mockResolvedValue({}),
+      prefetch: vi.fn().mockResolvedValue({}),
+      consume: vi.fn((_queue, callback) => {
         // Store the callback so tests can call it
         (mockChannel as any)._callback = callback;
       }),
-      ack: jest.fn(),
-      nack: jest.fn()
+      ack: vi.fn(),
+      nack: vi.fn()
     };
 
     mockGetCollectionName.mockReturnValue('trade_XBTUSD');
   });
 
   afterEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   describe('startConsuming', () => {
-    it('should setup exchange, queue, and binding', async () => {
-      const onStoreMsg = jest.fn();
+    it('should setup queue', async () => {
+      const onStoreMsg = vi.fn();
 
       await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
 
-      expect(mockChannel.assertExchange).toHaveBeenCalledWith(
-        'bitmex-data',
-        'topic',
-        { durable: true }
-      );
-
       expect(mockChannel.assertQueue).toHaveBeenCalledWith(
-        'bitmex-feed',
+        'archivist',
         { durable: true }
-      );
-
-      expect(mockChannel.bindQueue).toHaveBeenCalledWith(
-        'bitmex-feed',
-        'bitmex-data',
-        '#'
       );
     });
 
     it('should set prefetch to batch size', async () => {
-      const onStoreMsg = jest.fn();
+      const onStoreMsg = vi.fn();
 
       await startConsuming(mockChannel, mockDb, 50, onStoreMsg);
 
@@ -75,18 +68,18 @@ describe('Message persistence', () => {
     });
 
     it('should start consuming from queue', async () => {
-      const onStoreMsg = jest.fn();
+      const onStoreMsg = vi.fn();
 
       await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
 
       expect(mockChannel.consume).toHaveBeenCalledWith(
-        'bitmex-feed',
+        'archivist',
         expect.any(Function)
       );
     });
 
     it('should handle null message gracefully', async () => {
-      const onStoreMsg = jest.fn();
+      const onStoreMsg = vi.fn();
 
       await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
 
@@ -98,7 +91,7 @@ describe('Message persistence', () => {
     });
 
     it('should process valid message', async () => {
-      const onStoreMsg = jest.fn();
+      const onStoreMsg = vi.fn();
 
       await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
 
@@ -106,7 +99,7 @@ describe('Message persistence', () => {
         content: Buffer.from(JSON.stringify({
           table: 'trade',
           action: 'insert',
-          data: [{ symbol: 'XBTUSD', price: 50000 }]
+          data: [{ symbol: 'XBTUSD', price: 50000, timestamp: '2024-01-01T00:00:00.000Z' }]
         }))
       };
 
@@ -116,13 +109,13 @@ describe('Message persistence', () => {
 
       expect(mockGetCollectionName).toHaveBeenCalled();
       expect(mockDb.collection).toHaveBeenCalledWith('trade_XBTUSD');
-      expect(mockCollection.insertMany).toHaveBeenCalled();
+      expect(mockCollection.insertOne).toHaveBeenCalled();
       expect(onStoreMsg).toHaveBeenCalled();
       expect(mockChannel.ack).toHaveBeenCalledWith(message);
     });
 
     it('should handle duplicate key error', async () => {
-      const onStoreMsg = jest.fn();
+      const onStoreMsg = vi.fn();
 
       await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
 
@@ -130,13 +123,15 @@ describe('Message persistence', () => {
         content: Buffer.from(JSON.stringify({
           table: 'trade',
           action: 'insert',
-          data: [{ symbol: 'XBTUSD', price: 50000 }]
+          data: [{ symbol: 'XBTUSD', price: 50000, timestamp: '2024-01-01T00:00:00.000Z' }]
         }))
       };
 
-      const error = new Error('E11000 duplicate key error');
-      (error as any).code = 11000;
-      mockCollection.insertMany.mockRejectedValueOnce(error);
+      // Create a MongoError-like object with code 11000
+      const error = Object.create(MongoError.prototype);
+      error.code = 11000;
+      error.message = 'E11000 duplicate key error';
+      mockCollection.insertOne.mockRejectedValueOnce(error);
 
       const consumeCallback = mockChannel.consume.mock.calls[0][1];
       await consumeCallback(message);
@@ -147,7 +142,7 @@ describe('Message persistence', () => {
     });
 
     it('should requeue message on transient error', async () => {
-      const onStoreMsg = jest.fn();
+      const onStoreMsg = vi.fn();
 
       await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
 
@@ -155,12 +150,12 @@ describe('Message persistence', () => {
         content: Buffer.from(JSON.stringify({
           table: 'trade',
           action: 'insert',
-          data: [{ symbol: 'XBTUSD', price: 50000 }]
+          data: [{ symbol: 'XBTUSD', price: 50000, timestamp: '2024-01-01T00:00:00.000Z' }]
         }))
       };
 
       const error = new Error('Connection timeout');
-      mockCollection.insertMany.mockRejectedValueOnce(error);
+      mockCollection.insertOne.mockRejectedValueOnce(error);
 
       const consumeCallback = mockChannel.consume.mock.calls[0][1];
       await consumeCallback(message);
@@ -170,30 +165,56 @@ describe('Message persistence', () => {
       expect(mockChannel.ack).not.toHaveBeenCalled();
     });
 
-    it('should handle messages with no data array', async () => {
-      const onStoreMsg = jest.fn();
+    it('should filter out unlisted instruments', async () => {
+      const onStoreMsg = vi.fn();
 
       await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
 
       const message = {
         content: Buffer.from(JSON.stringify({
-          table: 'trade',
-          action: 'insert'
-          // no data array
+          table: 'instrument',
+          action: 'partial',
+          data: [
+            { symbol: 'XBTUSD', state: 'Open' },
+            { symbol: 'ETHUSD', state: 'Unlisted' }
+          ]
         }))
       };
 
-      mockGetCollectionName.mockReturnValue('trade');
+      mockGetCollectionName.mockReturnValue('instrument');
       const consumeCallback = mockChannel.consume.mock.calls[0][1];
       await consumeCallback(message);
 
-      // Should handle gracefully without trying to insert
+      // Should have filtered out unlisted and only inserted valid data
+      expect(mockCollection.insertOne).toHaveBeenCalled();
+      const insertCall = mockCollection.insertOne.mock.calls[0][0];
+      expect(insertCall.data).toHaveLength(1);
+      expect(insertCall.data[0].symbol).toBe('XBTUSD');
       expect(mockChannel.ack).toHaveBeenCalledWith(message);
-      // insertMany should not be called if there's no data
-      if (mockCollection.insertMany.mock.calls.length > 0) {
-        const insertCall = mockCollection.insertMany.mock.calls[0];
-        expect(insertCall[0]).toHaveLength(0);
-      }
+    });
+
+    it('should ack message if all instruments are unlisted', async () => {
+      const onStoreMsg = vi.fn();
+
+      await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
+
+      const message = {
+        content: Buffer.from(JSON.stringify({
+          table: 'instrument',
+          action: 'partial',
+          data: [
+            { symbol: 'ETHUSD', state: 'Unlisted' }
+          ]
+        }))
+      };
+
+      mockGetCollectionName.mockReturnValue('instrument');
+      const consumeCallback = mockChannel.consume.mock.calls[0][1];
+      await consumeCallback(message);
+
+      // Should ack without inserting since all data was filtered
+      expect(mockCollection.insertOne).not.toHaveBeenCalled();
+      expect(mockChannel.ack).toHaveBeenCalledWith(message);
     });
   });
 });

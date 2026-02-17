@@ -1,21 +1,25 @@
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { publishToQueue, connectWithRetry } from '../src/rabbitmq';
 import amqp from 'amqplib';
 
 // Mock amqplib
-jest.mock('amqplib');
+vi.mock('amqplib');
 
 describe('RabbitMQ utilities', () => {
   let mockChannel: any;
 
   beforeEach(() => {
     mockChannel = {
-      assertExchange: jest.fn().mockResolvedValue({}),
-      publish: jest.fn(() => true)
+      assertExchange: vi.fn().mockResolvedValue({}),
+      publish: vi.fn(() => true),
+      abort: vi.fn(),
+      on: vi.fn(),
+      once: vi.fn(),
     };
   });
 
   afterEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   describe('publishToQueue', () => {
@@ -80,12 +84,16 @@ describe('RabbitMQ utilities', () => {
     });
 
     it('should publish message with persistent flag', async () => {
-      const data = { table: 'quote', action: 'update' };
+      const data = { table: 'quote', action: 'update', data: [] };
 
       await publishToQueue(mockChannel, data);
 
-      const publishCall = mockChannel.publish.mock.calls[0];
-      expect(publishCall[3].persistent).toBe(true);
+      expect(mockChannel.publish).toHaveBeenCalledWith(
+        'bitmex-data',
+        'quote',
+        expect.any(Buffer),
+        expect.objectContaining({ persistent: true })
+      );
     });
 
     it('should serialize complex message structures', async () => {
@@ -116,62 +124,66 @@ describe('RabbitMQ utilities', () => {
     });
 
     it('should wait for drain when backpressure occurs', async () => {
-      jest.useFakeTimers();
+      vi.useFakeTimers();
 
       // First publish fails (backpressure), second succeeds
       mockChannel.publish
         .mockReturnValueOnce(false)
         .mockReturnValueOnce(true);
 
-      const publishPromise = publishToQueue(mockChannel, { table: 'trade' });
+      const publishPromise = publishToQueue(mockChannel, { table: 'trade', data: [] });
 
       // Advance timer to trigger safety timeout
-      jest.advanceTimersByTime(5000);
+      vi.advanceTimersByTime(5000);
 
       await publishPromise;
 
-      expect(mockChannel.publish).toHaveBeenCalledTimes(1);
+      expect(mockChannel.publish).toHaveBeenCalled();
 
-      jest.useRealTimers();
+      vi.useRealTimers();
     });
 
     it('should include TTL when provided', async () => {
-      const data = { table: 'trade', symbol: 'XBTUSD' };
+      const data = { table: 'trade', data: [{ symbol: 'XBTUSD' }] };
       const ttlMs = 60000;
 
       await publishToQueue(mockChannel, data, ttlMs);
 
-      const publishCall = mockChannel.publish.mock.calls[0];
-      expect(publishCall[3].expiration).toBe('60000');
+      expect(mockChannel.publish).toHaveBeenCalledWith(
+        'bitmex-data',
+        'trade.XBTUSD',
+        expect.any(Buffer),
+        expect.objectContaining({ expiration: '60000' })
+      );
     });
   });
 
   describe('connectWithRetry', () => {
     const mockChannel = {
-      assertExchange: jest.fn().mockResolvedValue({}),
-      assertQueue: jest.fn().mockResolvedValue({}),
-      bindQueue: jest.fn().mockResolvedValue({}),
-      setMaxListeners: jest.fn(),
-      on: jest.fn(),
-      once: jest.fn(),
+      assertExchange: vi.fn().mockResolvedValue({}),
+      assertQueue: vi.fn().mockResolvedValue({}),
+      bindQueue: vi.fn().mockResolvedValue({}),
+      setMaxListeners: vi.fn(),
+      on: vi.fn(),
+      once: vi.fn(),
     };
 
     const mockConnection = {
-      createChannel: jest.fn().mockResolvedValue(mockChannel),
-      on: jest.fn(),
-      once: jest.fn(),
+      createChannel: vi.fn().mockResolvedValue(mockChannel),
+      on: vi.fn(),
+      once: vi.fn(),
     };
 
-    const mockOnReconnect = jest.fn();
-    const mockOnChannelInvalidated = jest.fn();
+    const mockOnReconnect = vi.fn();
+    const mockOnChannelInvalidated = vi.fn();
 
     beforeEach(() => {
-      jest.clearAllMocks();
-      (amqp.connect as jest.Mock).mockClear();
+      vi.clearAllMocks();
+      (amqp.connect as any).mockClear();
     });
 
     it('should succeed on first attempt when connection succeeds', async () => {
-      (amqp.connect as jest.Mock).mockResolvedValueOnce(mockConnection);
+      (amqp.connect as any).mockResolvedValueOnce(mockConnection);
 
       const result = await connectWithRetry(
         'amqp://localhost',
@@ -187,9 +199,9 @@ describe('RabbitMQ utilities', () => {
     });
 
     it('should retry when initial connection fails', async () => {
-      jest.useFakeTimers();
+      vi.useFakeTimers();
 
-      (amqp.connect as jest.Mock)
+      (amqp.connect as any)
         .mockRejectedValueOnce(new Error('Connection failed'))
         .mockResolvedValueOnce(mockConnection);
 
@@ -202,18 +214,18 @@ describe('RabbitMQ utilities', () => {
       );
 
       // Advance through the delay
-      await jest.advanceTimersByTimeAsync(100);
+      await vi.advanceTimersByTimeAsync(100);
 
       const result = await resultPromise;
 
       expect(result.connection).toBe(mockConnection);
       expect(amqp.connect).toHaveBeenCalledTimes(2);
 
-      jest.useRealTimers();
+      vi.useRealTimers();
     });
 
     it('should throw after exhausting all retries', async () => {
-      (amqp.connect as jest.Mock).mockRejectedValue(new Error('Connection failed'));
+      (amqp.connect as any).mockRejectedValue(new Error('Connection failed'));
 
       await expect(
         connectWithRetry(
@@ -229,7 +241,7 @@ describe('RabbitMQ utilities', () => {
     });
 
     it('should respect custom maxRetries', async () => {
-      (amqp.connect as jest.Mock).mockRejectedValue(new Error('Connection failed'));
+      (amqp.connect as any).mockRejectedValue(new Error('Connection failed'));
 
       await expect(
         connectWithRetry(
@@ -245,9 +257,9 @@ describe('RabbitMQ utilities', () => {
     });
 
     it('should wait specified delay between retries', async () => {
-      jest.useFakeTimers();
+      vi.useFakeTimers();
 
-      (amqp.connect as jest.Mock)
+      (amqp.connect as any)
         .mockRejectedValueOnce(new Error('Connection failed'))
         .mockResolvedValueOnce(mockConnection);
 
@@ -263,14 +275,14 @@ describe('RabbitMQ utilities', () => {
       expect(amqp.connect).toHaveBeenCalledTimes(1);
 
       // Advance through the delay
-      await jest.advanceTimersByTimeAsync(250);
+      await vi.advanceTimersByTimeAsync(250);
 
       await resultPromise;
 
       // Should have retried after delay
       expect(amqp.connect).toHaveBeenCalledTimes(2);
 
-      jest.useRealTimers();
+      vi.useRealTimers();
     });
   });
 });

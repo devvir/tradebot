@@ -93,8 +93,8 @@ describe('Config utilities', () => {
 
       expect(config.bitmexWsUrl).toBe('wss://www.bitmex.com/realtime');
       expect(config.rabbitmqUrl).toBe('amqp://guest:guest@rabbitmq:5672');
-      expect(config.channels).toEqual(['trade', 'orderBookL2']);
-      expect(config.symbols).toEqual(['XBTUSD']);
+      expect(config.channels).toEqual([]);
+      expect(config.symbols).toEqual([]);
     });
 
     it('should parse reconnect delay options', () => {
@@ -143,14 +143,14 @@ describe('Config utilities', () => {
       expect(() => validateConfig(config)).toThrow('RABBITMQ_URL is required');
     });
 
-    it('should throw if no channel patterns are configured', () => {
+    it('should not require channel patterns to be configured', () => {
       config.channelPatterns = [];
-      expect(() => validateConfig(config)).toThrow('At least one channel pattern must be configured');
+      expect(() => validateConfig(config)).not.toThrow();
     });
 
-    it('should throw if no symbol patterns are configured', () => {
+    it('should not require symbol patterns to be configured', () => {
       config.symbolPatterns = [];
-      expect(() => validateConfig(config)).toThrow('At least one symbol pattern must be configured');
+      expect(() => validateConfig(config)).not.toThrow();
     });
 
     it('should accept wildcard patterns', () => {

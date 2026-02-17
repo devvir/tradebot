@@ -18,4 +18,5 @@ Thumbs.db
 
 # Builds/Deps
 **/node_modules/
-services/**/dist/
+**/dist/
+*.tsbuildinfo

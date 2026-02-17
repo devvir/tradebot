@@ -1,0 +1,39 @@
+# Codec Service - Consumes from bitmex-feed queue, transforms messages, publishes to archivist exchange
+# Stateless transformation service for message encoding/decoding and normalization
+
+services:
+  codec:
+    build:
+      context: ../../..
+      dockerfile: docker/node.Dockerfile
+      args:
+        SERVICE_NAME: codec
+    container_name: ${COMPOSE_PROJECT_NAME:-.}-codec
+
+    environment:
+      # Dependencies (queue)
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
+
+      # Batch Processing
+      CODEC_BATCH_SIZE: ${CODEC_BATCH_SIZE:-100}
+      CODEC_BATCH_TIMEOUT_MS: ${CODEC_BATCH_TIMEOUT_MS:-5000}
+
+      # Runtime
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV: ${APP_ENV:-production}
+      TZ: ${TZ:-UTC}
+
+    ports:
+      - "${CODEC_PORT:-}:3000"
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    restart: ${CODEC_RESTART_POLICY:-unless-stopped}
+
+    depends_on:
+      - rabbitmq

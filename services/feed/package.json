@@ -7,7 +7,9 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
-    "test": "jest"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "keywords": [
     "bitmex",
@@ -25,12 +27,11 @@
   },
   "devDependencies": {
     "@types/amqplib": "^0.10.8",
-    "@types/jest": "^29.5.0",
     "@types/node": "^20.10.0",
     "@types/ws": "^8.5.0",
-    "jest": "^30.2.0",
-    "ts-jest": "^29.4.6",
+    "@vitest/coverage-v8": "^1.0.0",
     "ts-node": "^10.9.1",
-    "typescript": "^5.3.0"
+    "typescript": "^5.3.0",
+    "vitest": "^1.0.0"
   }
 }

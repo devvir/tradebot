@@ -1,0 +1,14 @@
+{
+  "name": "@tradebot/types",
+  "version": "1.0.0",
+  "description": "Shared type definitions for TradeBot services",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "private": true,
+  "keywords": ["tradebot", "types"],
+  "author": "",
+  "license": "ISC"
+}

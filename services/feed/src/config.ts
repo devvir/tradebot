@@ -53,7 +53,6 @@ export const loadConfig = (): Config => {
   const role = (process.env.FEED_ROLE || 'GLOBAL').toUpperCase() as FeedRole;
 
   logger.info(`BitMEX WebSocket: ${bitmexWsUrl}`);
-  logger.info({ role }, 'Starting with feed role');
 
   return {
     bitmexWsUrl,
