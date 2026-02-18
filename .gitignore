@@ -20,3 +20,12 @@ Thumbs.db
 **/node_modules/
 **/dist/
 *.tsbuildinfo
+
+# Temp
+.old/
+# services
+# modules/
+modules/bitmex
+services/snapshots
+services/bitmex-ws
+# services/codec

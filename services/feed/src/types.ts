@@ -1,38 +1,14 @@
 import WebSocket from 'ws';
 import type { Broker } from '../../../packages/rabbitmq';
-
-/**
- * BitMEX WebSocket message structure as received from BitMEX API
- */
-export interface BitmexRawMessage {
-  table: string;
-  action: string;
-  keys?: string[];
-  types?: Record<string, string>;
-  foreignKeys?: Record<string, unknown>;
-  attributes?: Record<string, unknown>;
-  data: Array<Record<string, unknown>>;
-}
-
-/**
- * BitMEX WebSocket message as stored/archived
- * Includes _apiVersion (added by feed service for schema tracking)
- * Includes _hash (added by archivist service for uniqueness and sorting)
- */
-export interface BitmexWSMessage extends BitmexRawMessage {
-  _apiVersion?: string;
-  _hash?: string;
-}
-
-export interface FeedState {
-  ws: WebSocket | null;
-  broker: Broker | null;
-  reconnectDelay: number;
-  isShuttingDown: boolean;
-  lastMessageTime: number;
-  apiVersion: string | null;
-  pingInterval: NodeJS.Timeout | null;
-}
+import {
+  type BitmexSubscriptionMessage,
+  type BitmexUnsubscriptionMessage,
+  type BitmexInfoMessage,
+  type BitmexWebSocketMessage,
+  isBitmexSubscriptionMessage,
+  isBitmexUnsubscriptionMessage,
+  isBitmexInfoMessage,
+} from '../../../shared/types';
 
 export type FeedRole =
   | 'NONE'
@@ -59,10 +35,21 @@ export interface Config {
   batchDelayMs: number;
 }
 
+export interface FeedState {
+  ws: WebSocket | null;
+  broker: Broker | null;
+  reconnectDelay: number;
+  isShuttingDown: boolean;
+  lastMessageTime: number;
+  apiVersion: string | null;
+  pingInterval: NodeJS.Timeout | null;
+}
+
 export interface HealthState {
   wsConnected: boolean;
   lastMessageTime: number;
 }
+
 export interface HealthCheckResult {
   isHealthy: boolean;
   statusCode: number;
@@ -73,68 +60,13 @@ export interface HealthCheckResult {
   };
 }
 
-/**
- * BitMEX subscription confirmation message
- */
-export interface BitmexSubscriptionMessage {
-  subscribe: string;
-  success: boolean;
-  request?: {
-    op: string;
-    args: string[];
-  };
-}
-
-/**
- * BitMEX unsubscription confirmation message
- */
-export interface BitmexUnsubscriptionMessage {
-  unsubscribe: string;
-  success: boolean;
-  request?: {
-    op: string;
-    args: string[];
-  };
-}
-
-/**
- * BitMEX info/welcome message
- */
-export interface BitmexInfoMessage {
-  info: string;
-  version: string;
-  timestamp: string;
-  docs: string;
-  limit?: {
-    remaining: number;
-  };
-}
-
-/**
- * Union type for all BitMEX WebSocket messages
- */
-export type BitmexWebSocketMessage =
-  | BitmexSubscriptionMessage
-  | BitmexUnsubscriptionMessage
-  | BitmexInfoMessage;
-
-/**
- * Type guard for subscription messages
- */
-export const isSubscriptionMessage = (data: unknown): data is BitmexSubscriptionMessage => {
-  return typeof data === 'object' && data !== null && 'subscribe' in data;
+// Re-export BitMEX types for convenience in this service
+export type {
+  BitmexSubscriptionMessage,
+  BitmexUnsubscriptionMessage,
+  BitmexInfoMessage,
+  BitmexWebSocketMessage,
 };
 
-/**
- * Type guard for unsubscription messages
- */
-export const isUnsubscriptionMessage = (data: unknown): data is BitmexUnsubscriptionMessage => {
-  return typeof data === 'object' && data !== null && 'unsubscribe' in data;
-};
-
-/**
- * Type guard for info messages
- */
-export const isInfoMessage = (data: unknown): data is BitmexInfoMessage => {
-  return typeof data === 'object' && data !== null && 'info' in data && 'version' in data;
-};
+// Re-export BitMEX type guards for convenience
+export { isBitmexSubscriptionMessage, isBitmexUnsubscriptionMessage, isBitmexInfoMessage };

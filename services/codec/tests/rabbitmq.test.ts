@@ -1,133 +1,94 @@
-import { describe, it, expect, vi } from 'vitest';
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { connectToQueue } from '../src/rabbitmq';
+
+// Mock the broker module
+vi.mock('../../../packages/rabbitmq', () => ({
+  keepAlive: vi.fn(),
+}));
+
+// Import after mock
+import * as brokerModule from '../../../packages/rabbitmq';
 
 describe('RabbitMQ integration', () => {
-  describe('Broker topology', () => {
-    it('should declare required exchanges and queues', () => {
-      // The topology expected by codec service:
-      // - exchanges:
-      //   - bitmex-data (type: topic, durable: true)
-      //     - queue: bitmex-feed (durable: true, routingKey: #)
-      // - standalone queues:
-      //   - archivist (durable: true)
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
 
-      const topology = {
-        exchanges: {
-          'bitmex-data': {
-            type: 'topic',
-            durable: true,
-            queues: {
-              'bitmex-feed': {
-                routingKey: '#',
-                durable: true,
-              },
-            },
-          },
-        },
-        queues: {
-          'archivist': {
-            durable: true,
-          },
-        },
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  describe('connectToQueue', () => {
+    it('should initialize broker and declare topology', async () => {
+      const mockBroker = {
+        declares: vi.fn().mockReturnThis(),
       };
 
-      expect(topology.exchanges).toHaveProperty('bitmex-data');
-      expect(topology.exchanges['bitmex-data'].type).toBe('topic');
-      expect(topology.exchanges['bitmex-data'].durable).toBe(true);
+      vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
 
-      expect(topology.exchanges['bitmex-data'].queues).toHaveProperty('bitmex-feed');
-      expect(topology.exchanges['bitmex-data'].queues['bitmex-feed'].routingKey).toBe('#');
+      const broker = await connectToQueue('amqp://localhost');
 
-      expect(topology.queues).toHaveProperty('archivist');
-      expect(topology.queues['archivist'].durable).toBe(true);
+      expect(brokerModule.keepAlive).toHaveBeenCalledWith('amqp://localhost');
+      expect(mockBroker.declares).toHaveBeenCalled();
+      expect(broker).toBe(mockBroker);
     });
 
-    it('should configure durable exchanges for persistence', () => {
-      const isBitmexDataDurable = true;
-      const isBitmexFeedDurable = true;
-      const isArchivistDurable = true;
-
-      expect(isBitmexDataDurable).toBe(true);
-      expect(isBitmexFeedDurable).toBe(true);
-      expect(isArchivistDurable).toBe(true);
-    });
-  });
-
-  describe('Message flow', () => {
-    it('should consume from bitmex-feed queue', () => {
-      const consumerQueue = 'bitmex-feed';
-
-      expect(consumerQueue).toBe('bitmex-feed');
-    });
-
-    it('should publish to archivist queue', () => {
-      const publisherQueue = 'archivist';
-
-      expect(publisherQueue).toBe('archivist');
-    });
-
-    it('should use prefetch of 10 for consumption', () => {
-      const prefetch = 10;
-
-      expect(prefetch).toBe(10);
-    });
-  });
-
-  describe('Error handling', () => {
-    it('should nack messages with requeue on processing error', () => {
-      // The expected behavior is:
-      // - On error: nack(true) = nack with requeue
-      // - This allows retried processing
-
-      const shouldRequeue = true;
-
-      expect(shouldRequeue).toBe(true);
-    });
-
-    it('should ack messages after successful processing', () => {
-      // The expected behavior is:
-      // - On success: ack()
-      // - Message is removed from queue
-
-      const shouldAck = true;
-
-      expect(shouldAck).toBe(true);
-    });
-
-    it('should throw when required queues are not found', () => {
-      const error = new Error('Required queues not found');
-
-      expect(error).toBeInstanceOf(Error);
-      expect(error.message).toBe('Required queues not found');
-    });
-
-    it('should handle connection failures gracefully', () => {
-      // Connection errors should be logged and thrown
-      const expectedThrow = true;
-
-      expect(expectedThrow).toBe(true);
-    });
-  });
-
-  describe('Consumption lifecycle', () => {
-    it('should start consuming when both input and output queues are available', () => {
-      const queuesAvailable = true;
-      const shouldConsume = queuesAvailable;
-
-      expect(shouldConsume).toBe(true);
-    });
-
-    it('should process messages with callbacks', () => {
-      // Expected callbacks:
-      // - onProcessMsg() called when message is processed
-      // - onPublishMsg() called when message is published
-
-      const callbacks = {
-        onProcessMsg: vi.fn(),
-        onPublishMsg: vi.fn(),
+    it('should declare bitmex-data exchange as topic exchange', async () => {
+      const mockBroker = {
+        declares: vi.fn().mockReturnThis(),
       };
 
-      expect(callbacks.onProcessMsg).toBeDefined();
-      expect(callbacks.onPublishMsg).toBeDefined();
+      vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
+
+      await connectToQueue('amqp://localhost');
+
+      const declareCall = mockBroker.declares.mock.calls[0][0];
+      expect(declareCall.exchanges['bitmex-data']).toBeDefined();
+      expect(declareCall.exchanges['bitmex-data'].type).toBe('topic');
+    });
+
+    it('should declare bitmex-feed queue bound to bitmex-data exchange', async () => {
+      const mockBroker = {
+        declares: vi.fn().mockReturnThis(),
+      };
+
+      vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
+
+      await connectToQueue('amqp://localhost');
+
+      const declareCall = mockBroker.declares.mock.calls[0][0];
+      expect(declareCall.exchanges['bitmex-data']).toBeDefined();
+      expect(declareCall.exchanges['bitmex-data'].queues['bitmex-feed']).toBeDefined();
+      expect(declareCall.exchanges['bitmex-data'].queues['bitmex-feed'].routingKey).toBe('#');
+    });
+
+    it('should declare archivist queue to publish to storage', async () => {
+      const mockBroker = {
+        declares: vi.fn().mockReturnThis(),
+      };
+
+      vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
+
+      await connectToQueue('amqp://localhost');
+
+      const declareCall = mockBroker.declares.mock.calls[0][0];
+      expect(declareCall.queues['archivist']).toBeDefined();
+    });
+
+    it('should declare all necessary topology', async () => {
+      const mockBroker = {
+        declares: vi.fn().mockReturnThis(),
+      };
+
+      vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
+
+      await connectToQueue('amqp://localhost');
+
+      const declareCall = mockBroker.declares.mock.calls[0][0];
+      expect(declareCall.exchanges['bitmex-data'].type).toBe('topic');
+      expect(declareCall.exchanges['bitmex-data'].queues['bitmex-feed'].routingKey).toBe('#');
+      expect(declareCall.queues['archivist']).toBeDefined();
     });
   });
 });
+

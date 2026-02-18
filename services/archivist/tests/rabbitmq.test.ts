@@ -1,52 +1,64 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { connectRabbitMQ } from '../src/rabbitmq';
-import amqp from 'amqplib';
+import { connectToQueue } from '../src/rabbitmq';
 
-vi.mock('amqplib', () => ({
-  default: {
-    connect: vi.fn()
-  }
+// Mock the broker module
+vi.mock('../../../packages/rabbitmq', () => ({
+  keepAlive: vi.fn(),
 }));
 
-describe('RabbitMQ connection', () => {
-  let mockConnection: any;
-  let mockChannel: any;
+// Import after mock
+import * as brokerModule from '../../../packages/rabbitmq';
 
+describe('RabbitMQ integration', () => {
   beforeEach(() => {
-    mockChannel = {
-      close: vi.fn().mockResolvedValue(undefined)
-    };
-
-    mockConnection = {
-      createChannel: vi.fn().mockResolvedValue(mockChannel),
-      close: vi.fn().mockResolvedValue(undefined),
-      on: vi.fn()
-    };
-
-    vi.mocked(amqp.connect).mockResolvedValue(mockConnection);
+    vi.clearAllMocks();
   });
 
   afterEach(() => {
     vi.clearAllMocks();
   });
 
-  describe('connectRabbitMQ', () => {
-    it('should return a channel and connection object', async () => {
-      const result = await connectRabbitMQ('amqp://guest:guest@localhost:5672');
+  describe('connectToQueue', () => {
+    it('should initialize broker and declare topology', async () => {
+      const mockBroker = {
+        declares: vi.fn().mockResolvedValue({}),
+      };
 
-      expect(result).toHaveProperty('channel');
-      expect(result).toHaveProperty('connection');
-      expect(result.channel).toBe(mockChannel);
-      expect(result.connection).toBe(mockConnection);
+      vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
+
+      const broker = await connectToQueue('amqp://localhost');
+
+      expect(brokerModule.keepAlive).toHaveBeenCalledWith('amqp://localhost');
+      expect(mockBroker.declares).toHaveBeenCalled();
+      expect(broker).toBe(mockBroker);
     });
 
-    it('should handle connection URL', async () => {
-      const url = 'amqp://test:pass@rabbitmq:5672';
+    it('should declare archivist queue to consume messages from codec', async () => {
+      const mockBroker = {
+        declares: vi.fn().mockResolvedValue({}),
+      };
 
-      const result = await connectRabbitMQ(url);
+      vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
 
-      expect(amqp.connect).toHaveBeenCalledWith(url);
-      expect(result.channel).toBeDefined();
+      await connectToQueue('amqp://localhost');
+
+      const declareCall = mockBroker.declares.mock.calls[0][0];
+      expect(declareCall.queues['archivist']).toBeDefined();
+      expect(declareCall.queues['archivist'].durable).toBe(true);
+    });
+
+    it('should ensure queue is durable for reliability', async () => {
+      const mockBroker = {
+        declares: vi.fn().mockResolvedValue({}),
+      };
+
+      vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
+
+      await connectToQueue('amqp://localhost');
+
+      const declareCall = mockBroker.declares.mock.calls[0][0];
+      expect(declareCall.queues['archivist'].durable).toBe(true);
     });
   });
 });
+

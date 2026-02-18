@@ -1,7 +1,7 @@
 import logger from './logger';
 import { Config, loadConfig, validateConfig } from './config';
-import { connectMongoDB } from './mongodb';
-import { connectRabbitMQ } from './rabbitmq';
+import { connectToDatabase } from './persistence';
+import { connectToQueue } from './rabbitmq';
 import { startHealthCheck } from './health';
 import { startConsuming } from './persistence';
 import type { ArchivistState, HealthState } from './types';
@@ -52,7 +52,7 @@ const shutdown = async (): Promise<void> => {
 const connectMongoWithRetry = async (maxRetries = 10, delayMs = 5000): Promise<void> => {
   for (let i = 0; i < maxRetries; i++) {
     try {
-      state.mongoConnection = await connectMongoDB(config.mongodbUrl);
+      state.mongoConnection = await connectToDatabase(config.mongodbUrl);
       logger.info('Successfully connected to MongoDB');
 
       return;
@@ -79,7 +79,7 @@ const main = async (): Promise<void> => {
     await connectMongoWithRetry();
 
     // Connect to RabbitMQ
-    state.broker = await connectRabbitMQ(config.rabbitmqUrl);
+    state.broker = await connectToQueue(config.rabbitmqUrl);
 
     logger.info('Successfully connected to RabbitMQ');
 

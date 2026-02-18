@@ -1,8 +1,8 @@
 import logger from './logger';
 import { Config, loadConfig, validateConfig } from './config';
-import { connectRabbitMQ } from './rabbitmq';
+import { connectToQueue } from './rabbitmq';
 import { startHealthCheck } from './health';
-import { startConsuming } from './transform';
+import { startConsuming } from './rabbitmq';
 import type { CodecState, HealthState } from './types';
 
 let state: CodecState = {
@@ -58,8 +58,7 @@ const main = async (): Promise<void> => {
     config = loadConfig();
     validateConfig(config);
 
-    // Connect to RabbitMQ
-    state.rabbitmqBroker = await connectRabbitMQ(config.rabbitmqUrl);
+    state.rabbitmqBroker = await connectToQueue(config.rabbitmqUrl);
 
     logger.info('Successfully connected to RabbitMQ');
 

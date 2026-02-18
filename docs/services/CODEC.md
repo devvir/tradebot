@@ -102,7 +102,7 @@ This can be extended to:
 
 ### Core Functions
 
-#### `connectRabbitMQ(url: string): Promise<Broker>`
+#### `connectToQueue(url: string): Promise<Broker>`
 
 Establishes connection and declares topology.
 
@@ -111,7 +111,7 @@ Establishes connection and declares topology.
   - Queue: `bitmex-feed` (durable: `true`, routing key: `#`)
 - Queue: `archivist` (durable: `true`)
 
-#### `startConsuming(broker, onProcessMsg, onPublishMsg): Promise<void>`
+#### `startConsuming(broker, onMessageReceived, onPublishMsg): Promise<void>`
 
 Enters the consumption loop. For each message:
 

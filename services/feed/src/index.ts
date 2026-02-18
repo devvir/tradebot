@@ -4,18 +4,17 @@ import WebSocket from 'ws';
 import logger from './logger';
 import { loadConfig, validateConfig, type Config } from './config';
 import { fetchAllSymbols, resolveChannels, buildSubscriptionTopics } from './bitmex';
-import { connectRabbitMQ } from './rabbitmq';
+import { connectToQueue } from './rabbitmq';
 import { startHealthCheck } from './health';
 import { subscribeToTopics } from './subscriptions';
 import { setupCommandListener } from './commands';
 import {
   type FeedState,
   type HealthState,
-  type BitmexRawMessage,
-  type BitmexWSMessage,
-  isSubscriptionMessage,
-  isUnsubscriptionMessage,
-  isInfoMessage,
+  isBitmexSubscriptionMessage,
+  isBitmexUnsubscriptionMessage,
+  isBitmexInfoMessage,
+  BitmexWebSocketMessage,
 } from './types';
 
 
@@ -121,40 +120,41 @@ const handleMessage = async (message: Buffer): Promise<void> => {
   state.lastMessageTime = Date.now();
 
   try {
-    const data: unknown = JSON.parse(message.toString());
+    const data = JSON.parse(message.toString()) as BitmexWebSocketMessage;
 
-    if (isSubscriptionMessage(data)) {
+    if (isBitmexSubscriptionMessage(data)) {
       logger.debug({ subscribe: data.subscribe, success: data.success }, 'Subscription confirmed');
       subscriptionEvents.emit('subscribed', data.subscribe);
       return;
     }
 
-    if (isUnsubscriptionMessage(data)) {
+    if (isBitmexUnsubscriptionMessage(data)) {
       logger.debug({ unsubscribe: data.unsubscribe, success: data.success }, 'Unsubscription confirmed');
       subscriptionEvents.emit('unsubscribed', data.unsubscribe);
       return;
     }
 
-    if (isInfoMessage(data)) {
+    if (isBitmexInfoMessage(data)) {
       state.apiVersion = data.version;
       logger.info({ apiVersion: state.apiVersion, info: data.info }, 'Captured BitMEX API version');
       return;
     }
 
-    const rawMessage = data as BitmexRawMessage;
-
-    if (rawMessage.table && rawMessage.action) {
-      if (state.broker) {
-        const enrichedData: BitmexWSMessage = { ...rawMessage, _apiVersion: state.apiVersion || undefined };
-        const exchange = state.broker.getExchange('bitmex-data');
-        if (exchange) {
-          const routingKey = rawMessage.data[0]?.symbol ? `${rawMessage.table}.${rawMessage.data[0].symbol}` : rawMessage.table;
-          exchange.publish(enrichedData, routingKey, { persistent: true, expiration: config.messageTtlMs?.toString() });
-        }
-      }
-    } else {
-      logger.warn({ data }, 'Received unexpected message format');
+    if (! data.table || ! data.action) {
+      throw new Error(`Received invalid or unexpected message`);
     }
+
+    const symbol = data.filter?.symbol || (
+      (data.data[0] && 'symbol' in data.data[0]) ? data.data[0].symbol : undefined
+    );
+
+    const routingKey = symbol ? `${data.table}.${symbol}` : data.table;
+
+    const exchange = state.broker!.getExchange('bitmex-data')!;
+    exchange.publish(data, routingKey, {
+      expiration: config.messageTtlMs?.toString(),
+      headers: { api_version: state.apiVersion || undefined },
+    });
   } catch (error) {
     logger.error({ error, message: message.toString() }, 'Error processing WebSocket message');
   }
@@ -256,7 +256,7 @@ const shouldStartIdleMode = (cfg: Config): string | null => {
  * Connect to RabbitMQ and set up broker
  */
 const initializeRabbitMQ = async (cfg: Config): Promise<void> => {
-  state.broker = await connectRabbitMQ(cfg.rabbitmqUrl);
+  state.broker = await connectToQueue(cfg.rabbitmqUrl);
 
   logger.info('Successfully connected to RabbitMQ');
 

@@ -1,41 +1,69 @@
 import { keepAlive, Broker } from '../../../packages/rabbitmq';
 import logger from './logger';
+import { encode } from './transform';
+
+const consumerQueueName = 'bitmex-feed';
+const outputQueueName = 'archivist';
 
 /**
- * Creates and configures a RabbitMQ broker for the codec service.
- * Sets up the necessary topology: bitmex-data exchange, bitmex-feed queue, and archivist queue.
+ * Creates and configures a RabbitMQ broker.
+ * Sets up the necessary message topology for this service.
  *
- * Connection lifecycle events (connect/disconnect/reconnect/errors) are logged
- * by the broker, so the service doesn't need to handle them.
+ * Connection lifecycle events are logged by the broker.
  */
-export const connectRabbitMQ = async (url: string): Promise<Broker> => {
+export const connectToQueue = async (url: string): Promise<Broker> => {
   logger.info('Setting up RabbitMQ broker...');
 
   // Connect with unlimited retries (broker logs all connection events)
   const broker = await keepAlive(url);
 
-  // Declare topology
-  await broker.declares({
+  return broker.declares({
+    queues: { 'archivist': {} }, // Default exchange
     exchanges: {
       'bitmex-data': {
         type: 'topic',
-        durable: true,
-        queues: {
-          'bitmex-feed': {
-            routingKey: '#',
-            durable: true,
-          },
-        },
+        queues: { 'bitmex-feed': { routingKey: '#' } },
       },
-    },
-    queues: {
-      'archivist': {
-        durable: true,
-      },
-    },
+    }
   });
+};
 
-  logger.info('RabbitMQ topology declared');
+export const startConsuming = async (
+  broker: Broker,
+  onProcessMsg: () => void,
+  onPublishMsg: () => void
+): Promise<void> => {
+  try {
+    const inputQueue = broker.getQueue(consumerQueueName)!;
+    const outputQueue = broker.getQueue(outputQueueName)!;
 
-  return broker;
+    logger.info({ queue: consumerQueueName }, 'Starting message consumption');
+
+    await inputQueue.consume(
+      async (message, { ack, nack, original: rawMsg }) => {
+        if (! message) return;
+
+        try {
+          const { headers, payload } = encode(rawMsg);
+
+          onProcessMsg();
+
+          outputQueue.publish(payload, { headers, contentType: 'application/octet-stream' });
+          // const headers = { table: rawMsg.fields.routingKey.split('.')[0] };
+          // outputQueue.publish(message, { headers, contentType: 'application/json' });
+
+          onPublishMsg();
+          ack();
+        } catch (error) {
+          logger.error({ error }, 'Error processing message');
+          nack(true);
+        }
+      }, { prefetch: 10 }
+    );
+
+    logger.info('Started consuming messages');
+  } catch (e) {
+    logger.error({ e }, 'Failed to start consuming');
+    throw e;
+  }
 };

@@ -1,34 +1,31 @@
-import { Db, MongoError } from 'mongodb';
+import { MongoClient, Db, MongoError, Long } from 'mongodb';
 import amqp from 'amqplib';
 import logger from './logger';
-import { getCollectionName } from './mongodb';
-import type { BitmexWSMessage } from './types';
 
-const queueName = 'archivist';
+export interface MongoDBConnection {
+  client: MongoClient;
+  db: Db;
+}
 
-// Track which collections have had their indexes ensured
-const indexedCollections = new Set<string>();
+export const connectToDatabase = async (url: string): Promise<MongoDBConnection> => {
+  logger.info('Connecting to MongoDB...');
 
-/**
- * Ensure unique index exists for every collection
- * Only checks once per collection per service lifetime
- */
-const ensureIndexedCollection = async (db: Db, collectionName: string): Promise<void> => {
   try {
-    const collection = await db.listCollections({ name: collectionName }).hasNext()
-        ? await db.collection(collectionName)
-        : await db.createCollection(collectionName);
+    const client = new MongoClient(url);
+    const db = client.db();
 
-    await collection.createIndex({ _hash: 1 }, { unique: true });
+    await client.connect();
 
-    logger.info(`Ensured unique index for collection: ${collectionName}`);
-  } catch (e) {
-    if (! (e instanceof MongoError) || e.code !== 11000) {
-      indexedCollections.delete(collectionName);
-      logger.error({ error: e, collectionName }, 'Failed to ensure index, will retry');
-    }
+    logger.info({ url }, 'Connected to MongoDB');
+
+    return { client, db };
+  } catch (error) {
+    logger.error({ error, url }, 'Failed to connect to MongoDB');
+    throw error;
   }
 };
+
+const queueName = 'archivist';
 
 export const startConsuming = async (
   channel: amqp.Channel,
@@ -50,29 +47,14 @@ export const startConsuming = async (
 };
 
 const consume = async (channel: amqp.Channel, db: Db, onStoreMsg: () => void): Promise<void> => {
-  channel.consume(queueName, async (msg: any) => {
+  channel.consume(queueName, async (msg) => {
     if (! msg) return;
 
     try {
-      const data = JSON.parse(msg.content.toString()) as BitmexWSMessage;
-      const collectionName = getCollectionName(data);
-      const collection = db.collection(collectionName);
+      const document = createDocument(msg);
+      const collection = db.collection(getCollectionName(msg));
 
-      // Ensure indexes exist for this collection
-      if (! indexedCollections.has(collectionName)) {
-          indexedCollections.add(collectionName);
-          await ensureIndexedCollection(db, collectionName);
-      }
-
-      const minTimestamp = data.data.reduce(
-          (min, d) => d.timestamp < min ? d.timestamp : min,
-          data.data[0]?.timestamp
-      ) ?? new Date().toISOString();
-
-      const hash = `${minTimestamp}_${data.action}_${data.data.length}`;
-
-      await collection.insertOne({ ...data, _hash: hash } as any);
-
+      await collection.insertOne(document);
       onStoreMsg();
     } catch (e) {
       if (! (e instanceof MongoError) || e.code !== 11000) {
@@ -84,4 +66,37 @@ const consume = async (channel: amqp.Channel, db: Db, onStoreMsg: () => void): P
 
     channel.ack(msg);
   });
-}
+};
+
+/**
+ * Extract collection name from RabbitMQ message headers.
+ */
+const getCollectionName = (msg: amqp.ConsumeMessage): string => {
+  const table = msg.properties?.headers?.table as string | undefined;
+
+  if (! table) {
+    throw new Error('Message missing required table header');
+  }
+
+  return table;
+};
+
+/**
+ * Create MongoDB document from RabbitMQ message (content + headers).
+ */
+const createDocument = (msg: amqp.ConsumeMessage): Record<string, unknown> => {
+  const rawMetadata: Record<string, unknown> = msg.properties?.headers?.metadata || {};
+  const contentType = msg.properties?.contentType;
+
+  // Deserialise metadata: Buffer values are treated as big-endian int64 → BSON Long
+  const metadata = Object.fromEntries(
+    Object.entries(rawMetadata).map(([k, v]) =>
+      [ k, Buffer.isBuffer(v) ? Long.fromBigInt(v.readBigUInt64BE()) : v ])
+  );
+
+  const data = (contentType === 'application/octet-stream')
+    ? { message: msg.content }
+    : JSON.parse(msg.content.toString());
+
+  return { ...metadata, ...data };
+};

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { BitmexWSMessage } from '../src/types';
+import type { BitmexWSMessage } from '../../../shared/types';
 
 /**
  * Transform function tests

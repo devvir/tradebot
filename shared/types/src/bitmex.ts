@@ -85,11 +85,6 @@ export type BitmexWSMessage<Item extends BitmexDataItem = BitmexDataItem> =
   | BitmexDelete<Item>;
 
 /**
- * Alias for backwards compatibility
- */
-export type BitmexRawMessage = BitmexWSMessage;
-
-/**
  * Table-specific data types extracted from BitMEX partial messages
  * These define the full field structure for each table
  */
@@ -305,6 +300,79 @@ export type BitmexDataItem =
   | LiquidationData
   | FundingData
   | SettlementData;
+
+/**
+ * BitMEX subscription confirmation message
+ */
+export interface BitmexSubscriptionMessage {
+  subscribe: string;
+  success: boolean;
+  request?: {
+    op: string;
+    args: string[];
+  };
+}
+
+/**
+ * BitMEX unsubscription confirmation message
+ */
+export interface BitmexUnsubscriptionMessage {
+  unsubscribe: string;
+  success: boolean;
+  request?: {
+    op: string;
+    args: string[];
+  };
+}
+
+/**
+ * BitMEX info/welcome message
+ */
+export interface BitmexInfoMessage {
+  info: string;
+  version: string;
+  timestamp: string;
+  docs: string;
+  limit?: {
+    remaining: number;
+  };
+}
+
+/**
+ * Union of all BitMEX control messages (subscription/unsubscription/info)
+ * These are WebSocket control frames, not data messages
+ */
+export type BitmexControlMessage =
+  | BitmexSubscriptionMessage
+  | BitmexUnsubscriptionMessage
+  | BitmexInfoMessage;
+
+/**
+ * Union of all possible BitMEX WebSocket messages
+ * Includes both data messages and control messages
+ */
+export type BitmexWebSocketMessage = BitmexWSMessage | BitmexControlMessage;
+
+/**
+ * Type guard for subscription messages
+ */
+export const isBitmexSubscriptionMessage = (data: unknown): data is BitmexSubscriptionMessage => {
+  return typeof data === 'object' && data !== null && 'subscribe' in data;
+};
+
+/**
+ * Type guard for unsubscription messages
+ */
+export const isBitmexUnsubscriptionMessage = (data: unknown): data is BitmexUnsubscriptionMessage => {
+  return typeof data === 'object' && data !== null && 'unsubscribe' in data;
+};
+
+/**
+ * Type guard for info messages
+ */
+export const isBitmexInfoMessage = (data: unknown): data is BitmexInfoMessage => {
+  return typeof data === 'object' && data !== null && 'info' in data && 'version' in data;
+};
 
 /**
  * ISO 8601 timestamp as string

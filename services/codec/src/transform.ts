@@ -1,66 +1,101 @@
-import type { Broker } from '../../../packages/rabbitmq';
+import { brotliCompressSync } from 'node:zlib';
 import type { BitmexWSMessage } from '../../../shared/types';
-import logger from './logger';
+import type { RawMessage } from '../../../packages/rabbitmq';
+import { type EncodedField, ACTION_ID, encodeVersion, encodeTimestamp, } from './encoding/mappings';
 
-const consumerQueueName = 'bitmex-feed';
+interface EncodedMessage {
+  headers: Record<string, unknown>;
+  payload: Buffer;
+}
 
 /**
- * Transform a BitMEX message. Currently passes through with minimal changes.
- * This is the place to add custom transformations for different message types.
+ * Encode a raw AMQP message for compressed archival.
+ *
+ * Responsibilities:
+ * - Build outbound headers (table for collection routing, metadata for document fields)
+ * - Strip redundant payload fields (table, keys, types, filter)
+ * - Encode action as a compact 1-byte prefix
+ * - Brotli-compress data items
+ *
+ * Returns headers and the compressed payload buffer.
  */
-const transformMessage = (data: BitmexWSMessage): BitmexWSMessage => {
-  // TODO: Add custom transformations here based on message table/action
-  // Examples:
-  // - Normalize field names
-  // - Convert timestamps
-  // - Calculate derived fields
-  // - Filter sensitive data
-  // For now, pass through as-is
-  return data;
+export const encode = (rawMsg: RawMessage): EncodedMessage => {
+  const bitmexMsg = JSON.parse(rawMsg.content.toString()) as BitmexWSMessage;
+  const payload = JSON.stringify(bitmexMsg.data);
+
+  return {
+    headers: messageHeaders(rawMsg),
+    payload: brotliCompressSync(payload),
+  };
 };
 
-export const startConsuming = async (
-  broker: Broker,
-  onProcessMsg: () => void,
-  onPublishMsg: () => void
-): Promise<void> => {
-  try {
-    const inputQueue = broker.getQueue(consumerQueueName);
-    const outputQueue = broker.getQueue('archivist');
+/**
+ * Pack multiple encoded fields into a single BigInt.
+ * Fields are packed MSB first: first field occupies the highest bits.
+ *
+ * @param fields Array of { encoded, bits } objects to pack
+ * @returns Packed BigInt combining all fields
+ * @throws Error if total bits exceed 64
+ */
+const pack = (fields: EncodedField[]): bigint => {
+  let totalBits = 0;
+  let packed = 0n;
 
-    if (! inputQueue || ! outputQueue) {
-      throw new Error('Required queues not found');
+  for (const field of fields) {
+    if (totalBits + field.bits > 64) {
+      throw new Error(`Cannot pack: total bits ${totalBits + field.bits} exceeds 64`);
     }
 
-    logger.info({ queue: consumerQueueName }, 'Starting message consumption');
-
-    await inputQueue.consume(
-      async (message, { ack, nack }) => {
-        try {
-          const data = message as BitmexWSMessage;
-          const transformed = transformMessage(data);
-
-          onProcessMsg();
-
-          // Publish to archivist queue
-          outputQueue.publish(transformed, { persistent: true });
-
-          onPublishMsg();
-
-          // Acknowledge the message
-          ack();
-        } catch (error) {
-          logger.error({ error }, 'Error processing message');
-          // Nack with requeue on error
-          nack(true);
-        }
-      },
-      { prefetch: 10 }
-    );
-
-    logger.info('Successfully started consuming messages');
-  } catch (e) {
-    logger.error({ e }, 'Failed to start consuming');
-    throw e;
+    // Shift the current value left by the number of bits for this field,
+    // then add the new encoded value
+    packed = (packed << BigInt(field.bits)) | BigInt(field.encoded);
+    totalBits += field.bits;
   }
+
+  return packed;
+};
+
+const extractTs = (message: BitmexWSMessage): string => {
+  return (message.data.length && 'timestamp' in message.data[0])
+    ? message.data[0].timestamp
+    : new Date().toISOString();
+};
+
+const messageHeaders = (rawMsg: RawMessage): Record<string, unknown> => {
+  const [table, symbol] = rawMsg.fields.routingKey.split('.');
+  const documentId = createDocumentId(rawMsg);
+
+  return {
+    table,
+    metadata: {
+      _id: bigIntToBuffer(documentId),
+      ...(symbol && { symbol }),
+    },
+  };
+}
+
+/**
+ * Create custom MongoDB _id by packing message metadata into a single int64.
+ */
+const createDocumentId = (message: RawMessage, encoderVersion: string = '1.0.0'): bigint => {
+  const bitmexMsg = JSON.parse(message.content.toString()) as BitmexWSMessage;
+  const actionId = ACTION_ID[bitmexMsg.action as keyof typeof ACTION_ID];
+  const apiVersion = message.properties.headers?.api_version as string | undefined;
+
+  return pack([
+    { encoded: 0, bits: 2 },                // unused (2 bits, 62-63)
+    encodeTimestamp(extractTs(bitmexMsg)),  // timestamp (42 bits, 20-61)
+    encodeVersion(apiVersion || '2.0.0'),   // apiVersion (9 bits, 11-19)
+    encodeVersion(encoderVersion),          // encoderVersion (9 bits, 2-10)
+    { encoded: actionId, bits: 2 },          // action (2 bits, 0-1)
+  ]);
+};
+
+/**
+ * Serialise a BigInt as a big-endian 8-byte Buffer for lossless AMQP header transport.
+ */
+const bigIntToBuffer = (value: bigint): Buffer => {
+  const buf = Buffer.allocUnsafe(8);
+  buf.writeBigUInt64BE(value);
+  return buf;
 };
