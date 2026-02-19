@@ -18,6 +18,9 @@ services:
       CODEC_BATCH_SIZE: ${CODEC_BATCH_SIZE:-100}
       CODEC_BATCH_TIMEOUT_MS: ${CODEC_BATCH_TIMEOUT_MS:-5000}
 
+      # Codec Strategy
+      CODEC_STRATEGY: ${CODEC_STRATEGY:-}
+
       # Runtime
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV: ${APP_ENV:-production}

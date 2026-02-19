@@ -12,8 +12,7 @@ import type {
   InstrumentData,
   FundingData,
   SettlementData,
-  InsuranceData,
-} from '../src/types';
+} from '../../../shared/types';
 
 // Pending Review
 // Auto-generated BitMEX WebSocket message fixtures

@@ -1,4 +1,4 @@
-import { MongoClient, Db, MongoError, Long } from 'mongodb';
+import { MongoClient, Db, MongoError, Long, Binary } from 'mongodb';
 import amqp from 'amqplib';
 import logger from './logger';
 
@@ -86,7 +86,7 @@ const getCollectionName = (msg: amqp.ConsumeMessage): string => {
  */
 const createDocument = (msg: amqp.ConsumeMessage): Record<string, unknown> => {
   const rawMetadata: Record<string, unknown> = msg.properties?.headers?.metadata || {};
-  const contentType = msg.properties?.contentType;
+  const contentType = msg.properties?.contentType || 'application/json';
 
   // Deserialise metadata: Buffer values are treated as big-endian int64 → BSON Long
   const metadata = Object.fromEntries(
@@ -95,7 +95,7 @@ const createDocument = (msg: amqp.ConsumeMessage): Record<string, unknown> => {
   );
 
   const data = (contentType === 'application/octet-stream')
-    ? { message: msg.content }
+    ? { b: new Binary(msg.content) }
     : JSON.parse(msg.content.toString());
 
   return { ...metadata, ...data };

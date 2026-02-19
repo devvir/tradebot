@@ -8,6 +8,7 @@ import { connectToQueue } from './rabbitmq';
 import { startHealthCheck } from './health';
 import { subscribeToTopics } from './subscriptions';
 import { setupCommandListener } from './commands';
+import { InstrumentData } from '../../../shared/types';
 import {
   type FeedState,
   type HealthState,
@@ -148,9 +149,15 @@ const handleMessage = async (message: Buffer): Promise<void> => {
       (data.data[0] && 'symbol' in data.data[0]) ? data.data[0].symbol : undefined
     );
 
+    const exchange = state.broker!.getExchange('bitmex-data')!;
     const routingKey = symbol ? `${data.table}.${symbol}` : data.table;
 
-    const exchange = state.broker!.getExchange('bitmex-data')!;
+    // Filter out unlisted instruments from instrument partials
+    if (data.table === 'instrument' && data.action === 'partial') {
+      const dataItems = data.data as InstrumentData[];
+      data.data = dataItems.filter(({ state }) => state !== 'Unlisted');
+    }
+
     exchange.publish(data, routingKey, {
       expiration: config.messageTtlMs?.toString(),
       headers: { api_version: state.apiVersion || undefined },
@@ -228,6 +235,7 @@ const resolveSubscriptions = async (cfg: Config): Promise<void> => {
 
   try {
     cfg.symbols = await fetchAllSymbols(cfg.symbolPatterns, cfg.role);
+
     logger.info({ role: cfg.role, symbols: cfg.symbols.length }, 'Resolved symbols');
   } catch (error) {
     logger.error({ error }, 'Failed to fetch symbols');

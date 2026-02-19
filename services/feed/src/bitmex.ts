@@ -1,4 +1,3 @@
-import https from 'https';
 import logger from './logger';
 import { KNOWN_CHANNELS, SYMBOL_REQUIRED_CHANNELS } from './channels';
 import { filterChannelsByRole, filterSymbolsByRole } from './config';
@@ -12,32 +11,14 @@ export { KNOWN_CHANNELS, SYMBOL_REQUIRED_CHANNELS, GLOBAL_CHANNELS } from './cha
  * Returns the symbols this service instance should handle.
  */
 export const fetchAllSymbols = async (patterns: string[], role: FeedRole): Promise<string[]> => {
-  const raw = await new Promise<string[]>((resolve, reject) => {
-    const req = https.get('https://www.bitmex.com/api/v1/instrument/active', (res) => {
-      let data = '';
+  const filter = encodeURIComponent(JSON.stringify({ state: 'Open' }));
+  const res = await fetch(`https://www.bitmex.com/api/v1/instrument?filter=${filter}`);
+  const instruments = (await res.json()) as Array<{ symbol: string }>;
+  const symbols = instruments.map((inst) => inst.symbol);
 
-      res.on('data', (chunk: string) => {
-        data += chunk;
-      });
+  logger.info({ count: symbols.length }, 'Fetched active symbols from BitMEX');
 
-      res.on('end', () => {
-        try {
-          const instruments = JSON.parse(data) as Array<{ symbol?: string }>;
-          const symbols = instruments
-            .map((inst) => inst.symbol)
-            .filter((symbol): symbol is string => Boolean(symbol));
-          logger.info({ count: symbols.length }, 'Fetched active symbols from BitMEX');
-          resolve(symbols);
-        } catch (error) {
-          reject(error);
-        }
-      });
-    });
-
-    req.on('error', reject);
-  });
-
-  return filterSymbolsByPatterns(filterSymbolsByRole(raw, role), patterns);
+  return filterSymbolsByPatterns(filterSymbolsByRole(symbols, role), patterns);
 };
 
 /**

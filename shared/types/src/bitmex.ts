@@ -42,6 +42,8 @@ export type BitmexTable =
   | 'funding'
   | 'settlement';
 
+export type BitmexAction = 'partial' | 'update' | 'insert' | 'delete';
+
 /**
  * BitMEX WebSocket message structure as received from BitMEX API
  * Discriminated union by action type
@@ -198,12 +200,12 @@ export interface InstrumentData {
 export interface OrderBookL2Data {
   symbol: string;
   id: number;
-  side: string;
+  side: 'Buy' | 'Sell';
   size?: number;
   price: number;
   pool?: string;
   timestamp: string;
-  transactTime?: string;
+  transactTime: string;
 }
 
 export interface QuoteData {

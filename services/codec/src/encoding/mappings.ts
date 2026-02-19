@@ -3,6 +3,9 @@
  * These define how fields are encoded to minimize storage requirements
  */
 
+import { BitmexAction, BitmexDataItem, OrderBookL2Data, QuoteData } from "../../../../shared/types/src";
+import { codecStrategy } from "../config";
+
 /**
  * Encoded value with bit width specification, describing what and how much space is needed.
  */
@@ -203,3 +206,28 @@ export const instrumentEncoding = {
   // Metadata-heavy, compression not priority
 } as const;
 
+export const extractPayload = (data: BitmexDataItem[], table: string, action: BitmexAction): unknown => {
+  switch (table) {
+    case 'orderBookL2':
+      return data.map(item => orderBookL2Payload(item as OrderBookL2Data, action));
+
+    case 'quote':
+      return data.map(item => QuotePayload(item as QuoteData));
+
+    default:
+      return data;
+  }
+}
+
+const orderBookL2Payload = ({ id, side, size, price, transactTime }: OrderBookL2Data, action: BitmexAction): PackedDataItem => {
+  const ts = codecStrategy.pack() ? encodeTimestamp(transactTime).encoded : transactTime;
+  const sideId = codecStrategy.pack() ? orderBookL2Encoding.sideMap[side] : side;
+
+  return (action === 'delete') ? [id, sideId, ts] : [id, sideId, size!, price, ts];
+}
+
+const QuotePayload = ({ bidSize, bidPrice, askSize, askPrice }: QuoteData): PackedDataItem => {
+  return [bidSize, bidPrice, askPrice, askSize];
+}
+
+type PackedDataItem = (string | number | bigint)[];

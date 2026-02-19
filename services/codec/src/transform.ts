@@ -1,11 +1,12 @@
 import { brotliCompressSync } from 'node:zlib';
 import type { BitmexWSMessage } from '../../../shared/types';
 import type { RawMessage } from '../../../packages/rabbitmq';
-import { type EncodedField, ACTION_ID, encodeVersion, encodeTimestamp, } from './encoding/mappings';
+import { type EncodedField, ACTION_ID, encodeVersion, encodeTimestamp, extractPayload, } from './encoding/mappings';
+import { codecStrategy } from './config';
 
 interface EncodedMessage {
   headers: Record<string, unknown>;
-  payload: Buffer;
+  payload: Buffer | Record<string, unknown>[];
 }
 
 /**
@@ -19,13 +20,22 @@ interface EncodedMessage {
  *
  * Returns headers and the compressed payload buffer.
  */
-export const encode = (rawMsg: RawMessage): EncodedMessage => {
-  const bitmexMsg = JSON.parse(rawMsg.content.toString()) as BitmexWSMessage;
-  const payload = JSON.stringify(bitmexMsg.data);
+export const encode = (rawMsg: RawMessage, jsonMsg: BitmexWSMessage): EncodedMessage => {
+  const [table, _] = rawMsg.fields.routingKey.split('.');
+
+  let payload = jsonMsg.data as unknown;
+
+  if (codecStrategy.trim() || codecStrategy.pack()) {
+    payload = extractPayload(jsonMsg.data, table, jsonMsg.action);
+  }
+
+  if (codecStrategy.binary()) {
+    payload = brotliCompressSync(JSON.stringify(payload));
+  }
 
   return {
-    headers: messageHeaders(rawMsg),
-    payload: brotliCompressSync(payload),
+    headers: messageHeaders(rawMsg, jsonMsg),
+    payload: payload as EncodedMessage['payload'],
   };
 };
 
@@ -61,15 +71,15 @@ const extractTs = (message: BitmexWSMessage): string => {
     : new Date().toISOString();
 };
 
-const messageHeaders = (rawMsg: RawMessage): Record<string, unknown> => {
+const messageHeaders = (rawMsg: RawMessage, jsonMsg: BitmexWSMessage): Record<string, unknown> => {
   const [table, symbol] = rawMsg.fields.routingKey.split('.');
-  const documentId = createDocumentId(rawMsg);
+  const documentId = createDocumentId(rawMsg, jsonMsg);
 
   return {
     table,
     metadata: {
       _id: bigIntToBuffer(documentId),
-      ...(symbol && { symbol }),
+      ...(symbol && { s: symbol }),
     },
   };
 }
@@ -77,17 +87,16 @@ const messageHeaders = (rawMsg: RawMessage): Record<string, unknown> => {
 /**
  * Create custom MongoDB _id by packing message metadata into a single int64.
  */
-const createDocumentId = (message: RawMessage, encoderVersion: string = '1.0.0'): bigint => {
-  const bitmexMsg = JSON.parse(message.content.toString()) as BitmexWSMessage;
-  const actionId = ACTION_ID[bitmexMsg.action as keyof typeof ACTION_ID];
+const createDocumentId = (message: RawMessage, jsonMsg: BitmexWSMessage, encoderVersion: string = '1.0.0'): bigint => {
+  const actionId = ACTION_ID[jsonMsg.action as keyof typeof ACTION_ID];
   const apiVersion = message.properties.headers?.api_version as string | undefined;
 
   return pack([
     { encoded: 0, bits: 2 },                // unused (2 bits, 62-63)
-    encodeTimestamp(extractTs(bitmexMsg)),  // timestamp (42 bits, 20-61)
+    encodeTimestamp(extractTs(jsonMsg)),    // timestamp (42 bits, 20-61)
     encodeVersion(apiVersion || '2.0.0'),   // apiVersion (9 bits, 11-19)
     encodeVersion(encoderVersion),          // encoderVersion (9 bits, 2-10)
-    { encoded: actionId, bits: 2 },          // action (2 bits, 0-1)
+    { encoded: actionId, bits: 2 },         // action (2 bits, 0-1)
   ]);
 };
 

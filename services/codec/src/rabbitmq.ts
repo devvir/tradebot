@@ -1,4 +1,6 @@
 import { keepAlive, Broker } from '../../../packages/rabbitmq';
+import { BitmexWSMessage } from '../../../shared/types/src';
+import { codecStrategy } from './config';
 import logger from './logger';
 import { encode } from './transform';
 
@@ -44,13 +46,18 @@ export const startConsuming = async (
         if (! message) return;
 
         try {
-          const { headers, payload } = encode(rawMsg);
-
           onProcessMsg();
 
-          outputQueue.publish(payload, { headers, contentType: 'application/octet-stream' });
-          // const headers = { table: rawMsg.fields.routingKey.split('.')[0] };
-          // outputQueue.publish(message, { headers, contentType: 'application/json' });
+          if (codecStrategy.passthru()) {
+            const headers = { table: rawMsg.fields.routingKey.split('.')[0] };
+
+            outputQueue.publish(message, { headers, contentType: 'application/json' });
+          } else {
+            const { headers, payload } = encode(rawMsg, message as BitmexWSMessage);
+            const contentType = codecStrategy.binary() ? 'application/octet-stream' : 'application/json';
+
+            outputQueue.publish(payload, { headers, contentType });
+          }
 
           onPublishMsg();
           ack();
