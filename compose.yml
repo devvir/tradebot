@@ -1,5 +1,0 @@
-# Full Application Compose
-# Orchestrates modules - each module manages its own service dependencies
-
-include:
-  - path: modules/reader/compose.yml

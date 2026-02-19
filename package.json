@@ -4,6 +4,9 @@
   "description": "BitMEX Trading Bot",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": "^22.22.0"
+  },
   "scripts": {
     "build": "pnpm --color -r build",
     "lint": "pnpm --color -r lint",
@@ -13,7 +16,6 @@
     "check": "pnpm --color -r check"
   },
   "devDependencies": {
-    "node": "^22.22.0",
-    "typescript": "^5.3.0"
+    "typescript": "^5.9.3"
   }
 }

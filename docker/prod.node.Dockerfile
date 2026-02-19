@@ -1,5 +1,4 @@
 # Base Dockerfile for all Node.js services in the TradeBot monorepo
-# Usage: docker build --build-arg SERVICE_NAME=archivist -f docker/node.Dockerfile .
 
 ARG NODE_VERSION=22-alpine
 

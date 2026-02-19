@@ -6,7 +6,7 @@ services:
   codec:
     build:
       context: ../../..
-      dockerfile: docker/node.Dockerfile
+      dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
       args:
         SERVICE_NAME: codec
 
@@ -23,11 +23,14 @@ services:
 
       # Runtime
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      NODE_ENV: ${APP_ENV:-production}
+      NODE_ENV: ${APP_ENV:-prod}
       TZ: ${TZ:-UTC}
 
     ports:
       - "${CODEC_PORT:-}:3000"
+
+    volumes:
+      - ../../../:/live
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
