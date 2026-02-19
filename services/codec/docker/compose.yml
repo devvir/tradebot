@@ -1,5 +1,6 @@
 # Codec Service - Consumes from bitmex-feed queue, transforms messages, publishes to archivist exchange
 # Stateless transformation service for message encoding/decoding and normalization
+# Supports scaling: Multiple instances automatically load-balance message consumption from RabbitMQ
 
 services:
   codec:
@@ -8,7 +9,6 @@ services:
       dockerfile: docker/node.Dockerfile
       args:
         SERVICE_NAME: codec
-    container_name: ${COMPOSE_PROJECT_NAME:-.}-codec
 
     environment:
       # Dependencies (queue)
@@ -37,3 +37,15 @@ services:
 
     depends_on:
       - rabbitmq
+
+    deploy:
+      replicas: ${CODEC_REPLICAS:-1}
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s

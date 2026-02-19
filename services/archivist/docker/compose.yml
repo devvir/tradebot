@@ -1,5 +1,6 @@
 # Archivist Service - Consumes from queue and persists to MongoDB
 # Generic, reusable service. Deduplicates and archives data.
+# Supports horizontal scaling: Multiple instances automatically load-balance message consumption.
 
 services:
   archivist:
@@ -8,7 +9,6 @@ services:
       dockerfile: docker/node.Dockerfile
       args:
         SERVICE_NAME: archivist
-    container_name: ${COMPOSE_PROJECT_NAME:-.}-archivist
 
     environment:
       # Dependencies (queue and database)
@@ -39,3 +39,15 @@ services:
     depends_on:
       - mongodb
       - rabbitmq
+
+    deploy:
+      replicas: ${ARCHIVIST_REPLICAS:-1}
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s

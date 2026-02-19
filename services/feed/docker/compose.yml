@@ -1,5 +1,6 @@
 # Feed Service - Connects to BitMEX and publishes to queue
 # Generic, reusable service. Multiple instances with different FEED_ROLE values.
+# Supports horizontal scaling via replicas configuration.
 
 services:
   feed:
@@ -47,3 +48,15 @@ services:
 
     depends_on:
       - rabbitmq
+
+    deploy:
+      replicas: ${FEED_REPLICAS:-1}
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
