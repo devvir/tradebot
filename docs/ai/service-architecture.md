@@ -8,7 +8,28 @@ This document describes the architectural principles that govern how services ar
 
 ## Note
 
-The examples in this file are NOT documentation of existing features; they're just meant to showcase the principles described. This document describes guidelines, not implementation details.
+This document describes architectural principles and guidelines for the project. Some examples are aspirational (showing how the system _should_ be organized) rather than documentation of all current implemented features. The three active services (feed, codec, archivist) follow these principles. Some services mentioned in examples (e.g., Snapshots, Bitmex-WS) are currently disabled/in development.
+
+## Shared Packages (Workspace Modules)
+
+Beyond services, the project includes shared workspace packages for code reuse:
+
+**`@tradebot/logger`** (`shared/logger/`)
+- Shared pino logger configuration and utilities
+- Imported by: feed, codec, archivist, and other services
+- Usage: `import logger from '@tradebot/logger'`
+
+**`@tradebot/types`** (`shared/types/`)
+- Shared TypeScript type definitions (BitMEX message types, data structures, etc.)
+- Imported by: feed, codec, archivist
+- Usage: `import type { BitmexDataMessage } from '@tradebot/types'`
+
+**`@devvir/rabbitmq`** (`packages/rabbitmq/`)
+- Generic RabbitMQ broker wrapper and utilities
+- Imported by: feed, codec, archivist
+- Usage: `import { Broker, keepAlive } from '@devvir/rabbitmq'`
+
+These shared packages are managed via pnpm workspace references (e.g., `"@tradebot/logger": "workspace:*"` in service package.json), enabling seamless local development and easy future npm publication.
 
 ## Core Principles
 

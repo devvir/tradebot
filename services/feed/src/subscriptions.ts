@@ -1,5 +1,5 @@
 import WebSocket from 'ws';
-import logger from './logger';
+import logger from '@tradebot/logger';
 
 /**
  * Core subscription management logic - handles batching for any operation

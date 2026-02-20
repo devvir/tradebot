@@ -9,7 +9,7 @@
 services:
   mongodb:
     image: mongo:7
-    container_name: ${COMPOSE_PROJECT_NAME:-.}-mongodb
+    container_name: ${COMPOSE_PROJECT_NAME:-tradebot}-mongodb
     command: mongod --quiet --setParameter logLevel=0 --wiredTigerCacheSizeGB=${MONGODB_CACHE_SIZE_GB:-2}
 
     environment:

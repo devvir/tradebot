@@ -1,6 +1,5 @@
-import logger from './logger';
+import logger from '@tradebot/logger';
 import type { Config, FeedRole } from './types';
-export type { Config, FeedRole } from './types';
 
 const BITMEX_WS_URLS = {
   live: 'wss://www.bitmex.com/realtime',

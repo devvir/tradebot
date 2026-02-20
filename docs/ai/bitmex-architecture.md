@@ -1,8 +1,10 @@
-# Bitmex Module: Architecture & Strategic Motivation
+# Bitmex Module: Architecture & Strategic Motivation (In Development)
+
+**Status:** The services described below (Snapshots, Bitmex-WS) are currently disabled/in development and are not part of the active system. This document describes aspirational architecture for a future BitMEX integration module.
 
 ## Overview
 
-The Bitmex module is a replacement for direct BitMEX WebSocket connections. It provides:
+When completed, the Bitmex module will provide a replacement for direct BitMEX WebSocket connections. It provides:
 
 1. **A BitMEX-compatible WebSocket server** that clients can connect to identically to BitMEX's official API
 2. **State aggregation** for delta-based channels (orderBookL2, quotes) into snapshots
@@ -93,11 +95,11 @@ The client strategy sees the same WebSocket API and message flow as in productio
 
 ### Service Responsibilities
 
-#### Feed Service (Inherited from reader module)
+#### Feed Service
 
 **Role:** Data acquisition and normalization
 
-**Current implementation:** Connects to BitMEX WebSocket, maintains subscriptions, publishes to RabbitMQ
+**Current implementation:** The feed service (active) connects to BitMEX WebSocket, maintains subscriptions, and publishes to RabbitMQ for consumption by codec and archivist services
 
 **Future flexibility:** Could be replaced with:
 - Database replay service (for backtesting)

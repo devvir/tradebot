@@ -27,7 +27,8 @@ ARG SERVICE_NAME
 ENV SERVICE_NAME=${SERVICE_NAME}
 
 # For pnpm
-ENV CI=true
+ENV CI=true`
+ENV npm_config_store_dir=/live/.pnpm-store
 
 USER node
 
@@ -35,4 +36,4 @@ USER node
 ENTRYPOINT ["dumb-init", "--"]
 
 # Install and build at startup (volume is mounted by then), then run the service
-CMD ["/bin/sh", "-c", "pnpm install && ./tb build ${SERVICE_NAME} && exec node --max-old-space-size=${NODE_MEMORY_MB} services/${SERVICE_NAME}/dist/index.js"]
+CMD ["/bin/sh", "-c", "pnpm install && ./tb build ${SERVICE_NAME} && exec node --max-old-space-size=${NODE_MEMORY_MB} services/${SERVICE_NAME}/dist/src/index.js"]

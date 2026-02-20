@@ -21,18 +21,11 @@
   "license": "ISC",
   "dependencies": {
     "@devvir/rabbitmq": "workspace:*",
+    "@tradebot/logger": "workspace:*",
+    "@tradebot/types": "workspace:*",
     "amqplib": "^0.10.3",
     "dotenv": "^16.3.1",
     "pino": "^8.14.1",
     "ws": "^8.14.0"
-  },
-  "devDependencies": {
-    "@types/amqplib": "^0.10.8",
-    "@types/node": "^20.10.0",
-    "@types/ws": "^8.5.0",
-    "@vitest/coverage-v8": "^1.0.0",
-    "ts-node": "^10.9.1",
-    "typescript": "^5.3.0",
-    "vitest": "^1.0.0"
   }
 }

@@ -1,6 +1,6 @@
 import { MongoClient, Db, MongoError, Long, Binary } from 'mongodb';
 import amqp from 'amqplib';
-import logger from './logger';
+import logger from '@tradebot/logger';
 
 export interface MongoDBConnection {
   client: MongoClient;

@@ -1,4 +1,4 @@
-import logger from './logger';
+import logger from '@tradebot/logger';
 
 export interface Config {
   rabbitmqUrl: string;

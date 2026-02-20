@@ -1,5 +1,5 @@
 import http from 'http';
-import logger from './logger';
+import logger from '@tradebot/logger';
 import type { HealthState, HealthCheckResult } from './types';
 
 const STALENESS_THRESHOLD_MS = 30000;

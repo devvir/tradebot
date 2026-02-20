@@ -1,14 +1,15 @@
 import 'dotenv/config';
 import { EventEmitter } from 'node:events';
 import WebSocket from 'ws';
-import logger from './logger';
-import { loadConfig, validateConfig, type Config } from './config';
+import logger from '@tradebot/logger';
+import { loadConfig, validateConfig } from './config';
+import type { Config } from './types';
 import { fetchAllSymbols, resolveChannels, buildSubscriptionTopics } from './bitmex';
 import { connectToQueue } from './rabbitmq';
 import { startHealthCheck } from './health';
 import { subscribeToTopics } from './subscriptions';
 import { setupCommandListener } from './commands';
-import { InstrumentData } from '../../../shared/types';
+import type { InstrumentData } from '@tradebot/types';
 import {
   type FeedState,
   type HealthState,
@@ -50,9 +51,7 @@ const main = async (): Promise<void> => {
 
     logger.info({
       role: config.role,
-      channels: config.channels.length,
-      symbols: config.symbols.length,
-      subscriptions: buildSubscriptionTopics(config.channels, config.symbols).length,
+      subscriptions: buildSubscriptionTopics(config.channels, config.symbols),
     }, 'Will subscribe to topics');
 
     await initializeRabbitMQ(config);
@@ -158,6 +157,8 @@ const handleMessage = async (message: Buffer): Promise<void> => {
       data.data = dataItems.filter(({ state }) => state !== 'Unlisted');
     }
 
+    logger.debug({ routingKey }, 'Publishing message to queue');
+
     exchange.publish(data, routingKey, {
       expiration: config.messageTtlMs?.toString(),
       headers: { api_version: state.apiVersion || undefined },
@@ -235,8 +236,7 @@ const resolveSubscriptions = async (cfg: Config): Promise<void> => {
 
   try {
     cfg.symbols = await fetchAllSymbols(cfg.symbolPatterns, cfg.role);
-
-    logger.info({ role: cfg.role, symbols: cfg.symbols.length }, 'Resolved symbols');
+    logger.info({ role: cfg.role, symbols: cfg.symbols }, 'Resolved symbols');
   } catch (error) {
     logger.error({ error }, 'Failed to fetch symbols');
     throw error;
@@ -246,18 +246,13 @@ const resolveSubscriptions = async (cfg: Config): Promise<void> => {
 /**
  * Determine if service should enter idle mode (no work to do)
  */
-const shouldStartIdleMode = (cfg: Config): string | null => {
-  if (cfg.channels.length === 0) {
-    return 'No channels for this role';
-  }
-  if (cfg.symbols.length === 0 && cfg.role !== 'GLOBAL') {
-    return 'No symbols for this role';
-  }
+const shouldStartIdleMode = (cfg: Config): string | void => {
+  if (cfg.channels.length === 0) return 'No channels for this role';
+  if (cfg.symbols.length === 0 && cfg.role !== 'GLOBAL') return 'No symbols for this role';
+
   const topics = buildSubscriptionTopics(cfg.channels, cfg.symbols);
-  if (topics.length === 0) {
-    return 'No subscription topics';
-  }
-  return null;
+
+  if (topics.length === 0) return 'No subscription topics';
 };
 
 /**

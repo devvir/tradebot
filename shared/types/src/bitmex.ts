@@ -25,24 +25,32 @@ export type BitmexFieldType =
  * All possible BitMEX WebSocket table names
  */
 export type BitmexTable =
+  | 'announcement'
+  | 'chat'
+  | 'connected'
   | 'insurance'
   | 'instrument'
+  | 'funding'
+  | 'liquidation'
   | 'orderBookL2'
+  | 'publicNotifications'
   | 'quote'
-  | 'trade'
   | 'quoteBin1m'
   | 'quoteBin5m'
   | 'quoteBin1h'
   | 'quoteBin1d'
+  | 'settlement'
+  | 'trade'
   | 'tradeBin1m'
   | 'tradeBin5m'
   | 'tradeBin1h'
-  | 'tradeBin1d'
-  | 'liquidation'
-  | 'funding'
-  | 'settlement';
+  | 'tradeBin1d';
 
 export type BitmexAction = 'partial' | 'update' | 'insert' | 'delete';
+
+export type BitmexSide = 'Buy' | 'Sell';
+
+export type BitmexTickDirection = 'MinusTick' | 'ZeroMinusTick' | 'ZeroPlusTick' | 'PlusTick';
 
 /**
  * BitMEX WebSocket message structure as received from BitMEX API
@@ -80,7 +88,7 @@ export interface BitmexDelete<Item extends BitmexDataItem = BitmexDataItem> exte
 /**
  * Union of all BitMEX WebSocket message types
  */
-export type BitmexWSMessage<Item extends BitmexDataItem = BitmexDataItem> =
+export type BitmexDataMessage<Item extends BitmexDataItem = BitmexDataItem> =
   | BitmexPartial<Item>
   | BitmexUpdate<Item>
   | BitmexInsert<Item>
@@ -168,7 +176,7 @@ export interface InstrumentData {
   lowPrice?: number;
   lastPrice?: number;
   lastPriceProtected?: number;
-  lastTickDirection?: string;
+  lastTickDirection?: BitmexTickDirection;
   lastChangePcnt?: number;
   bidPrice?: number;
   midPrice?: number;
@@ -200,12 +208,12 @@ export interface InstrumentData {
 export interface OrderBookL2Data {
   symbol: string;
   id: number;
-  side: 'Buy' | 'Sell';
-  size?: number;
+  side: BitmexSide;
+  size?: number; // Missing in delete actions
   price: number;
-  pool?: string;
   timestamp: string;
   transactTime: string;
+  pool?: string; // Only in Rest API?
 }
 
 export interface QuoteData {
@@ -215,22 +223,22 @@ export interface QuoteData {
   bidPrice: number;
   askPrice: number;
   askSize: number;
-  pool?: string;
+  pool?: string; // Only in Rest API?
 }
 
 export interface TradeData {
   timestamp: string;
   symbol: string;
-  side: string;
+  side: BitmexSide;
   size: number;
   price: number;
-  tickDirection: string;
+  tickDirection: BitmexTickDirection;
   trdMatchID: string;
   grossValue: number;
   homeNotional: number;
   foreignNotional: number;
   trdType: string;
-  pool?: string;
+  pool?: string; // Only in Rest API?
 }
 
 export interface QuoteBinData {
@@ -263,7 +271,7 @@ export interface TradeBinData {
 export interface LiquidationData {
   orderID: string;
   symbol: string;
-  side: string;
+  side: BitmexSide;
   price: number;
   leavesQty: number;
 }
@@ -288,11 +296,44 @@ export interface SettlementData {
   taxRate?: number;
 }
 
+export interface AnnouncementData {
+  id: number;
+  link: string;
+  title: string;
+  content: string;
+  date: string;
+}
+
+export interface ChatData {
+  id: number;
+  date: string;
+  user: string;
+  message: string;
+  html: string;
+  userColor: string;
+}
+
+export interface ConnectedData {
+  id: number;
+  users: number;
+  bots: number;
+}
+
+export interface PublicNotificationsData {
+  title: string;
+  body: string;
+  ttl: number;
+  closable: boolean;
+  persist: boolean;
+  sound: string;
+}
+
 /**
  * Union type of all possible BitMEX data items
  */
-export type BitmexDataItem =
-  | InsuranceData
+export type BitmexDataItem = BitmexDataItemWithSymbol | BitmexDataItemWithoutSymbol;
+
+export type BitmexDataItemWithSymbol =
   | InstrumentData
   | OrderBookL2Data
   | QuoteData
@@ -302,6 +343,13 @@ export type BitmexDataItem =
   | LiquidationData
   | FundingData
   | SettlementData;
+
+export type BitmexDataItemWithoutSymbol =
+  | InsuranceData
+  | AnnouncementData
+  | ChatData
+  | ConnectedData
+  | PublicNotificationsData;
 
 /**
  * BitMEX subscription confirmation message
@@ -353,7 +401,7 @@ export type BitmexControlMessage =
  * Union of all possible BitMEX WebSocket messages
  * Includes both data messages and control messages
  */
-export type BitmexWebSocketMessage = BitmexWSMessage | BitmexControlMessage;
+export type BitmexWebSocketMessage = BitmexDataMessage | BitmexControlMessage;
 
 /**
  * Type guard for subscription messages

@@ -10,7 +10,7 @@ Services define themselves with **no assumptions about their context or dependen
 
 Services should NOT declare `depends_on` on other services, or networks. This keeps them decoupled and reusable across different modules.
 
-**Example:** [services/feed/docker/compose.yml](../../services/feed/docker/compose.yml)
+**Example:** Each service (feed, codec, archivist) has its own `docker/compose.yml` defining container configuration
 
 ### Level 2: Module Composition (`extends`)
 
@@ -52,9 +52,9 @@ This approach:
 - **Centralizes orchestration logic**: Module-level compose files own the wiring, not the services themselves
 - **Scales across contexts**: A service used in multiple modules only needs to be defined once
 
-### Reference Implementation
+### Current Status
 
-See [modules/reader/compose.yml](../../modules/reader/compose.yml) for a complete example using both `include` and `extends`.
+The Docker Compose strategy is documented here for when modules are actively developed. Currently, services are developed and tested individually rather than through formal module compositions.
 
 ## Merge Rules
 

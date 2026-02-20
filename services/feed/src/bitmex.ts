@@ -1,7 +1,6 @@
-import logger from './logger';
 import { KNOWN_CHANNELS, SYMBOL_REQUIRED_CHANNELS } from './channels';
 import { filterChannelsByRole, filterSymbolsByRole } from './config';
-import type { FeedRole } from './config';
+import type { FeedRole } from './types';
 
 // Re-export channel constants for convenience
 export { KNOWN_CHANNELS, SYMBOL_REQUIRED_CHANNELS, GLOBAL_CHANNELS } from './channels';
@@ -15,8 +14,6 @@ export const fetchAllSymbols = async (patterns: string[], role: FeedRole): Promi
   const res = await fetch(`https://www.bitmex.com/api/v1/instrument?filter=${filter}`);
   const instruments = (await res.json()) as Array<{ symbol: string }>;
   const symbols = instruments.map((inst) => inst.symbol);
-
-  logger.info({ count: symbols.length }, 'Fetched active symbols from BitMEX');
 
   return filterSymbolsByPatterns(filterSymbolsByRole(symbols, role), patterns);
 };

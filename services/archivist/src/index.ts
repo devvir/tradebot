@@ -1,4 +1,4 @@
-import logger from './logger';
+import logger from '@tradebot/logger';
 import { Config, loadConfig, validateConfig } from './config';
 import { connectToDatabase } from './persistence';
 import { connectToQueue } from './rabbitmq';

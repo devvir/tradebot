@@ -37,6 +37,8 @@ services:
     ports:
       - "${FEED_PORT:-}:3000"
 
+    user: "1000:1000"
+
     volumes:
       - ../../../:/live
 

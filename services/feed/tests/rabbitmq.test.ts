@@ -2,12 +2,12 @@ import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { connectToQueue } from '../src/rabbitmq';
 
 // Mock the broker module
-vi.mock('../../../packages/rabbitmq', () => ({
+vi.mock('@devvir/rabbitmq', () => ({
   keepAlive: vi.fn(),
 }));
 
 // Import after mock
-import * as brokerModule from '../../../packages/rabbitmq';
+import * as brokerModule from '@devvir/rabbitmq';
 
 describe('RabbitMQ integration', () => {
   beforeEach(() => {

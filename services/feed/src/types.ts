@@ -1,5 +1,5 @@
 import WebSocket from 'ws';
-import type { Broker } from '../../../packages/rabbitmq';
+import type { Broker } from '@devvir/rabbitmq';
 import {
   type BitmexSubscriptionMessage,
   type BitmexUnsubscriptionMessage,
@@ -8,7 +8,7 @@ import {
   isBitmexSubscriptionMessage,
   isBitmexUnsubscriptionMessage,
   isBitmexInfoMessage,
-} from '../../../shared/types';
+} from '@tradebot/types';
 
 export type FeedRole =
   | 'NONE'

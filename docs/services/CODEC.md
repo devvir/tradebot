@@ -63,7 +63,7 @@ Archivist Service (persists to MongoDB)
 The `transformMessage` function in `src/transform.ts` is a placeholder:
 
 ```typescript
-const transformMessage = (data: BitmexWSMessage): BitmexWSMessage => {
+const transformMessage = (data: BitmexDataMessage): BitmexDataMessage => {
   // TODO: Add custom transformations here based on message table/action
   // Examples:
   // - Normalize field names
@@ -116,7 +116,7 @@ Establishes connection and declares topology.
 Enters the consumption loop. For each message:
 
 1. Consume from `bitmex-feed` queue
-2. Parse message as `BitmexWSMessage`
+2. Parse message as `BitmexDataMessage`
 3. Call `transformMessage()` on the message (currently pass-through)
 4. Increment `messagesProcessed` counter
 5. Publish to `archivist` queue with `persistent: true`

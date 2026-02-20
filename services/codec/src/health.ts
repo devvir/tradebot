@@ -1,5 +1,5 @@
 import http from 'node:http';
-import logger from './logger';
+import logger from '@tradebot/logger';
 import type { HealthState } from './types';
 
 export const startHealthCheck = (port: number, getState: () => HealthState): void => {

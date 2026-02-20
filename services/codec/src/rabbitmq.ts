@@ -1,7 +1,7 @@
-import { keepAlive, Broker } from '../../../packages/rabbitmq';
-import { BitmexWSMessage } from '../../../shared/types/src';
-import { codecStrategy } from './config';
-import logger from './logger';
+import { keepAlive, Broker } from '@devvir/rabbitmq';
+import { BitmexDataMessage } from '@tradebot/types';
+import { codecStrategies, codecStrategy } from './config';
+import logger from '@tradebot/logger';
 import { encode } from './transform';
 
 const consumerQueueName = 'bitmex-feed';
@@ -49,11 +49,12 @@ export const startConsuming = async (
           onProcessMsg();
 
           if (codecStrategy.passthru()) {
-            const headers = { table: rawMsg.fields.routingKey.split('.')[0] };
-
-            outputQueue.publish(message, { headers, contentType: 'application/json' });
+            outputQueue.publish(message, {
+              headers: { table: rawMsg.fields.routingKey.split('.')[0] },
+              contentType: 'application/json',
+            });
           } else {
-            const { headers, payload } = encode(rawMsg, message as BitmexWSMessage);
+            const { headers, payload } = encode(rawMsg, message as BitmexDataMessage);
             const contentType = codecStrategy.binary() ? 'application/octet-stream' : 'application/json';
 
             outputQueue.publish(payload, { headers, contentType });
@@ -61,16 +62,17 @@ export const startConsuming = async (
 
           onPublishMsg();
           ack();
-        } catch (error) {
-          logger.error({ error }, 'Error processing message');
+        } catch (e) {
+          const error = e instanceof Error ? e.message : e;
+          logger.error({ error, codecStrategies, message }, 'PINO: Error processing feed message');
           nack(true);
         }
       }, { prefetch: 10 }
     );
 
     logger.info('Started consuming messages');
-  } catch (e) {
-    logger.error({ e }, 'Failed to start consuming');
-    throw e;
+  } catch (error) {
+    logger.error({ error }, 'Failed to start consuming');
+    throw error;
   }
 };

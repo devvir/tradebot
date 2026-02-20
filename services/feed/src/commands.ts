@@ -1,8 +1,9 @@
 import type { Channel } from 'amqplib';
 import type { EventEmitter } from 'node:events';
 import type WebSocket from 'ws';
-import logger from './logger';
-import { filterChannelsByRole, type Config } from './config';
+import logger from '@tradebot/logger';
+import { filterChannelsByRole } from './config';
+import type { Config } from './types';
 import { subscribeToTopics, unsubscribeFromTopics } from './subscriptions';
 
 interface CommandMessage {

@@ -1,4 +1,4 @@
-import logger from './logger';
+import logger from '@tradebot/logger';
 
 export interface Config {
   rabbitmqUrl: string;
@@ -36,14 +36,13 @@ const sanitizeUrl = (url: string): string => {
   return urlObj.toString();
 };
 
-const codecStrategies = (process.env.CODEC_STRATEGY || '')
+export const codecStrategies = (process.env.CODEC_STRATEGY || '')
   .split(',')
   .map((s) => s.trim().toLowerCase())
   .filter(s => !! s);
 
 export const codecStrategy = {
   trim: () => codecStrategies.includes('trim'),
-  pack: () => codecStrategies.includes('pack'),
   binary: () => codecStrategies.includes('binary'),
   passthru: () => codecStrategies.length === 0,
 } as const;

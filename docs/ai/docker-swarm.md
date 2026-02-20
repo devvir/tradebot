@@ -1,6 +1,6 @@
-# Docker Swarm Deployment Guide
+# Docker Swarm Deployment Guide (Production/Future Reference)
 
-This document describes how to deploy TradeBot using Docker Swarm for horizontal scaling.
+This document describes deployment patterns and strategies for production environments using Docker Swarm. These patterns are documented for future use; the project is currently in development with ad-hoc testing and local deployment.
 
 ## Overview
 

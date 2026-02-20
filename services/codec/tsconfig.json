@@ -1,7 +1,6 @@
 {
   "extends": "../../tsconfig.json",
   "compilerOptions": {
-    "rootDir": "./src",
     "outDir": "./dist",
     "composite": true
   },
@@ -9,6 +8,7 @@
   "exclude": ["node_modules", "dist"],
   "references": [
     { "path": "../../packages/rabbitmq" },
-    { "path": "../../shared/types" }
+    { "path": "../../shared/types" },
+    { "path": "../../shared/logger" }
   ]
 }

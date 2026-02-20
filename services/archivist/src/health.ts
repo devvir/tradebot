@@ -1,5 +1,5 @@
 import http from 'http';
-import logger from './logger';
+import logger from '@tradebot/logger';
 
 export interface HealthState {
   mongoConnected: boolean;

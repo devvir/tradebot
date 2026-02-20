@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { BitmexWSMessage } from '../../../shared/types';
+import type { BitmexDataMessage } from '@tradebot/types';
 
 /**
  * Transform function tests
@@ -8,7 +8,7 @@ import type { BitmexWSMessage } from '../../../shared/types';
 describe('Transform utilities', () => {
   describe('Message structure validation', () => {
     it('should have valid trade message structure', () => {
-      const tradeMessage: BitmexWSMessage = {
+      const tradeMessage: BitmexDataMessage = {
         table: 'trade',
         action: 'insert',
         data: [
@@ -55,7 +55,7 @@ describe('Transform utilities', () => {
     });
 
     it('should have valid quote message structure', () => {
-      const quoteMessage: BitmexWSMessage = {
+      const quoteMessage: BitmexDataMessage = {
         table: 'quote',
         action: 'insert',
         data: [
@@ -85,7 +85,7 @@ describe('Transform utilities', () => {
     });
 
     it('should have valid instrument message structure', () => {
-      const instrumentMessage: BitmexWSMessage = {
+      const instrumentMessage: BitmexDataMessage = {
         table: 'instrument',
         action: 'update',
         data: [
@@ -152,7 +152,7 @@ describe('Transform utilities', () => {
     });
 
     it('should preserve message structure through transform', () => {
-      const message: BitmexWSMessage = {
+      const message: BitmexDataMessage = {
         table: 'trade',
         action: 'insert',
         data: [
@@ -205,7 +205,7 @@ describe('Transform utilities', () => {
 
   describe('Different message types', () => {
     it('should handle trade messages', () => {
-      const tradeMessage: BitmexWSMessage = {
+      const tradeMessage: BitmexDataMessage = {
         table: 'trade',
         action: 'insert',
         data: [
@@ -245,7 +245,7 @@ describe('Transform utilities', () => {
     });
 
     it('should handle quote messages', () => {
-      const quoteMessage: BitmexWSMessage = {
+      const quoteMessage: BitmexDataMessage = {
         table: 'quote',
         action: 'insert',
         data: [
@@ -275,7 +275,7 @@ describe('Transform utilities', () => {
     });
 
     it('should handle instrument messages', () => {
-      const instrumentMessage: BitmexWSMessage = {
+      const instrumentMessage: BitmexDataMessage = {
         table: 'instrument',
         action: 'update',
         data: [
@@ -342,7 +342,7 @@ describe('Transform utilities', () => {
     });
 
     it('should handle multiple data items', () => {
-      const multiItemMessage: BitmexWSMessage = {
+      const multiItemMessage: BitmexDataMessage = {
         table: 'trade',
         action: 'insert',
         data: [
