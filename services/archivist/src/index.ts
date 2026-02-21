@@ -29,8 +29,8 @@ const onStoreMsg = (): void => {
   state.messagesProcessed++;
   state.lastProcessedTime = Date.now();
 
-  if (state.messagesProcessed % 1000 === 0) {
-    logger.info({ processed: state.messagesProcessed }, 'Batch inserted');
+  if (state.messagesProcessed % 10000 === 0) {
+    logger.info(`Processed ${ Math.floor(state.messagesProcessed / 1000) }k messages`);
   }
 };
 

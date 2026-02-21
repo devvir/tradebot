@@ -19,8 +19,8 @@ const onProcessMsg = (): void => {
   state.messagesProcessed++;
   state.lastProcessedTime = Date.now();
 
-  if (state.messagesProcessed % 1000 === 0) {
-    logger.info(state.messagesProcessed, 'Batch processed');
+  if (state.messagesProcessed % 10000 === 0) {
+    logger.info(`Processed ${ Math.floor(state.messagesProcessed / 1000) }k messages`);
   }
 };
 

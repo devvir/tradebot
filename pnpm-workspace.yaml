@@ -3,3 +3,7 @@ packages:
   - shared/*
   - services/*
   - dx
+
+onlyBuiltDependencies:
+  - esbuild
+  - mongodb-memory-server

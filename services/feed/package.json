@@ -23,9 +23,9 @@
     "@devvir/rabbitmq": "workspace:*",
     "@tradebot/logger": "workspace:*",
     "@tradebot/types": "workspace:*",
-    "amqplib": "^0.10.3",
-    "dotenv": "^16.3.1",
-    "pino": "^8.14.1",
-    "ws": "^8.14.0"
+    "amqplib": "^0.10.9",
+    "dotenv": "^17.3.1",
+    "pino": "^10.3.1",
+    "ws": "^8.19.0"
   }
 }

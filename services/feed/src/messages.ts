@@ -56,7 +56,7 @@ const handleControlMessage = (message: BitmexWebSocketMessage, state: FeedState)
 let counter = 0;
 
 const increaseCounter = () => {
-  if (++counter % 1000 === 0) {
-    logger.info(`Processed ${counter} data messages`);
+  if (++counter % 10000 === 0) {
+    logger.info(`Processed ${ Math.floor(counter / 1000) }k messages`);
   }
 };
