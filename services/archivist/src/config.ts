@@ -11,7 +11,7 @@ export interface Config {
 export const loadConfig = (): Config => ({
   rabbitmqUrl: sanitizeUrl(process.env.RABBITMQ_URL || 'amqp://guest:guest@rabbitmq:5672'),
   mongodbUrl: sanitizeUrl(process.env.MONGODB_URL || 'mongodb://root:root@mongodb:27017/tradebot?authSource=admin'),
-  batchSize: parseInt(process.env.ARCHIVIST_BATCH_SIZE || '100', 10),
+  batchSize: parseInt(process.env.ARCHIVIST_BATCH_SIZE || '1000', 10),
   batchTimeoutMs: parseInt(process.env.ARCHIVIST_BATCH_TIMEOUT_MS || '5000', 10),
   healthPort: 3000,
 });

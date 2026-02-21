@@ -75,7 +75,7 @@ RabbitMQ sends `null` to consumer callback. Service returns early without proces
 
 ## Configuration
 
-**`ARCHIVIST_BATCH_SIZE`** (default: 100)
+**`ARCHIVIST_BATCH_SIZE`** (default: 1000)
 Controls RabbitMQ prefetch window. Provides backpressure.
 
 ## Health Monitoring

@@ -4,6 +4,7 @@
 
 services:
   codec:
+    container_name: ${MODULE_NAME:-tradebot}-codec
     build:
       context: ../../..
       dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
@@ -40,7 +41,8 @@ services:
     restart: ${CODEC_RESTART_POLICY:-unless-stopped}
 
     depends_on:
-      - rabbitmq
+      rabbitmq:
+        condition: service_healthy
 
     deploy:
       replicas: ${CODEC_REPLICAS:-1}

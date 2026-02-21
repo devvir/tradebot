@@ -4,6 +4,7 @@
 
 services:
   archivist:
+    container_name: ${MODULE_NAME:-tradebot}-archivist
     build:
       context: ../../..
       dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
@@ -16,7 +17,7 @@ services:
       MONGODB_URL: ${MONGODB_URL:-mongodb://root:root@mongodb:27017/tradebot?authSource=admin}
 
       # Batch Processing
-      ARCHIVIST_BATCH_SIZE: ${ARCHIVIST_BATCH_SIZE:-100}
+      ARCHIVIST_BATCH_SIZE: ${ARCHIVIST_BATCH_SIZE:-1000}
       ARCHIVIST_BATCH_TIMEOUT_MS: ${ARCHIVIST_BATCH_TIMEOUT_MS:-5000}
 
       # Runtime
@@ -42,8 +43,10 @@ services:
     restart: ${ARCHIVIST_RESTART_POLICY:-unless-stopped}
 
     depends_on:
-      - mongodb
-      - rabbitmq
+      mongodb:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
 
     deploy:
       replicas: ${ARCHIVIST_REPLICAS:-1}

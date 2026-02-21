@@ -11,3 +11,4 @@ include:
 networks:
   default:
     name: ${COMPOSE_PROJECT_NAME:-tradebot}-network
+    external: true

@@ -1,0 +1,12 @@
+# Infra Module
+# Includes: rabbitmq (queue), mongodb (storage), redis (cache)
+
+include:
+  - path: ../../services/rabbitmq/docker/compose.yml
+  - path: ../../services/mongodb/docker/compose.yml
+  - path: ../../services/redis/docker/compose.yml
+
+networks:
+  default:
+    name: ${COMPOSE_PROJECT_NAME:-tradebot}-network
+    external: true

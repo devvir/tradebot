@@ -1,0 +1,30 @@
+# Redis Service - In-Memory Cache
+# Provides fast, ephemeral storage and caching. Can be shared across services/modules.
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: ${COMPOSE_PROJECT_NAME:-tradebot}-redis
+
+    environment:
+      TZ: ${TZ:-UTC}
+
+    ports:
+      - "${REDIS_PORT:-}:6379"
+
+    volumes:
+      - redis-data:/data
+
+    command: redis-server --appendonly yes --requirepass "${REDIS_PASS:-}"
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+
+    restart: ${REDIS_RESTART_POLICY:-unless-stopped}
+
+volumes:
+  redis-data:
