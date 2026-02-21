@@ -1,127 +1,114 @@
 import http from 'node:http';
-import { describe, it, expect, vi } from 'vitest';
-import type { HealthState } from '../src/types';
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { startHealthCheck } from '../src/health';
+import type { CodecState } from '../src/types';
 
-describe('Health check logic', () => {
-  describe('HealthState calculation', () => {
-    const baseTime = 1000000000;
+vi.mock('@tradebot/logger', () => ({ default: { info: vi.fn(), error: vi.fn() } }));
 
-    it('should track message processing metrics', () => {
-      const state: HealthState = {
-        mqConnected: true,
-        messagesProcessed: 100,
-        messagesPublished: 100,
-        lastProcessedTime: baseTime - 5000,
-      };
+function makeReq(url: string): http.IncomingMessage {
+  return { url } as http.IncomingMessage;
+}
 
-      expect(state.messagesProcessed).toBe(100);
-      expect(state.messagesPublished).toBe(100);
-      expect(state.mqConnected).toBe(true);
-    });
+function makeRes() {
+  const res = {
+    statusCode: 0,
+    body: '',
+    writeHead: vi.fn((code: number) => {
+      res.statusCode = code;
+    }),
+    end: vi.fn((b: string) => {
+      res.body = b;
+    }),
+  };
+  return res;
+}
 
-    it('should track when messages are fresh', () => {
-      const now = Date.now();
-      const state: HealthState = {
-        mqConnected: true,
-        messagesProcessed: 50,
-        messagesPublished: 50,
-        lastProcessedTime: now - 1000, // 1 second ago
-      };
+function makeState(overrides: Partial<CodecState> = {}): CodecState {
+  return {
+    rabbitmqBroker: { getState: vi.fn().mockReturnValue('connected') } as any,
+    isShuttingDown: false,
+    messagesProcessed: 0,
+    lastProcessedTime: Date.now(),
+    ...overrides,
+  };
+}
 
-      const timeSinceLastMessage = now - state.lastProcessedTime;
-      expect(timeSinceLastMessage).toBeLessThan(5000);
-    });
+describe('Health HTTP handler', () => {
+  let handler: http.RequestListener;
+  let listenMock: ReturnType<typeof vi.fn>;
 
-    it('should track when messages are stale', () => {
-      const now = Date.now();
-      const state: HealthState = {
-        mqConnected: true,
-        messagesProcessed: 50,
-        messagesPublished: 50,
-        lastProcessedTime: now - 65000, // 65 seconds ago
-      };
-
-      const timeSinceLastMessage = now - state.lastProcessedTime;
-      expect(timeSinceLastMessage).toBeGreaterThan(60000);
-    });
-
-    it('should track disconnection state', () => {
-      const state: HealthState = {
-        mqConnected: false,
-        messagesProcessed: 0,
-        messagesPublished: 0,
-        lastProcessedTime: 0,
-      };
-
-      expect(state.mqConnected).toBe(false);
+  beforeEach(() => {
+    const mockServer = { listen: vi.fn() };
+    listenMock = mockServer.listen;
+    vi.spyOn(http, 'createServer').mockImplementationOnce((h: any) => {
+      handler = h;
+      return mockServer as any;
     });
   });
 
-  describe('Health endpoint response format', () => {
-    it('should include required fields in response', () => {
-      const response = {
-        status: 'healthy',
-        mqConnected: true,
-        messagesProcessed: 100,
-        messagesPublished: 100,
-        lastProcessedTime: 5000,
-      };
-
-      expect(response).toHaveProperty('status');
-      expect(response).toHaveProperty('mqConnected');
-      expect(response).toHaveProperty('messagesProcessed');
-      expect(response).toHaveProperty('messagesPublished');
-      expect(response).toHaveProperty('lastProcessedTime');
-    });
-
-    it('should report healthy status correctly', () => {
-      expect('healthy').toBeDefined();
-      expect('unhealthy').toBeDefined();
-    });
-
-    it('should return correct status codes', () => {
-      const healthyCode = 200;
-      const unhealthyCode = 503;
-
-      expect(healthyCode).toBe(200);
-      expect(unhealthyCode).toBe(503);
-    });
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
-  describe('Health criteria', () => {
-    it('should be healthy when MQ is connected and messages are recent', () => {
-      const now = Date.now();
-      const isHealthy = true && now - (now - 5000) < 60000;
+  it('should start listening on port 3000', () => {
+    startHealthCheck(makeState());
+    expect(listenMock).toHaveBeenCalledWith(3000, expect.any(Function));
+  });
 
-      expect(isHealthy).toBe(true);
+  it('should return 200 when connected and messages are recent', () => {
+    startHealthCheck(makeState({ lastProcessedTime: Date.now() - 5000 }));
+    const res = makeRes();
+    handler(makeReq('/health'), res as any);
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).status).toBe('healthy');
+  });
+
+  it('should return 503 when broker is disconnected', () => {
+    const state = makeState({
+      rabbitmqBroker: { getState: vi.fn().mockReturnValue('disconnected') } as any,
     });
+    startHealthCheck(state);
+    const res = makeRes();
+    handler(makeReq('/health'), res as any);
+    expect(res.statusCode).toBe(503);
+    expect(JSON.parse(res.body).status).toBe('unhealthy');
+  });
 
-    it('should be unhealthy when MQ is disconnected', () => {
-      const isHealthy = false && true;
+  it('should return 503 when broker is null', () => {
+    startHealthCheck(makeState({ rabbitmqBroker: null }));
+    const res = makeRes();
+    handler(makeReq('/health'), res as any);
+    expect(res.statusCode).toBe(503);
+  });
 
-      expect(isHealthy).toBe(false);
-    });
+  it('should return 503 when messages are stale (>60s)', () => {
+    startHealthCheck(makeState({ lastProcessedTime: Date.now() - 61000 }));
+    const res = makeRes();
+    handler(makeReq('/health'), res as any);
+    expect(res.statusCode).toBe(503);
+    expect(JSON.parse(res.body).status).toBe('unhealthy');
+  });
 
-    it('should be unhealthy when messages are stale', () => {
-      const now = Date.now();
-      const lastProcessed = now - 65000;
-      const isHealthy = true && now - lastProcessed < 60000;
+  it('should include message counter in the response body', () => {
+    startHealthCheck(makeState({ messagesProcessed: 42 }));
+    const res = makeRes();
+    handler(makeReq('/health'), res as any);
+    const body = JSON.parse(res.body);
+    expect(body.messagesProcessed).toBe(42);
+  });
 
-      expect(isHealthy).toBe(false);
-    });
+  it('should return 404 for unknown paths', () => {
+    startHealthCheck(makeState());
+    const res = makeRes();
+    handler(makeReq('/metrics'), res as any);
+    expect(res.statusCode).toBe(404);
+  });
 
-    it('should transition from healthy to unhealthy after 60 seconds without messages', () => {
-      const now = Date.now();
-
-      // Healthy at 59.5 seconds
-      const lastProcessed59 = now - 59500;
-      const isHealthy59 = now - lastProcessed59 < 60000;
-      expect(isHealthy59).toBe(true);
-
-      // Unhealthy at 60.5 seconds
-      const lastProcessed60 = now - 60500;
-      const isHealthy60 = now - lastProcessed60 < 60000;
-      expect(isHealthy60).toBe(false);
-    });
+  it('should remain healthy up to 59.9s without messages', () => {
+    startHealthCheck(makeState({ lastProcessedTime: Date.now() - 59900 }));
+    const res = makeRes();
+    handler(makeReq('/health'), res as any);
+    expect(res.statusCode).toBe(200);
   });
 });
+

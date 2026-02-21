@@ -1,28 +1,32 @@
-import http from 'http';
+import http from 'node:http';
 import logger from '@tradebot/logger';
 import type { HealthState, HealthCheckResult } from './types';
 
+const HEALTH_PORT = 3000;
 const STALENESS_THRESHOLD_MS = 30000;
 
 /**
- * Determine if the service is healthy based on WebSocket connection state and message recency
+ * Determine if the service is healthy based on WebSocket connection states and message recency.
+ * At least one WS must be connected (realtime or platform) and messages must be recent.
  */
 export const determineHealth = (state: HealthState, currentTime: number = Date.now()): HealthCheckResult => {
   const timeSinceLastMessage = currentTime - state.lastMessageTime;
-  const isHealthy = state.wsConnected && timeSinceLastMessage < STALENESS_THRESHOLD_MS;
+  const anyConnected = state.realtimeConnected || state.platformConnected;
+  const isHealthy = anyConnected && timeSinceLastMessage < STALENESS_THRESHOLD_MS;
 
   return {
     isHealthy,
     statusCode: isHealthy ? 200 : 503,
     body: {
       status: isHealthy ? 'healthy' : 'unhealthy',
-      wsConnected: state.wsConnected,
+      realtimeConnected: state.realtimeConnected,
+      platformConnected: state.platformConnected,
       lastMessage: timeSinceLastMessage,
     },
   };
 };
 
-export const startHealthCheck = (port: number, getState: () => HealthState): void => {
+export const startHealthCheck = (getState: () => HealthState): void => {
   const server = http.createServer((req, res) => {
     if (req.url === '/health') {
       const state = getState();
@@ -36,7 +40,7 @@ export const startHealthCheck = (port: number, getState: () => HealthState): voi
     }
   });
 
-  server.listen(port, () => {
-    logger.info({ port }, 'Health check server listening');
+  server.listen(HEALTH_PORT, () => {
+    logger.info({ port: HEALTH_PORT }, 'Health check server listening');
   });
 };

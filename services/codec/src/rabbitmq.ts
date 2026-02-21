@@ -1,10 +1,10 @@
+import logger from '@tradebot/logger';
 import { keepAlive, Broker } from '@devvir/rabbitmq';
 import { BitmexDataMessage } from '@tradebot/types';
 import { codecStrategies, codecStrategy } from './config';
-import logger from '@tradebot/logger';
-import { encode } from './transform';
+import { encode } from './encoding';
 
-const consumerQueueName = 'bitmex-feed';
+const consumerQueueName = 'bitmex.feed';
 const outputQueueName = 'archivist';
 
 /**
@@ -16,63 +16,70 @@ const outputQueueName = 'archivist';
 export const connectToQueue = async (url: string): Promise<Broker> => {
   logger.info('Setting up RabbitMQ broker...');
 
-  // Connect with unlimited retries (broker logs all connection events)
   const broker = await keepAlive(url);
 
-  return broker.declares({
-    queues: { 'archivist': {} }, // Default exchange
+  broker.declares({
+    queues: { [outputQueueName]: {} }, // Default exchange
     exchanges: {
-      'bitmex-data': {
+      [consumerQueueName]: {
         type: 'topic',
-        queues: { 'bitmex-feed': { routingKey: '#' } },
+        queues: { [consumerQueueName]: { routingKey: '#' } },
       },
     }
   });
+
+  return broker;
 };
 
 export const startConsuming = async (
   broker: Broker,
-  onProcessMsg: () => void,
-  onPublishMsg: () => void
+  onProcessMsg: () => void
 ): Promise<void> => {
-  try {
-    const inputQueue = broker.getQueue(consumerQueueName)!;
-    const outputQueue = broker.getQueue(outputQueueName)!;
+  const inputQueue = await waitForQueue(broker, consumerQueueName);
+  const outputQueue = broker.getQueue(outputQueueName)!;
 
-    logger.info({ queue: consumerQueueName }, 'Starting message consumption');
+  logger.info({ queue: consumerQueueName }, 'Starting message consumption');
 
-    await inputQueue.consume(
-      async (message, { ack, nack, original: rawMsg }) => {
-        if (! message) return;
+  await inputQueue.consume(
+    async (message, { ack, nack, original: rawMsg }) => {
+      if (! message) return;
 
-        try {
-          onProcessMsg();
+      try {
+        onProcessMsg();
 
-          if (codecStrategy.passthru()) {
-            outputQueue.publish(message, {
-              headers: { table: rawMsg.fields.routingKey.split('.')[0] },
-              contentType: 'application/json',
-            });
-          } else {
-            const { headers, payload } = encode(rawMsg, message as BitmexDataMessage);
-            const contentType = codecStrategy.binary() ? 'application/octet-stream' : 'application/json';
+        if (codecStrategy.passthru()) {
+          outputQueue.publish(message, {
+            headers: { table: rawMsg.fields.routingKey },
+            contentType: 'application/json',
+          });
+        } else {
+          const { headers, payload } = encode(rawMsg, message as BitmexDataMessage);
+          const contentType = codecStrategy.binary() ? 'application/octet-stream' : 'application/json';
 
-            outputQueue.publish(payload, { headers, contentType });
-          }
-
-          onPublishMsg();
-          ack();
-        } catch (e) {
-          const error = e instanceof Error ? e.message : e;
-          logger.error({ error, codecStrategies, message }, 'PINO: Error processing feed message');
-          nack(true);
+          outputQueue.publish(payload, { headers, contentType });
         }
-      }, { prefetch: 10 }
-    );
 
-    logger.info('Started consuming messages');
-  } catch (error) {
-    logger.error({ error }, 'Failed to start consuming');
-    throw error;
+        ack();
+      } catch (e) {
+        const error = e instanceof Error ? e.message : e;
+        logger.error({ error, codecStrategies, message }, 'Error processing feed message');
+        nack(true);
+      }
+    }, { prefetch: 10 }
+  );
+
+  logger.info('Started consuming messages');
+};
+
+const waitForQueue = async (broker: Broker, queueName: string, maxRetries = 10): Promise<ReturnType<Broker['getQueue']> & {}> => {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const queue = broker.getQueue(queueName);
+    if (queue) return queue;
+
+    const delayMs = Math.min(1000 * 2 ** attempt, 32000);
+    logger.warn({ queue: queueName, attempt: attempt + 1, delayMs }, 'Queue not ready, retrying...');
+    await new Promise(resolve => setTimeout(resolve, delayMs));
   }
+
+  throw new Error(`Queue '${queueName}' not available after ${maxRetries} retries`);
 };

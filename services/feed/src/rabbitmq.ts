@@ -1,29 +1,27 @@
 import { keepAlive, Broker } from '@devvir/rabbitmq';
 import logger from '@tradebot/logger';
 
+export const exchangeName = 'bitmex.feed';
+export const queueName = 'bitmex.feed';
+
 /**
- * Creates and configures a RabbitMQ broker.
- * Sets up the necessary message topology for this service.
+ * Create and configure a RabbitMQ broker.
  *
  * Connection lifecycle events are logged by the broker.
  */
 export const connectToQueue = async (url: string): Promise<Broker> => {
   logger.info('Setting up RabbitMQ broker...');
 
-  // Connect with unlimited retries (broker logs all connection events)
   const broker = await keepAlive(url);
 
   await broker.declares({
     exchanges: {
-      'bitmex-data': {
+      [exchangeName]: {
         type: 'topic',
-        queues: { 'bitmex-feed': { routingKey: '#' } },
+        queues: { [queueName]: { routingKey: '#' } },
       },
     },
-    queues: { 'archivist': {} },
   });
-
-  logger.info('RabbitMQ topology declared');
 
   return broker;
 };

@@ -6,4 +6,9 @@ export interface EncodedField {
   bits: number;
 }
 
-export type PackedDataItem = (string | number | bigint)[];
+export interface EncodedMessage {
+  headers: Record<string, unknown>;
+  payload: Buffer | Record<string, unknown[]>;
+}
+
+export type PackedDataItem = (string | number | Buffer<ArrayBufferLike>)[];

@@ -23,7 +23,7 @@ export const TICK_DIRECTION: Record<BitmexTickDirection, 0 | 1 | 2 | 3> = {
 } as const;
 
 export const INSTRUMENT_KEY: Record<keyof InstrumentData, string> = {
-  symbol: '',
+  symbol: '_',
   rootSymbol: 'R1',
   state: 'S1',
   typ: 'T1',

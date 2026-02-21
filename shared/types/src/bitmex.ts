@@ -425,6 +425,20 @@ export const isBitmexInfoMessage = (data: unknown): data is BitmexInfoMessage =>
 };
 
 /**
+ * Type guard for data messages
+ */
+export const isBitmexDataMessage = (data: unknown): data is BitmexDataMessage => {
+  return typeof data === 'object' && data !== null && 'table' in data && 'action' in data;
+};
+
+/**
+ * Type guard for subscription messages
+ */
+export const isBitmexDataWithSymbol = (data: BitmexDataItem[]): data is BitmexDataItemWithSymbol[] => {
+  return data.length > 0 && 'symbol' in data[0];
+};
+
+/**
  * ISO 8601 timestamp as string
  * Format: 2026-02-15T19:27:38.368Z
  *

@@ -1,15 +1,17 @@
 import {
-  BitmexDataItem,
-  PackedDataItem,
-  EncodedField,
-  InstrumentData,
-  OrderBookL2Data,
-  QuoteData,
-  TradeData,
-  BitmexAction,
+  type BitmexDataItem,
+  type PackedDataItem,
+  type EncodedField,
+  type InstrumentData,
+  type OrderBookL2Data,
+  type QuoteData,
+  type TradeData,
+  type BitmexAction,
   INSTRUMENT_KEY,
   SIDE_ID,
   TICK_DIRECTION,
+  isBitmexDataWithSymbol,
+  bigIntToBuffer,
 } from '.';
 
 /**
@@ -61,24 +63,45 @@ export const decodeTimestamp = (encoded: number | bigint): string => {
 };
 
 /**
+ * Encode payload (doc.data) according to the table and action, applying the appropriate packing/trimming strategy.
+ *
+ * Output depends on whether symbols apply to the table:
+ *  - without Symbol: { _: dataGroup }
+ *  - with Symbol: { [symbol1]: dataGroup1, [symbol2]: dataGroup2, ... }
+ */
+export const encodePayload = (
+  data: BitmexDataItem[],
+  table: string,
+  action: BitmexAction
+): Record<string, unknown[]> => {
+  const payload = data.map(item => extractPayload(item, table, action));
+
+  if (! isBitmexDataWithSymbol(data)) {
+    return { _: payload };
+  }
+
+  return Object.groupBy(payload, (_, i) => data[i].symbol) as Record<string, unknown[]>;
+}
+
+/**
  * Per-table encoding strategies
  */
-export const extractPayload = (data: BitmexDataItem[], table: string, action: BitmexAction): unknown => {
+const extractPayload = (item: BitmexDataItem, table: string, action: BitmexAction): unknown => {
   switch (table) {
     case 'instrument':
-      return data.map(item => instrumentPayload(item as InstrumentData));
+      return instrumentPayload(item as InstrumentData);
 
     case 'quote':
-      return data.map(item => quotePayload(item as QuoteData));
+      return quotePayload(item as QuoteData);
 
     case 'orderBookL2':
-      return data.map(item => orderBookL2Payload(item as OrderBookL2Data, action));
+      return orderBookL2Payload(item as OrderBookL2Data, action);
 
     case 'trade':
-      return data.map(item => tradePayload(item as TradeData));
+      return tradePayload(item as TradeData);
 
     default:
-      return data;
+      return item;
   }
 }
 
@@ -119,7 +142,7 @@ const orderBookL2Payload = (
   { id, side, size, price, transactTime, pool }: OrderBookL2Data,
   action: BitmexAction
 ): PackedDataItem => {
-  const ts = encodeTimestamp(transactTime).encoded;
+  const ts = bigIntToBuffer(encodeTimestamp(transactTime).encoded as bigint);
   const sideId = SIDE_ID[side];
   const poolItem = pool ? [pool] : [];  // This seems to exist only in the Rest API
 

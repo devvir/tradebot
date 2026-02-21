@@ -1,42 +1,33 @@
 import WebSocket from 'ws';
 import type { Broker } from '@devvir/rabbitmq';
-import {
-  type BitmexSubscriptionMessage,
-  type BitmexUnsubscriptionMessage,
-  type BitmexInfoMessage,
+
+export {
   type BitmexWebSocketMessage,
+  isBitmexDataMessage,
+  isBitmexInfoMessage,
   isBitmexSubscriptionMessage,
   isBitmexUnsubscriptionMessage,
-  isBitmexInfoMessage,
 } from '@tradebot/types';
 
-export type FeedRole =
-  | 'NONE'
-  | 'GLOBAL'
-  | 'LOW_VOLUME_1'
-  | 'LOW_VOLUME_2'
-  | 'LOW_VOLUME_3'
-  | 'HIGH_VOLUME'
-  | 'BITCOIN';
-
 export interface Config {
-  bitmexWsUrl: string;
-  rabbitmqUrl: string;
-  role: FeedRole;
-  channels: string[];
-  channelPatterns: string[];
-  symbols: string[];
-  symbolPatterns: string[];
-  healthPort: number;
-  reconnectDelayMs: number;
-  maxReconnectDelayMs: number;
-  messageTtlMs: number;
-  batchSizeChannels: number;
-  batchDelayMs: number;
+  env: 'live' | 'testnet';
+  realtimeWsUrl: string;
+  platformWsUrl: string;
+  realtimeChannels: readonly string[];
+  platformChannels: readonly string[];
+  queue: {
+    rabbitmqUrl: string;
+    messageTtlMs: number;
+  };
+  connection: {
+    reconnectDelayMs: number;
+    maxReconnectDelayMs: number;
+  };
 }
 
 export interface FeedState {
-  ws: WebSocket | null;
+  realtime: WebSocket | null;
+  platform: WebSocket | null;
   broker: Broker | null;
   reconnectDelay: number;
   isShuttingDown: boolean;
@@ -46,7 +37,8 @@ export interface FeedState {
 }
 
 export interface HealthState {
-  wsConnected: boolean;
+  realtimeConnected: boolean;
+  platformConnected: boolean;
   lastMessageTime: number;
 }
 
@@ -55,18 +47,21 @@ export interface HealthCheckResult {
   statusCode: number;
   body: {
     status: string;
-    wsConnected: boolean;
+    realtimeConnected: boolean;
+    platformConnected: boolean;
     lastMessage: number;
   };
 }
 
-// Re-export BitMEX types for convenience in this service
-export type {
-  BitmexSubscriptionMessage,
-  BitmexUnsubscriptionMessage,
-  BitmexInfoMessage,
-  BitmexWebSocketMessage,
+export type MessageHandler = (msg: Buffer) => void;
+
+export interface EndpointDefinition {
+  name: 'realtime' | 'platform';
+  url: string;
+  channels: readonly string[];
 };
 
-// Re-export BitMEX type guards for convenience
-export { isBitmexSubscriptionMessage, isBitmexUnsubscriptionMessage, isBitmexInfoMessage };
+export interface EndpointConnections {
+  connectRealtime: () => void;
+  connectPlatform: () => void;
+};

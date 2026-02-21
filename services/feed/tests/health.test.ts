@@ -1,14 +1,18 @@
+import { vi, describe, it, expect } from 'vitest';
 import { determineHealth } from '../src/health';
 import type { HealthState } from '../src/types';
 
-describe('Health check logic', () => {
+vi.mock('@tradebot/logger', () => ({ default: { info: vi.fn(), error: vi.fn(), warn: vi.fn() } }));
+
+describe('Health checks', () => {
   describe('determineHealth', () => {
     const baseTime = 1000000000;
 
-    it('should report healthy when connected and messages are recent', () => {
+    it('should report healthy when realtime WS connected and messages are recent', () => {
       const state: HealthState = {
-        wsConnected: true,
-        lastMessageTime: baseTime - 5000, // 5 seconds ago
+        realtimeConnected: true,
+        platformConnected: false,
+        lastMessageTime: baseTime - 5000,
       };
 
       const result = determineHealth(state, baseTime);
@@ -16,42 +20,27 @@ describe('Health check logic', () => {
       expect(result.isHealthy).toBe(true);
       expect(result.statusCode).toBe(200);
       expect(result.body.status).toBe('healthy');
-      expect(result.body.wsConnected).toBe(true);
-      expect(result.body.lastMessage).toBe(5000);
     });
 
-    it('should report unhealthy when not connected even with recent messages', () => {
+    it('should report healthy when platform WS connected and messages are recent', () => {
       const state: HealthState = {
-        wsConnected: false,
-        lastMessageTime: baseTime - 1000, // 1 second ago
+        realtimeConnected: false,
+        platformConnected: true,
+        lastMessageTime: baseTime - 5000,
       };
 
       const result = determineHealth(state, baseTime);
 
-      expect(result.isHealthy).toBe(false);
-      expect(result.statusCode).toBe(503);
-      expect(result.body.status).toBe('unhealthy');
-      expect(result.body.wsConnected).toBe(false);
+      expect(result.isHealthy).toBe(true);
+      expect(result.statusCode).toBe(200);
+      expect(result.body.status).toBe('healthy');
     });
 
-    it('should report unhealthy when messages are stale (>30s)', () => {
+    it('should report healthy when both connections active and messages recent', () => {
       const state: HealthState = {
-        wsConnected: true,
-        lastMessageTime: baseTime - 35000, // 35 seconds ago
-      };
-
-      const result = determineHealth(state, baseTime);
-
-      expect(result.isHealthy).toBe(false);
-      expect(result.statusCode).toBe(503);
-      expect(result.body.status).toBe('unhealthy');
-      expect(result.body.lastMessage).toBe(35000);
-    });
-
-    it('should report healthy at exactly 29999ms staleness', () => {
-      const state: HealthState = {
-        wsConnected: true,
-        lastMessageTime: baseTime - 29999,
+        realtimeConnected: true,
+        platformConnected: true,
+        lastMessageTime: baseTime - 5000,
       };
 
       const result = determineHealth(state, baseTime);
@@ -60,45 +49,50 @@ describe('Health check logic', () => {
       expect(result.statusCode).toBe(200);
     });
 
-    it('should report unhealthy at exactly 30000ms staleness', () => {
+    it('should report unhealthy when neither connection is active', () => {
       const state: HealthState = {
-        wsConnected: true,
-        lastMessageTime: baseTime - 30000,
+        realtimeConnected: false,
+        platformConnected: false,
+        lastMessageTime: baseTime - 1000,
       };
 
       const result = determineHealth(state, baseTime);
 
       expect(result.isHealthy).toBe(false);
       expect(result.statusCode).toBe(503);
+      expect(result.body.status).toBe('unhealthy');
     });
 
-    it('should handle lastMessageTime in the future gracefully', () => {
+    it('should report unhealthy when messages are stale (> 30s)', () => {
       const state: HealthState = {
-        wsConnected: true,
-        lastMessageTime: baseTime + 5000, // 5 seconds in future (clock skew)
-      };
-
-      const result = determineHealth(state, baseTime);
-
-      expect(result.isHealthy).toBe(true); // negative staleness is < threshold
-      expect(result.body.lastMessage).toBe(-5000);
-    });
-
-    it('should calculate staleness correctly for very old messages', () => {
-      const state: HealthState = {
-        wsConnected: true,
-        lastMessageTime: baseTime - 3600000, // 1 hour ago
+        realtimeConnected: true,
+        platformConnected: false,
+        lastMessageTime: baseTime - 35000,
       };
 
       const result = determineHealth(state, baseTime);
 
       expect(result.isHealthy).toBe(false);
-      expect(result.body.lastMessage).toBe(3600000);
+      expect(result.statusCode).toBe(503);
+      expect(result.body.lastMessage).toBe(35000);
     });
 
-    it('should handle both disconnected and stale', () => {
+    it('should handle clock skew gracefully (message in future)', () => {
       const state: HealthState = {
-        wsConnected: false,
+        realtimeConnected: true,
+        platformConnected: false,
+        lastMessageTime: baseTime + 5000,
+      };
+
+      const result = determineHealth(state, baseTime);
+
+      expect(result.isHealthy).toBe(true);
+    });
+
+    it('should report unhealthy when both disconnected and stale', () => {
+      const state: HealthState = {
+        realtimeConnected: false,
+        platformConnected: false,
         lastMessageTime: baseTime - 60000,
       };
 
@@ -106,8 +100,6 @@ describe('Health check logic', () => {
 
       expect(result.isHealthy).toBe(false);
       expect(result.statusCode).toBe(503);
-      expect(result.body.wsConnected).toBe(false);
-      expect(result.body.lastMessage).toBe(60000);
     });
   });
 });

@@ -1,21 +1,35 @@
 import logger from '@tradebot/logger';
+import { Config } from './types';
 
-export interface Config {
-  rabbitmqUrl: string;
-  healthPort: number;
-}
+export const loadConfig = (): Config => {
+  const config = {
+    rabbitmqUrl: sanitizeUrl(process.env.RABBITMQ_URL || 'amqp://guest:guest@rabbitmq:5672'),
+  };
 
-export const loadConfig = (): Config => ({
-  rabbitmqUrl: sanitizeUrl(process.env.RABBITMQ_URL || 'amqp://guest:guest@rabbitmq:5672'),
-  healthPort: 3000,
-});
+  validateConfig(config);
 
-export const validateConfig = (config: Config): void => {
+  const rabbitmqUrlRedacted = config.rabbitmqUrl.replace(/\/\/(.+:.+)@rabbitmq/, '//*****@rabbitmq');
+  const safeConfig = { ...config, rabbitmqUrl: rabbitmqUrlRedacted };
+  logger.info({ config: safeConfig }, 'Configuration loaded and validated!');
+
+  return config;
+};
+
+export const codecStrategies = (process.env.CODEC_STRATEGY || '')
+  .split(',')
+  .map((s) => s.trim().toLowerCase())
+  .filter(s => !! s);
+
+export const codecStrategy = {
+  trim: () => codecStrategies.includes('trim'),
+  binary: () => codecStrategies.includes('binary'),
+  passthru: () => codecStrategies.length === 0,
+} as const;
+
+const validateConfig = (config: Config): void => {
   if (! config.rabbitmqUrl) {
     throw new Error('RABBITMQ_URL is required');
   }
-
-  logger.info({ config }, 'Configuration validated');
 };
 
 /**
@@ -35,14 +49,3 @@ const sanitizeUrl = (url: string): string => {
 
   return urlObj.toString();
 };
-
-export const codecStrategies = (process.env.CODEC_STRATEGY || '')
-  .split(',')
-  .map((s) => s.trim().toLowerCase())
-  .filter(s => !! s);
-
-export const codecStrategy = {
-  trim: () => codecStrategies.includes('trim'),
-  binary: () => codecStrategies.includes('binary'),
-  passthru: () => codecStrategies.length === 0,
-} as const;

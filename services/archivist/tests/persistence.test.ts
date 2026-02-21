@@ -2,6 +2,7 @@ import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { startConsuming } from '../src/persistence';
 import { MongoError, Long } from 'mongodb';
 
+vi.mock('@tradebot/logger', () => ({ default: { info: vi.fn(), error: vi.fn(), warn: vi.fn() } }));
 vi.mock('amqplib');
 
 describe('Message persistence', () => {
@@ -155,7 +156,8 @@ describe('Message persistence', () => {
       await consumeCallback(message);
 
       const insertedDoc = mockCollection.insertOne.mock.calls[0][0];
-      expect(insertedDoc).toEqual({ message: binaryData });
+      // Binary wraps the content and stores as Binary type with buffer
+      expect(insertedDoc.b.buffer).toEqual(binaryData);
     });
 
     it('should ack message on successful insert', async () => {

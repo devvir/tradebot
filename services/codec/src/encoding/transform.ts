@@ -1,35 +1,36 @@
 import { brotliCompressSync } from 'node:zlib';
-import type { BitmexDataMessage } from '@tradebot/types';
 import type { RawMessage } from '@devvir/rabbitmq';
-import { type EncodedField, ACTION_ID, encodeVersion, encodeTimestamp, extractPayload } from './encoding';
-import { codecStrategy } from './config';
-
-interface EncodedMessage {
-  headers: Record<string, unknown>;
-  payload: Buffer | Record<string, unknown[]>;
-}
+import type { BitmexDataMessage } from '@tradebot/types';
+import { codecStrategy } from '../config';
+import {
+  type EncodedField,
+  type EncodedMessage,
+  ACTION_ID,
+  encodeVersion,
+  encodeTimestamp,
+  encodePayload,
+} from '.';
 
 /**
  * Encode a raw AMQP message for compressed archival.
  *
- * Responsibilities:
  * - Build outbound headers (table for collection routing, metadata for document fields)
  * - Strip redundant payload fields (table, keys, types, filter)
  * - Encode action as a compact 1-byte prefix
  * - Brotli-compress data items
  *
- * Returns headers and the compressed payload buffer.
+ * Returns headers and the compressed payload (binary buffer or encoded JSON object).
  */
 export const encode = (rawMsg: RawMessage, jsonMsg: BitmexDataMessage): EncodedMessage => {
-  const [table, _] = rawMsg.fields.routingKey.split('.');
+  const table = rawMsg.fields.routingKey;
 
   let payload = jsonMsg.data as unknown;
 
-  if (codecStrategy.trim()) {
-    payload = { p: extractPayload(jsonMsg.data, table, jsonMsg.action) };
+  if (codecStrategy.trim()) {   // Reduce size by encoding, pruning and packing
+    payload = encodePayload(jsonMsg.data, table, jsonMsg.action);
   }
 
-  if (codecStrategy.binary()) {
+  if (codecStrategy.binary()) { // Compress full document (binary output)
     payload = brotliCompressSync(JSON.stringify(payload));
   }
 
@@ -72,15 +73,12 @@ const extractTs = (message: BitmexDataMessage): string => {
 };
 
 const messageHeaders = (rawMsg: RawMessage, jsonMsg: BitmexDataMessage): Record<string, unknown> => {
-  const [table, symbol] = rawMsg.fields.routingKey.split('.');
+  const table = rawMsg.fields.routingKey;
   const documentId = createDocumentId(rawMsg, jsonMsg);
 
   return {
     table,
-    metadata: {
-      _id: bigIntToBuffer(documentId),
-      ...(symbol && { s: symbol }),
-    },
+    metadata: { _id: bigIntToBuffer(documentId) },
   };
 }
 
@@ -103,7 +101,7 @@ const createDocumentId = (message: RawMessage, jsonMsg: BitmexDataMessage, encod
 /**
  * Serialise a BigInt as a big-endian 8-byte Buffer for lossless AMQP header transport.
  */
-const bigIntToBuffer = (value: bigint): Buffer => {
+export const bigIntToBuffer = (value: bigint): Buffer => {
   const buf = Buffer.allocUnsafe(8);
   buf.writeBigUInt64BE(value);
   return buf;

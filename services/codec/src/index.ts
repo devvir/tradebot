@@ -1,27 +1,18 @@
 import logger from '@tradebot/logger';
-import { Config, loadConfig, validateConfig } from './config';
+import { loadConfig } from './config';
 import { connectToQueue } from './rabbitmq';
 import { startHealthCheck } from './health';
 import { startConsuming } from './rabbitmq';
-import type { CodecState, HealthState } from './types';
+import type { CodecState } from './types';
+
+const config = loadConfig();
 
 let state: CodecState = {
   rabbitmqBroker: null,
   isShuttingDown: false,
   messagesProcessed: 0,
-  messagesPublished: 0,
+
   lastProcessedTime: Date.now(),
-};
-
-let config: Config;
-
-const getHealthState = (): HealthState => {
-  return {
-    mqConnected: state.rabbitmqBroker !== null && state.rabbitmqBroker.getState() === 'connected',
-    messagesProcessed: state.messagesProcessed,
-    messagesPublished: state.messagesPublished,
-    lastProcessedTime: state.lastProcessedTime,
-  };
 };
 
 const onProcessMsg = (): void => {
@@ -29,15 +20,8 @@ const onProcessMsg = (): void => {
   state.lastProcessedTime = Date.now();
 
   if (state.messagesProcessed % 1000 === 0) {
-    logger.info(
-      { processed: state.messagesProcessed, published: state.messagesPublished },
-      'Batch processed'
-    );
+    logger.info(state.messagesProcessed, 'Batch processed');
   }
-};
-
-const onPublishMsg = (): void => {
-  state.messagesPublished++;
 };
 
 const shutdown = async (): Promise<void> => {
@@ -55,20 +39,17 @@ const main = async (): Promise<void> => {
   try {
     logger.info('Starting Codec Service...');
 
-    config = loadConfig();
-    validateConfig(config);
-
     state.rabbitmqBroker = await connectToQueue(config.rabbitmqUrl);
-
     logger.info('Successfully connected to RabbitMQ');
 
-    await startConsuming(state.rabbitmqBroker, onProcessMsg, onPublishMsg);
+    await startConsuming(state.rabbitmqBroker, onProcessMsg);
 
-    startHealthCheck(config.healthPort, getHealthState);
+    startHealthCheck(state);
 
     logger.info('Codec service initialized and consuming messages');
   } catch (error) {
-    logger.error({ error }, 'Failed to start service');
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    logger.error({ error: errorMsg }, 'Failed to start service');
     process.exit(1);
   }
 };

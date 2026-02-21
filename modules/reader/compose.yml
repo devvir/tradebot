@@ -1,55 +1,12 @@
 # Reader Module
 # Includes: rabbitmq (queue), mongodb (storage), archivist (data archiver)
-# Extends: feed (data fetcher, multiple instances)
 
 include:
   - path: ../../services/rabbitmq/docker/compose.yml
   - path: ../../services/mongodb/docker/compose.yml
+  - path: ../../services/feed/docker/compose.yml
   - path: ../../services/codec/docker/compose.yml
   - path: ../../services/archivist/docker/compose.yml
-
-services:
-  feed-global:
-    extends:
-      file: ../../services/feed/docker/compose.yml
-      service: feed
-    environment:
-      FEED_ROLE: GLOBAL
-
-  feed-lv-1:
-    extends:
-      file: ../../services/feed/docker/compose.yml
-      service: feed
-    environment:
-      FEED_ROLE: LOW_VOLUME_1
-
-  feed-lv-2:
-    extends:
-      file: ../../services/feed/docker/compose.yml
-      service: feed
-    environment:
-      FEED_ROLE: LOW_VOLUME_2
-
-  feed-lv-3:
-    extends:
-      file: ../../services/feed/docker/compose.yml
-      service: feed
-    environment:
-      FEED_ROLE: LOW_VOLUME_3
-
-  feed-hv:
-    extends:
-      file: ../../services/feed/docker/compose.yml
-      service: feed
-    environment:
-      FEED_ROLE: HIGH_VOLUME
-
-  feed-bitcoin:
-    extends:
-      file: ../../services/feed/docker/compose.yml
-      service: feed
-    environment:
-      FEED_ROLE: BITCOIN
 
 networks:
   default:

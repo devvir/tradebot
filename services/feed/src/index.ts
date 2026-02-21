@@ -1,291 +1,47 @@
 import 'dotenv/config';
-import { EventEmitter } from 'node:events';
-import WebSocket from 'ws';
 import logger from '@tradebot/logger';
-import { loadConfig, validateConfig } from './config';
-import type { Config } from './types';
-import { fetchAllSymbols, resolveChannels, buildSubscriptionTopics } from './bitmex';
+import { loadConfig } from './config';
 import { connectToQueue } from './rabbitmq';
 import { startHealthCheck } from './health';
-import { subscribeToTopics } from './subscriptions';
-import { setupCommandListener } from './commands';
-import type { InstrumentData } from '@tradebot/types';
-import {
-  type FeedState,
-  type HealthState,
-  isBitmexSubscriptionMessage,
-  isBitmexUnsubscriptionMessage,
-  isBitmexInfoMessage,
-  BitmexWebSocketMessage,
-} from './types';
-
-
-let state: FeedState = {
-  ws: null,
-  broker: null,
-  reconnectDelay: 0,
-  isShuttingDown: false,
-  lastMessageTime: Date.now(),
-  apiVersion: null,
-  pingInterval: null,
-};
-
-let config: Config;
-
-// Event emitter for subscription lifecycle events
-const subscriptionEvents = new EventEmitter();
+import { createConnections } from './connection';
+import { registerLifecycle } from './lifecycle';
+import { createMessageHandler } from './messages';
+import type { FeedState } from './types';
 
 const main = async (): Promise<void> => {
-  try {
-    logger.info('Starting BitMEX Feed Service...');
+  logger.info('Starting BitMEX Feed Service...');
 
-    config = loadAndValidateConfig();
-    await resolveSubscriptions(config);
+  const config = loadConfig();
 
-    const idleReason = shouldStartIdleMode(config);
-    if (idleReason) {
-      logger.warn({ role: config.role, reason: idleReason }, 'Service entering idle mode');
-      startHealthCheck(config.healthPort, getHealthState);
-      return;
-    }
-
-    logger.info({
-      role: config.role,
-      subscriptions: buildSubscriptionTopics(config.channels, config.symbols),
-    }, 'Will subscribe to topics');
-
-    await initializeRabbitMQ(config);
-
-    initializeBitMEX();
-    startHealthCheck(config.healthPort, getHealthState);
-
-    logger.info('Service started successfully');
-  } catch (error) {
-    logger.error({ error }, 'Failed to start service');
-    process.exit(1);
-  }
-};
-
-/**
- * Start periodic ping to keep connection alive
- */
-const startHeartbeat = (ws: WebSocket): NodeJS.Timeout => {
-  return setInterval(() => {
-    if (ws.readyState === WebSocket.OPEN) {
-      logger.debug('Sending ping to BitMEX');
-      ws.ping();
-    }
-  }, 30000);
-};
-
-const connectBitMEX = (): void => {
-  if (state.isShuttingDown) return;
-
-  logger.info({ url: config.bitmexWsUrl }, 'Connecting to BitMEX WebSocket');
-  state.ws = new WebSocket(config.bitmexWsUrl);
-
-  setupWebSocketHandlers(state.ws);
-};
-
-const setupWebSocketHandlers = (ws: WebSocket): void => {
-  ws.on('open', () => handleOpen(ws));
-  ws.on('ping', handlePing);
-  ws.on('pong', handlePong);
-  ws.on('message', handleMessage);
-  ws.on('error', handleError);
-  ws.on('close', handleClose);
-};
-
-const handleOpen = (ws: WebSocket): void => {
-  logger.info('Connected to BitMEX WebSocket');
-  state.reconnectDelay = config.reconnectDelayMs;
-  state.lastMessageTime = Date.now();
-
-  const topics = buildSubscriptionTopics(config.channels, config.symbols);
-  subscribeToTopics(ws, topics, config.batchSizeChannels, config.batchDelayMs);
-
-  state.pingInterval = startHeartbeat(ws);
-};
-
-const handlePing = (): void => {
-  logger.debug('Received ping from BitMEX, sending pong');
-  state.ws?.pong();
-};
-
-const handlePong = (): void => {
-  logger.debug('Received pong from BitMEX');
-};
-
-const handleMessage = async (message: Buffer): Promise<void> => {
-  state.lastMessageTime = Date.now();
-
-  try {
-    const data = JSON.parse(message.toString()) as BitmexWebSocketMessage;
-
-    if (isBitmexSubscriptionMessage(data)) {
-      logger.debug({ subscribe: data.subscribe, success: data.success }, 'Subscription confirmed');
-      subscriptionEvents.emit('subscribed', data.subscribe);
-      return;
-    }
-
-    if (isBitmexUnsubscriptionMessage(data)) {
-      logger.debug({ unsubscribe: data.unsubscribe, success: data.success }, 'Unsubscription confirmed');
-      subscriptionEvents.emit('unsubscribed', data.unsubscribe);
-      return;
-    }
-
-    if (isBitmexInfoMessage(data)) {
-      state.apiVersion = data.version;
-      logger.info({ apiVersion: state.apiVersion, info: data.info }, 'Captured BitMEX API version');
-      return;
-    }
-
-    if (! data.table || ! data.action) {
-      throw new Error(`Received invalid or unexpected message`);
-    }
-
-    const symbol = data.filter?.symbol || (
-      (data.data[0] && 'symbol' in data.data[0]) ? data.data[0].symbol : undefined
-    );
-
-    const exchange = state.broker!.getExchange('bitmex-data')!;
-    const routingKey = symbol ? `${data.table}.${symbol}` : data.table;
-
-    // Filter out unlisted instruments from instrument partials
-    if (data.table === 'instrument' && data.action === 'partial') {
-      const dataItems = data.data as InstrumentData[];
-      data.data = dataItems.filter(({ state }) => state !== 'Unlisted');
-    }
-
-    logger.debug({ routingKey }, 'Publishing message to queue');
-
-    exchange.publish(data, routingKey, {
-      expiration: config.messageTtlMs?.toString(),
-      headers: { api_version: state.apiVersion || undefined },
-    });
-  } catch (error) {
-    logger.error({ error, message: message.toString() }, 'Error processing WebSocket message');
-  }
-};
-
-const handleError = (error: Error): void => {
-  logger.error({ error: error.message || error.toString(), stack: error.stack }, 'WebSocket error');
-};
-
-const handleClose = (code: number, reason: string): void => {
-  logger.warn({ code, reason: reason.toString() }, 'WebSocket closed, attempting to reconnect...');
-
-  if (state.pingInterval) {
-    clearInterval(state.pingInterval);
-    state.pingInterval = null;
-  }
-
-  if (! state.isShuttingDown) {
-    scheduleReconnect();
-  }
-};
-
-const scheduleReconnect = (): void => {
-  setTimeout(connectBitMEX, state.reconnectDelay);
-  state.reconnectDelay = Math.min(
-    state.reconnectDelay * 2,
-    config.maxReconnectDelayMs
-  );
-};
-
-const getHealthState = (): HealthState => {
-  return {
-    wsConnected: state.ws !== null && state.ws.readyState === WebSocket.OPEN,
-    lastMessageTime: state.lastMessageTime,
+  // ── Service state ─────────────────────────────────────────────────────────
+  const state: FeedState = {
+    realtime: null,
+    platform: null,
+    broker: null,
+    reconnectDelay: config.connection.reconnectDelayMs,
+    isShuttingDown: false,
+    lastMessageTime: Date.now(),
+    apiVersion: null,
+    pingInterval: null,
   };
+
+  // ── RabbitMQ ──────────────────────────────────────────────────────────────
+  state.broker = await connectToQueue(config.queue.rabbitmqUrl);
+
+  // ── Message handler ───────────────────────────────────────────────────────
+  const onMessage = createMessageHandler(state);
+
+  // ── WebSocket connections ─────────────────────────────────────────────────
+  const { connectRealtime, connectPlatform } = createConnections(state, config, onMessage);
+  if (config.realtimeChannels.length > 0) connectRealtime();
+  if (config.platformChannels.length > 0) connectPlatform();
+
+  // ── Health & lifecycle ────────────────────────────────────────────────────
+  const { getHealthState } = registerLifecycle(state);
+  startHealthCheck(getHealthState);
+
+  logger.info('Service started successfully');
 };
-
-const shutdown = async (): Promise<void> => {
-  logger.info('Shutting down gracefully...');
-  state.isShuttingDown = true;
-
-  if (state.ws) {
-    state.ws.close();
-  }
-
-  if (state.broker) {
-    await state.broker.disconnect();
-  }
-
-  process.exit(0);
-};
-
-
-/**
- * Load configuration and prepare for resolution
- */
-const loadAndValidateConfig = (): Config => {
-  const cfg = loadConfig();
-  cfg.channelPatterns = cfg.channels;
-  cfg.symbolPatterns = cfg.symbols;
-  validateConfig(cfg);
-  return cfg;
-};
-
-/**
- * Resolve channels and symbols based on role and patterns
- */
-const resolveSubscriptions = async (cfg: Config): Promise<void> => {
-  cfg.channels = resolveChannels(cfg.channelPatterns, cfg.role);
-  logger.info({ role: cfg.role, channels: cfg.channels }, 'Resolved channels');
-
-  try {
-    cfg.symbols = await fetchAllSymbols(cfg.symbolPatterns, cfg.role);
-    logger.info({ role: cfg.role, symbols: cfg.symbols }, 'Resolved symbols');
-  } catch (error) {
-    logger.error({ error }, 'Failed to fetch symbols');
-    throw error;
-  }
-};
-
-/**
- * Determine if service should enter idle mode (no work to do)
- */
-const shouldStartIdleMode = (cfg: Config): string | void => {
-  if (cfg.channels.length === 0) return 'No channels for this role';
-  if (cfg.symbols.length === 0 && cfg.role !== 'GLOBAL') return 'No symbols for this role';
-
-  const topics = buildSubscriptionTopics(cfg.channels, cfg.symbols);
-
-  if (topics.length === 0) return 'No subscription topics';
-};
-
-/**
- * Connect to RabbitMQ and set up broker
- */
-const initializeRabbitMQ = async (cfg: Config): Promise<void> => {
-  state.broker = await connectToQueue(cfg.rabbitmqUrl);
-
-  logger.info('Successfully connected to RabbitMQ');
-
-  const channel = state.broker.getChannel();
-  if (! channel) {
-    throw new Error('Failed to get channel from broker');
-  }
-
-  await setupCommandListener(channel, state, subscriptionEvents, config);
-};
-
-/**
- * Connect to BitMEX WebSocket and start streaming
- */
-const initializeBitMEX = (): void => {
-  connectBitMEX();
-  state.reconnectDelay = config.reconnectDelayMs;
-};
-
-process.on('SIGTERM', () => {
-  shutdown().catch((error) => logger.error({ error }, 'Error during shutdown'));
-});
-
-process.on('SIGINT', () => {
-  shutdown().catch((error) => logger.error({ error }, 'Error during shutdown'));
-});
 
 main().catch((error) => {
   logger.error({ error }, 'Unhandled error in main');

@@ -1,168 +1,108 @@
-import { loadConfig, validateConfig, usesTestnet } from '../src/config';
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { loadConfig } from '../src/config';
 
-describe('Config utilities', () => {
+vi.mock('@tradebot/logger', () => ({ default: { info: vi.fn(), error: vi.fn(), warn: vi.fn() } }));
+
+describe('Configuration', () => {
   const originalEnv = process.env;
 
   beforeEach(() => {
     process.env = { ...originalEnv };
-    delete process.env.BITMEX_TESTNET;
   });
 
   afterEach(() => {
     process.env = originalEnv;
   });
 
-  describe('usesTestnet', () => {
-    it('should use testnet by default when BITMEX_TESTNET is not set', () => {
-      delete process.env.BITMEX_TESTNET;
-      expect(usesTestnet()).toBe(true);
-    });
-
-    it('should use testnet when BITMEX_TESTNET is empty string', () => {
-      process.env.BITMEX_TESTNET = '';
-      expect(usesTestnet()).toBe(true);
-    });
-
-    it('should use testnet when BITMEX_TESTNET is "1"', () => {
-      process.env.BITMEX_TESTNET = '1';
-      expect(usesTestnet()).toBe(true);
-    });
-
-    it('should use testnet when BITMEX_TESTNET is "true"', () => {
-      process.env.BITMEX_TESTNET = 'true';
-      expect(usesTestnet()).toBe(true);
-    });
-
-    it('should use testnet when BITMEX_TESTNET is "on"', () => {
-      process.env.BITMEX_TESTNET = 'on';
-      expect(usesTestnet()).toBe(true);
-    });
-
-    it('should use live when BITMEX_TESTNET is "0"', () => {
-      process.env.BITMEX_TESTNET = '0';
-      expect(usesTestnet()).toBe(false);
-    });
-
-    it('should use live when BITMEX_TESTNET is "false"', () => {
+  describe('BitMEX endpoint selection', () => {
+    it('should use live endpoints when BITMEX_TESTNET is false', () => {
       process.env.BITMEX_TESTNET = 'false';
-      expect(usesTestnet()).toBe(false);
-    });
-
-    it('should use live when BITMEX_TESTNET is "off"', () => {
-      process.env.BITMEX_TESTNET = 'off';
-      expect(usesTestnet()).toBe(false);
-    });
-  });
-
-  describe('loadConfig', () => {
-    it('should load config from environment variables (live)', () => {
-      process.env.BITMEX_TESTNET = '0'; // Force live mode
-      process.env.RABBITMQ_URL = 'amqp://test:pass@localhost:5672';
-      process.env.FEED_CHANNELS = 'trade,quote';
-      process.env.FEED_SYMBOLS = 'XBTUSD,ETHUSD';
-      process.env.FEED_PORT = '3001';
-
       const config = loadConfig();
-
-      expect(config.bitmexWsUrl).toBe('wss://www.bitmex.com/realtime');
-      expect(config.rabbitmqUrl).toBe('amqp://test:pass@localhost:5672');
-      expect(config.channels).toEqual(['trade', 'quote']);
-      expect(config.symbols).toEqual(['XBTUSD', 'ETHUSD']);
-      expect(config.healthPort).toBe(3000);
+      expect(config.realtimeWsUrl).toBe('wss://www.bitmex.com/realtime');
+      expect(config.platformWsUrl).toBe('wss://www.bitmex.com/realtimePlatform');
     });
 
-    it('should use testnet URL when BITMEX_TESTNET is enabled', () => {
-      process.env.BITMEX_TESTNET = '1';
+    it('should use testnet endpoints when BITMEX_TESTNET is true', () => {
+      process.env.BITMEX_TESTNET = 'true';
       const config = loadConfig();
-      expect(config.bitmexWsUrl).toBe('wss://testnet.bitmex.com/realtime');
+      expect(config.realtimeWsUrl).toBe('wss://testnet.bitmex.com/realtime');
+      expect(config.platformWsUrl).toBe('wss://testnet.bitmex.com/realtimePlatform');
     });
 
-    it('should use testnet URL by default when BITMEX_TESTNET is not set', () => {
+    it('should default to testnet when BITMEX_TESTNET not set', () => {
       delete process.env.BITMEX_TESTNET;
       const config = loadConfig();
-      expect(config.bitmexWsUrl).toBe('wss://testnet.bitmex.com/realtime');
-    });
-
-    it('should use default values when env vars are not set', () => {
-      process.env.BITMEX_TESTNET = '0'; // Force live mode
-      delete process.env.RABBITMQ_URL;
-      delete process.env.FEED_CHANNELS;
-      delete process.env.FEED_SYMBOLS;
-
-      const config = loadConfig();
-
-      expect(config.bitmexWsUrl).toBe('wss://www.bitmex.com/realtime');
-      expect(config.rabbitmqUrl).toBe('amqp://guest:guest@rabbitmq:5672');
-      expect(config.channels).toEqual([]);
-      expect(config.symbols).toEqual([]);
-    });
-
-    it('should parse reconnect delay options', () => {
-      process.env.FEED_RECONNECT_DELAY_MS = '2000';
-      process.env.FEED_MAX_RECONNECT_DELAY_MS = '30000';
-
-      const config = loadConfig();
-
-      expect(config.reconnectDelayMs).toBe(2000);
-      expect(config.maxReconnectDelayMs).toBe(30000);
-    });
-
-    it('should parse message TTL', () => {
-      process.env.FEED_MESSAGE_TTL = '3600000';
-
-      const config = loadConfig();
-
-      expect(config.messageTtlMs).toBe(3600000);
+      expect(config.realtimeWsUrl).toBe('wss://testnet.bitmex.com/realtime');
+      expect(config.platformWsUrl).toBe('wss://testnet.bitmex.com/realtimePlatform');
     });
   });
 
-  describe('validateConfig', () => {
-    let config: ReturnType<typeof loadConfig>;
-
-    beforeEach(() => {
-      process.env.BITMEX_TESTNET = '0'; // Use live mode for validation tests
-      process.env.RABBITMQ_URL = 'amqp://guest:guest@localhost:5672';
-      process.env.FEED_CHANNELS = 'trade';
-      process.env.FEED_SYMBOLS = 'XBTUSD';
-      config = loadConfig();
-      config.channelPatterns = config.channels;
-      config.symbolPatterns = config.symbols;
+  describe('Channel subscriptions', () => {
+    it('should include required realtime channels', () => {
+      const config = loadConfig();
+      expect(config.realtimeChannels).toContain('instrument');
+      expect(config.realtimeChannels).toContain('orderBookL2');
+      expect(config.realtimeChannels).toContain('quote');
+      expect(config.realtimeChannels).toContain('trade');
     });
 
-    it('should not throw for valid config', () => {
-      expect(() => validateConfig(config)).not.toThrow();
+    it('should include required platform channels', () => {
+      const config = loadConfig();
+      expect(config.platformChannels).toContain('announcement');
+      expect(config.platformChannels).toContain('chat');
+      expect(config.platformChannels).toContain('connected');
+    });
+  });
+
+  describe('Connection settings', () => {
+    it('should use default reconnect delay (5000ms)', () => {
+      delete process.env.FEED_RECONNECT_DELAY_MS;
+      const config = loadConfig();
+      expect(config.connection.reconnectDelayMs).toBe(5000);
     });
 
-    it('should throw if bitmexWsUrl is missing', () => {
-      config.bitmexWsUrl = '';
-      expect(() => validateConfig(config)).toThrow('Failed to determine BitMEX WebSocket URL');
+    it('should parse reconnect delay from env', () => {
+      process.env.FEED_RECONNECT_DELAY_MS = '10000';
+      const config = loadConfig();
+      expect(config.connection.reconnectDelayMs).toBe(10000);
     });
 
-    it('should throw if RABBITMQ_URL is missing', () => {
-      config.rabbitmqUrl = '';
-      expect(() => validateConfig(config)).toThrow('RABBITMQ_URL is required');
+    it('should use default max reconnect delay (60000ms)', () => {
+      delete process.env.FEED_MAX_RECONNECT_DELAY_MS;
+      const config = loadConfig();
+      expect(config.connection.maxReconnectDelayMs).toBe(60000);
     });
 
-    it('should not require channel patterns to be configured', () => {
-      config.channelPatterns = [];
-      expect(() => validateConfig(config)).not.toThrow();
+    it('should parse max reconnect delay from env', () => {
+      process.env.FEED_MAX_RECONNECT_DELAY_MS = '120000';
+      const config = loadConfig();
+      expect(config.connection.maxReconnectDelayMs).toBe(120000);
+    });
+  });
+
+  describe('RabbitMQ settings', () => {
+    it('should use default RabbitMQ URL', () => {
+      delete process.env.RABBITMQ_URL;
+      const config = loadConfig();
+      expect(config.queue.rabbitmqUrl).toBe('amqp://guest:guest@rabbitmq:5672');
     });
 
-    it('should not require symbol patterns to be configured', () => {
-      config.symbolPatterns = [];
-      expect(() => validateConfig(config)).not.toThrow();
+    it('should use custom RabbitMQ URL when provided', () => {
+      process.env.RABBITMQ_URL = 'amqp://user:pass@broker:5672';
+      const config = loadConfig();
+      expect(config.queue.rabbitmqUrl).toBe('amqp://user:pass@broker:5672');
     });
 
-    it('should accept wildcard patterns', () => {
-      config.channelPatterns = ['*'];
-      config.symbolPatterns = ['*'];
-      expect(() => validateConfig(config)).not.toThrow();
+    it('should use default message TTL (1800000ms = 30min)', () => {
+      delete process.env.FEED_MESSAGE_TTL;
+      const config = loadConfig();
+      expect(config.queue.messageTtlMs).toBe(1800000);
     });
 
-    it('should accept glob patterns', () => {
-      config.channelPatterns = ['trade', 'quote*'];
-      config.symbolPatterns = ['XBT*', 'ETH*'];
-      expect(() => validateConfig(config)).not.toThrow();
+    it('should parse message TTL from env', () => {
+      process.env.FEED_MESSAGE_TTL = '3600000';
+      const config = loadConfig();
+      expect(config.queue.messageTtlMs).toBe(3600000);
     });
   });
 });

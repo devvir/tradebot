@@ -1,77 +1,50 @@
-import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { connectToQueue } from '../src/rabbitmq';
 
-// Mock the broker module
+vi.mock('@tradebot/logger', () => ({ default: { info: vi.fn(), error: vi.fn(), warn: vi.fn() } }));
 vi.mock('@devvir/rabbitmq', () => ({
   keepAlive: vi.fn(),
 }));
 
-// Import after mock
 import * as brokerModule from '@devvir/rabbitmq';
 
-describe('RabbitMQ integration', () => {
+describe('RabbitMQ setup', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  afterEach(() => {
-    vi.clearAllMocks();
+  it('should connect to queue with given URL', async () => {
+    const mockBroker = { declares: vi.fn().mockResolvedValue({}) };
+    vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
+
+    await connectToQueue('amqp://localhost');
+
+    expect(brokerModule.keepAlive).toHaveBeenCalledWith('amqp://localhost');
   });
 
-  describe('connectToQueue', () => {
-    it('should initialize broker and declare topology', async () => {
-      const mockBroker = {
-        declares: vi.fn().mockResolvedValue({}),
-      };
+  it('should declare feed exchange with matching routing', async () => {
+    const mockBroker = { declares: vi.fn().mockResolvedValue({}) };
+    vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
 
-      vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
+    await connectToQueue('amqp://localhost');
 
-      const broker = await connectToQueue('amqp://localhost');
-
-      expect(brokerModule.keepAlive).toHaveBeenCalledWith('amqp://localhost');
-      expect(mockBroker.declares).toHaveBeenCalled();
-      expect(broker).toBe(mockBroker);
+    expect(mockBroker.declares).toHaveBeenCalledWith({
+      exchanges: {
+        'bitmex.feed': {
+          type: 'topic',
+          queues: { 'bitmex.feed': { routingKey: '#' } },
+        },
+      },
     });
+  });
 
-    it('should declare bitmex-data exchange with topic type', async () => {
-      const mockBroker = {
-        declares: vi.fn().mockResolvedValue({}),
-      };
+  it('should return the broker instance', async () => {
+    const mockBroker = { declares: vi.fn().mockResolvedValue({}) };
+    vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
 
-      vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
+    const broker = await connectToQueue('amqp://localhost');
 
-      await connectToQueue('amqp://localhost');
-
-      const declareCall = mockBroker.declares.mock.calls[0][0];
-      expect(declareCall.exchanges['bitmex-data'].type).toBe('topic');
-    });
-
-    it('should declare bitmex-feed queue bound to bitmex-data exchange', async () => {
-      const mockBroker = {
-        declares: vi.fn().mockResolvedValue({}),
-      };
-
-      vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
-
-      await connectToQueue('amqp://localhost');
-
-      const declareCall = mockBroker.declares.mock.calls[0][0];
-      expect(declareCall.exchanges['bitmex-data'].queues['bitmex-feed']).toBeDefined();
-      expect(declareCall.exchanges['bitmex-data'].queues['bitmex-feed'].routingKey).toBe('#');
-    });
-
-    it('should declare archivist queue for codec-to-storage pipeline', async () => {
-      const mockBroker = {
-        declares: vi.fn().mockResolvedValue({}),
-      };
-
-      vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
-
-      await connectToQueue('amqp://localhost');
-
-      const declareCall = mockBroker.declares.mock.calls[0][0];
-      expect(declareCall.queues['archivist']).toBeDefined();
-    });
+    expect(broker).toBe(mockBroker);
   });
 });
 

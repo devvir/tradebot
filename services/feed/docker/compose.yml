@@ -1,5 +1,4 @@
 # Feed Service - Connects to BitMEX and publishes to queue
-# Generic, reusable service. Multiple instances with different FEED_ROLE values.
 # Supports horizontal scaling via replicas configuration.
 
 services:
@@ -14,20 +13,13 @@ services:
       # BitMEX Connection (testnet or live)
       BITMEX_TESTNET: ${BITMEX_TESTNET:-false}
 
-      # Queue Connection
+      # Queue
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
-
-      # Role-based channel/symbol selection
-      FEED_ROLE: ${FEED_ROLE:-NONE}
-      FEED_SYMBOLS: ${FEED_SYMBOLS:-}
-      FEED_CHANNELS: ${FEED_CHANNELS:-}
+      FEED_MESSAGE_TTL: ${FEED_MESSAGE_TTL:-1800000}
 
       # Reconnect delays
       FEED_RECONNECT_DELAY_MS: ${FEED_RECONNECT_DELAY_MS:-5000}
       FEED_MAX_RECONNECT_DELAY_MS: ${FEED_MAX_RECONNECT_DELAY_MS:-60000}
-
-      # Message TTL
-      FEED_MESSAGE_TTL: ${FEED_MESSAGE_TTL:-1800000}
 
       # Runtime
       LOG_LEVEL: ${LOG_LEVEL:-info}

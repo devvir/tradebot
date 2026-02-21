@@ -1,397 +1,88 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { encodeVersion, decodeVersion, encodeTimestamp, decodeTimestamp, encodePayload } from '../src/encoding';
 import type { BitmexDataMessage } from '@tradebot/types';
 
-/**
- * Transform function tests
- * Currently tests the pass-through behavior and message structure
- */
-describe('Transform utilities', () => {
-  describe('Message structure validation', () => {
-    it('should have valid trade message structure', () => {
-      const tradeMessage: BitmexDataMessage = {
-        table: 'trade',
-        action: 'insert',
-        data: [
-          {
-            timestamp: '2024-01-15T10:30:45.123Z',
-            symbol: 'XBTUSD',
-            side: 'Buy',
-            size: 1000,
-            price: 42500.5,
-            tickDirection: 'PlusTick',
-            trdMatchID: 'd0673ede-aaaa-bbbb-cccc-ddddeeeefffff',
-            grossValue: 2350000,
-            homeNotional: 0.0235,
-            foreignNotional: 1000,
-            trdType: 'RegularTrade',
-          },
-        ],
-        keys: ['timestamp', 'symbol'],
-        types: {
-          timestamp: 'timestamp',
-          symbol: 'symbol',
-          side: 'string',
-          size: 'long',
-          price: 'float',
-          tickDirection: 'string',
-          trdMatchID: 'guid',
-          grossValue: 'long',
-          homeNotional: 'float',
-          foreignNotional: 'float',
-          trdType: 'string',
-        },
-      };
-
-      expect(tradeMessage).toHaveProperty('table');
-      expect(tradeMessage).toHaveProperty('action');
-      expect(tradeMessage).toHaveProperty('data');
-      expect(tradeMessage).toHaveProperty('keys');
-      expect(tradeMessage).toHaveProperty('types');
-
-      expect(tradeMessage.table).toBe('trade');
-      expect(tradeMessage.action).toBe('insert');
-      expect(Array.isArray(tradeMessage.data)).toBe(true);
-      expect(tradeMessage.data.length).toBeGreaterThan(0);
+describe('Encoding utilities', () => {
+  describe('encodeVersion / decodeVersion', () => {
+    it('should roundtrip common semver strings', () => {
+      for (const v of ['1.0.0', '2.3.4', '0.1.0', '3.7.15']) {
+        const { encoded, bits } = encodeVersion(v);
+        expect(bits).toBe(9);
+        expect(decodeVersion(encoded as number)).toBe(v);
+      }
     });
 
-    it('should have valid quote message structure', () => {
-      const quoteMessage: BitmexDataMessage = {
-        table: 'quote',
-        action: 'insert',
-        data: [
-          {
-            timestamp: '2024-01-15T10:30:45.223Z',
-            symbol: 'XBTUSD',
-            bidSize: 50000,
-            bidPrice: 42500.0,
-            askPrice: 42501.0,
-            askSize: 50000,
-          },
-        ],
-        keys: ['timestamp', 'symbol'],
-        types: {
-          timestamp: 'timestamp',
-          symbol: 'symbol',
-          bidSize: 'long',
-          bidPrice: 'float',
-          askPrice: 'float',
-          askSize: 'long',
-        },
-      };
-
-      expect(quoteMessage.table).toBe('quote');
-      expect(quoteMessage.action).toBe('insert');
-      expect(quoteMessage.data).toHaveLength(1);
-    });
-
-    it('should have valid instrument message structure', () => {
-      const instrumentMessage: BitmexDataMessage = {
-        table: 'instrument',
-        action: 'update',
-        data: [
-          {
-            symbol: 'XBTUSD',
-            rootSymbol: 'XBT',
-            state: 'Open',
-            typ: 'FFCCSX',
-            listing: '2015-11-23T04:00:00.000Z',
-            front: '2015-11-23T04:00:00.000Z',
-            expiry: null,
-            settle: null,
-            relistInterval: null,
-            inverseLeg: null,
-            sellLeg: null,
-            buyLeg: null,
-            optionStrikePcnt: null,
-            optionStrikeRound: null,
-            optionStrike: null,
-            optionMultiplier: null,
-            positionLimit: 20000000,
-            postOnly: false,
-            maxOrderQty: 100000000,
-            maxPrice: 1000000,
-            maxLeverage: 100,
-            initMargin: 0.005,
-            maintMargin: 0.0025,
-            riskLimit: 20000000,
-            riskStep: 10000000,
-            limit: 13513.45709294,
-            capped: false,
-            taxed: true,
-            deleverage: true,
-            makerFee: -0.0001,
-            takerFee: 0.0005,
-            settlCurrency: 'XBt',
-            underlyingSymbol: null,
-            quoteCurrency: null,
-            isQuanto: false,
-            isInverse: true,
-            initMarginReq: 0.005,
-            maintMarginReq: 0.0025,
-            indicativeSettlePrice: 42445.5,
-            markPrice: 42500.25,
-            lastPrice: 42499.5,
-            timestamp: '2024-01-15T10:30:45.000Z',
-          },
-        ],
-        keys: ['symbol'],
-        types: {
-          symbol: 'symbol',
-          rootSymbol: 'symbol',
-          state: 'string',
-          typ: 'string',
-          listing: 'timestamp',
-          front: 'timestamp',
-          timestamp: 'timestamp',
-        },
-      };
-
-      expect(instrumentMessage.table).toBe('instrument');
-      expect(instrumentMessage.action).toBe('update');
-      expect(instrumentMessage.data).toHaveLength(1);
-    });
-
-    it('should preserve message structure through transform', () => {
-      const message: BitmexDataMessage = {
-        table: 'trade',
-        action: 'insert',
-        data: [
-          {
-            timestamp: '2024-01-15T10:30:45.123Z',
-            symbol: 'XBTUSD',
-            side: 'Buy',
-            size: 100,
-            price: 42500,
-            tickDirection: 'PlusTick',
-            trdMatchID: 'test-id',
-            grossValue: 235000,
-            homeNotional: 0.00235,
-            foreignNotional: 100,
-            trdType: 'RegularTrade',
-          },
-        ],
-        keys: ['timestamp', 'symbol'],
-        types: {
-          timestamp: 'timestamp',
-          symbol: 'symbol',
-          side: 'string',
-          size: 'long',
-          price: 'float',
-          tickDirection: 'string',
-          trdMatchID: 'guid',
-          grossValue: 'long',
-          homeNotional: 'float',
-          foreignNotional: 'float',
-          trdType: 'string',
-        },
-      };
-
-      // Verify message has all required fields
-      expect(message.table).toBeDefined();
-      expect(message.action).toBeDefined();
-      expect(message.data).toBeDefined();
-      expect(message.keys).toBeDefined();
-      expect(message.types).toBeDefined();
-
-      // Verify data contains expected fields
-      const [dataItem] = message.data;
-      expect(dataItem.timestamp).toBeDefined();
-      expect(dataItem.symbol).toBeDefined();
-      expect(dataItem.side).toBeDefined();
-      expect(dataItem.size).toBeDefined();
-      expect(dataItem.price).toBeDefined();
+    it('should clamp values to bit widths (major: 2 bits, minor: 3 bits, patch: 4 bits)', () => {
+      // Values exceeding bit width wrap around due to masking
+      const { encoded } = encodeVersion('4.0.0'); // major 4 = 0b100, masked to 0b00
+      expect(decodeVersion(encoded as number)).toBe('0.0.0');
     });
   });
 
-  describe('Different message types', () => {
-    it('should handle trade messages', () => {
-      const tradeMessage: BitmexDataMessage = {
-        table: 'trade',
-        action: 'insert',
-        data: [
-          {
-            timestamp: '2024-01-15T10:30:45.123Z',
-            symbol: 'XBTUSD',
-            side: 'Buy',
-            size: 100,
-            price: 42500,
-            tickDirection: 'PlusTick',
-            trdMatchID: 'id-1',
-            grossValue: 235000,
-            homeNotional: 0.00235,
-            foreignNotional: 100,
-            trdType: 'RegularTrade',
-          },
-        ],
-        keys: ['timestamp', 'symbol'],
-        types: {
-          timestamp: 'timestamp',
-          symbol: 'symbol',
-          side: 'string',
-          size: 'long',
-          price: 'float',
-          tickDirection: 'string',
-          trdMatchID: 'guid',
-          grossValue: 'long',
-          homeNotional: 'float',
-          foreignNotional: 'float',
-          trdType: 'string',
-        },
-      };
-
-      expect(tradeMessage.table).toBe('trade');
-      expect(tradeMessage.data[0]).toHaveProperty('trdMatchID');
-      expect(tradeMessage.data[0]).toHaveProperty('grossValue');
+  describe('encodeTimestamp / decodeTimestamp', () => {
+    it('should roundtrip timestamps within the valid range (2000-2100)', () => {
+      const ts = '2024-01-15T10:30:45.123Z';
+      const { encoded, bits } = encodeTimestamp(ts);
+      expect(bits).toBe(42);
+      expect(decodeTimestamp(encoded as bigint)).toBe(ts);
     });
 
-    it('should handle quote messages', () => {
-      const quoteMessage: BitmexDataMessage = {
-        table: 'quote',
-        action: 'insert',
-        data: [
-          {
-            timestamp: '2024-01-15T10:30:45.223Z',
-            symbol: 'XBTUSD',
-            bidSize: 50000,
-            bidPrice: 42500.0,
-            askPrice: 42501.0,
-            askSize: 50000,
-          },
-        ],
-        keys: ['timestamp', 'symbol'],
-        types: {
-          timestamp: 'timestamp',
-          symbol: 'symbol',
-          bidSize: 'long',
-          bidPrice: 'float',
-          askPrice: 'float',
-          askSize: 'long',
-        },
-      };
-
-      expect(quoteMessage.table).toBe('quote');
-      expect(quoteMessage.data[0]).toHaveProperty('bidPrice');
-      expect(quoteMessage.data[0]).toHaveProperty('askPrice');
+    it('should roundtrip timestamps at common boundary values', () => {
+      for (const ts of ['2000-01-01T00:00:00.000Z', '2050-06-15T12:00:00.000Z']) {
+        expect(decodeTimestamp(encodeTimestamp(ts).encoded as bigint)).toBe(ts);
+      }
     });
 
-    it('should handle instrument messages', () => {
-      const instrumentMessage: BitmexDataMessage = {
-        table: 'instrument',
-        action: 'update',
-        data: [
-          {
-            symbol: 'XBTUSD',
-            rootSymbol: 'XBT',
-            state: 'Open',
-            typ: 'FFCCSX',
-            listing: '2015-11-23T04:00:00.000Z',
-            front: '2015-11-23T04:00:00.000Z',
-            expiry: null,
-            settle: null,
-            relistInterval: null,
-            inverseLeg: null,
-            sellLeg: null,
-            buyLeg: null,
-            optionStrikePcnt: null,
-            optionStrikeRound: null,
-            optionStrike: null,
-            optionMultiplier: null,
-            positionLimit: 20000000,
-            postOnly: false,
-            maxOrderQty: 100000000,
-            maxPrice: 1000000,
-            maxLeverage: 100,
-            initMargin: 0.005,
-            maintMargin: 0.0025,
-            riskLimit: 20000000,
-            riskStep: 10000000,
-            limit: 13513.45709294,
-            capped: false,
-            taxed: true,
-            deleverage: true,
-            makerFee: -0.0001,
-            takerFee: 0.0005,
-            settlCurrency: 'XBt',
-            underlyingSymbol: null,
-            quoteCurrency: null,
-            isQuanto: false,
-            isInverse: true,
-            initMarginReq: 0.005,
-            maintMarginReq: 0.0025,
-            indicativeSettlePrice: 42445.5,
-            markPrice: 42500.25,
-            lastPrice: 42499.5,
-            timestamp: '2024-01-15T10:30:45.000Z',
-          },
-        ],
-        keys: ['symbol'],
-        types: {
-          symbol: 'symbol',
-          rootSymbol: 'symbol',
-          state: 'string',
-          typ: 'string',
-          listing: 'timestamp',
-          front: 'timestamp',
-          timestamp: 'timestamp',
-        },
-      };
+    it('should throw for timestamps before year 2000', () => {
+      expect(() => encodeTimestamp('1999-12-31T23:59:59.999Z')).toThrow();
+    });
+  });
 
-      expect(instrumentMessage.table).toBe('instrument');
-      expect(instrumentMessage.data[0]).toHaveProperty('markPrice');
-      expect(instrumentMessage.data[0]).toHaveProperty('lastPrice');
+  describe('encodePayload', () => {
+    const tradeItem = {
+      symbol: 'XBTUSD',
+      trdMatchID: 'id-1',
+      side: 'Buy' as const,
+      size: 100,
+      price: 42500,
+      tickDirection: 'PlusTick' as const,
+      grossValue: 235000,
+      homeNotional: 0.00235,
+      foreignNotional: 100,
+      trdType: 'Regular',
+    };
+
+    it('should group items by symbol for symboled tables', () => {
+      const items = [
+        { ...tradeItem, symbol: 'XBTUSD' },
+        { ...tradeItem, symbol: 'ETHUSD' },
+        { ...tradeItem, symbol: 'XBTUSD' },
+      ];
+
+      const result = encodePayload(items, 'trade', 'insert');
+
+      expect(Object.keys(result)).toContain('XBTUSD');
+      expect(Object.keys(result)).toContain('ETHUSD');
+      expect(result['XBTUSD']).toHaveLength(2);
+      expect(result['ETHUSD']).toHaveLength(1);
     });
 
-    it('should handle multiple data items', () => {
-      const multiItemMessage: BitmexDataMessage = {
-        table: 'trade',
-        action: 'insert',
-        data: [
-          {
-            timestamp: '2024-01-15T10:30:45.123Z',
-            symbol: 'XBTUSD',
-            side: 'Buy',
-            size: 100,
-            price: 42500,
-            tickDirection: 'PlusTick',
-            trdMatchID: 'id-1',
-            grossValue: 235000,
-            homeNotional: 0.00235,
-            foreignNotional: 100,
-            trdType: 'RegularTrade',
-          },
-          {
-            timestamp: '2024-01-15T10:30:45.223Z',
-            symbol: 'XBTUSD',
-            side: 'Sell',
-            size: 50,
-            price: 42501,
-            tickDirection: 'MinusTick',
-            trdMatchID: 'id-2',
-            grossValue: 117550,
-            homeNotional: 0.001175,
-            foreignNotional: 50,
-            trdType: 'RegularTrade',
-          },
-        ],
-        keys: ['timestamp', 'symbol'],
-        types: {
-          timestamp: 'timestamp',
-          symbol: 'symbol',
-          side: 'string',
-          size: 'long',
-          price: 'float',
-          tickDirection: 'string',
-          trdMatchID: 'guid',
-          grossValue: 'long',
-          homeNotional: 'float',
-          foreignNotional: 'float',
-          trdType: 'string',
-        },
-      };
+    it('should use _ key for non-symboled tables', () => {
+      const items = [
+        { bidSize: 100, bidPrice: 42500, askPrice: 42501, askSize: 100, symbol: 'XBTUSD', timestamp: '2024-01-15T10:30:00.000Z' },
+      ];
 
-      expect(multiItemMessage.data).toHaveLength(2);
-      expect(multiItemMessage.data[0].side).toBe('Buy');
-      expect(multiItemMessage.data[1].side).toBe('Sell');
+      // insurance table has no symbol field
+      const noSymbolItems = [{ premium: 100, currency: 'XBt', timestamp: '2024-01-15T10:30:00.000Z' }];
+      const result = encodePayload(noSymbolItems as any, 'insurance', 'insert');
+
+      expect(result).toHaveProperty('_');
+    });
+
+    it('should encode quote items as [bidSize, bidPrice, askPrice, askSize]', () => {
+      const quoteItem = { bidSize: 50000, bidPrice: 42500, askPrice: 42501, askSize: 60000, symbol: 'XBTUSD', timestamp: '2024-01-15T10:30:00.000Z' };
+      const result = encodePayload([quoteItem], 'quote', 'insert');
+      expect(result['XBTUSD'][0]).toEqual([50000, 42500, 42501, 60000]);
     });
   });
 });
