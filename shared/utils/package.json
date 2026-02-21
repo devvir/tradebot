@@ -1,12 +1,12 @@
 {
-  "name": "@tradebot/types",
+  "name": "@tradebot/utils",
   "version": "1.0.0",
-  "description": "Shared type definitions for TradeBot services",
+  "description": "Shared utility functions for TradeBot services",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc"
   },
   "private": true,
-  "keywords": ["tradebot", "types"]
+  "keywords": ["tradebot", "utils"]
 }

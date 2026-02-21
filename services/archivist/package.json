@@ -23,6 +23,7 @@
   "dependencies": {
     "@devvir/rabbitmq": "workspace:*",
     "@tradebot/logger": "workspace:*",
+    "@tradebot/utils": "workspace:*",
     "amqplib": "^0.10.9",
     "dotenv": "^17.3.1",
     "mongodb": "^7.1.0",

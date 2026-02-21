@@ -16,11 +16,11 @@ export const connectToDatabase = async (url: string): Promise<MongoDBConnection>
 
     await client.connect();
 
-    logger.info({ url }, 'Connected to MongoDB');
+    logger.info('Connected to MongoDB');
 
     return { client, db };
   } catch (error) {
-    logger.error({ error, url }, 'Failed to connect to MongoDB');
+    logger.error({ error }, 'Failed to connect to MongoDB');
     throw error;
   }
 };

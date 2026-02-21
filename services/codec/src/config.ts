@@ -1,4 +1,5 @@
 import logger from '@tradebot/logger';
+import { redactedUrl } from '@tradebot/utils';
 import { Config } from './types';
 
 export const loadConfig = (): Config => {
@@ -8,8 +9,7 @@ export const loadConfig = (): Config => {
 
   validateConfig(config);
 
-  const rabbitmqUrlRedacted = config.rabbitmqUrl.replace(/\/\/(.+:.+)@rabbitmq/, '//*****@rabbitmq');
-  const safeConfig = { ...config, rabbitmqUrl: rabbitmqUrlRedacted };
+  const safeConfig = { ...config, rabbitmqUrl: redactedUrl(config.rabbitmqUrl) };
   logger.info({ config: safeConfig }, 'Configuration loaded and validated!');
 
   return config;

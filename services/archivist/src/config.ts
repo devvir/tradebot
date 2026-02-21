@@ -1,4 +1,5 @@
 import logger from '@tradebot/logger';
+import { redactedUrl } from '@tradebot/utils';
 
 export interface Config {
   rabbitmqUrl: string;
@@ -33,7 +34,11 @@ export const validateConfig = (config: Config): void => {
     throw new Error('ARCHIVIST_BATCH_TIMEOUT_MS must be greater than 0');
   }
 
-  logger.info({ config }, 'Configuration validated');
+  logger.info({
+    ...config,
+    rabbitmqUrl: redactedUrl(config.rabbitmqUrl),
+    mongodbUrl: redactedUrl(config.mongodbUrl),
+  }, 'Configuration validated');
 };
 
 /**

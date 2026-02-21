@@ -1,4 +1,5 @@
 import logger from '@tradebot/logger';
+import { redactedUrl } from '@tradebot/utils';
 import type { Config } from './types';
 
 export const BITMEX_WS_URLS = {
@@ -56,9 +57,14 @@ export const loadConfig = (): Config => {
 
   validateConfig(config);
 
-  const rabbitmqUrlRedacted = config.queue.rabbitmqUrl.replace(/\/\/(.+:.+)@rabbitmq/, '//*****@rabbitmq');
-  const safeConfig = { ...config, queue: { ...config.queue, rabbitmqUrl: rabbitmqUrlRedacted } };
-  logger.info({ config: safeConfig }, 'Configuration loaded and validated!');
+  const safeConfig = {
+    ...config,
+    queue: {
+      ...config.queue,
+      rabbitmqUrl: redactedUrl(config.queue.rabbitmqUrl),
+    },
+  };
+  logger.info(safeConfig, 'Configuration loaded and validated!');
 
   return config;
 };
