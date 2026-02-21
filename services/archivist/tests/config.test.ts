@@ -1,7 +1,5 @@
-import { vi, describe, beforeEach, afterEach } from 'vitest';
+import { describe, beforeEach, afterEach } from 'vitest';
 import { loadConfig, validateConfig } from '../src/config';
-
-vi.mock('@tradebot/logger', () => ({ default: { info: vi.fn(), error: vi.fn(), warn: vi.fn() } }));
 
 describe('Archivist Config utilities', () => {
   const originalEnv = process.env;

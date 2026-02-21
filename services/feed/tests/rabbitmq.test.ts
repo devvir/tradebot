@@ -1,7 +1,6 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { connectToQueue } from '../src/rabbitmq';
 
-vi.mock('@tradebot/logger', () => ({ default: { info: vi.fn(), error: vi.fn(), warn: vi.fn() } }));
 vi.mock('@devvir/rabbitmq', () => ({
   keepAlive: vi.fn(),
 }));

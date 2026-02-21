@@ -5,10 +5,5 @@
     "composite": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"],
-  "references": [
-    { "path": "../../packages/rabbitmq" },
-    { "path": "../../shared/types" },
-    { "path": "../../shared/logger" }
-  ]
+  "exclude": ["node_modules", "dist"]
 }

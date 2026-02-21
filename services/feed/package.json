@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "BitMEX WebSocket reader service",
   "main": "dist/index.js",
+  "private": true,
   "scripts": {
     "build": "tsc -b",
     "start": "node dist/index.js",
@@ -17,16 +18,11 @@
     "reader",
     "trading"
   ],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
     "@devvir/rabbitmq": "workspace:*",
-    "@tradebot/logger": "workspace:*",
-    "@tradebot/types": "workspace:*",
+    "@devvir/service": "workspace:*",
     "@tradebot/utils": "workspace:*",
-    "amqplib": "^0.10.9",
     "dotenv": "^17.3.1",
-    "pino": "^10.3.1",
     "ws": "^8.19.0"
   }
 }

@@ -16,6 +16,7 @@
     "check": "pnpm --color -r check"
   },
   "devDependencies": {
+    "@tradebot/types": "workspace:*",
     "@types/amqplib": "^0.10.8",
     "@types/express": "^5.0.6",
     "@types/node": "^25.3.0",

@@ -1,7 +1,5 @@
-import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { loadConfig } from '../src/config';
-
-vi.mock('@tradebot/logger', () => ({ default: { info: vi.fn(), error: vi.fn(), warn: vi.fn() } }));
 
 describe('Configuration', () => {
   const originalEnv = process.env;

@@ -1,5 +1,5 @@
-import logger from '@tradebot/logger';
-import { redactedUrl } from '@tradebot/utils';
+import { logger } from '@devvir/service';
+import { redactUrl } from '@tradebot/utils';
 import type { Config } from './types';
 
 export const BITMEX_WS_URLS = {
@@ -61,7 +61,7 @@ export const loadConfig = (): Config => {
     ...config,
     queue: {
       ...config.queue,
-      rabbitmqUrl: redactedUrl(config.queue.rabbitmqUrl),
+      rabbitmqUrl: redactUrl(config.queue.rabbitmqUrl),
     },
   };
   logger.info(safeConfig, 'Configuration loaded and validated!');

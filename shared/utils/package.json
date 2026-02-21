@@ -8,5 +8,8 @@
     "build": "tsc"
   },
   "private": true,
-  "keywords": ["tradebot", "utils"]
+  "keywords": ["tradebot", "utils"],
+  "dependencies": {
+    "@devvir/service": "workspace:*"
+  }
 }

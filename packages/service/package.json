@@ -1,0 +1,40 @@
+{
+  "name": "@devvir/service",
+  "version": "1.0.0",
+  "description": "Service architecture lifecycle management without reinventing the wheel",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "private": false,
+  "keywords": [
+    "service",
+    "microservice",
+    "lifecycle",
+    "health-checks",
+    "orchestration"
+  ],
+  "author": "Diego Indart <db.indart.dev@gmail.com>",
+  "license": "ISC",
+  "dependencies": {
+    "pino": "^10.3.1",
+    "pino-pretty": "^13.1.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.0",
+    "@vitest/coverage-v8": "^4.0.18",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "import": "./dist/index.js"
+    }
+  }
+}

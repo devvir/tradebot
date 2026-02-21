@@ -1,4 +1,4 @@
-import logger from '@tradebot/logger';
+import { logger } from '@devvir/service';
 import { keepAlive, Broker } from '@devvir/rabbitmq';
 import { BitmexDataMessage } from '@tradebot/types';
 import { codecStrategies, codecStrategy } from './config';
@@ -15,8 +15,8 @@ const outputQueueName = 'archivist';
  */
 export const connectToQueue = async (url: string): Promise<Broker> => {
   logger.info('Setting up RabbitMQ broker...');
-
   const broker = await keepAlive(url);
+  logger.info('Successfully connected to RabbitMQ');
 
   broker.declares({
     queues: { [outputQueueName]: {} }, // Default exchange
@@ -31,10 +31,7 @@ export const connectToQueue = async (url: string): Promise<Broker> => {
   return broker;
 };
 
-export const startConsuming = async (
-  broker: Broker,
-  onProcessMsg: () => void
-): Promise<void> => {
+export const startConsuming = async (broker: Broker, onProcessMsg: () => void): Promise<void> => {
   const inputQueue = await waitForQueue(broker, consumerQueueName);
   const outputQueue = broker.getQueue(outputQueueName)!;
 

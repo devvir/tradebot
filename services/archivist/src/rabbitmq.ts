@@ -1,5 +1,5 @@
 import { keepAlive, Broker } from '@devvir/rabbitmq';
-import logger from '@tradebot/logger';
+import { logger } from '@devvir/service';
 
 /**
  * Creates and configures a RabbitMQ broker.

@@ -23,12 +23,10 @@
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true
   },
-  "files": [],
   "references": [
     { "path": "shared/types" },
+    { "path": "shared/utils" },
     { "path": "packages/rabbitmq" },
-    { "path": "services/feed" },
-    { "path": "services/archivist" },
-    { "path": "services/codec" }
+    { "path": "packages/service" }
   ]
 }

@@ -1,5 +1,5 @@
 import WebSocket from 'ws';
-import logger from '@tradebot/logger';
+import { logger } from '@devvir/service';
 import { subscribeToTopics } from './subscriptions';
 import type { Config, EndpointConnections, EndpointDefinition, FeedState, MessageHandler } from './types';
 

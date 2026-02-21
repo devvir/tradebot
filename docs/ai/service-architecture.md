@@ -14,10 +14,11 @@ This document describes architectural principles and guidelines for the project.
 
 Beyond services, the project includes shared workspace packages for code reuse:
 
-**`@tradebot/logger`** (`shared/logger/`)
-- Shared pino logger configuration and utilities
-- Imported by: feed, codec, archivist, and other services
-- Usage: `import logger from '@tradebot/logger'`
+**`@devvir/service`** (`packages/service/`)
+- Microservice architecture pattern: lifecycle management, health checks, shutdown handling, and unified logger
+- Every independent service depends on this package to represent its structure and constraints
+- Imported by: feed, codec, archivist, unarchivist, and any other autonomous services
+- Usage: `import { logger, defineLifecycle } from '@devvir/service'`
 
 **`@tradebot/types`** (`shared/types/`)
 - Shared TypeScript type definitions (BitMEX message types, data structures, etc.)
@@ -29,7 +30,7 @@ Beyond services, the project includes shared workspace packages for code reuse:
 - Imported by: feed, codec, archivist
 - Usage: `import { Broker, keepAlive } from '@devvir/rabbitmq'`
 
-These shared packages are managed via pnpm workspace references (e.g., `"@tradebot/logger": "workspace:*"` in service package.json), enabling seamless local development and easy future npm publication.
+These shared packages are managed via pnpm workspace references (e.g., `"@devvir/service": "workspace:*"` in service package.json), enabling seamless local development and easy future npm publication.
 
 ## Core Principles
 

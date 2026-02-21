@@ -1,5 +1,5 @@
 import WebSocket from 'ws';
-import logger from '@tradebot/logger';
+import { logger } from '@devvir/service';
 
 /**
  * Subscribe to a list of BitMEX channels in a single message.

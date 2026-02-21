@@ -1,5 +1,5 @@
 import http from 'node:http';
-import logger from '@tradebot/logger';
+import { logger } from '@devvir/service';
 import type { HealthState, HealthCheckResult } from './types';
 
 const HEALTH_PORT = 3000;

@@ -2,7 +2,6 @@ import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { startConsuming } from '../src/persistence';
 import { MongoError, Long } from 'mongodb';
 
-vi.mock('@tradebot/logger', () => ({ default: { info: vi.fn(), error: vi.fn(), warn: vi.fn() } }));
 vi.mock('amqplib');
 
 describe('Message persistence', () => {

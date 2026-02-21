@@ -220,18 +220,6 @@ Multiple instances can be deployed:
 | `FEED_MAX_RECONNECT_DELAY_MS` | `60000` | Maximum reconnect delay (ms) |
 | `FEED_MESSAGE_TTL` | `1800000` | Message time-to-live (30 min) |
 
-## Observability
-
-### Logging
-
-Logger name: `@tradebot/logger` (via shared logger package)
-
-**Log levels:**
-- `info`: Connection events, config loaded
-- `debug`: Subscription confirmations, pong receipts
-- `warn`: Connection closes, unknown message types
-- `error`: Parse failures, WebSocket errors
-
 ### Health Endpoint
 
 ```bash

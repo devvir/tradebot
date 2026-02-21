@@ -1,8 +1,6 @@
-import { vi, describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { determineHealth } from '../src/health';
 import type { HealthState } from '../src/types';
-
-vi.mock('@tradebot/logger', () => ({ default: { info: vi.fn(), error: vi.fn(), warn: vi.fn() } }));
 
 describe('Health checks', () => {
   describe('determineHealth', () => {

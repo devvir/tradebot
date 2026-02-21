@@ -1,34 +1,30 @@
 import 'dotenv/config';
-import logger from '@tradebot/logger';
+import { logger } from '@devvir/service';
 import { loadConfig } from './config';
 import { connectToQueue } from './rabbitmq';
-import { startHealthCheck } from './health';
 import { createConnections } from './connection';
-import { registerLifecycle } from './lifecycle';
 import { createMessageHandler } from './messages';
+import service from './service';
 import type { FeedState } from './types';
 
-const main = async (): Promise<void> => {
+const config = loadConfig();
+
+const state: FeedState = {
+  realtime: null,
+  platform: null,
+  broker: null,
+  reconnectDelay: config.connection.reconnectDelayMs,
+  isShuttingDown: false,
+  lastMessageTime: Date.now(),
+  apiVersion: null,
+  pingInterval: null,
+};
+
+service.run(async () => {
   logger.info('Starting BitMEX Feed Service...');
 
-  const config = loadConfig();
+  const broker = state.broker = await connectToQueue(config.queue.rabbitmqUrl);
 
-  // ── Service state ─────────────────────────────────────────────────────────
-  const state: FeedState = {
-    realtime: null,
-    platform: null,
-    broker: null,
-    reconnectDelay: config.connection.reconnectDelayMs,
-    isShuttingDown: false,
-    lastMessageTime: Date.now(),
-    apiVersion: null,
-    pingInterval: null,
-  };
-
-  // ── RabbitMQ ──────────────────────────────────────────────────────────────
-  state.broker = await connectToQueue(config.queue.rabbitmqUrl);
-
-  // ── Message handler ───────────────────────────────────────────────────────
   const onMessage = createMessageHandler(state);
 
   // ── WebSocket connections ─────────────────────────────────────────────────
@@ -36,14 +32,7 @@ const main = async (): Promise<void> => {
   if (config.realtimeChannels.length > 0) connectRealtime();
   if (config.platformChannels.length > 0) connectPlatform();
 
-  // ── Health & lifecycle ────────────────────────────────────────────────────
-  const { getHealthState } = registerLifecycle(state);
-  startHealthCheck(getHealthState);
-
   logger.info('Service started successfully');
-};
 
-main().catch((error) => {
-  logger.error({ error }, 'Unhandled error in main');
-  process.exit(1);
+  return { state, broker };
 });

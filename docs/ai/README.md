@@ -38,10 +38,10 @@ Covers:
 
 ## Quick Reference
 
-**Key Principle:** Services are independent units that communicate via environment variables and message queues. Currently active services: feed, codec, archivist. Shared packages (workspace modules): @tradebot/logger, @tradebot/types.
+**Key Principle:** Services are independent units that communicate via environment variables and message queues. Currently active services: feed, codec, archivist. Shared packages (workspace modules): @devvir/service, @tradebot/types.
 
 **Current Enforcement:**
 - Each service reads configuration from environment variables only
-- Services import shared packages via workspace references (e.g., `import logger from '@tradebot/logger'`)
+- Services import shared packages via workspace references (e.g., `import { logger } from '@devvir/service'`)
 - No hardcoded connections between services
 - Message-based communication through RabbitMQ

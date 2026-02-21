@@ -3,8 +3,6 @@ import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { startHealthCheck } from '../src/health';
 import type { CodecState } from '../src/types';
 
-vi.mock('@tradebot/logger', () => ({ default: { info: vi.fn(), error: vi.fn() } }));
-
 function makeReq(url: string): http.IncomingMessage {
   return { url } as http.IncomingMessage;
 }

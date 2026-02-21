@@ -1,4 +1,4 @@
-import logger from '@tradebot/logger';
+import { logger } from '@devvir/service';
 import { exchangeName } from './rabbitmq';
 import {
   type BitmexWebSocketMessage,

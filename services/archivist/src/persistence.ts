@@ -1,6 +1,6 @@
 import { MongoClient, Db, MongoError, Long, Binary } from 'mongodb';
 import amqp from 'amqplib';
-import logger from '@tradebot/logger';
+import { logger } from '@devvir/service';
 
 export interface MongoDBConnection {
   client: MongoClient;
@@ -23,6 +23,33 @@ export const connectToDatabase = async (url: string): Promise<MongoDBConnection>
     logger.error({ error }, 'Failed to connect to MongoDB');
     throw error;
   }
+};
+
+/**
+ * Connect to MongoDB with exponential backoff retry logic.
+ * Ensures service startup waits for database availability.
+ */
+export const connectMongoWithRetry = async (
+  mongodbUrl: string,
+  maxRetries = 10,
+  delayMs = 5000
+): Promise<MongoDBConnection> => {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const connection = await connectToDatabase(mongodbUrl);
+      logger.info('Successfully connected to MongoDB');
+
+      return connection;
+    } catch (error) {
+      logger.warn({ error, attempt: i + 1, maxRetries }, 'Failed to connect to MongoDB, retrying...');
+
+      if (i < maxRetries - 1) {
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
+    }
+  }
+
+  throw new Error(`Failed to connect to MongoDB after ${maxRetries} attempts`);
 };
 
 const queueName = 'archivist';

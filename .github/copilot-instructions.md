@@ -34,7 +34,6 @@ All code in this project is written primarily for **human understanding and main
 - All application code lives in `src/` folders within each service
 - Use modular files for different concerns:
   - `src/index.ts` - Entry point, orchestration only
-  - `src/logger.ts` - Logger setup and configuration
   - `src/mongodb.ts` - MongoDB connection and utilities
   - `src/rabbitmq.ts` - RabbitMQ connection and utilities
   - `src/health.ts` - Health check server
