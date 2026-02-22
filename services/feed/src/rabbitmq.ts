@@ -1,24 +1,22 @@
 import { keepAlive, Broker } from '@devvir/rabbitmq';
 import { logger } from '@devvir/service';
-
-export const exchangeName = 'bitmex.feed';
-export const queueName = 'bitmex.feed';
+import type { Config } from './types';
 
 /**
  * Create and configure a RabbitMQ broker.
  *
  * Connection lifecycle events are logged by the broker.
  */
-export const connectToQueue = async (url: string): Promise<Broker> => {
+export const connectToQueue = async (config: Config): Promise<Broker> => {
   logger.info('Setting up RabbitMQ broker...');
 
-  const broker = await keepAlive(url);
+  const broker = await keepAlive(config.queue.rabbitmqUrl);
 
   await broker.declares({
     exchanges: {
-      [exchangeName]: {
+      [config.queue.exchangeName]: {
         type: 'topic',
-        queues: { [queueName]: { routingKey: '#' } },
+        queues: { [config.queue.queueName]: { routingKey: '#' } },
       },
     },
   });

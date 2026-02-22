@@ -16,6 +16,10 @@ services:
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
       MONGODB_URL: ${MONGODB_URL:-mongodb://root:root@mongodb:27017/tradebot?authSource=admin}
 
+      # Data flow
+      ARCHIVIST_EXCHANGE: ${ARCHIVIST_EXCHANGE:-ex.archive}
+      ARCHIVIST_QUEUE: ${ARCHIVIST_QUEUE:-q.archive}
+
       # Batch Processing
       ARCHIVIST_BATCH_SIZE: ${ARCHIVIST_BATCH_SIZE:-1000}
       ARCHIVIST_BATCH_TIMEOUT_MS: ${ARCHIVIST_BATCH_TIMEOUT_MS:-5000}

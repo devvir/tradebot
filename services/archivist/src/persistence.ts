@@ -1,6 +1,7 @@
-import { MongoClient, Db, MongoError, Long, Binary } from 'mongodb';
 import amqp from 'amqplib';
+import { MongoClient, Db, MongoError, Long, Binary } from 'mongodb';
 import { logger } from '@devvir/service';
+import { Config } from './types';
 
 export interface MongoDBConnection {
   client: MongoClient;
@@ -52,28 +53,26 @@ export const connectMongoWithRetry = async (
   throw new Error(`Failed to connect to MongoDB after ${maxRetries} attempts`);
 };
 
-const queueName = 'archivist';
-
 export const startConsuming = async (
   channel: amqp.Channel,
   db: Db,
-  batchSize: number,
+  { batchSize, queueName }: Config,
   onStoreMsg: () => void
 ): Promise<void> => {
   try {
-    await channel.assertQueue(queueName, { durable: true });
+    await channel.assertQueue(queueName);
 
     logger.info({ queue: queueName }, 'Consuming from queue');
     await channel.prefetch(batchSize);
 
-    consume(channel, db, onStoreMsg);
+    consume(channel, db, queueName, onStoreMsg);
   } catch (e) {
     logger.error({ e }, 'Failed to start consuming');
     throw e;
   }
 };
 
-const consume = async (channel: amqp.Channel, db: Db, onStoreMsg: () => void): Promise<void> => {
+const consume = async (channel: amqp.Channel, db: Db, queueName: string, onStoreMsg: () => void): Promise<void> => {
   channel.consume(queueName, async (msg) => {
     if (! msg) return;
 

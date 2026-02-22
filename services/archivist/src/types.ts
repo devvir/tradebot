@@ -6,9 +6,10 @@ export interface MongoDBConnection {
 }
 
 export interface Config {
-  rabbitmqUrl: string;
   mongodbUrl: string;
+  rabbitmqUrl: string;
+  exchangeName: string;
+  queueName: string;
   batchSize: number;
   batchTimeoutMs: number;
-  healthPort: number;
 }

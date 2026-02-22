@@ -5,7 +5,16 @@ describe('Configuration', () => {
   const originalEnv = process.env;
 
   beforeEach(() => {
-    process.env = { ...originalEnv };
+    process.env = {
+      ...originalEnv,
+      // Set required env vars for all tests
+      RABBITMQ_URL: 'amqp://guest:guest@rabbitmq:5672',
+      FEED_EXCHANGE: 'ex.feed',
+      FEED_QUEUE: 'q.feed',
+      FEED_MESSAGE_TTL: '1800000',
+      FEED_RECONNECT_DELAY_MS: '5000',
+      FEED_MAX_RECONNECT_DELAY_MS: '60000',
+    };
   });
 
   afterEach(() => {
@@ -53,22 +62,10 @@ describe('Configuration', () => {
   });
 
   describe('Connection settings', () => {
-    it('should use default reconnect delay (5000ms)', () => {
-      delete process.env.FEED_RECONNECT_DELAY_MS;
-      const config = loadConfig();
-      expect(config.connection.reconnectDelayMs).toBe(5000);
-    });
-
     it('should parse reconnect delay from env', () => {
       process.env.FEED_RECONNECT_DELAY_MS = '10000';
       const config = loadConfig();
       expect(config.connection.reconnectDelayMs).toBe(10000);
-    });
-
-    it('should use default max reconnect delay (60000ms)', () => {
-      delete process.env.FEED_MAX_RECONNECT_DELAY_MS;
-      const config = loadConfig();
-      expect(config.connection.maxReconnectDelayMs).toBe(60000);
     });
 
     it('should parse max reconnect delay from env', () => {
@@ -79,28 +76,46 @@ describe('Configuration', () => {
   });
 
   describe('RabbitMQ settings', () => {
-    it('should use default RabbitMQ URL', () => {
-      delete process.env.RABBITMQ_URL;
-      const config = loadConfig();
-      expect(config.queue.rabbitmqUrl).toBe('amqp://guest:guest@rabbitmq:5672');
-    });
-
     it('should use custom RabbitMQ URL when provided', () => {
       process.env.RABBITMQ_URL = 'amqp://user:pass@broker:5672';
       const config = loadConfig();
       expect(config.queue.rabbitmqUrl).toBe('amqp://user:pass@broker:5672');
     });
 
-    it('should use default message TTL (1800000ms = 30min)', () => {
-      delete process.env.FEED_MESSAGE_TTL;
-      const config = loadConfig();
-      expect(config.queue.messageTtlMs).toBe(1800000);
-    });
-
     it('should parse message TTL from env', () => {
       process.env.FEED_MESSAGE_TTL = '3600000';
       const config = loadConfig();
       expect(config.queue.messageTtlMs).toBe(3600000);
+    });
+
+    it('should require RABBITMQ_URL', () => {
+      delete process.env.RABBITMQ_URL;
+      expect(() => loadConfig()).toThrow('RABBITMQ_URL is required');
+    });
+
+    it('should require FEED_EXCHANGE', () => {
+      delete process.env.FEED_EXCHANGE;
+      expect(() => loadConfig()).toThrow('FEED_EXCHANGE is required');
+    });
+
+    it('should require FEED_QUEUE', () => {
+      delete process.env.FEED_QUEUE;
+      expect(() => loadConfig()).toThrow('FEED_QUEUE is required');
+    });
+
+    it('should require FEED_MESSAGE_TTL as a positive number', () => {
+      delete process.env.FEED_MESSAGE_TTL;
+      expect(() => loadConfig()).toThrow('FEED_MESSAGE_TTL must be a positive number');
+    });
+
+    it('should require FEED_RECONNECT_DELAY_MS as a positive number', () => {
+      delete process.env.FEED_RECONNECT_DELAY_MS;
+      expect(() => loadConfig()).toThrow('FEED_RECONNECT_DELAY_MS must be a positive number');
+    });
+
+    it('should require FEED_MAX_RECONNECT_DELAY_MS as a positive number', () => {
+      delete process.env.FEED_MAX_RECONNECT_DELAY_MS;
+      expect(() => loadConfig()).toThrow('FEED_MAX_RECONNECT_DELAY_MS must be a positive number');
     });
   });
 });

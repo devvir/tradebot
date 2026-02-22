@@ -10,12 +10,13 @@ export interface UnarchivistState {
 }
 
 export interface Config {
-  rabbitmqUrl: string;
   mongodbUrl: string;
+  rabbitmqUrl: string;
+  exchangeName: string;
+  queueName: string;
   batchSize: number;
-  collections: string[]; // Empty array = all collections
-  healthPort: number;
   pollIntervalMs: number;
+  collections: string[]; // Empty array = all collections
 }
 
 /**

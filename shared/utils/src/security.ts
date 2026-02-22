@@ -24,9 +24,9 @@ export const redactUrl = (url: string): string => {
  * Credentials must be URL-encoded to handle special characters like @, :, /, etc.
  */
 export const sanitizeUrl = (url: string): string => {
-  const urlObj = new URL(url);
-
   try {
+    var urlObj = new URL(url);
+
     if (urlObj.username) urlObj.username = encodeURIComponent(decodeURIComponent(urlObj.username));
     if (urlObj.password) urlObj.password = encodeURIComponent(decodeURIComponent(urlObj.password));
   } catch (error) {

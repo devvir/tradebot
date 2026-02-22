@@ -73,13 +73,9 @@ const extractTs = (message: BitmexDataMessage): string => {
 };
 
 const messageHeaders = (rawMsg: RawMessage, jsonMsg: BitmexDataMessage): Record<string, unknown> => {
-  const table = rawMsg.fields.routingKey;
   const documentId = createDocumentId(rawMsg, jsonMsg);
 
-  return {
-    table,
-    metadata: { _id: bigIntToBuffer(documentId) },
-  };
+  return { metadata: { _id: bigIntToBuffer(documentId) } };
 }
 
 /**
@@ -101,7 +97,7 @@ const createDocumentId = (message: RawMessage, jsonMsg: BitmexDataMessage, encod
 /**
  * Serialise a BigInt as a big-endian 8-byte Buffer for lossless AMQP header transport.
  */
-export const bigIntToBuffer = (value: bigint): Buffer => {
+const bigIntToBuffer = (value: bigint): Buffer => {
   const buf = Buffer.allocUnsafe(8);
   buf.writeBigUInt64BE(value);
   return buf;

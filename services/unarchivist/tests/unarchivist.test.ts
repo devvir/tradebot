@@ -8,6 +8,7 @@ describe('Unarchivist Service - Observable Behavior', () => {
   let db: Db;
   let broker: Broker;
   let skipIntegrationTests = true;
+  const originalEnv = process.env;
 
   beforeAll(async () => {
     // Check if MongoDB and RabbitMQ are available
@@ -43,19 +44,29 @@ describe('Unarchivist Service - Observable Behavior', () => {
     if (mongoClient) {
       await mongoClient.close();
     }
+    process.env = originalEnv;
   });
 
   // Helper to conditionally skip tests if services aren't available
   const itIfServicesAvailable = skipIntegrationTests ? it.skip : it;
 
   describe('Config Validation', () => {
+    beforeEach(() => {
+      process.env = {
+        ...originalEnv,
+        MONGODB_URL: 'mongodb://localhost:27017/test',
+        RABBITMQ_URL: 'amqp://localhost:5672',
+        UNARCHIVIST_EXCHANGE: 'ex.unarchivist',
+        UNARCHIVIST_QUEUE: 'q.unarchivist',
+        UNARCHIVIST_BATCH_SIZE: '100',
+        UNARCHIVIST_POLL_INTERVAL_MS: '3000',
+      };
+    });
+
     afterEach(() => {
       // Clear require cache and reset environment variables
       delete require.cache[require.resolve('../dist/src/config.js')];
-      delete process.env.RABBITMQ_URL;
-      delete process.env.MONGODB_URL;
-      delete process.env.UNARCHIVIST_BATCH_SIZE;
-      delete process.env.UNARCHIVIST_BATCH_TIMEOUT_MS;
+      process.env = originalEnv;
     });
 
     it('should reject invalid batch size', () => {
@@ -66,17 +77,29 @@ describe('Unarchivist Service - Observable Behavior', () => {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const { loadConfig } = require('../dist/src/config.js');
         loadConfig();
-      }).toThrow('UNARCHIVIST_BATCH_SIZE must be greater than 0');
+      }).toThrow('UNARCHIVIST_BATCH_SIZE must be a positive number');
     });
   });
 
 
 
   describe('Configuration Loading', () => {
+    beforeEach(() => {
+      process.env = {
+        ...originalEnv,
+        MONGODB_URL: 'mongodb://localhost:27017/test',
+        RABBITMQ_URL: 'amqp://localhost:5672',
+        UNARCHIVIST_EXCHANGE: 'ex.unarchivist',
+        UNARCHIVIST_QUEUE: 'q.unarchivist',
+        UNARCHIVIST_BATCH_SIZE: '100',
+        UNARCHIVIST_POLL_INTERVAL_MS: '3000',
+      };
+    });
+
     afterEach(() => {
       // Clear require cache and reset environment variables
       delete require.cache[require.resolve('../dist/src/config.js')];
-      delete process.env.UNARCHIVIST_COLLECTIONS;
+      process.env = originalEnv;
     });
 
     it('should parse collection whitelist from env', () => {

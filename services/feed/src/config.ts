@@ -1,5 +1,5 @@
 import { logger } from '@devvir/service';
-import { redactUrl } from '@tradebot/utils';
+import { redactUrl, sanitizeUrl } from '@tradebot/utils';
 import type { Config } from './types';
 
 export const BITMEX_WS_URLS = {
@@ -46,25 +46,23 @@ export const loadConfig = (): Config => {
     realtimeChannels: REALTIME_CHANNELS,
     platformChannels: PLATFORM_CHANNELS,
     queue: {
-      rabbitmqUrl: process.env.RABBITMQ_URL || 'amqp://guest:guest@rabbitmq:5672',
-      messageTtlMs: parseInt(process.env.FEED_MESSAGE_TTL || '1800000', 10),
+      rabbitmqUrl: sanitizeUrl(process.env.RABBITMQ_URL || ''),
+      exchangeName: process.env.FEED_EXCHANGE || '',
+      queueName: process.env.FEED_QUEUE || '',
+      messageTtlMs: parseInt(process.env.FEED_MESSAGE_TTL || '0', 10),
     },
     connection: {
-      reconnectDelayMs: parseInt(process.env.FEED_RECONNECT_DELAY_MS || '5000', 10),
-      maxReconnectDelayMs: parseInt(process.env.FEED_MAX_RECONNECT_DELAY_MS || '60000', 10),
+      reconnectDelayMs: parseInt(process.env.FEED_RECONNECT_DELAY_MS || '0', 10),
+      maxReconnectDelayMs: parseInt(process.env.FEED_MAX_RECONNECT_DELAY_MS || '0', 10),
     },
   };
 
   validateConfig(config);
 
-  const safeConfig = {
-    ...config,
-    queue: {
-      ...config.queue,
-      rabbitmqUrl: redactUrl(config.queue.rabbitmqUrl),
-    },
-  };
-  logger.info(safeConfig, 'Configuration loaded and validated!');
+  logger.info({ ...config, queue: {
+    ...config.queue,
+    rabbitmqUrl: redactUrl(config.queue.rabbitmqUrl),
+  } }, 'Configuration loaded and validated!');
 
   return config;
 };
@@ -72,6 +70,11 @@ export const loadConfig = (): Config => {
 const validateConfig = (config: Config): void => {
   if (! config.realtimeWsUrl) throw new Error('Failed to determine BitMEX realtime WS URL');
   if (! config.queue.rabbitmqUrl) throw new Error('RABBITMQ_URL is required');
+  if (! config.queue.exchangeName) throw new Error('FEED_EXCHANGE is required');
+  if (! config.queue.queueName) throw new Error('FEED_QUEUE is required');
+  if (config.queue.messageTtlMs <= 0) throw new Error('FEED_MESSAGE_TTL must be a positive number');
+  if (config.connection.reconnectDelayMs <= 0) throw new Error('FEED_RECONNECT_DELAY_MS must be a positive number');
+  if (config.connection.maxReconnectDelayMs <= 0) throw new Error('FEED_MAX_RECONNECT_DELAY_MS must be a positive number');
 };
 
 const usesTestnet = () => [undefined, '', '1', 'on', 'true'].includes(

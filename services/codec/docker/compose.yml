@@ -15,6 +15,12 @@ services:
       # Dependencies (queue)
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
 
+      # Data flow
+      CODEC_INBOUND_EXCHANGE: ${CODEC_INBOUND_EXCHANGE:-ex.feed}
+      CODEC_INBOUND_QUEUE: ${CODEC_INBOUND_QUEUE:-q.feed}
+      CODEC_OUTBOUND_EXCHANGE: ${CODEC_OUTBOUND_EXCHANGE:-ex.archive}
+      CODEC_OUTBOUND_QUEUE: ${CODEC_OUTBOUND_QUEUE:-q.archive}
+
       # Codec Strategy
       CODEC_STRATEGY: ${CODEC_STRATEGY:-}
 

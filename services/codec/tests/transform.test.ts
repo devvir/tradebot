@@ -24,12 +24,12 @@ describe('Encoding utilities', () => {
       const ts = '2024-01-15T10:30:45.123Z';
       const { encoded, bits } = encodeTimestamp(ts);
       expect(bits).toBe(42);
-      expect(decodeTimestamp(encoded as bigint)).toBe(ts);
+      expect(decodeTimestamp(encoded as number)).toBe(ts);
     });
 
     it('should roundtrip timestamps at common boundary values', () => {
       for (const ts of ['2000-01-01T00:00:00.000Z', '2050-06-15T12:00:00.000Z']) {
-        expect(decodeTimestamp(encodeTimestamp(ts).encoded as bigint)).toBe(ts);
+        expect(decodeTimestamp(encodeTimestamp(ts).encoded as number)).toBe(ts);
       }
     });
 

@@ -24,10 +24,10 @@ Polling-based extraction service that continuously scans MongoDB collections:
 
 ## Usage
 
-Launch the complete extract stack:
+Launch the complete transform stack:
 
 ```bash
-tb up extract
+tb up transform
 ```
 
 Logs and health checks follow the standard tradebot service patterns.

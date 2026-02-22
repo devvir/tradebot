@@ -8,13 +8,13 @@ service.run(async () => {
 
   const [mongo, broker] = await Promise.all([
     connectMongoWithRetry(config.mongodbUrl),
-    connectToQueue(config.rabbitmqUrl),
+    connectToQueue(config),
   ]);
 
   const channel = broker.getChannel();
   if (! channel) throw new Error('Failed to get channel from broker');
 
-  await startConsuming(channel, mongo.db, config.batchSize, service.onMessage);
+  await startConsuming(channel, mongo.db, config, service.onMessage);
 
   return { mongo, broker };
 });

@@ -1,5 +1,4 @@
 import { logger } from '@devvir/service';
-import { exchangeName } from './rabbitmq';
 import {
   type BitmexWebSocketMessage,
   type FeedState,
@@ -13,7 +12,7 @@ import {
 /**
  * Creates a message handler that publishes all BitMEX messages directly.
  * - Logs subscription/info control messages
- * - Publishes all data messages to the `feed` exchange
+ * - Publishes all data messages to the feed exchange
  */
 export const createMessageHandler = (state: FeedState): MessageHandler => (buffer: Buffer): void => {
   state.lastMessageTime = Date.now();
@@ -29,7 +28,7 @@ export const createMessageHandler = (state: FeedState): MessageHandler => (buffe
       return handleControlMessage(message, state);
     }
 
-    state.broker!.getExchange(exchangeName)!.publish(message, message.table, {
+    state.broker!.getExchange()!.publish(message, message.table, {
       headers: { api_version: state.apiVersion || undefined },
     });
 

@@ -11,7 +11,6 @@ import {
   SIDE_ID,
   TICK_DIRECTION,
   isBitmexDataWithSymbol,
-  bigIntToBuffer,
 } from '.';
 
 /**
@@ -53,7 +52,7 @@ export const encodeTimestamp = (isoString: string): EncodedField => {
     throw new Error(`Timestamp ${isoString} out of valid range (2000-2100)`);
   }
 
-  return { encoded: BigInt(offset), bits: 42 };
+  return { encoded: offset, bits: 42 };
 };
 
 export const decodeTimestamp = (encoded: number | bigint): string => {
@@ -142,7 +141,7 @@ const orderBookL2Payload = (
   { id, side, size, price, transactTime, pool }: OrderBookL2Data,
   action: BitmexAction
 ): PackedDataItem => {
-  const ts = bigIntToBuffer(encodeTimestamp(transactTime).encoded as bigint);
+  const ts = encodeTimestamp(transactTime).encoded as number;
   const sideId = SIDE_ID[side];
   const poolItem = pool ? [pool] : [];  // This seems to exist only in the Rest API
 

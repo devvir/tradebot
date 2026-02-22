@@ -2,10 +2,8 @@ import { logger } from '@devvir/service';
 import { keepAlive, Broker } from '@devvir/rabbitmq';
 import { BitmexDataMessage } from '@tradebot/types';
 import { codecStrategies, codecStrategy } from './config';
+import type { Config } from './types';
 import { encode } from './encoding';
-
-const consumerQueueName = 'bitmex.feed';
-const outputQueueName = 'archivist';
 
 /**
  * Creates and configures a RabbitMQ broker.
@@ -13,17 +11,20 @@ const outputQueueName = 'archivist';
  *
  * Connection lifecycle events are logged by the broker.
  */
-export const connectToQueue = async (url: string): Promise<Broker> => {
+export const connectToQueue = async (config: Config): Promise<Broker> => {
   logger.info('Setting up RabbitMQ broker...');
-  const broker = await keepAlive(url);
+  const broker = await keepAlive(config.rabbitmqUrl);
   logger.info('Successfully connected to RabbitMQ');
 
   broker.declares({
-    queues: { [outputQueueName]: {} }, // Default exchange
     exchanges: {
-      [consumerQueueName]: {
+      [config.inboundExchange]: {
         type: 'topic',
-        queues: { [consumerQueueName]: { routingKey: '#' } },
+        queues: { [config.inboundQueue]: { routingKey: '#' } },
+      },
+      [config.outboundExchange]: {
+        type: 'topic',
+        queues: { [config.outboundQueue]: { routingKey: '#' } },
       },
     }
   });
@@ -31,11 +32,11 @@ export const connectToQueue = async (url: string): Promise<Broker> => {
   return broker;
 };
 
-export const startConsuming = async (broker: Broker, onProcessMsg: () => void): Promise<void> => {
-  const inputQueue = await waitForQueue(broker, consumerQueueName);
-  const outputQueue = broker.getQueue(outputQueueName)!;
+export const startConsuming = async (broker: Broker, config: Config, onProcessMsg: () => void): Promise<void> => {
+  const inputQueue = await waitForQueue(broker, config.inboundQueue);
+  const outputExchange = broker.getExchange(config.outboundExchange)!;
 
-  logger.info({ queue: consumerQueueName }, 'Starting message consumption');
+  logger.info({ queue: config.inboundQueue }, 'Starting message consumption');
 
   await inputQueue.consume(
     async (message, { ack, nack, original: rawMsg }) => {
@@ -45,15 +46,12 @@ export const startConsuming = async (broker: Broker, onProcessMsg: () => void): 
         onProcessMsg();
 
         if (codecStrategy.passthru()) {
-          outputQueue.publish(message, {
-            headers: { table: rawMsg.fields.routingKey },
-            contentType: 'application/json',
-          });
+          outputExchange.publish(message, rawMsg.fields.routingKey, { contentType: 'application/json' });
         } else {
           const { headers, payload } = encode(rawMsg, message as BitmexDataMessage);
           const contentType = codecStrategy.binary() ? 'application/octet-stream' : 'application/json';
 
-          outputQueue.publish(payload, { headers, contentType });
+          outputExchange.publish(payload, rawMsg.fields.routingKey, { headers, contentType });
         }
 
         ack();

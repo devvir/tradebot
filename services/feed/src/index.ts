@@ -22,7 +22,7 @@ const state: FeedState = {
 service.run(async () => {
   logger.info('Starting BitMEX Feed Service...');
 
-  const broker = state.broker = await connectToQueue(config.queue.rabbitmqUrl);
+  const broker = state.broker = await connectToQueue(config);
 
   const onMessage = createMessageHandler(state);
 

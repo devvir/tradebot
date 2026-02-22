@@ -18,6 +18,10 @@ services:
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
       FEED_MESSAGE_TTL: ${FEED_MESSAGE_TTL:-1800000}
 
+      # Data flow
+      FEED_EXCHANGE: ${FEED_EXCHANGE:-ex.feed}
+      FEED_QUEUE: ${FEED_QUEUE:-q.feed}
+
       # Reconnect delays
       FEED_RECONNECT_DELAY_MS: ${FEED_RECONNECT_DELAY_MS:-5000}
       FEED_MAX_RECONNECT_DELAY_MS: ${FEED_MAX_RECONNECT_DELAY_MS:-60000}

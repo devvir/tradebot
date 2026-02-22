@@ -1,6 +1,7 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { startConsuming } from '../src/persistence';
 import { MongoError, Long } from 'mongodb';
+import { loadConfig } from '../src/config';
 
 vi.mock('amqplib');
 
@@ -8,8 +9,19 @@ describe('Message persistence', () => {
   let mockChannel: any;
   let mockDb: any;
   let mockCollection: any;
+  const originalEnv = process.env;
 
   beforeEach(() => {
+    process.env = {
+      ...originalEnv,
+      RABBITMQ_URL: 'amqp://guest:guest@rabbitmq:5672',
+      MONGODB_URL: 'mongodb://root:root@mongodb:27017/tradebot?authSource=admin',
+      ARCHIVIST_EXCHANGE: 'ex.archive',
+      ARCHIVIST_QUEUE: 'q.archive',
+      ARCHIVIST_BATCH_SIZE: '100',
+      ARCHIVIST_BATCH_TIMEOUT_MS: '5000',
+    };
+
     mockCollection = {
       insertOne: vi.fn().mockResolvedValue({ insertedCount: 1 })
     };
@@ -31,33 +43,36 @@ describe('Message persistence', () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    process.env = originalEnv;
   });
 
   describe('startConsuming', () => {
+    const queueName = 'q.archive';
+
     it('should setup queue', async () => {
       const onStoreMsg = vi.fn();
-      await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
+      await startConsuming(mockChannel, mockDb, { ...loadConfig(), batchSize: 100, queueName }, onStoreMsg);
 
-      expect(mockChannel.assertQueue).toHaveBeenCalledWith('archivist', { durable: true });
+      expect(mockChannel.assertQueue).toHaveBeenCalledWith(queueName);
     });
 
     it('should set prefetch to batch size', async () => {
       const onStoreMsg = vi.fn();
-      await startConsuming(mockChannel, mockDb, 50, onStoreMsg);
+      await startConsuming(mockChannel, mockDb, { ...loadConfig(), batchSize: 50, queueName }, onStoreMsg);
 
       expect(mockChannel.prefetch).toHaveBeenCalledWith(50);
     });
 
     it('should start consuming from queue', async () => {
       const onStoreMsg = vi.fn();
-      await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
+      await startConsuming(mockChannel, mockDb, { ...loadConfig(), batchSize: 100, queueName }, onStoreMsg);
 
-      expect(mockChannel.consume).toHaveBeenCalledWith('archivist', expect.any(Function));
+      expect(mockChannel.consume).toHaveBeenCalledWith(queueName, expect.any(Function));
     });
 
     it('should handle null message gracefully', async () => {
       const onStoreMsg = vi.fn();
-      await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
+      await startConsuming(mockChannel, mockDb, { ...loadConfig(), batchSize: 100, queueName }, onStoreMsg);
 
       const consumeCallback = mockChannel.consume.mock.calls[0][1];
       await consumeCallback(null);
@@ -68,7 +83,7 @@ describe('Message persistence', () => {
 
     it('should use table header as collection name', async () => {
       const onStoreMsg = vi.fn();
-      await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
+      await startConsuming(mockChannel, mockDb, { ...loadConfig(), batchSize: 100, queueName }, onStoreMsg);
 
       const message = {
         content: Buffer.from(JSON.stringify({ value: 42 })),
@@ -87,7 +102,7 @@ describe('Message persistence', () => {
 
     it('should merge metadata and JSON content into document', async () => {
       const onStoreMsg = vi.fn();
-      await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
+      await startConsuming(mockChannel, mockDb, { ...loadConfig(), batchSize: 100, queueName }, onStoreMsg);
 
       const message = {
         content: Buffer.from(JSON.stringify({ price: 50000, quantity: 1 })),
@@ -118,7 +133,7 @@ describe('Message persistence', () => {
 
     it('should parse JSON by default when contentType not specified', async () => {
       const onStoreMsg = vi.fn();
-      await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
+      await startConsuming(mockChannel, mockDb, { ...loadConfig(), batchSize: 100, queueName }, onStoreMsg);
 
       const message = {
         content: Buffer.from(JSON.stringify({ value: 100 })),
@@ -138,7 +153,7 @@ describe('Message persistence', () => {
 
     it('should wrap binary content when contentType is application/octet-stream', async () => {
       const onStoreMsg = vi.fn();
-      await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
+      await startConsuming(mockChannel, mockDb, { ...loadConfig(), batchSize: 100, queueName }, onStoreMsg);
 
       const binaryData = Buffer.from([0x00, 0x01, 0x02, 0x03]);
       const message = {
@@ -161,7 +176,7 @@ describe('Message persistence', () => {
 
     it('should ack message on successful insert', async () => {
       const onStoreMsg = vi.fn();
-      await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
+      await startConsuming(mockChannel, mockDb, { ...loadConfig(), batchSize: 100, queueName }, onStoreMsg);
 
       const message = {
         content: Buffer.from(JSON.stringify({ data: 'test' })),
@@ -180,7 +195,7 @@ describe('Message persistence', () => {
 
     it('should ack duplicate key errors (11000) as idempotent', async () => {
       const onStoreMsg = vi.fn();
-      await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
+      await startConsuming(mockChannel, mockDb, { ...loadConfig(), batchSize: 100, queueName }, onStoreMsg);
 
       const message = {
         content: Buffer.from(JSON.stringify({ _id: 'doc-1' })),
@@ -205,7 +220,7 @@ describe('Message persistence', () => {
 
     it('should nack other errors with requeue', async () => {
       const onStoreMsg = vi.fn();
-      await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
+      await startConsuming(mockChannel, mockDb, { ...loadConfig(), batchSize: 100, queueName }, onStoreMsg);
 
       const message = {
         content: Buffer.from(JSON.stringify({ data: 'test' })),
@@ -225,7 +240,7 @@ describe('Message persistence', () => {
 
     it('should call onStoreMsg on successful insert', async () => {
       const onStoreMsg = vi.fn();
-      await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
+      await startConsuming(mockChannel, mockDb, { ...loadConfig(), batchSize: 100, queueName }, onStoreMsg);
 
       const message = {
         content: Buffer.from(JSON.stringify({ data: 'test' })),
@@ -242,7 +257,7 @@ describe('Message persistence', () => {
 
     it('should not call onStoreMsg on error', async () => {
       const onStoreMsg = vi.fn();
-      await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
+      await startConsuming(mockChannel, mockDb, { ...loadConfig(), batchSize: 100, queueName }, onStoreMsg);
 
       const message = {
         content: Buffer.from(JSON.stringify({ data: 'test' })),
@@ -261,7 +276,7 @@ describe('Message persistence', () => {
 
     it('should throw when table header is missing', async () => {
       const onStoreMsg = vi.fn();
-      await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
+      await startConsuming(mockChannel, mockDb, { ...loadConfig(), batchSize: 100, queueName }, onStoreMsg);
 
       const message = {
         content: Buffer.from(JSON.stringify({ data: 'test' })),
@@ -278,7 +293,7 @@ describe('Message persistence', () => {
 
     it('should convert Buffer metadata values to BSON Long (int64 BE)', async () => {
       const onStoreMsg = vi.fn();
-      await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
+      await startConsuming(mockChannel, mockDb, { ...loadConfig(), batchSize: 100, queueName }, onStoreMsg);
 
       // Use a value > Number.MAX_SAFE_INTEGER to confirm no precision loss
       const bigValue = 9007199254740993n; // 2^53 + 1
@@ -307,7 +322,7 @@ describe('Message persistence', () => {
 
     it('should leave non-Buffer metadata values unchanged alongside Buffer values', async () => {
       const onStoreMsg = vi.fn();
-      await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
+      await startConsuming(mockChannel, mockDb, { ...loadConfig(), batchSize: 100, queueName }, onStoreMsg);
 
       const idBuffer = Buffer.allocUnsafe(8);
       idBuffer.writeBigUInt64BE(1n);
@@ -334,7 +349,7 @@ describe('Message persistence', () => {
 
     it('should handle empty metadata by not including it', async () => {
       const onStoreMsg = vi.fn();
-      await startConsuming(mockChannel, mockDb, 100, onStoreMsg);
+      await startConsuming(mockChannel, mockDb, { ...loadConfig(), batchSize: 100, queueName }, onStoreMsg);
 
       const message = {
         content: Buffer.from(JSON.stringify({ value: 42 })),

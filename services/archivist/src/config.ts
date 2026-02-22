@@ -3,12 +3,16 @@ import { redactUrl, sanitizeUrl } from '@tradebot/utils';
 import { Config } from './types';
 
 export const loadConfig = (): Config => {
+  const mongodbUrl = process.env.MONGODB_URL;
+  const rabbitmqUrl = process.env.RABBITMQ_URL;
+
   const config = {
-    rabbitmqUrl: sanitizeUrl(process.env.RABBITMQ_URL || 'amqp://guest:guest@rabbitmq:5672'),
-    mongodbUrl: sanitizeUrl(process.env.MONGODB_URL || 'mongodb://root:root@mongodb:27017/tradebot?authSource=admin'),
-    batchSize: parseInt(process.env.ARCHIVIST_BATCH_SIZE || '100', 10),
-    batchTimeoutMs: parseInt(process.env.ARCHIVIST_BATCH_TIMEOUT_MS || '5000', 10),
-    healthPort: 3000,
+    mongodbUrl: mongodbUrl || '',
+    rabbitmqUrl: rabbitmqUrl || '',
+    exchangeName: sanitizeUrl(process.env.ARCHIVIST_EXCHANGE || ''),
+    queueName: sanitizeUrl(process.env.ARCHIVIST_QUEUE || ''),
+    batchSize: parseInt(process.env.ARCHIVIST_BATCH_SIZE || '0', 10),
+    batchTimeoutMs: parseInt(process.env.ARCHIVIST_BATCH_TIMEOUT_MS || '0', 10),
   };
 
   validateConfig(config);
@@ -25,6 +29,8 @@ export const loadConfig = (): Config => {
 export const validateConfig = (config: Config): void => {
   if (! config.rabbitmqUrl) throw new Error('RABBITMQ_URL is required');
   if (! config.mongodbUrl) throw new Error('MONGODB_URL is required');
-  if (config.batchSize <= 0) throw new Error('ARCHIVIST_BATCH_SIZE must be greater than 0');
-  if (config.batchTimeoutMs <= 0) throw new Error('ARCHIVIST_BATCH_TIMEOUT_MS must be greater than 0');
+  if (! config.exchangeName) throw new Error('ARCHIVIST_EXCHANGE is required');
+  if (! config.queueName) throw new Error('ARCHIVIST_QUEUE is required');
+  if (config.batchSize <= 0) throw new Error('ARCHIVIST_BATCH_SIZE must be a positive number');
+  if (config.batchTimeoutMs <= 0) throw new Error('ARCHIVIST_BATCH_TIMEOUT_MS must be a positive number');
 };

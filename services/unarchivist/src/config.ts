@@ -3,23 +3,22 @@ import { redactUrl, sanitizeUrl } from '@tradebot/utils';
 import type { Config } from './types';
 
 /**
- * Magic numbers for the polling algorithm.
- * Tune these to adjust behavior (e.g., if hitting timeout or missing docs).
+ * Sliding window of _ids to catch out-of-order writes.
+ * This is a tuning parameter for the polling algorithm.
  */
-export const BUFFER_SIZE = 1000; // Sliding window of _ids to catch out-of-order writes
-export const POLL_INTERVAL_MS = 3000; // Time between polls in milliseconds
+export const BUFFER_SIZE = 1000;
 
 export const loadConfig = (): Config => {
   const collectionsEnv = process.env.UNARCHIVIST_COLLECTIONS || '';
-  const collections = collectionsEnv.split(',').map((c) => c.trim()).filter(Boolean);
 
   const config: Config = {
-    rabbitmqUrl: sanitizeUrl(process.env.RABBITMQ_URL || 'amqp://guest:guest@rabbitmq:5672'),
-    mongodbUrl: sanitizeUrl(process.env.MONGODB_URL || 'mongodb://root:root@mongodb:27017/tradebot?authSource=admin'),
-    batchSize: parseInt(process.env.UNARCHIVIST_BATCH_SIZE || '1000', 10),
-    collections,
-    healthPort: 3000,
-    pollIntervalMs: parseInt(process.env.UNARCHIVIST_POLL_INTERVAL_MS || String(POLL_INTERVAL_MS), 10),
+    mongodbUrl: sanitizeUrl(process.env.MONGODB_URL || ''),
+    rabbitmqUrl: sanitizeUrl(process.env.RABBITMQ_URL || ''),
+    exchangeName: process.env.UNARCHIVIST_EXCHANGE || '',
+    queueName: process.env.UNARCHIVIST_QUEUE || '',
+    batchSize: parseInt(process.env.UNARCHIVIST_BATCH_SIZE || '0', 10),
+    pollIntervalMs: parseInt(process.env.UNARCHIVIST_POLL_INTERVAL_MS || '0', 10),
+    collections: collectionsEnv.split(',').map((c) => c.trim()).filter(Boolean),
   };
 
   validateConfig(config);
@@ -36,5 +35,8 @@ export const loadConfig = (): Config => {
 const validateConfig = (config: Config): void => {
   if (! config.rabbitmqUrl) throw new Error('RABBITMQ_URL is required');
   if (! config.mongodbUrl) throw new Error('MONGODB_URL is required');
-  if (config.batchSize <= 0) throw new Error('UNARCHIVIST_BATCH_SIZE must be greater than 0');
+  if (! config.exchangeName) throw new Error('UNARCHIVIST_EXCHANGE is required');
+  if (! config.queueName) throw new Error('UNARCHIVIST_QUEUE is required');
+  if (config.batchSize <= 0) throw new Error('UNARCHIVIST_BATCH_SIZE must be a positive number');
+  if (config.pollIntervalMs <= 0) throw new Error('UNARCHIVIST_POLL_INTERVAL_MS must be a positive number');
 };

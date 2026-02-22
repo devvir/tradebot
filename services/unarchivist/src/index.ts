@@ -23,7 +23,7 @@ service.run(async () => {
   // ── Connect to infrastructure ─────────────────────────────────────────────
   [state.mongoConnection, state.broker] = await Promise.all([
     connectToDatabase(config.mongodbUrl),
-    connectToQueue(config.rabbitmqUrl),
+    connectToQueue(config),
   ]);
 
   const db = state.mongoConnection.db;
@@ -33,7 +33,7 @@ service.run(async () => {
 
   // ── Start polling loop (discovers collections dynamically on each iteration) ─
   runPollingLoop(db, config, async (collectionName, doc) => {
-    await publishDocument(state.broker!, collectionName, doc);
+    await publishDocument(state.broker!, collectionName, doc, config);
     service.onMessage();
   });
 

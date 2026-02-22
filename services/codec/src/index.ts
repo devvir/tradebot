@@ -16,9 +16,9 @@ const state: CodecState = {
 service.run(async () => {
   logger.info('Starting Codec Service...');
 
-  const broker = state.rabbitmqBroker = await connectToQueue(config.rabbitmqUrl);
+  const broker = state.rabbitmqBroker = await connectToQueue(config);
 
-  await startConsuming(broker, service.onMessage);
+  await startConsuming(broker, config, service.onMessage);
 
   return { state, broker };
 });

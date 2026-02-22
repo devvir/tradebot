@@ -2,6 +2,10 @@ import type { Broker } from '@devvir/rabbitmq';
 
 export interface Config {
   rabbitmqUrl: string;
+  inboundExchange: string;
+  inboundQueue: string;
+  outboundExchange: string;
+  outboundQueue: string;
 }
 
 export interface CodecState {

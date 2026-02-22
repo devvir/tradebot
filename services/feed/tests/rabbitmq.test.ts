@@ -1,5 +1,6 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { connectToQueue } from '../src/rabbitmq';
+import type { Config } from '../src/types';
 
 vi.mock('@devvir/rabbitmq', () => ({
   keepAlive: vi.fn(),
@@ -12,26 +13,46 @@ describe('RabbitMQ setup', () => {
     vi.clearAllMocks();
   });
 
-  it('should connect to queue with given URL', async () => {
-    const mockBroker = { declares: vi.fn().mockResolvedValue({}) };
-    vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
-
-    await connectToQueue('amqp://localhost');
-
-    expect(brokerModule.keepAlive).toHaveBeenCalledWith('amqp://localhost');
+  const createMockConfig = (): Config => ({
+    env: 'testnet',
+    realtimeWsUrl: 'wss://testnet.bitmex.com/realtime',
+    platformWsUrl: 'wss://testnet.bitmex.com/realtimePlatform',
+    realtimeChannels: [],
+    platformChannels: [],
+    queue: {
+      rabbitmqUrl: 'amqp://localhost',
+      exchangeName: 'ex.feed',
+      queueName: 'q.feed',
+      messageTtlMs: 1800000,
+    },
+    connection: {
+      reconnectDelayMs: 5000,
+      maxReconnectDelayMs: 60000,
+    },
   });
 
-  it('should declare feed exchange with matching routing', async () => {
+  it('should connect to queue with URL from config', async () => {
     const mockBroker = { declares: vi.fn().mockResolvedValue({}) };
     vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
 
-    await connectToQueue('amqp://localhost');
+    const config = createMockConfig();
+    await connectToQueue(config);
+
+    expect(brokerModule.keepAlive).toHaveBeenCalledWith(config.queue.rabbitmqUrl);
+  });
+
+  it('should declare feed exchange with queue using config names', async () => {
+    const mockBroker = { declares: vi.fn().mockResolvedValue({}) };
+    vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
+
+    const config = createMockConfig();
+    await connectToQueue(config);
 
     expect(mockBroker.declares).toHaveBeenCalledWith({
       exchanges: {
-        'bitmex.feed': {
+        [config.queue.exchangeName]: {
           type: 'topic',
-          queues: { 'bitmex.feed': { routingKey: '#' } },
+          queues: { [config.queue.queueName]: { routingKey: '#' } },
         },
       },
     });
@@ -41,7 +62,8 @@ describe('RabbitMQ setup', () => {
     const mockBroker = { declares: vi.fn().mockResolvedValue({}) };
     vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
 
-    const broker = await connectToQueue('amqp://localhost');
+    const config = createMockConfig();
+    const broker = await connectToQueue(config);
 
     expect(broker).toBe(mockBroker);
   });

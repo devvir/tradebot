@@ -1,5 +1,6 @@
 import { keepAlive, Broker } from '@devvir/rabbitmq';
 import { logger } from '@devvir/service';
+import type { Config } from './types';
 
 /**
  * Creates and configures a RabbitMQ broker.
@@ -7,17 +8,18 @@ import { logger } from '@devvir/service';
  *
  * Connection lifecycle events are logged by the broker.
  */
-export const connectToQueue = async (url: string): Promise<Broker> => {
+export const connectToQueue = async (config: Config): Promise<Broker> => {
   logger.info('Setting up RabbitMQ broker...');
 
   // Connect with unlimited retries (broker logs all connection events)
-  const broker = await keepAlive(url);
+  const broker = await keepAlive(config.rabbitmqUrl);
 
   // Declare topology
   await broker.declares({
-    queues: {
-      'archivist': {
-        durable: true,
+    exchanges: {
+      [config.exchangeName]: {
+        type: 'topic',
+        queues: { [config.queueName]: { routingKey: '#' } },
       },
     },
   });

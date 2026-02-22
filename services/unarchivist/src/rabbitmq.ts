@@ -1,35 +1,34 @@
 import { keepAlive, Broker } from '@devvir/rabbitmq';
 import amqp from 'amqplib';
 import { logger } from '@devvir/service';
-
-const EXCHANGE_NAME = 'unarchived';
-const OUTGOING_QUEUE = 'unarchived';
+import type { Config } from './types';
 
 /**
  * Creates and configures a RabbitMQ broker.
  */
-export const connectToQueue = async (url: string): Promise<Broker> => {
+export const connectToQueue = async (config: Config): Promise<Broker> => {
   logger.info('Setting up RabbitMQ broker...');
-  const broker = await keepAlive(url);
+  const broker = await keepAlive(config.rabbitmqUrl);
   logger.info('Successfully connected to RabbitMQ');
 
   return broker.declares({
     exchanges: {
-      [EXCHANGE_NAME]: {
+      [config.exchangeName]: {
         type: 'topic',
-        queues: { [OUTGOING_QUEUE]: { routingKey: '#' } },
+        queues: { [config.queueName]: { routingKey: '#' } },
       },
     },
   });
 };
 
 /**
- * Publish a document to the unarchived exchange (routingKey := collection name).
+ * Publish a document to the configured exchange (routingKey := collection name).
  */
 export const publishDocument = async (
   broker: Broker,
   collectionName: string,
-  document: Record<string, unknown>
+  document: Record<string, unknown>,
+  config: Config
 ): Promise<void> => {
   const channel = broker.getChannel();
 
@@ -38,7 +37,7 @@ export const publishDocument = async (
   const message = Buffer.from(JSON.stringify(document));
 
   const published = channel.publish(
-    EXCHANGE_NAME,
+    config.exchangeName,
     collectionName,
     message,
     {
@@ -48,5 +47,5 @@ export const publishDocument = async (
     } as amqp.Options.Publish
   );
 
-  if (! published) throw new Error(`Failed to publish to ${EXCHANGE_NAME}/${collectionName}`);
+  if (! published) throw new Error(`Failed to publish to ${config.exchangeName}/${collectionName}`);
 };
