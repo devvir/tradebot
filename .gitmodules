@@ -6,3 +6,7 @@
 	path = packages/rabbitmq
 	url = git@github.com:devvir/rabbitmq.git
 	branch = main
+[submodule "packages/service"]
+	path = packages/service
+	url = git@github.com:devvir/service.git
+	branch = main
