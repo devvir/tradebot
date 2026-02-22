@@ -13,7 +13,7 @@ export const loadConfig = (): Config => {
   const config = {
     rabbitmqUrl: sanitizeUrl(process.env.RABBITMQ_URL || 'amqp://guest:guest@rabbitmq:5672'),
     mongodbUrl: sanitizeUrl(process.env.MONGODB_URL || 'mongodb://root:root@mongodb:27017/tradebot?authSource=admin'),
-    batchSize: parseInt(process.env.ARCHIVIST_BATCH_SIZE || '1000', 10),
+    batchSize: parseInt(process.env.ARCHIVIST_BATCH_SIZE || '100', 10),
     batchTimeoutMs: parseInt(process.env.ARCHIVIST_BATCH_TIMEOUT_MS || '5000', 10),
     healthPort: 3000,
   };
@@ -29,7 +29,7 @@ export const loadConfig = (): Config => {
   return config;
 };
 
-const validateConfig = (config: Config): void => {
+export const validateConfig = (config: Config): void => {
   if (! config.rabbitmqUrl) throw new Error('RABBITMQ_URL is required');
   if (! config.mongodbUrl) throw new Error('MONGODB_URL is required');
   if (config.batchSize <= 0) throw new Error('ARCHIVIST_BATCH_SIZE must be greater than 0');
