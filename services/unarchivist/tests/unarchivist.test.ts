@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { MongoClient, Db } from 'mongodb';
 import { Broker, keepAlive } from '@devvir/rabbitmq';
-import { areServicesAvailable } from '@tradebot/utils/services';
+import { areServicesAvailable } from '@tradebot/utils';
 
 describe('Unarchivist Service - Observable Behavior', () => {
   let mongoClient: MongoClient;

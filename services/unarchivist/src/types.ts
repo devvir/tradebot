@@ -39,10 +39,3 @@ export interface PersistedPollingState {
     lastHighId: string | null;
   }>;
 }
-
-export interface HealthState {
-  mongoConnected: boolean;
-  mqConnected: boolean;
-  messagesPublished: number;
-  lastPublishedTime: number;
-}

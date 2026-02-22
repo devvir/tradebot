@@ -10,9 +10,3 @@ export interface CodecState {
   messagesProcessed: number;
   lastProcessedTime: number;
 }
-
-export interface HealthState {
-  mqConnected: boolean;
-  messagesProcessed: number;
-  lastProcessedTime: number;
-}

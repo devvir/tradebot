@@ -1,17 +1,8 @@
 import type { MongoClient, Db } from 'mongodb';
-import type { Broker } from '@devvir/rabbitmq';
 
 export interface MongoDBConnection {
   client: MongoClient;
   db: Db;
-}
-
-export interface ArchivistState {
-  mongoConnection: MongoDBConnection | null;
-  broker: Broker | null;
-  isShuttingDown: boolean;
-  messagesProcessed: number;
-  lastProcessedTime: number;
 }
 
 export interface Config {
@@ -20,11 +11,4 @@ export interface Config {
   batchSize: number;
   batchTimeoutMs: number;
   healthPort: number;
-}
-
-export interface HealthState {
-  mongoConnected: boolean;
-  mqConnected: boolean;
-  messagesProcessed: number;
-  lastProcessedTime: number;
 }

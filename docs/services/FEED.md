@@ -106,25 +106,6 @@ Exports `connectToQueue(url)` which:
 3. Binds queue to exchange with routing key `#` (matches all messages)
 4. Returns broker instance for message publishing
 
-### Health Checks (`src/health.ts`)
-
-Exports `determineHealth(state, currentTime)` which checks:
-
-- **At least one WebSocket connected**: `realtimeConnected OR platformConnected`
-- **Messages recent**: Last message < 30 seconds old
-- **Result**: 200 (healthy) or 503 (unhealthy)
-
-Response body includes per-endpoint connection status and message staleness.
-
-### Service Lifecycle (`src/lifecycle.ts`)
-
-Exports `registerLifecycle(state)` which:
-
-1. Registers SIGTERM/SIGINT handlers
-2. Closes both WebSockets gracefully on shutdown
-3. Disconnects RabbitMQ broker
-4. Provides `getHealthState()` callback for health endpoint
-
 ### Entry Point (`src/index.ts`)
 
 1. Load configuration

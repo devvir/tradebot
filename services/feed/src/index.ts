@@ -1,8 +1,7 @@
-import 'dotenv/config';
 import { logger } from '@devvir/service';
 import { loadConfig } from './config';
 import { connectToQueue } from './rabbitmq';
-import { createConnections } from './connection';
+import { createConnections } from './websocket';
 import { createMessageHandler } from './messages';
 import service from './service';
 import type { FeedState } from './types';

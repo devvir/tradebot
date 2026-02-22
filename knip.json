@@ -1,0 +1,24 @@
+{
+  "$schema": "https://unpkg.com/knip@latest/dist/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": ["tsconfig.json"]
+    },
+    "packages/**": {},
+    "services/**": {
+      "project": ["src/**/*.ts"],
+      "paths": {
+        "@tradebot/*": ["../../../shared/*/src"],
+        "@devvir/*": ["../../../packages/*/src"]
+      }
+    },
+    "shared/**": {
+      "project": ["src/**/*.ts"]
+    },
+    "dx": {
+      "entry": ["entrypoint", "commands/**/*.js"],
+      "project": ["utils/**/*.js"]
+    }
+  },
+  "ignoreExportsUsedInFile": true
+}

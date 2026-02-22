@@ -126,28 +126,6 @@ Enters the consumption loop. For each message:
 
 Prefetch window: 10 messages (controls backpressure if downstream is slow)
 
-#### `startHealthCheck(port: number, getState: () => HealthState)`
-
-Exposes health endpoint on the given port.
-
-**Endpoint:** `GET /health`
-
-**Response (200 OK if healthy, 503 Service Unavailable if not):**
-
-```json
-{
-  "status": "healthy|unhealthy",
-  "mqConnected": true|false,
-  "messagesProcessed": 12345,
-  "messagesPublished": 12345,
-  "lastProcessedTime": 5000
-}
-```
-
-**Health criteria:**
-- Healthy: MQ connected AND last processed message < 60 seconds ago
-- Unhealthy: MQ disconnected OR no messages for > 60 seconds
-
 ### Message Flow Example
 
 **Input (from bitmex-feed queue):**

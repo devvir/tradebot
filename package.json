@@ -18,12 +18,10 @@
   "devDependencies": {
     "@tradebot/types": "workspace:*",
     "@types/amqplib": "^0.10.8",
-    "@types/express": "^5.0.6",
     "@types/node": "^25.3.0",
     "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^4.0.18",
     "knip": "^5.85.0",
-    "mongodb-memory-server": "^11.0.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"

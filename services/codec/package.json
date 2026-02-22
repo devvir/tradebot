@@ -22,7 +22,6 @@
   "dependencies": {
     "@devvir/rabbitmq": "workspace:*",
     "@devvir/service": "workspace:*",
-    "@tradebot/utils": "workspace:*",
-    "dotenv": "^17.3.1"
+    "@tradebot/utils": "workspace:*"
   }
 }

@@ -1,6 +1,5 @@
 import WebSocket from 'ws';
 import { logger } from '@devvir/service';
-import { subscribeToTopics } from './subscriptions';
 import type { Config, EndpointConnections, EndpointDefinition, FeedState, MessageHandler } from './types';
 
 /**
@@ -56,3 +55,13 @@ export const createConnections = (state: FeedState, config: Config, onMessage: M
 const startHeartbeat = (ws: WebSocket): NodeJS.Timeout => setInterval(() => {
   if (ws.readyState === WebSocket.OPEN) ws.ping();
 }, 30000);
+
+/**
+ * Subscribe to a list of BitMEX channels in a single message.
+ * Channels are plain names (e.g., 'trade'), no symbol suffix.
+ */
+const subscribeToTopics = (ws: WebSocket, channels: readonly string[]): void => {
+  if (channels.length === 0) return;
+  logger.info({ channels }, 'Subscribing to channels');
+  ws.send(JSON.stringify({ op: 'subscribe', args: channels }));
+};

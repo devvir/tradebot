@@ -1,13 +1,6 @@
 import { logger } from '@devvir/service';
 import { redactUrl, sanitizeUrl } from '@tradebot/utils';
-
-export interface Config {
-  rabbitmqUrl: string;
-  mongodbUrl: string;
-  batchSize: number;
-  batchTimeoutMs: number;
-  healthPort: number;
-}
+import { Config } from './types';
 
 export const loadConfig = (): Config => {
   const config = {

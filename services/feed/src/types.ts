@@ -36,23 +36,6 @@ export interface FeedState {
   pingInterval: NodeJS.Timeout | null;
 }
 
-export interface HealthState {
-  realtimeConnected: boolean;
-  platformConnected: boolean;
-  lastMessageTime: number;
-}
-
-export interface HealthCheckResult {
-  isHealthy: boolean;
-  statusCode: number;
-  body: {
-    status: string;
-    realtimeConnected: boolean;
-    platformConnected: boolean;
-    lastMessage: number;
-  };
-}
-
 export type MessageHandler = (msg: Buffer) => void;
 
 export interface EndpointDefinition {
