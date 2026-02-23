@@ -18,9 +18,7 @@ export async function areServicesAvailable(
       services.map((service) =>
         Promise.race([
           checkServiceConnection(service.url),
-          new Promise<void>((_, reject) =>
-            setTimeout(() => reject(new Error(`${service.name} timeout`)), timeout),
-          ),
+          new Promise<void>((_, reject) => setTimeout(() => reject(new Error(`${service.name} timeout`)), timeout)),
         ]),
       ),
     );

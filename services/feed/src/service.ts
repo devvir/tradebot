@@ -79,7 +79,7 @@ const run = (flow: () => Promise<FeedResources>): void => {
   });
 
   lifecycle.init().catch((error) => {
-    logger.error({ error }, 'Failed to start Feed service');
+    logger.error({ err: error }, 'Failed to start Feed service');
     process.exit(1);
   });
 };

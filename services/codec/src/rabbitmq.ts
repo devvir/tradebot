@@ -56,8 +56,11 @@ export const startConsuming = async (broker: Broker, config: Config, onProcessMs
 
         ack();
       } catch (e) {
-        const error = e instanceof Error ? e.message : e;
-        logger.error({ error, codecStrategies, message }, 'Error processing feed message');
+        const msgPreview = typeof message === 'string'
+          ? message.slice(0, 200)
+          : Buffer.isBuffer(message) ? '[Binary]' : JSON.stringify(message).slice(0, 200);
+
+        logger.error({ err: e, message: msgPreview, codecStrategies }, 'Error processing feed message');
         nack(true);
       }
     }, { prefetch: 10 }

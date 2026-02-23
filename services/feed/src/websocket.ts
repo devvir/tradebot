@@ -31,7 +31,7 @@ export const createConnections = (state: FeedState, config: Config, onMessage: M
       ws.on('ping', () => ws.pong());
       ws.on('pong', () => logger.debug(`Pong from ${ep.name}`));
       ws.on('message', (msg: Buffer) => onMessage(msg));
-      ws.on('error', (err: Error) => logger.error({ error: err.message }, `${ep.name} WebSocket error`));
+      ws.on('error', (err: Error) => logger.error({ err }, `${ep.name} WebSocket error`));
       ws.on('close', (code: number, reason: Buffer) => {
         logger.warn({ code, reason: reason.toString() }, `${ep.name} closed, reconnecting...`);
         if (state.pingInterval) { clearInterval(state.pingInterval); state.pingInterval = null; }

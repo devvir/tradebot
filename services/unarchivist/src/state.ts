@@ -15,8 +15,7 @@ export const loadPollingState = async (db: Db): Promise<void> => {
     const persistedState = await getPersistedPollingState(db);
     restoreCollectionStatesFromPersisted(persistedState);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logger.error({ error: message, stack: error instanceof Error ? error.stack : undefined }, 'Failed to load polling state from MongoDB');
+    logger.error({ err: error }, 'Failed to load polling state from MongoDB');
     throw error;
   }
 };
@@ -34,8 +33,7 @@ export const savePollingState = async (db: Db): Promise<void> => {
 
     await updatePersistedPollingState(db, withId);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logger.error({ error: message, stack: error instanceof Error ? error.stack : undefined }, 'Failed to save polling state to MongoDB');
+    logger.error({ err: error }, 'Failed to save polling state to MongoDB');
   }
 };
 

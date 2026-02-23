@@ -20,7 +20,7 @@ export const createMessageHandler = (state: FeedState): MessageHandler => (buffe
   try {
     var message = JSON.parse(buffer.toString()) as BitmexWebSocketMessage;
   } catch (error) {
-    return logger.error({ error }, 'Failed to parse WebSocket message');
+    return logger.error({ err: error }, 'Failed to parse WebSocket message');
   }
 
   try {
@@ -35,7 +35,7 @@ export const createMessageHandler = (state: FeedState): MessageHandler => (buffe
     increaseCounter();
   } catch (error) {
     console.log({ error }, 'Error processing WebSocket message');
-    logger.error({ error }, 'Error processing WebSocket message');
+    logger.error({ err: error }, 'Error processing WebSocket message');
   }
 };
 
@@ -48,7 +48,8 @@ const handleControlMessage = (message: BitmexWebSocketMessage, state: FeedState)
   } else if (isBitmexUnsubscriptionMessage(message)) {
     logger.debug({ unsubscribe: message.unsubscribe, success: message.success }, 'Unsubscription event');
   } else {
-    logger.warn({ message }, 'Unrecognized message received');
+    const msgPreview = JSON.stringify(message).slice(0, 200);
+    logger.warn({ message: msgPreview }, 'Unrecognized message received');
   }
 }
 

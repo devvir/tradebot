@@ -8,16 +8,14 @@ export const codecStrategies = (process.env.CODEC_STRATEGY || '')
   .filter(s => !! s);
 
 export const codecStrategy = {
-  trim: () => codecStrategies.includes('trim'),
-  binary: () => codecStrategies.includes('binary'),
   passthru: () => codecStrategies.length === 0,
+  encode: () => codecStrategies.includes('encode'),
+  binary: () => codecStrategies.includes('binary'),
 } as const;
 
 export const loadConfig = (): Config => {
-  const rabbitmqUrl = process.env.RABBITMQ_URL;
-
   const config = {
-    rabbitmqUrl: sanitizeUrl(rabbitmqUrl || ''),
+    rabbitmqUrl: sanitizeUrl(process.env.RABBITMQ_URL || ''),
     inboundExchange: process.env.CODEC_INBOUND_EXCHANGE || '',
     inboundQueue: process.env.CODEC_INBOUND_QUEUE || '',
     outboundExchange: process.env.CODEC_OUTBOUND_EXCHANGE || '',

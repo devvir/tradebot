@@ -1,0 +1,18 @@
+import { resolve } from 'node:path';
+import { startMongoDB, stopMongoDB, startRabbitMQ, stopRabbitMQ } from '@tradebot/utils';
+
+const envFile = resolve(__dirname, '.env.testing');
+
+export const setup = async () => {
+  console.log('🚀 Starting test services (MongoDB, RabbitMQ)...');
+  startMongoDB(envFile);
+  startRabbitMQ(envFile);
+  console.log('✅ Test services started');
+};
+
+export const teardown = async () => {
+  console.log('🛑 Stopping test services...');
+  stopMongoDB(envFile);
+  stopRabbitMQ(envFile);
+  console.log('✅ Test services stopped');
+};

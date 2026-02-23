@@ -16,9 +16,6 @@ The Archivist service consumes market data from RabbitMQ and persists it to Mong
 
 ### Core Functions
 
-#### `getCollectionName(msg)`
-Extracts the `table` header from the RabbitMQ message. Throws if missing. Returns the table name as-is (no symbol suffix logic).
-
 #### `createDocument(msg)`
 Merges upstream metadata and parsed message content into a single document:
 1. Extracts `headers.metadata` (optional, defaults to `{}`)

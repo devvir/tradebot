@@ -73,7 +73,7 @@ const run = (flow: () => Promise<UnarchivistResources>): void => {
   });
 
   lifecycle.init().catch((error) => {
-    logger.error({ error }, 'Failed to start Unarchivist service');
+    logger.error({ err: error }, 'Failed to start Unarchivist service');
     process.exit(1);
   });
 };

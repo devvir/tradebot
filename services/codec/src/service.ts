@@ -69,7 +69,7 @@ const run = (flow: () => Promise<CodecResources>): void => {
   });
 
   lifecycle.init().catch((error) => {
-    logger.error({ error }, 'Failed to start Codec service');
+    logger.error({ err: error }, 'Failed to start Codec service');
     process.exit(1);
   });
 };

@@ -81,16 +81,15 @@ describe('Message persistence', () => {
       expect(mockChannel.nack).not.toHaveBeenCalled();
     });
 
-    it('should use table header as collection name', async () => {
+    it('should use routing key as collection name', async () => {
       const onStoreMsg = vi.fn();
       await startConsuming(mockChannel, mockDb, { ...loadConfig(), batchSize: 100, queueName }, onStoreMsg);
 
       const message = {
         content: Buffer.from(JSON.stringify({ value: 42 })),
-        properties: {
-          headers: {
-            table: 'orderBookL2'
-          }
+        properties: {},
+        fields: {
+          routingKey: 'orderBookL2'
         }
       };
 
@@ -109,12 +108,14 @@ describe('Message persistence', () => {
         properties: {
           contentType: 'application/json',
           headers: {
-            table: 'trade',
             metadata: {
               _id: 'doc-123',
               symbol: 'XBTUSD'
             }
           }
+        },
+        fields: {
+          routingKey: 'trade'
         }
       };
 
@@ -137,10 +138,9 @@ describe('Message persistence', () => {
 
       const message = {
         content: Buffer.from(JSON.stringify({ value: 100 })),
-        properties: {
-          headers: {
-            table: 'quote'
-          }
+        properties: {},
+        fields: {
+          routingKey: 'quote'
         }
       };
 
@@ -160,9 +160,10 @@ describe('Message persistence', () => {
         content: binaryData,
         properties: {
           contentType: 'application/octet-stream',
-          headers: {
-            table: 'compressed'
-          }
+          headers: {}
+        },
+        fields: {
+          routingKey: 'compressed'
         }
       };
 
@@ -180,8 +181,9 @@ describe('Message persistence', () => {
 
       const message = {
         content: Buffer.from(JSON.stringify({ data: 'test' })),
-        properties: {
-          headers: { table: 'test' }
+        properties: {},
+        fields: {
+          routingKey: 'test'
         }
       };
 
@@ -201,9 +203,11 @@ describe('Message persistence', () => {
         content: Buffer.from(JSON.stringify({ _id: 'doc-1' })),
         properties: {
           headers: {
-            table: 'events',
             metadata: { _id: 'doc-1' }
           }
+        },
+        fields: {
+          routingKey: 'events'
         }
       };
 
@@ -224,8 +228,9 @@ describe('Message persistence', () => {
 
       const message = {
         content: Buffer.from(JSON.stringify({ data: 'test' })),
-        properties: {
-          headers: { table: 'events' }
+        properties: {},
+        fields: {
+          routingKey: 'events'
         }
       };
 
@@ -244,8 +249,9 @@ describe('Message persistence', () => {
 
       const message = {
         content: Buffer.from(JSON.stringify({ data: 'test' })),
-        properties: {
-          headers: { table: 'test' }
+        properties: {},
+        fields: {
+          routingKey: 'test'
         }
       };
 
@@ -261,8 +267,9 @@ describe('Message persistence', () => {
 
       const message = {
         content: Buffer.from(JSON.stringify({ data: 'test' })),
-        properties: {
-          headers: { table: 'test' }
+        properties: {},
+        fields: {
+          routingKey: 'test'
         }
       };
 
@@ -272,23 +279,6 @@ describe('Message persistence', () => {
       await consumeCallback(message);
 
       expect(onStoreMsg).not.toHaveBeenCalled();
-    });
-
-    it('should throw when table header is missing', async () => {
-      const onStoreMsg = vi.fn();
-      await startConsuming(mockChannel, mockDb, { ...loadConfig(), batchSize: 100, queueName }, onStoreMsg);
-
-      const message = {
-        content: Buffer.from(JSON.stringify({ data: 'test' })),
-        properties: {
-          headers: {} // missing table
-        }
-      };
-
-      const consumeCallback = mockChannel.consume.mock.calls[0][1];
-      await consumeCallback(message);
-
-      expect(mockChannel.nack).toHaveBeenCalled();
     });
 
     it('should convert Buffer metadata values to BSON Long (int64 BE)', async () => {
@@ -305,9 +295,11 @@ describe('Message persistence', () => {
         properties: {
           contentType: 'application/json',
           headers: {
-            table: 'trade',
             metadata: { _id: idBuffer, symbol: 'XBTUSD' }
           }
+        },
+        fields: {
+          routingKey: 'trade'
         }
       };
 
@@ -332,9 +324,11 @@ describe('Message persistence', () => {
         properties: {
           contentType: 'application/json',
           headers: {
-            table: 'trade',
             metadata: { _id: idBuffer, symbol: 'XBTUSD', count: 42 }
           }
+        },
+        fields: {
+          routingKey: 'trade'
         }
       };
 
@@ -354,10 +348,11 @@ describe('Message persistence', () => {
       const message = {
         content: Buffer.from(JSON.stringify({ value: 42 })),
         properties: {
-          headers: {
-            table: 'test'
-            // no metadata
-          }
+          headers: {}
+          // no metadata
+        },
+        fields: {
+          routingKey: 'test'
         }
       };
 

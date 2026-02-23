@@ -67,7 +67,7 @@ const run = (flow: () => Promise<ArchivistResources>): void => {
   });
 
   lifecycle.init().catch((error) => {
-    logger.error({ error }, 'Failed to start Archivist service');
+    logger.error({ err: error }, 'Failed to start Archivist service');
     process.exit(1);
   });
 };

@@ -1,40 +1,35 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { MongoClient, Db } from 'mongodb';
 import { Broker, keepAlive } from '@devvir/rabbitmq';
-import { areServicesAvailable } from '@tradebot/utils';
+
+// Test infrastructure config — must match .env.testing values
+const TEST_CONFIG = {
+  MONGODB_USER: 'root',
+  MONGODB_PASS: 'root',
+  MONGODB_HOST: 'localhost',
+  MONGODB_PORT: 27027,
+  RABBITMQ_USER: 'guest',
+  RABBITMQ_PASS: 'guest',
+  RABBITMQ_AMQP_PORT: 56729,
+};
 
 describe('Unarchivist Service - Observable Behavior', () => {
   let mongoClient: MongoClient;
   let db: Db;
   let broker: Broker;
-  let skipIntegrationTests = true;
   const originalEnv = process.env;
 
   beforeAll(async () => {
-    // Check if MongoDB and RabbitMQ are available
-    const mongoUrl = process.env.MONGODB_URL || 'mongodb://root:root@localhost:27017/test_unarchivist?authSource=admin';
-    const rabbitUrl = process.env.RABBITMQ_URL || 'amqp://guest:guest@localhost:5672';
+    const mongoUrl = `mongodb://${TEST_CONFIG.MONGODB_USER}:${TEST_CONFIG.MONGODB_PASS}@${TEST_CONFIG.MONGODB_HOST}:${TEST_CONFIG.MONGODB_PORT}/test_unarchivist?authSource=admin`;
+    const rabbitUrl = `amqp://${TEST_CONFIG.RABBITMQ_USER}:${TEST_CONFIG.RABBITMQ_PASS}@localhost:${TEST_CONFIG.RABBITMQ_AMQP_PORT}`;
 
-    skipIntegrationTests = ! (await areServicesAvailable(
-      [
-        { name: 'MongoDB', url: mongoUrl },
-        { name: 'RabbitMQ', url: rabbitUrl },
-      ],
-      3000,
-    ));
+    mongoClient = new MongoClient(mongoUrl);
+    await mongoClient.connect();
+    db = mongoClient.db();
 
-    if (! skipIntegrationTests) {
-      // Connect to test MongoDB
-      mongoClient = new MongoClient(mongoUrl);
-      await mongoClient.connect();
-      db = mongoClient.db();
+    broker = await keepAlive(rabbitUrl);
 
-      // Connect to test RabbitMQ
-      broker = await keepAlive(rabbitUrl);
-
-      // Clean up test collections
-      await db.collection('_unarchivist_state').deleteMany({});
-    }
+    await db.collection('_unarchivist_state').deleteMany({});
   });
 
   afterAll(async () => {
@@ -46,9 +41,6 @@ describe('Unarchivist Service - Observable Behavior', () => {
     }
     process.env = originalEnv;
   });
-
-  // Helper to conditionally skip tests if services aren't available
-  const itIfServicesAvailable = skipIntegrationTests ? it.skip : it;
 
   describe('Config Validation', () => {
     beforeEach(() => {

@@ -22,7 +22,7 @@ export type BitmexFieldType =
   | 'date';
 
 /**
- * All possible BitMEX WebSocket table names
+ * All possible BitMEX WebSocket tmessageable names
  */
 export type BitmexTable =
   | 'announcement'
@@ -64,7 +64,6 @@ interface BitmexBaseMessage<Item extends BitmexDataItem = BitmexDataItem> {
   table: BitmexTable;
   filter?: { symbol?: string }
   data: Item[];
-  _apiVersion?: string;
 }
 
 export interface BitmexPartial<Item extends BitmexDataItem = BitmexDataItem> extends BitmexBaseMessage<Item> {
@@ -106,103 +105,116 @@ export interface InsuranceData {
 }
 
 export interface InstrumentData {
+  /** Always present */
   symbol: string;
-  rootSymbol?: string;
-  state?: string;
-  typ?: string;
-  listing?: string;
-  front?: string;
-  expiry?: string;
-  settle?: string;
-  listedSettle?: string;
-  relistInterval?: string;
-  positionCurrency?: string;
-  underlying?: string;
-  quoteCurrency?: string;
-  underlyingSymbol?: string;
-  reference?: string;
-  referenceSymbol?: string;
-  calcInterval?: string;
-  publishInterval?: string;
-  publishTime?: string;
-  maxOrderQty?: number;
-  minPrice?: number;
-  maxPrice?: number;
-  lotSize?: number;
-  tickSize?: number;
-  multiplier?: number;
-  settlCurrency?: string;
-  underlyingToPositionMultiplier?: number;
-  underlyingToSettleMultiplier?: number;
-  quoteToSettleMultiplier?: number;
-  isQuanto?: boolean;
-  isInverse?: boolean;
-  initMargin?: number;
-  maintMargin?: number;
-  riskLimit?: number;
-  riskStep?: number;
-  limit?: number;
-  taxed?: boolean;
-  deleverage?: boolean;
-  makerFee?: number;
-  takerFee?: number;
-  settlementFee?: number;
-  fundingBaseSymbol?: string;
-  fundingQuoteSymbol?: string;
-  fundingPremiumSymbol?: string;
-  fundingTimestamp?: string;
-  fundingInterval?: string;
-  fundingRate?: number;
-  indicativeFundingRate?: number;
-  rebalanceTimestamp?: string;
-  rebalanceInterval?: string;
-  launchingTimestamp?: string;
-  prevClosePrice?: number;
-  limitDownPrice?: number;
-  limitUpPrice?: number;
-  prevTotalVolume?: number;
-  totalVolume?: number;
-  volume?: number;
-  volume24h?: number;
-  prevTotalTurnover?: number;
-  totalTurnover?: number;
-  turnover?: number;
-  turnover24h?: number;
-  homeNotional24h?: number;
-  foreignNotional24h?: number;
-  prevPrice24h?: number;
-  vwap?: number;
-  highPrice?: number;
-  lowPrice?: number;
-  lastPrice?: number;
-  lastPriceProtected?: number;
-  lastTickDirection?: BitmexTickDirection;
+  timestamp: string;
+
+  /** >35% occurrences */
   lastChangePcnt?: number;
-  bidPrice?: number;
-  midPrice?: number;
-  askPrice?: number;
+  lastPrice?: number;
+  markPrice?: number;
+
+  /** >10% occurrences */
+  fairPrice?: number;
+  impactAskPrice?: number;
   impactBidPrice?: number;
   impactMidPrice?: number;
-  impactAskPrice?: number;
-  hasLiquidity?: boolean;
-  openInterest?: number;
-  openValue?: number;
-  fairMethod?: string;
-  fairBasisRate?: number;
-  fairBasis?: number;
-  fairPrice?: number;
-  markMethod?: string;
-  markPrice?: number;
   indicativeSettlePrice?: number;
-  settledPriceAdjustmentRate?: number;
-  settledPrice?: number;
-  instantPnl?: boolean;
-  minTick?: number;
+  midPrice?: number;
+  openValue?: number;
+  prevPrice24h?: number;
+
+  /** 1-10% occurrences */
+  askPrice?: number;
+  bidPrice?: number;
+
+  /** 0.3-1% occurrences */
+  fairBasis?: number;
+  foreignNotional24h?: number;
+  homeNotional24h?: number;
+  lastPriceProtected?: number;
+  lastTickDirection?: BitmexTickDirection;
+  lowPrice?: number;
+  openInterest?: number;
+  totalTurnover?: number;
+  totalVolume?: number;
+  turnover?: number;
+  turnover24h?: number;
+  volume?: number;
+  volume24h?: number;
+
+  /** <0.3% occurrences */
+  calcInterval?: string;
+  deleverage?: boolean;
+  expiry?: string;
+  fairBasisRate?: number;
+  fairMethod?: string;
+  front?: string;
   fundingBaseRate?: number;
+  fundingBaseSymbol?: string;
+  fundingInterval?: string;
+  fundingPremiumSymbol?: string;
   fundingQuoteRate?: number;
+  fundingQuoteSymbol?: string;
+  fundingRate?: number;
+  fundingTimestamp?: string;
+  hasLiquidity?: boolean;
+  highPrice?: number;
+  indicativeFundingRate?: number;
+  initMargin?: number;
+  instantPnl?: boolean;
+  isInverse?: boolean;
+  isQuanto?: boolean;
+  limit?: number;
+  limitDownPrice?: number;
+  limitUpPrice?: number;
+  listing?: string;
+  lotSize?: number;
+  maintMargin?: number;
+  makerFee?: number;
+  markMethod?: string;
+  maxOrderQty?: number;
+  maxPrice?: number;
+  minPrice?: number;
+  minTick?: number;
+  multiplier?: number;
+  positionCurrency?: string;
+  prevClosePrice?: number;
+  prevTotalTurnover?: number;
+  prevTotalVolume?: number;
+  publishInterval?: string;
+  publishTime?: string;
+  quoteCurrency?: string;
+  quoteToSettleMultiplier?: number;
+  reference?: string;
+  referenceSymbol?: string;
+  riskLimit?: number;
+  riskStep?: number;
+  rootSymbol?: string;
+  settle?: string;
+  settlCurrency?: string;
+  settlementFee?: number;
+  state?: string;
+  takerFee?: number;
+  taxed?: boolean;
+  tickSize?: number;
+  typ?: string;
+  underlying?: string;
+  underlyingSymbol?: string;
+  underlyingToPositionMultiplier?: number;
+  underlyingToSettleMultiplier?: number;
+  vwap?: number;
+
+  /** Not seen once in 1.4M sample */
   farLegSymbol?: string;
+  launchingTimestamp?: string;
+  listedSettle?: string;
   nearLegSymbol?: string;
-  timestamp: string;
+  rebalanceInterval?: string;
+  rebalanceTimestamp?: string;
+  relistInterval?: string;
+  settledPrice?: number;
+  settledPriceAdjustmentRate?: number;
 }
 
 export interface OrderBookL2Data {
@@ -216,15 +228,23 @@ export interface OrderBookL2Data {
   pool?: string; // Only in Rest API?
 }
 
-export interface QuoteData {
+interface QuoteDataBase {
   timestamp: string;
   symbol: string;
-  bidSize: number;
-  bidPrice: number;
-  askPrice: number;
-  askSize: number;
   pool?: string; // Only in Rest API?
 }
+
+interface QuoteDataAsk {
+  askSize: number;
+  askPrice: number;
+}
+
+interface QuoteDataBid {
+  bidSize: number;
+  bidPrice: number;
+}
+// Quote data may include at least one size/price pair, and potentially both.
+export type QuoteData = QuoteDataBase & (QuoteDataAsk | QuoteDataBid);
 
 export interface TradeData {
   timestamp: string;
@@ -233,11 +253,11 @@ export interface TradeData {
   size: number;
   price: number;
   tickDirection: BitmexTickDirection;
-  trdMatchID: string;
-  grossValue: number;
-  homeNotional: number;
-  foreignNotional: number;
   trdType: string;
+  trdMatchID?: string;
+  grossValue?: number;
+  homeNotional?: number;
+  foreignNotional?: number;
   pool?: string; // Only in Rest API?
 }
 

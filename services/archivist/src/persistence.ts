@@ -67,24 +67,26 @@ export const startConsuming = async (
 
     consume(channel, db, queueName, onStoreMsg);
   } catch (e) {
-    logger.error({ e }, 'Failed to start consuming');
+    logger.error({ err: e }, 'Failed to start consuming');
     throw e;
   }
 };
 
-const consume = async (channel: amqp.Channel, db: Db, queueName: string, onStoreMsg: () => void): Promise<void> => {
-  channel.consume(queueName, async (msg) => {
+const consume = (channel: amqp.Channel, db: Db, queueName: string, onStoreMsg: () => void): void => {
+  channel.consume(queueName, async (msg: amqp.ConsumeMessage | null) => {
     if (! msg) return;
 
     try {
+      const collectionName = msg.fields.routingKey;
+
       const document = createDocument(msg);
-      const collection = db.collection(getCollectionName(msg));
+      const collection = db.collection(collectionName);
 
       await collection.insertOne(document);
       onStoreMsg();
     } catch (e) {
       if (! (e instanceof MongoError) || e.code !== 11000) {
-        logger.error({ e }, 'Error processing message');
+        logger.error({ err: e }, 'Error processing message');
         channel.nack(msg, false, true);
         return;
       }
@@ -92,19 +94,6 @@ const consume = async (channel: amqp.Channel, db: Db, queueName: string, onStore
 
     channel.ack(msg);
   });
-};
-
-/**
- * Extract collection name from RabbitMQ message headers.
- */
-const getCollectionName = (msg: amqp.ConsumeMessage): string => {
-  const table = msg.properties?.headers?.table as string | undefined;
-
-  if (! table) {
-    throw new Error('Message missing required table header');
-  }
-
-  return table;
 };
 
 /**

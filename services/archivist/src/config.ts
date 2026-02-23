@@ -1,5 +1,5 @@
 import { logger } from '@devvir/service';
-import { redactUrl, sanitizeUrl } from '@tradebot/utils';
+import { redactUrl } from '@tradebot/utils';
 import { Config } from './types';
 
 export const loadConfig = (): Config => {
@@ -9,8 +9,8 @@ export const loadConfig = (): Config => {
   const config = {
     mongodbUrl: mongodbUrl || '',
     rabbitmqUrl: rabbitmqUrl || '',
-    exchangeName: sanitizeUrl(process.env.ARCHIVIST_EXCHANGE || ''),
-    queueName: sanitizeUrl(process.env.ARCHIVIST_QUEUE || ''),
+    exchangeName: process.env.ARCHIVIST_EXCHANGE || '',
+    queueName: process.env.ARCHIVIST_QUEUE || '',
     batchSize: parseInt(process.env.ARCHIVIST_BATCH_SIZE || '0', 10),
     batchTimeoutMs: parseInt(process.env.ARCHIVIST_BATCH_TIMEOUT_MS || '0', 10),
   };

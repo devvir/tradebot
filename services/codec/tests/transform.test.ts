@@ -1,40 +1,32 @@
 import { describe, it, expect, vi } from 'vitest';
-import { encodeVersion, decodeVersion, encodeTimestamp, decodeTimestamp, encodePayload } from '../src/encoding';
+import { buildDocumentId, unpackDocumentId, encodePayload } from '../src/encoding';
+import { bigIntToBuffer } from '../src/encoding/utils';
 import type { BitmexDataMessage } from '@tradebot/types';
 
 describe('Encoding utilities', () => {
-  describe('encodeVersion / decodeVersion', () => {
-    it('should roundtrip common semver strings', () => {
-      for (const v of ['1.0.0', '2.3.4', '0.1.0', '3.7.15']) {
-        const { encoded, bits } = encodeVersion(v);
-        expect(bits).toBe(9);
-        expect(decodeVersion(encoded as number)).toBe(v);
+  describe('document _id: build → unpack', () => {
+    it('should roundtrip action, version, and timestamp', () => {
+      for (const action of ['partial', 'insert', 'update', 'delete'] as const) {
+        const ts = '2024-01-15T10:30:45.123Z';
+        const id = buildDocumentId(ts, action, '2.3.4', '1.0.0');
+        const unpacked = unpackDocumentId(bigIntToBuffer(id));
+
+        expect(unpacked.action).toBe(action);
+        expect(unpacked.encoderVersion).toBe('1.0.0');
+        expect(unpacked.timestamp).toBe(ts);
       }
     });
 
-    it('should clamp values to bit widths (major: 2 bits, minor: 3 bits, patch: 4 bits)', () => {
-      // Values exceeding bit width wrap around due to masking
-      const { encoded } = encodeVersion('4.0.0'); // major 4 = 0b100, masked to 0b00
-      expect(decodeVersion(encoded as number)).toBe('0.0.0');
-    });
-  });
-
-  describe('encodeTimestamp / decodeTimestamp', () => {
-    it('should roundtrip timestamps within the valid range (2000-2100)', () => {
-      const ts = '2024-01-15T10:30:45.123Z';
-      const { encoded, bits } = encodeTimestamp(ts);
-      expect(bits).toBe(42);
-      expect(decodeTimestamp(encoded as number)).toBe(ts);
-    });
-
-    it('should roundtrip timestamps at common boundary values', () => {
+    it('should roundtrip timestamps at boundary values', () => {
       for (const ts of ['2000-01-01T00:00:00.000Z', '2050-06-15T12:00:00.000Z']) {
-        expect(decodeTimestamp(encodeTimestamp(ts).encoded as number)).toBe(ts);
+        const id = buildDocumentId(ts, 'insert');
+        const unpacked = unpackDocumentId(bigIntToBuffer(id));
+        expect(unpacked.timestamp).toBe(ts);
       }
     });
 
-    it('should throw for timestamps before year 2000', () => {
-      expect(() => encodeTimestamp('1999-12-31T23:59:59.999Z')).toThrow();
+    it('should reject timestamps before year 2000', () => {
+      expect(() => buildDocumentId('1999-12-31T23:59:59.999Z', 'insert')).toThrow();
     });
   });
 
@@ -79,10 +71,15 @@ describe('Encoding utilities', () => {
       expect(result).toHaveProperty('_');
     });
 
-    it('should encode quote items as [bidSize, bidPrice, askPrice, askSize]', () => {
+    it('should encode quote items with compression', () => {
       const quoteItem = { bidSize: 50000, bidPrice: 42500, askPrice: 42501, askSize: 60000, symbol: 'XBTUSD', timestamp: '2024-01-15T10:30:00.000Z' };
       const result = encodePayload([quoteItem], 'quote', 'insert');
-      expect(result['XBTUSD'][0]).toEqual([50000, 42500, 42501, 60000]);
+      const encoded = result['XBTUSD'][0];
+
+      // Quote returns 2 items when encoded: [packed_bid, packed_ask]
+      // or 4 items [bidPrice, bidSize, askPrice, askSize] if not encodable (fallback)
+      // With these values, encoding should succeed, so expect 2 items
+      expect(Array.isArray(encoded) ? encoded.length : 0).toBe(2);
     });
   });
 });
