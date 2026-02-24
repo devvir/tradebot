@@ -6,6 +6,7 @@ export interface Config {
   inboundQueue: string;
   outboundExchange: string;
   outboundQueue: string;
+  prefetch: number;
 }
 
 export interface CodecState {

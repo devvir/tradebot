@@ -1,4 +1,4 @@
-import { brotliCompressSync } from 'node:zlib';
+import { brotliCompressSync, constants } from 'node:zlib';
 import type { RawMessage } from '@devvir/rabbitmq';
 import type { BitmexDataMessage } from '@tradebot/types';
 import type { EncodedMessage } from './types';
@@ -7,6 +7,8 @@ import { encodePayload } from './encoders';
 import { buildDocumentId } from './document-id';
 import { bigIntToBuffer } from './utils';
 import { logger } from '@devvir/service';
+
+const BROTLI_QUALITY = parseInt(process.env.CODEC_BROTLI_QUALITY || '4', 10);
 
 /**
  * Encode a raw AMQP message for compressed archival.
@@ -40,7 +42,9 @@ export const encode = (rawMsg: RawMessage, jsonMsg: BitmexDataMessage): EncodedM
   }
 
   if (codecStrategy.binary()) { // Compress full document (binary output)
-    payload = brotliCompressSync(JSON.stringify(payload));
+    payload = brotliCompressSync(JSON.stringify(payload), {
+      params: { [constants.BROTLI_PARAM_QUALITY]: BROTLI_QUALITY },
+    });
   }
 
   return {

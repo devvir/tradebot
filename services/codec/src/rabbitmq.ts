@@ -36,7 +36,7 @@ export const startConsuming = async (broker: Broker, config: Config, onProcessMs
   const inputQueue = await waitForQueue(broker, config.inboundQueue);
   const outputExchange = broker.getExchange(config.outboundExchange)!;
 
-  logger.info({ queue: config.inboundQueue }, 'Starting message consumption');
+  logger.info({ queue: config.inboundQueue, prefetch: config.prefetch }, 'Starting message consumption');
 
   await inputQueue.consume(
     async (message, { ack, nack, original: rawMsg }) => {
@@ -63,7 +63,7 @@ export const startConsuming = async (broker: Broker, config: Config, onProcessMs
         logger.error({ err: e, message: msgPreview, codecStrategies }, 'Error processing feed message');
         nack(true);
       }
-    }, { prefetch: 10 }
+    }, { prefetch: config.prefetch }
   );
 
   logger.info('Started consuming messages');

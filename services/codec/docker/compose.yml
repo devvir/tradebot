@@ -24,6 +24,10 @@ services:
       # Codec Strategy
       CODEC_STRATEGY: ${CODEC_STRATEGY:-}
 
+      # Performance tuning
+      CODEC_BROTLI_QUALITY: ${CODEC_BROTLI_QUALITY:-4}
+      CODEC_PREFETCH: ${CODEC_PREFETCH:-100}
+
       # Runtime
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV: ${APP_ENV:-prod}
