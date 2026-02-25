@@ -13,16 +13,15 @@ services:
     environment:
       # Dependencies (queue and database)
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
-      MONGODB_URL: ${MONGODB_URL:-mongodb://root:root@mongodb:27017/tradebot?authSource=admin}
+      MONGODB_URL: ${MONGODB_URL:-mongodb://root:root@mongodb:27017?authSource=admin}
+      UNARCHIVIST_DATABASE: ${UNARCHIVIST_DATABASE:-tradebot_archive}
+      UNARCHIVIST_COLLECTIONS: ${UNARCHIVIST_COLLECTIONS:-}
 
       # Data flow
       UNARCHIVIST_EXCHANGE: ${UNARCHIVIST_EXCHANGE:-ex.transform}
       UNARCHIVIST_QUEUE: ${UNARCHIVIST_QUEUE:-q.transform}
-
-      # Batch Processing
       UNARCHIVIST_BATCH_SIZE: ${UNARCHIVIST_BATCH_SIZE:-1000}
       UNARCHIVIST_POLL_INTERVAL_MS: ${UNARCHIVIST_POLL_INTERVAL_MS:-3000}
-      UNARCHIVIST_COLLECTIONS: ${UNARCHIVIST_COLLECTIONS:-}
 
       # Runtime
       LOG_LEVEL: ${LOG_LEVEL:-info}

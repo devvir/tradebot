@@ -49,11 +49,11 @@ export const loadConfig = (): Config => {
       rabbitmqUrl: sanitizeUrl(process.env.RABBITMQ_URL || ''),
       exchangeName: process.env.FEED_EXCHANGE || '',
       queueName: process.env.FEED_QUEUE || '',
-      messageTtlMs: parseInt(process.env.FEED_MESSAGE_TTL || '0', 10),
+      messageTtlMs: parseInt(process.env.FEED_MESSAGE_TTL || '0'),
     },
     connection: {
-      reconnectDelayMs: parseInt(process.env.FEED_RECONNECT_DELAY_MS || '0', 10),
-      maxReconnectDelayMs: parseInt(process.env.FEED_MAX_RECONNECT_DELAY_MS || '0', 10),
+      reconnectDelayMs: parseInt(process.env.FEED_RECONNECT_DELAY_MS || '0'),
+      maxReconnectDelayMs: parseInt(process.env.FEED_MAX_RECONNECT_DELAY_MS || '0'),
     },
   };
 

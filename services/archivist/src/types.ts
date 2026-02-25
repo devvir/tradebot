@@ -7,6 +7,7 @@ export interface MongoDBConnection {
 
 export interface Config {
   mongodbUrl: string;
+  database: string;
   rabbitmqUrl: string;
   exchangeName: string;
   queueName: string;

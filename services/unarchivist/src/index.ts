@@ -22,7 +22,7 @@ service.run(async () => {
 
   // ── Connect to infrastructure ─────────────────────────────────────────────
   [state.mongoConnection, state.broker] = await Promise.all([
-    connectToDatabase(config.mongodbUrl),
+    connectToDatabase(config.mongodbUrl, config.database),
     connectToQueue(config),
   ]);
 

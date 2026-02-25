@@ -20,7 +20,7 @@ export const loadConfig = (): Config => {
     inboundQueue: process.env.CODEC_INBOUND_QUEUE || '',
     outboundExchange: process.env.CODEC_OUTBOUND_EXCHANGE || '',
     outboundQueue: process.env.CODEC_OUTBOUND_QUEUE || '',
-    prefetch: parseInt(process.env.CODEC_PREFETCH || '0', 10),
+    prefetch: parseInt(process.env.CODEC_PREFETCH || '0'),
   };
 
   validateConfig(config);

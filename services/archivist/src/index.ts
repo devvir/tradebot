@@ -1,5 +1,5 @@
 import { loadConfig } from './config';
-import { connectMongoWithRetry, startConsuming } from './persistence';
+import { connectToDatabase, startConsuming } from './persistence';
 import { connectToQueue } from './rabbitmq';
 import service from './service';
 
@@ -7,7 +7,7 @@ service.run(async () => {
   const config = loadConfig();
 
   const [mongo, broker] = await Promise.all([
-    connectMongoWithRetry(config.mongodbUrl),
+    connectToDatabase(config.mongodbUrl, config.database),
     connectToQueue(config),
   ]);
 

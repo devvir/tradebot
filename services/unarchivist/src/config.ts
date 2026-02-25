@@ -13,12 +13,13 @@ export const loadConfig = (): Config => {
 
   const config: Config = {
     mongodbUrl: sanitizeUrl(process.env.MONGODB_URL || ''),
+    database: process.env.UNARCHIVIST_DATABASE || '',
+    collections: collectionsEnv.split(',').map((c) => c.trim()).filter(Boolean),
     rabbitmqUrl: sanitizeUrl(process.env.RABBITMQ_URL || ''),
     exchangeName: process.env.UNARCHIVIST_EXCHANGE || '',
     queueName: process.env.UNARCHIVIST_QUEUE || '',
-    batchSize: parseInt(process.env.UNARCHIVIST_BATCH_SIZE || '0', 10),
-    pollIntervalMs: parseInt(process.env.UNARCHIVIST_POLL_INTERVAL_MS || '0', 10),
-    collections: collectionsEnv.split(',').map((c) => c.trim()).filter(Boolean),
+    batchSize: parseInt(process.env.UNARCHIVIST_BATCH_SIZE || '0'),
+    pollIntervalMs: parseInt(process.env.UNARCHIVIST_POLL_INTERVAL_MS || '0'),
   };
 
   validateConfig(config);
@@ -33,8 +34,9 @@ export const loadConfig = (): Config => {
 };
 
 const validateConfig = (config: Config): void => {
-  if (! config.rabbitmqUrl) throw new Error('RABBITMQ_URL is required');
   if (! config.mongodbUrl) throw new Error('MONGODB_URL is required');
+  if (! config.database) throw new Error('UNARCHIVIST_DATABASE is required');
+  if (! config.rabbitmqUrl) throw new Error('RABBITMQ_URL is required');
   if (! config.exchangeName) throw new Error('UNARCHIVIST_EXCHANGE is required');
   if (! config.queueName) throw new Error('UNARCHIVIST_QUEUE is required');
   if (config.batchSize <= 0) throw new Error('UNARCHIVIST_BATCH_SIZE must be a positive number');

@@ -8,7 +8,7 @@ import { buildDocumentId } from './document-id';
 import { bigIntToBuffer } from './utils';
 import { logger } from '@devvir/service';
 
-const BROTLI_QUALITY = parseInt(process.env.CODEC_BROTLI_QUALITY || '4', 10);
+const BROTLI_QUALITY = parseInt(process.env.CODEC_BROTLI_QUALITY || '4');
 
 /**
  * Encode a raw AMQP message for compressed archival.

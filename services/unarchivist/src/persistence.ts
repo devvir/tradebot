@@ -1,16 +1,11 @@
 import { MongoClient, Db } from 'mongodb';
 import { logger } from '@devvir/service';
-import type { PersistedPollingState } from './types';
-
-export interface MongoDBConnection {
-  client: MongoClient;
-  db: Db;
-}
+import type { MongoDBConnection, PersistedPollingState } from './types';
 
 const STATE_COLLECTION = '_unarchivist_state';
 const STATE_ID = 'unarchivist-state';
 
-export const connectToDatabase = async (url: string): Promise<MongoDBConnection> => {
+export const connectToDatabase = async (url: string, database: string): Promise<MongoDBConnection> => {
   logger.info('Connecting to MongoDB...');
 
   try {
@@ -20,7 +15,7 @@ export const connectToDatabase = async (url: string): Promise<MongoDBConnection>
 
     logger.info('Connected to MongoDB');
 
-    return { client, db: client.db() };
+    return { client, db: client.db(database) };
   } catch (error) {
     logger.error({ err: error }, 'Failed to connect to MongoDB');
     throw error;

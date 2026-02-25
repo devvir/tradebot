@@ -1,43 +1,21 @@
 import amqp from 'amqplib';
 import { MongoClient, Db, MongoError, Long, Binary } from 'mongodb';
 import { logger } from '@devvir/service';
-import { Config } from './types';
-
-export interface MongoDBConnection {
-  client: MongoClient;
-  db: Db;
-}
-
-export const connectToDatabase = async (url: string): Promise<MongoDBConnection> => {
-  logger.info('Connecting to MongoDB...');
-
-  try {
-    const client = new MongoClient(url);
-    const db = client.db();
-
-    await client.connect();
-
-    logger.info('Connected to MongoDB');
-
-    return { client, db };
-  } catch (error) {
-    logger.error({ error }, 'Failed to connect to MongoDB');
-    throw error;
-  }
-};
+import { Config, MongoDBConnection } from './types';
 
 /**
  * Connect to MongoDB with exponential backoff retry logic.
  * Ensures service startup waits for database availability.
  */
-export const connectMongoWithRetry = async (
+export const connectToDatabase = async (
   mongodbUrl: string,
+  database: string,
   maxRetries = 10,
   delayMs = 5000
 ): Promise<MongoDBConnection> => {
   for (let i = 0; i < maxRetries; i++) {
     try {
-      const connection = await connectToDatabase(mongodbUrl);
+      const connection = await connect(mongodbUrl, database);
       logger.info('Successfully connected to MongoDB');
 
       return connection;
@@ -69,6 +47,24 @@ export const startConsuming = async (
   } catch (e) {
     logger.error({ err: e }, 'Failed to start consuming');
     throw e;
+  }
+};
+
+const connect = async (url: string, database: string): Promise<MongoDBConnection> => {
+  logger.info('Connecting to MongoDB...');
+
+  try {
+    const client = new MongoClient(url);
+    const db = client.db(database);
+
+    await client.connect();
+
+    logger.info('Connected to MongoDB');
+
+    return { client, db };
+  } catch (error) {
+    logger.error({ error }, 'Failed to connect to MongoDB');
+    throw error;
   }
 };
 
