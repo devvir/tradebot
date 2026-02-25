@@ -7,14 +7,14 @@ MongoDB-to-RabbitMQ data extraction. Continuously scans MongoDB collections and 
 ### MongoDB
 - Persistent document database where source data is stored
 - Collections are scanned at configurable interval
-- Tracks polling state in `_unarchivist_state` collection for resumable scanning
+- Tracks polling state in `_reader_state` collection for resumable scanning
 
 ### RabbitMQ
 - Message broker for pub/sub communication
-- Topic exchange `"archivist"` receives extracted documents
+- Topic exchange `"writer"` receives extracted documents
 - Routing keys match collection names for targeted consumption
 
-### Unarchivist
+### Reader
 Polling-based extraction service that continuously scans MongoDB collections:
 - Runs on configurable interval (default 3 seconds)
 - Automatically discovers new collections
@@ -34,4 +34,4 @@ Logs and health checks follow the standard tradebot service patterns.
 
 ## Configuration
 
-See [services/unarchivist/README.md](../../services/unarchivist/README.md) for detailed configuration and algorithm documentation.
+See [services/reader/README.md](../../services/reader/README.md) for detailed configuration and algorithm documentation.

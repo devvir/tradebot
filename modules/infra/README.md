@@ -2,7 +2,7 @@
 
 Provides essential infrastructure services: RabbitMQ (message queue), MongoDB (persistent storage), and Redis (in-memory cache).
 
-Use this module to launch all three services independently, or include it as part of your deployment (e.g., the reader module uses these services).
+Use this module to launch all three services independently, or include it as part of your deployment (e.g., the archivist module uses these services).
 
 ## Services
 
@@ -18,13 +18,13 @@ Message queue broker for pub/sub communication between services.
 tb up infra
 ```
 
-### Launch only with reader module:
+### Launch only with archivist module:
 
 ```bash
-tb up reader
+tb up archivist
 ```
 
-Reader module already includes rabbitmq, mongodb, and redis, so you don't need to launch infra separately.
+Archivist module already includes rabbitmq, mongodb, and redis, so you don't need to launch infra separately.
 
 ## ⚠️ Security
 

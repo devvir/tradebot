@@ -1,7 +1,7 @@
 {
   "name": "@tradebot/feed",
   "version": "1.0.0",
-  "description": "BitMEX WebSocket reader service",
+  "description": "BitMEX WebSocket feed service",
   "main": "dist/index.js",
   "private": true,
   "scripts": {
@@ -15,7 +15,7 @@
   "keywords": [
     "bitmex",
     "websocket",
-    "reader",
+    "feed",
     "trading"
   ],
   "dependencies": {

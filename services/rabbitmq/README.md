@@ -1,15 +1,34 @@
 # RabbitMQ Service
 
-Message queue broker providing pub/sub communication for the application. Used for event streaming between services.
+Message queue broker (RabbitMQ 3.13). Provides pub/sub messaging for inter-service communication.
 
-## Features
+## Docker Commands
 
-- RabbitMQ 3.13 with management UI
-- Durable exchanges and queues
-- Topic-based routing
-- Configurable credentials via environment variables
+Build the image:
+```bash
+docker compose -f services/rabbitmq/docker/compose.yml build
+```
 
-## Configuration
+Start the container:
+```bash
+docker compose -f services/rabbitmq/docker/compose.yml up -d
+```
+
+Stop the container:
+```bash
+docker compose -f services/rabbitmq/docker/compose.yml down
+```
+
+View logs:
+```bash
+docker compose -f services/rabbitmq/docker/compose.yml logs -f
+```
+
+## Official Documentation
+
+- [RabbitMQ Documentation](https://www.rabbitmq.com/documentation.html)
+- [RabbitMQ Installation Guides](https://www.rabbitmq.com/download.html)
+- [RabbitMQ Management Plugin](https://www.rabbitmq.com/management.html)
 
 ### Environment Variables
 
@@ -32,22 +51,6 @@ All credentials are configured via environment variables:
 1. Change `RABBITMQ_USER` and `RABBITMQ_PASS` in your module's `.env` file
 2. Update the `RABBITMQ_URL` connection string in all services to match
 3. Never commit real credentials to version control
-
-### Setting Credentials
-
-Set credentials in your module's `.env` file:
-
-```bash
-# Change these to strong, unique values!
-RABBITMQ_USER=admin
-RABBITMQ_PASS=your-secure-password-here
-```
-
-Or pass them when starting a module:
-
-```bash
-RABBITMQ_USER=admin RABBITMQ_PASS=secret tb up reader
-```
 
 ### Services Using RabbitMQ
 

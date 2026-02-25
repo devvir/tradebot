@@ -1,4 +1,4 @@
-# Codec Service - Consumes from bitmex.feed queue, transforms messages, publishes to archivist exchange
+# Codec Service - Consumes from bitmex.feed queue, transforms messages, publishes to writer exchange
 # Stateless transformation service for message encoding/decoding and normalization
 # Supports scaling: Multiple instances automatically load-balance message consumption from RabbitMQ
 

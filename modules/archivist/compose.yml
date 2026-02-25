@@ -1,12 +1,13 @@
-# Extract Module
-# Includes: rabbitmq (queue), mongodb (storage), reader (MongoDB -> RabbitMQ replication)
+# Archivist Module
+# Includes: rabbitmq (queue), mongodb (storage),
+#           feed (bitmex ws consumer), codec (message encoder/decoder), writer (data archiver)
 
 include:
   - path: ../../services/rabbitmq/docker/compose.yml
   - path: ../../services/mongodb/docker/compose.yml
+  - path: ../../services/feed/docker/compose.yml
   - path: ../../services/codec/docker/compose.yml
   - path: ../../services/writer/docker/compose.yml
-  - path: ../../services/reader/docker/compose.yml
 
 networks:
   default:

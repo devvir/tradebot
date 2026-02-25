@@ -1,0 +1,64 @@
+# Reader Service - MongoDB to RabbitMQ Replication
+# Exports archived data from MongoDB and streams real-time changes to RabbitMQ
+
+services:
+  reader:
+    container_name: ${MODULE_NAME:-tradebot}-reader
+    build:
+      context: ../../..
+      dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
+      args:
+        SERVICE_NAME: reader
+
+    environment:
+      # Dependencies (queue and database)
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
+      MONGODB_URL: ${MONGODB_URL:-mongodb://root:root@mongodb:27017?authSource=admin}
+      READER_DATABASE: ${READER_DATABASE:-tradebot_archive}
+      READER_COLLECTIONS: ${READER_COLLECTIONS:-}
+
+      # Data flow
+      READER_EXCHANGE: ${READER_EXCHANGE:-ex.transform}
+      READER_QUEUE: ${READER_QUEUE:-q.transform}
+      READER_BATCH_SIZE: ${READER_BATCH_SIZE:-1000}
+      READER_POLL_INTERVAL_MS: ${READER_POLL_INTERVAL_MS:-3000}
+
+      # Runtime
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV: ${APP_ENV:-prod}
+      TZ: ${TZ:-UTC}
+
+    ports:
+      - "${READER_PORT:-}:3000"
+
+    user: "1000:1000"
+
+    volumes:
+      - ../../../:/live
+
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+
+    restart: ${READER_RESTART_POLICY:-unless-stopped}
+
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+    deploy:
+      replicas: ${READER_REPLICAS:-1}
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s

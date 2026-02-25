@@ -1,15 +1,34 @@
 # Redis Service
 
-In-memory data store and cache providing fast, ephemeral storage. Used for caching, sessions, and temporary data structures.
+In-memory data store (Redis 7). Provides fast, ephemeral storage for caching and temporary data.
 
-## Features
+## Docker Commands
 
-- Redis 7 Alpine (lightweight image)
-- Persistent storage with AOF (Append-Only File)
-- Configurable credentials via environment variables
-- Health checks for container orchestration
+Build the image:
+```bash
+docker compose -f services/redis/docker/compose.yml build
+```
 
-## Configuration
+Start the container:
+```bash
+docker compose -f services/redis/docker/compose.yml up -d
+```
+
+Stop the container:
+```bash
+docker compose -f services/redis/docker/compose.yml down
+```
+
+View logs:
+```bash
+docker compose -f services/redis/docker/compose.yml logs -f
+```
+
+## Official Documentation
+
+- [Redis Documentation](https://redis.io/documentation)
+- [Redis Server](https://redis.io/commands/)
+- [Redis Docker Hub](https://hub.docker.com/_/redis)
 
 ### Environment Variables
 

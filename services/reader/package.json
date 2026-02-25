@@ -1,7 +1,7 @@
 {
-  "name": "@tradebot/codec",
+  "name": "@tradebot/reader",
   "version": "1.0.0",
-  "description": "Codec service - consumes BitMEX messages, transforms them, and publishes them to another exchange",
+  "description": "Data replication service - exports archived data and streams real-time changes",
   "main": "dist/index.js",
   "private": true,
   "scripts": {
@@ -13,15 +13,17 @@
     "test:coverage": "vitest run --coverage"
   },
   "keywords": [
-    "bitmex",
-    "codec",
-    "transform",
+    "mongodb",
     "rabbitmq",
-    "trading"
+    "replication",
+    "streaming",
+    "change-streams"
   ],
   "dependencies": {
     "@devvir/rabbitmq": "workspace:*",
     "@devvir/service": "workspace:*",
-    "@tradebot/utils": "workspace:*"
+    "@tradebot/utils": "workspace:*",
+    "amqplib": "^0.10.9",
+    "mongodb": "^7.1.0"
   }
 }
