@@ -1,4 +1,4 @@
-# Feeder Module
+# Collector Module
 # Includes: rabbitmq (queue), mongodb (storage), feed (bitmex ws consumer), writer (data archiver)
 
 include:

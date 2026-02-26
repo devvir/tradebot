@@ -24,5 +24,5 @@ cd "$DX_DIR" || exit 1
 export DX_EXECUTOR="$(basename "$0")"
 
 # Route all commands through dx entry point
-# exec replaces this shell so signals (Ctrl+C) propagate directly to docker compose
-exec pnpm run dx "${@}"
+# exec replaces this shell so signals (Ctrl+C) propagate directly to the process
+exec node dx.js "${@}"

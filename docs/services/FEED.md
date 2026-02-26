@@ -146,7 +146,7 @@ On `SIGTERM` or `SIGINT`:
 
 The Feed service is used by:
 - **archivist module** - Feed + Codec + Writer pipeline for data storage
-- **feeder module** - Feed + Writer for minimal data persistence
+- **collector module** - Feed + Writer for minimal data persistence
 - **transform module** - Feed + Codec for data transformation workflows
 
 Each module configures the service via environment variables and consumes messages from the `FEED_EXCHANGE` using RabbitMQ routing keys.
