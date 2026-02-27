@@ -1,5 +1,4 @@
 import { keepAlive, Broker } from '@devvir/rabbitmq';
-import amqp from 'amqplib';
 import { logger } from '@devvir/service';
 import type { Config } from './types';
 
@@ -30,22 +29,10 @@ export const publishDocument = async (
   document: Record<string, unknown>,
   config: Config
 ): Promise<void> => {
-  const channel = broker.getChannel();
+  const exchange = broker.getExchange(config.exchangeName);
+  if (! exchange) throw new Error(`Exchange "${config.exchangeName}" not found`);
 
-  if (! channel) throw new Error('No RabbitMQ channel available');
-
-  const message = Buffer.from(JSON.stringify(document));
-
-  const published = channel.publish(
-    config.exchangeName,
-    collectionName,
-    message,
-    {
-      contentType: 'application/json',
-      persistent: true,
-      headers: { table: collectionName },
-    } as amqp.Options.Publish
-  );
-
-  if (! published) throw new Error(`Failed to publish to ${config.exchangeName}/${collectionName}`);
+  await exchange.publishAsync(document, collectionName, {
+    headers: { table: collectionName },
+  });
 };

@@ -1,9 +1,9 @@
+// Pending Review
 import { logger } from '@devvir/service';
 import { keepAlive, Broker } from '@devvir/rabbitmq';
-import { BitmexDataMessage } from '@tradebot/types';
-import { codecStrategies, codecStrategy } from './config';
+import { codecStrategies } from './config';
 import type { Config } from './types';
-import { encode } from './encoding';
+import { transform } from './encoding';
 
 /**
  * Creates and configures a RabbitMQ broker.
@@ -45,14 +45,17 @@ export const startConsuming = async (broker: Broker, config: Config, onProcessMs
       try {
         onProcessMsg();
 
-        if (codecStrategy.passthru()) {
-          outputExchange.publish(message, rawMsg.fields.routingKey, { contentType: 'application/json' });
-        } else {
-          const { headers, payload } = encode(rawMsg, message as BitmexDataMessage);
-          const contentType = codecStrategy.binary() ? 'application/octet-stream' : 'application/json';
-
-          outputExchange.publish(payload, rawMsg.fields.routingKey, { headers, contentType });
+        const result = transform(rawMsg, message);
+        if (! result) {
+          logger.error({ routingKey: rawMsg.fields.routingKey }, 'Transform failed, nacking message');
+          nack(true);
+          return;
         }
+
+        await outputExchange.publishAsync(result.payload, rawMsg.fields.routingKey, {
+          headers: result.headers,
+          contentType: result.contentType,
+        });
 
         ack();
       } catch (e) {
@@ -60,7 +63,7 @@ export const startConsuming = async (broker: Broker, config: Config, onProcessMs
           ? message.slice(0, 200)
           : Buffer.isBuffer(message) ? '[Binary]' : JSON.stringify(message).slice(0, 200);
 
-        logger.error({ err: e, message: msgPreview, codecStrategies }, 'Error processing feed message');
+        logger.error({ err: e, message: msgPreview, codecStrategies }, 'Error processing message');
         nack(true);
       }
     }, { prefetch: config.prefetch }

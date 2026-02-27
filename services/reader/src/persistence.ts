@@ -107,40 +107,49 @@ export const updatePersistedPollingState = async (
 
 /**
  * Fetch the latest BUFFER_SIZE _ids from a collection.
- * Returns _ids in ascending order (lowest to highest).
+ * Returns actual _id objects (Long, ObjectId, string, etc) in ascending order.
  */
 export const getLatestBufferedIds = async (
   collection: any,
   limit: number
-): Promise<string[]> => {
-  const ids = await collection
+): Promise<any[]> => {
+  const docs = await collection
     .find()
     .project({ _id: 1 })
     .sort({ _id: -1 })
     .limit(limit)
-    .toArray()
-    .then((docs: any[]) => docs.map((doc) => String(doc._id)).sort());
+    .toArray();
 
-  return ids;
+  // Return actual _id objects (not strings), sorted ascending
+  return docs.map((doc: any) => doc._id).sort((a: any, b: any) => {
+    // Handle different types: Long, number, string, ObjectId
+    if (typeof a.compare === 'function') {
+      return a.compare(b); // Long has compare method
+    }
+    if (a < b) return -1;
+    if (a > b) return 1;
+    return 0;
+  });
 };
 
 /**
- * Get the highest _id in a collection (the maximum _id value).
+ * Get the highest _id in a collection (the maximum _id value as actual object).
  */
-export const getHighestId = async (collection: any): Promise<string | null> => {
+export const getHighestId = async (collection: any): Promise<any | null> => {
   const result = await collection.findOne({}, { projection: { _id: 1 }, sort: { _id: -1 } });
 
-  return result?._id ? String(result._id) : null;
+  return result?._id || null;
 };
 
 /**
  * Scan documents in a collection between startId and endId (inclusive).
+ * Works with actual _id objects (Long, ObjectId, number, string, etc).
  * Returns all documents in ascending _id order.
  */
 export const scanCollectionUpToHighId = async (
   collection: any,
-  startId: string | null,
-  endId: string
+  startId: any | null,
+  endId: any
 ): Promise<Array<Record<string, unknown>>> => {
   const query: Record<string, any> = {
     _id: { $lte: endId },
@@ -149,6 +158,12 @@ export const scanCollectionUpToHighId = async (
   if (startId !== null) {
     query._id.$gt = startId;
   }
+
+  const { logger } = await import('@devvir/service');
+  logger.debug(
+    { collectionName: collection.collectionName, startIdStr: String(startId || 'null'), endIdStr: String(endId), query: JSON.stringify(query, (_, v) => typeof v === 'object' && v !== null && typeof v.toString === 'function' && ! Array.isArray(v) ? `[${v.constructor.name}]` : v) },
+    'executing scan query',
+  );
 
   return collection.find(query).sort({ _id: 1 }).toArray();
 };

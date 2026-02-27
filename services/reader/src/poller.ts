@@ -5,6 +5,27 @@ import type { CollectionPollingState, PersistedPollingState, Config } from './ty
 import { getLatestBufferedIds, getHighestId, scanCollectionUpToHighId, getCollectionsToProcess } from './persistence.js';
 
 /**
+ * Compare two _id values for equality, handling Long objects and other types.
+ * Handles comparisons between:
+ * - Two Long objects
+ * - Long object and string representation
+ * - Any other types
+ */
+function idsAreEqual(id1: any, id2: any): boolean {
+  if (id1 === id2) return true;
+  if (! id1 || ! id2) return id1 === id2;
+
+  // If one is a Long with compare method, use it
+  if (typeof id1.compare === 'function' && typeof id2.compare === 'function') {
+    return id1.compare(id2) === 0;
+  }
+
+  // Handle mixed comparison: Long vs string (or vice versa)
+  // Convert both to string and compare
+  return String(id1) === String(id2);
+}
+
+/**
  * In-memory collection polling states.
  * Maps collection name to its current polling state.
  */
@@ -12,7 +33,7 @@ export const collectionStates: Map<string, CollectionPollingState> = new Map();
 
 /**
  * Convert in-memory collection states to persisted format.
- * Ready for storage in MongoDB.
+ * Serializes actual _id objects as strings for JSON storage.
  */
 export function collectionsStateToPersisted(
   states: Map<string, CollectionPollingState> = collectionStates,
@@ -20,8 +41,8 @@ export function collectionsStateToPersisted(
   const orderedIds: Record<string, { bufferedIds: string[]; lastHighId: string | null }> = {};
   states.forEach((state, collectionName) => {
     orderedIds[collectionName] = {
-      bufferedIds: Array.from(state.bufferedIds),
-      lastHighId: state.lastHighId,
+      bufferedIds: Array.from(state.bufferedIds).map((id) => String(id)),
+      lastHighId: state.lastHighId ? String(state.lastHighId) : null,
     };
   });
   return {
@@ -51,6 +72,10 @@ export function restoreCollectionStatesFromPersisted(
       lastHighId: stateData.lastHighId || null,
     };
     collectionStates.set(collectionName, state);
+    logger.info(
+      { collectionName, lastHighId: stateData.lastHighId, bufferedIdCount: stateData.bufferedIds?.length },
+      'restored collection state',
+    );
   }
 }
 
@@ -61,7 +86,7 @@ export function restoreCollectionStatesFromPersisted(
 export function initializeCollectionState(collectionName: string): CollectionPollingState {
   const state: CollectionPollingState = {
     collectionName,
-    bufferedIds: new Set<string>(),
+    bufferedIds: new Set<any>(),
     lastHighId: null,
   };
   collectionStates.set(collectionName, state);
@@ -91,28 +116,32 @@ export async function processCollection(
     // 1. Snapshot current highest id (NEW HIGH)
     const newHighId = await getHighestId(collection);
     if (! newHighId) {
-      logger.debug({ collectionName }, 'collection is empty');
+      logger.info({ collectionName }, 'collection is empty');
       return;
     }
+
+    logger.info({ collectionName, newHighId: String(newHighId) }, 'found highest ID in collection');
 
     // 2. Get or initialize state
     let state = collectionStates.get(collectionName);
     if (! state) {
       state = initializeCollectionState(collectionName);
+      logger.info({ collectionName }, 'initializing fresh collection state (null lastHighId)');
     }
     const oldHighId = state.lastHighId;
     const oldBufferedIds = new Set(state.bufferedIds);
 
     // 3. Get latest buffer (1000 most recent ids)
     const newBufferedIds = await getLatestBufferedIds(collection, BUFFER_SIZE);
+    const newBufferedIdStrSet = new Set(newBufferedIds.map((id) => String(id)));
     const newBufferedIdSet = new Set(newBufferedIds);
 
     // 4. Detect pending ids (out-of-order writes from previous buffer that still need processing)
-    const pendingIds: string[] = [];
+    const pendingIds: any[] = [];
     if (oldHighId) {
       // Only check for pending if we have previous boundary (not first run)
       for (const id of oldBufferedIds) {
-        if (! newBufferedIdSet.has(id)) {
+        if (! newBufferedIdStrSet.has(String(id))) {
           // Id was in old buffer but not in new buffer = fell out, potential pending
           pendingIds.push(id);
         }
@@ -136,19 +165,35 @@ export async function processCollection(
     }
 
     // 5b. Process new ids (from oldHighId boundary to newHighId)
-    if (oldHighId !== newHighId || ! oldHighId) {
+    // Need to compare actual values for Long objects, not references
+    const highIdChanged = ! oldHighId || ! idsAreEqual(oldHighId, newHighId);
+    logger.info(
+      { collectionName, oldHighIdStr: String(oldHighId || 'null'), newHighIdStr: String(newHighId), highIdChanged },
+      'comparing high IDs',
+    );
+
+    if (highIdChanged) {
       const startId = oldHighId || null; // null means process from lowest id in new buffer
-      logger.debug(
-        { collectionName, startId, endId: newHighId },
+      logger.info(
+        { collectionName, startId: String(startId || 'null'), endId: String(newHighId), hasPrevious: !! oldHighId },
         'processing new documents',
       );
       const docs = await scanCollectionUpToHighId(collection, startId, newHighId);
+      logger.info(
+        { collectionName, count: docs.length },
+        'found documents to process',
+      );
       for (const doc of docs) {
         const docId = String(doc._id);
         if (onPublish) {
           await onPublish(docId, doc);
         }
       }
+    } else {
+      logger.info(
+        { collectionName, oldHighId: String(oldHighId), newHighId: String(newHighId) },
+        'no new documents (oldHighId === newHighId)',
+      );
     }
 
     // 6. Update state
