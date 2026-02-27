@@ -9,6 +9,7 @@ A message transformation and encoding service that consumes market data messages
   - Pass-through: republish unchanged
   - Encode: compact representation with field reduction
   - Binary: Brotli compression of payloads
+  - Decode: decompress and decode (inverse of encode+binary)
 - **Metadata enrichment** - generates document IDs for database storage
 - **Error handling** - graceful fallback to raw payloads on transformation failures
 - **Scalability** - configurable prefetch for load balancing
@@ -71,7 +72,8 @@ docker run -e RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672 \
 - `CODEC_STRATEGY` - Comma-separated transformation modes (default: empty = pass-through):
   - `encode` - Compact field encoding
   - `binary` - Brotli compression
-  - Examples: `encode`, `binary`, `encode,binary`, or empty
+  - `decode` - Decompress and decode (inverse of encode+binary)
+  - Examples: `encode`, `binary`, `encode,binary`, `decode`, or empty
 - `CODEC_PREFETCH` - RabbitMQ prefetch window (default: 100)
 - `CODEC_BROTLI_QUALITY` - Compression quality 0-11 (default: 4, where 0=fastest, 11=best compression)
 

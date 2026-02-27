@@ -58,6 +58,38 @@ Applies Brotli compression to the full payload:
 
 **Combined with Encode:** Compression applied to already-compact encoded data
 
+#### Decode Mode
+
+Reverses encoding and decompression (inverse of encode+binary):
+
+1. Decompress Brotli if payload is binary
+2. Parse compressed/encoded message structure
+3. Decode action from 1-byte prefix
+4. Reconstruct original message fields
+5. Output as JSON equivalent to original BitMEX message
+
+**Result:** Reconstructs original message format from encoded/compressed form. Used to restore archived data to usable format (e.g., for analysis or replay).
+
+**Validation:** Cannot be combined with `encode` or `binary` (validation enforced in config).
+
+### Strategy Combinations & Validation
+
+| Strategy | Valid? | Use Case | Notes |
+|----------|--------|----------|-------|
+| (empty or `passthru`) | ✓ | Message routing, buffering | No transformation overhead |
+| `encode` | ✓ | Compact representation | ~10-20% size reduction + metadata |
+| `binary` | ✓ | Compression only | ~40-70% size reduction (binary output) |
+| `encode,binary` | ✓ | Maximum compression | Encode first, then compress binary |
+| `decode` | ✓ | Decompress & restore | Inverse of `encode,binary` |
+| `encode` + `decode` | ✗ | *Invalid* | Decode cannot combine with encode/binary |
+| `binary` + `decode` | ✗ | *Invalid* | Decode cannot combine with encode/binary |
+| `encode,binary` + `decode` | ✗ | *Invalid* | Decode is mutually exclusive |
+
+**Validation Rules:**
+- Passthru (`passthru` or empty) cannot be combined with other strategies
+- Decode is mutually exclusive—cannot be combined with `encode` or `binary`
+- Encode and binary can be combined in either order
+
 ### Document ID Generation
 
 When encoding is enabled, a document ID is generated from:
@@ -78,7 +110,7 @@ Result: 8-byte big-endian integer, included in message headers as `metadata._id`
 | `CODEC_INBOUND_QUEUE` | Yes | - | Source queue name |
 | `CODEC_OUTBOUND_EXCHANGE` | Yes | - | Destination topic exchange name |
 | `CODEC_OUTBOUND_QUEUE` | Yes | - | Destination queue name |
-| `CODEC_STRATEGY` | No | (empty) | Comma-separated modes: `encode`, `binary`, or both |
+| `CODEC_STRATEGY` | No | (empty) | `passthru` (same as empty), `encode`, `binary`, `encode,binary`, `decode` |
 | `CODEC_PREFETCH` | No | `100` | RabbitMQ prefetch window (messages buffered per consumer) |
 | `CODEC_BROTLI_QUALITY` | No | `4` | Brotli compression quality (0-11: 0=fastest, 11=best) |
 
@@ -141,10 +173,11 @@ Returned when:
 ## Usage Modules
 
 The Codec service is used by:
-- **archivist module** - Feed → Codec → Writer (data transformation for archival)
-- **transform module** - Feed → Codec → (external systems) (flexible transformation pipeline)
+- **archivist module** - Feed → Codec → Writer (data consumption and compression for long-term archive)
+- **rearchivist module** - Reader → Codec → Writer (data transformation, from raw to archive)
+- **unarchivist module** - Reader → Codec → Writer (data transformation, from archive to raw)
 
-Typical configuration in archivist:
+Example configuration for archivist:
 ```bash
 CODEC_INBOUND_EXCHANGE=ex.feed          # Consumes from feed output
 CODEC_INBOUND_QUEUE=q.feed
@@ -156,11 +189,6 @@ CODEC_BROTLI_QUALITY=4
 ```
 
 ## Performance Characteristics
-
-- **Pass-through mode:** ~100k+ messages/sec (minimal overhead)
-- **Encode mode:** ~50-80k messages/sec (field extraction, ID generation)
-- **Binary mode:** ~10-30k messages/sec (Brotli compression, quality-dependent)
-- **Combined:** ~5-15k messages/sec (cumulative with compression quality)
 
 Throughput scales with:
 - Prefetch window size

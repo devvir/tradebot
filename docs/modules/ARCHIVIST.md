@@ -51,12 +51,15 @@ Optionally transforms messages between Feed and Writer.
 - **Pass-through** (default) - No transformation
 - **Encode** - Compact representation, ~10-20% size reduction
 - **Binary** - Brotli compression, ~40-70% reduction
-- **Both** - Encode then compress
+- **Encode + Binary** - Encode then compress (maximum compression)
+- **Decode** - Decompress and decode (inverse of encode+binary)
 
 **Key Configuration:**
-- `CODEC_INBOUND_EXCHANGE` - Source exchange (default: `ex.feed`)
-- `CODEC_OUTBOUND_EXCHANGE` - Destination exchange (default: `ex.archive`)
-- `CODEC_STRATEGY` - Modes: `encode` and/or `binary` (optional)
+- `CODEC_INBOUND_EXCHANGE` - Source exchange (default: `ex.codec.in`; **archivist override: `ex.feed`**)
+- `CODEC_INBOUND_QUEUE` - Source queue (default: `q.codec.in`; **archivist override: `q.feed`**)
+- `CODEC_OUTBOUND_EXCHANGE` - Destination exchange (default: `ex.codec.out`; **archivist override: `ex.archive`**)
+- `CODEC_OUTBOUND_QUEUE` - Destination queue (default: `q.codec.out`; **archivist override: `q.archive`**)
+- `CODEC_STRATEGY` - Mode: `encode,binary` (maximum compression for long-term storage)
 - `CODEC_BROTLI_QUALITY` - Compression quality 0-11 (default: 4)
 - `CODEC_PREFETCH` - Message buffer size (default: 100)
 

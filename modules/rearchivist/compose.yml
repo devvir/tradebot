@@ -1,0 +1,15 @@
+# Rearchivist Module
+# Includes: rabbitmq (queue), mongodb (storage),
+#           reader (MongoDB -> RabbitMQ), codec (compress), writer (RabbitMQ -> MongoDB)
+
+include:
+  - path: ../../services/rabbitmq/docker/compose.yml
+  - path: ../../services/mongodb/docker/compose.yml
+  - path: ../../services/reader/docker/compose.yml
+  - path: ../../services/codec/docker/compose.yml
+  - path: ../../services/writer/docker/compose.yml
+
+networks:
+  default:
+    name: ${COMPOSE_PROJECT_NAME:-tradebot}-network
+    external: true
