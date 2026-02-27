@@ -145,10 +145,6 @@ Shows status of all services in the module.
 
 Configuration is managed via environment variables in `.env`:
 
-### Global
-
-- `MODULE_NAME` - Container name prefix (default: `archivist`)
-
 ### Service Replicas (Docker Swarm)
 
 - `FEED_REPLICAS` - Number of Feed instances (default: 1)

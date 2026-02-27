@@ -3,7 +3,6 @@
 
 services:
   reader:
-    container_name: ${MODULE_NAME:-tradebot}-reader
     build:
       context: ../../..
       dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
@@ -44,12 +43,6 @@ services:
       start_period: 15s
 
     restart: ${READER_RESTART_POLICY:-unless-stopped}
-
-    depends_on:
-      mongodb:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
 
     deploy:
       replicas: ${READER_REPLICAS:-1}

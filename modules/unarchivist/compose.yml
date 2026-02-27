@@ -5,9 +5,35 @@
 include:
   - path: ../../services/rabbitmq/docker/compose.yml
   - path: ../../services/mongodb/docker/compose.yml
-  - path: ../../services/reader/docker/compose.yml
-  - path: ../../services/codec/docker/compose.yml
-  - path: ../../services/writer/docker/compose.yml
+
+services:
+  unarchivist-reader:
+    extends:
+      file: ../../services/reader/docker/compose.yml
+      service: reader
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  unarchivist-codec:
+    extends:
+      file: ../../services/codec/docker/compose.yml
+      service: codec
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  unarchivist-writer:
+    extends:
+      file: ../../services/writer/docker/compose.yml
+      service: writer
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
 
 networks:
   default:

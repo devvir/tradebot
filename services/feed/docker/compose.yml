@@ -3,7 +3,6 @@
 
 services:
   feed:
-    container_name: ${MODULE_NAME:-tradebot}-feed
     build:
       context: ../../..
       dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
@@ -47,10 +46,6 @@ services:
       start_period: 10s
 
     restart: ${FEED_RESTART_POLICY:-unless-stopped}
-
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
 
     deploy:
       replicas: ${FEED_REPLICAS:-1}

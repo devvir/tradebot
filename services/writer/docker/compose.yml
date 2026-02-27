@@ -4,7 +4,6 @@
 
 services:
   writer:
-    container_name: ${MODULE_NAME:-tradebot}-writer
     build:
       context: ../../..
       dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
@@ -44,12 +43,6 @@ services:
       start_period: 10s
 
     restart: ${WRITER_RESTART_POLICY:-unless-stopped}
-
-    depends_on:
-      mongodb:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
 
     deploy:
       replicas: ${WRITER_REPLICAS:-1}
