@@ -17,7 +17,15 @@ services:
       rabbitmq:
         condition: service_healthy
 
-  rearchivist-codec:
+  rearchivist-codec-1:
+    extends:
+      file: ../../services/codec/docker/compose.yml
+      service: codec
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  rearchivist-codec-2:
     extends:
       file: ../../services/codec/docker/compose.yml
       service: codec
