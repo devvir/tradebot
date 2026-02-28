@@ -1,30 +1,29 @@
 import { keepAlive, Broker } from '@devvir/rabbitmq';
 import { logger } from '@devvir/service';
-import type { Config } from './types';
+import { type Config, CONSUMER_QUEUES, DLQ, DLX, EXCHANGE } from './types';
 
 /**
  * Creates and configures a RabbitMQ broker.
- * Sets up the necessary message topology for this service.
- *
- * Connection lifecycle events are logged by the broker.
+ * Declares the writer topic exchange with archive, collect, and custom queues.
  */
 export const connectToQueue = async (config: Config): Promise<Broker> => {
   logger.info('Setting up RabbitMQ broker...');
 
-  // Connect with unlimited retries (broker logs all connection events)
   const broker = await keepAlive(config.rabbitmqUrl);
 
-  // Declare topology
-  await broker.declares({
+  return broker.declares({
     exchanges: {
-      [config.exchangeName]: {
+      [EXCHANGE]: {
         type: 'topic',
-        queues: { [config.queueName]: { routingKey: '#' } },
+        queues: {
+          [CONSUMER_QUEUES.archive]: { routingKey: 'archive.*', deadLetterExchange: DLX },
+          [CONSUMER_QUEUES.collect]: { routingKey: 'collect.*', deadLetterExchange: DLX },
+          [CONSUMER_QUEUES.custom]:  { routingKey: 'custom.*.*', deadLetterExchange: DLX },
+        },
       },
+
+      /** Dead-letter exchange */
+      [DLX]: { type: 'fanout', queues: { [DLQ]: {} } },
     },
   });
-
-  logger.info('RabbitMQ topology declared');
-
-  return broker;
 };

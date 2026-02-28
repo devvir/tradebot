@@ -1,66 +1,65 @@
+<!-- Pending Review -->
 # Writer Service
 
-Consumes messages from RabbitMQ queue and persists them to MongoDB collections.
+Consumes messages from a RabbitMQ topic exchange and persists them to MongoDB.
 
 ## Core Functionality
 
-- **Queue consumption** from RabbitMQ with configurable prefetch
-- **Message routing** - uses routing key to determine target MongoDB collection
-- **Metadata merging** - combines message headers and content into documents
-- **Binary support** - handles both JSON and binary (compressed) message payloads
-- **Graceful error handling** - silently handles duplicate key errors, retries other failures
-- **Health monitoring** - exposes health check endpoint with activity metrics
+- **Topic exchange routing** — declares a `writer` exchange (type: topic) with three queues bound by routing key pattern
+- **Message persistence** — stores message content as-is into MongoDB documents
+- **Binary support** — handles both JSON and binary (compressed) message payloads
+- **Idempotent writes** — silently acknowledges duplicate key errors (11000), retries other failures
+- **Health monitoring** — exposes health check endpoint with activity metrics
 
-## Installation
+## Routing
 
-```bash
-pnpm install
-```
+Messages are routed by publishing to the `writer` exchange with a routing key:
 
-## Building
+| Routing Key | Queue | Database | Collection |
+|---|---|---|---|
+| `archive.<collection>` | `archive` | `WRITER_DB_ARCHIVE` | `<collection>` |
+| `collect.<collection>` | `collect` | `WRITER_DB_COLLECT` | `<collection>` |
+| `custom.<db>.<col>` | `custom` | `<db>` | `<col>` |
 
-```bash
-pnpm build
-```
+Examples:
+- `archive.orderBookL2` → `tradebot_archive.orderBookL2`
+- `collect.trade` → `tradebot_collect.trade`
+- `custom.mydb.mycol` → `mydb.mycol`
 
-## Development
-
-```bash
-pnpm dev            # Watch mode with ts-node
-pnpm test           # Run test suite
-pnpm test:watch     # Watch mode tests
-pnpm test:coverage  # Coverage report
-```
-
-## Running
-
-```bash
-pnpm start
-```
+Messages with unresolvable routing keys are nacked without requeue and routed to the `writer.dead-letter` queue via the `writer.dlx` fanout exchange.
 
 ## Configuration
 
-**Required:**
-- `MONGODB_URL` - MongoDB connection string
-- `WRITER_DATABASE` - Target database name
-- `RABBITMQ_URL` - RabbitMQ connection string
-- `WRITER_EXCHANGE` - Source topic exchange name
-- `WRITER_QUEUE` - Source queue name
-- `WRITER_BATCH_SIZE` - RabbitMQ prefetch window (messages buffered per consumer)
-- `WRITER_BATCH_TIMEOUT_MS` - Batch timeout in milliseconds
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `MONGODB_URL` | Yes | — | MongoDB connection string |
+| `RABBITMQ_URL` | Yes | — | RabbitMQ connection string |
+| `WRITER_PREFETCH` | No | `1000` | RabbitMQ prefetch window |
+| `WRITER_DB_ARCHIVE` | No | `tradebot_archive` | Database for `archive.*` messages |
+| `WRITER_DB_COLLECT` | No | `tradebot_collect` | Database for `collect.*` messages |
+
+## Scripts
+
+```bash
+pnpm build           # Compile TypeScript
+pnpm start           # Run compiled service
+pnpm dev             # Watch mode with ts-node
+pnpm test            # Run test suite
+pnpm test:watch      # Watch mode tests
+pnpm test:coverage   # Coverage report
+```
 
 ## Health Check
 
 ```bash
-curl http://localhost:3000/health
+curl http://writer:3000/health
 ```
 
-Returns:
-- **200 OK** - Service is healthy (MongoDB and RabbitMQ connected, recent activity)
-- **503 Service Unavailable** - Missing connections or no activity for 60+ seconds
+- **200 OK** — MongoDB and RabbitMQ connected, recent activity
+- **503 Service Unavailable** — missing connections or no activity for 60+ seconds
 
 Response includes:
-- `messagesProcessed` - Total messages ACKed
-- `lastProcessedTime` - Milliseconds since last processed message
+- `messagesProcessed` — total messages acknowledged
+- `lastProcessedTime` — milliseconds since last processed message
 
-For detailed implementation information, see [docs/services/WRITER.md](../../docs/services/WRITER.md).
+For detailed technical documentation, see [docs/services/WRITER.md](../../docs/services/WRITER.md).

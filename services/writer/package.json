@@ -1,7 +1,7 @@
 {
   "name": "@tradebot/writer",
   "version": "1.0.0",
-  "description": "BitMEX data archival service - consumes queue messages and persists to MongoDB",
+  "description": "Consumes messages from RabbitMQ topic exchange and persists to MongoDB",
   "main": "dist/index.js",
   "private": true,
   "scripts": {

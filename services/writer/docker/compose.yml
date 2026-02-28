@@ -1,4 +1,4 @@
-# Writer Service - Consumes from queue and persists to MongoDB
+# Writer Service - Consumes from topic exchange and persists to MongoDB
 # Generic, reusable service. Deduplicates and archives data.
 # Supports horizontal scaling: Multiple instances automatically load-balance message consumption.
 
@@ -14,13 +14,11 @@ services:
       # Dependencies (queue and database)
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
       MONGODB_URL: ${MONGODB_URL:-mongodb://root:root@mongodb:27017?authSource=admin}
-      WRITER_DATABASE: ${WRITER_DATABASE:-}
 
       # Data flow
-      WRITER_EXCHANGE: ${WRITER_EXCHANGE:-ex.archive}
-      WRITER_QUEUE: ${WRITER_QUEUE:-q.archive}
-      WRITER_BATCH_SIZE: ${WRITER_BATCH_SIZE:-1000}
-      WRITER_BATCH_TIMEOUT_MS: ${WRITER_BATCH_TIMEOUT_MS:-5000}
+      WRITER_DB_ARCHIVE: ${WRITER_DB_ARCHIVE:-tradebot_archive}
+      WRITER_DB_COLLECT: ${WRITER_DB_COLLECT:-tradebot_collect}
+      WRITER_PREFETCH: ${WRITER_PREFETCH:-1000}
 
       # Runtime
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -41,6 +39,12 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
 
     restart: ${WRITER_RESTART_POLICY:-unless-stopped}
 

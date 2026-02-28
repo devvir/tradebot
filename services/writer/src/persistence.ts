@@ -1,7 +1,7 @@
 import amqp from 'amqplib';
-import { MongoClient, Db, MongoError, Long, Binary } from 'mongodb';
+import { MongoClient, MongoError, BSON } from 'mongodb';
 import { logger } from '@devvir/service';
-import { Config, MongoDBConnection } from './types';
+import { Config, MongoDBConnection, CONSUMER_QUEUES, WriteTarget } from './types';
 
 /**
  * Connect to MongoDB with exponential backoff retry logic.
@@ -9,105 +9,125 @@ import { Config, MongoDBConnection } from './types';
  */
 export const connectToDatabase = async (
   mongodbUrl: string,
-  database: string,
   maxRetries = 10,
   delayMs = 5000
 ): Promise<MongoDBConnection> => {
   for (let i = 0; i < maxRetries; i++) {
     try {
-      const connection = await connect(mongodbUrl, database);
+      const connection = await connect(mongodbUrl);
       logger.info('Successfully connected to MongoDB');
 
       return connection;
     } catch (error) {
       logger.warn({ error, attempt: i + 1, maxRetries }, 'Failed to connect to MongoDB, retrying...');
 
-      if (i < maxRetries - 1) {
-        await new Promise(resolve => setTimeout(resolve, delayMs));
-      }
+      if (i < maxRetries - 1) await new Promise(resolve => setTimeout(resolve, delayMs));
     }
   }
 
   throw new Error(`Failed to connect to MongoDB after ${maxRetries} attempts`);
 };
 
+/**
+ * Start consuming from all writer queues (archive, collect, custom).
+ * Each queue resolves database + collection from the routing key.
+ */
 export const startConsuming = async (
   channel: amqp.Channel,
-  db: Db,
-  { batchSize, queueName }: Config,
+  client: MongoClient,
+  config: Config,
   onStoreMsg: () => void
 ): Promise<void> => {
-  try {
-    await channel.assertQueue(queueName);
+  await channel.prefetch(config.batchSize);
 
+  for (const queueName of Object.values(CONSUMER_QUEUES)) {
     logger.info({ queue: queueName }, 'Consuming from queue');
-    await channel.prefetch(batchSize);
 
-    consume(channel, db, queueName, onStoreMsg);
-  } catch (e) {
-    logger.error({ err: e }, 'Failed to start consuming');
-    throw e;
+    consume(channel, client, config, queueName, onStoreMsg);
   }
 };
 
-const connect = async (url: string, database: string): Promise<MongoDBConnection> => {
+const connect = async (url: string): Promise<MongoDBConnection> => {
   logger.info('Connecting to MongoDB...');
 
   try {
     const client = new MongoClient(url);
-    const db = client.db(database);
 
     await client.connect();
 
     logger.info('Connected to MongoDB');
 
-    return { client, db };
+    return { client };
   } catch (error) {
     logger.error({ error }, 'Failed to connect to MongoDB');
     throw error;
   }
 };
 
-const consume = (channel: amqp.Channel, db: Db, queueName: string, onStoreMsg: () => void): void => {
+const consume = (channel: amqp.Channel, client: MongoClient, config: Config, queueName: string, onStoreMsg: () => void): void => {
   channel.consume(queueName, async (msg: amqp.ConsumeMessage | null) => {
     if (! msg) return;
 
     try {
-      const collectionName = msg.fields.routingKey;
+      const routingKey = msg.fields.routingKey;
+      const target = resolveTarget(routingKey, config);
+
+      if (! target) {
+        logger.error({ routingKey }, 'Cannot resolve write target from routing key');
+        return channel.nack(msg, false, false);
+      }
+
+      const db = client.db(target.database);
+      const collection = db.collection(target.collection);
 
       const document = createDocument(msg);
-      const collection = db.collection(collectionName);
-
       await collection.insertOne(document);
-      onStoreMsg();
     } catch (e) {
-      if (! (e instanceof MongoError) || e.code !== 11000) {
-        logger.error({ err: e }, 'Error processing message');
-        channel.nack(msg, false, true);
-        return;
+      if (e instanceof MongoError && e.code === 11000) {
+        onStoreMsg();
+        return channel.ack(msg);
       }
+
+      const requeue = e instanceof MongoError;
+
+      logger.error({ err: e, routingKey: msg.fields.routingKey, requeue }, 'Error processing message');
+
+      return channel.nack(msg, false, requeue);
     }
 
+    onStoreMsg();
     channel.ack(msg);
   });
 };
 
 /**
- * Create MongoDB document from RabbitMQ message (content + headers).
+ * Resolve the target database and collection from an AMQP routing key.
+ *
+ * - archive.<collection>         → { database: config.dbArchive, collection }
+ * - collect.<collection>         → { database: config.dbCollect, collection }
+ * - custom.<database>.<collection> → { database, collection }
+ */
+export const resolveTarget = (routingKey: string, config: Config): WriteTarget | null => {
+  const parts = routingKey.split('.');
+
+  if (parts.length < 2) return null;
+
+  const prefix = parts[0];
+
+  if (prefix === 'archive') return { database: config.dbArchive, collection: parts[1] };
+  if (prefix === 'collect') return { database: config.dbCollect, collection: parts[1] };
+  if (prefix === 'custom' && parts.length >= 3) return { database: parts[1], collection: parts[2] };
+
+  return null;
+};
+
+/**
+ * Create MongoDB document from RabbitMQ message content.
  */
 const createDocument = (msg: amqp.ConsumeMessage): Record<string, unknown> => {
-  const rawMetadata: Record<string, unknown> = msg.properties?.headers?.metadata || {};
   const contentType = msg.properties?.contentType || 'application/json';
 
-  // Deserialise metadata: Buffer values are treated as big-endian int64 → BSON Long
-  const metadata = Object.fromEntries(
-    Object.entries(rawMetadata).map(([k, v]) =>
-      [ k, Buffer.isBuffer(v) ? Long.fromBigInt(v.readBigUInt64BE()) : v ])
-  );
-
-  const data = (contentType === 'application/octet-stream')
-    ? { b: new Binary(msg.content) }
+  return (contentType === 'application/bson')
+    ? BSON.deserialize(msg.content)
     : JSON.parse(msg.content.toString());
-
-  return { ...metadata, ...data };
 };

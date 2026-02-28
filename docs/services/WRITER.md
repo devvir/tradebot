@@ -1,140 +1,134 @@
-# Writer Service - Technical Documentation
+# Writer Service — Technical Documentation
 
 ## Overview
 
-The Writer service is a generic message persistence component that consumes messages from a RabbitMQ queue and stores them in MongoDB. It handles document assembly, metadata enrichment, and gracefully manages duplicate key violations at the database level.
+The Writer service consumes messages from a RabbitMQ topic exchange and persists them to MongoDB. It owns the `writer` exchange and three queues, routing each message to the correct database and collection based on the routing key. Message content is stored as-is.
 
 ## Architecture
+
+### Topology
+
+```
+Exchange: writer.dlx (fanout, durable)
+  └─ Queue: writer.dead-letter
+
+Exchange: writer (topic, durable)
+  ├─ Queue: writer.archive   ← binding: archive.*   (DLX → writer.dlx)
+  ├─ Queue: writer.collect   ← binding: collect.*   (DLX → writer.dlx)
+  └─ Queue: writer.custom    ← binding: custom.*.*  (DLX → writer.dlx)
+```
+
+All queues are durable and declared at startup. Nacked-without-requeue and expired messages are routed to the `writer.dead-letter` queue via the `writer.dlx` fanout exchange.
 
 ### Message Flow
 
 ```
-RabbitMQ Queue
-    ↓ (prefetch batchSize)
- Writer Service
-    ├─ Extract routingKey from message metadata
-    ├─ Create document: merge headers + content
-    ├─ Select collection (routingKey → collection name)
-    └─ insertOne() to MongoDB
-         ├─ Success → ACK message
-         └─ Duplicate key error → ACK message (silent)
-         └─ Other error → NACK with requeue
+Publisher → writer exchange (routing key)
+    ↓
+Queue (matched by binding pattern)
+    ↓
+Consumer (prefetch = batchSize)
+    ├─ resolveTarget(routingKey, config)
+    │     ├─ archive.<col>       → { db: config.dbArchive, col }
+    │     ├─ collect.<col>       → { db: config.dbCollect, col }
+    │     ├─ custom.<db>.<col>   → { db, col }
+    │     └─ unresolvable        → NACK (no requeue)
+    ├─ Parse content (JSON or binary)
+    └─ insertOne(document) → MongoDB[database][collection]
+         ├─ Success              → ACK
+         ├─ Duplicate key (11000)→ ACK (idempotent)
+         └─ Other error          → NACK (requeue)
 ```
 
-### Document Assembly
+### Routing Key Resolution
 
-The Writer combines message headers and content into a MongoDB document:
+The `resolveTarget()` function maps a routing key to a database and collection:
 
-#### Input
+| Pattern | Database | Collection | Example |
+|---|---|---|---|
+| `archive.<collection>` | `WRITER_DB_ARCHIVE` | `<collection>` | `archive.orderBookL2` → `tradebot_archive.orderBookL2` |
+| `collect.<collection>` | `WRITER_DB_COLLECT` | `<collection>` | `collect.trade` → `tradebot_collect.trade` |
+| `custom.<db>.<col>` | `<db>` | `<col>` | `custom.mydb.mycol` → `mydb.mycol` |
 
-RabbitMQ message structure:
-```
-Message {
-  properties: {
-    headers: {
-      metadata: {
-        _id: Buffer (big-endian int64),
-        other_field: value,
-        ...
-      }
-    },
-    contentType: 'application/json' | 'application/octet-stream'
-  },
-  content: Buffer,
-  fields: {
-    routingKey: 'collection_name'
-  }
-}
-```
+Routing keys that don't match any pattern are nacked without requeue and routed to `writer.dead-letter` via the DLX.
 
-#### Processing
+### Document Creation
 
-1. **Extract routing key** → Determines target collection name
-2. **Deserialize metadata headers:**
-   - Buffer values are converted to BSON Long (big-endian int64)
-   - Other values pass through unchanged
-3. **Handle content based on content-type:**
-   - `application/json`: Parse JSON string into object
-   - `application/octet-stream`: Wrap binary data in `{ b: new Binary(buffer) }`
-4. **Merge into document:** `{ ...metadata, ...data }`
+Content handling depends on `properties.contentType`:
 
-#### Output
+| Content Type | Processing | Document |
+|---|---|---|
+| `application/json` (or unset) | `JSON.parse(content)` | Parsed object stored directly |
+| `application/bson` | `BSON.deserialize(content)` | Deserialized document with types preserved (Binary, Int32, Long, etc.) |
 
-MongoDB document ready for insertion:
-```javascript
-{
-  _id: Long(timestamp),                    // from metadata headers
-  other_field: value,                      // from metadata headers
-  // ... (other fields from content)
-}
-```
-
-### Collection Routing
-
-- **Routing key** from message metadata → **collection name**
-- Collections are created on-demand during first insert
-- No schema enforcement (MongoDB document collections)
+Writer does not modify, merge, or enrich the document — it stores exactly what it receives.
 
 ## Configuration
 
 ### Environment Variables
 
-| Variable | Type | Required | Default | Description |
-|----------|------|----------|---------|-------------|
-| `MONGODB_URL` | string | Yes | - | MongoDB connection URL |
-| `WRITER_DATABASE` | string | Yes | - | Target database name |
-| `RABBITMQ_URL` | string | Yes | - | RabbitMQ broker URL |
-| `WRITER_EXCHANGE` | string | Yes | - | Source RabbitMQ exchange |
-| `WRITER_QUEUE` | string | Yes | - | Source queue name |
-| `WRITER_BATCH_SIZE` | number | Yes | - | RabbitMQ prefetch (messages buffered) |
-| `WRITER_BATCH_TIMEOUT_MS` | number | Yes | - | Batch timeout window (ms) |
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `MONGODB_URL` | Yes | — | MongoDB connection string |
+| `RABBITMQ_URL` | Yes | — | RabbitMQ connection string |
+| `WRITER_PREFETCH` | No | `1000` | RabbitMQ prefetch (messages buffered per consumer) |
+| `WRITER_DB_ARCHIVE` | No | `tradebot_archive` | Database for `archive.*` messages |
+| `WRITER_DB_COLLECT` | No | `tradebot_collect` | Database for `collect.*` messages |
 
-### Queue Configuration
+### Topology Declaration
 
-- **Exchange binding:** Queue declares from configured exchange with routing key `#` (all messages)
-- **Prefetch:** Controls RabbitMQ backpressure. Higher values = faster throughput, more memory; lower = more balanced consumption
+At startup, the service declares:
+
+1. **Exchange** `writer.dlx` — type `fanout`, durable
+2. **Queue** `writer.dead-letter` — durable, bound to `writer.dlx`
+3. **Exchange** `writer` — type `topic`, durable
+4. **Queue** `writer.archive` — durable, bound to `archive.*`, DLX → `writer.dlx`
+5. **Queue** `writer.collect` — durable, bound to `collect.*`, DLX → `writer.dlx`
+6. **Queue** `writer.custom` — durable, bound to `custom.*.*`, DLX → `writer.dlx`
+
+All three consumer queues share the same consumer logic; only the routing key resolution differs. Dead-lettered messages from any queue end up in `writer.dead-letter`.
 
 ## Dependencies
 
 ### MongoDB
 
 - **Connection:** Standard MongoDB driver with exponential backoff retry (10 attempts, 5s delay)
-- **Operations:** Single `insertOne()` call per message
-- **Indexes:** Service assumes target collection has a unique index on `_id` (caller's responsibility)
+- **Operations:** Single `insertOne()` per message
+- **Indexes:** The service assumes target collections have a unique index on `_id` (caller's responsibility)
+- **Collections:** Created on-demand during first insert, no schema enforcement
 
 ### RabbitMQ
 
-- **Consumption:** Persistent queue with manual ACK/NACK
-- **Message format:** Expects `metadata` in message headers and routable via `routingKey`
-- **Backpressure:** Respects prefetch window to prevent consumer overload
+- **Broker wrapper:** `@devvir/rabbitmq` (`keepAlive` + `Broker.declares()`)
+- **Consumption:** Manual ACK/NACK on each queue
+- **Backpressure:** Prefetch window shared across all three consumer callbacks
 
 ## Error Handling
 
 ### Duplicate Key Errors (MongoDB code 11000)
 
-When `insertOne()` fails with a duplicate key constraint violation:
-1. Error is suppressed (no log message)
-2. Message is **acknowledged** (removed from queue)
-3. Processing continues with next message
+1. Error is suppressed (no log)
+2. Message is acknowledged (removed from queue)
 
-**Rationale:** Duplicate key errors indicate the document already exists in MongoDB. This is expected behavior when messages are reprocessed and should not block the pipeline.
+Duplicate key errors indicate the document already exists. This is expected when messages are reprocessed and should not block the pipeline.
+
+### Unresolvable Routing Keys
+
+1. Error is logged with the routing key
+2. Message is nacked without requeue (`nack(msg, false, false)`)
+
+These messages are routed to the `writer.dead-letter` queue via the DLX for inspection or replay.
 
 ### Other Errors
 
-When any non-duplicate error occurs during `insertOne()`:
 1. Error is logged with context
-2. Message is **not acknowledged** (NACK with requeue)
-3. Processing continues; broker will retry after backoff
+2. Message is nacked with requeue (`nack(msg, false, true)`)
 
-**Errors recovered via retry:**
-- Network timeouts
-- MongoDB conn drops
-- Document validation failures
-- Other constraint violations (non-unique)
+Covers network timeouts, MongoDB connection drops, validation failures, etc.
 
 ## Health Monitoring
 
-### Health Check Endpoint
+### Endpoint
 
 ```
 GET /health
@@ -146,49 +140,27 @@ GET /health
 - Messages processed within last 60 seconds
 
 **Unhealthy (503):**
-- MongoDB disconnected OR
-- RabbitMQ disconnected OR
+- MongoDB disconnected, or
+- RabbitMQ disconnected, or
 - No message activity for 60+ seconds
 
 ### Metrics
 
-- **`messagesProcessed`** - Cumulative count of messages ACKed (successful + duplicates)
-- **`lastProcessedTime`** - Milliseconds elapsed since last ACK
+- `messagesProcessed` — cumulative count of messages acknowledged (successful + duplicates)
+- `lastProcessedTime` — milliseconds elapsed since last ACK
 
 ## Lifecycle
 
-### Initialization
+### Startup
 
-1. Load and validate configuration (all required env vars present)
-2. Connect to MongoDB (exponential backoff: 10 retries, 5s delay between attempts)
-3. Connect to RabbitMQ broker
-4. Get channel from broker
-5. Assert queue exists and establish consumer with prefetch window
+1. Load and validate configuration
+2. Connect to MongoDB (exponential backoff: 10 retries, 5s delay)
+3. Connect to RabbitMQ broker (`keepAlive`)
+4. Declare topology (exchange + queues + bindings)
+5. Get channel, set prefetch, start consuming all three queues
 
-### Graceful Shutdown
+### Shutdown
 
-1. Disconnect RabbitMQ broker (stops consuming new messages)
-2. Allow in-flight messages to complete processing
+1. Disconnect RabbitMQ broker (stops consuming)
+2. Allow in-flight messages to complete
 3. Close MongoDB client
-
-## Performance Characteristics
-
-- **Throughput:** Dependent on MongoDB latency, network, and prefetch window
-- **Backpressure:** RabbitMQ prefetch window prevents memory overload
-- **Scalability:** Horizontal scaling via multiple consumer instances (each with own prefetch window)
-
-## Generic Design Principles
-
-The Writer service makes **no assumptions** about:
-- Message content structure or semantics
-- Document ID generation or meaning
-- Data type or business domain
-- Message source or destination
-- Broader system integration patterns
-
-Input interface is purely:
-- A message queue name and exchange
-- Messages with metadata headers and routing keys
-- A database name and connection URL
-
-Output is MongoDB documents, keyed by routing key.
