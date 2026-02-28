@@ -1,0 +1,30 @@
+services:
+  router:
+    build:
+      context: ../../..
+      dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
+      args:
+        SERVICE_NAME: router
+
+    environment:
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
+      ROUTER_RULES: ${ROUTER_RULES:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV: ${APP_ENV:-prod}
+
+    ports:
+      - ${ROUTER_PORT:-}:3000
+
+    user: "1000:1000"
+
+    volumes:
+      - ../../../:/live
+
+    restart: ${ROUTER_RESTART_POLICY:-unless-stopped}
+
+    healthcheck:
+      test: curl -f http://localhost:3000/health || exit 1
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

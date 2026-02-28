@@ -1,0 +1,27 @@
+{
+  "name": "@tradebot/router",
+  "version": "1.0.0",
+  "description": "Router service - configurable message routing between RabbitMQ queues and exchanges",
+  "main": "dist/index.js",
+  "private": true,
+  "scripts": {
+    "build": "tsc -b",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "keywords": [
+    "rabbitmq",
+    "routing",
+    "queue",
+    "exchange",
+    "message-broker"
+  ],
+  "dependencies": {
+    "@devvir/rabbitmq": "workspace:*",
+    "@devvir/service": "workspace:*",
+    "@tradebot/utils": "workspace:*"
+  }
+}
