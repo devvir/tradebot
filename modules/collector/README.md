@@ -1,51 +1,40 @@
 # Collector Module
 
-Collects all messages from BitMEX WebSocket and stores them in MongoDB for future replay by other modules.
+The Collector module subscribes to the Broadcast service's topic exchange and stores all BitMEX market data in MongoDB via the Writer service.
 
 ## Components
 
-- **Feed** - Connects to BitMEX WebSocket and publishes all market data to RabbitMQ
-- **Writer** - Persists messages to MongoDB collections
-- **RabbitMQ** - Message broker for Feed → Writer pipeline
-- **MongoDB** - Persistent storage for collected raw market data
+- **Broadcast** — Feeds BitMEX WebSocket data into a topic exchange (default: `broadcast`)
+- **Router** — Bridges the broadcast exchange to the Writer exchange, transforming routing keys (e.g. `message.trade` > `collect.trade`)
+- **Writer** — Persists incoming messages to MongoDB
+- **RabbitMQ** — Message broker
+- **MongoDB** — Persistent storage
+
+## Data Flow
+
+```
+BitMEX WS → Broadcast Module → topic:broadcast (key: message.trade, ...)
+                                        ↓
+                             Router (key transform: message.* → collect.*)
+                                        ↓
+                               topic:writer (key: collect.trade)
+                                        ↓
+                             Writer → MongoDB (WRITER_DB_COLLECT.trade)
 
 ## Quick Start
 
-Start the module:
 ```bash
-tb up collector
-```
-
-Build images and start:
-```bash
-tb up collector --build
-```
-
-Stop the module:
-```bash
-tb down collector
-```
-
-View logs:
-```bash
-tb logs collector
-```
-
-Follow logs in real-time:
-```bash
-tb logs collector -f
+tb up collector          # Start all services
+tb up collector --build  # Rebuild and start
+tb down collector        # Stop all services
+tb logs collector        # Stream logs
+tb ps collector          # Check service status
 ```
 
 ## Configuration
 
-See `.env` for module configuration. Key settings:
+Copy `.env.example` to `.env` and customize.
 
-- `WRITER_DATABASE` - MongoDB database name (default: `tradebot`)
-- `FEED_EXCHANGE` - RabbitMQ exchange for feed messages (default: `ex.collect`)
-- `FEED_QUEUE` - RabbitMQ queue name (default: `q.collect`)
+Router rules are set directly in `compose.yml`.
 
-For detailed information about each service, see:
-- [services/feed/README.md](../../services/feed/README.md)
-- [services/writer/README.md](../../services/writer/README.md)
-- [services/rabbitmq/README.md](../../services/rabbitmq/README.md)
-- [services/mongodb/README.md](../../services/mongodb/README.md)
+For detailed technical documentation, see [docs/modules/COLLECTOR.md](../../docs/modules/COLLECTOR.md).

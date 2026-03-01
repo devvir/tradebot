@@ -1,28 +1,25 @@
 # Collector Module
-# Includes: rabbitmq (queue), mongodb (storage), feed (bitmex ws consumer), writer (data archiver)
+# Includes: extended broadcast (bitmex ws consumer + rabbitmq)
+#           router (broadcast → writer exchange)
+#           extended writer (mongodb manager + rabbitmq + mongodb)
+#
+# Data flow:
+#   Broadcast → topic:broadcast (routingKey = message.table, e.g. "message.trade")
+#   Router    → consumes from topic:broadcast, replaces "message" with "collect" in the
+#               routingKey (e.g. "collect.trade"), and republishes to topic:writer
+#   Writer    → consumes from writer.collect queue, and stores the message in MongoDB
 
 include:
-  - path: ../../services/rabbitmq/docker/compose.yml
-  - path: ../../services/mongodb/docker/compose.yml
+  - path: ../../services/broadcast/docker/extended.yml
+  - path: ../../services/writer/docker/extended.yml
 
 services:
-  collector-feed:
+  collector:
     extends:
-      file: ../../services/feed/docker/compose.yml
-      service: feed
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-
-  collector-writer:
-    extends:
-      file: ../../services/writer/docker/compose.yml
-      service: writer
-    depends_on:
-      mongodb:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
+      file: ../../services/router/docker/compose.yml
+      service: router
+    environment:
+      ROUTER_RULES: "collector@topic:broadcast > @topic:writer(key:message:collect)"
 
 networks:
   default:
