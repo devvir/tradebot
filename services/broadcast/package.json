@@ -1,7 +1,7 @@
 {
-  "name": "@tradebot/feed",
+  "name": "@tradebot/broadcast",
   "version": "1.0.0",
-  "description": "BitMEX WebSocket feed service",
+  "description": "BitMEX WebSocket broadcast service",
   "main": "dist/index.js",
   "private": true,
   "scripts": {
@@ -15,7 +15,7 @@
   "keywords": [
     "bitmex",
     "websocket",
-    "feed",
+    "broadcast",
     "trading"
   ],
   "dependencies": {

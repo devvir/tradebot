@@ -1,0 +1,15 @@
+# Broadcast Extended Service
+# Includes: rabbitmq (queue), broadcast (bitmex ws consumer)
+
+include:
+  - path: ../../rabbitmq/docker/compose.yml
+
+services:
+  broadcast:
+    extends:
+      file: ./compose.yml
+      service: broadcast
+
+    depends_on:
+      rabbitmq:
+        condition: service_healthy

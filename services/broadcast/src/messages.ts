@@ -12,7 +12,7 @@ import {
 /**
  * Creates a message handler that publishes all BitMEX messages directly.
  * - Logs subscription/info control messages
- * - Publishes all data messages to the feed exchange
+ * - Publishes all data messages to the configured exchange
  */
 export const createMessageHandler = (state: FeedState): MessageHandler => (buffer: Buffer): void => {
   state.lastMessageTime = Date.now();
@@ -28,14 +28,16 @@ export const createMessageHandler = (state: FeedState): MessageHandler => (buffe
       return handleControlMessage(message, state);
     }
 
-    state.broker!.getExchange()!.publish(message, message.table, {
-      headers: { api_version: state.apiVersion || undefined },
+    const exchange = state.broker!.getExchange()!;
+    const routingKey =  `message.${message.table}`;
+
+    exchange.publish(Buffer.from(JSON.stringify(message)), routingKey, {
+      contentType: 'application/json',
     });
 
     increaseCounter();
-  } catch (error) {
-    console.log({ error }, 'Error processing WebSocket message');
-    logger.error({ err: error }, 'Error processing WebSocket message');
+  } catch (err) {
+    logger.error({ err }, 'Error processing WebSocket message');
   }
 };
 

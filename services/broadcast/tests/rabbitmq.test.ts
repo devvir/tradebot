@@ -1,5 +1,5 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
-import { connectToQueue } from '../src/rabbitmq';
+import { connectToQueue, EXCHANGE } from '../src/rabbitmq';
 import type { Config } from '../src/types';
 
 vi.mock('@devvir/rabbitmq', () => ({
@@ -21,8 +21,6 @@ describe('RabbitMQ setup', () => {
     platformChannels: [],
     queue: {
       rabbitmqUrl: 'amqp://localhost',
-      exchangeName: 'ex.feed',
-      queueName: 'q.feed',
       messageTtlMs: 1800000,
     },
     connection: {
@@ -41,31 +39,15 @@ describe('RabbitMQ setup', () => {
     expect(brokerModule.keepAlive).toHaveBeenCalledWith(config.queue.rabbitmqUrl);
   });
 
-  it('should declare feed exchange with queue using config names', async () => {
+  it('should not declare any queues', async () => {
     const mockBroker = { declares: vi.fn().mockResolvedValue({}) };
     vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
 
     const config = createMockConfig();
     await connectToQueue(config);
 
-    expect(mockBroker.declares).toHaveBeenCalledWith({
-      exchanges: {
-        [config.queue.exchangeName]: {
-          type: 'topic',
-          queues: { [config.queue.queueName]: { routingKey: '#' } },
-        },
-      },
-    });
-  });
-
-  it('should return the broker instance', async () => {
-    const mockBroker = { declares: vi.fn().mockResolvedValue({}) };
-    vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
-
-    const config = createMockConfig();
-    const broker = await connectToQueue(config);
-
-    expect(broker).toBe(mockBroker);
+    const declaredTopology = mockBroker.declares.mock.calls[0][0];
+    expect(declaredTopology.queues).toBeUndefined();
   });
 });
 

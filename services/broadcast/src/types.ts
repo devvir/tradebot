@@ -17,8 +17,6 @@ export interface Config {
   platformChannels: readonly string[];
   queue: {
     rabbitmqUrl: string;
-    exchangeName: string;
-    queueName: string;
     messageTtlMs: number;
   };
   connection: {

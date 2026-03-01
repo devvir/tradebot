@@ -47,13 +47,11 @@ export const loadConfig = (): Config => {
     platformChannels: PLATFORM_CHANNELS,
     queue: {
       rabbitmqUrl: sanitizeUrl(process.env.RABBITMQ_URL || ''),
-      exchangeName: process.env.FEED_EXCHANGE || '',
-      queueName: process.env.FEED_QUEUE || '',
-      messageTtlMs: parseInt(process.env.FEED_MESSAGE_TTL || '0'),
+      messageTtlMs: parseInt(process.env.BROADCAST_MESSAGE_TTL || '0'),
     },
     connection: {
-      reconnectDelayMs: parseInt(process.env.FEED_RECONNECT_DELAY_MS || '0'),
-      maxReconnectDelayMs: parseInt(process.env.FEED_MAX_RECONNECT_DELAY_MS || '0'),
+      reconnectDelayMs: parseInt(process.env.BROADCAST_RECONNECT_DELAY_MS || '0'),
+      maxReconnectDelayMs: parseInt(process.env.BROADCAST_MAX_RECONNECT_DELAY_MS || '0'),
     },
   };
 
@@ -70,11 +68,9 @@ export const loadConfig = (): Config => {
 const validateConfig = (config: Config): void => {
   if (! config.realtimeWsUrl) throw new Error('Failed to determine BitMEX realtime WS URL');
   if (! config.queue.rabbitmqUrl) throw new Error('RABBITMQ_URL is required');
-  if (! config.queue.exchangeName) throw new Error('FEED_EXCHANGE is required');
-  if (! config.queue.queueName) throw new Error('FEED_QUEUE is required');
-  if (config.queue.messageTtlMs <= 0) throw new Error('FEED_MESSAGE_TTL must be a positive number');
-  if (config.connection.reconnectDelayMs <= 0) throw new Error('FEED_RECONNECT_DELAY_MS must be a positive number');
-  if (config.connection.maxReconnectDelayMs <= 0) throw new Error('FEED_MAX_RECONNECT_DELAY_MS must be a positive number');
+  if (config.queue.messageTtlMs <= 0) throw new Error('BROADCAST_MESSAGE_TTL must be a positive number');
+  if (config.connection.reconnectDelayMs <= 0) throw new Error('BROADCAST_RECONNECT_DELAY_MS must be a positive number');
+  if (config.connection.maxReconnectDelayMs <= 0) throw new Error('BROADCAST_MAX_RECONNECT_DELAY_MS must be a positive number');
 };
 
 const usesTestnet = () => [undefined, '', '1', 'on', 'true'].includes(

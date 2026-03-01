@@ -21,7 +21,7 @@ All code in this project is written primarily for **human understanding and main
 
 ## Type Definitions
 
-- All TypeScript interfaces and type definitions should be placed in dedicated `types` files (e.g., `services/feed/types/index.ts`).
+- All TypeScript interfaces and type definitions should be placed in dedicated `types` files (e.g., `services/broadcast/types/index.ts`).
 
 - **Language**: TypeScript is preferred over JavaScript for all new code
 - **Formatting**: All code must follow Prettier formatting rules (see `.prettierrc`)

@@ -57,7 +57,7 @@ All credentials are configured via environment variables:
 Services connect using the `RABBITMQ_URL` environment variable, which automatically includes the credentials:
 
 ```typescript
-// Example: services/feed/docker/compose.yml
+// Example: services/broadcast/docker/compose.yml
 RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASS}@rabbitmq:${RABBITMQ_AMQP_PORT}
 ```
 

@@ -1,13 +1,12 @@
-# Feed Service - Connects to BitMEX and publishes to queue
-# Supports horizontal scaling via replicas configuration.
+# Broadcast Service - Connects to BitMEX and publishes to queue
 
 services:
-  feed:
+  broadcast:
     build:
       context: ../../..
       dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
       args:
-        SERVICE_NAME: feed
+        SERVICE_NAME: broadcast
 
     environment:
       # BitMEX Connection (testnet or live)
@@ -15,15 +14,11 @@ services:
 
       # Queue
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
-      FEED_MESSAGE_TTL: ${FEED_MESSAGE_TTL:-1800000}
-
-      # Data flow
-      FEED_EXCHANGE: ${FEED_EXCHANGE:-ex.feed}
-      FEED_QUEUE: ${FEED_QUEUE:-q.feed}
+      BROADCAST_MESSAGE_TTL: ${BROADCAST_MESSAGE_TTL:-1800000}
 
       # Reconnect delays
-      FEED_RECONNECT_DELAY_MS: ${FEED_RECONNECT_DELAY_MS:-5000}
-      FEED_MAX_RECONNECT_DELAY_MS: ${FEED_MAX_RECONNECT_DELAY_MS:-60000}
+      BROADCAST_RECONNECT_DELAY_MS: ${BROADCAST_RECONNECT_DELAY_MS:-5000}
+      BROADCAST_MAX_RECONNECT_DELAY_MS: ${BROADCAST_MAX_RECONNECT_DELAY_MS:-60000}
 
       # Runtime
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -31,7 +26,7 @@ services:
       TZ: ${TZ:-UTC}
 
     ports:
-      - "${FEED_PORT:-}:3000"
+      - "${BROADCAST_PORT:-}:3000"
 
     user: "1000:1000"
 
@@ -45,10 +40,10 @@ services:
       retries: 5
       start_period: 10s
 
-    restart: ${FEED_RESTART_POLICY:-unless-stopped}
+    restart: ${BROADCAST_RESTART_POLICY:-unless-stopped}
 
     deploy:
-      replicas: ${FEED_REPLICAS:-1}
+      replicas: ${BROADCAST_REPLICAS:-1}
       update_config:
         parallelism: 1
         delay: 10s

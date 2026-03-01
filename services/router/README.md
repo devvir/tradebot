@@ -87,42 +87,42 @@ The `(key:...)` suffix controls how routing keys are handled.
 
 **Simple route (default exchange):**
 ```bash
-ROUTER_RULES="feed > writer"
+ROUTER_RULES="broadcast > writer"
 ```
 
 **Fan-out to multiple destinations:**
 ```bash
-ROUTER_RULES="feed > codec.in & writer"
+ROUTER_RULES="broadcast > codec.in & writer"
 ```
 
 **With explicit exchange binding:**
 ```bash
-ROUTER_RULES="feed@fanout:ex.feed > codec.in@fanout:ex.codec"
+ROUTER_RULES="broadcast@fanout:broadcast > codec.in@fanout:codec"
 ```
 
 **Exchange-only destination (broadcast pattern):**
 ```bash
-ROUTER_RULES="broadcast@topic:feed > @fanout:broadcast"
+ROUTER_RULES="broadcast@topic:broadcast > @fanout:broadcast"
 ```
-Consumes from Feed's topic exchange, republishes to a fanout exchange. No destination queue is declared — subscribers bind their own queues independently.
+Consumes from Broadcast's topic exchange, republishes to a fanout exchange. No destination queue is declared — subscribers bind their own queues independently.
 
 **With routing key replacement (Collector module):**
 ```bash
-ROUTER_RULES="collect@topic:feed > collect@topic:writer(key:message:collect)"
+ROUTER_RULES="collect@topic:broadcast > collect@topic:writer(key:message:collect)"
 ```
-Consumes from Feed's topic exchange, replaces `message` prefix with `collect`, republishes to Writer's topic exchange. Incoming `message.trade` becomes `collect.trade`.
+Consumes from Broadcast's topic exchange, replaces `message` prefix with `collect`, republishes to Writer's topic exchange. Incoming `message.trade` becomes `collect.trade`.
 
 **Multiple rules:**
 ```bash
 ROUTER_RULES="
-  | feed > codec.in & writer
+  | broadcast > codec.in & writer
   | reader > codec.reader & archive
 "
 ```
 
 **Multiple sources:**
 ```bash
-ROUTER_RULES="feed & reader > writer"
+ROUTER_RULES="broadcast & reader > writer"
 ```
 
 ### Rule Validation
@@ -167,10 +167,10 @@ If you need routing key preservation across the route, use an explicit exchange 
 
 ```bash
 # Routing key lost — default exchange overwrites it with "writer"
-ROUTER_RULES="feed@topic:ex.feed > writer"
+ROUTER_RULES="broadcast@topic:broadcast > writer"
 
 # Routing key preserved — explicit exchange keeps it
-ROUTER_RULES="feed@topic:ex.feed > writer@topic:ex.writer"
+ROUTER_RULES="broadcast@topic:broadcast > writer@topic:writer"
 ```
 
 ## Health Check

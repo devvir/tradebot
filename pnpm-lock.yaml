@@ -119,19 +119,7 @@ importers:
         specifier: ^4.0.18
         version: 4.0.18(@types/node@25.3.3)(jiti@2.6.1)(yaml@2.8.2)
 
-  services/codec:
-    dependencies:
-      '@devvir/rabbitmq':
-        specifier: workspace:*
-        version: link:../../packages/rabbitmq
-      '@devvir/service':
-        specifier: workspace:*
-        version: link:../../packages/service
-      '@tradebot/utils':
-        specifier: workspace:*
-        version: link:../../shared/utils
-
-  services/feed:
+  services/broadcast:
     dependencies:
       '@devvir/rabbitmq':
         specifier: workspace:*
@@ -145,6 +133,18 @@ importers:
       ws:
         specifier: ^8.19.0
         version: 8.19.0
+
+  services/codec:
+    dependencies:
+      '@devvir/rabbitmq':
+        specifier: workspace:*
+        version: link:../../packages/rabbitmq
+      '@devvir/service':
+        specifier: workspace:*
+        version: link:../../packages/service
+      '@tradebot/utils':
+        specifier: workspace:*
+        version: link:../../shared/utils
 
   services/reader:
     dependencies:

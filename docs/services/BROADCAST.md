@@ -1,8 +1,8 @@
-# Feed Service - Technical Documentation
+# Broadcast Service - Technical Documentation
 
 ## Overview
 
-The Feed service maintains two persistent WebSocket connections to BitMEX market data endpoints and relays all messages to RabbitMQ. It provides a centralized, resilient data acquisition point for the platform.
+The Broadcast service maintains two persistent WebSocket connections to BitMEX market data endpoints and relays all messages to a RabbitMQ topic exchange `broadcast`. It provides a centralized, resilient data acquisition point for the platform.
 
 ## Architecture
 
@@ -25,35 +25,17 @@ Both connections subscribe to predefined channel sets on startup. If either conn
 ```
 BitMEX WebSocket
     ↓ (raw JSON messages)
- Feed Service
-    ↓ (parse + classify)
-├─ Control messages (subscriptions, info) → logged
-├─ Data messages → published to RabbitMQ
-    ↓ (with routing key = channel name)
- RabbitMQ Exchange
-    ↓ (topic ex.feed)
- Subscribe clients (routing keys: e.g., "trade", "orderBookL2")
+ Broadcast Service
+    ├─ Parse and classify message
+    └─ Use message.<table> as routing key (e.g. "message.trade", "message.orderBookL2")
+        ↓
+ RabbitMQ Topic Exchange `broadcast`
+    └─ Downstream consumers bind their own queues with routing key patterns
 ```
 
-### Subscribed Channels
+Broadcast declares the topic exchange only — no queues. Downstream services may assert their own queues and bind to the routing key patterns they need.
 
-**Realtime:**
-- `instrument` - Contract specifications and definitions
-- `orderBookL2` - Level 2 order book updates
-- `quote` - Best bid/ask snapshots
-- `trade` - Individual trade executions
-- `liquidation` - Liquidation events
-- `settlement` - Settlement records
-- `funding` - Funding rate events
-- `insurance` - Insurance fund updates
-
-**Platform:**
-- `announcement` - System announcements
-- `chat` - Chat messages
-- `connected` - Connection status messages
-- `publicNotifications` - Broadcast notifications
-
-## Configuration
+### Configuration
 
 ### Environment Variables
 
@@ -61,17 +43,15 @@ BitMEX WebSocket
 |----------|----------|---------|-------------|
 | `BITMEX_TESTNET` | No | `true` | Use BitMEX testnet (`true`) or live (`false`) |
 | `RABBITMQ_URL` | Yes | - | RabbitMQ connection string (e.g., `amqp://guest:guest@localhost:5672`) |
-| `FEED_EXCHANGE` | Yes | - | RabbitMQ topic exchange name (e.g., `ex.feed`) |
-| `FEED_QUEUE` | Yes | - | RabbitMQ queue name (e.g., `q.feed`) |
-| `FEED_RECONNECT_DELAY_MS` | No | `5000` | Initial reconnection delay in milliseconds |
-| `FEED_MAX_RECONNECT_DELAY_MS` | No | `60000` | Maximum reconnection delay (exponential backoff caps here) |
-| `FEED_MESSAGE_TTL` | No | `1800000` | RabbitMQ message TTL in milliseconds (30 min default) |
+| `BROADCAST_RECONNECT_DELAY_MS` | No | `5000` | Initial reconnection delay in milliseconds |
+| `BROADCAST_MAX_RECONNECT_DELAY_MS` | No | `60000` | Maximum reconnection delay (exponential backoff caps here) |
+| `BROADCAST_MESSAGE_TTL` | No | `1800000` | RabbitMQ message TTL in milliseconds (30 min default) |
 
 ### Reconnection Strategy
 
 When a WebSocket connection fails:
-1. Schedule reconnection after `FEED_RECONNECT_DELAY_MS`
-2. Double the delay for next retry (capped at `FEED_MAX_RECONNECT_DELAY_MS`)
+1. Schedule reconnection after `BROADCAST_RECONNECT_DELAY_MS`
+2. Double the delay for next retry (capped at `BROADCAST_MAX_RECONNECT_DELAY_MS`)
 3. Reset delay to initial value on successful connection
 
 Example with defaults:
@@ -141,12 +121,3 @@ On `SIGTERM` or `SIGINT`:
 3. Cancel pending heartbeat timers
 4. Close RabbitMQ broker connection
 5. Exit cleanly
-
-## Usage Modules
-
-The Feed service is used by:
-- **archivist module** - Feed + Codec + Writer pipeline for data storage
-- **collector module** - Feed + Writer for minimal data persistence
-- **transform module** - Feed + Codec for data transformation workflows
-
-Each module configures the service via environment variables and consumes messages from the `FEED_EXCHANGE` using RabbitMQ routing keys.

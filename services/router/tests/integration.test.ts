@@ -654,14 +654,14 @@ describe('Router Integration', () => {
       await testBroker?.close().catch(() => {});
     });
 
-    it('routes feed data to both codec and writer', async () => {
+    it('routes broadcast data to both codec and writer', async () => {
       const tradeData = {
         table: 'trade',
         action: 'insert',
         data: [{ symbol: 'XBTUSD', price: 50000, size: 100 }],
       };
 
-      publishToQueue(testBroker, 'int.coll.feed', tradeData);
+      publishToQueue(testBroker, 'int.coll.broadcast', tradeData);
 
       const [codecMsg, writerMsg] = await Promise.all([
         getMessage(testBroker, 'int.coll.codec'),

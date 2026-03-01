@@ -20,7 +20,7 @@ const state: FeedState = {
 };
 
 service.run(async () => {
-  logger.info('Starting BitMEX Feed Service...');
+  logger.info('Starting BitMEX Broadcast Service...');
 
   const broker = state.broker = await connectToQueue(config);
 
