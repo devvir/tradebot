@@ -17,6 +17,7 @@
 include:
   - path: ../../services/broadcast/docker/extended.yml
   - path: ../../services/writer/docker/extended.yml
+  - path: ../../services/codec/docker/compose.yml
 
 services:
   compress-in:
