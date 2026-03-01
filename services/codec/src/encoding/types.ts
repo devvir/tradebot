@@ -1,4 +1,7 @@
+import { Long } from "bson";
 import { InstrumentData } from ".";
+
+export * from '../types';
 
 /**
  * Encoded value with bit width specification (how much space to take).
@@ -13,27 +16,15 @@ export type UnknownMessage = Record<string, unknown>;
 /**
  * Structured format for encoded messages ready for publishing.
  */
-export interface EncodedMessage {
-  headers: Record<string, unknown>;
-  payload: Buffer | Record<string, unknown[]>;
-}
+export type EncodedMessage = {
+  _id: Long,
+  [key: string]: unknown,
+};
 
 /**
  * Structured format for decoded messages ready for publishing.
  */
-export interface DecodedMessage {
-  headers: Record<string, unknown>;
-  payload: Record<string, unknown>; // Partial<BitmexDataMessage> but also compatible with JSON serialization
-}
-
-/**
- * Unified output from any codec transformation (passthru, encode, or decode).
- */
-export interface TransformResult {
-  payload: unknown;
-  contentType: string;
-  headers?: Record<string, unknown>;
-}
+export type DecodedMessage = Record<string, unknown>;
 
 /**
  * Represents encoded price and size, with optional packing.

@@ -4,9 +4,9 @@ Handles encoding and decoding of Bitmex WebSocket messages for compressed archiv
 
 ## Functions
 
-### `encode(rawMsg, jsonMsg) → EncodedMessage`
+### `encode(strategy, rawMsg, jsonMsg) → EncodedMessage`
 
-Top-level entry point. Builds metadata headers, encodes the data payload (table-specific packing + Brotli compression), and returns `{ headers, payload }` ready for archival. Falls back to the raw payload on any encoding error.
+Top-level entry point. Builds a document ID, embeds it in the payload as `_id`, encodes the data payload (table-specific packing, Brotli compression), and returns payload ready for archival. Falls back to the raw payload on any encoding error.
 
 ### `encodePayload(data, table, action) → Record<string, unknown[]>`
 

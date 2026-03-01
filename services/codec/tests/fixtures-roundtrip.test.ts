@@ -1,17 +1,10 @@
 // Pending Review
 import { describe, it, expect } from 'vitest';
-import {
-  encodePayload,
-  buildDocumentIdBuffer,
-  decodeMessage,
-} from '../src/encoding';
-import type {
-  OrderBookL2Data,
-  TradeData,
-  QuoteData,
-  InstrumentData,
-  BitmexAction,
-} from '@tradebot/types';
+import { buildDocumentIdBuffer } from '../src/encoding';
+import { encodePayload } from '../src/encoding/encoders';
+import { decodeMessage } from '../src/encoding/decoders';
+import type { OrderBookL2Data, TradeData, QuoteData, InstrumentData, BitmexAction } from '@tradebot/types';
+import { QuoteDataAsk, QuoteDataBid } from '../../../shared/types/src';
 
 const roundtrip = (items: unknown[], table: string, action: BitmexAction, timestamp: string) => {
   const encoded = encodePayload(items as any, table, action);
@@ -32,7 +25,7 @@ const tradeFixtures: TradeData[] = [
   { symbol: 'ETHUSD', timestamp: '2024-02-15T10:30:01.000Z', trdType: 'Regular', trdMatchID: 'match-002', side: 'Sell', size: 1000, price: 2400.5, tickDirection: 'MinusTick', grossValue: 2400500, homeNotional: 0.416, foreignNotional: 1000 },
 ];
 
-const quoteFixtures: QuoteData[] = [
+const quoteFixtures: (QuoteData & QuoteDataBid & QuoteDataAsk)[] = [
   { symbol: 'XBTUSD', timestamp: '2024-02-15T10:30:00.000Z', bidSize: 10000, bidPrice: 42499.5, askPrice: 42500.5, askSize: 15000 },
   { symbol: 'ETHUSD', timestamp: '2024-02-15T10:30:01.000Z', bidSize: 50000, bidPrice: 2400, askPrice: 2401, askSize: 75000 },
   { symbol: 'XBTUSD', timestamp: '2024-02-15T10:30:02.000Z', bidSize: 1, bidPrice: 0.00001, askPrice: 100000.99999, askSize: 999999 },
@@ -104,7 +97,7 @@ describe('Fixture round-trips', () => {
     it('round-trips all quote fixtures', () => {
       for (const fixture of quoteFixtures) {
         const { data } = roundtrip([fixture], 'quote', 'partial', fixture.timestamp);
-        const d = data![0] as QuoteData;
+        const d = data![0] as QuoteData & QuoteDataBid & QuoteDataAsk;
 
         expect(d.symbol).toBe(fixture.symbol);
         expect(d.bidSize).toBe(fixture.bidSize);

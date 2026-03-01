@@ -1,10 +1,6 @@
 // Pending Review
 import { describe, it, expect } from 'vitest';
-import {
-  encodePayload,
-  buildDocumentIdBuffer,
-  decodeMessage,
-} from '../src/encoding';
+import { buildDocumentIdBuffer } from '../src/encoding';
 import { encodePriceAndSize, decodePriceAndSize } from '../src/encoding/utils';
 import type {
   OrderBookL2Data,
@@ -13,6 +9,9 @@ import type {
   InstrumentData,
   BitmexAction,
 } from '@tradebot/types';
+import { encodePayload } from '../src/encoding/encoders';
+import { decodeMessage } from '../src/encoding/decoders';
+import { QuoteDataAsk, QuoteDataBid } from '../../../shared/types/src';
 
 // ── encodePriceAndSize / decodePriceAndSize ────────────────────────────────────
 
@@ -321,14 +320,14 @@ describe('Quote encode → decode', () => {
   const ts = '2024-01-15T10:30:00.000Z';
 
   it('round-trips with both bid and ask', () => {
-    const original: QuoteData = {
+    const original: QuoteData & QuoteDataBid & QuoteDataAsk = {
       symbol: 'XBTUSD', timestamp: ts,
       bidSize: 100, bidPrice: 45250,
       askPrice: 45251, askSize: 150,
     };
 
     const { data } = roundtrip([original], 'quote', 'partial', ts);
-    const d = data![0] as QuoteData;
+    const d = data![0] as QuoteData & QuoteDataBid & QuoteDataAsk;
 
     expect(d.symbol).toBe(original.symbol);
     expect(d.timestamp).toBe(ts);

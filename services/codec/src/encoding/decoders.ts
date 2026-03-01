@@ -1,5 +1,3 @@
-import { brotliDecompressSync } from 'zlib';
-import { Buffer } from 'node:buffer';
 import type { BitmexDataMessage, BitmexDataItem, BitmexTable, BitmexAction } from '@tradebot/types';
 import { unpackDocumentId } from './document-id';
 import { decodeOrderBookL2 } from './orderBookL2';
@@ -35,23 +33,19 @@ const decodeTableData = (
  * Decode a stored document back to a BitmexDataMessage.
  *
  * @param table    - Collection / table name
- * @param payload  - Brotli-compressed Buffer **or** pre-parsed JSON object
+ * @param payload  - Pre-parsed JSON object
  * @param idBuffer - The 8-byte MongoDB _id that carries action, version, and timestamp
  */
 export const decodeMessage = (
   table: BitmexTable,
-  payload: Buffer | Record<string, unknown[]>,
+  payload: Record<string, unknown[]>,
   idBuffer: Buffer | ArrayBuffer,
 ): Partial<BitmexDataMessage> => {
-  const decoded = payload instanceof Buffer
-    ? JSON.parse(brotliDecompressSync(payload).toString())
-    : payload;
-
   const { encoderVersion, action, timestamp } = unpackDocumentId(idBuffer);
 
   return {
     table,
     action,
-    data: decodeTableData(table, decoded, action, encoderVersion, timestamp),
+    data: decodeTableData(table, payload, action, encoderVersion, timestamp),
   };
 };

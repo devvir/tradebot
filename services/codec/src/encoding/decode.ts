@@ -1,5 +1,5 @@
-// Pending Review
-import { brotliDecompressSync } from 'node:zlib';
+import { brotliDecompress } from 'node:zlib';
+import { promisify } from 'node:util';
 import type { RawMessage } from '@devvir/rabbitmq';
 import type { BitmexTable } from '@tradebot/types';
 import { logger } from '@devvir/service';
@@ -7,6 +7,8 @@ import { decodeMessage } from './decoders';
 import { unpackDocumentId } from './document-id';
 import { bigIntToBuffer } from './utils';
 import type { DecodedMessage, UnknownMessage } from './types';
+
+const brotliDecompressAsync = promisify(brotliDecompress);
 
 /**
  * Decode a MongoDB document back to a BitmexDataMessage.
@@ -23,14 +25,14 @@ import type { DecodedMessage, UnknownMessage } from './types';
  * document and handles all three cases, guaranteeing a decoded BitmexDataMessage
  * as output regardless of input.
  */
-export const decode = (rawMsg: RawMessage, message: unknown): DecodedMessage | null => {
-  const table = rawMsg.fields.routingKey as BitmexTable;
+export default async (rawMsg: RawMessage, message: unknown): Promise<DecodedMessage | null> => {
   const doc = (typeof message === 'string' ? JSON.parse(message) : message) as UnknownMessage;
+  const table = rawMsg.fields.routingKey.split('.')[1] as BitmexTable;
   const format = detectFormat(doc);
 
   try {
     // Raw: document is already the original BitmexDataMessage shape
-    if (format === 'raw') return { payload: doc, headers: {} };
+    if (format === 'raw') return doc;
 
     const idBuffer = idToBuffer(doc._id);
     if (! idBuffer) {
@@ -41,22 +43,20 @@ export const decode = (rawMsg: RawMessage, message: unknown): DecodedMessage | n
     if (format === 'binary') {
       // doc.b is a base64 string (BSON Binary.toJSON())
       const compressed = Buffer.from(String(doc.b), 'base64');
-      const decompressed = JSON.parse(brotliDecompressSync(compressed).toString());
+      const decompressed = JSON.parse((await brotliDecompressAsync(compressed)).toString());
 
       if (Array.isArray(decompressed)) {
         // binary-only (no encode): decompressed is the raw data[], action from _id
         const { action } = unpackDocumentId(idBuffer);
-        return { payload: { table, action, data: decompressed }, headers: {} };
+
+        return { table, action, data: decompressed };
       }
 
       // encode+binary: decompressed is the encoded record, decode normally
-      const decoded = decodeMessage(table, decompressed, idBuffer);
-      return { payload: decoded, headers: {} };
+      return decodeMessage(table, decompressed, idBuffer);
     }
 
-    // encoded: payload is the doc body minus _id
-    const decoded = decodeMessage(table, extractPayload(doc), idBuffer);
-    return { payload: decoded, headers: {} };
+    return decodeMessage(table, extractPayload(doc), idBuffer);
   } catch (err) {
     logger.error({ err, table, format }, 'Failed to decode message');
     return null;

@@ -1,14 +1,9 @@
-// Public API
+export { default as transform } from './transform';
+export { default as encode } from './encode';
+export { default as decode } from './decode';
+export { bigIntToBuffer } from './utils';
 export { encodePayload } from './encoders';
-export { decodeMessage } from './decoders';
-export { encode } from './transform';
-export { decode } from './decode';
-export { transform } from './codec';
-
-// Document _id — observable behavior (the _id leaves the service and ends up in a database)
 export { buildDocumentId, buildDocumentIdBuffer, unpackDocumentId } from './document-id';
-
-// Mappings re-exported for tests
 export { ACTION_ID } from './mappings';
 
 // Types

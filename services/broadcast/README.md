@@ -53,4 +53,4 @@ The service maintains two independent WebSocket connections:
 
 Both publish to the same RabbitMQ topic exchange with `message.<table>` as the routing key (e.g., `trade`, `orderBookL2`, `instrument`). Broadcast declares the exchange only — no queues. Downstream consumers assert their own queues and bind to the patterns they need.
 
-For detailed implementation information, see [docs/services/BROADCAST-WIP.md](../../docs/services/BROADCAST-WIP.md).
+For detailed implementation information, see [docs/services/BROADCAST.md](../../docs/services/BROADCAST.md).

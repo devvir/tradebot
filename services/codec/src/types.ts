@@ -2,10 +2,6 @@ import type { Broker } from '@devvir/rabbitmq';
 
 export interface Config {
   rabbitmqUrl: string;
-  inboundExchange: string;
-  inboundQueue: string;
-  outboundExchange: string;
-  outboundQueue: string;
   prefetch: number;
 }
 
@@ -15,3 +11,7 @@ export interface CodecState {
   messagesProcessed: number;
   lastProcessedTime: number;
 }
+
+export type Strategy = typeof STRATEGIES[number];
+
+export const STRATEGIES = [ 'encode', 'compress', 'decode' ] as const;

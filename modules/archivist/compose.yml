@@ -1,45 +1,37 @@
 # Archivist Module
-# Includes: rabbitmq (queue), mongodb (storage),
-#           feed (bitmex ws consumer), codec (message encoder/decoder), writer (data archiver)
+# Includes: extended broadcast (bitmex ws consumer + rabbitmq)
+#           router (1) (broadcast → codec exchange)
+#           codec (bitmex messages transformer)
+#           router (2) (codec → writer exchange)
+#           extended writer (mongodb manager + rabbitmq + mongodb)
+#
+# Data flow:
+#   Broadcast → topic:broadcast (routingKey = message.table, e.g. "message.trade")
+#   Router    → consumes from topic:broadcast, replaces "message" with "compress" in the
+#               routingKey (e.g. "compress.trade"), and republishes to topic:codec.in
+#   Codec     → consumes from codec.in, compresses the message, and republishes to codec.out
+#   Router    → consumes from topic:codec.out, replaces "compress" with "archive" in the
+#               routingKey (e.g. "archive.trade"), and republishes to topic:writer
+#   Writer    → consumes from its writer.archive queue, and stores the message in MongoDB
 
 include:
-  - path: ../../services/rabbitmq/docker/compose.yml
-  - path: ../../services/mongodb/docker/compose.yml
+  - path: ../../services/broadcast/docker/extended.yml
+  - path: ../../services/writer/docker/extended.yml
 
 services:
-  archivist-feed:
+  compress-in:
     extends:
-      file: ../../services/feed/docker/compose.yml
-      service: feed
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
+      file: ../../services/router/docker/compose.yml
+      service: router
+    environment:
+      ROUTER_RULES: "compress.in@topic:broadcast > @topic:codec.in(key:message:compress)"
 
-  archivist-codec-1:
+  compress-out:
     extends:
-      file: ../../services/codec/docker/compose.yml
-      service: codec
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-
-  archivist-codec-2:
-    extends:
-      file: ../../services/codec/docker/compose.yml
-      service: codec
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-
-  archivist-writer:
-    extends:
-      file: ../../services/writer/docker/compose.yml
-      service: writer
-    depends_on:
-      mongodb:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
+      file: ../../services/router/docker/compose.yml
+      service: router
+    environment:
+      ROUTER_RULES: "compress.out@topic:codec.out > @topic:writer(key:compress:archive)"
 
 networks:
   default:

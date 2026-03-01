@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import { buildDocumentId, unpackDocumentId, encodePayload } from '../src/encoding';
+import { buildDocumentId, unpackDocumentId } from '../src/encoding';
 import { bigIntToBuffer } from '../src/encoding/utils';
-import type { BitmexDataMessage } from '@tradebot/types';
+import { encodePayload } from '../src/encoding/encoders';
 
 describe('Encoding utilities', () => {
   describe('document _id: build → unpack', () => {

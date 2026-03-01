@@ -1,6 +1,4 @@
-# Codec Service - Consumes from bitmex.feed queue, transforms messages, publishes to writer exchange
-# Stateless transformation service for message encoding/decoding and normalization
-# Supports scaling: Multiple instances automatically load-balance message consumption from RabbitMQ
+# Codec Service - Stateless transformation service for message encoding/decoding
 
 services:
   codec:
@@ -14,18 +12,9 @@ services:
       # Dependencies (queue)
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
 
-      # Data flow
-      CODEC_INBOUND_EXCHANGE: ${CODEC_INBOUND_EXCHANGE:-ex.codec.in}
-      CODEC_INBOUND_QUEUE: ${CODEC_INBOUND_QUEUE:-q.codec.in}
-      CODEC_OUTBOUND_EXCHANGE: ${CODEC_OUTBOUND_EXCHANGE:-ex.codec.out}
-      CODEC_OUTBOUND_QUEUE: ${CODEC_OUTBOUND_QUEUE:-q.codec.out}
-
-      # Codec Strategy
-      CODEC_STRATEGY: ${CODEC_STRATEGY:-}
-
       # Performance tuning
-      CODEC_PREFETCH: ${CODEC_PREFETCH:-100}
-      CODEC_BROTLI_QUALITY: ${CODEC_BROTLI_QUALITY:-4}
+      CODEC_PREFETCH: ${CODEC_PREFETCH:-1000}
+      CODEC_BROTLI_QUALITY: ${CODEC_BROTLI_QUALITY:-1}
 
       # Runtime
       LOG_LEVEL: ${LOG_LEVEL:-info}

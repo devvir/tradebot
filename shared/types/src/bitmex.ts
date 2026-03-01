@@ -234,12 +234,12 @@ interface QuoteDataBase {
   pool?: string; // Only in Rest API?
 }
 
-interface QuoteDataAsk {
+export interface QuoteDataAsk {
   askSize: number;
   askPrice: number;
 }
 
-interface QuoteDataBid {
+export interface QuoteDataBid {
   bidSize: number;
   bidPrice: number;
 }
