@@ -2,6 +2,8 @@
 
 services:
   codec:
+    scale: ${CODEC_REPLICAS:-1}
+
     build:
       context: ../../..
       dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
@@ -37,15 +39,3 @@ services:
       start_period: 10s
 
     restart: ${CODEC_RESTART_POLICY:-unless-stopped}
-
-    deploy:
-      replicas: ${CODEC_REPLICAS:-1}
-      update_config:
-        parallelism: 1
-        delay: 10s
-        failure_action: rollback
-      restart_policy:
-        condition: on-failure
-        delay: 5s
-        max_attempts: 3
-        window: 120s
