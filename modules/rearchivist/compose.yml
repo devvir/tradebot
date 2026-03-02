@@ -1,49 +1,41 @@
 # Rearchivist Module
-# Includes: rabbitmq (queue), mongodb (storage),
-#           reader (MongoDB -> RabbitMQ), codec (compress), writer (RabbitMQ -> MongoDB)
+# Includes: extended reader (bitmex mongodb reader + rabbitmq + mongodb)
+#           router (1) (reader → codec exchange)
+#           codec (bitmex messages encoder/decoder)
+#           router (2) (codec → writer exchange)
+#           extended writer (mongodb manager + rabbitmq + mongodb)
+#
+# Data flow:
+#   Reader    → topic:reader (routingKey = message.table, e.g. "message.trade")
+#   Router    → consumes from topic:reader, replaces "message" with "compress" in the
+#               routingKey (e.g. "compress.trade"), and republishes to topic:codec.in
+#   Codec     → consumes from codec.in, decodes the message, and republishes to codec.out
+#   Router    → consumes from topic:codec.out, replaces "compress" with "archive" in the
+#               routingKey (e.g. "archive.trade"), and republishes to topic:writer
+#   Writer    → consumes from its writer.archive queue, and stores the message in MongoDB
 
 include:
-  - path: ../../services/rabbitmq/docker/compose.yml
-  - path: ../../services/mongodb/docker/compose.yml
+  - path: ../../services/reader/docker/extended.yml
+  - path: ../../services/writer/docker/extended.yml
+  - path: ../../services/codec/docker/compose.yml
 
 services:
-  rearchivist-reader:
+  rearchive-in:
     extends:
-      file: ../../services/reader/docker/compose.yml
-      service: reader
-    depends_on:
-      mongodb:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
+      file: ../../services/router/docker/compose.yml
+      service: router
+    environment:
+      ROUTER_RULES: "rearchive.in@topic:reader > @topic:codec.in(key:message:compress)"
 
-  rearchivist-codec-1:
+  rearchive-out:
     extends:
-      file: ../../services/codec/docker/compose.yml
-      service: codec
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-
-  rearchivist-codec-2:
-    extends:
-      file: ../../services/codec/docker/compose.yml
-      service: codec
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-
-  rearchivist-writer:
-    extends:
-      file: ../../services/writer/docker/compose.yml
-      service: writer
-    depends_on:
-      mongodb:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
+      file: ../../services/router/docker/compose.yml
+      service: router
+    environment:
+      ROUTER_RULES: "rearchive.out@topic:codec.out > @topic:writer(key:compress:archive)"
 
 networks:
   default:
     name: ${COMPOSE_PROJECT_NAME:-tradebot}-network
     external: true
+

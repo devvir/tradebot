@@ -1,41 +1,42 @@
 # Rearchivist Module
 
-Reads stored documents from MongoDB, optionally transforms them via Codec, and writes to another collection.
+Reads stored raw messages from MongoDB, compresses them using Codec, and writes to the archives collection.
 
 ## Components
 
-- **Reader** - Scans MongoDB collections and publishes documents to RabbitMQ
-- **Codec** - Transforms messages (optional encoding and compression)
-- **Writer** - Persists transformed messages to MongoDB collections
+- **Reader** - Scans MongoDB collections in the Collector database and publishes to RabbitMQ
+- **Codec** - Compresses messages
+- **Writer** - Persists compressed messages to MongoDB's archive database
+- **Router** - Defines the pipeline messages flow through
 - **RabbitMQ** - Message broker for Reader → Codec → Writer pipeline
 - **MongoDB** - Source and destination database for documents
 
 ## Quick Start
 
-Start the module:
 ```bash
 tb up rearchivist
-```
-
-Build images and start:
-```bash
 tb up rearchivist --build
-```
-
-Stop the module:
-```bash
 tb down rearchivist
+tb logs rearchivist
 ```
 
-View logs:
-```bash
-tb logs rearchivist
+## Message Routing
+
+Data flows through the pipeline via routing key transformations:
+
+```
+Reader  → topic:reader  (routingKey = "message.{table}")
+Router  → topic:codec.in (routingKey = "compress.{table}")
+Codec   → topic:codec.out (routingKey = "compress.{table}")
+Router  → topic:writer  (routingKey = "archive.{table}")
+Writer  → MongoDB archives database, collection named after the table
 ```
 
 ## Configuration
 
-Copy `.env.example` to `.env` and customize:
+Copy `.env.example` to `.env` and customize.
+
+Key settings:
 - `READER_DATABASE` - MongoDB database to read from (required)
-- `WRITER_DATABASE` - MongoDB database to write to (required)
-- `CODEC_STRATEGY` - Transformation modes: `encode`, `binary`, `encode,binary`, `decode`, or empty for pass-through (optional)
-- Other configuration in `.env.example` with defaults documented
+
+See each service's documentation for the full list of available environment variables.
