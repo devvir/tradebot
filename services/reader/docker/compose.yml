@@ -15,13 +15,10 @@ services:
       # Dependencies (queue and database)
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
       MONGODB_URL: ${MONGODB_URL:-mongodb://root:root@mongodb:27017?authSource=admin}
-      READER_DATABASE: ${READER_DATABASE:-tradebot_archive}
+      READER_DATABASE: ${READER_DATABASE:-}
       READER_COLLECTIONS: ${READER_COLLECTIONS:-}
 
-      # Data flow
-      READER_EXCHANGE: ${READER_EXCHANGE:-ex.transform}
-      READER_QUEUE: ${READER_QUEUE:-q.transform}
-      READER_BATCH_SIZE: ${READER_BATCH_SIZE:-1000}
+      # Polling
       READER_POLL_INTERVAL_MS: ${READER_POLL_INTERVAL_MS:-3000}
 
       # Runtime

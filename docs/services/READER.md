@@ -2,7 +2,9 @@
 
 ## Overview
 
-The Reader service implements a MongoDB collection polling mechanism that detects and publishes newly inserted documents via RabbitMQ. It handles out-of-order writes using a sliding window algorithm and persists polling state for recovery on restart.
+The Reader service is a generic MongoDB reader that implements continuous collection polling: it detects newly inserted documents and publishes them via RabbitMQ. It handles out-of-order writes using a sliding window algorithm and persists polling state for recovery on restart.
+
+It's agnostic to the use case — it simply reads whatever `READER_DATABASE` is configured and publishes documents to `topic:reader`. Downstream routers (in each module) determine the message flow and transformations.
 
 ## Architecture
 
@@ -12,15 +14,13 @@ The Reader service implements a MongoDB collection polling mechanism that detect
 Every READER_POLL_INTERVAL_MS
     ↓
 For each collection (whitelist or all)
-    ├─ Snapshot current highest _id (NEW HIGH)
-    ├─ Load previous state (OLD HIGH, OLD BUFFER)
-    ├─ Get latest 1000 _ids (NEW BUFFER)
-    ├─ Detect pending _ids (in OLD BUFFER but not NEW BUFFER)
-    ├─ Publish pending _ids (out-of-order documents)
-    ├─ Scan from OLD HIGH to NEW HIGH
-    ├─ Publish all documents in range
-    ├─ Persist state (NEW HIGH, NEW BUFFER)
-    └─ Move to next collection
+    ├─ Detect new and out-of-order documents
+    ├─ Publish to topic:reader exchange
+    └─ Routing key: message.{collection}
+        ↓
+ RabbitMQ topic:reader exchange
+    ├─ No queues declared — downstream consumers assert their own
+    └─ Typically consumed by a router that transforms the routing key
 ```
 
 ### Sliding Window Algorithm
@@ -80,16 +80,13 @@ Persisted after each polling iteration for disaster recovery.
 
 ### Environment Variables
 
-| Variable | Type | Required | Description |
-|----------|------|----------|-------------|
-| `MONGODB_URL` | string | Yes | MongoDB connection URL |
-| `READER_DATABASE` | string | Yes | Source database name |
-| `RABBITMQ_URL` | string | Yes | RabbitMQ broker URL |
-| `READER_EXCHANGE` | string | Yes | Destination exchange name |
-| `READER_QUEUE` | string | Yes | Destination queue name |
-| `READER_BATCH_SIZE` | number | Yes | RabbitMQ prefetch window |
-| `READER_POLL_INTERVAL_MS` | number | Yes | Poll interval (milliseconds) |
-| `READER_COLLECTIONS` | string | No | Comma-separated collection whitelist (default: all non-system collections) |
+| Variable | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| `RABBITMQ_URL` | string | Yes | - | RabbitMQ broker URL |
+| `MONGODB_URL` | string | Yes | - | MongoDB connection URL |
+| `READER_DATABASE` | string | Yes | - | MongoDB database name to read from (module-specific) |
+| `READER_POLL_INTERVAL_MS` | number | Yes | - | Poll interval in milliseconds |
+| `READER_COLLECTIONS` | string | No | - | Comma-separated collection whitelist (default: all non-system collections) |
 
 ### Collection Discovery
 
@@ -99,11 +96,12 @@ Persisted after each polling iteration for disaster recovery.
 
 ## Document Publishing
 
-Documents are published to RabbitMQ with:
-- **Exchange:** Configured `READER_EXCHANGE`
-- **Routing key:** Collection name (e.g., `trades`, `instrument`)
+Documents are published to the `reader` topic exchange with:
+- **Routing key:** `message.{collection}` (e.g. `message.trade`, `message.orderBookL2`)
 - **Content type:** `application/json`
 - **Payload:** Full MongoDB document
+
+No queues are declared by the reader — downstream consumers (typically a router) assert their own queues bound to this exchange.
 
 ## Dependencies
 
@@ -121,8 +119,8 @@ Documents are published to RabbitMQ with:
 
 ### RabbitMQ
 
-- **Publishing:** Topic exchange with routing key = collection name
-- **Queue binding:** External concern (subscribers bind to exchange with routing key patterns)
+- **Publishing:** Via configured exchange/queue (default: AMQP default exchange + `reader` queue)
+- **Queue declaration:** Durable queue declared at startup
 - **Backpressure:** Respects prefetch via prefetch window
 
 ## Error Handling
@@ -202,8 +200,6 @@ The service successfully detects and publishes the out-of-order document on the 
 
 ## Limitations
 
-- **No deletion tracking:** Deleted documents are not published (MongoDB doesn't track deletions efficiently via polling)
-- **No update tracking:** Only inserts detected; updates to existing documents not published
 - **Buffer size fixed:** 1000-ID buffer is hardcoded (`BUFFER_SIZE` constant)
 - **Collection-level granularity:** Polls entire collection, not specific query ranges
 - **No deduplication:** Service may publish same document multiple times if polling restarts mid-iteration

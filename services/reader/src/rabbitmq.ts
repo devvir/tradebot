@@ -1,38 +1,21 @@
 import { keepAlive, Broker } from '@devvir/rabbitmq';
 import { logger } from '@devvir/service';
-import type { Config } from './types';
+
+export const EXCHANGE = 'reader';
 
 /**
- * Creates and configures a RabbitMQ broker.
+ * Create and configure a RabbitMQ broker.
+ * Declares a topic exchange for message publishing.
+ * Queues are NOT declared here — downstream consumers assert their own.
  */
-export const connectToQueue = async (config: Config): Promise<Broker> => {
+export const connectToQueue = async (rabbitmqUrl: string): Promise<Broker> => {
   logger.info('Setting up RabbitMQ broker...');
-  const broker = await keepAlive(config.rabbitmqUrl);
-  logger.info('Successfully connected to RabbitMQ');
+
+  const broker = await keepAlive(rabbitmqUrl);
 
   return broker.declares({
     exchanges: {
-      [config.exchangeName]: {
-        type: 'topic',
-        queues: { [config.queueName]: { routingKey: '#' } },
-      },
+      [EXCHANGE]: { type: 'topic' },
     },
-  });
-};
-
-/**
- * Publish a document to the configured exchange (routingKey := collection name).
- */
-export const publishDocument = async (
-  broker: Broker,
-  collectionName: string,
-  document: Record<string, unknown>,
-  config: Config
-): Promise<void> => {
-  const exchange = broker.getExchange(config.exchangeName);
-  if (! exchange) throw new Error(`Exchange "${config.exchangeName}" not found`);
-
-  await exchange.publishAsync(document, collectionName, {
-    headers: { table: collectionName },
   });
 };

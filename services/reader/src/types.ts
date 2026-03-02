@@ -13,9 +13,6 @@ export interface Config {
   mongodbUrl: string;
   database: string;
   rabbitmqUrl: string;
-  exchangeName: string;
-  queueName: string;
-  batchSize: number;
   pollIntervalMs: number;
   collections: string[]; // Empty array = all collections
 }

@@ -1,7 +1,7 @@
 import { logger } from '@devvir/service';
 import { loadConfig } from './config';
 import { connectToDatabase } from './persistence';
-import { connectToQueue, publishDocument } from './rabbitmq';
+import { connectToQueue } from './rabbitmq';
 import { loadPollingState, startPeriodicStateSave } from './state';
 import { runPollingLoop } from './poller';
 import service from './service';
@@ -18,22 +18,25 @@ const state: ReaderState = {
 };
 
 service.run(async () => {
-  logger.info('Starting Reader Service (polling-based)...');
-
-  // ── Connect to infrastructure ─────────────────────────────────────────────
-  [state.mongoConnection, state.broker] = await Promise.all([
+  [ state.mongoConnection, state.broker ] = await Promise.all([
     connectToDatabase(config.mongodbUrl, config.database),
-    connectToQueue(config),
+    connectToQueue(config.rabbitmqUrl),
   ]);
 
   const db = state.mongoConnection.db;
-  await loadPollingState(db);
 
+  await loadPollingState(db);
   await startPeriodicStateSave(db);
 
   // ── Start polling loop (discovers collections dynamically on each iteration) ─
   runPollingLoop(db, config, async (collectionName, doc) => {
-    await publishDocument(state.broker!, collectionName, doc, config);
+    const exchange = state.broker!.getExchange()!;
+    const message = Buffer.from(JSON.stringify(doc));
+
+    exchange.publish(message, `message.${collectionName}`, {
+      contentType: 'application/json',
+    });
+
     service.onMessage();
   });
 

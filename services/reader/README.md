@@ -40,21 +40,20 @@ pnpm start
 ## Configuration
 
 **Required:**
-- `MONGODB_URL` - MongoDB connection string
-- `READER_DATABASE` - Source database name
 - `RABBITMQ_URL` - RabbitMQ connection string
-- `READER_EXCHANGE` - Destination topic exchange name
-- `READER_QUEUE` - Destination queue name
-- `READER_BATCH_SIZE` - RabbitMQ batch size (prefetch window)
+- `MONGODB_URL` - MongoDB connection string
+- `READER_DATABASE` - Database name to read from
 - `READER_POLL_INTERVAL_MS` - Time between collection polls (milliseconds)
 
 **Optional:**
-- `READER_COLLECTIONS` - Comma-separated collection names to poll (default: all collections)
+- `READER_COLLECTIONS` - Comma-separated collection names to poll (default: all non-system collections)
+
+The service publishes to a `reader` topic exchange with routing key `message.{collection}`. Queues are declared by downstream consumers (e.g. the router in the module's compose.yml).
 
 ## Health Check
 
 ```bash
-curl http://localhost:3000/health
+GET /health
 ```
 
 Returns:

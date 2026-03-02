@@ -1,0 +1,18 @@
+# Reader Extended Service
+# Includes: rabbitmq (queue), mongodb (database), reader (MongoDB reader)
+
+include:
+  - path: ../../rabbitmq/docker/compose.yml
+  - path: ../../mongodb/docker/compose.yml
+
+services:
+  reader:
+    extends:
+      file: ./compose.yml
+      service: reader
+
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
