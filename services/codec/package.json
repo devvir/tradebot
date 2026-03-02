@@ -15,7 +15,6 @@
   "dependencies": {
     "@devvir/rabbitmq": "workspace:*",
     "@devvir/service": "workspace:*",
-    "@tradebot/utils": "workspace:*",
-    "bson": "^7.2.0"
+    "@tradebot/utils": "workspace:*"
   }
 }

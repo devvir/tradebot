@@ -1,6 +1,6 @@
 import type { QuoteData } from '@tradebot/types';
-import type { PackedDataItem } from './types';
-import { pack, encodePriceAndSize, decodePriceAndSize, extractBig } from './utils';
+import type { PackedDataItem } from '../types';
+import { pack, encodePriceAndSize, decodePriceAndSize, extract } from '../utils';
 
 // ── Encode ─────────────────────────────────────────────────────────────────────
 
@@ -45,9 +45,8 @@ export const encodeQuote = (item: QuoteData): PackedDataItem => {
  * Layout (LSB → MSB): witness(1) | meta(10) | priceAndSize(remaining)
  */
 const unpackQuoteValue = (packed: number) => {
-  const big = BigInt(packed);
-  const meta = extractBig(big, 1, 10);
-  const priceAndSize = Number(big >> 11n);
+  const meta = extract(packed, 1, 10);
+  const priceAndSize = extract(packed, 11, 42);
 
   return decodePriceAndSize(priceAndSize, meta);
 };

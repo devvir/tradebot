@@ -7,14 +7,18 @@ The Collector module subscribes to the Broadcast service's topic exchange and st
 ## Pipeline
 
 ```
-Broadcast service → topic:broadcast → Router → topic:writer → Writer → MongoDB
+Broadcast → topic:broadcast → Router → topic:codec.in → Codec → topic:codec.out → Router → topic:writer → Writer → MongoDB
 ```
 
 1. **Broadcast** subscribes to BitMEX WebSocket channels and publishes all messages into a `topic:broadcast` exchange, with routing key `message.<table>` (e.g., `message.trade`).
 
-2. **Router** (collector) binds its `collect` queue to the broadcast exchange, transforms the routing key prefix from `message` to `collect` (e.g., `message.trade` → `collect.trade`), and republishes each message to the `writer` topic exchange.
+2. **Router** (collect-in) transforms the routing key prefix from `message` to `passthru` and republishes to `codec.in`.
 
-3. **Writer** consumes from its `writer.collect` queue (bound with key `collect.*`) and writes each message to MongoDB.
+3. **Codec** applies the `passthru` strategy: adds a unique, deduplicating `_id` field to each message without transforming the payload.
+
+4. **Router** (collect-out) transforms the routing key prefix from `passthru` to `collect` and republishes to the `writer` topic exchange.
+
+5. **Writer** consumes from its `writer.collect` queue (bound with key `collect.*`) and writes each message to MongoDB. The `_id` field enables idempotent inserts: duplicate `_id` values are silently skipped (duplicate key error).
 
 ## Message Routing
 

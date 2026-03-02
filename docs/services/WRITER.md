@@ -54,13 +54,6 @@ Routing keys that don't match any pattern are nacked without requeue and routed 
 
 ### Document Creation
 
-Content handling depends on `properties.contentType`:
-
-| Content Type | Processing | Document |
-|---|---|---|
-| `application/json` (or unset) | `JSON.parse(content)` | Parsed object stored directly |
-| `application/bson` | `BSON.deserialize(content)` | Deserialized document with types preserved (Binary, Int32, Long, etc.) |
-
 Writer does not modify, merge, or enrich the document — it stores exactly what it receives.
 
 ## Configuration

@@ -20,19 +20,19 @@ include:
   - path: ../../services/codec/docker/compose.yml
 
 services:
-  compress-in:
+  archive-in:
     extends:
       file: ../../services/router/docker/compose.yml
       service: router
     environment:
-      ROUTER_RULES: "compress.in@topic:broadcast > @topic:codec.in(key:message:compress)"
+      ROUTER_RULES: "archive.in@topic:broadcast > @topic:codec.in(key:message:compress)"
 
-  compress-out:
+  archive-out:
     extends:
       file: ../../services/router/docker/compose.yml
       service: router
     environment:
-      ROUTER_RULES: "compress.out@topic:codec.out > @topic:writer(key:compress:archive)"
+      ROUTER_RULES: "archive.out@topic:codec.out > @topic:writer(key:compress:archive)"
 
 networks:
   default:

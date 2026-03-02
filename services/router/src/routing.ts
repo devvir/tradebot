@@ -3,7 +3,7 @@ import { logger } from '@devvir/service';
 import type { Broker } from '@devvir/rabbitmq';
 import type { Route, RoutingKeyConfig } from './types';
 
-const PREFETCH = 10000;
+const PREFETCH = 1000;
 
 /** Setup routing consumers that republish messages to destinations, grouped by source queue. */
 export const startConsuming = async (broker: Broker, routes: Route[]): Promise<void> => {

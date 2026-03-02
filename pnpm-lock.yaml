@@ -27,9 +27,6 @@ importers:
       knip:
         specifier: ^5.85.0
         version: 5.85.0(@types/node@25.3.3)(typescript@5.9.3)
-      mongodb:
-        specifier: ^7.1.0
-        version: 7.1.0
       ts-node:
         specifier: ^10.9.2
         version: 10.9.2(@types/node@25.3.3)(typescript@5.9.3)
@@ -145,9 +142,6 @@ importers:
       '@tradebot/utils':
         specifier: workspace:*
         version: link:../../shared/utils
-      bson:
-        specifier: ^7.2.0
-        version: 7.2.0
 
   services/reader:
     dependencies:

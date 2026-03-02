@@ -15,8 +15,6 @@ describe('RabbitMQ setup', () => {
 
   const createMockConfig = (): Config => ({
     rabbitmqUrl: 'amqp://user:pass@broker:5672',
-    inboundQueue: 'codec.in',
-    outboundExchange: 'codec',
     prefetch: 1000,
   });
 

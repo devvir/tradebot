@@ -1,5 +1,5 @@
 import amqp from 'amqplib';
-import { MongoClient, MongoError, BSON } from 'mongodb';
+import { MongoClient, MongoError } from 'mongodb';
 import { logger } from '@devvir/service';
 import { Config, MongoDBConnection, CONSUMER_QUEUES, WriteTarget } from './types';
 
@@ -80,7 +80,7 @@ const consume = (channel: amqp.Channel, client: MongoClient, config: Config, que
       const db = client.db(target.database);
       const collection = db.collection(target.collection);
 
-      const document = createDocument(msg);
+      const document = JSON.parse(msg.content.toString(), bufferReviver);
       await collection.insertOne(document);
     } catch (e) {
       if (e instanceof MongoError && e.code === 11000) {
@@ -122,12 +122,12 @@ export const resolveTarget = (routingKey: string, config: Config): WriteTarget |
 };
 
 /**
- * Create MongoDB document from RabbitMQ message content.
- */
-const createDocument = (msg: amqp.ConsumeMessage): Record<string, unknown> => {
-  const contentType = msg.properties?.contentType || 'application/json';
+ * Revive JSON-serialized Buffers back into Buffer (so MongoDB can store them as BSON Binary).
+ * */
+const bufferReviver = (_key: string, value: unknown): unknown => {
+  if (value && typeof value === 'object' && (value as any).type === 'Buffer' && Array.isArray((value as any).data)) {
+    return Buffer.from((value as any).data);
+  }
 
-  return (contentType === 'application/bson')
-    ? BSON.deserialize(msg.content)
-    : JSON.parse(msg.content.toString());
+  return value;
 };

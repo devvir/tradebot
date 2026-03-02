@@ -1,7 +1,7 @@
 // Pending Review
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { startConsuming, resolveTarget } from '../src/persistence';
-import { MongoError, BSON, Binary } from 'mongodb';
+import { MongoError, Binary } from 'mongodb';
 import { CONSUMER_QUEUES } from '../src/types';
 import type { Config } from '../src/types';
 
@@ -205,19 +205,6 @@ describe('Message persistence', () => {
 
       const doc = mockCollection.insertOne.mock.calls[0][0];
       expect(doc).toEqual({ value: 100 });
-    });
-
-    it('should deserialize BSON content preserving binary fields', async () => {
-      const { callback } = await setup();
-      const payload = Buffer.from([0xDE, 0xAD, 0xBE, 0xEF]);
-      const bsonBuffer = Buffer.from(BSON.serialize({ _id: 12345, b: payload }));
-
-      await callback(CONSUMER_QUEUES.archive)(msg('archive.encoded', bsonBuffer, 'application/bson'));
-
-      const doc = mockCollection.insertOne.mock.calls[0][0];
-      expect(doc._id).toBe(12345);
-      expect(doc.b).toBeInstanceOf(Binary);
-      expect(Buffer.from(doc.b.buffer)).toEqual(payload);
     });
   });
 

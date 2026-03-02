@@ -1,13 +1,12 @@
-import { Long } from "bson";
-import { InstrumentData } from ".";
+import type { InstrumentData } from "@tradebot/types";
 
 export * from '../types';
 
 /**
  * Encoded value with bit width specification (how much space to take).
  */
-export interface EncodedField<T extends number | bigint = number> {
-  number: T;
+export interface EncodedField {
+  number: number;
   bits: number;
 }
 
@@ -17,7 +16,7 @@ export type UnknownMessage = Record<string, unknown>;
  * Structured format for encoded messages ready for publishing.
  */
 export type EncodedMessage = {
-  _id: Long,
+  _id: number,
   [key: string]: unknown,
 };
 
@@ -40,7 +39,7 @@ export interface EncodedPriceAndSize {
 }
 
 /** The result of encoding data items */
-export type PackedDataItem = (string | number | Buffer<ArrayBufferLike>)[];
+export type PackedDataItem = (string | number)[];
 
 /** Used by instrument encoder/decoder */
 export type EncodingFn = (v: number | string | boolean, k: keyof InstrumentData) => number | string;

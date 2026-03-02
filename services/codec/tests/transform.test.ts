@@ -1,6 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { buildDocumentId, unpackDocumentId } from '../src/encoding';
-import { bigIntToBuffer } from '../src/encoding/utils';
 import { encodePayload } from '../src/encoding/encoders';
 
 describe('Encoding utilities', () => {
@@ -8,19 +7,26 @@ describe('Encoding utilities', () => {
     it('should roundtrip action, version, and timestamp', () => {
       for (const action of ['partial', 'insert', 'update', 'delete'] as const) {
         const ts = '2024-01-15T10:30:45.123Z';
-        const id = buildDocumentId(ts, action, '2.3.4', '1.0.0');
-        const unpacked = unpackDocumentId(bigIntToBuffer(id));
+        const id = buildDocumentId(ts, action, '2.3.4');
+        const unpacked = unpackDocumentId(id);
 
         expect(unpacked.action).toBe(action);
-        expect(unpacked.encoderVersion).toBe('1.0.0');
+        expect(unpacked.apiVersion).toBe('2.3.4');
         expect(unpacked.timestamp).toBe(ts);
       }
+    });
+
+    it('should fit within Number.MAX_SAFE_INTEGER', () => {
+      // Use a far-future timestamp to push the value as high as possible
+      const id = buildDocumentId('2100-12-31T23:59:59.999Z', 'delete', '3.7.15');
+      expect(id).toBeLessThanOrEqual(Number.MAX_SAFE_INTEGER);
+      expect(Number.isSafeInteger(id)).toBe(true);
     });
 
     it('should roundtrip timestamps at boundary values', () => {
       for (const ts of ['2000-01-01T00:00:00.000Z', '2050-06-15T12:00:00.000Z']) {
         const id = buildDocumentId(ts, 'insert');
-        const unpacked = unpackDocumentId(bigIntToBuffer(id));
+        const unpacked = unpackDocumentId(id);
         expect(unpacked.timestamp).toBe(ts);
       }
     });

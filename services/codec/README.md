@@ -2,17 +2,17 @@
 
 A message transformation and encoding service that consumes market data messages from RabbitMQ, applies compression/encoding strategies (or the inverse: decode), and republishes them to another RabbitMQ queue.
 
-# BSON Serialization
-
-All published messages are BSON-serialized (content-type: application/bson) in order to preserve Buffers through rabbitMQ. Consumers should call `BSON.deserialize(message)` on messages received from Codec.
-
 ## Core Functionality
 
 - **Message consumption** from RabbitMQ `codec` queue in the `codec.in` topic exchange.
 - **Flexible transformation modes**:
-- **Document ID generation** - embeds document IDs directly in the message payload for storage (except for `decode`)
-- **Error handling** - graceful fallback to raw payloads on transformation failures
-- **Scalability** - configurable prefetch for load balancing
+  - `encode` - Compact field-reduced representation
+  - `compress` - Brotli compression on top of encode
+  - `decode` - Decompress (if compressed), reverse encode
+  - `passthru` - Add deduplicating `_id` without payload transformation
+- **Document ID generation** - Embeds a deterministic numeric `_id` (53-bit safe integer) in every message for idempotent inserts. The `_id` encodes timestamp, API version, and action so documents are self-describing and directly queryable as plain numbers in JavaScript, MongoDB Compass, and mongosh.
+- **Error handling** - Graceful fallback to raw payloads on transformation failures
+- **Scalability** - Configurable prefetch for load balancing
 
 ## Development
 
@@ -49,4 +49,4 @@ Response includes:
 - `lastProcessedTime` - Time since last message (ms)
 - `brokerConnected` - RabbitMQ connection status
 
-For detailed implementation information, see [docs/services/CODEC.md](../../docs/services/CODEC.md).
+For detailed implementation information, see [docs/services/CODEC.md](../../docs/services/CODEC.md). For encoding internals, see [encoding/README.md](src/encoding/README.md).

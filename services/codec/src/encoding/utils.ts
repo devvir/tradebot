@@ -15,35 +15,25 @@ export const minBits = (n: number) => n ? (Math.floor(Math.log2(n)) + 1) : 1;
 /** Minimum bytes required to hold `n`. */
 export const minBytes = (n: number) => Math.ceil(minBits(n) / 8);
 
-/** Extract `width` bits starting at bit position `offset` (from LSB). */
+/** Extract `width` bits starting at bit position `offset` (from LSB). Handles values up to 53 bits. */
 export const extract = (value: number, offset: number, width: number): number =>
-  (value >>> offset) & ((1 << width) - 1);
-
-/** Extract `width` bits from a bigint starting at `offset`. */
-export const extractBig = (value: bigint, offset: number, width: number): number =>
-  Number((value >> BigInt(offset)) & ((1n << BigInt(width)) - 1n));
+  Math.floor(value / 2 ** offset) % (2 ** width);
 
 // ── Packing ────────────────────────────────────────────────────────────────────
 
 /**
- * Pack multiple encoded fields into a single BigInt (MSB-first).
+ * Pack multiple encoded fields into a single number (MSB-first).
  * Accepts { number, bits } objects or plain numbers (auto-sized).
+ * All values must fit within 53 bits total (Number.MAX_SAFE_INTEGER).
  */
-export const pack = (fields: (EncodedField | number)[]): bigint =>
+export const pack = (fields: (EncodedField | number)[]): number =>
   fields
     .map(f => (typeof f === 'object') ? f : { number: f, bits: minBits(f) })
-    .reduce((acc, { number, bits }) => (acc << BigInt(bits)) | BigInt(number), 0n);
-
-/** Serialise a BigInt as a big-endian 8-byte Buffer. */
-export const bigIntToBuffer = (value: bigint): Buffer => {
-  const buf = Buffer.allocUnsafe(8);
-  buf.writeBigUInt64BE(value);
-  return buf;
-};
+    .reduce((acc, { number, bits }) => acc * (2 ** bits) + number, 0);
 
 // ── Semver (9 bits: 2 major + 3 minor + 4 patch) ──────────────────────────────
 
-export const encodeVersion = (version: string): EncodedField<number> => {
+export const encodeVersion = (version: string): EncodedField => {
   const [major, minor, patch] = version.split('.').map(Number);
   const encoded = ((major & 0b11) << 7) | ((minor & 0b111) << 4) | (patch & 0b1111);
   return { number: encoded, bits: 9 };
@@ -58,7 +48,7 @@ export const decodeVersion = (encoded: number): string => {
 
 // ── Timestamp (42 bits: ms since Jan 1, 2000 — covers up to ~2139) ────────────
 
-export const encodeTimestamp = (isoString: string): EncodedField<number> => {
+export const encodeTimestamp = (isoString: string): EncodedField => {
   const offset = new Date(isoString).getTime() - EPOCH_2000;
 
   if (offset < 0 || offset > 0x3ffffffffff) {
@@ -68,7 +58,7 @@ export const encodeTimestamp = (isoString: string): EncodedField<number> => {
   return { number: offset, bits: 42 };
 };
 
-export const decodeTimestamp = (encoded: number | bigint): string =>
+export const decodeTimestamp = (encoded: number): string =>
   new Date(Number(encoded) + EPOCH_2000).toISOString();
 
 // ── Price + Size encoding/decoding ─────────────────────────────────────────────
@@ -120,10 +110,11 @@ export const decodePriceAndSize = (field1: number, meta: number) => {
   const priceBits = ((meta >> 5) & 0x7) * 8;
   const negativePrice = (meta >> 8) & 0x1;
   const negativeSize = (meta >> 9) & 0x1;
-  const big = BigInt(field1);
+  const priceScale = 2 ** priceBits;
 
   return {
-    price: Number(big & ((1n << BigInt(priceBits)) - 1n)) / 10 ** decimals * (negativePrice ? -1 : 1),
-    size: Number(big >> BigInt(priceBits)) * (negativeSize ? -1 : 1),
+    price: (field1 % priceScale) / 10 ** decimals * (negativePrice ? -1 : 1),
+    size: Math.floor(field1 / priceScale) * (negativeSize ? -1 : 1),
   };
 };
+

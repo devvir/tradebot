@@ -1,25 +1,39 @@
 # Collector Module
 # Includes: extended broadcast (bitmex ws consumer + rabbitmq)
-#           router (broadcast → writer exchange)
+#           router (1) (broadcast → codec exchange)
+#           codec (adds deduplication _id without payload transformation)
+#           router (2) (codec → writer exchange)
 #           extended writer (mongodb manager + rabbitmq + mongodb)
 #
 # Data flow:
-#   Broadcast → topic:broadcast (routingKey = message.table, e.g. "message.trade")
-#   Router    → consumes from topic:broadcast, replaces "message" with "collect" in the
-#               routingKey (e.g. "collect.trade"), and republishes to topic:writer
-#   Writer    → consumes from writer.collect queue, and stores the message in MongoDB
+#   Broadcast  → topic:broadcast (routingKey = message.table, e.g. "message.trade")
+#   Router     → consumes from topic:broadcast, replaces "message" with "passthru" in the
+#                routingKey (e.g. "passthru.trade"), and republishes to topic:codec.in
+#   Codec      → consumes from codec.in, stamps a unique numeric _id for deduplication,
+#                and republishes to codec.out (no payload transformation)
+#   Router     → consumes from topic:codec.out, replaces "passthru" with "collect" in the
+#                routingKey (e.g. "collect.trade"), and republishes to topic:writer
+#   Writer     → consumes from writer.collect queue, and stores the message in MongoDB
 
 include:
   - path: ../../services/broadcast/docker/extended.yml
   - path: ../../services/writer/docker/extended.yml
+  - path: ../../services/codec/docker/compose.yml
 
 services:
-  collector:
+  collect-in:
     extends:
       file: ../../services/router/docker/compose.yml
       service: router
     environment:
-      ROUTER_RULES: "collector@topic:broadcast > @topic:writer(key:message:collect)"
+      ROUTER_RULES: "collect.in@topic:broadcast > @topic:codec.in(key:message:passthru)"
+
+  collect-out:
+    extends:
+      file: ../../services/router/docker/compose.yml
+      service: router
+    environment:
+      ROUTER_RULES: "collect.out@topic:codec.out > @topic:writer(key:passthru:collect)"
 
 networks:
   default:

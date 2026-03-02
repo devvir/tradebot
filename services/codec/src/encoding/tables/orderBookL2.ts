@@ -1,7 +1,7 @@
 import type { OrderBookL2Data, BitmexAction } from '@tradebot/types';
-import type { PackedDataItem } from './types';
-import { SIDE_ID, SIDE_ID_REVERSE } from './mappings';
-import { pack, encodeTimestamp, decodeTimestamp, encodePriceAndSize, decodePriceAndSize } from './utils';
+import type { PackedDataItem } from '../types';
+import { SIDE_ID, SIDE_ID_REVERSE } from '../mappings';
+import { pack, encodeTimestamp, decodeTimestamp, encodePriceAndSize, decodePriceAndSize } from '../utils';
 
 // ── Encode ─────────────────────────────────────────────────────────────────────
 
@@ -21,7 +21,7 @@ export const encodeOrderBookL2 = (
   const { meta, field1, field2 } = encodePriceAndSize(price, size!);
   const encodedSizePrice = meta ? [field1] : [field1, field2!];
   const encodedMeta = { number: meta, bits: 10 };
-  const encodedTsSideMeta = Number(pack([ts, encodedMeta, SIDE_ID[side]]));
+  const encodedTsSideMeta = pack([ts, encodedMeta, SIDE_ID[side]]);
 
   return [
     id,
@@ -45,7 +45,7 @@ const decodeItem = (item: unknown[], action: BitmexAction): Partial<OrderBookL2D
 
   const sideId = encoded & 0x1;
   const meta = (encoded >> 1) & 0x3ff;
-  const ts = encoded >> 11;
+  const ts = Math.floor(encoded / 2048);
   const priceBytes = (meta >> 5) & 0x7;
 
   const base = {

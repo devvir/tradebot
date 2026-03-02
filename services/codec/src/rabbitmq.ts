@@ -37,29 +37,15 @@ export const startConsuming = async (broker: Broker, config: Config, onProcessMs
 
   logger.info({ queue: INBOUND_QUEUE, prefetch: config.prefetch }, 'Started message consumption');
 
-  const timings = { transform: 0, republish: 0, count: 0 };
-
   await inboundQueue.consume(async (message, { ack, nack, original }) => {
     if (! message) return;
 
     try {
       onProcessMsg();
 
-      const t0 = Date.now();
       const content = await transform(original, message as EncodedMessage | DecodedMessage);
-      const t1 = Date.now();
 
-      await outputExchange.republish({ ...original, content }, { contentType: 'application/bson' });
-      const t2 = Date.now();
-
-      timings.transform += t1 - t0;
-      timings.republish += t2 - t1;
-
-      if (++timings.count % 500 === 0) {
-        const avg = (n: number) => (n / timings.count).toFixed(1);
-        logger.info({ transformAvgMs: avg(timings.transform), republishAvgMs: avg(timings.republish), samples: timings.count }, 'Codec timings');
-        timings.transform = 0; timings.republish = 0; timings.count = 0;
-      }
+      await outputExchange.republish({ ...original, content });
 
       ack();
     } catch (err) {

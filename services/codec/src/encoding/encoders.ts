@@ -8,10 +8,10 @@ import {
   isBitmexDataWithSymbol,
 } from '@tradebot/types';
 
-import { encodeQuote } from './quote';
-import { encodeOrderBookL2 } from './orderBookL2';
-import { encodeTrade } from './trade';
-import { encodeInstrument } from './instrument';
+import { encodeQuote } from './tables/quote';
+import { encodeOrderBookL2 } from './tables/orderBookL2';
+import { encodeTrade } from './tables/trade';
+import { encodeInstrument } from './tables/instrument';
 
 /**
  * Encode payload (doc.data) by table, applying the appropriate packing strategy.

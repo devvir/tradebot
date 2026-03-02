@@ -1,11 +1,11 @@
 import type { TradeData } from '@tradebot/types';
-import type { PackedDataItem } from './types';
-import { encodePriceAndSize, decodePriceAndSize, extract, pack } from './utils';
+import type { PackedDataItem } from '../types';
+import { encodePriceAndSize, decodePriceAndSize, extract, pack } from '../utils';
 import {
   SIDE_ID, SIDE_ID_REVERSE,
   TICK_DIRECTION, TICK_DIRECTION_REVERSE,
   TRD_TYPE, TRD_TYPE_REVERSE
-} from './mappings';
+} from '../mappings';
 
 // ── Encode ─────────────────────────────────────────────────────────────────────
 

@@ -1,6 +1,6 @@
 // Pending Review
 import { describe, it, expect } from 'vitest';
-import { buildDocumentIdBuffer } from '../src/encoding';
+import { buildDocumentId } from '../src/encoding';
 import { encodePriceAndSize, decodePriceAndSize } from '../src/encoding/utils';
 import type {
   OrderBookL2Data,
@@ -96,8 +96,8 @@ const roundtrip = (
   timestamp: string,
 ) => {
   const encoded = encodePayload(items as any, table, action);
-  const idBuffer = buildDocumentIdBuffer(timestamp, action);
-  return decodeMessage(table as any, encoded, idBuffer);
+  const id = buildDocumentId(timestamp, action);
+  return decodeMessage(table as any, encoded, id);
 };
 
 // ── OrderBookL2 ────────────────────────────────────────────────────────────────
@@ -432,16 +432,6 @@ describe('decodeMessage metadata', () => {
 
     const { data } = roundtrip([item], 'quote', 'partial', ts);
     expect((data![0] as QuoteData).timestamp).toBe(ts);
-  });
-
-  it('throws on unsupported encoder version', () => {
-    const encoded = encodePayload(
-      [{ symbol: 'T', id: 1, side: 'Buy', price: 1, size: 1, timestamp: ts, transactTime: ts } as OrderBookL2Data],
-      'orderBookL2', 'insert',
-    );
-    const badId = buildDocumentIdBuffer(ts, 'insert', '2.0.0', '2.0.0');
-
-    expect(() => decodeMessage('orderBookL2', encoded, badId)).toThrow(/Unsupported encoder version/);
   });
 });
 

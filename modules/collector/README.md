@@ -5,8 +5,8 @@ The Collector module subscribes to the Broadcast service's topic exchange and st
 ## Components
 
 - **Broadcast** — Feeds BitMEX WebSocket data into a topic exchange (default: `broadcast`)
-- **Router** — Bridges the broadcast exchange to the Writer exchange, transforming routing keys (e.g. `message.trade` > `collect.trade`)
-- **Writer** — Persists incoming messages to MongoDB
+- **Codec** — Adds a unique, deduplicating numeric `_id` field using the `passthru` strategy (no payload transformation)
+- **Writer** — Persists incoming messages to MongoDB with idempotent inserts (duplicates by `_id` are skipped)
 - **RabbitMQ** — Message broker
 - **MongoDB** — Persistent storage
 
@@ -15,11 +15,16 @@ The Collector module subscribes to the Broadcast service's topic exchange and st
 ```
 BitMEX WS → Broadcast Module → topic:broadcast (key: message.trade, ...)
                                         ↓
-                             Router (key transform: message.* → collect.*)
+                   Router collect-in (key: message.* → passthru.*)
+                                        ↓
+                            topic:codec.in → Codec (add _id)
+                                        ↓
+                   Router collect-out (key: passthru.* → collect.*)
                                         ↓
                                 topic:writer (key: collect.trade)
                                         ↓
-                             Writer → MongoDB (<DATABASE_COLLECT>.trade)
+             Writer → MongoDB (<DATABASE_COLLECT>.trade, _id deduped)
+```
 
 ## Quick Start
 

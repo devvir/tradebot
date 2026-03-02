@@ -14,4 +14,4 @@ export interface CodecState {
 
 export type Strategy = typeof STRATEGIES[number];
 
-export const STRATEGIES = [ 'encode', 'compress', 'decode' ] as const;
+export const STRATEGIES = [ 'encode', 'compress', 'decode', 'passthru' ] as const;

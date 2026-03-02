@@ -1,6 +1,6 @@
 // Pending Review
 import { describe, it, expect } from 'vitest';
-import { buildDocumentIdBuffer } from '../src/encoding';
+import { buildDocumentId } from '../src/encoding';
 import { encodePayload } from '../src/encoding/encoders';
 import { decodeMessage } from '../src/encoding/decoders';
 import type { OrderBookL2Data, TradeData, QuoteData, InstrumentData, BitmexAction } from '@tradebot/types';
@@ -8,7 +8,7 @@ import { QuoteDataAsk, QuoteDataBid } from '../../../shared/types/src';
 
 const roundtrip = (items: unknown[], table: string, action: BitmexAction, timestamp: string) => {
   const encoded = encodePayload(items as any, table, action);
-  return decodeMessage(table as any, encoded, buildDocumentIdBuffer(timestamp, action));
+  return decodeMessage(table as any, encoded, buildDocumentId(timestamp, action));
 };
 
 // ── Fixture data ───────────────────────────────────────────────────────────────

@@ -1,9 +1,12 @@
 export { default as transform } from './transform';
-export { default as encode } from './encode';
-export { default as decode } from './decode';
-export { bigIntToBuffer } from './utils';
+
+// Strategies — internal to transform, but exported for tests
+export { default as encode } from './strategies/encode';
+export { default as decode } from './strategies/decode';
+
 export { encodePayload } from './encoders';
-export { buildDocumentId, buildDocumentIdBuffer, unpackDocumentId } from './document-id';
+export { decodeMessage } from './decoders';
+export { buildDocumentId, unpackDocumentId, getIdempotentId } from './documentId';
 export { ACTION_ID } from './mappings';
 
 // Types
