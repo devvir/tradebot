@@ -12,8 +12,8 @@ describe('Writer Config utilities', () => {
       RABBITMQ_URL: 'amqp://guest:guest@rabbitmq:5672',
       MONGODB_URL: 'mongodb://root:root@mongodb:27017/tradebot?authSource=admin',
       WRITER_PREFETCH: '100',
-      WRITER_DB_ARCHIVE: 'tradebot_archive',
-      WRITER_DB_COLLECT: 'tradebot_collect',
+      DATABASE_COLLECT: 'tradebot_collect',
+      DATABASE_ARCHIVE: 'tradebot_archive',
     };
   });
 
@@ -57,24 +57,24 @@ describe('Writer Config utilities', () => {
       expect(() => loadConfig()).toThrow('WRITER_PREFETCH must be a positive number');
     });
 
-    it('should throw when WRITER_DB_ARCHIVE is missing', () => {
-      delete process.env.WRITER_DB_ARCHIVE;
-      expect(() => loadConfig()).toThrow('WRITER_DB_ARCHIVE is required');
+    it('should throw when DATABASE_ARCHIVE is missing', () => {
+      delete process.env.DATABASE_ARCHIVE;
+      expect(() => loadConfig()).toThrow('DATABASE_ARCHIVE is required');
     });
 
-    it('should throw when WRITER_DB_COLLECT is missing', () => {
-      delete process.env.WRITER_DB_COLLECT;
-      expect(() => loadConfig()).toThrow('WRITER_DB_COLLECT is required');
+    it('should throw when DATABASE_COLLECT is missing', () => {
+      delete process.env.DATABASE_COLLECT;
+      expect(() => loadConfig()).toThrow('DATABASE_COLLECT is required');
     });
 
-    it('should use custom dbArchive from WRITER_DB_ARCHIVE', () => {
-      process.env.WRITER_DB_ARCHIVE = 'my_archive';
+    it('should use custom dbArchive from DATABASE_ARCHIVE', () => {
+      process.env.DATABASE_ARCHIVE = 'my_archive';
       const config = loadConfig();
       expect(config.dbArchive).toBe('my_archive');
     });
 
-    it('should use custom dbCollect from WRITER_DB_COLLECT', () => {
-      process.env.WRITER_DB_COLLECT = 'my_collect';
+    it('should use custom dbCollect from DATABASE_COLLECT', () => {
+      process.env.DATABASE_COLLECT = 'my_collect';
       const config = loadConfig();
       expect(config.dbCollect).toBe('my_collect');
     });
@@ -87,8 +87,8 @@ describe('Writer Config utilities', () => {
       process.env.RABBITMQ_URL = 'amqp://guest:guest@localhost:5672';
       process.env.MONGODB_URL = 'mongodb://localhost:27017/testdb';
       process.env.WRITER_PREFETCH = '100';
-      process.env.WRITER_DB_ARCHIVE = 'tradebot_archive';
-      process.env.WRITER_DB_COLLECT = 'tradebot_collect';
+      process.env.DATABASE_ARCHIVE = 'tradebot_archive';
+      process.env.DATABASE_COLLECT = 'tradebot_collect';
       config = loadConfig();
     });
 
@@ -108,12 +108,12 @@ describe('Writer Config utilities', () => {
 
     it('should throw if dbArchive is empty', () => {
       config.dbArchive = '';
-      expect(() => validateConfig(config)).toThrow('WRITER_DB_ARCHIVE is required');
+      expect(() => validateConfig(config)).toThrow('DATABASE_ARCHIVE is required');
     });
 
     it('should throw if dbCollect is empty', () => {
       config.dbCollect = '';
-      expect(() => validateConfig(config)).toThrow('WRITER_DB_COLLECT is required');
+      expect(() => validateConfig(config)).toThrow('DATABASE_COLLECT is required');
     });
 
     it('should throw if batchSize is 0 or negative', () => {

@@ -22,9 +22,9 @@ Destination is determined by the AMQP routing key on the `writer` exchange:
 
 | Routing key | Queue | Database | Collection |
 |---|---|---|---|
-| `collect.<table>` | `writer.collect` | `WRITER_DB_COLLECT` | `<table>` |
+| `collect.<table>` | `writer.collect` | `DATABASE_COLLECT` | `<table>` |
 
-For example, a BitMEX `trade` message arrives at the broadcast fanout with key `message.trade`. The collector-router transforms it to `collect.trade`. Writer routes it to `WRITER_DB_COLLECT.trade`.
+For example, a BitMEX `trade` message arrives at the broadcast fanout with key `message.trade`. The collector-router transforms it to `collect.trade`. Writer routes it to `<DATABASE_COLLECT>.trade`.
 
 ## Usage
 

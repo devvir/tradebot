@@ -32,10 +32,20 @@ View logs:
 tb logs unarchivist
 ```
 
+## Message Routing
+
+Writer is a shared service — it determines where to persist each message from AMQP headers, not from its own configuration:
+
+- **`table`** — Target MongoDB collection. Reader sets this automatically from the source collection name.
+- **`database`** — Target MongoDB database. Reader sets this from `READER_DATABASE`
+
+Reader and Codec are agnostic about headers — Reader attaches routing information and Codec passes it through. Writer interprets `database` and `table` to select the MongoDB destination.
+
 ## Configuration
 
-Copy `.env.example` to `.env` and customize:
+Copy `.env.example` to `.env` and customize.
+
+Key settings:
 - `READER_DATABASE` - MongoDB database to read from (required)
-- `WRITER_DATABASE` - MongoDB database to write to (required)
-- `CODEC_STRATEGY` - Transformation modes: `encode`, `binary`, `encode,binary`, `decode`, or empty for pass-through (optional)
-- Other configuration in `.env.example` with defaults documented
+
+See each service's documentation for the full list of available environment variables.

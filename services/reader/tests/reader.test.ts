@@ -55,9 +55,9 @@ describe('Reader Service', () => {
 
   describe('Config Validation', () => {
     const valid = {
+      RABBITMQ_URL: 'amqp://localhost:5672',
       MONGODB_URL: 'mongodb://localhost:27017/test',
       READER_DATABASE: 'test_reader',
-      RABBITMQ_URL: 'amqp://localhost:5672',
       READER_POLL_INTERVAL_MS: '3000',
     };
 

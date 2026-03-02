@@ -1,6 +1,4 @@
 # Writer Service - Consumes from topic exchange and persists to MongoDB
-# Generic, reusable service. Deduplicates and archives data.
-# Supports horizontal scaling: Multiple instances automatically load-balance message consumption.
 
 services:
   writer:
@@ -18,8 +16,8 @@ services:
       MONGODB_URL: ${MONGODB_URL:-mongodb://root:root@mongodb:27017?authSource=admin}
 
       # Data flow
-      WRITER_DB_ARCHIVE: ${WRITER_DB_ARCHIVE:-tradebot_archive}
-      WRITER_DB_COLLECT: ${WRITER_DB_COLLECT:-tradebot_collect}
+      DATABASE_COLLECT: ${DATABASE_COLLECT:-tradebot_collect}
+      DATABASE_ARCHIVE: ${DATABASE_ARCHIVE:-tradebot_archive}
       WRITER_PREFETCH: ${WRITER_PREFETCH:-1000}
 
       # Runtime
@@ -41,11 +39,5 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
-
-    depends_on:
-      mongodb:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
 
     restart: ${WRITER_RESTART_POLICY:-unless-stopped}

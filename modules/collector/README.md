@@ -17,9 +17,9 @@ BitMEX WS → Broadcast Module → topic:broadcast (key: message.trade, ...)
                                         ↓
                              Router (key transform: message.* → collect.*)
                                         ↓
-                               topic:writer (key: collect.trade)
+                                topic:writer (key: collect.trade)
                                         ↓
-                             Writer → MongoDB (WRITER_DB_COLLECT.trade)
+                             Writer → MongoDB (<DATABASE_COLLECT>.trade)
 
 ## Quick Start
 

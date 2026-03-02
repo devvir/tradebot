@@ -46,8 +46,8 @@ The `resolveTarget()` function maps a routing key to a database and collection:
 
 | Pattern | Database | Collection | Example |
 |---|---|---|---|
-| `archive.<collection>` | `WRITER_DB_ARCHIVE` | `<collection>` | `archive.orderBookL2` → `tradebot_archive.orderBookL2` |
-| `collect.<collection>` | `WRITER_DB_COLLECT` | `<collection>` | `collect.trade` → `tradebot_collect.trade` |
+| `archive.<collection>` | `DATABASE_ARCHIVE` | `<collection>` | `archive.orderBookL2` → `tradebot_archive.orderBookL2` |
+| `collect.<collection>` | `DATABASE_COLLECT` | `<collection>` | `collect.trade` → `tradebot_collect.trade` |
 | `custom.<db>.<col>` | `<db>` | `<col>` | `custom.mydb.mycol` → `mydb.mycol` |
 
 Routing keys that don't match any pattern are nacked without requeue and routed to `writer.dead-letter` via the DLX.
@@ -72,8 +72,8 @@ Writer does not modify, merge, or enrich the document — it stores exactly what
 | `MONGODB_URL` | Yes | — | MongoDB connection string |
 | `RABBITMQ_URL` | Yes | — | RabbitMQ connection string |
 | `WRITER_PREFETCH` | No | `1000` | RabbitMQ prefetch (messages buffered per consumer) |
-| `WRITER_DB_ARCHIVE` | No | `tradebot_archive` | Database for `archive.*` messages |
-| `WRITER_DB_COLLECT` | No | `tradebot_collect` | Database for `collect.*` messages |
+| `DATABASE_ARCHIVE` | No | `tradebot_archive` | Database for `archive.*` messages |
+| `DATABASE_COLLECT` | No | `tradebot_collect` | Database for `collect.*` messages |
 
 ### Topology Declaration
 

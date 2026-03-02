@@ -17,8 +17,8 @@ Messages are routed by publishing to the `writer` exchange with a routing key:
 
 | Routing Key | Queue | Database | Collection |
 |---|---|---|---|
-| `archive.<collection>` | `archive` | `WRITER_DB_ARCHIVE` | `<collection>` |
-| `collect.<collection>` | `collect` | `WRITER_DB_COLLECT` | `<collection>` |
+| `archive.<collection>` | `archive` | `DATABASE_ARCHIVE` | `<collection>` |
+| `collect.<collection>` | `collect` | `DATABASE_COLLECT` | `<collection>` |
 | `custom.<db>.<col>` | `custom` | `<db>` | `<col>` |
 
 Examples:
@@ -35,8 +35,8 @@ Messages with unresolvable routing keys are nacked without requeue and routed to
 | `MONGODB_URL` | Yes | — | MongoDB connection string |
 | `RABBITMQ_URL` | Yes | — | RabbitMQ connection string |
 | `WRITER_PREFETCH` | No | `1000` | RabbitMQ prefetch window |
-| `WRITER_DB_ARCHIVE` | No | `tradebot_archive` | Database for `archive.*` messages |
-| `WRITER_DB_COLLECT` | No | `tradebot_collect` | Database for `collect.*` messages |
+| `DATABASE_ARCHIVE` | Yes | `tradebot_archive` | Database for `archive.*` messages |
+| `DATABASE_COLLECT` | Yes | `tradebot_collect` | Database for `collect.*` messages |
 
 ## Scripts
 
