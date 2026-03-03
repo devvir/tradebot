@@ -1,0 +1,20 @@
+services:
+  pipe:
+    build:
+      context: ../../..
+      dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
+      args:
+        SERVICE_NAME: pipe
+
+    environment:
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
+      PIPE_BINDINGS: ${PIPE_BINDINGS:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV: ${APP_ENV:-prod}
+
+    user: "1000:1000"
+
+    volumes:
+      - ../../../:/live
+
+    restart: ${PIPE_RESTART_POLICY:-on-failure}

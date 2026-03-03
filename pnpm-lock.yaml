@@ -143,6 +143,18 @@ importers:
         specifier: workspace:*
         version: link:../../shared/utils
 
+  services/pipe:
+    dependencies:
+      '@devvir/rabbitmq':
+        specifier: workspace:*
+        version: link:../../packages/rabbitmq
+      '@devvir/service':
+        specifier: workspace:*
+        version: link:../../packages/service
+      '@tradebot/utils':
+        specifier: workspace:*
+        version: link:../../shared/utils
+
   services/reader:
     dependencies:
       '@devvir/rabbitmq':

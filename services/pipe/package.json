@@ -1,0 +1,20 @@
+{
+  "name": "@tradebot/pipe",
+  "version": "1.0.0",
+  "description": "Pipe service - native exchange-to-exchange bindings between RabbitMQ exchanges",
+  "main": "dist/index.js",
+  "private": true,
+  "scripts": {
+    "build": "tsc -b",
+    "start": "node dist/src/index.js",
+    "dev": "ts-node src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@devvir/rabbitmq": "workspace:*",
+    "@tradebot/utils": "workspace:*",
+    "@devvir/service": "workspace:*"
+  }
+}
