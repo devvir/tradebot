@@ -1,12 +1,12 @@
-import type { MongoClient } from 'mongodb';
+import type { Document } from 'mongodb';
+import type { ConsumerEvent } from '@devvir/rabbitmq';
 
-export interface MongoDBConnection {
-  client: MongoClient;
-}
+// ── Topology ─────────────────────────────────────────────────────────────────
 
 /** Writer exchange and queue names — these are the writer's public API. */
 export const EXCHANGE = 'writer';
 export const DLX = 'writer.dlx';
+export const DLQ = 'writer.dead-letter';
 
 export const CONSUMER_QUEUES = {
   archive: 'writer.archive',
@@ -14,26 +14,48 @@ export const CONSUMER_QUEUES = {
   custom: 'writer.custom',
 } as const;
 
-export const DLQ = 'writer.dead-letter';
+export type ConsumerQueueName = (typeof CONSUMER_QUEUES)[keyof typeof CONSUMER_QUEUES];
 
-export type ConsumerQueueName = typeof CONSUMER_QUEUES[keyof typeof CONSUMER_QUEUES];
+// ── Config ───────────────────────────────────────────────────────────────────
 
 export interface Config {
   mongodbUrl: string;
   rabbitmqUrl: string;
-  batchSize: number;
+  prefetch: number;
   dbArchive: string;
   dbCollect: string;
+  insertBatchSize: number;
+  flushIntervalMs: number;
 }
+
+// ── Persistence ──────────────────────────────────────────────────────────────
 
 /**
  * Resolved write target from a routing key.
  *
- * archive.orderBookL2  → { database: dbArchive, collection: 'orderBookL2' }
- * collect.trade         → { database: dbCollect, collection: 'trade' }
- * custom.mydb.mycol     → { database: 'mydb',    collection: 'mycol' }
+ * archive.orderBookL2    → { database: dbArchive, collection: 'orderBookL2' }
+ * collect.trade          → { database: dbCollect, collection: 'trade' }
+ * custom.mydb.mycol      → { database: 'mydb',   collection: 'mycol' }
  */
 export interface WriteTarget {
   database: string;
   collection: string;
+}
+
+export interface BatchEntry {
+  event: ConsumerEvent;
+  document: Document;
+}
+
+export interface Batch {
+  entries: BatchEntry[];
+  database: string;
+  collection: string;
+}
+
+// ── Error handling ───────────────────────────────────────────────────────────
+
+export interface ErrorContext {
+  collection: string;
+  queue: string;
 }

@@ -26,7 +26,9 @@ describe('RabbitMQ integration', () => {
     rabbitmqUrl: 'amqp://localhost',
     dbArchive: 'tradebot_archive',
     dbCollect: 'tradebot_collect',
-    batchSize: 100,
+    prefetch: 100,
+    insertBatchSize: 100,
+    flushIntervalMs: 50,
   });
 
   describe('connectToQueue', () => {

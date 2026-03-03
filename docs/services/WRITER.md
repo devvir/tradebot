@@ -27,17 +27,24 @@ Publisher → writer exchange (routing key)
     ↓
 Queue (matched by binding pattern)
     ↓
-Consumer (prefetch = batchSize)
+Consumer (prefetch = WRITER_PREFETCH)
     ├─ resolveTarget(routingKey, config)
     │     ├─ archive.<col>       → { db: config.dbArchive, col }
     │     ├─ collect.<col>       → { db: config.dbCollect, col }
     │     ├─ custom.<db>.<col>   → { db, col }
     │     └─ unresolvable        → NACK (no requeue)
-    ├─ Parse content (JSON or binary)
-    └─ insertOne(document) → MongoDB[database][collection]
-         ├─ Success              → ACK
-         ├─ Duplicate key (11000)→ ACK (idempotent)
-         └─ Other error          → NACK (requeue)
+    ├─ Parse content (JSON)
+    └─ Accumulate in per-collection batch
+         ├─ Batch full (WRITER_BATCH_SIZE) → insertMany immediately
+         └─ Timer fires (WRITER_FLUSH_INTERVAL_MS) → insertMany partial batch
+              ├─ Success                     → ACK all messages in batch
+              ├─ Partial failure (BulkWrite) → ACK succeeded, settle failed individually
+              └─ Total failure               → fallback to insertOne per message
+                   ├─ insertOne success     → ACK
+                   ├─ Duplicate key (11000) → ACK (idempotent)
+                   └─ Other failure
+                        ├─ First attempt    → NACK (requeue)
+                        └─ Redelivered      → NACK (dead-letter)
 ```
 
 ### Routing Key Resolution
@@ -64,7 +71,9 @@ Writer does not modify, merge, or enrich the document — it stores exactly what
 |---|---|---|---|
 | `MONGODB_URL` | Yes | — | MongoDB connection string |
 | `RABBITMQ_URL` | Yes | — | RabbitMQ connection string |
-| `WRITER_PREFETCH` | No | `1000` | RabbitMQ prefetch (messages buffered per consumer) |
+| `WRITER_PREFETCH` | No | `1000` | RabbitMQ prefetch window (max unacked messages per consumer) |
+| `WRITER_BATCH_SIZE` | No | `100` | Max documents accumulated per collection before flushing to MongoDB |
+| `WRITER_FLUSH_INTERVAL_MS` | No | `50` | Max milliseconds to hold a partial batch before flushing |
 | `DATABASE_ARCHIVE` | No | `tradebot_archive` | Database for `archive.*` messages |
 | `DATABASE_COLLECT` | No | `tradebot_collect` | Database for `collect.*` messages |
 
@@ -86,7 +95,7 @@ All three consumer queues share the same consumer logic; only the routing key re
 ### MongoDB
 
 - **Connection:** Standard MongoDB driver with exponential backoff retry (10 attempts, 5s delay)
-- **Operations:** Single `insertOne()` per message
+- **Operations:** `insertMany()` per batch (up to `WRITER_BATCH_SIZE` documents, flushed every `WRITER_FLUSH_INTERVAL_MS` ms)
 - **Indexes:** The service assumes target collections have a unique index on `_id` (caller's responsibility)
 - **Collections:** Created on-demand during first insert, no schema enforcement
 
@@ -105,6 +114,31 @@ All three consumer queues share the same consumer logic; only the routing key re
 
 Duplicate key errors indicate the document already exists. This is expected when messages are reprocessed and should not block the pipeline.
 
+### Partial Batch Failure (MongoBulkWriteError)
+
+When `insertMany({ordered: false})` partially fails, MongoDB reports which documents failed via `writeErrors` (each with an index into the original batch):
+
+1. Documents **not** in `writeErrors` were inserted successfully → ACK
+2. `writeErrors` with code 11000 (duplicate) → ACK
+3. `writeErrors` with other codes → settled individually (see Poison Pill Protection)
+
+### Total Failure (network, auth, unexpected)
+
+When `insertMany` fails with a non-bulk error (nothing was inserted), the writer falls back to one-by-one `insertOne` to isolate the culprit:
+
+1. `insertOne` succeeds → ACK
+2. `insertOne` fails with duplicate key → ACK
+3. `insertOne` fails with other error → settled individually (see Poison Pill Protection)
+
+### Poison Pill Protection
+
+To prevent infinite requeue loops from a single bad message:
+
+1. **First attempt** (`msg.fields.redelivered = false`) — message is nacked with requeue, giving it one more chance
+2. **Redelivered** (`msg.fields.redelivered = true`) — message has already failed before and is nacked **without** requeue, routing it to `writer.dead-letter` via the DLX
+
+This guarantees at most two delivery attempts per message before dead-lettering.
+
 ### Unresolvable Routing Keys
 
 1. Error is logged with the routing key
@@ -112,12 +146,12 @@ Duplicate key errors indicate the document already exists. This is expected when
 
 These messages are routed to the `writer.dead-letter` queue via the DLX for inspection or replay.
 
-### Other Errors
+### Malformed JSON
 
-1. Error is logged with context
-2. Message is nacked with requeue (`nack(msg, false, true)`)
+1. Error is logged with the routing key
+2. Message is nacked without requeue (dead-lettered)
 
-Covers network timeouts, MongoDB connection drops, validation failures, etc.
+Unparseable payloads cannot be retried and are sent directly to the dead-letter queue.
 
 ## Health Monitoring
 

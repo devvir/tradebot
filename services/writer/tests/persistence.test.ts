@@ -1,19 +1,44 @@
 // Pending Review
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { startConsuming, resolveTarget } from '../src/persistence';
-import { MongoError, Binary } from 'mongodb';
-import { CONSUMER_QUEUES } from '../src/types';
+import { persistBatch, resolveTarget, parseDocument } from '../src/persistence';
+import { MongoError } from 'mongodb';
 import type { Config } from '../src/types';
-
-vi.mock('amqplib');
+import type { Batch } from '../src/types';
+import type { ConsumerEvent } from '@devvir/rabbitmq';
 
 const defaultConfig: Config = {
   mongodbUrl: 'mongodb://root:root@mongodb:27017/tradebot?authSource=admin',
   rabbitmqUrl: 'amqp://guest:guest@rabbitmq:5672',
   dbArchive: 'tradebot_archive',
   dbCollect: 'tradebot_collect',
-  batchSize: 100,
+  prefetch: 100,
+  insertBatchSize: 1,
+  flushIntervalMs: 60_000,
 };
+
+/** Drain all pending microtasks so async operations complete. */
+const drain = () => new Promise<void>(resolve => setImmediate(resolve));
+
+/** Build a ConsumerEvent for testing. */
+const makeEvent = (routingKey: string, content: unknown, redelivered = false): ConsumerEvent => ({
+  metadata: {
+    routingKey,
+    redelivered,
+    exchange: 'writer',
+    deliveryTag: 1,
+    raw: {} as any,
+    properties: {} as any,
+  },
+  ack: vi.fn(),
+  nack: vi.fn(),
+  original: {
+    content: typeof content === 'string'
+      ? Buffer.from(content)
+      : Buffer.from(JSON.stringify(content)),
+    fields: { routingKey, redelivered } as any,
+    properties: { headers: {} } as any,
+  } as any,
+});
 
 describe('resolveTarget', () => {
   it('should resolve archive routing key to dbArchive', () => {
@@ -69,34 +94,44 @@ describe('resolveTarget', () => {
   });
 });
 
-describe('Message persistence', () => {
-  let mockChannel: any;
-  let mockDb: any;
+describe('parseDocument', () => {
+  it('should parse JSON content from event', () => {
+    const event = makeEvent('archive.trade', { price: 100 });
+    const doc = parseDocument(event);
+    expect(doc).toEqual({ price: 100 });
+  });
+
+  it('should throw on malformed JSON', () => {
+    const event = makeEvent('archive.trade', '{bad json}');
+    expect(() => parseDocument(event)).toThrow();
+  });
+
+  it('should revive serialized Buffers back to Buffer instances', () => {
+    const serializedBuffer = { type: 'Buffer', data: [1, 2, 3] };
+    const event = makeEvent('archive.trade', { payload: serializedBuffer });
+    const doc = parseDocument(event);
+    expect(Buffer.isBuffer(doc.payload)).toBe(true);
+    expect(doc.payload).toEqual(Buffer.from([1, 2, 3]));
+  });
+});
+
+describe('persistBatch', () => {
   let mockCollection: any;
-  let mockClient: any;
+  let mockDb: any;
+  let mockMongo: any;
 
   beforeEach(() => {
     mockCollection = {
-      insertOne: vi.fn().mockResolvedValue({ insertedCount: 1 }),
+      insertMany: vi.fn().mockResolvedValue({ insertedCount: 1 }),
+      insertOne: vi.fn().mockResolvedValue({ insertedId: 'ok' }),
     };
 
     mockDb = {
       collection: vi.fn().mockReturnValue(mockCollection),
     };
 
-    mockClient = {
+    mockMongo = {
       db: vi.fn().mockReturnValue(mockDb),
-    };
-
-    mockChannel = {
-      assertQueue: vi.fn().mockResolvedValue({}),
-      prefetch: vi.fn().mockResolvedValue({}),
-      consume: vi.fn((_queue: string, callback: any) => {
-        if (! mockChannel._callbacks) mockChannel._callbacks = {};
-        mockChannel._callbacks[_queue] = callback;
-      }),
-      ack: vi.fn(),
-      nack: vi.fn(),
     };
   });
 
@@ -104,197 +139,106 @@ describe('Message persistence', () => {
     vi.clearAllMocks();
   });
 
-  /** Helper: start consuming and return the consume callback for a specific queue. */
-  const setup = async (config = defaultConfig) => {
+  const makeBatch = (database: string, collection: string, entries: Array<{ routingKey: string; doc: Record<string, unknown>; redelivered?: boolean }>): Batch => ({
+    database,
+    collection,
+    entries: entries.map(e => ({
+      event: makeEvent(e.routingKey, e.doc, e.redelivered ?? false),
+      document: e.doc,
+    })),
+  });
+
+  it('should insertMany with ordered:false and ack all entries', async () => {
+    const batch = makeBatch('tradebot_archive', 'orderBookL2', [
+      { routingKey: 'archive.orderBookL2', doc: { price: 100 } },
+      { routingKey: 'archive.orderBookL2', doc: { price: 200 } },
+    ]);
     const onStoreMsg = vi.fn();
-    await startConsuming(mockChannel, mockClient, config, onStoreMsg);
 
-    return {
-      onStoreMsg,
-      callback: (queue: string) => mockChannel._callbacks[queue],
-    };
-  };
+    await persistBatch(mockMongo, batch, 'writer.archive', onStoreMsg);
 
-  /** Build a minimal AMQP message with a routing key. */
-  const msg = (routingKey: string, content: unknown, contentType?: string) => ({
-    content: typeof content === 'string'
-      ? Buffer.from(content)
-      : Buffer.isBuffer(content) ? content : Buffer.from(JSON.stringify(content)),
-    fields: { routingKey },
-    properties: { contentType, headers: {} },
+    expect(mockMongo.db).toHaveBeenCalledWith('tradebot_archive');
+    expect(mockDb.collection).toHaveBeenCalledWith('orderBookL2');
+    expect(mockCollection.insertMany).toHaveBeenCalledWith(
+      [{ price: 100 }, { price: 200 }],
+      { ordered: false },
+    );
+    expect(batch.entries[0].event.ack).toHaveBeenCalled();
+    expect(batch.entries[1].event.ack).toHaveBeenCalled();
+    expect(onStoreMsg).toHaveBeenCalledTimes(2);
   });
 
-  describe('startConsuming', () => {
-    it('should set prefetch once for the channel', async () => {
-      await setup();
-      expect(mockChannel.prefetch).toHaveBeenCalledWith(100);
-      expect(mockChannel.prefetch).toHaveBeenCalledTimes(1);
-    });
+  it('should call onStoreMsg for each acked entry', async () => {
+    const batch = makeBatch('db', 'col', [
+      { routingKey: 'collect.trade', doc: { v: 1 } },
+    ]);
+    const onStoreMsg = vi.fn();
 
-    it('should consume from all three queues', async () => {
-      await setup();
+    await persistBatch(mockMongo, batch, 'writer.collect', onStoreMsg);
 
-      for (const q of Object.values(CONSUMER_QUEUES)) {
-        expect(mockChannel.consume).toHaveBeenCalledWith(q, expect.any(Function));
-      }
-    });
-
-    it('should handle null message gracefully', async () => {
-      const { callback } = await setup();
-
-      await callback(CONSUMER_QUEUES.archive)(null);
-
-      expect(mockChannel.ack).not.toHaveBeenCalled();
-      expect(mockChannel.nack).not.toHaveBeenCalled();
-    });
+    expect(onStoreMsg).toHaveBeenCalledTimes(1);
   });
 
-  describe('archive queue routing', () => {
-    it('should store in dbArchive with collection from routing key', async () => {
-      const { callback } = await setup();
+  it('should delegate to error handler on insertMany failure', async () => {
+    const error = new Error('Connection timeout');
+    mockCollection.insertMany.mockRejectedValueOnce(error);
 
-      await callback(CONSUMER_QUEUES.archive)(msg('archive.orderBookL2', { price: 100 }));
+    const batch = makeBatch('db', 'col', [
+      { routingKey: 'collect.trade', doc: { v: 1 } },
+    ]);
+    const onStoreMsg = vi.fn();
 
-      expect(mockClient.db).toHaveBeenCalledWith('tradebot_archive');
-      expect(mockDb.collection).toHaveBeenCalledWith('orderBookL2');
-      expect(mockCollection.insertOne).toHaveBeenCalledWith({ price: 100 });
-      expect(mockChannel.ack).toHaveBeenCalled();
-    });
+    await persistBatch(mockMongo, batch, 'writer.collect', onStoreMsg);
+
+    // insertOne fallback (from error handler) succeeds by default
+    expect(mockCollection.insertOne).toHaveBeenCalledWith({ v: 1 });
+    expect(batch.entries[0].event.ack).toHaveBeenCalled();
   });
 
-  describe('collect queue routing', () => {
-    it('should store in dbCollect with collection from routing key', async () => {
-      const { callback } = await setup();
+  it('should requeue first-attempt messages when persistence fails entirely', async () => {
+    const error = Object.assign(Object.create(MongoError.prototype), { code: 999 });
+    mockCollection.insertMany.mockRejectedValueOnce(error);
+    mockCollection.insertOne.mockRejectedValueOnce(error);
 
-      await callback(CONSUMER_QUEUES.collect)(msg('collect.trade', { side: 'Buy' }));
+    const batch = makeBatch('db', 'col', [
+      { routingKey: 'collect.trade', doc: { v: 1 }, redelivered: false },
+    ]);
+    const onStoreMsg = vi.fn();
 
-      expect(mockClient.db).toHaveBeenCalledWith('tradebot_collect');
-      expect(mockDb.collection).toHaveBeenCalledWith('trade');
-      expect(mockCollection.insertOne).toHaveBeenCalledWith({ side: 'Buy' });
-      expect(mockChannel.ack).toHaveBeenCalled();
-    });
+    await persistBatch(mockMongo, batch, 'writer.collect', onStoreMsg);
+
+    expect(batch.entries[0].event.nack).toHaveBeenCalledWith(true);
+    expect(onStoreMsg).not.toHaveBeenCalled();
   });
 
-  describe('custom queue routing', () => {
-    it('should store in custom database and collection from routing key', async () => {
-      const { callback } = await setup();
+  it('should dead-letter redelivered messages when persistence fails entirely', async () => {
+    const error = new Error('Persistent failure');
+    mockCollection.insertMany.mockRejectedValueOnce(error);
+    mockCollection.insertOne.mockRejectedValueOnce(error);
 
-      await callback(CONSUMER_QUEUES.custom)(msg('custom.mydb.mycol', { value: 42 }));
+    const batch = makeBatch('db', 'col', [
+      { routingKey: 'collect.trade', doc: { v: 1 }, redelivered: true },
+    ]);
+    const onStoreMsg = vi.fn();
 
-      expect(mockClient.db).toHaveBeenCalledWith('mydb');
-      expect(mockDb.collection).toHaveBeenCalledWith('mycol');
-      expect(mockCollection.insertOne).toHaveBeenCalledWith({ value: 42 });
-      expect(mockChannel.ack).toHaveBeenCalled();
-    });
+    await persistBatch(mockMongo, batch, 'writer.collect', onStoreMsg);
+
+    expect(batch.entries[0].event.nack).toHaveBeenCalledWith(false);
+    expect(onStoreMsg).not.toHaveBeenCalled();
   });
 
-  describe('document creation', () => {
-    it('should parse JSON content by default', async () => {
-      const { callback } = await setup();
+  it('should ack on duplicate key error via insertOne fallback', async () => {
+    const error = Object.assign(Object.create(MongoError.prototype), { code: 11000 });
+    mockCollection.insertMany.mockRejectedValueOnce(error);
 
-      await callback(CONSUMER_QUEUES.archive)(msg('archive.quote', { value: 100 }));
+    const batch = makeBatch('db', 'col', [
+      { routingKey: 'archive.trade', doc: { _id: 'dup' } },
+    ]);
+    const onStoreMsg = vi.fn();
 
-      const doc = mockCollection.insertOne.mock.calls[0][0];
-      expect(doc).toEqual({ value: 100 });
-    });
+    await persistBatch(mockMongo, batch, 'writer.archive', onStoreMsg);
 
-    it('should parse JSON when contentType is application/json', async () => {
-      const { callback } = await setup();
-
-      await callback(CONSUMER_QUEUES.archive)(msg('archive.quote', { value: 100 }, 'application/json'));
-
-      const doc = mockCollection.insertOne.mock.calls[0][0];
-      expect(doc).toEqual({ value: 100 });
-    });
-  });
-
-  describe('error handling', () => {
-    it('should nack without requeue when routing key is unresolvable', async () => {
-      const { callback } = await setup();
-      const m = msg('bad', { v: 1 });
-
-      await callback(CONSUMER_QUEUES.archive)(m);
-
-      expect(mockChannel.nack).toHaveBeenCalledWith(m, false, false);
-      expect(mockChannel.ack).not.toHaveBeenCalled();
-    });
-
-    it('should ack duplicate key errors (11000) as idempotent', async () => {
-      const { callback } = await setup();
-      const error = Object.create(MongoError.prototype);
-      error.code = 11000;
-      mockCollection.insertOne.mockRejectedValueOnce(error);
-
-      const m = msg('archive.trade', { _id: 'dup' });
-      await callback(CONSUMER_QUEUES.archive)(m);
-
-      expect(mockChannel.ack).toHaveBeenCalledWith(m);
-      expect(mockChannel.nack).not.toHaveBeenCalled();
-    });
-
-    it('should nack MongoError with requeue', async () => {
-      const { callback } = await setup();
-      const error = Object.create(MongoError.prototype);
-      error.code = 999;
-      mockCollection.insertOne.mockRejectedValueOnce(error);
-
-      const m = msg('archive.trade', { v: 1 });
-      await callback(CONSUMER_QUEUES.archive)(m);
-
-      expect(mockChannel.nack).toHaveBeenCalledWith(m, false, true);
-      expect(mockChannel.ack).not.toHaveBeenCalled();
-    });
-
-    it('should nack malformed JSON without requeue', async () => {
-      const { callback } = await setup();
-      const m = msg('archive.trade', '{bad json}');
-
-      await callback(CONSUMER_QUEUES.archive)(m);
-
-      expect(mockChannel.nack).toHaveBeenCalledWith(m, false, false);
-      expect(mockChannel.ack).not.toHaveBeenCalled();
-    });
-
-    it('should nack non-Mongo errors without requeue', async () => {
-      const { callback } = await setup();
-      mockCollection.insertOne.mockRejectedValueOnce(new Error('Unexpected'));
-
-      const m = msg('archive.trade', { v: 1 });
-      await callback(CONSUMER_QUEUES.archive)(m);
-
-      expect(mockChannel.nack).toHaveBeenCalledWith(m, false, false);
-      expect(mockChannel.ack).not.toHaveBeenCalled();
-    });
-
-    it('should call onStoreMsg on successful insert', async () => {
-      const { callback, onStoreMsg } = await setup();
-
-      await callback(CONSUMER_QUEUES.collect)(msg('collect.trade', { v: 1 }));
-
-      expect(onStoreMsg).toHaveBeenCalled();
-    });
-
-    it('should call onStoreMsg on duplicate key', async () => {
-      const { callback, onStoreMsg } = await setup();
-      const error = Object.create(MongoError.prototype);
-      error.code = 11000;
-      mockCollection.insertOne.mockRejectedValueOnce(error);
-
-      await callback(CONSUMER_QUEUES.collect)(msg('collect.trade', { _id: 'dup' }));
-
-      expect(onStoreMsg).toHaveBeenCalled();
-    });
-
-    it('should not call onStoreMsg on error', async () => {
-      const { callback, onStoreMsg } = await setup();
-      const error = Object.create(MongoError.prototype);
-      error.code = 999;
-      mockCollection.insertOne.mockRejectedValueOnce(error);
-
-      await callback(CONSUMER_QUEUES.collect)(msg('collect.trade', { v: 1 }));
-
-      expect(onStoreMsg).not.toHaveBeenCalled();
-    });
+    expect(batch.entries[0].event.ack).toHaveBeenCalled();
+    expect(batch.entries[0].event.nack).not.toHaveBeenCalled();
   });
 });
-

@@ -6,7 +6,9 @@ export const loadConfig = (): Config => {
   const config = {
     mongodbUrl: sanitizeUrl(process.env.MONGODB_URL || ''),
     rabbitmqUrl: sanitizeUrl(process.env.RABBITMQ_URL || ''),
-    batchSize: parseInt(process.env.WRITER_PREFETCH || '0'),
+    prefetch: parseInt(process.env.WRITER_PREFETCH || '0'),
+    insertBatchSize: parseInt(process.env.WRITER_BATCH_SIZE || '0'),
+    flushIntervalMs: parseInt(process.env.WRITER_FLUSH_INTERVAL_MS || '0'),
     dbArchive: process.env.DATABASE_ARCHIVE || '',
     dbCollect: process.env.DATABASE_COLLECT || '',
   };
@@ -25,7 +27,9 @@ export const loadConfig = (): Config => {
 export const validateConfig = (config: Config): void => {
   if (! config.mongodbUrl) throw new Error('MONGODB_URL is required');
   if (! config.rabbitmqUrl) throw new Error('RABBITMQ_URL is required');
-  if (config.batchSize <= 0) throw new Error('WRITER_PREFETCH must be a positive number');
+  if (config.prefetch <= 0) throw new Error('WRITER_PREFETCH must be a positive number');
   if (! config.dbArchive) throw new Error('DATABASE_ARCHIVE is required');
   if (! config.dbCollect) throw new Error('DATABASE_COLLECT is required');
+  if (config.insertBatchSize <= 0) throw new Error('WRITER_BATCH_SIZE must be a positive number');
+  if (config.flushIntervalMs <= 0) throw new Error('WRITER_FLUSH_INTERVAL_MS must be a positive number');
 };

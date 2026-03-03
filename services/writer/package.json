@@ -16,7 +16,6 @@
     "@devvir/rabbitmq": "workspace:*",
     "@devvir/service": "workspace:*",
     "@tradebot/utils": "workspace:*",
-    "amqplib": "^0.10.9",
     "mongodb": "^7.1.0"
   }
 }

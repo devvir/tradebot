@@ -1,22 +1,19 @@
 import { logger } from '@devvir/service';
 import { defineLifecycle } from '@devvir/service';
+import type { MongoClient } from 'mongodb';
 import type { Broker } from '@devvir/rabbitmq';
-import type { MongoDBConnection } from './types';
 
-/**
- * Resources returned by the service's init flow.
- * Lifecycle uses these for health checks and shutdown.
- */
+const MESSAGE_LOG_INTERVAL = 10_000;
+const HEALTH_INACTIVITY_MS = 60_000;
+
 interface WriterResources {
-  mongo: MongoDBConnection;
+  mongo: MongoClient;
   broker: Broker;
 }
 
-// Resources captured from the init flow
-let mongo: MongoDBConnection | null = null;
+let mongo: MongoClient | null = null;
 let broker: Broker | null = null;
 
-// Activity tracking
 let messagesProcessed = 0;
 let lastProcessedTime = Date.now();
 
@@ -28,8 +25,8 @@ const onMessage = (): void => {
   messagesProcessed++;
   lastProcessedTime = Date.now();
 
-  if (messagesProcessed % 10000 === 0) {
-    logger.info(`Processed ${ Math.floor(messagesProcessed / 1000) }k messages`);
+  if (messagesProcessed % MESSAGE_LOG_INTERVAL === 0) {
+    logger.info(`Processed ${Math.floor(messagesProcessed / 1000)}k messages`);
   }
 };
 
@@ -56,13 +53,13 @@ const run = (flow: () => Promise<WriterResources>): void => {
     isHealthy: () => {
       const mongoConnected = mongo !== null;
       const mqConnected = broker?.getState() === 'connected';
-      const recentActivity = Date.now() - lastProcessedTime < 60000;
+      const recentActivity = Date.now() - lastProcessedTime < HEALTH_INACTIVITY_MS;
       return mongoConnected && mqConnected && recentActivity;
     },
 
     onShutdown: async () => {
       if (broker) await broker.disconnect();
-      if (mongo?.client) await mongo.client.close();
+      if (mongo) await mongo.close();
     },
   });
 

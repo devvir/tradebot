@@ -8,7 +8,8 @@ Consumes messages from a RabbitMQ topic exchange and persists them to MongoDB.
 - **Topic exchange routing** — declares a `writer` exchange (type: topic) with three queues bound by routing key pattern
 - **Message persistence** — stores message content as-is into MongoDB documents
 - **Binary support** — handles both JSON and binary (compressed) message payloads
-- **Idempotent writes** — silently acknowledges duplicate key errors (11000), retries other failures
+- **Idempotent writes** — silently acknowledges duplicate key errors (11000)
+- **Fault isolation** — falls back to individual inserts on batch failure, dead-letters poison messages
 - **Health monitoring** — exposes health check endpoint with activity metrics
 
 ## Routing
@@ -34,7 +35,9 @@ Messages with unresolvable routing keys are nacked without requeue and routed to
 |---|---|---|---|
 | `MONGODB_URL` | Yes | — | MongoDB connection string |
 | `RABBITMQ_URL` | Yes | — | RabbitMQ connection string |
-| `WRITER_PREFETCH` | No | `1000` | RabbitMQ prefetch window |
+| `WRITER_PREFETCH` | No | `1000` | RabbitMQ prefetch window (max unacked messages per consumer) |
+| `WRITER_BATCH_SIZE` | No | `100` | Max documents per collection before flushing to MongoDB |
+| `WRITER_FLUSH_INTERVAL_MS` | No | `50` | Max ms to hold a partial batch before flushing |
 | `DATABASE_ARCHIVE` | Yes | `tradebot_archive` | Database for `archive.*` messages |
 | `DATABASE_COLLECT` | Yes | `tradebot_collect` | Database for `collect.*` messages |
 
