@@ -1,5 +1,5 @@
-import type { OrderBookL2Data, BitmexAction } from '@tradebot/types';
-import type { PackedDataItem } from '../types';
+import type { OrderBookL2Data } from '@tradebot/types';
+import type { DecodedMessageData, PackedDataItem } from '../types';
 import { SIDE_ID, SIDE_ID_REVERSE } from '../mappings';
 import { pack, encodeTimestamp, decodeTimestamp, encodePriceAndSize, decodePriceAndSize } from '../utils';
 
@@ -7,18 +7,17 @@ import { pack, encodeTimestamp, decodeTimestamp, encodePriceAndSize, decodePrice
 
 /**
  * Compression strategy for orderBookL2:
- * - delete: [id, ts]
- * - other:  [id, pack(ts, meta, side), field1, [field2], [pool]]
+ * - no size (delete action): [id, ts]
+ * - with size:  [id, pack(ts, meta, side), field1, [field2], [pool]]
  */
 export const encodeOrderBookL2 = (
   { id, side, size, price, transactTime, pool }: OrderBookL2Data,
-  action: BitmexAction,
 ): PackedDataItem => {
   const ts = encodeTimestamp(transactTime);
 
-  if (action === 'delete') return [id, ts.number];
+  if (! size) return [id, ts.number];
 
-  const { meta, field1, field2 } = encodePriceAndSize(price, size!);
+  const { meta, field1, field2 } = encodePriceAndSize(price, size);
   const encodedSizePrice = meta ? [field1] : [field1, field2!];
   const encodedMeta = { number: meta, bits: 10 };
   const encodedTsSideMeta = pack([ts, encodedMeta, SIDE_ID[side]]);
@@ -33,10 +32,10 @@ export const encodeOrderBookL2 = (
 
 // ── Decode ─────────────────────────────────────────────────────────────────────
 
-const decodeItem = (item: unknown[], action: BitmexAction): Partial<OrderBookL2Data> => {
+const decodeItem = (item: unknown[]): Partial<OrderBookL2Data> => {
   const id = item[0] as number;
 
-  if (action === 'delete') {
+  if (item.length === 2) { // Only id and tt
     return { id, transactTime: decodeTimestamp(item[1] as number) };
   }
 
@@ -62,26 +61,22 @@ const decodeItem = (item: unknown[], action: BitmexAction): Partial<OrderBookL2D
   return { ...base, size, price, pool: item[3] as string | undefined };
 };
 
-export const decodeOrderBookL2 = (
-  payload: Record<string, unknown[]>,
-  action: BitmexAction,
-): OrderBookL2Data[] => {
+export const decodeOrderBookL2 = (payload: DecodedMessageData): OrderBookL2Data[] => {
   const items: OrderBookL2Data[] = [];
 
   for (const [symbol, symbolData] of Object.entries(payload)) {
-    if (symbol === '_') continue;
-
     for (const raw of symbolData) {
-      const d = decodeItem(raw as unknown[], action);
+      const doc = decodeItem(raw as unknown[]);
+
       items.push({
         symbol,
-        id: d.id || 0,
-        side: d.side || 'Buy',
-        size: d.size,
-        price: d.price || 0,
-        transactTime: d.transactTime || '',
-        timestamp: d.transactTime || '',
-        pool: d.pool,
+        id: doc.id || 0,
+        side: doc.side || 'Buy',
+        size: doc.size,
+        price: doc.price || 0,
+        transactTime: doc.transactTime || '',
+        timestamp: doc.transactTime || '',
+        pool: doc.pool,
       });
     }
   }

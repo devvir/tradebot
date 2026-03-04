@@ -1,66 +1,52 @@
 import { brotliDecompressSync } from 'node:zlib';
 import { logger } from '@devvir/service';
-import { type RawMessage } from '@devvir/rabbitmq';
-import { type BitmexTable } from '@tradebot/types';
-import { decodeMessage, type DecodedMessage, type UnknownMessage } from '..';
+import {
+  decodeOrderBookL2,
+  decodeQuote,
+  decodeTrade,
+  decodeInstrument,
+  type Message,
+  type DecodedMessage,
+  type BitmexTable,
+  DecodedMessageData,
+} from '..';
 
 /**
- * Decode a MongoDB document back to a BitmexDataMessage.
+ * Decompress and decode an encoded document, back to a BitmexDataMessage.
  *
- * Incoming message is always a parsed JS object (the broker JSON-parses all
- * messages).
+ *   encoded → { table, action, b: "<base64>" }
+ *   decoded → { table, action, data: [...] }   (passthrough, no-op)
  *
- *   compress (± encode) → { _id: number, b: "<base64>" }
- *   encode only         → { _id: number, [symbol]: encodedItems[], ... }
- *   raw / passthru      → { _id: number, table, action, data: [...] }
- *
- * The codec makes no assumptions about which strategy was used: it inspects the
- * document and handles all three cases, guaranteeing a decoded BitmexDataMessage
- * as output regardless of input.
- *
- * _id handling (preservation/generation) is done by transform.ts.
+ * All root fields except `b` are passed through unchanged.
  */
-export default (rawMsg: RawMessage, message: unknown): DecodedMessage | null => {
-  const doc = (typeof message === 'string' ? JSON.parse(message) : message) as UnknownMessage;
-  const table = rawMsg.fields.routingKey.split('.')[1] as BitmexTable;
-  const format = detectFormat(doc);
+export default (message: Message): DecodedMessage | void => {
+  if (! message.b)
+    return message as unknown as DecodedMessage;
 
-  logger.debug({ incomingId: JSON.stringify(doc._id), format, table }, 'Decode strategy called');
+  const { b, ...rest } = message;
 
   try {
-    if (format === 'raw') return doc;
+    // doc.b arrives as a base64 string from RabbitMQ
+    const compressed = Buffer.from(b as string, 'base64');
+    const encoded = JSON.parse(brotliDecompressSync(compressed).toString());
+    const data = decodeMessage(message.table, encoded);
 
-    if (format === 'compressed') {
-      // doc.b arrives as a base64 string: MongoDB BSON Binary serialises to
-      // base64 when JSON-stringified for RabbitMQ transport.
-      const compressed = Buffer.from(doc.b as string, 'base64');
-      const decompressed = JSON.parse(brotliDecompressSync(compressed).toString());
-
-      return decodeMessage(table, decompressed, doc._id as number);
-    }
-
-    return decodeMessage(table, extractPayload(doc), doc._id as number);
+    return { ...rest, data };
   } catch (err) {
-    logger.error({ err, table, format }, 'Failed to decode message');
-    return null;
+    logger.error({ err, table: message.table }, 'Failed to decode message');
   }
 };
 
-/** Strip _id (and b for compressed docs) so only the encoded payload fields remain. */
-const extractPayload = (doc: UnknownMessage): Record<string, unknown[]> => {
-  const { _id, ...rest } = doc;
-  return rest as Record<string, unknown[]>;
-};
 
 /**
- * Detect the storage format of a MongoDB document produced by the writer.
- *
- * - `compressed` → doc has a `b` field (Brotli-compressed content, base64 string)
- * - `encoded`    → numeric _id packed by the codec encoder (no `b` field)
- * - `raw`        → auto-generated ObjectId; document is the original BitmexDataMessage
+ * Decode a stored document back to a BitmexDataMessage.
  */
-const detectFormat = (doc: UnknownMessage): 'compressed' | 'encoded' | 'raw' => {
-  if ('action' in doc && typeof doc.action === 'string') return 'raw';
-  if ('b' in doc && ! Array.isArray(doc.b)) return 'compressed';
-  return 'encoded';
+const decodeMessage = (table: BitmexTable, encodedData: DecodedMessageData): DecodedMessage['data'] => {
+  switch (table) {
+    case 'orderBookL2': return decodeOrderBookL2(encodedData);
+    case 'quote':       return decodeQuote(encodedData);
+    case 'trade':       return decodeTrade(encodedData);
+    case 'instrument':  return decodeInstrument(encodedData);
+    default:            return [];
+  }
 };

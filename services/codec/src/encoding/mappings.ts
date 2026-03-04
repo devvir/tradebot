@@ -1,12 +1,5 @@
 import type { BitmexSide, BitmexTickDirection, InstrumentData } from '@tradebot/types';
 
-export const ACTION_ID = {
-  partial: 0,
-  insert: 1,
-  update: 2,
-  delete: 3,
-} as const;
-
 export const SIDE_ID: Record<BitmexSide, 0 | 1> = {
   Buy: 0,
   Sell: 1

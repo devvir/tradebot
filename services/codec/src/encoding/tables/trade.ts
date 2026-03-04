@@ -1,6 +1,6 @@
 import type { TradeData } from '@tradebot/types';
-import type { PackedDataItem } from '../types';
-import { encodePriceAndSize, decodePriceAndSize, extract, pack } from '../utils';
+import type { DecodedMessageData, PackedDataItem } from '../types';
+import { encodePriceAndSize, decodePriceAndSize, extract, pack, encodeTimestamp, decodeTimestamp } from '../utils';
 import {
   SIDE_ID, SIDE_ID_REVERSE,
   TICK_DIRECTION, TICK_DIRECTION_REVERSE,
@@ -10,17 +10,18 @@ import {
 // ── Encode ─────────────────────────────────────────────────────────────────────
 
 /**
- * Trade payload: strip symbol/timestamp (recovered from grouping key + document _id),
- * encode side and tickDirection as compact ids, omit trdType when 'Regular'.
+ * Trade payload: strip symbol (recovered from grouping key), encode timestamp
+ * per item, encode side and tickDirection as compact ids, omit trdType when 'Regular'.
+ *
+ * Item layout: [encodedTimestamp, packed, ...sizePrice, trdMatchID?, grossValue?,
+ *               homeNotional?, foreignNotional?, pool?, trdType?]
  *
  * Packed header layout (LSB → MSB):
  *   pool(1) | foreignNotional(1) | homeNotional(1) | grossValue(1) | trdMatchID(1)
  *   | trdType(2) | tickDirection(2) | side(1) | sizePriceMeta(10)
- *
- * Body: [packed, ...sizePrice, trdMatchID?, grossValue?, homeNotional?, foreignNotional?, pool?, trdType?]
  */
 export const encodeTrade = (
-  { side, size, price, tickDirection, trdType, trdMatchID, grossValue, homeNotional, foreignNotional, pool }: TradeData,
+  { timestamp, side, size, price, tickDirection, trdType, trdMatchID, grossValue, homeNotional, foreignNotional, pool }: TradeData,
 ): PackedDataItem => {
   const { meta: sizePriceMeta, field1: sizeAndPrice, field2: priceIfRaw } = encodePriceAndSize(price, size);
   // Use meta (not filter(Boolean)) to distinguish packed vs raw — size or price may be 0
@@ -44,6 +45,7 @@ export const encodeTrade = (
   ]);
 
   return [
+    encodeTimestamp(timestamp).number,
     Number(packed),
     ...encodedSizeAndPrice,
     ...(trdMatchID ? [trdMatchID] : []),
@@ -57,8 +59,9 @@ export const encodeTrade = (
 
 // ── Decode ─────────────────────────────────────────────────────────────────────
 
-const decodeTradeItem = (arr: unknown[]): Omit<TradeData, 'symbol' | 'timestamp'> => {
-  const packed = arr[0] as number;
+const decodeTradeItem = (arr: unknown[]): Omit<TradeData, 'symbol'> => {
+  const timestamp = decodeTimestamp(arr[0] as number);
+  const packed = arr[1] as number;
 
   const poolFlag =             extract(packed, 0, 1);
   const foreignNotionalFlag =  extract(packed, 1, 1);
@@ -70,7 +73,7 @@ const decodeTradeItem = (arr: unknown[]): Omit<TradeData, 'symbol' | 'timestamp'
   const sideId =               extract(packed, 9, 1);
   const meta =                 extract(packed, 10, 10);
 
-  let i = 1;
+  let i = 2;
 
   // Price + size: packed (meta ≠ 0) or raw pair (meta = 0)
   let price: number;
@@ -95,7 +98,8 @@ const decodeTradeItem = (arr: unknown[]): Omit<TradeData, 'symbol' | 'timestamp'
     ? arr[i++] as string
     : TRD_TYPE_REVERSE[trdTypeEncoded as 0 | 1];
 
-  const result: Omit<TradeData, 'symbol' | 'timestamp'> = {
+  const result: Omit<TradeData, 'symbol'> = {
+    timestamp,
     side: SIDE_ID_REVERSE[sideId as 0 | 1],
     size,
     price,
@@ -112,17 +116,14 @@ const decodeTradeItem = (arr: unknown[]): Omit<TradeData, 'symbol' | 'timestamp'
   return result;
 };
 
-export const decodeTrade = (
-  payload: Record<string, unknown[]>,
-  timestamp: string,
-): TradeData[] => {
+export const decodeTrade = (payload: DecodedMessageData): TradeData[] => {
   const items: TradeData[] = [];
 
   for (const [symbol, symbolData] of Object.entries(payload)) {
-    if (symbol === '_') continue;
+    if (symbol === '_' || ! Array.isArray(symbolData)) continue;
 
     for (const raw of symbolData) {
-      items.push({ symbol, timestamp, ...decodeTradeItem(raw as unknown[]) });
+      items.push({ symbol, ...decodeTradeItem(raw as unknown[]) });
     }
   }
 

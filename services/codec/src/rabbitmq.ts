@@ -1,7 +1,7 @@
 import { logger } from '@devvir/service';
 import { keepAlive, Broker } from '@devvir/rabbitmq';
-import type { Config } from './types';
-import { DecodedMessage, EncodedMessage, STRATEGIES, transform } from './encoding';
+import type { Config, Message } from './types';
+import { transform } from './encoding';
 
 export const INBOUND_QUEUE = 'codec';
 export const INBOUND_EXCHANGE = 'codec.in';
@@ -21,11 +21,7 @@ export const connectToQueue = async (config: Config): Promise<Broker> => {
 
       [INBOUND_EXCHANGE]: {
         type: 'topic',
-        queues: {
-          [INBOUND_QUEUE]: {
-            routingKey: STRATEGIES.map((s) => `${s}.*`)
-          }
-        },
+        queues: { [INBOUND_QUEUE]: { routingKey: '#' } },
       },
     },
   });
@@ -43,7 +39,7 @@ export const startConsuming = async (broker: Broker, config: Config, onProcessMs
     try {
       onProcessMsg();
 
-      const content = await transform(original, message as EncodedMessage | DecodedMessage);
+      const content = await transform(original, message as Message);
 
       await outputExchange.republish({ ...original, content });
 

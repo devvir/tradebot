@@ -245,6 +245,7 @@ export interface QuoteDataBid {
 }
 // Quote data may include at least one size/price pair, and potentially both.
 export type QuoteData = QuoteDataBase & (QuoteDataAsk | QuoteDataBid);
+export type QuoteDataFull = QuoteDataBase & QuoteDataAsk & QuoteDataBid;
 
 export interface TradeData {
   timestamp: string;

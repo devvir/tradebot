@@ -1,6 +1,6 @@
 import { logger } from '@devvir/service';
 import type { InstrumentData } from '@tradebot/types';
-import type { DecodingFn, EncodedInstrumentItem, EncodingFn, PackedDataItem } from '../types';
+import type { DecodedMessageData, DecodingFn, EncodedInstrumentItem, EncodingFn, PackedDataItem } from '../types';
 import { INSTRUMENT_FIELD, INSTRUMENT_FIELD_REVERSE, TICK_DIRECTION, TICK_DIRECTION_REVERSE } from '../mappings';
 import { encodeTimestamp, decodeTimestamp } from '../utils';
 
@@ -27,7 +27,7 @@ export const encodeInstrument = (item: InstrumentData): PackedDataItem => {
 
 // ── Decode ─────────────────────────────────────────────────────────────────────
 
-export const decodeInstrument = (payload: Record<string, unknown[]>): InstrumentData[] => {
+export const decodeInstrument = (payload: DecodedMessageData): InstrumentData[] => {
   const items: InstrumentData[] = [];
 
   for (const [symbol, data] of Object.entries(payload)) {

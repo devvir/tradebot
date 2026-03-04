@@ -1,11 +1,7 @@
 import type { EncodedField, EncodedPriceAndSize } from './types';
 
-// ── Constants ──────────────────────────────────────────────────────────────────
-
 /** Start of encoded timestamp range (2000-01-01 00:00:00.000Z) */
-export const EPOCH_2000 = 946684800000;
-
-export const MAX_SAFE_INT = 0x1fffffffffffff; // 2^53 - 1
+const EPOCH_2000_MS = 946_684_800_000;
 
 // ── Bit helpers ────────────────────────────────────────────────────────────────
 
@@ -48,8 +44,13 @@ export const decodeVersion = (encoded: number): string => {
 
 // ── Timestamp (42 bits: ms since Jan 1, 2000 — covers up to ~2139) ────────────
 
+// BitMEX uses this date as a sentinel for instruments that are planned but not yet launched.
+const FAR_FUTURE_ISO = '2200-02-01T00:00:00.000Z';
+
 export const encodeTimestamp = (isoString: string): EncodedField => {
-  const offset = new Date(isoString).getTime() - EPOCH_2000;
+  if (isoString === FAR_FUTURE_ISO) return { number: 0, bits: 42 };
+
+  const offset = new Date(isoString).getTime() - EPOCH_2000_MS;
 
   if (offset < 0 || offset > 0x3ffffffffff) {
     throw new Error(`Timestamp ${isoString} out of valid range (2000-2100)`);
@@ -58,8 +59,11 @@ export const encodeTimestamp = (isoString: string): EncodedField => {
   return { number: offset, bits: 42 };
 };
 
-export const decodeTimestamp = (encoded: number): string =>
-  new Date(Number(encoded) + EPOCH_2000).toISOString();
+export const decodeTimestamp = (encoded: number): string => {
+  return (encoded === 0)
+    ? FAR_FUTURE_ISO /** Sentinel value BitMEX uses for planned instruments */
+    : new Date(Number(encoded) + EPOCH_2000_MS).toISOString();
+};
 
 // ── Price + Size encoding/decoding ─────────────────────────────────────────────
 

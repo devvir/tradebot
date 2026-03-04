@@ -1,37 +1,68 @@
 import { brotliCompressSync, constants } from 'node:zlib';
 import { logger } from '@devvir/service';
-import { type BitmexDataMessage } from '@tradebot/types';
-import { type RawMessage } from '@devvir/rabbitmq';
-import { encodePayload, type Strategy } from '..';
+import {
+  encodeInstrument,
+  encodeQuote,
+  encodeOrderBookL2,
+  encodeTrade,
+  isBitmexDataWithSymbol,
+  type EncodedMessage,
+  type BitmexDataItem,
+  type InstrumentData,
+  type OrderBookL2Data,
+  type QuoteDataFull,
+  type TradeData,
+  type BitmexDataMessage,
+} from '..';
 
 const BROTLI_QUALITY = parseInt(process.env.CODEC_BROTLI_QUALITY || '1');
 const BROTLI_OPTIONS = { params: { [constants.BROTLI_PARAM_QUALITY]: BROTLI_QUALITY } };
 
 /**
- * Encode a raw AMQP message for compressed archival.
+ * Encode and brotli-compress an AMQP message's data array.
  *
- * - Strip redundant payload fields (table, keys, types, filter)
- * - Encode action as a compact 1-byte prefix
- * - Brotli-compress data items (if compress mode)
- *
- * Returns the encoded payload. _id is handled by transform.ts.
+ * Other root items pass through unchanged.
  */
-export default (strategy: Strategy, original: RawMessage, jsonMsg: BitmexDataMessage): Record<string, unknown> => {
-  let payload = jsonMsg.data as unknown as Record<string, unknown>;
+export default (message: BitmexDataMessage): EncodedMessage | BitmexDataMessage => {
+  const { table, data, ...rest } = message;
 
   try {
-    // Reduce size by encoding, pruning and packing
-    const table = original.fields.routingKey.split('.')[1];
-    payload = encodePayload(jsonMsg.data, table, jsonMsg.action);
+    const encoded = encodePayload(table, data);
+    const compressed = brotliCompressSync(JSON.stringify(encoded), BROTLI_OPTIONS);
 
-    // Further compress if so configured
-    if (strategy === 'compress') {
-      const compressed = brotliCompressSync(JSON.stringify(payload), BROTLI_OPTIONS);
-      payload = { b: compressed };
-    }
+    return { table, b: compressed, ...rest };
   } catch (err) {
-    logger.error({ err, routingKey: original.fields.routingKey }, 'Failed to encode message, falling back to raw payload');
+    logger.error({ err, table }, 'Failed to encode message, falling back to raw payload');
   }
 
-  return payload;
+  return message;
+};
+
+/**
+ * Encode payload (doc.data) by table, applying the appropriate packing strategy.
+ *
+ * Output shape:
+ *  - Tables without symbol: { _: dataGroup }
+ *  - Tables with symbol:    { [symbol]: dataGroup, ... }
+ */
+const encodePayload = (table: string, data: BitmexDataItem[]): Record<string, unknown[]> => {
+  const encoded = data.map(item => encodeItem(table, item));
+
+  if (! isBitmexDataWithSymbol(data))
+    return { _: encoded };
+
+  return Object.groupBy(encoded, (_, i) => data[i].symbol) as Record<string, unknown[]>;
+};
+
+/**
+ * Delegate encoding of each data item to the appropriate encoder.
+ */
+const encodeItem = (table: string, item: BitmexDataItem): unknown => {
+  switch (table) {
+    case 'instrument':  return encodeInstrument(item as InstrumentData);
+    case 'quote':       return encodeQuote(item as QuoteDataFull);
+    case 'orderBookL2': return encodeOrderBookL2(item as OrderBookL2Data);
+    case 'trade':       return encodeTrade(item as TradeData);
+    default:            return item;
+  }
 };

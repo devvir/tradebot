@@ -1,34 +1,19 @@
-import { logger } from '@devvir/service';
 import type { RawMessage } from '@devvir/rabbitmq';
-import { getIdempotentId } from './documentId';
-import { encode, decode, type Strategy, type DecodedMessage, type EncodedMessage, type BitmexDataMessage } from '.';
+import { encode, decode, type Strategy, type BitmexDataMessage, type Message } from '.';
 
 /**
- * Apply the configured codec strategy to an inbound message, then ensure an
- * idempotent _id for deduplication on insert.
- *
- * This is the ONLY place that manages _id. Strategies must NOT set _id.
+ * Apply the configured codec strategy to an inbound message.
  */
-export default (rawMsg: RawMessage, jsonMsg: EncodedMessage | DecodedMessage): Buffer => {
-  const strategy = rawMsg.fields.routingKey.split('.')[0] as Strategy;
+export default (rawMsg: RawMessage, jsonMsg: Message): Buffer => {
+  const headers = rawMsg.properties.headers ?? {};
+  const strategy: Strategy = headers['x-codec-strategy'] || 'encode';
 
-  logger.debug({ strategy, routingKey: rawMsg.fields.routingKey }, 'Transform called with strategy');
+  const payload = strategy === 'encode'
+    ? encode(jsonMsg as BitmexDataMessage)
+    : decode(jsonMsg);
 
-  const payload = applyStrategy(strategy, rawMsg, jsonMsg);
-  if (! payload) throw new Error('Transform failed, nacking message');
-
-  payload._id = getIdempotentId(jsonMsg as Record<string, unknown>, payload, rawMsg);
+  if (! payload)
+    throw new Error('Transform failed, nacking message');
 
   return Buffer.from(JSON.stringify(payload));
-};
-
-const applyStrategy = (
-  strategy: Strategy,
-  rawMsg: RawMessage,
-  jsonMsg: EncodedMessage | DecodedMessage,
-): Record<string, unknown> | null => {
-  if (strategy === 'passthru') return jsonMsg;
-  if (strategy === 'decode') return decode(rawMsg, jsonMsg);
-
-  return encode(strategy, rawMsg, jsonMsg as unknown as BitmexDataMessage);
 };

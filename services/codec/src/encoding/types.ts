@@ -12,17 +12,6 @@ export interface EncodedField {
 
 export type UnknownMessage = Record<string, unknown>;
 
-/**
- * Structured format for encoded messages ready for publishing.
- */
-export type EncodedMessage = {
-  _id: number,
-  [key: string]: unknown,
-};
-
-/**
- * Structured format for decoded messages ready for publishing.
- */
 export type DecodedMessage = Record<string, unknown>;
 
 /**

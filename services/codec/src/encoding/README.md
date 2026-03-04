@@ -1,107 +1,119 @@
-# `encoding/` — Codec Encoding & Decoding Engine
+# Encoding
 
-Encodes and decodes Bitmex WebSocket messages for compressed archival and retrieval.
+Brotli compression with optional table-specific field encoding. All messages are compressed; `orderBookL2`, `trade`, `quote`, and `instrument` also go through a field encoding step first. The public entry points are `encode` and `decode` in `strategies/`; everything in `tables/` and `utils.ts` is internal.
 
-## Directory Structure
+---
 
-```
-encoding/
-├── transform.ts       Entry point. Dispatches to strategies, manages _id
-├── documentId.ts       Build / unpack / normalise 53-bit document _ids
-├── encoders.ts         Encode dispatcher: routes data to table encoders
-├── decoders.ts         Decode dispatcher: routes payload to table decoders
-├── mappings.ts         Enum ↔ number lookup tables (action, side, tick, etc.)
-├── utils.ts            Bit packing, timestamp/version codecs, price+size encoding
-├── types.ts            Shared type definitions
-├── strategies/
-│   ├── encode.ts       Encode strategy: field-reduce + optional Brotli compress
-│   └── decode.ts       Decode strategy: decompress + reverse-encode
-└── tables/
-    ├── trade.ts        Trade-specific encode/decode
-    ├── quote.ts        Quote-specific encode/decode
-    ├── orderBookL2.ts  OrderBookL2-specific encode/decode
-    └── instrument.ts   Instrument-specific encode/decode
-```
+## Symbol Grouping
 
-## How It Works
+Before encoding, data items are grouped by symbol:
 
-### Entry Point: `transform(rawMsg, jsonMsg) → Buffer`
+- Tables **with** symbol (trade, quote, orderBookL2, instrument): `{ XBTUSD: [...], ETHUSD: [...] }`
+- Tables **without** symbol (announcement, chat, etc.): `{ _: [...] }`
 
-Every message flowing through the codec enters via `transform()`. It:
+The symbol is stripped from each item after grouping and restored by the decoder using the group key. On decode, items keyed `_` are skipped (no symbol to restore).
 
-1. Reads the strategy from the routing key (e.g. `encode.trade` → strategy `encode`, table `trade`)
-2. Dispatches to the strategy handler (`encode` or `decode`) or leaves unchanged for `passthru`
-3. Ensures a deterministic `_id` via `getIdempotentId()` (see _Document ID_ below)
+---
 
-**`transform` is the only place that manages `_id`.** Strategies return payloads without `_id`.
+## Bit Packing (`utils.ts`)
 
-### Strategies
+### `pack(fields)`
 
-#### Encode (`strategies/encode.ts`)
+Packs an array of `{ number, bits }` fields MSB-first into a single JS number (up to 53 bits total, limited by `Number.MAX_SAFE_INTEGER`). Plain numbers are auto-sized via `minBits`.
 
-Reduces message payload size:
+### `extract(value, offset, width)`
 
-1. Strips BitMEX envelope fields (`table`, `keys`, `types`, `filter`)
-2. Dispatches `data[]` to the appropriate table encoder (via `encodePayload`)
-3. Groups encoded items by symbol (or `_` for symbol-less tables)
-4. Returns a flat `{ [symbol]: encodedItems[] }` object
+Extracts `width` bits starting at bit position `offset` (from LSB). Inverse of pack for individual fields.
 
-#### Compress (`strategies/encode.ts`, compress branch)
+### `minBits(n)` / `minBytes(n)`
 
-Same as encode, but followed by Brotli compression:
+Compute the minimum number of bits/bytes needed to represent `n`.
 
-1. Runs the encode pipeline above
-2. Serialises the encoded payload to JSON
-3. Brotli-compresses the JSON string
-4. Returns `{ b: <Buffer> }` (a single binary field)
+---
 
-#### Decode (`strategies/decode.ts`)
+## Price + Size Encoding (`utils.ts`)
 
-Reverses any combination of encode + compress. Inspects the incoming document to detect the storage format:
+`encodePriceAndSize(price, size)` packs a price/size pair into 1-2 numbers:
 
-- **`raw`** — document has a string `action` field → decode the encoded record
-- **`compressed`** — document has a non-array `b` field → decompress with Brotli, then decode
-- **`encoded`** — otherwise → return as-is (passthru data)
-
-Decompressed payloads are routed through `decodeMessage()`, which unpacks the `_id` to recover `action` and `timestamp`, then dispatches to the appropriate table decoder.
-
-### Table Encoders / Decoders (`tables/`)
-
-Each table has a matched encode/decode pair. Encoding applies table-specific field reduction:
-
-- **trade** — maps `side`, `tickDirection`, `trdType` to numeric IDs; packs `price+size` into a single number using `encodePriceAndSize()`
-- **quote** — splits into bid/ask halves; packs each `price+size` pair
-- **orderBookL2** — maps `side` to numeric; packs `price+size`; stores `id` directly
-- **instrument** — stores selected numeric fields only (e.g. `impactBidPrice`, `markPrice`)
-
-The `encodePriceAndSize()` utility (in `utils.ts`) packs a price and size into 1–2 numbers using a meta byte that encodes decimal count and byte widths. Falls back to raw values when the pair exceeds 53 bits.
-
-### Document ID (`documentId.ts`)
-
-Every document gets a deterministic 53-bit numeric `_id` that fits within `Number.MAX_SAFE_INTEGER`.
-
-**Bit layout** (MSB → LSB):
+**Packed form** (when total bits ≤ 53 and decimals ≤ 31):
 
 ```
-timestamp(42) | apiVersion(9) | action(2)  =  53 bits
+meta byte: negativeSize(1) | negativePrice(1) | priceBytes(3) | decimals(5)
+field1:    abs(size) packed with scaledPrice  (size bits + price bits)
 ```
 
-- **timestamp** — milliseconds since 2000-01-01 (covers up to ~2139)
-- **apiVersion** — semver packed into 9 bits (2 major + 3 minor + 4 patch)
-- **action** — `partial=0`, `insert=1`, `update=2`, `delete=3`
+`scaledPrice = round(abs(price) × 10^decimals)` — removes the decimal point entirely.
 
-Key functions:
+**Raw fallback** (when packing would overflow):
 
-| Function | Description |
-|----------|-------------|
-| `buildDocumentId(ts, action, apiVersion?)` | Returns the packed `_id` as a plain `number` |
-| `unpackDocumentId(id)` | Extracts `{ action, apiVersion, timestamp }` from a number |
-| `getIdempotentId(incoming, result, rawMsg)` | Resolves the `_id`: preserves existing numeric `_id` or generates a new one |
+```
+meta: 0  →  field1 = size, field2 = price (unchanged)
+```
 
-### Bit Packing (`utils.ts`)
+The `meta === 0` sentinel distinguishes packed from raw; callers must use `meta`, not a truthiness check on `field1` (size or price may legitimately be 0).
 
-`pack(fields)` concatenates an array of `{ number, bits }` fields into a single `number`, MSB-first, using `acc * 2**bits + n` arithmetic (safe for all values ≤ 53 bits). This is how the document `_id`, the version fields, and the price+size encodings are all built.
+---
 
-## Public Exports (`index.ts`)
+## Timestamp Encoding (`utils.ts`)
 
-The barrel file exports strategies, document ID utilities, type definitions, and the encode/decode dispatchers. Internal helpers or table-specific functions are not exported.
+Timestamps are stored as milliseconds since 2000-01-01 (42 bits, covering up to ~2139). This trims ~7 bits vs Unix epoch and fits alongside other fields in a packed number.
+
+```
+encodeTimestamp(isoString) → { number: msSince2000, bits: 42 }
+decodeTimestamp(encoded)   → ISO-8601 string
+```
+
+---
+
+## Per-Table Encoding
+
+### `trade`
+
+Item layout: `[timestamp, packed_header, ...sizePrice, trdMatchID?, grossValue?, homeNotional?, foreignNotional?, pool?, trdType?]`
+
+The `packed_header` encodes in 19 bits (LSB → MSB):
+```
+sizePriceMeta(10) | side(1) | tickDirection(2) | trdType(2) | trdMatchID_flag(1)
+| grossValue_flag(1) | homeNotional_flag(1) | foreignNotional_flag(1) | pool_flag(1)
+```
+
+Optional fields are appended in the order their presence flags appear. `trdType` is stored as a 2-bit enum id for known values (`Regular`=0, `BlockTrade`=1); unknown types use id=2 and append the raw string.
+
+### `quote`
+
+Item layout: `[timestamp, ...quoteData]`
+
+`quoteData` encodes up to two bid/ask pairs. Each packed value includes a witness bit (LSB) that identifies whether it is a bid (0) or ask (1), followed by 10 meta bits and then the packed price+size:
+
+```
+witness(1) | sizePriceMeta(10) | priceAndSize(remaining bits)
+```
+
+If both pairs fit: two packed values. If only one: one packed value (witness identifies which side). If packing overflows: raw fallback `[price, size, witness?]` or `[bidPrice, bidSize, askPrice, askSize]`.
+
+### `orderBookL2`
+
+Item layout:
+
+- Delete (no size): `[id, timestamp]`
+- With size: `[id, packed(ts+meta+side), field1, field2?, pool?]`
+
+The second element packs timestamp (42 bits), sizePriceMeta (10 bits), and side (1 bit) into a single number. `priceBytes === 0` in meta signals the raw fallback (field1=size, field2=price).
+
+### `instrument`
+
+Instrument messages carry many optional fields. Rather than a fixed array, each item is encoded as:
+
+```
+[timestamp, fieldCodes, ...values]
+```
+
+`fieldCodes` is a string of single-character codes (from `INSTRUMENT_FIELD` mapping) listing which fields are present, in order. Values follow in the same order. Timestamps and timespans are encoded as ms-since-2000; enums are encoded as numeric ids; booleans as 0/1. Fields not in the mapping are stored as-is.
+
+---
+
+## Brotli Compression
+
+After per-table encoding, the entire grouped payload (a `Record<string, unknown[]>`) is JSON-serialised and Brotli-compressed into a `Buffer`, stored as `b` on the message. Quality is configurable via `CODEC_BROTLI_QUALITY` (default: 1 — fast).
+
+On decode, `b` arrives as a base64 string (AMQP serialisation), is reconstructed into a Buffer, Brotli-decompressed, JSON-parsed, then passed to the appropriate table decoder.

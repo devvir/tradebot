@@ -1,14 +1,16 @@
 export { default as transform } from './transform';
 
-// Strategies — internal to transform, but exported for tests
 export { default as encode } from './strategies/encode';
+export { encodeInstrument } from './tables/instrument';
+export { encodeQuote } from './tables/quote';
+export { encodeTrade } from './tables/trade';
+export { encodeOrderBookL2 } from './tables/orderBookL2';
+
 export { default as decode } from './strategies/decode';
+export { decodeInstrument } from './tables/instrument';
+export { decodeQuote } from './tables/quote';
+export { decodeTrade } from './tables/trade';
+export { decodeOrderBookL2 } from './tables/orderBookL2';
 
-export { encodePayload } from './encoders';
-export { decodeMessage } from './decoders';
-export { buildDocumentId, unpackDocumentId, getIdempotentId } from './documentId';
-export { ACTION_ID } from './mappings';
-
-// Types
 export * from './types';
 export * from '@tradebot/types';
