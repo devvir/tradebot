@@ -26,14 +26,20 @@ Both connections subscribe to predefined channel sets on startup. If either conn
 BitMEX WebSocket
     ↓ (raw JSON messages)
  Broadcast Service
-    ├─ Parse and classify message
-    └─ Use message.<table> as routing key (e.g. "message.trade", "message.orderBookL2")
+    ├─ Control messages (info, subscribe confirmations) → logged, not published
+    └─ Data messages → published to RabbitMQ
+        │  routing key: <table>.<action>.<symbol>  (symbol empty if absent or multi-symbol)
+        │  headers:
+        │    x-worker-uuid         — broadcast instance identity
+        │    x-bitmex-version      — BitMEX WebSocket API version
+        │    x-bitmex-symbols      — comma-separated unique symbols in this message
+        │    x-bitmex-published-at — ISO-8601 timestamp of receipt
         ↓
  RabbitMQ Topic Exchange `broadcast`
     └─ Downstream consumers bind their own queues with routing key patterns
 ```
 
-Broadcast declares the topic exchange only — no queues. Downstream services may assert their own queues and bind to the routing key patterns they need.
+Broadcast declares the topic exchange only — no queues. Downstream services assert their own queues and bind to the routing key patterns they need. Headers carry all metadata; the routing key is purely for consumer-side filtering.
 
 ### Configuration
 
@@ -59,7 +65,6 @@ Example with defaults:
 - 2nd retry: 10s
 - 3rd retry: 20s
 - 4th retry: 40s
-- ... continues doubling ...
 - 5th+ retry: 60s (capped)
 
 ## Dependencies
@@ -78,8 +83,8 @@ Example with defaults:
 
 ### Health Check Endpoint
 
-```
-GET /health
+```bash
+curl http://broadcast:3000/health
 ```
 
 **Response (200 - Healthy):**
@@ -115,9 +120,4 @@ Returned when:
 
 ### Graceful Shutdown
 
-On `SIGTERM` or `SIGINT`:
-1. Stop accepting new WebSocket operations
-2. Close both WebSocket connections
-3. Cancel pending heartbeat timers
-4. Close RabbitMQ broker connection
-5. Exit cleanly
+On signal, WebSocket connections and the RabbitMQ broker are closed cleanly. See [service-kit: graceful shutdown](../../packages/service-kit/docs/guides/graceful-shutdown.md).

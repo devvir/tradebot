@@ -1,6 +1,7 @@
 import { logger } from '@devvir/service';
 import {
   type BitmexWebSocketMessage,
+  type Config,
   type FeedState,
   isBitmexSubscriptionMessage,
   isBitmexUnsubscriptionMessage,
@@ -14,31 +15,45 @@ import {
  * - Logs subscription/info control messages
  * - Publishes all data messages to the configured exchange
  */
-export const createMessageHandler = (state: FeedState): MessageHandler => (buffer: Buffer): void => {
-  state.lastMessageTime = Date.now();
+export const createMessageHandler = (state: FeedState, config: Config): MessageHandler => {
+  return (buffer: Buffer): void => {
+    state.lastMessageTime = Date.now();
 
-  try {
-    var message = JSON.parse(buffer.toString()) as BitmexWebSocketMessage;
-  } catch (error) {
-    return logger.error({ err: error }, 'Failed to parse WebSocket message');
-  }
-
-  try {
-    if (! isBitmexDataMessage(message)) {
-      return handleControlMessage(message, state);
+    try {
+      var message = JSON.parse(buffer.toString()) as BitmexWebSocketMessage;
+    } catch (error) {
+      return logger.error({ err: error }, 'Failed to parse WebSocket message');
     }
 
-    const exchange = state.broker!.getExchange()!;
-    const routingKey =  `message.${message.table}`;
+    try {
+      if (! isBitmexDataMessage(message)) {
+        return handleControlMessage(message, state);
+      }
 
-    exchange.publish(Buffer.from(JSON.stringify(message)), routingKey, {
-      contentType: 'application/json',
-    });
+      const content = Buffer.from(JSON.stringify(message));
+      const exchange = state.broker!.getExchange()!;
 
-    increaseCounter();
-  } catch (err) {
-    logger.error({ err }, 'Error processing WebSocket message');
-  }
+      const symbols = [ ...new Set(
+        message.data?.map(item => 'symbol' in item ? item.symbol : '') ?? [].filter(Boolean))
+      ];
+      const symbol = symbols.length === 1 ? symbols[0] : '';
+      const routingKey = `${message.table}.${message.action}.${symbol}`;
+
+      exchange.publish(content, routingKey, {
+        contentType: 'application/json',
+        headers: {
+          'x-worker-uuid': config.workerUuid,
+          'x-bitmex-version': state.apiVersion ?? '',
+          'x-bitmex-symbols': symbols.join(','),
+          'x-bitmex-published-at': new Date().toISOString(),
+        },
+      });
+
+      increaseCounter();
+    } catch (err) {
+      logger.error({ err }, 'Error processing WebSocket message');
+    }
+  };
 };
 
 const handleControlMessage = (message: BitmexWebSocketMessage, state: FeedState): void => {
@@ -53,7 +68,7 @@ const handleControlMessage = (message: BitmexWebSocketMessage, state: FeedState)
     const msgPreview = JSON.stringify(message).slice(0, 200);
     logger.warn({ message: msgPreview }, 'Unrecognized message received');
   }
-}
+};
 
 let counter = 0;
 

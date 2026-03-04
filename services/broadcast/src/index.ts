@@ -24,7 +24,7 @@ service.run(async () => {
 
   const broker = state.broker = await connectToQueue(config);
 
-  const onMessage = createMessageHandler(state);
+  const onMessage = createMessageHandler(state, config);
 
   // ── WebSocket connections ─────────────────────────────────────────────────
   const { connectRealtime, connectPlatform } = createConnections(state, config, onMessage);

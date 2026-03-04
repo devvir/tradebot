@@ -85,19 +85,19 @@ describe('Configuration', () => {
       expect(config.queue.messageTtlMs).toBe(3600000);
     });
 
-    it('should require BROADCAST_MESSAGE_TTL as a positive number', () => {
-      delete process.env.BROADCAST_MESSAGE_TTL;
-      expect(() => loadConfig()).toThrow('BROADCAST_MESSAGE_TTL must be a positive number');
+    it('should require BROADCAST_MESSAGE_TTL of at least 100ms', () => {
+      process.env.BROADCAST_MESSAGE_TTL = '50';
+      expect(() => loadConfig()).toThrow('BROADCAST_MESSAGE_TTL must be at least 100ms');
     });
 
-    it('should require BROADCAST_RECONNECT_DELAY_MS as a positive number', () => {
-      delete process.env.BROADCAST_RECONNECT_DELAY_MS;
-      expect(() => loadConfig()).toThrow('BROADCAST_RECONNECT_DELAY_MS must be a positive number');
+    it('should require BROADCAST_RECONNECT_DELAY_MS of at least 100ms', () => {
+      process.env.BROADCAST_RECONNECT_DELAY_MS = '50';
+      expect(() => loadConfig()).toThrow('BROADCAST_RECONNECT_DELAY_MS must be at least 100ms');
     });
 
-    it('should require BROADCAST_MAX_RECONNECT_DELAY_MS as a positive number', () => {
-      delete process.env.BROADCAST_MAX_RECONNECT_DELAY_MS;
-      expect(() => loadConfig()).toThrow('BROADCAST_MAX_RECONNECT_DELAY_MS must be a positive number');
+    it('should require BROADCAST_MAX_RECONNECT_DELAY_MS of at least 1000ms', () => {
+      process.env.BROADCAST_MAX_RECONNECT_DELAY_MS = '500';
+      expect(() => loadConfig()).toThrow('BROADCAST_MAX_RECONNECT_DELAY_MS must be at least 1000ms');
     });
   });
 });

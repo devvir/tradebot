@@ -11,6 +11,7 @@ export {
 
 export interface Config {
   env: 'live' | 'testnet';
+  workerUuid: string;
   realtimeWsUrl: string;
   platformWsUrl: string;
   realtimeChannels: readonly string[];

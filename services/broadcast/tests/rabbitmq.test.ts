@@ -15,6 +15,7 @@ describe('RabbitMQ setup', () => {
 
   const createMockConfig = (): Config => ({
     env: 'testnet',
+    workerUuid: '00000000-0000-0000-0000-000000000000',
     realtimeWsUrl: 'wss://testnet.bitmex.com/realtime',
     platformWsUrl: 'wss://testnet.bitmex.com/realtimePlatform',
     realtimeChannels: [],

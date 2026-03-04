@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { logger } from '@devvir/service';
 import { redactUrl, sanitizeUrl } from '@tradebot/utils';
 import type { Config } from './types';
@@ -41,6 +42,7 @@ export const loadConfig = (): Config => {
 
   const config: Config = {
     env: bitmexEnv,
+    workerUuid: randomUUID(),
     realtimeWsUrl: BITMEX_WS_URLS.realtime[bitmexEnv],
     platformWsUrl: BITMEX_WS_URLS.platform[bitmexEnv],
     realtimeChannels: REALTIME_CHANNELS,
@@ -68,9 +70,9 @@ export const loadConfig = (): Config => {
 const validateConfig = (config: Config): void => {
   if (! config.realtimeWsUrl) throw new Error('Failed to determine BitMEX realtime WS URL');
   if (! config.queue.rabbitmqUrl) throw new Error('RABBITMQ_URL is required');
-  if (config.queue.messageTtlMs <= 0) throw new Error('BROADCAST_MESSAGE_TTL must be a positive number');
-  if (config.connection.reconnectDelayMs <= 0) throw new Error('BROADCAST_RECONNECT_DELAY_MS must be a positive number');
-  if (config.connection.maxReconnectDelayMs <= 0) throw new Error('BROADCAST_MAX_RECONNECT_DELAY_MS must be a positive number');
+  if (config.queue.messageTtlMs < 100) throw new Error('BROADCAST_MESSAGE_TTL must be at least 100ms');
+  if (config.connection.reconnectDelayMs < 100) throw new Error('BROADCAST_RECONNECT_DELAY_MS must be at least 100ms');
+  if (config.connection.maxReconnectDelayMs < 1000) throw new Error('BROADCAST_MAX_RECONNECT_DELAY_MS must be at least 1000ms');
 };
 
 const usesTestnet = () => [undefined, '', '1', 'on', 'true'].includes(
