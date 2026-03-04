@@ -34,11 +34,11 @@ export const startConsuming = async (broker: Broker, routes: Route[]): Promise<v
 
         if (! exchange) throw new Error(`Destination exchange not found: ${dest.exchange.name}`);
 
-        return { exchange, routingKey: dest.routingKey, fixedRoutingKey: undefined as string | undefined };
+        return { exchange, routingKey: dest.routingKey, fixedRoutingKey: undefined as string | undefined, headers: dest.headers };
       }
 
       // Queue-only destination: publish to default exchange ('') with queue name as routing key
-      return { exchange: new Exchange(channel, ''), routingKey: dest.routingKey, fixedRoutingKey: dest.queue! };
+      return { exchange: new Exchange(channel, ''), routingKey: dest.routingKey, fixedRoutingKey: dest.queue!, headers: dest.headers };
     });
 
     await sourceQueue.consume(async (_message, { ack, nack, original: rawMsg }) => {
@@ -47,7 +47,10 @@ export const startConsuming = async (broker: Broker, routes: Route[]): Promise<v
 
         for (const target of targets) {
           const routingKey = target.fixedRoutingKey ?? resolveRoutingKey(target.routingKey, incomingKey);
-          await target.exchange.republish(rawMsg, { routingKey });
+          await target.exchange.republish(rawMsg, {
+            routingKey,
+            ...(target.headers ? { headers: { ...(rawMsg.properties?.headers ?? {}), ...target.headers } } : {}),
+          });
         }
 
         ack();

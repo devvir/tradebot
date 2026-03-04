@@ -20,6 +20,7 @@ export interface RouteDestination {
   queue?: string;
   exchange?: Exchange;
   routingKey?: RoutingKeyConfig;
+  headers?: Record<string, string>;
 }
 
 /** A single source → destination pair (normalized from multi-source/multi-dest rules). */

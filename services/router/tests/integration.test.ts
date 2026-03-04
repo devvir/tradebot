@@ -673,6 +673,50 @@ describe('Router Integration', () => {
     });
   });
 
+  // ── Header injection ──────────────────────────────────────────────────────
+
+  describe('Header injection', () => {
+    let routerBroker: Broker;
+    let testBroker: Broker;
+    let routes: Route[];
+
+    beforeAll(async () => {
+      const config = parseRules('int.hdr.src > int.hdr.dst(header:x-test=hello)');
+      routes = config.routes;
+
+      routerBroker = await connectToQueue(config);
+
+      testBroker = await keepAlive(RABBIT_URL, { retries: 5 });
+      await testBroker.declares({
+        queues: { 'int.hdr.dst': { durable: true } },
+      });
+
+      await startConsuming(routerBroker, routes);
+    });
+
+    afterAll(async () => {
+      await routerBroker?.close().catch(() => {});
+      await testBroker?.close().catch(() => {});
+    });
+
+    it('injects static header into republished message', async () => {
+      publishToQueue(testBroker, 'int.hdr.src', { data: 'test' });
+
+      const received = await getRawMessage(testBroker, 'int.hdr.dst');
+      expect(received).not.toBeNull();
+      expect(received!.headers['x-test']).toBe('hello');
+    });
+
+    it('merges injected headers with existing message headers', async () => {
+      publishToQueue(testBroker, 'int.hdr.src', { data: 'merge' }, { 'x-existing': 'keep' });
+
+      const received = await getRawMessage(testBroker, 'int.hdr.dst');
+      expect(received).not.toBeNull();
+      expect(received!.headers['x-test']).toBe('hello');
+      expect(received!.headers['x-existing']).toBe('keep');
+    });
+  });
+
   // ── Message integrity ─────────────────────────────────────────────────────
 
   describe('Message integrity', () => {

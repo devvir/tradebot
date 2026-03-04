@@ -1,9 +1,11 @@
 import { logger } from '@devvir/service';
 import { sanitizeUrl, redactUrl } from '@tradebot/utils';
-import type { Config, Route, RouteSource, RouteDestination, Exchange } from './types';
+import type { Config, Route, RouteSource, RouteDestination, Exchange, RoutingKeyConfig } from './types';
 
-const VALID_TYPES = new Set(['fanout', 'topic', 'headers', 'direct', 'default']);
-const ITEM_RE = /^(?<queue>[\w.-]+)?(?:@(?:(?<type>\w+):)?(?<exchange>[\w.-]+))?(?:\(key:(?<key>[^:)]+)(?::(?<replace>[^)]*))?\))?$/;
+const VALID_TYPES  = new Set(['fanout', 'topic', 'headers', 'direct', 'default']);
+const ITEM_RE      = /^(?<queue>[\w.-]+)?(?:@(?:(?<type>\w+):)?(?<exchange>[\w.-]+))?(?:\([^)]*\))?$/;
+const KEY_MOD_RE   = /^key:(?<value>[^:]+)(?::(?<replace>.*))?$/;
+const HEADER_MOD_RE = /^header:(?<name>[^=]*)=(?<val>.*)$/;
 
 export const loadConfig = (): Config => {
   const config: Config = {
@@ -62,7 +64,42 @@ const splitRules = (raw: string): Array<{ source: string; destination: string }>
   return pairs;
 };
 
-// ── Step 2: Parse a single item string via regex ──
+// ── Step 2a: Parse modifier content (the text inside parentheses) ──
+
+type ParsedModifiers = { routingKey?: RoutingKeyConfig; headers?: Record<string, string> };
+
+const parseModifiers = (content: string | undefined, raw: string): ParsedModifiers => {
+  if (! content) return {};
+
+  const result: ParsedModifiers = {};
+
+  for (const token of content.split(',').filter(Boolean)) {
+    const keyMatch = KEY_MOD_RE.exec(token);
+    if (keyMatch) {
+      const { value, replace } = keyMatch.groups!;
+      result.routingKey = { value, ...(replace ? { replace } : {}) };
+      continue;
+    }
+
+    const headerMatch = HEADER_MOD_RE.exec(token);
+    if (headerMatch) {
+      const { name, val } = headerMatch.groups!;
+      if (! name) throw new Error('header name cannot be empty');
+      if (! result.headers) result.headers = {};
+      result.headers[name] = val;
+      continue;
+    }
+
+    if (token.startsWith('header:'))
+      throw new Error(`header modifier requires "=" separator: "${token}"`);
+    else
+      throw new Error(`Unknown modifier "${token}" in "${raw}"`);
+  }
+
+  return result;
+};
+
+// ── Step 2b: Parse a single item string via regex ──
 const parseItem = (raw: string) => {
   const mainPart = raw.split('(')[0];
   if (! mainPart.includes('@') && mainPart.includes(':')) {
@@ -79,7 +116,7 @@ const parseItem = (raw: string) => {
   const match = ITEM_RE.exec(raw);
   if (! match) throw new Error(`Invalid route item: "${raw}"`);
 
-  const { queue, type, exchange, key, replace } = match.groups!;
+  const { queue, type, exchange } = match.groups!;
 
   if (! queue && ! exchange) throw new Error(`Invalid route item: "${raw}"`);
 
@@ -89,13 +126,14 @@ const parseItem = (raw: string) => {
     );
   }
 
+  const modContent = raw.match(/\(([^)]*)\)/)?.[1];
+
   return {
     queue: queue || undefined,
     exchange: exchange
       ? ({ name: exchange, type: (type as Exchange['type']) || undefined } as Exchange)
       : undefined,
-    key: key || undefined,
-    replace,
+    ...parseModifiers(modContent, raw),
   };
 };
 
@@ -103,12 +141,12 @@ const toSource = (raw: string): RouteSource => {
   const item = parseItem(raw);
 
   if (! item.queue) throw new Error(`Source must have a queue name. Context: "${raw}"`);
-  if (item.replace) throw new Error(`(key:match:replace) is only valid on destinations "${raw}"`);
+  if (item.routingKey?.replace !== undefined) throw new Error(`(key:match:replace) is only valid on destinations "${raw}"`);
 
   return {
     queue: item.queue,
     exchange: item.exchange,
-    ...(item.key && item.exchange ? { bindingKey: item.key } : {}),
+    ...(item.routingKey?.value && item.exchange ? { bindingKey: item.routingKey.value } : {}),
   };
 };
 
@@ -118,10 +156,8 @@ const toDestination = (raw: string): RouteDestination => {
   return {
     queue: item.queue,
     exchange: item.exchange,
-    ...(item.key ? { routingKey: {
-        value: item.key,
-        ...(item.replace ? { replace: item.replace } : {}),
-      }} : {}),
+    ...(item.routingKey ? { routingKey: item.routingKey } : {}),
+    ...(item.headers ? { headers: item.headers } : {}),
   };
 };
 
@@ -137,8 +173,17 @@ const formatItem = (queue?: string, exchange?: Exchange, keySuffix?: string): st
 export const formatRoute = (route: Route): string => {
   const { source: s, destination: d } = route;
   const srcKey = s.bindingKey ? `(key:${s.bindingKey})` : '';
-  const dstKey = d.routingKey
-    ? `(key:${d.routingKey.value}${d.routingKey.replace !== undefined ? ':' + d.routingKey.replace : ''})`
-    : '';
+
+  const dstParts: string[] = [];
+  if (d.routingKey) {
+    dstParts.push(`key:${d.routingKey.value}${d.routingKey.replace !== undefined ? ':' + d.routingKey.replace : ''}`);
+  }
+  if (d.headers) {
+    for (const [name, value] of Object.entries(d.headers)) {
+      dstParts.push(`header:${name}=${value}`);
+    }
+  }
+  const dstKey = dstParts.length ? `(${dstParts.join(',')})` : '';
+
   return `${formatItem(s.queue, s.exchange, srcKey)} > ${formatItem(d.queue, d.exchange, dstKey)}`;
 };

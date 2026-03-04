@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { loadConfig } from '../src/config';
+import { loadConfig, formatRoute } from '../src/config';
 import { buildTopology } from '../src/rabbitmq';
 
 describe('Router Config Parser', () => {
@@ -646,6 +646,83 @@ describe('Router Config Parser', () => {
 
         expect(() => loadConfig()).toThrow();
       });
+    });
+  });
+
+  describe('Header modifier syntax', () => {
+    it('parses header:name=value on destination', () => {
+      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.ROUTER_RULES = 'broadcast > writer(header:x-writer-database=tradebot_collect)';
+
+      const config = loadConfig();
+
+      expect(config.routes[0].destination).toEqual({
+        queue: 'writer',
+        headers: { 'x-writer-database': 'tradebot_collect' },
+      });
+    });
+
+    it('parses key: and header: combined', () => {
+      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.ROUTER_RULES = 'broadcast > @topic:writer(key:message:collect,header:x-writer-database=tradebot_collect)';
+
+      const config = loadConfig();
+
+      expect(config.routes[0].destination).toEqual({
+        exchange: { name: 'writer', type: 'topic' },
+        routingKey: { value: 'message', replace: 'collect' },
+        headers: { 'x-writer-database': 'tradebot_collect' },
+      });
+    });
+
+    it('parses multiple header: entries', () => {
+      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.ROUTER_RULES = 'broadcast > writer(header:x-db=mydb,header:x-mode=fast)';
+
+      const config = loadConfig();
+
+      expect(config.routes[0].destination.headers).toEqual({ 'x-db': 'mydb', 'x-mode': 'fast' });
+    });
+
+    it('allows empty header value', () => {
+      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.ROUTER_RULES = 'broadcast > writer(header:x-flag=)';
+
+      const config = loadConfig();
+
+      expect(config.routes[0].destination.headers).toEqual({ 'x-flag': '' });
+    });
+
+    it('rejects header: without = separator', () => {
+      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.ROUTER_RULES = 'broadcast > writer(header:x-writer-database)';
+
+      expect(() => loadConfig()).toThrow('header modifier requires "=" separator');
+    });
+
+    it('rejects empty header name', () => {
+      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.ROUTER_RULES = 'broadcast > writer(header:=value)';
+
+      expect(() => loadConfig()).toThrow('header name cannot be empty');
+    });
+
+    it('rejects unknown modifier prefix', () => {
+      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.ROUTER_RULES = 'broadcast > writer(unknown:value)';
+
+      expect(() => loadConfig()).toThrow('Unknown modifier');
+    });
+
+    it('serialises headers in formatRoute', () => {
+      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.ROUTER_RULES = 'broadcast > @topic:writer(key:message:collect,header:x-db=tradebot_collect)';
+
+      const config = loadConfig();
+      const formatted = formatRoute(config.routes[0]);
+
+      expect(formatted).toContain('header:x-db=tradebot_collect');
+      expect(formatted).toContain('key:message:collect');
     });
   });
 
