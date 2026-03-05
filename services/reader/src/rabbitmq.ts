@@ -1,21 +1,23 @@
 import { keepAlive, Broker } from '@devvir/rabbitmq';
 import { logger } from '@devvir/service';
-
-export const EXCHANGE = 'reader';
+import type { Config } from './types';
 
 /**
  * Create and configure a RabbitMQ broker.
- * Declares a topic exchange for message publishing.
- * Queues are NOT declared here — downstream consumers assert their own.
+ *
+ * Declares a durable queue `reader.<database>` on the default exchange.
+ * Each pipeline gets its own isolated queue keyed by the database name.
  */
-export const connectToQueue = async (rabbitmqUrl: string): Promise<Broker> => {
+export const connectToQueue = async (
+  { rabbitmqUrl: url, database }: Config,
+): Promise<Broker> => {
   logger.info('Setting up RabbitMQ broker...');
 
-  const broker = await keepAlive(rabbitmqUrl);
+  const broker = await keepAlive(url);
 
   return broker.declares({
-    exchanges: {
-      [EXCHANGE]: { type: 'topic' },
+    queues: {
+      [`reader.${database}`]: {},
     },
   });
 };

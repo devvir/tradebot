@@ -15,6 +15,7 @@ export interface Config {
   rabbitmqUrl: string;
   pollIntervalMs: number;
   collections: string[]; // Empty array = all collections
+  maxReady: number;      // Max messages in reader queue before pausing. 0 = disabled.
 }
 
 export interface MongoDBConnection {

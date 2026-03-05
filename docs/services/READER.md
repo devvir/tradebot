@@ -4,7 +4,7 @@
 
 The Reader service is a generic MongoDB reader that implements continuous collection polling: it detects newly inserted documents and publishes them via RabbitMQ. It handles out-of-order writes using a sliding window algorithm and persists polling state for recovery on restart.
 
-It's agnostic to the use case — it simply reads whatever `READER_DATABASE` is configured and publishes documents to `topic:reader`. Downstream routers (in each module) determine the message flow and transformations.
+It's agnostic to the use case — it simply reads whatever `READER_DATABASE` is configured and publishes documents to `queue:reader.<READER_DATABASE>`. Downstream routers (in each module) determine the message flow and transformations.
 
 ## Architecture
 
@@ -15,12 +15,12 @@ Every READER_POLL_INTERVAL_MS
     ↓
 For each collection (whitelist or all)
     ├─ Detect new and out-of-order documents
-    ├─ Publish to topic:reader exchange
-    └─ Routing key: message.{collection}
+    ├─ Every 500 publishes: check queue:reader.<database> depth
+    │   └─ If depth >= READER_MAX_READY: pause until queue drains
+    └─ Publish directly to queue:reader.<database> (default exchange)
         ↓
- RabbitMQ topic:reader exchange
-    ├─ No queues declared — downstream consumers assert their own
-    └─ Typically consumed by a router that transforms the routing key
+ RabbitMQ queue:reader.<database> (durable)
+    └─ Consumed by a router in the module's compose.yml
 ```
 
 ### Sliding Window Algorithm
@@ -87,6 +87,7 @@ Persisted after each polling iteration for disaster recovery.
 | `READER_DATABASE` | string | Yes | - | MongoDB database name to read from (module-specific) |
 | `READER_POLL_INTERVAL_MS` | number | Yes | - | Poll interval in milliseconds |
 | `READER_COLLECTIONS` | string | No | - | Comma-separated collection whitelist (default: all non-system collections) |
+| `READER_MAX_READY` | number | No | `1000000` | Max messages in `reader` queue before publishing pauses. `0` disables backpressure. |
 
 ### Collection Discovery
 
@@ -96,12 +97,16 @@ Persisted after each polling iteration for disaster recovery.
 
 ## Document Publishing
 
-Documents are published to the `reader` topic exchange with:
-- **Routing key:** `message.{collection}` (e.g. `message.trade`, `message.orderBookL2`)
+Documents are published directly to queue `reader.<database>` via the default exchange:
+- **Queue:** `reader.<database>` (e.g. `reader.tradebot_collect`), durable
 - **Content type:** `application/json`
-- **Payload:** Full MongoDB document
+- **Payload:** Full MongoDB document encoded as JSON
 
-No queues are declared by the reader — downstream consumers (typically a router) assert their own queues bound to this exchange.
+Using the default exchange means each pipeline gets its own isolated queue keyed by the database name. The reader asserts the queue at startup, ensuring messages accumulate even if the downstream router is temporarily disconnected.
+
+### Backpressure
+
+Every 500 published messages, the reader checks how many messages are in `queue:reader.<database>`. If the count reaches `READER_MAX_READY`, publishing pauses (polling loop blocks) until the queue drains below the limit. A `warn` log is emitted on pause and an `info` log on resume.
 
 ## Dependencies
 
@@ -119,9 +124,9 @@ No queues are declared by the reader — downstream consumers (typically a route
 
 ### RabbitMQ
 
-- **Publishing:** Via configured exchange/queue (default: AMQP default exchange + `reader` queue)
-- **Queue declaration:** Durable queue declared at startup
-- **Backpressure:** Respects prefetch via prefetch window
+- **Queue:** `reader.<database>` (durable), declared at startup on the default exchange
+- **Publishing:** Fire-and-forget via `sendToQueue`
+- **Backpressure:** Checks `reader.<database>` queue depth every 500 messages; pauses when depth ≥ `READER_MAX_READY`
 
 ## Error Handling
 
@@ -160,14 +165,7 @@ Runs periodically every `READER_POLL_INTERVAL_MS`:
 
 ### Graceful Shutdown
 
-On `SIGTERM` or `SIGINT`:
-1. Stop accepting new poll cycles
-2. Allow in-flight documents to finish publishing
-3. Close MongoDB connection
-4. Close RabbitMQ broker
-5. Exit
-
-State is checkpointed after each poll cycle, so restart resumes from last checkpoint.
+Active poll cycles complete before connections are closed. State is checkpointed after each poll cycle, so restart resumes from the last checkpoint. See [service-kit: graceful shutdown](../../packages/service-kit/docs/guides/graceful-shutdown.md).
 
 ## Performance Characteristics
 

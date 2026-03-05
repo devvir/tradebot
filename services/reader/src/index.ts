@@ -4,6 +4,7 @@ import { connectToDatabase } from './persistence';
 import { connectToQueue } from './rabbitmq';
 import { loadPollingState, startPeriodicStateSave } from './state';
 import { runPollingLoop } from './poller';
+import { createPublisher } from './publisher';
 import service from './service';
 import type { ReaderState } from './types';
 
@@ -19,8 +20,8 @@ const state: ReaderState = {
 
 service.run(async () => {
   [ state.mongoConnection, state.broker ] = await Promise.all([
-    connectToDatabase(config.mongodbUrl, config.database),
-    connectToQueue(config.rabbitmqUrl),
+    connectToDatabase(config),
+    connectToQueue(config),
   ]);
 
   const db = state.mongoConnection.db;
@@ -28,15 +29,10 @@ service.run(async () => {
   await loadPollingState(db);
   await startPeriodicStateSave(db);
 
-  // ── Start polling loop (discovers collections dynamically on each iteration) ─
-  runPollingLoop(db, config, async (collectionName, doc) => {
-    const exchange = state.broker!.getExchange()!;
-    const message = Buffer.from(JSON.stringify(doc));
+  const publish = createPublisher(state.broker!, config);
 
-    exchange.publish(message, `message.${collectionName}`, {
-      contentType: 'application/json',
-    });
-
+  runPollingLoop(db, config, async (collection, doc) => {
+    await publish(collection, doc);
     service.onMessage();
   });
 

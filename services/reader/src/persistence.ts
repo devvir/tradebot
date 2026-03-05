@@ -1,25 +1,35 @@
 import { MongoClient, Db } from 'mongodb';
 import { logger } from '@devvir/service';
-import type { MongoDBConnection, PersistedPollingState } from './types';
+import type { Config, MongoDBConnection, PersistedPollingState } from './types';
 
 const STATE_COLLECTION = '_reader_state';
 const STATE_ID = 'reader-state';
 
-export const connectToDatabase = async (url: string, database: string): Promise<MongoDBConnection> => {
-  logger.info('Connecting to MongoDB...');
+const MAX_RETRIES = 10;
+const RETRY_DELAY_MS = 5_000;
 
-  try {
-    const client = new MongoClient(url);
+export const connectToDatabase = async (
+  { mongodbUrl: url, database }: Config,
+  maxRetries = MAX_RETRIES,
+  delayMs = RETRY_DELAY_MS,
+): Promise<MongoDBConnection> => {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const client = new MongoClient(url);
 
-    await client.connect();
+      await client.connect();
 
-    logger.info('Connected to MongoDB');
+      logger.info('Connected to MongoDB');
 
-    return { client, db: client.db(database) };
-  } catch (error) {
-    logger.error({ err: error }, 'Failed to connect to MongoDB');
-    throw error;
+      return { client, db: client.db(database) };
+    } catch (error) {
+      logger.warn({ error, attempt: i + 1, maxRetries }, 'Failed to connect to MongoDB, retrying...');
+
+      if (i < maxRetries - 1) await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
   }
+
+  throw new Error(`Failed to connect to MongoDB after ${maxRetries} attempts`);
 };
 
 /**

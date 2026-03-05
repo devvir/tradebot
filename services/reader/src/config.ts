@@ -17,6 +17,7 @@ export const loadConfig = (): Config => {
     database: process.env.READER_DATABASE || '',
     collections: collectionsEnv.split(',').map((c) => c.trim()).filter(Boolean),
     pollIntervalMs: parseInt(process.env.READER_POLL_INTERVAL_MS || '0'),
+    maxReady: parseInt(process.env.READER_MAX_READY || '0'),
   };
 
   validateConfig(config);
@@ -34,5 +35,5 @@ const validateConfig = (config: Config): void => {
   if (! config.mongodbUrl) throw new Error('MONGODB_URL is required');
   if (! config.database) throw new Error('READER_DATABASE is required');
   if (! config.rabbitmqUrl) throw new Error('RABBITMQ_URL is required');
-  if (config.pollIntervalMs <= 0) throw new Error('READER_POLL_INTERVAL_MS must be a positive number');
+  if (config.pollIntervalMs < 100) throw new Error('READER_POLL_INTERVAL_MS must be at least 100ms');
 };

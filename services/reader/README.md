@@ -10,31 +10,12 @@ Polls MongoDB collections at regular intervals and publishes discovered document
 - **State persistence** - resumes from checkpoint on restart (no duplicate publishing)
 - **Health monitoring** - reports connection and activity status
 
-## Installation
-
-```bash
-pnpm install
-```
-
-## Building
-
-```bash
-pnpm build
-```
-
 ## Development
 
 ```bash
-pnpm dev            # Watch mode with ts-node
-pnpm test           # Run test suite
-pnpm test:watch     # Watch mode tests
-pnpm test:coverage  # Coverage report
-```
-
-## Running
-
-```bash
-pnpm start
+pnpm install   # Install dependencies
+pnpm build     # Compile TypeScript
+pnpm test      # Run tests
 ```
 
 ## Configuration
@@ -47,17 +28,8 @@ pnpm start
 
 **Optional:**
 - `READER_COLLECTIONS` - Comma-separated collection names to poll (default: all non-system collections)
+- `READER_MAX_READY` - Max messages in the `reader` queue before publishing pauses (default: `1000000`; `0` disables backpressure)
 
-The service publishes to a `reader` topic exchange with routing key `message.{collection}`. Queues are declared by downstream consumers (e.g. the router in the module's compose.yml).
+The service publishes to a `reader` topic exchange with routing key `reader.<database>`, and asserts a durable `reader` queue bound to that exchange. Downstream consumers (e.g. the router in each module) consume from this queue directly.
 
-## Health Check
-
-```bash
-GET /health
-```
-
-Returns:
-- **200 OK** - Service is healthy (MongoDB and RabbitMQ connected, recent polling activity)
-- **503 Service Unavailable** - Missing connections or no activity for 60+ seconds
-
-For implementation details, see [docs/services/READER.md](../../docs/services/READER.md).
+For technical details, see [docs/services/READER.md](../../docs/services/READER.md).

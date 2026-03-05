@@ -89,9 +89,14 @@ describe('Reader Service', () => {
       expect(() => load()()).toThrow('RABBITMQ_URL is required');
     });
 
-    it('rejects non-positive READER_POLL_INTERVAL_MS', () => {
-      process.env.READER_POLL_INTERVAL_MS = '0';
-      expect(() => load()()).toThrow('READER_POLL_INTERVAL_MS must be a positive number');
+    it('rejects READER_POLL_INTERVAL_MS below 100ms', () => {
+      process.env.READER_POLL_INTERVAL_MS = '50';
+      expect(() => load()()).toThrow('READER_POLL_INTERVAL_MS must be at least 100ms');
+    });
+
+    it('accepts READER_MAX_READY of 0 to disable backpressure', () => {
+      process.env.READER_MAX_READY = '0';
+      expect(() => load()()).not.toThrow();
     });
   });
 
@@ -131,6 +136,20 @@ describe('Reader Service', () => {
     it('trims whitespace in collection names', () => {
       process.env.READER_COLLECTIONS = '  trades  ,  orderBookL2  ';
       expect(load().collections).toEqual(['trades', 'orderBookL2']);
+    });
+
+    it('defaults maxReady to 1000000', () => {
+      expect(load().maxReady).toBe(1_000_000);
+    });
+
+    it('parses READER_MAX_READY', () => {
+      process.env.READER_MAX_READY = '500000';
+      expect(load().maxReady).toBe(500_000);
+    });
+
+    it('accepts READER_MAX_READY=0 to disable backpressure', () => {
+      process.env.READER_MAX_READY = '0';
+      expect(load().maxReady).toBe(0);
     });
   });
 
