@@ -1,15 +1,12 @@
-// Pending Review
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { connectToQueue } from '../src/rabbitmq';
-import { CONSUMER_QUEUES, DLQ, DLX, EXCHANGE } from '../src/types';
+import { QUEUE, DLQ, DLX, EXCHANGE } from '../src/rabbitmq';
 import type { Config } from '../src/types';
 
-// Mock the broker module
 vi.mock('@devvir/rabbitmq', () => ({
   keepAlive: vi.fn(),
 }));
 
-// Import after mock
 import * as brokerModule from '@devvir/rabbitmq';
 
 describe('RabbitMQ integration', () => {
@@ -24,19 +21,17 @@ describe('RabbitMQ integration', () => {
   const createMockConfig = (): Config => ({
     mongodbUrl: 'mongodb://localhost:27017/test',
     rabbitmqUrl: 'amqp://localhost',
-    dbArchive: 'tradebot_archive',
-    dbCollect: 'tradebot_collect',
     prefetch: 100,
-    insertBatchSize: 100,
     flushIntervalMs: 50,
+  });
+
+  const makeMockBroker = () => ({
+    declares: vi.fn().mockResolvedValue({}),
   });
 
   describe('connectToQueue', () => {
     it('should declare a topic exchange named "writer"', async () => {
-      const mockBroker = {
-        declares: vi.fn().mockResolvedValue({}),
-      };
-
+      const mockBroker = makeMockBroker();
       vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
 
       await connectToQueue(createMockConfig());
@@ -46,11 +41,20 @@ describe('RabbitMQ integration', () => {
       expect(declareCall.exchanges[EXCHANGE].type).toBe('topic');
     });
 
-    it('should declare a fanout DLX with a dead-letter queue', async () => {
-      const mockBroker = {
-        declares: vi.fn().mockResolvedValue({}),
-      };
+    it('should declare a single catch-all queue bound to "#"', async () => {
+      const mockBroker = makeMockBroker();
+      vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
 
+      await connectToQueue(createMockConfig());
+
+      const queues = mockBroker.declares.mock.calls[0][0].exchanges[EXCHANGE].queues;
+      expect(queues[QUEUE]).toBeDefined();
+      expect(queues[QUEUE].routingKey).toBe('#');
+      expect(queues[QUEUE].deadLetterExchange).toBe(DLX);
+    });
+
+    it('should declare a fanout DLX with a dead-letter queue', async () => {
+      const mockBroker = makeMockBroker();
       vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
 
       await connectToQueue(createMockConfig());
@@ -60,51 +64,5 @@ describe('RabbitMQ integration', () => {
       expect(declareCall.exchanges[DLX].type).toBe('fanout');
       expect(declareCall.exchanges[DLX].queues[DLQ]).toBeDefined();
     });
-
-    it('should declare archive queue bound to archive.*', async () => {
-      const mockBroker = {
-        declares: vi.fn().mockResolvedValue({}),
-      };
-
-      vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
-
-      await connectToQueue(createMockConfig());
-
-      const queues = mockBroker.declares.mock.calls[0][0].exchanges[EXCHANGE].queues;
-      expect(queues[CONSUMER_QUEUES.archive]).toBeDefined();
-      expect(queues[CONSUMER_QUEUES.archive].routingKey).toBe('archive.*');
-      expect(queues[CONSUMER_QUEUES.archive].deadLetterExchange).toBe(DLX);
-    });
-
-    it('should declare collect queue bound to collect.*', async () => {
-      const mockBroker = {
-        declares: vi.fn().mockResolvedValue({}),
-      };
-
-      vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
-
-      await connectToQueue(createMockConfig());
-
-      const queues = mockBroker.declares.mock.calls[0][0].exchanges[EXCHANGE].queues;
-      expect(queues[CONSUMER_QUEUES.collect]).toBeDefined();
-      expect(queues[CONSUMER_QUEUES.collect].routingKey).toBe('collect.*');
-      expect(queues[CONSUMER_QUEUES.collect].deadLetterExchange).toBe(DLX);
-    });
-
-    it('should declare custom queue bound to custom.*.*', async () => {
-      const mockBroker = {
-        declares: vi.fn().mockResolvedValue({}),
-      };
-
-      vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
-
-      await connectToQueue(createMockConfig());
-
-      const queues = mockBroker.declares.mock.calls[0][0].exchanges[EXCHANGE].queues;
-      expect(queues[CONSUMER_QUEUES.custom]).toBeDefined();
-      expect(queues[CONSUMER_QUEUES.custom].routingKey).toBe('custom.*.*');
-      expect(queues[CONSUMER_QUEUES.custom].deadLetterExchange).toBe(DLX);
-    });
   });
 });
-

@@ -1,68 +1,29 @@
-<!-- Pending Review -->
 # Writer Service
 
-Consumes messages from a RabbitMQ topic exchange and persists them to MongoDB.
+Consumes messages from a RabbitMQ topic exchange and persists them to MongoDB. It is the single write path for all market data in the system.
 
-## Core Functionality
+## What it does
 
-- **Topic exchange routing** — declares a `writer` exchange (type: topic) with three queues bound by routing key pattern
-- **Message persistence** — stores message content as-is into MongoDB documents
-- **Binary support** — handles both JSON and binary (compressed) message payloads
-- **Idempotent writes** — silently acknowledges duplicate key errors (11000)
-- **Fault isolation** — falls back to individual inserts on batch failure, dead-letters poison messages
-- **Health monitoring** — exposes health check endpoint with activity metrics
+Messages arrive on the `writer` queue. The target database is read from the `x-writer-database` AMQP header (default: `tradebot`); the target collection is read from the `table` field in the message body. Writer batches documents by collection, flushes on a timer, and stores each with a generated `_id`.
 
-## Routing
-
-Messages are routed by publishing to the `writer` exchange with a routing key:
-
-| Routing Key | Queue | Database | Collection |
-|---|---|---|---|
-| `archive.<collection>` | `archive` | `DATABASE_ARCHIVE` | `<collection>` |
-| `collect.<collection>` | `collect` | `DATABASE_COLLECT` | `<collection>` |
-| `custom.<db>.<col>` | `custom` | `<db>` | `<col>` |
-
-Examples:
-- `archive.orderBookL2` → `tradebot_archive.orderBookL2`
-- `collect.trade` → `tradebot_collect.trade`
-- `custom.mydb.mycol` → `mydb.mycol`
-
-Messages with unresolvable routing keys are nacked without requeue and routed to the `writer.dead-letter` queue via the `writer.dlx` fanout exchange.
+Duplicate key errors are silently ACKed and trigger a partition slot rotation (see docs for details). Messages that fail for other reasons twice are dead-lettered to `writer.dead-letter` for inspection.
 
 ## Configuration
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `MONGODB_URL` | Yes | — | MongoDB connection string |
-| `RABBITMQ_URL` | Yes | — | RabbitMQ connection string |
-| `WRITER_PREFETCH` | No | `1000` | RabbitMQ prefetch window (max unacked messages per consumer) |
-| `WRITER_BATCH_SIZE` | No | `100` | Max documents per collection before flushing to MongoDB |
-| `WRITER_FLUSH_INTERVAL_MS` | No | `50` | Max ms to hold a partial batch before flushing |
-| `DATABASE_ARCHIVE` | Yes | `tradebot_archive` | Database for `archive.*` messages |
-| `DATABASE_COLLECT` | Yes | `tradebot_collect` | Database for `collect.*` messages |
+| Variable | Default | Description |
+|---|---|---|
+| `RABBITMQ_URL` | `amqp://guest:guest@rabbitmq:5672` | RabbitMQ connection string |
+| `MONGODB_URL` | `mongodb://root:root@mongodb:27017?authSource=admin` | MongoDB connection string |
+| `WRITER_PREFETCH` | `500` | Max unacked messages per consumer |
+| `WRITER_FLUSH_INTERVAL_MS` | `50` | Max ms to hold a partial batch |
+| `WRITER_REPLICAS` | `1` | Number of writer container instances |
 
-## Scripts
+## Development
 
 ```bash
-pnpm build           # Compile TypeScript
-pnpm start           # Run compiled service
-pnpm dev             # Watch mode with ts-node
-pnpm test            # Run test suite
-pnpm test:watch      # Watch mode tests
-pnpm test:coverage   # Coverage report
+pnpm install   # Install dependencies
+pnpm build     # Compile TypeScript
+pnpm test      # Run tests
 ```
 
-## Health Check
-
-```bash
-curl http://writer:3000/health
-```
-
-- **200 OK** — MongoDB and RabbitMQ connected, recent activity
-- **503 Service Unavailable** — missing connections or no activity for 60+ seconds
-
-Response includes:
-- `messagesProcessed` — total messages acknowledged
-- `lastProcessedTime` — milliseconds since last processed message
-
-For detailed technical documentation, see [docs/services/WRITER.md](../../docs/services/WRITER.md).
+For technical details, see [docs/services/WRITER.md](../../docs/services/WRITER.md).

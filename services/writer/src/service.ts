@@ -9,10 +9,12 @@ const HEALTH_INACTIVITY_MS = 60_000;
 interface WriterResources {
   mongo: MongoClient;
   broker: Broker;
+  drain: () => Promise<void>;
 }
 
 let mongo: MongoClient | null = null;
 let broker: Broker | null = null;
+let drain: (() => Promise<void>) | null = null;
 
 let messagesProcessed = 0;
 let lastProcessedTime = Date.now();
@@ -43,6 +45,7 @@ const run = (flow: () => Promise<WriterResources>): void => {
       const resources = await flow();
       mongo = resources.mongo;
       broker = resources.broker;
+      drain = resources.drain;
     },
 
     onPing: async () => ({
@@ -58,6 +61,7 @@ const run = (flow: () => Promise<WriterResources>): void => {
     },
 
     onShutdown: async () => {
+      if (drain) await drain();
       if (broker) await broker.disconnect();
       if (mongo) await mongo.close();
     },

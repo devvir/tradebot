@@ -1,6 +1,5 @@
-// Pending Review
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { persistBatch, resolveTarget, parseDocument } from '../src/persistence';
+import { persistBatch, parseDocument } from '../src/persistence';
 import { MongoError } from 'mongodb';
 import type { Config } from '../src/types';
 import type { Batch } from '../src/types';
@@ -9,18 +8,21 @@ import type { ConsumerEvent } from '@devvir/rabbitmq';
 const defaultConfig: Config = {
   mongodbUrl: 'mongodb://root:root@mongodb:27017/tradebot?authSource=admin',
   rabbitmqUrl: 'amqp://guest:guest@rabbitmq:5672',
-  dbArchive: 'tradebot_archive',
-  dbCollect: 'tradebot_collect',
   prefetch: 100,
-  insertBatchSize: 1,
   flushIntervalMs: 60_000,
 };
 
-/** Drain all pending microtasks so async operations complete. */
-const drain = () => new Promise<void>(resolve => setImmediate(resolve));
+const DEFAULT_HEADERS = {
+  'x-bitmex-published-at': '2026-03-04T01:51:41.208Z',
+};
 
 /** Build a ConsumerEvent for testing. */
-const makeEvent = (routingKey: string, content: unknown, redelivered = false): ConsumerEvent => ({
+const createDelivery = (
+  routingKey: string,
+  content: unknown,
+  redelivered = false,
+  headers: Record<string, string> = DEFAULT_HEADERS,
+): ConsumerEvent => ({
   metadata: {
     routingKey,
     redelivered,
@@ -28,6 +30,7 @@ const makeEvent = (routingKey: string, content: unknown, redelivered = false): C
     deliveryTag: 1,
     raw: {} as any,
     properties: {} as any,
+    headers,
   },
   ack: vi.fn(),
   nack: vi.fn(),
@@ -36,82 +39,70 @@ const makeEvent = (routingKey: string, content: unknown, redelivered = false): C
       ? Buffer.from(content)
       : Buffer.from(JSON.stringify(content)),
     fields: { routingKey, redelivered } as any,
-    properties: { headers: {} } as any,
+    properties: { headers } as any,
   } as any,
 });
 
-describe('resolveTarget', () => {
-  it('should resolve archive routing key to dbArchive', () => {
-    const target = resolveTarget('archive.orderBookL2', defaultConfig);
-    expect(target).toEqual({ database: 'tradebot_archive', collection: 'orderBookL2' });
-  });
-
-  it('should resolve collect routing key to dbCollect', () => {
-    const target = resolveTarget('collect.trade', defaultConfig);
-    expect(target).toEqual({ database: 'tradebot_collect', collection: 'trade' });
-  });
-
-  it('should resolve custom routing key to explicit database and collection', () => {
-    const target = resolveTarget('custom.mydb.mycol', defaultConfig);
-    expect(target).toEqual({ database: 'mydb', collection: 'mycol' });
-  });
-
-  it('should use configured dbArchive value', () => {
-    const config = { ...defaultConfig, dbArchive: 'custom_archive' };
-    const target = resolveTarget('archive.quote', config);
-    expect(target).toEqual({ database: 'custom_archive', collection: 'quote' });
-  });
-
-  it('should use configured dbCollect value', () => {
-    const config = { ...defaultConfig, dbCollect: 'custom_collect' };
-    const target = resolveTarget('collect.instrument', config);
-    expect(target).toEqual({ database: 'custom_collect', collection: 'instrument' });
-  });
-
-  it('should return null for unknown prefix', () => {
-    expect(resolveTarget('unknown.trade', defaultConfig)).toBeNull();
-  });
-
-  it('should return null for routing key with no dots', () => {
-    expect(resolveTarget('archive', defaultConfig)).toBeNull();
-  });
-
-  it('should return null for empty routing key', () => {
-    expect(resolveTarget('', defaultConfig)).toBeNull();
-  });
-
-  it('should use first segment after prefix for archive regardless of extra dots', () => {
-    expect(resolveTarget('archive.a.b', defaultConfig)).toEqual({ database: 'tradebot_archive', collection: 'a' });
-  });
-
-  it('should use first segment after prefix for collect regardless of extra dots', () => {
-    expect(resolveTarget('collect.a.b', defaultConfig)).toEqual({ database: 'tradebot_collect', collection: 'a' });
-  });
-
-  it('should require at least two segments for custom', () => {
-    expect(resolveTarget('custom.onlyone', defaultConfig)).toBeNull();
-    expect(resolveTarget('custom.a.b.c', defaultConfig)).toEqual({ database: 'a', collection: 'b' });
-  });
-});
-
 describe('parseDocument', () => {
-  it('should parse JSON content from event', () => {
-    const event = makeEvent('archive.trade', { price: 100 });
-    const doc = parseDocument(event);
-    expect(doc).toEqual({ price: 100 });
+  it('generates numeric _id and strips table/action before storing', () => {
+    const delivery = createDelivery('archive.trade', { table: 'trade', action: 'insert', price: 100 });
+    const { document, collection } = parseDocument(delivery);
+    expect(typeof document._id).toBe('number');
+    expect(collection).toBe('trade');
+    expect(document.price).toBe(100);
+    expect(document.table).toBeUndefined();
+    expect(document.action).toBeUndefined();
   });
 
-  it('should throw on malformed JSON', () => {
-    const event = makeEvent('archive.trade', '{bad json}');
-    expect(() => parseDocument(event)).toThrow();
+  it('uses x-bitmex-published-at header for _id timestamp when present', () => {
+    const delivery = createDelivery('archive.trade', { table: 'trade', action: 'insert' }, false, {
+      'x-bitmex-published-at': '2026-03-04T00:00:00.000Z',
+    });
+    const { document } = parseDocument(delivery);
+    expect(typeof document._id).toBe('number');
   });
 
-  it('should revive serialized Buffers back to Buffer instances', () => {
-    const serializedBuffer = { type: 'Buffer', data: [1, 2, 3] };
-    const event = makeEvent('archive.trade', { payload: serializedBuffer });
-    const doc = parseDocument(event);
-    expect(Buffer.isBuffer(doc.payload)).toBe(true);
-    expect(doc.payload).toEqual(Buffer.from([1, 2, 3]));
+  it('falls back to current time when x-bitmex-published-at header is absent', () => {
+    const delivery = createDelivery('archive.trade', { table: 'trade', action: 'insert' }, false, {});
+    const { document } = parseDocument(delivery);
+    expect(typeof document._id).toBe('number');
+  });
+
+  it('preserves existing doc._id and skips generation', () => {
+    const delivery = createDelivery('archive.trade', { table: 'trade', action: 'insert', _id: 99999 });
+    const { document } = parseDocument(delivery);
+    expect(document._id).toBe(99999);
+  });
+
+  it('throws on malformed JSON', () => {
+    const delivery = createDelivery('archive.trade', '{bad json}');
+    expect(() => parseDocument(delivery)).toThrow();
+  });
+
+  it('throws if doc.table is missing', () => {
+    const delivery = createDelivery('archive.trade', { action: 'insert', price: 100 });
+    expect(() => parseDocument(delivery)).toThrow(/doc\.table/);
+  });
+
+  it('throws if doc.action is missing and no _id', () => {
+    const delivery = createDelivery('archive.trade', { table: 'trade', price: 100 });
+    expect(() => parseDocument(delivery)).toThrow(/doc\.action/);
+  });
+
+  it('throws if doc.action is not a valid BitMEX action', () => {
+    const delivery = createDelivery('archive.trade', { table: 'trade', action: 'badaction' });
+    expect(() => parseDocument(delivery)).toThrow(/doc\.action/);
+  });
+
+  it('revives serialized Buffers back to Buffer instances', () => {
+    const delivery = createDelivery('archive.trade', {
+      table: 'trade',
+      action: 'insert',
+      payload: { type: 'Buffer', data: [1, 2, 3] },
+    });
+    const { document } = parseDocument(delivery);
+    expect(Buffer.isBuffer(document.payload)).toBe(true);
+    expect(document.payload).toEqual(Buffer.from([1, 2, 3]));
   });
 });
 
@@ -143,7 +134,7 @@ describe('persistBatch', () => {
     database,
     collection,
     entries: entries.map(e => ({
-      event: makeEvent(e.routingKey, e.doc, e.redelivered ?? false),
+      delivery: createDelivery(e.routingKey, e.doc, e.redelivered ?? false),
       document: e.doc,
     })),
   });
@@ -163,8 +154,8 @@ describe('persistBatch', () => {
       [{ price: 100 }, { price: 200 }],
       { ordered: false },
     );
-    expect(batch.entries[0].event.ack).toHaveBeenCalled();
-    expect(batch.entries[1].event.ack).toHaveBeenCalled();
+    expect(batch.entries[0].delivery.ack).toHaveBeenCalled();
+    expect(batch.entries[1].delivery.ack).toHaveBeenCalled();
     expect(onStoreMsg).toHaveBeenCalledTimes(2);
   });
 
@@ -192,7 +183,7 @@ describe('persistBatch', () => {
 
     // insertOne fallback (from error handler) succeeds by default
     expect(mockCollection.insertOne).toHaveBeenCalledWith({ v: 1 });
-    expect(batch.entries[0].event.ack).toHaveBeenCalled();
+    expect(batch.entries[0].delivery.ack).toHaveBeenCalled();
   });
 
   it('should requeue first-attempt messages when persistence fails entirely', async () => {
@@ -207,7 +198,7 @@ describe('persistBatch', () => {
 
     await persistBatch(mockMongo, batch, 'writer.collect', onStoreMsg);
 
-    expect(batch.entries[0].event.nack).toHaveBeenCalledWith(true);
+    expect(batch.entries[0].delivery.nack).toHaveBeenCalledWith(true);
     expect(onStoreMsg).not.toHaveBeenCalled();
   });
 
@@ -223,7 +214,7 @@ describe('persistBatch', () => {
 
     await persistBatch(mockMongo, batch, 'writer.collect', onStoreMsg);
 
-    expect(batch.entries[0].event.nack).toHaveBeenCalledWith(false);
+    expect(batch.entries[0].delivery.nack).toHaveBeenCalledWith(false);
     expect(onStoreMsg).not.toHaveBeenCalled();
   });
 
@@ -238,7 +229,7 @@ describe('persistBatch', () => {
 
     await persistBatch(mockMongo, batch, 'writer.archive', onStoreMsg);
 
-    expect(batch.entries[0].event.ack).toHaveBeenCalled();
-    expect(batch.entries[0].event.nack).not.toHaveBeenCalled();
+    expect(batch.entries[0].delivery.ack).toHaveBeenCalled();
+    expect(batch.entries[0].delivery.nack).not.toHaveBeenCalled();
   });
 });

@@ -1,20 +1,83 @@
 import { MongoClient, Document } from 'mongodb';
 import { logger } from '@devvir/service';
 import type { ConsumerEvent } from '@devvir/rabbitmq';
-import type { Config, WriteTarget, Batch, ErrorContext } from './types';
+import type { Config, Batch, ErrorContext } from './types';
 import { handleBatchError } from './errors';
+import { generateId, EPOCH_2000_MS, ACTION_ID, type BitmexAction } from './documentId';
 
-// ── Constants ────────────────────────────────────────────────────────────────
-
-const SLOW_INSERT_MS = 500;
 const THROUGHPUT_LOG_INTERVAL = 5_000;
-
-// ── Throughput tracking ──────────────────────────────────────────────────────
 
 let totalInsertMs = 0;
 let totalInserted = 0;
 
-// ── Public API ───────────────────────────────────────────────────────────────
+/**
+ * Creates a stateful batch ingestor for a single queue.
+ * Accumulates documents into per-collection batches and flushes via persistBatch.
+ * Throws on invalid message headers or body — caller should nack.
+ */
+export interface BatchHandler {
+  handleMessage: (delivery: ConsumerEvent, database: string) => void;
+  drainAll: () => Promise<void>;
+}
+
+export const createBatchHandler = (
+  mongo: MongoClient,
+  config: Config,
+  queueName: string,
+  onStoreMsg: () => void,
+): BatchHandler => {
+  const { flushIntervalMs } = config;
+  const pending = new Map<string, Batch>();
+  let flushTimer: NodeJS.Timeout | null = null;
+  const inFlight = new Set<Promise<void>>();
+
+  const flush = (key: string): void => {
+    const batch = pending.get(key);
+    if (! batch || batch.entries.length === 0) return;
+
+    const snapshot: Batch = {
+      database: batch.database,
+      collection: batch.collection,
+      entries: batch.entries.splice(0),
+    };
+
+    pending.delete(key);
+
+    const promise = persistBatch(mongo, snapshot, queueName, onStoreMsg)
+      .catch(err => logger.error({ err, queueName }, 'Unexpected persistBatch error'));
+    inFlight.add(promise);
+    promise.finally(() => inFlight.delete(promise));
+  };
+
+  const scheduleFlush = (): void => {
+    if (flushTimer) return;
+
+    flushTimer = setTimeout(() => {
+      flushTimer = null;
+      for (const key of Array.from(pending.keys())) flush(key);
+    }, flushIntervalMs);
+  };
+
+  const drainAll = async (): Promise<void> => {
+    if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+    for (const key of Array.from(pending.keys())) flush(key);
+    await Promise.all(Array.from(inFlight));
+  };
+
+  const handleMessage = (delivery: ConsumerEvent, database: string): void => {
+    const { document, collection } = parseDocument(delivery);
+    const key = `${database}|${collection}`;
+
+    if (! pending.has(key))
+      pending.set(key, { entries: [], database, collection });
+
+    const batch = pending.get(key)!;
+    batch.entries.push({ delivery, document });
+    scheduleFlush();
+  };
+
+  return { handleMessage, drainAll };
+};
 
 /**
  * Flush a batch of documents to MongoDB via insertMany.
@@ -37,59 +100,70 @@ export const persistBatch = async (
     totalInsertMs += insertMs;
     totalInserted += batch.entries.length;
 
-    if (insertMs > SLOW_INSERT_MS) {
-      logger.debug({ insertMs, collection: batch.collection, count: batch.entries.length, queue: queueName }, 'Slow insertMany');
-    }
-
     if (totalInserted > 0 && totalInserted % THROUGHPUT_LOG_INTERVAL < batch.entries.length) {
-      logger.debug({ inserted: totalInserted, queue: queueName, avgMs: (totalInsertMs / totalInserted).toFixed(2) }, 'Writer throughput');
+      const averageMs = (totalInsertMs / totalInserted).toFixed(2);
+      logger.debug({ totalInserted, queueName, averageMs }, 'Writer throughput');
     }
 
     for (const entry of batch.entries) {
-      entry.event.ack();
+      entry.delivery.ack();
       onStoreMsg();
     }
-  } catch (error) {
-    const insertMs = Date.now() - t0;
+  } catch (err) {
+    const errMsg = (err as Error).message ?? err;
     const ctx: ErrorContext = { collection: batch.collection, queue: queueName };
-    logger.error({ err: error, insertMs, collection: batch.collection, count: batch.entries.length, queue: queueName }, 'insertMany failed');
-    await handleBatchError(error, batch.entries, collection, onStoreMsg, ctx);
+    logger.error({ err: errMsg, count: batch.entries.length, queueName }, 'Batch insert failed');
+
+    await handleBatchError(err, batch.entries, collection, onStoreMsg, ctx);
   }
 };
 
 /**
  * Parse raw message content into a MongoDB document.
- * Revives JSON-serialized Buffers so MongoDB can store them as BSON Binary.
- */
-export const parseDocument = (event: ConsumerEvent): Document => {
-  return JSON.parse(event.original.content.toString(), bufferReviver) as Document;
-};
-
-/**
- * Resolve the target database and collection from an AMQP routing key.
  *
- * - archive.<collection>           → { database: config.dbArchive, collection }
- * - collect.<collection>           → { database: config.dbCollect, collection }
- * - custom.<database>.<collection> → { database, collection }
+ * - Reads doc.table (required) to determine the target collection.
+ * - If doc._id is already present, it is used as-is (e.g. document originated from DB).
+ * - Otherwise, builds _id from doc.action (required) and the x-bitmex-published-at header
+ *   (falls back to current time if absent).
+ * - Deletes doc.table and doc.action before returning — both are redundant in storage
+ *   (table = collection name, action = last 2 bits of _id).
+ *
+ * Throws (causing the caller to nack) if any required field is missing or invalid.
  */
-export const resolveTarget = (routingKey: string, config: Config): WriteTarget | null => {
-  const parts = routingKey.split('.');
+export const parseDocument = (delivery: ConsumerEvent): { document: Document; collection: string } => {
+  const doc = JSON.parse(delivery.original.content.toString(), bufferReviver) as Document;
 
-  if (parts.length < 2) return null;
+  const table = doc.table;
+  if (typeof table !== 'string' || table === '')
+    throw new Error(`Missing or invalid doc.table: ${table}`);
 
-  const prefix = parts[0];
+  if (doc._id === undefined) {
+    const action = doc.action;
+    if (typeof action !== 'string' || ! (action in ACTION_ID))
+      throw new Error(`Missing or invalid doc.action: ${action}`);
 
-  if (prefix === 'archive') return { database: config.dbArchive, collection: parts[1] };
-  if (prefix === 'collect') return { database: config.dbCollect, collection: parts[1] };
-  if (prefix === 'custom' && parts.length >= 3) return { database: parts[1], collection: parts[2] };
+    const headers  = delivery.metadata.headers ?? {};
+    const rawTs    = headers['x-bitmex-published-at'];
+    const tsMs     = (typeof rawTs === 'string' ? new Date(rawTs).getTime() : Date.now()) - EPOCH_2000_MS;
 
-  return null;
+    doc._id = generateId(table, action as BitmexAction, tsMs);
+  }
+
+  delete doc.table;
+  delete doc.action;
+
+  return { document: doc, collection: table };
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 const bufferReviver = (_key: string, value: unknown): unknown => {
-  if (value && typeof value === 'object' && (value as any).type === 'Buffer' && Array.isArray((value as any).data)) {
+  if (
+    value &&
+    typeof value === 'object' &&
+    (value as any).type === 'Buffer' &&
+    Array.isArray((value as any).data)
+  ) {
     return Buffer.from((value as any).data);
   }
 

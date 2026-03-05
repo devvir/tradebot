@@ -1,4 +1,3 @@
-// Pending Review
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { handleBatchError } from '../src/errors';
 import { MongoBulkWriteError, MongoError } from 'mongodb';
@@ -13,16 +12,27 @@ vi.mock('@devvir/service', () => ({
   },
 }));
 
-/** Build a minimal BatchEntry with a routing key and redelivered flag. */
-const entry = (routingKey: string, doc: Record<string, unknown>, redelivered = false): BatchEntry => ({
-  event: {
-    metadata: { routingKey, redelivered, exchange: 'writer', deliveryTag: 1, raw: {} as any, properties: {} as any },
+vi.mock('../src/documentId', () => ({
+  moveToNextSlot: vi.fn(),
+}));
+
+import * as documentId from '../src/documentId';
+
+/** Build a minimal BatchEntry with a routing key, redelivered flag, and optional headers. */
+const entry = (
+  routingKey: string,
+  doc: Record<string, unknown>,
+  redelivered = false,
+  headers?: Record<string, unknown>,
+): BatchEntry => ({
+  delivery: {
+    metadata: { routingKey, redelivered, exchange: 'writer', deliveryTag: 1, raw: {} as any, properties: {} as any, headers },
     ack: vi.fn(),
     nack: vi.fn(),
     original: {
       content: Buffer.from(JSON.stringify(doc)),
       fields: { routingKey, redelivered } as any,
-      properties: { headers: {} } as any,
+      properties: { headers: headers ?? {} } as any,
     } as any,
   },
   document: doc,
@@ -77,12 +87,12 @@ describe('handleBatchError', () => {
       await handleBatchError(error, entries, mockCollection, onStoreMsg, ctx);
 
       // Indices 0 and 2 were inserted successfully → ACK
-      expect(entries[0].event.ack).toHaveBeenCalled();
-      expect(entries[2].event.ack).toHaveBeenCalled();
+      expect(entries[0].delivery.ack).toHaveBeenCalled();
+      expect(entries[2].delivery.ack).toHaveBeenCalled();
       expect(onStoreMsg).toHaveBeenCalledTimes(2);
     });
 
-    it('should ACK duplicate key writeErrors (11000)', async () => {
+    it('should ACK duplicate key writeErrors (slot collision)', async () => {
       const entries = [
         entry('collect.trade', { _id: 'dup1' }),
         entry('collect.trade', { _id: 'dup2' }),
@@ -95,11 +105,27 @@ describe('handleBatchError', () => {
 
       await handleBatchError(error, entries, mockCollection, onStoreMsg, ctx);
 
-      expect(entries[0].event.ack).toHaveBeenCalled();
-      expect(entries[1].event.ack).toHaveBeenCalled();
-      expect(entries[0].event.nack).not.toHaveBeenCalled();
-      expect(entries[1].event.nack).not.toHaveBeenCalled();
+      expect(entries[0].delivery.ack).toHaveBeenCalled();
+      expect(entries[1].delivery.ack).toHaveBeenCalled();
       expect(onStoreMsg).toHaveBeenCalledTimes(2);
+    });
+
+    it('should call moveToNextSlot when duplicate key errors are present', async () => {
+      const entries = [entry('collect.trade', { _id: 'dup1' })];
+      const error = bulkError([{ index: 0, code: 11000 }]);
+
+      await handleBatchError(error, entries, mockCollection, onStoreMsg, ctx);
+
+      expect(documentId.moveToNextSlot).toHaveBeenCalledOnce();
+    });
+
+    it('should not call moveToNextSlot when no duplicate key errors', async () => {
+      const entries = [entry('collect.trade', { v: 1 })];
+      const error = bulkError([{ index: 0, code: 999 }]);
+
+      await handleBatchError(error, entries, mockCollection, onStoreMsg, ctx);
+
+      expect(documentId.moveToNextSlot).not.toHaveBeenCalled();
     });
 
     it('should NACK with requeue on first-attempt failures', async () => {
@@ -111,8 +137,8 @@ describe('handleBatchError', () => {
 
       await handleBatchError(error, entries, mockCollection, onStoreMsg, ctx);
 
-      expect(entries[0].event.nack).toHaveBeenCalledWith(true);
-      expect(entries[0].event.ack).not.toHaveBeenCalled();
+      expect(entries[0].delivery.nack).toHaveBeenCalledWith(true);
+      expect(entries[0].delivery.ack).not.toHaveBeenCalled();
     });
 
     it('should dead-letter redelivered messages that still fail', async () => {
@@ -125,8 +151,8 @@ describe('handleBatchError', () => {
       await handleBatchError(error, entries, mockCollection, onStoreMsg, ctx);
 
       // nack without requeue → dead-lettered
-      expect(entries[0].event.nack).toHaveBeenCalledWith(false);
-      expect(entries[0].event.ack).not.toHaveBeenCalled();
+      expect(entries[0].delivery.nack).toHaveBeenCalledWith(false);
+      expect(entries[0].delivery.ack).not.toHaveBeenCalled();
     });
 
     it('should handle mixed success, duplicate, and failure in one batch', async () => {
@@ -146,15 +172,15 @@ describe('handleBatchError', () => {
       await handleBatchError(error, entries, mockCollection, onStoreMsg, ctx);
 
       // index 0: not in writeErrors → ACK
-      expect(entries[0].event.ack).toHaveBeenCalled();
-      // index 1: duplicate → ACK
-      expect(entries[1].event.ack).toHaveBeenCalled();
+      expect(entries[0].delivery.ack).toHaveBeenCalled();
+      // index 1: duplicate → ACK (slot collision)
+      expect(entries[1].delivery.ack).toHaveBeenCalled();
       // index 2: redelivered + fail → dead-letter (nack without requeue)
-      expect(entries[2].event.nack).toHaveBeenCalledWith(false);
+      expect(entries[2].delivery.nack).toHaveBeenCalledWith(false);
       // index 3: first attempt + fail → requeue
-      expect(entries[3].event.nack).toHaveBeenCalledWith(true);
+      expect(entries[3].delivery.nack).toHaveBeenCalledWith(true);
 
-      expect(onStoreMsg).toHaveBeenCalledTimes(2); // indices 0 and 1
+      expect(onStoreMsg).toHaveBeenCalledTimes(2); // index 0 and 1
     });
   });
 
@@ -174,12 +200,12 @@ describe('handleBatchError', () => {
       expect(mockCollection.insertOne).toHaveBeenCalledTimes(2);
       expect(mockCollection.insertOne).toHaveBeenCalledWith({ v: 1 });
       expect(mockCollection.insertOne).toHaveBeenCalledWith({ v: 2 });
-      expect(entries[0].event.ack).toHaveBeenCalled();
-      expect(entries[1].event.ack).toHaveBeenCalled();
+      expect(entries[0].delivery.ack).toHaveBeenCalled();
+      expect(entries[1].delivery.ack).toHaveBeenCalled();
       expect(onStoreMsg).toHaveBeenCalledTimes(2);
     });
 
-    it('should ACK duplicates found during insertOne fallback', async () => {
+    it('should ACK duplicates during insertOne fallback (slot collision)', async () => {
       const entries = [entry('collect.trade', { _id: 'dup' })];
 
       const dupError = Object.assign(Object.create(MongoError.prototype), { code: 11000 });
@@ -189,8 +215,22 @@ describe('handleBatchError', () => {
 
       await handleBatchError(error, entries, mockCollection, onStoreMsg, ctx);
 
-      expect(entries[0].event.ack).toHaveBeenCalled();
+      expect(entries[0].delivery.ack).toHaveBeenCalled();
+      expect(entries[0].delivery.nack).not.toHaveBeenCalled();
       expect(onStoreMsg).toHaveBeenCalledTimes(1);
+    });
+
+    it('should call moveToNextSlot when duplicate key errors during insertOne fallback', async () => {
+      const entries = [entry('collect.trade', { _id: 'dup' })];
+
+      const dupError = Object.assign(Object.create(MongoError.prototype), { code: 11000 });
+      mockCollection.insertOne.mockRejectedValueOnce(dupError);
+
+      const error = new Error('Connection timeout');
+
+      await handleBatchError(error, entries, mockCollection, onStoreMsg, ctx);
+
+      expect(documentId.moveToNextSlot).toHaveBeenCalledOnce();
     });
 
     it('should requeue first-attempt failures during insertOne fallback', async () => {
@@ -203,8 +243,8 @@ describe('handleBatchError', () => {
 
       await handleBatchError(error, entries, mockCollection, onStoreMsg, ctx);
 
-      expect(entries[0].event.nack).toHaveBeenCalledWith(true);
-      expect(entries[0].event.ack).not.toHaveBeenCalled();
+      expect(entries[0].delivery.nack).toHaveBeenCalledWith(true);
+      expect(entries[0].delivery.ack).not.toHaveBeenCalled();
     });
 
     it('should dead-letter redelivered failures during insertOne fallback', async () => {
@@ -218,8 +258,8 @@ describe('handleBatchError', () => {
       await handleBatchError(error, entries, mockCollection, onStoreMsg, ctx);
 
       // nack without requeue → dead-lettered
-      expect(entries[0].event.nack).toHaveBeenCalledWith(false);
-      expect(entries[0].event.ack).not.toHaveBeenCalled();
+      expect(entries[0].delivery.nack).toHaveBeenCalledWith(false);
+      expect(entries[0].delivery.ack).not.toHaveBeenCalled();
     });
 
     it('should isolate the bad message when only one in the batch fails', async () => {
@@ -240,10 +280,10 @@ describe('handleBatchError', () => {
       await handleBatchError(error, entries, mockCollection, onStoreMsg, ctx);
 
       // v: 1 and v: 3 succeed → ACK
-      expect(entries[0].event.ack).toHaveBeenCalled();
-      expect(entries[2].event.ack).toHaveBeenCalled();
+      expect(entries[0].delivery.ack).toHaveBeenCalled();
+      expect(entries[2].delivery.ack).toHaveBeenCalled();
       // v: 'poison' first attempt → requeue
-      expect(entries[1].event.nack).toHaveBeenCalledWith(true);
+      expect(entries[1].delivery.nack).toHaveBeenCalledWith(true);
       expect(onStoreMsg).toHaveBeenCalledTimes(2);
     });
 
@@ -256,7 +296,7 @@ describe('handleBatchError', () => {
 
       await handleBatchError(error, entries, mockCollection, onStoreMsg, ctx);
 
-      expect(entries[0].event.nack).toHaveBeenCalledWith(false);
+      expect(entries[0].delivery.nack).toHaveBeenCalledWith(false);
     });
   });
 });

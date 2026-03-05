@@ -11,7 +11,7 @@ service.run(async () => {
     connectToQueue(config.rabbitmqUrl),
   ]);
 
-  await startConsuming(broker, mongo, config, service.onMessage);
+  const drain = await startConsuming(broker, mongo, config, service.onMessage);
 
-  return { mongo, broker };
+  return { mongo, broker, drain };
 });
