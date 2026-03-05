@@ -1,44 +1,48 @@
-# Archivist Module
+# Packer Module
 #
 # Data flow:
-#   Broadcast   → topic:broadcast  (routingKey = table.action.symbol)
-#   archive-in  → topic:codec.in   (injects x-codec-strategy=encode, x-writer-database=tradebot_archive)
-#   codec       → topic:codec.out  (encodes and compresses)
-#   archive-out → topic:writer     (native E2E binding, no transformation)
-#   writer      → MongoDB tradebot_archive
+#   Reader   → queue:reader.<database>  (reader asserts its own durable queue via default exchange)
+#   pack-in  → topic:codec.in           (consumes queue:reader.<database>, injects headers)
+#   codec    → topic:codec.out          (encodes and compresses)
+#   pack-out → topic:writer             (native E2E binding, no transformation)
+#   writer   → MongoDB tradebot_packed
 #
-# archive-in (router):
-#   Consumes all messages from broadcast topic exchange,
-#   injects x-codec-strategy=encode and x-writer-database=tradebot_archive headers,
+# pack-in (router):
+#   Consumes from queue:reader.<database> (asserted by the reader service).
+#   Injects x-codec-strategy=encode and x-writer-database=tradebot_packed headers,
 #   and publishes to codec.in topic exchange.
 #
 # codec:
 #   Encodes and compresses messages, republishes to codec.out.
 #
-# archive-out (pipe):
+# pack-out (pipe):
 #   Wires codec.out topic exchange → writer topic exchange (native E2E binding).
 #
 # writer:
 #   Consumes from writer queue, stores to database specified by x-writer-database header.
 
 include:
-  - path: ../../services/broadcast/docker/extended.yml
   - path: ../../services/writer/docker/extended.yml
   - path: ../../services/codec/docker/compose.yml
 
 services:
-  archive-in:
+  packer:
+    extends:
+      file: ../../services/reader/docker/compose.yml
+      service: reader
+
+  pack:
     extends:
       file: ../../services/router/docker/compose.yml
       service: router
     environment:
       ROUTER_RULES: >-
-        archive.in@topic:broadcast > @topic:codec.in(
+        reader.${READER_DATABASE} > @topic:codec.in(
           header:x-codec-strategy=encode,
-          header:x-writer-database=tradebot_archive
+          header:x-writer-database=tradebot_packed
         )
 
-  archive-out:
+  pack-out:
     extends:
       file: ../../services/pipe/docker/compose.yml
       service: pipe

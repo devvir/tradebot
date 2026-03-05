@@ -1,35 +1,31 @@
 # Infra Module
 
-Provides essential infrastructure services: RabbitMQ (message queue), MongoDB (persistent storage), and Redis (in-memory cache).
+Shared infrastructure services: RabbitMQ (message broker), MongoDB (persistent storage), and Redis (cache).
 
-Use this module to launch all three services independently, or include it as part of your deployment (e.g., the archivist module uses these services).
+Start this module independently to bring up infrastructure without application services. All other modules include these services automatically via their own compose files, so this module is only needed when you want infrastructure alone.
 
 ## Services
 
-### RabbitMQ
-Message queue broker for pub/sub communication between services.
-- Durable exchanges and queues
-- Topic-based routing
-- Management UI accessible at `http://localhost:${RABBITMQ_MGMT_PORT}`
+- **RabbitMQ** — AMQP message broker; management UI at `http://localhost:${RABBITMQ_MGMT_PORT}`
+- **MongoDB** — Document store
+- **Redis** — In-memory cache
 
-### Launch all three services:
+## Usage
 
 ```bash
-tb up infra
+tb up infra          # Start all infrastructure services
+tb up infra --build  # Rebuild and start
+tb down infra        # Stop all infrastructure services
+tb logs infra        # Stream logs
+tb ps infra          # Check service status
 ```
 
-### Launch only with archivist module:
+## Configuration
 
-```bash
-tb up archivist
-```
+Copy `.env.example` to `.env` and customize.
 
-Archivist module already includes rabbitmq, mongodb, and redis, so you don't need to launch infra separately.
+See each service's documentation for the full list of available environment variables:
 
-## ⚠️ Security
-
-**CRITICAL for production**:
-1. Change default credentials for all services
-2. Set `REDIS_PASS` to a strong value
-3. Use environment-specific `.env` files
-4. Never commit real credentials to version control
+- [RabbitMQ](../../services/rabbitmq/README.md)
+- [MongoDB](../../services/mongodb/README.md)
+- [Redis](../../services/redis/README.md)

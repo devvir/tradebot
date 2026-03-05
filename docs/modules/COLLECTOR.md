@@ -1,57 +1,31 @@
-# Collector Module
+# Collector Module — Technical Reference
 
 ## Overview
 
-The Collector module subscribes to the Broadcast service's topic exchange and stores all BitMEX market data in MongoDB via the Writer service.
+The Collector module subscribes to BitMEX WebSocket data via Broadcast and stores every incoming message in MongoDB. There is no transformation — messages are stored as-is with a deduplicating `_id` added by Writer.
 
 ## Pipeline
 
 ```
-Broadcast → topic:broadcast → Router → topic:codec.in → Codec → topic:codec.out → Router → topic:writer → Writer → MongoDB
+Broadcast → topic:broadcast → collect (Router) → topic:writer → Writer → MongoDB tradebot_collect
 ```
 
-1. **Broadcast** subscribes to BitMEX WebSocket channels and publishes all messages into a `topic:broadcast` exchange, with routing key `message.<table>` (e.g., `message.trade`).
+1. **Broadcast** connects to the BitMEX WebSocket and publishes each incoming message to `topic:broadcast` with routing key `table.action.symbol` (e.g. `trade.insert.XBTUSD`).
 
-2. **Router** (collect-in) transforms the routing key prefix from `message` to `passthru` and republishes to `codec.in`.
+2. **collect** (Router) consumes all messages from `topic:broadcast`, injects the `x-writer-database=tradebot_collect` header, and republishes to `topic:writer`.
 
-3. **Codec** applies the `passthru` strategy: adds a unique, deduplicating `_id` field to each message without transforming the payload.
+3. **Writer** consumes from `topic:writer`, derives a unique `_id` from message headers (timestamp + discriminator + action bits), and inserts the document into MongoDB. Duplicate key errors are silently ACKed (the partition slot rotates automatically to prevent future collisions).
 
-4. **Router** (collect-out) transforms the routing key prefix from `passthru` to `collect` and republishes to the `writer` topic exchange.
+## AMQP Headers
 
-5. **Writer** consumes from its `writer.collect` queue (bound with key `collect.*`) and writes each message to MongoDB. The `_id` field enables idempotent inserts: duplicate `_id` values are silently skipped (duplicate key error).
+| Header | Value | Set by | Effect |
+|--------|-------|--------|--------|
+| `x-writer-database` | `tradebot_collect` | collect (Router) | Selects the MongoDB database |
 
-## Message Routing
+## Error Handling
 
-Destination is determined by the AMQP routing key on the `writer` exchange:
-
-| Routing key | Queue | Database | Collection |
-|---|---|---|---|
-| `collect.<table>` | `writer.collect` | `DATABASE_COLLECT` | `<table>` |
-
-For example, a BitMEX `trade` message arrives at the broadcast fanout with key `message.trade`. The collector-router transforms it to `collect.trade`. Writer routes it to `<DATABASE_COLLECT>.trade`.
-
-## Usage
-
-```bash
-tb up collector          # Start all services
-tb up collector --build  # Rebuild and start
-tb down collector        # Stop all services
-tb logs collector        # Stream logs
-tb ps collector          # Check service status
-```
-
-## Configuration
-
-Copy `.env.example` to `.env` and customize. Router rules are set directly in `compose.yml`. See each service's documentation for the full list of available environment variables:
-
-- [Broadcast](../../services/broadcast/README.md)
-- [Router](../../services/router/README.md)
-- [Writer](../../services/writer/README.md)
-
-## Resilience
-
-- **Broadcast** (in Broadcast) reconnects automatically with exponential backoff on WebSocket failure
-- **Router** durably buffers via the `collect` queue; requeues on failure for automatic retry
-- **Writer** silently handles duplicate key errors (idempotent inserts) and NACKs other failures for retry
-- **RabbitMQ** durably buffers messages between pipeline stages; acknowledged only after successful persistence
-- **Graceful shutdown** allows in-flight messages to complete before exit
+- **Broadcast** reconnects automatically with exponential backoff on WebSocket failure.
+- **collect** (Router) durably buffers messages in RabbitMQ; NACKs with requeue on processing failure.
+- **Writer** silently ACKs duplicate key errors and rotates the partition slot to prevent future collisions; NACKs other failures for retry.
+- **RabbitMQ** durably buffers messages between pipeline stages; acknowledged only after successful persistence.
+- **Graceful shutdown** allows in-flight messages to complete before exit.

@@ -7,8 +7,8 @@ This document collects alternative naming ideas for modules and services in the 
 ## Thematic Naming (Finance/Trading)
 - **collector** → ticker, harvester, feed
 - **archivist** → vault, ledger, coldstore
-- **rearchivist** → compressor, packer, archiver
-- **unarchivist** → extractor, thawer, restorer
+- **packer** → compressor, archiver
+- **unpacker** → extractor, thawer, restorer
 - **statekeeper** → oracle, sentinel, keeper
 - **broadcaster** → relay, caster, announcer
 - **mirror** → reflector, echo, simulator
@@ -16,8 +16,8 @@ This document collects alternative naming ideas for modules and services in the 
 ## Functional/Process-Oriented
 - **collector** → ingest
 - **archivist** → archive
-- **rearchivist** → repack
-- **unarchivist** → unpack
+- **packer** → repack
+- **unpacker** → unpack
 - **statekeeper** → snapshot
 - **broadcaster** → fanout
 - **mirror** → ws-gateway
@@ -25,8 +25,8 @@ This document collects alternative naming ideas for modules and services in the 
 ## Playful/Metaphorical
 - **collector** → sponge, funnel
 - **archivist** → deepfreeze
-- **rearchivist** → shrinker
-- **unarchivist** → inflator
+- **packer** → shrinker
+- **unpacker** → inflator
 - **statekeeper** → lighthouse
 - **broadcaster** → megaphone
 - **mirror** → shadow

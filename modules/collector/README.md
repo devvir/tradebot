@@ -1,32 +1,16 @@
 # Collector Module
 
-The Collector module subscribes to the Broadcast service's topic exchange and stores all BitMEX market data in MongoDB via the Writer service.
+Subscribes to BitMEX WebSocket data via Broadcast and stores all market data messages in MongoDB.
 
-## Components
+## Services
 
-- **Broadcast** — Feeds BitMEX WebSocket data into a topic exchange (default: `broadcast`)
-- **Codec** — Adds a unique, deduplicating numeric `_id` field using the `passthru` strategy (no payload transformation)
-- **Writer** — Persists incoming messages to MongoDB with idempotent inserts (duplicates by `_id` are skipped)
+- **Broadcast** — Connects to BitMEX WebSocket and publishes messages to `topic:broadcast`
+- **collect** (Router) — Consumes from `topic:broadcast`, injects `x-writer-database=tradebot_collect`, publishes to `topic:writer`
+- **Writer** — Persists messages to MongoDB (`tradebot_collect`)
 - **RabbitMQ** — Message broker
 - **MongoDB** — Persistent storage
 
-## Data Flow
-
-```
-BitMEX WS → Broadcast Module → topic:broadcast (key: message.trade, ...)
-                                        ↓
-                   Router collect-in (key: message.* → passthru.*)
-                                        ↓
-                            topic:codec.in → Codec (add _id)
-                                        ↓
-                   Router collect-out (key: passthru.* → collect.*)
-                                        ↓
-                                topic:writer (key: collect.trade)
-                                        ↓
-             Writer → MongoDB (<DATABASE_COLLECT>.trade, _id deduped)
-```
-
-## Quick Start
+## Usage
 
 ```bash
 tb up collector          # Start all services
@@ -40,6 +24,10 @@ tb ps collector          # Check service status
 
 Copy `.env.example` to `.env` and customize.
 
-Router rules are set directly in `compose.yml`.
+See each service's documentation for the full list of available environment variables:
+
+- [Broadcast](../../services/broadcast/README.md)
+- [Router](../../services/router/README.md)
+- [Writer](../../services/writer/README.md)
 
 For detailed technical documentation, see [docs/modules/COLLECTOR.md](../../docs/modules/COLLECTOR.md).

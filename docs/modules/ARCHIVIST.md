@@ -1,52 +1,37 @@
-# Archivist Module
+# Archivist Module — Technical Reference
 
 ## Overview
 
-The Archivist module implements a complete data pipeline for subscribing to BitMEX market data streams and archiving them to MongoDB with optional encoding and compression.
+The Archivist module subscribes to BitMEX WebSocket data via Broadcast, encodes and compresses each message via Codec, and stores the result in MongoDB. Encoding compacts the JSON representation (~10–20% reduction); Brotli compression reduces it further (~40–70%).
 
 ## Pipeline
 
 ```
-BitMEX WebSocket → Broadcast → Codec → Writer → MongoDB
+Broadcast → topic:broadcast → archive-in (Router) → topic:codec.in → Codec → topic:codec.out → archive-out (Pipe) → topic:writer → Writer → MongoDB tradebot_archive
 ```
 
-1. **Broadcast** connects to BitMEX WebSocket endpoints and publishes all received market data messages to RabbitMQ.
+1. **Broadcast** connects to the BitMEX WebSocket and publishes each incoming message to `topic:broadcast` with routing key `table.action.symbol` (e.g. `trade.insert.XBTUSD`).
 
-2. **Codec** consumes messages from Broadcast's output, applies configurable transformation strategies, and republishes them. For archival, `encode,binary` is recommended — encoding compacts the representation (~10-20% reduction), then Brotli compression reduces it further (~40-70%).
+2. **archive-in** (Router) consumes all messages from `topic:broadcast`, injects `x-codec-strategy=encode` and `x-writer-database=tradebot_archive` headers, and republishes to `topic:codec.in`.
 
-3. **Writer** consumes transformed messages and persists each one to MongoDB.
+3. **Codec** consumes from `topic:codec.in`, applies the `encode` strategy (encode + Brotli compress), and republishes to `topic:codec.out`. All headers are passed through unchanged.
 
-Data flow between services is wired via RabbitMQ queue overrides in the module's `compose.yml`. Each service publishes to and consumes from configurable queues, connected together by the module configuration. See `.env.example` for available settings.
+4. **archive-out** (Pipe) wires `topic:codec.out` directly to `topic:writer` — a native E2E binding with no transformation.
 
-## Message Routing
+5. **Writer** consumes from `topic:writer`, derives a unique `_id` from message headers, and inserts the compressed document into MongoDB. Duplicate key errors are silently ACKed (the partition slot rotates automatically to prevent future collisions).
 
-Writer is a shared service — a single instance can serve multiple pipelines and databases. It makes no assumptions about where data comes from or where it goes. Instead, every message must carry its own routing information via AMQP headers:
+## AMQP Headers
 
-- **`table`** (required) — Target MongoDB collection name. Set automatically by Broadcast (from the BitMEX channel name, e.g., `trade`, `orderBookL2`) and by Reader (from the source collection name).
+| Header | Value | Set by | Effect |
+|--------|-------|--------|--------|
+| `x-codec-strategy` | `encode` | archive-in (Router) | Instructs Codec to encode and compress |
+| `x-writer-database` | `tradebot_archive` | archive-in (Router) | Selects the MongoDB database |
 
-Broadcast and Reader are agnostic about headers — they attach whatever the module configures via `*_HEADERS` without interpreting them. Codec passes all headers and the routing key through to the next stage, transparently and unconditionally. Writer is the consumer that gives these headers meaning: `database` selects the MongoDB database and `table` selects the collection. The message content is stored as-is — if upstream services (like Codec) need something in the document, they put it in the message payload.
+## Error Handling
 
-## Usage
-
-```bash
-tb up archivist          # Start all services
-tb up archivist --build  # Rebuild and start
-tb down archivist        # Stop all services
-tb logs archivist        # Stream logs
-tb ps archivist          # Check service status
-```
-
-## Configuration
-
-Copy `.env.example` to `.env` and customize. See each service's documentation for the full list of available environment variables:
-
-- [Broadcast](../../services/broadcast/README.md)
-- [Codec](../../services/codec/README.md)
-- [Writer](../../services/writer/README.md)
-
-## Resilience
-
-- **Broadcast** reconnects automatically with exponential backoff on WebSocket failure
-- **Writer** silently handles duplicate key errors (idempotent inserts) and NACKs other failures for retry
-- **RabbitMQ** durably buffers messages between pipeline stages; acknowledged only after successful persistence
-- **Graceful shutdown** allows in-flight messages to complete before exit
+- **Broadcast** reconnects automatically with exponential backoff on WebSocket failure.
+- **archive-in** (Router) durably buffers messages in RabbitMQ; NACKs with requeue on processing failure.
+- **Codec** NACKs with requeue on processing failure.
+- **Writer** silently ACKs duplicate key errors and rotates the partition slot to prevent future collisions; NACKs other failures for retry.
+- **RabbitMQ** durably buffers messages between pipeline stages; acknowledged only after successful persistence.
+- **Graceful shutdown** allows in-flight messages to complete before exit.
