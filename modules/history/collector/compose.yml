@@ -14,13 +14,13 @@
 #   Consumes from writer queue, stores to database specified by x-writer-database header.
 
 include:
-  - path: ../../services/broadcast/docker/extended.yml
-  - path: ../../services/writer/docker/extended.yml
+  - path: ../../../services/broadcast/docker/extended.yml
+  - path: ../../../services/writer/docker/extended.yml
 
 services:
   collect:
     extends:
-      file: ../../services/router/docker/compose.yml
+      file: ../../../services/router/docker/compose.yml
       service: router
     environment:
       ROUTER_RULES: >-

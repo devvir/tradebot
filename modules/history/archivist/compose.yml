@@ -22,14 +22,14 @@
 #   Consumes from writer queue, stores to database specified by x-writer-database header.
 
 include:
-  - path: ../../services/broadcast/docker/extended.yml
-  - path: ../../services/writer/docker/extended.yml
-  - path: ../../services/codec/docker/compose.yml
+  - path: ../../../services/broadcast/docker/extended.yml
+  - path: ../../../services/writer/docker/extended.yml
+  - path: ../../../services/codec/docker/compose.yml
 
 services:
   archive-in:
     extends:
-      file: ../../services/router/docker/compose.yml
+      file: ../../../services/router/docker/compose.yml
       service: router
     environment:
       ROUTER_RULES: >-
@@ -40,7 +40,7 @@ services:
 
   archive-out:
     extends:
-      file: ../../services/pipe/docker/compose.yml
+      file: ../../../services/pipe/docker/compose.yml
       service: pipe
     environment:
       PIPE_BINDINGS: "topic:codec.out > topic:writer"

@@ -28,9 +28,9 @@ Copy `.env.example` to `.env` and customize.
 
 See each service's documentation for the full list of available environment variables:
 
-- [Broadcast](../../services/broadcast/README.md)
-- [Codec](../../services/codec/README.md)
-- [Router](../../services/router/README.md)
-- [Writer](../../services/writer/README.md)
+- [Broadcast](../../../services/broadcast/README.md)
+- [Codec](../../../services/codec/README.md)
+- [Router](../../../services/router/README.md)
+- [Writer](../../../services/writer/README.md)
 
 For detailed technical documentation, see [docs/modules/ARCHIVIST.md](../../docs/modules/ARCHIVIST.md).

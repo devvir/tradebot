@@ -69,11 +69,12 @@ const run = (flow: () => Promise<FeedResources>): void => {
     },
 
     onShutdown: async () => {
-      state?.isShuttingDown === true;
+      if (state) state.isShuttingDown = true;
 
       if (state?.realtime) state.realtime.close();
       if (state?.platform) state.platform.close();
       if (state?.pingInterval) clearInterval(state.pingInterval);
+
       if (broker) await broker.disconnect();
     },
   });

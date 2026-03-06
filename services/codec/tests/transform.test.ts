@@ -160,7 +160,7 @@ describe('encode → decode roundtrip', () => {
     const item: OrderBookL2Data = {
       symbol: 'XBTUSD', id: 12345, side: 'Buy',
       price: 42500.5, size: 100,
-      timestamp: '2026-02-15T10:30:00.000Z', transactTime: '2026-02-15T10:30:00.000Z',
+      timestamp: '2026-02-15T10:30:00.948Z', transactTime: '2026-02-15T10:30:00.000Z',
     };
 
     const decoded = roundtrip({ table: 'orderBookL2', action: 'insert', data: [item] });
@@ -170,20 +170,23 @@ describe('encode → decode roundtrip', () => {
     expect(decoded.data[0].symbol).toBe(item.symbol);
     expect(decoded.data[0].price).toBeCloseTo(item.price, 2);
     expect(decoded.data[0].size).toBe(item.size);
+    expect(decoded.data[0].timestamp).toBe(item.timestamp);
+    expect(decoded.data[0].transactTime).toBe(item.transactTime);
   });
 
   it('round-trips orderBookL2 delete (compact form)', () => {
     const item: OrderBookL2Data = {
       symbol: 'XBTUSD', id: 67890, side: 'Sell',
       price: 45300, size: 500,
-      timestamp: '2024-01-15T10:30:00.000Z', transactTime: '2024-01-15T10:30:00.000Z',
+      timestamp: '2024-01-15T10:30:00.948Z', transactTime: '2024-01-15T10:30:00.000Z',
     };
 
     const decoded = roundtrip({ table: 'orderBookL2', action: 'delete', data: [item] });
 
     expect(decoded.data[0].id).toBe(item.id);
-    expect(decoded.data[0].transactTime).toBe(item.transactTime);
     expect(decoded.data[0].symbol).toBe(item.symbol);
+    expect(decoded.data[0].timestamp).toBe(item.timestamp);
+    expect(decoded.data[0].transactTime).toBe(item.transactTime);
   });
 
   it('round-trips instrument data', () => {

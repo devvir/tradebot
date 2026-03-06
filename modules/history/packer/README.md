@@ -30,9 +30,9 @@ Key setting: `READER_DATABASE` — MongoDB database to read from (e.g. `tradebot
 
 See each service's documentation for the full list of available environment variables:
 
-- [Reader](../../services/reader/README.md)
-- [Codec](../../services/codec/README.md)
-- [Router](../../services/router/README.md)
-- [Writer](../../services/writer/README.md)
+- [Reader](../../../services/reader/README.md)
+- [Codec](../../../services/codec/README.md)
+- [Router](../../../services/router/README.md)
+- [Writer](../../../services/writer/README.md)
 
 For detailed technical documentation, see [docs/modules/PACKER.md](../../docs/modules/PACKER.md).

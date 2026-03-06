@@ -138,8 +138,8 @@ describe('Reader Service', () => {
       expect(load().collections).toEqual(['trades', 'orderBookL2']);
     });
 
-    it('defaults maxReady to 1000000', () => {
-      expect(load().maxReady).toBe(1_000_000);
+    it('defaults maxReady to 0', () => {
+      expect(load().maxReady).toBe(0);
     });
 
     it('parses READER_MAX_READY', () => {

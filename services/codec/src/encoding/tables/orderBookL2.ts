@@ -7,23 +7,26 @@ import { pack, encodeTimestamp, decodeTimestamp, encodePriceAndSize, decodePrice
 
 /**
  * Compression strategy for orderBookL2:
- * - no size (delete action): [id, ts]
- * - with size:  [id, pack(ts, meta, side), field1, [field2], [pool]]
+ * - no size (delete action): [id, timestamp, transactTime]
+ * - with size:  [id, timestamp, pack(transactTime, meta, side), field1, [field2], [pool]]
  */
 export const encodeOrderBookL2 = (
-  { id, side, size, price, transactTime, pool }: OrderBookL2Data,
+  { id, side, size, price, transactTime, timestamp, pool }: OrderBookL2Data,
 ): PackedDataItem => {
-  const ts = encodeTimestamp(transactTime);
+  const ts = encodeTimestamp(timestamp);
+  const tts = encodeTimestamp(transactTime);
 
-  if (! size) return [id, ts.number];
+  /** Delete actions have all props but size (who knows why) */
+  if (! size) return [id, ts.number, tts.number];
 
   const { meta, field1, field2 } = encodePriceAndSize(price, size);
   const encodedSizePrice = meta ? [field1] : [field1, field2!];
   const encodedMeta = { number: meta, bits: 10 };
-  const encodedTsSideMeta = pack([ts, encodedMeta, SIDE_ID[side]]);
+  const encodedTsSideMeta = pack([tts, encodedMeta, SIDE_ID[side]]);
 
   return [
     id,
+    ts.number,
     encodedTsSideMeta,
     ...encodedSizePrice,
     ...(pool ? [pool] : []),
@@ -34,31 +37,33 @@ export const encodeOrderBookL2 = (
 
 const decodeItem = (item: unknown[]): Partial<OrderBookL2Data> => {
   const id = item[0] as number;
+  const timestamp = decodeTimestamp(item[1] as number);
 
-  if (item.length === 2) { // Only id and tt
-    return { id, transactTime: decodeTimestamp(item[1] as number) };
+  if (item.length === 3) { // delete: [id, timestamp, transactTime]
+    return { id, timestamp, transactTime: decodeTimestamp(item[2] as number) };
   }
 
-  const encoded = item[1] as number;
-  const field1 = item[2] as number;
+  const encoded = item[2] as number;
+  const field1 = item[3] as number;
 
   const sideId = encoded & 0x1;
   const meta = (encoded >> 1) & 0x3ff;
-  const ts = Math.floor(encoded / 2048);
+  const tts = Math.floor(encoded / 2048);
   const priceBytes = (meta >> 5) & 0x7;
 
   const base = {
     id,
+    timestamp,
     side: SIDE_ID_REVERSE[sideId as 0 | 1] || 'Buy',
-    transactTime: decodeTimestamp(ts),
+    transactTime: decodeTimestamp(tts),
   } as const;
 
   if (priceBytes === 0) {
-    return { ...base, size: field1, price: item[3] as number, pool: item[4] as string | undefined };
+    return { ...base, size: field1, price: item[4] as number, pool: item[5] as string | undefined };
   }
 
   const { price, size } = decodePriceAndSize(field1, meta);
-  return { ...base, size, price, pool: item[3] as string | undefined };
+  return { ...base, size, price, pool: item[4] as string | undefined };
 };
 
 export const decodeOrderBookL2 = (payload: DecodedMessageData): OrderBookL2Data[] => {
@@ -70,14 +75,14 @@ export const decodeOrderBookL2 = (payload: DecodedMessageData): OrderBookL2Data[
 
       items.push({
         symbol,
-        id: doc.id || 0,
-        side: doc.side || 'Buy',
+        id: doc.id,
+        side: doc.side,
         size: doc.size,
-        price: doc.price || 0,
-        transactTime: doc.transactTime || '',
-        timestamp: doc.transactTime || '',
+        price: doc.price,
+        transactTime: doc.transactTime,
+        timestamp: doc.timestamp,
         pool: doc.pool,
-      });
+      } as OrderBookL2Data);
     }
   }
 
