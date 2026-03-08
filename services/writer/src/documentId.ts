@@ -63,9 +63,11 @@ export const ACTION_ID: Record<BitmexAction, 0 | 1 | 2 | 3> = { partial: 0, inse
 let instanceSlot = 0;
 
 /**
- * Keep track of the last cache slot, to clear stale slots when we move to a new one
+ * Keep track of the last cache slot, to clear stale slots when we move to a new one.
+ * Only advance forward — never clear based on out-of-order messages from concurrent producers.
  */
 let lastCacheSlot = 0;
+let maxSeenTsMs = 0;
 
 /**
  * Generate a unique ID for a document.
@@ -81,11 +83,16 @@ export default function generateId(doc: Document, tsMs: number): number {
   const action = doc.action as BitmexAction;
   const cacheSlot = Math.floor(tsMs / 1000) % CACHE_SLOTS;
 
-  // Clear old state (skip immediate next slot in case we overflowed into it)
-  if (cacheSlot !== lastCacheSlot) {
-    lastCacheSlot = cacheSlot;
-    const staleSlotKey = (cacheSlot + 2) % CACHE_SLOTS;
-    mapGet(CACHE, staleSlotKey, new Map()).clear();
+  // Clear old state (skip immediate next slot in case we overflowed into it).
+  // Only advance on monotonically increasing timestamps — non-monotonic messages from
+  // concurrent codec instances must not clear slots that are still actively in use.
+  if (tsMs > maxSeenTsMs) {
+    maxSeenTsMs = tsMs;
+    if (cacheSlot !== lastCacheSlot) {
+      lastCacheSlot = cacheSlot;
+      const staleSlotKey = (cacheSlot + 2) % CACHE_SLOTS;
+      mapGet(CACHE, staleSlotKey, new Map()).clear();
+    }
   }
 
   const slotMap = mapGet<CacheSlot>(CACHE, cacheSlot, new Map());
@@ -125,4 +132,4 @@ export function moveToNextSlot(): void {
  */
 export const _clearCacheSlot = (tsMs: number) => CACHE.get(Math.floor(tsMs / 1000) % CACHE_SLOTS)?.clear();
 export const _getInstanceSlot = () => instanceSlot;
-export const _resetInstanceSlot = () => ( instanceSlot = 0, resume() );
+export const _resetInstanceSlot = () => ( instanceSlot = 0, lastCacheSlot = 0, maxSeenTsMs = 0, resume() );

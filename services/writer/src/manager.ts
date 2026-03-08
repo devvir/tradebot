@@ -55,14 +55,14 @@ export default (config: Config, mongo: MongoClient): Manager => ({
         await db.insertMany(entries.map(e => e.document as MongoDocument), { ordered: false });
         entries.ack();
       } catch (err) {
-        pause(1000); /** No await here, but other parts of the service must pause for a second */
-
         /** BulkWrite errors require special care: partial ack, duplicate key handling, etc. */
         if (err instanceof MongoBulkWriteError) {
           return handleBatchInsertFailure(db, entries, err);
         }
 
         /** Other errors are likely transient and should be retried after a brief pause */
+        pause(1000);
+
         logger.error({ err, database, collection }, 'Unexpected Mongo error. Requeueing...');
 
         return entries.nack(true);
