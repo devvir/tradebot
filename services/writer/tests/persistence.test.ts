@@ -1,30 +1,29 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { persistBatch, parseDocument } from '../src/persistence';
-import { MongoError } from 'mongodb';
-import type { Config } from '../src/types';
-import type { Batch } from '../src/types';
+import createManager from '../src/manager';
+import { flushStore } from '../src/batch';
+import { MongoBulkWriteError } from 'mongodb';
 import type { ConsumerEvent } from '@devvir/rabbitmq';
+import type { Config } from '../src/types';
 
-const defaultConfig: Config = {
-  mongodbUrl: 'mongodb://root:root@mongodb:27017/tradebot?authSource=admin',
-  rabbitmqUrl: 'amqp://guest:guest@rabbitmq:5672',
+vi.mock('@devvir/service', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
+vi.mock('../src/semaphore', () => ({
+  paused: vi.fn(() => false),
+  pause: vi.fn(),
+}));
+
+const config: Config = {
+  mongodbUrl: 'mongodb://localhost:27017',
+  rabbitmqUrl: 'amqp://localhost:5672',
   prefetch: 100,
   flushIntervalMs: 60_000,
 };
 
-const DEFAULT_HEADERS = {
-  'x-bitmex-published-at': '2026-03-04T01:51:41.208Z',
-};
-
-/** Build a ConsumerEvent for testing. */
-const createDelivery = (
-  routingKey: string,
-  content: unknown,
-  redelivered = false,
-  headers: Record<string, string> = DEFAULT_HEADERS,
-): ConsumerEvent => ({
+const delivery = (redelivered = false, headers: Record<string, unknown> = { 'x-bitmex-published-at': 1741046301208 }): ConsumerEvent => ({
   metadata: {
-    routingKey,
+    routingKey: 'writer.trade',
     redelivered,
     exchange: 'writer',
     deliveryTag: 1,
@@ -34,202 +33,165 @@ const createDelivery = (
   },
   ack: vi.fn(),
   nack: vi.fn(),
-  original: {
-    content: typeof content === 'string'
-      ? Buffer.from(content)
-      : Buffer.from(JSON.stringify(content)),
-    fields: { routingKey, redelivered } as any,
-    properties: { headers } as any,
-  } as any,
+  original: {} as any,
 });
 
-describe('parseDocument', () => {
-  it('generates numeric _id and strips table/action before storing', () => {
-    const delivery = createDelivery('archive.trade', { table: 'trade', action: 'insert', price: 100 });
-    const { document, collection } = parseDocument(delivery);
-    expect(typeof document._id).toBe('number');
-    expect(collection).toBe('trade');
-    expect(document.price).toBe(100);
-    expect(document.table).toBeUndefined();
-    expect(document.action).toBeUndefined();
+let mockCollection: { insertMany: ReturnType<typeof vi.fn> };
+let mockMongo: any;
+
+beforeEach(() => {
+  flushStore();
+  mockCollection = { insertMany: vi.fn().mockResolvedValue({}) };
+  mockMongo = {
+    db: vi.fn().mockReturnValue({ collection: vi.fn().mockReturnValue(mockCollection) }),
+  };
+});
+
+afterEach(() => {
+  vi.clearAllMocks();
+});
+
+// ── enqueue ───────────────────────────────────────────────────────────────────
+
+describe('enqueue', () => {
+  it('adds a valid document to the batch', () => {
+    const d = delivery();
+    createManager(config, mockMongo).enqueue({ table: 'trade', action: 'insert', price: 100 }, d);
+    const [batch] = flushStore();
+    expect(batch?.collection).toBe('trade');
+    expect(batch?.entries[0].document.price).toBe(100);
   });
 
-  it('uses x-bitmex-published-at header for _id timestamp when present', () => {
-    const delivery = createDelivery('archive.trade', { table: 'trade', action: 'insert' }, false, {
-      'x-bitmex-published-at': '2026-03-04T00:00:00.000Z',
-    });
-    const { document } = parseDocument(delivery);
-    expect(typeof document._id).toBe('number');
+  it('strips table and action from the stored document', () => {
+    const d = delivery();
+    createManager(config, mockMongo).enqueue({ table: 'trade', action: 'insert' }, d);
+    const [batch] = flushStore();
+    expect((batch.entries[0].document as any).table).toBeUndefined();
+    expect((batch.entries[0].document as any).action).toBeUndefined();
   });
 
-  it('falls back to current time when x-bitmex-published-at header is absent', () => {
-    const delivery = createDelivery('archive.trade', { table: 'trade', action: 'insert' }, false, {});
-    const { document } = parseDocument(delivery);
-    expect(typeof document._id).toBe('number');
+  it('acks and skips invalid messages (no table or action)', () => {
+    const d = delivery();
+    createManager(config, mockMongo).enqueue({ price: 100 }, d);
+    expect(d.ack).toHaveBeenCalled();
+    expect(flushStore()).toHaveLength(0);
   });
 
-  it('preserves existing doc._id and skips generation', () => {
-    const delivery = createDelivery('archive.trade', { table: 'trade', action: 'insert', _id: 99999 });
-    const { document } = parseDocument(delivery);
-    expect(document._id).toBe(99999);
+  it('uses x-writer-database header as database name', () => {
+    const d = delivery(false, { 'x-bitmex-published-at': 1741046301208, 'x-writer-database': 'mydb' });
+    createManager(config, mockMongo).enqueue({ table: 'trade', action: 'insert' }, d);
+    const [batch] = flushStore();
+    expect(batch.database).toBe('mydb');
   });
 
-  it('throws on malformed JSON', () => {
-    const delivery = createDelivery('archive.trade', '{bad json}');
-    expect(() => parseDocument(delivery)).toThrow();
+  it('defaults database to tradebot', () => {
+    const d = delivery();
+    createManager(config, mockMongo).enqueue({ table: 'trade', action: 'insert' }, d);
+    const [batch] = flushStore();
+    expect(batch.database).toBe('tradebot');
   });
 
-  it('throws if doc.table is missing', () => {
-    const delivery = createDelivery('archive.trade', { action: 'insert', price: 100 });
-    expect(() => parseDocument(delivery)).toThrow(/doc\.table/);
+  it('preserves an existing numeric _id', () => {
+    const d = delivery();
+    createManager(config, mockMongo).enqueue({ table: 'trade', action: 'insert', _id: 42 }, d);
+    const [batch] = flushStore();
+    expect(batch.entries[0].document._id).toBe(42);
   });
 
-  it('throws if doc.action is missing and no _id', () => {
-    const delivery = createDelivery('archive.trade', { table: 'trade', price: 100 });
-    expect(() => parseDocument(delivery)).toThrow(/doc\.action/);
-  });
-
-  it('throws if doc.action is not a valid BitMEX action', () => {
-    const delivery = createDelivery('archive.trade', { table: 'trade', action: 'badaction' });
-    expect(() => parseDocument(delivery)).toThrow(/doc\.action/);
-  });
-
-  it('revives serialized Buffers back to Buffer instances', () => {
-    const delivery = createDelivery('archive.trade', {
-      table: 'trade',
-      action: 'insert',
-      payload: { type: 'Buffer', data: [1, 2, 3] },
-    });
-    const { document } = parseDocument(delivery);
-    expect(Buffer.isBuffer(document.payload)).toBe(true);
-    expect(document.payload).toEqual(Buffer.from([1, 2, 3]));
+  it('generates a numeric _id when absent', () => {
+    const d = delivery();
+    createManager(config, mockMongo).enqueue({ table: 'trade', action: 'insert' }, d);
+    const [batch] = flushStore();
+    expect(typeof batch.entries[0].document._id).toBe('number');
   });
 });
 
-describe('persistBatch', () => {
-  let mockCollection: any;
-  let mockDb: any;
-  let mockMongo: any;
+// ── flush ─────────────────────────────────────────────────────────────────────
 
-  beforeEach(() => {
-    mockCollection = {
-      insertMany: vi.fn().mockResolvedValue({ insertedCount: 1 }),
-      insertOne: vi.fn().mockResolvedValue({ insertedId: 'ok' }),
-    };
-
-    mockDb = {
-      collection: vi.fn().mockReturnValue(mockCollection),
-    };
-
-    mockMongo = {
-      db: vi.fn().mockReturnValue(mockDb),
-    };
-  });
-
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
-
-  const makeBatch = (database: string, collection: string, entries: Array<{ routingKey: string; doc: Record<string, unknown>; redelivered?: boolean }>): Batch => ({
-    database,
-    collection,
-    entries: entries.map(e => ({
-      delivery: createDelivery(e.routingKey, e.doc, e.redelivered ?? false),
-      document: e.doc,
-    })),
-  });
-
-  it('should insertMany with ordered:false and ack all entries', async () => {
-    const batch = makeBatch('tradebot_archive', 'orderBookL2', [
-      { routingKey: 'archive.orderBookL2', doc: { price: 100 } },
-      { routingKey: 'archive.orderBookL2', doc: { price: 200 } },
-    ]);
-    const onStoreMsg = vi.fn();
-
-    await persistBatch(mockMongo, batch, 'writer.archive', onStoreMsg);
-
-    expect(mockMongo.db).toHaveBeenCalledWith('tradebot_archive');
-    expect(mockDb.collection).toHaveBeenCalledWith('orderBookL2');
+describe('flush', () => {
+  it('calls insertMany with all documents in the batch', async () => {
+    const manager = createManager(config, mockMongo);
+    const d1 = delivery();
+    const d2 = delivery();
+    manager.enqueue({ table: 'trade', action: 'insert', price: 100 }, d1);
+    manager.enqueue({ table: 'trade', action: 'insert', price: 200 }, d2);
+    await manager.flush();
     expect(mockCollection.insertMany).toHaveBeenCalledWith(
-      [{ price: 100 }, { price: 200 }],
+      expect.arrayContaining([
+        expect.objectContaining({ price: 100 }),
+        expect.objectContaining({ price: 200 }),
+      ]),
       { ordered: false },
     );
-    expect(batch.entries[0].delivery.ack).toHaveBeenCalled();
-    expect(batch.entries[1].delivery.ack).toHaveBeenCalled();
-    expect(onStoreMsg).toHaveBeenCalledTimes(2);
   });
 
-  it('should call onStoreMsg for each acked entry', async () => {
-    const batch = makeBatch('db', 'col', [
-      { routingKey: 'collect.trade', doc: { v: 1 } },
-    ]);
-    const onStoreMsg = vi.fn();
-
-    await persistBatch(mockMongo, batch, 'writer.collect', onStoreMsg);
-
-    expect(onStoreMsg).toHaveBeenCalledTimes(1);
+  it('acks all entries on success', async () => {
+    const manager = createManager(config, mockMongo);
+    const d1 = delivery();
+    const d2 = delivery();
+    manager.enqueue({ table: 'trade', action: 'insert' }, d1);
+    manager.enqueue({ table: 'trade', action: 'insert' }, d2);
+    await manager.flush();
+    expect(d1.ack).toHaveBeenCalled();
+    expect(d2.ack).toHaveBeenCalled();
   });
 
-  it('should delegate to error handler on insertMany failure', async () => {
-    const error = new Error('Connection timeout');
-    mockCollection.insertMany.mockRejectedValueOnce(error);
-
-    const batch = makeBatch('db', 'col', [
-      { routingKey: 'collect.trade', doc: { v: 1 } },
-    ]);
-    const onStoreMsg = vi.fn();
-
-    await persistBatch(mockMongo, batch, 'writer.collect', onStoreMsg);
-
-    // insertOne fallback (from error handler) succeeds by default
-    expect(mockCollection.insertOne).toHaveBeenCalledWith({ v: 1 });
-    expect(batch.entries[0].delivery.ack).toHaveBeenCalled();
+  it('nacks all entries with requeue on unexpected errors', async () => {
+    mockCollection.insertMany.mockRejectedValueOnce(new Error('Connection lost'));
+    const manager = createManager(config, mockMongo);
+    const d = delivery(false);
+    manager.enqueue({ table: 'trade', action: 'insert' }, d);
+    await manager.flush();
+    expect(d.nack).toHaveBeenCalledWith(true);
   });
 
-  it('should requeue first-attempt messages when persistence fails entirely', async () => {
-    const error = Object.assign(Object.create(MongoError.prototype), { code: 999 });
-    mockCollection.insertMany.mockRejectedValueOnce(error);
-    mockCollection.insertOne.mockRejectedValueOnce(error);
+  it('acks successful entries on partial MongoBulkWriteError', async () => {
+    const err = Object.create(MongoBulkWriteError.prototype) as MongoBulkWriteError;
+    Object.defineProperty(err, 'writeErrors', { value: [{ index: 1, code: 999 }] });
+    mockCollection.insertMany.mockRejectedValueOnce(err);
 
-    const batch = makeBatch('db', 'col', [
-      { routingKey: 'collect.trade', doc: { v: 1 }, redelivered: false },
-    ]);
-    const onStoreMsg = vi.fn();
+    const manager = createManager(config, mockMongo);
+    const d0 = delivery();
+    const d1 = delivery();
+    manager.enqueue({ table: 'trade', action: 'insert', _id: 1 }, d0);
+    manager.enqueue({ table: 'trade', action: 'insert', _id: 2 }, d1);
+    await manager.flush();
 
-    await persistBatch(mockMongo, batch, 'writer.collect', onStoreMsg);
-
-    expect(batch.entries[0].delivery.nack).toHaveBeenCalledWith(true);
-    expect(onStoreMsg).not.toHaveBeenCalled();
+    expect(d0.ack).toHaveBeenCalled();          // index 0: success
+    expect(d1.nack).toHaveBeenCalledWith(true);  // index 1: first attempt → requeue
   });
 
-  it('should dead-letter redelivered messages when persistence fails entirely', async () => {
-    const error = new Error('Persistent failure');
-    mockCollection.insertMany.mockRejectedValueOnce(error);
-    mockCollection.insertOne.mockRejectedValueOnce(error);
+  it('dead-letters redelivered entries on non-duplicate MongoBulkWriteError', async () => {
+    const err = Object.create(MongoBulkWriteError.prototype) as MongoBulkWriteError;
+    Object.defineProperty(err, 'writeErrors', { value: [{ index: 0, code: 999 }] });
+    mockCollection.insertMany.mockRejectedValueOnce(err);
 
-    const batch = makeBatch('db', 'col', [
-      { routingKey: 'collect.trade', doc: { v: 1 }, redelivered: true },
-    ]);
-    const onStoreMsg = vi.fn();
+    const manager = createManager(config, mockMongo);
+    const d = delivery(true); // redelivered
+    manager.enqueue({ table: 'trade', action: 'insert', _id: 1 }, d);
+    await manager.flush();
 
-    await persistBatch(mockMongo, batch, 'writer.collect', onStoreMsg);
-
-    expect(batch.entries[0].delivery.nack).toHaveBeenCalledWith(false);
-    expect(onStoreMsg).not.toHaveBeenCalled();
+    expect(d.nack).toHaveBeenCalledWith(false); // dead-letter
   });
 
-  it('should ack on duplicate key error via insertOne fallback', async () => {
-    const error = Object.assign(Object.create(MongoError.prototype), { code: 11000 });
-    mockCollection.insertMany.mockRejectedValueOnce(error);
+  it('requeues duplicate-key (11000) entries into the batch for retry', async () => {
+    const err = Object.create(MongoBulkWriteError.prototype) as MongoBulkWriteError;
+    Object.defineProperty(err, 'writeErrors', { value: [{ index: 0, code: 11000 }] });
+    mockCollection.insertMany.mockRejectedValueOnce(err);
 
-    const batch = makeBatch('db', 'col', [
-      { routingKey: 'archive.trade', doc: { _id: 'dup' } },
-    ]);
-    const onStoreMsg = vi.fn();
+    const manager = createManager(config, mockMongo);
+    const d = delivery();
+    manager.enqueue({ table: 'trade', action: 'insert', _id: 1 }, d);
+    await manager.flush();
 
-    await persistBatch(mockMongo, batch, 'writer.archive', onStoreMsg);
+    // Not immediately acked or nacked — entry is retried via handleDuplicates
+    expect(d.ack).not.toHaveBeenCalled();
+    expect(d.nack).not.toHaveBeenCalled();
 
-    expect(batch.entries[0].delivery.ack).toHaveBeenCalled();
-    expect(batch.entries[0].delivery.nack).not.toHaveBeenCalled();
+    // The entry is back in the batch with a new _id and incremented retries
+    const [batch] = flushStore();
+    expect(batch.entries).toHaveLength(1);
+    expect(batch.entries[0].retries).toBe(1);
+    expect(batch.entries[0].document._id).not.toBe(1);
   });
 });

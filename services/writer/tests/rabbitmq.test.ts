@@ -34,7 +34,7 @@ describe('RabbitMQ integration', () => {
       const mockBroker = makeMockBroker();
       vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
 
-      await connectToQueue(createMockConfig());
+      await connectToQueue(createMockConfig().rabbitmqUrl);
 
       const declareCall = mockBroker.declares.mock.calls[0][0];
       expect(declareCall.exchanges[EXCHANGE]).toBeDefined();
@@ -45,7 +45,7 @@ describe('RabbitMQ integration', () => {
       const mockBroker = makeMockBroker();
       vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
 
-      await connectToQueue(createMockConfig());
+      await connectToQueue(createMockConfig().rabbitmqUrl);
 
       const queues = mockBroker.declares.mock.calls[0][0].exchanges[EXCHANGE].queues;
       expect(queues[QUEUE]).toBeDefined();
@@ -57,7 +57,7 @@ describe('RabbitMQ integration', () => {
       const mockBroker = makeMockBroker();
       vi.mocked(brokerModule.keepAlive).mockResolvedValueOnce(mockBroker as any);
 
-      await connectToQueue(createMockConfig());
+      await connectToQueue(createMockConfig().rabbitmqUrl);
 
       const declareCall = mockBroker.declares.mock.calls[0][0];
       expect(declareCall.exchanges[DLX]).toBeDefined();

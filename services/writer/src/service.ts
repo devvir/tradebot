@@ -3,18 +3,18 @@ import { defineLifecycle } from '@devvir/service';
 import type { MongoClient } from 'mongodb';
 import type { Broker } from '@devvir/rabbitmq';
 
-const MESSAGE_LOG_INTERVAL = 10_000;
+const MESSAGE_LOG_INTERVAL = 20_000;
 const HEALTH_INACTIVITY_MS = 60_000;
 
 interface WriterResources {
   mongo: MongoClient;
   broker: Broker;
-  drain: () => Promise<void>;
+  onShutdown: () => Promise<void>;
 }
 
 let mongo: MongoClient | null = null;
 let broker: Broker | null = null;
-let drain: (() => Promise<void>) | null = null;
+let onShutdown: (() => Promise<void>) | null = null;
 
 let messagesProcessed = 0;
 let lastProcessedTime = Date.now();
@@ -28,7 +28,9 @@ const onMessage = (): void => {
   lastProcessedTime = Date.now();
 
   if (messagesProcessed % MESSAGE_LOG_INTERVAL === 0) {
-    logger.info(`Processed ${Math.floor(messagesProcessed / 1000)}k messages`);
+    logger.info(messagesProcessed < 1_000_000
+      ? `Processed ${(messagesProcessed / 1_000).toFixed(0)}K messages`
+      : `Processed ${(messagesProcessed / 1_000_000).toFixed(2)}M messages`);
   }
 };
 
@@ -45,7 +47,7 @@ const run = (flow: () => Promise<WriterResources>): void => {
       const resources = await flow();
       mongo = resources.mongo;
       broker = resources.broker;
-      drain = resources.drain;
+      onShutdown = resources.onShutdown;
     },
 
     onPing: async () => ({
@@ -61,7 +63,7 @@ const run = (flow: () => Promise<WriterResources>): void => {
     },
 
     onShutdown: async () => {
-      if (drain) await drain();
+      if (onShutdown) await onShutdown();
       if (broker) await broker.disconnect();
       if (mongo) await mongo.close();
     },

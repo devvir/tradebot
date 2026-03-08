@@ -1,133 +1,157 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { EPOCH_2000_MS, ACTION_ID, generateId, getSlot, moveToNextSlot, _clearSlot, _resetSlot } from '../src/documentId';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import generateId, { ACTION_ID, _getInstanceSlot, moveToNextSlot, _clearCacheSlot, _resetInstanceSlot } from '../src/documentId';
+import type { BitmexAction } from '@tradebot/types';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** tsMs relative to EPOCH_2000_MS for the current second. */
-const nowTsMs = () => Date.now() - EPOCH_2000_MS;
+const NUM_DISCRIMINATORS = 128; // 512 / 4 instances
 
-const PARTITION_SIZE = 256;
-
-const id = (tsMs: number, slot: number, localCounter: number, action: keyof typeof ACTION_ID) =>
-  tsMs * 4096 + (slot * PARTITION_SIZE + localCounter) * 4 + ACTION_ID[action];
+/**
+ * Calculate expected ID matching the actual generateId formula.
+ * timestampSlot = (ts & 0x1FFFFFFFFFFn) << 12n (as Number)
+ * ID = timestampSlot + (discriminator * 4) + action
+ * where discriminator = count + (slot * NUM_DISCRIMINATORS) - 1
+ */
+const id = (ts: number, count: number, slot: number, action: BitmexAction) => {
+  const discriminator = (count + (slot * NUM_DISCRIMINATORS)) - 1;
+  const timestampSlot = Number((BigInt(ts) & 0x1FFFFFFFFFFn) << 12n);
+  return timestampSlot + (discriminator * 4) + ACTION_ID[action];
+};
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 // Each test uses a unique table name to avoid bucket state collisions between tests.
 
 describe('generateId', () => {
   beforeEach(() => {
-    _resetSlot();
+    _resetInstanceSlot();
   });
 
-  it('first message at a key: discriminator 0 in slot 0', () => {
-    const tsMs = nowTsMs();
-    expect(generateId('tbl-a', 'insert', tsMs)).toBe(id(tsMs, 0, 0, 'insert'));
+  it('first message at a key: discriminator 1 in slot 0 (count increments before use)', () => {
+    const ts = 1_000_000; // Use fixed timestamp to avoid cache pollution
+    const result = generateId({ table: 'tbl-a', action: 'insert' } as any, ts);
+    expect(result).toBe(id(ts, 1, 0, 'insert'));
   });
 
-  it('second message at same key: local counter 1', () => {
-    const tsMs = nowTsMs();
-    generateId('tbl-b', 'insert', tsMs);
-    expect(generateId('tbl-b', 'insert', tsMs)).toBe(id(tsMs, 0, 1, 'insert'));
+  it('second message at same key: local counter 2', () => {
+    const ts = 2_000_000;
+    generateId({ table: 'tbl-b', action: 'insert' } as any, ts);
+    const result = generateId({ table: 'tbl-b', action: 'insert' } as any, ts);
+    expect(result).toBe(id(ts, 2, 0, 'insert'));
   });
 
-  it('third message at same key: local counter 2', () => {
-    const tsMs = nowTsMs();
-    generateId('tbl-c', 'insert', tsMs);
-    generateId('tbl-c', 'insert', tsMs);
-    expect(generateId('tbl-c', 'insert', tsMs)).toBe(id(tsMs, 0, 2, 'insert'));
+  it('third message at same key: local counter 3', () => {
+    const ts = 3_000_000;
+    generateId({ table: 'tbl-c', action: 'insert' } as any, ts);
+    generateId({ table: 'tbl-c', action: 'insert' } as any, ts);
+    const result = generateId({ table: 'tbl-c', action: 'insert' } as any, ts);
+    expect(result).toBe(id(ts, 3, 0, 'insert'));
   });
 
-  it('different action at same tsMs: independent counter', () => {
-    const tsMs = nowTsMs();
-    generateId('tbl-d', 'insert', tsMs);
-    expect(generateId('tbl-d', 'update', tsMs)).toBe(id(tsMs, 0, 0, 'update'));
+  it('different action at same ts: independent counter', () => {
+    const ts = 4_000_000;
+    generateId({ table: 'tbl-d', action: 'insert' } as any, ts);
+    const result = generateId({ table: 'tbl-d', action: 'update' } as any, ts);
+    expect(result).toBe(id(ts, 1, 0, 'update'));
   });
 
-  it('different table at same tsMs: independent counter', () => {
-    const tsMs = nowTsMs();
-    generateId('tbl-e1', 'insert', tsMs);
-    expect(generateId('tbl-e2', 'insert', tsMs)).toBe(id(tsMs, 0, 0, 'insert'));
+  it('different table at same ts: independent counter', () => {
+    const ts = 5_000_000;
+    generateId({ table: 'tbl-e1', action: 'insert' } as any, ts);
+    const result = generateId({ table: 'tbl-e2', action: 'insert' } as any, ts);
+    expect(result).toBe(id(ts, 1, 0, 'insert'));
   });
 
   it('action bits are encoded correctly for all 4 actions', () => {
-    const tsMs = nowTsMs();
-    expect(generateId('tbl-f', 'partial', tsMs) & 0b11).toBe(0);
-    expect(generateId('tbl-f', 'insert',  tsMs) & 0b11).toBe(1);
-    expect(generateId('tbl-f', 'update',  tsMs) & 0b11).toBe(2);
-    expect(generateId('tbl-f', 'delete',  tsMs) & 0b11).toBe(3);
+    const ts = 6_000_000;
+    const actionIds = ['partial', 'insert', 'update', 'delete'] as const;
+    for (let i = 0; i < actionIds.length; i++) {
+      const action = actionIds[i];
+      const generatedId = generateId({ table: `tbl-act-${i}`, action } as any, ts);
+      expect((generatedId & 0b11) === i, `action ${action} should encode as ${i}, got ${generatedId & 0b11}`).toBe(true);
+    }
   });
 
-  it('overflow: local counter >= 256 seeds next-ms bucket in same slot', () => {
-    const tsMs = nowTsMs();
+  it('overflow: count >= 128 (NUM_DISCRIMINATORS=128) borrows from next timestamp', () => {
+    const ts = 7_000_999; // Near second boundary to avoid cache slot collision
 
-    // Burn through local counters 0..255
-    for (let i = 0; i < 256; i++) generateId('tbl-g', 'insert', tsMs);
+    // Burn through counters 1..128 (NUM_DISCRIMINATORS=128)
+    for (let i = 0; i < 128; i++) generateId({ table: 'tbl-g', action: 'insert' } as any, ts);
 
-    // The 257th call (localCounter=256) should spill: effective _id at tsMs+1, slot 0, counter 0
-    expect(generateId('tbl-g', 'insert', tsMs)).toBe(id(tsMs + 1, 0, 0, 'insert'));
-
-    // Next real message at tsMs+1 gets localCounter=1 (0 was taken by overflow)
-    expect(generateId('tbl-g', 'insert', tsMs + 1)).toBe(id(tsMs + 1, 0, 1, 'insert'));
+    // The 257th call should overflow and recurse to ts+1 (next second)
+    const result = generateId({ table: 'tbl-g', action: 'insert' } as any, ts);
+    expect(result).toBe(id(ts + 1, 1, 0, 'insert'));
   });
 
   it('cleanup: after slot is cleared, key is treated as new', () => {
-    const tsMs = nowTsMs();
-    generateId('tbl-h', 'insert', tsMs); // prime counter to 0
+    const ts = 8_000_000;
+    generateId({ table: 'tbl-h', action: 'insert' } as any, ts);
 
-    _clearSlot(tsMs); // simulate the cleanup interval firing
+    _clearCacheSlot(ts);
 
-    // Same key now treated as fresh — gets local counter 0 again
-    expect(generateId('tbl-h', 'insert', tsMs)).toBe(id(tsMs, 0, 0, 'insert'));
+    // Same key now treated as fresh — counter increments from 0 to 1
+    const result = generateId({ table: 'tbl-h', action: 'insert' } as any, ts);
+    expect(result).toBe(id(ts, 1, 0, 'insert'));
   });
 });
 
 describe('slot partitioning', () => {
   beforeEach(() => {
-    _resetSlot();
+    vi.useFakeTimers();
+    _resetInstanceSlot();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('starts at slot 0', () => {
-    expect(getSlot()).toBe(0);
+    expect(_getInstanceSlot()).toBe(0);
   });
 
-  it('moveToNextSlot advances circularly', () => {
-    moveToNextSlot();
-    expect(getSlot()).toBe(1);
-    moveToNextSlot();
-    expect(getSlot()).toBe(2);
-    moveToNextSlot();
-    expect(getSlot()).toBe(3);
-    moveToNextSlot();
-    expect(getSlot()).toBe(0);
+  it('moveToNextSlot advances circularly', async () => {
+    let p = moveToNextSlot();
+    vi.runAllTimers();
+    await p;
+    expect(_getInstanceSlot()).toBe(1);
+
+    p = moveToNextSlot();
+    vi.runAllTimers();
+    await p;
+    expect(_getInstanceSlot()).toBe(2);
+
+    p = moveToNextSlot();
+    vi.runAllTimers();
+    await p;
+    expect(_getInstanceSlot()).toBe(3);
+
+    p = moveToNextSlot();
+    vi.runAllTimers();
+    await p;
+    expect(_getInstanceSlot()).toBe(0);
   });
 
-  it('different slots produce non-overlapping discriminators', () => {
-    const tsMs = nowTsMs();
+  it('different slots produce different base discriminators', async () => {
+    const ts = 7_000_000;
+    const doc = { table: 'tbl-slots', action: 'insert' };
 
-    // Simulate 4 independent instances by clearing bucket state between slot changes
-    const id0 = generateId('tbl-slot', 'insert', tsMs);
+    // Slot 0: first call
+    const id0 = generateId(doc as any, ts);
+    expect(_getInstanceSlot()).toBe(0);
 
-    _clearSlot(tsMs);
-    moveToNextSlot();
-    const id1 = generateId('tbl-slot', 'insert', tsMs);
+    // Move to slot 1, clear cache to reset counter
+    _clearCacheSlot(ts);
+    const p = moveToNextSlot();
+    vi.runAllTimers();
+    await p;
+    expect(_getInstanceSlot()).toBe(1);
 
-    _clearSlot(tsMs);
-    moveToNextSlot();
-    const id2 = generateId('tbl-slot', 'insert', tsMs);
+    // Slot 1: same table/action/ts, but different slot
+    const id1 = generateId(doc as any, ts);
 
-    _clearSlot(tsMs);
-    moveToNextSlot();
-    const id3 = generateId('tbl-slot', 'insert', tsMs);
+    // IDs should be different because discriminators use different slot offsets
+    expect(id0).not.toBe(id1);
 
-    // All 4 ids must be distinct — each slot uses a different partition of the discriminator
-    const ids = new Set([id0, id1, id2, id3]);
-    expect(ids.size).toBe(4);
-
-    // Verify discriminator ranges: slot N uses [N*256, (N+1)*256)
-    const disc = (genId: number) => Math.floor((genId % 4096) / 4);
-    expect(disc(id0)).toBe(0);    // slot 0, counter 0
-    expect(disc(id1)).toBe(256);  // slot 1, counter 0
-    expect(disc(id2)).toBe(512);  // slot 2, counter 0
-    expect(disc(id3)).toBe(768);  // slot 3, counter 0
+    // Discriminator difference should be IDS_PER_MS * 4
+    expect(id1 - id0).toBe(NUM_DISCRIMINATORS * 4);
   });
 });
