@@ -15,8 +15,8 @@ import {
  * - Logs subscription/info control messages
  * - Publishes all data messages to the configured exchange
  */
-export const createMessageHandler = (state: FeedState, config: Config): MessageHandler => {
-  return (buffer: Buffer): void => {
+export const createMessageHandler = (state: FeedState, config: Config, onMessage: () => void): MessageHandler => {
+  return async (buffer: Buffer): Promise<void> => {
     state.lastMessageTime = Date.now();
 
     try {
@@ -39,7 +39,7 @@ export const createMessageHandler = (state: FeedState, config: Config): MessageH
       const symbol = symbols.length === 1 ? symbols[0] : '';
       const routingKey = `${message.table}.${message.action}.${symbol}`;
 
-      exchange.publish(content, routingKey, {
+      await exchange.publish(content, routingKey, {
         contentType: 'application/json',
         headers: {
           'x-worker-uuid': config.workerUuid,
@@ -49,7 +49,7 @@ export const createMessageHandler = (state: FeedState, config: Config): MessageH
         },
       });
 
-      increaseCounter();
+      onMessage();
     } catch (err) {
       logger.error({ err }, 'Error processing WebSocket message');
     }
@@ -67,13 +67,5 @@ const handleControlMessage = (message: BitmexWebSocketMessage, state: FeedState)
   } else {
     const msgPreview = JSON.stringify(message).slice(0, 200);
     logger.warn({ message: msgPreview }, 'Unrecognized message received');
-  }
-};
-
-let counter = 0;
-
-const increaseCounter = () => {
-  if (++counter % 10000 === 0) {
-    logger.info(`Processed ${ Math.floor(counter / 1000) }k messages`);
   }
 };

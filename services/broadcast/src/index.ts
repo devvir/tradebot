@@ -29,7 +29,7 @@ service.run(async () => {
     else        { state.realtime?.resume(); state.platform?.resume(); }
   });
 
-  const onMessage = createMessageHandler(state, config);
+  const onMessage = createMessageHandler(state, config, service.onMessage);
 
   // ── WebSocket connections ─────────────────────────────────────────────────
   const { connectRealtime, connectPlatform } = createConnections(state, config, onMessage);

@@ -31,6 +31,7 @@ services:
     extends:
       file: ../../../services/router/docker/compose.yml
       service: router
+
     environment:
       ROUTER_RULES: >-
         archive.in@topic:broadcast > @topic:codec.in(
@@ -42,6 +43,7 @@ services:
     extends:
       file: ../../../services/pipe/docker/compose.yml
       service: pipe
+
     environment:
       PIPE_BINDINGS: "topic:codec.out > topic:writer"
 

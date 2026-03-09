@@ -39,7 +39,7 @@ export const startConsuming = async (broker: Broker, config: Config, onProcessMs
     try {
       onProcessMsg();
 
-      const content = await transform(original, message as Message);
+      const content = transform(original, message as Message);
 
       await outputExchange.republish({ ...original, content });
 

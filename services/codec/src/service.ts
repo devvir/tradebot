@@ -19,6 +19,8 @@ let broker: Broker | null = null;
 let messagesProcessed = 0;
 let lastProcessedTime = Date.now();
 
+const MESSAGE_LOG_INTERVAL = 20_000;
+
 /**
  * Called by message handler on each processed message.
  * Tracks activity for health checks and monitoring.
@@ -27,8 +29,10 @@ const onMessage = (): void => {
   messagesProcessed++;
   lastProcessedTime = Date.now();
 
-  if (messagesProcessed % 10000 === 0) {
-    logger.info(`Processed ${Math.floor(messagesProcessed / 1000)}k messages`);
+  if (messagesProcessed % MESSAGE_LOG_INTERVAL === 0) {
+    logger.info(messagesProcessed < 1_000_000
+      ? `Processed ${(messagesProcessed / 1_000).toFixed(0)}K messages`
+      : `Processed ${(messagesProcessed / 1_000_000).toFixed(2)}M messages`);
   }
 };
 

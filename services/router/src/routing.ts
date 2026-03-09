@@ -3,8 +3,6 @@ import { logger } from '@devvir/service';
 import type { Broker } from '@devvir/rabbitmq';
 import type { Route, RoutingKeyConfig } from './types';
 
-const PREFETCH = 1000;
-
 /** Setup routing consumers that republish messages to destinations, grouped by source queue. */
 export const startConsuming = async (broker: Broker, routes: Route[]): Promise<void> => {
   const channel = broker.getChannel();
@@ -41,24 +39,27 @@ export const startConsuming = async (broker: Broker, routes: Route[]): Promise<v
       return { exchange: new Exchange(channel, ''), routingKey: dest.routingKey, fixedRoutingKey: dest.queue!, headers: dest.headers };
     });
 
-    await sourceQueue.consume(async (_message, { ack, nack, original: rawMsg }) => {
+    // await sourceQueue.getChannel().consume(sourceQueue.getName(), async (_message, { ack, nack, original: rawMsg }) => {
+    await channel.consume(sourceQueue.getName(), async (msg) => {
+      if (! msg) return;
+
       try {
-        const incomingKey = rawMsg.fields?.routingKey || '';
+        const incomingKey = msg.fields?.routingKey || '';
 
         for (const target of targets) {
           const routingKey = target.fixedRoutingKey ?? resolveRoutingKey(target.routingKey, incomingKey);
-          await target.exchange.republish(rawMsg, {
+          await target.exchange.republish(msg, {
             routingKey,
-            ...(target.headers ? { headers: { ...(rawMsg.properties?.headers ?? {}), ...target.headers } } : {}),
+            ...(target.headers ? { headers: { ...(msg.properties?.headers ?? {}), ...target.headers } } : {}),
           });
         }
 
-        ack();
+        channel.ack(msg);
       } catch (err) {
         logger.error({ err, source: queueName }, 'Failed to route message');
-        nack(true);
+        channel.nack(msg, false, true);
       }
-    }, { prefetch: PREFETCH });
+    });
 
     logger.info({
       source: queueName,
