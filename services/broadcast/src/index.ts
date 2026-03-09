@@ -24,6 +24,11 @@ service.run(async () => {
 
   const broker = state.broker = await connectToQueue(config);
 
+  broker.getExchange()!.setBackpressureHandler((paused) => {
+    if (paused) { state.realtime?.pause(); state.platform?.pause(); }
+    else        { state.realtime?.resume(); state.platform?.resume(); }
+  });
+
   const onMessage = createMessageHandler(state, config);
 
   // ── WebSocket connections ─────────────────────────────────────────────────
