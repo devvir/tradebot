@@ -21,3 +21,8 @@ Thumbs.db
 **/dist/
 *.tsbuildinfo
 .pnpm-store/
+
+.nx/cache
+.nx/workspace-data
+vitest.config.*.timestamp*
+.nx/polygraph

@@ -16,14 +16,17 @@
     "check": "pnpm --color -r check"
   },
   "devDependencies": {
+    "@nx/vitest": "22.5.4",
     "@tradebot/types": "workspace:*",
     "@types/amqplib": "^0.10.8",
     "@types/node": "^25.3.5",
     "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^4.0.18",
     "knip": "^5.85.0",
+    "nx": "22.5.4",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3",
+    "vite": "^7.0.0",
     "vitest": "^4.0.18"
   }
 }
