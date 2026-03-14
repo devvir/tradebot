@@ -1,81 +1,30 @@
-import { logger, defineLifecycle } from '@devvir/service';
-import type { Broker } from '@devvir/rabbitmq';
-import type { ReaderState } from './types';
+import { SKFactory } from '@tradebot/utils';
+import type { Service } from '@devvir/service-kit';
+import type { ServerResponse } from 'node:http';
+import config from './config';
 
-/**
- * Resources returned by the service's init flow.
- * Lifecycle uses these for health checks and shutdown.
- */
-interface ReaderResources {
-  state: ReaderState;
-  broker: Broker;
-}
+const HEALTH_INACTIVITY_MS = 300_000; // 5 min — polling service
 
-// Resources captured from the init flow
-let state: ReaderState | null = null;
-let broker: Broker | null = null;
-
-// Activity tracking
-let messagesPublished = 0;
-let lastPublishedTime = Date.now();
-
-/**
- * Called by polling loop on each published message.
- * Tracks activity for health checks and monitoring.
- */
-const onMessage = (): void => {
-  messagesPublished++;
-  lastPublishedTime = Date.now();
-
-  if (messagesPublished % 10000 === 0) {
-    logger.info(`Published ${Math.floor(messagesPublished / 1000)}k messages`);
-  }
-};
-
-/**
- * Run the service with full lifecycle management.
- * The flow callback contains the business logic (the recipe).
- * Its returned resources are used for health checks and cleanup.
- */
-const run = (flow: () => Promise<ReaderResources>): void => {
-  const lifecycle = defineLifecycle({
-    dependencies: ['mongodb', 'rabbitmq'],
-
-    onInit: async () => {
-      const resources = await flow();
-      state = resources.state;
-      broker = resources.broker;
+export default SKFactory({ name: 'reader', rabbitmq: true, mongodb: true })
+  .declare({
+    config,
+    state: {
+      messagesPublished: 0,
+      lastPublishedAt: null,
     },
+  })
+  .bind({
+    onHealthCheck: (service: Service, res: ServerResponse) => {
+      const messagesPublished = service.state('messagesPublished') as number;
+      const lastPublishedAt   = service.state('lastPublishedAt')   as number | null;
 
-    onPing: async () => ({
-      messagesPublished,
-      lastPublishedTime: Date.now() - lastPublishedTime,
-      mongoConnected: state?.mongoConnection !== null,
-      brokerConnected: broker?.getState?.() === 'connected',
-    }),
+      const healthy = lastPublishedAt !== null
+        && Date.now() - lastPublishedAt < HEALTH_INACTIVITY_MS;
 
-    isHealthy: () => {
-      if (! state || ! broker) return false;
-
-      const mongoConnected = state.mongoConnection !== null;
-      const brokerConnected = broker.getState?.() === 'connected';
-      const recentActivity = Date.now() - state.lastPublishedTime < 300000; // 5 min threshold for polling service
-
-      return mongoConnected && brokerConnected && recentActivity;
-    },
-
-    onShutdown: async () => {
-      state!.isShuttingDown = true;
-
-      if (broker) await broker.disconnect();
-      if (state?.mongoConnection?.client) await state.mongoConnection.client.close();
+      res.writeHead(healthy ? 200 : 503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        messagesPublished,
+        lastProcessedTime: lastPublishedAt !== null ? Date.now() - lastPublishedAt : null,
+      }));
     },
   });
-
-  lifecycle.init().catch((error) => {
-    logger.error({ err: error }, 'Failed to start Reader service');
-    process.exit(1);
-  });
-};
-
-export default { run, onMessage };

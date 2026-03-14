@@ -1,23 +1,12 @@
-import { keepAlive } from '@devvir/rabbitmq';
-import { logger } from '@devvir/service';
-import type { Broker, TopologySpec } from '@devvir/rabbitmq';
-import { Config, Exchange, Route } from './types';
-
-export const connectToQueue = async ({ rabbitmqUrl, routes } : Config): Promise<Broker> => {
-  logger.info('Connecting to RabbitMQ...');
-
-  const broker = await keepAlive(rabbitmqUrl);
-  const topology = buildTopology(routes);
-
-  return await broker.declares(topology as TopologySpec);
-};
+import type { RabbitMQ } from '@devvir/service-kit';
+import type { Exchange, Route } from './types';
 
 /**
  * Builds a RabbitMQ topology specification from the provided routing rules.
  */
-export const buildTopology = (routes: Route[]): TopologySpec => {
-  const exchanges: NonNullable<TopologySpec['exchanges']> = {};
-  const queues: NonNullable<TopologySpec['queues']> = {};
+export const buildTopology = (routes: Route[]): RabbitMQ.TopologySpec => {
+  const exchanges: NonNullable<RabbitMQ.TopologySpec['exchanges']> = {};
+  const queues: NonNullable<RabbitMQ.TopologySpec['queues']> = {};
 
   const ensureExchange = (ex: Exchange) => {
     if (exchanges[ex.name]) return;

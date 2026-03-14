@@ -1,5 +1,5 @@
 import { brotliCompressSync, constants } from 'node:zlib';
-import { logger } from '@devvir/service';
+import { logger } from '@devvir/service-kit';
 import {
   encodeInstrument,
   encodeQuote,

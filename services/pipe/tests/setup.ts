@@ -1,5 +1,4 @@
-// Cleanup env vars after each test
-afterEach(() => {
-  delete process.env.RABBITMQ_URL;
-  delete process.env.PIPE_BINDINGS;
-});
+import { loadTestingEnv } from '@tradebot/utils';
+
+// Load env vars from .env.testing before module initialization
+loadTestingEnv(__dirname);

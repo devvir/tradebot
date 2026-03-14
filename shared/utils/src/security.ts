@@ -1,4 +1,4 @@
-import { logger } from "@devvir/service";
+import { logger } from "@devvir/service-kit";
 
 /**
  * Replace credentials in a URL with asterisks for safe logging.

@@ -1,7 +1,7 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { pause, resume, paused, greenLight } from '../src/semaphore';
 
-vi.mock('@devvir/service', () => ({
+vi.mock('@devvir/service-kit', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 

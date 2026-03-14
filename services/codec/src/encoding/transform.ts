@@ -1,10 +1,10 @@
-import type { RawMessage } from '@devvir/rabbitmq';
+import { RabbitMQ } from '@devvir/service-kit';
 import { encode, decode, type Strategy, type BitmexDataMessage, type Message } from '.';
 
 /**
  * Apply the configured codec strategy to an inbound message.
  */
-export default (rawMsg: RawMessage, jsonMsg: Message): Buffer => {
+export default (rawMsg: RabbitMQ.RawMessage, jsonMsg: Message): Buffer => {
   const headers = rawMsg.properties.headers ?? {};
   const strategy: Strategy = headers['x-codec-strategy'] || 'encode';
 

@@ -1,4 +1,4 @@
-import { logger } from '@devvir/service';
+import { logger } from '@devvir/service-kit';
 import { redactUrl, sanitizeUrl } from '@tradebot/utils';
 import { Config } from './types';
 
@@ -27,3 +27,6 @@ export const validateConfig = (config: Config): void => {
   if (config.prefetch < 50) throw new Error('WRITER_PREFETCH must be greater than 50');
   if (config.flushIntervalMs < 20) throw new Error('WRITER_FLUSH_INTERVAL_MS must be greater than 20');
 };
+
+export default loadConfig();
+

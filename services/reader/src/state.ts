@@ -1,4 +1,4 @@
-import { logger } from '@devvir/service';
+import { logger } from '@devvir/service-kit';
 import { Db } from 'mongodb';
 import {
   getPersistedPollingState,

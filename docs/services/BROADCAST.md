@@ -75,8 +75,7 @@ Example with defaults:
 
 ### NPM Packages
 - `ws` - WebSocket client library
-- `@devvir/service` - Service lifecycle management framework
-- `@devvir/rabbitmq` - RabbitMQ connection broker
+- `@devvir/service-kit` - Service lifecycle management framework (includes RabbitMQ broker)
 - `@tradebot/utils` - Utility functions (URL sanitization, logging)
 
 ## Health Monitoring

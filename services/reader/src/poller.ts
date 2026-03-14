@@ -1,5 +1,5 @@
 import type { Db } from 'mongodb';
-import { logger } from '@devvir/service';
+import { logger } from '@devvir/service-kit';
 import { BUFFER_SIZE } from './config.js';
 import type { CollectionPollingState, PersistedPollingState, Config } from './types.js';
 import { getLatestBufferedIds, getHighestId, scanCollectionUpToHighId, getCollectionsToProcess } from './persistence.js';

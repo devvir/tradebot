@@ -64,8 +64,7 @@ Brotli-decompresses `b` and reverses the table-specific encoding, recovering the
 
 ### External Runtime Dependencies
 - **RabbitMQ** - For message consumption and publishing
-- **@devvir/service** - Lifecycle management framework
-- **@devvir/rabbitmq** - RabbitMQ broker abstraction
+- **@devvir/service-kit** - Lifecycle management framework (includes RabbitMQ broker)
 - **@tradebot/utils** - Utilities (logging, URL handling)
 - **@tradebot/types** - BitMEX message type definitions
 - **Node.js zlib** - Brotli compression

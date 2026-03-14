@@ -3,15 +3,14 @@
  *
  * Each describe block spins up its own isolated broker pair:
  *   - testBroker  — publishes to source exchanges and consumes from destination queues
- *   - pipeBroker  — created by pipe's connect(); declares E2E exchange bindings then stays idle
+ *   - pipeBroker  — declares E2E exchange bindings then stays idle
  *
  * Message retrieval uses channel.get() (pull-based) to avoid lingering consumers between tests.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { keepAlive, Broker } from '@devvir/rabbitmq';
-import { connect } from '../src/rabbitmq';
-import { loadConfig } from '../src/config';
+import { RabbitMQ } from '@devvir/service-kit';
+import parseBindingsStr, { buildTopology, withDefaults } from '../src/bindings';
 import type { Config } from '../src/types';
 
 const RABBIT_URL = 'amqp://guest:guest@localhost:56732';
@@ -19,22 +18,25 @@ const RABBIT_URL = 'amqp://guest:guest@localhost:56732';
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /** Build a Config from a PIPE_BINDINGS string. */
-const parseBindings = (bindings: string): Config => {
-  const prev = { url: process.env.RABBITMQ_URL, b: process.env.PIPE_BINDINGS };
-  process.env.RABBITMQ_URL = RABBIT_URL;
-  process.env.PIPE_BINDINGS = bindings;
-  try {
-    return loadConfig();
-  } finally {
-    if (prev.url !== undefined) process.env.RABBITMQ_URL = prev.url;
-    else delete process.env.RABBITMQ_URL;
-    if (prev.b !== undefined) process.env.PIPE_BINDINGS = prev.b;
-    else delete process.env.PIPE_BINDINGS;
-  }
+const parseBindings = (bindingsStr: string): Config => {
+  const bindings = withDefaults(parseBindingsStr(bindingsStr));
+
+  return {
+    rabbitmqUrl: RABBIT_URL,
+    topology:    buildTopology(bindings),
+    bindings,
+  };
+};
+
+/** Create a broker and declare the pipe topology. */
+const connect = async (config: Config): Promise<RabbitMQ.Broker> => {
+  const broker = await RabbitMQ.keepAlive(RABBIT_URL);
+  await broker.declares(config.topology as RabbitMQ.TopologySpec);
+  return broker;
 };
 
 /** Assert an exclusive queue and bind it to an exchange. */
-const bindTestQueue = async (broker: Broker, exchangeName: string, queueName: string, routingKey = '#'): Promise<void> => {
+const bindTestQueue = async (broker: RabbitMQ.Broker, exchangeName: string, queueName: string, routingKey = '#'): Promise<void> => {
   const channel = broker.getChannel();
   if (! channel) throw new Error('No channel');
   await channel.assertQueue(queueName, { durable: false, exclusive: true, autoDelete: true });
@@ -43,7 +45,7 @@ const bindTestQueue = async (broker: Broker, exchangeName: string, queueName: st
 
 /** Publish a JSON message to an exchange. */
 const publish = (
-  broker: Broker,
+  broker: RabbitMQ.Broker,
   exchangeName: string,
   message: unknown,
   routingKey = '',
@@ -59,7 +61,7 @@ const publish = (
 };
 
 /** Poll a queue and return the first parsed message, or null on timeout. */
-const getMessage = async (broker: Broker, queueName: string, timeoutMs = 3000): Promise<unknown | null> => {
+const getMessage = async (broker: RabbitMQ.Broker, queueName: string, timeoutMs = 3000): Promise<unknown | null> => {
   const channel = broker.getChannel();
   if (! channel) return null;
 
@@ -76,7 +78,7 @@ const getMessage = async (broker: Broker, queueName: string, timeoutMs = 3000): 
 };
 
 /** Poll a queue until `count` messages arrive, or timeout. */
-const getMessages = async (broker: Broker, queueName: string, count: number, timeoutMs = 5000): Promise<unknown[]> => {
+const getMessages = async (broker: RabbitMQ.Broker, queueName: string, count: number, timeoutMs = 5000): Promise<unknown[]> => {
   const messages: unknown[] = [];
   const deadline = Date.now() + timeoutMs;
 
@@ -103,12 +105,12 @@ describe('Pipe integration tests', () => {
   // ── Fanout ─────────────────────────────────────────────────────────────────
 
   describe('Fanout-to-fanout', () => {
-    let testBroker: Broker;
-    let pipeBroker: Broker;
+    let testBroker: RabbitMQ.Broker;
+    let pipeBroker: RabbitMQ.Broker;
 
     beforeAll(async () => {
       const config = parseBindings('fanout:int.pipe.fanout.src > fanout:int.pipe.fanout.dst');
-      testBroker = await keepAlive(RABBIT_URL);
+      testBroker = await RabbitMQ.keepAlive(RABBIT_URL);
       pipeBroker = await connect(config);
       await bindTestQueue(testBroker, 'int.pipe.fanout.dst', 'int.pipe.fanout.q');
     });
@@ -137,14 +139,14 @@ describe('Pipe integration tests', () => {
   // ── Fan-out to multiple destinations ───────────────────────────────────────
 
   describe('Fan-out to multiple destinations', () => {
-    let testBroker: Broker;
-    let pipeBroker: Broker;
+    let testBroker: RabbitMQ.Broker;
+    let pipeBroker: RabbitMQ.Broker;
 
     beforeAll(async () => {
       const config = parseBindings(
         'fanout:int.pipe.fan.src > fanout:int.pipe.fan.dst1 | fanout:int.pipe.fan.src > fanout:int.pipe.fan.dst2',
       );
-      testBroker = await keepAlive(RABBIT_URL);
+      testBroker = await RabbitMQ.keepAlive(RABBIT_URL);
       pipeBroker = await connect(config);
       await bindTestQueue(testBroker, 'int.pipe.fan.dst1', 'int.pipe.fan.q1');
       await bindTestQueue(testBroker, 'int.pipe.fan.dst2', 'int.pipe.fan.q2');
@@ -170,14 +172,14 @@ describe('Pipe integration tests', () => {
   // ── Chain (A → B → C) ──────────────────────────────────────────────────────
 
   describe('Chain (A → B → C)', () => {
-    let testBroker: Broker;
-    let pipeBroker: Broker;
+    let testBroker: RabbitMQ.Broker;
+    let pipeBroker: RabbitMQ.Broker;
 
     beforeAll(async () => {
       const config = parseBindings(
         'fanout:int.pipe.chain.a > fanout:int.pipe.chain.b | fanout:int.pipe.chain.b > fanout:int.pipe.chain.c',
       );
-      testBroker = await keepAlive(RABBIT_URL);
+      testBroker = await RabbitMQ.keepAlive(RABBIT_URL);
       pipeBroker = await connect(config);
       await bindTestQueue(testBroker, 'int.pipe.chain.c', 'int.pipe.chain.q');
     });
@@ -196,13 +198,13 @@ describe('Pipe integration tests', () => {
   // ── Topic source ───────────────────────────────────────────────────────────
 
   describe('Topic source — default "#" binding forwards all messages', () => {
-    let testBroker: Broker;
-    let pipeBroker: Broker;
+    let testBroker: RabbitMQ.Broker;
+    let pipeBroker: RabbitMQ.Broker;
 
     beforeAll(async () => {
       // No routing key specified: pipe defaults to '#' for topic sources
       const config = parseBindings('topic:int.pipe.topic.all.src > fanout:int.pipe.topic.all.dst');
-      testBroker = await keepAlive(RABBIT_URL);
+      testBroker = await RabbitMQ.keepAlive(RABBIT_URL);
       pipeBroker = await connect(config);
       await bindTestQueue(testBroker, 'int.pipe.topic.all.dst', 'int.pipe.topic.all.q');
     });
@@ -228,12 +230,12 @@ describe('Pipe integration tests', () => {
   });
 
   describe('Topic source — explicit routing key filters messages', () => {
-    let testBroker: Broker;
-    let pipeBroker: Broker;
+    let testBroker: RabbitMQ.Broker;
+    let pipeBroker: RabbitMQ.Broker;
 
     beforeAll(async () => {
       const config = parseBindings('topic:int.pipe.topic.rk.src(key:trade.*) > fanout:int.pipe.topic.rk.dst');
-      testBroker = await keepAlive(RABBIT_URL);
+      testBroker = await RabbitMQ.keepAlive(RABBIT_URL);
       pipeBroker = await connect(config);
       await bindTestQueue(testBroker, 'int.pipe.topic.rk.dst', 'int.pipe.topic.rk.q');
     });
@@ -257,12 +259,12 @@ describe('Pipe integration tests', () => {
   // ── Direct source ──────────────────────────────────────────────────────────
 
   describe('Direct source — exact routing key filter', () => {
-    let testBroker: Broker;
-    let pipeBroker: Broker;
+    let testBroker: RabbitMQ.Broker;
+    let pipeBroker: RabbitMQ.Broker;
 
     beforeAll(async () => {
       const config = parseBindings('direct:int.pipe.direct.src(key:collect) > fanout:int.pipe.direct.dst');
-      testBroker = await keepAlive(RABBIT_URL);
+      testBroker = await RabbitMQ.keepAlive(RABBIT_URL);
       pipeBroker = await connect(config);
       await bindTestQueue(testBroker, 'int.pipe.direct.dst', 'int.pipe.direct.q');
     });
@@ -286,14 +288,14 @@ describe('Pipe integration tests', () => {
   // ── Headers source ─────────────────────────────────────────────────────────
 
   describe('Headers source — all messages forwarded via empty binding args {}', () => {
-    let testBroker: Broker;
-    let pipeBroker: Broker;
+    let testBroker: RabbitMQ.Broker;
+    let pipeBroker: RabbitMQ.Broker;
 
     beforeAll(async () => {
       // Pipe binds headers exchanges with empty args {}, which RabbitMQ treats as match-all.
       // Header-based filtering (binding arguments) is not yet supported.
       const config = parseBindings('headers:int.pipe.hdrs.src > fanout:int.pipe.hdrs.dst');
-      testBroker = await keepAlive(RABBIT_URL);
+      testBroker = await RabbitMQ.keepAlive(RABBIT_URL);
       pipeBroker = await connect(config);
       await bindTestQueue(testBroker, 'int.pipe.hdrs.dst', 'int.pipe.hdrs.q');
     });
@@ -319,12 +321,12 @@ describe('Pipe integration tests', () => {
   describe('Recovery — reconnects without error after channel drop', () => {
     // Regression: topology re-declaration during recovery previously used this.channel! (null),
     // causing "Cannot read properties of null (reading 'assertExchange')" and an infinite reconnect loop.
-    let testBroker: Broker;
-    let pipeBroker: Broker;
+    let testBroker: RabbitMQ.Broker;
+    let pipeBroker: RabbitMQ.Broker;
 
     beforeAll(async () => {
       const config = parseBindings('fanout:int.pipe.recovery.src > fanout:int.pipe.recovery.dst');
-      testBroker = await keepAlive(RABBIT_URL);
+      testBroker = await RabbitMQ.keepAlive(RABBIT_URL);
       pipeBroker = await connect(config);
       await bindTestQueue(testBroker, 'int.pipe.recovery.dst', 'int.pipe.recovery.q');
     });

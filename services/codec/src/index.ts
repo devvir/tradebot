@@ -1,24 +1,28 @@
-import { logger } from '@devvir/service';
-import { loadConfig } from './config';
-import { connectToQueue, startConsuming } from './rabbitmq';
-import service from './service';
-import type { CodecState } from './types';
+import SK, { QUEUE, OUTBOUND_EXCHANGE } from './service';
+import { RabbitMQ } from '@devvir/service-kit';
+import { transform } from './encoding';
+import type { Message } from './types';
 
-const config = loadConfig();
+SK.run(async (service) => {
+  const broker      = await service.providers.connect('rabbitmq') as RabbitMQ.Broker;
+  const queue       = broker.getQueue(QUEUE)!;
+  const outExchange = broker.getExchange(OUTBOUND_EXCHANGE)!;
 
-const state: CodecState = {
-  rabbitmqBroker: null,
-  isShuttingDown: false,
-  messagesProcessed: 0,
-  lastProcessedTime: Date.now(),
-};
+  service.logger.info('Started message consumption');
 
-service.run(async () => {
-  logger.info('Starting Codec Service...');
+  const stopConsuming = await queue.consume(async (message, { ack, nack, original }) => {
+    try {
+      await outExchange.republish({ ...original, content: transform(original, message as Message) });
 
-  const broker = state.rabbitmqBroker = await connectToQueue(config);
+      ack();
+      service.emit('message');
+    } catch (err) {
+      nack(true);
 
-  await startConsuming(broker, config, service.onMessage);
+      const errorPayload = { err, message: (message as string).slice(0, 200) };
+      service.logger.error(errorPayload, 'Failed to process message');
+    }
+  }, { prefetch: service.config('prefetch') as number });
 
-  return { state, broker };
+  service.once('shutdown', () => stopConsuming?.());
 });

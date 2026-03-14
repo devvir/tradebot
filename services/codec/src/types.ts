@@ -1,16 +1,9 @@
-import type { Broker } from '@devvir/rabbitmq';
-import { BitmexDataItem, BitmexTable } from '@tradebot/types';
+import type { BitmexDataItem, BitmexTable } from '@tradebot/types';
 
 export interface Config {
   rabbitmqUrl: string;
   prefetch: number;
-}
-
-export interface CodecState {
-  rabbitmqBroker: Broker | null;
-  isShuttingDown: boolean;
-  messagesProcessed: number;
-  lastProcessedTime: number;
+  [key: string]: unknown;
 }
 
 export type Strategy = typeof STRATEGIES[number];

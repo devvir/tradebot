@@ -1,3 +1,9 @@
+import { Collection, Document as MongoDocument } from "mongodb";
+import { logger } from "@devvir/service-kit";
+import type { BatchEntry, Document, ConsumerEvent } from "./types";
+import { addToBatch } from "./batch";
+import { moveToNextSlot } from "./documentId";
+
 /**
  * Duplicate-key collision handling for the writer service.
  *
@@ -32,13 +38,6 @@
  * Entries that exhaust MAX_RETRIES are nacked with requeue=true on first delivery (leveraging the
  * 512 emergency discriminators as a safety net), and dead-lettered only on redelivery.
  */
-
-import { Collection, Document as MongoDocument } from "mongodb";
-import { BatchEntry, Document } from "./types";
-import { logger } from "@devvir/service";
-import { addToBatch } from "./batch";
-import { ConsumerEvent } from "@devvir/rabbitmq";
-import { moveToNextSlot } from "./documentId";
 
 const MAX_RETRIES = 5;
 

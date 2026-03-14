@@ -1,17 +1,12 @@
-import { logger } from '@devvir/service';
-import { loadConfig } from './config';
-import { connect } from './rabbitmq';
+import SK from './service';
+import type { RabbitMQ } from '@devvir/service-kit';
 
-const main = async () => {
-  const config = loadConfig();
-  const broker = await connect(config);
-  await broker.close();
+SK.run(async (service) => {
+  const broker = await service.providers.connect('rabbitmq') as RabbitMQ.Broker;
 
-  logger.info('Bindings successfully declared — exiting');
-};
+  await broker.declares(service.config('topology') as RabbitMQ.TopologySpec);
 
-main().catch((error) => {
-  logger.error({ err: error }, 'Failed to declare pipe bindings');
+  service.logger.info('Bindings successfully declared — exiting');
 
-  process.exit(1);
+  service.shutdown();
 });

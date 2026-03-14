@@ -1,10 +1,11 @@
-import { Exchange } from '@devvir/rabbitmq';
-import { logger } from '@devvir/service';
-import type { Broker } from '@devvir/rabbitmq';
+import { logger, RabbitMQ } from '@devvir/service-kit';
 import type { Route, RoutingKeyConfig } from './types';
+import { buildTopology } from './rabbitmq';
 
 /** Setup routing consumers that republish messages to destinations, grouped by source queue. */
-export const startConsuming = async (broker: Broker, routes: Route[]): Promise<void> => {
+export const startConsuming = async (broker: RabbitMQ.Broker, routes: Route[]): Promise<void> => {
+  await broker.declares(buildTopology(routes) as RabbitMQ.TopologySpec);
+
   const channel = broker.getChannel();
   if (! channel) throw new Error('No RabbitMQ channel available');
 
@@ -36,7 +37,7 @@ export const startConsuming = async (broker: Broker, routes: Route[]): Promise<v
       }
 
       // Queue-only destination: publish to default exchange ('') with queue name as routing key
-      return { exchange: new Exchange(channel, ''), routingKey: dest.routingKey, fixedRoutingKey: dest.queue!, headers: dest.headers };
+      return { exchange: new RabbitMQ.Exchange(channel, ''), routingKey: dest.routingKey, fixedRoutingKey: dest.queue!, headers: dest.headers };
     });
 
     // await sourceQueue.getChannel().consume(sourceQueue.getName(), async (_message, { ack, nack, original: rawMsg }) => {

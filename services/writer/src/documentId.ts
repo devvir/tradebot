@@ -1,5 +1,5 @@
 import { BitmexAction, BitmexTable } from '@tradebot/types';
-import { logger } from '@devvir/service';
+import { logger } from '@devvir/service-kit';
 import { mapGet } from '@tradebot/utils';
 import { Document } from 'mongodb';
 import { pause, resume } from './semaphore';

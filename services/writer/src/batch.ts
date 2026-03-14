@@ -1,7 +1,6 @@
 import { BitmexTable } from '@tradebot/types';
-import { Batch, BatchEntries, BatchEntry, Document, StorableDocument } from './types';
+import type { Batch, BatchEntries, BatchEntry, ConsumerEvent, Document, StorableDocument } from './types';
 import { mapGet } from '@tradebot/utils';
-import { ConsumerEvent } from '@devvir/rabbitmq';
 
 const STORE =new Map<string, Batch>();
 

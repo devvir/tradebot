@@ -1,7 +1,7 @@
 import { vi } from 'vitest';
 
 // Mock logger to suppress test output
-vi.mock('@devvir/service', () => ({
+vi.mock('@devvir/service-kit', () => ({
   logger: {
     info: vi.fn(),
     warn: vi.fn(),

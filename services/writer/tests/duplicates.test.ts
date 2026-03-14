@@ -3,7 +3,7 @@ import { handleDuplicates, sampleTimestamp, _resetDuplicatesState } from '../src
 import { flushStore } from '../src/batch';
 import type { BatchEntry } from '../src/types';
 
-vi.mock('@devvir/service', () => ({
+vi.mock('@devvir/service-kit', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 

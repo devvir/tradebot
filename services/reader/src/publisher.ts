@@ -1,5 +1,4 @@
-import { logger } from '@devvir/service';
-import type { Broker } from '@devvir/rabbitmq';
+import { logger, RabbitMQ } from '@devvir/service-kit';
 import type { Config } from './types';
 
 const BACKPRESSURE_CHECK_EVERY = 500;
@@ -13,7 +12,7 @@ const BACKPRESSURE_CHECK_EVERY = 500;
  *   reader queue has reached READER_MAX_READY messages.
  */
 export const createPublisher = (
-  broker: Broker,
+  broker: RabbitMQ.Broker,
   config: Config,
 ): (collection: string, doc: Record<string, unknown>) => Promise<void> => {
   const queue = broker.getQueue()!;

@@ -1,5 +1,5 @@
 import WebSocket from 'ws';
-import type { Broker } from '@devvir/rabbitmq';
+import type { RabbitMQ } from '@devvir/service-kit';
 
 export {
   type BitmexWebSocketMessage,
@@ -24,12 +24,13 @@ export interface Config {
     reconnectDelayMs: number;
     maxReconnectDelayMs: number;
   };
+  [key: string]: unknown;
 }
 
 export interface FeedState {
   realtime: WebSocket | null;
   platform: WebSocket | null;
-  broker: Broker | null;
+  broker: RabbitMQ.Broker | null;
   reconnectDelay: number;
   isShuttingDown: boolean;
   lastMessageTime: number;

@@ -1,4 +1,4 @@
-import { logger } from "@devvir/service";
+import { logger } from "@devvir/service-kit";
 
 const MAX_PAUSE_MS = 5 * 60 * 1000; // 5 minutes
 

@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { logger } from '@devvir/service';
+import { logger } from '@devvir/service-kit';
 import { redactUrl, sanitizeUrl } from '@tradebot/utils';
 import type { Config } from './types';
 
@@ -78,3 +78,5 @@ const validateConfig = (config: Config): void => {
 const usesTestnet = () => [undefined, '', '1', 'on', 'true'].includes(
   process.env.BITMEX_TESTNET?.toLowerCase()
 );
+
+export default loadConfig();

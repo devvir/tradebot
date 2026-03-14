@@ -1,66 +1,80 @@
-/**
- * Service availability checking utilities.
- * Useful for conditionally skipping integration tests when external services aren't running.
- */
+import SK, { type Service, type ServiceKit, type Spec, type Bindings, type ProviderSpec } from '@devvir/service-kit';
+import type { TopologySpec } from '@devvir/rabbitmq';
+import type { ServerResponse } from 'node:http';
 
-/**
- * Check if one or more services are available by attempting connection.
- * @param services - Array of service configs with name and URL
- * @param timeout - Connection timeout in milliseconds (default: 3000)
- * @returns true if all services are available, false otherwise
- */
-export async function areServicesAvailable(
-  services: Array<{ name: string; url: string }>,
-  timeout = 3000,
-): Promise<boolean> {
-  try {
-    await Promise.all(
-      services.map((service) =>
-        Promise.race([
-          checkServiceConnection(service.url),
-          new Promise<void>((_, reject) => setTimeout(() => reject(new Error(`${service.name} timeout`)), timeout)),
-        ]),
-      ),
-    );
-    return true;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.warn(
-      `\n⚠️  Services not available: ${message}\n`,
-      `Available services: ${services.map((s) => s.name).join(', ')}\n`,
-      'Environment variables:',
-      services.map((s) => `  ${s.name}: ${s.url}`).join('\n'),
-    );
-    return false;
-  }
+const MESSAGE_LOG_INTERVAL = 20_000;
+const HEALTH_INACTIVITY_MS = 30_000;
+
+export interface SKFactoryConfig {
+  name:           string;
+  rabbitmq?:      boolean | { topology?: TopologySpec };
+  mongodb?:       boolean;
+  trackMessages?: boolean;
 }
 
 /**
- * Check connection to a service URL.
- * Supports both HTTP and AMQP URLs.
+ * Creates a pre-configured SK instance with tradebot conventions baked in:
+ *   - Standard provider URLs from RABBITMQ_URL / MONGODB_URL env vars
+ *   - RabbitMQ always in Broker mode (useBroker: true)
+ *   - Health check on port 3000
+ *   - Optional message tracking with activity-based health (trackMessages: true)
+ *
+ * Usage:
+ *   SKFactory({ name: 'writer', rabbitmq: { topology }, mongodb: true, trackMessages: true })
+ *     .bind({ onShutdown: async () => { ... } })
+ *     .run(async (service) => { ... service.emit('message') ... });
  */
-async function checkServiceConnection(url: string): Promise<void> {
-  try {
-    if (url.startsWith('amqp://') || url.startsWith('amqps://')) {
-      // For RabbitMQ: dynamic import to avoid circular dependencies
-      const { keepAlive } = await import('@devvir/rabbitmq');
-      const broker = await keepAlive(url);
-      await broker.disconnect();
-    } else if (url.startsWith('mongodb://') || url.startsWith('mongodb+srv://')) {
-      // For MongoDB: dynamic import
-      const { MongoClient } = await import('mongodb');
-      const client = new MongoClient(url);
-      await client.connect();
-      await client.close();
-    } else {
-      // For HTTP/HTTPS: try a simple fetch
-      const response = await fetch(url);
-      if (! response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+export const SKFactory = (config: SKFactoryConfig): ServiceKit => {
+  const providers: Record<string, ProviderSpec> = {};
+
+  if (config.rabbitmq) {
+    providers.rabbitmq = {
+      url:       process.env.RABBITMQ_URL ?? 'amqp://guest:guest@rabbitmq:5672',
+      useBroker: true,
+      ...(typeof config.rabbitmq === 'object' && config.rabbitmq.topology
+        ? { topology: config.rabbitmq.topology }
+        : {}),
+    };
+  }
+
+  if (config.mongodb) {
+    providers.mongodb = {
+      url: process.env.MONGODB_URL ?? 'mongodb://root:root@mongodb:27017/?authSource=admin',
+    };
+  }
+
+  const spec: Spec = {
+    name:        config.name,
+    healthcheck: { port: 3000 },
+    ...(Object.keys(providers).length > 0 ? { providers } : {}),
+    ...(config.trackMessages ? { state: { messages: 0, lastMessageAt: null } } : {}),
+  };
+
+  const bindings: Bindings = {};
+
+  if (config.trackMessages) {
+    bindings.onMessage = (service: Service) => {
+      service.increment('messages');
+      service.setState('lastMessageAt', Date.now());
+
+      const messages = service.state('messages') as number;
+
+      if (messages % MESSAGE_LOG_INTERVAL === 0) {
+        service.logger.info(messages < 1_000_000
+          ? `Processed ${(messages / 1_000).toFixed(0)}K messages`
+          : `Processed ${(messages / 1_000_000).toFixed(2)}M messages`);
       }
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to connect to ${url}: ${message}`);
+    };
+
+    bindings.onHealthCheck = (service: Service, res: ServerResponse) => {
+      const lastMessageAt = service.state('lastMessageAt') as number | null;
+      const messages      = service.state('messages') as number;
+      const healthy       = lastMessageAt !== null && (Date.now() - lastMessageAt < HEALTH_INACTIVITY_MS);
+
+      res.writeHead(healthy ? 200 : 503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ healthy, messages, lastMessageAt }));
+    };
   }
-}
+
+  return SK.create({ spec, bindings });
+};

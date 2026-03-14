@@ -1,7 +1,7 @@
 // Pending Review
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach } from 'vitest';
 import { MongoClient, Db } from 'mongodb';
-import { keepAlive, Broker } from '@devvir/rabbitmq';
+import { RabbitMQ } from '@devvir/service-kit';
 import {
   collectionStates,
   processCollection,
@@ -32,7 +32,7 @@ const rabbitUrl = `amqp://${TEST_CONFIG.RABBITMQ_USER}:${TEST_CONFIG.RABBITMQ_PA
 describe('Reader Service', () => {
   let mongoClient: MongoClient;
   let db: Db;
-  let broker: Broker;
+  let broker: RabbitMQ.Broker;
   const originalEnv = process.env;
 
   beforeAll(async () => {
@@ -40,7 +40,7 @@ describe('Reader Service', () => {
     await mongoClient.connect();
     db = mongoClient.db();
 
-    broker = await keepAlive(rabbitUrl);
+    broker = await RabbitMQ.keepAlive(rabbitUrl);
 
     await db.collection('_reader_state').deleteMany({});
   });

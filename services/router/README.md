@@ -10,7 +10,7 @@ Routes messages between RabbitMQ queues and exchanges with configurable routing 
 - **Header injection** — inject static AMQP headers into republished messages per destination
 - **Fan-out routing** — single source to multiple destinations
 - **Durable queues** — messages persist across router restarts
-- **Automatic reconnection** — via @devvir/rabbitmq keepAlive
+- **Automatic reconnection** — via service-kit provider retry
 
 ## Development
 

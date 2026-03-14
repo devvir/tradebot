@@ -1,5 +1,5 @@
 import { MongoClient } from 'mongodb';
-import { logger } from '@devvir/service';
+import { logger } from '@devvir/service-kit';
 
 const MAX_RETRIES = 10;
 const RETRY_DELAY_MS = 5_000;

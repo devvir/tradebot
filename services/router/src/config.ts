@@ -1,4 +1,4 @@
-import { logger } from '@devvir/service';
+import { logger } from '@devvir/service-kit';
 import { sanitizeUrl, redactUrl } from '@tradebot/utils';
 import type { Config, Route, RouteSource, RouteDestination, Exchange, RoutingKeyConfig } from './types';
 
@@ -187,3 +187,5 @@ export const formatRoute = (route: Route): string => {
 
   return `${formatItem(s.queue, s.exchange, srcKey)} > ${formatItem(d.queue, d.exchange, dstKey)}`;
 };
+
+export default loadConfig();

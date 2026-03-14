@@ -1,14 +1,3 @@
-import { Db, MongoClient } from 'mongodb';
-import { Broker } from '@devvir/rabbitmq';
-
-export interface ReaderState {
-  mongoConnection: { client: any; db: Db } | null;
-  broker: Broker | null;
-  isShuttingDown: boolean;
-  messagesPublished: number;
-  lastPublishedTime: number;
-}
-
 export interface Config {
   mongodbUrl: string;
   database: string;
@@ -16,11 +5,7 @@ export interface Config {
   pollIntervalMs: number;
   collections: string[]; // Empty array = all collections
   maxReady: number;      // Max messages in reader queue before pausing. 0 = disabled.
-}
-
-export interface MongoDBConnection {
-  client: MongoClient;
-  db: Db;
+  [key: string]: unknown;
 }
 
 /**

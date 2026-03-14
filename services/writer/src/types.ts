@@ -1,5 +1,9 @@
-import type { ConsumerEvent } from '@devvir/rabbitmq';
+import type { RabbitMQ } from '@devvir/service-kit';
 import { BitmexAction, BitmexTable } from '@tradebot/types';
+
+export type Broker        = RabbitMQ.Broker;
+export type ConsumerEvent = RabbitMQ.ConsumerEvent;
+export type TopologySpec  = RabbitMQ.TopologySpec;
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
@@ -8,6 +12,7 @@ export interface Config {
   rabbitmqUrl: string;
   prefetch: number;
   flushIntervalMs: number;
+  [key: string]: unknown;
 }
 
 // ── Persistence ──────────────────────────────────────────────────────────────

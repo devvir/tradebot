@@ -1,5 +1,5 @@
 import { brotliDecompressSync } from 'node:zlib';
-import { logger } from '@devvir/service';
+import { logger } from '@devvir/service-kit';
 import {
   decodeOrderBookL2,
   decodeQuote,

@@ -13,8 +13,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@devvir/rabbitmq": "workspace:*",
-    "@devvir/service": "workspace:*",
+    "@devvir/service-kit": "workspace:*",
     "@tradebot/utils": "workspace:*",
     "ws": "^8.19.0"
   }

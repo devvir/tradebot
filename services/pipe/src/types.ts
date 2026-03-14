@@ -1,14 +1,10 @@
-import type { TopologySpec } from '@devvir/rabbitmq';
+import type { RabbitMQ } from '@devvir/service-kit';
 
-export type { TopologySpec };
-
-export interface ExchangeSpec {
-  name: string;
-  type?: 'fanout' | 'topic' | 'direct' | 'headers';
-}
+export type TopologySpec = RabbitMQ.TopologySpec;
+export type ExchangeSpec = RabbitMQ.ExchangeSpec;
 
 export interface Binding {
-  source: ExchangeSpec;
+  source:      ExchangeSpec;
   destination: ExchangeSpec;
   routingKey?: string;
 }
@@ -16,4 +12,6 @@ export interface Binding {
 export interface Config {
   rabbitmqUrl: string;
   topology: TopologySpec;
+  bindings: Binding[];
+  [key: string]: unknown;
 }

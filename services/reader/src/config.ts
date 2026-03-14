@@ -1,4 +1,4 @@
-import { logger } from '@devvir/service';
+import { logger } from '@devvir/service-kit';
 import { redactUrl, sanitizeUrl } from '@tradebot/utils';
 import type { Config } from './types';
 
@@ -37,3 +37,6 @@ const validateConfig = (config: Config): void => {
   if (! config.rabbitmqUrl) throw new Error('RABBITMQ_URL is required');
   if (config.pollIntervalMs < 100) throw new Error('READER_POLL_INTERVAL_MS must be at least 100ms');
 };
+
+export default loadConfig();
+

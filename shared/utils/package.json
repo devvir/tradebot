@@ -10,7 +10,7 @@
   "private": true,
   "keywords": ["tradebot", "utils"],
   "dependencies": {
-    "@devvir/service": "workspace:*",
+    "@devvir/service-kit": "workspace:*",
     "@devvir/rabbitmq": "workspace:*",
     "mongodb": "^7.1.0"
   }

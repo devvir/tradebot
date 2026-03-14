@@ -12,8 +12,8 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { keepAlive, Broker } from '@devvir/rabbitmq';
-import { connectToQueue } from '../src/rabbitmq';
+import { RabbitMQ } from '@devvir/service-kit';
+import { buildTopology } from '../src/rabbitmq';
 import { startConsuming } from '../src/routing';
 import { loadConfig } from '../src/config';
 import type { Config, Route } from '../src/types';
@@ -37,10 +37,17 @@ const parseRules = (rules: string): Config => {
   }
 };
 
+/** Create a broker and declare the router topology. */
+const connectToQueue = async (config: Config): Promise<RabbitMQ.Broker> => {
+  const broker = await RabbitMQ.keepAlive(RABBIT_URL);
+  await broker.declares(buildTopology(config.routes));
+  return broker;
+};
+
 /**
  * Publish a JSON message to a queue via the default exchange.
  */
-const publishToQueue = (broker: Broker, queueName: string, message: unknown, headers?: Record<string, any>): void => {
+const publishToQueue = (broker: RabbitMQ.Broker, queueName: string, message: unknown, headers?: Record<string, any>): void => {
   const channel = broker.getChannel();
   if (! channel) throw new Error('No channel');
   const buffer = Buffer.from(JSON.stringify(message), 'utf-8');
@@ -56,7 +63,7 @@ const publishToQueue = (broker: Broker, queueName: string, message: unknown, hea
  * Publish a JSON message to an exchange with a routing key.
  */
 const publishToExchange = (
-  broker: Broker,
+  broker: RabbitMQ.Broker,
   exchangeName: string,
   message: unknown,
   routingKey = '',
@@ -78,7 +85,7 @@ const publishToExchange = (
  * Retries with polling to allow time for routing.
  */
 const getMessage = async (
-  broker: Broker,
+  broker: RabbitMQ.Broker,
   queueName: string,
   timeoutMs = 3000,
 ): Promise<unknown | null> => {
@@ -105,7 +112,7 @@ const getMessage = async (
  * Pull a raw message (with headers/properties) from a queue.
  */
 const getRawMessage = async (
-  broker: Broker,
+  broker: RabbitMQ.Broker,
   queueName: string,
   timeoutMs = 3000,
 ): Promise<{ content: unknown; headers: Record<string, any>; routingKey: string } | null> => {
@@ -138,7 +145,7 @@ const getRawMessage = async (
  * Pull N messages from a queue. Returns what's available within the timeout.
  */
 const getMessages = async (
-  broker: Broker,
+  broker: RabbitMQ.Broker,
   queueName: string,
   count: number,
   timeoutMs = 5000,
@@ -171,9 +178,9 @@ const getMessages = async (
  * affect the main broker).
  */
 const queueExists = async (queueName: string): Promise<boolean> => {
-  let probe: Broker | null = null;
+  let probe: RabbitMQ.Broker | null = null;
   try {
-    probe = await keepAlive(RABBIT_URL, { retries: 5 });
+    probe = await RabbitMQ.keepAlive(RABBIT_URL, { retries: 5 });
     const channel = probe.getChannel()!;
     await channel.checkQueue(queueName);
     return true;
@@ -193,8 +200,8 @@ describe('Router Integration', () => {
   // ── Bare queue routing (default exchange) ──────────────────────────────────
 
   describe('Bare queue routing (default exchange)', () => {
-    let routerBroker: Broker;
-    let testBroker: Broker;
+    let routerBroker: RabbitMQ.Broker;
+    let testBroker: RabbitMQ.Broker;
     let routes: Route[];
 
     beforeAll(async () => {
@@ -204,7 +211,7 @@ describe('Router Integration', () => {
       routerBroker = await connectToQueue(config);
 
       // Declare destination queue from test side (simulates downstream service)
-      testBroker = await keepAlive(RABBIT_URL, { retries: 5 });
+      testBroker = await RabbitMQ.keepAlive(RABBIT_URL, { retries: 5 });
       await testBroker.declares({
         queues: { 'int.bare.dst': { durable: true } },
       });
@@ -237,17 +244,16 @@ describe('Router Integration', () => {
       }
 
       const received = await getMessages(testBroker, 'int.bare.dst', 3);
-
       expect(received).toHaveLength(3);
       expect(received).toEqual(expect.arrayContaining(messages));
     });
   });
 
-  // ── Fan-out to multiple destinations ───────────────────────────────────────
+  // ── Fan-out routing ────────────────────────────────────────────────────────
 
-  describe('Fan-out to multiple destinations', () => {
-    let routerBroker: Broker;
-    let testBroker: Broker;
+  describe('Fan-out routing (one source, multiple destinations)', () => {
+    let routerBroker: RabbitMQ.Broker;
+    let testBroker: RabbitMQ.Broker;
     let routes: Route[];
 
     beforeAll(async () => {
@@ -256,7 +262,7 @@ describe('Router Integration', () => {
 
       routerBroker = await connectToQueue(config);
 
-      testBroker = await keepAlive(RABBIT_URL, { retries: 5 });
+      testBroker = await RabbitMQ.keepAlive(RABBIT_URL, { retries: 5 });
       await testBroker.declares({
         queues: {
           'int.fan.dst1': { durable: true },
@@ -314,8 +320,8 @@ describe('Router Integration', () => {
   // ── Explicit exchange binding ──────────────────────────────────────────────
 
   describe('Explicit exchange binding', () => {
-    let routerBroker: Broker;
-    let testBroker: Broker;
+    let routerBroker: RabbitMQ.Broker;
+    let testBroker: RabbitMQ.Broker;
     let routes: Route[];
 
     beforeAll(async () => {
@@ -325,7 +331,7 @@ describe('Router Integration', () => {
       routerBroker = await connectToQueue(config);
 
       // Bind a test consumer queue to the output exchange
-      testBroker = await keepAlive(RABBIT_URL, { retries: 5 });
+      testBroker = await RabbitMQ.keepAlive(RABBIT_URL, { retries: 5 });
       await testBroker.declares({
         exchanges: {
           'int.exch.output': {
@@ -368,8 +374,8 @@ describe('Router Integration', () => {
   // ── Mixed destinations (default + explicit exchange) ───────────────────────
 
   describe('Mixed destinations (default + explicit exchange)', () => {
-    let routerBroker: Broker;
-    let testBroker: Broker;
+    let routerBroker: RabbitMQ.Broker;
+    let testBroker: RabbitMQ.Broker;
     let routes: Route[];
 
     beforeAll(async () => {
@@ -378,7 +384,7 @@ describe('Router Integration', () => {
 
       routerBroker = await connectToQueue(config);
 
-      testBroker = await keepAlive(RABBIT_URL, { retries: 5 });
+      testBroker = await RabbitMQ.keepAlive(RABBIT_URL, { retries: 5 });
       await testBroker.declares({
         queues: {
           'int.mixed.bare': { durable: true },
@@ -416,8 +422,8 @@ describe('Router Integration', () => {
   // ── Multiple sources ───────────────────────────────────────────────────────
 
   describe('Multiple sources', () => {
-    let routerBroker: Broker;
-    let testBroker: Broker;
+    let routerBroker: RabbitMQ.Broker;
+    let testBroker: RabbitMQ.Broker;
     let routes: Route[];
 
     beforeAll(async () => {
@@ -426,7 +432,7 @@ describe('Router Integration', () => {
 
       routerBroker = await connectToQueue(config);
 
-      testBroker = await keepAlive(RABBIT_URL, { retries: 5 });
+      testBroker = await RabbitMQ.keepAlive(RABBIT_URL, { retries: 5 });
       await testBroker.declares({
         queues: { 'int.multi.dst': { durable: true } },
       });
@@ -455,8 +461,8 @@ describe('Router Integration', () => {
   // ── Multi-rule configuration ───────────────────────────────────────────────
 
   describe('Multi-rule configuration', () => {
-    let routerBroker: Broker;
-    let testBroker: Broker;
+    let routerBroker: RabbitMQ.Broker;
+    let testBroker: RabbitMQ.Broker;
     let routes: Route[];
 
     beforeAll(async () => {
@@ -468,7 +474,7 @@ describe('Router Integration', () => {
 
       routerBroker = await connectToQueue(config);
 
-      testBroker = await keepAlive(RABBIT_URL, { retries: 5 });
+      testBroker = await RabbitMQ.keepAlive(RABBIT_URL, { retries: 5 });
       await testBroker.declares({
         queues: {
           'int.rule1.dst1': { durable: true },
@@ -526,8 +532,8 @@ describe('Router Integration', () => {
   // ── Routing key transforms ────────────────────────────────────────────────
 
   describe('Routing key transforms', () => {
-    let routerBroker: Broker;
-    let testBroker: Broker;
+    let routerBroker: RabbitMQ.Broker;
+    let testBroker: RabbitMQ.Broker;
     let routes: Route[];
 
     beforeAll(async () => {
@@ -538,7 +544,7 @@ describe('Router Integration', () => {
       routerBroker = await connectToQueue(config);
 
       // Bind a test consumer queue to the output exchange with catch-all
-      testBroker = await keepAlive(RABBIT_URL, { retries: 5 });
+      testBroker = await RabbitMQ.keepAlive(RABBIT_URL, { retries: 5 });
       await testBroker.declares({
         exchanges: {
           'int.rk.output': {
@@ -579,8 +585,8 @@ describe('Router Integration', () => {
   // ── Exchange-only destination (broadcast pattern) ─────────────────────────
 
   describe('Exchange-only destination (broadcast pattern)', () => {
-    let routerBroker: Broker;
-    let testBroker: Broker;
+    let routerBroker: RabbitMQ.Broker;
+    let testBroker: RabbitMQ.Broker;
     let routes: Route[];
 
     beforeAll(async () => {
@@ -590,7 +596,7 @@ describe('Router Integration', () => {
       routerBroker = await connectToQueue(config);
 
       // Subscribers bind their own queues to the fanout exchange
-      testBroker = await keepAlive(RABBIT_URL, { retries: 5 });
+      testBroker = await RabbitMQ.keepAlive(RABBIT_URL, { retries: 5 });
       await testBroker.declares({
         exchanges: {
           'int.bcast.output': {
@@ -628,8 +634,8 @@ describe('Router Integration', () => {
   // ── Real-world scenario: Collector module ──────────────────────────────────
 
   describe('Real-world: Collector module pattern', () => {
-    let routerBroker: Broker;
-    let testBroker: Broker;
+    let routerBroker: RabbitMQ.Broker;
+    let testBroker: RabbitMQ.Broker;
     let routes: Route[];
 
     beforeAll(async () => {
@@ -638,7 +644,7 @@ describe('Router Integration', () => {
 
       routerBroker = await connectToQueue(config);
 
-      testBroker = await keepAlive(RABBIT_URL, { retries: 5 });
+      testBroker = await RabbitMQ.keepAlive(RABBIT_URL, { retries: 5 });
       await testBroker.declares({
         queues: {
           'int.coll.codec': { durable: true },
@@ -676,8 +682,8 @@ describe('Router Integration', () => {
   // ── Header injection ──────────────────────────────────────────────────────
 
   describe('Header injection', () => {
-    let routerBroker: Broker;
-    let testBroker: Broker;
+    let routerBroker: RabbitMQ.Broker;
+    let testBroker: RabbitMQ.Broker;
     let routes: Route[];
 
     beforeAll(async () => {
@@ -686,7 +692,7 @@ describe('Router Integration', () => {
 
       routerBroker = await connectToQueue(config);
 
-      testBroker = await keepAlive(RABBIT_URL, { retries: 5 });
+      testBroker = await RabbitMQ.keepAlive(RABBIT_URL, { retries: 5 });
       await testBroker.declares({
         queues: { 'int.hdr.dst': { durable: true } },
       });
@@ -720,8 +726,8 @@ describe('Router Integration', () => {
   // ── Message integrity ─────────────────────────────────────────────────────
 
   describe('Message integrity', () => {
-    let routerBroker: Broker;
-    let testBroker: Broker;
+    let routerBroker: RabbitMQ.Broker;
+    let testBroker: RabbitMQ.Broker;
     let routes: Route[];
 
     beforeAll(async () => {
@@ -730,7 +736,7 @@ describe('Router Integration', () => {
 
       routerBroker = await connectToQueue(config);
 
-      testBroker = await keepAlive(RABBIT_URL, { retries: 5 });
+      testBroker = await RabbitMQ.keepAlive(RABBIT_URL, { retries: 5 });
       await testBroker.declares({
         queues: { 'int.integrity.dst': { durable: true } },
       });

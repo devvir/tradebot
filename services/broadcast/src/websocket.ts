@@ -1,5 +1,5 @@
 import WebSocket from 'ws';
-import { logger } from '@devvir/service';
+import { logger } from '@devvir/service-kit';
 import type { Config, EndpointConnections, EndpointDefinition, FeedState, MessageHandler } from './types';
 
 /**

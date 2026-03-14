@@ -2,10 +2,10 @@ import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import createManager from '../src/manager';
 import { flushStore } from '../src/batch';
 import { MongoBulkWriteError } from 'mongodb';
-import type { ConsumerEvent } from '@devvir/rabbitmq';
+import type { ConsumerEvent } from '../src/types';
 import type { Config } from '../src/types';
 
-vi.mock('@devvir/service', () => ({
+vi.mock('@devvir/service-kit', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 

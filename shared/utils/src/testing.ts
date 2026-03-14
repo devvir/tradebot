@@ -1,6 +1,7 @@
 // Pending Review
 import { readFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
+import { resolve } from 'node:path';
 
 // ── Env file parsing ───────────────────────────────────────────────────────────
 
@@ -45,6 +46,31 @@ export const parseEnvFile = (filePath: string): Record<string, string> => {
   return result;
 };
 
+/**
+ * Load .env file and set variables into process.env
+ * Only sets vars that are not already set in process.env
+ */
+export const loadEnvFile = (filePath: string): void => {
+  try {
+    const parsed = parseEnvFile(filePath);
+    for (const [key, value] of Object.entries(parsed)) {
+      if (! process.env[key]) {
+        process.env[key] = value;
+      }
+    }
+  } catch (err) {
+    // Silently ignore if file doesn't exist
+  }
+};
+
+/**
+ * Load .env.testing from the tests directory of the current service
+ */
+export const loadTestingEnv = (testsDir: string): void => {
+  const envFile = resolve(testsDir, '.env.testing');
+  loadEnvFile(envFile);
+};
+
 // ── Docker Compose lifecycle ───────────────────────────────────────────────────
 
 export interface TestServicesConfig {
@@ -70,9 +96,11 @@ const composeCommand = (config: TestServicesConfig): string => {
  */
 export const startTestServices = (config: TestServicesConfig): void => {
   const timeout = config.timeout ?? 60;
+  const parsed  = parseEnvFile(config.envFile);
+
   execSync(
     `${composeCommand(config)} up -d --wait --timeout ${timeout}`,
-    { stdio: 'inherit' },
+    { stdio: 'inherit', env: { ...process.env, ...parsed } },
   );
 };
 
@@ -81,9 +109,11 @@ export const startTestServices = (config: TestServicesConfig): void => {
  * Throws if docker compose exits non-zero.
  */
 export const stopTestServices = (config: TestServicesConfig): void => {
+  const parsed = parseEnvFile(config.envFile);
+
   execSync(
     `${composeCommand(config)} down --volumes`,
-    { stdio: 'inherit' },
+    { stdio: 'inherit', env: { ...process.env, ...parsed } },
   );
 };
 // ── Per-service helpers ────────────────────────────────────────────────────────

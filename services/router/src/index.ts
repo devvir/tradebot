@@ -1,16 +1,10 @@
-import { logger } from '@devvir/service';
-import { loadConfig } from './config';
-import { connectToQueue } from './rabbitmq';
+import SK from './service';
+import type { RabbitMQ } from '@devvir/service-kit';
 import { startConsuming } from './routing';
-import service from './service';
+import type { Route } from './types';
 
-service.run(async () => {
-  logger.info('Starting Router Service...');
+SK.run(async (service) => {
+  const broker = await service.providers.connect('rabbitmq') as RabbitMQ.Broker;
 
-  const config = loadConfig();
-  const broker = await connectToQueue(config);
-
-  await startConsuming(broker, config.routes);
-
-  return { broker, routes: config.routes };
+  await startConsuming(broker, service.config('routes') as Route[]);
 });

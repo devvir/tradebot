@@ -1,7 +1,6 @@
 import { Document as MongoDocument, MongoClient, MongoBulkWriteError, WriteError, Collection } from "mongodb";
-import { ConsumerEvent } from "@devvir/rabbitmq";
-import { logger } from '@devvir/service';
-import { BatchEntries, Config, Document, Manager } from "./types";
+import { logger } from '@devvir/service-kit';
+import { BatchEntries, Config, ConsumerEvent, Document, Manager } from "./types";
 import { addToBatch, flushStore } from "./batch";
 import generateId from "./documentId";
 import { pause, paused } from "./semaphore";

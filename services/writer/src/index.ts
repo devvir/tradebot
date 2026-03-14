@@ -1,47 +1,31 @@
-import service from './service';
-import { loadConfig } from './config';
-import { connectToDatabase } from './mongodb';
-import { connectToQueue, QUEUE } from './rabbitmq';
+import type { MongoClient } from 'mongodb';
+import type { Broker, Config, ConsumerEvent } from './types';
+import SK, { QUEUE } from './service';
 import createManager from './manager';
-import { ConsumerEvent } from '@devvir/rabbitmq';
 import { greenLight, pause } from './semaphore';
 
-service.run(async () => {
-  const config = loadConfig();
+SK.run(async (service) => {
+  const [mongo, broker] = await service.providers.connect(['mongodb', 'rabbitmq']) as [MongoClient, Broker];
+  const manager = createManager(service.config() as Config, mongo);
+  const prefetch = service.config('prefetch') as number;
+  const queue = broker.getQueue(QUEUE)!;
 
-  const [mongo, broker] = await Promise.all([
-    connectToDatabase(config.mongodbUrl),
-    connectToQueue(config.rabbitmqUrl),
-  ]);
-
-  const manager = createManager(config, mongo);
-  const queue = await broker.getQueue(QUEUE)!;
-
-  /**
-   * Start processing documents
-   */
+  /** Start processing documents */
   manager.process();
 
-  /**
-   * Start consuming messages from RabbitMQ, and enqueue them for processing.
-   */
+  /** Start consuming messages from RabbitMQ, and enqueue them for processing */
   const stopConsuming = await queue.consume(async (message: unknown, delivery: ConsumerEvent) => {
     await greenLight();
 
-    const confirm = () => (delivery.ack(), service.onMessage());
+    const confirm = () => { delivery.ack(); service.emit('message'); };
 
-    await manager.enqueue(message, { ...delivery, ack: confirm });
-  }, { prefetch: config.prefetch });
+    await manager!.enqueue(message, { ...delivery, ack: confirm });
+  }, { prefetch });
 
-  /**
-   * On shutdown, stop consuming messages and flush pending batches before exiting.
-   */
-  const onShutdown = async (): Promise<void> => {
+  service.on('shutdown', async () => {
     pause();
 
-    await stopConsuming();
-    await manager.flushAll();
-  }
-
-  return { mongo, broker, onShutdown };
+    if (stopConsuming) await stopConsuming();
+    if (manager) await manager.flushAll();
+  });
 });

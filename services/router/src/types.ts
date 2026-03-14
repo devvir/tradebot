@@ -1,4 +1,4 @@
-import type { Broker } from '@devvir/rabbitmq';
+import type { RabbitMQ } from '@devvir/service-kit';
 
 export interface Exchange {
   name: string;
@@ -32,9 +32,10 @@ export interface Route {
 export interface Config {
   rabbitmqUrl: string;
   routes: Route[];
+  [key: string]: unknown;
 }
 
 export interface RouterResources {
-  broker: Broker;
+  broker: RabbitMQ.Broker;
   routes: Route[];
 }
