@@ -70,6 +70,9 @@ export interface BitmexPartial<Item extends BitmexDataItem = BitmexDataItem> ext
   action: 'partial';
   keys: string[];
   types: Record<string, BitmexFieldType>;
+  foreignKeys?: Record<string, string>;
+  attributes?:  Record<string, string>;
+  filter?:      Record<string, unknown>;
 }
 
 export interface BitmexUpdate<Item extends BitmexDataItem = BitmexDataItem> extends BitmexBaseMessage<Item> {

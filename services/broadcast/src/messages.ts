@@ -16,6 +16,8 @@ import {
  * - Publishes all data messages to the configured exchange
  */
 export const createMessageHandler = (state: FeedState, config: Config, onMessage: () => void): MessageHandler => {
+  let messageCount = 0;
+
   return async (buffer: Buffer): Promise<void> => {
     state.lastMessageTime = Date.now();
 
@@ -43,6 +45,7 @@ export const createMessageHandler = (state: FeedState, config: Config, onMessage
         contentType: 'application/json',
         headers: {
           'x-worker-uuid': config.workerUuid,
+          'x-message-count': String(++messageCount),
           'x-bitmex-version': state.apiVersion ?? '',
           'x-bitmex-symbols': symbols.join(','),
           'x-bitmex-published-at': new Date().toISOString(),

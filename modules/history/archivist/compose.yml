@@ -22,11 +22,19 @@
 #   Consumes from writer queue, stores to database specified by x-writer-database header.
 
 include:
-  - path: ../../../services/broadcast/docker/extended.yml
   - path: ../../../services/writer/docker/extended.yml
   - path: ../../../services/codec/docker/compose.yml
 
 services:
+  broadcast:
+    extends:
+      file: ../../../services/broadcast/docker/compose.yml
+      service: broadcast
+
+    depends_on:
+      archive-in:
+        condition: service_healthy
+
   archive-in:
     extends:
       file: ../../../services/router/docker/compose.yml

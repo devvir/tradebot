@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { logger } from '@devvir/service-kit';
 import { redactUrl, sanitizeUrl } from '@tradebot/utils';
 import type { Config } from './types';
@@ -12,6 +13,7 @@ export const loadConfig = (): Config => {
   const collectionsEnv = process.env.READER_COLLECTIONS || '';
 
   const config: Config = {
+    workerUuid: randomUUID(),
     rabbitmqUrl: sanitizeUrl(process.env.RABBITMQ_URL || ''),
     mongodbUrl: sanitizeUrl(process.env.MONGODB_URL || ''),
     database: process.env.READER_DATABASE || '',

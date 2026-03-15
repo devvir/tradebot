@@ -20,6 +20,8 @@ The service manages two independent WebSocket connections:
 
 Both connections subscribe to predefined channel sets on startup. If either connection fails, automatic reconnection with exponential backoff kicks in independently.
 
+Each connection maintains its own independent message counter and worker UUID for per-instance message tracking across the downstream pipeline.
+
 ### Message Processing Flow
 
 ```
@@ -30,16 +32,24 @@ BitMEX WebSocket
     └─ Data messages → published to RabbitMQ
         │  routing key: <table>.<action>.<symbol>  (symbol empty if absent or multi-symbol)
         │  headers:
-        │    x-worker-uuid         — broadcast instance identity
-        │    x-bitmex-version      — BitMEX WebSocket API version
-        │    x-bitmex-symbols      — comma-separated unique symbols in this message
-        │    x-bitmex-published-at — ISO-8601 timestamp of receipt
+        │    x-message-count         — counter tracking message sequence (increments per publish)
+        │    x-worker-uuid           — broadcast instance UUID for per-instance deduplication
+        │    x-bitmex-version        — BitMEX WebSocket API version
+        │    x-bitmex-symbols        — comma-separated unique symbols in this message
+        │    x-bitmex-published-at   — ISO-8601 timestamp of receipt
         ↓
  RabbitMQ Topic Exchange `broadcast`
     └─ Downstream consumers bind their own queues with routing key patterns
 ```
 
 Broadcast declares the topic exchange only — no queues. Downstream services assert their own queues and bind to the routing key patterns they need. Headers carry all metadata; the routing key is purely for consumer-side filtering.
+
+### Message Counter Semantics
+
+The `x-message-count` header (combined with `x-worker-uuid`) enables downstream services to coordinate message ordering:
+- **Incremental counter** — Starts at 1 for the first message published from this broadcast instance
+- **Deduplication** — `(x-worker-uuid, x-message-count)` tuple uniquely identifies a message across all downstream services
+- **Ordering** — Downstream services compare counters to reorder received messages and detect gaps
 
 ### Configuration
 

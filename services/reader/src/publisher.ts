@@ -17,6 +17,7 @@ export const createPublisher = (
 ): (collection: string, doc: Record<string, unknown>) => Promise<void> => {
   const queue = broker.getQueue()!;
   let publishCount = 0;
+  let messageCount = 0;
 
   return async (collection, doc) => {
     if (config.maxReady > 0 && ++publishCount % BACKPRESSURE_CHECK_EVERY === 0) {
@@ -38,6 +39,12 @@ export const createPublisher = (
     const action = ['partial', 'insert', 'update', 'delete'][ Number(doc._id) % 4 ];
     const envelope = Buffer.from(JSON.stringify({ table: collection, action, ...doc }));
 
-    await queue.publish(envelope, { contentType: 'application/json' });
+    await queue.publish(envelope, {
+      contentType: 'application/json',
+      headers: {
+        'x-worker-uuid': config.workerUuid,
+        'x-message-count': String(++messageCount),
+      },
+    });
   };
 };

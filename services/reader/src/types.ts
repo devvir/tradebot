@@ -1,4 +1,5 @@
 export interface Config {
+  workerUuid: string;
   mongodbUrl: string;
   database: string;
   rabbitmqUrl: string;

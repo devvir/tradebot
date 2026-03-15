@@ -18,6 +18,9 @@ For each collection (whitelist or all)
     ├─ Every 500 publishes: check queue:reader.<database> depth
     │   └─ If depth >= READER_MAX_READY: pause until queue drains
     └─ Publish directly to queue:reader.<database> (default exchange)
+        │  headers:
+        │    x-worker-uuid     — instance UUID for deduplication
+        │    x-message-count   — counter (increments per message published)
         ↓
  RabbitMQ queue:reader.<database> (durable)
     └─ Consumed by a router in the module's compose.yml
@@ -101,8 +104,19 @@ Documents are published directly to queue `reader.<database>` via the default ex
 - **Queue:** `reader.<database>` (e.g. `reader.tradebot_collect`), durable
 - **Content type:** `application/json`
 - **Payload:** Full MongoDB document encoded as JSON
+- **Headers:**
+  - `x-message-count`: Counter tracking message sequence (starts at 1, increments per publish)
+  - `x-worker-uuid`: Instance UUID for per-instance message tracking and deduplication
 
 Using the default exchange means each pipeline gets its own isolated queue keyed by the database name. The reader asserts the queue at startup, ensuring messages accumulate even if the downstream router is temporarily disconnected.
+
+### Message Counter Semantics
+
+The `x-message-count` header enables downstream services to coordinate message ordering and detect duplicates:
+- **Incremental counter** — Starts at 1 for the first published message from this reader instance
+- **Per-instance** — Combined with `x-worker-uuid` to identify which reader instance published it
+- **Uniqueness** — Each reader instance has its own sequence; services use `(x-worker-uuid, x-message-count)` for deduplication
+- **Downstream flow** — Counter propagates through broadcast → snapshots, allowing downstream services to order messages correctly even if received out-of-order
 
 ### Backpressure
 

@@ -1,30 +1,23 @@
-# Codec Service - Stateless transformation service for message encoding/decoding
+# Snapshots Service - Accumulates BitMEX deltas and publishes full table snapshots
 
 services:
-  codec:
-    scale: ${CODEC_REPLICAS:-1}
-
+  snapshots:
     build:
       context: ../../..
       dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
       args:
-        SERVICE_NAME: codec
+        SERVICE_NAME: snapshots
 
     environment:
-      # Dependencies (queue)
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
 
-      # Performance tuning
-      CODEC_PREFETCH: ${CODEC_PREFETCH:-1000}
-      CODEC_BROTLI_QUALITY: ${CODEC_BROTLI_QUALITY:-1}
-
-      # Runtime
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV: ${APP_ENV:-prod}
       TZ: ${TZ:-UTC}
 
     ports:
-      - "${CODEC_PORT:-}:3000"
+      - "${SNAPSHOTS_HTTP_PORT:-}:3001"
+      - "${SNAPSHOTS_HEALTH_PORT:-}:3000"
 
     user: "1000:1000"
 
@@ -38,4 +31,4 @@ services:
       retries: 5
       start_period: 10s
 
-    restart: ${CODEC_RESTART_POLICY:-unless-stopped}
+    restart: ${SNAPSHOTS_RESTART_POLICY:-unless-stopped}

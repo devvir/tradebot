@@ -1,0 +1,15 @@
+# Snapshots Extended Service
+# Includes: rabbitmq, snapshots
+
+include:
+  - path: ../../rabbitmq/docker/compose.yml
+
+services:
+  snapshots:
+    extends:
+      file: ./compose.yml
+      service: snapshots
+
+    depends_on:
+      rabbitmq:
+        condition: service_healthy

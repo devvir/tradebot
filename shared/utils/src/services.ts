@@ -9,19 +9,20 @@ export interface SKFactoryConfig {
   name:           string;
   rabbitmq?:      boolean | { topology?: TopologySpec };
   mongodb?:       boolean;
+  redis?:         boolean;
   trackMessages?: boolean;
 }
 
 /**
  * Creates a pre-configured SK instance with tradebot conventions baked in:
- *   - Standard provider URLs from RABBITMQ_URL / MONGODB_URL env vars
+ *   - Standard provider URLs from RABBITMQ_URL / MONGODB_URL / REDIS_URL env vars
  *   - RabbitMQ always in Broker mode (useBroker: true)
  *   - Health check on port 3000
  *   - Optional message tracking with activity-based health (trackMessages: true)
  *
  * Usage:
- *   SKFactory({ name: 'writer', rabbitmq: { topology }, mongodb: true, trackMessages: true })
- *     .bind({ onShutdown: async () => { ... } })
+ *   SKFactory({ name: 'writer', rabbitmq: { topology }, mongodb: true, redis: true, trackMessages: true })
+ *     .declare({ config })
  *     .run(async (service) => { ... service.emit('message') ... });
  */
 export const SKFactory = (config: SKFactoryConfig): ServiceKit => {
@@ -29,8 +30,9 @@ export const SKFactory = (config: SKFactoryConfig): ServiceKit => {
 
   if (config.rabbitmq) {
     providers.rabbitmq = {
-      url:       process.env.RABBITMQ_URL ?? 'amqp://guest:guest@rabbitmq:5672',
+      url:       process.env.RABBITMQ_URL || '',
       useBroker: true,
+      retry:     { strategy: 'exponential', attempts: 10 },
       ...(typeof config.rabbitmq === 'object' && config.rabbitmq.topology
         ? { topology: config.rabbitmq.topology }
         : {}),
@@ -39,7 +41,15 @@ export const SKFactory = (config: SKFactoryConfig): ServiceKit => {
 
   if (config.mongodb) {
     providers.mongodb = {
-      url: process.env.MONGODB_URL ?? 'mongodb://root:root@mongodb:27017/?authSource=admin',
+      url:   process.env.MONGODB_URL || '',
+      retry: { strategy: 'exponential', attempts: 10 },
+    };
+  }
+
+  if (config.redis) {
+    providers.redis = {
+      url:   process.env.REDIS_URL || '',
+      retry: { strategy: 'exponential', attempts: 10 },
     };
   }
 
@@ -53,7 +63,7 @@ export const SKFactory = (config: SKFactoryConfig): ServiceKit => {
   const bindings: Bindings = {};
 
   if (config.trackMessages) {
-    bindings.onMessage = (service: Service) => {
+    bindings.onMessage = async (service: Service) => {
       service.increment('messages');
       service.setState('lastMessageAt', Date.now());
 

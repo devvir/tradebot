@@ -1,0 +1,31 @@
+# Snapshots Service
+
+Consumes BitMEX-format delta messages from RabbitMQ and maintains in-memory per-table snapshots. Serves current state via HTTP GET `/snapshot/{table}`.
+
+## What it does
+
+- Consumes deltas from the `snapshots` RabbitMQ queue (default exchange)
+- Aggregates delta actions into per-table snapshots
+- Tracks `x-message-count` header for message ordering guarantees
+- Exposes snapshots via HTTP for clients to fetch on demand
+- Includes counter metadata with each snapshot for downstream ordering
+
+## Development
+
+```bash
+pnpm install   # Install dependencies
+pnpm build     # Compile TypeScript
+pnpm test      # Run tests
+```
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `RABBITMQ_URL` | yes | — | RabbitMQ connection URL |
+| `SNAPSHOTS_HTTP_PORT` | no | <empty> | HTTP server host port |
+| `SNAPSHOTS_HEALTH_PORT` | no | <empty> | HTTP health checks host port |
+
+See [docs/services/SNAPSHOTS.md](../../docs/services/SNAPSHOTS.md) for technical details.
