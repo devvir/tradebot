@@ -1,3 +1,4 @@
+
 [submodule "dx"]
 	path = dx
 	url = https://github.com/devvir/monorepo-dx.git
@@ -5,10 +6,6 @@
 [submodule "packages/rabbitmq"]
 	path = packages/rabbitmq
 	url = https://github.com/devvir/rabbitmq.git
-	branch = main
-[submodule "packages/service"]
-	path = packages/service
-	url = https://github.com/devvir/service.git
 	branch = main
 [submodule "packages/service-kit"]
 	path = packages/service-kit

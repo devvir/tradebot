@@ -1,0 +1,23 @@
+{
+  "name": "@tradebot/ws",
+  "version": "1.0.0",
+  "description": "BitMEX-compatible WebSocket server",
+  "main": "dist/index.js",
+  "private": true,
+  "scripts": {
+    "build": "tsc -b",
+    "start": "node dist/src/index.js",
+    "dev": "ts-node src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@devvir/elastic-queue": "^1.0.0",
+    "@devvir/service-kit": "workspace:*",
+    "@tradebot/utils": "workspace:*",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.14"
+  }
+}

@@ -29,7 +29,7 @@ importers:
         version: 4.1.0(vitest@4.1.0(@types/node@25.5.0)(vite@7.3.1(@types/node@25.5.0)(jiti@2.6.1)(yaml@2.8.2)))
       knip:
         specifier: ^5.86.0
-        version: 5.86.0(@types/node@25.5.0)(typescript@5.9.3)
+        version: 5.87.0(@types/node@25.5.0)(typescript@5.9.3)
       nx:
         specifier: 22.5.4
         version: 22.5.4
@@ -221,6 +221,9 @@ importers:
 
   services/ws:
     dependencies:
+      '@devvir/elastic-queue':
+        specifier: ^1.0.0
+        version: 1.0.0
       '@devvir/service-kit':
         specifier: workspace:*
         version: link:../../packages/service-kit
@@ -799,6 +802,9 @@ packages:
   '@cspotcode/source-map-support@0.8.1':
     resolution: {integrity: sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw==}
     engines: {node: '>=12'}
+
+  '@devvir/elastic-queue@1.0.0':
+    resolution: {integrity: sha512-r8A/6ukj7i21CL0MINECKi4xYgudOFIfB6+23tyQb/3dh2d/ISfVDh9MBzI3jyG51NpwBUznxVu9qipq0DaNmg==}
 
   '@emnapi/core@1.9.0':
     resolution: {integrity: sha512-0DQ98G9ZQZOxfUcQn1waV2yS8aWdZ6kJMbYCJB3oUBecjWYO1fqJ+a1DRfPF3O5JEkwqwP1A9QEN/9mYm2Yd0w==}
@@ -2368,8 +2374,8 @@ packages:
   jsonc-parser@3.2.0:
     resolution: {integrity: sha512-gfFQZrcTc8CnKXp6Y4/CBT3fTc0OVuDofpre4aEeEpSBPV5X5v4+Vmx+8snU7RLPrNHPKSgLxGo9YuQzz20o+w==}
 
-  knip@5.86.0:
-    resolution: {integrity: sha512-tGpRCbP+L+VysXnAp1bHTLQ0k/SdC3M3oX18+Cpiqax1qdS25iuCPzpK8LVmAKARZv0Ijri81Wq09Rzk0JTl+Q==}
+  knip@5.87.0:
+    resolution: {integrity: sha512-oJBrwd4/Mt5E6817vcdQLaPpejxZTxpASauYLkp6HaT0HN1seHnpF96KEjza9O8yARvHEQ9+So9AFUjkPci7dQ==}
     engines: {node: '>=18.18.0'}
     hasBin: true
     peerDependencies:
@@ -4042,6 +4048,8 @@ snapshots:
     dependencies:
       '@jridgewell/trace-mapping': 0.3.9
 
+  '@devvir/elastic-queue@1.0.0': {}
+
   '@emnapi/core@1.9.0':
     dependencies:
       '@emnapi/wasi-threads': 1.2.0
@@ -5513,7 +5521,7 @@ snapshots:
 
   jsonc-parser@3.2.0: {}
 
-  knip@5.86.0(@types/node@25.5.0)(typescript@5.9.3):
+  knip@5.87.0(@types/node@25.5.0)(typescript@5.9.3):
     dependencies:
       '@nodelib/fs.walk': 1.2.8
       '@types/node': 25.5.0
