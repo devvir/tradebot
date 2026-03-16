@@ -1,0 +1,46 @@
+# Exchange Module — Live
+#
+# Wires live BitMEX data into a fully BitMEX-compatible API surface.
+# Bots connect to ws and rest as if they were BitMEX.
+#
+# Data flow:
+#
+#   BitMEX WS ──► broadcast ──► [broadcast exchange]
+#                                             │
+#                    ┌────────────────────────┤
+#           snapshots@default        ws.deltas@default
+#                    │                        │
+#                snapshots ◄── HTTP ──────── ws  ◄── bots
+
+include:
+  - path: ../../../services/snapshots/docker/extended.yml
+  - path: ../../../services/rest/docker/compose.yml
+  - path: ../../../services/ws/docker/extended.yml
+
+services:
+  broadcast:
+    extends:
+      file: ../../../services/broadcast/docker/compose.yml
+      service: broadcast
+
+    depends_on:
+      live-router:
+        condition: service_healthy
+
+  live-router:
+    extends:
+      file: ../../../services/router/docker/compose.yml
+      service: router
+
+    environment:
+      ROUTER_RULES: >-
+        | live@topic:broadcast > ws.deltas & snapshots
+
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+networks:
+  default:
+    name: ${COMPOSE_PROJECT_NAME:-tradebot}-network
+    external: true
