@@ -54,7 +54,7 @@ export const SKFactory = (config: SKFactoryConfig): ServiceKit => {
   }
 
   const spec: Spec = {
-    name:        config.name,
+    name: config.name,
     healthcheck: { port: 3000 },
     ...(Object.keys(providers).length > 0 ? { providers } : {}),
     ...(config.trackMessages ? { state: { messages: 0, lastMessageAt: null } } : {}),

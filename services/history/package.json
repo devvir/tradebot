@@ -1,0 +1,23 @@
+{
+  "name": "@tradebot/history",
+  "version": "1.0.0",
+  "description": "BitMEX historical data fetcher service",
+  "main": "dist/index.js",
+  "private": true,
+  "scripts": {
+    "build": "tsc -b",
+    "start": "node dist/src/index.js",
+    "dev": "ts-node src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@devvir/bitmex-api": "^1.2.0",
+    "@devvir/service-kit": "workspace:*",
+    "@tradebot/utils": "workspace:*"
+  },
+  "devDependencies": {
+    "mongodb": "^7.1.0"
+  }
+}

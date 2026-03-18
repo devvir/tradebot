@@ -1,0 +1,39 @@
+# History Service - BitMEX REST API historical data fetcher
+
+services:
+  history:
+    build:
+      context: ../../..
+      dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
+      args:
+        SERVICE_NAME: history
+
+    environment:
+      # Dependencies
+      MONGODB_URL: ${MONGODB_URL:-mongodb://root:root@mongodb:27017?authSource=admin}
+      HISTORY_DATABASE: ${HISTORY_DATABASE:-tradebot_history}
+
+      # BitMEX API
+      BITMEX_TESTNET: ${BITMEX_TESTNET:-}
+
+      # Runtime
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV: ${APP_ENV:-prod}
+      TZ: ${TZ:-UTC}
+
+    ports:
+      - "${HISTORY_PORT:-}:3000"
+
+    user: "1000:1000"
+
+    volumes:
+      - ../../../:/live
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+
+    restart: ${HISTORY_RESTART_POLICY:-unless-stopped}
