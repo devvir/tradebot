@@ -13,10 +13,16 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { RabbitMQ } from '@devvir/service-kit';
-import { buildTopology } from '../src/rabbitmq';
-import { startConsuming } from '../src/routing';
+import { buildTopology } from '../src/topology';
+import { consumeAndRepublish } from '../src/consumer';
 import { loadConfig } from '../src/config';
 import type { Config, Route } from '../src/types';
+
+/** Convenience wrapper matching the old startConsuming(broker, routes) test API. */
+const startConsuming = async (broker: RabbitMQ.Broker, routes: Route[]): Promise<void> => {
+  const config: Config = { rabbitmqUrl: '', routes, maxReady: 0, watchQueues: [] };
+  await consumeAndRepublish(broker, config, null);
+};
 
 const RABBIT_URL = 'amqp://guest:guest@localhost:56731';
 

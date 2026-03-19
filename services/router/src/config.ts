@@ -14,6 +14,8 @@ export const loadConfig = (): Config => {
       source: toSource(p.source),
       destination: toDestination(p.destination),
     })),
+    maxReady:    parseInt(process.env.ROUTER_MAX_READY    || '0'),
+    watchQueues: (process.env.ROUTER_WATCH_QUEUES || '').split(',').map((s) => s.trim()).filter(Boolean),
   };
 
   validateConfig(config);
@@ -29,6 +31,7 @@ export const loadConfig = (): Config => {
 const validateConfig = (config: Config): void => {
   if (! config.rabbitmqUrl) throw new Error('RABBITMQ_URL is required');
   if (! config.routes.length) throw new Error('Router rules are required');
+  if (config.maxReady > 0 && config.watchQueues.length === 0) throw new Error('ROUTER_WATCH_QUEUES is required when ROUTER_MAX_READY is set');
 };
 
 

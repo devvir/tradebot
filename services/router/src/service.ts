@@ -1,4 +1,7 @@
 import { SKFactory } from '@tradebot/utils';
 import config from './config';
 
-export default SKFactory({ name: 'router', rabbitmq: true }).declare({ config });
+export default SKFactory({
+  name: 'router',
+  rabbitmq: true,
+}).declare({ config, state: { counter: 0 } });

@@ -22,20 +22,20 @@
 #   Consumes from writer queue, stores to database specified by x-writer-database header.
 
 include:
-  - path: ../../../services/writer/docker/extended.yml
+  - path: ../../../services/rabbitmq/docker/compose.yml
+  - path: ../../../services/reader/docker/compose.yml
   - path: ../../../services/codec/docker/compose.yml
+  - path: ../../../services/writer/docker/compose.yml
 
 services:
-  unpacker:
-    extends:
-      file: ../../../services/reader/docker/compose.yml
-      service: reader
-
   unpack-in:
     extends:
       file: ../../../services/router/docker/compose.yml
       service: router
     environment:
+      ROUTER_MAX_READY: ${ROUTER_MAX_READY:-200000}
+      ROUTER_WATCH_QUEUES: codec
+
       ROUTER_RULES: >-
         reader.${READER_DATABASE} > @topic:codec.in(
           header:x-codec-strategy=decode,

@@ -1,10 +1,17 @@
 import SK from './service';
-import type { RabbitMQ } from '@devvir/service-kit';
-import { startConsuming } from './routing';
-import type { Route } from './types';
+import type { RabbitMQ, Service } from '@devvir/service-kit';
+import type { Config } from './types';
+import { declareTopology } from './topology';
+import { createBackpressureGate } from './backpressure';
+import { consumeAndRepublish } from './consumer';
 
-SK.run(async (service) => {
+SK.run(async (service: Service) => {
   const broker = await service.providers.connect('rabbitmq') as RabbitMQ.Broker;
+  const config = service.config() as Config;
 
-  await startConsuming(broker, service.config('routes') as Route[]);
+  await declareTopology(broker, config);
+
+  const holdPublishing = createBackpressureGate(broker, config);
+
+  await consumeAndRepublish(broker, config, holdPublishing);
 });

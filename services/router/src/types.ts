@@ -32,6 +32,8 @@ export interface Route {
 export interface Config {
   rabbitmqUrl: string;
   routes: Route[];
+  maxReady: number;      // Max messages in any watched queue before pausing (0 = disabled)
+  watchQueues: string[]; // Queues to monitor for backpressure (required when maxReady > 0)
   [key: string]: unknown;
 }
 

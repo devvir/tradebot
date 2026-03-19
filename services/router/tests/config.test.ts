@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { loadConfig, formatRoute } from '../src/config';
-import { buildTopology } from '../src/rabbitmq';
+import { buildTopology } from '../src/topology';
 
 describe('Router Config Parser', () => {
   afterEach(() => {

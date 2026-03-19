@@ -244,7 +244,7 @@ export function runPollingLoop(
 
   const poll = async () => {
     const iterationStartTime = Date.now();
-    let docsPublishedThisIteration = 0;
+    let docsPublished = 0;
     let progressInterval: NodeJS.Timeout | null = null;
 
     try {
@@ -258,16 +258,13 @@ export function runPollingLoop(
 
         // Start progress reporting every 2 seconds during iteration
         progressInterval = setInterval(() => {
-          logger.info(
-            { docsPublished: docsPublishedThisIteration },
-            'Iteration progress',
-          );
-        }, 2000);
+          logger.info(`Iteration progress: ${docsPublished} docs published`);
+        }, 5000);
 
         for (const collectionName of collectionNames) {
           await processCollection(db, collectionName, async (_docId, doc) => {
             await onMessage(collectionName, doc);
-            docsPublishedThisIteration++;
+            docsPublished++;
           });
         }
       }
@@ -282,14 +279,12 @@ export function runPollingLoop(
       // Log iteration completion
       const iterationDuration = Date.now() - iterationStartTime;
       const nextIterationTime = config.pollIntervalMs;
-      logger.info(
-        {
-          docsPublished: docsPublishedThisIteration,
-          durationMs: iterationDuration,
-          resumeInMs: nextIterationTime,
-        },
-        'Iteration complete, next iteration in',
-      );
+
+      logger.info({
+        docsPublished,
+        durationMs: iterationDuration,
+        resumeInMs: nextIterationTime,
+      }, 'Iteration complete, next iteration in');
     }
 
     // Schedule next iteration after this one completes

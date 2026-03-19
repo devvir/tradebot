@@ -1,6 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { WebSocket } from 'ws';
-import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
 import { createBus } from '../src/events';
 import { ClientRegistry } from '../src/subs/clients';
 import { createServer } from '../src/server/websocket';
@@ -67,7 +65,7 @@ describe('subscribe: snapshot activation', () => {
     await stopServer(server);
   });
 
-  it('defers activation until qualifying delta arrives', async () => {
+  it('activates after qualifying delta even when old deltas were buffered', async () => {
     const table           = 'orderBook_def';
     const snapshotCounter = 10;
     const olderCounter    = 5;
@@ -75,21 +73,24 @@ describe('subscribe: snapshot activation', () => {
     const { server, url } = await startSnapshotServer({ [table]: makeSnapshot(table, snapshotCounter) });
     const { wss, push }   = createTestService(url);
 
+    // Pre-buffer an old delta (older than snapshot) — should be dropped
     push(makeMsg(table, 'insert'), olderCounter);
 
     const port           = await listen(wss);
     const { client, messages } = await connect(port);
 
     client.send(JSON.stringify({ op: 'subscribe', args: [table] }));
-    await waitFor(messages, msgs => hasAck(msgs) && partials(msgs).length === 0);
 
-    expect(partials(messages)).toHaveLength(0);
-
+    // Qualifying delta triggers activation
     push(makeMsg(table, 'update'), 20);
     await waitFor(messages, msgs => partials(msgs).length >= 1);
 
     expect(partials(messages)).toHaveLength(1);
     expect((partials(messages)[0] as BitmexWsMessage).table).toBe(table);
+
+    // Old delta (counter 5) must not appear — only deltas newer than snapshot are valid
+    const inserts = messages.filter(m => (m as BitmexWsMessage).action === 'insert');
+    expect(inserts).toHaveLength(0);
 
     client.close();
     await closeWss(wss);

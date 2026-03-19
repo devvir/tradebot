@@ -1,5 +1,18 @@
-import type { RabbitMQ } from '@devvir/service-kit';
-import type { Exchange, Route } from './types';
+import { RabbitMQ } from '@devvir/service-kit';
+import type { Exchange, Route, Config } from './types';
+
+// ── Public ────────────────────────────────────────────────────────────────────
+
+/** Declare all queues, exchanges, and bindings needed by the configured routes. */
+export const declareTopology = async (broker: RabbitMQ.Broker, config: Config): Promise<void> => {
+  const topology = buildTopology(config.routes) as RabbitMQ.TopologySpec;
+
+  for (const name of config.watchQueues) {
+    topology.queues = { ...topology.queues, [name]: { durable: true } };
+  }
+
+  await broker.declares(topology);
+};
 
 /**
  * Builds a RabbitMQ topology specification from the provided routing rules.

@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { WebSocket } from 'ws';
 import { createBus } from '../src/events';
 import { ClientRegistry } from '../src/subs/clients';
 import { createServer } from '../src/server/websocket';
@@ -88,15 +87,24 @@ describe('delta buffering and replay', () => {
     const { client, messages } = await connect(port);
 
     client.send(JSON.stringify({ op: 'subscribe', args: [table] }));
-    await waitFor(messages, hasAck);
 
-    // Qualifying delta arrives
+    // Qualifying delta triggers activation
     push(makeMsg(table, 'update'), 20);
     await waitFor(messages, msgs => partials(msgs).length >= 1);
 
-    // Only the new update should be in client messages (old one not replayed)
+    // Clear everything up to and including the partial, then send a live delta
+    messages.splice(0);
+
+    push(makeMsg(table, 'insert'), 30);
+    await waitFor(messages, msgs =>
+      msgs.some(m => (m as BitmexWsMessage).action === 'insert'));
+
+    // Live delta arrives; old delta (counter 5) must not have appeared
+    const inserts = messages.filter(m => (m as BitmexWsMessage).action === 'insert');
+    expect(inserts).toHaveLength(1);
+
     const updates = messages.filter(m => (m as BitmexWsMessage).action === 'update');
-    expect(updates).toHaveLength(1);
+    expect(updates).toHaveLength(0);
 
     client.close();
     await closeWss(wss);
