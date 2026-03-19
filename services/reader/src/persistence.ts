@@ -128,6 +128,9 @@ export const getHighestId = async (collection: any): Promise<any | null> => {
  * Scan documents in a collection between startId and endId (inclusive).
  * Works with actual _id objects (Long, ObjectId, number, string, etc).
  * Returns all documents in ascending _id order.
+ *
+ * Only use for small, bounded queries (e.g. individual pending IDs).
+ * For large/unbounded scans use createScanCursor instead.
  */
 export const scanCollectionUpToHighId = async (
   collection: any,
@@ -148,4 +151,29 @@ export const scanCollectionUpToHighId = async (
   );
 
   return collection.find(query).sort({ _id: 1 }).toArray();
+};
+
+/**
+ * Return a cursor over documents between startId and endId (inclusive).
+ * Streams results without loading everything into memory.
+ */
+export const createScanCursor = (
+  collection: any,
+  startId: any | null,
+  endId: any,
+) => {
+  const query: Record<string, any> = {
+    _id: { $lte: endId },
+  };
+
+  if (startId !== null) {
+    query._id.$gt = startId;
+  }
+
+  logger.debug(
+    { collectionName: collection.collectionName, startIdStr: String(startId || 'null'), endIdStr: String(endId) },
+    'opening scan cursor',
+  );
+
+  return collection.find(query).sort({ _id: 1 });
 };

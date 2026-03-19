@@ -14,7 +14,7 @@ services:
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
       MONGODB_URL: ${MONGODB_URL:-mongodb://root:root@mongodb:27017?authSource=admin}
       READER_DATABASE: ${READER_DATABASE:-}
-      READER_MAX_READY: ${READER_MAX_READY:-1000000}
+      READER_MAX_READY: ${READER_MAX_READY:-100000}
       READER_COLLECTIONS: ${READER_COLLECTIONS:-}
 
       # Polling

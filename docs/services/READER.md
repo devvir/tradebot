@@ -90,7 +90,7 @@ Persisted after each polling iteration for disaster recovery.
 | `READER_DATABASE` | string | Yes | - | MongoDB database name to read from (module-specific) |
 | `READER_POLL_INTERVAL_MS` | number | Yes | - | Poll interval in milliseconds |
 | `READER_COLLECTIONS` | string | No | - | Comma-separated collection whitelist (default: all non-system collections) |
-| `READER_MAX_READY` | number | No | `1000000` | Max messages in `reader` queue before publishing pauses. `0` disables backpressure. |
+| `READER_MAX_READY` | number | No | `100000` | Max messages in `reader` queue before publishing pauses. `0` disables backpressure. |
 
 ### Collection Discovery
 

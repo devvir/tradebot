@@ -1,5 +1,7 @@
 // Pending Review
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { MongoClient, Db } from 'mongodb';
 import { RabbitMQ } from '@devvir/service-kit';
 import {
@@ -15,19 +17,13 @@ import {
 } from '../src/persistence';
 import { loadPollingState, savePollingState } from '../src/state';
 
-// Test infrastructure config — must match .env.testing values
-const TEST_CONFIG = {
-  MONGODB_USER: 'root',
-  MONGODB_PASS: 'root',
-  MONGODB_HOST: 'localhost',
-  MONGODB_PORT: 27027,
-  RABBITMQ_USER: 'guest',
-  RABBITMQ_PASS: 'guest',
-  RABBITMQ_AMQP_PORT: 56729,
-};
+// Ports are discovered dynamically — globalSetup writes them after Docker assigns random ones
+const { mongoPort, rabbitPort } = JSON.parse(
+  readFileSync(resolve(__dirname, '.ports.json'), 'utf8'),
+);
 
-const mongoUrl = `mongodb://${TEST_CONFIG.MONGODB_USER}:${TEST_CONFIG.MONGODB_PASS}@${TEST_CONFIG.MONGODB_HOST}:${TEST_CONFIG.MONGODB_PORT}/test_reader?authSource=admin`;
-const rabbitUrl = `amqp://${TEST_CONFIG.RABBITMQ_USER}:${TEST_CONFIG.RABBITMQ_PASS}@localhost:${TEST_CONFIG.RABBITMQ_AMQP_PORT}`;
+const mongoUrl = `mongodb://root:root@localhost:${mongoPort}/test_reader?authSource=admin`;
+const rabbitUrl = `amqp://guest:guest@localhost:${rabbitPort}`;
 
 describe('Reader Service', () => {
   let mongoClient: MongoClient;
@@ -361,6 +357,32 @@ describe('Reader Service', () => {
       expect(state).toBeDefined();
       expect(String(state.lastHighId)).toBe('20');
       expect(state.bufferedIds.size).toBeGreaterThan(0);
+    });
+
+    it('updates lastHighId incrementally during first-run scan (regression: toArray OOM on large collections)', async () => {
+      const docs = Array.from({ length: 50 }, (_, i) => ({ _id: i + 1 }));
+      await db.collection(COLL).insertMany(docs as any[]);
+
+      const stateSnapshots: (string | null)[] = [];
+
+      await processCollection(db, COLL, async (_id, _doc) => {
+        const state = collectionStates.get(COLL);
+        stateSnapshots.push(state?.lastHighId != null ? String(state.lastHighId) : null);
+      });
+
+      // With cursor-based streaming, lastHighId is updated after each
+      // onPublish call. During onPublish for doc N, lastHighId = (N-1)'s _id.
+      // The first publish sees null (fresh state).
+      //
+      // If the old toArray() code were still in use, ALL snapshots would be
+      // null because lastHighId was only assigned after the entire loop.
+      expect(stateSnapshots).toHaveLength(50);
+      expect(stateSnapshots[0]).toBeNull();
+      expect(stateSnapshots[1]).toBe('1');
+      expect(stateSnapshots[49]).toBe('49');
+
+      // Final state has the collection's actual high id
+      expect(String(collectionStates.get(COLL)!.lastHighId)).toBe('50');
     });
 
     it('handles multiple successive polls with growing data correctly', async () => {

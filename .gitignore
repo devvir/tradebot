@@ -21,6 +21,7 @@ Thumbs.db
 **/dist/
 *.tsbuildinfo
 .pnpm-store/
+**/.ports.json
 
 .nx/cache
 .nx/workspace-data

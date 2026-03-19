@@ -28,7 +28,7 @@ pnpm test      # Run tests
 
 **Optional:**
 - `READER_COLLECTIONS` - Comma-separated collection names to poll (default: all non-system collections)
-- `READER_MAX_READY` - Max messages in the `reader` queue before publishing pauses (default: `1000000`; `0` disables backpressure)
+- `READER_MAX_READY` - Max messages in the `reader` queue before publishing pauses (default: `100000`; `0` disables backpressure)
 
 The service publishes to a `reader` topic exchange with routing key `reader.<database>`, and asserts a durable `reader` queue bound to that exchange. Downstream consumers (e.g. the router in each module) consume from this queue directly.
 

@@ -2,7 +2,7 @@ import type { Db } from 'mongodb';
 import { logger } from '@devvir/service-kit';
 import { BUFFER_SIZE } from './config.js';
 import type { CollectionPollingState, PersistedPollingState, Config } from './types.js';
-import { getLatestBufferedIds, getHighestId, scanCollectionUpToHighId, getCollectionsToProcess } from './persistence.js';
+import { getLatestBufferedIds, getHighestId, scanCollectionUpToHighId, createScanCursor, getCollectionsToProcess } from './persistence.js';
 
 /**
  * Compare two _id values for equality, handling Long objects and other types.
@@ -173,22 +173,36 @@ export async function processCollection(
     );
 
     if (highIdChanged) {
-      const startId = oldHighId || null; // null means process from lowest id in new buffer
+      const startId = oldHighId || null;
       logger.info(
         { collectionName, startId: String(startId || 'null'), endId: String(newHighId), hasPrevious: !! oldHighId },
         'processing new documents',
       );
-      const docs = await scanCollectionUpToHighId(collection, startId, newHighId);
-      logger.info(
-        { collectionName, count: docs.length },
-        'found documents to process',
-      );
-      for (const doc of docs) {
-        const docId = String(doc._id);
+
+      // Update buffer early so periodic state saves have consistent state
+      // during the (potentially long) cursor scan below.
+      state.bufferedIds = newBufferedIdSet;
+
+      const cursor = createScanCursor(collection, startId, newHighId);
+      let count = 0;
+
+      for await (const doc of cursor) {
+        count++;
+
         if (onPublish) {
-          await onPublish(docId, doc);
+          await onPublish(String(doc._id), doc);
         }
+
+        // Update lastHighId incrementally — the periodic state save (every 10s)
+        // captures this, so on crash/restart we resume from here instead of
+        // re-scanning from the beginning.
+        state.lastHighId = doc._id;
       }
+
+      logger.info(
+        { collectionName, count },
+        'processed documents',
+      );
     } else {
       logger.info(
         { collectionName, oldHighId: String(oldHighId), newHighId: String(newHighId) },
@@ -196,10 +210,10 @@ export async function processCollection(
       );
     }
 
-    // 6. Update state
+    // 6. Finalize state (buffer may already be set above for the cursor path;
+    //    lastHighId is set to the snapshot high to cover the no-change branch)
     state.bufferedIds = newBufferedIdSet;
     state.lastHighId = newHighId;
-    collectionStates.set(collectionName, state);
 
     logger.debug(
       { collectionName, newHighId, bufferSize: newBufferedIds.length },

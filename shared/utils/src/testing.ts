@@ -116,6 +116,28 @@ export const stopTestServices = (config: TestServicesConfig): void => {
     { stdio: 'inherit', env: { ...process.env, ...parsed } },
   );
 };
+// ── Port discovery ───────────────────────────────────────────────────────────
+
+/**
+ * Discover the host port Docker assigned to a container port.
+ * Use when host ports are left empty in .env.testing so Docker picks random ones.
+ */
+export const getExposedPort = (projectName: string, service: string, containerPort: number): number => {
+  const containerName = `${projectName}-${service}`;
+  const output = execSync(
+    `docker port "${containerName}" ${containerPort}`,
+    { encoding: 'utf8' },
+  ).trim();
+
+  const match = output.match(/:(\d+)/);
+
+  if (! match) {
+    throw new Error(`Could not discover host port for ${containerName}:${containerPort}`);
+  }
+
+  return parseInt(match[1], 10);
+};
+
 // ── Per-service helpers ────────────────────────────────────────────────────────
 
 /**
