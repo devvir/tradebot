@@ -64,13 +64,9 @@ export const createServer = (service: Service): express.Application => {
  * Start the HTTP server
  */
 export const startServer = (app: express.Application, port: number): Server => {
-  const server = app.listen(port, () => {
-    logger.info({ port }, 'REST server listening');
-  });
+  const server = app.listen(port, () => logger.info({ port }, 'REST server listening'));
 
-  server.on('error', (err: Error) => {
-    logger.error({ err }, 'Server error');
-  });
+  server.on('error', (err: Error) => logger.error({ err }, 'Server error'));
 
   return server;
 };

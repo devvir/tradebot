@@ -1,0 +1,41 @@
+# Bouncer Service — signs exchange auth requests on behalf of other services
+# Credentials are stored on a named volume; never exposed via API responses.
+
+services:
+  bouncer:
+    build:
+      context: ../../..
+      dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
+      args:
+        SERVICE_NAME: bouncer
+
+    environment:
+      BOUNCER_TOKEN: ${BOUNCER_TOKEN}
+
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV: ${APP_ENV:-prod}
+      TZ: ${TZ:-UTC}
+
+    ports:
+      - ${BOUNCER_HTTP_PORT:-}:3010
+      - ${BOUNCER_HEALTH_PORT:-}:3000
+
+    user: "0:0"
+
+    volumes:
+      - ../../../:/live
+      - bouncer_data:/data/bouncer
+
+    entrypoint: ["/bin/sh", "-c", "chown -R 1000:1000 /data/bouncer && exec dumb-init -- /entrypoint.sh"]
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+
+    restart: ${BOUNCER_RESTART_POLICY:-unless-stopped}
+
+volumes:
+  bouncer_data:

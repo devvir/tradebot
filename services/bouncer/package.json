@@ -1,0 +1,23 @@
+{
+  "name": "@tradebot/bouncer",
+  "version": "1.0.0",
+  "description": "Bouncer service — signs exchange auth requests on behalf of services; never exposes secrets",
+  "main": "dist/src/index.js",
+  "private": true,
+  "scripts": {
+    "build": "tsc -b",
+    "start": "node dist/src/index.js",
+    "dev": "ts-node src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@devvir/service-kit": "workspace:*",
+    "@tradebot/utils": "workspace:*",
+    "express": "^5.2.1",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0"
+  }
+}

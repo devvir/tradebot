@@ -36,3 +36,10 @@ export const sanitizeUrl = (url: string): string => {
 
   return urlObj.toString();
 };
+
+/**
+ * Replace credentials in a URL with asterisks for safe logging.
+ */
+export const redactCredentials = (original: string, length: number = 5): string => {
+  return original.slice(0, length) + '*****';
+}
