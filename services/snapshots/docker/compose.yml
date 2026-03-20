@@ -16,10 +16,10 @@ services:
       TZ: ${TZ:-UTC}
 
     ports:
-      - "${SNAPSHOTS_HTTP_PORT:-}:3001"
-      - "${SNAPSHOTS_HEALTH_PORT:-}:3000"
+      - ${SNAPSHOTS_HTTP_PORT:-}:3001
+      - ${SNAPSHOTS_HEALTH_PORT:-}:3000
 
-    user: "1000:1000"
+    user: 1000:1000
 
     volumes:
       - ../../../:/live

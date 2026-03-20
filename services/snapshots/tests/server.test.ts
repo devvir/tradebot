@@ -1,51 +1,171 @@
 import { describe, it, expect } from 'vitest';
-import type { SnapshotIndexedData } from '../src/types';
+import { createDatabase } from '@devvir/bitmex-database';
+import type { BitmexTable, Database } from '@devvir/bitmex-database';
 
-describe('snapshot server', () => {
-  it('converts indexed table (Map) to array in response', () => {
-    const indexedData: SnapshotIndexedData = new Map();
-    indexedData.set('1', { id: 1, side: 'Buy', size: 100 });
-    indexedData.set('2', { id: 2, side: 'Sell', size: 200 });
+// ── Inline the server response logic for unit testing ─────────────────────────
 
-    const snapshot = {
-      table: 'orderBookL2',
-      action: 'partial' as const,
-      keys: ['id'],
-      data: indexedData,
-      counter: 42,
-      publishedAt: '2026-03-15T10:00:00Z',
-    };
+const buildResponse = (
+  db: Database,
+  tables: Set<string>,
+  counters: Record<string, number>,
+  table: string,
+  symbol?: string
+) => {
+  if (!tables.has(table)) {
+    return { status: 404, body: { error: `No snapshot for table '${table}'` } };
+  }
 
-    let responseData = snapshot.data;
-    if (snapshot.keys.length) {
-      responseData = [...(snapshot.data as SnapshotIndexedData).values()];
-    }
+  const view = db.view(table as BitmexTable);
+  const snapshot = db.snapshot(table as BitmexTable);
 
-    expect(Array.isArray(responseData)).toBe(true);
-    expect(responseData).toHaveLength(2);
+  const filterBySymbol = symbol && 'symbol' in view.types;
+
+  const data = filterBySymbol
+    ? snapshot.filter((item: unknown) => (item as Record<string, unknown>)['symbol'] === symbol)
+    : snapshot;
+
+  return {
+    status: 200,
+    body: {
+      table: view.table,
+      keys: view.keys,
+      types: view.types,
+      data,
+      counter: counters[table] ?? 0,
+      filter: filterBySymbol ? { symbol } : {},
+    },
+  };
+};
+
+// ── 404 for unknown table ─────────────────────────────────────────────────────
+
+describe('server — 404 for unknown table', () => {
+  it('returns 404 when table has never received a partial', () => {
+    const db = createDatabase();
+    const tables = new Set<string>();
+    const counters: Record<string, number> = {};
+
+    const res = buildResponse(db, tables, counters, 'orderBookL2');
+
+    expect(res.status).toBe(404);
   });
 
-  it('keeps non-indexed table (array) as-is in response', () => {
-    const arrayData = [
-      { id: 1, price: 50000 },
-      { id: 2, price: 50001 },
-    ];
+  it('returns 200 after partial received', () => {
+    const db = createDatabase();
+    const tables = new Set<string>();
+    const counters: Record<string, number> = {};
 
-    const snapshot = {
-      table: 'trade',
-      action: 'insert' as const,
-      keys: [],
-      data: arrayData,
-      counter: 42,
-      publishedAt: '2026-03-15T10:00:00Z',
-    };
+    db.apply({
+      table: 'orderBookL2',
+      action: 'partial',
+      keys: ['id'],
+      types: { id: 'long' },
+      data: [],
+    });
+    tables.add('orderBookL2');
 
-    let responseData = snapshot.data;
-    if (snapshot.keys.length) {
-      responseData = [...(snapshot.data as SnapshotIndexedData).values()];
-    }
+    const res = buildResponse(db, tables, counters, 'orderBookL2');
 
-    expect(Array.isArray(responseData)).toBe(true);
-    expect(responseData).toEqual(arrayData);
+    expect(res.status).toBe(200);
+  });
+});
+
+// ── Response shape ────────────────────────────────────────────────────────────
+
+describe('server — response shape', () => {
+  it('includes table metadata and data', () => {
+    const db = createDatabase();
+    const tables = new Set<string>();
+    const counters: Record<string, number> = {};
+
+    db.apply({
+      table: 'orderBookL2',
+      action: 'partial',
+      keys: ['id'],
+      types: { id: 'long', side: 'symbol' },
+      data: [{ id: 1, side: 'Buy' }],
+    });
+    tables.add('orderBookL2');
+    counters['orderBookL2'] = 5;
+
+    const res = buildResponse(db, tables, counters, 'orderBookL2');
+
+    expect(res.status).toBe(200);
+    expect(res.body.table).toBe('orderBookL2');
+    expect(res.body.keys).toEqual(['id']);
+    expect(res.body.counter).toBe(5);
+    expect(res.body.data).toHaveLength(1);
+  });
+});
+
+// ── Symbol filtering ──────────────────────────────────────────────────────────
+
+describe('server — symbol filtering', () => {
+  it('filters rows by symbol when ?symbol= is provided', () => {
+    const db = createDatabase();
+    const tables = new Set<string>();
+    const counters: Record<string, number> = {};
+
+    db.apply({
+      table: 'instrument',
+      action: 'partial',
+      keys: ['symbol'],
+      types: { symbol: 'symbol' },
+      data: [
+        { symbol: 'XBTUSD', price: 100 },
+        { symbol: 'ETHUSD', price: 50 },
+      ],
+    });
+    tables.add('instrument');
+
+    const res = buildResponse(db, tables, counters, 'instrument', 'XBTUSD');
+
+    expect(res.status).toBe(200);
+    expect((res.body as { data: unknown[] }).data).toHaveLength(1);
+    expect((res.body as { data: { symbol: string }[] }).data[0].symbol).toBe('XBTUSD');
+  });
+
+  it('returns all rows when no symbol filter', () => {
+    const db = createDatabase();
+    const tables = new Set<string>();
+    const counters: Record<string, number> = {};
+
+    db.apply({
+      table: 'instrument',
+      action: 'partial',
+      keys: ['symbol'],
+      types: { symbol: 'symbol' },
+      data: [
+        { symbol: 'XBTUSD', price: 100 },
+        { symbol: 'ETHUSD', price: 50 },
+      ],
+    });
+    tables.add('instrument');
+
+    const res = buildResponse(db, tables, counters, 'instrument');
+
+    expect(res.status).toBe(200);
+    expect((res.body as { data: unknown[] }).data).toHaveLength(2);
+  });
+
+  it('does not filter by symbol on tables with no symbol field', () => {
+    const db = createDatabase();
+    const tables = new Set<string>();
+    const counters: Record<string, number> = {};
+
+    db.apply({
+      table: 'connected',
+      action: 'partial',
+      keys: ['id'],
+      types: { id: 'integer' },
+      data: [{ id: 1, users: 5, bots: 2 }],
+    });
+    tables.add('connected');
+
+    // passes symbol= but table has no symbol field — should not filter
+    const res = buildResponse(db, tables, counters, 'connected', 'XBTUSD');
+
+    expect(res.status).toBe(200);
+    expect((res.body as { data: unknown[] }).data).toHaveLength(1);
   });
 });

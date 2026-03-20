@@ -4,7 +4,7 @@ import { startDeltaConsumer } from './processor';
 import { startSnapshotServer } from './server';
 
 SK.run(async (service: Service) => {
-  await service.providers.connect('rabbitmq') as Broker;
+  (await service.providers.connect('rabbitmq')) as Broker;
 
   startSnapshotServer(service);
 

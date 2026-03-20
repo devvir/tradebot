@@ -22,10 +22,10 @@ pnpm test      # Run tests
 
 ### Environment Variables
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `RABBITMQ_URL` | yes | — | RabbitMQ connection URL |
-| `SNAPSHOTS_HTTP_PORT` | no | <empty> | HTTP server host port |
-| `SNAPSHOTS_HEALTH_PORT` | no | <empty> | HTTP health checks host port |
+| Variable                | Required | Default | Description                  |
+| ----------------------- | -------- | ------- | ---------------------------- |
+| `RABBITMQ_URL`          | yes      | —       | RabbitMQ connection URL      |
+| `SNAPSHOTS_HTTP_PORT`   | no       | <empty> | HTTP server host port        |
+| `SNAPSHOTS_HEALTH_PORT` | no       | <empty> | HTTP health checks host port |
 
 See [docs/services/SNAPSHOTS.md](../../docs/services/SNAPSHOTS.md) for technical details.
