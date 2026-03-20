@@ -1,0 +1,35 @@
+# Executor Service — reconciles desired order state against live exchange orders
+
+services:
+  executor:
+    build:
+      context: ../../..
+      dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
+      args:
+        SERVICE_NAME: executor
+
+    environment:
+      BOUNCER_URL: ${BOUNCER_URL}
+      BOUNCER_TOKEN: ${BOUNCER_TOKEN}
+
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV: ${APP_ENV:-prod}
+      TZ: ${TZ:-UTC}
+
+    ports:
+      - ${EXECUTOR_HTTP_PORT:-}:3001
+      - ${EXECUTOR_HEALTH_PORT:-}:3000
+
+    user: 1000:1000
+
+    volumes:
+      - ../../../:/live
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+
+    restart: ${EXECUTOR_RESTART_POLICY:-unless-stopped}

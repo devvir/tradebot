@@ -158,9 +158,6 @@ importers:
       '@types/express':
         specifier: ^5.0.0
         version: 5.0.6
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
 
   services/broadcast:
     dependencies:
@@ -194,10 +191,16 @@ importers:
       '@tradebot/utils':
         specifier: workspace:*
         version: link:../../shared/utils
+      express:
+        specifier: ^5.2.1
+        version: 5.2.1
+      zod:
+        specifier: ^3.24.0
+        version: 3.25.76
     devDependencies:
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
+      '@types/express':
+        specifier: ^5.0.0
+        version: 5.0.6
 
   services/history:
     dependencies:
@@ -2572,8 +2575,8 @@ packages:
     resolution: {integrity: sha512-BuU2qnTti9YKgK5N+IeMubp14ZUKUUw7yeJbkjtosvHiP0AZ5c8IAgEMk79D0eC8F23r4Ac/q8cAIFdm2FtyoA==}
     hasBin: true
 
-  marked@17.0.4:
-    resolution: {integrity: sha512-NOmVMM+KAokHMvjWmC5N/ZOvgmSWuqJB8FoYI019j4ogb/PeRMKoKIjReZ2w3376kkA8dSJIP8uD993Kxc0iRQ==}
+  marked@17.0.5:
+    resolution: {integrity: sha512-6hLvc0/JEbRjRgzI6wnT2P1XuM1/RrrDEX0kPt0N7jGm1133g6X7DlxFasUIx+72aKAr904GTxhSLDrd5DIlZg==}
     engines: {node: '>= 20'}
     hasBin: true
 
@@ -4678,7 +4681,7 @@ snapshots:
 
   '@types/marked@6.0.0':
     dependencies:
-      marked: 17.0.4
+      marked: 17.0.5
 
   '@types/mdurl@2.0.0': {}
 
@@ -5730,7 +5733,7 @@ snapshots:
       punycode.js: 2.3.1
       uc.micro: 2.1.0
 
-  marked@17.0.4: {}
+  marked@17.0.5: {}
 
   math-intrinsics@1.1.0: {}
 
