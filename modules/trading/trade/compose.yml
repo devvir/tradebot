@@ -1,0 +1,15 @@
+# Trade Module
+# Includes: mongodb (storage), history service (fetcher)
+#
+# The history service fetches historical paginated data from BitMEX REST API
+# and stores it in MongoDB. Runs on a polling schedule when no real-time data
+# is being collected.
+
+include:
+  - path: ../../../services/bouncer/docker/compose.yml
+  - path: ../../../services/executor/docker/compose.yml
+
+networks:
+  default:
+    name: ${COMPOSE_PROJECT_NAME:-tradebot}-network
+    external: true
