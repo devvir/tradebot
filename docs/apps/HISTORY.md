@@ -1,6 +1,6 @@
 # History App
 
-Collects BitMEX market data to MongoDB in real time and provides offline tools to transform between storage formats.
+Collects BitMEX market data, both real time an historic, and provides offline tools to transform between storage formats, including compression/decompression, merging, sanitization and gap-filling.
 
 ## What it is
 
@@ -13,7 +13,7 @@ Four deployable modules, each a self-contained pipeline:
 | Module | Purpose | README | Technical ref |
 |---|---|---|---|
 | `collector` | Collect raw data from BitMEX WS → MongoDB | [README](../../modules/history/collector/README.md) | [COLLECTOR.md](../modules/COLLECTOR.md) |
-| `archivist` | Collect encoded+compressed data from BitMEX WS → MongoDB | [README](../../modules/history/archivist/README.md) | [ARCHIVIST.md](../modules/ARCHIVIST.md) |
+| `archivist` | Collect, encoded and compress data from BitMEX WS → MongoDB | [README](../../modules/history/archivist/README.md) | [ARCHIVIST.md](../modules/ARCHIVIST.md) |
 | `packer` | Encode+compress an existing raw collection → new collection | [README](../../modules/history/packer/README.md) | [PACKER.md](../modules/PACKER.md) |
 | `unpacker` | Decode+decompress an existing compressed collection → new collection | [README](../../modules/history/unpacker/README.md) | [UNPACKER.md](../modules/UNPACKER.md) |
 
@@ -26,11 +26,11 @@ Four deployable modules, each a self-contained pipeline:
 | Service | Role | Docs |
 |---|---|---|
 | `broadcast` | BitMEX WS connection → `broadcast` exchange | [README](../../services/broadcast/README.md) · [BROADCAST.md](../services/BROADCAST.md) |
-| `router` | Injects AMQP headers, routes between exchanges | [ROUTER.md](../services/ROUTER.md) |
+| `router` | Injects AMQP headers, routes between exchanges | [README](../../services/router/README.md) · [ROUTER.md](../services/ROUTER.md) |
 | `codec` | Encode/decode + Brotli compress/decompress | [README](../../services/codec/README.md) · [CODEC.md](../services/CODEC.md) |
 | `writer` | Consumes from `writer` exchange → MongoDB | [README](../../services/writer/README.md) · [WRITER.md](../services/WRITER.md) |
 | `reader` | MongoDB → `reader` exchange (packer/unpacker only) | [README](../../services/reader/README.md) · [READER.md](../services/READER.md) |
-| `pipe` | Native exchange-to-exchange binding, no transform | — |
+| `pipe` | Native exchange-to-exchange binding, no transform | [README](../../services/pipe/README.md) |
 
 ## Data flow
 
@@ -42,7 +42,7 @@ LIVE (collector / archivist):
                                     │
                                [codec.in exchange]  ← archivist only
                                     │
-                                  codec              ← archivist only
+                                  codec             ← archivist only
                                     │
                                [writer exchange]
                                     │

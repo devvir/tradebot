@@ -1,0 +1,1291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trading App — Mental Model</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, sans-serif;
+      background: #f1f5f9;
+      color: #0f172a;
+      margin: 0;
+      padding: 52px 36px;
+    }
+    .page { max-width: 1080px; margin: 0 auto; }
+
+    h1 { font-size: 1.9rem; font-weight: 800; margin: 0 0 6px; letter-spacing: -0.02em; }
+    .tagline { color: #64748b; font-size: 0.93rem; margin: 0 0 40px; }
+
+    section { margin-bottom: 56px; }
+    h2 {
+      font-size: 0.72rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.1em;
+      color: #94a3b8; margin: 0 0 18px;
+    }
+
+    .card {
+      background: white; border: 1px solid #e2e8f0;
+      border-radius: 14px; padding: 32px; overflow-x: auto;
+    }
+
+    .callout {
+      background: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #94a3b8;
+      border-radius: 8px; padding: 14px 18px; margin-bottom: 20px;
+      font-size: 0.83rem; color: #475569; line-height: 1.65;
+    }
+
+    /* ── Actor grid ── */
+    .actors { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+    .actor {
+      background: white; border: 1px solid #e2e8f0;
+      border-left: 4px solid; border-radius: 10px; padding: 17px 19px;
+    }
+    .actor h3 { margin: 0 0 7px; font-size: 0.9rem; font-weight: 700; }
+    .actor p  { margin: 0 0 12px; font-size: 0.83rem; color: #475569; line-height: 1.62; }
+    .io       { font-size: 0.78rem; display: flex; flex-direction: column; gap: 4px; }
+    .io-row   { display: flex; gap: 7px; }
+    .lbl      { font-weight: 700; color: #cbd5e1; width: 28px; flex-shrink: 0; }
+    .val      { color: #64748b; line-height: 1.5; }
+
+    /* ── Legend ── */
+    .legend { display: flex; flex-wrap: wrap; gap: 18px; margin-bottom: 20px; align-items: center; }
+    .leg-item { display: flex; align-items: center; gap: 7px; font-size: 0.78rem; color: #64748b; }
+    .leg-dot  { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; }
+    .leg-dash { width: 22px; border-top: 2px dashed #cbd5e1; }
+    .leg-opt  { width: 22px; border-top: 1.5px dashed #e2e8f0; }
+
+    /* ═══ Chapter styles ═══════════════════════════════════════════ */
+    .divider { border: none; border-top: 2px solid #e2e8f0; margin: 72px 0; }
+
+    .chapter { margin-bottom: 72px; }
+    .chapter-num {
+      font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.12em; color: #cbd5e1; margin: 0 0 4px; display: block;
+    }
+    .chapter-title {
+      font-size: 1.45rem; font-weight: 800; margin: 0 0 14px;
+      letter-spacing: -0.02em; color: #0f172a;
+    }
+    .chapter-lead {
+      font-size: 0.92rem; color: #475569; line-height: 1.72; margin: 0 0 38px;
+      max-width: 800px; border-left: 3px solid #e2e8f0; padding-left: 16px;
+    }
+    h3.sec {
+      font-size: 1.05rem; font-weight: 700; margin: 46px 0 10px;
+      padding-bottom: 8px; border-bottom: 1px solid #f1f5f9; color: #1e293b;
+    }
+    h4.sub { font-size: 0.9rem; font-weight: 700; color: #334155; margin: 28px 0 8px; }
+
+    .prose { font-size: 0.875rem; color: #374151; line-height: 1.76; max-width: 820px; }
+    .prose p  { margin: 0 0 14px; }
+    .prose ul, .prose ol { margin: 0 0 14px; padding-left: 24px; }
+    .prose li { margin-bottom: 5px; }
+    .prose strong { color: #1e293b; font-weight: 700; }
+    .prose code {
+      font-family: 'SF Mono','Fira Code','Consolas',monospace;
+      background: #f1f5f9; border-radius: 4px; padding: 1px 5px;
+      font-size: 0.82em; color: #0f172a;
+    }
+
+    .callout-y {
+      background: #fffbeb; border: 1px solid #fde68a; border-left: 4px solid #f59e0b;
+      border-radius: 8px; padding: 13px 18px; margin: 18px 0 24px;
+      font-size: 0.83rem; color: #78350f; line-height: 1.68;
+    }
+    .callout-b {
+      background: #f0f9ff; border: 1px solid #bae6fd; border-left: 4px solid #38bdf8;
+      border-radius: 8px; padding: 13px 18px; margin: 18px 0 24px;
+      font-size: 0.83rem; color: #0c4a6e; line-height: 1.68;
+    }
+    .callout-p {
+      background: #fdf4ff; border: 1px solid #e9d5ff; border-left: 4px solid #c084fc;
+      border-radius: 8px; padding: 13px 18px; margin: 18px 0 24px;
+      font-size: 0.83rem; color: #581c87; line-height: 1.68;
+    }
+    .callout-g {
+      background: #f0fdf4; border: 1px solid #bbf7d0; border-left: 4px solid #4ade80;
+      border-radius: 8px; padding: 13px 18px; margin: 18px 0 24px;
+      font-size: 0.83rem; color: #14532d; line-height: 1.68;
+    }
+    .callout-r {
+      background: #fef2f2; border: 1px solid #fecaca; border-left: 4px solid #f87171;
+      border-radius: 8px; padding: 13px 18px; margin: 18px 0 24px;
+      font-size: 0.83rem; color: #7f1d1d; line-height: 1.68;
+    }
+
+    span.code-label {
+      font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.08em; color: #94a3b8; display: block; margin-bottom: 4px;
+    }
+    pre.code {
+      background: #1e293b; color: #e2e8f0; border-radius: 10px;
+      padding: 20px 24px; font-size: 0.795rem; line-height: 1.7;
+      overflow-x: auto; margin: 0 0 22px;
+      font-family: 'SF Mono','Fira Code','Consolas','Monaco',monospace;
+      white-space: pre;
+    }
+
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0 24px; }
+    @media (max-width: 700px) { .two-col { grid-template-columns: 1fr; } }
+    .box {
+      background: white; border: 1px solid #e2e8f0; border-radius: 10px;
+      padding: 16px 18px; font-size: 0.83rem; color: #374151; line-height: 1.62;
+    }
+    .box h5 { margin: 0 0 8px; font-size: 0.87rem; font-weight: 700; color: #0f172a; }
+    .box ul { margin: 0; padding-left: 18px; }
+    .box li { margin-bottom: 3px; }
+
+    .service-card {
+      background: white; border: 1px solid #e2e8f0; border-radius: 10px;
+      padding: 20px 22px; margin-bottom: 16px; border-top: 3px solid;
+    }
+    .service-card h4 { margin: 0 0 6px; font-size: 0.98rem; font-weight: 700; }
+    .service-card .sc-desc { font-size: 0.85rem; color: #475569; margin: 0 0 14px; line-height: 1.62; }
+    .sc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px,1fr)); gap: 12px; }
+    .sc-block .sc-lbl { font-weight: 700; font-size: 0.69rem; text-transform: uppercase;
+      letter-spacing: 0.06em; color: #94a3b8; margin-bottom: 3px; }
+    .sc-block .sc-val { font-size: 0.8rem; color: #475569; line-height: 1.5; }
+
+    .milestone {
+      background: white; border: 1px solid #e2e8f0; border-radius: 10px;
+      padding: 18px 20px; margin-bottom: 12px; display: flex; gap: 20px; align-items: flex-start;
+    }
+    .m-num { font-size: 1.6rem; font-weight: 800; color: #e2e8f0; flex-shrink: 0; line-height: 1; }
+    .m-body h4 { margin: 0 0 5px; font-size: 0.92rem; font-weight: 700; }
+    .m-body p  { margin: 0 0 8px; font-size: 0.83rem; color: #475569; line-height: 1.6; }
+    .m-why { font-size: 0.78rem; color: #94a3b8; font-style: italic; margin-bottom: 4px; }
+    .m-done { font-size: 0.78rem; color: #16a34a; font-weight: 600; }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <h1>Trading App — Mental Model</h1>
+  <p class="tagline">Actors, responsibilities, and data flows. Big picture only.</p>
+
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <section>
+    <h2>Design Paradigm</h2>
+    <div class="callout">
+      <strong>Publish / subscribe.</strong> Each actor publishes its output without knowing who will consume it — zero consumers, one, or many. There are no directed calls between actors. An actor that produces assessments does not know whether anyone is listening. An actor that needs data subscribes to whatever it needs and gets it — the source and the transport are not relevant at this level of abstraction.<br><br>
+      <strong>Data availability is assumed.</strong> Exchange data — market prices, order book, trades, account state, positions, fills — is available to any actor that needs it. How it is delivered and what backs it (live, testnet, replay) is an operational concern, not a conceptual one.
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <section>
+    <h2>Data Flow</h2>
+
+    <div class="legend">
+      <div class="leg-item"><div class="leg-dot" style="background:#4ade80"></div>Computation</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#22d3ee"></div>Interpretation</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#a78bfa"></div>Advisory</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#fbbf24"></div>Orchestration</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#f97316"></div>Decision</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#d946ef"></div>Resolution</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#f87171"></div>Execution</div>
+      <div class="leg-item"><div class="leg-dash"></div>Flow of data</div>
+      <div class="leg-item"><div class="leg-opt"></div>Optional / strategy-specific</div>
+    </div>
+
+    <div class="card">
+      <svg viewBox="0 0 960 720" xmlns="http://www.w3.org/2000/svg"
+           style="width:100%; display:block; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+        <defs>
+          <marker id="arr" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+            <path d="M0,1 L0,8 L8,4.5 z" fill="#94a3b8"/>
+          </marker>
+          <marker id="arr-opt" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+            <path d="M0,1 L0,8 L8,4.5 z" fill="#e2e8f0"/>
+          </marker>
+        </defs>
+
+        <!-- ── Top data band ────────────────────────────────────── -->
+        <rect x="0" y="0" width="960" height="36" rx="0" fill="#f8fafc"/>
+        <rect x="0" y="34" width="960" height="2" fill="#e2e8f0"/>
+        <text x="480" y="22" text-anchor="middle" font-size="10.5" font-weight="600"
+              fill="#94a3b8" letter-spacing="0.04em">
+          EXCHANGE DATA AVAILABLE TO ANY ACTOR
+        </text>
+
+        <!-- ── Analysis band (left) ─────────────────────────────── -->
+        <rect x="46" y="52" width="190" height="186" rx="12" fill="#f0fdf4" opacity="0.5"/>
+
+        <!-- ── Execution band (centre bottom) ───────────────────── -->
+        <rect x="378" y="482" width="186" height="150" rx="12" fill="#fef2f2" opacity="0.4"/>
+
+        <!-- ── SOLID ARROWS ──────────────────────────────────────── -->
+
+        <!-- Signal → Barometer -->
+        <line x1="140" y1="106" x2="140" y2="152" stroke="#cbd5e1" stroke-width="2" marker-end="url(#arr)"/>
+        <text x="148" y="136" font-size="10" fill="#94a3b8">indicators</text>
+
+        <!-- Barometer → Accountant (horizontal) -->
+        <path d="M220,184 C480,184 480,184 738,184"
+              stroke="#cbd5e1" stroke-width="2" fill="none" marker-end="url(#arr)"/>
+        <text x="479" y="178" font-size="10" fill="#94a3b8" text-anchor="middle">assessments</text>
+
+        <!-- Accountant → Bot (diagonal curve) -->
+        <path d="M820,206 C820,296 554,260 554,296"
+              stroke="#cbd5e1" stroke-width="2" fill="none" marker-end="url(#arr)"/>
+        <text x="718" y="262" font-size="10" fill="#94a3b8">recommendation</text>
+
+        <!-- Bot → Strategy -->
+        <line x1="470" y1="318" x2="470" y2="362" stroke="#cbd5e1" stroke-width="2" marker-end="url(#arr)"/>
+        <text x="478" y="344" font-size="10" fill="#94a3b8">activates</text>
+
+        <!-- Strategy → Planner -->
+        <line x1="470" y1="408" x2="470" y2="450" stroke="#cbd5e1" stroke-width="2" marker-end="url(#arr)"/>
+        <text x="478" y="433" font-size="10" fill="#94a3b8">order plan</text>
+
+        <!-- Planner → Executor -->
+        <line x1="470" y1="496" x2="470" y2="534" stroke="#cbd5e1" stroke-width="2" marker-end="url(#arr)"/>
+        <text x="478" y="519" font-size="10" fill="#94a3b8">order specs</text>
+
+        <!-- Executor → Exchange -->
+        <line x1="470" y1="580" x2="470" y2="614" stroke="#cbd5e1" stroke-width="2" marker-end="url(#arr)"/>
+        <text x="478" y="602" font-size="10" fill="#94a3b8">REST calls</text>
+
+        <!-- ── OPTIONAL dashed arrows (left-side routing) ─────── -->
+        <!-- Signal → Strategy (strategy may subscribe) -->
+        <path d="M60,84 C22,84 22,386 386,386"
+              stroke="#e2e8f0" stroke-width="1.5" stroke-dasharray="5,4"
+              fill="none" marker-end="url(#arr-opt)"/>
+        <!-- Barometer → Strategy -->
+        <path d="M60,184 C16,184 16,392 386,392"
+              stroke="#e2e8f0" stroke-width="1.5" stroke-dasharray="5,4"
+              fill="none" marker-end="url(#arr-opt)"/>
+
+        <!-- Optional label -->
+        <text font-size="9" fill="#cbd5e1" font-style="italic" text-anchor="middle"
+              transform="translate(10,310) rotate(-90)">strategy subscribes to what it needs</text>
+
+        <!-- ── BOXES ─────────────────────────────────────────────── -->
+
+        <!-- Signal -->
+        <rect x="60" y="62" width="160" height="44" rx="8"
+              fill="#f0fdf4" stroke="#4ade80" stroke-width="2"/>
+        <text x="140" y="82" text-anchor="middle" font-size="12" font-weight="700" fill="#166534">Signal</text>
+        <text x="140" y="98" text-anchor="middle" font-size="9.5" fill="#16a34a">generates indicators</text>
+
+        <!-- Barometer -->
+        <rect x="60" y="162" width="160" height="44" rx="8"
+              fill="#ecfeff" stroke="#22d3ee" stroke-width="2"/>
+        <text x="140" y="182" text-anchor="middle" font-size="12" font-weight="700" fill="#0e7490">Barometer</text>
+        <text x="140" y="198" text-anchor="middle" font-size="9.5" fill="#0891b2">reads market state</text>
+
+        <!-- Accountant -->
+        <rect x="740" y="162" width="160" height="44" rx="8"
+              fill="#faf5ff" stroke="#a78bfa" stroke-width="2"/>
+        <text x="820" y="182" text-anchor="middle" font-size="12" font-weight="700" fill="#6d28d9">Accountant</text>
+        <text x="820" y="198" text-anchor="middle" font-size="9.5" fill="#7c3aed">advises strategy selection</text>
+
+        <!-- Bot -->
+        <rect x="390" y="274" width="160" height="44" rx="8"
+              fill="#fffbeb" stroke="#fbbf24" stroke-width="2.5"/>
+        <text x="470" y="294" text-anchor="middle" font-size="12" font-weight="700" fill="#92400e">Trader</text>
+        <text x="470" y="310" text-anchor="middle" font-size="9.5" fill="#d97706">orchestrates strategies</text>
+
+        <!-- Strategy — stacked to suggest "one of many" -->
+        <rect x="394" y="370" width="160" height="38" rx="8"
+              fill="#fff7ed" stroke="#fb923c" stroke-width="1.5" opacity="0.38"/>
+        <rect x="388" y="362" width="164" height="44" rx="8"
+              fill="#fff7ed" stroke="#f97316" stroke-width="2"/>
+        <text x="470" y="382" text-anchor="middle" font-size="12" font-weight="700" fill="#9a3412">Strategy</text>
+        <text x="470" y="398" text-anchor="middle" font-size="9.5" fill="#ea580c">active algorithm  ·  one of many</text>
+
+        <!-- Planner -->
+        <rect x="390" y="450" width="160" height="44" rx="8"
+              fill="#fdf4ff" stroke="#d946ef" stroke-width="2"/>
+        <text x="470" y="470" text-anchor="middle" font-size="12" font-weight="700" fill="#86198f">Planner</text>
+        <text x="470" y="486" text-anchor="middle" font-size="9.5" fill="#a21caf">generates exchange-native orders</text>
+
+        <!-- Executor -->
+        <rect x="390" y="534" width="160" height="44" rx="8"
+              fill="#fef2f2" stroke="#f87171" stroke-width="2"/>
+        <text x="470" y="554" text-anchor="middle" font-size="12" font-weight="700" fill="#991b1b">Executor</text>
+        <text x="470" y="570" text-anchor="middle" font-size="9.5" fill="#dc2626">dumb order reconciler</text>
+
+        <!-- Exchange (external, dashed) -->
+        <rect x="390" y="614" width="160" height="44" rx="8"
+              fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="4,3"/>
+        <text x="470" y="634" text-anchor="middle" font-size="12" font-weight="600" fill="#475569">Exchange</text>
+        <text x="470" y="650" text-anchor="middle" font-size="9.5" fill="#94a3b8">orders placed here</text>
+
+      </svg>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <section>
+    <h2>Actors</h2>
+    <div class="actors">
+
+      <div class="actor" style="border-left-color:#4ade80">
+        <h3>Signal</h3>
+        <p>A pure mathematician. Consumes raw market data and applies known algorithms to produce indicators — moving averages, volatility bands, volume profiles, and so on. No interpretation, no opinion, no prediction. It produces numbers. What those numbers mean is not its concern.</p>
+        <div class="io">
+          <div class="io-row"><span class="lbl">IN</span><span class="val">Raw market data — price, volume, trades, order book</span></div>
+          <div class="io-row"><span class="lbl">OUT</span><span class="val">Indicators — computed values, published for any subscriber</span></div>
+        </div>
+      </div>
+
+      <div class="actor" style="border-left-color:#22d3ee">
+        <h3>Barometer</h3>
+        <p>Uses indicators and raw market data to form discrete, high-meaning assessments of market state. Not time series — conclusions. "Volatility is compressed." "Elevated risk of sudden move." "Pattern match: this setup has preceded sharp drops in similar conditions." It can look across time, recognise patterns, and form a view. An indicator measures; the Barometer judges.</p>
+        <div class="io">
+          <div class="io-row"><span class="lbl">IN</span><span class="val">Indicators (Signal), raw market data</span></div>
+          <div class="io-row"><span class="lbl">OUT</span><span class="val">Assessments — discrete, named evaluations of market state</span></div>
+        </div>
+      </div>
+
+      <div class="actor" style="border-left-color:#a78bfa">
+        <h3>Accountant</h3>
+        <p>Combines the Barometer's view of the market with the current account reality — positions, unrealised P&amp;L, margin usage, total exposure — and forms a strategy recommendation. Its output is advisory: it publishes a recommendation, not a command. Whether to act on it, and when, is up to the Bot and the active Strategy.</p>
+        <div class="io">
+          <div class="io-row"><span class="lbl">IN</span><span class="val">Barometer assessments, account state (positions, margin, balance)</span></div>
+          <div class="io-row"><span class="lbl">OUT</span><span class="val">Strategy recommendation</span></div>
+        </div>
+      </div>
+
+      <div class="actor" style="border-left-color:#fbbf24">
+        <h3>Trader</h3>
+        <p>The orchestrator and runtime. Listens to the Accountant's advice and manages which Strategy is active — activating, transitioning, deactivating. The Trader has no market opinion of its own. A strategy may defer a switch or handle its own handoff; the Trader coordinates that lifecycle without imposing it.</p>
+        <div class="io">
+          <div class="io-row"><span class="lbl">IN</span><span class="val">Accountant recommendation</span></div>
+          <div class="io-row"><span class="lbl">OUT</span><span class="val">Lifecycle management of the active Strategy</span></div>
+        </div>
+      </div>
+
+      <div class="actor" style="border-left-color:#f97316">
+        <h3>Strategy</h3>
+        <p>One of many possible algorithms — the bot's active personality. Each strategy decides what the bot wants in terms of orders. Strategies are autonomous: they subscribe to whatever data they need (indicators, assessments, raw prices, account state, or nothing) and produce an order plan. Some are purely deterministic; others are stateful and handle their own internal phases. That complexity is entirely internal to the strategy.</p>
+        <div class="io">
+          <div class="io-row"><span class="lbl">IN</span><span class="val">Whatever it needs — zero, one, or many data sources, strategy-specific</span></div>
+          <div class="io-row"><span class="lbl">OUT</span><span class="val">Order plan — desired order state, expressed however the strategy chooses</span></div>
+        </div>
+      </div>
+
+      <div class="actor" style="border-left-color:#d946ef">
+        <h3>Planner</h3>
+        <p>Translates strategy intent into fully-specified, exchange-native order objects — whatever the exchange natively understands. That includes all order types (limit, market, stop, trailing stop, etc.), all execution modes (post-only, reduce-only, close-on-trigger, etc.), and all parameter forms the exchange accepts. A trailing stop is expressed as a trailing stop — the exchange handles the logic. A close-all has no size. A market order has no price. The Planner knows the exchange's order vocabulary and produces orders in it.</p>
+        <div class="io">
+          <div class="io-row"><span class="lbl">IN</span><span class="val">Order plan from Strategy, current market &amp; account data where needed</span></div>
+          <div class="io-row"><span class="lbl">OUT</span><span class="val">Exchange-native order specifications — valid, fully-parameterised, ready to diff and submit</span></div>
+        </div>
+      </div>
+
+      <div class="actor" style="border-left-color:#f87171">
+        <h3>Executor</h3>
+        <p>Dumb and stateless. Given a desired list of exchange-native order specs and the current live order state, it computes the minimum diff and fires the necessary calls — amend, create, cancel. No knowledge of strategy, context, or why any order exists. Its job is exactly one thing: make what exists on the exchange match what was asked for.</p>
+        <div class="io">
+          <div class="io-row"><span class="lbl">IN</span><span class="val">Desired order specs (exchange-native); current live order state</span></div>
+          <div class="io-row"><span class="lbl">OUT</span><span class="val">Order operations — amend / create / cancel</span></div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+
+  <hr class="divider">
+
+  <!-- ═══════════════════════════════════════════════════════════
+       CHAPTER 2: ACTORS IN DEPTH
+  ════════════════════════════════════════════════════════════════ -->
+  <div class="chapter">
+    <span class="chapter-num">Chapter 2</span>
+    <h2 class="chapter-title">Actors in Depth</h2>
+    <p class="chapter-lead">The first section defined what each actor is. This chapter goes one level deeper: what each actor knows, what it does, the interesting design decisions within it, and how it relates to the others. Still conceptual — no service boundaries, no code yet.</p>
+
+    <h3 class="sec">Signal</h3>
+    <div class="prose">
+      <p>Signal is the simplest actor to reason about. It consumes raw market data from the exchange — price, volume, trades, the order book — and runs mathematical algorithms over it to produce indicators. Nothing more. It has no opinion about the market, no awareness of positions or orders, and no knowledge of who will consume its output.</p>
+      <p>Internally, Signal maintains rolling buffers per symbol: a history of recent prices, volumes, and order book snapshots sufficient to compute its indicators. These are the raw material. The outputs are published continuously as new data arrives, typically rate-limited to avoid flooding downstream consumers.</p>
+      <p><strong>Examples of what Signal computes:</strong></p>
+      <ul>
+        <li>EMA (exponential moving average) of last price — configurable window(s), e.g. EMA(20), EMA(50)</li>
+        <li>Simple moving average of volume</li>
+        <li>Bollinger bands (price ± N standard deviations of a rolling window)</li>
+        <li>RSI (relative strength index)</li>
+        <li>Order book imbalance — bid volume vs ask volume in the top N levels</li>
+        <li>VWAP (volume-weighted average price over a rolling window)</li>
+      </ul>
+      <p>The initial implementation needs only one: EMA of last price. The architecture should make it trivial to add more without restructuring anything — each indicator is just a function over the buffer.</p>
+    </div>
+    <div class="callout-b">Signal is a tool, not a thinker. It answers "what is the EMA of the last 20 prices?" It does not answer "is this a good time to trade?"</div>
+
+    <h4 class="sub">Lazy computation — only compute what's consumed</h4>
+    <div class="prose">
+      <p>Signal can be configured for many symbols and many indicators, but it should not compute what nobody is reading. When training dozens of bots simultaneously, a fixed "compute everything and publish it all" approach wastes CPU and generates significant queue traffic for combinations no bot cares about.</p>
+      <p>The solution: <strong>lazy computation driven by RabbitMQ binding events</strong>. Signal subscribes to RabbitMQ's internal event exchange (<code>amq.rabbitmq.event.exchange</code>) at startup. Whenever a consumer creates a queue and binds it to a signal routing key, RabbitMQ fires a <code>queue.bound</code> event. Signal receives this event, parses the routing key to extract the symbol + indicator, and adds that pair to its active set. When the consumer disconnects, its non-durable auto-delete queue is automatically deleted by RabbitMQ, which fires a <code>queue.unbound</code> event — Signal removes the pair from the active set.</p>
+      <p>The routing key encodes both dimensions: <code>signal.{SYMBOL}.{INDICATOR_KEY}</code> — for example <code>signal.XBTUSD.ema.20</code> or <code>signal.ETHUSD.rsi.14</code>. Base market data (bid/ask/book/lastPrice) uses <code>signal.{SYMBOL}.market</code>. This gives consumers fine-grained control: a bot wanting only EMA(100) for XBTUSD binds to exactly <code>signal.XBTUSD.ema.100</code> and nothing else.</p>
+      <p><strong>What is always on:</strong></p>
+      <ul>
+        <li>WS subscription to the exchange feed — all configured symbols, always connected</li>
+        <li>Raw state accumulation (order book, last trade, instrument metadata) — in-memory map updates, essentially free</li>
+      </ul>
+      <p><strong>What is lazy (only when a binding exists):</strong></p>
+      <ul>
+        <li>Indicator computation — EMA, RSI, Bollinger, etc.</li>
+        <li>Message publishing — no binding, no message</li>
+      </ul>
+      <p>Signal maintains a reference count per <code>(symbol, indicator)</code> pair to handle multiple consumers of the same combination. Count goes to zero only when the last binding for that pair is removed — not on the first unbind event.</p>
+    </div>
+    <div class="callout-g">Non-durable auto-delete queues are the right default for all signal consumers. When a bot process exits, its queue disappears automatically, the binding is removed, and Signal stops computing that indicator for that symbol. No manual cleanup, no queue buildup, no wasted cycles.</div>
+
+    <h3 class="sec">Barometer</h3>
+    <div class="prose">
+      <p>The Barometer is where raw information becomes meaning. It takes Signal's indicators and real-time market data and produces discrete assessments — not time series, but conclusions. "The market has been ranging in a tight band for five days." "Volatility is compressed — a large move is likely soon." "Risk level: elevated."</p>
+      <p>The key distinction from Signal: Signal says "EMA20 = 49,500." The Barometer says "price has been hugging the 20-period EMA for an unusually long time, and the last three times this happened, a sharp move followed." The Barometer looks across time. It can compare the current state to historical patterns. It has memory.</p>
+      <p><strong>Examples of assessments the Barometer might produce:</strong></p>
+      <ul>
+        <li><strong>Volatility regime</strong> — compressed / normal / elevated / extreme (numeric score + label)</li>
+        <li><strong>Trend state</strong> — uptrend / downtrend / ranging, with a confidence score</li>
+        <li><strong>Band detection</strong> — is price inside a recognised range? If so: the low, high, and duration</li>
+        <li><strong>Risk score</strong> — an aggregate risk metric, 0–100, combining multiple factors</li>
+        <li><strong>Pattern match</strong> — current conditions resemble N past setups; what followed in those cases</li>
+        <li><strong>Temporal context</strong> — BitMEX funding in 20 minutes; estimated directional pressure</li>
+      </ul>
+      <p>These assessments are what the Accountant reads to form its strategy recommendation. But strategies can also subscribe to the Barometer directly — a market maker might widen its spread when the risk score exceeds a threshold, without needing to switch strategies entirely.</p>
+    </div>
+    <div class="callout-y"><strong>The Barometer is intentionally separate from the Strategy.</strong> Strategies should not contain market-interpretation logic. "If EMA50 crosses EMA200 it means the trend has shifted" is the Barometer's conclusion to draw. Strategies consume assessments and act on them. This keeps strategies focused on order logic, not market analysis — and it means improving the Barometer benefits all strategies at once.</div>
+
+    <h3 class="sec">Accountant</h3>
+    <div class="prose">
+      <p>The Accountant sees two things simultaneously: what the market looks like (from the Barometer) and what the account looks like (positions, P&L, margin). From those two pictures it forms a recommendation: "given all of this, the bot should be running strategy X right now."</p>
+      <p>Its role is advisory. It publishes a recommendation; the Trader and the active Strategy decide what to do with it. A strategy in the middle of unwinding a position might defer the recommendation for a few minutes. Another strategy might switch immediately. The Accountant just keeps publishing its current view — it doesn't track whether its advice was followed.</p>
+      <p><strong>What the Accountant reads from account state:</strong></p>
+      <ul>
+        <li>Positions — per symbol: quantity, average entry price, unrealised P&L, liquidation price</li>
+        <li>Margin — wallet balance, available margin, margin balance, realised P&L today</li>
+        <li>Exposure — how much of available margin is committed, aggregate risk</li>
+      </ul>
+      <p>Notice that account state already contains implicit feedback. If the current strategy has been losing money, the wallet balance will reflect it. If a position is deeply underwater, unrealised P&L shows it. The Accountant does not need a separate performance-tracking actor — it reads the consequences of past decisions directly.</p>
+      <p>A recommendation can carry optional context: not just "use strategy X" but "use market-maker with position size reduced by 50%." Strategies that understand those constraints can adapt. Simpler strategies can ignore them.</p>
+      <p>"Doing nothing" is a valid recommendation. There is a stand-down strategy whose <code>decide()</code> returns an empty order list. The Executor will cancel all existing orders. No special circuit-breaker actor is needed — this is handled naturally through the normal advisory channel.</p>
+    </div>
+
+    <h3 class="sec">Trader</h3>
+    <div class="prose">
+      <p>The Trader is the runtime and orchestrator. It doesn't make market decisions — it manages the lifecycle of the actor that does. Its job: listen to the Accountant's advice, manage which strategy is active, and call that strategy on each tick.</p>
+      <p>The tick mechanism is hybrid: new MarketState messages buffer up as they arrive, and the trader ticks at a minimum interval (e.g. every 5 seconds). On each tick it passes the latest accumulated state to the active strategy. This decouples the decision rate from the data rate — the strategy is not called hundreds of times per second because the order book is updating.</p>
+      <p><strong>The Trader's responsibilities on each tick:</strong></p>
+      <ol>
+        <li>Check latest Accountant recommendation — is the active strategy still the right one?</li>
+        <li>If a switch is needed: call <code>strategy.onDeactivate()</code> on the current strategy. If it returns false, defer the switch. If true, activate the new strategy.</li>
+        <li>Call <code>strategy.decide(markets, account)</code> to get an OrderPlan</li>
+        <li>Pass the OrderPlan through the Planner to get exchange-native order specs</li>
+        <li>Publish a DesiredState message with those specs</li>
+      </ol>
+      <p>The Trader does not contain market logic. It is stable infrastructure. Changing the strategy does not change the Trader. Adding new indicators to the Barometer does not change the Trader.</p>
+    </div>
+    <div class="callout-b">The Trader is also the natural home for the Accountant and Planner — they run in the same process, in memory, as parts of the Trader's tick cycle. No network boundary is needed between these three actors.</div>
+
+    <h3 class="sec">Strategy</h3>
+    <div class="prose">
+      <p>The Strategy is the personality of the bot — the only actor that makes trading decisions. It sees market state and account state, and produces an order plan expressing what the bot wants to have open on the exchange.</p>
+      <p>Strategies are autonomous. Each one subscribes to whatever data it needs: some only need current bid/ask; others need Barometer assessments; others need Signal indicators and account state; some are purely deterministic and need nothing at all beyond being told to tick.</p>
+    </div>
+    <span class="code-label">Strategy interface — illustrative, not final</span>
+    <pre class="code">interface Strategy {
+  name: string
+
+  // Called on every tick with the latest accumulated state.
+  // Returns the desired order state for all managed symbols.
+  decide(market: MarketState[], account: AccountState): OrderPlan[]
+
+  // Optional: called when this strategy becomes active.
+  onActivate?(market: MarketState[], account: AccountState): void
+
+  // Optional: called when the Bot wants to deactivate this strategy.
+  // Return true = ready to hand off. Return false = "give me more time."
+  // The Trader will call this repeatedly until it returns true.
+  onDeactivate?(market: MarketState[], account: AccountState): boolean
+}</pre>
+    <div class="prose">
+      <p>The <code>onDeactivate</code> hook is the key to graceful transitions. A strategy in the middle of unwinding a position can return false until the unwind is complete, then true. The Bot respects this without needing to know anything about the strategy's internal state.</p>
+      <p>Strategies will live in packages/modules, not as separate services. A <code>strategies/market-maker</code> package exports a class that implements the Strategy interface. The Bot imports and instantiates it. Multiple strategy packages can coexist; only one is active at a time (unless a meta-strategy internally composes several).</p>
+    </div>
+
+    <h4 class="sub">The Adaptive Strategy Pattern</h4>
+    <div class="prose">
+      <p>One of the most powerful patterns: a Strategy that contains sub-strategies and manages regime detection internally. To the Trader, it looks like a single strategy. Internally it maintains its own state machine and delegates to different sub-strategies based on market conditions.</p>
+      <p>Example: an <code>AdaptiveMarketMaker</code> that:</p>
+      <ul>
+        <li>In a ranging market: runs a classic market-maker sub-strategy</li>
+        <li>On a band breakout: immediately switches to a stand-down sub-strategy</li>
+        <li>In a recovery phase: runs a conservative market-maker with reduced size and tighter limits</li>
+      </ul>
+      <p>The Bot never knows about regimes. It just calls <code>decide()</code>. The regime detection — watching for band breaks, tracking recovery progress — lives entirely inside the <code>AdaptiveMarketMaker</code> class. The framework stays simple; the strategy is as complex as it needs to be.</p>
+    </div>
+
+    <h4 class="sub">The Stand-Down Strategy</h4>
+    <div class="prose">
+      <p>A valid strategy that simply cancels all open orders and places nothing. <code>decide()</code> always returns an empty list. When the Executor receives an empty DesiredState, it cancels everything currently open. This is the bot's "safe mode" — no new risk, no outstanding orders.</p>
+      <p>The Accountant recommends this when market conditions are dangerous or when account exposure is too high. No special emergency-stop actor is needed — this is just a strategy.</p>
+    </div>
+
+    <h3 class="sec">Planner</h3>
+    <div class="prose">
+      <p>The Planner is the translator between what strategies express and what the exchange accepts. It takes an OrderPlan and produces fully-specified, exchange-native order objects. It knows the full vocabulary of the exchange's order system.</p>
+      <p>BitMEX is not just "limit orders at a price." It offers a rich order type system:</p>
+      <ul>
+        <li><strong>Market</strong> — fills immediately at best available price; no price field</li>
+        <li><strong>Limit</strong> — standard limit order; optional post-only (<code>execInst: ParticipateDoNotInitiate</code>)</li>
+        <li><strong>Stop / StopLimit</strong> — triggered at a stop price; becomes market or limit</li>
+        <li><strong>Trailing stop</strong> — exchange-managed trailing: set <code>pegOffsetValue</code> and the exchange moves the stop as price moves</li>
+        <li><strong>Pegged</strong> — price anchored to mid, primary bid/ask, or last price with an offset (<code>pegPriceType + pegOffsetValue</code>)</li>
+        <li><strong>Close</strong> — closes the full position; no quantity needed (<code>execInst: Close</code>)</li>
+        <li><strong>ReduceOnly</strong> — only reduces an existing position, never opens new</li>
+        <li><strong>MarketIfTouched / LimitIfTouched</strong> — triggered orders that become market/limit when price reaches a level</li>
+      </ul>
+      <p>The Planner knows when to resolve and when to pass through natively. A strategy saying "trailing stop $200 below current price" maps directly to a BitMEX native trailing stop — no resolution required, the exchange manages the trailing itself. A strategy saying "limit buy at 1% below entry price" requires the Planner to compute the actual price from the current entry price, then emit a standard limit order.</p>
+      <p>The Planner does not need to be built all at once. Start with the minimal vocabulary for the market maker (limit orders, post-only). Add order types as strategies require them.</p>
+    </div>
+
+    <h3 class="sec">Executor</h3>
+    <div class="prose">
+      <p>The Executor is the most precisely defined actor. Its algorithm is clear, its inputs are clear, its outputs are clear. It does exactly one thing: given a desired list of orders and the current live list, make the live list match the desired list.</p>
+      <p><strong>The converge_orders algorithm:</strong></p>
+      <ol>
+        <li>Receive a DesiredState payload via HTTP POST — a list of fully-specified order specs</li>
+        <li>Read live order state from the accumulated WS stream (order table), filtered to orders matching <code>ORDERID_PREFIX</code></li>
+        <li>Sort both lists the same way: closest-to-mid first (bids descending by price, asks ascending)</li>
+        <li>Match by index: <code>desired[0]</code> ↔ <code>live[0]</code>, <code>desired[1]</code> ↔ <code>live[1]</code>, etc.</li>
+        <li>For each matched pair: amend if price delta exceeds threshold (e.g. 0.5 ticks) <em>or</em> quantity changed. Amended quantity = <code>cumQty + desiredQty</code> to account for partial fills.</li>
+        <li>Unmatched desired orders (desired list longer than live): create new orders</li>
+        <li>Unmatched live orders (live list longer than desired): cancel</li>
+        <li>Execute in order: <strong>amend first → create → cancel</strong>. Amending first keeps existing orders active; creating before cancelling ensures the book is never under-covered.</li>
+      </ol>
+      <p><strong>ORDERID_PREFIX scoping:</strong> every order placed by this Executor instance carries a prefix on its client order ID. Multiple Executor instances (for different strategies or accounts) can share an exchange account without interfering — each only manages the orders it created.</p>
+      <p><strong>Error handling:</strong> transient errors are retried. A "stale amend" (order already filled by the time the amend arrives) is handled by creating a new order instead of re-attempting the amend.</p>
+    </div>
+    <div class="callout-g">The Executor is the best first service to build. It has the clearest contract, can be fully tested with a static DesiredState message (no live bot needed), and has a well-understood reference implementation in the BitMEX sample-market-maker Python repo (<code>converge_orders</code>).</div>
+  </div><!-- /chapter 2 -->
+
+  <hr class="divider">
+
+  <!-- ═══════════════════════════════════════════════════════════
+       CHAPTER 3: DATA IN MOTION
+  ════════════════════════════════════════════════════════════════ -->
+  <div class="chapter">
+    <span class="chapter-num">Chapter 3</span>
+    <h2 class="chapter-title">Data in Motion</h2>
+    <p class="chapter-lead">These are the messages and data structures that flow between actors. Not final TypeScript — these are descriptions of what each message must carry and why. Exact field names and types are defined in M0 (the contracts milestone) after this planning phase.</p>
+
+    <h3 class="sec">MarketSnapshot — from Signal (base market data)</h3>
+    <div class="prose">
+      <p>Published by Signal per symbol on each meaningful update, rate-limited. Routing key: <code>signal.{SYMBOL}.market</code>. Contains only raw market data — no computed indicators. Indicators are separate messages on their own routing keys.</p>
+    </div>
+    <span class="code-label">Illustrative shape — routing key: signal.{SYMBOL}.market</span>
+    <pre class="code">MarketSnapshot {
+  symbol:     string        // e.g. "XBTUSD"
+  timestamp:  string        // ISO timestamp of this snapshot
+
+  // Best quotes
+  bid:        number        // best bid price
+  ask:        number        // best ask price
+  mid:        number        // (bid + ask) / 2
+  spread:     number        // ask - bid
+
+  // Order book snapshot
+  book: {
+    bids: [price, size][]   // top N levels, descending price
+    asks: [price, size][]   // top N levels, ascending price
+  }
+
+  // Last trade
+  lastPrice:  number
+
+  // Instrument metadata (from BitMEX instrument table)
+  instrument: {
+    tickSize:    number     // minimum price increment
+    lotSize:     number     // minimum order quantity increment
+    multiplier:  number     // contract value multiplier
+    fundingRate: number     // current funding rate
+    markPrice:   number     // exchange mark price (used for PnL calculations)
+    nextFunding: string     // timestamp of next funding
+  }
+}</pre>
+
+    <h3 class="sec">IndicatorUpdate — from Signal (per indicator)</h3>
+    <div class="prose">
+      <p>Published by Signal lazily — only when a consumer has bound a queue to that routing key. Each indicator is a separate message with its own routing key: <code>signal.{SYMBOL}.{INDICATOR_KEY}</code>. Examples: <code>signal.XBTUSD.ema.20</code>, <code>signal.ETHUSD.rsi.14</code>.</p>
+      <p>Consumers subscribe to exactly the indicators they need — nothing more is computed or published.</p>
+    </div>
+    <span class="code-label">Illustrative shape — routing key: signal.{SYMBOL}.{INDICATOR_KEY}</span>
+    <pre class="code">IndicatorUpdate {
+  symbol:     string        // e.g. "XBTUSD"
+  indicator:  string        // e.g. "ema", "rsi", "bollinger"
+  params:     Record&lt;string, number&gt;  // e.g. { window: 20 }
+  value:      number | Record&lt;string, number&gt;  // scalar or named band values
+  timestamp:  string
+}
+
+// Examples:
+// EMA(20):        { indicator: "ema",       params: { window: 20 },  value: 49480 }
+// RSI(14):        { indicator: "rsi",       params: { period: 14 },  value: 62.3 }
+// Bollinger(20):  { indicator: "bollinger", params: { window: 20 },  value: { mid: 49480, upper: 50100, lower: 48860 } }</pre>
+
+    <div class="callout-b">
+      The Bot combines the latest MarketSnapshot with the latest IndicatorUpdate values (cached in memory) into a single <code>MarketState</code> object before passing it to the strategy on each tick. The strategy sees a unified view — it doesn't need to know that these arrived as separate messages.
+    </div>
+
+    <h3 class="sec">MarketAssessment — from Barometer</h3>
+    <div class="prose">
+      <p>Published by Barometer per symbol. Not on every tick — when assessments change meaningfully. Consumers (Accountant, Strategy) always have the latest assessment available.</p>
+    </div>
+    <span class="code-label">Illustrative shape</span>
+    <pre class="code">MarketAssessment {
+  symbol:    string
+  timestamp: string
+
+  volatility: {
+    regime:    'compressed' | 'normal' | 'elevated' | 'extreme'
+    score:     number       // 0–100
+  }
+
+  trend: {
+    direction:  'up' | 'down' | 'sideways'
+    confidence: number      // 0–100
+    strength:   number      // magnitude of the trend
+  }
+
+  band: {
+    active:   boolean
+    low:      number        // lower edge of detected range
+    high:     number        // upper edge
+    duration: number        // how long price has been inside, in hours
+    nearEdge: 'low' | 'high' | null   // is price close to an edge?
+  }
+
+  riskScore:  number        // aggregate risk, 0–100; high = dangerous to trade
+
+  // Future: pattern matches, event timing, etc.
+}</pre>
+
+    <h3 class="sec">AccountState — available to Accountant and Bot</h3>
+    <div class="prose">
+      <p>Not a published message — this is accumulated from the exchange WS private stream. The Bot and Accountant read it from in-memory state, continuously updated as the WS delivers changes.</p>
+    </div>
+    <span class="code-label">Illustrative shape</span>
+    <pre class="code">AccountState {
+  positions: Record&lt;symbol, {
+    currentQty:       number   // positive = long, negative = short
+    avgEntryPrice:    number
+    unrealisedPnl:    number   // in XBT (sats)
+    liquidationPrice: number
+    leverage:         number
+  }&gt;
+
+  margin: {
+    walletBalance:    number   // total wallet (in sats)
+    availableMargin:  number   // what's free to use
+    marginBalance:    number   // wallet + unrealised PnL
+    realisedPnl:      number   // today's realised
+  }
+}</pre>
+
+    <h3 class="sec">StrategyRecommendation — from Accountant</h3>
+    <div class="prose">
+      <p>Published by the Accountant. The Bot checks the latest recommendation on each tick. The Bot and active Strategy decide what to do with it.</p>
+    </div>
+    <span class="code-label">Illustrative shape</span>
+    <pre class="code">StrategyRecommendation {
+  strategy:    string       // name of the recommended strategy, e.g. "market-maker"
+  urgency:     'normal' | 'urgent'   // urgent = switch ASAP; normal = finish current action first
+  reason:      string       // human-readable, for logging ("high risk score + elevated volatility")
+  constraints?: {
+    maxPositionSize?: number    // override strategy's default
+    sizeMultiplier?:  number    // e.g. 0.5 = trade at half normal size
+    // any other advisory constraints the strategy may choose to honour
+  }
+}</pre>
+
+    <h3 class="sec">OrderPlan — from Strategy</h3>
+    <div class="prose">
+      <p>What the Strategy returns from <code>decide()</code>. This is the strategy's expression of intent — it may use relative prices, leverage-based sizes, or native order types. The Planner resolves this into exchange-native specs. The full order language is described in Chapter 5.</p>
+    </div>
+    <span class="code-label">Illustrative shape</span>
+    <pre class="code">OrderPlan {
+  symbol:    string
+  orders:    OrderIntent[]
+  timestamp: string
+}
+
+OrderIntent {
+  side:      'Buy' | 'Sell'
+  size:      SizeExpr        // how much (see Chapter 5)
+  price:     PriceExpr       // at what price (see Chapter 5)
+  type:      OrderType       // Limit | Market | Stop | Trailing | Close | ...
+  postOnly?: boolean
+  reduceOnly?: boolean
+  // additional fields depending on order type
+}</pre>
+
+    <h3 class="sec">DesiredState — from Bot to Executor</h3>
+    <div class="prose">
+      <p>The output of the Planner. Fully-resolved, exchange-native order specs. Sent to the Executor via HTTP POST on each tick. The Executor diffs this against live orders and acts immediately — or not at all.</p>
+    </div>
+    <span class="code-label">Illustrative shape</span>
+    <pre class="code">DesiredState {
+  symbol:    string
+  orders:    ExchangeOrderSpec[]
+  timestamp: string
+}
+
+ExchangeOrderSpec {
+  // Direct BitMEX API fields — fully specified, ready to submit
+  symbol:       string
+  side:         'Buy' | 'Sell'
+  orderQty?:    number          // absent for Close orders
+  price?:       number          // absent for Market orders
+  stopPx?:      number          // for Stop orders
+  pegOffsetValue?: number       // for Trailing / Pegged orders
+  pegPriceType?:   string       // 'TrailingStopPeg' | 'MidPricePeg' | ...
+  ordType:      string          // 'Limit' | 'Market' | 'Stop' | 'MarketIfTouched' | ...
+  execInst?:    string          // 'ParticipateDoNotInitiate' | 'ReduceOnly' | 'Close' | ...
+  clOrdID?:     string          // client order ID, will include ORDERID_PREFIX
+}</pre>
+  </div><!-- /chapter 3 -->
+
+  <hr class="divider">
+
+  <!-- ═══════════════════════════════════════════════════════════
+       CHAPTER 4: STRATEGIES
+  ════════════════════════════════════════════════════════════════ -->
+  <div class="chapter">
+    <span class="chapter-num">Chapter 4</span>
+    <h2 class="chapter-title">Strategies</h2>
+    <p class="chapter-lead">Strategies are the trading logic of the system. This chapter walks through the key patterns from simplest to most complex, and discusses how strategies compose and transition.</p>
+
+    <h3 class="sec">The Market Maker — first strategy to build</h3>
+    <div class="prose">
+      <p>The simplest meaningful strategy and the right starting point. It places N limit orders on each side of the mid price at evenly-spaced intervals, collecting the bid-ask spread as the market oscillates.</p>
+      <p><strong>Algorithm:</strong></p>
+      <ol>
+        <li>Compute mid price from MarketState: <code>mid = (bid + ask) / 2</code></li>
+        <li>Round mid to nearest tick (BitMEX requires prices to be multiples of tickSize)</li>
+        <li>Place N bid orders: <code>mid - spacing×1, mid - spacing×2, ..., mid - spacing×N</code></li>
+        <li>Place N ask orders: <code>mid + spacing×1, mid + spacing×2, ..., mid + spacing×N</code></li>
+        <li>Apply position limits: if <code>currentQty &gt;= MAX_POSITION</code>, suppress all bids. If <code>currentQty &lt;= -MAX_POSITION</code>, suppress all asks.</li>
+        <li>All orders: Limit, post-only (ParticipateDoNotInitiate), GoodTillCancel</li>
+      </ol>
+      <p><strong>Config parameters:</strong></p>
+      <ul>
+        <li><code>N</code> — number of levels per side (e.g. 5)</li>
+        <li><code>SPACING</code> — distance between levels in ticks (e.g. 2 ticks = $2 on XBTUSD)</li>
+        <li><code>ORDER_SIZE</code> — quantity per order in contracts</li>
+        <li><code>MAX_POSITION</code> — absolute position limit (e.g. 5000 contracts)</li>
+      </ul>
+      <p>On each tick, the strategy produces a fresh list of desired orders. The Executor reconciles this against the current live orders — amending prices that have moved, creating new ones if some are missing, cancelling if the position limit was hit.</p>
+      <p>This strategy does not need the Barometer. It does not need indicators. It only needs <code>MarketState.bid</code>, <code>MarketState.ask</code>, and account position data.</p>
+    </div>
+    <div class="callout-g">The market maker is the right first strategy: it exercises the full pipeline (Signal → Bot → Planner → Executor → Exchange), it's simple enough to reason about and verify manually, and it produces real, observable results on testnet.</div>
+
+    <h3 class="sec">The Stand-Down Strategy</h3>
+    <div class="prose">
+      <p><code>decide()</code> returns an empty order list for all symbols. When the Executor receives an empty DesiredState, it cancels all existing orders. The bot goes quiet — no new risk, no outstanding orders, no exposure.</p>
+      <p>This is activated when the Accountant recommends it. The scenarios:</p>
+      <ul>
+        <li>Risk score too high to trade safely</li>
+        <li>Volatility extreme (market maker would lose money on every fill)</li>
+        <li>Account exposure already at limit</li>
+        <li>Barometer detects conditions that historically precede large adverse moves</li>
+      </ul>
+      <p>Implementation is trivial. Value is enormous.</p>
+    </div>
+
+    <h3 class="sec">The Adaptive Market Maker</h3>
+    <div class="prose">
+      <p>A richer version of the market maker that incorporates Barometer assessments to adjust its behaviour. Still a single strategy class — not composed of sub-strategies — but it reads more data and behaves differently based on market state.</p>
+      <p><strong>Behaviour variations:</strong></p>
+      <ul>
+        <li><strong>Band detected, price inside:</strong> normal operation, use band edges as boundaries (don't place orders beyond them)</li>
+        <li><strong>Band detected, price near edge:</strong> tighten spacing, reduce order count on the side pointing toward the edge</li>
+        <li><strong>Volatility elevated:</strong> widen spacing (wider spread = better edge), reduce size per order</li>
+        <li><strong>Volatility extreme:</strong> return empty orders (self-imposed stand-down, without waiting for Accountant)</li>
+        <li><strong>Risk score high:</strong> reduce to 1 level per side at wider spacing</li>
+      </ul>
+      <p>This strategy needs both <code>MarketState</code> and <code>MarketAssessment</code>. Still no internal state transitions — it's a stateless function of current inputs. Behaviour is determined entirely by the current state of the market.</p>
+    </div>
+
+    <h3 class="sec">The Regime-Aware Adaptive Strategy</h3>
+    <div class="prose">
+      <p>The full version of the adaptive pattern: a Strategy class that maintains an internal state machine and contains sub-strategies. The outer class manages regime detection and transitions; the inner classes handle order logic for each regime.</p>
+    </div>
+    <span class="code-label">Conceptual structure</span>
+    <pre class="code">class AdaptiveStrategy implements Strategy {
+  // Internal regime state — not visible to the Bot
+  private regime: 'ranging' | 'breakout' | 'recovery' = 'ranging'
+
+  // Sub-strategies, each a simple Strategy implementation
+  private subStrategies = {
+    ranging:  new MarketMakerStrategy(config.ranging),
+    breakout: new StandDownStrategy(),
+    recovery: new ConservativeMarketMaker(config.recovery),
+  }
+
+  decide(market, account): OrderPlan[] {
+    // 1. Detect regime from market + account (Barometer assessments, position state)
+    const newRegime = this.detectRegime(market, account)
+
+    // 2. Handle transition if regime changed
+    if (newRegime !== this.regime) {
+      this.handleTransition(this.regime, newRegime, market, account)
+      this.regime = newRegime
+    }
+
+    // 3. Delegate to active sub-strategy
+    return this.subStrategies[this.regime].decide(market, account)
+  }
+
+  // The Trader just calls decide() — it never sees regimes or sub-strategies
+}</pre>
+    <div class="prose">
+      <p>The transition from "ranging" to "breakout" might immediately return empty orders (stop everything). The transition from "breakout" to "recovery" might take several ticks — the strategy needs to verify the price has stabilised before resuming. The <code>onDeactivate()</code> hook lets the outer strategy tell the Bot "I'm not ready to be replaced yet" during a transition.</p>
+    </div>
+    <div class="callout-p">This is a meaningful amount of complexity. It should not be the first thing built. Start with the simple market maker, verify the full pipeline end-to-end on testnet, then layer complexity. Complexity that isn't exercised on a working system is just untested speculation.</div>
+  </div><!-- /chapter 4 -->
+
+  <hr class="divider">
+
+  <!-- ═══════════════════════════════════════════════════════════
+       CHAPTER 5: THE ORDER LANGUAGE
+  ════════════════════════════════════════════════════════════════ -->
+  <div class="chapter">
+    <span class="chapter-num">Chapter 5</span>
+    <h2 class="chapter-title">The Order Language</h2>
+    <p class="chapter-lead">The OrderPlan that strategies produce is written in a language richer than "limit buy at $49,500." Strategies should be able to express orders in terms that make sense for their logic — relative prices, position-based sizes, native exchange order types — and the Planner translates that into concrete exchange API calls. This chapter defines the vocabulary of that language.</p>
+
+    <h3 class="sec">Price Expressions</h3>
+    <div class="prose">
+      <p>A price expression describes where an order should be placed. It can be a literal value, or it can be relative to some anchor that the Planner resolves at execution time.</p>
+      <p><strong>Price anchors:</strong></p>
+      <ul>
+        <li><code>mid</code> — <code>(bid + ask) / 2</code> at time of resolution</li>
+        <li><code>bid</code> — best bid at time of resolution</li>
+        <li><code>ask</code> — best ask at time of resolution</li>
+        <li><code>last</code> — last trade price</li>
+        <li><code>mark</code> — exchange mark price (used for liquidation calculations)</li>
+        <li><code>entryPrice</code> — average entry price of the current position for this symbol</li>
+        <li><code>high(period)</code> — highest price over the last N minutes / bars</li>
+        <li><code>low(period)</code> — lowest price over the last N minutes / bars</li>
+        <li><code>literal(n)</code> — a specific absolute price</li>
+      </ul>
+      <p><strong>Price expression forms:</strong></p>
+    </div>
+    <span class="code-label">Price expression vocabulary</span>
+    <pre class="code">// Absolute price
+{ type: 'literal', value: 49500 }
+
+// Offset from an anchor — dollar amount
+{ type: 'offset', anchor: 'mid', delta: -100 }        // $100 below mid
+{ type: 'offset', anchor: 'entryPrice', delta: +50 }  // $50 above entry price
+
+// Percentage from an anchor
+{ type: 'pct', anchor: 'mid', pct: -0.01 }            // 1% below mid
+{ type: 'pct', anchor: 'high24h', pct: -0.005 }       // 0.5% below 24h high
+
+// Native trailing — no resolution needed; exchange manages the trailing
+{ type: 'trailing', offset: -200 }    // trailing stop $200 below current price
+{ type: 'trailing', offset: +200 }    // trailing stop $200 above (for short)</pre>
+
+    <h3 class="sec">Size Expressions</h3>
+    <div class="prose">
+      <p>A size expression describes how much. It can be an absolute quantity in contracts, or relative to wallet or position.</p>
+    </div>
+    <span class="code-label">Size expression vocabulary</span>
+    <pre class="code">// Absolute quantity in contracts
+{ type: 'qty', value: 1000 }
+
+// Leverage-based: n × walletBalance / markPrice
+// e.g. leverage 5 on a $10,000 wallet at $50,000/BTC = 1,000 contracts
+{ type: 'leverage', value: 5 }
+
+// Percentage of wallet balance (converted to contracts at mark price)
+{ type: 'walletPct', pct: 0.10 }        // 10% of wallet
+
+// Position-relative
+{ type: 'closeAll' }                     // close entire position (maps to BitMEX Close execInst)
+{ type: 'closePct', pct: 0.5 }          // close 50% of current position</pre>
+
+    <h3 class="sec">Native Order Types — No Resolution Needed</h3>
+    <div class="prose">
+      <p>Some order types in the exchange API are already "rich" — the exchange handles the complexity natively. The Planner does not need to resolve these; it just maps the strategy's intent directly to the correct API fields.</p>
+    </div>
+    <div class="two-col">
+      <div class="box">
+        <h5>Trailing Stop</h5>
+        <ul>
+          <li>Strategy says: "stop loss trailing $200 below price"</li>
+          <li>Planner emits: <code>ordType: "Stop"</code>, <code>pegPriceType: "TrailingStopPeg"</code>, <code>pegOffsetValue: -200</code></li>
+          <li>Exchange manages the trailing. No price computed by Planner.</li>
+        </ul>
+      </div>
+      <div class="box">
+        <h5>Close (full position)</h5>
+        <ul>
+          <li>Strategy says: "close all"</li>
+          <li>Planner emits: <code>ordType: "Market"</code>, <code>execInst: "Close"</code></li>
+          <li>No quantity field — exchange closes whatever is open.</li>
+        </ul>
+      </div>
+      <div class="box">
+        <h5>Pegged Limit</h5>
+        <ul>
+          <li>Strategy says: "limit buy always $5 below mid"</li>
+          <li>Planner emits: <code>ordType: "Pegged"</code>, <code>pegPriceType: "MidPricePeg"</code>, <code>pegOffsetValue: -5</code></li>
+          <li>Exchange continuously adjusts the order price as mid moves.</li>
+        </ul>
+      </div>
+      <div class="box">
+        <h5>Stop Limit</h5>
+        <ul>
+          <li>Strategy says: "if price drops to $48,000, place limit sell at $47,800"</li>
+          <li>Planner emits: <code>ordType: "StopLimit"</code>, <code>stopPx: 48000</code>, <code>price: 47800</code></li>
+          <li>Two prices — trigger and limit — both may be expressions.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout-b">The initial implementation of the Planner only needs to handle <strong>Limit orders with post-only</strong> — everything the market maker needs. The richer vocabulary is added order type by order type, as strategies request it. Don't build what isn't needed yet.</div>
+
+    <h3 class="sec">Conditional and Time-Based Logic</h3>
+    <div class="prose">
+      <p>More advanced: strategies may want to express orders that are conditional on events — "place this order only if price crosses X first" — or that follow a sequence — "price breaks support, bounces, then sell."</p>
+      <p>This kind of logic is <strong>not in scope for the initial build</strong>. It is the responsibility of the Planner (or a future dedicated "order manager" service that sits between Bot and Executor). For now, strategies that need conditional logic implement it themselves — they track state internally and only emit an OrderPlan when their condition is met.</p>
+      <p>The full conditional/sequential order language is a natural extension point once the basic pipeline is working.</p>
+    </div>
+  </div><!-- /chapter 5 -->
+
+  <hr class="divider">
+
+  <!-- ═══════════════════════════════════════════════════════════
+       CHAPTER 6: FROM ACTORS TO CODE
+  ════════════════════════════════════════════════════════════════ -->
+  <div class="chapter">
+    <span class="chapter-num">Chapter 6</span>
+    <h2 class="chapter-title">From Actors to Code</h2>
+    <p class="chapter-lead">The actor model is implementation-agnostic. This chapter makes the first step toward concrete implementation: deciding which actors become services (separate running processes), which become libraries (packages imported in-process), and which become plain functions or modules. This decision affects deployment, testing, and operational complexity.</p>
+
+    <h3 class="sec">The Distinction</h3>
+    <div class="two-col">
+      <div class="box">
+        <h5>Service (separate process)</h5>
+        <ul>
+          <li>Runs independently with its own lifecycle</li>
+          <li>Communicates over a network boundary: queues, WS, HTTP</li>
+          <li>Has its own configuration, Dockerfile, compose entry</li>
+          <li>Can be restarted, scaled, or replaced independently</li>
+          <li>Overhead: serialization, network latency, operational complexity</li>
+        </ul>
+      </div>
+      <div class="box">
+        <h5>Library (in-process package)</h5>
+        <ul>
+          <li>Imported and runs in the same process as its caller</li>
+          <li>No process boundary, no network call</li>
+          <li>Communicates via function calls, shared memory</li>
+          <li>Fast: no serialization, no latency</li>
+          <li>Cannot be scaled or restarted independently</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3 class="sec">Which Actors Become Services</h3>
+
+    <h4 class="sub">Signal → Service</h4>
+    <div class="prose">
+      <p>Signal runs continuously, consuming a live WS stream and publishing to a queue. Multiple consumers (Bot, possibly Barometer later) subscribe to its output. It has its own connection to the exchange and its own state (rolling buffers). It belongs as a separate service.</p>
+    </div>
+
+    <h4 class="sub">Barometer → Library (for now)</h4>
+    <div class="prose">
+      <p>Barometer reads Signal output and produces assessments. In the initial build it can run as a library within the Bot process — the Bot subscribes to Signal's queue and passes the MarketState through Barometer before calling the strategy. If Barometer later grows into something that needs its own continuous monitoring loop (e.g. async pattern matching that runs independently of bot ticks), it can be promoted to a service. For now, simplicity wins.</p>
+    </div>
+
+    <h4 class="sub">Accountant → Library (within Bot)</h4>
+    <div class="prose">
+      <p>The Accountant is tightly coupled to the Bot's tick cycle — it evaluates on each tick and the result is consumed immediately by the Bot. There is no reason to introduce a process boundary. It lives inside the Bot service.</p>
+    </div>
+
+    <h4 class="sub">Strategy → Library (package)</h4>
+    <div class="prose">
+      <p>Strategies are packages that the Bot imports and instantiates. They implement the Strategy interface. No process boundary. Swapping strategies means changing which package the Bot loads — not replacing a service. Strategies live in a <code>packages/strategies/</code> directory or similar.</p>
+    </div>
+
+    <h4 class="sub">Planner → Library (within Bot)</h4>
+    <div class="prose">
+      <p>The Planner is called synchronously within the Bot's tick cycle — it takes an OrderPlan and returns order specs, then the Bot publishes them. It has no reason to be a separate process. It lives inside the Bot service.</p>
+    </div>
+
+    <h4 class="sub">Trader → Service</h4>
+    <div class="prose">
+      <p>The Trader is the main trading process. It subscribes to Signal's queue, maintains account state via WS, runs its tick loop, and publishes to the Executor's queue. It contains Accountant, active Strategy, and Planner as in-process libraries. It has its own Dockerfile and configuration.</p>
+    </div>
+
+    <h4 class="sub">Executor → Service</h4>
+    <div class="prose">
+      <p>The Executor is separate from the Bot for a good reason: it manages its own private WS connection (order stream), its own REST client, and its own order state. It needs to react to incoming DesiredState messages independently of the Bot's tick cycle. It is also the most operationally sensitive component — if it crashes or restarts, the Bot should continue producing DesiredState messages without caring. Separate service means separate failure domain.</p>
+    </div>
+
+    <h3 class="sec">The Resulting Service Map</h3>
+    <div class="prose">
+      <p>Three services, each with a clear boundary:</p>
+    </div>
+    <span class="code-label">Service boundaries</span>
+    <pre class="code">services/
+  signal/     — consumes exchange WS (public), publishes MarketSnapshot + IndicatorUpdates to topic exchange
+  trader/     — contains: Accountant, Strategy, Planner
+               — subscribes to signal topic exchange (MarketSnapshot + configured indicators)
+               — HTTP POSTs DesiredState to executor on each tick
+  executor/   — contains: converge_orders, REST client
+               — exposes HTTP server: POST /desired-state
+               — subscribes to exchange WS (private: order, execution)
+
+packages/
+  strategies/
+    market-maker/     — implements Strategy interface
+    stand-down/       — implements Strategy interface
+    adaptive-mm/      — future
+  order-language/     — PriceExpr, SizeExpr, resolution logic (used by Planner)
+  types/              — shared type definitions (M0 milestone)
+
+modules/
+  trading/trade/      — compose file wiring all three services + exchange app</pre>
+  </div><!-- /chapter 6 -->
+
+  <hr class="divider">
+
+  <!-- ═══════════════════════════════════════════════════════════
+       CHAPTER 7: SERVICES AND COMMUNICATION
+  ════════════════════════════════════════════════════════════════ -->
+  <div class="chapter">
+    <span class="chapter-num">Chapter 7</span>
+    <h2 class="chapter-title">Services and Communication</h2>
+    <p class="chapter-lead">Each service described concretely: what it connects to, what it subscribes and publishes, its configuration. Then the communication patterns and transport choices between them.</p>
+
+    <h3 class="sec">Signal Service</h3>
+    <div class="service-card" style="border-top-color:#4ade80;">
+      <h4>signal</h4>
+      <p class="sc-desc">Subscribes to the exchange WS public tables for all configured symbols. Continuously accumulates raw market state. Publishes lazily: base market data and indicators are only computed and emitted for <code>(symbol, indicator)</code> pairs that have at least one active queue binding.</p>
+      <div class="sc-grid">
+        <div class="sc-block">
+          <div class="sc-lbl">WS subscriptions</div>
+          <div class="sc-val"><code>orderBookL2</code>, <code>trade</code>, <code>instrument</code>, <code>quote</code>, <code>funding</code> — all configured symbols, always on</div>
+        </div>
+        <div class="sc-block">
+          <div class="sc-lbl">Publishes</div>
+          <div class="sc-val">
+            <code>signal.{SYMBOL}.market</code> — MarketSnapshot (base data)<br>
+            <code>signal.{SYMBOL}.{INDICATOR_KEY}</code> — IndicatorUpdate (e.g. <code>signal.XBTUSD.ema.20</code>)<br>
+            Only when a binding for that key exists.
+          </div>
+        </div>
+        <div class="sc-block">
+          <div class="sc-lbl">Subscription tracking</div>
+          <div class="sc-val">Listens to <code>amq.rabbitmq.event.exchange</code> for <code>queue.bound</code> / <code>queue.unbound</code> events. Maintains ref-counted active set of <code>(symbol, indicator)</code> pairs.</div>
+        </div>
+        <div class="sc-block">
+          <div class="sc-lbl">State</div>
+          <div class="sc-val">In-memory: order book + trade/instrument buffers per symbol (always); rolling indicator buffers only for active pairs</div>
+        </div>
+        <div class="sc-block">
+          <div class="sc-lbl">Key config</div>
+          <div class="sc-val"><code>WS_URL</code>, <code>SYMBOLS</code>, <code>EMIT_INTERVAL_MS</code>, <code>RABBITMQ_URL</code></div>
+        </div>
+      </div>
+    </div>
+    <div class="callout-b">Signal uses the same delta accumulation pattern already implemented in the snapshots service. The existing <code>deltaParser.js</code> from the BitMEX official WS client (cloned at <code>/data/Development/Repos/NM/BitMEX/api-connectors/official-ws/nodejs</code>) is the reference.</div>
+    <div class="callout-g">Consumers should use <strong>non-durable auto-delete queues</strong>. When a consumer process exits, its queue is automatically deleted, the binding disappears, and Signal stops computing that <code>(symbol, indicator)</code> pair. No manual cleanup, no queue buildup. This is especially important when training dozens of bots concurrently.</div>
+
+    <h3 class="sec">Bot Service</h3>
+    <div class="service-card" style="border-top-color:#fbbf24;">
+      <h4>trader</h4>
+      <p class="sc-desc">The main trading process. Contains the Accountant, active Strategy, and Planner as in-process components. Subscribes to MarketState from Signal and account state from the exchange WS private stream. Runs the tick loop. Publishes DesiredState to the Executor queue.</p>
+      <div class="sc-grid">
+        <div class="sc-block">
+          <div class="sc-lbl">Subscribes (queue)</div>
+          <div class="sc-val">RabbitMQ: <code>signal.{SYMBOL}.market</code> for base market data; <code>signal.{SYMBOL}.{INDICATOR_KEY}</code> for each indicator the active strategy needs. Non-durable auto-delete queues.</div>
+        </div>
+        <div class="sc-block">
+          <div class="sc-lbl">Subscribes (WS private)</div>
+          <div class="sc-val"><code>position</code>, <code>margin</code> — for account state accumulation</div>
+        </div>
+        <div class="sc-block">
+          <div class="sc-lbl">Sends (HTTP)</div>
+          <div class="sc-val">HTTP POST to executor: DesiredState after each tick. Fire-and-forget — if the executor is unavailable, the tick is skipped and fresh state is sent next tick.</div>
+        </div>
+        <div class="sc-block">
+          <div class="sc-lbl">Internal components</div>
+          <div class="sc-val">Accountant (library), Strategy (loaded from package), Planner (library), Barometer (library)</div>
+        </div>
+        <div class="sc-block">
+          <div class="sc-lbl">Tick mechanism</div>
+          <div class="sc-val">Hybrid: signals buffer up; timer fires every <code>TICK_INTERVAL_MS</code>; both trigger a tick</div>
+        </div>
+        <div class="sc-block">
+          <div class="sc-lbl">Key config</div>
+          <div class="sc-val"><code>WS_URL</code>, <code>SYMBOLS</code>, <code>API_KEY</code>, <code>API_SECRET</code>, <code>STRATEGY</code>, <code>TICK_INTERVAL_MS</code>, <code>RABBITMQ_URL</code></div>
+        </div>
+      </div>
+    </div>
+
+    <h3 class="sec">Executor Service</h3>
+    <div class="service-card" style="border-top-color:#f87171;">
+      <h4>executor</h4>
+      <p class="sc-desc">Exposes an HTTP server. The Bot POSTs a DesiredState to it on each tick. Independently maintains live order state via private WS. On each incoming request, runs converge_orders and fires the necessary REST calls. Completely decoupled from the Bot — it does not know anything about the strategy that produced the desired state.</p>
+      <div class="sc-grid">
+        <div class="sc-block">
+          <div class="sc-lbl">HTTP server</div>
+          <div class="sc-val"><code>POST /desired-state</code> — receives DesiredState, processes immediately, returns 200 or error. No queue, no backlog.</div>
+        </div>
+        <div class="sc-block">
+          <div class="sc-lbl">Subscribes (WS private)</div>
+          <div class="sc-val"><code>order</code>, <code>execution</code> — for live order state accumulation</div>
+        </div>
+        <div class="sc-block">
+          <div class="sc-lbl">REST (outbound)</div>
+          <div class="sc-val"><code>PUT /order</code> (amend), <code>POST /order</code> (create), <code>DELETE /order</code> (cancel)</div>
+        </div>
+        <div class="sc-block">
+          <div class="sc-lbl">State</div>
+          <div class="sc-val">In-memory: current live order state (accumulated from WS), filtered by <code>ORDERID_PREFIX</code></div>
+        </div>
+        <div class="sc-block">
+          <div class="sc-lbl">Key config</div>
+          <div class="sc-val"><code>WS_URL</code>, <code>REST_URL</code>, <code>API_KEY</code>, <code>API_SECRET</code>, <code>ORDERID_PREFIX</code>, <code>SYMBOLS</code>, <code>HTTP_PORT</code></div>
+        </div>
+      </div>
+    </div>
+
+    <h3 class="sec">Communication Patterns</h3>
+
+    <h4 class="sub">Signal → Bot: RabbitMQ topic exchange</h4>
+    <div class="prose">
+      <p>Signal publishes to a topic exchange with routing keys <code>signal.{SYMBOL}.market</code> (base market data) and <code>signal.{SYMBOL}.{INDICATOR_KEY}</code> (per computed indicator). The Bot creates non-durable auto-delete queues and binds them to exactly the keys it needs — the market snapshot for each symbol, plus the specific indicator keys the active strategy uses. When the Bot exits, queues auto-delete and Signal stops computing those combinations.</p>
+      <p>Multiple Bot instances can consume the same Signal output independently. Each binds its own queues; Signal emits to whoever is listening. Adding a new Bot training instance that needs <code>signal.XBTUSD.rsi.14</code> automatically activates that computation — no Signal reconfiguration needed.</p>
+    </div>
+
+    <h4 class="sub">Trader → Executor: HTTP POST</h4>
+    <div class="prose">
+      <p>The Trader sends DesiredState to the Executor via a plain HTTP POST on each tick. This is an intentional departure from the queue model used elsewhere, and the reasoning matters.</p>
+      <p>A DesiredState is a complete snapshot of what should exist <em>right now</em> — not a delta, not a command to be replayed later. If the Executor is down for 30 seconds and a queue is accumulating messages, the right behaviour on recovery is to process only the latest state and discard everything before it. A queue makes that hard to guarantee.</p>
+      <p>HTTP gives exact semantics: the Trader fires a POST, the Executor processes it immediately or it fails. If it fails (network error, crash, overload), the Trader logs it and moves on — the next tick will carry fresh state. There is no backlog, no stale order plan that gets processed minutes later when conditions have changed. The "right" TTL for a queue-based approach would just be trying to approximate this same behaviour with an educated guess.</p>
+      <p>The Trader is configured with <code>EXECUTOR_URL</code>. For multiple symbols handled by separate Executor instances, the Trader holds a map of symbol → URL. The Executor's address is static configuration — no service discovery needed at this scale.</p>
+    </div>
+
+    <h4 class="sub">Exchange data: direct WS connections</h4>
+    <div class="prose">
+      <p>Signal, Bot, and Executor each maintain their own independent WS connection to the exchange (via our <code>ws</code> service). They subscribe to different tables. No shared WS connections between services — each service owns its own connection and its own accumulated state. This is simpler, more resilient, and consistent with the pub/sub principle: each actor subscribes to what it needs independently.</p>
+    </div>
+
+    <h4 class="sub">Exchange REST: only Executor</h4>
+    <div class="prose">
+      <p>Only the Executor makes REST calls (to place, amend, cancel orders). The Bot and Signal never call REST at runtime. The Bot may call REST on startup to fetch instrument metadata or current position state, but not in its main loop. This keeps the REST call surface minimal and easy to reason about.</p>
+    </div>
+
+    <h3 class="sec">The Exchange Abstraction Layer</h3>
+    <div class="prose">
+      <p>All three services connect to our own <code>ws</code> and <code>rest</code> services, not directly to BitMEX. What those services are backed by — testnet, mainnet, or historical replay — is a module-level configuration decision. The bot services don't know or care.</p>
+      <p>The key advantage: our exchange services impose no rate limits. Multiple services can consume freely without coordinating. Signal, Bot, and Executor can all maintain their own WS connections simultaneously without the connection or message rate limits that direct BitMEX connections carry.</p>
+    </div>
+    <div class="callout-y">When building bot services, gaps in the exchange app will surface — private WS streams, order management endpoints, authentication. That's expected and fine. The bot app is what drives the exchange app to completion.</div>
+  </div><!-- /chapter 7 -->
+
+  <hr class="divider">
+
+  <!-- ═══════════════════════════════════════════════════════════
+       CHAPTER 8: BUILD ORDER
+  ════════════════════════════════════════════════════════════════ -->
+  <div class="chapter">
+    <span class="chapter-num">Chapter 8</span>
+    <h2 class="chapter-title">Build Order</h2>
+    <p class="chapter-lead">Each milestone produces something independently verifiable. A service is "done" when it behaves correctly given valid input at its boundary — the upstream doesn't need to be real. Static inputs and stub scripts are first-class tools, not workarounds.</p>
+
+    <div class="milestone">
+      <div class="m-num">M0</div>
+      <div class="m-body">
+        <h4>Contracts — define all shared types</h4>
+        <p>Before writing any service code, define the message interfaces that actors exchange. These live in <code>shared/types</code> and everything else is built against them. The types document the system as much as they constrain it.</p>
+        <p><strong>Types to define:</strong> MarketState, MarketAssessment, AccountState, StrategyRecommendation, OrderPlan, OrderIntent, PriceExpr, SizeExpr, ExchangeOrderSpec, DesiredState.</p>
+        <p class="m-why">Why first: contracts are the foundation. Building services without agreed types leads to mismatches discovered late. Define them once, use them everywhere.</p>
+        <p class="m-done">Types compile, are exported from the shared package, and each field is documented with a comment.</p>
+      </div>
+    </div>
+
+    <div class="milestone">
+      <div class="m-num">M1</div>
+      <div class="m-body">
+        <h4>Executor — converge orders from static input</h4>
+        <p>Build the Executor service completely. Connect it to testnet via the exchange WS and REST services. Test by publishing a hardcoded DesiredState message to its input queue via a stub script. No bot, no signal service needed.</p>
+        <p><strong>What to verify:</strong> given a static DesiredState with 5 desired orders, the correct REST calls appear on testnet (amend existing, create missing, cancel extras). Partial fill handling: amended qty = cumQty + desiredQty.</p>
+        <p class="m-why">Why before bot: the Executor is the most precisely defined component and the hardest to get wrong. Verifying it independently with controlled inputs catches the subtle converge_orders logic before it's buried under a live strategy.</p>
+        <p class="m-done">Orders appear on testnet matching the static DesiredState. ORDERID_PREFIX scoping works. Amend/create/cancel all exercised.</p>
+      </div>
+    </div>
+
+    <div class="milestone">
+      <div class="m-num">M2</div>
+      <div class="m-body">
+        <h4>Signal — emit MarketState from live WS</h4>
+        <p>Build the Signal service. Connect it to testnet via the exchange WS service. Verify output by running a simple subscriber script that logs incoming MarketState messages. No bot needed.</p>
+        <p><strong>What to verify:</strong> well-formed MarketState messages appear on the queue. Order book state is correct after a sequence of insert/update/delete deltas. EMA values are sensible and update on each trade. Emission rate respects the configured minimum interval.</p>
+        <p class="m-why">Why after Executor: the Executor is production-critical (wrong orders = real risk). Signal only reads — getting it wrong has no consequence. Build and verify Executor first.</p>
+        <p class="m-done">MarketState messages with correct bid/ask/book/EMA flow on the queue at the configured rate.</p>
+      </div>
+    </div>
+
+    <div class="milestone">
+      <div class="m-num">M3</div>
+      <div class="m-body">
+        <h4>Trader framework — market maker strategy end-to-end</h4>
+        <p>Build the Trader service shell with the market maker strategy. Feed it live MarketState from Signal. Verify it publishes well-formed DesiredState messages. No Executor needed for this step — subscribe to the output queue to inspect what the trader wants to do.</p>
+        <p><strong>What to verify:</strong> the trader produces DesiredState messages with N bid + N ask limit orders centred around mid, at the configured spacing and size. Position limits suppress orders correctly when the (initially zero) position would be exceeded. Tick rate is as configured.</p>
+        <p class="m-why">Why before integration: isolating the trader allows verifying its logic without the risk of it actually placing orders. Once we've confirmed it produces sensible desired states, we wire it to the Executor.</p>
+        <p class="m-done">DesiredState messages flow on the queue. Order prices are correct multiples of tickSize. Position limiting works. Tick interval is respected.</p>
+      </div>
+    </div>
+
+    <div class="milestone">
+      <div class="m-num">M4</div>
+      <div class="m-body">
+        <h4>Integration — Signal → Bot → Executor end-to-end</h4>
+        <p>Wire all three services in the <code>modules/bot/testnet/</code> compose file. Let the system run against testnet. Watch orders appear, amend as market moves, cancel when position limits change.</p>
+        <p><strong>What to verify:</strong> orders appear on testnet matching strategy intent. Amend/create/cancel cycle works as the mid price moves. No accumulation of stale or duplicate orders over time. System recovers cleanly from a restart.</p>
+        <p class="m-why">Why this order: each service has been independently verified. Integration should "just work" if the contracts (M0) and service implementations (M1–M3) are correct. Any failure here is a contract mismatch, not a logic bug.</p>
+        <p class="m-done">The market maker runs on testnet. Orders move as price moves. No crashes over a 30-minute run.</p>
+      </div>
+    </div>
+
+    <div class="milestone">
+      <div class="m-num">M5</div>
+      <div class="m-body">
+        <h4>Exchange app wiring — our ws/rest as the data source</h4>
+        <p>Point the bot module at our exchange app's ws and rest services instead of direct testnet. Surface and fix any gaps: missing private WS tables, missing REST order endpoints, authentication. Signal, Bot, and Executor should require no code changes — only the module's compose configuration changes.</p>
+        <p class="m-why">Why last: the exchange app is the long-term target (enables replay, no rate limits, source agnosticism). But the bot logic is what drives what the exchange app needs to implement. Building bot first surfaces the requirements. Exchange app gaps are expected — that's fine.</p>
+        <p class="m-done">Bot app works identically with the exchange app as its data source. Behaviour is indistinguishable from M4.</p>
+      </div>
+    </div>
+
+    <h3 class="sec">After M5 — Natural Extensions</h3>
+    <div class="prose">
+      <p>Once the pipeline is solid and the market maker is running, the natural extensions in rough order of value:</p>
+      <ul>
+        <li><strong>Barometer</strong> — build it as a library first, test its assessments against historical data via the replay module</li>
+        <li><strong>Accountant</strong> — initially trivial (always recommend market-maker), grows as Barometer matures</li>
+        <li><strong>Adaptive market maker</strong> — uses Barometer assessments to adjust spacing and size; builds on the existing market maker strategy</li>
+        <li><strong>Regime-aware adaptive strategy</strong> — introduces sub-strategies and internal transitions</li>
+        <li><strong>Richer order language</strong> — add expression types to the Planner as strategies need them (trailing stops, close orders, etc.)</li>
+        <li><strong>Promote Barometer to service</strong> — if it needs its own continuous monitoring loop independent of bot ticks</li>
+      </ul>
+    </div>
+    <div class="callout-r"><strong>Resist the urge to build complexity before the simple pipeline is proven.</strong> A market maker on testnet that places, amends, and cancels orders correctly is worth more than a sophisticated adaptive strategy that has never been tested end-to-end. Earn complexity.</div>
+  </div><!-- /chapter 8 -->
+
+</div><!-- /page -->
+</body>
+</html>
