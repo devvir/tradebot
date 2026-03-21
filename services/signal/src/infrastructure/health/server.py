@@ -1,0 +1,32 @@
+import asyncio
+import json
+import logging
+from asyncio import StreamReader, StreamWriter
+
+logger = logging.getLogger(__name__)
+
+_RESPONSE = (
+    b"HTTP/1.1 200 OK\r\n"
+    b"Content-Type: application/json\r\n"
+    b"Content-Length: 16\r\n"
+    b"Connection: close\r\n"
+    b"\r\n"
+    b'{"status": "ok"}'
+)
+
+
+async def _handle(reader: StreamReader, writer: StreamWriter) -> None:
+    try:
+        await reader.read(1024)
+        writer.write(_RESPONSE)
+        await writer.drain()
+    finally:
+        writer.close()
+
+
+async def start(port: int = 3000) -> asyncio.Server:
+    server = await asyncio.start_server(_handle, "0.0.0.0", port)
+
+    logger.info(f"Health server listening on :{port}")
+
+    return server
