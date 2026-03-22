@@ -1,14 +1,14 @@
-# History Extended Service
-# Includes: mongodb (database), history (BitMEX REST data fetcher)
+# Historian Extended Service
+# Includes: mongodb (database), historian (BitMEX REST data fetcher)
 
 include:
   - path: ../../mongodb/docker/compose.yml
 
 services:
-  history:
+  historian:
     extends:
       file: ./compose.yml
-      service: history
+      service: historian
 
     depends_on:
       mongodb:

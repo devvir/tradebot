@@ -1,8 +1,8 @@
-# History Service - Technical Documentation
+# Historian Service - Technical Documentation
 
 ## Overview
 
-The History service fetches historical data from the BitMEX REST API and writes it directly to MongoDB. It does **not** go through the RabbitMQ pipeline (no Codec, no Writer) — this is an intentional deviation from the other services, because the history data needs to be searchable and filterable by any field, which is incompatible with the compressed binary format used by that pipeline.
+The Historian service fetches historical data from the BitMEX REST API and writes it directly to MongoDB. It does **not** go through the RabbitMQ pipeline (no Codec, no Writer) — this is an intentional deviation from the other services, because the historian data needs to be searchable and filterable by any field, which is incompatible with the compressed binary format used by that pipeline.
 
 The service iterates through a fixed list of public, paginated REST endpoints (called "tables"), fetching pages of the maximum allowed size and upserting each row into a dedicated collection per table.
 
@@ -212,7 +212,7 @@ When exhausted, the `_state` document is updated with `exhausted: true` and the 
 ## Architecture
 
 ```
-History Service
+Historian Service
   │
   ├─ On startup:
   │    1. Create PersistenceService (all MongoDB access goes through this)
@@ -253,7 +253,7 @@ Loaded from environment variables, validated on startup.
 | Env var                         | Required | Default   | Description                                       |
 |---------------------------------|----------|-----------|---------------------------------------------------|
 | `MONGODB_URL`                   | yes      | —         | MongoDB connection URL                            |
-| `HISTORY_DATABASE`              | yes      | —         | MongoDB database name                             |
+| `HISTORIAN_DATABASE`              | yes      | —         | MongoDB database name                             |
 | `BITMEX_TESTNET`                | no       | `false`   | Use testnet API if `1` / `on` / `true`            |
 
 ---
@@ -264,7 +264,7 @@ Uses `SKFactory` with MongoDB only (no RabbitMQ):
 
 ```ts
 SKFactory({
-  name: 'history',
+  name: 'historian',
   mongodb: true,
 }).declare({ config });
 ```
@@ -274,7 +274,7 @@ SKFactory({
 ## Package
 
 ```
-@tradebot/history
+@tradebot/historian
 ```
 
 Dependencies:

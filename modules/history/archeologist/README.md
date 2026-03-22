@@ -7,7 +7,7 @@ Historical data fetcher for BitMEX paginated data (Rest API).
 | Service | Role |
 |---------|------|
 | **mongodb** | Persistence layer for historical data |
-| **history** | BitMEX REST API historical data fetcher and poller |
+| **historian** | BitMEX REST API historical data fetcher and poller |
 
 ## Usage
 
@@ -25,7 +25,7 @@ Copy `.env.example` to `.env` and update credentials as needed. Most config live
 
 See each service's documentation for the full list of available environment variables:
 
-- [History](../../../services/history/README.md)
+- [Historian](../../../services/historian/README.md)
 - [MongoDB](../../../services/mongodb/README.md)
 
 For detailed technical documentation, see [docs/modules/ARCHEOLOGIST.md](../../docs/modules/ARCHEOLOGIST.md).

@@ -1,5 +1,5 @@
 {
-  "name": "@tradebot/history",
+  "name": "@tradebot/historian",
   "version": "1.0.0",
   "description": "BitMEX historical data fetcher service",
   "main": "dist/index.js",

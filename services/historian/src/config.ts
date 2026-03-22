@@ -14,7 +14,7 @@ const usesTestnet = () =>
 export const loadConfig = (): Config => {
   const config: Config = {
     bitmexRestUrl: usesTestnet() ? BITMEX_REST_URLS.testnet : BITMEX_REST_URLS.live,
-    database:      process.env.HISTORY_DATABASE ?? '',
+    database:      process.env.HISTORIAN_DATABASE ?? '',
   };
 
   validateConfig(config);
@@ -25,7 +25,7 @@ export const loadConfig = (): Config => {
 };
 
 const validateConfig = (config: Config): void => {
-  if (! config.database) throw new Error('HISTORY_DATABASE is required');
+  if (! config.database) throw new Error('HISTORIAN_DATABASE is required');
 };
 
 export default loadConfig();

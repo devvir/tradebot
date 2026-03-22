@@ -7,10 +7,10 @@ The Archeologist module fetches historical data from the BitMEX REST API on a po
 ## Architecture
 
 ```
-BitMEX REST API → History Service → MongoDB bitmex_history
+BitMEX REST API → Historian Service → MongoDB bitmex_history
 ```
 
-1. **History Service** periodically queries the BitMEX REST API for historical data across multiple endpoints: trades, quotes, settlements, funding rates, insurance, composite indices, and chat.
+1. **Historian Service** periodically queries the BitMEX REST API for historical data across multiple endpoints: trades, quotes, settlements, funding rates, insurance, composite indices, and chat.
 2. Fetched data is stored in MongoDB under the `bitmex_history` database with collections per table.
 3. State is tracked per table/symbol pair to avoid re-fetching; polling resumes from the last known start position.
 
@@ -36,7 +36,7 @@ BitMEX REST API → History Service → MongoDB bitmex_history
 
 Historical data is stored in MongoDB:
 
-- **Database**: Configurable via `HISTORY_DATABASE` (default: `bitmex_history`)
+- **Database**: Configurable via `HISTORIAN_DATABASE` (default: `bitmex_history`)
 - **Collections**: One collection per table (e.g., `trade`, `quote`, `settlement`, `funding`, `insurance`, `compositeIndex`, `chat`)
 - **Document Schema**: Each collection follows the BitMEX REST API response schema for that endpoint
 
@@ -67,8 +67,8 @@ Historical data is stored in MongoDB:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `HISTORY_DATABASE` | `bitmex_history` | MongoDB database name |
-| `HISTORY_PORT` | Random | Health check/status port |
+| `HISTORIAN_DATABASE` | `bitmex_history` | MongoDB database name |
+| `HISTORIAN_PORT` | Random | Health check/status port |
 | `BITMEX_TESTNET` | (empty) | Set to `true` for BitMEX testnet; empty for mainnet |
 | `LOG_LEVEL` | `info` | Logging verbosity |
 
