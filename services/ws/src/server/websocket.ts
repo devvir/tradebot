@@ -1,4 +1,5 @@
 import { WebSocketServer, WebSocket } from 'ws';
+import { type IncomingMessage } from 'node:http';
 import { logger } from '@devvir/service-kit';
 import { welcome } from './protocol';
 import { SUBSCRIPTION, DISCONNECT } from '../events';
@@ -14,6 +15,7 @@ import type { SubscribeOp } from '../types';
  *
  * Responsibilities:
  *   - Accept incoming connections and register them in the client registry
+ *   - Extract optional ?apiKey= from the connection URL and store it as the account identity
  *   - Greet each client on connect
  *   - Parse incoming messages and dispatch ops as bus events
  *   - Emit disconnect events on close/error so other modules can clean up
@@ -27,8 +29,14 @@ export const createServer = (
 ): WebSocketServer => {
   const wss = new WebSocketServer({ port });
 
-  wss.on('connection', (ws) => {
+  wss.on('connection', (ws, req: IncomingMessage) => {
+    const url    = new URL(req.url ?? '/', 'http://x');
+    const apiKey = url.searchParams.get('api-key') ?? undefined;
+
     registry.register(ws);
+
+    if (apiKey) registry.setApiKey(ws, apiKey);
+
     ws.send(welcome());
 
     ws.on('message', (data) => handleMessage(ws, data.toString(), bus));
@@ -81,6 +89,11 @@ const handleMessage = (ws: WebSocket, raw: string, bus: Bus): void => {
 
   // No op, or unrecognised op — BitMEX echoes the request but replaces the op
   // value with the literal string "UNKNOWN" when an op was present.
-  const request = msg.op ? { ...msg, op: 'UNKNOWN' } : msg;
+  // For no-op messages, BitMEX only echoes recognised protocol fields (args);
+  // unrecognised keys are stripped.
+  const request = msg.op
+    ? { ...msg, op: 'UNKNOWN' }
+    : (msg.args !== undefined ? { args: msg.args } : {});
+
   ws.send(unrecognizedRequest(request));
 };

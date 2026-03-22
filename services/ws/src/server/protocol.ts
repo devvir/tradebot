@@ -13,7 +13,8 @@ export const welcome = (): string =>
     timestamp:        new Date().toISOString(),
     docs:             'https://www.bitmex.com/app/wsAPI',
     heartbeatEnabled: false,
-    limit:            {},
+    limit:            { remaining: 179 },
+    appName:          'TradeBOT',
   });
 
 export const subscribeAck = (arg: string, request: SubscribeOp): string =>

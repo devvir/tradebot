@@ -9,6 +9,9 @@ services:
         SERVICE_NAME: snapshots
 
     environment:
+      BOUNCER_URL: ${BOUNCER_URL:-}
+      BOUNCER_TOKEN: ${BOUNCER_TOKEN:-}
+
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
 
       LOG_LEVEL: ${LOG_LEVEL:-info}

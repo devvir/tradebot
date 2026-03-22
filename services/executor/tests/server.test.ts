@@ -28,9 +28,9 @@ function makeLive(overrides: Partial<LiveOrder> = {}): LiveOrder {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function makeWs(overrides: Partial<{ isReady: boolean; orders: LiveOrder[] }> = {}): WsPool {
+function makeWs(overrides: Partial<{ orders: LiveOrder[] }> = {}): WsPool {
   const state = {
-    isReady:   () => overrides.isReady ?? true,
+    isReady:   () => true,
     getOrders: () => overrides.orders ?? [],
     close:     vi.fn(),
   };
@@ -152,19 +152,24 @@ describe('POST /plan — validation', () => {
   });
 });
 
-// ── WS not ready ──────────────────────────────────────────────────────────────
+// ── WS timeout ────────────────────────────────────────────────────────────────
 
-describe('POST /plan — WS not ready', () => {
+describe('POST /plan — WS timeout', () => {
   let server: http.Server;
   let baseUrl: string;
 
   beforeAll(async () => {
-    ({ server, baseUrl } = await listen(makeWs({ isReady: false }), makeRest()));
+    const ws: WsPool = {
+      getOrCreate: vi.fn().mockRejectedValue(new Error('WS not ready after 15000ms for account \'bitmex-testnet\'')),
+      closeAll:    vi.fn(),
+    };
+
+    ({ server, baseUrl } = await listen(ws, makeRest()));
   });
 
   afterAll(() => close(server));
 
-  it('returns 503 when WS order state is not yet initialised', async () => {
+  it('returns 503 when WS times out connecting', async () => {
     const res = await plan('/plan', VALID_PLAN, baseUrl);
 
     expect(res.status).toBe(503);

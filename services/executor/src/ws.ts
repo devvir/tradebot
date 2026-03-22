@@ -2,13 +2,16 @@ import { logger } from '@devvir/service-kit';
 import { createDatabase, BitmexTable } from '@devvir/bitmex-database';
 import type { Config, WsState, LiveOrder } from './types';
 
+const READY_TIMEOUT_MS = 5_000;
+
 export interface WsPool {
   getOrCreate: (accountId: string) => Promise<WsState>;
   closeAll:    () => void;
 }
 
 export function createWsPool(config: Config): WsPool {
-  const pool = new Map<string, WsState>();
+  const pool:    Map<string, WsState>          = new Map();
+  const pending: Map<string, Promise<WsState>> = new Map();
 
   return {
     async getOrCreate(accountId) {
@@ -16,24 +19,38 @@ export function createWsPool(config: Config): WsPool {
 
       if (existing) return existing;
 
-      const expires = Math.round(Date.now() / 1000) + 5;
-      const res     = await fetch(`${config.bouncerUrl}/accounts/${accountId}?expires=${expires}`, {
-        headers: { 'Authorization': `Bearer ${config.bouncerToken}` },
-      });
+      const inFlight = pending.get(accountId);
+      if (inFlight) return inFlight;
 
-      if (! res.ok) {
-        throw new Error(`Bouncer returned ${res.status} for account '${accountId}'`);
-      }
+      const promise = (async () => {
+        const expires = Math.round(Date.now() / 1000) + 5;
+        const res     = await fetch(`${config.bouncerUrl}/accounts/${accountId}?expires=${expires}`, {
+          headers: { 'Authorization': `Bearer ${config.bouncerToken}` },
+        });
 
-      const { wsUrl, apiKey, signature } = await res.json() as { wsUrl: string; apiKey: string; signature: string };
-      const ws = connect(accountId, wsUrl, apiKey, signature, expires, () => {
-        pool.delete(accountId);
-        logger.info({ accountId }, 'WS closed — removed from pool');
-      });
+        if (! res.ok) {
+          throw new Error(`Bouncer returned ${res.status} for account '${accountId}'`);
+        }
 
-      pool.set(accountId, ws);
+        const { wsUrl, apiKey, signature } = await res.json() as { wsUrl: string; apiKey: string; signature: string };
 
-      return ws;
+        const ws = await connectAndWait(accountId, wsUrl, apiKey, signature, expires, () => {
+          pool.delete(accountId);
+          logger.info({ accountId }, 'WS closed — removed from pool');
+        });
+
+        pool.set(accountId, ws);
+
+        return ws;
+      })();
+
+      pending.set(accountId, promise);
+
+      promise
+        .then(() => pending.delete(accountId))
+        .catch(() => pending.delete(accountId));
+
+      return promise;
     },
 
     closeAll() {
@@ -43,70 +60,85 @@ export function createWsPool(config: Config): WsPool {
   };
 }
 
-function connect(
+function connectAndWait(
   accountId: string,
   wsUrl:     string,
   apiKey:    string,
   signature: string,
   expires:   number,
   onClose:   () => void,
-): WsState {
-  const db    = createDatabase();
-  let ready   = false;
-  const ws    = new WebSocket(wsUrl);
+): Promise<WsState> {
+  return new Promise((resolve, reject) => {
+    const db  = createDatabase();
+    let ready = false;
+    const ws  = new WebSocket(wsUrl);
 
-  ws.onopen = () => {
-    logger.info({ accountId }, 'WS connected — authenticating');
-    ws.send(JSON.stringify({ op: 'authKeyExpires', args: [apiKey, expires, signature] }));
-  };
+    const timer = setTimeout(() => {
+      ws.close();
+      reject(new Error(`WS not ready after ${READY_TIMEOUT_MS}ms for account '${accountId}'`));
+    }, READY_TIMEOUT_MS);
 
-  ws.onmessage = (event) => handleMessage(event.data as string);
+    const state: WsState = {
+      isReady:   () => ready,
+      getOrders: () => ready ? db.snapshot(BitmexTable.Order) as LiveOrder[] : [],
+      close:     () => ws.close(),
+    };
 
-  ws.onerror = (event) => logger.error({ event, accountId }, 'WS error');
+    ws.onopen = () => {
+      logger.info({ accountId }, 'WS connected — authenticating');
+      ws.send(JSON.stringify({ op: 'authKeyExpires', args: [apiKey, expires, signature] }));
+    };
 
-  ws.onclose = () => {
-    ready = false;
-    onClose();
-  };
+    ws.onmessage = (event) => handleMessage(event.data as string);
 
-  function handleMessage(raw: string): void {
-    let msg: Record<string, unknown>;
+    ws.onerror = (event) => {
+      logger.error({ event, accountId }, 'WS error');
+      clearTimeout(timer);
+      reject(new Error(`WS connection error for account '${accountId}'`));
+    };
 
-    try {
-      msg = JSON.parse(raw) as Record<string, unknown>;
-    } catch {
-      return;
-    }
+    ws.onclose = () => {
+      ready = false;
+      onClose();
+    };
 
-    if ('request' in msg && (msg['request'] as Record<string, unknown>)['op'] === 'authKeyExpires') {
-      if (msg['success'] === true) {
-        logger.info({ accountId }, 'WS authenticated — subscribing to order table');
-        ws.send(JSON.stringify({ op: 'subscribe', args: ['order'] }));
-      } else {
-        logger.error({ accountId, msg }, 'WS authentication failed');
+    function handleMessage(raw: string): void {
+      let msg: Record<string, unknown>;
+
+      try {
+        msg = JSON.parse(raw) as Record<string, unknown>;
+      } catch {
+        return;
       }
 
-      return;
-    }
+      if ('request' in msg && (msg['request'] as Record<string, unknown>)['op'] === 'authKeyExpires') {
+        if (msg['success'] === true) {
+          logger.info({ accountId }, 'WS authenticated — subscribing to order table');
+          ws.send(JSON.stringify({ op: 'subscribe', args: ['order'] }));
+        } else {
+          logger.error({ accountId, msg }, 'WS authentication failed');
+          clearTimeout(timer);
+          reject(new Error(`WS authentication failed for account '${accountId}'`));
+        }
 
-    if ('subscribe' in msg) {
-      logger.info({ accountId, subscription: msg['subscribe'] }, 'WS subscription confirmed');
-      return;
-    }
+        return;
+      }
 
-    if ('table' in msg && 'action' in msg) {
-      db.apply(msg as Parameters<typeof db.apply>[0]);
+      if ('subscribe' in msg) {
+        logger.info({ accountId, subscription: msg['subscribe'] }, 'WS subscription confirmed');
+        return;
+      }
 
-      if (msg['table'] === 'order' && msg['action'] === 'partial') {
-        ready = true;
-        logger.info({ accountId }, 'WS order table initialised — ready');
+      if ('table' in msg && 'action' in msg) {
+        db.apply(msg as Parameters<typeof db.apply>[0]);
+
+        if (msg['table'] === 'order' && msg['action'] === 'partial') {
+          ready = true;
+          clearTimeout(timer);
+          logger.info({ accountId }, 'WS order table initialised — ready');
+          resolve(state);
+        }
       }
     }
-  }
-
-  return {
-    isReady:   () => ready,
-    getOrders: () => ready ? db.snapshot(BitmexTable.Order) as LiveOrder[] : [],
-    close:     () => ws.close(),
-  };
+  });
 }

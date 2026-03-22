@@ -9,8 +9,8 @@ services:
         SERVICE_NAME: executor
 
     environment:
-      BOUNCER_URL: ${BOUNCER_URL}
-      BOUNCER_TOKEN: ${BOUNCER_TOKEN}
+      BOUNCER_URL: ${BOUNCER_URL:-}
+      BOUNCER_TOKEN: ${BOUNCER_TOKEN:-}
 
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV: ${APP_ENV:-prod}

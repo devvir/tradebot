@@ -12,7 +12,7 @@ import type {
   DeltaChannelEvent,
 } from '../events';
 import { parseArg, subscribeAck, unsubscribeAck } from '../server/protocol';
-import { unknownTable, alreadySubscribed } from '../server/responses';
+import { unknownTable, alreadySubscribed, authRequired } from '../server/responses';
 import type { ClientRegistry } from './clients';
 import { Queue } from '@devvir/elastic-queue';
 import type { BitmexWsMessage, SubscribeOp } from '../types';
@@ -20,6 +20,14 @@ import type { BitmexWsMessage, SubscribeOp } from '../types';
 // ---- Types --------------------------------------------------------------
 
 type SubQueue = Queue<DeltaChannelEvent>;
+
+// ---- Private tables -----------------------------------------------------
+
+const PRIVATE_TABLES = new Set([
+  'execution', 'order', 'transact',
+  'position', 'margin', 'wallet',
+  'affiliate',
+]);
 
 const RETRY_DELAY_MS = 5_000;
 
@@ -45,18 +53,24 @@ type SnapshotResult =
 
 const fetchSnapshot = async (
   table:        string,
+  symbol:       string,
   snapshotsUrl: string,
+  account?:     string,
 ): Promise<SnapshotResult> => {
   try {
-    const res = await fetch(`${snapshotsUrl}/snapshot/${table}`);
+    const symbolParam = symbol !== '_' ? `symbol=${encodeURIComponent(symbol)}` : '';
+    const query = account
+      ? `?account=${encodeURIComponent(account)}${symbolParam ? `&${symbolParam}` : ''}`
+      : (symbolParam ? `?${symbolParam}` : '');
+    const res = await fetch(`${snapshotsUrl}/snapshot/${table}${query}`);
 
     if (res.status === 404) return { ok: false, reason: 'not-found' };
     if (! res.ok) throw new Error(`HTTP ${res.status}`);
 
-    const data    = await res.json() as BitmexWsMessage & { counter?: number };
-    const counter = data.counter ?? 0;
+    const data = await res.json() as BitmexWsMessage & { counter?: number };
+    const { counter, ...snapshot } = data;
 
-    return { ok: true, snapshot: data as BitmexWsMessage, counter };
+    return { ok: true, snapshot: snapshot as BitmexWsMessage, counter: counter ?? 0 };
   } catch (err) {
     logger.error({ err, table }, 'Failed to fetch snapshot');
     return { ok: false, reason: 'error' };
@@ -146,7 +160,7 @@ export const setup = (
   // ---- Subscribe / unsubscribe --------------------------------------
 
   const activate = (ws: WebSocket, queue: SubQueue, snapshot: BitmexWsMessage, counter: number): void => {
-    ws.send(JSON.stringify(snapshot));
+    ws.send(JSON.stringify({ ...snapshot, action: 'partial' }));
 
     queue.stream(({ delta }) => {
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(delta));
@@ -156,12 +170,13 @@ export const setup = (
   };
 
   const scheduleRetry = (
-    ws:     WebSocket,
-    key:    string,
-    queue:  SubQueue,
-    table:  string,
-    symbol: string,
-    op:     SubscribeOp,
+    ws:      WebSocket,
+    key:     string,
+    queue:   SubQueue,
+    table:   string,
+    symbol:  string,
+    op:      SubscribeOp,
+    account: string | undefined,
   ): void => {
     setTimeout(async () => {
       if (ws.readyState !== WebSocket.OPEN) {
@@ -170,7 +185,7 @@ export const setup = (
         return;
       }
 
-      const result = await fetchSnapshot(table, snapshotsUrl);
+      const result = await fetchSnapshot(table, symbol, snapshotsUrl, account);
 
       if (! result.ok) {
         if (result.reason === 'not-found') {
@@ -179,7 +194,7 @@ export const setup = (
           registry.removeSubscription(ws, key);
           removeTableListenerIfIdle(table);
         } else {
-          scheduleRetry(ws, key, queue, table, symbol, op);
+          scheduleRetry(ws, key, queue, table, symbol, op, account);
         }
         return;
       }
@@ -191,10 +206,16 @@ export const setup = (
   const handleSubscribe = async (ws: WebSocket, op: SubscribeOp): Promise<void> => {
     for (const arg of normalizeArgs(op.args)) {
       const { table, symbol } = parseArg(arg);
-      const key = `${table}:${symbol}`;
+      const key               = `${table}:${symbol}`;
+      const account           = PRIVATE_TABLES.has(table) ? registry.getApiKey(ws) : undefined;
+
+      if (PRIVATE_TABLES.has(table) && ! account) {
+        ws.send(authRequired(op));
+        continue;
+      }
 
       if (registry.hasSubscription(ws, key)) {
-        ws.send(alreadySubscribed(key, op));
+        ws.send(alreadySubscribed(arg, op));
         continue;
       }
 
@@ -209,7 +230,7 @@ export const setup = (
 
       ws.send(subscribeAck(arg, op));
 
-      const result = await fetchSnapshot(table, snapshotsUrl);
+      const result = await fetchSnapshot(table, symbol, snapshotsUrl, account);
 
       if (! result.ok) {
         if (result.reason === 'not-found') {
@@ -219,7 +240,7 @@ export const setup = (
           removeTableListenerIfIdle(table);
         } else {
           // Transient error: queue keeps accumulating while we retry
-          scheduleRetry(ws, key, queue, table, symbol, op);
+          scheduleRetry(ws, key, queue, table, symbol, op, account);
         }
 
         continue;

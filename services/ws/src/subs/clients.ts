@@ -7,6 +7,7 @@ export type ClientState = 'idle' | 'awaitSnapshot' | 'streaming';
 interface ClientRecord {
   state:         ClientState;
   subscriptions: Set<string>;
+  apiKey?:       string;
 }
 
 // ---- Registry -----------------------------------------------------------
@@ -69,5 +70,16 @@ export class ClientRegistry {
 
   getSubscriptions(ws: WebSocket): Set<string> {
     return this._map.get(ws)?.subscriptions ?? new Set();
+  }
+
+  // ---- Auth --------------------------------------------------------
+
+  setApiKey(ws: WebSocket, apiKey: string): void {
+    const record = this._map.get(ws);
+    if (record) record.apiKey = apiKey;
+  }
+
+  getApiKey(ws: WebSocket): string | undefined {
+    return this._map.get(ws)?.apiKey;
   }
 }

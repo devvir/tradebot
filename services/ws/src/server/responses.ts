@@ -6,7 +6,7 @@
  *
  * Behaviour confirmed against testnet.bitmex.com:
  *   - Invalid JSON             → unrecognizedRequest({})
- *   - Valid JSON, no op        → unrecognizedRequest(parsedObject)
+ *   - Valid JSON, no op        → unrecognizedRequest({args} if present, else {})
  *   - Valid JSON, unknown op   → unrecognizedRequest({ ...parsed, op: 'UNKNOWN' })
  *   - subscribe, no/null/[] args → no response (silent)
  *   - subscribe, string args   → treated as single-item (BitMEX quirk, we replicate)
@@ -39,6 +39,10 @@ export const unknownTable = (table: string, request: object): string =>
     `Unknown table: ${table}. Please see the documentation at ${DOCS}.`,
     request,
   );
+
+/** The client tried to subscribe to a private table without authenticating first. */
+export const authRequired = (request: object): string =>
+  JSON.stringify({ status: 403, error: 'You are not logged in.', meta: {}, request });
 
 /** The client tried to subscribe to a topic they're already subscribed to. */
 export const alreadySubscribed = (topic: string, request: object): string =>

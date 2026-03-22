@@ -132,8 +132,9 @@ describe('counter = 0 (fresh snapshot) edge cases', () => {
       partials(msgs).length >= 1 &&
       msgs.filter(m => (m as BitmexWsMessage).action === 'insert').length >= 1);
 
-    const snapshot = partials(messages)[0] as { counter: number };
-    expect(snapshot.counter).toBe(0);
+    // counter is stripped from the partial before forwarding to clients
+    const snapshot = partials(messages)[0] as Record<string, unknown>;
+    expect(snapshot).not.toHaveProperty('counter');
 
     const inserts = messages.filter(m => (m as BitmexWsMessage).action === 'insert');
     expect(inserts).toHaveLength(1);

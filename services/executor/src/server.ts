@@ -46,12 +46,14 @@ export function startServer(ws: WsPool, rest: RestClient, config: Config): http.
     try {
       conn = await ws.getOrCreate(plan.accountId);
     } catch (err) {
-      next(err);
-      return;
-    }
+      const msg = err instanceof Error ? err.message : '';
 
-    if (! conn.isReady()) {
-      res.status(503).json({ error: 'WS not ready — order state not initialised' });
+      if (msg.includes('WS not ready after') || msg.includes('WS connection error')) {
+        res.status(503).json({ error: 'Exchange WS unavailable — try again shortly' });
+      } else {
+        next(err);
+      }
+
       return;
     }
 
