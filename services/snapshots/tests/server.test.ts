@@ -83,7 +83,7 @@ describe('server — response shape', () => {
       action: 'partial',
       keys: ['id'],
       types: { id: 'long', side: 'symbol' },
-      data: [{ id: 1, side: 'Buy' }],
+      data: [{ id: 1, symbol: 'XBTUSD', side: 'Buy' }],
     });
     tables.add('orderBookL2');
     counters['orderBookL2'] = 5;

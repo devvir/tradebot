@@ -1,0 +1,5 @@
+# Ignore common files
+node_modules/
+dist/
+*.tsbuildinfo
+.env.local

@@ -17,7 +17,7 @@ const processMessage = (
     return { processed: false, reason: 'Received pre-filtered partial (not supported)' };
   }
 
-  db.apply(message);
+  db.apply(message, true);
 
   counters[message.table] = counter;
 
@@ -62,7 +62,7 @@ describe('processor — filter validation', () => {
       action: 'partial',
       keys: ['id'],
       types: { id: 'long' },
-      data: [{ id: 1, price: 100 }],
+      data: [{ id: 1, price: 100, symbol: 'XBTUSD', side: 'Buy' }],
     };
 
     const result = processMessage(db, tables, counters, msg, 1);
@@ -142,7 +142,7 @@ describe('processor — counter tracking', () => {
       {
         table: 'trade',
         action: 'insert',
-        data: [{ price: 100 }],
+        data: [{ price: 100, symbol: 'XBTUSD', side: 'Buy', timestamp: '2024-01-01T00:00:00.000Z', trdMatchID: 'abc123' }],
       },
       7
     );
@@ -247,5 +247,73 @@ describe('processor — table registration', () => {
     );
 
     expect(tables.has('trade')).toBe(false);
+  });
+});
+
+// ── Insert-only table behaviour (wsPartialMode=true) ───────────────────────────────
+
+describe('processor — insert-only tables (wsPartialMode=true)', () => {
+  it('keeps one entry per symbol — latest wins', () => {
+    const db = createDatabase();
+    const tables = new Set<string>();
+    const counters: Record<string, number> = {};
+
+    processMessage(db, tables, counters, {
+      table: 'trade', action: 'partial', keys: [], types: { symbol: 'symbol', price: 'double' },
+      data: [{ symbol: 'XBTUSD', timestamp: '2024-01-01T00:00:00.000Z', side: 'Buy', trdMatchID: 'a', price: 100 }],
+    }, 1);
+
+    processMessage(db, tables, counters, {
+      table: 'trade', action: 'insert',
+      data: [{ symbol: 'XBTUSD', timestamp: '2024-01-01T00:00:01.000Z', side: 'Buy', trdMatchID: 'b', price: 200 }],
+    }, 2);
+
+    const snapshot = db.snapshot('trade' as import('@devvir/bitmex-database').BitmexTable);
+    expect(snapshot).toHaveLength(1);
+    expect((snapshot[0] as Record<string, unknown>).price).toBe(200);
+  });
+
+  it('keeps separate entries for different symbols', () => {
+    const db = createDatabase();
+    const tables = new Set<string>();
+    const counters: Record<string, number> = {};
+
+    processMessage(db, tables, counters, {
+      table: 'trade', action: 'partial', keys: [], types: { symbol: 'symbol', price: 'double' },
+      data: [{ symbol: 'XBTUSD', timestamp: '2024-01-01T00:00:00.000Z', side: 'Buy', trdMatchID: 'a', price: 100 }],
+    }, 1);
+
+    processMessage(db, tables, counters, {
+      table: 'trade', action: 'insert',
+      data: [{ symbol: 'ETHUSD', timestamp: '2024-01-01T00:00:01.000Z', side: 'Buy', trdMatchID: 'b', price: 50 }],
+    }, 2);
+
+    const snapshot = db.snapshot('trade' as import('@devvir/bitmex-database').BitmexTable);
+    expect(snapshot).toHaveLength(2);
+  });
+
+  it('keeps a single entry for tables with no symbol field', () => {
+    const db = createDatabase();
+    const tables = new Set<string>();
+    const counters: Record<string, number> = {};
+
+    processMessage(db, tables, counters, {
+      table: 'connected', action: 'partial', keys: [], types: { users: 'int32' },
+      data: [{ users: 10 }],
+    }, 1);
+
+    processMessage(db, tables, counters, {
+      table: 'connected', action: 'insert',
+      data: [{ users: 20 }],
+    }, 2);
+
+    processMessage(db, tables, counters, {
+      table: 'connected', action: 'insert',
+      data: [{ users: 30 }],
+    }, 3);
+
+    const snapshot = db.snapshot('connected' as import('@devvir/bitmex-database').BitmexTable);
+    expect(snapshot).toHaveLength(1);
+    expect((snapshot[0] as Record<string, unknown>).users).toBe(30);
   });
 });

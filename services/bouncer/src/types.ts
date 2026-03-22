@@ -10,8 +10,6 @@ export type AccountType = 'live' | 'testnet' | 'replay';
 export interface StoredAccount {
   id:        string;
   type:      AccountType;
-  wsUrl:     string;
-  restUrl:   string;
   apiKey:    string;
   apiSecret: string;  // never returned to callers
 }

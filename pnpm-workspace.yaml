@@ -3,6 +3,7 @@ packages:
   - shared/*
   - services/*
   - dx
+  - dev/tooling
 
 onlyBuiltDependencies:
   - esbuild

@@ -33,7 +33,7 @@ export const applyPrivateDelta = (
     privateCounters.set(accountId, {});
   }
 
-  privateDBs.get(accountId)!.apply(msg);
+  privateDBs.get(accountId)!.apply(msg, true);
   privateCounters.get(accountId)![msg.table] = counter;
 
   if (msg.action === 'partial') {

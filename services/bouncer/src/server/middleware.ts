@@ -33,8 +33,6 @@ export const validateQuery = (schema: ZodTypeAny): RequestHandler => (req, res, 
 export const CreateAccountSchema = z.object({
   id:        z.string().min(1),
   type:      z.enum(['live', 'testnet', 'replay']),
-  wsUrl:     z.string().url(),
-  restUrl:   z.string().url(),
   apiKey:    z.string().min(1),
   apiSecret: z.string().min(1),
 });

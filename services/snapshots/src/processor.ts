@@ -43,7 +43,7 @@ const applyPublicDelta = (
   const counters = service.state('counters')   as Record<string, number>;
   const tables   = service.state('tables')     as Set<string>;
 
-  db.apply(msg);
+  db.apply(msg, true);
 
   counters[msg.table] = counter;
 

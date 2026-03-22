@@ -10,8 +10,6 @@ const DATA_PATH = join(tmpdir(), `bouncer-store-test-${process.pid}.json`);
 const TEST_ACCOUNT: StoredAccount = {
   id:        'acc-1',
   type:      'testnet',
-  wsUrl:     'wss://testnet.bitmex.com/realtime',
-  restUrl:   'https://testnet.bitmex.com/api/v1',
   apiKey:    'key-abc',
   apiSecret: 'secret-xyz',
 };

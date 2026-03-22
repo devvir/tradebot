@@ -8,6 +8,7 @@ import {
   type Message,
   type DecodedMessage,
   type BitmexTable,
+  type BitmexDataItem,
   DecodedMessageData,
 } from '..';
 
@@ -47,6 +48,20 @@ const decodeMessage = (table: BitmexTable, encodedData: DecodedMessageData): Dec
     case 'quote':       return decodeQuote(encodedData);
     case 'trade':       return decodeTrade(encodedData);
     case 'instrument':  return decodeInstrument(encodedData);
-    default:            return [];
+    default:            return decodePassthrough(encodedData);
   }
+};
+
+/**
+ * Passthrough decode: reverse the groupBy applied by encodePayload for unknown tables.
+ * Items were stored unchanged (not packed), grouped by symbol key or under '_'.
+ * Since items are stored with their symbol field intact, just flatten all groups.
+ */
+const decodePassthrough = (encodedData: DecodedMessageData): BitmexDataItem[] => {
+  if (! encodedData || typeof encodedData !== 'object') {
+    logger.warn({ encodedData }, 'Invalid encoded data. Skipping.');
+    return [];
+  }
+
+  return Object.values(encodedData as Record<string, unknown[]>).flat() as BitmexDataItem[];
 };

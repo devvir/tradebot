@@ -12,8 +12,6 @@ const DATA_PATH = join(tmpdir(), `bouncer-server-test-${process.pid}.json`);
 const TEST_ACCOUNT = {
   id:        'test-account',
   type:      'testnet',
-  wsUrl:     'wss://testnet.bitmex.com/realtime',
-  restUrl:   'https://testnet.bitmex.com/api/v1',
   apiKey:    'test-api-key',
   apiSecret: 'test-api-secret',
 };
@@ -111,8 +109,6 @@ describe('POST /accounts', () => {
     const account = {
       id:        'new-account',
       type:      'live',
-      wsUrl:     'wss://www.bitmex.com/realtime',
-      restUrl:   'https://www.bitmex.com/api/v1',
       apiKey:    'live-key',
       apiSecret: 'live-secret',
     };
