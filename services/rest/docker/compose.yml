@@ -1,4 +1,5 @@
-# Rest Service - BitMEX-compatible HTTP Rest API server
+# Rest Service — BitMEX-compatible HTTP REST API facade
+# Forwards all requests (including api-key header) to the configured data backend (proxy or digger)
 
 services:
   rest:
@@ -9,16 +10,15 @@ services:
         SERVICE_NAME: rest
 
     environment:
-      # URL to the Snapshots HTTP server
-      SNAPSHOTS_URL: ${SNAPSHOTS_URL:-}
+      REST_DATA_URL: ${REST_DATA_URL:-}
 
       # Runtime
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      NODE_ENV: ${APP_ENV:-prod}
-      TZ: ${TZ:-UTC}
+      NODE_ENV:  ${APP_ENV:-prod}
+      TZ:        ${TZ:-UTC}
 
     ports:
-      - "${REST_HTTP_PORT:-}:3001"
+      - "${REST_HTTP_PORT:-}:80"
       - "${REST_HEALTH_PORT:-}:3000"
 
     user: "1000:1000"

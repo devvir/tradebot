@@ -1,7 +1,7 @@
 {
   "name": "@tradebot/rest",
   "version": "1.0.0",
-  "description": "BitMEX-compatible REST API server for public and account data",
+  "description": "BitMEX-compatible REST API facade — authenticates callers and forwards to the data backend",
   "main": "dist/src/index.js",
   "private": true,
   "scripts": {
@@ -12,12 +12,10 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@devvir/bitmex-api": "^1.2.0",
     "@devvir/service-kit": "workspace:*",
-    "@tradebot/types": "workspace:*",
     "@tradebot/utils": "workspace:*",
     "express": "^5.2.1",
-    "zod": "^4.3.6"
+    "http-proxy-middleware": "^3.0.5"
   },
   "devDependencies": {
     "@types/express": "^5.0.6"

@@ -1,9 +1,10 @@
+// Pending Review
 import http from 'node:http';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { ZodError, z } from 'zod';
 import { logger } from '@devvir/service-kit';
 import { converge, filterActiveOrders } from './converge';
-import type { Config, DesiredState, DesiredOrder } from './types';
+import type { Config, DesiredState, DesiredOrder, LiveOrder } from './types';
 import type { WsPool } from './ws';
 import type { RestClient } from './rest';
 
@@ -76,7 +77,7 @@ export function startServer(ws: WsPool, rest: RestClient, config: Config): http.
         const desired = findDesiredForAmend(op.orderID, live, plan.orders);
 
         if (desired) {
-          await rest.createOrder(plan.accountId, { ...desired, symbol: plan.symbol }, nextClOrdID(plan.symbol));
+          await rest.createOrder(plan.accountId, { ...desired, symbol: plan.symbol }, nextClOrdID(plan.symbol, live));
           staleFallback++;
         }
       } else if (r) {
@@ -85,7 +86,7 @@ export function startServer(ws: WsPool, rest: RestClient, config: Config): http.
     }
 
     for (const op of creates) {
-      await rest.createOrder(plan.accountId, { ...op.order, symbol: plan.symbol }, nextClOrdID(plan.symbol));
+      await rest.createOrder(plan.accountId, { ...op.order, symbol: plan.symbol }, nextClOrdID(plan.symbol, live));
       createdCount++;
     }
 
@@ -125,9 +126,21 @@ export function startServer(ws: WsPool, rest: RestClient, config: Config): http.
 
 let orderSeq = 0;
 
-function nextClOrdID(symbol: string): string {
-  orderSeq = (orderSeq + 1) % 1_000_000;
-  return `tb_${symbol}_${orderSeq.toString().padStart(6, '0')}`;
+function nextClOrdID(symbol: string, live: LiveOrder[]): string {
+  const prefix = `tb_${symbol}_`;
+  const used   = new Set(
+    live
+      .map((o) => o.clOrdID)
+      .filter((id) => id.startsWith(prefix))
+      .map((id) => parseInt(id.slice(prefix.length), 10))
+      .filter((n) => ! isNaN(n)),
+  );
+
+  do {
+    orderSeq = (orderSeq + 1) % 1_000_000;
+  } while (used.has(orderSeq));
+
+  return `${prefix}${orderSeq.toString().padStart(6, '0')}`;
 }
 
 function findDesiredForAmend(

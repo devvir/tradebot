@@ -21,7 +21,7 @@ pnpm test
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `BOUNCER_URL` | yes | — | URL of the Bouncer service, e.g. `http://bouncer:3010` |
+| `BOUNCER_URL` | yes | — | URL of the Bouncer service, e.g. `http://bouncer:80` |
 | `BOUNCER_TOKEN` | yes | — | Bearer token for Bouncer authentication |
 | `EXECUTOR_HTTP_PORT` | no | `3001` | Host port mapped to 3001 (HTTP server) |
 | `EXECUTOR_HEALTH_PORT` | no | `3000` | Host port mapped to 3000 (health check) |

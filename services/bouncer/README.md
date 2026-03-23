@@ -22,7 +22,7 @@ pnpm test
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `BOUNCER_TOKEN` | yes | — | Bearer token required on all requests |
-| `BOUNCER_HTTP_PORT` | no | — | Host port mapped to 3010 (HTTP server) |
+| `BOUNCER_HTTP_PORT` | no | — | Host port mapped to 80 (HTTP server) |
 | `BOUNCER_HEALTH_PORT` | no | — | Host port mapped to 3000 (health check) |
 
 For technical details and the full API reference, see [docs/services/BOUNCER.md](../../docs/services/BOUNCER.md).

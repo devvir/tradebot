@@ -207,8 +207,8 @@ importers:
   services/executor:
     dependencies:
       '@devvir/bitmex-database':
-        specifier: ^1.0.0
-        version: 1.1.2
+        specifier: ^1.1.3
+        version: 1.1.3
       '@devvir/service-kit':
         specifier: workspace:*
         version: link:../../packages/service-kit
@@ -219,8 +219,8 @@ importers:
         specifier: ^5.2.1
         version: 5.2.1
       zod:
-        specifier: ^3.24.0
-        version: 3.25.76
+        specifier: ^4.3.6
+        version: 4.3.6
     devDependencies:
       '@types/express':
         specifier: ^5.0.0
@@ -264,6 +264,22 @@ importers:
         specifier: ^22.0.0
         version: 22.19.15
 
+  services/proxy:
+    dependencies:
+      '@devvir/service-kit':
+        specifier: workspace:*
+        version: link:../../packages/service-kit
+      '@tradebot/utils':
+        specifier: workspace:*
+        version: link:../../shared/utils
+      express:
+        specifier: ^5.2.1
+        version: 5.2.1
+    devDependencies:
+      '@types/express':
+        specifier: ^5.0.6
+        version: 5.0.6
+
   services/reader:
     dependencies:
       '@devvir/service-kit':
@@ -278,24 +294,18 @@ importers:
 
   services/rest:
     dependencies:
-      '@devvir/bitmex-api':
-        specifier: ^1.2.0
-        version: 1.2.1
       '@devvir/service-kit':
         specifier: workspace:*
         version: link:../../packages/service-kit
-      '@tradebot/types':
-        specifier: workspace:*
-        version: link:../../shared/types
       '@tradebot/utils':
         specifier: workspace:*
         version: link:../../shared/utils
       express:
         specifier: ^5.2.1
         version: 5.2.1
-      zod:
-        specifier: ^4.3.6
-        version: 4.3.6
+      http-proxy-middleware:
+        specifier: ^3.0.5
+        version: 3.0.5
     devDependencies:
       '@types/express':
         specifier: ^5.0.6
@@ -314,7 +324,7 @@ importers:
     dependencies:
       '@devvir/bitmex-database':
         specifier: ^1.1.2
-        version: 1.1.2
+        version: 1.1.3
       '@devvir/service-kit':
         specifier: workspace:*
         version: link:../../packages/service-kit
@@ -324,6 +334,9 @@ importers:
       express:
         specifier: ^5.2.1
         version: 5.2.1
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
     devDependencies:
       '@types/express':
         specifier: ^5.0.6
@@ -944,8 +957,8 @@ packages:
   '@devvir/bitmex-api@1.2.1':
     resolution: {integrity: sha512-4iWUmGn/e2pfhdmZpKhLPS92tcZVqLzrDTyimbP2VL51a5YvhgaGOlW/D6cOURuvnBSeW4f/eD6zhRdS9wbyIQ==}
 
-  '@devvir/bitmex-database@1.1.2':
-    resolution: {integrity: sha512-5ay1XmzJ45yBORPq+/0X2zANREtdCL9Ag8t8FWMu3TV/yhGxrNNJ5cFU02EVxbN4fQHlA+xuoo0WgYdLCfezXw==}
+  '@devvir/bitmex-database@1.1.3':
+    resolution: {integrity: sha512-kP2thFYJ5AkkY/lQQG6dN3a1XR5RIcbnHAFAMG2t2pdzF1/yqMkgKZasRmPuaFySVoynSOtmn2GeMhxwWZmYSA==}
 
   '@devvir/elastic-queue@1.0.0':
     resolution: {integrity: sha512-r8A/6ukj7i21CL0MINECKi4xYgudOFIfB6+23tyQb/3dh2d/ISfVDh9MBzI3jyG51NpwBUznxVu9qipq0DaNmg==}
@@ -1702,6 +1715,9 @@ packages:
   '@types/http-errors@2.0.5':
     resolution: {integrity: sha512-r8Tayk8HJnX0FztbZN7oVqGccWgw98T/0neJphO91KkmOzug1KkofZURD4UaD5uH8AqcFLfdPErnBod0u71/qg==}
 
+  '@types/http-proxy@1.17.17':
+    resolution: {integrity: sha512-ED6LB+Z1AVylNTu7hdzuBqOgMnvG/ld6wGCG8wFnAzKX5uyW2K3WD52v0gnLCTK/VLpXtKckgWuyScYK6cSPaw==}
+
   '@types/linkify-it@5.0.0':
     resolution: {integrity: sha512-sVDA58zAw4eWAffKOaQH5/5j3XeayukzDk+ewSsnv3p4yJEZHCCzMDiZM8e0OUrRvmpGZ85jf4yDHkHsgBNr9Q==}
 
@@ -2379,6 +2395,9 @@ packages:
     resolution: {integrity: sha512-i/2XbnSz/uxRCU6+NdVJgKWDTM427+MqYbkQzD321DuCQJUqOuJKIA0IM2+W2xtYHdKOmZ4dR6fExsd4SXL+WQ==}
     engines: {node: '>=6'}
 
+  eventemitter3@4.0.7:
+    resolution: {integrity: sha512-8guHBZCwKnFhYdHr2ysuRWErTwhoN2X8XELRlrRwpmfeY2jjuUN4taQMsULKUVo1K4DvZl+0pgfyoysHxvmvEw==}
+
   events@3.3.0:
     resolution: {integrity: sha512-mQw+2fkQbALzQ7V0MY0IqdnXNOeTtP4r0lN9z7AAawCXgqea7bDii20AYrIBrFd/Hx0M2Ocz6S111CaFkUcb0Q==}
     engines: {node: '>=0.8.x'}
@@ -2551,6 +2570,14 @@ packages:
     resolution: {integrity: sha512-4FbRdAX+bSdmo4AUFuS0WNiPz8NgFt+r8ThgNWmlrjQjt1Q7ZR9+zTlce2859x4KSXrwIsaeTqDoKQmtP8pLmQ==}
     engines: {node: '>= 0.8'}
 
+  http-proxy-middleware@3.0.5:
+    resolution: {integrity: sha512-GLZZm1X38BPY4lkXA01jhwxvDoOkkXqjgVyUzVxiEK4iuRu03PZoYHhHRwxnfhQMDuaxi3vVri0YgSro/1oWqg==}
+    engines: {node: ^14.15.0 || ^16.10.0 || >=18.0.0}
+
+  http-proxy@1.18.1:
+    resolution: {integrity: sha512-7mz/721AbnJwIVbnaSv1Cz3Am0ZLT/UBwkC92VlxhXv/k/BBQfM2fXElQNC27BVGr0uwUpplYPQM9LnaBMR5NQ==}
+    engines: {node: '>=8.0.0'}
+
   iconv-lite@0.4.24:
     resolution: {integrity: sha512-v3MXnZAcvnywkTUEZomIActle7RXXeedOR31wwl7VlyoXO4Qi9arvSenNQWne1TcRwhCL1HwLI21bEqdpj8/rA==}
     engines: {node: '>=0.10.0'}
@@ -2623,6 +2650,10 @@ packages:
   is-plain-obj@4.1.0:
     resolution: {integrity: sha512-+Pgi+vMuUNkJyExiMBt5IlFoMyKnr5zhJ4Uspz58WOhBF5QoIZkFyNHIbBAtHwzVAgk5RtndVNsDRN61/mmDqg==}
     engines: {node: '>=12'}
+
+  is-plain-object@5.0.0:
+    resolution: {integrity: sha512-VRSzKkbMm5jMDoKLbltAkFQ5Qr7VDiTFGXxYFXXowVj387GeGNOCsOH6Msy00SGZ3Fp84b1Naa1psqgcCIEP5Q==}
+    engines: {node: '>=0.10.0'}
 
   is-promise@4.0.0:
     resolution: {integrity: sha512-hvpoI6korhJMnej285dSg6nu1+e6uxs7zG3BYAm5byqDsgJNWwxzM6z6iZiAgQR4TJ30JmBTOwqZUw3WlyH3AQ==}
@@ -3043,16 +3074,16 @@ packages:
   picocolors@1.1.1:
     resolution: {integrity: sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==}
 
-  picomatch@2.3.1:
-    resolution: {integrity: sha512-JU3teHTNjmE2VCGFzuY8EXzCDVwEqB2a8fsIvwaStHhAWJEeVd1o1QD80CU6+ZdEXXSLbSsuLwJjkCBWqRQUVA==}
+  picomatch@2.3.2:
+    resolution: {integrity: sha512-V7+vQEJ06Z+c5tSye8S+nHUfI51xoXIXjHQ99cQtKUkQqqO1kO/KCJUfZXuB47h/YBlDhah2H3hdUGXn8ie0oA==}
     engines: {node: '>=8.6'}
 
   picomatch@4.0.2:
     resolution: {integrity: sha512-M7BAV6Rlcy5u+m6oPhAPFgJTzAioX/6B0DxyvDlo9l8+T3nLKbrczg2WLUyzd45L8RqfUMyGPzekbMvX2Ldkwg==}
     engines: {node: '>=12'}
 
-  picomatch@4.0.3:
-    resolution: {integrity: sha512-5gTmgEY/sqK6gFXLIsQNH19lWb4ebPDLA4SdLP7dsWkIXHWlG66oPuVvXSGFPppYZz8ZDZq0dYYrbHfBCVUb1Q==}
+  picomatch@4.0.4:
+    resolution: {integrity: sha512-QP88BAKvMam/3NxH6vj2o21R6MjxZUAd6nlwAS/pnGvN9IVLocLHxGYIzFhg6fUQ+5th6P4dv4eW9jX3DSIj7A==}
     engines: {node: '>=12'}
 
   pino-abstract-transport@1.2.0:
@@ -3280,8 +3311,8 @@ packages:
     resolution: {integrity: sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw==}
     engines: {node: '>=14'}
 
-  smol-toml@1.6.0:
-    resolution: {integrity: sha512-4zemZi0HvTnYwLfrpk/CF9LOd9Lt87kAt50GnqhMpyF9U3poDAP2+iukq2bZsO/ufegbYehBkqINbsWxj4l4cw==}
+  smol-toml@1.6.1:
+    resolution: {integrity: sha512-dWUG8F5sIIARXih1DTaQAX4SsiTXhInKf1buxdY9DIg4ZYPZK5nGM1VRIYmEbDbsHt7USo99xSLFu5Q1IqTmsg==}
     engines: {node: '>= 18'}
 
   sonic-boom@3.8.1:
@@ -4453,7 +4484,7 @@ snapshots:
     transitivePeerDependencies:
       - debug
 
-  '@devvir/bitmex-database@1.1.2':
+  '@devvir/bitmex-database@1.1.3':
     dependencies:
       '@devvir/bitmex-api': 1.2.1
       lodash.clonedeep: 4.5.0
@@ -5118,6 +5149,10 @@ snapshots:
 
   '@types/http-errors@2.0.5': {}
 
+  '@types/http-proxy@1.17.17':
+    dependencies:
+      '@types/node': 25.5.0
+
   '@types/linkify-it@5.0.0': {}
 
   '@types/markdown-it@14.1.2':
@@ -5330,7 +5365,7 @@ snapshots:
 
   axios@1.13.6:
     dependencies:
-      follow-redirects: 1.15.11
+      follow-redirects: 1.15.11(debug@4.4.3)
       form-data: 4.0.5
       proxy-from-env: 1.1.0
     transitivePeerDependencies:
@@ -5872,6 +5907,8 @@ snapshots:
 
   event-target-shim@5.0.1: {}
 
+  eventemitter3@4.0.7: {}
+
   events@3.3.0: {}
 
   expect-type@1.3.0: {}
@@ -5939,9 +5976,9 @@ snapshots:
     dependencies:
       walk-up-path: 4.0.0
 
-  fdir@6.5.0(picomatch@4.0.3):
+  fdir@6.5.0(picomatch@4.0.4):
     optionalDependencies:
-      picomatch: 4.0.3
+      picomatch: 4.0.4
 
   figures@3.2.0:
     dependencies:
@@ -5968,7 +6005,9 @@ snapshots:
 
   flat@5.0.2: {}
 
-  follow-redirects@1.15.11: {}
+  follow-redirects@1.15.11(debug@4.4.3):
+    optionalDependencies:
+      debug: 4.4.3
 
   form-data@4.0.5:
     dependencies:
@@ -6059,6 +6098,25 @@ snapshots:
       statuses: 2.0.2
       toidentifier: 1.0.1
 
+  http-proxy-middleware@3.0.5:
+    dependencies:
+      '@types/http-proxy': 1.17.17
+      debug: 4.4.3
+      http-proxy: 1.18.1(debug@4.4.3)
+      is-glob: 4.0.3
+      is-plain-object: 5.0.0
+      micromatch: 4.0.8
+    transitivePeerDependencies:
+      - supports-color
+
+  http-proxy@1.18.1(debug@4.4.3):
+    dependencies:
+      eventemitter3: 4.0.7
+      follow-redirects: 1.15.11(debug@4.4.3)
+      requires-port: 1.0.0
+    transitivePeerDependencies:
+      - debug
+
   iconv-lite@0.4.24:
     dependencies:
       safer-buffer: 2.1.2
@@ -6116,6 +6174,8 @@ snapshots:
   is-number@7.0.0: {}
 
   is-plain-obj@4.1.0: {}
+
+  is-plain-object@5.0.0: {}
 
   is-promise@4.0.0: {}
 
@@ -6182,8 +6242,8 @@ snapshots:
       minimist: 1.2.8
       oxc-resolver: 11.19.1
       picocolors: 1.1.1
-      picomatch: 4.0.3
-      smol-toml: 1.6.0
+      picomatch: 4.0.4
+      smol-toml: 1.6.1
       strip-json-comments: 5.0.3
       typescript: 5.9.3
       unbash: 2.2.0
@@ -6281,7 +6341,7 @@ snapshots:
   micromatch@4.0.8:
     dependencies:
       braces: 3.0.3
-      picomatch: 2.3.1
+      picomatch: 2.3.2
 
   mime-db@1.52.0: {}
 
@@ -6513,11 +6573,11 @@ snapshots:
 
   picocolors@1.1.1: {}
 
-  picomatch@2.3.1: {}
+  picomatch@2.3.2: {}
 
   picomatch@4.0.2: {}
 
-  picomatch@4.0.3: {}
+  picomatch@4.0.4: {}
 
   pino-abstract-transport@1.2.0:
     dependencies:
@@ -6826,7 +6886,7 @@ snapshots:
 
   signal-exit@4.1.0: {}
 
-  smol-toml@1.6.0: {}
+  smol-toml@1.6.1: {}
 
   sonic-boom@3.8.1:
     dependencies:
@@ -6951,8 +7011,8 @@ snapshots:
 
   tinyglobby@0.2.15:
     dependencies:
-      fdir: 6.5.0(picomatch@4.0.3)
-      picomatch: 4.0.3
+      fdir: 6.5.0(picomatch@4.0.4)
+      picomatch: 4.0.4
 
   tinyrainbow@3.1.0: {}
 
@@ -7063,8 +7123,8 @@ snapshots:
   vite@7.3.1(@types/node@25.5.0)(jiti@2.6.1)(yaml@2.8.3):
     dependencies:
       esbuild: 0.27.4
-      fdir: 6.5.0(picomatch@4.0.3)
-      picomatch: 4.0.3
+      fdir: 6.5.0(picomatch@4.0.4)
+      picomatch: 4.0.4
       postcss: 8.5.8
       rollup: 4.60.0
       tinyglobby: 0.2.15
@@ -7088,7 +7148,7 @@ snapshots:
       magic-string: 0.30.21
       obug: 2.1.1
       pathe: 2.0.3
-      picomatch: 4.0.3
+      picomatch: 4.0.4
       std-env: 4.0.0
       tinybench: 2.9.0
       tinyexec: 1.0.4

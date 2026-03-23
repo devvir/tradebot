@@ -3,7 +3,7 @@ import { Config } from "./types";
 import { redactCredentials } from '@tradebot/utils';
 
 const DATA_PATH = '/data/bouncer/accounts.json';
-const HTTP_PORT = 3010;
+const HTTP_PORT = 80;
 
 function loadConfig(): Config {
   const config: Config = {

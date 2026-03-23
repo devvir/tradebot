@@ -1,12 +1,51 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { createServer as createHttpServer, type Server } from 'node:http';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { createServer as createHttpServer, type Server, type IncomingMessage } from 'node:http';
+import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { createServer } from '../src/server/server';
+import { createServer } from '../src/server';
 import { MockedService } from './mocks';
+
+function makeResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+// Use node:http directly so global fetch mock only intercepts the server's outgoing calls
+function request(
+  method: string,
+  path: string,
+  headers: Record<string, string> = {},
+  body?: string,
+): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const url   = new URL(path, base);
+    const allHeaders: Record<string, string> = { ...headers };
+    if (body) allHeaders['content-length'] = String(Buffer.byteLength(body));
+
+    const req = http.request({
+      hostname: url.hostname,
+      port:     Number(url.port),
+      path:     url.pathname + url.search,
+      method,
+      headers:  allHeaders,
+    }, (res: IncomingMessage) => {
+      let data = '';
+      res.on('data', (chunk: Buffer) => { data += chunk; });
+      res.on('end', () => resolve({ status: res.statusCode!, body: data }));
+    });
+
+    req.on('error', reject);
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
+let base: string;
 
 describe('REST API', () => {
   let server: Server;
-  let base: string;
 
   beforeAll(() => new Promise<void>(resolve => {
     const service = new MockedService();
@@ -21,86 +60,66 @@ describe('REST API', () => {
 
   afterAll(() => new Promise<void>(resolve => server.close(() => resolve())));
 
-  const get = (path: string) => fetch(`${base}${path}`);
-  const post = (path: string, body: unknown) =>
-    fetch(`${base}${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-
-  describe('Public endpoints', () => {
-    it('GET /instrument returns array', async () => {
-      const res = await get('/instrument');
-      expect(res.status).toBe(200);
-      expect(Array.isArray(await res.json())).toBe(true);
-    });
-
-    it('GET /orderBook/L2 returns array', async () => {
-      const res = await get('/orderBook/L2?symbol=XBTUSD');
-      expect(res.status).toBe(200);
-      expect(Array.isArray(await res.json())).toBe(true);
-    });
-
-    it('GET /trade returns array', async () => {
-      const res = await get('/trade');
-      expect(res.status).toBe(200);
-      expect(Array.isArray(await res.json())).toBe(true);
-    });
-
-    it('GET /quote returns array', async () => {
-      const res = await get('/quote');
-      expect(res.status).toBe(200);
-      expect(Array.isArray(await res.json())).toBe(true);
-    });
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
   });
 
-  describe('Query validation', () => {
-    it('rejects invalid query parameters', async () => {
-      const res = await get('/instrument?count=not-a-number');
-      expect(res.status).toBe(400);
-      expect((await res.json() as any).error).toBe('Invalid request');
-    });
+  const mockFetch = () => fetch as ReturnType<typeof vi.fn>;
+  const mockData  = (data: unknown, status = 200) => mockFetch().mockResolvedValueOnce(makeResponse(data, status));
 
-    it('accepts valid query parameters', async () => {
-      const res = await get('/instrument?count=10&symbol=XBTUSD');
+  describe('Request forwarding', () => {
+    it('forwards GET to data backend', async () => {
+      mockData([{ symbol: 'XBTUSD' }]);
+      const res = await request('GET', '/instrument');
       expect(res.status).toBe(200);
-      expect(Array.isArray(await res.json())).toBe(true);
-    });
-  });
-
-  describe('Account endpoints (stubs)', () => {
-    it('GET /position returns stub response', async () => {
-      const res = await get('/position');
-      expect(res.status).toBe(200);
-      expect(Array.isArray(await res.json())).toBe(true);
+      expect(mockFetch()).toHaveBeenCalledOnce();
+      const [url] = mockFetch().mock.calls[0] as [string, RequestInit];
+      expect(url).toBe('http://test-data/instrument');
     });
 
-    it('GET /user/margin returns stub response', async () => {
-      const res = await get('/user/margin');
-      expect(res.status).toBe(200);
-      expect(typeof (await res.json())).toBe('object');
+    it('forwards query string to data backend', async () => {
+      mockData([]);
+      await request('GET', '/instrument?symbol=XBTUSD&count=10');
+      const [url] = mockFetch().mock.calls[0] as [string, unknown];
+      expect(url).toBe('http://test-data/instrument?symbol=XBTUSD&count=10');
     });
-  });
 
-  describe('Order endpoints (stubs)', () => {
-    it('POST /order returns stub response', async () => {
-      const res = await post('/order', {
-        symbol: 'XBTUSD',
-        side: 'Buy',
-        orderQty: 100,
-        price: 43000,
-      });
-      expect(res.status).toBe(200);
-      expect(typeof (await res.json())).toBe('object');
-    });
-  });
-
-  describe('404 handling', () => {
-    it('returns 404 for unknown endpoints', async () => {
-      const res = await get('/unknown/endpoint');
+    it('passes data backend status through unchanged', async () => {
+      mockData({ error: 'not found' }, 404);
+      const res = await request('GET', '/order?clOrdID=unknown');
       expect(res.status).toBe(404);
-      expect((await res.json() as any).error).toBe('Endpoint not found');
+    });
+
+    it('passes all headers through to data backend', async () => {
+      mockData({ result: 'ok' });
+      await request('GET', '/order', { 'api-key': 'my-account', 'x-custom': 'value' });
+      expect(mockFetch()).toHaveBeenCalledOnce();
+      const [url, opts] = mockFetch().mock.calls[0] as [string, RequestInit & { headers: Record<string, string> }];
+      expect(url).toBe('http://test-data/order');
+      expect(opts.headers['api-key']).toBe('my-account');
+      expect(opts.headers['x-custom']).toBe('value');
+    });
+
+    it('forwards without api-key when not provided', async () => {
+      mockData([]);
+      await request('GET', '/instrument');
+      const [, opts] = mockFetch().mock.calls[0] as [string, RequestInit & { headers: Record<string, string> }];
+      expect(opts.headers['api-key']).toBeUndefined();
+    });
+
+    it('forwards POST body to data backend', async () => {
+      mockData({ orderID: 'abc' });
+      const body = JSON.stringify({ symbol: 'XBTUSD', side: 'Buy', orderQty: 100 });
+      const res = await request('POST', '/order', { 'content-type': 'application/json' }, body);
+      expect(res.status).toBe(200);
+    });
+
+    it('passes content-type header through to data backend', async () => {
+      mockData([]);
+      await request('GET', '/instrument', { 'content-type': 'application/json' });
+      const [, opts] = mockFetch().mock.calls[0] as [string, RequestInit & { headers: Record<string, string> }];
+      expect(opts.headers['content-type']).toBe('application/json');
     });
   });
 });
+

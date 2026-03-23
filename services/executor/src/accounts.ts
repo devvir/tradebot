@@ -1,12 +1,17 @@
+// Pending Review
 import { logger } from '@devvir/service-kit';
 import type { Config } from './types';
 
+export interface BouncerResponse {
+  id:     string;
+  type:   'live' | 'testnet' | 'replay';
+  apiKey: string;
+}
+
 export interface AccountData {
-  id:      string;
-  type:    'live' | 'testnet' | 'replay';
-  wsUrl:   string;
-  restUrl: string;
-  apiKey:  string;
+  id:     string;
+  type:   'live' | 'testnet' | 'replay';
+  apiKey: string;
 }
 
 export interface AccountRegistry {
@@ -30,7 +35,8 @@ export function createAccountRegistry(config: Config): AccountRegistry {
         throw new Error(`Bouncer returned ${res.status} for account '${accountId}'`);
       }
 
-      const data = await res.json() as AccountData;
+      const raw  = await res.json() as BouncerResponse;
+      const data: AccountData = { ...raw };
 
       cache.set(accountId, data);
       logger.debug({ accountId }, 'Account cached');

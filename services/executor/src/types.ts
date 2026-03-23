@@ -2,6 +2,7 @@ export interface Config {
   bouncerUrl:   string;
   bouncerToken: string;
   httpPort:     number;
+  restUrl:      string;
   [key: string]: unknown;
 }
 

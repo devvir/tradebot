@@ -1,5 +1,7 @@
+// Pending Review
 import { logger } from '@devvir/service-kit';
 import { createDatabase, BitmexTable } from '@devvir/bitmex-database';
+import { resolveBitmexUrls } from '@tradebot/utils';
 import type { Config, WsState, LiveOrder } from './types';
 
 const READY_TIMEOUT_MS = 5_000;
@@ -23,7 +25,7 @@ export function createWsPool(config: Config): WsPool {
       if (inFlight) return inFlight;
 
       const promise = (async () => {
-        const expires = Math.round(Date.now() / 1000) + 5;
+        const expires = Math.round(Date.now() / 1000) + 60;
         const res     = await fetch(`${config.bouncerUrl}/accounts/${accountId}?expires=${expires}`, {
           headers: { 'Authorization': `Bearer ${config.bouncerToken}` },
         });
@@ -32,7 +34,8 @@ export function createWsPool(config: Config): WsPool {
           throw new Error(`Bouncer returned ${res.status} for account '${accountId}'`);
         }
 
-        const { wsUrl, apiKey, signature } = await res.json() as { wsUrl: string; apiKey: string; signature: string };
+        const { type, apiKey, signature } = await res.json() as { type: 'live' | 'testnet' | 'replay'; apiKey: string; signature: string };
+        const wsUrl = resolveBitmexUrls(type).wsUrl;
 
         const ws = await connectAndWait(accountId, wsUrl, apiKey, signature, expires, () => {
           pool.delete(accountId);

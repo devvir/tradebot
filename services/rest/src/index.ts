@@ -1,8 +1,8 @@
 import { logger, Service } from '@devvir/service-kit';
 import SK from './service';
-import { createServer, startServer } from './server/server';
+import { createServer, startServer } from './server';
 
-const API_PORT = 3001;
+const API_PORT = 80;
 
 SK.run(async (service: Service) => {
   const app = createServer(service);

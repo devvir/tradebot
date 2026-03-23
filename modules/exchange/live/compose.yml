@@ -1,4 +1,4 @@
-# Exchange Module — Live
+# Live Module — Exchange App
 #
 # Wires live BitMEX data into a fully BitMEX-compatible API surface.
 # Bots connect to ws and rest as if they were BitMEX.
@@ -11,11 +11,16 @@
 #           snapshots@default        ws.deltas@default
 #                    │                        │
 #                snapshots ◄── HTTP ──────── ws  ◄── bots
+#
+#   bots ──► rest ──► proxy ──► BitMEX REST API
+#                └── (auth via Bouncer)
 
 include:
+  - path: ../../../services/bouncer/docker/compose.yml
   - path: ../../../services/snapshots/docker/extended.yml
   - path: ../../../services/rest/docker/compose.yml
   - path: ../../../services/ws/docker/extended.yml
+  - path: ../../../services/proxy/docker/compose.yml
 
 services:
   broadcast:

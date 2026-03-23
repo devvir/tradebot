@@ -1,5 +1,5 @@
-import { SKFactory } from '@tradebot/utils';
 import { createDatabase, type Database } from '@devvir/bitmex-database';
+import { SKFactory } from '@tradebot/utils';
 import config from './config';
 
 export default SKFactory({

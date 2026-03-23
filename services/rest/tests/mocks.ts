@@ -1,21 +1,15 @@
 export class MockedService {
-  config(key: string): unknown {
-    const configs: Record<string, unknown> = {
-      httpPort: 3001,
-      snapshotsUrl: 'http://snapshots:3001',
+  config(): unknown {
+    return {
+      dataUrl: 'http://test-data',
     };
-    return configs[key];
   }
 
-  state(key: string): unknown {
+  state(_key: string): unknown {
     return {};
   }
 
-  emit(event: string): void {
-    // noop
-  }
+  emit(_event: string): void {}
 
-  on(event: string, handler: unknown): void {
-    // noop
-  }
+  on(_event: string, _handler: unknown): void {}
 }

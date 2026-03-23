@@ -8,6 +8,14 @@ const CONFIG: Config = {
   httpPort:     3001,
 };
 
+// What bouncer returns — no wsUrl/restUrl
+const MOCK_BOUNCER_RESPONSE = {
+  id:     'test-account',
+  type:   'testnet' as const,
+  apiKey: 'test-key',
+};
+
+// What registry.get() returns — URLs computed from type
 const MOCK_ACCOUNT = {
   id:      'test-account',
   type:    'testnet' as const,
@@ -34,7 +42,7 @@ afterEach(() => {
 
 describe('AccountRegistry', () => {
   it('fetches from bouncer on first get() with correct URL and auth header', async () => {
-    const mockFetch = vi.fn().mockResolvedValue(makeFetchResponse(MOCK_ACCOUNT));
+    const mockFetch = vi.fn().mockResolvedValue(makeFetchResponse(MOCK_BOUNCER_RESPONSE));
 
     vi.stubGlobal('fetch', mockFetch);
 
@@ -50,7 +58,7 @@ describe('AccountRegistry', () => {
   });
 
   it('returns cached data on second get() — fetch called only once', async () => {
-    const mockFetch = vi.fn().mockResolvedValue(makeFetchResponse(MOCK_ACCOUNT));
+    const mockFetch = vi.fn().mockResolvedValue(makeFetchResponse(MOCK_BOUNCER_RESPONSE));
 
     vi.stubGlobal('fetch', mockFetch);
 
@@ -65,10 +73,11 @@ describe('AccountRegistry', () => {
   });
 
   it('caches different accounts independently', async () => {
-    const otherAccount = { ...MOCK_ACCOUNT, id: 'other-account', apiKey: 'other-key' };
+    const otherBouncer  = { ...MOCK_BOUNCER_RESPONSE, id: 'other-account', apiKey: 'other-key' };
+    const otherAccount  = { ...MOCK_ACCOUNT,          id: 'other-account', apiKey: 'other-key' };
     const mockFetch = vi.fn()
-      .mockResolvedValueOnce(makeFetchResponse(MOCK_ACCOUNT))
-      .mockResolvedValueOnce(makeFetchResponse(otherAccount));
+      .mockResolvedValueOnce(makeFetchResponse(MOCK_BOUNCER_RESPONSE))
+      .mockResolvedValueOnce(makeFetchResponse(otherBouncer));
 
     vi.stubGlobal('fetch', mockFetch);
 

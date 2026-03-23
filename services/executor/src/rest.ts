@@ -1,6 +1,6 @@
+// Pending Review
 import { logger } from '@devvir/service-kit';
 import type { Config, DesiredOrder, AmendOp, CancelOp } from './types';
-import type { AccountRegistry } from './accounts';
 
 const MAX_RETRIES       = 3;
 const RETRY_BASE_MS     = 500;
@@ -12,8 +12,13 @@ export interface RestClient {
   cancelOrders: (accountId: string, ops: CancelOp[]) => Promise<unknown>;
 }
 
-export function createRestClient(accounts: AccountRegistry, config: Config): RestClient {
-  async function sign(accountId: string, verb: string, path: string, body: string): Promise<{ apiKey: string; expires: number; signature: string }> {
+export function createRestClient(config: Config): RestClient {
+  async function sign(
+    accountId: string,
+    verb: string,
+    path: string,
+    body: string,
+  ): Promise<{ apiKey: string; expires: number; signature: string }> {
     const expires = Math.round(Date.now() / 1000) + 5;
     const res = await fetch(`${config.bouncerUrl}/sign/rest`, {
       method:  'POST',
@@ -27,15 +32,13 @@ export function createRestClient(accounts: AccountRegistry, config: Config): Res
   }
 
   async function request(accountId: string, verb: 'POST' | 'PUT' | 'DELETE', path: string, body: Record<string, unknown>, attempt = 1): Promise<unknown> {
-    const account = await accounts.get(accountId);
-    const fullUrl = account.restUrl + path;
-    const urlPath = new URL(fullUrl).pathname;
+    const fullUrl = config.restUrl + '/api/v1' + path;
     const bodyStr = JSON.stringify(body);
 
     let auth: { apiKey: string; expires: number; signature: string };
 
     try {
-      auth = await sign(accountId, verb, urlPath, bodyStr);
+      auth = await sign(accountId, verb, path, bodyStr);
     } catch (err) {
       logger.error({ err, verb, path }, 'Failed to get signature from bouncer');
       return null;
@@ -109,9 +112,7 @@ export function createRestClient(accounts: AccountRegistry, config: Config): Res
   }
 
   async function amendOrder(accountId: string, op: AmendOp): Promise<{ stale?: boolean } | unknown> {
-    const account = await accounts.get(accountId);
-    const fullUrl = account.restUrl + '/order';
-    const urlPath = new URL(fullUrl).pathname;
+    const fullUrl = config.restUrl + '/api/v1/order';
     const body: Record<string, unknown> = { orderID: op.orderID };
 
     if (op.price     !== undefined) body['price']     = op.price;
@@ -122,7 +123,7 @@ export function createRestClient(accounts: AccountRegistry, config: Config): Res
     let auth: { apiKey: string; expires: number; signature: string };
 
     try {
-      auth = await sign(accountId, 'PUT', urlPath, bodyStr);
+      auth = await sign(accountId, 'PUT', '/order', bodyStr);
     } catch (err) {
       logger.error({ err, op }, 'Failed to get signature for amend');
       return null;
