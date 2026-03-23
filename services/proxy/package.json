@@ -1,0 +1,22 @@
+{
+  "name": "@tradebot/proxy",
+  "version": "1.0.0",
+  "description": "Transparent HTTP forwarder — signs requests and forwards to BitMEX REST API",
+  "main": "dist/src/index.js",
+  "private": true,
+  "scripts": {
+    "build": "tsc -b",
+    "start": "node dist/src/index.js",
+    "dev": "ts-node src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@devvir/service-kit": "workspace:*",
+    "@tradebot/utils": "workspace:*",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6"
+  }
+}

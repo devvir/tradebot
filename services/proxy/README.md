@@ -1,0 +1,32 @@
+# Proxy Service
+
+Transparent HTTP forwarder that signs requests via Bouncer and forwards them to the BitMEX REST API. Responses are streamed back verbatim — no transformation, no caching.
+
+## What it does
+
+- Accepts any HTTP request (method, path, query string, body)
+- Resolves the target BitMEX account via the `X-Account-Id` header or `api-key` header
+- Signs the request through Bouncer (`POST /sign/rest`) — sees only the public `apiKey`, never the secret
+- Forwards the signed request to the correct BitMEX environment (live or testnet)
+- Returns the upstream response as-is: status code, headers, and body unchanged
+
+Callers that already hold a valid BitMEX signature can pass `api-key` + `api-signature` directly; proxy will skip the signing step and only resolve the target URL.
+
+## Development
+
+```bash
+pnpm install
+pnpm build
+pnpm test
+```
+
+## Configuration
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `BOUNCER_URL` | yes | — | Base URL for the Bouncer service |
+| `BOUNCER_TOKEN` | yes | — | Bearer token for Bouncer authentication |
+| `PROXY_HTTP_PORT` | no | — | Host port mapping for the HTTP server (internal port is always 80) |
+| `PROXY_HEALTH_PORT` | no | — | Host port mapping for the health check server |
+
+For technical details and architecture, see [docs/services/PROXY.md](../../docs/services/PROXY.md).
