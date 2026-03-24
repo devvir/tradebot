@@ -1,11 +1,16 @@
 import Table from 'cli-table3';
 import { C } from '../../shared/utils/colors';
-import type { ContainerRow, QueueRow } from './types';
+import type { ContainerRow, QueueRow, RabbitInstance } from './types';
 
-function colorUnacked(unacked: number): string {
-  if (unacked > 10000) return `${C.red}${unacked}${C.reset}`;
-  if (unacked > 1000) return `${C.yellow}${unacked}${C.reset}`;
-  return `${C.green}${unacked}${C.reset}`;
+function colorQueueCount(n: number): string {
+  if (n === 0) return `${C.dim}${n}${C.reset}`;
+  if (n > 100000) return `${C.red}${n}${C.reset}`;
+  if (n > 10000) return `${C.yellow}${n}${C.reset}`;
+  return `${C.green}${n}${C.reset}`;
+}
+
+function osc8Link(url: string, text: string): string {
+  return `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\`;
 }
 
 function colorLastLog(lastLog: string, name: string): string {
@@ -35,6 +40,7 @@ export function buildOutput(
   containerRows: ContainerRow[],
   queuesByInstance: Map<string, QueueRow[]>,
   rabbitErrors: Map<string, string>,
+  instancesByName: Map<string, RabbitInstance>,
   interval: number,
   updatedAt: Date,
   errorMsg: string | null,
@@ -103,7 +109,11 @@ export function buildOutput(
   }
 
   for (const [instanceName, rows] of [...queuesByInstance.entries()].sort()) {
-    lines.push(`${C.bold}${C.blue} ▸ RabbitMQ · ${instanceName}${C.reset}`);
+    const inst = instancesByName.get(instanceName);
+    const mgmtUrl = inst ? `${inst.mgmtUrl}/` : null;
+    const linkPart = mgmtUrl ? `  ${C.dim}${osc8Link(mgmtUrl, mgmtUrl)}${C.reset}` : '';
+
+    lines.push(`${C.bold}${C.blue} ▸ RabbitMQ · ${instanceName}${C.reset}${linkPart}`);
 
     if (rows.length === 0) {
       lines.push(`  ${C.dim}No queues${C.reset}`);
@@ -119,8 +129,8 @@ export function buildOutput(
         qt.push([
           q.name,
           `${C.dim}${q.vhost}${C.reset}`,
-          q.ready > 0 ? `${C.yellow}${q.ready}${C.reset}` : `${C.dim}${q.ready}${C.reset}`,
-          colorUnacked(q.unacked),
+          colorQueueCount(q.ready),
+          colorQueueCount(q.unacked),
           q.total > 0 ? String(q.total) : `${C.dim}0${C.reset}`,
           String(q.consumers),
           q.publishRate,
@@ -131,11 +141,16 @@ export function buildOutput(
 
       lines.push(qt.toString());
     }
+
     lines.push('');
   }
 
   for (const [instanceName, err] of rabbitErrors.entries()) {
-    lines.push(`${C.bold}${C.blue} ▸ RabbitMQ · ${instanceName}${C.reset}`);
+    const inst = instancesByName.get(instanceName);
+    const mgmtUrl = inst ? `${inst.mgmtUrl}/` : null;
+    const linkPart = mgmtUrl ? `  ${C.dim}${osc8Link(mgmtUrl, mgmtUrl)}${C.reset}` : '';
+
+    lines.push(`${C.bold}${C.blue} ▸ RabbitMQ · ${instanceName}${C.reset}${linkPart}`);
     lines.push(`  ${C.red}⚠ ${err}${C.reset}`);
     lines.push('');
   }

@@ -1,0 +1,32 @@
+# Shuttle Infra — Data Transformation Server
+#
+# Shared infrastructure for shuttle modules (concierge, student, witness).
+# Shuttle transforms and moves data between server roles.
+#
+# Shuttle does NOT own any databases — all DB access is via remote connection URLs.
+# DB_*_URL vars for source and destination databases are set in the root .env.
+#
+# Abstract service names:
+#   queue    — internal message broker for shuttle transformation pipelines
+
+services:
+  queue:
+    extends:
+      file: ../../../services/rabbitmq/docker/base.yml
+      service: rabbitmq
+    hostname: queue
+    container_name: queue
+    ports:
+      - "${QUEUE_PORT:-}:5672"
+      - "${QUEUE_MGMT_PORT:-}:15672"
+    volumes:
+      - queue-data:/var/lib/rabbitmq
+
+volumes:
+  queue-data:
+
+networks:
+  default:
+    name: ${PROJECT_NAME:-tradebot}-network
+    external: true
+

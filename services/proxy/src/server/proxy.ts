@@ -34,8 +34,7 @@ export async function forwardRequest(req: Request, res: Response, config: Config
         ...(apiExpires ? { 'api-expires': apiExpires } : {}),
       });
     } else if (! accountId && ! apiKey) {
-      // ── Case: guest (unauthenticated) ──────────────────────────────────
-      // Forward to live BitMEX with no auth. Testnet is not accessible as guest.
+      // No auth headers — forward as-is. No account to resolve environment from, so default to live.
       await forward(req, res, 'live', {});
     } else {
       // ── Case: resolve account + sign via Bouncer ──────────────────────────

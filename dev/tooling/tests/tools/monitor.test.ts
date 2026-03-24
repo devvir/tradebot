@@ -101,8 +101,8 @@ describe('cpuPercent', () => {
 describe('discoverRabbitInstances', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.RABBITMQ_USER = 'testuser';
-    process.env.RABBITMQ_PASS = 'testpass';
+    process.env.QUEUE_USER = 'testuser';
+    process.env.QUEUE_PASS = 'testpass';
   });
 
   afterEach(() => {

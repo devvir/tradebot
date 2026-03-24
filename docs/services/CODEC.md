@@ -53,7 +53,6 @@ Brotli-decompresses `b` and reverses the table-specific encoding, recovering the
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `RABBITMQ_URL` | Yes | - | RabbitMQ connection string |
 | `CODEC_PREFETCH` | No | `1000` | RabbitMQ prefetch window (messages buffered per consumer) |
 | `CODEC_BROTLI_QUALITY` | No | `1` | Brotli compression quality (0-11: 0=fastest, 11=best) |
 
@@ -63,7 +62,7 @@ Brotli-decompresses `b` and reverses the table-specific encoding, recovering the
 ## Dependencies
 
 ### External Runtime Dependencies
-- **RabbitMQ** - For message consumption and publishing
+- **RabbitMQ** — For message consumption and publishing. See [infra packs](../../modules/infra/README.md).
 - **@devvir/service-kit** - Lifecycle management framework (includes RabbitMQ broker)
 - **@tradebot/utils** - Utilities (logging, URL handling)
 - **@tradebot/types** - BitMEX message type definitions

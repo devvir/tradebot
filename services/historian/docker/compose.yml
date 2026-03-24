@@ -10,7 +10,7 @@ services:
 
     environment:
       # Dependencies
-      MONGODB_URL: ${MONGODB_URL:-mongodb://root:root@mongodb:27017?authSource=admin}
+      DB_URL: ${DB_URL}
       HISTORIAN_DATABASE: ${HISTORIAN_DATABASE:-tradebot_history}
 
       # BitMEX API

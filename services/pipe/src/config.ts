@@ -7,7 +7,7 @@ const loadConfig = (): Config => {
   const bindings = withDefaults(parseBindings(process.env.PIPE_BINDINGS || ''));
 
   const config: Config = {
-    rabbitmqUrl: sanitizeUrl(process.env.RABBITMQ_URL || ''),
+    rabbitmqUrl: sanitizeUrl(process.env.QUEUE_URL || ''),
     topology: buildTopology(bindings),
     bindings,
   }
@@ -23,7 +23,7 @@ const loadConfig = (): Config => {
 };
 
 const validateConfig = (config: Config): void => {
-  if (! config.rabbitmqUrl) throw new Error('RABBITMQ_URL is required');
+  if (! config.rabbitmqUrl) throw new Error('QUEUE_URL is required');
   if (! config.bindings.length) throw new Error('PIPE_BINDINGS is required');
 };
 

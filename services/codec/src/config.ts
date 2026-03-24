@@ -4,7 +4,7 @@ import type { Config } from './types';
 
 const loadConfig = (): Config => {
   const config: Config = {
-    rabbitmqUrl: sanitizeUrl(process.env.RABBITMQ_URL || ''),
+    rabbitmqUrl: sanitizeUrl(process.env.QUEUE_URL || ''),
     prefetch: parseInt(process.env.CODEC_PREFETCH || '0'),
   };
 
@@ -19,7 +19,7 @@ const loadConfig = (): Config => {
 };
 
 const validateConfig = (config: Config): void => {
-  if (! config.rabbitmqUrl) throw new Error('RABBITMQ_URL is required');
+  if (! config.rabbitmqUrl) throw new Error('QUEUE_URL is required');
   if (! config.prefetch) throw new Error('CODEC_PREFETCH is required');
 };
 

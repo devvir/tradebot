@@ -1,0 +1,65 @@
+# Bootcamp Infra — Training Server
+#
+# Shared infrastructure for the model training / replay server.
+#
+# Abstract service names:
+#   queue-rt   — replay data pipeline message broker
+#   db-replay  — MongoDB for curated replay/training data (owned here)
+#   db-audit   — MongoDB for training run audit and state
+#   bouncer    — API credential signing
+
+name: infrastructure
+
+include:
+  - path: ../../../services/bouncer/docker/compose.yml
+
+services:
+  queue-rt:
+    extends:
+      file: ../../../services/rabbitmq/docker/base.yml
+      service: rabbitmq
+    hostname: queue-rt
+    container_name: queue-rt
+    ports:
+      - "${QUEUE_RT_PORT:-}:5672"
+      - "${QUEUE_RT_MGMT_PORT:-}:15672"
+    volumes:
+      - queue-rt-data:/var/lib/rabbitmq
+
+  db-replay:
+    extends:
+      file: ../../../services/mongodb/docker/base.yml
+      service: mongodb
+    container_name: db-replay
+    command: mongod --quiet --setParameter logLevel=0 --wiredTigerCacheSizeGB=${DB_REPLAY_CACHE_SIZE_GB:-2}
+    ports:
+      - "${DB_REPLAY_PORT:-}:27017"
+    volumes:
+      - db-replay-data:/data/db
+      - db-replay-config:/data/configdb
+
+  db-audit:
+    extends:
+      file: ../../../services/mongodb/docker/base.yml
+      service: mongodb
+    container_name: db-audit
+
+    command: mongod --quiet --setParameter logLevel=0 --wiredTigerCacheSizeGB=${DB_AUDIT_CACHE_SIZE_GB:-2}
+    ports:
+      - "${DB_AUDIT_PORT:-}:27017"
+    volumes:
+      - db-audit-data:/data/db
+      - db-audit-config:/data/configdb
+
+volumes:
+  queue-rt-data:
+  db-replay-data:
+  db-replay-config:
+  db-audit-data:
+  db-audit-config:
+
+networks:
+  default:
+    name: ${PROJECT_NAME:-tradebot}-network
+    external: true
+

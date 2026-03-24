@@ -27,7 +27,8 @@ pnpm test      # Run tests
 
 ## Configuration
 
-- `RABBITMQ_URL` - (Required) Connection string to RabbitMQ
+Requires RabbitMQ — see [infra packs](../../modules/infra/README.md).
+
 - `BITMEX_TESTNET` - Use testnet (default: false)
 - `BROADCAST_RECONNECT_DELAY_MS` - Initial reconnection delay in ms (default: 5000)
 - `BROADCAST_MAX_RECONNECT_DELAY_MS` - Max reconnection delay in ms (default: 60000)

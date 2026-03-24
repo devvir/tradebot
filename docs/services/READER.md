@@ -83,10 +83,10 @@ Persisted after each polling iteration for disaster recovery.
 
 ### Environment Variables
 
+Requires RabbitMQ and MongoDB — see [infra packs](../../modules/infra/README.md).
+
 | Variable | Type | Required | Default | Description |
 |----------|------|----------|---------|-------------|
-| `RABBITMQ_URL` | string | Yes | - | RabbitMQ broker URL |
-| `MONGODB_URL` | string | Yes | - | MongoDB connection URL |
 | `READER_DATABASE` | string | Yes | - | MongoDB database name to read from (module-specific) |
 | `READER_POLL_INTERVAL_MS` | number | Yes | - | Poll interval in milliseconds |
 | `READER_COLLECTIONS` | string | No | - | Comma-separated collection whitelist (default: all non-system collections) |
@@ -124,7 +124,7 @@ Every 500 published messages, the reader checks how many messages are in `queue:
 
 ## Dependencies
 
-### MongoDB
+### MongoDB ([infra packs](../../modules/infra/README.md))
 
 - **Connection:** Standard MongoDB driver, no retry logic (startup only)
 - **Operations:**
@@ -136,7 +136,7 @@ Every 500 published messages, the reader checks how many messages are in `queue:
   - Target collections: Any collection to poll
   - `_reader_state`: Persists polling state (created on demand)
 
-### RabbitMQ
+### RabbitMQ ([infra packs](../../modules/infra/README.md))
 
 - **Queue:** `reader.<database>` (durable), declared at startup on the default exchange
 - **Publishing:** Fire-and-forget via `sendToQueue`

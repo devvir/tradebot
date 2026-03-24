@@ -1,5 +1,7 @@
 # Collector Module
 #
+# Infra: queue-rt, db-feed
+#
 # Data flow:
 #   Broadcast → topic:broadcast  (routingKey = table.action.symbol)
 #   collect   → topic:writer     (injects x-writer-database=tradebot_collect)
@@ -13,8 +15,11 @@
 # writer:
 #   Consumes from writer queue, stores to database specified by x-writer-database header.
 
+# Docker Compose Project (for all history app modules)
+name: history
+
 include:
-  - path: ../../../services/writer/docker/extended.yml
+  - path: ../../../services/writer/docker/compose.yml
 
 services:
   broadcast:
@@ -38,5 +43,5 @@ services:
 
 networks:
   default:
-    name: ${COMPOSE_PROJECT_NAME:-tradebot}-network
+    name: ${PROJECT_NAME:-tradebot}-network
     external: true

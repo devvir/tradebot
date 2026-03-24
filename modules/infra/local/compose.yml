@@ -1,0 +1,106 @@
+# Local Infra — Development Server
+#
+# Full shared infrastructure for local development.
+# Covers all server roles simultaneously.
+#
+# Two RabbitMQ instances isolate RT feed traffic from batch processing traffic.
+# Two MongoDB instances isolate high-frequency RT writes (db-feed) from everything else.
+# The general-purpose MongoDB instance is aliased to db-store, db-replay, and db-audit.
+#
+# Abstract service names (used by all services as hostnames):
+#   queue      — general / batch message broker
+#   queue-rt   — real-time live data message broker
+#   db-feed    — MongoDB for real-time streaming data
+#   db-store   — MongoDB for historical paginated data     ⎫
+#   db-replay  — MongoDB for curated replay/training data  ⎬ all aliased to the same instance
+#   db-audit   — MongoDB for trading audit / state         ⎭
+#   bouncer    — API credential signing
+#   redis      — cache
+
+name: infrastructure
+
+include:
+  - path: ../../../services/vault/docker/compose.yml
+  - path: ../../../services/bouncer/docker/compose.yml
+
+services:
+  queue:
+    extends:
+      file: ../../../services/rabbitmq/docker/base.yml
+      service: rabbitmq
+    hostname: queue
+    container_name: queue
+    ports:
+      - "${QUEUE_PORT:-}:5672"
+      - "${QUEUE_MGMT_PORT:-}:15672"
+    volumes:
+      - queue-data:/var/lib/rabbitmq
+
+  queue-rt:
+    extends:
+      file: ../../../services/rabbitmq/docker/base.yml
+      service: rabbitmq
+    hostname: queue-rt
+    container_name: queue-rt
+    ports:
+      - "${QUEUE_RT_PORT:-}:5672"
+      - "${QUEUE_RT_MGMT_PORT:-}:15672"
+    volumes:
+      - queue-rt-data:/var/lib/rabbitmq
+
+  db-feed:
+    extends:
+      file: ../../../services/mongodb/docker/base.yml
+      service: mongodb
+    container_name: db-feed
+    command: mongod --quiet --setParameter logLevel=0 --wiredTigerCacheSizeGB=${DB_FEED_CACHE_SIZE_GB:-2}
+    ports:
+      - "${DB_FEED_PORT:-}:27017"
+    volumes:
+      - db-feed-data:/data/db
+      - db-feed-config:/data/configdb
+
+  # Single MongoDB instance aliased to db-store, db-replay, and db-audit.
+  # Sufficient for local development; in production each gets its own instance.
+  db:
+    extends:
+      file: ../../../services/mongodb/docker/base.yml
+      service: mongodb
+    container_name: db
+    command: mongod --quiet --setParameter logLevel=0 --wiredTigerCacheSizeGB=${DB_CACHE_SIZE_GB:-2}
+    ports:
+      - "${DB_PORT:-}:27017"
+    volumes:
+      - db-data:/data/db
+      - db-config:/data/configdb
+    networks:
+      default:
+        aliases:
+          - db-store
+          - db-replay
+          - db-audit
+
+  cache:
+    extends:
+      file: ../../../services/redis/docker/compose.yml
+      service: redis
+    container_name: cache
+    ports:
+      - "${CACHE_PORT:-}:6379"
+    volumes:
+      - cache-data:/data
+
+volumes:
+  queue-data:
+  queue-rt-data:
+  db-feed-data:
+  db-feed-config:
+  db-data:
+  db-config:
+  cache-data:
+
+networks:
+  default:
+    name: ${PROJECT_NAME:-tradebot}-network
+    external: true
+

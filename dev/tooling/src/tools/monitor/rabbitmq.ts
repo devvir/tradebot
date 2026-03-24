@@ -9,8 +9,8 @@ import type { RabbitInstance, QueueRow } from './types';
  */
 export async function discoverRabbitInstances(docker: Dockerode): Promise<RabbitInstance[]> {
   const containers = await docker.listContainers({ all: false });
-  const rabbitUser = getEnv('RABBITMQ_USER', 'guest')!;
-  const rabbitPass = getEnv('RABBITMQ_PASS', 'guest')!;
+  const rabbitUser = getEnv('QUEUE_USER', 'guest')!;
+  const rabbitPass = getEnv('QUEUE_PASS', 'guest')!;
 
   const instances: RabbitInstance[] = [];
 

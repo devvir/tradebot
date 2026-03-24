@@ -58,7 +58,6 @@ The `x-message-count` header (combined with `x-worker-uuid`) enables downstream 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `BITMEX_TESTNET` | No | `true` | Use BitMEX testnet (`true`) or live (`false`) |
-| `RABBITMQ_URL` | Yes | - | RabbitMQ connection string (e.g., `amqp://guest:guest@localhost:5672`) |
 | `BROADCAST_RECONNECT_DELAY_MS` | No | `5000` | Initial reconnection delay in milliseconds |
 | `BROADCAST_MAX_RECONNECT_DELAY_MS` | No | `60000` | Maximum reconnection delay (exponential backoff caps here) |
 | `BROADCAST_MESSAGE_TTL` | No | `1800000` | RabbitMQ message TTL in milliseconds (30 min default) |
@@ -80,8 +79,8 @@ Example with defaults:
 ## Dependencies
 
 ### External Runtime Dependencies
-- **RabbitMQ** - For message publishing
-- **BitMEX API** - WebSocket endpoints (live or testnet)
+- **RabbitMQ** — For message publishing. See [infra packs](../../modules/infra/README.md).
+- **BitMEX API** — WebSocket endpoints (live or testnet)
 
 ### NPM Packages
 - `ws` - WebSocket client library

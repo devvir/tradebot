@@ -6,7 +6,7 @@ Each run: dumps yesterday's data from every collection → gzip archives, prunes
 
 Date-range selection uses the `_id` field directly (no separate timestamp index) — the writer embeds the creation timestamp in each document's `_id`.
 
-Requires `mongodump` and `mongosh` to be installed on the host (`mongodb-database-tools` and `mongodb-mongosh` packages). MongoDB must be port-mapped to the host via `MONGODB_PORT`.
+Requires `mongodump` and `mongosh` to be installed on the host (`mongodb-database-tools` and `mongodb-mongosh` packages). MongoDB must be port-mapped to the host via `DB_PORT`.
 
 ---
 
@@ -16,9 +16,9 @@ Loaded automatically from the root `.env` at startup.
 
 | Variable              | Default               | Description                                              |
 |-----------------------|-----------------------|----------------------------------------------------------|
-| `MONGODB_USER`        | *(required)*          | MongoDB username                                         |
-| `MONGODB_PASS`        | *(required)*          | MongoDB password                                         |
-| `MONGODB_PORT`        | `27017`               | Host port MongoDB is mapped to                           |
+| `DB_USER`        | *(required)*          | MongoDB username                                         |
+| `DB_PASS`        | *(required)*          | MongoDB password                                         |
+| `DB_PORT`        | `27017`               | Host port MongoDB is mapped to                           |
 | `BACKUP_DATABASE`     | `tradebot_archive`    | Database to back up and prune                            |
 | `DUMP_DIR`            | `/data/backups/tradebot` | Directory where dump files are written               |
 | `DUMP_RETENTION_DAYS` | `30`                  | Delete local dump files older than this many days        |

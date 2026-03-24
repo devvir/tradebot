@@ -1,0 +1,63 @@
+# Market Infra — Trading Server
+#
+# Shared infrastructure for the live trading server.
+#
+# Abstract service names:
+#   queue      — trading signals / order message broker
+#   queue-rt   — real-time live BitMEX feed message broker
+#   db-audit   — MongoDB for live trading state and audit
+#   bouncer    — API credential signing
+#   redis      — fast cache for order/position data
+
+include:
+  - path: ../../../services/bouncer/docker/compose.yml
+  - path: ../../../services/redis/docker/compose.yml
+
+services:
+  queue:
+    extends:
+      file: ../../../services/rabbitmq/docker/base.yml
+      service: rabbitmq
+    hostname: queue
+    container_name: queue
+    ports:
+      - "${QUEUE_PORT:-}:5672"
+      - "${QUEUE_MGMT_PORT:-}:15672"
+    volumes:
+      - queue-data:/var/lib/rabbitmq
+
+  queue-rt:
+    extends:
+      file: ../../../services/rabbitmq/docker/base.yml
+      service: rabbitmq
+    hostname: queue-rt
+    container_name: queue-rt
+    ports:
+      - "${QUEUE_RT_PORT:-}:5672"
+      - "${QUEUE_RT_MGMT_PORT:-}:15672"
+    volumes:
+      - queue-rt-data:/var/lib/rabbitmq
+
+  db-audit:
+    extends:
+      file: ../../../services/mongodb/docker/base.yml
+      service: mongodb
+    container_name: db-audit
+    command: mongod --quiet --setParameter logLevel=0 --wiredTigerCacheSizeGB=${DB_AUDIT_CACHE_SIZE_GB:-2}
+    ports:
+      - "${DB_AUDIT_PORT:-}:27017"
+    volumes:
+      - db-audit-data:/data/db
+      - db-audit-config:/data/configdb
+
+volumes:
+  queue-data:
+  queue-rt-data:
+  db-audit-data:
+  db-audit-config:
+
+networks:
+  default:
+    name: ${PROJECT_NAME:-tradebot}-network
+    external: true
+

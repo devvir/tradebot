@@ -1,5 +1,7 @@
 # Archivist Module
 #
+# Infra: queue-rt, db-feed
+#
 # Data flow:
 #   Broadcast   → topic:broadcast  (routingKey = table.action.symbol)
 #   archive-in  → topic:codec.in   (injects x-codec-strategy=encode, x-writer-database=tradebot_archive)
@@ -21,8 +23,11 @@
 # writer:
 #   Consumes from writer queue, stores to database specified by x-writer-database header.
 
+# Docker Compose Project (for all history app modules)
+name: history
+
 include:
-  - path: ../../../services/writer/docker/extended.yml
+  - path: ../../../services/writer/docker/compose.yml
   - path: ../../../services/codec/docker/compose.yml
 
 services:
@@ -57,5 +62,5 @@ services:
 
 networks:
   default:
-    name: ${COMPOSE_PROJECT_NAME:-tradebot}-network
+    name: ${PROJECT_NAME:-tradebot}-network
     external: true

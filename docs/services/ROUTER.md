@@ -162,9 +162,10 @@ Rules are validated at startup. Rejected conditions:
 
 ## Configuration
 
+Requires RabbitMQ — see [infra packs](../../modules/infra/README.md).
+
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `RABBITMQ_URL` | Yes | - | RabbitMQ connection string |
 | `ROUTER_RULES` | Yes | - | Routing rules (see syntax above) |
 
 ## Health Monitoring

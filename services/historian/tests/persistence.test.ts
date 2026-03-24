@@ -6,7 +6,7 @@ import { PAGE_SIZE } from '../src/utils/tables.js';
 import type { TableConfig } from '../src/types.js';
 import type { HistoryState } from '../src/persistence/index.js';
 
-const mongoUrl = process.env.MONGODB_URL!;
+const mongoUrl = process.env.DB_URL!;
 
 // ── Test fixtures ──────────────────────────────────────────────────────────────
 

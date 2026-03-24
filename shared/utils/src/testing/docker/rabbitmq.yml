@@ -1,0 +1,26 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+
+    environment:
+      RABBITMQ_DEFAULT_USER: ${QUEUE_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${QUEUE_PASS:-guest}
+
+    ports:
+      - "${RABBITMQ_AMQP_PORT:-}:5672"
+      - "${RABBITMQ_MGMT_PORT:-}:15672"
+
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+      start_period: 10s
+
+    restart: "no"
+
+volumes:
+  rabbitmq_data:

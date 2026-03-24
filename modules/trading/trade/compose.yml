@@ -1,14 +1,17 @@
 # Trade Module
-# Includes: bouncer (auth), executor service (fetcher)
+#
+# Infra: bouncer
 #
 # The executor service receives orders from clients and posts them to BitMEX via authenticated
 # websocket connections (keeps a connection pool for active clients).
 
+# Docker Compose Project (for all trading app modules)
+name: trade
+
 include:
-  - path: ../../../services/bouncer/docker/compose.yml
   - path: ../../../services/executor/docker/compose.yml
 
 networks:
   default:
-    name: ${COMPOSE_PROJECT_NAME:-tradebot}-network
+    name: ${PROJECT_NAME:-tradebot}-network
     external: true

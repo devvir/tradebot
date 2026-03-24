@@ -12,9 +12,9 @@ export interface RabbitConnection {
 }
 
 export async function connectRabbit(): Promise<RabbitConnection> {
-  const user = getEnv('RABBITMQ_USER') || 'guest';
-  const pass = getEnv('RABBITMQ_PASS') || 'guest';
-  let url = getEnv('RABBITMQ_URL') || 'amqp://guest:guest@localhost:5672';
+  const user = getEnv('QUEUE_USER') || 'guest';
+  const pass = getEnv('QUEUE_PASS') || 'guest';
+  let url = getEnv('QUEUE_URL') || 'amqp://guest:guest@localhost:5672';
   let mgmtUrl = 'http://localhost:15672/api';
 
   const discovered = await discoverService(

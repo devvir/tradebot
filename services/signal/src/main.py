@@ -25,7 +25,7 @@ async def main() -> None:
     market = MarketState()
 
     # 3. MQ broker
-    broker = MQBroker(config.rabbitmq_url)
+    broker = MQBroker(config.queue_url)
     await broker.connect()
 
     # 4. REST client (stateless — no persistent connection)
@@ -59,7 +59,7 @@ async def main() -> None:
 
     # 6. Binding watcher
     watcher = BindingWatcher(
-        url=      config.rabbitmq_url,
+        url=      config.queue_url,
         on_event= registry.on_binding,
     )
 

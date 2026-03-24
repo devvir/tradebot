@@ -10,10 +10,10 @@ Duplicate key errors are silently ACKed and trigger a partition slot rotation (s
 
 ## Configuration
 
+Requires RabbitMQ and MongoDB — see [infra packs](../../modules/infra/README.md).
+
 | Variable | Default | Description |
 |---|---|---|
-| `RABBITMQ_URL` | `amqp://guest:guest@rabbitmq:5672` | RabbitMQ connection string |
-| `MONGODB_URL` | `mongodb://root:root@mongodb:27017?authSource=admin` | MongoDB connection string |
 | `WRITER_PREFETCH` | `500` | Max unacked messages per consumer |
 | `WRITER_FLUSH_INTERVAL_MS` | `50` | Max ms to hold a partial batch |
 | `WRITER_REPLICAS` | `1` | Number of writer container instances |

@@ -14,8 +14,8 @@ export const loadConfig = (): Config => {
 
   const config: Config = {
     workerUuid: randomUUID(),
-    rabbitmqUrl: sanitizeUrl(process.env.RABBITMQ_URL || ''),
-    mongodbUrl: sanitizeUrl(process.env.MONGODB_URL || ''),
+    rabbitmqUrl: sanitizeUrl(process.env.QUEUE_URL || ''),
+    mongodbUrl: sanitizeUrl(process.env.DB_URL || ''),
     database: process.env.READER_DATABASE || '',
     collections: collectionsEnv.split(',').map((c) => c.trim()).filter(Boolean),
     pollIntervalMs: parseInt(process.env.READER_POLL_INTERVAL_MS || '0'),
@@ -34,9 +34,9 @@ export const loadConfig = (): Config => {
 };
 
 const validateConfig = (config: Config): void => {
-  if (! config.mongodbUrl) throw new Error('MONGODB_URL is required');
+  if (! config.mongodbUrl) throw new Error('DB_URL is required');
   if (! config.database) throw new Error('READER_DATABASE is required');
-  if (! config.rabbitmqUrl) throw new Error('RABBITMQ_URL is required');
+  if (! config.rabbitmqUrl) throw new Error('QUEUE_URL is required');
   if (config.pollIntervalMs < 100) throw new Error('READER_POLL_INTERVAL_MS must be at least 100ms');
 };
 

@@ -99,9 +99,10 @@ The queue name `snapshots` is provided via the `service.declare({ ... })` declar
 
 ## Configuration
 
+Requires RabbitMQ — see [infra packs](../../modules/infra/README.md).
+
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `RABBITMQ_URL` | yes | — | RabbitMQ connection string (e.g., `amqp://guest:guest@localhost:5672`) |
 | `SNAPSHOTS_HTTP_PORT` | no | <empty> | HTTP server host port |
 | `SNAPSHOTS_HEALTH_PORT` | no | <empty> | Health check server host port |
 
@@ -117,7 +118,7 @@ No persistence layer (Redis or database) — snapshots exist only in RAM for the
 ## Dependencies
 
 ### External Service
-- **RabbitMQ** — For consuming delta messages from the `snapshots` queue
+- **RabbitMQ** — For consuming delta messages from the `snapshots` queue. See [infra packs](../../modules/infra/README.md).
 
 ### NPM Packages
 - `@devvir/service-kit` — Service lifecycle and RabbitMQ broker

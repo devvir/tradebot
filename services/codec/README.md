@@ -22,7 +22,8 @@ pnpm test      # Run tests
 
 ### Environment Variables
 
-- `RABBITMQ_URL` - Connection string to RabbitMQ
+Requires RabbitMQ — see [infra packs](../../modules/infra/README.md).
+
 - `CODEC_PREFETCH` - RabbitMQ prefetch window (default: 1000)
 - `CODEC_BROTLI_QUALITY` - Brotli compression quality for encode mode (default: 1, where 0=fastest, 11=best)
 

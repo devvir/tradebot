@@ -9,7 +9,7 @@ services:
         SERVICE_NAME: ws
 
     environment:
-      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
+      QUEUE_URL: ${QUEUE_URL}
       WS_PORT: ${WS_PORT:-8180}
 
       LOG_LEVEL: ${LOG_LEVEL:-info}

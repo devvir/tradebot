@@ -9,7 +9,7 @@ const HEADER_MOD_RE = /^header:(?<name>[^=]*)=(?<val>.*)$/;
 
 export const loadConfig = (): Config => {
   const config: Config = {
-    rabbitmqUrl: sanitizeUrl(process.env.RABBITMQ_URL || ''),
+    rabbitmqUrl: sanitizeUrl(process.env.QUEUE_URL || ''),
     routes: splitRules(process.env.ROUTER_RULES || '').map((p) => ({
       source: toSource(p.source),
       destination: toDestination(p.destination),
@@ -29,7 +29,7 @@ export const loadConfig = (): Config => {
 };
 
 const validateConfig = (config: Config): void => {
-  if (! config.rabbitmqUrl) throw new Error('RABBITMQ_URL is required');
+  if (! config.rabbitmqUrl) throw new Error('QUEUE_URL is required');
   if (! config.routes.length) throw new Error('Router rules are required');
   if (config.maxReady > 0 && config.watchQueues.length === 0) throw new Error('ROUTER_WATCH_QUEUES is required when ROUTER_MAX_READY is set');
 };

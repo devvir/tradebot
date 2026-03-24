@@ -1,0 +1,39 @@
+# MongoDB base service definition.
+# Extend this in infra pack composes to create named instances (db-feed, db-store, etc.)
+#
+# Cache Size:
+# By default, MongoDB's WiredTiger allocates 50% of available system memory as cache.
+# This is automatically capped here to prevent OOM kills on memory-constrained systems.
+# For ~4GB of data, 2GB cache is optimal. Adjust DB_CACHE_SIZE_GB if needed.
+
+services:
+  mongodb:
+    image: mongo:7
+    command: mongod --quiet --setParameter logLevel=0 --wiredTigerCacheSizeGB=${DB_CACHE_SIZE_GB:-2}
+
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${DB_USER:-root}
+      MONGO_INITDB_ROOT_PASSWORD: ${DB_PASS:-root}
+      TZ: ${TZ:-UTC}
+
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+    volumes:
+      - mongodb-data:/data/db
+      - mongodb-config:/data/configdb
+
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+
+    restart: unless-stopped
+
+volumes:
+  mongodb-data:
+  mongodb-config:

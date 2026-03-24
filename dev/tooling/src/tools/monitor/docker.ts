@@ -22,10 +22,14 @@ function memUsage(stats: any): string {
     const cache = stats.memory_stats.stats?.cache ?? 0;
     const used = stats.memory_stats.usage - cache;
     const limit = stats.memory_stats.limit;
+
+    if (! Number.isFinite(used) || ! Number.isFinite(limit)) return '- / -';
+
     const pct = limit > 0 ? ((used / limit) * 100).toFixed(1) : '?';
+
     return `${fmtBytes(used)} / ${fmtBytes(limit)} (${pct}%)`;
   } catch {
-    return 'N/A';
+    return '- / -';
   }
 }
 

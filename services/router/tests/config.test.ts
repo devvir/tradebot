@@ -4,13 +4,13 @@ import { buildTopology } from '../src/topology';
 
 describe('Router Config Parser', () => {
   afterEach(() => {
-    delete process.env.RABBITMQ_URL;
+    delete process.env.QUEUE_URL;
     delete process.env.ROUTER_RULES;
   });
 
   describe('Simple rules — bare queues (default exchange)', () => {
     it('parses single source > single destination', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast > writer';
 
       const config = loadConfig();
@@ -21,7 +21,7 @@ describe('Router Config Parser', () => {
     });
 
     it('declares standalone queues in topology', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast > writer';
 
       const config = loadConfig();
@@ -37,7 +37,7 @@ describe('Router Config Parser', () => {
 
   describe('Queue bindings to explicit exchanges', () => {
     it('parses queue with explicit exchange', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast > writer@fanout:output';
 
       const config = loadConfig();
@@ -49,7 +49,7 @@ describe('Router Config Parser', () => {
     });
 
     it('parses queue binding without specifying type', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast > output@archive';
 
       const config = loadConfig();
@@ -61,7 +61,7 @@ describe('Router Config Parser', () => {
     });
 
     it('parses source queue binding to explicit exchange', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'inbound@fanout:events > writer';
 
       const config = loadConfig();
@@ -73,7 +73,7 @@ describe('Router Config Parser', () => {
     });
 
     it('parses source binding with type', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'inbound@topic:events > writer';
 
       const config = loadConfig();
@@ -85,7 +85,7 @@ describe('Router Config Parser', () => {
     });
 
     it('declares exchange topology with queue bindings', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'inbound@fanout:events > writer';
 
       const config = loadConfig();
@@ -99,7 +99,7 @@ describe('Router Config Parser', () => {
     });
 
     it('accepts default as exchange type', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast@default:events > writer@default:output';
 
       const config = loadConfig();
@@ -109,7 +109,7 @@ describe('Router Config Parser', () => {
     });
 
     it('maps default exchange type to direct in topology', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast@default:events > writer';
 
       const config = loadConfig();
@@ -120,7 +120,7 @@ describe('Router Config Parser', () => {
 
   describe('Multiple destinations (fan-out)', () => {
     it('normalizes to flat routes (one per source×destination)', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast > writer & archive & replay';
 
       const config = loadConfig();
@@ -132,7 +132,7 @@ describe('Router Config Parser', () => {
     });
 
     it('parses destinations with different exchange types', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast > w@fanout:writer & a@topic:audit & r@direct:replay';
 
       const config = loadConfig();
@@ -145,7 +145,7 @@ describe('Router Config Parser', () => {
 
   describe('Multiple sources', () => {
     it('normalizes to flat routes', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast & reader > writer';
 
       const config = loadConfig();
@@ -156,7 +156,7 @@ describe('Router Config Parser', () => {
     });
 
     it('cross-products multiple sources and destinations', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast & reader > writer & archive';
 
       const config = loadConfig();
@@ -171,7 +171,7 @@ describe('Router Config Parser', () => {
     });
 
     it('parses multiple sources with mixed bindings', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'input@fanout:events & reader > writer';
 
       const config = loadConfig();
@@ -186,7 +186,7 @@ describe('Router Config Parser', () => {
 
   describe('Complex rules', () => {
     it('parses with all options combined', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'in@topic:events & reader > w@fanout:writer & audit@topic:audit & replay';
 
       const config = loadConfig();
@@ -201,7 +201,7 @@ describe('Router Config Parser', () => {
 
   describe('Multi-rule configurations', () => {
     it('parses pipe-separated rules on single line', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = '| broadcast > writer | reader > archive';
 
       const config = loadConfig();
@@ -212,7 +212,7 @@ describe('Router Config Parser', () => {
     });
 
     it('parses multi-line YAML literal block format', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = `
         | codec.broadcast@fanout:broadcast > writer
         | codec.reader@fanout:reader > writer
@@ -226,7 +226,7 @@ describe('Router Config Parser', () => {
     });
 
     it('parses newline-separated rules (treated as single rule set)', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = `| broadcast > writer
 | reader > archive`;
 
@@ -238,7 +238,7 @@ describe('Router Config Parser', () => {
     });
 
     it('parses complex multi-rule with types and exchanges', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = `
         | in@topic:events > notify & audit@topic:audit
         | broadcast & reader > output@fanout:writer & replay
@@ -253,7 +253,7 @@ describe('Router Config Parser', () => {
 
   describe('Real-world module examples', () => {
     it('parses Collector module', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast > codec.broadcast & writer';
 
       const config = loadConfig();
@@ -264,7 +264,7 @@ describe('Router Config Parser', () => {
     });
 
     it('parses Archivist module with explicit exchanges', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast > codec.broadcast@fanout:broadcast & writer & archive@fanout:archive';
 
       const config = loadConfig();
@@ -276,7 +276,7 @@ describe('Router Config Parser', () => {
     });
 
     it('parses complex multi-module orchestration', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = `
         | broadcast > codec.broadcast & writer & backup & audit
         | reader > codec.reader & writer & replay
@@ -291,7 +291,7 @@ describe('Router Config Parser', () => {
 
   describe('Exchange-only destinations', () => {
     it('parses exchange-only destination (fanout broadcast)', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast@topic:broadcast > @fanout:broadcast';
 
       const config = loadConfig();
@@ -302,7 +302,7 @@ describe('Router Config Parser', () => {
     });
 
     it('declares exchange-only destination in topology (no queues bound)', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast@topic:source > @fanout:output';
 
       const config = loadConfig();
@@ -314,7 +314,7 @@ describe('Router Config Parser', () => {
     });
 
     it('parses exchange-only destination with routing key', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast@topic:broadcast > @topic:output(key:message:collect)';
 
       const config = loadConfig();
@@ -326,7 +326,7 @@ describe('Router Config Parser', () => {
     });
 
     it('parses mixed exchange-only and queue destinations', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast > @fanout:broadcast & writer';
 
       const config = loadConfig();
@@ -339,7 +339,7 @@ describe('Router Config Parser', () => {
     });
 
     it('rejects exchange-only source (must have queue)', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = '@fanout:events > writer';
 
       expect(() => loadConfig()).toThrow('Source must have a queue name');
@@ -348,21 +348,21 @@ describe('Router Config Parser', () => {
 
   describe('Malformed exchange detection', () => {
     it('rejects bare destination that looks like exchange spec (has colon, no @)', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast > fanout:broadcast';
 
       expect(() => loadConfig()).toThrow('looks like an exchange spec but is missing "@"');
     });
 
     it('rejects bare source that looks like exchange spec (has colon, no @)', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'topic:broadcast > writer';
 
       expect(() => loadConfig()).toThrow('looks like an exchange spec but is missing "@"');
     });
 
     it('rejects invalid exchange type', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast > writer@invalid:exchange';
 
       expect(() => loadConfig()).toThrow('Invalid exchange type');
@@ -371,42 +371,42 @@ describe('Router Config Parser', () => {
 
   describe('Validation and error handling', () => {
     it('rejects rules without > separator', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast writer';
 
       expect(() => loadConfig()).toThrow("Rule missing '>'");
     });
 
     it('rejects rules with multiple > separators', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast > writer > archive';
 
       expect(() => loadConfig()).toThrow('must have exactly one');
     });
 
     it('rejects rules with no sources', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = ' > writer';
 
       expect(() => loadConfig()).toThrow('No sources');
     });
 
     it('rejects rules with no destinations', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast > ';
 
       expect(() => loadConfig()).toThrow('No destinations');
     });
 
-    it('rejects missing RABBITMQ_URL env var', () => {
-      delete process.env.RABBITMQ_URL;
+    it('rejects missing QUEUE_URL env var', () => {
+      delete process.env.QUEUE_URL;
       process.env.ROUTER_RULES = 'broadcast > writer';
 
-      expect(() => loadConfig()).toThrow('RABBITMQ_URL is required');
+      expect(() => loadConfig()).toThrow('QUEUE_URL is required');
     });
 
     it('rejects missing ROUTER_RULES env var', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       delete process.env.ROUTER_RULES;
 
       expect(() => loadConfig()).toThrow('Router rules are required');
@@ -415,7 +415,7 @@ describe('Router Config Parser', () => {
 
   describe('Edge cases and whitespace handling', () => {
     it('handles extra whitespace around operators', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast   >   writer & archive';
 
       const config = loadConfig();
@@ -427,7 +427,7 @@ describe('Router Config Parser', () => {
     });
 
     it('handles leading and trailing whitespace', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = '  broadcast > writer  ';
 
       const config = loadConfig();
@@ -437,7 +437,7 @@ describe('Router Config Parser', () => {
     });
 
     it('ignores empty lines in multi-rule format', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = `
         | broadcast > writer
 
@@ -450,7 +450,7 @@ describe('Router Config Parser', () => {
     });
 
     it('handles queue names with dots and numbers', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast > queue.123 & router.456';
 
       const config = loadConfig();
@@ -460,7 +460,7 @@ describe('Router Config Parser', () => {
     });
 
     it('handles exchange names with dots and hyphens', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast@fanout:broadcast.v1 > writer@fanout:writer-2 & q@fanout:archive.main';
 
       const config = loadConfig();
@@ -474,7 +474,7 @@ describe('Router Config Parser', () => {
   describe('Key syntax — binding keys and routing key transforms', () => {
     describe('Source binding keys', () => {
       it('parses source with explicit binding key', () => {
-        process.env.RABBITMQ_URL = 'amqp://localhost';
+        process.env.QUEUE_URL = 'amqp://localhost';
         process.env.ROUTER_RULES = 'collect@topic:broadcast(key:trade.*) > writer';
 
         const config = loadConfig();
@@ -487,7 +487,7 @@ describe('Router Config Parser', () => {
       });
 
       it('parses source with catch-all binding key', () => {
-        process.env.RABBITMQ_URL = 'amqp://localhost';
+        process.env.QUEUE_URL = 'amqp://localhost';
         process.env.ROUTER_RULES = 'collect@topic:broadcast(key:#) > writer';
 
         const config = loadConfig();
@@ -496,7 +496,7 @@ describe('Router Config Parser', () => {
       });
 
       it('source without key on topic exchange defaults bindingKey to undefined (topology defaults to #)', () => {
-        process.env.RABBITMQ_URL = 'amqp://localhost';
+        process.env.QUEUE_URL = 'amqp://localhost';
         process.env.ROUTER_RULES = 'collect@topic:broadcast > writer';
 
         const config = loadConfig();
@@ -505,14 +505,14 @@ describe('Router Config Parser', () => {
       });
 
       it('rejects (key:match:replace) on source', () => {
-        process.env.RABBITMQ_URL = 'amqp://localhost';
+        process.env.QUEUE_URL = 'amqp://localhost';
         process.env.ROUTER_RULES = 'collect@topic:broadcast(key:message:collect) > writer';
 
         expect(() => loadConfig()).toThrow('only valid on destinations');
       });
 
       it('uses # as default binding key for topic exchanges in topology', () => {
-        process.env.RABBITMQ_URL = 'amqp://localhost';
+        process.env.QUEUE_URL = 'amqp://localhost';
         process.env.ROUTER_RULES = 'collect@topic:broadcast > writer';
 
         const config = loadConfig();
@@ -524,7 +524,7 @@ describe('Router Config Parser', () => {
       });
 
       it('uses explicit binding key in topology', () => {
-        process.env.RABBITMQ_URL = 'amqp://localhost';
+        process.env.QUEUE_URL = 'amqp://localhost';
         process.env.ROUTER_RULES = 'collect@topic:broadcast(key:trade.*) > writer';
 
         const config = loadConfig();
@@ -538,7 +538,7 @@ describe('Router Config Parser', () => {
 
     describe('Destination static routing key', () => {
       it('parses destination with static routing key', () => {
-        process.env.RABBITMQ_URL = 'amqp://localhost';
+        process.env.QUEUE_URL = 'amqp://localhost';
         process.env.ROUTER_RULES = 'broadcast > writer@topic:writer(key:collect)';
 
         const config = loadConfig();
@@ -551,7 +551,7 @@ describe('Router Config Parser', () => {
       });
 
       it('parses destination with static routing key on bare queue', () => {
-        process.env.RABBITMQ_URL = 'amqp://localhost';
+        process.env.QUEUE_URL = 'amqp://localhost';
         process.env.ROUTER_RULES = 'broadcast > writer(key:collect.trade)';
 
         const config = loadConfig();
@@ -565,7 +565,7 @@ describe('Router Config Parser', () => {
 
     describe('Destination routing key replacement', () => {
       it('parses destination with key replacement', () => {
-        process.env.RABBITMQ_URL = 'amqp://localhost';
+        process.env.QUEUE_URL = 'amqp://localhost';
         process.env.ROUTER_RULES = 'collect@topic:broadcast > collect@topic:writer(key:message:collect)';
 
         const config = loadConfig();
@@ -578,7 +578,7 @@ describe('Router Config Parser', () => {
       });
 
       it('allows exchange-only destination with key replacement', () => {
-        process.env.RABBITMQ_URL = 'amqp://localhost';
+        process.env.QUEUE_URL = 'amqp://localhost';
         process.env.ROUTER_RULES = 'collect@topic:broadcast > @topic:writer(key:message:collect)';
 
         const config = loadConfig();
@@ -590,7 +590,7 @@ describe('Router Config Parser', () => {
       });
 
       it('allows empty replace string in key replacement (strips prefix)', () => {
-        process.env.RABBITMQ_URL = 'amqp://localhost';
+        process.env.QUEUE_URL = 'amqp://localhost';
         process.env.ROUTER_RULES = 'broadcast > writer@topic:writer(key:prefix:)';
 
         const config = loadConfig();
@@ -604,7 +604,7 @@ describe('Router Config Parser', () => {
 
     describe('Key syntax with fan-out', () => {
       it('parses multiple destinations with different key configs', () => {
-        process.env.RABBITMQ_URL = 'amqp://localhost';
+        process.env.QUEUE_URL = 'amqp://localhost';
         process.env.ROUTER_RULES = 'collect@topic:broadcast > archive@topic:writer(key:message:archive) & collect@topic:writer(key:message:collect)';
 
         const config = loadConfig();
@@ -615,7 +615,7 @@ describe('Router Config Parser', () => {
       });
 
       it('mixes destinations with and without key config', () => {
-        process.env.RABBITMQ_URL = 'amqp://localhost';
+        process.env.QUEUE_URL = 'amqp://localhost';
         process.env.ROUTER_RULES = 'broadcast > writer@topic:writer(key:message:collect) & backup';
 
         const config = loadConfig();
@@ -627,21 +627,21 @@ describe('Router Config Parser', () => {
 
     describe('Key syntax validation', () => {
       it('rejects unclosed key parenthesis', () => {
-        process.env.RABBITMQ_URL = 'amqp://localhost';
+        process.env.QUEUE_URL = 'amqp://localhost';
         process.env.ROUTER_RULES = 'broadcast > writer@topic:writer(key:collect';
 
         expect(() => loadConfig()).toThrow();
       });
 
       it('rejects empty key value', () => {
-        process.env.RABBITMQ_URL = 'amqp://localhost';
+        process.env.QUEUE_URL = 'amqp://localhost';
         process.env.ROUTER_RULES = 'broadcast > writer@topic:writer(key:)';
 
         expect(() => loadConfig()).toThrow();
       });
 
       it('rejects empty match in key replacement', () => {
-        process.env.RABBITMQ_URL = 'amqp://localhost';
+        process.env.QUEUE_URL = 'amqp://localhost';
         process.env.ROUTER_RULES = 'broadcast > writer@topic:writer(key::replace)';
 
         expect(() => loadConfig()).toThrow();
@@ -651,7 +651,7 @@ describe('Router Config Parser', () => {
 
   describe('Header modifier syntax', () => {
     it('parses header:name=value on destination', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast > writer(header:x-writer-database=tradebot_collect)';
 
       const config = loadConfig();
@@ -663,7 +663,7 @@ describe('Router Config Parser', () => {
     });
 
     it('parses key: and header: combined', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast > @topic:writer(key:message:collect,header:x-writer-database=tradebot_collect)';
 
       const config = loadConfig();
@@ -676,7 +676,7 @@ describe('Router Config Parser', () => {
     });
 
     it('parses multiple header: entries', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast > writer(header:x-db=mydb,header:x-mode=fast)';
 
       const config = loadConfig();
@@ -685,7 +685,7 @@ describe('Router Config Parser', () => {
     });
 
     it('allows empty header value', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast > writer(header:x-flag=)';
 
       const config = loadConfig();
@@ -694,28 +694,28 @@ describe('Router Config Parser', () => {
     });
 
     it('rejects header: without = separator', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast > writer(header:x-writer-database)';
 
       expect(() => loadConfig()).toThrow('header modifier requires "=" separator');
     });
 
     it('rejects empty header name', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast > writer(header:=value)';
 
       expect(() => loadConfig()).toThrow('header name cannot be empty');
     });
 
     it('rejects unknown modifier prefix', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast > writer(unknown:value)';
 
       expect(() => loadConfig()).toThrow('Unknown modifier');
     });
 
     it('serialises headers in formatRoute', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast > @topic:writer(key:message:collect,header:x-db=tradebot_collect)';
 
       const config = loadConfig();
@@ -728,7 +728,7 @@ describe('Router Config Parser', () => {
 
   describe('Topology', () => {
     it('merges exchange declarations from sources and destinations', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'collect@topic:broadcast > collect@topic:writer';
 
       const config = loadConfig();
@@ -742,7 +742,7 @@ describe('Router Config Parser', () => {
     });
 
     it('handles mixed standalone and exchange-bound queues', () => {
-      process.env.RABBITMQ_URL = 'amqp://localhost';
+      process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast > @fanout:broadcast & writer';
 
       const config = loadConfig();

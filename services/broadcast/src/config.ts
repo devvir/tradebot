@@ -58,7 +58,7 @@ export const loadConfig = (): Config => {
     realtimeChannels: REALTIME_CHANNELS,
     platformChannels: PLATFORM_CHANNELS,
     queue: {
-      rabbitmqUrl: sanitizeUrl(process.env.RABBITMQ_URL || ''),
+      rabbitmqUrl: sanitizeUrl(process.env.QUEUE_URL || ''),
       messageTtlMs: parseInt(process.env.BROADCAST_MESSAGE_TTL || '0'),
     },
     connection: {
@@ -79,7 +79,7 @@ export const loadConfig = (): Config => {
 
 const validateConfig = (config: Config): void => {
   if (! config.realtimeWsUrl) throw new Error('Failed to determine BitMEX realtime WS URL');
-  if (! config.queue.rabbitmqUrl) throw new Error('RABBITMQ_URL is required');
+  if (! config.queue.rabbitmqUrl) throw new Error('QUEUE_URL is required');
   if (config.queue.messageTtlMs < 100) throw new Error('BROADCAST_MESSAGE_TTL must be at least 100ms');
   if (config.connection.reconnectDelayMs < 100) throw new Error('BROADCAST_RECONNECT_DELAY_MS must be at least 100ms');
   if (config.connection.maxReconnectDelayMs < 1000) throw new Error('BROADCAST_MAX_RECONNECT_DELAY_MS must be at least 1000ms');

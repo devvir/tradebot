@@ -15,8 +15,8 @@ import { discoverBouncerUrl } from '../../src/shared/connections/bouncer';
 import { run } from '../../src/tools/bouncer/index';
 
 const ACCOUNTS = [
-  { name: 'MainBot', exchange: 'bitmex', testnet: false, key: 'abc123xyz789', token: 'secret' },
-  { name: 'TestBot', exchange: 'bitmex', testnet: true, key: 'def456uvw012', token: 'other' },
+  { id: 'MainBot', type: 'live',    apiKey: 'abc123xyz789' },
+  { id: 'TestBot', type: 'testnet', apiKey: 'def456uvw012' },
 ];
 
 describe('bouncer tool', () => {
@@ -53,14 +53,14 @@ describe('bouncer tool', () => {
     await run({ all: true });
     const output = vi.mocked(console.log).mock.calls.map(c => String(c[0])).join('\n');
     expect(output).toContain('abc123xy');
-    expect(output).toContain('••••••••');
+    expect(output).toContain('...');
   });
 
   it('shows JSON for a specific account when --account is set', async () => {
     vi.mocked(axios.get).mockResolvedValue({ data: ACCOUNTS });
     await run({ account: 'MainBot' });
     const output = vi.mocked(console.log).mock.calls.map(c => String(c[0])).join('\n');
-    expect(output).toContain('"name": "MainBot"');
+    expect(output).toContain('"id": "MainBot"');
   });
 
   it('warns when --account name is not found', async () => {

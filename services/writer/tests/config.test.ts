@@ -7,8 +7,8 @@ describe('Writer Config utilities', () => {
   beforeEach(() => {
     process.env = {
       ...originalEnv,
-      RABBITMQ_URL: 'amqp://guest:guest@rabbitmq:5672',
-      MONGODB_URL: 'mongodb://root:root@mongodb:27017/tradebot?authSource=admin',
+      QUEUE_URL: 'amqp://guest:guest@rabbitmq:5672',
+      DB_URL: 'mongodb://root:root@mongodb:27017/tradebot?authSource=admin',
       WRITER_PREFETCH: '100',
       WRITER_FLUSH_INTERVAL_MS: '50',
     };
@@ -20,8 +20,8 @@ describe('Writer Config utilities', () => {
 
   describe('loadConfig', () => {
     it('should load config from environment variables', () => {
-      process.env.RABBITMQ_URL = 'amqp://test:pass@localhost:5672';
-      process.env.MONGODB_URL = 'mongodb://user:pass@localhost:27017/testdb';
+      process.env.QUEUE_URL = 'amqp://test:pass@localhost:5672';
+      process.env.DB_URL = 'mongodb://user:pass@localhost:27017/testdb';
       process.env.WRITER_PREFETCH = '50';
 
       const config = loadConfig();
@@ -41,14 +41,14 @@ describe('Writer Config utilities', () => {
       expect(loadConfig().flushIntervalMs).toBe(100);
     });
 
-    it('should throw when RABBITMQ_URL is missing', () => {
-      delete process.env.RABBITMQ_URL;
-      expect(() => loadConfig()).toThrow('RABBITMQ_URL is required');
+    it('should throw when QUEUE_URL is missing', () => {
+      delete process.env.QUEUE_URL;
+      expect(() => loadConfig()).toThrow('QUEUE_URL is required');
     });
 
-    it('should throw when MONGODB_URL is missing', () => {
-      delete process.env.MONGODB_URL;
-      expect(() => loadConfig()).toThrow('MONGODB_URL is required');
+    it('should throw when DB_URL is missing', () => {
+      delete process.env.DB_URL;
+      expect(() => loadConfig()).toThrow('DB_URL is required');
     });
 
     it('should use default WRITER_PREFETCH of 500 when not set', () => {
@@ -73,14 +73,14 @@ describe('Writer Config utilities', () => {
       expect(() => validateConfig(config)).not.toThrow();
     });
 
-    it('should throw if RABBITMQ_URL is missing', () => {
+    it('should throw if QUEUE_URL is missing', () => {
       config.rabbitmqUrl = '';
-      expect(() => validateConfig(config)).toThrow('RABBITMQ_URL is required');
+      expect(() => validateConfig(config)).toThrow('QUEUE_URL is required');
     });
 
-    it('should throw if MONGODB_URL is missing', () => {
+    it('should throw if DB_URL is missing', () => {
       config.mongodbUrl = '';
-      expect(() => validateConfig(config)).toThrow('MONGODB_URL is required');
+      expect(() => validateConfig(config)).toThrow('DB_URL is required');
     });
 
     it('should throw if prefetch is lower than 50', () => {

@@ -177,7 +177,7 @@ In interactive mode, you can enter:
 
 ### Configuration
 
-Connects to MongoDB using `MONGODB_URL` environment variable (default: `mongodb://localhost:27017/tradebot`)
+Connects to MongoDB using `DB_URL` environment variable (default: `mongodb://localhost:27017/tradebot`)
 
 ---
 
@@ -243,7 +243,7 @@ Messages are displayed as:
 
 ### Configuration
 
-- **RabbitMQ URL**: `RABBITMQ_URL` environment variable (default: `amqp://guest:guest@localhost:5672`)
+- **RabbitMQ URL**: `QUEUE_URL` environment variable (default: `amqp://guest:guest@localhost:5672`)
 - **Management API**: `RABBITMQ_MGMT_URL` (default: `http://localhost:15672/api`)
 
 ---
@@ -353,7 +353,7 @@ Common message types (service-specific):
 
 Uses RabbitMQ with:
 - **Exchange**: `broadcast` (fanout type)
-- **URL**: `RABBITMQ_URL` environment variable
+- **URL**: `QUEUE_URL` environment variable
 
 ---
 
@@ -421,7 +421,7 @@ After listing signals, you'll see:
 ### Configuration
 
 Connects to MongoDB collection `signals`:
-- **URL**: `MONGODB_URL` environment variable
+- **URL**: `DB_URL` environment variable
 - **Collection**: `signals`
 - **Default DB**: `tradebot`
 
@@ -490,8 +490,8 @@ RabbitMQ instances are **auto-discovered** from running Docker containers — no
 ### Credentials
 
 RabbitMQ management API credentials are read from:
-- `RABBITMQ_USER` (default: `guest`)
-- `RABBITMQ_PASS` (default: `guest`)
+- `QUEUE_USER` (default: `guest`)
+- `QUEUE_PASS` (default: `guest`)
 
 Override per-project with `-e` if credentials differ.
 
@@ -524,8 +524,8 @@ The tooling package loads environment variables in this order (later overrides e
 | Variable | Example | Tools | Default |
 |----------|---------|-------|---------|
 | `BOUNCER_URL` | `http://localhost:3010` | ws, bouncer | Required |
-| `MONGODB_URL` | `mongodb://localhost:27017/tradebot` | db, signal | `mongodb://localhost:27017/tradebot` |
-| `RABBITMQ_URL` | `amqp://guest:guest@localhost:5672` | rabbit, broadcast | `amqp://guest:guest@localhost:5672` |
+| `DB_URL` | `mongodb://localhost:27017/tradebot` | db, signal | `mongodb://localhost:27017/tradebot` |
+| `QUEUE_URL` | `amqp://guest:guest@localhost:5672` | rabbit, broadcast | `amqp://guest:guest@localhost:5672` |
 | `RABBITMQ_MGMT_URL` | `http://localhost:15672/api` | rabbit | `http://localhost:15672/api` |
 
 ---
@@ -661,14 +661,14 @@ Or use the `-e` flag:
 
 ### MongoDB connection times out
 
-Check MongoDB is running and `MONGODB_URL` is correct:
+Check MongoDB is running and `DB_URL` is correct:
 
 ```bash
 # Test connection
 ./tools db -l
 
 # Check env var
-echo $MONGODB_URL
+echo $DB_URL
 ```
 
 ### RabbitMQ queue not found

@@ -9,6 +9,8 @@ services:
       args:
         SERVICE_NAME: bouncer
 
+    container_name: bouncer
+
     environment:
       BOUNCER_TOKEN: ${BOUNCER_TOKEN}
 
@@ -17,7 +19,7 @@ services:
       TZ: ${TZ:-UTC}
 
     ports:
-      - ${BOUNCER_HTTP_PORT:-7113}:80
+      - ${BOUNCER_HTTP_PORT:-}:80
       - ${BOUNCER_HEALTH_PORT:-}:3000
 
     user: "0:0"
@@ -35,7 +37,7 @@ services:
       retries: 5
       start_period: 15s
 
-    restart: ${BOUNCER_RESTART_POLICY:-unless-stopped}
+    restart: unless-stopped
 
 volumes:
   bouncer_data:

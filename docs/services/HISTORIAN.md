@@ -250,9 +250,10 @@ Historian Service
 
 Loaded from environment variables, validated on startup.
 
+Requires MongoDB — see [infra packs](../../modules/infra/README.md).
+
 | Env var                         | Required | Default   | Description                                       |
 |---------------------------------|----------|-----------|---------------------------------------------------|
-| `MONGODB_URL`                   | yes      | —         | MongoDB connection URL                            |
 | `HISTORIAN_DATABASE`              | yes      | —         | MongoDB database name                             |
 | `BITMEX_TESTNET`                | no       | `false`   | Use testnet API if `1` / `on` / `true`            |
 

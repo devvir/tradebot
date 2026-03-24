@@ -2,7 +2,7 @@ import Dockerode from 'dockerode';
 import { fetchContainerRows } from './docker';
 import { discoverRabbitInstances, fetchQueueRows } from './rabbitmq';
 import { buildOutput } from './render';
-import type { ContainerRow, QueueRow } from './types';
+import type { ContainerRow, QueueRow, RabbitInstance } from './types';
 
 export async function run(options: { interval?: number } = {}): Promise<void> {
   const interval = options.interval ?? 3;
@@ -25,9 +25,15 @@ export async function run(options: { interval?: number } = {}): Promise<void> {
     const rabbitErrors = new Map<string, string>();
     let errorMsg: string | null = null;
 
+    const instancesByName = new Map<string, RabbitInstance>();
+
     try {
       containerRows = await fetchContainerRows(docker);
       const instances = await discoverRabbitInstances(docker);
+
+      for (const inst of instances) {
+        instancesByName.set(inst.name, inst);
+      }
 
       await Promise.all(
         instances.map(async (inst) => {
@@ -42,7 +48,7 @@ export async function run(options: { interval?: number } = {}): Promise<void> {
       errorMsg = (err as Error).message;
     }
 
-    const output = buildOutput(containerRows, queuesByInstance, rabbitErrors, interval, new Date(), errorMsg);
+    const output = buildOutput(containerRows, queuesByInstance, rabbitErrors, instancesByName, interval, new Date(), errorMsg);
 
     process.stdout.write(firstRun ? '\x1b[2J\x1b[H' : '\x1b[H\x1b[J');
     firstRun = false;

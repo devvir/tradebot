@@ -9,10 +9,11 @@ services:
       SERVICE_NAME: signal
       WS_URL: ${WS_URL}
       REST_URL: ${REST_URL}
-      RABBITMQ_URL: ${RABBITMQ_URL}
+      QUEUE_URL: ${QUEUE_URL}
     volumes:
       - ../../services/signal:/live/services/signal
       - ../../packages:/live/packages
     ports:
       - "3005:3000"
-    restart: unless-stopped
+
+    restart: ${SIGNAL_RESTART_POLICY:-unless-stopped}

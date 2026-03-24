@@ -20,9 +20,9 @@ pnpm test      # Run tests
 
 ## Configuration
 
+Requires RabbitMQ and MongoDB — see [infra packs](../../modules/infra/README.md).
+
 **Required:**
-- `RABBITMQ_URL` - RabbitMQ connection string
-- `MONGODB_URL` - MongoDB connection string
 - `READER_DATABASE` - Database name to read from
 - `READER_POLL_INTERVAL_MS` - Time between collection polls (milliseconds)
 

@@ -1,15 +1,17 @@
 # Archeaologist Module
-# Includes: mongodb (storage), historian service (fetcher)
+# Includes: historian service (fetcher)
 #
-# The historian service fetches historical paginated data from BitMEX REST API
-# and stores it in MongoDB. Runs on a polling schedule when no real-time data
-# is being collected.
+# Infra: db-store, bouncer
+#
+# Fetches historical paginated data from BitMEX REST API and persists it.
+
+# Docker Compose Project (for all history app modules)
+name: history
 
 include:
-  - path: ../../../services/mongodb/docker/compose.yml
   - path: ../../../services/historian/docker/compose.yml
 
 networks:
   default:
-    name: ${COMPOSE_PROJECT_NAME:-tradebot}-network
+    name: ${PROJECT_NAME:-tradebot}-network
     external: true

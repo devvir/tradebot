@@ -51,8 +51,8 @@ describe('Reader Service', () => {
 
   describe('Config Validation', () => {
     const valid = {
-      RABBITMQ_URL: 'amqp://localhost:5672',
-      MONGODB_URL: 'mongodb://localhost:27017/test',
+      QUEUE_URL: 'amqp://localhost:5672',
+      DB_URL: 'mongodb://localhost:27017/test',
       READER_DATABASE: 'test_reader',
       READER_POLL_INTERVAL_MS: '3000',
     };
@@ -70,9 +70,9 @@ describe('Reader Service', () => {
       return require('../dist/src/config.js').loadConfig;
     };
 
-    it('rejects missing MONGODB_URL', () => {
-      delete process.env.MONGODB_URL;
-      expect(() => load()()).toThrow('MONGODB_URL is required');
+    it('rejects missing DB_URL', () => {
+      delete process.env.DB_URL;
+      expect(() => load()()).toThrow('DB_URL is required');
     });
 
     it('rejects missing READER_DATABASE', () => {
@@ -80,9 +80,9 @@ describe('Reader Service', () => {
       expect(() => load()()).toThrow('READER_DATABASE is required');
     });
 
-    it('rejects missing RABBITMQ_URL', () => {
-      delete process.env.RABBITMQ_URL;
-      expect(() => load()()).toThrow('RABBITMQ_URL is required');
+    it('rejects missing QUEUE_URL', () => {
+      delete process.env.QUEUE_URL;
+      expect(() => load()()).toThrow('QUEUE_URL is required');
     });
 
     it('rejects READER_POLL_INTERVAL_MS below 100ms', () => {
@@ -100,9 +100,9 @@ describe('Reader Service', () => {
 
   describe('Configuration Loading', () => {
     const valid = {
-      MONGODB_URL: 'mongodb://localhost:27017/test',
+      DB_URL: 'mongodb://localhost:27017/test',
       READER_DATABASE: 'test_reader',
-      RABBITMQ_URL: 'amqp://localhost:5672',
+      QUEUE_URL: 'amqp://localhost:5672',
       READER_POLL_INTERVAL_MS: '3000',
     };
 

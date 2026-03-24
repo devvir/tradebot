@@ -11,6 +11,7 @@ services:
     environment:
       BOUNCER_URL: ${BOUNCER_URL:-}
       BOUNCER_TOKEN: ${BOUNCER_TOKEN:-}
+      EXECUTOR_REST_URL: ${EXECUTOR_REST_URL:-}
 
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV: ${APP_ENV:-prod}

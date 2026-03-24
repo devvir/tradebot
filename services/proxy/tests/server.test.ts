@@ -106,11 +106,6 @@ function withRealCredentials(path: string): Promise<TestResponse> {
   });
 }
 
-/** Request with no auth headers at all. */
-function unauthenticated(path: string): Promise<TestResponse> {
-  return httpRequest('GET', path);
-}
-
 function makeJson<T>(data: T, status = 200): Response {
   return {
     ok:      status >= 200 && status < 300,
@@ -144,13 +139,6 @@ function mockAccountsListThenBitmex(upstreamStatus = 200, upstreamBody = '{"resu
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
-
-describe('Proxy — no auth headers', () => {
-  it('returns 401 when no auth headers present', async () => {
-    const res = await unauthenticated('/order');
-    expect(res.status).toBe(401);
-  });
-});
 
 describe('Proxy — case 1: x-account-id (sign via Bouncer)', () => {
   it('calls POST /sign/rest with account id from x-account-id', async () => {

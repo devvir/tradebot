@@ -7,7 +7,7 @@ services:
         SERVICE_NAME: pipe
 
     environment:
-      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
+      QUEUE_URL: ${QUEUE_URL}
       PIPE_BINDINGS: ${PIPE_BINDINGS:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV: ${APP_ENV:-prod}

@@ -3,14 +3,22 @@ import { startRabbitMQ, stopRabbitMQ } from '@tradebot/utils';
 
 const envFile = resolve(__dirname, '.env.testing');
 
+let stopped = false;
+
+const stop = () => {
+  if (stopped) return;
+  stopped = true;
+  try { stopRabbitMQ(envFile); } catch { /* already gone */ }
+};
+
 export const setup = async () => {
-  console.log('Starting test RabbitMQ...');
+  // Clean up any containers left by a previous aborted run
+  try { stopRabbitMQ(envFile); } catch { /* nothing to stop */ }
+  stopped = false;
   startRabbitMQ(envFile);
-  console.log('Test RabbitMQ started');
+  process.on('exit', stop);
 };
 
 export const teardown = async () => {
-  console.log('Stopping test RabbitMQ...');
-  stopRabbitMQ(envFile);
-  console.log('Test RabbitMQ stopped');
+  stop();
 };

@@ -8,20 +8,10 @@ const CONFIG: Config = {
   httpPort:     3001,
 };
 
-// What bouncer returns — no wsUrl/restUrl
 const MOCK_BOUNCER_RESPONSE = {
   id:     'test-account',
   type:   'testnet' as const,
   apiKey: 'test-key',
-};
-
-// What registry.get() returns — URLs computed from type
-const MOCK_ACCOUNT = {
-  id:      'test-account',
-  type:    'testnet' as const,
-  wsUrl:   'wss://testnet.bitmex.com/realtime',
-  restUrl: 'https://testnet.bitmex.com/api/v1',
-  apiKey:  'test-key',
 };
 
 function makeFetchResponse(data: unknown, status = 200): Response {
@@ -68,13 +58,12 @@ describe('AccountRegistry', () => {
     const second = await registry.get('test-account');
 
     expect(mockFetch).toHaveBeenCalledOnce();
-    expect(first).toEqual(MOCK_ACCOUNT);
-    expect(second).toEqual(MOCK_ACCOUNT);
+    expect(first).toEqual(MOCK_BOUNCER_RESPONSE);
+    expect(second).toEqual(MOCK_BOUNCER_RESPONSE);
   });
 
   it('caches different accounts independently', async () => {
     const otherBouncer  = { ...MOCK_BOUNCER_RESPONSE, id: 'other-account', apiKey: 'other-key' };
-    const otherAccount  = { ...MOCK_ACCOUNT,          id: 'other-account', apiKey: 'other-key' };
     const mockFetch = vi.fn()
       .mockResolvedValueOnce(makeFetchResponse(MOCK_BOUNCER_RESPONSE))
       .mockResolvedValueOnce(makeFetchResponse(otherBouncer));

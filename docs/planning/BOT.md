@@ -150,7 +150,7 @@ DesiredState {
 | `STRATEGY` | Strategy name to load (e.g. `market-maker`) |
 | `INPUT_QUEUE_PREFIX` | MarketState input queue prefix (default: `signal`) |
 | `OUTPUT_QUEUE_PREFIX` | DesiredState output queue prefix (default: `desired`) |
-| `RABBITMQ_URL` | RabbitMQ connection URL |
+| `QUEUE_URL` | RabbitMQ connection URL |
 | Strategy-specific vars | N, SPACING, ORDER_SIZE, MAX_POSITION, etc. |
 
 ---

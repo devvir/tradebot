@@ -1,0 +1,28 @@
+services:
+  mongodb:
+    image: mongo:7
+    command: mongod --quiet --setParameter logLevel=0 --wiredTigerCacheSizeGB=${DB_CACHE_SIZE_GB:-1}
+
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${DB_USER:-root}
+      MONGO_INITDB_ROOT_PASSWORD: ${DB_PASS:-root}
+
+    ports:
+      - "${DB_PORT:-}:27017"
+
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+      start_period: 5s
+
+    restart: "no"
+
+volumes:
+  mongodb_data:
+  mongodb_config:

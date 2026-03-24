@@ -20,8 +20,9 @@ pnpm test      # Run tests
 
 ## Configuration
 
+Requires RabbitMQ — see [infra packs](../../modules/infra/README.md).
+
 **Required:**
-- `RABBITMQ_URL` — RabbitMQ connection string
 - `PIPE_BINDINGS` — Binding rules (see syntax below)
 
 ### Binding Syntax

@@ -20,9 +20,10 @@ When subscribing, clients fetch the current snapshot counter and only apply delt
 
 ## Configuration
 
+Requires RabbitMQ — see [infra packs](../../modules/infra/README.md).
+
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `RABBITMQ_URL` | yes | — | RabbitMQ connection URL |
 | `WS_PORT` | no | `8180` | WebSocket server port |
 | `SNAPSHOTS_URL` | no | `http://snapshots:3001` | Snapshots service HTTP base URL |
 

@@ -1,5 +1,7 @@
 # Live Module — Exchange App
 #
+# Infra: queue-rt, bouncer, redis
+#
 # Wires live BitMEX data into a fully BitMEX-compatible API surface.
 # Bots connect to ws and rest as if they were BitMEX.
 #
@@ -15,12 +17,14 @@
 #   bots ──► rest ──► proxy ──► BitMEX REST API
 #                └── (auth via Bouncer)
 
+# Docker Compose Project (for all exchange app modules)
+name: exchange
+
 include:
-  - path: ../../../services/bouncer/docker/compose.yml
-  - path: ../../../services/snapshots/docker/extended.yml
+  - path: ../../../services/ws/docker/compose.yml
   - path: ../../../services/rest/docker/compose.yml
-  - path: ../../../services/ws/docker/extended.yml
   - path: ../../../services/proxy/docker/compose.yml
+  - path: ../../../services/snapshots/docker/compose.yml
 
 services:
   broadcast:
@@ -42,10 +46,10 @@ services:
         | live@topic:broadcast > ws.deltas & snapshots
 
     depends_on:
-      rabbitmq:
+      queue-rt:
         condition: service_healthy
 
 networks:
   default:
-    name: ${COMPOSE_PROJECT_NAME:-tradebot}-network
+    name: ${PROJECT_NAME:-tradebot}-network
     external: true

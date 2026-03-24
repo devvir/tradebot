@@ -4,7 +4,7 @@ import { MongoClient, Db } from 'mongodb';
 import { buildSubTableId, loadAllStates, saveState } from '../src/persistence/index.js';
 import type { HistoryState } from '../src/persistence/index.js';
 
-const mongoUrl = process.env.MONGODB_URL!;
+const mongoUrl = process.env.DB_URL!;
 
 const makeState = (id: string, overrides: Partial<HistoryState> = {}): HistoryState => ({
   _id: id,

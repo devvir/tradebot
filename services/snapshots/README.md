@@ -20,11 +20,12 @@ pnpm test      # Run tests
 
 ## Configuration
 
+Requires RabbitMQ — see [infra packs](../../modules/infra/README.md).
+
 ### Environment Variables
 
 | Variable                | Required | Default | Description                  |
 | ----------------------- | -------- | ------- | ---------------------------- |
-| `RABBITMQ_URL`          | yes      | —       | RabbitMQ connection URL      |
 | `SNAPSHOTS_HTTP_PORT`   | no       | <empty> | HTTP server host port        |
 | `SNAPSHOTS_HEALTH_PORT` | no       | <empty> | HTTP health checks host port |
 

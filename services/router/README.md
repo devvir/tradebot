@@ -22,8 +22,9 @@ pnpm test      # Run tests
 
 ## Configuration
 
+Requires RabbitMQ — see [infra packs](../../modules/infra/README.md).
+
 **Required:**
-- `RABBITMQ_URL` — RabbitMQ connection string
 - `ROUTER_RULES` — Routing rules (see tech docs for syntax)
 
 For technical details, see [docs/services/ROUTER.md](../../docs/services/ROUTER.md).

@@ -15,7 +15,7 @@ services:
       BITMEX_TESTNET: ${BITMEX_TESTNET:-false}
 
       # Queue
-      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
+      QUEUE_URL: ${QUEUE_URL}
       BROADCAST_MESSAGE_TTL: ${BROADCAST_MESSAGE_TTL:-1800000}
 
       # Reconnect delays

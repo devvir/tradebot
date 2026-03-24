@@ -376,8 +376,9 @@ Dev compose mounts:
 
 ## Environment Variables
 
+Requires RabbitMQ — see [infra packs](../../modules/infra/README.md).
+
 | Variable | Required | Description |
 |---|---|---|
 | `WS_URL` | yes | BitMEX WebSocket URL, e.g. `wss://testnet.bitmex.com/realtime` |
 | `REST_URL` | yes | BitMEX REST base URL, e.g. `https://testnet.bitmex.com/api/v1` |
-| `RABBITMQ_URL` | yes | RabbitMQ connection string |

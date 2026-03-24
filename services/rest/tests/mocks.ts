@@ -1,7 +1,13 @@
 export class MockedService {
+  private dataUrl: string;
+
+  constructor(dataUrl: string) {
+    this.dataUrl = dataUrl;
+  }
+
   config(): unknown {
     return {
-      dataUrl: 'http://test-data',
+      dataUrl: this.dataUrl,
     };
   }
 

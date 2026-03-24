@@ -30,14 +30,14 @@ const RABBIT_URL = 'amqp://guest:guest@localhost:56731';
 
 /** Build a full Config from a ROUTER_RULES string (via loadConfig). */
 const parseRules = (rules: string): Config => {
-  const prev = { url: process.env.RABBITMQ_URL, rules: process.env.ROUTER_RULES };
-  process.env.RABBITMQ_URL = RABBIT_URL;
+  const prev = { url: process.env.QUEUE_URL, rules: process.env.ROUTER_RULES };
+  process.env.QUEUE_URL = RABBIT_URL;
   process.env.ROUTER_RULES = rules;
   try {
     return loadConfig();
   } finally {
-    if (prev.url !== undefined) process.env.RABBITMQ_URL = prev.url;
-    else delete process.env.RABBITMQ_URL;
+    if (prev.url !== undefined) process.env.QUEUE_URL = prev.url;
+    else delete process.env.QUEUE_URL;
     if (prev.rules !== undefined) process.env.ROUTER_RULES = prev.rules;
     else delete process.env.ROUTER_RULES;
   }

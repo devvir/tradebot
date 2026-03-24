@@ -1,33 +1,15 @@
-# RabbitMQ Service - Message Queue
-# Provides pub/sub queue for all data flow. Can be shared across services/modules.
-
 services:
   rabbitmq:
-    image: rabbitmq:3.12-management-alpine
-    container_name: ${COMPOSE_PROJECT_NAME:-tradebot}-rabbitmq
-    hostname: rabbitmq
+    extends:
+      file: base.yml
+      service: rabbitmq
 
-    environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
-      TZ: ${TZ:-UTC}
+    hostname: rabbitmq
+    container_name: rabbitmq
 
     ports:
-      - "${RABBITMQ_AMQP_PORT:-}:5672"
-      - "${RABBITMQ_MGMT_PORT:-}:15672"
-
-    volumes:
-      - rabbitmq-data:/var/lib/rabbitmq
-      - .:/etc/rabbitmq/conf.d:ro
-
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
-      interval: 60s
-      timeout: 30s
-      retries: 5
-      start_period: 15s
-
-    restart: ${RABBITMQ_RESTART_POLICY:-unless-stopped}
+      - "${QUEUE_PORT:-}:5672"
+      - "${QUEUE_MGMT_PORT:-}:15672"
 
 volumes:
   rabbitmq-data:

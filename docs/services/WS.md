@@ -159,9 +159,10 @@ Retried on 404 with 5-second delay. Timeout/connection error → logged, client 
 
 ## Configuration
 
+Requires RabbitMQ — see [infra packs](../../modules/infra/README.md).
+
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `RABBITMQ_URL` | yes | — | RabbitMQ connection string |
 | `WS_PORT` | no | `8180` | WebSocket server port |
 | `SNAPSHOTS_URL` | no | `http://snapshots:3001` | Base URL for snapshots service (used as `{SNAPSHOTS_URL}/snapshot/{table}`) |
 
@@ -185,7 +186,7 @@ Authentication would intercept at connection time, before subscribe is processed
 ## Dependencies
 
 ### External Runtime
-- **RabbitMQ** — For consuming delta updates from the `broadcast` exchange
+- **RabbitMQ** — For consuming delta updates from the `broadcast` exchange. See [infra packs](../../modules/infra/README.md).
 - **Snapshots service** — For HTTP snapshot fetches on client subscribe
 - **Node.js 18+** — For native WebSocket server and fetch API
 
