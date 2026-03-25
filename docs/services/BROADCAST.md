@@ -35,7 +35,6 @@ BitMEX WebSocket
         │    x-message-count         — counter tracking message sequence (increments per publish)
         │    x-worker-uuid           — broadcast instance UUID for per-instance deduplication
         │    x-bitmex-version        — BitMEX WebSocket API version
-        │    x-bitmex-symbols        — comma-separated unique symbols in this message
         │    x-bitmex-published-at   — ISO-8601 timestamp of receipt
         ↓
  RabbitMQ Topic Exchange `broadcast`
@@ -58,23 +57,21 @@ The `x-message-count` header (combined with `x-worker-uuid`) enables downstream 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `BITMEX_TESTNET` | No | `true` | Use BitMEX testnet (`true`) or live (`false`) |
-| `BROADCAST_RECONNECT_DELAY_MS` | No | `5000` | Initial reconnection delay in milliseconds |
-| `BROADCAST_MAX_RECONNECT_DELAY_MS` | No | `60000` | Maximum reconnection delay (exponential backoff caps here) |
 | `BROADCAST_MESSAGE_TTL` | No | `1800000` | RabbitMQ message TTL in milliseconds (30 min default) |
 
 ### Reconnection Strategy
 
 When a WebSocket connection fails:
-1. Schedule reconnection after `BROADCAST_RECONNECT_DELAY_MS`
-2. Double the delay for next retry (capped at `BROADCAST_MAX_RECONNECT_DELAY_MS`)
+1. Schedule reconnection after 200ms
+2. Double the delay for next retry (capped at 15s)
 3. Reset delay to initial value on successful connection
 
 Example with defaults:
-- 1st retry: 5s
-- 2nd retry: 10s
-- 3rd retry: 20s
-- 4th retry: 40s
-- 5th+ retry: 60s (capped)
+- 1st retry: 200ms
+- 2nd retry: 400ms
+- ...
+- 7th retry: 12.8s
+- 8th+ retry: 15s (capped)
 
 ## Dependencies
 

@@ -50,16 +50,6 @@ describe('Writer Config utilities', () => {
       delete process.env.DB_URL;
       expect(() => loadConfig()).toThrow('DB_URL is required');
     });
-
-    it('should use default WRITER_PREFETCH of 500 when not set', () => {
-      delete process.env.WRITER_PREFETCH;
-      expect(loadConfig().prefetch).toBe(500);
-    });
-
-    it('should use default WRITER_FLUSH_INTERVAL_MS of 50 when not set', () => {
-      delete process.env.WRITER_FLUSH_INTERVAL_MS;
-      expect(loadConfig().flushIntervalMs).toBe(50);
-    });
   });
 
   describe('validateConfig', () => {

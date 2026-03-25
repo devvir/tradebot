@@ -27,7 +27,6 @@ Reader → topic:reader → unpack-in (Router) → topic:codec.in → Codec → 
 | `x-codec-strategy` | `decode` | unpack-in (Router) | Instructs Codec to decompress and decode |
 | `x-writer-database` | `tradebot_unpacked` | unpack-in (Router) | Selects the MongoDB database |
 | `x-bitmex-published-at` | ISO timestamp | Reader | Reconstructed from `_id`; passed through |
-| `x-bitmex-symbols` | symbol string | Reader | Extracted from document; passed through |
 
 ## Error Handling
 

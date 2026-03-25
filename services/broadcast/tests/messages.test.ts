@@ -1,112 +1,267 @@
-import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createMessageHandler } from '../src/messages';
-import type { Config, FeedState } from '../src/types';
+import type { State, Config } from '../src/types';
 
-// ── Fixtures ──────────────────────────────────────────────────────────────────
+// ── Service mock ──────────────────────────────────────────────────────────────
 
-const WORKER_UUID = '11111111-2222-3333-4444-555555555555';
+const makeService = (stateOverrides: Partial<State> = {}) => {
+  const state: State = {
+    realtime:        null,
+    platform:        null,
+    broker:          null,
+    isShuttingDown:  false,
+    lastMessageTime: 0,
+    apiVersion:      null,
+    pingInterval:    null,
+    ...stateOverrides,
+  };
 
-const makeConfig = (): Config => ({
-  env: 'testnet',
-  workerUuid: WORKER_UUID,
-  realtimeWsUrl: 'wss://testnet.bitmex.com/realtime',
-  platformWsUrl: 'wss://testnet.bitmex.com/realtimePlatform',
-  realtimeChannels: [],
-  platformChannels: [],
-  queue: { rabbitmqUrl: 'amqp://localhost', messageTtlMs: 1000 },
-  connection: { reconnectDelayMs: 1000, maxReconnectDelayMs: 60000 },
+  const config: Config = {
+    workerUuid:        'test-uuid-1234',
+    env:               'live',
+    rabbitmqUrl:       'amqp://localhost',
+    realtimeWsUrl:     'wss://www.bitmex.com/realtime',
+    platformWsUrl:     'wss://www.bitmex.com/realtimePlatform',
+    realtimeChannels:  ['trade'],
+    platformChannels:  ['announcement'],
+  };
+
+  const exchange = { publish: vi.fn().mockResolvedValue(undefined) };
+  const broker   = { getExchange: vi.fn(() => exchange) };
+
+  const service = {
+    state:     (key?: string) => (key !== undefined ? (state as Record<string, unknown>)[key] : state),
+    setState:  (key: string, value: unknown) => { (state as Record<string, unknown>)[key] = value; return value; },
+    config:    () => config,
+    providers: { get: vi.fn(() => broker) },
+  };
+
+  return { service, state, config, exchange };
+};
+
+// ── Message fixtures ──────────────────────────────────────────────────────────
+
+const buf = (data: unknown): Buffer => Buffer.from(JSON.stringify(data));
+
+const dataMsg = (table = 'trade', action = 'insert') => ({
+  table,
+  action,
+  data: [{ symbol: 'XBTUSD', timestamp: '2026-01-01T00:00:00.000Z' }],
 });
 
-const makeState = (publishFn = vi.fn()): FeedState => ({
-  realtime: null,
-  platform: null,
-  broker: {
-    getExchange: () => ({ publish: publishFn }),
-  } as any,
-  reconnectDelay: 1000,
-  isShuttingDown: false,
-  lastMessageTime: 0,
-  apiVersion: null,
-  pingInterval: null,
+const infoMsg = (version = '1.0.0') => ({
+  info:      'Welcome to the BitMEX Realtime API.',
+  version,
+  timestamp: '2026-01-01T00:00:00.000Z',
+  docs:      'https://www.bitmex.com/app/wsAPI',
 });
 
-const dataMessage = (table: string, action: string, data = [{ symbol: 'XBTUSD', bidSize: 100 }]) =>
-  Buffer.from(JSON.stringify({ table, action, data }));
+// ── Publishing ────────────────────────────────────────────────────────────────
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
+describe('data messages: publishing', () => {
+  it('publishes to the exchange for every data message', async () => {
+    const { service, exchange } = makeService();
+    const handler = createMessageHandler(service as any, vi.fn());
 
-describe('createMessageHandler', () => {
-  beforeEach(() => vi.clearAllMocks());
+    await handler(buf(dataMsg()));
 
-  it('publishes with correct headers on a data message', () => {
-    const publish = vi.fn();
-    const handler = createMessageHandler(makeState(publish), makeConfig());
-
-    handler(dataMessage('quote', 'insert'));
-
-    expect(publish).toHaveBeenCalledOnce();
-    const [, , options] = publish.mock.calls[0];
-    expect(options.headers['x-bitmex-published-at']).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-    expect(options.headers['x-worker-uuid']).toBe(WORKER_UUID);
+    expect(exchange.publish).toHaveBeenCalledOnce();
   });
 
-  it('uses routing key table.action.symbol for single-symbol messages', () => {
-    const publish = vi.fn();
-    const handler = createMessageHandler(makeState(publish), makeConfig());
+  it('uses table.action as routing key', async () => {
+    const cases: [string, string][] = [
+      ['trade',       'insert'],
+      ['quote',       'partial'],
+      ['orderBookL2', 'update'],
+      ['instrument',  'delete'],
+    ];
 
-    handler(dataMessage('quote', 'insert'));
+    for (const [table, action] of cases) {
+      const { service, exchange } = makeService();
+      const handler = createMessageHandler(service as any, vi.fn());
 
-    const [, routingKey] = publish.mock.calls[0];
-    expect(routingKey).toBe('quote.insert.XBTUSD');
+      await handler(buf(dataMsg(table, action)));
+
+      expect(exchange.publish.mock.calls[0][1]).toBe(`${table}.${action}`);
+    }
   });
 
-  it('uses empty symbol segment for tables without symbol', () => {
-    const publish = vi.fn();
-    const handler = createMessageHandler(makeState(publish), makeConfig());
+  it('publishes the original message as a JSON Buffer', async () => {
+    const { service, exchange } = makeService();
+    const handler = createMessageHandler(service as any, vi.fn());
+    const msg = dataMsg('quote', 'update');
 
-    handler(dataMessage('announcement', 'insert', [{ id: 1, title: 'Test', link: '', content: '', date: '' }]));
+    await handler(buf(msg));
 
-    const [, routingKey] = publish.mock.calls[0];
-    expect(routingKey).toBe('announcement.insert.');
+    const content = exchange.publish.mock.calls[0][0] as Buffer;
+
+    expect(Buffer.isBuffer(content)).toBe(true);
+    expect(JSON.parse(content.toString())).toMatchObject(msg);
   });
 
-  it('uses the symbol when all data items share the same symbol', () => {
-    const publish = vi.fn();
-    const handler = createMessageHandler(makeState(publish), makeConfig());
+  it('increments x-message-count with each publish', async () => {
+    const { service, exchange } = makeService();
+    const handler = createMessageHandler(service as any, vi.fn());
 
-    handler(dataMessage('orderBookL2', 'update', [
-      { symbol: 'XBTUSD', id: 1, side: 'Buy', price: 100, size: 10 },
-      { symbol: 'XBTUSD', id: 2, side: 'Sell', price: 101, size: 5 },
-    ]));
+    await handler(buf(dataMsg()));
+    await handler(buf(dataMsg()));
+    await handler(buf(dataMsg()));
 
-    const [, routingKey] = publish.mock.calls[0];
-    expect(routingKey).toBe('orderBookL2.update.XBTUSD');
+    const counts = exchange.publish.mock.calls.map(call => (call[2] as any).headers['x-message-count']);
+
+    expect(counts).toEqual(['1', '2', '3']);
   });
 
-  it('uses empty symbol segment for multi-symbol messages', () => {
-    const publish = vi.fn();
-    const handler = createMessageHandler(makeState(publish), makeConfig());
+  it('includes x-worker-uuid from config', async () => {
+    const { service, config, exchange } = makeService();
+    const handler = createMessageHandler(service as any, vi.fn());
 
-    handler(dataMessage('trade', 'insert', [
-      { symbol: 'XBTUSD', price: 100, size: 1 },
-      { symbol: 'ETHUSD', price: 200, size: 1 },
-    ]));
+    await handler(buf(dataMsg()));
 
-    const [, routingKey] = publish.mock.calls[0];
-    expect(routingKey).toBe('trade.insert.');
+    const headers = (exchange.publish.mock.calls[0][2] as any).headers;
+
+    expect(headers['x-worker-uuid']).toBe(config.workerUuid);
   });
 
-  it('does not publish control messages', () => {
-    const publish = vi.fn();
-    const handler = createMessageHandler(makeState(publish), makeConfig());
+  it('includes x-bitmex-published-at as a parseable timestamp', async () => {
+    const { service, exchange } = makeService();
+    const handler = createMessageHandler(service as any, vi.fn());
 
-    handler(Buffer.from(JSON.stringify({ info: 'Welcome', version: '2.0.0' })));
+    await handler(buf(dataMsg()));
 
-    expect(publish).not.toHaveBeenCalled();
+    const ts = (exchange.publish.mock.calls[0][2] as any).headers['x-bitmex-published-at'];
+
+    expect(typeof ts).toBe('string');
+    expect(new Date(ts).getTime()).not.toBeNaN();
   });
 
-  it('does not throw on malformed JSON', () => {
-    const handler = createMessageHandler(makeState(), makeConfig());
-    expect(() => handler(Buffer.from('{bad json'))).not.toThrow();
+  it('includes empty x-bitmex-version before any info message arrives', async () => {
+    const { service, exchange } = makeService();
+    const handler = createMessageHandler(service as any, vi.fn());
+
+    await handler(buf(dataMsg()));
+
+    expect((exchange.publish.mock.calls[0][2] as any).headers['x-bitmex-version']).toBe('');
+  });
+
+  it('includes api version in headers once an info message has been received', async () => {
+    const { service, exchange } = makeService();
+    const handler = createMessageHandler(service as any, vi.fn());
+
+    await handler(buf(infoMsg('2.5.0')));
+    await handler(buf(dataMsg()));
+
+    expect((exchange.publish.mock.calls[0][2] as any).headers['x-bitmex-version']).toBe('2.5.0');
+  });
+
+  it('calls the onMessage callback after each publish', async () => {
+    const { service } = makeService();
+    const onMessage = vi.fn();
+    const handler = createMessageHandler(service as any, onMessage);
+
+    await handler(buf(dataMsg()));
+    await handler(buf(dataMsg()));
+
+    expect(onMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('updates lastMessageTime on every call', async () => {
+    const { service, state } = makeService();
+    const handler = createMessageHandler(service as any, vi.fn());
+    const before = Date.now();
+
+    await handler(buf(dataMsg()));
+
+    expect(state.lastMessageTime).toBeGreaterThanOrEqual(before);
+  });
+});
+
+// ── Control messages ──────────────────────────────────────────────────────────
+
+describe('control messages: no publish', () => {
+  it('skips publish on subscription confirmation', async () => {
+    const { service, exchange } = makeService();
+    const onMessage = vi.fn();
+    const handler = createMessageHandler(service as any, onMessage);
+
+    await handler(buf({ subscribe: 'trade', success: true }));
+
+    expect(exchange.publish).not.toHaveBeenCalled();
+    expect(onMessage).not.toHaveBeenCalled();
+  });
+
+  it('skips publish on unsubscription confirmation', async () => {
+    const { service, exchange } = makeService();
+    const onMessage = vi.fn();
+    const handler = createMessageHandler(service as any, onMessage);
+
+    await handler(buf({ unsubscribe: 'trade', success: true }));
+
+    expect(exchange.publish).not.toHaveBeenCalled();
+    expect(onMessage).not.toHaveBeenCalled();
+  });
+
+  it('skips publish on info message', async () => {
+    const { service, exchange } = makeService();
+    const onMessage = vi.fn();
+    const handler = createMessageHandler(service as any, onMessage);
+
+    await handler(buf(infoMsg()));
+
+    expect(exchange.publish).not.toHaveBeenCalled();
+    expect(onMessage).not.toHaveBeenCalled();
+  });
+
+  it('retains only the first info message version', async () => {
+    const { service, exchange } = makeService();
+    const handler = createMessageHandler(service as any, vi.fn());
+
+    await handler(buf(infoMsg('2.5.0')));
+    await handler(buf(infoMsg('3.0.0')));
+    await handler(buf(dataMsg()));
+
+    expect((exchange.publish.mock.calls[0][2] as any).headers['x-bitmex-version']).toBe('2.5.0');
+  });
+
+  it('skips publish on unrecognized message shapes', async () => {
+    const { service, exchange } = makeService();
+    const onMessage = vi.fn();
+    const handler = createMessageHandler(service as any, onMessage);
+
+    await handler(buf({ unexpected: true, whatever: 123 }));
+
+    expect(exchange.publish).not.toHaveBeenCalled();
+    expect(onMessage).not.toHaveBeenCalled();
+  });
+});
+
+// ── Error handling ────────────────────────────────────────────────────────────
+
+describe('error handling', () => {
+  it('resolves without publishing on invalid JSON', async () => {
+    const { service, exchange } = makeService();
+    const handler = createMessageHandler(service as any, vi.fn());
+
+    await expect(handler(Buffer.from('{bad json}'))).resolves.toBeUndefined();
+
+    expect(exchange.publish).not.toHaveBeenCalled();
+  });
+
+  it('rethrows Channel closed errors', async () => {
+    const { service, exchange } = makeService();
+    const handler = createMessageHandler(service as any, vi.fn());
+
+    exchange.publish.mockRejectedValueOnce(new Error('Channel closed'));
+
+    await expect(handler(buf(dataMsg()))).rejects.toThrow('Channel closed');
+  });
+
+  it('swallows other publish errors without propagating', async () => {
+    const { service, exchange } = makeService();
+    const handler = createMessageHandler(service as any, vi.fn());
+
+    exchange.publish.mockRejectedValueOnce(new Error('Connection reset'));
+
+    await expect(handler(buf(dataMsg()))).resolves.toBeUndefined();
   });
 });

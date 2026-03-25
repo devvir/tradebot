@@ -12,26 +12,18 @@ export {
 export interface Config {
   env: 'live' | 'testnet';
   workerUuid: string;
+  rabbitmqUrl: string;
   realtimeWsUrl: string;
   platformWsUrl: string;
   realtimeChannels: readonly string[];
   platformChannels: readonly string[];
-  queue: {
-    rabbitmqUrl: string;
-    messageTtlMs: number;
-  };
-  connection: {
-    reconnectDelayMs: number;
-    maxReconnectDelayMs: number;
-  };
   [key: string]: unknown;
 }
 
-export interface FeedState {
+export interface State {
   realtime: WebSocket | null;
   platform: WebSocket | null;
   broker: RabbitMQ.Broker | null;
-  reconnectDelay: number;
   isShuttingDown: boolean;
   lastMessageTime: number;
   apiVersion: string | null;

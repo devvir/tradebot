@@ -1,8 +1,8 @@
-import { logger } from '@devvir/service-kit';
+import { Broker, logger, Service } from '@devvir/service-kit';
 import {
   type BitmexWebSocketMessage,
   type Config,
-  type FeedState,
+  type State,
   isBitmexSubscriptionMessage,
   isBitmexUnsubscriptionMessage,
   isBitmexInfoMessage,
@@ -15,11 +15,15 @@ import {
  * - Logs subscription/info control messages
  * - Publishes all data messages to the configured exchange
  */
-export const createMessageHandler = (state: FeedState, config: Config, onMessage: () => void): MessageHandler => {
+export const createMessageHandler = (service: Service, onMessage: () => void): MessageHandler => {
+  const state = service.state() as State;
+  const config = service.config() as Config;
+  const broker = service.providers.get('rabbitmq') as Broker;
+
   let messageCount = 0;
 
   return async (buffer: Buffer): Promise<void> => {
-    state.lastMessageTime = Date.now();
+    service.setState('lastMessageTime', Date.now());
 
     try {
       var message = JSON.parse(buffer.toString()) as BitmexWebSocketMessage;
@@ -28,18 +32,12 @@ export const createMessageHandler = (state: FeedState, config: Config, onMessage
     }
 
     try {
-      if (! isBitmexDataMessage(message)) {
+      if (! isBitmexDataMessage(message))
         return handleControlMessage(message, state);
-      }
 
+      const exchange = broker.getExchange()!;
       const content = Buffer.from(JSON.stringify(message));
-      const exchange = state.broker!.getExchange()!;
-
-      const symbols = [ ...new Set(
-        message.data?.map(item => 'symbol' in item ? item.symbol : '') ?? [].filter(Boolean))
-      ];
-      const symbol = symbols.length === 1 ? symbols[0] : '';
-      const routingKey = `${message.table}.${message.action}.${symbol}`;
+      const routingKey = `${message.table}.${message.action}`;
 
       await exchange.publish(content, routingKey, {
         contentType: 'application/json',
@@ -47,19 +45,21 @@ export const createMessageHandler = (state: FeedState, config: Config, onMessage
           'x-worker-uuid': config.workerUuid,
           'x-message-count': String(++messageCount),
           'x-bitmex-version': state.apiVersion ?? '',
-          'x-bitmex-symbols': symbols.join(','),
           'x-bitmex-published-at': new Date().toISOString(),
         },
       });
 
       onMessage();
     } catch (err) {
+      if (err instanceof Error && err.message === 'Channel closed')
+        throw err;
+
       logger.error({ err }, 'Error processing WebSocket message');
     }
   };
 };
 
-const handleControlMessage = (message: BitmexWebSocketMessage, state: FeedState): void => {
+const handleControlMessage = (message: BitmexWebSocketMessage, state: State): void => {
   if (isBitmexInfoMessage(message)) {
     state.apiVersion ??= message.version;
     logger.debug({ info: message.info, version: message.version }, 'Informative message received');

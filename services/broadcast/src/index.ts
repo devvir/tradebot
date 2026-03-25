@@ -1,35 +1,22 @@
 import SK from './service';
-import type { RabbitMQ } from '@devvir/service-kit';
-import { createConnections } from './websocket';
+import type { RabbitMQ, Service } from '@devvir/service-kit';
+import makeConnection from './websocket';
 import { createMessageHandler } from './messages';
-import type { Config, FeedState } from './types';
+import type { State } from './types';
 
-SK.run(async (service) => {
-  const config = service.config() as Config;
+SK.run(async (service: Service) => {
+  const state = service.state() as State;
+  const broker = await service.providers.connect('rabbitmq') as RabbitMQ.Broker;
 
-  const state: FeedState = {
-    realtime: null,
-    platform: null,
-    broker: null,
-    reconnectDelay: config.connection.reconnectDelayMs,
-    isShuttingDown: false,
-    lastMessageTime: Date.now(),
-    apiVersion: null,
-    pingInterval: null,
-  };
-
-  const broker = state.broker = await service.providers.connect('rabbitmq') as RabbitMQ.Broker;
-
-  broker.getExchange('broadcast')!.setBackpressureHandler((paused) => {
+  broker.getExchange()!.setBackpressureHandler((paused) => {
     if (paused) { state.realtime?.pause(); state.platform?.pause(); }
     else        { state.realtime?.resume(); state.platform?.resume(); }
   });
 
-  const onMessage = createMessageHandler(state, config, () => service.emit('message'));
+  const onMessage = createMessageHandler(service, () => service.emit('message'));
 
-  // ── WebSocket connections ─────────────────────────────────────────────────
-  const { connectRealtime, connectPlatform } = createConnections(state, config, onMessage);
+  const connectors = makeConnection(service, onMessage);
 
-  if (config.realtimeChannels.length > 0) connectRealtime();
-  if (config.platformChannels.length > 0) connectPlatform();
+  connectors.connectRealtime();
+  connectors.connectPlatform();
 });
