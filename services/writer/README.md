@@ -14,7 +14,7 @@ Requires RabbitMQ and MongoDB — see [infra packs](../../modules/infra/README.m
 
 | Variable | Default | Description |
 |---|---|---|
-| `WRITER_PREFETCH` | `500` | Max unacked messages per consumer |
+| `WRITER_PREFETCH` | `1000` | Max unacked messages per consumer |
 | `WRITER_FLUSH_INTERVAL_MS` | `50` | Max ms to hold a partial batch |
 | `WRITER_REPLICAS` | `1` | Number of writer container instances |
 

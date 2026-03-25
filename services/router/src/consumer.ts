@@ -5,11 +5,12 @@ import type { Route, RoutingKeyConfig, Config } from './types';
 
 /** For each source queue, consume messages and republish them to every configured destination. */
 export const consumeAndRepublish = async (
-  broker: RabbitMQ.Broker,
+  consumer: RabbitMQ.Broker,
+  publisher: RabbitMQ.Broker,
   config: Config,
   holdPublishing: (() => Promise<void>) | null,
 ): Promise<void> => {
-  const channel = broker.getChannel();
+  const channel = consumer.getChannel();
 
   if (! channel)
     throw new Error('No RabbitMQ channel available');
@@ -18,7 +19,7 @@ export const consumeAndRepublish = async (
     channel.prefetch(1000);
 
   for (const [queueName, routes] of groupBySource(config.routes)) {
-    const targets = resolveTargets(broker, channel, routes);
+    const targets = resolveTargets(publisher, channel, routes);
 
     await channel.consume(queueName, async (msg) => {
       if (! msg) return;

@@ -1,16 +1,20 @@
-import SK, { QUEUE, OUTBOUND_EXCHANGE } from './service';
-import { RabbitMQ } from '@devvir/service-kit';
+import SK from './service';
+import { RabbitMQ, Service } from '@devvir/service-kit';
 import { transform } from './encoding';
 import type { Message } from './types';
 
-SK.run(async (service) => {
-  const broker      = await service.providers.connect('rabbitmq') as RabbitMQ.Broker;
-  const queue       = broker.getQueue(QUEUE)!;
-  const outExchange = broker.getExchange(OUTBOUND_EXCHANGE)!;
+SK.run(async (service: Service) => {
+  const [ consumer, publisher ] = await service.providers.connect([
+    'consumer',
+    'publisher',
+  ]) as [ RabbitMQ.Broker, RabbitMQ.Broker ];
+
+  const inQueue     = consumer.getQueue()!;
+  const outExchange = publisher.getExchange()!;
 
   service.logger.info('Started message consumption');
 
-  const stopConsuming = await queue.consume(async (message, { ack, nack, original }) => {
+  const stopConsuming = await inQueue.consume(async (message, { ack, nack, original }) => {
     try {
       await outExchange.republish({ ...original, content: transform(original, message as Message) });
 

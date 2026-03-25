@@ -13,6 +13,7 @@ services:
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
       - .:/etc/rabbitmq/conf.d:ro
+      - ./advanced.config:/etc/rabbitmq/advanced.config:ro
 
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]

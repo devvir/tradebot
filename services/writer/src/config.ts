@@ -6,8 +6,8 @@ export const loadConfig = (): Config => {
   const config = {
     mongodbUrl: sanitizeUrl(process.env.DB_URL || ''),
     rabbitmqUrl: sanitizeUrl(process.env.QUEUE_URL || ''),
-    prefetch: parseInt(process.env.WRITER_PREFETCH || '500'),
-    flushIntervalMs: parseInt(process.env.WRITER_FLUSH_INTERVAL_MS || '50'),
+    prefetch: parseInt(process.env.WRITER_PREFETCH || '50'),
+    flushIntervalMs: parseInt(process.env.WRITER_FLUSH_INTERVAL_MS || '20'),
   };
 
   validateConfig(config);

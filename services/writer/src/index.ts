@@ -5,7 +5,11 @@ import createManager from './manager';
 import { greenLight, pause } from './semaphore';
 
 SK.run(async (service) => {
-  const [mongo, broker] = await service.providers.connect(['mongodb', 'rabbitmq']) as [MongoClient, Broker];
+  const [ mongo, broker ] = await service.providers.connect([
+    'mongodb',
+    'rabbitmq',
+  ]) as [ MongoClient, Broker ];
+
   const manager = createManager(service.config() as Config, mongo);
   const prefetch = service.config('prefetch') as number;
   const queue = broker.getQueue(QUEUE)!;

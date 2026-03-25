@@ -16,7 +16,7 @@ services:
       DB_URL: ${DB_URL}
 
       # Data flow
-      WRITER_PREFETCH: ${WRITER_PREFETCH:-500}
+      WRITER_PREFETCH: ${WRITER_PREFETCH:-1000}
       WRITER_FLUSH_INTERVAL_MS: ${WRITER_FLUSH_INTERVAL_MS:-50}
 
       # Runtime

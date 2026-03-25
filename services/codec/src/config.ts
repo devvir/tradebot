@@ -20,7 +20,7 @@ const loadConfig = (): Config => {
 
 const validateConfig = (config: Config): void => {
   if (! config.rabbitmqUrl) throw new Error('QUEUE_URL is required');
-  if (! config.prefetch) throw new Error('CODEC_PREFETCH is required');
+  if (config.prefetch < 0) throw new Error('CODEC_PREFETCH cannot be negative');
 };
 
 export default loadConfig();

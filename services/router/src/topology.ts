@@ -3,16 +3,34 @@ import type { Exchange, Route, Config } from './types';
 
 // ── Public ────────────────────────────────────────────────────────────────────
 
-/** Declare all queues, exchanges, and bindings needed by the configured routes. */
-export const declareTopology = async (broker: RabbitMQ.Broker, config: Config): Promise<void> => {
-  const topology = buildTopology(config.routes) as RabbitMQ.TopologySpec;
+/**
+ * Declare source queues/exchanges on the consumer broker.
+ */
+export const declareConsumerTopology = async (
+  broker: RabbitMQ.Broker,
+  config: Config,
+): Promise<void> => {
+  const topology = buildConsumerTopology(config.routes) as RabbitMQ.TopologySpec;
+
   await broker.declares(topology);
 };
 
 /**
- * Builds a RabbitMQ topology specification from the provided routing rules.
+ * Declare destination exchanges on the publisher broker.
  */
-export const buildTopology = (routes: Route[]): RabbitMQ.TopologySpec => {
+export const declarePublisherTopology = async (
+  broker: RabbitMQ.Broker,
+  config: Config,
+): Promise<void> => {
+  const topology = buildPublisherTopology(config.routes) as RabbitMQ.TopologySpec;
+
+  await broker.declares(topology);
+};
+
+/**
+ * Builds topology for the consumer broker: source queues and their exchange bindings.
+ */
+export const buildConsumerTopology = (routes: Route[]): RabbitMQ.TopologySpec => {
   const exchanges: NonNullable<RabbitMQ.TopologySpec['exchanges']> = {};
   const queues: NonNullable<RabbitMQ.TopologySpec['queues']> = {};
 
@@ -22,7 +40,7 @@ export const buildTopology = (routes: Route[]): RabbitMQ.TopologySpec => {
     exchanges[ex.name] = { type, queues: {} };
   };
 
-  for (const { source, destination } of routes) {
+  for (const { source } of routes) {
     if (source.exchange) {
       ensureExchange(source.exchange);
       const exType = exchanges[source.exchange.name].type;
@@ -35,7 +53,28 @@ export const buildTopology = (routes: Route[]): RabbitMQ.TopologySpec => {
     } else {
       queues[source.queue] = { durable: true };
     }
+  }
 
+  return {
+    ...(Object.keys(exchanges).length > 0 ? { exchanges } : {}),
+    ...(Object.keys(queues).length > 0 ? { queues } : {}),
+  };
+};
+
+/**
+ * Builds topology for the publisher broker: destination exchanges only.
+ */
+export const buildPublisherTopology = (routes: Route[]): RabbitMQ.TopologySpec => {
+  const exchanges: NonNullable<RabbitMQ.TopologySpec['exchanges']> = {};
+  const queues: NonNullable<RabbitMQ.TopologySpec['queues']> = {};
+
+  const ensureExchange = (ex: Exchange) => {
+    if (exchanges[ex.name]) return;
+    const type = ex.type === 'default' ? 'direct' : (ex.type || 'fanout');
+    exchanges[ex.name] = { type, queues: {} };
+  };
+
+  for (const { destination } of routes) {
     if (destination.exchange) {
       ensureExchange(destination.exchange);
       if (destination.queue) {
