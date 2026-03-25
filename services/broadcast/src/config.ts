@@ -19,43 +19,67 @@ export const BITMEX_WS_URLS = {
  * Source: https://www.bitmex.com/app/wsAPI
  */
 
-export const REALTIME_CHANNELS = [
+const REALTIME_PRIMARY_CHANNELS = [
   'instrument',
   'orderBookL2',
-  'orderBookL2_25',
-  'orderBook10',
   'quote',
-  'quoteBin1m',
-  'quoteBin5m',
-  'quoteBin1h',
-  'quoteBin1d',
   'trade',
-  'tradeBin1m',
-  'tradeBin5m',
-  'tradeBin1h',
-  'tradeBin1d',
+] as const;
+
+const REALTIME_SECONDARY_CHANNELS = [
   'liquidation',
   'settlement',
   'funding',
   'insurance',
 ] as const;
 
-export const PLATFORM_CHANNELS = [
+const REALTIME_REDUNDANT_CHANNELS = [
+  'orderBookL2_25',
+  'orderBook10',
+  'quoteBin1m',
+  'quoteBin5m',
+  'quoteBin1h',
+  'quoteBin1d',
+  'tradeBin1m',
+  'tradeBin5m',
+  'tradeBin1h',
+  'tradeBin1d',
+] as const;
+
+const REALTIME_CHANNELS = [
+  ...REALTIME_PRIMARY_CHANNELS,
+  ...REALTIME_SECONDARY_CHANNELS,
+  ...REALTIME_REDUNDANT_CHANNELS,
+] as const;
+
+const PLATFORM_CHANNELS = [
   'announcement',
   'chat',
   'connected',
   'publicNotifications',
 ] as const;
 
+const REALTIME_CHANNEL_PRESETS = {
+  feed: REALTIME_CHANNELS,
+  primary: REALTIME_PRIMARY_CHANNELS,
+  secondary: REALTIME_SECONDARY_CHANNELS,
+  redundant: REALTIME_REDUNDANT_CHANNELS,
+  archive: [ ...REALTIME_PRIMARY_CHANNELS, ...REALTIME_SECONDARY_CHANNELS ],
+} as const;
+
+type RealtimeChannelPreset = keyof typeof REALTIME_CHANNEL_PRESETS;
+
 export const loadConfig = (): Config => {
   const bitmexEnv = usesTestnet() ? 'testnet' : 'live';
+  const preset = (process.env.BROADCAST_FEED_PRESET ?? 'feed') as RealtimeChannelPreset;
 
   const config: Config = {
     env: bitmexEnv,
     workerUuid: randomUUID(),
     realtimeWsUrl: BITMEX_WS_URLS.realtime[bitmexEnv],
     platformWsUrl: BITMEX_WS_URLS.platform[bitmexEnv],
-    realtimeChannels: REALTIME_CHANNELS,
+    realtimePreset: preset,
+    realtimeChannels: REALTIME_CHANNEL_PRESETS[preset],
     platformChannels: PLATFORM_CHANNELS,
     queue: {
       rabbitmqUrl: sanitizeUrl(process.env.QUEUE_URL || ''),
