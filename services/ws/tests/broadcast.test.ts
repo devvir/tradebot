@@ -13,7 +13,7 @@ const createTestService = (snapshotsUrl: string) => {
   const registry = new ClientRegistry();
   const wss      = createServer(0, bus, registry);
   setup(bus, registry, snapshotsUrl);
-  return { wss, push: (delta: BitmexWsMessage, counter: number) => processDelta(delta, counter, bus) };
+  return { wss, push: (delta: BitmexWsMessage, counter: number, accountId?: string) => processDelta(delta, counter, bus, accountId) };
 };
 
 const makeMsg = (table: string, action: string): BitmexWsMessage => ({
@@ -223,6 +223,52 @@ describe('live delta broadcast', () => {
 
     client1.close();
     client2.close();
+    await closeWss(wss);
+    await stopServer(server);
+  });
+});
+
+// ---- Private table routing ---------------------------------------------------
+
+describe('private table delta routing', () => {
+  const makePrivateSnapshot = (table: string, counter: number) => ({
+    table,
+    action:  'partial',
+    keys:    ['id'],
+    types:   { id: 'integer', account: 'long' },
+    data:    [],
+    counter,
+  });
+
+  it('delivers private deltas only to the matching account', async () => {
+    const table = 'order';
+
+    const { server, url } = await startSnapshotServer({ [table]: makePrivateSnapshot(table, 0) });
+    const { wss, push }   = createTestService(url);
+
+    const port = await listen(wss);
+    const { client: clientA, messages: msgsA } = await connect(port, 'account-A');
+    const { client: clientB, messages: msgsB } = await connect(port, 'account-B');
+
+    clientA.send(JSON.stringify({ op: 'subscribe', args: [table] }));
+    clientB.send(JSON.stringify({ op: 'subscribe', args: [table] }));
+
+    await waitFor(msgsA, m => partials(m).length >= 1);
+    await waitFor(msgsB, m => partials(m).length >= 1);
+    msgsA.splice(0);
+    msgsB.splice(0);
+
+    // Delta tagged to account-A — only clientA should receive it
+    push(makeMsg(table, 'update'), 10, 'account-A');
+
+    await waitFor(msgsA, m => m.some(x => (x as BitmexWsMessage).action === 'update'));
+    await new Promise(r => setTimeout(r, 150));
+
+    expect(msgsA.some(m => (m as BitmexWsMessage).action === 'update')).toBe(true);
+    expect(msgsB.some(m => (m as BitmexWsMessage).action === 'update')).toBe(false);
+
+    clientA.close();
+    clientB.close();
     await closeWss(wss);
     await stopServer(server);
   });

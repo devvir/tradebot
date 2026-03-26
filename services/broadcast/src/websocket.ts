@@ -32,7 +32,7 @@ export const connect = (
 
     logger.info({ endpointName: endpoint.name, account: label }, 'Connecting to Websocket endpoint');
 
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(url).setMaxListeners(0);
     let pingInterval: NodeJS.Timeout | null = null;
 
     ws.on('open', () => {

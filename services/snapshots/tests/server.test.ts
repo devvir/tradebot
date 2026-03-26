@@ -10,29 +10,35 @@ const buildResponse = (
   counters: Record<string, number>,
   table:    string,
   symbol?:  string,
+  account?: string,
 ) => {
-  if (!tables.has(table)) {
+  if (! tables.has(table)) {
     return { status: 404, body: { error: `No snapshot for table '${table}'` } };
   }
 
   const view = db.view(table as BitmexTable);
-  const snapshot = db.snapshot(table as BitmexTable);
+  let   data = db.snapshot(table as BitmexTable);
 
-  const filterBySymbol = symbol && 'symbol' in view.types;
+  if (symbol  && 'symbol'  in view.types) data = data.filter(r => (r as Record<string, unknown>).symbol  === symbol);
+  if (account && 'account' in view.types) data = data.filter(r => (r as Record<string, unknown>).account === Number(account));
 
-  const data = filterBySymbol
-    ? snapshot.filter((item: unknown) => (item as Record<string, unknown>)['symbol'] === symbol)
-    : snapshot;
+  if (table === 'trade') data = data.slice(-1000);
+  if (table === 'quote') data = data.slice(-100);
+
+  const filter: Record<string, string> = {};
+
+  if (symbol)  filter.symbol  = symbol;
+  if (account) filter.account = account;
 
   return {
     status: 200,
     body: {
-      table: view.table,
-      keys: view.keys,
-      types: view.types,
+      table:   view.table,
+      keys:    view.keys,
+      types:   view.types,
       data,
       counter: counters[table] ?? 0,
-      filter: filterBySymbol ? { symbol } : {},
+      filter,
     },
   };
 };
@@ -170,237 +176,135 @@ describe('server — symbol filtering', () => {
   });
 });
 
-// ── Private table helpers (inlined for unit testing) ─────────────────────────
+// ── Account filtering ─────────────────────────────────────────────────────────
 
-const buildPrivateResponse = async (
-  privateDBs:     Map<string, Database>,
-  privateTables:  Map<string, Set<string>>,
-  privateCounters: Map<string, Record<string, number>>,
-  table:          string,
-  account:        string | undefined,
-  symbol:         string | undefined,
-  accountExists:  (id: string) => Promise<boolean>,
-) => {
-  if (! account) {
-    return { status: 400, body: { error: `Table '${table}' requires an account parameter` } };
-  }
-
-  const accountDB     = privateDBs.get(account);
-  const accountTables = privateTables.get(account);
-
-  if (! accountDB || ! accountTables?.has(table)) {
-    if (await accountExists(account)) {
-      return { status: 503, body: { error: `No snapshot yet for table '${table}' (account '${account}')` } };
-    }
-
-    return { status: 403, body: { error: `Unknown account: '${account}'` } };
-  }
-
-  const accountCounters = privateCounters.get(account)!;
-  const view            = accountDB.view(table as BitmexTable);
-  const snapshot        = accountDB.snapshot(table as BitmexTable);
-
-  const filterBySymbol = symbol && 'symbol' in view.types;
-
-  const data = filterBySymbol
-    ? snapshot.filter((item: unknown) => (item as Record<string, unknown>)['symbol'] === symbol)
-    : snapshot;
-
-  const filter: Record<string, string> = { account };
-
-  if (filterBySymbol) filter['symbol'] = symbol!;
-
-  return {
-    status: 200,
-    body: {
-      table:   view.table,
-      keys:    view.keys,
-      types:   view.types,
-      data,
-      counter: accountCounters[table] ?? 0,
-      filter,
-    },
-  };
-};
-
-// ── Private table — missing account param ────────────────────────────────────
-
-describe('server — private table missing ?account= → 400', () => {
-  it('returns 400 when account param is absent', async () => {
-    const privateDBs      = new Map<string, Database>();
-    const privateTables   = new Map<string, Set<string>>();
-    const privateCounters = new Map<string, Record<string, number>>();
-
-    const res = await buildPrivateResponse(
-      privateDBs, privateTables, privateCounters,
-      'order', undefined, undefined,
-      async () => false,
-    );
-
-    expect(res.status).toBe(400);
-  });
-});
-
-// ── Private table — account not in store, bouncer says unknown ───────────────
-
-describe('server — private table unknown account → 403', () => {
-  it('returns 403 when bouncer says account is unknown', async () => {
-    const privateDBs      = new Map<string, Database>();
-    const privateTables   = new Map<string, Set<string>>();
-    const privateCounters = new Map<string, Record<string, number>>();
-
-    const res = await buildPrivateResponse(
-      privateDBs, privateTables, privateCounters,
-      'order', 'ghost-account', undefined,
-      async () => false,
-    );
-
-    expect(res.status).toBe(403);
-  });
-});
-
-// ── Private table — account known but data not ready ─────────────────────────
-
-describe('server — private table known account, no data yet → 503', () => {
-  it('returns 503 when account is valid but snapshot not yet received', async () => {
-    const privateDBs      = new Map<string, Database>();
-    const privateTables   = new Map<string, Set<string>>();
-    const privateCounters = new Map<string, Record<string, number>>();
-
-    const res = await buildPrivateResponse(
-      privateDBs, privateTables, privateCounters,
-      'order', 'bitmex-testnet', undefined,
-      async () => true,
-    );
-
-    expect(res.status).toBe(503);
-  });
-});
-
-// ── Private table — happy path ────────────────────────────────────────────────
-
-describe('server — private table happy path', () => {
-  const makePrivateState = (accountId: string, tableFixture: string, data: unknown[]) => {
+describe('server — account filtering', () => {
+  it('filters rows by account when ?account= is provided', () => {
     const db = createDatabase();
+    const tables = new Set<string>();
+    const counters: Record<string, number> = {};
 
     db.apply({
-      table:  tableFixture,
+      table: 'order',
       action: 'partial',
-      keys:   ['orderID'],
-      types:  { orderID: 'guid', account: 'long', symbol: 'symbol' },
-      data:   data as Record<string, unknown>[],
-    });
-
-    const privateDBs      = new Map<string, Database>([[accountId, db]]);
-    const privateTables   = new Map<string, Set<string>>([[accountId, new Set([tableFixture])]]);
-    const privateCounters = new Map<string, Record<string, number>>([[accountId, { [tableFixture]: 7 }]]);
-
-    return { privateDBs, privateTables, privateCounters };
-  };
-
-  it('returns 200 with account in filter', async () => {
-    const { privateDBs, privateTables, privateCounters } =
-      makePrivateState('bitmex-testnet', 'order', []);
-
-    const res = await buildPrivateResponse(
-      privateDBs, privateTables, privateCounters,
-      'order', 'bitmex-testnet', undefined,
-      async () => { throw new Error('bouncer should not be called'); },
-    );
-
-    expect(res.status).toBe(200);
-    expect((res.body as { filter: Record<string, string> }).filter.account).toBe('bitmex-testnet');
-    expect((res.body as { filter: Record<string, string> }).filter.symbol).toBeUndefined();
-  });
-
-  it('includes counter in response', async () => {
-    const { privateDBs, privateTables, privateCounters } =
-      makePrivateState('bitmex-testnet', 'order', []);
-
-    const res = await buildPrivateResponse(
-      privateDBs, privateTables, privateCounters,
-      'order', 'bitmex-testnet', undefined,
-      async () => { throw new Error('bouncer should not be called'); },
-    );
-
-    expect(res.status).toBe(200);
-    expect((res.body as { counter: number }).counter).toBe(7);
-  });
-
-  it('does not call bouncer on happy path', async () => {
-    const { privateDBs, privateTables, privateCounters } =
-      makePrivateState('bitmex-testnet', 'order', []);
-
-    let bouncerCalled = false;
-
-    await buildPrivateResponse(
-      privateDBs, privateTables, privateCounters,
-      'order', 'bitmex-testnet', undefined,
-      async () => { bouncerCalled = true; return true; },
-    );
-
-    expect(bouncerCalled).toBe(false);
-  });
-});
-
-// ── Private table — symbol filter ─────────────────────────────────────────────
-
-describe('server — private table symbol filter', () => {
-  it('filters rows by symbol for tables with a symbol field', async () => {
-    const db = createDatabase();
-
-    db.apply({
-      table:  'order',
-      action: 'partial',
-      keys:   ['orderID'],
-      types:  { orderID: 'guid', account: 'long', symbol: 'symbol' },
-      data:   [
+      keys: ['orderID'],
+      types: { orderID: 'guid', account: 'long', symbol: 'symbol' },
+      data: [
         { orderID: 'a', account: 1, symbol: 'XBTUSD' },
-        { orderID: 'b', account: 1, symbol: 'ETHUSD' },
+        { orderID: 'b', account: 2, symbol: 'XBTUSD' },
       ],
     });
+    tables.add('order');
+    counters['order'] = 7;
 
-    const privateDBs      = new Map<string, Database>([['acct', db]]);
-    const privateTables   = new Map<string, Set<string>>([['acct', new Set(['order'])]]);
-    const privateCounters = new Map<string, Record<string, number>>([['acct', {}]]);
-
-    const res = await buildPrivateResponse(
-      privateDBs, privateTables, privateCounters,
-      'order', 'acct', 'XBTUSD',
-      async () => { throw new Error('should not call bouncer'); },
-    );
+    const res = buildResponse(db, tables, counters, 'order', undefined, '1');
 
     expect(res.status).toBe(200);
     expect((res.body as { data: unknown[] }).data).toHaveLength(1);
-    expect((res.body as { filter: Record<string, string> }).filter).toEqual({ account: 'acct', symbol: 'XBTUSD' });
+    expect((res.body as { data: { account: number }[] }).data[0].account).toBe(1);
+    expect((res.body as { counter: number }).counter).toBe(7);
+    expect((res.body as { filter: Record<string, string> }).filter).toEqual({ account: '1' });
   });
 
-  it('does not filter by symbol for tables without a symbol field', async () => {
+  it('returns all rows when no account filter', () => {
     const db = createDatabase();
+    const tables = new Set<string>();
+    const counters: Record<string, number> = {};
 
     db.apply({
-      table:  'margin',
+      table: 'order',
       action: 'partial',
-      keys:   ['account', 'currency'],
-      types:  { account: 'long', currency: 'symbol', amount: 'long' },
-      data:   [
-        { account: 1, currency: 'XBt', amount: 1000 },
-        { account: 1, currency: 'USDt', amount: 500 },
+      keys: ['orderID'],
+      types: { orderID: 'guid', account: 'long', symbol: 'symbol' },
+      data: [
+        { orderID: 'a', account: 1, symbol: 'XBTUSD' },
+        { orderID: 'b', account: 2, symbol: 'XBTUSD' },
       ],
     });
+    tables.add('order');
 
-    const privateDBs      = new Map<string, Database>([['acct', db]]);
-    const privateTables   = new Map<string, Set<string>>([['acct', new Set(['margin'])]]);
-    const privateCounters = new Map<string, Record<string, number>>([['acct', {}]]);
-
-    const res = await buildPrivateResponse(
-      privateDBs, privateTables, privateCounters,
-      'margin', 'acct', 'XBTUSD',
-      async () => { throw new Error('should not call bouncer'); },
-    );
+    const res = buildResponse(db, tables, counters, 'order');
 
     expect(res.status).toBe(200);
     expect((res.body as { data: unknown[] }).data).toHaveLength(2);
-    expect((res.body as { filter: Record<string, string> }).filter).toEqual({ account: 'acct' });
+  });
+
+  it('does not filter by account on tables with no account field', () => {
+    const db = createDatabase();
+    const tables = new Set<string>();
+    const counters: Record<string, number> = {};
+
+    db.apply({
+      table: 'instrument',
+      action: 'partial',
+      keys: ['symbol'],
+      types: { symbol: 'symbol' },
+      data: [
+        { symbol: 'XBTUSD', price: 100 },
+        { symbol: 'ETHUSD', price: 50 },
+      ],
+    });
+    tables.add('instrument');
+
+    // passes account= but table has no account field — should not filter
+    const res = buildResponse(db, tables, counters, 'instrument', undefined, '425857');
+
+    expect(res.status).toBe(200);
+    expect((res.body as { data: unknown[] }).data).toHaveLength(2);
+  });
+});
+
+// ── Combined account + symbol filtering ───────────────────────────────────────
+
+describe('server — combined account + symbol filtering', () => {
+  it('filters by both account and symbol independently', () => {
+    const db = createDatabase();
+    const tables = new Set<string>();
+    const counters: Record<string, number> = {};
+
+    db.apply({
+      table: 'order',
+      action: 'partial',
+      keys: ['orderID'],
+      types: { orderID: 'guid', account: 'long', symbol: 'symbol' },
+      data: [
+        { orderID: 'a', account: 1, symbol: 'XBTUSD' },
+        { orderID: 'b', account: 1, symbol: 'ETHUSD' },
+        { orderID: 'c', account: 2, symbol: 'XBTUSD' },
+      ],
+    });
+    tables.add('order');
+
+    const res = buildResponse(db, tables, counters, 'order', 'XBTUSD', '1');
+
+    expect(res.status).toBe(200);
+    expect((res.body as { data: unknown[] }).data).toHaveLength(1);
+    expect((res.body as { data: { account: number; symbol: string }[] }).data[0]).toMatchObject({ account: 1, symbol: 'XBTUSD' });
+    expect((res.body as { filter: Record<string, string> }).filter).toEqual({ symbol: 'XBTUSD', account: '1' });
+  });
+
+  it('account-only filter returns all symbols for that account', () => {
+    const db = createDatabase();
+    const tables = new Set<string>();
+    const counters: Record<string, number> = {};
+
+    db.apply({
+      table: 'order',
+      action: 'partial',
+      keys: ['orderID'],
+      types: { orderID: 'guid', account: 'long', symbol: 'symbol' },
+      data: [
+        { orderID: 'a', account: 1, symbol: 'XBTUSD' },
+        { orderID: 'b', account: 1, symbol: 'ETHUSD' },
+        { orderID: 'c', account: 2, symbol: 'XBTUSD' },
+      ],
+    });
+    tables.add('order');
+
+    const res = buildResponse(db, tables, counters, 'order', undefined, '1');
+
+    expect(res.status).toBe(200);
+    expect((res.body as { data: unknown[] }).data).toHaveLength(2);
+    expect((res.body as { filter: Record<string, string> }).filter).toEqual({ account: '1' });
   });
 });

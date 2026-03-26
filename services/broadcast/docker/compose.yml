@@ -13,7 +13,7 @@ services:
     environment:
       # BitMEX Connection (testnet or live)
       BITMEX_TESTNET: ${BITMEX_TESTNET:-false}
-      BROADCAST_FEED_PRESET: ${BROADCAST_FEED_PRESET:-feed}
+      BROADCAST_FEED_PRESET: ${BROADCAST_FEED_PRESET:-none}
 
       # Queue
       QUEUE_URL: ${QUEUE_URL}

@@ -13,7 +13,7 @@ const processMessage = (
   message: IncomingMsg,
   counter: number
 ): { processed: false; reason: string } | { processed: true } => {
-  if (message.action === 'partial' && message.filter && 'symbol' in message.filter) {
+  if (message.action === 'partial' && message.filter && Object.keys(message.filter).length > 0) {
     return { processed: false, reason: 'Received pre-filtered partial (not supported)' };
   }
 
@@ -50,6 +50,26 @@ describe('processor — filter validation', () => {
     expect(result.processed).toBe(false);
     expect((result as { processed: false; reason: string }).reason).toMatch(/pre-filtered/);
     expect(tables.has('orderBookL2')).toBe(false);
+  });
+
+  it('rejects pre-filtered partial with account filter', () => {
+    const db = createDatabase();
+    const tables = new Set<string>();
+    const counters: Record<string, number> = {};
+
+    const msg: IncomingMsg = {
+      table: 'order',
+      action: 'partial',
+      keys: ['orderID'],
+      types: { orderID: 'guid', account: 'long' },
+      data: [],
+      filter: { account: 425857 },
+    };
+
+    const result = processMessage(db, tables, counters, msg, 1);
+
+    expect(result.processed).toBe(false);
+    expect(tables.has('order')).toBe(false);
   });
 
   it('allows partial with no filter', () => {

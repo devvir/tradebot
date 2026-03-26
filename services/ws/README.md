@@ -24,8 +24,9 @@ Requires RabbitMQ — see [infra packs](../../modules/infra/README.md).
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `WS_PORT` | no | `8180` | WebSocket server port |
-| `SNAPSHOTS_URL` | no | `http://snapshots:3001` | Snapshots service HTTP base URL |
+| `WS_PORT` | no | `` | WebSocket server port mapping on host |
+| `SNAPSHOTS_URL` | yes | `` | Snapshots service HTTP base URL |
+| `BROADCAST_URL` | yes | `` | Broadcast commands HTTP server |
 
 ## Development
 

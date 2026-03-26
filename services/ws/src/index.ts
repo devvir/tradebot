@@ -15,22 +15,24 @@ SK.run(async (service: Service) => {
   const registry = new ClientRegistry();
 
   /** Boot up the WebSocket server and start accepting connections */
-  const wss = createServer(config.wsPort, bus, registry);
+  const wss = createServer(bus, registry);
 
   /** Wire subscription handling (subscribe/unsubscribe ops, snapshot fetch, delta routing) */
-  setup(bus, registry, config.snapshotsUrl);
+  setup(bus, config, registry);
 
   /** Start consuming deltas from the RabbitMQ deltas queue */
   const broker     = await service.providers.connect('rabbitmq') as Broker;
   const deltaQueue = broker.getQueue()!;
 
   const consumeCloseHandle = await deltaQueue.consume((message, { ack, metadata }) => {
-    const counter = parseInt(metadata.headers?.['x-message-count'] ?? '0');
-    const delta   = message as BitmexWsMessage;
+    const counter   = parseInt(metadata.headers?.['x-message-count'] ?? '0');
+    const accountId = (metadata.headers?.['x-account-id'] as string) || undefined;
+    const delta     = message as BitmexWsMessage;
 
-    processDelta(delta, counter, bus);
+    processDelta(delta, counter, bus, accountId);
 
     ack();
+
     service.emit('message');
   }, { prefetch: 1000 });
 

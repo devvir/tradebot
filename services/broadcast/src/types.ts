@@ -53,3 +53,6 @@ export interface EndpointDefinition {
   name: 'realtime' | 'platform';
   url: string;
 }
+
+export type SubscribeHandler   = (channel: string, accountId?: string) => Promise<void>;
+export type UnsubscribeHandler = (channel: string, accountId?: string, keepOpen?: boolean) => void;

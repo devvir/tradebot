@@ -1,10 +1,10 @@
-import type { Broker, Service } from '@devvir/service-kit';
+import type { Service } from '@devvir/service-kit';
 import SK from './service';
 import { startDeltaConsumer } from './processor';
 import { startSnapshotServer } from './server';
 
 SK.run(async (service: Service) => {
-  (await service.providers.connect('rabbitmq')) as Broker;
+  await service.providers.connect('rabbitmq');
 
   startSnapshotServer(service);
 

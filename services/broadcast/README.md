@@ -34,9 +34,8 @@ Requires RabbitMQ and Bouncer — see [infra packs](../../modules/infra/README.m
 | `QUEUE_URL` | Yes | — | RabbitMQ connection URL |
 | `BOUNCER_URL` | Yes | — | Bouncer service URL for signing authenticated WS credentials |
 | `BOUNCER_TOKEN` | Yes | — | Bearer token to authenticate requests to Bouncer |
-| `BITMEX_TESTNET` | No | `false` | Use BitMEX testnet |
-| `BROADCAST_FEED_PRESET` | No | `feed` | Preset channel set (`feed`, `archive`, `primary`, `secondary`, `redundant`) |
-| `BROADCAST_MESSAGE_TTL` | No | `1800000` | RabbitMQ message TTL in ms (30 min) |
+| `BROADCAST_FEED_PRESET` | No | `none` | Preset channel set (`none`, `core`, `feed`, `archive`, `primary`, `secondary`, `redundant`) |
+| `BROADCAST_PORT` | No | — | Broadcast Commands Server port mapping on host |
 
 ## Runtime Command API
 

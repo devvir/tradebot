@@ -10,14 +10,15 @@ services:
 
     environment:
       QUEUE_URL: ${QUEUE_URL}
-      WS_PORT: ${WS_PORT:-8180}
+      SNAPSHOTS_URL: ${SNAPSHOTS_URL:-}
+      BROADCAST_URL: ${BROADCAST_URL:-}
 
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV: ${APP_ENV:-prod}
       TZ: ${TZ:-UTC}
 
     ports:
-      - "${WS_PORT:-8180}:${WS_PORT:-8180}"
+      - "${WS_PORT:-}:80"
 
     user: "1000:1000"
 

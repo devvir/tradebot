@@ -12,8 +12,8 @@ const { startSnapshotServer, stopServer, listen, closeWss, connect, waitFor } = 
 const createTestService = (snapshotsUrl: string) => {
   const bus      = createBus();
   const registry = new ClientRegistry();
-  const wss      = createServer(0, bus, registry);
-  setup(bus, registry, snapshotsUrl);
+  const wss      = createServer(bus, registry);
+  setup(bus, { snapshotsUrl, broadcastUrl: '' }, registry);
   return { wss, bus, registry, push: (delta: BitmexWsMessage, counter: number) => processDelta(delta, counter, bus) };
 };
 

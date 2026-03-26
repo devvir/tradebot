@@ -37,7 +37,7 @@ export const subscribe = async (
   entry.channels.add(channel);
 };
 
-export const unsubscribe = (channel: string, accountId?: string): void => {
+export const unsubscribe = (channel: string, accountId?: string, keepOpen = false): void => {
   const endpointName = pool.endpointForChannel(channel);
   const key          = pool.poolKey(endpointName, accountId);
   const entry        = pool.get(key);
@@ -49,7 +49,7 @@ export const unsubscribe = (channel: string, accountId?: string): void => {
   entry.channels.delete(channel);
 
   // Guest connections persist; close authenticated connections when idle
-  if (accountId && entry.channels.size === 0) {
+  if (accountId && entry.channels.size === 0 && ! keepOpen) {
     entry.ws.close();
     pool.remove(key);
   }

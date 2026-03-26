@@ -8,7 +8,7 @@ import type { ClientRegistry } from '../subs/clients';
 import { unrecognizedRequest } from './responses';
 import type { SubscribeOp } from '../types';
 
-// ---- Server -------------------------------------------------------------
+const WS_PORT = 80;
 
 /**
  * Start the WebSocket server.
@@ -22,12 +22,8 @@ import type { SubscribeOp } from '../types';
  *
  * Does NOT handle subscription logic — that is subs/subscription.ts's job.
  */
-export const createServer = (
-  port:     number,
-  bus:      Bus,
-  registry: ClientRegistry,
-): WebSocketServer => {
-  const wss = new WebSocketServer({ port });
+export const createServer = (bus: Bus, registry: ClientRegistry): WebSocketServer => {
+  const wss = new WebSocketServer({ port: WS_PORT });
 
   wss.on('connection', (ws, req: IncomingMessage) => {
     const url    = new URL(req.url ?? '/', 'http://x');
@@ -53,7 +49,7 @@ export const createServer = (
     });
   });
 
-  wss.on('listening', () => logger.info({ port }, 'WebSocket server listening'));
+  wss.on('listening', () => logger.info({ port: WS_PORT }, 'WebSocket server listening'));
   wss.on('error',     (err) => logger.error({ err }, 'WebSocket server error'));
 
   return wss;

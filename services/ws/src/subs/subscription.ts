@@ -15,7 +15,7 @@ import { parseArg, subscribeAck, unsubscribeAck } from '../server/protocol';
 import { unknownTable, alreadySubscribed, authRequired } from '../server/responses';
 import type { ClientRegistry } from './clients';
 import { Queue } from '@devvir/elastic-queue';
-import type { BitmexWsMessage, SubscribeOp } from '../types';
+import type { BitmexWsMessage, Config, SubscribeOp } from '../types';
 
 // ---- Types --------------------------------------------------------------
 
@@ -26,7 +26,9 @@ type SubQueue = Queue<DeltaChannelEvent>;
 const PRIVATE_TABLES = new Set([
   'execution', 'order', 'transact',
   'position', 'margin', 'wallet',
-  'affiliate',
+  'affiliate', 'privateNotifications',
+  /** Undocumented private channels */
+  'csastate', 'isolation', 'leverage', 'mamAllocation', 'voucher',
 ]);
 
 const RETRY_DELAY_MS = 5_000;
@@ -77,6 +79,37 @@ const fetchSnapshot = async (
   }
 };
 
+// ---- Broadcast signal ---------------------------------------------------
+
+type SignalResult = 'ok' | 'rejected' | 'error';
+
+const signalBroadcastResubscribe = async (
+  broadcastUrl: string,
+  channel:      string,
+  accountId?:   string,
+): Promise<SignalResult> => {
+  try {
+    const headers: Record<string, string> = {};
+
+    if (accountId) headers['x-account-id'] = accountId;
+
+    const res = await fetch(`${broadcastUrl}/resubscribe/${channel}`, {
+      method: 'POST',
+      headers,
+    });
+
+    if (res.status === 201) return 'ok';
+    if (res.status === 400) return 'rejected';
+
+    logger.warn({ channel, accountId, status: res.status }, 'Broadcast resubscribe signal returned unexpected status');
+
+    return 'error';
+  } catch (err) {
+    logger.warn({ err, channel, accountId }, 'Broadcast resubscribe signal failed');
+    return 'error';
+  }
+};
+
 // ---- Setup --------------------------------------------------------------
 
 /**
@@ -86,11 +119,10 @@ const fetchSnapshot = async (
  * isolated — important for testing and multi-instance scenarios.
  */
 export const setup = (
-  bus:          Bus,
-  registry:     ClientRegistry,
-  snapshotsUrl: string,
+  bus:      Bus,
+  config:   Config,
+  registry: ClientRegistry,
 ): void => {
-
   // ---- State (per-setup, scoped via closure) -------------------------
 
   // Routing: 'table:symbol' → queues of subscribed clients
@@ -128,29 +160,50 @@ export const setup = (
 
   const handleTableDelta = (table: string) =>
     (event: DeltaChannelEvent): void => {
-      const key    = `${table}:${getSymbol(event.delta)}`;
+      const routingId = PRIVATE_TABLES.has(table) ? (event.accountId ?? '') : getSymbol(event.delta);
+      const key       = `${table}:${routingId}`;
+
       const queues = _keyQueues.get(key);
-      if (! queues?.size) return;
-      for (const queue of queues) queue.push(event);
+
+      if (queues?.size) {
+        for (const queue of queues)
+          queue.push(event);
+      }
+
+      // Also deliver to wildcard subscribers (subscribed to the table without a symbol filter)
+      if (routingId !== '_') {
+        const wildcardQueues = _keyQueues.get(`${table}:_`);
+
+        if (wildcardQueues?.size) {
+          for (const queue of wildcardQueues)
+            queue.push(event);
+        }
+      }
     };
 
   const isTableIdle = (table: string): boolean => {
     for (const [key, queues] of _keyQueues) {
-      if (key.startsWith(`${table}:`) && queues.size > 0) return false;
+      if (key.startsWith(`${table}:`) && queues.size > 0)
+        return false;
     }
+
     return true;
   };
 
   const ensureTableListener = (table: string): void => {
     if (_tableListeners.has(table)) return;
+
     const handler = handleTableDelta(table);
+
     bus.on(deltaWildcard(table), handler);
     _tableListeners.set(table, handler);
   };
 
   const removeTableListenerIfIdle = (table: string): void => {
     if (! isTableIdle(table)) return;
+
     const handler = _tableListeners.get(table);
+
     if (handler) {
       bus.off(deltaWildcard(table), handler);
       _tableListeners.delete(table);
@@ -159,11 +212,18 @@ export const setup = (
 
   // ---- Subscribe / unsubscribe --------------------------------------
 
-  const activate = (ws: WebSocket, queue: SubQueue, snapshot: BitmexWsMessage, counter: number): void => {
+  const activate = (
+    ws: WebSocket,
+    queue: SubQueue,
+    snapshot: BitmexWsMessage,
+    counter: number,
+    key: string,
+  ): void => {
     ws.send(JSON.stringify({ ...snapshot, action: 'partial' }));
 
     queue.stream(({ delta }) => {
-      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(delta));
+      if (ws.readyState === WebSocket.OPEN && registry.hasSubscription(ws, key))
+        ws.send(JSON.stringify(delta));
     }, counter);
 
     registry.setState(ws, 'streaming');
@@ -185,29 +245,22 @@ export const setup = (
         return;
       }
 
-      const result = await fetchSnapshot(table, symbol, snapshotsUrl, account);
+      const result = await fetchSnapshot(table, symbol, config.snapshotsUrl, account);
 
       if (! result.ok) {
-        if (result.reason === 'not-found') {
-          ws.send(unknownTable(table, op));
-          removeQueue(ws, key);
-          registry.removeSubscription(ws, key);
-          removeTableListenerIfIdle(table);
-        } else {
-          scheduleRetry(ws, key, queue, table, symbol, op, account);
-        }
+        scheduleRetry(ws, key, queue, table, symbol, op, account);
         return;
       }
 
-      activate(ws, queue, result.snapshot, result.counter);
+      activate(ws, queue, result.snapshot, result.counter, key);
     }, RETRY_DELAY_MS);
   };
 
   const handleSubscribe = async (ws: WebSocket, op: SubscribeOp): Promise<void> => {
     for (const arg of normalizeArgs(op.args)) {
       const { table, symbol } = parseArg(arg);
-      const key               = `${table}:${symbol}`;
       const account           = PRIVATE_TABLES.has(table) ? registry.getApiKey(ws) : undefined;
+      const key               = PRIVATE_TABLES.has(table) ? `${table}:${account ?? ''}` : `${table}:${symbol}`;
 
       if (PRIVATE_TABLES.has(table) && ! account) {
         ws.send(authRequired(op));
@@ -230,30 +283,38 @@ export const setup = (
 
       ws.send(subscribeAck(arg, op));
 
-      const result = await fetchSnapshot(table, symbol, snapshotsUrl, account);
+      const result = await fetchSnapshot(table, symbol, config.snapshotsUrl, account);
 
       if (! result.ok) {
         if (result.reason === 'not-found') {
-          ws.send(unknownTable(table, op));
-          removeQueue(ws, key);
-          registry.removeSubscription(ws, key);
-          removeTableListenerIfIdle(table);
-        } else {
-          // Transient error: queue keeps accumulating while we retry
-          scheduleRetry(ws, key, queue, table, symbol, op, account);
+          // Snapshots doesn't have this table yet — signal broadcast to subscribe
+          const signal = await signalBroadcastResubscribe(config.broadcastUrl, table, account);
+
+          if (signal === 'rejected') {
+            // BitMEX rejected the channel — genuinely unknown table
+            ws.send(unknownTable(table, op));
+            removeQueue(ws, key);
+            registry.removeSubscription(ws, key);
+            removeTableListenerIfIdle(table);
+            continue;
+          }
         }
+
+        // Data is in flight (broadcast signaled) or transient error — retry
+        scheduleRetry(ws, key, queue, table, symbol, op, account);
 
         continue;
       }
 
-      activate(ws, queue, result.snapshot, result.counter);
+      activate(ws, queue, result.snapshot, result.counter, key);
     }
   };
 
   const handleUnsubscribe = (ws: WebSocket, op: SubscribeOp): void => {
     for (const arg of normalizeArgs(op.args)) {
       const { table, symbol } = parseArg(arg);
-      const key = `${table}:${symbol}`;
+      const account           = PRIVATE_TABLES.has(table) ? registry.getApiKey(ws) : undefined;
+      const key               = PRIVATE_TABLES.has(table) ? `${table}:${account ?? ''}` : `${table}:${symbol}`;
 
       removeQueue(ws, key);
       registry.removeSubscription(ws, key);
@@ -292,7 +353,5 @@ export const setup = (
     }
   });
 
-  bus.on(DISCONNECT, ({ ws }: DisconnectEvent) => {
-    handleDisconnect(ws);
-  });
+  bus.on(DISCONNECT, ({ ws }: DisconnectEvent) => handleDisconnect(ws));
 };

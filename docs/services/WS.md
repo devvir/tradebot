@@ -163,8 +163,9 @@ Requires RabbitMQ — see [infra packs](../../modules/infra/README.md).
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `WS_PORT` | no | `8180` | WebSocket server port |
-| `SNAPSHOTS_URL` | no | `http://snapshots:3001` | Base URL for snapshots service (used as `{SNAPSHOTS_URL}/snapshot/{table}`) |
+| `WS_PORT` | no | `` | WebSocket server port mapping on host |
+| `SNAPSHOTS_URL` | yes | `` | Base URL for snapshots service |
+| `BROADCAST_URL` | yes | `` | Base URL for broadcast service |
 
 ## Lifecycle
 

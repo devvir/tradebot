@@ -9,9 +9,9 @@ import type { BitmexWsMessage } from '../types';
  *   - 'delta:orderBookL2:XBTUSD'   (per-symbol, for fine-grained listeners)
  *   - 'delta:orderBookL2:*'        (per-table wildcard, for subscription routing)
  */
-export const processDelta = (delta: BitmexWsMessage, counter: number, bus: Bus): void => {
+export const processDelta = (delta: BitmexWsMessage, counter: number, bus: Bus, accountId?: string): void => {
   const symbol = getSymbol(delta);
-  const event: DeltaChannelEvent = { delta, counter };
+  const event: DeltaChannelEvent = { delta, counter, accountId };
 
   bus.emit(deltaChannel(delta.table, symbol), event);
   bus.emit(deltaWildcard(delta.table),        event);

@@ -14,8 +14,9 @@ export interface DisconnectEvent {
 }
 
 export interface DeltaChannelEvent {
-  delta:   BitmexWsMessage;
-  counter: number;
+  delta:     BitmexWsMessage;
+  counter:   number;
+  accountId: string | undefined;
 }
 
 // ---- Event name constants -----------------------------------------------

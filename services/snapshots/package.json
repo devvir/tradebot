@@ -12,7 +12,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@devvir/bitmex-database": "^1.1.2",
+    "@devvir/bitmex-database": "^1.1.4",
     "@devvir/service-kit": "workspace:*",
     "@tradebot/utils": "workspace:*",
     "express": "^5.2.1",
