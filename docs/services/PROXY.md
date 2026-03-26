@@ -11,7 +11,7 @@ Proxy is a standalone service. Any service that needs authenticated access to Bi
 ## Responsibilities
 
 - **Accept** any HTTP request (method, path, query string, body)
-- **Identify** the target account from the `X-Account-Id` header or `api-key` header
+- **Identify** the target account from the `x-account-id` header or `api-key` header
 - **Sign** the request through Bouncer (`POST /sign/rest`)
 - **Forward** the signed request to the correct BitMEX environment with auth headers (`api-key`, `api-expires`, `api-signature`)
 - **Return** the BitMEX response verbatim — status code, body, content-type
@@ -24,7 +24,7 @@ Proxy supports two modes for identifying the target account:
 
 ### 1. Account ID (sign via Bouncer)
 
-The caller provides `X-Account-Id` (or `api-key` used as an account id). Proxy fetches the account from Bouncer to determine type and target URL, then requests a signature:
+The caller provides `x-account-id` (or `api-key` used as an account id). Proxy fetches the account from Bouncer to determine type and target URL, then requests a signature:
 
 ```
 POST /sign/rest
@@ -67,7 +67,7 @@ Upstream:  GET https://www.bitmex.com/api/v1/order?symbol=XBTUSD&count=10
 
 Most headers from the caller are forwarded unchanged (e.g. `Content-Type`, `Accept`). The following are stripped before forwarding:
 
-- `X-Account-Id` (internal, not a BitMEX header)
+- `x-account-id` (internal, not a BitMEX header)
 - `host`, `connection`, `transfer-encoding` (hop-by-hop)
 
 In the account-id flow, any `api-*` headers from the caller are replaced by the signed headers from Bouncer.
@@ -121,7 +121,7 @@ Health check: `GET /health` (provided by service-kit).
 
 ```
 Caller (any service)
-    ↓  HTTP (X-Account-Id or api-key + api-signature)
+    ↓  HTTP (x-account-id or api-key + api-signature)
 proxy
     ↓  HTTPS (api-key + api-expires + api-signature)
 BitMEX REST API

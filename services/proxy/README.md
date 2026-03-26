@@ -5,7 +5,7 @@ Transparent HTTP forwarder that signs requests via Bouncer and forwards them to 
 ## What it does
 
 - Accepts any HTTP request (method, path, query string, body)
-- Resolves the target BitMEX account via the `X-Account-Id` header or `api-key` header
+- Resolves the target BitMEX account via the `x-account-id` header or `api-key` header
 - Signs the request through Bouncer (`POST /sign/rest`) — sees only the public `apiKey`, never the secret
 - Forwards the signed request to the correct BitMEX environment (live or testnet)
 - Returns the upstream response as-is: status code, headers, and body unchanged

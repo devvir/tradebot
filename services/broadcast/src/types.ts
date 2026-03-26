@@ -15,9 +15,27 @@ export interface Config {
   rabbitmqUrl: string;
   realtimeWsUrl: string;
   platformWsUrl: string;
-  realtimeChannels: readonly string[];
-  platformChannels: readonly string[];
+  channels: readonly string[];
+  bouncerUrl:   string;
+  bouncerToken: string;
   [key: string]: unknown;
+}
+
+export interface Credentials {
+  apiKey:    string;
+  expires:   number;
+  signature: string;
+}
+
+export interface PoolEntry {
+  ws:       WebSocket;
+  channels: Set<string>;
+}
+
+export interface ConnectOptions {
+  credentials?: Credentials;
+  accountId?:   string;
+  onReconnect?: (ws: WebSocket) => void;
 }
 
 export interface State {
@@ -27,18 +45,11 @@ export interface State {
   isShuttingDown: boolean;
   lastMessageTime: number;
   apiVersion: string | null;
-  pingInterval: NodeJS.Timeout | null;
 }
 
-export type MessageHandler = (msg: Buffer) => void;
+export type MessageHandler = (msg: Buffer, accountId?: string) => void;
 
 export interface EndpointDefinition {
   name: 'realtime' | 'platform';
   url: string;
-  channels: readonly string[];
-};
-
-export interface EndpointConnections {
-  connectRealtime: () => void;
-  connectPlatform: () => void;
-};
+}

@@ -1,6 +1,6 @@
 import WebSocket from 'ws';
 import { logger, type Service } from '@devvir/service-kit';
-import type { Config, EndpointConnections, EndpointDefinition, MessageHandler } from './types';
+import type { ConnectOptions, EndpointDefinition, MessageHandler } from './types';
 
 const RECONNECT_DELAY_MS = 200;
 const MAX_RECONNECT_DELAY_MS = 15_000;
@@ -8,65 +8,76 @@ const MAX_RECONNECT_DELAY_MS = 15_000;
 let reconnectDelayMs = RECONNECT_DELAY_MS;
 
 /**
- * Creates the two BitMEX WebSocket connections (realtime + platform).
+ * Connect to a BitMEX WebSocket endpoint.
  *
- * Returns `{ connectRealtime, connectPlatform }`, to establish (or re-establish) each connection.
+ * Handles lifecycle (heartbeat, pong, reconnect with backoff). The caller
+ * receives the WebSocket and is responsible for tracking it. On reconnect, the
+ * `onReconnect` callback provides the replacement instance.
  */
-export default (service: Service, onMessage: MessageHandler): EndpointConnections => {
-  const config = service.config() as Config;
+export const connect = (
+  endpoint:  EndpointDefinition,
+  service:   Service,
+  onMessage: MessageHandler,
+  options:   ConnectOptions = {},
+): WebSocket => {
+  const { credentials, accountId, onReconnect } = options;
+  const label = accountId ?? 'guest';
 
-  const endpoints: Record<string, EndpointDefinition> = {
-    realtime: { name: 'realtime', url: config.realtimeWsUrl, channels: config.realtimeChannels },
-    platform: { name: 'platform', url: config.platformWsUrl, channels: config.platformChannels },
-  };
+  const doConnect = (): WebSocket => {
+    if (service.state('isShuttingDown')) return null!;
 
-  const connect = (endpointName: keyof typeof endpoints): void => {
-    if (service.state('isShuttingDown')) return;
+    const url = credentials
+      ? `${endpoint.url}?api-key=${credentials.apiKey}&api-expires=${credentials.expires}&api-signature=${credentials.signature}`
+      : endpoint.url;
 
-    logger.info({ endpointName }, 'Connecting to Websocket endpoint');
+    logger.info({ endpointName: endpoint.name, account: label }, 'Connecting to Websocket endpoint');
 
-    const endpoint: EndpointDefinition = endpoints[endpointName];
-    const ws = service.setState(endpoint.name, new WebSocket(endpoint.url));
+    const ws = new WebSocket(url);
+    let pingInterval: NodeJS.Timeout | null = null;
 
     ws.on('open', () => {
-      logger.info(`Connected to ${endpoint.name}`);
+      logger.info(`Connected to ${endpoint.name} (${label})`);
 
       service.setState('lastMessageTime', Date.now());
-      service.setState('pingInterval', startHeartbeat(ws));
+      pingInterval = startHeartbeat(ws);
 
       reconnectDelayMs = RECONNECT_DELAY_MS;
-
-      subscribeToTopics(ws, endpoint.channels);
     });
 
     ws.on('ping', () => ws.pong());
-    ws.on('pong', () => logger.debug(`Pong from ${endpoint.name}`));
-    ws.on('message', (msg: Buffer) => onMessage(msg));
+    ws.on('pong', () => logger.debug(`Pong from ${endpoint.name} (${label})`));
+    ws.on('message', (msg: Buffer) => onMessage(msg, accountId));
 
     ws.on('error', (err: Error) => {
-      logger.error({ err }, `${endpoint.name} WebSocket error`);
-      scheduleReconnect(() => connect(endpointName));
+      logger.error({ err }, `${endpoint.name} WebSocket error (${label})`);
+      scheduleReconnect(() => {
+        const next = doConnect();
+        if (next) onReconnect?.(next);
+      });
     });
 
     ws.on('close', (code: number, reason: Buffer) => {
-      logger.warn({ code, reason: reason.toString() }, `${endpoint.name} closed, reconnecting...`);
+      logger.warn({ code, reason: reason.toString() }, `${endpoint.name} closed (${label})`);
 
-      const pingInterval = service.state('pingInterval') as NodeJS.Timeout | null;
-      if (pingInterval) { clearInterval(pingInterval); service.setState('pingInterval', null); }
+      if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
 
       if (! service.state('isShuttingDown'))
-        scheduleReconnect(() => connect(endpointName));
+        scheduleReconnect(() => {
+          const next = doConnect();
+          if (next) onReconnect?.(next);
+        });
     });
+
+    return ws;
   };
 
-  return {
-    connectRealtime: () => connect('realtime'),
-    connectPlatform: () => connect('platform'),
-  } as EndpointConnections;
+  return doConnect();
 };
 
-const scheduleReconnect = (connect: () => void): void => {
-  setTimeout(connect, reconnectDelayMs);
+// ── Private helpers ───────────────────────────────────────────────────────────
+
+const scheduleReconnect = (reconnect: () => void): void => {
+  setTimeout(reconnect, reconnectDelayMs);
   reconnectDelayMs = Math.min(reconnectDelayMs * 2, MAX_RECONNECT_DELAY_MS);
 };
 
@@ -74,14 +85,3 @@ const startHeartbeat = (ws: WebSocket): NodeJS.Timeout =>
   setInterval(() => {
     if (ws.readyState === WebSocket.OPEN) ws.ping();
   }, 30000);
-
-/**
- * Subscribe to a list of BitMEX channels in a single message.
- */
-const subscribeToTopics = (ws: WebSocket, channels: readonly string[]): void => {
-  if (channels.length === 0) return;
-
-  logger.info({ channels }, 'Subscribing to channels');
-
-  ws.send(JSON.stringify({ op: 'subscribe', args: channels }));
-};

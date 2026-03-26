@@ -12,7 +12,6 @@ const makeService = (stateOverrides: Partial<State> = {}) => {
     isShuttingDown:  false,
     lastMessageTime: 0,
     apiVersion:      null,
-    pingInterval:    null,
     ...stateOverrides,
   };
 
@@ -22,8 +21,9 @@ const makeService = (stateOverrides: Partial<State> = {}) => {
     rabbitmqUrl:       'amqp://localhost',
     realtimeWsUrl:     'wss://www.bitmex.com/realtime',
     platformWsUrl:     'wss://www.bitmex.com/realtimePlatform',
-    realtimeChannels:  ['trade'],
-    platformChannels:  ['announcement'],
+    channels:          ['trade', 'announcement'],
+    bouncerUrl:        'http://bouncer:3000',
+    bouncerToken:      'test-token',
   };
 
   const exchange = { publish: vi.fn().mockResolvedValue(undefined) };
@@ -152,6 +152,24 @@ describe('data messages: publishing', () => {
     await handler(buf(dataMsg()));
 
     expect((exchange.publish.mock.calls[0][2] as any).headers['x-bitmex-version']).toBe('2.5.0');
+  });
+
+  it('includes x-account-id from accountId argument', async () => {
+    const { service, exchange } = makeService();
+    const handler = createMessageHandler(service as any, vi.fn());
+
+    await handler(buf(dataMsg()), 'acc-42');
+
+    expect((exchange.publish.mock.calls[0][2] as any).headers['x-account-id']).toBe('acc-42');
+  });
+
+  it('includes empty x-account-id for guest messages', async () => {
+    const { service, exchange } = makeService();
+    const handler = createMessageHandler(service as any, vi.fn());
+
+    await handler(buf(dataMsg()));
+
+    expect((exchange.publish.mock.calls[0][2] as any).headers['x-account-id']).toBe('');
   });
 
   it('calls the onMessage callback after each publish', async () => {

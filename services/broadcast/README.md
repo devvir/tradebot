@@ -1,21 +1,21 @@
 # Broadcast Service
 
-A WebSocket client that connects to BitMEX market data endpoints and publishes all received messages to RabbitMQ.
+A WebSocket client that connects to BitMEX market data endpoints, and publishes all received messages to RabbitMQ.
+
+It exposes an HTTP command interface for runtime channel subscription management.
 
 ## Core Functionality
 
 - **WebSocket connections** to BitMEX realtime and platform endpoints (with configurable live/testnet)
 - **Message relay** - receives all BitMEX messages and publishes them to RabbitMQ
+- **Runtime subscriptions** - HTTP API on port 80 to subscribe/unsubscribe channels at runtime (including authenticated, per-account connections via Bouncer)
 - **Automatic reconnection** with exponential backoff on connection loss
 - **Health monitoring** - exposes health check endpoint reporting connection and activity status
 - **Lifecycle management** - graceful shutdown, proper resource cleanup
 
-The service maintains two independent WebSocket connections:
+The service maintains two persistent guest WebSocket connections (realtime + platform) for preset channels, plus an on-demand pool of authenticated connections for per-account channel subscriptions.
 
-- **Realtime**: Market data (instruments, quotes, trades, order books)
-- **Platform**: System announcements and chat
-
-Both publish to the same RabbitMQ topic exchange with `<table>.<action>` as the routing key (e.g., `trade.insert`).
+Both connection types publish to the same RabbitMQ topic exchange with `<table>.<action>` as the routing key (e.g., `trade.insert`).
 
 ## Development
 
@@ -27,9 +27,29 @@ pnpm test      # Run tests
 
 ## Configuration
 
-Requires RabbitMQ — see [infra packs](../../modules/infra/README.md).
+Requires RabbitMQ and Bouncer — see [infra packs](../../modules/infra/README.md).
 
-- `BITMEX_TESTNET` - Use testnet (default: false)
-- `BROADCAST_MESSAGE_TTL` - RabbitMQ message TTL in ms (default: 1800000 = 30 minutes)
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `QUEUE_URL` | Yes | — | RabbitMQ connection URL |
+| `BOUNCER_URL` | Yes | — | Bouncer service URL for signing authenticated WS credentials |
+| `BOUNCER_TOKEN` | Yes | — | Bearer token to authenticate requests to Bouncer |
+| `BITMEX_TESTNET` | No | `false` | Use BitMEX testnet |
+| `BROADCAST_FEED_PRESET` | No | `feed` | Preset channel set (`feed`, `archive`, `primary`, `secondary`, `redundant`) |
+| `BROADCAST_MESSAGE_TTL` | No | `1800000` | RabbitMQ message TTL in ms (30 min) |
+
+## Runtime Command API
+
+```bash
+# Subscribe to a channel (guest connection)
+POST http://broadcast:80/subscribe/trade
+
+# Subscribe to a channel (authenticated, per-account connection)
+POST http://broadcast:80/subscribe/order
+x-account-id: <accountId>
+
+# Unsubscribe
+POST http://broadcast:80/unsubscribe/trade
+```
 
 For technical details, see [docs/services/BROADCAST.md](../../docs/services/BROADCAST.md).

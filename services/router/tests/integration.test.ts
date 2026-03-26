@@ -13,15 +13,15 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { RabbitMQ } from '@devvir/service-kit';
-import { buildTopology } from '../src/topology';
+import { buildConsumerTopology, buildPublisherTopology } from '../src/topology';
 import { consumeAndRepublish } from '../src/consumer';
 import { loadConfig } from '../src/config';
 import type { Config, Route } from '../src/types';
 
-/** Convenience wrapper matching the old startConsuming(broker, routes) test API. */
-const startConsuming = async (broker: RabbitMQ.Broker, routes: Route[]): Promise<void> => {
+/** Convenience wrapper for starting the router with separate consumer and publisher brokers. */
+const startConsuming = async (consumer: RabbitMQ.Broker, publisher: RabbitMQ.Broker, routes: Route[]): Promise<void> => {
   const config: Config = { rabbitmqUrl: '', routes, maxReady: 0, watchQueues: [] };
-  await consumeAndRepublish(broker, config, null);
+  await consumeAndRepublish(consumer, publisher, config, null);
 };
 
 const RABBIT_URL = 'amqp://guest:guest@localhost:56731';
@@ -43,11 +43,15 @@ const parseRules = (rules: string): Config => {
   }
 };
 
-/** Create a broker and declare the router topology. */
-const connectToQueue = async (config: Config): Promise<RabbitMQ.Broker> => {
-  const broker = await RabbitMQ.keepAlive(RABBIT_URL);
-  await broker.declares(buildTopology(config.routes));
-  return broker;
+/** Create consumer and publisher brokers with their respective topologies declared. */
+const connectRouterBrokers = async (config: Config): Promise<{ consumerBroker: RabbitMQ.Broker; publisherBroker: RabbitMQ.Broker }> => {
+  const consumerBroker = await RabbitMQ.keepAlive(RABBIT_URL);
+  await consumerBroker.declares(buildConsumerTopology(config.routes) as RabbitMQ.TopologySpec);
+
+  const publisherBroker = await RabbitMQ.keepAlive(RABBIT_URL);
+  await publisherBroker.declares(buildPublisherTopology(config.routes) as RabbitMQ.TopologySpec);
+
+  return { consumerBroker, publisherBroker };
 };
 
 /**
@@ -206,7 +210,8 @@ describe('Router Integration', () => {
   // ── Bare queue routing (default exchange) ──────────────────────────────────
 
   describe('Bare queue routing (default exchange)', () => {
-    let routerBroker: RabbitMQ.Broker;
+    let consumerBroker: RabbitMQ.Broker;
+    let publisherBroker: RabbitMQ.Broker;
     let testBroker: RabbitMQ.Broker;
     let routes: Route[];
 
@@ -214,7 +219,7 @@ describe('Router Integration', () => {
       const config = parseRules('int.bare.src > int.bare.dst');
       routes = config.routes;
 
-      routerBroker = await connectToQueue(config);
+      ({ consumerBroker, publisherBroker } = await connectRouterBrokers(config));
 
       // Declare destination queue from test side (simulates downstream service)
       testBroker = await RabbitMQ.keepAlive(RABBIT_URL, { retries: 5 });
@@ -222,11 +227,12 @@ describe('Router Integration', () => {
         queues: { 'int.bare.dst': { durable: true } },
       });
 
-      await startConsuming(routerBroker, routes);
+      await startConsuming(consumerBroker, publisherBroker, routes);
     });
 
     afterAll(async () => {
-      await routerBroker?.close().catch(() => {});
+      await consumerBroker?.close().catch(() => {});
+      await publisherBroker?.close().catch(() => {});
       await testBroker?.close().catch(() => {});
     });
 
@@ -258,7 +264,8 @@ describe('Router Integration', () => {
   // ── Fan-out routing ────────────────────────────────────────────────────────
 
   describe('Fan-out routing (one source, multiple destinations)', () => {
-    let routerBroker: RabbitMQ.Broker;
+    let consumerBroker: RabbitMQ.Broker;
+    let publisherBroker: RabbitMQ.Broker;
     let testBroker: RabbitMQ.Broker;
     let routes: Route[];
 
@@ -266,7 +273,7 @@ describe('Router Integration', () => {
       const config = parseRules('int.fan.src > int.fan.dst1 & int.fan.dst2 & int.fan.dst3');
       routes = config.routes;
 
-      routerBroker = await connectToQueue(config);
+      ({ consumerBroker, publisherBroker } = await connectRouterBrokers(config));
 
       testBroker = await RabbitMQ.keepAlive(RABBIT_URL, { retries: 5 });
       await testBroker.declares({
@@ -277,11 +284,12 @@ describe('Router Integration', () => {
         },
       });
 
-      await startConsuming(routerBroker, routes);
+      await startConsuming(consumerBroker, publisherBroker, routes);
     });
 
     afterAll(async () => {
-      await routerBroker?.close().catch(() => {});
+      await consumerBroker?.close().catch(() => {});
+      await publisherBroker?.close().catch(() => {});
       await testBroker?.close().catch(() => {});
     });
 
@@ -326,7 +334,8 @@ describe('Router Integration', () => {
   // ── Explicit exchange binding ──────────────────────────────────────────────
 
   describe('Explicit exchange binding', () => {
-    let routerBroker: RabbitMQ.Broker;
+    let consumerBroker: RabbitMQ.Broker;
+    let publisherBroker: RabbitMQ.Broker;
     let testBroker: RabbitMQ.Broker;
     let routes: Route[];
 
@@ -334,7 +343,7 @@ describe('Router Integration', () => {
       const config = parseRules('int.exch.src@fanout:int.exch.input > int.exch.dst@fanout:int.exch.output');
       routes = config.routes;
 
-      routerBroker = await connectToQueue(config);
+      ({ consumerBroker, publisherBroker } = await connectRouterBrokers(config));
 
       // Bind a test consumer queue to the output exchange
       testBroker = await RabbitMQ.keepAlive(RABBIT_URL, { retries: 5 });
@@ -347,11 +356,12 @@ describe('Router Integration', () => {
         },
       });
 
-      await startConsuming(routerBroker, routes);
+      await startConsuming(consumerBroker, publisherBroker, routes);
     });
 
     afterAll(async () => {
-      await routerBroker?.close().catch(() => {});
+      await consumerBroker?.close().catch(() => {});
+      await publisherBroker?.close().catch(() => {});
       await testBroker?.close().catch(() => {});
     });
 
@@ -368,8 +378,8 @@ describe('Router Integration', () => {
     it('routes messages published to source exchange through to destination exchange', async () => {
       const payload = { test: 'exchange-routing', exchange: true };
 
-      // Publish to the source exchange (router declared it)
-      publishToExchange(routerBroker, 'int.exch.input', payload);
+      // Publish to the source exchange (consumer broker declared it)
+      publishToExchange(consumerBroker, 'int.exch.input', payload);
 
       // Test consumer queue (bound to output exchange) should receive it
       const received = await getMessage(testBroker, 'int.exch.test-consumer');
@@ -380,7 +390,8 @@ describe('Router Integration', () => {
   // ── Mixed destinations (default + explicit exchange) ───────────────────────
 
   describe('Mixed destinations (default + explicit exchange)', () => {
-    let routerBroker: RabbitMQ.Broker;
+    let consumerBroker: RabbitMQ.Broker;
+    let publisherBroker: RabbitMQ.Broker;
     let testBroker: RabbitMQ.Broker;
     let routes: Route[];
 
@@ -388,7 +399,7 @@ describe('Router Integration', () => {
       const config = parseRules('int.mixed.src > int.mixed.bare & int.mixed.bound@fanout:int.mixed.ex');
       routes = config.routes;
 
-      routerBroker = await connectToQueue(config);
+      ({ consumerBroker, publisherBroker } = await connectRouterBrokers(config));
 
       testBroker = await RabbitMQ.keepAlive(RABBIT_URL, { retries: 5 });
       await testBroker.declares({
@@ -403,11 +414,12 @@ describe('Router Integration', () => {
         },
       });
 
-      await startConsuming(routerBroker, routes);
+      await startConsuming(consumerBroker, publisherBroker, routes);
     });
 
     afterAll(async () => {
-      await routerBroker?.close().catch(() => {});
+      await consumerBroker?.close().catch(() => {});
+      await publisherBroker?.close().catch(() => {});
       await testBroker?.close().catch(() => {});
     });
 
@@ -428,7 +440,8 @@ describe('Router Integration', () => {
   // ── Multiple sources ───────────────────────────────────────────────────────
 
   describe('Multiple sources', () => {
-    let routerBroker: RabbitMQ.Broker;
+    let consumerBroker: RabbitMQ.Broker;
+    let publisherBroker: RabbitMQ.Broker;
     let testBroker: RabbitMQ.Broker;
     let routes: Route[];
 
@@ -436,18 +449,19 @@ describe('Router Integration', () => {
       const config = parseRules('int.multi.src1 & int.multi.src2 > int.multi.dst');
       routes = config.routes;
 
-      routerBroker = await connectToQueue(config);
+      ({ consumerBroker, publisherBroker } = await connectRouterBrokers(config));
 
       testBroker = await RabbitMQ.keepAlive(RABBIT_URL, { retries: 5 });
       await testBroker.declares({
         queues: { 'int.multi.dst': { durable: true } },
       });
 
-      await startConsuming(routerBroker, routes);
+      await startConsuming(consumerBroker, publisherBroker, routes);
     });
 
     afterAll(async () => {
-      await routerBroker?.close().catch(() => {});
+      await consumerBroker?.close().catch(() => {});
+      await publisherBroker?.close().catch(() => {});
       await testBroker?.close().catch(() => {});
     });
 
@@ -467,7 +481,8 @@ describe('Router Integration', () => {
   // ── Multi-rule configuration ───────────────────────────────────────────────
 
   describe('Multi-rule configuration', () => {
-    let routerBroker: RabbitMQ.Broker;
+    let consumerBroker: RabbitMQ.Broker;
+    let publisherBroker: RabbitMQ.Broker;
     let testBroker: RabbitMQ.Broker;
     let routes: Route[];
 
@@ -478,7 +493,7 @@ describe('Router Integration', () => {
       `);
       routes = config.routes;
 
-      routerBroker = await connectToQueue(config);
+      ({ consumerBroker, publisherBroker } = await connectRouterBrokers(config));
 
       testBroker = await RabbitMQ.keepAlive(RABBIT_URL, { retries: 5 });
       await testBroker.declares({
@@ -489,11 +504,12 @@ describe('Router Integration', () => {
         },
       });
 
-      await startConsuming(routerBroker, routes);
+      await startConsuming(consumerBroker, publisherBroker, routes);
     });
 
     afterAll(async () => {
-      await routerBroker?.close().catch(() => {});
+      await consumerBroker?.close().catch(() => {});
+      await publisherBroker?.close().catch(() => {});
       await testBroker?.close().catch(() => {});
     });
 
@@ -538,7 +554,8 @@ describe('Router Integration', () => {
   // ── Routing key transforms ────────────────────────────────────────────────
 
   describe('Routing key transforms', () => {
-    let routerBroker: RabbitMQ.Broker;
+    let consumerBroker: RabbitMQ.Broker;
+    let publisherBroker: RabbitMQ.Broker;
     let testBroker: RabbitMQ.Broker;
     let routes: Route[];
 
@@ -547,7 +564,7 @@ describe('Router Integration', () => {
       const config = parseRules('int.rk.src@topic:int.rk.input > int.rk.dst@topic:int.rk.output(key:message:collect)');
       routes = config.routes;
 
-      routerBroker = await connectToQueue(config);
+      ({ consumerBroker, publisherBroker } = await connectRouterBrokers(config));
 
       // Bind a test consumer queue to the output exchange with catch-all
       testBroker = await RabbitMQ.keepAlive(RABBIT_URL, { retries: 5 });
@@ -560,17 +577,18 @@ describe('Router Integration', () => {
         },
       });
 
-      await startConsuming(routerBroker, routes);
+      await startConsuming(consumerBroker, publisherBroker, routes);
     });
 
     afterAll(async () => {
-      await routerBroker?.close().catch(() => {});
+      await consumerBroker?.close().catch(() => {});
+      await publisherBroker?.close().catch(() => {});
       await testBroker?.close().catch(() => {});
     });
 
     it('replaces routing key prefix (message.trade → collect.trade)', async () => {
       const payload = { table: 'trade', data: [1, 2, 3] };
-      publishToExchange(routerBroker, 'int.rk.input', payload, 'message.trade');
+      publishToExchange(consumerBroker, 'int.rk.input', payload, 'message.trade');
 
       const received = await getRawMessage(testBroker, 'int.rk.consumer');
       expect(received).not.toBeNull();
@@ -580,7 +598,7 @@ describe('Router Integration', () => {
 
     it('replaces routing key in multi-segment keys', async () => {
       const payload = { table: 'orderBookL2', data: [] };
-      publishToExchange(routerBroker, 'int.rk.input', payload, 'message.orderBookL2');
+      publishToExchange(consumerBroker, 'int.rk.input', payload, 'message.orderBookL2');
 
       const received = await getRawMessage(testBroker, 'int.rk.consumer');
       expect(received).not.toBeNull();
@@ -591,7 +609,8 @@ describe('Router Integration', () => {
   // ── Exchange-only destination (broadcast pattern) ─────────────────────────
 
   describe('Exchange-only destination (broadcast pattern)', () => {
-    let routerBroker: RabbitMQ.Broker;
+    let consumerBroker: RabbitMQ.Broker;
+    let publisherBroker: RabbitMQ.Broker;
     let testBroker: RabbitMQ.Broker;
     let routes: Route[];
 
@@ -599,7 +618,7 @@ describe('Router Integration', () => {
       const config = parseRules('int.bcast.src@topic:int.bcast.input > @fanout:int.bcast.output');
       routes = config.routes;
 
-      routerBroker = await connectToQueue(config);
+      ({ consumerBroker, publisherBroker } = await connectRouterBrokers(config));
 
       // Subscribers bind their own queues to the fanout exchange
       testBroker = await RabbitMQ.keepAlive(RABBIT_URL, { retries: 5 });
@@ -615,17 +634,18 @@ describe('Router Integration', () => {
         },
       });
 
-      await startConsuming(routerBroker, routes);
+      await startConsuming(consumerBroker, publisherBroker, routes);
     });
 
     afterAll(async () => {
-      await routerBroker?.close().catch(() => {});
+      await consumerBroker?.close().catch(() => {});
+      await publisherBroker?.close().catch(() => {});
       await testBroker?.close().catch(() => {});
     });
 
     it('broadcasts to all subscriber queues via fanout exchange', async () => {
       const payload = { broadcast: true, data: 'hello subscribers' };
-      publishToExchange(routerBroker, 'int.bcast.input', payload, 'message.trade');
+      publishToExchange(consumerBroker, 'int.bcast.input', payload, 'message.trade');
 
       const [sub1, sub2] = await Promise.all([
         getMessage(testBroker, 'int.bcast.sub1'),
@@ -640,7 +660,8 @@ describe('Router Integration', () => {
   // ── Real-world scenario: Collector module ──────────────────────────────────
 
   describe('Real-world: Collector module pattern', () => {
-    let routerBroker: RabbitMQ.Broker;
+    let consumerBroker: RabbitMQ.Broker;
+    let publisherBroker: RabbitMQ.Broker;
     let testBroker: RabbitMQ.Broker;
     let routes: Route[];
 
@@ -648,7 +669,7 @@ describe('Router Integration', () => {
       const config = parseRules('int.coll.broadcast > int.coll.codec & int.coll.writer');
       routes = config.routes;
 
-      routerBroker = await connectToQueue(config);
+      ({ consumerBroker, publisherBroker } = await connectRouterBrokers(config));
 
       testBroker = await RabbitMQ.keepAlive(RABBIT_URL, { retries: 5 });
       await testBroker.declares({
@@ -658,11 +679,12 @@ describe('Router Integration', () => {
         },
       });
 
-      await startConsuming(routerBroker, routes);
+      await startConsuming(consumerBroker, publisherBroker, routes);
     });
 
     afterAll(async () => {
-      await routerBroker?.close().catch(() => {});
+      await consumerBroker?.close().catch(() => {});
+      await publisherBroker?.close().catch(() => {});
       await testBroker?.close().catch(() => {});
     });
 
@@ -688,7 +710,8 @@ describe('Router Integration', () => {
   // ── Header injection ──────────────────────────────────────────────────────
 
   describe('Header injection', () => {
-    let routerBroker: RabbitMQ.Broker;
+    let consumerBroker: RabbitMQ.Broker;
+    let publisherBroker: RabbitMQ.Broker;
     let testBroker: RabbitMQ.Broker;
     let routes: Route[];
 
@@ -696,18 +719,19 @@ describe('Router Integration', () => {
       const config = parseRules('int.hdr.src > int.hdr.dst(header:x-test=hello)');
       routes = config.routes;
 
-      routerBroker = await connectToQueue(config);
+      ({ consumerBroker, publisherBroker } = await connectRouterBrokers(config));
 
       testBroker = await RabbitMQ.keepAlive(RABBIT_URL, { retries: 5 });
       await testBroker.declares({
         queues: { 'int.hdr.dst': { durable: true } },
       });
 
-      await startConsuming(routerBroker, routes);
+      await startConsuming(consumerBroker, publisherBroker, routes);
     });
 
     afterAll(async () => {
-      await routerBroker?.close().catch(() => {});
+      await consumerBroker?.close().catch(() => {});
+      await publisherBroker?.close().catch(() => {});
       await testBroker?.close().catch(() => {});
     });
 
@@ -732,7 +756,8 @@ describe('Router Integration', () => {
   // ── Message integrity ─────────────────────────────────────────────────────
 
   describe('Message integrity', () => {
-    let routerBroker: RabbitMQ.Broker;
+    let consumerBroker: RabbitMQ.Broker;
+    let publisherBroker: RabbitMQ.Broker;
     let testBroker: RabbitMQ.Broker;
     let routes: Route[];
 
@@ -740,18 +765,19 @@ describe('Router Integration', () => {
       const config = parseRules('int.integrity.src > int.integrity.dst');
       routes = config.routes;
 
-      routerBroker = await connectToQueue(config);
+      ({ consumerBroker, publisherBroker } = await connectRouterBrokers(config));
 
       testBroker = await RabbitMQ.keepAlive(RABBIT_URL, { retries: 5 });
       await testBroker.declares({
         queues: { 'int.integrity.dst': { durable: true } },
       });
 
-      await startConsuming(routerBroker, routes);
+      await startConsuming(consumerBroker, publisherBroker, routes);
     });
 
     afterAll(async () => {
-      await routerBroker?.close().catch(() => {});
+      await consumerBroker?.close().catch(() => {});
+      await publisherBroker?.close().catch(() => {});
       await testBroker?.close().catch(() => {});
     });
 

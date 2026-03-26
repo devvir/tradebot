@@ -1,0 +1,349 @@
+[
+  {
+    "table": "leverage",
+    "action": "partial",
+    "keys": [
+      "account",
+      "symbol",
+      "strategy"
+    ],
+    "types": {
+      "account": "long",
+      "symbol": "symbol",
+      "strategy": "symbol",
+      "leverage": "float"
+    },
+    "filter": {
+      "account": 425857
+    },
+    "data": []
+  },
+
+  {
+    "table": "csastate",
+    "action": "partial",
+    "keys": [
+      "account"
+    ],
+    "types": {
+      "account": "long",
+      "valuationCurrency": "symbol",
+      "maintMarginRatio": "float",
+      "maintMarginRatioMarginCall": "float",
+      "maintMarginRatioLiquidation": "float",
+      "maintMarginRatioStatus": "symbol",
+      "marginBalance": "float",
+      "marginBalanceMarginCall": "float",
+      "marginBalanceLiquidation": "float",
+      "marginBalanceStatus": "symbol",
+      "overallStatus": "symbol",
+      "liquidationDeadline": "timestamp",
+      "timestamp": "timestamp"
+    },
+    "filter": {
+      "account": 425857
+    },
+    "data": []
+  },
+
+  {
+    "table": "isolation",
+    "action": "partial",
+    "keys": [
+      "account",
+      "symbol"
+    ],
+    "types": {
+      "account": "long",
+      "symbol": "symbol",
+      "crossMargin": "boolean"
+    },
+    "filter": {
+      "account": 425857
+    },
+    "data": []
+  },
+
+  {
+    "table": "mamAllocation",
+    "action": "partial",
+    "keys": [
+      "account",
+      "marginCurrency"
+    ],
+    "types": {
+      "account": "long",
+      "marginCurrency": "symbol",
+      "allocations": "",
+      "timestamp": "timestamp"
+    },
+    "filter": {
+      "account": 425857
+    },
+    "data": [
+      {
+        "account": 425857,
+        "marginCurrency": "RLUSd",
+        "allocations": [
+          {
+            "type": "USDt",
+            "amount": 0
+          },
+          {
+            "type": "XBt",
+            "amount": 0
+          },
+          {
+            "type": "free",
+            "amount": 0
+          }
+        ],
+        "timestamp": "2026-03-20T16:54:14.237Z"
+      },
+      {
+        "account": 425857,
+        "marginCurrency": "Gwei",
+        "allocations": [
+          {
+            "type": "USDt",
+            "amount": 0
+          },
+          {
+            "type": "XBt",
+            "amount": 0
+          },
+          {
+            "type": "free",
+            "amount": 0
+          }
+        ],
+        "timestamp": "2026-03-20T16:54:14.237Z"
+      },
+      {
+        "account": 425857,
+        "marginCurrency": "USDc",
+        "allocations": [
+          {
+            "type": "USDt",
+            "amount": 0
+          },
+          {
+            "type": "XBt",
+            "amount": 0
+          },
+          {
+            "type": "free",
+            "amount": 0
+          }
+        ],
+        "timestamp": "2026-03-20T16:54:14.237Z"
+      },
+      {
+        "account": 425857,
+        "marginCurrency": "XBt",
+        "allocations": [
+          {
+            "type": "USDt",
+            "amount": 0
+          },
+          {
+            "type": "XBt",
+            "amount": 14518
+          },
+          {
+            "type": "free",
+            "amount": 988272
+          }
+        ],
+        "timestamp": "2026-03-26T14:16:20.505Z"
+      },
+      {
+        "account": 425857,
+        "marginCurrency": "LAMp",
+        "allocations": [
+          {
+            "type": "USDt",
+            "amount": 0
+          },
+          {
+            "type": "XBt",
+            "amount": 0
+          },
+          {
+            "type": "free",
+            "amount": 0
+          }
+        ],
+        "timestamp": "2026-03-20T16:54:14.237Z"
+      },
+      {
+        "account": 425857,
+        "marginCurrency": "USDt",
+        "allocations": [
+          {
+            "type": "USDt",
+            "amount": 0
+          },
+          {
+            "type": "XBt",
+            "amount": 0
+          },
+          {
+            "type": "free",
+            "amount": 100000000000
+          }
+        ],
+        "timestamp": "2026-03-26T14:16:20.505Z"
+      },
+      {
+        "account": 425857,
+        "marginCurrency": "XAUt",
+        "allocations": [
+          {
+            "type": "USDt",
+            "amount": 0
+          },
+          {
+            "type": "XBt",
+            "amount": 0
+          },
+          {
+            "type": "free",
+            "amount": 0
+          }
+        ],
+        "timestamp": "2026-03-20T16:54:14.237Z"
+      },
+      {
+        "account": 425857,
+        "marginCurrency": "XRp",
+        "allocations": [
+          {
+            "type": "USDt",
+            "amount": 0
+          },
+          {
+            "type": "XBt",
+            "amount": 0
+          },
+          {
+            "type": "free",
+            "amount": 0
+          }
+        ],
+        "timestamp": "2026-03-20T16:54:14.237Z"
+      }
+    ]
+  },
+  {
+    "table": "mamAllocation",
+    "action": "update",
+    "data": [
+      {
+        "account": 425857,
+        "marginCurrency": "XBt",
+        "allocations": [
+          {
+            "type": "USDt",
+            "amount": 0
+          },
+          {
+            "type": "XBt",
+            "amount": 14518
+          },
+          {
+            "type": "free",
+            "amount": 987998
+          }
+        ],
+        "timestamp": "2026-03-26T14:16:25.506Z"
+      },
+      {
+        "account": 425857,
+        "marginCurrency": "USDt",
+        "allocations": [
+          {
+            "type": "USDt",
+            "amount": 0
+          },
+          {
+            "type": "XBt",
+            "amount": 0
+          },
+          {
+            "type": "free",
+            "amount": 100000000000
+          }
+        ],
+        "timestamp": "2026-03-26T14:16:25.506Z"
+      }
+    ]
+  },
+  {
+    "table": "mamAllocation",
+    "action": "update",
+    "data": [
+      {
+        "account": 425857,
+        "marginCurrency": "XBt",
+        "allocations": [
+          {
+            "type": "USDt",
+            "amount": 0
+          },
+          {
+            "type": "XBt",
+            "amount": 14518
+          },
+          {
+            "type": "free",
+            "amount": 987775
+          }
+        ],
+        "timestamp": "2026-03-26T14:16:30.506Z"
+      },
+      {
+        "account": 425857,
+        "marginCurrency": "USDt",
+        "allocations": [
+          {
+            "type": "USDt",
+            "amount": 0
+          },
+          {
+            "type": "XBt",
+            "amount": 0
+          },
+          {
+            "type": "free",
+            "amount": 100000000000
+          }
+        ],
+        "timestamp": "2026-03-26T14:16:30.506Z"
+      }
+    ]
+  },
+
+  {
+    "table": "voucher",
+    "action": "partial",
+    "keys": [
+      "voucherId"
+    ],
+    "types": {
+      "account": "long",
+      "voucherId": "guid",
+      "currency": "symbol",
+      "balance": "long",
+      "expiry": "timestamp",
+      "voucherType": "symbol",
+      "transactTime": "timestamp",
+      "timestamp": "timestamp",
+      "masterVoucherId": "guid"
+    },
+    "filter": {
+      "account": 425857
+    },
+    "data": []
+  }
+]

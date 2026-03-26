@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import makeConnection from '../src/websocket';
-import type { State, Config } from '../src/types';
+import { connect } from '../src/websocket';
+import type { State, Config, EndpointDefinition } from '../src/types';
 
 // ── WebSocket mock ────────────────────────────────────────────────────────────
 
@@ -29,7 +29,7 @@ vi.mock('ws', async () => {
 
 // ── Service mock ──────────────────────────────────────────────────────────────
 
-const makeService = (stateOverrides: Partial<State> = {}, configOverrides: Partial<Config> = {}) => {
+const makeService = (stateOverrides: Partial<State> = {}) => {
   const state: State = {
     realtime:        null,
     platform:        null,
@@ -37,60 +37,57 @@ const makeService = (stateOverrides: Partial<State> = {}, configOverrides: Parti
     isShuttingDown:  false,
     lastMessageTime: 0,
     apiVersion:      null,
-    pingInterval:    null,
     ...stateOverrides,
-  };
-
-  const config: Config = {
-    env:              'live',
-    workerUuid:       'test-uuid',
-    rabbitmqUrl:      'amqp://localhost',
-    realtimeWsUrl:    'wss://www.bitmex.com/realtime',
-    platformWsUrl:    'wss://www.bitmex.com/realtimePlatform',
-    realtimeChannels: ['trade', 'quote'],
-    platformChannels: ['announcement', 'chat'],
-    ...configOverrides,
   };
 
   const service = {
     state:    (key?: string) => (key !== undefined ? (state as Record<string, unknown>)[key] : state),
     setState: (key: string, value: unknown) => { (state as Record<string, unknown>)[key] = value; return value; },
-    config:   () => config,
+    config:   () => ({}),
   };
 
-  return { service, state, config };
+  return { service, state };
 };
+
+const endpoint = (overrides: Partial<EndpointDefinition> = {}): EndpointDefinition => ({
+  name: 'realtime',
+  url:  'wss://www.bitmex.com/realtime',
+  ...overrides,
+});
 
 const ws = (state: State, name: 'realtime' | 'platform'): any => state[name];
 
-// ── Connection creation ───────────────────────────────────────────────────────
+// ── URL construction ──────────────────────────────────────────────────────────
 
-describe('connection creation', () => {
+describe('URL construction', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it('connectRealtime uses the realtime URL from config', () => {
-    const { service, state, config } = makeService();
+  it('uses the plain endpoint URL when no credentials are provided', () => {
+    const { service } = makeService();
 
-    makeConnection(service as any, vi.fn()).connectRealtime();
+    const result = connect(endpoint(), service as any, vi.fn());
 
-    expect(ws(state, 'realtime')?.url).toBe(config.realtimeWsUrl);
+    expect(result.url).toBe('wss://www.bitmex.com/realtime');
   });
 
-  it('connectPlatform uses the platform URL from config', () => {
-    const { service, state, config } = makeService();
+  it('appends auth query params when credentials are provided', () => {
+    const { service } = makeService();
+    const credentials = { apiKey: 'key-abc', expires: 1234567890, signature: 'sig-xyz' };
 
-    makeConnection(service as any, vi.fn()).connectPlatform();
+    const result = connect(endpoint(), service as any, vi.fn(), { credentials });
 
-    expect(ws(state, 'platform')?.url).toBe(config.platformWsUrl);
+    expect(result.url).toBe(
+      'wss://www.bitmex.com/realtime?api-key=key-abc&api-expires=1234567890&api-signature=sig-xyz',
+    );
   });
 
   it('does not create a connection when the service is shutting down', () => {
-    const { service, state } = makeService({ isShuttingDown: true });
+    const { service } = makeService({ isShuttingDown: true });
 
-    makeConnection(service as any, vi.fn()).connectRealtime();
+    const result = connect(endpoint(), service as any, vi.fn());
 
-    expect(state.realtime).toBeNull();
+    expect(result).toBeNull();
   });
 });
 
@@ -100,48 +97,24 @@ describe('open event', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it('sends a subscribe message for configured channels on open', () => {
-    const { service, state, config } = makeService();
-
-    makeConnection(service as any, vi.fn()).connectRealtime();
-
-    ws(state, 'realtime').emit('open');
-
-    expect(ws(state, 'realtime').send).toHaveBeenCalledOnce();
-
-    const sent = JSON.parse(ws(state, 'realtime').send.mock.calls[0][0]);
-
-    expect(sent.op).toBe('subscribe');
-    expect(sent.args).toEqual([...config.realtimeChannels]);
-  });
-
-  it('does not send subscribe when channels list is empty', () => {
-    const { service, state } = makeService({}, { realtimeChannels: [] });
-
-    makeConnection(service as any, vi.fn()).connectRealtime();
-
-    ws(state, 'realtime').emit('open');
-
-    expect(ws(state, 'realtime').send).not.toHaveBeenCalled();
-  });
-
   it('starts a heartbeat interval on open', () => {
-    const { service, state } = makeService();
+    const { service } = makeService();
 
-    makeConnection(service as any, vi.fn()).connectRealtime();
+    const result = connect(endpoint(), service as any, vi.fn());
 
-    ws(state, 'realtime').emit('open');
+    result.emit('open');
 
-    expect(state.pingInterval).not.toBeNull();
+    vi.advanceTimersByTime(30_000);
+    expect((result as any).ping).toHaveBeenCalledTimes(1);
   });
 
   it('updates lastMessageTime on open', () => {
     const { service, state } = makeService();
     const before = Date.now();
 
-    makeConnection(service as any, vi.fn()).connectRealtime();
+    const result = connect(endpoint(), service as any, vi.fn());
 
-    ws(state, 'realtime').emit('open');
+    result.emit('open');
 
     expect(state.lastMessageTime).toBeGreaterThanOrEqual(before);
   });
@@ -154,26 +127,39 @@ describe('ping and message events', () => {
   afterEach(() => vi.useRealTimers());
 
   it('responds to ping with pong', () => {
-    const { service, state } = makeService();
+    const { service } = makeService();
 
-    makeConnection(service as any, vi.fn()).connectRealtime();
+    const result = connect(endpoint(), service as any, vi.fn());
 
-    ws(state, 'realtime').emit('ping');
+    result.emit('ping');
 
-    expect(ws(state, 'realtime').pong).toHaveBeenCalledOnce();
+    expect((result as any).pong).toHaveBeenCalledOnce();
   });
 
   it('forwards received messages to the handler', () => {
-    const { service, state } = makeService();
+    const { service } = makeService();
     const onMessage = vi.fn();
 
-    makeConnection(service as any, onMessage).connectRealtime();
+    const result = connect(endpoint(), service as any, onMessage);
 
     const payload = Buffer.from('{"table":"trade","action":"insert","data":[]}');
 
-    ws(state, 'realtime').emit('message', payload);
+    result.emit('message', payload);
 
-    expect(onMessage).toHaveBeenCalledWith(payload);
+    expect(onMessage).toHaveBeenCalledWith(payload, undefined);
+  });
+
+  it('forwards accountId to the handler when set in options', () => {
+    const { service } = makeService();
+    const onMessage = vi.fn();
+
+    const result = connect(endpoint(), service as any, onMessage, { accountId: 'acc-42' });
+
+    const payload = Buffer.from('{"table":"trade","action":"insert","data":[]}');
+
+    result.emit('message', payload);
+
+    expect(onMessage).toHaveBeenCalledWith(payload, 'acc-42');
   });
 });
 
@@ -184,17 +170,17 @@ describe('heartbeat', () => {
   afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 
   it('pings the server every 30 seconds while the connection is open', () => {
-    const { service, state } = makeService();
+    const { service } = makeService();
 
-    makeConnection(service as any, vi.fn()).connectRealtime();
+    const result = connect(endpoint(), service as any, vi.fn());
 
-    ws(state, 'realtime').emit('open');
-
-    vi.advanceTimersByTime(30_000);
-    expect(ws(state, 'realtime').ping).toHaveBeenCalledTimes(1);
+    result.emit('open');
 
     vi.advanceTimersByTime(30_000);
-    expect(ws(state, 'realtime').ping).toHaveBeenCalledTimes(2);
+    expect((result as any).ping).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(30_000);
+    expect((result as any).ping).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -205,39 +191,38 @@ describe('reconnection', () => {
   afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 
   it('reconnects after a connection error', () => {
-    const { service, state } = makeService();
+    const { service } = makeService();
+    const onReconnect = vi.fn();
 
-    makeConnection(service as any, vi.fn()).connectRealtime();
-
-    const original = ws(state, 'realtime');
+    const original = connect(endpoint(), service as any, vi.fn(), { onReconnect });
 
     original.emit('error', new Error('ECONNREFUSED'));
 
     vi.runAllTimers();
 
-    expect(state.realtime).not.toBe(original);
+    expect(onReconnect).toHaveBeenCalledOnce();
+    expect(onReconnect).not.toHaveBeenCalledWith(original);
   });
 
   it('reconnects after the connection closes', () => {
-    const { service, state } = makeService();
+    const { service } = makeService();
+    const onReconnect = vi.fn();
 
-    makeConnection(service as any, vi.fn()).connectRealtime();
-
-    const original = ws(state, 'realtime');
+    const original = connect(endpoint(), service as any, vi.fn(), { onReconnect });
 
     original.emit('close', 1006, Buffer.from('abnormal'));
 
     vi.runAllTimers();
 
-    expect(state.realtime).not.toBe(original);
+    expect(onReconnect).toHaveBeenCalledOnce();
+    expect(onReconnect).not.toHaveBeenCalledWith(original);
   });
 
   it('does not reconnect after close when shutting down', () => {
     const { service, state } = makeService();
+    const onReconnect = vi.fn();
 
-    makeConnection(service as any, vi.fn()).connectRealtime();
-
-    const original = ws(state, 'realtime');
+    const original = connect(endpoint(), service as any, vi.fn(), { onReconnect });
 
     (state as any).isShuttingDown = true;
 
@@ -245,20 +230,24 @@ describe('reconnection', () => {
 
     vi.runAllTimers();
 
-    expect(state.realtime).toBe(original);
+    expect(onReconnect).not.toHaveBeenCalled();
   });
 
   it('clears the heartbeat interval when the connection closes', () => {
-    const { service, state } = makeService();
+    const { service } = makeService();
 
-    makeConnection(service as any, vi.fn()).connectRealtime();
+    const result = connect(endpoint(), service as any, vi.fn());
 
-    ws(state, 'realtime').emit('open');
+    result.emit('open');
 
-    expect(state.pingInterval).not.toBeNull();
+    // heartbeat running
+    vi.advanceTimersByTime(30_000);
+    expect((result as any).ping).toHaveBeenCalledTimes(1);
 
-    ws(state, 'realtime').emit('close', 1000, Buffer.from(''));
+    result.emit('close', 1000, Buffer.from(''));
 
-    expect(state.pingInterval).toBeNull();
+    // heartbeat should be cleared — no more pings
+    vi.advanceTimersByTime(30_000);
+    expect((result as any).ping).toHaveBeenCalledTimes(1);
   });
 });

@@ -8,7 +8,6 @@ const state = {
   isShuttingDown: false,
   lastMessageTime: Date.now(),
   apiVersion: null,
-  pingInterval: null,
 };
 
 export default SKFactory({

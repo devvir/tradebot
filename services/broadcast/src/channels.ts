@@ -43,6 +43,8 @@ export const PLATFORM_CHANNELS = [
 ] as const;
 
 export const REALTIME_CHANNEL_PRESETS = {
+  none: [],
+  core: [ 'quote', 'trade', 'orderBookL2_25' ],
   feed: REALTIME_CHANNELS,
   primary: REALTIME_PRIMARY_CHANNELS,
   secondary: REALTIME_SECONDARY_CHANNELS,

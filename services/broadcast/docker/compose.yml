@@ -18,6 +18,10 @@ services:
       # Queue
       QUEUE_URL: ${QUEUE_URL}
 
+      # Bouncer (authenticated WebSocket connections)
+      BOUNCER_URL: ${BOUNCER_URL}
+      BOUNCER_TOKEN: ${BOUNCER_TOKEN}
+
       # Runtime
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV: ${APP_ENV:-prod}

@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { logger } from '@devvir/service-kit';
-import { redactUrl, sanitizeUrl } from '@tradebot/utils';
+import { redactCredentials, redactUrl, sanitizeUrl } from '@tradebot/utils';
 import { PLATFORM_CHANNELS, REALTIME_CHANNEL_PRESETS, type RealtimeChannelPreset } from './channels';
 import type { Config } from './types';
 
@@ -22,19 +22,21 @@ const loadConfig = (): Config => {
   const config: Config = {
     env: bitmexEnv,
     workerUuid: randomUUID(),
-    rabbitmqUrl: sanitizeUrl(process.env.QUEUE_URL || ''),
+    rabbitmqUrl:  sanitizeUrl(process.env.QUEUE_URL   || ''),
     realtimeWsUrl: BITMEX_WS_URLS.realtime[bitmexEnv],
     platformWsUrl: BITMEX_WS_URLS.platform[bitmexEnv],
-    realtimePreset: preset,
-    realtimeChannels: REALTIME_CHANNEL_PRESETS[preset],
-    platformChannels: PLATFORM_CHANNELS,
+    channels: [...REALTIME_CHANNEL_PRESETS[preset], ...PLATFORM_CHANNELS],
+    bouncerUrl:   process.env.BOUNCER_URL ?? '',
+    bouncerToken: process.env.BOUNCER_TOKEN ?? '',
   };
 
   validateConfig(config);
 
   logger.info({
     ...config,
-    rabbitmqUrl: redactUrl(config.rabbitmqUrl),
+    preset,
+    rabbitmqUrl:  redactUrl(config.rabbitmqUrl),
+    bouncerToken: redactCredentials(config.bouncerToken),
   }, 'Configuration loaded and validated!');
 
   return config;
@@ -43,6 +45,8 @@ const loadConfig = (): Config => {
 const validateConfig = (config: Config): void => {
   if (! config.realtimeWsUrl) throw new Error('Failed to determine BitMEX realtime WS URL');
   if (! config.rabbitmqUrl) throw new Error('QUEUE_URL is required');
+  if (! config.bouncerUrl)   throw new Error('BOUNCER_URL is required');
+  if (! config.bouncerToken) throw new Error('BOUNCER_TOKEN is required');
 };
 
 const usesTestnet = () => [undefined, '', '1', 'on', 'true'].includes(

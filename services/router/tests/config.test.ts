@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { loadConfig, formatRoute } from '../src/config';
-import { buildTopology } from '../src/topology';
+import { buildConsumerTopology, buildPublisherTopology } from '../src/topology';
 
 describe('Router Config Parser', () => {
   afterEach(() => {
@@ -20,17 +20,17 @@ describe('Router Config Parser', () => {
       expect(config.routes[0].destination).toEqual({ queue: 'writer' });
     });
 
-    it('declares standalone queues in topology', () => {
+    it('declares source queue in consumer topology and destination in publisher topology', () => {
       process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast > writer';
 
       const config = loadConfig();
 
-      expect(buildTopology(config.routes)).toEqual({
-        queues: {
-          broadcast: { durable: true },
-          writer: { durable: true },
-        },
+      expect(buildConsumerTopology(config.routes)).toEqual({
+        queues: { broadcast: { durable: true } },
+      });
+      expect(buildPublisherTopology(config.routes)).toEqual({
+        queues: { writer: { durable: true } },
       });
     });
   });
@@ -89,13 +89,12 @@ describe('Router Config Parser', () => {
       process.env.ROUTER_RULES = 'inbound@fanout:events > writer';
 
       const config = loadConfig();
-      const topology = buildTopology(config.routes);
 
-      expect(topology.exchanges?.events).toEqual({
+      expect(buildConsumerTopology(config.routes).exchanges?.events).toEqual({
         type: 'fanout',
         queues: { inbound: { durable: true } },
       });
-      expect(topology.queues?.writer).toEqual({ durable: true });
+      expect(buildPublisherTopology(config.routes).queues?.writer).toEqual({ durable: true });
     });
 
     it('accepts default as exchange type', () => {
@@ -114,7 +113,7 @@ describe('Router Config Parser', () => {
 
       const config = loadConfig();
 
-      expect(buildTopology(config.routes).exchanges?.events?.type).toBe('direct');
+      expect(buildConsumerTopology(config.routes).exchanges?.events?.type).toBe('direct');
     });
   });
 
@@ -307,7 +306,7 @@ describe('Router Config Parser', () => {
 
       const config = loadConfig();
 
-      expect(buildTopology(config.routes).exchanges?.output).toEqual({
+      expect(buildPublisherTopology(config.routes).exchanges?.output).toEqual({
         type: 'fanout',
         queues: {},
       });
@@ -517,7 +516,7 @@ describe('Router Config Parser', () => {
 
         const config = loadConfig();
 
-        expect(buildTopology(config.routes).exchanges?.broadcast?.queues?.collect).toEqual({
+        expect(buildConsumerTopology(config.routes).exchanges?.broadcast?.queues?.collect).toEqual({
           durable: true,
           routingKey: '#',
         });
@@ -529,7 +528,7 @@ describe('Router Config Parser', () => {
 
         const config = loadConfig();
 
-        expect(buildTopology(config.routes).exchanges?.broadcast?.queues?.collect).toEqual({
+        expect(buildConsumerTopology(config.routes).exchanges?.broadcast?.queues?.collect).toEqual({
           durable: true,
           routingKey: 'trade.*',
         });
@@ -727,15 +726,19 @@ describe('Router Config Parser', () => {
   });
 
   describe('Topology', () => {
-    it('merges exchange declarations from sources and destinations', () => {
+    it('consumer topology has source exchange, publisher topology has destination exchange', () => {
       process.env.QUEUE_URL = 'amqp://localhost';
       process.env.ROUTER_RULES = 'collect@topic:broadcast > collect@topic:writer';
 
       const config = loadConfig();
 
-      expect(buildTopology(config.routes)).toEqual({
+      expect(buildConsumerTopology(config.routes)).toEqual({
         exchanges: {
           broadcast: { type: 'topic', queues: { collect: { durable: true, routingKey: '#' } } },
+        },
+      });
+      expect(buildPublisherTopology(config.routes)).toEqual({
+        exchanges: {
           writer: { type: 'topic', queues: { collect: { durable: true } } },
         },
       });
@@ -747,14 +750,14 @@ describe('Router Config Parser', () => {
 
       const config = loadConfig();
 
-      expect(buildTopology(config.routes)).toEqual({
+      expect(buildConsumerTopology(config.routes)).toEqual({
+        queues: { broadcast: { durable: true } },
+      });
+      expect(buildPublisherTopology(config.routes)).toEqual({
         exchanges: {
           broadcast: { type: 'fanout', queues: {} },
         },
-        queues: {
-          broadcast: { durable: true },
-          writer: { durable: true },
-        },
+        queues: { writer: { durable: true } },
       });
     });
   });
