@@ -1,16 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import {
-  REALTIME_PRIMARY_CHANNELS,
-  REALTIME_SECONDARY_CHANNELS,
-  REALTIME_CHANNELS,
-  REALTIME_CHANNEL_PRESETS,
-  PLATFORM_CHANNELS,
-} from '../src/channels';
+  CHANNEL_PRESETS,
+  channelPreset,
+  type RealtimeChannelPreset,
+} from '@tradebot/utils';
 
 describe('channel presets', () => {
   it('archive contains exactly primary and secondary channels', () => {
-    const expected = [...REALTIME_PRIMARY_CHANNELS, ...REALTIME_SECONDARY_CHANNELS];
-    const archive  = [...REALTIME_CHANNEL_PRESETS.archive];
+    const expected = [...channelPreset('primary'), ...channelPreset('secondary')];
+    const archive  = [...channelPreset('archive')];
 
     expect(archive).toHaveLength(expected.length);
 
@@ -20,27 +18,29 @@ describe('channel presets', () => {
   });
 
   it('feed contains every realtime channel', () => {
-    const feed = [...REALTIME_CHANNEL_PRESETS.feed];
+    const feed     = [...channelPreset('feed')];
+    const realtime = [...channelPreset('primary'), ...channelPreset('secondary'), ...channelPreset('redundant')];
 
-    expect(feed).toHaveLength(REALTIME_CHANNELS.length);
+    expect(feed).toHaveLength(realtime.length);
 
-    for (const ch of REALTIME_CHANNELS) {
+    for (const ch of realtime) {
       expect(feed).toContain(ch);
     }
   });
 
   it('no preset contains duplicate channels', () => {
-    for (const [name, channels] of Object.entries(REALTIME_CHANNEL_PRESETS)) {
-      const unique = new Set(channels);
+    for (const name of Object.keys(CHANNEL_PRESETS) as RealtimeChannelPreset[]) {
+      const channels = channelPreset(name);
+      const unique   = new Set(channels);
 
       expect(unique.size, `preset "${name}" has duplicate channels`).toBe(channels.length);
     }
   });
 
   it('platform channels do not appear in the realtime channel set', () => {
-    const realtimeSet = new Set(REALTIME_CHANNELS);
+    const realtimeSet = new Set(channelPreset('feed'));
 
-    for (const ch of PLATFORM_CHANNELS) {
+    for (const ch of channelPreset('platform')) {
       expect(realtimeSet.has(ch), `"${ch}" must not overlap with realtime channels`).toBe(false);
     }
   });

@@ -1,20 +1,19 @@
 import WebSocket from 'ws';
 import { type Service } from '@devvir/service-kit';
 import type { Config, Credentials, EndpointDefinition, MessageHandler, PoolEntry } from './types';
-import { PLATFORM_CHANNELS } from './channels';
+import { PLATFORM_CHANNELS } from '@tradebot/utils';
 import { connect } from './websocket';
 
 const pool = new Map<string, PoolEntry>();
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/**
+ * Private Channel privateNotifications is not supported (it's in the platform
+ * endpoint, unlike all other private channels, and is currently not in use).
+ */
 export const endpointForChannel = (channel: string): 'platform' | 'realtime' =>
   (PLATFORM_CHANNELS as readonly string[]).includes(channel) ? 'platform' : 'realtime';
-
-// privateNotifications is a private channel on the platform endpoint — a cross-case
-// that would require pool to check both PLATFORM_CHANNELS and authentication.
-// BitMEX documents it as not actively used. Broadcast will never open this
-// subscription; clients that try to subscribe will get a failure.
 
 export const poolKey = (endpointName: string, accountId?: string): string =>
   `${accountId ?? ''}:${endpointName}`;

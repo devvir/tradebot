@@ -1,6 +1,5 @@
-/**
- * BitMEX WebSocket Channel Definitions and Presets
- */
+// BitMEX WebSocket channel definitions and presets.
+// See docs/BitMEX/WS_TABLES.md for full channel documentation.
 
 export const REALTIME_PRIMARY_CHANNELS = [
   'instrument',
@@ -14,6 +13,19 @@ export const REALTIME_SECONDARY_CHANNELS = [
   'settlement',
   'funding',
   'insurance',
+] as const;
+
+export const ARCHIVE_CHANNELS = [
+  'announcement',
+  'chat',
+  'connected',
+  'funding',
+  'instrument',
+  'insurance',
+  'liquidation',
+  'orderBookL2',
+  'publicNotifications',
+  'settlement',
 ] as const;
 
 export const REALTIME_REDUNDANT_CHANNELS = [
@@ -42,14 +54,28 @@ export const PLATFORM_CHANNELS = [
   'publicNotifications',
 ] as const;
 
-export const REALTIME_CHANNEL_PRESETS = {
+export const PRIVATE_CHANNELS = [
+  'execution', 'order', 'transact',
+  'position', 'margin', 'wallet',
+  'affiliate', 'privateNotifications',
+  /** Undocumented private channels */
+  'csastate', 'isolation', 'leverage', 'mamAllocation', 'voucher',
+] as const;
+
+export const CHANNEL_PRESETS = {
   none: [],
   core: [ 'quote', 'trade', 'orderBookL2_25' ],
   feed: REALTIME_CHANNELS,
+  archive: ARCHIVE_CHANNELS,
   primary: REALTIME_PRIMARY_CHANNELS,
   secondary: REALTIME_SECONDARY_CHANNELS,
   redundant: REALTIME_REDUNDANT_CHANNELS,
-  archive: [ ...REALTIME_PRIMARY_CHANNELS, ...REALTIME_SECONDARY_CHANNELS ],
+  platform: PLATFORM_CHANNELS,
+  private: PRIVATE_CHANNELS,
 } as const;
 
-export type RealtimeChannelPreset = keyof typeof REALTIME_CHANNEL_PRESETS;
+export type RealtimeChannelPreset = keyof typeof CHANNEL_PRESETS;
+
+export const channelPreset = (
+  preset: RealtimeChannelPreset,
+): readonly string[] => CHANNEL_PRESETS[preset] ?? [];

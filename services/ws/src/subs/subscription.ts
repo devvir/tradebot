@@ -16,6 +16,7 @@ import { unknownTable, alreadySubscribed, authRequired } from '../server/respons
 import type { ClientRegistry } from './clients';
 import { Queue } from '@devvir/elastic-queue';
 import type { BitmexWsMessage, Config, SubscribeOp } from '../types';
+import { PRIVATE_CHANNELS } from '@tradebot/utils';
 
 // ---- Types --------------------------------------------------------------
 
@@ -23,13 +24,7 @@ type SubQueue = Queue<DeltaChannelEvent>;
 
 // ---- Private tables -----------------------------------------------------
 
-const PRIVATE_TABLES = new Set([
-  'execution', 'order', 'transact',
-  'position', 'margin', 'wallet',
-  'affiliate', 'privateNotifications',
-  /** Undocumented private channels */
-  'csastate', 'isolation', 'leverage', 'mamAllocation', 'voucher',
-]);
+const PRIVATE_TABLES = new Set<string>(PRIVATE_CHANNELS);
 
 const RETRY_DELAY_MS = 5_000;
 

@@ -1,9 +1,11 @@
+import { BitmexTable } from '@tradebot/types';
 import type { SubscribeOp } from '../types';
 
-export const parseArg = (arg: string): { table: string; symbol: string } => {
+export const parseArg = (arg: string): { table: BitmexTable; symbol: string } => {
   const colon = arg.indexOf(':');
-  if (colon === -1) return { table: arg, symbol: '_' };
-  return { table: arg.slice(0, colon), symbol: arg.slice(colon + 1) };
+  if (colon === -1) return { table: arg as BitmexTable, symbol: '_' };
+
+  return { table: arg.slice(0, colon) as BitmexTable, symbol: arg.slice(colon + 1) };
 };
 
 export const welcome = (): string =>
