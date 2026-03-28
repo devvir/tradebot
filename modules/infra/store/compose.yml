@@ -11,6 +11,7 @@
 
 include:
   - path: ../../../services/bouncer/docker/compose.yml
+  - path: ../../../services/registry/docker/compose.yml
 
 services:
   queue:

@@ -1,0 +1,26 @@
+[
+  {
+    "id": 0,
+    "currency": "XBt"
+  },
+  {
+    "id": 1,
+    "currency": "USDt"
+  },
+  {
+    "id": 2,
+    "currency": "Gwei"
+  },
+  {
+    "id": 3,
+    "currency": "USD"
+  },
+  {
+    "id": 4,
+    "currency": "USDe"
+  },
+  {
+    "id": 5,
+    "currency": "USDc"
+  }
+]
