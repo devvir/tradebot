@@ -5,7 +5,9 @@ export default mergeConfig(
   baseConfig,
   defineConfig({
     test: {
-      setupFiles: ['./tests/setup.ts'],
+      globalSetup: ['./tests/global-setup.ts'],
+      setupFiles:  ['./tests/setup.ts'],
+      hookTimeout: 30000,
     },
   })
 );

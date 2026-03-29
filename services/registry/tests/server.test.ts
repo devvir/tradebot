@@ -1,16 +1,14 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { vi, describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { MongoClient, Db } from 'mongodb';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { mkdirSync } from 'node:fs';
 import http from 'node:http';
 import { startServer } from '../src/server/index.js';
 
-const mongoUrl = process.env['DB_URL']!;
-const dataPath = join(tmpdir(), `registry-server-test-${process.pid}`);
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, writeFile: vi.fn().mockResolvedValue(undefined) };
+});
 
-mkdirSync(dataPath, { recursive: true });
-process.env['REGISTRY_DATA_PATH'] = dataPath;
+const mongoUrl = process.env['DB_URL']!;
 
 let client: MongoClient;
 let db: Db;

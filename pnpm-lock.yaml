@@ -297,6 +297,9 @@ importers:
       '@types/express':
         specifier: ^5.0.0
         version: 5.0.6
+      mongodb:
+        specifier: ^7.1.1
+        version: 7.1.1
 
   services/rest:
     dependencies:

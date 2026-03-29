@@ -19,8 +19,8 @@ services:
       SCRIBE_START_DATE: ${SCRIBE_START_DATE:-}
 
       # Runtime
-      LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV: ${APP_ENV:-prod}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
       TZ: ${TZ:-UTC}
 
     ports:

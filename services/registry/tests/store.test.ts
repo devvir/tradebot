@@ -1,14 +1,18 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { vi, describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { MongoClient, Db } from 'mongodb';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
+import { existsSync, readFileSync } from 'node:fs';
 import { bootstrap, register, list } from '../src/store.js';
 
-const dataPath = join(tmpdir(), `registry-store-test-${process.pid}`);
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, writeFile: vi.fn().mockResolvedValue(undefined) };
+});
 
-mkdirSync(dataPath, { recursive: true });
-process.env['REGISTRY_DATA_PATH'] = dataPath;
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return { ...actual, existsSync: vi.fn().mockReturnValue(false), readFileSync: vi.fn() };
+});
 
 describe('register', () => {
   let client: MongoClient;
@@ -29,6 +33,7 @@ describe('register', () => {
     await db.collection('symbols').deleteMany({});
     await db.collection('currencies').deleteMany({});
     await db.collection('_counters').deleteMany({});
+    vi.mocked(writeFile).mockClear();
   });
 
   it('assigns id 0 to the first symbol', async () => {
@@ -66,12 +71,12 @@ describe('register', () => {
   it('writes symbols.json snapshot after new registration', async () => {
     await register(db, 'symbols', 'XBTUSD');
 
-    const file = join(dataPath, 'symbols.json');
+    expect(writeFile).toHaveBeenCalledOnce();
 
-    expect(existsSync(file)).toBe(true);
+    const [path, content] = vi.mocked(writeFile).mock.calls[0]!;
+    const data = JSON.parse(content as string) as Array<{ id: number; symbol: string }>;
 
-    const data = JSON.parse(readFileSync(file, 'utf-8')) as Array<{ id: number; symbol: string }>;
-
+    expect(path).toBe('/data/registry/symbols.json');
     expect(data).toHaveLength(1);
     expect(data[0]!.id).toBe(0);
     expect(data[0]!.symbol).toBe('XBTUSD');
@@ -81,7 +86,8 @@ describe('register', () => {
     await register(db, 'symbols', 'XBTUSD');
     await register(db, 'symbols', 'ETHUSD');
 
-    const data = JSON.parse(readFileSync(join(dataPath, 'symbols.json'), 'utf-8')) as unknown[];
+    const [, lastContent] = vi.mocked(writeFile).mock.calls.at(-1)!;
+    const data = JSON.parse(lastContent as string) as unknown[];
 
     expect(data).toHaveLength(2);
   });
@@ -89,15 +95,11 @@ describe('register', () => {
   it('does not rewrite snapshot when registering an existing symbol', async () => {
     await register(db, 'symbols', 'XBTUSD');
 
-    const file     = join(dataPath, 'symbols.json');
-    const mtBefore = (await import('node:fs')).statSync(file).mtimeMs;
+    const callsBefore = vi.mocked(writeFile).mock.calls.length;
 
-    await new Promise((r) => setTimeout(r, 10));
     await register(db, 'symbols', 'XBTUSD');
 
-    const mtAfter = (await import('node:fs')).statSync(file).mtimeMs;
-
-    expect(mtAfter).toBe(mtBefore);
+    expect(vi.mocked(writeFile).mock.calls.length).toBe(callsBefore);
   });
 });
 
@@ -136,9 +138,9 @@ describe('bootstrap', () => {
     await client.connect();
     db = client.db('test_registry_bootstrap');
 
-    writeFileSync(
-      join(dataPath, 'symbols.json'),
-      JSON.stringify([{ id: 0, symbol: 'XBTUSD' }, { id: 1, symbol: 'ETHUSD' }], null, 2),
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockReturnValue(
+      JSON.stringify([{ id: 0, symbol: 'XBTUSD' }, { id: 1, symbol: 'ETHUSD' }]),
     );
   });
 
@@ -174,6 +176,7 @@ describe('bootstrap', () => {
   });
 
   it('handles missing snapshot file gracefully', async () => {
+    vi.mocked(existsSync).mockReturnValueOnce(false);
     await db.collection('currencies').deleteMany({});
 
     await expect(bootstrap(db)).resolves.toBeUndefined();

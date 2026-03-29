@@ -1,0 +1,21 @@
+# Depot Module
+#
+# Infra: db-store, registry
+#
+# Continuously downloads the complete BitMEX historical dataset and keeps it
+# up to date as new data becomes available:
+#
+#   courier → S3 gzip dumps (trade, quote) → vault
+#   scribe  → REST endpoints               → vault
+
+# Docker Compose Project
+name: collect
+
+include:
+  - path: ../../../services/scribe/docker/compose.yml
+  - path: ../../../services/courier/docker/compose.yml
+
+networks:
+  default:
+    name: ${PROJECT_NAME:-tradebot}-network
+    external: true

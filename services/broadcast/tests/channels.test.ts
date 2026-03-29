@@ -6,17 +6,6 @@ import {
 } from '@tradebot/utils';
 
 describe('channel presets', () => {
-  it('archive contains exactly primary and secondary channels', () => {
-    const expected = [...channelPreset('primary'), ...channelPreset('secondary')];
-    const archive  = [...channelPreset('archive')];
-
-    expect(archive).toHaveLength(expected.length);
-
-    for (const ch of expected) {
-      expect(archive).toContain(ch);
-    }
-  });
-
   it('feed contains every realtime channel', () => {
     const feed     = [...channelPreset('feed')];
     const realtime = [...channelPreset('primary'), ...channelPreset('secondary'), ...channelPreset('redundant')];

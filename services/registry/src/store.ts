@@ -6,7 +6,7 @@ import { logger } from '@devvir/service-kit';
 import type { Entry, Collection } from './types.js';
 
 const COUNTERS  = '_counters';
-const DATA_PATH = process.env['REGISTRY_DATA_PATH'] ?? '/data/registry';
+const DATA_PATH = '/data/registry';
 
 // ── File helpers ──────────────────────────────────────────────────────────────
 

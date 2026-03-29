@@ -19,13 +19,10 @@ export const ARCHIVE_CHANNELS = [
   'announcement',
   'chat',
   'connected',
-  'funding',
   'instrument',
-  'insurance',
   'liquidation',
   'orderBookL2',
   'publicNotifications',
-  'settlement',
 ] as const;
 
 export const REALTIME_REDUNDANT_CHANNELS = [
