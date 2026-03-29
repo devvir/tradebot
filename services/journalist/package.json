@@ -1,0 +1,20 @@
+{
+  "name": "@tradebot/journalist",
+  "version": "1.0.0",
+  "description": "Journalist service — records live BitMEX WebSocket messages to vault",
+  "main": "dist/index.js",
+  "private": true,
+  "scripts": {
+    "build": "tsc -b",
+    "start": "node dist/src/index.js",
+    "dev": "ts-node src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@devvir/service-kit": "workspace:*",
+    "@tradebot/types": "workspace:*",
+    "@tradebot/utils": "workspace:*"
+  }
+}

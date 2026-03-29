@@ -242,6 +242,18 @@ importers:
         specifier: ^5.0.0
         version: 5.0.6
 
+  services/journalist:
+    dependencies:
+      '@devvir/service-kit':
+        specifier: workspace:*
+        version: link:../../packages/service-kit
+      '@tradebot/types':
+        specifier: workspace:*
+        version: link:../../shared/types
+      '@tradebot/utils':
+        specifier: workspace:*
+        version: link:../../shared/utils
+
   services/pipe:
     dependencies:
       '@devvir/service-kit':
