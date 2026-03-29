@@ -18,7 +18,7 @@ SK.run(async (service: Service) => {
 
   // Subscribe to preset channels — creates guest connections on demand
   await Promise.all(config.channels.map(ch =>
-    subscribe(ch, service, onMessage).catch(err => service.emit('error', err)),
+    subscribe(ch, service, onMessage).catch(err => service.emit('failure', err)),
   ));
 
   // HTTP command interface for runtime subscriptions
