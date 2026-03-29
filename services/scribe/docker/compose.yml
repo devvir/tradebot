@@ -1,0 +1,41 @@
+# Scribe Service - BitMEX REST API historical data fetcher
+
+services:
+  scribe:
+    build:
+      context: ../../..
+      dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
+      args:
+        SERVICE_NAME: scribe
+
+    environment:
+      # Dependencies
+      CACHE_URL:    ${CACHE_URL}
+      CACHE_PASS:   ${CACHE_PASS}
+      VAULT_URL:    ${VAULT_URL}
+      REGISTRY_URL: ${REGISTRY_URL}
+
+      # Config
+      SCRIBE_START_DATE: ${SCRIBE_START_DATE:-}
+
+      # Runtime
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV: ${APP_ENV:-prod}
+      TZ: ${TZ:-UTC}
+
+    ports:
+      - :3000
+
+    user: "1000:1000"
+
+    volumes:
+      - ../../../:/live
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+
+    restart: unless-stopped
