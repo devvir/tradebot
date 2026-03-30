@@ -48,8 +48,9 @@ export const SKFactory = (config: SKFactoryConfig): ServiceKit => {
 
   if (config.redis) {
     providers.redis = {
-      url:   process.env.CACHE_URL || '',
-      retry: { strategy: 'exponential', attempts: 10 },
+      url:      process.env.CACHE_URL || '',
+      password: process.env.CACHE_PASS || '',
+      retry:    { strategy: 'exponential', attempts: 10 },
     };
   }
 
