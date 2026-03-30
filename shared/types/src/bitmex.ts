@@ -10,41 +10,61 @@
  * Reference: https://www.bitmex.com/api/explorer/
  */
 export type BitmexFieldType =
-  | 'symbol'
-  | 'string'
-  | 'guid'
-  | 'timestamp'
-  | 'timespan'
-  | 'float'
-  | 'long'
-  | 'integer'
+  | ''          // untyped / array-of-objects (e.g. orderBook10.bids, orderBook10.asks)
   | 'boolean'
-  | 'date';
+  | 'float'
+  | 'guid'
+  | 'int'
+  | 'integer'   // variant seen in some private tables
+  | 'long'
+  | 'number'    // variant seen in publicNotifications
+  | 'object'
+  | 'string'
+  | 'symbol'
+  | 'timespan'
+  | 'timestamp';
 
 /**
  * All possible BitMEX WebSocket tmessageable names
  */
 export type BitmexTable =
+  // ── Public ──────────────────────────────────────────────────────────────────
   | 'announcement'
   | 'chat'
   | 'connected'
+  | 'funding'
   | 'insurance'
   | 'instrument'
-  | 'funding'
   | 'liquidation'
+  | 'orderBook10'
   | 'orderBookL2'
+  | 'orderBookL2_25'
   | 'publicNotifications'
   | 'quote'
+  | 'quoteBin1d'
+  | 'quoteBin1h'
   | 'quoteBin1m'
   | 'quoteBin5m'
-  | 'quoteBin1h'
-  | 'quoteBin1d'
   | 'settlement'
   | 'trade'
+  | 'tradeBin1d'
+  | 'tradeBin1h'
   | 'tradeBin1m'
   | 'tradeBin5m'
-  | 'tradeBin1h'
-  | 'tradeBin1d';
+  // ── Private ─────────────────────────────────────────────────────────────────
+  | 'affiliate'
+  | 'csastate'
+  | 'execution'
+  | 'isolation'
+  | 'leverage'
+  | 'mamAllocation'
+  | 'margin'
+  | 'order'
+  | 'position'
+  | 'privateNotifications'
+  | 'transact'
+  | 'voucher'
+  | 'wallet';
 
 export type BitmexAction = 'partial' | 'update' | 'insert' | 'delete';
 
