@@ -1,0 +1,38 @@
+# Registrar Service — assigns deterministic IDs and inserts customs records into MongoDB
+
+services:
+  registrar:
+    build:
+      context: ../../..
+      dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
+      args:
+        SERVICE_NAME: registrar
+
+    environment:
+      DB_URL:       ${DB_URL}
+      DB_DATABASE: ${DB_DATABASE:-tradebot}
+      QUEUE_URL: ${QUEUE_URL}
+
+      REGISTRAR_PREFETCH:          ${REGISTRAR_PREFETCH:-500}
+      REGISTRAR_FLUSH_INTERVAL_MS: ${REGISTRAR_FLUSH_INTERVAL_MS:-50}
+
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV:  ${APP_ENV:-prod}
+      TZ:        ${TZ:-UTC}
+
+    ports:
+      - :3000
+
+    user: "1000:1000"
+
+    volumes:
+      - ../../../:/live
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+
+    restart: unless-stopped

@@ -1,0 +1,19 @@
+{
+  "name": "@tradebot/registrar",
+  "version": "1.0.0",
+  "description": "Assigns deterministic IDs and inserts customs records into MongoDB",
+  "main": "dist/index.js",
+  "private": true,
+  "scripts": {
+    "build": "tsc -b",
+    "start": "node dist/src/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@devvir/service-kit": "workspace:*",
+    "@tradebot/utils": "workspace:*",
+    "mongodb": "^7.1.0"
+  }
+}
