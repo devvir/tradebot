@@ -129,6 +129,8 @@ export const INSTRUMENT_FIELD: Record<keyof InstrumentData, string> = {
   fundingQuoteRate: '"',
   farLegSymbol: '-',
   nearLegSymbol: '+',
+  instrumentID: '¡',
+  referencePrice: '¿',
 } as const;
 
 /**

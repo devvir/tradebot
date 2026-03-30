@@ -1,0 +1,29 @@
+# Journal Module
+#
+# Infra: queue-rt
+#
+# Continuously records live BitMEX WebSocket messages to vault:
+#
+#   broadcast  → exchange:broadcast  (routingKey = table.action)
+#   pipe       → binds broadcast     → journalist exchange
+#   journalist → exchange:journalist → vault
+
+# Docker Compose Project
+name: collect
+
+include:
+  - path: ../../../services/broadcast/docker/compose.yml
+  - path: ../../../services/journalist/docker/compose.yml
+
+services:
+  journal-pipe:
+    extends:
+      file: ../../../services/pipe/docker/compose.yml
+      service: pipe
+    environment:
+      PIPE_BINDINGS: "topic:broadcast > journalist@topic:journalist"
+
+networks:
+  default:
+    name: ${PROJECT_NAME:-tradebot}-network
+    external: true

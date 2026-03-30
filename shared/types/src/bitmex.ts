@@ -166,6 +166,7 @@ export interface InstrumentData {
   indicativeFundingRate?: number;
   initMargin?: number;
   instantPnl?: boolean;
+  instrumentID?: number;
   isInverse?: boolean;
   isQuanto?: boolean;
   limit?: number;
@@ -190,6 +191,7 @@ export interface InstrumentData {
   quoteCurrency?: string;
   quoteToSettleMultiplier?: number;
   reference?: string;
+  referencePrice?: number;
   referenceSymbol?: string;
   riskLimit?: number;
   riskStep?: number;
