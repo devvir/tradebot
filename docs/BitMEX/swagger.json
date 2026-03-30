@@ -85,6 +85,25 @@
         "deprecated": false
       }
     },
+    "/apiKey/self": {
+      "get": {
+        "tags": ["APIKey"],
+        "summary": "Get the API key used to make this request.",
+        "operationId": "APIKey.self",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Request was successful",
+            "schema": { "$ref": "#/definitions/APIKey" }
+          },
+          "400": { "description": "Parameter Error", "schema": { "$ref": "#/definitions/Error" } },
+          "401": { "description": "Unauthorized", "schema": { "$ref": "#/definitions/Error" } },
+          "403": { "description": "Access Denied", "schema": { "$ref": "#/definitions/Error" } },
+          "404": { "description": "Not Found", "schema": { "$ref": "#/definitions/Error" } }
+        },
+        "deprecated": false
+      }
+    },
     "/chat/pinned": {
       "get": {
         "tags": ["Chat"],
@@ -937,7 +956,10 @@
         "responses": {
           "200": {
             "description": "Request was successful",
-            "schema": { "type": "array", "items": { "$ref": "#/definitions/Leaderboard" } }
+            "schema": {
+              "description": "V1 (method param): Array of {profit, isRealName, name}. V2 (sortBy/period params): {endTime: string, data: [{name, isRealName, pnl, roi, tradingVolume}], userRank?: {rank, name, isRealName, pnl, roi, tradingVolume}}",
+              "$ref": "#/definitions/x-any"
+            }
           },
           "400": { "description": "Parameter Error", "schema": { "$ref": "#/definitions/Error" } },
           "401": { "description": "Unauthorized", "schema": { "$ref": "#/definitions/Error" } },
@@ -1471,6 +1493,14 @@
             "description": "Optional order annotation. e.g. 'Take profit'.",
             "required": false,
             "type": "string"
+          },
+          {
+            "name": "maxSlippagePct",
+            "in": "formData",
+            "description": "Optional maximum slippage percentage for the order.",
+            "required": false,
+            "type": "number",
+            "format": "double"
           }
         ],
         "responses": {
@@ -3021,7 +3051,7 @@
       "post": {
         "tags": ["User"],
         "summary": "Request a withdrawal to an external wallet or separate BitMEX account.",
-        "description": "### Email Confirmation\n\nIn most cases, this endpoint will send a confirmation email to the email address on record. When withdrawing to a saved address (i.e. given `addressId` or a corresponding `address`) with `skipConfirm` configured, the withdrawal will be immediately confirmed.\n\n### Two-Factor Authentication\n\nA valid 2FA code (`otpToken`) is required for all withdrawals unless the destination address is associated with either a saved address with `skip2FA` configured or a linked BitMEX account (e.g. a subaccount).\n\n### Internal Transfers\n\nIf a valid BitMEX deposit address is provided, the transaction will be made directly between BitMEX accounts. There will be no resulting on-chain transaction and no network fee will be charged.\n\nWhen given another account ID (`targetUserId`), the request will only succeed if the account is linked to the authenticated account.\n\nNote that `/api/v1/user/walletTransfer` may be a more suitable endpoint for transfers between linked accounts.\n\n### Saved Address Verification\n\nPlease note that when using saved addresses, `skip2FA` and `skipConfirm` require verification:\n - `skip2FA` can be verified by providing `otpToken` when creating the address. If `otpToken` is not provided, a 2FA code can be provided by visiting the link included in the email sent upon address creation.\n\n - `skipConfirm` can be verified by visiting the link included in the email sent upon address creation.\n\n### Whitelist\n\nIf the address book has the `whitelist` setting enabled, all withdrawal requests must be directed to either a saved addresses or a linked account. All other addresses will be rejected. Note that saved addresses must be __active__. A new saved address is active if it has been 2FA verified and a cooldown period has passed since its creation.",
+        "description": "### Email Confirmation\n\nIn most cases, this endpoint will send a confirmation email to the email address on record. When withdrawing to a saved address (i.e. given `addressId` or a corresponding `address`) with `skipConfirm` configured, the withdrawal will be immediately confirmed.\n\n### Two-Factor Authentication\n\nA valid 2FA code (`otpToken`) is required for all withdrawals unless the destination address is associated with either a saved address with `skip2FA` configured or a linked BitMEX account (e.g. a subaccount).\n\n### Internal Transfers\n\nIf a valid BitMEX deposit address is provided, the transaction will be made directly between BitMEX accounts. There will be no resulting on-chain transaction and no network fee will be charged.\n\nWhen given another account ID (`targetUserId`), the request will only succeed if the account is linked to the authenticated account.\n\nNote that `/api/v1/user/walletTransfer` may be a more suitable endpoint for transfers between linked accounts.\n\n### Saved Address Verification\n\nPlease note that when using saved addresses, `skip2FA` and `skipConfirm` require verification:\n - `skip2FA` can be verified by providing `otpToken` when creating the address. If `otpToken` is not provided, a 2FA code can be provided by visiting the link included in the email sent upon address creation.\n\n - `skipConfirm` can be verified by visiting the link included in the email sent upon address creation.\n\n### Whitelist\n\nIf the address book has the `whitelist` setting enabled, all withdrawal requests must be directed to either a saved addresses or a linked account. All other addresses will be rejected. Note that saved addresses must be __active__. A new saved address is active if it has been 2FA verified and a cooldown period has passed since its creation.\n\n### Travel Rule\n\nWithdrawals to external addresses will only succeed if travel rule information (beneficiary and VASP details) are available in the address book for the destination address. Use `POST /api/v1/address` or `PUT /api/v1/address` to provide this information before initiating a withdrawal.",
         "operationId": "User.requestWithdrawal",
         "parameters": [
           {
@@ -3726,6 +3756,22 @@
             "type": "string"
           },
           {
+            "name": "beneficiary",
+            "in": "formData",
+            "description": "Beneficiary Details.",
+            "required": false,
+            "type": "string",
+            "format": "JSON"
+          },
+          {
+            "name": "vasp",
+            "in": "formData",
+            "description": "Virtual Asset Service Provider Details.",
+            "required": false,
+            "type": "string",
+            "format": "JSON"
+          },
+          {
             "name": "skipConfirm",
             "in": "formData",
             "description": "Skip e-mail confirmations for transfers to this address. An email will be sent for confirmation to verify this setting.",
@@ -4368,6 +4414,599 @@
         },
         "deprecated": false
       }
+    },
+    "/trading-bots/strategies": {
+      "get": {
+        "tags": ["TradingBots"],
+        "summary": "List available trading bot strategies.",
+        "operationId": "TradingBots.getStrategies",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Request was successful",
+            "schema": { "type": "array", "items": { "type": "object" } }
+          },
+          "400": { "description": "Parameter Error", "schema": { "$ref": "#/definitions/Error" } },
+          "401": { "description": "Unauthorized", "schema": { "$ref": "#/definitions/Error" } },
+          "403": { "description": "Access Denied", "schema": { "$ref": "#/definitions/Error" } },
+          "404": { "description": "Not Found", "schema": { "$ref": "#/definitions/Error" } }
+        },
+        "deprecated": false,
+        "security": []
+      }
+    },
+    "/trading-bots/strategies/{strategyId}": {
+      "get": {
+        "tags": ["TradingBots"],
+        "summary": "Get a strategy by ID, including parametersSchema.",
+        "operationId": "TradingBots.getStrategy",
+        "parameters": [
+          {
+            "name": "strategyId",
+            "in": "path",
+            "required": true,
+            "type": "number",
+            "format": "double"
+          }
+        ],
+        "responses": {
+          "200": { "description": "Request was successful", "schema": { "type": "object" } },
+          "400": { "description": "Parameter Error", "schema": { "$ref": "#/definitions/Error" } },
+          "401": { "description": "Unauthorized", "schema": { "$ref": "#/definitions/Error" } },
+          "403": { "description": "Access Denied", "schema": { "$ref": "#/definitions/Error" } },
+          "404": { "description": "Not Found", "schema": { "$ref": "#/definitions/Error" } }
+        },
+        "deprecated": false,
+        "security": []
+      }
+    },
+    "/trading-bots/instances": {
+      "post": {
+        "tags": ["TradingBots"],
+        "summary": "Create and start a new bot instance. Pass sourceInstanceId to copy from marketplace.",
+        "operationId": "TradingBots.createInstance",
+        "parameters": [
+          {
+            "name": "targetAccountId",
+            "in": "query",
+            "required": false,
+            "type": "number",
+            "format": "double"
+          },
+          { "name": "body", "in": "body", "required": true, "schema": { "type": "object" } }
+        ],
+        "responses": {
+          "200": { "description": "Request was successful", "schema": { "type": "object" } },
+          "400": { "description": "Parameter Error", "schema": { "$ref": "#/definitions/Error" } },
+          "401": { "description": "Unauthorized", "schema": { "$ref": "#/definitions/Error" } },
+          "403": { "description": "Access Denied", "schema": { "$ref": "#/definitions/Error" } },
+          "404": { "description": "Not Found", "schema": { "$ref": "#/definitions/Error" } }
+        },
+        "deprecated": false
+      },
+      "get": {
+        "tags": ["TradingBots"],
+        "summary": "List the authenticated user's bot instances.",
+        "operationId": "TradingBots.getInstances",
+        "parameters": [
+          {
+            "name": "targetAccountIds",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "JSON"
+          },
+          { "name": "status", "in": "query", "required": false, "type": "string" },
+          {
+            "name": "strategyId",
+            "in": "query",
+            "required": false,
+            "type": "number",
+            "format": "double"
+          },
+          {
+            "name": "count",
+            "in": "query",
+            "required": false,
+            "type": "number",
+            "format": "double"
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "type": "number",
+            "format": "double"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Request was successful",
+            "schema": { "type": "array", "items": { "type": "object" } }
+          },
+          "400": { "description": "Parameter Error", "schema": { "$ref": "#/definitions/Error" } },
+          "401": { "description": "Unauthorized", "schema": { "$ref": "#/definitions/Error" } },
+          "403": { "description": "Access Denied", "schema": { "$ref": "#/definitions/Error" } },
+          "404": { "description": "Not Found", "schema": { "$ref": "#/definitions/Error" } }
+        },
+        "deprecated": false
+      }
+    },
+    "/trading-bots/instances/preview": {
+      "post": {
+        "tags": ["TradingBots"],
+        "summary": "Preview simulated orders/positions for a given config without starting a bot.",
+        "operationId": "TradingBots.previewInstance",
+        "parameters": [
+          {
+            "name": "targetAccountId",
+            "in": "query",
+            "required": false,
+            "type": "number",
+            "format": "double"
+          },
+          { "name": "body", "in": "body", "required": true, "schema": { "type": "object" } }
+        ],
+        "responses": {
+          "200": { "description": "Request was successful", "schema": { "type": "object" } },
+          "400": { "description": "Parameter Error", "schema": { "$ref": "#/definitions/Error" } },
+          "401": { "description": "Unauthorized", "schema": { "$ref": "#/definitions/Error" } },
+          "403": { "description": "Access Denied", "schema": { "$ref": "#/definitions/Error" } },
+          "404": { "description": "Not Found", "schema": { "$ref": "#/definitions/Error" } }
+        },
+        "deprecated": false
+      }
+    },
+    "/trading-bots/instances/{instanceId}": {
+      "get": {
+        "tags": ["TradingBots"],
+        "summary": "Get a bot instance by ID, including performance metrics.",
+        "operationId": "TradingBots.getInstance",
+        "parameters": [
+          {
+            "name": "targetAccountId",
+            "in": "query",
+            "required": false,
+            "type": "number",
+            "format": "double"
+          },
+          {
+            "name": "instanceId",
+            "in": "path",
+            "required": true,
+            "type": "number",
+            "format": "double"
+          }
+        ],
+        "responses": {
+          "200": { "description": "Request was successful", "schema": { "type": "object" } },
+          "400": { "description": "Parameter Error", "schema": { "$ref": "#/definitions/Error" } },
+          "401": { "description": "Unauthorized", "schema": { "$ref": "#/definitions/Error" } },
+          "403": { "description": "Access Denied", "schema": { "$ref": "#/definitions/Error" } },
+          "404": { "description": "Not Found", "schema": { "$ref": "#/definitions/Error" } }
+        },
+        "deprecated": false
+      },
+      "patch": {
+        "tags": ["TradingBots"],
+        "summary": "Update mutable fields on a bot instance (public, parameters).",
+        "operationId": "TradingBots.updateInstance",
+        "parameters": [
+          {
+            "name": "targetAccountId",
+            "in": "query",
+            "required": false,
+            "type": "number",
+            "format": "double"
+          },
+          {
+            "name": "instanceId",
+            "in": "path",
+            "required": true,
+            "type": "number",
+            "format": "double"
+          },
+          { "name": "body", "in": "body", "required": true, "schema": { "type": "object" } }
+        ],
+        "responses": {
+          "200": { "description": "Request was successful", "schema": { "type": "object" } },
+          "400": { "description": "Parameter Error", "schema": { "$ref": "#/definitions/Error" } },
+          "401": { "description": "Unauthorized", "schema": { "$ref": "#/definitions/Error" } },
+          "403": { "description": "Access Denied", "schema": { "$ref": "#/definitions/Error" } },
+          "404": { "description": "Not Found", "schema": { "$ref": "#/definitions/Error" } }
+        },
+        "deprecated": false
+      }
+    },
+    "/trading-bots/instances/{instanceId}/pause": {
+      "post": {
+        "tags": ["TradingBots"],
+        "summary": "Pause a running bot instance.",
+        "operationId": "TradingBots.pauseInstance",
+        "parameters": [
+          {
+            "name": "targetAccountId",
+            "in": "query",
+            "required": false,
+            "type": "number",
+            "format": "double"
+          },
+          {
+            "name": "instanceId",
+            "in": "path",
+            "required": true,
+            "type": "number",
+            "format": "double"
+          }
+        ],
+        "responses": {
+          "200": { "description": "Request was successful", "schema": { "type": "object" } },
+          "400": { "description": "Parameter Error", "schema": { "$ref": "#/definitions/Error" } },
+          "401": { "description": "Unauthorized", "schema": { "$ref": "#/definitions/Error" } },
+          "403": { "description": "Access Denied", "schema": { "$ref": "#/definitions/Error" } },
+          "404": { "description": "Not Found", "schema": { "$ref": "#/definitions/Error" } }
+        },
+        "deprecated": false
+      }
+    },
+    "/trading-bots/instances/{instanceId}/resume": {
+      "post": {
+        "tags": ["TradingBots"],
+        "summary": "Resume a paused bot instance.",
+        "operationId": "TradingBots.resumeInstance",
+        "parameters": [
+          {
+            "name": "targetAccountId",
+            "in": "query",
+            "required": false,
+            "type": "number",
+            "format": "double"
+          },
+          {
+            "name": "instanceId",
+            "in": "path",
+            "required": true,
+            "type": "number",
+            "format": "double"
+          }
+        ],
+        "responses": {
+          "200": { "description": "Request was successful", "schema": { "type": "object" } },
+          "400": { "description": "Parameter Error", "schema": { "$ref": "#/definitions/Error" } },
+          "401": { "description": "Unauthorized", "schema": { "$ref": "#/definitions/Error" } },
+          "403": { "description": "Access Denied", "schema": { "$ref": "#/definitions/Error" } },
+          "404": { "description": "Not Found", "schema": { "$ref": "#/definitions/Error" } }
+        },
+        "deprecated": false
+      }
+    },
+    "/trading-bots/instances/{instanceId}/stop": {
+      "post": {
+        "tags": ["TradingBots"],
+        "summary": "Stop a bot instance (terminal). Optionally close open orders.",
+        "operationId": "TradingBots.stopInstance",
+        "parameters": [
+          {
+            "name": "targetAccountId",
+            "in": "query",
+            "required": false,
+            "type": "number",
+            "format": "double"
+          },
+          {
+            "name": "instanceId",
+            "in": "path",
+            "required": true,
+            "type": "number",
+            "format": "double"
+          },
+          { "name": "body", "in": "body", "required": false, "schema": { "type": "object" } }
+        ],
+        "responses": {
+          "200": { "description": "Request was successful", "schema": { "type": "object" } },
+          "400": { "description": "Parameter Error", "schema": { "$ref": "#/definitions/Error" } },
+          "401": { "description": "Unauthorized", "schema": { "$ref": "#/definitions/Error" } },
+          "403": { "description": "Access Denied", "schema": { "$ref": "#/definitions/Error" } },
+          "404": { "description": "Not Found", "schema": { "$ref": "#/definitions/Error" } }
+        },
+        "deprecated": false
+      }
+    },
+    "/trading-bots/marketplace": {
+      "get": {
+        "tags": ["TradingBots"],
+        "summary": "Browse public bots with performance metrics. Filterable and sortable.",
+        "operationId": "TradingBots.getMarketplace",
+        "parameters": [
+          {
+            "name": "strategyId",
+            "in": "query",
+            "required": false,
+            "type": "number",
+            "format": "double"
+          },
+          { "name": "symbol", "in": "query", "required": false, "type": "string" },
+          { "name": "sort", "in": "query", "required": false, "type": "string" },
+          {
+            "name": "count",
+            "in": "query",
+            "required": false,
+            "type": "number",
+            "format": "double"
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "type": "number",
+            "format": "double"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Request was successful",
+            "schema": { "type": "array", "items": { "type": "object" } }
+          },
+          "400": { "description": "Parameter Error", "schema": { "$ref": "#/definitions/Error" } },
+          "401": { "description": "Unauthorized", "schema": { "$ref": "#/definitions/Error" } },
+          "403": { "description": "Access Denied", "schema": { "$ref": "#/definitions/Error" } },
+          "404": { "description": "Not Found", "schema": { "$ref": "#/definitions/Error" } }
+        },
+        "deprecated": false,
+        "security": []
+      }
+    },
+    "/trading-bots/marketplace/{instanceId}": {
+      "get": {
+        "tags": ["TradingBots"],
+        "summary": "Get a public bot's details and performance from the marketplace.",
+        "operationId": "TradingBots.getMarketplaceItem",
+        "parameters": [
+          {
+            "name": "instanceId",
+            "in": "path",
+            "required": true,
+            "type": "number",
+            "format": "double"
+          }
+        ],
+        "responses": {
+          "200": { "description": "Request was successful", "schema": { "type": "object" } },
+          "400": { "description": "Parameter Error", "schema": { "$ref": "#/definitions/Error" } },
+          "401": { "description": "Unauthorized", "schema": { "$ref": "#/definitions/Error" } },
+          "403": { "description": "Access Denied", "schema": { "$ref": "#/definitions/Error" } },
+          "404": { "description": "Not Found", "schema": { "$ref": "#/definitions/Error" } }
+        },
+        "deprecated": false,
+        "security": []
+      }
+    },
+    "/userPriceAlert": {
+      "get": {
+        "tags": ["UserPriceAlert"],
+        "summary": "Get your price alerts.",
+        "operationId": "UserPriceAlert.getAlerts",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Filter by status.",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "symbol",
+            "in": "query",
+            "description": "Filter by symbol.",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max results (default 100).",
+            "required": false,
+            "type": "number",
+            "format": "double"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Offset for pagination.",
+            "required": false,
+            "type": "number",
+            "format": "double"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Request was successful",
+            "schema": { "type": "array", "items": { "$ref": "#/definitions/UserPriceAlert" } }
+          },
+          "400": { "description": "Parameter Error", "schema": { "$ref": "#/definitions/Error" } },
+          "401": { "description": "Unauthorized", "schema": { "$ref": "#/definitions/Error" } },
+          "403": { "description": "Access Denied", "schema": { "$ref": "#/definitions/Error" } },
+          "404": { "description": "Not Found", "schema": { "$ref": "#/definitions/Error" } }
+        },
+        "deprecated": false
+      },
+      "post": {
+        "tags": ["UserPriceAlert"],
+        "summary": "Create a new price alert.",
+        "operationId": "UserPriceAlert.createAlert",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "formData",
+            "description": "Instrument symbol.",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "alertType",
+            "in": "formData",
+            "description": "price_level or pct_change.",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "targetPrice",
+            "in": "formData",
+            "description": "Target price (price_level only).",
+            "required": false,
+            "type": "number",
+            "format": "double"
+          },
+          {
+            "name": "direction",
+            "in": "formData",
+            "description": "above or below (price_level only).",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "threshold",
+            "in": "formData",
+            "description": "Movement threshold 0-1.0 (pct_change only).",
+            "required": false,
+            "type": "number",
+            "format": "double"
+          },
+          {
+            "name": "timeframeMs",
+            "in": "formData",
+            "description": "Timeframe in ms (pct_change only).",
+            "required": false,
+            "type": "number",
+            "format": "double"
+          },
+          {
+            "name": "movementDirection",
+            "in": "formData",
+            "description": "up, down, or any (pct_change only).",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "note",
+            "in": "formData",
+            "description": "User note (max 256 chars).",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "triggerMode",
+            "in": "formData",
+            "description": "once or always (default: always).",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Request was successful",
+            "schema": { "$ref": "#/definitions/UserPriceAlert" }
+          },
+          "400": { "description": "Parameter Error", "schema": { "$ref": "#/definitions/Error" } },
+          "401": { "description": "Unauthorized", "schema": { "$ref": "#/definitions/Error" } },
+          "403": { "description": "Access Denied", "schema": { "$ref": "#/definitions/Error" } },
+          "404": { "description": "Not Found", "schema": { "$ref": "#/definitions/Error" } }
+        },
+        "deprecated": false
+      },
+      "delete": {
+        "tags": ["UserPriceAlert"],
+        "summary": "Bulk delete price alerts.",
+        "operationId": "UserPriceAlert.bulkDelete",
+        "parameters": [
+          {
+            "name": "ids",
+            "in": "formData",
+            "description": "Array of alert IDs to delete.",
+            "required": true,
+            "type": "string",
+            "format": "JSON"
+          }
+        ],
+        "responses": {
+          "200": { "description": "Request was successful", "schema": { "type": "object" } },
+          "400": { "description": "Parameter Error", "schema": { "$ref": "#/definitions/Error" } },
+          "401": { "description": "Unauthorized", "schema": { "$ref": "#/definitions/Error" } },
+          "403": { "description": "Access Denied", "schema": { "$ref": "#/definitions/Error" } },
+          "404": { "description": "Not Found", "schema": { "$ref": "#/definitions/Error" } }
+        },
+        "deprecated": false
+      }
+    },
+    "/userPriceAlert/{id}": {
+      "put": {
+        "tags": ["UserPriceAlert"],
+        "summary": "Update a price alert.",
+        "operationId": "UserPriceAlert.updateAlert",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "type": "number", "format": "double" },
+          { "name": "symbol", "in": "formData", "required": false, "type": "string" },
+          {
+            "name": "targetPrice",
+            "in": "formData",
+            "required": false,
+            "type": "number",
+            "format": "double"
+          },
+          { "name": "direction", "in": "formData", "required": false, "type": "string" },
+          {
+            "name": "threshold",
+            "in": "formData",
+            "required": false,
+            "type": "number",
+            "format": "double"
+          },
+          {
+            "name": "timeframeMs",
+            "in": "formData",
+            "required": false,
+            "type": "number",
+            "format": "double"
+          },
+          { "name": "movementDirection", "in": "formData", "required": false, "type": "string" },
+          { "name": "note", "in": "formData", "required": false, "type": "string" },
+          { "name": "triggerMode", "in": "formData", "required": false, "type": "string" },
+          {
+            "name": "status",
+            "in": "formData",
+            "description": "Set to active or disabled.",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Request was successful",
+            "schema": { "$ref": "#/definitions/UserPriceAlert" }
+          },
+          "400": { "description": "Parameter Error", "schema": { "$ref": "#/definitions/Error" } },
+          "401": { "description": "Unauthorized", "schema": { "$ref": "#/definitions/Error" } },
+          "403": { "description": "Access Denied", "schema": { "$ref": "#/definitions/Error" } },
+          "404": { "description": "Not Found", "schema": { "$ref": "#/definitions/Error" } }
+        },
+        "deprecated": false
+      },
+      "delete": {
+        "tags": ["UserPriceAlert"],
+        "summary": "Delete a price alert.",
+        "operationId": "UserPriceAlert.deleteAlert",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "type": "number", "format": "double" }
+        ],
+        "responses": {
+          "200": { "description": "Request was successful", "schema": { "type": "object" } },
+          "400": { "description": "Parameter Error", "schema": { "$ref": "#/definitions/Error" } },
+          "401": { "description": "Unauthorized", "schema": { "$ref": "#/definitions/Error" } },
+          "403": { "description": "Access Denied", "schema": { "$ref": "#/definitions/Error" } },
+          "404": { "description": "Not Found", "schema": { "$ref": "#/definitions/Error" } }
+        },
+        "deprecated": false
+      }
     }
   },
   "tags": [
@@ -4398,7 +5037,12 @@
     { "name": "UserAffiliates" },
     { "name": "Guild" },
     { "name": "Porl", "description": "Proof of Reserves/Liabilities" },
-    { "name": "ReferralCode" }
+    { "name": "ReferralCode" },
+    {
+      "name": "TradingBots",
+      "description": "Trading Bots API — strategies, instances, marketplace"
+    },
+    { "name": "UserPriceAlert" }
   ],
   "consumes": ["application/json", "application/x-www-form-urlencoded"],
   "host": "www.bitmex.com",
@@ -4576,6 +5220,7 @@
       "properties": {
         "symbol": { "type": "string" },
         "rootSymbol": { "type": "string" },
+        "instrumentID": { "format": "int32", "type": "number" },
         "state": { "type": "string" },
         "typ": { "type": "string" },
         "listing": { "format": "date-time", "type": "string" },
@@ -4659,6 +5304,7 @@
         "fairPrice": { "format": "double", "type": "number" },
         "markMethod": { "type": "string" },
         "markPrice": { "format": "double", "type": "number" },
+        "referencePrice": { "format": "double", "type": "number" },
         "indicativeSettlePrice": { "format": "double", "type": "number" },
         "settledPriceAdjustmentRate": { "format": "double", "type": "number" },
         "settledPrice": { "format": "double", "type": "number" },
@@ -4720,16 +5366,6 @@
       "required": ["currency", "timestamp"],
       "type": "object"
     },
-    "Leaderboard": {
-      "description": "Information on Top Users",
-      "properties": {
-        "name": { "type": "string" },
-        "isRealName": { "type": "boolean" },
-        "profit": { "type": "number", "format": "double" }
-      },
-      "required": ["name"],
-      "type": "object"
-    },
     "Liquidation": {
       "description": "Active Liquidations",
       "properties": {
@@ -4762,6 +5398,20 @@
     "Order": {
       "description": "Placement, Cancellation, Amending, and History",
       "properties": {
+        "pegPriceType": { "type": "string" },
+        "ordRejReason": { "type": "string" },
+        "currency": { "type": "string" },
+        "orderID": { "format": "guid", "type": "string" },
+        "timeInForce": { "type": "string" },
+        "ordStatus": { "type": "string" },
+        "account": { "format": "int64", "type": "number" },
+        "maxSlippagePct": { "format": "double", "type": "number" },
+        "symbol": { "type": "string" },
+        "clOrdLinkID": { "type": "string" },
+        "contingencyType": { "type": "string" },
+        "pegOffsetValue": { "format": "double", "type": "number" },
+        "error": { "type": "string" },
+        "pool": { "type": "string" },
         "execInst": { "type": "string" },
         "algoOrderDetails": { "type": "object" },
         "displayQty": { "format": "int64", "type": "number" },
@@ -4781,21 +5431,7 @@
         "side": { "type": "string" },
         "destination": { "type": "string" },
         "workingIndicator": { "type": "boolean" },
-        "cumQty": { "format": "int64", "type": "number" },
-        "pegPriceType": { "type": "string" },
-        "ordRejReason": { "type": "string" },
-        "currency": { "type": "string" },
-        "orderID": { "format": "guid", "type": "string" },
-        "timeInForce": { "type": "string" },
-        "ordStatus": { "type": "string" },
-        "account": { "format": "int64", "type": "number" },
-        "maxSlippagePct": { "format": "double", "type": "number" },
-        "symbol": { "type": "string" },
-        "clOrdLinkID": { "type": "string" },
-        "contingencyType": { "type": "string" },
-        "pegOffsetValue": { "format": "double", "type": "number" },
-        "error": { "type": "string" },
-        "pool": { "type": "string" }
+        "cumQty": { "format": "int64", "type": "number" }
       },
       "required": ["orderID"],
       "type": "object"
@@ -5356,27 +5992,6 @@
       "required": ["network"],
       "type": "object"
     },
-    "Address": {
-      "properties": {
-        "id": { "format": "int32", "type": "number" },
-        "currency": { "type": "string" },
-        "created": { "type": "string", "format": "date-time" },
-        "userId": { "type": "number", "format": "double" },
-        "address": { "type": "string" },
-        "name": { "type": "string" },
-        "note": { "type": "string" },
-        "skipConfirm": { "type": "boolean" },
-        "skipConfirmVerified": { "type": "boolean" },
-        "skip2FA": { "type": "boolean" },
-        "skip2FAVerified": { "type": "boolean" },
-        "network": { "type": "string" },
-        "memo": { "type": "string" },
-        "cooldownExpires": { "type": "string", "format": "date-time" },
-        "verified": { "type": "boolean" }
-      },
-      "required": ["address", "name", "network"],
-      "type": "object"
-    },
     "Beneficiary": {
       "properties": {
         "type": { "type": "string" },
@@ -5399,6 +6014,27 @@
         "source": { "type": "string" }
       },
       "required": ["addressType"],
+      "type": "object"
+    },
+    "Address": {
+      "properties": {
+        "id": { "format": "int32", "type": "number" },
+        "currency": { "type": "string" },
+        "created": { "type": "string", "format": "date-time" },
+        "userId": { "type": "number", "format": "double" },
+        "address": { "type": "string" },
+        "name": { "type": "string" },
+        "note": { "type": "string" },
+        "skipConfirm": { "type": "boolean" },
+        "skipConfirmVerified": { "type": "boolean" },
+        "skip2FA": { "type": "boolean" },
+        "skip2FAVerified": { "type": "boolean" },
+        "network": { "type": "string" },
+        "memo": { "type": "string" },
+        "cooldownExpires": { "type": "string", "format": "date-time" },
+        "verified": { "type": "boolean" }
+      },
+      "required": ["address", "name", "network"],
       "type": "object"
     },
     "AddressConfig": {
@@ -5465,6 +6101,29 @@
       "required": ["id", "userId", "created", "modified", "isDefault", "isPrimary"],
       "type": "object"
     },
+    "UserPriceAlert": {
+      "properties": {
+        "id": { "format": "bigint", "type": "number" },
+        "userId": { "format": "bigint", "type": "number" },
+        "symbol": { "type": "string" },
+        "alertType": { "type": "string" },
+        "targetPrice": { "type": "number", "format": "double" },
+        "direction": { "type": "string" },
+        "threshold": { "type": "number", "format": "double" },
+        "timeframeMs": { "type": "number", "format": "double" },
+        "movementDirection": { "default": "any", "type": "string" },
+        "note": { "type": "string" },
+        "triggerMode": { "default": "always", "type": "string" },
+        "status": { "default": "active", "type": "string" },
+        "cooldownMs": { "type": "number", "format": "double" },
+        "lastTriggeredAt": { "type": "string", "format": "date-time" },
+        "triggerCount": { "format": "int32", "default": 0, "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "symbol", "alertType"],
+      "type": "object"
+    },
     "UserPreferences": {
       "properties": {
         "alertOnLiquidations": { "type": "boolean" },
@@ -5484,6 +6143,7 @@
         "features": { "type": "array", "items": { "type": "string" } },
         "favourites": { "type": "array", "items": { "type": "string" } },
         "favouritesAssets": { "type": "array", "items": { "type": "string" } },
+        "maxSlippageTolerance": { "type": "object" },
         "favouritesOrdered": { "type": "array", "items": { "type": "string" } },
         "favouriteBots": { "type": "array", "items": { "type": "string" } },
         "favouriteContracts": { "type": "array", "items": { "type": "string" } },
@@ -5497,6 +6157,7 @@
         "hideNotifications": { "type": "array", "items": { "type": "string" } },
         "hidePhoneConfirm": { "default": false, "type": "boolean" },
         "guidesShownVersion": { "format": "int32", "default": 0, "type": "number" },
+        "maxSlippageIntroGuideShownVersion": { "format": "int32", "default": 0, "type": "number" },
         "pnlDashboardGuidesShownVersion": { "format": "int32", "default": 0, "type": "number" },
         "isSensitiveInfoVisible": { "type": "boolean" },
         "isWalletZeroBalanceHidden": { "type": "boolean" },
