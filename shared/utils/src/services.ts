@@ -79,7 +79,7 @@ export const SKFactory = (config: SKFactoryConfig): ServiceKit => {
     bindings.onHealthCheck = (service: Service, res: ServerResponse) => {
       const lastMessageAt = service.state('lastMessageAt') as number | null;
       const messages      = service.state('messages') as number;
-      const healthy       = lastMessageAt !== null && (Date.now() - lastMessageAt < HEALTH_INACTIVITY_MS);
+      const healthy       = lastMessageAt === null || (Date.now() - lastMessageAt < HEALTH_INACTIVITY_MS);
 
       res.writeHead(healthy ? 200 : 503, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ healthy, messages, lastMessageAt }));

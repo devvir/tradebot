@@ -8,7 +8,9 @@ services:
 
     environment:
       QUEUE_URL: ${QUEUE_URL}
+
       PIPE_BINDINGS: ${PIPE_BINDINGS:-}
+
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV: ${APP_ENV:-prod}
 
@@ -17,4 +19,4 @@ services:
     volumes:
       - ../../../:/live
 
-    restart: ${PIPE_RESTART_POLICY:-on-failure}
+    restart: on-failure

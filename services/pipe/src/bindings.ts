@@ -1,65 +1,32 @@
-import type { Binding, ExchangeSpec, TopologySpec } from './types';
+import { parseRules } from '@tradebot/utils';
+import type { ParsedItem } from '@tradebot/utils';
+import type { Binding, DestinationSpec, ExchangeSpec, TopologySpec } from './types';
 
-const VALID_TYPES = new Set([ 'fanout', 'topic', 'direct', 'headers' ]);
-
-// Matches: [type:]name[(key:pattern)]
-const ITEM_RE = /^(?:(?<type>\w+):)?(?<name>[\w.-]+)(?:\(key:(?<key>[^)]+)\))?$/;
-
-const extractKey = (raw: string): string | undefined =>
-  ITEM_RE.exec(raw)?.groups?.key || undefined;
+// ── Public ────────────────────────────────────────────────────────────────────
 
 /**
- * Parse a PIPE_BINDINGS string into a list of raw bindings.
+ * Parse a PIPE_BINDINGS string into a list of pipe-specific bindings.
+ *
+ * Accepted input is a subset of the shared rule grammar:
+ *   [queue@]type:exchange[(key:pattern)] > [queue@]type:exchange
+ *
+ * Rejected (pipe has no message path — no transformation features):
+ *   - routingKey.replace  (key:value:replace)
+ *   - headers             (header:name=value)
  */
-export default (raw: string): Binding[] =>
-  raw.replace(/\s/g, '').split('|').filter(Boolean).map(parseBinding);
-
-
-const parseBinding = (rule: string): Binding => {
-  const sides = rule.split('>');
-
-  if (sides.length !== 2) {
-    throw new Error(
-      sides.length < 2
-        ? `Binding missing '>': "${rule}"`
-        : `Binding must have exactly one '>': "${rule}"`,
-    );
-  }
-
-  const srcKey = extractKey(sides[0]);
-  const dstKey = extractKey(sides[1]);
-
-  if (dstKey) {
-    throw new Error(`Routing key can only be set on the source side in "${rule}"`);
-  }
-
-  return {
-    source:      parseExchangeSpec(sides[0]),
-    destination: parseExchangeSpec(sides[1]),
-    ...(srcKey ? { routingKey: srcKey } : {}),
-  };
+const parseBindings = (raw: string): Binding[] => {
+  const rules = parseRules(raw);
+  return rules.map(({ source, destination }) => {
+    validatePipeItem(source, 'source');
+    validatePipeItem(destination, 'destination');
+    return toBinding(source, destination);
+  });
 };
 
-const parseExchangeSpec = (raw: string): ExchangeSpec => {
-  const match = ITEM_RE.exec(raw);
-  if (! match?.groups?.name) throw new Error(`Invalid exchange spec: "${raw}"`);
-
-  const { type, name } = match.groups;
-
-  if (type && ! VALID_TYPES.has(type)) {
-    throw new Error(
-      `Invalid exchange type "${type}" in "${raw}". Valid types: ${[...VALID_TYPES].join(', ')}`,
-    );
-  }
-
-  return {
-    name,
-    ...(type ? { type: type as ExchangeSpec['type'] } : {}),
-  };
-};
+export default parseBindings;
 
 /**
- * Apply per-exchange-type business rules and defaults.
+ * Apply per-exchange-type defaults and business rules.
  */
 export const withDefaults = (bindings: Binding[]): Binding[] => bindings.map((binding) => {
   const { source, routingKey } = binding;
@@ -83,7 +50,7 @@ export const withDefaults = (bindings: Binding[]): Binding[] => bindings.map((bi
  * Convert bindings (post-defaults) into a RabbitMQ topology spec.
  */
 export const buildTopology = (bindings: Binding[]): TopologySpec => {
-  const exchanges: NonNullable<TopologySpec['exchanges']>       = {};
+  const exchanges:        NonNullable<TopologySpec['exchanges']>        = {};
   const exchangeBindings: NonNullable<TopologySpec['exchangeBindings']> = [];
 
   const ensureExchange = ({ name, type }: ExchangeSpec) => {
@@ -94,6 +61,12 @@ export const buildTopology = (bindings: Binding[]): TopologySpec => {
   for (const { source, destination, routingKey } of bindings) {
     ensureExchange(source);
     ensureExchange(destination);
+
+    if (destination.queue) {
+      exchanges[destination.name!].queues                        ??= {};
+      exchanges[destination.name!].queues![destination.queue] = { durable: true, routingKey: '#' };
+    }
+
     exchangeBindings.push({
       source:      source.name!,
       destination: destination.name!,
@@ -103,3 +76,33 @@ export const buildTopology = (bindings: Binding[]): TopologySpec => {
 
   return { exchanges, exchangeBindings };
 };
+
+// ── Internal ──────────────────────────────────────────────────────────────────
+
+const validatePipeItem = (item: ParsedItem, side: 'source' | 'destination'): void => {
+  if (! item.exchange)
+    throw new Error(`Pipe ${side} must be an exchange, not a bare queue`);
+
+  if (item.routingKey?.replace !== undefined)
+    throw new Error(
+      `(key:value:replace) is a router-only feature and cannot be used in pipe bindings`,
+    );
+
+  if (item.headers)
+    throw new Error(
+      `Header modifiers are a router-only feature and cannot be used in pipe bindings`,
+    );
+
+  if (side === 'destination' && item.routingKey)
+    throw new Error(`Routing key can only be set on the source side in pipe bindings`);
+};
+
+const toBinding = (source: ParsedItem, destination: ParsedItem): Binding => ({
+  source:      { name: source.exchange!.name, ...(source.exchange!.type ? { type: source.exchange!.type as ExchangeSpec['type'] } : {}) },
+  destination: {
+    name: destination.exchange!.name,
+    ...(destination.exchange!.type ? { type: destination.exchange!.type as ExchangeSpec['type'] } : {}),
+    ...(destination.queue          ? { queue: destination.queue }                                  : {}),
+  } as DestinationSpec,
+  ...(source.routingKey ? { routingKey: source.routingKey.value } : {}),
+});

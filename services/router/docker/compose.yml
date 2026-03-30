@@ -13,14 +13,14 @@ services:
       NODE_ENV: ${APP_ENV:-prod}
 
     ports:
-      - ${ROUTER_PORT:-}:3000
+      - :3000
 
     user: "1000:1000"
 
     volumes:
       - ../../../:/live
 
-    restart: ${ROUTER_RESTART_POLICY:-unless-stopped}
+    restart: unless-stopped
 
     healthcheck:
       test: curl -f http://localhost:3000/health || exit 1

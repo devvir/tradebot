@@ -1,10 +1,11 @@
 # Pipe Service
 
-A one-shot service that declares native RabbitMQ exchange-to-exchange bindings. Unlike the Router, it does not consume or republish messages — it simply wires exchanges together at the broker level and exits. RabbitMQ handles message forwarding natively with zero CPU overhead.
+A one-shot service that declares native RabbitMQ exchange-to-exchange bindings and optionally asserts queues. Unlike the Router, it does not consume or republish messages — it simply wires exchanges together at the broker level and exits. RabbitMQ handles message forwarding natively with zero CPU overhead.
 
 ## Core Functionality
 
 - **Exchange-to-exchange bindings** — native RabbitMQ E2E bindings, no consumer loop
+- **Queue assertion on destination** — optionally assert a durable queue inside the destination exchange
 - **Fanout, topic, direct, headers** — any combination of exchange types
 - **Routing key filter** — topic sources default to `#` (all messages); direct requires an explicit key; fanout/headers ignore the routing key and match all messages by default
 - **Multiple bindings** — single invocation declares N bindings at once
@@ -28,13 +29,14 @@ Requires RabbitMQ — see [infra packs](../../modules/infra/README.md).
 ### Binding Syntax
 
 ```
-[type:]source[(key:bindingKey)] > [type:]destination
+[type:]source[(key:bindingKey)] > [queue@][type:]destination
 ```
 
 Where:
 - `type` — exchange type: `fanout`, `topic`, `direct`, `headers` (defaults to `fanout` if omitted)
 - `name` — exchange name
 - `(key:...)` — binding key on the **source** side only
+- `queue@` — optional prefix on the **destination** side; asserts a durable queue named `queue` inside the destination exchange, bound with routing key `#`
 - `|` — separator between multiple bindings
 
 **Default binding keys by exchange type:**
@@ -85,6 +87,12 @@ PIPE_BINDINGS="fanout:a > fanout:b | fanout:b > fanout:c"
 ```bash
 PIPE_BINDINGS="topic:events(key:trade.*) > fanout:archive | fanout:broadcast > fanout:replay"
 ```
+
+**Assert a queue inside the destination exchange:**
+```bash
+PIPE_BINDINGS="topic:broadcast > journalist@topic:journalist"
+```
+This creates the E2E binding `broadcast → journalist` **and** asserts a durable queue `journalist` inside exchange `journalist` (bound with `#`). The journalist service can then consume from `journalist` queue without declaring it itself.
 
 ## Message Flow
 

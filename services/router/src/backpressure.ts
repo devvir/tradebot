@@ -51,21 +51,39 @@ const createHoldPublishing = (
 
   interval.unref();
 
+  // Shared gate: once one concurrent caller starts waiting, all others await
+  // the same promise instead of each spinning independently.
+  let gatePromise: Promise<void> | null = null;
+
   return async () => {
+    if (gatePromise !== null) {
+      await gatePromise;
+      return;
+    }
+
     for (const name of queueNames) {
-      let depth = cachedDepths.get(name)!;
+      const depth = cachedDepths.get(name)!;
 
       if (depth < maxReady) continue;
 
       logger.warn({ depth, limit: maxReady, queue: name }, 'Router paused: downstream queue at capacity');
 
-      while (depth >= maxReady) {
-        await new Promise((r) => setTimeout(r, 1000));
-        depth = await getDepth(name);
-        cachedDepths.set(name, depth);
-      }
+      // Assign synchronously before any await so concurrent callers see it immediately.
+      gatePromise = (async () => {
+        let d = depth;
 
-      logger.info({ depth, limit: maxReady, queue: name }, 'Router resumed');
+        while (d >= maxReady) {
+          await new Promise((r) => setTimeout(r, 1000));
+          d = await getDepth(name);
+          cachedDepths.set(name, d);
+        }
+
+        logger.info({ depth: d, limit: maxReady, queue: name }, 'Router resumed');
+        gatePromise = null;
+      })();
+
+      await gatePromise;
+      return;
     }
   };
 };

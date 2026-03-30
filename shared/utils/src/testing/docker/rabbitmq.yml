@@ -14,10 +14,10 @@ services:
       - rabbitmq_data:/var/lib/rabbitmq
 
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
-      interval: 5s
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 3s
       timeout: 10s
-      retries: 12
+      retries: 6
       start_period: 10s
 
     restart: "no"
