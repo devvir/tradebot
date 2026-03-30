@@ -43,6 +43,38 @@ All code in this project is written primarily for **human understanding and main
 - Each module should export clean, well-documented interfaces
 - Avoid circular dependencies
 
+### `src/index.ts` — the entry point contract
+
+**`index.ts` is the synopsis of the service, not an implementation file.**
+It must be readable like a paragraph — a reader should understand what the
+service does before they reach line 20.
+
+Hard rules:
+- **≤ 50 lines.** Anything longer means implementation has leaked in.
+- **No complex logic.** Top-level flow is fine: connect, consume, try/catch ack/nack, shutdown. What must not appear: algorithms, state machines, buffer management, retry logic, message parsing, recovery routines.
+- **Every non-trivial block must live in its own module** (`loop.ts`,
+  `consume.ts`, `flush.ts`, etc.) and be called by name from `index.ts`.
+
+A correct `index.ts` reads like a synopsis — you can see the shape of the
+service without seeing how any step is implemented:
+```ts
+await connectQueue();
+
+queue.consume(async (message) => {
+  try {
+    await transform(message);
+    message.ack();
+  } catch {
+    message.nack();
+  }
+});
+
+onShutdown(async () => {
+  await flush();
+  await queue.disconnect();
+});
+```
+
 ## Review Requirements
 
 When modifying files:

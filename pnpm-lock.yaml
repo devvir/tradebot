@@ -164,6 +164,15 @@ importers:
         specifier: ^4.1.1
         version: 4.1.4(@types/node@25.6.0)(@vitest/coverage-v8@4.1.4)(vite@7.3.2(@types/node@25.6.0)(jiti@2.6.1)(yaml@2.8.3))
 
+  services/assembler:
+    dependencies:
+      '@devvir/service-kit':
+        specifier: workspace:*
+        version: link:../../packages/service-kit
+      '@tradebot/utils':
+        specifier: workspace:*
+        version: link:../../shared/utils
+
   services/bouncer:
     dependencies:
       '@devvir/service-kit':
@@ -201,6 +210,15 @@ importers:
       '@types/express':
         specifier: ^5.0.0
         version: 5.0.6
+
+  services/clerk:
+    dependencies:
+      '@devvir/service-kit':
+        specifier: workspace:*
+        version: link:../../packages/service-kit
+      '@tradebot/utils':
+        specifier: workspace:*
+        version: link:../../shared/utils
 
   services/codec:
     dependencies:
@@ -280,6 +298,18 @@ importers:
         version: 5.0.6
 
   services/reader:
+    dependencies:
+      '@devvir/service-kit':
+        specifier: workspace:*
+        version: link:../../packages/service-kit
+      '@tradebot/utils':
+        specifier: workspace:*
+        version: link:../../shared/utils
+      mongodb:
+        specifier: ^7.1.0
+        version: 7.1.1
+
+  services/registrar:
     dependencies:
       '@devvir/service-kit':
         specifier: workspace:*

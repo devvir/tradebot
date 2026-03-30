@@ -31,7 +31,7 @@ const buildMongoUrl = (): string => {
 export const loadConfig = (): Config => ({
   mongoUrl:      buildMongoUrl(),
   database:      process.env['BACKUP_DATABASE']       ?? 'tradebot_archive',
-  dumpDir:       process.env['DUMP_DIR']               ?? '/data/backups/tradebot',
+  dumpDir:       process.env['DUMP_DIR']               ?? '/data/bitmex/websocket',
   retentionDays: Number(process.env['DUMP_RETENTION_DAYS'] ?? '60'),
-  pruneAgeDays:  Number(process.env['PRUNE_AGE_DAYS']      ?? '30'),
+  pruneAgeDays:  Number(process.env['PRUNE_AGE_DAYS']      ?? '5'),
 });
