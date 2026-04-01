@@ -6,5 +6,10 @@ packages:
   - dev/tooling
 
 onlyBuiltDependencies:
+  - cpu-features
+  - es5-ext
   - esbuild
   - mongodb-memory-server
+  - nx
+  - protobufjs
+  - ssh2
