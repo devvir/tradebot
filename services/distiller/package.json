@@ -1,0 +1,21 @@
+{
+  "name": "@tradebot/distiller",
+  "version": "1.0.0",
+  "description": "Reads raw BitMEX data from MongoDB and writes derived collections (bins, orderBook10)",
+  "main": "dist/index.js",
+  "private": true,
+  "scripts": {
+    "build": "tsc -b && cp src/generators/instrument-seeds.ndjson dist/src/generators/",
+    "start": "node dist/src/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@devvir/bitmex-database": "^1.1.4",
+    "@devvir/service-kit": "workspace:*",
+    "@tradebot/types": "workspace:*",
+    "@tradebot/utils": "workspace:*",
+    "mongodb": "^7.1.0"
+  }
+}

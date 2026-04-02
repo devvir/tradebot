@@ -238,6 +238,24 @@ importers:
         specifier: workspace:*
         version: link:../../shared/utils
 
+  services/distiller:
+    dependencies:
+      '@devvir/bitmex-database':
+        specifier: ^1.1.4
+        version: 1.1.4
+      '@devvir/service-kit':
+        specifier: workspace:*
+        version: link:../../packages/service-kit
+      '@tradebot/types':
+        specifier: workspace:*
+        version: link:../../shared/types
+      '@tradebot/utils':
+        specifier: workspace:*
+        version: link:../../shared/utils
+      mongodb:
+        specifier: ^7.1.0
+        version: 7.1.1
+
   services/executor:
     dependencies:
       '@devvir/bitmex-database':
