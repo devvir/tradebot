@@ -43,9 +43,9 @@ services:
       file: ../../../services/mongodb/docker/base.yml
       service: mongodb
     container_name: db-feed
-    command: mongod --quiet --setParameter logLevel=0 --wiredTigerCacheSizeGB=${DB_FEED_CACHE_SIZE_GB:-2}
+    command: mongod --quiet --setParameter logLevel=0 --wiredTigerCacheSizeGB=${DB_CACHE_SIZE_GB:-2}
     ports:
-      - "${DB_FEED_PORT:-}:27017"
+      - "${DB_PORT:-}:27017"
     volumes:
       - db-feed-data:/data/db
       - db-feed-config:/data/configdb

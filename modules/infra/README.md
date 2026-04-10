@@ -34,7 +34,7 @@ A service compose file maps abstract → concrete via environment variables:
 services:
   writer:
     environment:
-      DB_URL: ${DB_FEED_URL}   # which db-* this writer talks to
+      DB_URL: ${DB_URL}   # which db-* this writer talks to
       QUEUE_URL: ${QUEUE_RT_URL}
 ```
 

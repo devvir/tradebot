@@ -21,7 +21,7 @@ export interface Config {
 const buildMongoUrl = (): string => {
   const user = process.env['DB_USER'];
   const pass = process.env['DB_PASS'];
-  const port = process.env['DB_FEED_PORT'];
+  const port = process.env['DB_PORT'];
 
   if (! user || ! pass) throw new Error('DB_USER and DB_PASS must be set');
 
@@ -30,8 +30,8 @@ const buildMongoUrl = (): string => {
 
 export const loadConfig = (): Config => ({
   mongoUrl:      buildMongoUrl(),
-  database:      process.env['BACKUP_DATABASE']       ?? 'tradebot_archive',
+  database:      process.env['BACKUP_DATABASE']       ?? 'tradebot_collect',
   dumpDir:       process.env['DUMP_DIR']               ?? '/data/bitmex/websocket',
   retentionDays: Number(process.env['DUMP_RETENTION_DAYS'] ?? '60'),
-  pruneAgeDays:  Number(process.env['PRUNE_AGE_DAYS']      ?? '5'),
+  pruneAgeDays:  Number(process.env['PRUNE_AGE_DAYS']      ?? '60'),
 });

@@ -223,15 +223,6 @@ importers:
         specifier: workspace:*
         version: link:../../shared/utils
 
-  services/codec:
-    dependencies:
-      '@devvir/service-kit':
-        specifier: workspace:*
-        version: link:../../packages/service-kit
-      '@tradebot/utils':
-        specifier: workspace:*
-        version: link:../../shared/utils
-
   services/courier:
     dependencies:
       '@devvir/service-kit':
@@ -342,18 +333,6 @@ importers:
       '@types/express':
         specifier: ^5.0.6
         version: 5.0.6
-
-  services/reader:
-    dependencies:
-      '@devvir/service-kit':
-        specifier: workspace:*
-        version: link:../../packages/service-kit
-      '@tradebot/utils':
-        specifier: workspace:*
-        version: link:../../shared/utils
-      mongodb:
-        specifier: ^7.1.0
-        version: 7.1.1
 
   services/registrar:
     dependencies:
@@ -484,18 +463,6 @@ importers:
       supertest:
         specifier: ^7.1.0
         version: 7.2.2
-
-  services/writer:
-    dependencies:
-      '@devvir/service-kit':
-        specifier: workspace:*
-        version: link:../../packages/service-kit
-      '@tradebot/utils':
-        specifier: workspace:*
-        version: link:../../shared/utils
-      mongodb:
-        specifier: ^7.1.0
-        version: 7.1.1
 
   services/ws:
     dependencies:
