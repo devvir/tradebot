@@ -9,12 +9,14 @@ Comprehensive CLI tooling for development, debugging, and monitoring of the Trad
 ./tools
 
 # Run a specific tool
-./tools ws                 # WebSocket tool
-./tools db -l              # MongoDB list mode
-./tools rabbit --list      # RabbitMQ queue list
-./tools bouncer            # View accounts
-./tools broadcast          # Monitor broadcast
-./tools signal --latest    # View latest signals
+./tools ws                    # WebSocket tool
+./tools db -l                 # MongoDB list mode
+./tools rabbit --list         # RabbitMQ queue list
+./tools bouncer               # View accounts
+./tools broadcast             # Monitor broadcast
+./tools signal --latest       # View latest signals
+./tools remote sync-env       # Push .env files to remote
+./tools remote pull           # Pull vault files from remote
 ```
 
 ## Global Options
@@ -497,6 +499,62 @@ Override per-project with `-e` if credentials differ.
 
 ---
 
+## Remote Tool (`remote`)
+
+Remote server operations. Two subcommands: `sync-env` pushes local `.env` files to a remote host; `pull` downloads vault files from a remote host, skipping any that are already identical locally.
+
+### Usage
+
+```bash
+./tools remote sync-env
+./tools remote pull
+./tools remote          # interactive menu
+```
+
+---
+
+### `remote sync-env`
+
+Finds all `.env` files in the monorepo and copies each to the corresponding path on a remote server via `scp`, preserving directory structure relative to the project root.
+
+Excludes `node_modules/`, `dist/`, and `.git/` directories from the search.
+
+```bash
+# Push all .env files to a remote server
+./tools remote sync-env
+# Prompt: Remote destination (user@host:/remote/path): deploy@10.0.0.1:/srv/tradebot
+```
+
+For each file, the equivalent remote path is created with `ssh mkdir -p` before the transfer.
+
+---
+
+### `remote pull`
+
+Downloads files from a remote path to a local directory. Before transferring each file, it computes the remote `md5sum` via SSH and compares it with the local copy. Only files that are missing or have a different checksum are pulled.
+
+```bash
+# Pull vault files from a remote host
+./tools remote pull
+# Prompt: Remote source (user@host:/remote/path): deploy@10.0.0.1:/data/vault
+# Prompt: Local destination path: /data/bitmex/vault
+```
+
+Output labels each file as `missing` or `changed` before pulling it. Files that are already up to date are silently skipped.
+
+---
+
+### Interactive menu
+
+Running `./tools remote` with no subcommand launches a menu:
+
+```
+Sync Env  — SCP all .env files to a remote server
+Pull      — Pull vault files from remote (skips unchanged files)
+```
+
+---
+
 ## Environment Configuration
 
 The tooling package loads environment variables in this order (later overrides earlier):
@@ -675,6 +733,8 @@ dev/tooling/
 │   │   ├── bouncer.ts
 │   │   ├── broadcast.ts
 │   │   ├── signal.ts
+│   │   ├── monitor.ts
+│   │   ├── remote.ts
 │   │   └── sources.ts
 │   ├── tools/                # Tool implementations (isolated)
 │   │   ├── websocket/
@@ -683,6 +743,12 @@ dev/tooling/
 │   │   ├── bouncer/
 │   │   ├── broadcast/
 │   │   ├── signal/
+│   │   ├── monitor/
+│   │   ├── remote/
+│   │   │   ├── index.ts      # Entry point, interactive submenu
+│   │   │   ├── types.ts      # RemoteDest, parseRemoteDest
+│   │   │   ├── sync-env.ts   # Push .env files via scp
+│   │   │   └── pull.ts       # Pull files by md5 comparison
 │   │   └── sources/
 │   │       ├── index.ts      # Entry point, scope/vault resolution
 │   │       ├── diagnose.ts   # Diagnose orchestrator
@@ -706,14 +772,26 @@ dev/tooling/
 │       └── utils/
 │           └── env.ts        # Environment loading
 ├── tests/
-│   └── tools/sources/
-│       ├── large-table.test.ts
-│       ├── small-table.test.ts
-│       ├── diagnose.test.ts
-│       └── checks/
-│           ├── header.test.ts
-│           ├── duplicates.test.ts
-│           └── gaps.test.ts
+│   ├── commands/
+│   │   └── register.test.ts  # Command registration smoke tests
+│   ├── shared/
+│   │   └── utils/
+│   │       └── env.test.ts
+│   └── tools/
+│       ├── remote.test.ts    # parseRemoteDest, findEnvFiles, listRemoteFiles, localMd5, run()
+│       ├── monitor.test.ts
+│       ├── bouncer.test.ts
+│       └── sources/
+│           ├── checks/
+│           │   ├── header.test.ts
+│           │   ├── duplicates.test.ts
+│           │   └── gaps.test.ts
+│           ├── fix/
+│           │   └── helpers.test.ts
+│           └── merge/
+│               ├── large-table.test.ts
+│               └── small-table.test.ts
+├── .env                      # Dev tooling overrides (loaded after root .env)
 ├── package.json
 ├── tsconfig.json
 ├── vitest.config.ts

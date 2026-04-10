@@ -6,6 +6,7 @@ import { register as registerRabbit } from '../../src/commands/rabbit.js';
 import { register as registerBouncer } from '../../src/commands/bouncer.js';
 import { register as registerBroadcast } from '../../src/commands/broadcast.js';
 import { register as registerSignal } from '../../src/commands/signal.js';
+import { register as registerRemote } from '../../src/commands/remote.js';
 
 function optionLongs(cmd: Command): string[] {
   return cmd.options.map(o => o.long ?? '');
@@ -111,5 +112,29 @@ describe('signal command', () => {
     const longs = optionLongs(program.commands.find(c => c.name() === 'signal')!);
     expect(longs).toContain('--latest');
     expect(longs).toContain('--symbol');
+  });
+});
+
+describe('remote command', () => {
+  it('registers name=remote', () => {
+    const program = new Command();
+    registerRemote(program);
+    expect(program.commands.find(c => c.name() === 'remote')).toBeDefined();
+  });
+
+  it('has sync-env and pull subcommands', () => {
+    const program = new Command();
+    registerRemote(program);
+    const remote = program.commands.find(c => c.name() === 'remote')!;
+    const subNames = remote.commands.map(c => c.name());
+    expect(subNames).toContain('sync-env');
+    expect(subNames).toContain('pull');
+  });
+
+  it('has no options on the top-level remote command', () => {
+    const program = new Command();
+    registerRemote(program);
+    const remote = program.commands.find(c => c.name() === 'remote')!;
+    expect(optionLongs(remote)).toHaveLength(0);
   });
 });
