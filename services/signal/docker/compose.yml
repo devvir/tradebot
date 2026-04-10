@@ -5,15 +5,17 @@ services:
       dockerfile: docker/dev.python.Dockerfile
       args:
         SERVICE_NAME: signal
+
     environment:
-      SERVICE_NAME: signal
       WS_URL: ${WS_URL}
       REST_URL: ${REST_URL}
       QUEUE_URL: ${QUEUE_URL}
+
     volumes:
       - ../../services/signal:/live/services/signal
       - ../../packages:/live/packages
-    ports:
-      - "3005:3000"
 
-    restart: ${SIGNAL_RESTART_POLICY:-unless-stopped}
+    ports:
+      - :80
+
+    restart: unless-stopped

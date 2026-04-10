@@ -2,13 +2,10 @@ import { logger } from '@devvir/service-kit';
 import { redactCredentials } from '@tradebot/utils';
 import type { Config } from './types';
 
-const HTTP_PORT = 80;
-
 const loadConfig = (): Config => {
   const config: Config = {
     bouncerUrl:   process.env['BOUNCER_URL']   ?? '',
     bouncerToken: process.env['BOUNCER_TOKEN'] ?? '',
-    httpPort:     HTTP_PORT,
   };
 
   validateConfig(config);

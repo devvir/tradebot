@@ -24,9 +24,6 @@ pnpm test
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `BOUNCER_URL` | yes | — | Base URL for the Bouncer service |
-| `BOUNCER_TOKEN` | yes | — | Bearer token for Bouncer authentication |
-| `PROXY_HTTP_PORT` | no | — | Host port mapping for the HTTP server (internal port is always 80) |
-| `PROXY_HEALTH_PORT` | no | — | Host port mapping for the health check server |
+| `PROXY_PORT` | no | — | Host port mapping for the HTTP server (internal port is always 80) |
 
 For technical details and architecture, see [docs/services/PROXY.md](../../docs/services/PROXY.md).

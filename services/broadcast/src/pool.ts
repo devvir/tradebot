@@ -68,8 +68,12 @@ export const getOrConnect = async (
     },
   });
 
+  service.on('shutdown', () => ws.close());
+
   entry.ws = ws;
-  if (! accountId) service.setState(endpointName, ws);
+
+  if (! accountId)
+    service.setState(endpointName, ws);
 
   return entry;
 };

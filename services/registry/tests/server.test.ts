@@ -20,7 +20,7 @@ beforeAll(async () => {
   await client.connect();
   db = client.db('test_registry_server');
 
-  server = startServer(db, { database: 'test_registry_server', httpPort: 0 });
+  server = startServer(db, { database: 'test_registry_server' });
 
   await new Promise<void>((resolve) => {
     server.once('listening', () => {

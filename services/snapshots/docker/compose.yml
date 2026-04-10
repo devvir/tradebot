@@ -9,17 +9,13 @@ services:
         SERVICE_NAME: snapshots
 
     environment:
-      QUEUE_URL: ${QUEUE_URL}
-      BOUNCER_URL: ${BOUNCER_URL:-}
-      BOUNCER_TOKEN: ${BOUNCER_TOKEN:-}
-
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV: ${APP_ENV:-prod}
       TZ: ${TZ:-UTC}
 
     ports:
-      - ${SNAPSHOTS_HTTP_PORT:-}:80
-      - ${SNAPSHOTS_HEALTH_PORT:-}:3000
+      - ${SNAPSHOTS_PORT:-}:80
+      - :3000
 
     user: 1000:1000
 
@@ -33,4 +29,4 @@ services:
       retries: 5
       start_period: 10s
 
-    restart: ${SNAPSHOTS_RESTART_POLICY:-unless-stopped}
+    restart: unless-stopped

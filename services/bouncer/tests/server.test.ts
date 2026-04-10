@@ -20,7 +20,7 @@ let server: http.Server;
 let baseUrl: string;
 
 beforeAll(async () => {
-  server = startServer({ token: TOKEN, dataPath: DATA_PATH, httpPort: 0 });
+  server = startServer({ token: TOKEN, dataPath: DATA_PATH });
 
   await new Promise<void>((resolve) => {
     server.once('listening', () => {

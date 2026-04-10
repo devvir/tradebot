@@ -4,12 +4,13 @@
 *.swp
 *.swo
 *~
+.github/**/*.md
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Environment files
+# Environment & secrets
 .env
 .env.local
 .env.dev*

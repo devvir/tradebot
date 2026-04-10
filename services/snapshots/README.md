@@ -26,7 +26,6 @@ Requires RabbitMQ — see [infra packs](../../modules/infra/README.md).
 
 | Variable                | Required | Default | Description                  |
 | ----------------------- | -------- | ------- | ---------------------------- |
-| `SNAPSHOTS_HTTP_PORT`   | no       | <empty> | HTTP server host port        |
-| `SNAPSHOTS_HEALTH_PORT` | no       | <empty> | HTTP health checks host port |
+| `SNAPSHOTS_PORT`   | no       | <empty> | HTTP server host port        |
 
 See [docs/services/SNAPSHOTS.md](../../docs/services/SNAPSHOTS.md) for technical details.

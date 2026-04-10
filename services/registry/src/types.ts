@@ -1,6 +1,5 @@
 export interface Config {
   database: string;
-  httpPort: number;
   [key: string]: unknown;
 }
 

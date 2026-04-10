@@ -7,7 +7,6 @@ import type { Config } from '../src/types';
 const CONFIG: Config = {
   bouncerUrl:   'http://test-bouncer',
   bouncerToken: 'test-token',
-  httpPort:      0,
 };
 
 const MOCK_ACCOUNT = {

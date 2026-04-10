@@ -6,6 +6,8 @@ import { requireAuth } from './middleware';
 import { setupRoutes } from './routes';
 import type { Config } from '../types';
 
+const HTTP_PORT = 80;
+
 export function startServer(config: Config): http.Server {
   const app = express();
 
@@ -26,8 +28,8 @@ export function startServer(config: Config): http.Server {
 
   const server = http.createServer(app);
 
-  server.listen(config.httpPort, () => {
-    logger.info({ port: config.httpPort }, 'Bouncer HTTP server listening');
+  server.listen(HTTP_PORT, () => {
+    logger.info({ port: HTTP_PORT }, 'Bouncer HTTP server listening');
   });
 
   return server;

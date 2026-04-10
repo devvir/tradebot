@@ -22,3 +22,11 @@ https://support.bitmex.com/hc/en-gb/articles/18589621443357-What-is-Auto-Delever
 ## Mark Price and Liquidation
 https://support.bitmex.com/hc/en-gb/articles/5931698556829-How-can-I-manually-calculate-what-the-Mark-Price-was-when-I-was-liquidated-on-Perpetual
 https://support.bitmex.com/hc/en-gb/articles/5932847366685-How-can-I-manually-calculate-what-the-Mark-Price-was-when-I-got-liquidated-on-Futures
+
+# Guilds
+https://www.bitmex.com/app/leaderboard/guilds
+
+# Historical Data
+https://www.bybit.com/derivatives/en/history-data
+https://api.tardis.dev/v1/exchanges/bitmex
+https://crypto-lake.com/subscribe/

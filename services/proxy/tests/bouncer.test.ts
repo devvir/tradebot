@@ -1,4 +1,3 @@
-// Pending Review
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { getAccount, getAccountByApiKey, signRest } from '../src/bouncer';
 

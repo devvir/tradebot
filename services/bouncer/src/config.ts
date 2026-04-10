@@ -3,13 +3,11 @@ import { Config } from "./types";
 import { redactCredentials } from '@tradebot/utils';
 
 const DATA_PATH = '/data/bouncer/accounts.json';
-const HTTP_PORT = 80;
 
 function loadConfig(): Config {
   const config: Config = {
     token: process.env.BOUNCER_TOKEN || '',
     dataPath: DATA_PATH,
-    httpPort: HTTP_PORT,
   };
 
   validateConfig(config);

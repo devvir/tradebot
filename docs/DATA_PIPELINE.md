@@ -166,7 +166,25 @@ _id = dateOffset × 2³⁹ + msgIndex × 2¹² + reserved
 
 ---
 
-## Data Layout
+## Stage 3 — Derive (distiller service)
+
+Distiller reads raw collections written by registrar and produces derived collections.
+
+```
+MongoDB tradebot
+  ├─ trade        ──→ distiller ──→ tradeBin1m / tradeBin5m / tradeBin1h / tradeBin1d
+  ├─ quote        ──→ distiller ──→ quoteBin1m / quoteBin5m / quoteBin1h / quoteBin1d
+  └─ orderBookL2  ──→ distiller ──→ orderBook10 / orderBookL2_25
+```
+
+All three source tables are processed in parallel. Progress is
+tracked in Redis (`distiller_progress:<table>` → last completed offset). When
+caught up, distiller sleeps 1 hour and retries.
+
+See [docs/services/DISTILLER.md](services/DISTILLER.md) for full details.
+
+---
+
 
 ```
 /data/vault/

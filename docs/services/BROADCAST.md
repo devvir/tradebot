@@ -139,9 +139,6 @@ Channels are routed to the realtime or platform endpoint based on `PLATFORM_CHAN
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `QUEUE_URL` | Yes | — | RabbitMQ connection URL |
-| `BOUNCER_URL` | Yes | — | Bouncer service base URL |
-| `BOUNCER_TOKEN` | Yes | — | Bearer token to authenticate Bouncer requests |
 | `BITMEX_TESTNET` | No | `false` | Use BitMEX testnet (`true`) or live (`false`) |
 | `BROADCAST_FEED_PRESET` | No | `feed` | Preset channel set for guest connections |
 

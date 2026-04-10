@@ -16,7 +16,7 @@ The executor is **multi-account**: it maintains a WS connection pool keyed by `a
 
 ### HTTP — `POST /plan`
 
-Listens on port `3001` (mapped to host via `EXECUTOR_HTTP_PORT`). Accepts a JSON body describing the complete desired order state for one account + symbol. Returns `200` on success.
+Listens on port `3001` (mapped to host via `EXECUTOR_PORT`). Accepts a JSON body describing the complete desired order state for one account + symbol. Returns `200` on success.
 
 There is no queue, no backlog. If the executor is unavailable when the bot ticks, the HTTP call fails, the tick is skipped, and fresh state arrives on the next tick. Stale desired states are never processed.
 
@@ -151,10 +151,6 @@ If an amend returns a "not found" response (order filled between the live snapsh
 
 | Env var | Required | Default | Description |
 |---|---|---|---|
-| `BOUNCER_URL` | yes | — | Bouncer base URL (e.g. `http://bouncer:80`) |
-| `BOUNCER_TOKEN` | yes | — | Bearer token for Bouncer authentication |
 | `EXECUTOR_REST_URL` | yes | — | BitMEX-compatible REST base URL (e.g. `https://www.bitmex.com`) |
-| `EXECUTOR_HTTP_PORT` | no | — | Host port mapped to the internal HTTP server (port `3001`) |
-| `EXECUTOR_HEALTH_PORT` | no | — | Host port mapped to the health check server (port `3000`) |
-| `EXECUTOR_RESTART_POLICY` | no | `unless-stopped` | Docker restart policy |
+| `EXECUTOR_PORT` | no | — | Host port mapped to the internal HTTP server (port `3001`) |
 

@@ -4,6 +4,8 @@ import { Server } from 'node:http';
 import { forwardRequest } from './proxy';
 import type { Config } from '../types';
 
+const HTTP_PORT = 80;
+
 export function startServer(config: Config): Server {
   const app = express();
 
@@ -21,8 +23,8 @@ export function startServer(config: Config): Server {
     });
   });
 
-  const server = app.listen(config.httpPort, () => {
-    logger.info({ port: config.httpPort }, 'Proxy server listening');
+  const server = app.listen(HTTP_PORT, () => {
+    logger.info({ port: HTTP_PORT }, 'Proxy server listening');
   });
 
   return server;

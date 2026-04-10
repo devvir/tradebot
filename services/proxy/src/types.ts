@@ -3,7 +3,6 @@ import type { AccountType } from '@tradebot/utils';
 export interface Config {
   bouncerUrl:   string;
   bouncerToken: string;
-  httpPort:     number;
   [key: string]: unknown;
 }
 

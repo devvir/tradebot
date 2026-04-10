@@ -16,7 +16,7 @@ RabbitMQ snapshots queue
          ↓
  Snapshots Service (in-memory)
     ├─ accumulator: applies deltas to per-table snapshot
-    └─ http server on :3001
+    └─ http server on :80
          ↓
  GET /snapshot/{table}
     ├─ status 200: { table, action: "partial", data, keys, counter, ... }
@@ -103,8 +103,7 @@ Requires RabbitMQ — see [infra packs](../../modules/infra/README.md).
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `SNAPSHOTS_HTTP_PORT` | no | <empty> | HTTP server host port |
-| `SNAPSHOTS_HEALTH_PORT` | no | <empty> | Health check server host port |
+| `SNAPSHOTS_PORT` | no | <empty> | HTTP server host port |
 
 ## Lifecycle
 
@@ -130,7 +129,7 @@ The `modules/exchange/live` module uses snapshots:
 
 1. **Router** binds `snapshots.*.*` from `broadcast` → snapshot service's queue
 2. **WS service** (on client subscribe):
-   - Fetches snapshot from `http://snapshots:3001/snapshot/{table}`
+   - Fetches snapshot from `http://snapshots/snapshot/{table}`
    - Buffers deltas from RabbitMQ
    - Serves snapshot on subscription
    - Streams subsequent deltas to connected clients

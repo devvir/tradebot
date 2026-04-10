@@ -75,13 +75,6 @@ onShutdown(async () => {
 });
 ```
 
-## Review Requirements
-
-When modifying files:
-
-- If changes affect **>10% of a file**, add a `// Pending Review` comment at the top of the file (syntax according to file language)
-- If creating **new files**, add the same review marker
-
 ## Build & Deployment
 
 - TypeScript is compiled to JavaScript in the `dist/` folder

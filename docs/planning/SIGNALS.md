@@ -91,7 +91,6 @@ A configurable minimum interval (e.g. 100ms) gates publication. If multiple upda
 | `EMIT_INTERVAL_MS` | Minimum ms between MarketState publications (default: 100) |
 | `EMA_WINDOWS` | Comma-separated EMA window sizes (e.g. `20,50`) |
 | `OUTPUT_QUEUE_PREFIX` | Queue name prefix for MarketState output (default: `signal`) |
-| `QUEUE_URL` | RabbitMQ connection URL |
 
 ---
 

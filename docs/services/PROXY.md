@@ -90,11 +90,9 @@ No response transformation, filtering, or caching occurs.
 
 | Variable | Required | Description |
 |---|---|---|
-| `BOUNCER_URL` | yes | Base URL for the Bouncer service |
-| `BOUNCER_TOKEN` | yes | Bearer token for Bouncer authentication |
-| `PROXY_HTTP_PORT` | no | Host port mapping (default: random available port) |
+| `PROXY_PORT` | no | Host port mapping (default: random available port) |
 
-The internal HTTP port is always `80`. `PROXY_HTTP_PORT` controls only the host-side port mapping in `compose.yml`. The BitMEX URL for each request is resolved dynamically based on the account type stored in Bouncer.
+The internal HTTP port is always `80`. `PROXY_PORT` controls only the host-side port mapping in `compose.yml`. The BitMEX URL for each request is resolved dynamically based on the account type stored in Bouncer.
 
 ---
 

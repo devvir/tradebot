@@ -24,4 +24,3 @@ pnpm test
 | `DB_STORE_URL` | yes | — | MongoDB connection string (db-store) |
 | `REGISTRY_DATABASE` | no | `tradebot_registry` | MongoDB database name |
 | `REGISTRY_PORT` | no | — | Host port mapped to 80 (HTTP server) |
-| `REGISTRY_HEALTH_PORT` | no | — | Host port mapped to 3000 (health check) |

@@ -78,8 +78,8 @@ REPLAY:
 ## Bot perspective
 
 A bot connecting to this exchange app:
-- Points its WS client at `ws:8180` instead of `wss://www.bitmex.com/realtime`
-- Points its REST client at `rest:3001` instead of `https://www.bitmex.com`
+- Points its WS client at `ws:80` instead of `wss://www.bitmex.com/realtime`
+- Points its REST client at `rest:80` instead of `https://www.bitmex.com`
 - Authenticates with an API key (any key is accepted in replay mode; real BitMEX key required in live mode via `proxy`)
 - Subscribes to the same tables and receives the same message shapes
 - Places and manages orders via the same REST endpoints

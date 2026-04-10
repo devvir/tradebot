@@ -31,9 +31,6 @@ Requires RabbitMQ and Bouncer — see [infra packs](../../modules/infra/README.m
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `QUEUE_URL` | Yes | — | RabbitMQ connection URL |
-| `BOUNCER_URL` | Yes | — | Bouncer service URL for signing authenticated WS credentials |
-| `BOUNCER_TOKEN` | Yes | — | Bearer token to authenticate requests to Bouncer |
 | `BROADCAST_FEED_PRESET` | No | `none` | Preset channel set (`none`, `core`, `feed`, `archive`, `primary`, `secondary`, `redundant`) |
 | `BROADCAST_PORT` | No | — | Broadcast Commands Server port mapping on host |
 
@@ -41,14 +38,14 @@ Requires RabbitMQ and Bouncer — see [infra packs](../../modules/infra/README.m
 
 ```bash
 # Subscribe to a channel (guest connection)
-POST http://broadcast:80/subscribe/trade
+POST http://broadcast/subscribe/trade
 
 # Subscribe to a channel (authenticated, per-account connection)
-POST http://broadcast:80/subscribe/order
+POST http://broadcast/subscribe/order
 x-account-id: <accountId>
 
 # Unsubscribe
-POST http://broadcast:80/unsubscribe/trade
+POST http://broadcast/unsubscribe/trade
 ```
 
 For technical details, see [docs/services/BROADCAST.md](../../docs/services/BROADCAST.md).

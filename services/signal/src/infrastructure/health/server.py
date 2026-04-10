@@ -24,7 +24,7 @@ async def _handle(reader: StreamReader, writer: StreamWriter) -> None:
         writer.close()
 
 
-async def start(port: int = 3000) -> asyncio.Server:
+async def start(port: int = 80) -> asyncio.Server:
     server = await asyncio.start_server(_handle, "0.0.0.0", port)
 
     logger.info(f"Health server listening on :{port}")

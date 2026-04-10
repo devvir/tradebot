@@ -1,7 +1,6 @@
 export interface Config {
   token:    string;   // shared Bearer token required on all authenticated endpoints
   dataPath: string;   // path to accounts.json on the named volume
-  httpPort: number;
   [key: string]: unknown;
 }
 

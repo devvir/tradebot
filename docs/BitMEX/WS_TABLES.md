@@ -6,43 +6,43 @@ Sources: `tradebot_unpacked` MongoDB (WS keys from partial messages — authorit
 
 ## Table Reference
 
-| Table | Keys | Access | Symbol | Snapshot | Actions | REST |
-|---|---|---|---|---|---|---|
-| orderBookL2 | symbol, id, side | public | optional | full | insert, update, delete | GET /orderBook/L2 |
-| orderBookL2_25 | symbol, id, side | public | optional | full | insert, update, delete | — |
-| orderBook10 | symbol | public | optional | full | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; update | — |
-| quote | (none) | public | optional | 1 per symbol | insert | GET /quote |
-| quoteBin1m | (none) | public | optional | 1 per symbol | insert | GET /quote/bucketed |
-| quoteBin5m | (none) | public | optional | 1 per symbol | insert | GET /quote/bucketed |
-| quoteBin1h | (none) | public | optional | 1 per symbol | insert | GET /quote/bucketed |
-| quoteBin1d | (none) | public | optional | 1 per symbol | insert | GET /quote/bucketed |
-| trade | (none) | public | optional | 1 per instrument | insert | GET /trade |
-| tradeBin1m | (none) | public | optional | 1 per symbol | insert | GET /trade/bucketed |
-| tradeBin5m | (none) | public | optional | 1 per symbol | insert | GET /trade/bucketed |
-| tradeBin1h | (none) | public | optional | 1 per symbol | insert | GET /trade/bucketed |
-| tradeBin1d | (none) | public | optional | 1 per symbol | insert | GET /trade/bucketed |
-| liquidation | orderID | public | optional | active | insert, update, delete | GET /liquidation |
-| instrument | symbol | public | optional | full | insert, update, delete | GET /instrument |
-| funding | timestamp, symbol | public | optional | 1 per symbol | insert | GET /funding |
-| settlement | timestamp, symbol | public | optional | 1 per symbol | insert | GET /settlement |
-| insurance | timestamp, currency | public | N/A | 1 per currency | insert | GET /insurance |
-| announcement | id | public | N/A | empty | insert | GET /announcement |
-| chat | id | public | N/A | empty | insert, update, delete | GET /chat |
-| connected | id (0) | public | N/A | 1 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; update | — |
-| publicNotifications | id | public | N/A | unknown | insert | — |
-| privateNotifications | id | private | N/A | unknown | insert | — |
-| execution | (none) | private | optional | empty | insert | GET /execution |
-| order | orderID | private | optional | full? | insert, update, delete | GET /order |
-| position | account, symbol, strategy | private | optional | full? | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; update | GET /position |
-| margin | account, currency | private | N/A | 1 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; update | GET /user/margin |
-| wallet | account, currency | private | N/A | 1 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; update | GET /user/wallet |
-| transact | transactID | private | N/A | empty | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; update | GET /user/walletHistory |
-| affiliate | account, currency | private | N/A | 1 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; update | GET /user/affiliateStatus |
-| csastate | account | private | N/A | 1 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; update | GET /user/csa |
-| isolation | account, symbol | private | N/A | 1 per symbol | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; update | N/A |
-| leverage | account, symbol, strategy | private | optional | empty? | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; update | GET /position/leverage |
-| mamAllocation | account, marginCurrency | private | N/A | 1 per currency? | insert, update, delete | N/A |
-| voucher | voucherId | private | N/A | unknown | insert, update, delete | N/A |
+| Table | Keys | Access | Symbol | Snapshot | Actions | REST | Since |
+|---|---|---|---|---|---|---|---|
+| orderBookL2 | symbol, id, side | public | optional | full | insert, update, delete | GET /orderBook/L2 | 2026-03-08 |
+| orderBookL2_25 | symbol, id, side | public | optional | full | insert, update, delete | — | 2026-03-08 |
+| orderBook10 | symbol | public | optional | full | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; update | — | 2026-03-08 |
+| quote | (none) | public | optional | 1 per symbol | insert | GET /quote | 2014-11-22 |
+| quoteBin1m | (none) | public | optional | 1 per symbol | insert | GET /quote/bucketed | 2014-11-22 |
+| quoteBin5m | (none) | public | optional | 1 per symbol | insert | GET /quote/bucketed | 2014-11-22 |
+| quoteBin1h | (none) | public | optional | 1 per symbol | insert | GET /quote/bucketed | 2014-11-22 |
+| quoteBin1d | (none) | public | optional | 1 per symbol | insert | GET /quote/bucketed | 2014-11-22 |
+| trade | (none) | public | optional | 1 per instrument | insert | GET /trade | 2014-11-22 |
+| tradeBin1m | (none) | public | optional | 1 per symbol | insert | GET /trade/bucketed | 2014-11-22 |
+| tradeBin5m | (none) | public | optional | 1 per symbol | insert | GET /trade/bucketed | 2014-11-22 |
+| tradeBin1h | (none) | public | optional | 1 per symbol | insert | GET /trade/bucketed | 2014-11-22 |
+| tradeBin1d | (none) | public | optional | 1 per symbol | insert | GET /trade/bucketed | 2014-11-22 |
+| liquidation | orderID | public | optional | active | insert, update, delete | GET /liquidation | 2026-03-08 |
+| instrument | symbol | public | optional | full | insert, update, delete | GET /instrument | 2026-03-08 |
+| funding | timestamp, symbol | public | optional | 1 per symbol | insert | GET /funding | 2016-05-07 |
+| settlement | timestamp, symbol | public | optional | 1 per symbol | insert | GET /settlement | 2015-05-01 |
+| insurance | timestamp, currency | public | N/A | 1 per currency | insert | GET /insurance | 2016-02-28 |
+| announcement | id | public | N/A | empty | insert | GET /announcement | 2026-03-08 |
+| chat | id | public | N/A | empty | insert, update, delete | GET /chat | 2026-03-08 |
+| connected | id (0) | public | N/A | 1 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; update | — | 2026-03-08 |
+| publicNotifications | id | public | N/A | unknown | insert | — | 2026-03-08 |
+| privateNotifications | id | private | N/A | unknown | insert | — | N/A |
+| execution | (none) | private | optional | empty | insert | GET /execution | N/A |
+| order | orderID | private | optional | full? | insert, update, delete | GET /order | N/A |
+| position | account, symbol, strategy | private | optional | full? | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; update | GET /position | N/A |
+| margin | account, currency | private | N/A | 1 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; update | GET /user/margin | N/A |
+| wallet | account, currency | private | N/A | 1 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; update | GET /user/wallet | N/A |
+| transact | transactID | private | N/A | empty | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; update | GET /user/walletHistory | N/A |
+| affiliate | account, currency | private | N/A | 1 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; update | GET /user/affiliateStatus | N/A |
+| csastate | account | private | N/A | 1 | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; update | GET /user/csa | N/A |
+| isolation | account, symbol | private | N/A | 1 per symbol | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; update | N/A | N/A |
+| leverage | account, symbol, strategy | private | optional | empty? | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; update | GET /position/leverage | N/A |
+| mamAllocation | account, marginCurrency | private | N/A | 1 per currency? | insert, update, delete | N/A | N/A |
+| voucher | voucherId | private | N/A | unknown | insert, update, delete | N/A | N/A |
 
 ---
 
@@ -60,6 +60,7 @@ Sources: `tradebot_unpacked` MongoDB (WS keys from partial messages — authorit
   - `unknown` — insufficient data to determine; empty in what we have but low activity makes this inconclusive
 - **Actions** — which action values the table emits after the initial partial; verified against `tradebot_archive` (`_id % 4`: 0=partial, 1=insert, 2=update, 3=delete)
 - **REST** — paginated REST endpoint to fetch historical data; `—` means no endpoint
+- **Since** — earliest date with data in `/data/bitmex/vault/`; `N/A` means no vault data collected yet
 
 ---
 

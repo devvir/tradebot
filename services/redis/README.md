@@ -36,7 +36,6 @@ All configuration is done via environment variables:
 
 - `CACHE_PASS` - Redis password (default: `""` / no password). Note: Redis uses password-only authentication (no username).
 - `CACHE_PORT` - Port for client connections (default: `6379`)
-- `CACHE_RESTART_POLICY` - Container restart policy (default: `unless-stopped`)
 
 ### ⚠️ Security Warning
 
