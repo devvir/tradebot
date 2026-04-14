@@ -527,6 +527,120 @@ The tooling package loads environment variables in this order (later overrides e
 | `DB_URL` | `mongodb://localhost:27017/tradebot` | db, signal | `mongodb://localhost:27017/tradebot` |
 | `QUEUE_URL` | `amqp://guest:guest@localhost:5672` | rabbit, broadcast | `amqp://guest:guest@localhost:5672` |
 | `RABBITMQ_MGMT_URL` | `http://localhost:15672/api` | rabbit | `http://localhost:15672/api` |
+| `VAULT_DATA_DIR` | `/data/bitmex/vault` | sources | `/data/bitmex/vault` |
+
+---
+
+---
+
+## Sources Tool (`sources`)
+
+Sanitise and merge vault source data. Two subcommands: `fix` scans and repairs individual vault files; `merge` joins a vault+gaps file pair into a single output.
+
+### Usage
+
+```bash
+./tools sources fix   [path] [-D] [--log <dir>]
+./tools sources merge [path] [-D] [--log <dir>]
+./tools sources                        # interactive menu
+```
+
+### Path argument
+
+Accepted forms (same for both subcommands):
+
+| Form | Meaning |
+|------|---------|
+| _(blank)_ | All files under `VAULT_DATA_DIR` |
+| `table` | One table, all years |
+| `table/year` | One table, one year |
+| `table/year/prefix` | Narrowed by filename prefix |
+| `/abs/path` | Override vault dir; no filter |
+| `/abs/path:filter` | Override vault dir + relative filter |
+
+### Options
+
+- `-D, --dry-run` — Scan and report only; no output written
+- `--log <dir>` — Write a `.log` file per task into this directory (one log per file or pair)
+
+---
+
+### `sources fix`
+
+Scans vault files for structural issues, writes a cleaned `.fixed.csv.gz` alongside each source file.
+
+**What it fixes** (skipped in output):
+
+| Issue | Description |
+|-------|-------------|
+| `duplicate` | Same message content seen more than once in a 15-minute sliding window (SHA-256 of all lines, receive time blanked) |
+| `header-in-wrong-row` | A header-looking row found mid-stream (concatenated files) |
+
+**What it reports as warnings only** (not fixable on a single file):
+
+| Issue | Description |
+|-------|-------------|
+| `bad-header` | First row is missing `_date_` or `_action_` columns, or file is empty |
+| `wrong-order` | A message's receive time is earlier than the previous message's |
+| `gap` | Forward jump in receive time > 1 second (large tables only: `orderBookL2`, `instrument`) |
+
+After filtering duplicates and mid-stream headers, remaining messages are **sorted by their canonical time field** — `timestamp` for large tables (`orderBookL2`, `instrument`), `_date_` for everything else. Sorting uses a bounded sliding-window bucket-flush so a 10GB file fixes in constant memory. Output is written to `<original>.fixed.csv.gz`.
+
+**Duplicate exemptions**:
+- `partial` messages in timeless (small) tables — reconnection snapshots, not true duplicates
+- `connected` table — ephemeral connection-state rows, exempt entirely
+
+```bash
+# Dry-run: scan and report, no output
+./tools sources fix orderBookL2 -D
+
+# Fix all instrument files, write logs
+./tools sources fix instrument --log /tmp/fix-logs
+
+# Fix a specific year with vault dir override
+./tools sources fix /data/bitmex/alt:trade/2025
+```
+
+---
+
+### `sources merge`
+
+Merges a vault+gaps file pair into a single `.merged.csv.gz` output.
+
+- Requires both files (vault and gaps counterpart). Files without a pair are **skipped with a warning** — not an error.
+- Pre-validates that each file's first line starts with `_date_,`. If not, it fails and tells you to run `fix` first.
+- **Large tables** (`orderBookL2`, `instrument`): streaming two-pointer walk ordered by per-message `timestamp`, with deduplication in the overlap window.
+- **Small tables** (all others): load both files fully, deduplicate by content-hash, sort by receive time.
+
+```bash
+# Dry-run merge: analyse and report, no output
+./tools sources merge instrument -D
+
+# Merge all paired files, write logs
+./tools sources merge --log /tmp/merge-logs
+
+# Merge a specific year
+./tools sources merge trade/2025
+```
+
+---
+
+### Interactive menu
+
+Running `./tools sources` with no subcommand launches an interactive prompt for scope and mode:
+
+```
+Fix           — scan, fix duplicates/order, write .fixed.csv.gz
+Merge         — merge vault+gaps pair into .merged.csv.gz
+Fix (dry-run) — scan and report issues, no output written
+Merge (dry)   — smoke-test and report, no output written
+```
+
+---
+
+### Configuration
+
+- `VAULT_DATA_DIR` — Root directory of vault files (default: `/data/bitmex/vault`). Required unless an absolute path is passed directly.
 
 ---
 
@@ -560,26 +674,46 @@ dev/tooling/
 │   │   ├── rabbit.ts
 │   │   ├── bouncer.ts
 │   │   ├── broadcast.ts
-│   │   └── signal.ts
+│   │   ├── signal.ts
+│   │   └── sources.ts
 │   ├── tools/                # Tool implementations (isolated)
 │   │   ├── websocket/
-│   │   │   └── index.ts
 │   │   ├── mongodb/
-│   │   │   └── index.ts
 │   │   ├── rabbitmq/
-│   │   │   └── index.ts
 │   │   ├── bouncer/
-│   │   │   └── index.ts
 │   │   ├── broadcast/
-│   │   │   └── index.ts
-│   │   └── signal/
-│   │       └── index.ts
+│   │   ├── signal/
+│   │   └── sources/
+│   │       ├── index.ts      # Entry point, scope/vault resolution
+│   │       ├── diagnose.ts   # Diagnose orchestrator
+│   │       ├── config.ts     # Per-table config (tier, timestamp column)
+│   │       ├── discover.ts   # File discovery, pair building
+│   │       ├── headers.ts    # CSV header parsing
+│   │       ├── reader.ts     # File streaming, message parsing
+│   │       ├── writer.ts     # Gzip output writer
+│   │       ├── large-table.ts # Two-pointer streaming merge
+│   │       ├── small-table.ts # In-memory merge with dedup
+│   │       ├── types.ts
+│   │       └── checks/
+│   │           ├── types.ts      # FileCheck, MessageCheck, DiagnosticIssue
+│   │           ├── header.ts     # Pre-pass + mid-stream header checks
+│   │           ├── duplicates.ts # Sliding-window duplicate detection
+│   │           └── gaps.ts       # Wrong-order + gap checks
 │   └── shared/               # Shared utilities
 │       ├── ui/
 │       │   ├── logger.ts     # Colored output, formatting
 │       │   └── prompts.ts    # Interactive prompts
 │       └── utils/
 │           └── env.ts        # Environment loading
+├── tests/
+│   └── tools/sources/
+│       ├── large-table.test.ts
+│       ├── small-table.test.ts
+│       ├── diagnose.test.ts
+│       └── checks/
+│           ├── header.test.ts
+│           ├── duplicates.test.ts
+│           └── gaps.test.ts
 ├── package.json
 ├── tsconfig.json
 ├── vitest.config.ts

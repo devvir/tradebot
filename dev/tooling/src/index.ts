@@ -10,7 +10,10 @@ import { register as registerDb } from './commands/db.js';
 import { register as registerRabbit } from './commands/rabbit.js';
 import { register as registerBouncer } from './commands/bouncer.js';
 import { register as registerBroadcast } from './commands/broadcast.js';
-import { register as registerSignal } from './commands/signal.js';import { register as registerMonitor } from './commands/monitor';
+import { register as registerSignal } from './commands/signal.js';
+import { register as registerMonitor } from './commands/monitor';
+import { register as registerSources } from './commands/sources.js';
+
 interface Tool {
   id: string;
   name: string;
@@ -25,6 +28,7 @@ const tools: Tool[] = [
   { id: 'broadcast', name: 'Broadcast', description: 'Monitor broadcast exchange messages' },
   { id: 'signal', name: 'Signal', description: 'View signals and indicators from Signal service' },
   { id: 'monitor', name: 'Monitor', description: 'Live dashboard: Docker containers and RabbitMQ queues' },
+  { id: 'sources', name: 'Sources', description: 'Sanitise and diagnose vault source data' },
 ];
 
 async function main(): Promise<void> {
@@ -54,6 +58,7 @@ async function main(): Promise<void> {
   registerBroadcast(program);
   registerSignal(program);
   registerMonitor(program);
+  registerSources(program);
 
   // Show interactive menu when no subcommand is given.
   // Preserve any global flags (-e, --env, -v, --verbose) so they survive the
