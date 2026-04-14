@@ -45,6 +45,21 @@ services:
       ROUTER_RULES: >-
         | live@topic:broadcast > ws.deltas & snapshots
 
+  trader:
+    extends:
+      file: ../../../services/trader/docker/compose.yml
+      service: trader
+
+    environment:
+      TRADER_WS_URL:   ${TRADER_WS_URL:-ws://ws}
+      TRADER_REST_URL: ${TRADER_REST_URL:-http://rest}
+
+    depends_on:
+      ws:
+        condition: service_healthy
+      rest:
+        condition: service_healthy
+
 networks:
   default:
     name: ${PROJECT_NAME:-tradebot}-network

@@ -1,0 +1,35 @@
+# Trader Service — Trading bot that places orders via the exchange WS/REST services
+
+services:
+  trader:
+    build:
+      context: ../../..
+      dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
+      args:
+        SERVICE_NAME: trader
+
+    environment:
+      TRADER_WS_URL:           ${TRADER_WS_URL:-}
+      TRADER_REST_URL:         ${TRADER_REST_URL:-}
+      TRADER_ACCOUNT_ID:       ${TRADER_ACCOUNT_ID}
+      TRADER_STRATEGY:         ${TRADER_STRATEGY:-range}
+      TRADER_SYMBOL:           ${TRADER_SYMBOL:-XBTUSD}
+      TRADER_TICK_INTERVAL_MS: ${TRADER_TICK_INTERVAL_MS:-30000}
+
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV:  ${APP_ENV:-prod}
+      TZ:        ${TZ:-UTC}
+
+    user: "1000:1000"
+
+    volumes:
+      - ../../../:/live
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+
+    restart: unless-stopped

@@ -1,0 +1,21 @@
+{
+  "name": "@tradebot/trader",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Trading bot — connects to the exchange WS/REST services and places orders",
+  "main": "dist/src/index.js",
+  "scripts": {
+    "build": "tsc -b",
+    "start": "node dist/src/index.js",
+    "dev":   "ts-node src/index.ts",
+    "test":  "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@devvir/service-kit": "workspace:*",
+    "@tradebot/types":     "workspace:*",
+    "@tradebot/utils":     "workspace:*"
+  },
+  "devDependencies": {}
+
+}
