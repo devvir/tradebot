@@ -1,0 +1,24 @@
+# UI Service - React SPA (Vite)
+
+services:
+  ui:
+    build:
+      context: ../../..
+      dockerfile: docker/dev.node.Dockerfile
+      args:
+        SERVICE_NAME: ui
+
+    command: ["sh", "-c", "cd services/ui && pnpm install --ignore-scripts && pnpm dev"]
+
+    environment:
+      VITE_BITMEX_REST_URL:    ${VITE_BITMEX_REST_URL:-/api/v1}
+      VITE_BITMEX_WS_URL:      ${VITE_BITMEX_WS_URL:-wss://ws.bitmex.com/realtime}
+      BITMEX_REST_PROXY_URL:   ${BITMEX_REST_PROXY_URL:-http://localhost:3101}
+
+    ports:
+      - ${UI_PORT:-3000}:3000
+
+    volumes:
+      - ../../../:/live
+
+    restart: unless-stopped
