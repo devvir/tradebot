@@ -1,0 +1,14 @@
+# GUI Module — BitMEX trading interface
+#
+# For now hits BitMEX REST/WS directly from the browser.
+# When the live backend module is ready, point VITE_BITMEX_* at it instead.
+
+name: gui
+
+include:
+  - path: ../../../services/ui/docker/compose.yml
+
+networks:
+  default:
+    name: ${PROJECT_NAME:-tradebot}-network
+    external: true
