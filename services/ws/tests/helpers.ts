@@ -1,38 +1,53 @@
 import { WebSocket, WebSocketServer } from 'ws';
 import { createServer, type Server as HttpServer } from 'node:http';
+import type { BitmexMessage } from '@devvir/bitmex-database';
+import type { Snapshots } from '../src/subs/snapshots';
 
-// ---- Snapshot HTTP server ---------------------------------------------------
+// ---- Snapshot priming -------------------------------------------------------
 
-type SnapshotStore = Record<string, object>;
+export interface SnapshotFixture {
+  table:    string;
+  keys?:    string[];
+  types?:   Record<string, string>;
+  data?:    unknown[];
+  counter:  number;
+}
 
-// Mirrors the real snapshots service: if ?symbol= is present and the stored
-// snapshot's `types` object contains a 'symbol' field, the response gets
-// filter: { symbol }.  Otherwise filter: {}.
-export const startSnapshotServer = (store: SnapshotStore): Promise<{ server: HttpServer; url: string }> =>
+/**
+ * Prime an in-memory Snapshots instance with fixture partials, as if the
+ * corresponding BitMEX `partial` messages had streamed in. Each fixture's
+ * `counter` becomes the table's current counter, mirroring what the live
+ * delta consumer does at runtime.
+ */
+export const primeSnapshots = (
+  snapshots: Snapshots,
+  store:     Record<string, SnapshotFixture>,
+): void => {
+  for (const [table, fixture] of Object.entries(store)) {
+    const partial = {
+      table,
+      action: 'partial',
+      keys:   fixture.keys  ?? [],
+      types:  fixture.types ?? {},
+      filter: {},
+      data:   fixture.data  ?? [],
+    } as unknown as BitmexMessage;
+
+    snapshots.apply(partial, fixture.counter);
+  }
+};
+
+// ---- Broadcast signal rejector ---------------------------------------------
+
+/**
+ * Mock broadcast commands server that always rejects resubscribe requests
+ * with 400. Used to assert the "unknown table" path in the subscribe flow:
+ * a 400 from broadcast signals BitMEX genuinely rejected the channel.
+ */
+export const startBroadcastRejector = (): Promise<{ server: HttpServer; url: string }> =>
   new Promise(resolve => {
-    const server = createServer((req, res) => {
-      const url    = new URL(req.url!, 'http://x');
-      const table  = url.pathname.match(/^\/snapshot\/([^/]+)$/)?.[1];
-      const symbol  = url.searchParams.get('symbol')  ?? undefined;
-      const account = url.searchParams.get('account') ?? undefined;
-
-      if (! table || ! (store as Record<string, unknown>)[table]) {
-        res.writeHead(404).end();
-        return;
-      }
-
-      const base            = store[table] as Record<string, unknown>;
-      const types           = base.types as object | null | undefined;
-      const hasAccountField = typeof types === 'object' && types !== null && 'account' in types;
-      const hasSymbolField  = typeof types === 'object' && types !== null && 'symbol' in types;
-
-      const filter: Record<string, string> = {};
-
-      if (account && hasAccountField) filter['account'] = account;
-      if (symbol  && hasSymbolField)  filter['symbol']  = symbol;
-
-      res.writeHead(200, { 'Content-Type': 'application/json' })
-        .end(JSON.stringify({ ...base, filter }));
+    const server = createServer((_req, res) => {
+      res.writeHead(400).end();
     });
 
     server.listen(0, '127.0.0.1', () => {
@@ -44,7 +59,7 @@ export const startSnapshotServer = (store: SnapshotStore): Promise<{ server: Htt
 export const stopServer = (server: HttpServer): Promise<void> =>
   new Promise(resolve => server.close(() => resolve()));
 
-// ---- WebSocket helpers -------------------------------------------------------
+// ---- WebSocket helpers ------------------------------------------------------
 
 export const listen = (wss: WebSocketServer): Promise<number> =>
   new Promise(resolve => wss.once('listening', () =>
@@ -67,7 +82,7 @@ export const connect = (port: number, apiKey?: string): Promise<{ client: WebSoc
 // ---- Wait helpers -----------------------------------------------------------
 
 export const waitFor = (
-  messages: unknown[],
+  messages:  unknown[],
   predicate: (msgs: unknown[]) => boolean,
   timeoutMs = 2000,
 ): Promise<void> =>
@@ -83,12 +98,3 @@ export const waitFor = (
       reject(new Error(`Timed out after ${timeoutMs}ms. Messages: ${JSON.stringify(messages)}`));
     }, timeoutMs);
   });
-
-export const testHelpers = {
-  startSnapshotServer,
-  stopServer,
-  listen,
-  closeWss,
-  connect,
-  waitFor,
-};

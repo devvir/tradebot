@@ -1,19 +1,27 @@
 import { describe, it, expect } from 'vitest';
-import { WebSocket } from 'ws';
 import { createBus } from '../src/events';
 import { ClientRegistry } from '../src/subs/clients';
 import { createServer } from '../src/server/websocket';
 import { setup } from '../src/subs/subscription';
 import { processDelta } from '../src/subs/deltas';
+import { createSnapshots } from '../src/subs/snapshots';
 import type { BitmexWsMessage } from '../src/types';
-import { startSnapshotServer, stopServer, listen, closeWss, connect, waitFor } from './helpers';
+import { primeSnapshots, listen, closeWss, connect, waitFor, type SnapshotFixture } from './helpers';
 
-const createTestService = (snapshotsUrl: string) => {
-  const bus      = createBus();
-  const registry = new ClientRegistry();
-  const wss      = createServer(0, bus, registry);
-  setup(bus, registry, snapshotsUrl);
-  return { wss, push: (delta: BitmexWsMessage, counter: number, accountId?: string) => processDelta(delta, counter, bus, accountId) };
+const createTestService = (store: Record<string, SnapshotFixture> = {}) => {
+  const bus       = createBus();
+  const registry  = new ClientRegistry();
+  const snapshots = createSnapshots();
+  const wss       = createServer(bus, registry, 0);
+
+  primeSnapshots(snapshots, store);
+  setup(bus, { broadcastUrl: '' }, registry, snapshots);
+
+  return {
+    wss,
+    push: (delta: BitmexWsMessage, counter: number, accountId?: string) =>
+      processDelta(delta, counter, bus, accountId),
+  };
 };
 
 const makeMsg = (table: string, action: string): BitmexWsMessage => ({
@@ -23,11 +31,10 @@ const makeMsg = (table: string, action: string): BitmexWsMessage => ({
   data: [{ id: 1 }],
 });
 
-const makeSnapshot = (table: string, counter: number) => ({
+const makeFixture = (table: string, counter: number): SnapshotFixture => ({
   table,
-  action: 'partial',
-  keys:   ['id'],
-  data:   [{ id: 1 }],
+  keys:    ['id'],
+  data:    [{ id: 1 }],
   counter,
 });
 
@@ -41,8 +48,7 @@ describe('live delta broadcast', () => {
     const table           = 'trade_live';
     const snapshotCounter = 5;
 
-    const { server, url } = await startSnapshotServer({ [table]: makeSnapshot(table, snapshotCounter) });
-    const { wss, push }   = createTestService(url);
+    const { wss, push } = createTestService({ [table]: makeFixture(table, snapshotCounter) });
 
     push(makeMsg(table, 'insert'), 10);
 
@@ -64,14 +70,12 @@ describe('live delta broadcast', () => {
 
     client.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 
   it('sends delta to multiple subscribers on same table', async () => {
     const table = 'trade_multi';
 
-    const { server, url } = await startSnapshotServer({ [table]: makeSnapshot(table, 1) });
-    const { wss, push }   = createTestService(url);
+    const { wss, push } = createTestService({ [table]: makeFixture(table, 1) });
 
     push(makeMsg(table, 'insert'), 10);
 
@@ -100,18 +104,16 @@ describe('live delta broadcast', () => {
     client1.close();
     client2.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 
   it('does not send delta to inactive (not subscribed) clients', async () => {
     const table1 = 'trade_sub1';
     const table2 = 'trade_unsub';
 
-    const { server, url } = await startSnapshotServer({
-      [table1]: makeSnapshot(table1, 1),
-      [table2]: makeSnapshot(table2, 1),
+    const { wss, push } = createTestService({
+      [table1]: makeFixture(table1, 1),
+      [table2]: makeFixture(table2, 1),
     });
-    const { wss, push } = createTestService(url);
 
     push(makeMsg(table1, 'insert'), 10);
     push(makeMsg(table2, 'insert'), 10);
@@ -142,14 +144,12 @@ describe('live delta broadcast', () => {
     client1.close();
     client2.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 
   it('sends deltas only to clients subscribed to that symbol', async () => {
     const table = 'orderBook_symbols';
 
-    const { server, url } = await startSnapshotServer({ [table]: makeSnapshot(table, 1) });
-    const { wss, push }   = createTestService(url);
+    const { wss, push } = createTestService({ [table]: makeFixture(table, 1) });
 
     const port = await listen(wss);
     const { client: client1, messages: msgs1 } = await connect(port);
@@ -183,14 +183,12 @@ describe('live delta broadcast', () => {
     client1.close();
     client2.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 
   it('allows multiple clients to subscribe to same symbol', async () => {
     const table = 'trade_same_symbol';
 
-    const { server, url } = await startSnapshotServer({ [table]: makeSnapshot(table, 1) });
-    const { wss, push }   = createTestService(url);
+    const { wss, push } = createTestService({ [table]: makeFixture(table, 1) });
 
     const port = await listen(wss);
     const { client: client1, messages: msgs1 } = await connect(port);
@@ -224,16 +222,14 @@ describe('live delta broadcast', () => {
     client1.close();
     client2.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 });
 
 // ---- Private table routing ---------------------------------------------------
 
 describe('private table delta routing', () => {
-  const makePrivateSnapshot = (table: string, counter: number) => ({
+  const makePrivateFixture = (table: string, counter: number): SnapshotFixture => ({
     table,
-    action:  'partial',
     keys:    ['id'],
     types:   { id: 'integer', account: 'long' },
     data:    [],
@@ -243,8 +239,7 @@ describe('private table delta routing', () => {
   it('delivers private deltas only to the matching account', async () => {
     const table = 'order';
 
-    const { server, url } = await startSnapshotServer({ [table]: makePrivateSnapshot(table, 0) });
-    const { wss, push }   = createTestService(url);
+    const { wss, push } = createTestService({ [table]: makePrivateFixture(table, 0) });
 
     const port = await listen(wss);
     const { client: clientA, messages: msgsA } = await connect(port, 'account-A');
@@ -270,6 +265,5 @@ describe('private table delta routing', () => {
     clientA.close();
     clientB.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 });

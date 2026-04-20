@@ -10,7 +10,6 @@ services:
 
     environment:
       QUEUE_URL: ${QUEUE_URL}
-      SNAPSHOTS_URL: ${SNAPSHOTS_URL:-}
       BROADCAST_URL: ${BROADCAST_URL:-}
 
       LOG_LEVEL: ${LOG_LEVEL:-info}

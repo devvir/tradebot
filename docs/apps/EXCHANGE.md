@@ -22,9 +22,8 @@ The module decides what feeds what. Swapping from live to replay means changing 
 | Service | Role | README |
 |---|---|---|
 | `broadcast` | BitMEX WS → `broadcast` exchange | [README](../../services/broadcast/README.md) · [BROADCAST.md](../services/BROADCAST.md) |
-| `snapshots` | `broadcast` exchange → in-memory delta accumulation → HTTP `/snapshot/{table}` | [README](../../services/snapshots/README.md) · [SNAPSHOTS.md](../services/SNAPSHOTS.md) |
-| `ws` | HTTP snapshots fetch + `broadcast` deltas + `account` → WebSocket server (BitMEX protocol) | [README](../../services/ws/README.md) · [WS.md](../services/WS.md) |
-| `rest` | HTTP snapshots fetch + `account` + `orders` RPC → HTTP server (BitMEX REST) | [README](../../services/rest/README.md) |
+| `ws` | `broadcast` deltas + in-memory snapshot accumulation + `account` → WebSocket server (BitMEX protocol) | [README](../../services/ws/README.md) · [WS.md](../services/WS.md) |
+| `rest` | In-memory snapshots + `account` + `orders` RPC → HTTP server (BitMEX REST) | [README](../../services/rest/README.md) |
 
 ### Account / order handling (module-specific, interchangeable)
 
@@ -39,13 +38,13 @@ The module decides what feeds what. Swapping from live to replay means changing 
 
 | Exchange | Routing key | Published by | Consumed by |
 |---|---|---|---|
-| `broadcast` | `{table}.{action}.{symbol}` | `broadcast` | `snapshots`, `ws` |
+| `broadcast` | `{table}.{action}.{symbol}` | `broadcast` | `ws` |
 | `account` | `{table}.{action}` | `proxy` or `account` | `ws`, `rest` |
 | `orders` | `{method}.{path}` | `rest` (RPC) | `proxy` or `account` |
 
-Snapshots no longer publishes to RabbitMQ — it accumulates state and serves via HTTP GET `/snapshot/{table}`. The `ws` and `rest` services fetch snapshots on demand via HTTP.
+`ws` (and in the future `rest`) accumulate table state in-memory from the same delta stream they serve. Clients subscribing for the first time receive the current in-memory snapshot directly — no separate HTTP hop.
 
-In the replay module, `reader` replaces `broadcast` as the upstream source for `snapshots`.
+In the replay module, `reader` replaces `broadcast` as the upstream source for `ws`.
 
 ## Full data flow
 
@@ -53,9 +52,7 @@ In the replay module, `reader` replaces `broadcast` as the upstream source for `
 LIVE:
   BitMEX WS ──► broadcast ──► [broadcast exchange]
                                        │
-                                   snapshots ◄── ws/rest (HTTP /snapshot/{table})
-                                       │
-                                    ws ◄─── bots (WS)
+                                      ws ◄─── bots (WS)
                                       │
                                     rest ◄── bots (HTTP)
 
@@ -65,14 +62,11 @@ LIVE:
 REPLAY:
   MongoDB ──► reader ──► [reader exchange]
                                 │
-                           snapshots ◄── ws/rest (HTTP /snapshot/{table})
-                                │
                                ws ◄── bots (WS)
                                  │
                                rest ◄── bots (HTTP)
 
   rest ──► [orders exchange] ──► account ──► [account exchange] ──► ws, rest
-  account ◄── snapshots (HTTP /snapshot/{table})  (price data for fill simulation)
 ```
 
 ## Bot perspective

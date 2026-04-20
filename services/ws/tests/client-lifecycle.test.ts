@@ -5,14 +5,19 @@ import { ClientRegistry } from '../src/subs/clients';
 import { createServer } from '../src/server/websocket';
 import { setup } from '../src/subs/subscription';
 import { processDelta } from '../src/subs/deltas';
+import { createSnapshots } from '../src/subs/snapshots';
 import type { BitmexWsMessage } from '../src/types';
-import { startSnapshotServer, stopServer, listen, closeWss, connect, waitFor } from './helpers';
+import { primeSnapshots, listen, closeWss, connect, waitFor, type SnapshotFixture } from './helpers';
 
-const createTestService = (snapshotsUrl: string) => {
-  const bus      = createBus();
-  const registry = new ClientRegistry();
-  const wss      = createServer(0, bus, registry);
-  setup(bus, registry, snapshotsUrl);
+const createTestService = (store: Record<string, SnapshotFixture> = {}) => {
+  const bus       = createBus();
+  const registry  = new ClientRegistry();
+  const snapshots = createSnapshots();
+  const wss       = createServer(bus, registry, 0);
+
+  primeSnapshots(snapshots, store);
+  setup(bus, { broadcastUrl: '' }, registry, snapshots);
+
   return {
     wss,
     registry,
@@ -20,11 +25,10 @@ const createTestService = (snapshotsUrl: string) => {
   };
 };
 
-const makeSnapshot = (table: string, counter: number) => ({
+const makeFixture = (table: string, counter: number): SnapshotFixture => ({
   table,
-  action: 'partial',
-  keys:   ['id'],
-  data:   [{ id: 1 }],
+  keys:    ['id'],
+  data:    [{ id: 1 }],
   counter,
 });
 
@@ -34,8 +38,7 @@ describe('client disconnect and cleanup', () => {
   it('client does not receive messages after disconnecting', async () => {
     const table = 'trade_disconnect';
 
-    const { server, url } = await startSnapshotServer({ [table]: makeSnapshot(table, 1) });
-    const { wss, push } = createTestService(url);
+    const { wss, push } = createTestService({ [table]: makeFixture(table, 1) });
 
     const port                 = await listen(wss);
     const { client, messages } = await connect(port);
@@ -58,18 +61,15 @@ describe('client disconnect and cleanup', () => {
     await new Promise(r => setTimeout(r, 200));
 
     // No new messages should be received by the closed client
-    // The client.on('message') won't fire after close anyway, so messages list stays the same
     expect(messages.length).toBe(initialMsgCount);
 
     await closeWss(wss);
-    await stopServer(server);
   });
 
   it('handles multiple clients disconnecting without affecting others', async () => {
     const table = 'trade_multi_disconnect';
 
-    const { server, url } = await startSnapshotServer({ [table]: makeSnapshot(table, 1) });
-    const { wss } = createTestService(url);
+    const { wss } = createTestService({ [table]: makeFixture(table, 1) });
 
     const port = await listen(wss);
     const { client: client1, messages: msgs1 } = await connect(port);
@@ -94,22 +94,18 @@ describe('client disconnect and cleanup', () => {
     await new Promise(r => setTimeout(r, 100));
 
     // client1 and client3 should still be connected and receiving
-    // Verify by checking they're still in the registry
-    const bus = (wss as any)._eventEmitter;
-    expect(msgs1.length).toBe(0); // No unexpected messages
+    expect(msgs1.length).toBe(0);
     expect(msgs3.length).toBe(0);
 
     client1.close();
     client3.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 });
 
 describe('unwelcome socket behavior', () => {
   it('handles client closing immediately after connect', async () => {
-    const { server, url } = await startSnapshotServer({});
-    const { wss } = createTestService(url);
+    const { wss } = createTestService();
 
     const port = await listen(wss);
 
@@ -130,12 +126,10 @@ describe('unwelcome socket behavior', () => {
 
     newClient.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 
   it('handles rapid connect-disconnect cycles', async () => {
-    const { server, url } = await startSnapshotServer({});
-    const { wss } = createTestService(url);
+    const { wss } = createTestService();
 
     const port = await listen(wss);
 
@@ -146,6 +140,7 @@ describe('unwelcome socket behavior', () => {
         client.on('open', () => r());
         client.on('error', () => r());
       });
+
       if (client.readyState === WebSocket.OPEN) client.close();
     }
 
@@ -155,6 +150,5 @@ describe('unwelcome socket behavior', () => {
 
     testClient.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 });

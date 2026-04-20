@@ -4,17 +4,35 @@ import { ClientRegistry } from '../src/subs/clients';
 import { createServer } from '../src/server/websocket';
 import { setup } from '../src/subs/subscription';
 import { processDelta } from '../src/subs/deltas';
+import { createSnapshots } from '../src/subs/snapshots';
 import type { BitmexWsMessage } from '../src/types';
-import { testHelpers } from './helpers';
+import {
+  primeSnapshots,
+  startBroadcastRejector,
+  stopServer,
+  listen,
+  closeWss,
+  connect,
+  waitFor,
+  type SnapshotFixture,
+} from './helpers';
 
-const { startSnapshotServer, stopServer, listen, closeWss, connect, waitFor } = testHelpers;
+const createTestService = (store: Record<string, SnapshotFixture> = {}, broadcastUrl = '') => {
+  const bus       = createBus();
+  const registry  = new ClientRegistry();
+  const snapshots = createSnapshots();
+  const wss       = createServer(bus, registry, 0);
 
-const createTestService = (snapshotsUrl: string) => {
-  const bus      = createBus();
-  const registry = new ClientRegistry();
-  const wss      = createServer(bus, registry);
-  setup(bus, { snapshotsUrl, broadcastUrl: '' }, registry);
-  return { wss, bus, registry, push: (delta: BitmexWsMessage, counter: number) => processDelta(delta, counter, bus) };
+  primeSnapshots(snapshots, store);
+  setup(bus, { broadcastUrl }, registry, snapshots);
+
+  return {
+    wss,
+    bus,
+    registry,
+    snapshots,
+    push: (delta: BitmexWsMessage, counter: number) => processDelta(delta, counter, bus),
+  };
 };
 
 const makeMsg = (table: string, action: string): BitmexWsMessage => ({
@@ -24,11 +42,10 @@ const makeMsg = (table: string, action: string): BitmexWsMessage => ({
   data: [{ id: 1 }],
 });
 
-const makeSnapshot = (table: string, counter: number) => ({
+const makeFixture = (table: string, counter: number): SnapshotFixture => ({
   table,
-  action: 'partial',
-  keys:   ['id'],
-  data:   [{ id: 1 }],
+  keys:    ['id'],
+  data:    [{ id: 1 }],
   counter,
 });
 
@@ -46,12 +63,11 @@ describe('subscribe: snapshot activation', () => {
     const snapshotCounter = 5;
     const deltaCounter    = 10;
 
-    const { server, url } = await startSnapshotServer({ [table]: makeSnapshot(table, snapshotCounter) });
-    const { wss, push }   = createTestService(url);
+    const { wss, push } = createTestService({ [table]: makeFixture(table, snapshotCounter) });
 
     push(makeMsg(table, 'insert'), deltaCounter);
 
-    const port           = await listen(wss);
+    const port                 = await listen(wss);
     const { client, messages } = await connect(port);
 
     client.send(JSON.stringify({ op: 'subscribe', args: [table] }));
@@ -62,7 +78,6 @@ describe('subscribe: snapshot activation', () => {
 
     client.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 
   it('activates after qualifying delta even when old deltas were buffered', async () => {
@@ -70,13 +85,12 @@ describe('subscribe: snapshot activation', () => {
     const snapshotCounter = 10;
     const olderCounter    = 5;
 
-    const { server, url } = await startSnapshotServer({ [table]: makeSnapshot(table, snapshotCounter) });
-    const { wss, push }   = createTestService(url);
+    const { wss, push } = createTestService({ [table]: makeFixture(table, snapshotCounter) });
 
     // Pre-buffer an old delta (older than snapshot) — should be dropped
     push(makeMsg(table, 'insert'), olderCounter);
 
-    const port           = await listen(wss);
+    const port                 = await listen(wss);
     const { client, messages } = await connect(port);
 
     client.send(JSON.stringify({ op: 'subscribe', args: [table] }));
@@ -94,16 +108,15 @@ describe('subscribe: snapshot activation', () => {
 
     client.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 });
 
-describe('subscribe: snapshot fetch errors', () => {
-  it('returns 404 error when snapshot not found', async () => {
-    const { server, url } = await startSnapshotServer({});
-    const { wss }         = createTestService(url);
+describe('subscribe: unknown table', () => {
+  it('returns "Unknown table" error when broadcast rejects resubscribe', async () => {
+    const { server, url } = await startBroadcastRejector();
+    const { wss }         = createTestService({}, url);
 
-    const port           = await listen(wss);
+    const port                 = await listen(wss);
     const { client, messages } = await connect(port);
 
     client.send(JSON.stringify({ op: 'subscribe', args: ['noSuchTable'] }));
@@ -124,12 +137,11 @@ describe('subscribe: duplicate and multiple subscriptions', () => {
   it('rejects duplicate subscribe to same table', async () => {
     const table = 'trade_dup';
 
-    const { server, url } = await startSnapshotServer({ [table]: makeSnapshot(table, 1) });
-    const { wss, push }   = createTestService(url);
+    const { wss, push } = createTestService({ [table]: makeFixture(table, 1) });
 
     push(makeMsg(table, 'insert'), 10);
 
-    const port           = await listen(wss);
+    const port                 = await listen(wss);
     const { client, messages } = await connect(port);
 
     client.send(JSON.stringify({ op: 'subscribe', args: [table] }));
@@ -144,23 +156,21 @@ describe('subscribe: duplicate and multiple subscriptions', () => {
 
     client.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 
   it('allows subscribing to multiple tables in single op', async () => {
     const table1 = 'instrument_multi1';
     const table2 = 'instrument_multi2';
 
-    const { server, url } = await startSnapshotServer({
-      [table1]: makeSnapshot(table1, 1),
-      [table2]: makeSnapshot(table2, 1),
+    const { wss, push } = createTestService({
+      [table1]: makeFixture(table1, 1),
+      [table2]: makeFixture(table2, 1),
     });
-    const { wss, push } = createTestService(url);
 
     push(makeMsg(table1, 'insert'), 10);
     push(makeMsg(table2, 'insert'), 10);
 
-    const port           = await listen(wss);
+    const port                 = await listen(wss);
     const { client, messages } = await connect(port);
 
     client.send(JSON.stringify({ op: 'subscribe', args: [table1, table2] }));
@@ -172,7 +182,6 @@ describe('subscribe: duplicate and multiple subscriptions', () => {
 
     client.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 });
 
@@ -180,12 +189,11 @@ describe('unsubscribe', () => {
   it('unsubscribes from table and stops receiving deltas', async () => {
     const table = 'trade_unsub';
 
-    const { server, url } = await startSnapshotServer({ [table]: makeSnapshot(table, 5) });
-    const { wss, push }   = createTestService(url);
+    const { wss, push } = createTestService({ [table]: makeFixture(table, 5) });
 
     push(makeMsg(table, 'insert'), 10);
 
-    const port           = await listen(wss);
+    const port                 = await listen(wss);
     const { client, messages } = await connect(port);
 
     client.send(JSON.stringify({ op: 'subscribe', args: [table] }));
@@ -211,23 +219,21 @@ describe('unsubscribe', () => {
 
     client.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 
   it('unsubscribes from one table while keeping others active', async () => {
     const table1 = 'instrument_keep';
     const table2 = 'instrument_drop';
 
-    const { server, url } = await startSnapshotServer({
-      [table1]: makeSnapshot(table1, 1),
-      [table2]: makeSnapshot(table2, 1),
+    const { wss, push } = createTestService({
+      [table1]: makeFixture(table1, 1),
+      [table2]: makeFixture(table2, 1),
     });
-    const { wss, push } = createTestService(url);
 
     push(makeMsg(table1, 'insert'), 10);
     push(makeMsg(table2, 'insert'), 10);
 
-    const port           = await listen(wss);
+    const port                 = await listen(wss);
     const { client, messages } = await connect(port);
 
     client.send(JSON.stringify({ op: 'subscribe', args: [table1, table2] }));
@@ -247,18 +253,16 @@ describe('unsubscribe', () => {
 
     client.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 
   it('allows unsubscribing from all subscriptions and resubscribing', async () => {
     const table = 'trade_re_sub';
 
-    const { server, url } = await startSnapshotServer({ [table]: makeSnapshot(table, 1) });
-    const { wss, push }   = createTestService(url);
+    const { wss, push } = createTestService({ [table]: makeFixture(table, 1) });
 
     push(makeMsg(table, 'insert'), 10);
 
-    const port           = await listen(wss);
+    const port                 = await listen(wss);
     const { client, messages } = await connect(port);
 
     // Subscribe
@@ -283,6 +287,5 @@ describe('unsubscribe', () => {
 
     client.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 });

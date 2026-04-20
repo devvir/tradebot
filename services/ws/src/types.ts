@@ -2,7 +2,6 @@ import type { WebSocket, WebSocketServer } from 'ws';
 import type { BitmexDataMessage } from '@tradebot/types';
 
 export interface Config {
-  snapshotsUrl: string;
   broadcastUrl: string;
   [key: string]: unknown;
 }

@@ -32,6 +32,6 @@ pnpm start     # Run compiled service
 pnpm dev       # Run with ts-node
 pnpm test      # Run tests
 ```
-1. Public endpoints: Consume deltas from `snapshots` exchange, maintain in-memory state
+1. Public endpoints: Consume deltas from `broadcast` exchange, maintain in-memory state
 2. Account endpoints: Consume from `account` exchange, return current state
 3. Order endpoints: Implement RabbitMQ RPC client, forward to `orders` exchange

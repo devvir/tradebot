@@ -1,0 +1,42 @@
+# Replay Module — Exchange App
+#
+# Infra: queue-rt, mongodb, bouncer, redis
+#
+# Wires replayed BitMEX data into a fully BitMEX-compatible API surface.
+# Bots connect to ws and rest as if they were BitMEX.
+#
+# Data flow:
+#
+#   mongodb ──► digger ──► [replay exchange] ──► ws.deltas@topic:deltas ──► ws ◄── bots
+#
+#   bots ──► rest ──► digger ──► mongodb
+
+# Docker Compose Project (for all exchange app modules)
+name: exchange
+
+include:
+  - path: ../../../services/ws/docker/compose.yml
+  - path: ../../../services/rest/docker/compose.yml
+
+services:
+  digger:
+    extends:
+      file: ../../../services/digger/docker/compose.yml
+      service: digger
+
+    depends_on:
+      replay-pipe:
+        condition: service_completed_successfully
+
+  replay-pipe:
+    extends:
+      file: ../../../services/pipe/docker/compose.yml
+      service: pipe
+
+    environment:
+      PIPE_BINDINGS: topic:replay > ws.deltas@topic:deltas
+
+networks:
+  default:
+    name: ${PROJECT_NAME:-tradebot}-network
+    external: true

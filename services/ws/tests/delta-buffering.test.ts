@@ -4,15 +4,23 @@ import { ClientRegistry } from '../src/subs/clients';
 import { createServer } from '../src/server/websocket';
 import { setup } from '../src/subs/subscription';
 import { processDelta } from '../src/subs/deltas';
+import { createSnapshots } from '../src/subs/snapshots';
 import type { BitmexWsMessage } from '../src/types';
-import { startSnapshotServer, stopServer, listen, closeWss, connect, waitFor } from './helpers';
+import { primeSnapshots, listen, closeWss, connect, waitFor, type SnapshotFixture } from './helpers';
 
-const createTestService = (snapshotsUrl: string) => {
-  const bus      = createBus();
-  const registry = new ClientRegistry();
-  const wss      = createServer(0, bus, registry);
-  setup(bus, registry, snapshotsUrl);
-  return { wss, push: (delta: BitmexWsMessage, counter: number) => processDelta(delta, counter, bus) };
+const createTestService = (store: Record<string, SnapshotFixture> = {}) => {
+  const bus       = createBus();
+  const registry  = new ClientRegistry();
+  const snapshots = createSnapshots();
+  const wss       = createServer(bus, registry, 0);
+
+  primeSnapshots(snapshots, store);
+  setup(bus, { broadcastUrl: '' }, registry, snapshots);
+
+  return {
+    wss,
+    push: (delta: BitmexWsMessage, counter: number) => processDelta(delta, counter, bus),
+  };
 };
 
 const makeMsg = (table: string, action: string): BitmexWsMessage => ({
@@ -22,11 +30,10 @@ const makeMsg = (table: string, action: string): BitmexWsMessage => ({
   data: [{ id: 1 }],
 });
 
-const makeSnapshot = (table: string, counter: number) => ({
+const makeFixture = (table: string, counter: number): SnapshotFixture => ({
   table,
-  action: 'partial',
-  keys:   ['id'],
-  data:   [{ id: 1 }],
+  keys:    ['id'],
+  data:    [{ id: 1 }],
   counter,
 });
 
@@ -43,16 +50,15 @@ describe('delta buffering and replay', () => {
     const table           = 'quote_replay';
     const snapshotCounter = 5;
 
-    const { server, url } = await startSnapshotServer({ [table]: makeSnapshot(table, snapshotCounter) });
-    const { wss, push }   = createTestService(url);
+    const { wss, push } = createTestService({ [table]: makeFixture(table, snapshotCounter) });
 
     const port                 = await listen(wss);
     const { client, messages } = await connect(port);
 
     client.send(JSON.stringify({ op: 'subscribe', args: [table] }));
 
-    // Wait for ack — queue now exists and snapshot fetch is in flight.
-    // Push deltas here so they're captured by the queue before snapshot arrives.
+    // Wait for ack — queue now exists. Push deltas here so they're captured
+    // by the queue before the snapshot is delivered.
     await waitFor(messages, hasAck);
     push(makeMsg(table, 'insert'), 10);
     push(makeMsg(table, 'insert'), 15);
@@ -69,7 +75,6 @@ describe('delta buffering and replay', () => {
 
     client.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 
   it('does not replay old deltas that arrived before subscription', async () => {
@@ -77,8 +82,7 @@ describe('delta buffering and replay', () => {
     const snapshotCounter = 10;
     const olderCounter    = 5;
 
-    const { server, url } = await startSnapshotServer({ [table]: makeSnapshot(table, snapshotCounter) });
-    const { wss, push }   = createTestService(url);
+    const { wss, push } = createTestService({ [table]: makeFixture(table, snapshotCounter) });
 
     // Pre-buffer an old delta (older than snapshot)
     push(makeMsg(table, 'update'), olderCounter);
@@ -108,7 +112,6 @@ describe('delta buffering and replay', () => {
 
     client.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 });
 
@@ -116,8 +119,7 @@ describe('counter = 0 (fresh snapshot) edge cases', () => {
   it('accepts snapshot with counter 0 and streams subsequent deltas', async () => {
     const table = 'instrument_counter0';
 
-    const { server, url } = await startSnapshotServer({ [table]: makeSnapshot(table, 0) });
-    const { wss, push }   = createTestService(url);
+    const { wss, push } = createTestService({ [table]: makeFixture(table, 0) });
 
     const port                 = await listen(wss);
     const { client, messages } = await connect(port);
@@ -141,14 +143,12 @@ describe('counter = 0 (fresh snapshot) edge cases', () => {
 
     client.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 
   it('does not replay deltas when counter is 0 (fresh snapshot case)', async () => {
     const table = 'orderBook_counter0_no_replay';
 
-    const { server, url } = await startSnapshotServer({ [table]: makeSnapshot(table, 0) });
-    const { wss, push }   = createTestService(url);
+    const { wss, push } = createTestService({ [table]: makeFixture(table, 0) });
 
     // Pre-buffer a delta
     push(makeMsg(table, 'update'), 50);
@@ -176,14 +176,12 @@ describe('counter = 0 (fresh snapshot) edge cases', () => {
 
     client.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 
   it('treats counter 0 as less than any positive counter when determining replay', async () => {
     const table = 'trade_counter0_comparison';
 
-    const { server, url } = await startSnapshotServer({ [table]: makeSnapshot(table, 0) });
-    const { wss, push }   = createTestService(url);
+    const { wss, push } = createTestService({ [table]: makeFixture(table, 0) });
 
     const port                 = await listen(wss);
     const { client, messages } = await connect(port);
@@ -204,7 +202,6 @@ describe('counter = 0 (fresh snapshot) edge cases', () => {
 
     client.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 });
 
@@ -212,8 +209,7 @@ describe('symbol extraction and routing', () => {
   it('extracts symbol from delta data and routes correctly', async () => {
     const table = 'orderBook_symbol';
 
-    const { server, url } = await startSnapshotServer({ [table]: makeSnapshot(table, 1) });
-    const { wss, push }   = createTestService(url);
+    const { wss, push } = createTestService({ [table]: makeFixture(table, 1) });
 
     const port                 = await listen(wss);
     const { client, messages } = await connect(port);
@@ -242,6 +238,5 @@ describe('symbol extraction and routing', () => {
 
     client.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 });

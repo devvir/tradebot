@@ -4,22 +4,35 @@ import { createBus } from '../src/events';
 import { ClientRegistry } from '../src/subs/clients';
 import { createServer } from '../src/server/websocket';
 import { setup } from '../src/subs/subscription';
+import { createSnapshots } from '../src/subs/snapshots';
 import type { BitmexWsMessage } from '../src/types';
-import { startSnapshotServer, stopServer, listen, closeWss, connect, waitFor } from './helpers';
+import {
+  primeSnapshots,
+  startBroadcastRejector,
+  stopServer,
+  listen,
+  closeWss,
+  connect,
+  waitFor,
+  type SnapshotFixture,
+} from './helpers';
 
-const createTestService = (snapshotsUrl: string) => {
-  const bus      = createBus();
-  const registry = new ClientRegistry();
-  const wss      = createServer(0, bus, registry);
-  setup(bus, registry, snapshotsUrl);
+const createTestService = (store: Record<string, SnapshotFixture> = {}, broadcastUrl = '') => {
+  const bus       = createBus();
+  const registry  = new ClientRegistry();
+  const snapshots = createSnapshots();
+  const wss       = createServer(bus, registry, 0);
+
+  primeSnapshots(snapshots, store);
+  setup(bus, { broadcastUrl }, registry, snapshots);
+
   return { wss };
 };
 
-const makeSnapshot = (table: string, counter: number) => ({
+const makeFixture = (table: string, counter: number): SnapshotFixture => ({
   table,
-  action: 'partial',
-  keys:   ['id'],
-  data:   [{ id: 1 }],
+  keys:    ['id'],
+  data:    [{ id: 1 }],
   counter,
 });
 
@@ -27,8 +40,7 @@ const makeSnapshot = (table: string, counter: number) => ({
 
 describe('websocket protocol', () => {
   it('responds to ping with pong', async () => {
-    const { server, url } = await startSnapshotServer({});
-    const { wss }         = createTestService(url);
+    const { wss } = createTestService();
 
     const port  = await listen(wss);
     const rawWs = new WebSocket(`ws://localhost:${port}`);
@@ -45,12 +57,10 @@ describe('websocket protocol', () => {
 
     rawWs.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 
   it('rejects malformed JSON with 400 error', async () => {
-    const { server, url } = await startSnapshotServer({});
-    const { wss }         = createTestService(url);
+    const { wss } = createTestService();
 
     const port                 = await listen(wss);
     const { client, messages } = await connect(port);
@@ -66,12 +76,10 @@ describe('websocket protocol', () => {
 
     client.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 
   it('rejects unknown op with 400 error', async () => {
-    const { server, url } = await startSnapshotServer({});
-    const { wss }         = createTestService(url);
+    const { wss } = createTestService();
 
     const port                 = await listen(wss);
     const { client, messages } = await connect(port);
@@ -86,12 +94,11 @@ describe('websocket protocol', () => {
 
     client.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 
   it('rejects subscribe to unknown table with 400 error', async () => {
-    const { server, url } = await startSnapshotServer({});
-    const { wss }         = createTestService(url);
+    const { server, url } = await startBroadcastRejector();
+    const { wss }         = createTestService({}, url);
 
     const port                 = await listen(wss);
     const { client, messages } = await connect(port);
@@ -113,8 +120,7 @@ describe('websocket protocol', () => {
   it('rejects duplicate subscribe to same table with 400 error', async () => {
     const table = 'trade_protocol_dup';
 
-    const { server, url } = await startSnapshotServer({ [table]: makeSnapshot(table, 1) });
-    const { wss }         = createTestService(url);
+    const { wss } = createTestService({ [table]: makeFixture(table, 1) });
 
     const port                 = await listen(wss);
     const { client, messages } = await connect(port);
@@ -134,14 +140,12 @@ describe('websocket protocol', () => {
 
     client.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 
   it('sends success ack on valid subscribe', async () => {
     const table = 'instrument_ack';
 
-    const { server, url } = await startSnapshotServer({ [table]: makeSnapshot(table, 1) });
-    const { wss }         = createTestService(url);
+    const { wss } = createTestService({ [table]: makeFixture(table, 1) });
 
     const port                 = await listen(wss);
     const { client, messages } = await connect(port);
@@ -156,14 +160,12 @@ describe('websocket protocol', () => {
 
     client.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 
   it('sends success ack on valid unsubscribe', async () => {
     const table = 'trade_unsub_ack';
 
-    const { server, url } = await startSnapshotServer({ [table]: makeSnapshot(table, 1) });
-    const { wss }         = createTestService(url);
+    const { wss } = createTestService({ [table]: makeFixture(table, 1) });
 
     const port                 = await listen(wss);
     const { client, messages } = await connect(port);
@@ -183,14 +185,12 @@ describe('websocket protocol', () => {
 
     client.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 
   it('normalizes single-string args to array', async () => {
     const table = 'instrument_normalize';
 
-    const { server, url } = await startSnapshotServer({ [table]: makeSnapshot(table, 1) });
-    const { wss }         = createTestService(url);
+    const { wss } = createTestService({ [table]: makeFixture(table, 1) });
 
     const port                 = await listen(wss);
     const { client, messages } = await connect(port);
@@ -206,12 +206,10 @@ describe('websocket protocol', () => {
 
     client.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 
   it('handles null/empty args gracefully', async () => {
-    const { server, url } = await startSnapshotServer({});
-    const { wss }         = createTestService(url);
+    const { wss } = createTestService();
 
     const port                 = await listen(wss);
     const { client, messages } = await connect(port);
@@ -225,6 +223,5 @@ describe('websocket protocol', () => {
 
     client.close();
     await closeWss(wss);
-    await stopServer(server);
   });
 });

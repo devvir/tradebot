@@ -2,113 +2,82 @@
 
 ## Overview
 
-The WebSocket service translates an external BitMEX WebSocket API surface (subscribe/unsubscribe, partial/insert/update/delete messages) and bridges it to internal data sources. Clients authenticate and subscribe as they would with BitMEX, but the underlying data comes from configurable sources (live market data, replayed history, test scenarios).
+The WebSocket service exposes a BitMEX-compatible WebSocket API (subscribe/unsubscribe, partial/insert/update/delete) and bridges it to internal data sources. Clients authenticate and subscribe as they would with BitMEX, but the underlying data comes from configurable upstreams (live market data, replayed history, test scenarios).
+
+Snapshots are accumulated in-memory from the same delta stream the service consumes, via `@devvir/bitmex-database`. No external HTTP fetches are involved in the subscribe path.
 
 ## Architecture
+
+### Components
+
+```
+RabbitMQ broadcast queue ──► delta consumer
+                                │
+                                ├─► snapshots.apply(delta, counter)   (in-memory state)
+                                └─► bus emits 'delta:{table}:{action}'
+
+WebSocket client ──► subscription handler
+                        ├─ snapshots.get(table, symbol?, account?)   (local lookup)
+                        └─ per-client elastic queue on the delta bus
+```
+
+The service owns a single `Snapshots` instance (a thin wrapper around `@devvir/bitmex-database`) that is updated on every incoming delta and read synchronously on every subscribe.
 
 ### Connection & Message Model
 
 ```
 Client WS Connection
     ├─ on connect: send welcome message
-    ├─ on subscribe: fetch snapshot via HTTP, initialize per-client queue
-    └─ on message: add to client queue → apply filter → stream if passes
-        ↓
- Per-Client Queue State
-    ├─ size: buffer capacity (100 before snapshot, 0 after)
-    ├─ drop: bool (true before snapshot, false after)
-    ├─ counter: minimum counter to send (0 before snapshot, snapshot.counter after)
-    ├─ data: FIFO message buffer
-    └─ filter: ! drop && msg.counter >= counter
+    ├─ on subscribe: read snapshot locally, initialize per-client queue, activate or retry
+    └─ on delta: delta arrives on bus → pushed into each subscribed queue → streamed if counter passes
 ```
 
 ### Client Subscription Flow
 
 When a client sends `{"op": "subscribe", "args": ["table:symbol"]}`:
 
-1. **Initialize per-client message queue:**
-   - `size = 100` (buffer up to 100 messages while waiting for snapshot)
-   - `drop = true` (overflow discards oldest messages)
-   - `counter = 0` (filter blocks all messages: `! true && msg.counter >= 0` = false)
-   - All incoming deltas enqueued; overflow discards based on policy
+1. **Create per-client elastic queue** on the `delta:{table}:*` bus channel. Any delta arriving between now and activation is captured, not lost.
 
-2. **Fetch snapshot via HTTP** from `SNAPSHOTS_URL/snapshot/{table}`
-   - If 404 → retry with 5s exponential backoff
-   - If 200 → extract `{ table, action: "partial", data, keys, counter, ... }`
+2. **Read the snapshot** via `snapshots.get(table, symbol?, account?)`:
+   - If present → returns `{ snapshot, counter }`, the subscription activates immediately.
+   - If absent → the table has no accumulated state yet. The service POSTs to `broadcastUrl/resubscribe/{table}` so that `broadcast` will begin streaming it. If broadcast rejects (HTTP 400) the table is genuinely unknown and the client receives an `Unknown table` error. Otherwise, the subscribe schedules a 5s retry loop until the first partial arrives and populates the snapshot.
 
-3. **On snapshot arrival:**
-   - Send snapshot to client immediately
-   - If `snapshot.counter === 0`: flush queue (send all buffered messages, pass-through filter)
-   - Reconfigure queue: `drop = false, size = 0, counter = snapshot.counter`
-   - Queue now operates as pass-through with counter-based filtering
+3. **Activation:** send the snapshot as a `partial`, then stream the queue from the snapshot's counter forward. Messages with counters less than or equal to the snapshot counter are filtered out by the elastic queue.
 
-4. **Live updates:**
-   - All incoming deltas added to queue
-   - Queue filter (`! drop && msg.counter >= counter`) applied
-   - Messages passing filter sent to client immediately
+### Routing Key
 
-### Queue Processing
+- **Public tables:** `{table}:{symbol}`, with `_` used when no symbol is requested (wildcard).
+- **Private tables** (`order`, `position`, `margin`, `execution`, `transact`, `wallet`, `privateNotifications`, `affiliate`): `{table}:{accountId}`. Private subscriptions require an authenticated API key; deltas are only delivered to the matching account.
 
-All deltas from RabbitMQ flow through per-client queues:
+Wildcard subscribers (`_`) also receive deltas for any symbol on the same table.
 
-```
-Delta arrives (counter from x-message-count header)
-    ↓
-Add to all client queues
-    ↓
-If queue.size >= capacity: drop oldest (if drop=true) or skip (if drop=false)
-    ↓
-Apply filter: ! queue.drop && delta.counter >= queue.counter
-    ↓
-If passes: send to client | If fails: stay buffered
-```
+## Snapshot Accumulation
 
-**FIFO guarantee:** Since all messages enter and exit via the same queue, FIFO order is preserved at least as well as during direct streaming.
+The delta consumer applies every incoming BitMEX message (`partial`, `insert`, `update`, `delete`) to the in-memory state before emitting it to the bus:
 
-**Elastic sizing:** By tuning `size` and `drop` policy, queue can buffer aggressively before snapshot (size=100, drop=true) or transparently after (size=0, pass-through).
+- `partial` messages replace the table's content and register the table as available.
+- `insert` / `update` / `delete` mutate state on the corresponding row keys.
+- The latest `x-message-count` header value is stored per table and returned alongside the snapshot so clients can filter deltas by counter.
+
+The service does **not** support pre-filtered partials (i.e. partials with `filter.symbol` set). BitMEX partials are always full-table; filtering is applied at read-time by `snapshots.get`.
 
 ## Message Ordering & Buffering
 
-The WebSocket service uses per-client message queues with counter-based filtering for strict message ordering:
+Per-client elastic queues with counter-based filtering guarantee strict ordering:
 
-### Before Snapshot Arrives
-- Queue buffering: size = 100 (drop oldest on overflow)
-- Filter: blocks all messages (counter = 0)
-- Result: up to 100 deltas buffered, none sent until snapshot arrives
-- **Bounds the pending time:** If snapshot never arrives, clients don't wait indefinitely (100 messages max buffer, then oldest discarded)
+### Before Snapshot Arrives (retry loop)
+- Queue captures all incoming deltas for the subscribed key.
+- No messages are forwarded to the client yet.
 
-### After Snapshot Arrives
-- Queue buffering: size = 0 (transparent pass-through, no buffering)
-- Filter: `! drop && msg.counter >= snapshot.counter`
-- Result: only deltas with counter > snapshot counter are sent (gaps discarded, out-of-order handled)
-- **If snapshot.counter === 0:** queue flushed immediately (all buffered messages sent), then filter toggles to pass-through
+### On Activation
+- The snapshot is sent immediately as a `partial`.
+- The queue begins streaming: each delta with `counter > snapshot.counter` is forwarded. Older deltas (captured before the snapshot's state took effect) are dropped.
 
 ### Counter Header Handling
 
-- **Expected:** RabbitMQ header `x-message-count` with numeric counter value
-- **If missing or `0`:** Treated as counter 0 (before snapshot, queue blocks; after snapshot, queue flushed and enters pass-through with counter = 0, so all deltas pass)
-- Counter-based ordering is the only mechanism — no timestamp fallback exists
-
-## State & Data Structures
-
-### Per-Client Message Queue
-
-| Field | Type | Purpose |
-|-------|------|---------|
-| `size` | number | Buffer capacity (100 before snapshot, 0 after) |
-| `drop` | bool | Overflow policy (true before snapshot, false after) |
-| `counter` | number | Minimum counter filter (0 before snapshot, snapshot.counter after) |
-| `data` | Buffered[] | FIFO message buffer |
-
-### Global Maps
-
-| Map | Key | Value | Lifetime |
-|-----|-----|-------|----------|
-| `clientQueues` | WebSocket instance | Queue state + buffer | Until client closes |
-| `subs` | `{table}:{symbol}` | `Set<WebSocket>` | Until unsubscribe or client closes |
-| `clients` | WebSocket instance | `Set<keys>` | Entire connection duration |
-
-**Note:** No persistence — state exists only in RAM. On service restart, clients must refetch snapshots and resubscribe.
+- **Expected:** RabbitMQ header `x-message-count` with a numeric counter value.
+- **Missing or `0`:** treated as counter `0`. Any positive counter then passes the filter, so there is no replay gap in fresh-snapshot scenarios.
+- Counter-based ordering is the only mechanism — no timestamp fallback exists.
 
 ## RabbitMQ Integration
 
@@ -116,46 +85,11 @@ The service declares:
 - **Queue:** `ws.deltas` (durable, non-exclusive)
 - **Binding:** `broadcast` exchange → `ws.deltas` queue with pattern `*.*` (all tables, all actions)
 
-No snapshot queue — snapshots are fetched via HTTP from the snapshots service on demand.
+Consumed messages are applied to the snapshot store, emitted on the event bus, and acknowledged individually. The `x-message-count` header provides ordering; the `x-account-id` header (present on private streams) routes deltas to the matching client.
 
-Messages are consumed and acknowledged individually. The `x-message-count` header is extracted and used for ordering.
+## Broadcast Commands
 
-## HTTP Server
-
-### GET /snapshot/{table}
-
-The service makes HTTP GET requests to the snapshots service at startup of a client subscription.
-
-**Expected response (200):**
-```json
-{
-  "table": "orderBookL2",
-  "action": "partial",
-  "keys": ["symbol", "id", "side", "size", "price"],
-  "data": [["XBTUSD", 1, "Buy", 100, 20000], ...],
-  "counter": 42
-}
-```
-
-Retried on 404 with 5-second delay. Timeout/connection error → logged, client put in pending state waiting for snapshot availability.
-
-## Trade-offs & Design Notes
-
-### Bounded Buffering Before Snapshot
-- Pre-snapshot queue (size = 100) ensures clients never wait indefinitely for snapshot
-- After 100 deltas arrive, oldest are discarded (not relayed to client)
-- Once snapshot arrives, full counter-based filtering kicks in
-- **Implication:** If snapshot fetch takes a very long time AND many deltas arrive for different symbols during that time, clients for slow symbols may miss some early deltas (worst case: 100 deltas dropped)
-
-### Slow Tables / Symbols (Now Bounded)
-- **Old behavior:** Client could wait indefinitely for first delta to arrive
-- **New behavior:** Client waits at most for ~100 deltas to pass on the table/symbol; after that, pending queue discards oldest
-- Still not ideal for truly dormant symbols, but no indefinite waits
-
-### Time-Based Pruning (Future Improvement)
-- Current design prunes based on queue size only
-- Could add timeout: if snapshot not received after N seconds, activate with pending queue + `counter = 0` flush
-- Would guarantee max latency even for slow/dormant symbols
+The service makes one outbound HTTP call in the subscribe path: `POST {broadcastUrl}/resubscribe/{table}` when the requested table is not yet in the snapshot store. The response distinguishes "table in flight" (201 / other non-400 status → retry) from "genuinely unknown" (400 → reject the subscribe).
 
 ## Configuration
 
@@ -164,70 +98,60 @@ Requires RabbitMQ — see [infra packs](../../modules/infra/README.md).
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `WS_PORT` | no | `` | WebSocket server port mapping on host |
-| `SNAPSHOTS_URL` | yes | `` | Base URL for snapshots service |
-| `BROADCAST_URL` | yes | `` | Base URL for broadcast service |
+| `BROADCAST_URL` | yes | `` | Base URL of the broadcast service's commands API |
 
 ## Lifecycle
 
-1. **On start** — Connect to RabbitMQ, start consuming deltas, listen for WebSocket connections
-2. **On client connect** — Send welcome, register client, await subscribe commands
-3. **On subscribe** — Fetch snapshot, check buffer, serve or defer
-4. **On delta (from RabbitMQ)** — Buffer, flush pending, broadcast to active
-5. **On client close** — Remove from all subs, cleanup pending entries, cleanup clients map
-6. **On shutdown** — Close all client connections, stop consuming from RabbitMQ, exit cleanly
-
-## Public vs. Private Streams (Future)
-
-Currently the service handles all tables uniformly. The architecture supports future split into:
-- **Public streams** — from `broadcast` exchange (no authentication required)
-- **Private streams** — from `account` exchange (require API key signature authentication)
-
-Authentication would intercept at connection time, before subscribe is processed.
+1. **On start** — connect to RabbitMQ, start consuming deltas, listen for WebSocket connections.
+2. **On delta (from RabbitMQ)** — apply to snapshot store, emit on bus.
+3. **On client connect** — send welcome, register client, await subscribe commands.
+4. **On subscribe** — create queue, read snapshot, activate (or signal broadcast + retry).
+5. **On client close** — remove from all queues, clean up table listeners when idle.
+6. **On shutdown** — close client connections, stop consuming from RabbitMQ, exit cleanly.
 
 ## Dependencies
 
 ### External Runtime
-- **RabbitMQ** — For consuming delta updates from the `broadcast` exchange. See [infra packs](../../modules/infra/README.md).
-- **Snapshots service** — For HTTP snapshot fetches on client subscribe
-- **Node.js 18+** — For native WebSocket server and fetch API
+- **RabbitMQ** — consumes delta updates from the `broadcast` exchange. See [infra packs](../../modules/infra/README.md).
+- **Broadcast service** — reached over HTTP when a subscribed table is not yet tracked.
+- **Node.js 18+** — native WebSocket server and `fetch`.
 
 ### NPM Packages
-- `ws` — WebSocket server library
-- `@devvir/service-kit` — Service lifecycle and RabbitMQ broker
-- `@tradebot/utils` — Shared utilities (logger)
+- `ws` — WebSocket server library.
+- `@devvir/bitmex-database` — in-memory BitMEX table state accumulator.
+- `@devvir/elastic-queue` — per-client delta buffer.
+- `@devvir/service-kit` — service lifecycle and RabbitMQ broker.
+- `@tradebot/utils` — shared utilities (logger, private-channel list).
 
 ## Error Handling
 
-### Snapshot Fetch Failures
-- **404** — Retry every 5 seconds until available
-- **Connection error** — Log, subscribe remains pending until resolved
-- **Timeout** — Same as connection error
+### Subscribe
+- **Table not yet accumulated** — broadcast signaled; retry every 5s.
+- **Broadcast rejects (400)** — treated as `Unknown table`, client receives a 400 error.
+- **Broadcast connection error** — retry loop continues; client stays in `awaitSnapshot`.
 
 ### Delta Processing
-- **Malformed message** — Logged, skipped, consumption continues
-- **Client send fails** — Close connection cleanly, cleanup state
+- **Malformed message** — logged, skipped, consumption continues.
+- **Pre-filtered partial** — logged and dropped (unsupported).
+- **Client send fails** — connection closed cleanly, state removed.
 
 ### Graceful Shutdown
 
 On SIGTERM/SIGINT:
-1. Stop accepting new RabbitMQ messages
-2. Close all client WebSocket connections
-3. Exit, releasing all in-memory state
+1. Stop consuming RabbitMQ messages.
+2. Close all client WebSocket connections.
+3. Exit, releasing all in-memory state.
 
 See [service-kit: graceful shutdown](../../packages/service-kit/docs/guides/graceful-shutdown.md).
 
 ## Performance Characteristics
 
 ### Memory
-- **Per-client overhead** — O(subscriptions) plus buffered deltas (30s window)
-- **Per-table overhead** — O(snapshot size) + O(buffer size) shared across all clients
+- **Snapshot store** — one accumulated copy of every subscribed BitMEX table.
+- **Per-client** — O(subscriptions) plus any deltas buffered during the (usually brief) activation window.
 
-Large order books (e.g., orderBookL2 with 10k rows) are buffered for all clients of that table. Consider memory limits when scaling client count.
+Large order books (e.g. `orderBookL2` with 10k rows) are held once centrally and read by reference on each subscribe.
 
 ### Latency
-- **Snapshot fetch** — HTTP round-trip to snapshots service (typically <10ms locally)
-- **Delta broadcast** — In-memory Set iteration, network I/O (dependent on client count)
-
-### Concurrency
-- **Multiple simultaneous subscribes** — Handled by async subscribe with separate HTTP fetches
-- **Pending flush** — O(pending clients) on each delta; typically small (fast move to active)
+- **Subscribe activation** — synchronous local lookup; only the table's first-ever subscribe pays a network cost (broadcast signal + retry).
+- **Delta broadcast** — in-memory bus emit + per-queue filter; dependent on connected client count.

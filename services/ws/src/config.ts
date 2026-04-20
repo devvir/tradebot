@@ -3,7 +3,6 @@ import { Config } from './types';
 
 const loadConfig = (): Config => {
   const config = {
-    snapshotsUrl: process.env.SNAPSHOTS_URL ?? '',
     broadcastUrl: process.env.BROADCAST_URL ?? '',
   };
 
@@ -15,7 +14,6 @@ const loadConfig = (): Config => {
 };
 
 const validateConfig = (config: Config): void => {
-  if (! config.snapshotsUrl) throw new Error('SNAPSHOTS_URL is required');
   if (! config.broadcastUrl) throw new Error('BROADCAST_URL is required');
 };
 

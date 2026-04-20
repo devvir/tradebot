@@ -1,10 +1,21 @@
+import { RabbitMQ } from '@devvir/service-kit';
 import { SKFactory } from '@tradebot/utils';
 import config from './config';
 
-const QUEUE_DELTAS = 'ws.deltas';
+const EXCHANGE = 'deltas';
+const QUEUE    = 'ws.deltas';
+
+const topology = {
+  exchanges: {
+    [EXCHANGE]: {
+      type: 'topic',
+      queues: { [QUEUE]: {} },
+    },
+  },
+} as RabbitMQ.TopologySpec;
 
 export default SKFactory({
   name: 'ws',
-  rabbitmq: { topology: { queues: { [QUEUE_DELTAS]: {} } } },
+  rabbitmq: { topology },
   trackMessages: true,
 }).declare({ config });

@@ -14,6 +14,7 @@ import type {
 import { parseArg, subscribeAck, unsubscribeAck } from '../server/protocol';
 import { unknownTable, alreadySubscribed, authRequired } from '../server/responses';
 import type { ClientRegistry } from './clients';
+import type { Snapshots } from './snapshots';
 import { Queue } from '@devvir/elastic-queue';
 import type { BitmexWsMessage, Config, SubscribeOp } from '../types';
 import { PRIVATE_CHANNELS } from '@tradebot/utils';
@@ -40,38 +41,6 @@ const normalizeArgs = (args: string[] | string | null | undefined): string[] => 
   if (! args) return [];
   if (typeof args === 'string') return [args];
   return args;
-};
-
-// ---- Snapshot fetch -----------------------------------------------------
-
-type SnapshotResult =
-  | { ok: true;  snapshot: BitmexWsMessage; counter: number }
-  | { ok: false; reason: 'not-found' | 'error' };
-
-const fetchSnapshot = async (
-  table:        string,
-  symbol:       string,
-  snapshotsUrl: string,
-  account?:     string,
-): Promise<SnapshotResult> => {
-  try {
-    const symbolParam = symbol !== '_' ? `symbol=${encodeURIComponent(symbol)}` : '';
-    const query = account
-      ? `?account=${encodeURIComponent(account)}${symbolParam ? `&${symbolParam}` : ''}`
-      : (symbolParam ? `?${symbolParam}` : '');
-    const res = await fetch(`${snapshotsUrl}/snapshot/${table}${query}`);
-
-    if (res.status === 404) return { ok: false, reason: 'not-found' };
-    if (! res.ok) throw new Error(`HTTP ${res.status}`);
-
-    const data = await res.json() as BitmexWsMessage & { counter?: number };
-    const { counter, ...snapshot } = data;
-
-    return { ok: true, snapshot: snapshot as BitmexWsMessage, counter: counter ?? 0 };
-  } catch (err) {
-    logger.error({ err, table }, 'Failed to fetch snapshot');
-    return { ok: false, reason: 'error' };
-  }
 };
 
 // ---- Broadcast signal ---------------------------------------------------
@@ -114,9 +83,10 @@ const signalBroadcastResubscribe = async (
  * isolated — important for testing and multi-instance scenarios.
  */
 export const setup = (
-  bus:      Bus,
-  config:   Config,
-  registry: ClientRegistry,
+  bus:       Bus,
+  config:    Config,
+  registry:  ClientRegistry,
+  snapshots: Snapshots,
 ): void => {
   // ---- State (per-setup, scoped via closure) -------------------------
 
@@ -233,14 +203,14 @@ export const setup = (
     op:      SubscribeOp,
     account: string | undefined,
   ): void => {
-    setTimeout(async () => {
+    setTimeout(() => {
       if (ws.readyState !== WebSocket.OPEN) {
         removeQueue(ws, key);
         removeTableListenerIfIdle(table);
         return;
       }
 
-      const result = await fetchSnapshot(table, symbol, config.snapshotsUrl, account);
+      const result = snapshots.get(table, symbol !== '_' ? symbol : undefined, account);
 
       if (! result.ok) {
         scheduleRetry(ws, key, queue, table, symbol, op, account);
@@ -267,8 +237,8 @@ export const setup = (
         continue;
       }
 
-      // Create queue before fetching snapshot so deltas that arrive
-      // during the async fetch are captured and not lost.
+      // Create queue before reading the snapshot so deltas that arrive
+      // between now and activation are captured and not lost.
       const queue = new Queue<DeltaChannelEvent>();
 
       ensureTableListener(table);
@@ -278,24 +248,22 @@ export const setup = (
 
       ws.send(subscribeAck(arg, op));
 
-      const result = await fetchSnapshot(table, symbol, config.snapshotsUrl, account);
+      const result = snapshots.get(table, symbol !== '_' ? symbol : undefined, account);
 
       if (! result.ok) {
-        if (result.reason === 'not-found') {
-          // Snapshots doesn't have this table yet — signal broadcast to subscribe
-          const signal = await signalBroadcastResubscribe(config.broadcastUrl, table, account);
+        // Snapshots doesn't have this table yet — signal broadcast to subscribe
+        const signal = await signalBroadcastResubscribe(config.broadcastUrl, table, account);
 
-          if (signal === 'rejected') {
-            // BitMEX rejected the channel — genuinely unknown table
-            ws.send(unknownTable(table, op));
-            removeQueue(ws, key);
-            registry.removeSubscription(ws, key);
-            removeTableListenerIfIdle(table);
-            continue;
-          }
+        if (signal === 'rejected') {
+          // BitMEX rejected the channel — genuinely unknown table
+          ws.send(unknownTable(table, op));
+          removeQueue(ws, key);
+          registry.removeSubscription(ws, key);
+          removeTableListenerIfIdle(table);
+          continue;
         }
 
-        // Data is in flight (broadcast signaled) or transient error — retry
+        // Data is in flight (broadcast signaled) — retry until partial arrives
         scheduleRetry(ws, key, queue, table, symbol, op, account);
 
         continue;

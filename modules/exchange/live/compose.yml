@@ -7,12 +7,7 @@
 #
 # Data flow:
 #
-#   BitMEX WS ──► broadcast ──► [broadcast exchange]
-#                                             │
-#                    ┌────────────────────────┤
-#           snapshots@default        ws.deltas@default
-#                    │                        │
-#                snapshots ◄── HTTP ──────── ws  ◄── bots
+#   BitMEX WS ──► broadcast ──► [broadcast exchange] ──► ws.deltas@default ──► ws ◄── bots
 #
 #   bots ──► rest ──► proxy ──► BitMEX REST API
 #                └── (auth via Bouncer)
@@ -24,41 +19,39 @@ include:
   - path: ../../../services/ws/docker/compose.yml
   - path: ../../../services/rest/docker/compose.yml
   - path: ../../../services/proxy/docker/compose.yml
-  - path: ../../../services/snapshots/docker/compose.yml
 
 services:
-  broadcast:
+  feed:
     extends:
       file: ../../../services/broadcast/docker/compose.yml
       service: broadcast
 
     depends_on:
-      live-router:
-        condition: service_healthy
+      live-pipe:
+        condition: service_completed_successfully
 
-  live-router:
+  live-pipe:
     extends:
-      file: ../../../services/router/docker/compose.yml
-      service: router
+      file: ../../../services/pipe/docker/compose.yml
+      service: pipe
 
     environment:
-      ROUTER_RULES: >-
-        | live@topic:broadcast > ws.deltas & snapshots
+      PIPE_BINDINGS: topic:broadcast > ws.deltas@topic:deltas
 
-  trader:
-    extends:
-      file: ../../../services/trader/docker/compose.yml
-      service: trader
+  # trader:
+  #   extends:
+  #     file: ../../../services/trader/docker/compose.yml
+  #     service: trader
 
-    environment:
-      TRADER_WS_URL:   ${TRADER_WS_URL:-ws://ws}
-      TRADER_REST_URL: ${TRADER_REST_URL:-http://rest}
+  #   environment:
+  #     TRADER_WS_URL:   ${TRADER_WS_URL:-ws://ws}
+  #     TRADER_REST_URL: ${TRADER_REST_URL:-http://rest}
 
-    depends_on:
-      ws:
-        condition: service_healthy
-      rest:
-        condition: service_healthy
+  #   depends_on:
+  #     ws:
+  #       condition: service_healthy
+  #     rest:
+  #       condition: service_healthy
 
 networks:
   default:

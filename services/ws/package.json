@@ -12,6 +12,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@devvir/bitmex-database": "^1.1.4",
     "@devvir/elastic-queue": "^1.0.0",
     "@devvir/service-kit": "workspace:*",
     "@tradebot/utils": "workspace:*",

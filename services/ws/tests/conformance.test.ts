@@ -1,40 +1,56 @@
 /**
  * Conformance tests — WS server protocol behaviour against an in-process server
- * and mock snapshot HTTP server.  No external services required.
+ * with an in-memory snapshots instance primed from BitMEX-shaped fixtures.
+ * No external services required.
  *
  * Reference: docs/BitMEX/WS_TABLES.md, docs/services/WS_DEVIATIONS.md
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import type { Server as HttpServer }                  from 'node:http';
-import { WebSocket, type WebSocketServer }             from 'ws';
-import { createBus }                                   from '../src/events';
-import { ClientRegistry }                              from '../src/subs/clients';
-import { createServer }                                from '../src/server/websocket';
-import { setup }                                       from '../src/subs/subscription';
-import { startSnapshotServer, stopServer, listen, closeWss } from './helpers';
+import type { Server as HttpServer }                 from 'node:http';
+import { WebSocket, type WebSocketServer }           from 'ws';
+import { createBus }                                 from '../src/events';
+import { ClientRegistry }                            from '../src/subs/clients';
+import { createServer }                              from '../src/server/websocket';
+import { setup }                                     from '../src/subs/subscription';
+import { createSnapshots }                           from '../src/subs/snapshots';
+import {
+  primeSnapshots,
+  startBroadcastRejector,
+  stopServer,
+  listen,
+  closeWss,
+  type SnapshotFixture,
+} from './helpers';
 import { snapshotStore } from './fixtures';
 
 // ── Shared server setup ───────────────────────────────────────────────────────
 
-let snapshotServer: HttpServer;
-let wss:            WebSocketServer;
-let wssPort:        number;
+let wss:              WebSocketServer;
+let wssPort:          number;
+let broadcastServer:  HttpServer;
 
 beforeAll(async () => {
-  const snap = await startSnapshotServer(snapshotStore);
-  snapshotServer = snap.server;
+  const bus       = createBus();
+  const registry  = new ClientRegistry();
+  const snapshots = createSnapshots();
 
-  const bus      = createBus();
-  const registry = new ClientRegistry();
-  wss     = createServer(0, bus, registry);
-  setup(bus, registry, snap.url);
+  primeSnapshots(snapshots, snapshotStore as Record<string, SnapshotFixture>);
+
+  // Unknown tables (not primed) trigger a broadcast "resubscribe" signal. A
+  // rejector that always returns 400 maps any unknown table straight to an
+  // `Unknown table` client error, matching the conformance expectations.
+  const { server, url } = await startBroadcastRejector();
+  broadcastServer = server;
+
+  wss     = createServer(bus, registry, 0);
+  setup(bus, { broadcastUrl: url }, registry, snapshots);
   wssPort = await listen(wss);
 });
 
 afterAll(async () => {
   await closeWss(wss);
-  await stopServer(snapshotServer);
+  await stopServer(broadcastServer);
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

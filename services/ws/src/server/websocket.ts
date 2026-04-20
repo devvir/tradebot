@@ -21,9 +21,13 @@ const WS_PORT = 80;
  *   - Emit disconnect events on close/error so other modules can clean up
  *
  * Does NOT handle subscription logic — that is subs/subscription.ts's job.
+ *
+ * @param bus      - Event bus
+ * @param registry - Client registry
+ * @param port     - Port to listen on (defaults to WS_PORT=80; pass 0 for a random port in tests)
  */
-export const createServer = (bus: Bus, registry: ClientRegistry): WebSocketServer => {
-  const wss = new WebSocketServer({ port: WS_PORT });
+export const createServer = (bus: Bus, registry: ClientRegistry, port = WS_PORT): WebSocketServer => {
+  const wss = new WebSocketServer({ port });
 
   wss.on('connection', (ws, req: IncomingMessage) => {
     const url    = new URL(req.url ?? '/', 'http://x');
