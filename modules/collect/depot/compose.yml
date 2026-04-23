@@ -5,8 +5,9 @@
 # Continuously downloads the complete BitMEX historical dataset and keeps it
 # up to date as new data becomes available:
 #
-#   courier → S3 gzip dumps (trade, quote) → vault
-#   scribe  → REST endpoints               → vault
+#   courier → S3 gzip dumps (trade, quote)                   → vault
+#   scribe  → REST endpoints                                  → vault
+#   tardy   → Tardis first-of-month WS history (7 WS tables) → vault
 
 # Docker Compose Project
 name: collect
@@ -14,6 +15,7 @@ name: collect
 include:
   - path: ../../../services/scribe/docker/compose.yml
   - path: ../../../services/courier/docker/compose.yml
+  - path: ../../../services/tardy/docker/compose.yml
 
 networks:
   default:

@@ -1,0 +1,38 @@
+# Tardy Service - Downloads first-of-month BitMEX WebSocket history from Tardis
+
+services:
+  tardy:
+    build:
+      context: ../../..
+      dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
+      args:
+        SERVICE_NAME: tardy
+
+    environment:
+      # Dependencies
+      VAULT_URL: ${VAULT_URL}
+
+      # Config
+      TARDY_START_DATE: ${TARDY_START_DATE:-}
+
+      # Runtime
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV:  ${APP_ENV:-prod}
+      TZ:        ${TZ:-UTC}
+
+    ports:
+      - :3000
+
+    user: "1000:1000"
+
+    volumes:
+      - ../../../:/live
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+
+    restart: unless-stopped
