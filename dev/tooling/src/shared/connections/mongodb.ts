@@ -2,6 +2,7 @@ import { MongoClient, Db } from 'mongodb';
 import { getEnv } from '../utils/env';
 import { discoverService } from '../utils/service-discovery';
 import { info, success } from '../ui/logger';
+import { redactUrl } from '@tradebot/utils';
 
 export async function connectMongo(): Promise<{ client: MongoClient; db: Db; url: string }> {
   let url = getEnv('DB_URL') || 'mongodb://localhost:27017/tradebot';
@@ -14,7 +15,7 @@ export async function connectMongo(): Promise<{ client: MongoClient; db: Db; url
 
   if (discovered) url = discovered.url;
 
-  info(`Connecting to MongoDB: ${url}`);
+  info(`Connecting to MongoDB: ${redactUrl(url)}`);
 
   const client = new MongoClient(url);
   await client.connect();

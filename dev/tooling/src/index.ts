@@ -14,6 +14,7 @@ import { register as registerSignal } from './commands/signal.js';
 import { register as registerMonitor } from './commands/monitor';
 import { register as registerSources } from './commands/sources.js';
 import { register as registerRemote } from './commands/remote.js';
+import { register as registerSynth } from './commands/synth.js';
 
 interface Tool {
   id: string;
@@ -31,6 +32,7 @@ const tools: Tool[] = [
   { id: 'monitor', name: 'Monitor', description: 'Live dashboard: Docker containers and RabbitMQ queues' },
   { id: 'sources', name: 'Sources', description: 'Sanitise and diagnose vault source data' },
   { id: 'remote', name: 'Remote', description: 'Remote server operations (sync-env, pull)' },
+  { id: 'synth', name: 'Synth', description: 'Synthetic data tools (index, generate)' },
 ];
 
 async function main(): Promise<void> {
@@ -62,6 +64,7 @@ async function main(): Promise<void> {
   registerMonitor(program);
   registerSources(program);
   registerRemote(program);
+  registerSynth(program);
 
   // Show interactive menu when no subcommand is given.
   // Preserve any global flags (-e, --env, -v, --verbose) so they survive the

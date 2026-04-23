@@ -30,3 +30,6 @@ https://www.bitmex.com/app/leaderboard/guilds
 https://www.bybit.com/derivatives/en/history-data
 https://api.tardis.dev/v1/exchanges/bitmex
 https://crypto-lake.com/subscribe/
+
+# OrderBook ID changes
+https://www.bitmex.com/blog/site-announcement/potentially-breaking-api-update-to-id-generation-on-websocket-orderbook-feeds

@@ -24,6 +24,15 @@ Thumbs.db
 .pnpm-store/
 **/.ports.json
 
+# Python
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+
 .nx/cache
 .nx/workspace-data
 vitest.config.*.timestamp*
