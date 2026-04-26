@@ -10,7 +10,7 @@ services:
 
     environment:
       QUEUE_URL: ${QUEUE_URL}
-      BROADCAST_URL: ${BROADCAST_URL:-}
+      WS_COMMANDS_URL: ${WS_COMMANDS_URL:-}
 
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV: ${APP_ENV:-prod}

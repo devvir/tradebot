@@ -48,7 +48,7 @@ const normalizeArgs = (args: string[] | string | null | undefined): string[] => 
 type SignalResult = 'ok' | 'rejected' | 'error';
 
 const signalBroadcastResubscribe = async (
-  broadcastUrl: string,
+  wsCommandsUrl: string,
   channel:      string,
   accountId?:   string,
 ): Promise<SignalResult> => {
@@ -57,7 +57,7 @@ const signalBroadcastResubscribe = async (
 
     if (accountId) headers['x-account-id'] = accountId;
 
-    const res = await fetch(`${broadcastUrl}/resubscribe/${channel}`, {
+    const res = await fetch(`${wsCommandsUrl}/resubscribe/${channel}`, {
       method: 'POST',
       headers,
     });
@@ -252,7 +252,7 @@ export const setup = (
 
       if (! result.ok) {
         // Snapshots doesn't have this table yet — signal broadcast to subscribe
-        const signal = await signalBroadcastResubscribe(config.broadcastUrl, table, account);
+        const signal = await signalBroadcastResubscribe(config.wsCommandsUrl, table, account);
 
         if (signal === 'rejected') {
           // BitMEX rejected the channel — genuinely unknown table

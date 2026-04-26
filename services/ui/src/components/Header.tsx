@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useDigger } from '../data/DataProvider';
 
 const NAV_LINKS = [
   { label: 'Buy Crypto', href: 'https://www.bitmex.com/app/buyCrypto' },
@@ -14,6 +15,56 @@ const ChevronDown = () => (
     <path d="M24 12L16 22 8 12z" />
   </svg>
 );
+
+function ReplayClock() {
+  const digger = useDigger();
+  const [status, setStatus] = useState<'idle' | 'pending' | 'error'>('idle');
+
+  if (! digger) return null;
+
+  const handleChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+
+    if (! value) return;
+
+    const ts = new Date(value).getTime();
+
+    if (! Number.isFinite(ts)) return;
+
+    setStatus('pending');
+
+    try {
+      await digger.setClock(ts);
+      setStatus('idle');
+    } catch {
+      setStatus('error');
+    }
+  };
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 16 }}>
+      <span style={{ fontSize: 11, color: 'var(--OnBackground-Medium-Emphasis)', whiteSpace: 'nowrap' }}>
+        Replay time
+      </span>
+      <input
+        type="datetime-local"
+        onChange={handleChange}
+        style={{
+          background:  'var(--Gray-Gray-80)',
+          border:      `1px solid ${status === 'error' ? 'var(--Sell-Primary)' : 'var(--Border-Border-Default)'}`,
+          borderRadius: 4,
+          color:       status === 'pending' ? 'var(--OnBackground-Medium-Emphasis)' : 'var(--OnBackground-High-Emphasis)',
+          fontSize:    11,
+          padding:     '2px 6px',
+          cursor:      'pointer',
+        }}
+      />
+      {status === 'error' && (
+        <span style={{ fontSize: 10, color: 'var(--Sell-Primary)' }}>failed</span>
+      )}
+    </div>
+  );
+}
 
 export function Header() {
   const [_menuOpen, setMenuOpen] = useState(false);
@@ -52,6 +103,9 @@ export function Header() {
           <ChevronDown />
         </div>
       </nav>
+
+      {/* Replay clock picker — only rendered when digger is configured */}
+      <ReplayClock />
 
       {/* End items */}
       <div className="organisms__Header__endItems__QW1Zt">

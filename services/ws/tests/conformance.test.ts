@@ -44,7 +44,7 @@ beforeAll(async () => {
   broadcastServer = server;
 
   wss     = createServer(bus, registry, 0);
-  setup(bus, { broadcastUrl: url }, registry, snapshots);
+  setup(bus, { wsCommandsUrl: url }, registry, snapshots);
   wssPort = await listen(wss);
 });
 

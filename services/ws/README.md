@@ -25,8 +25,8 @@ Requires RabbitMQ — see [infra packs](../../modules/infra/README.md).
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
+| `WS_COMMANDS_URL` | yes | `` | Base URL of the provider's commands API (broadcast/digger) |
 | `WS_PORT` | no | `` | WebSocket server port mapping on host |
-| `BROADCAST_URL` | yes | `` | Broadcast commands HTTP server |
 
 ## Development
 

@@ -40,7 +40,7 @@ When a client sends `{"op": "subscribe", "args": ["table:symbol"]}`:
 
 2. **Read the snapshot** via `snapshots.get(table, symbol?, account?)`:
    - If present → returns `{ snapshot, counter }`, the subscription activates immediately.
-   - If absent → the table has no accumulated state yet. The service POSTs to `broadcastUrl/resubscribe/{table}` so that `broadcast` will begin streaming it. If broadcast rejects (HTTP 400) the table is genuinely unknown and the client receives an `Unknown table` error. Otherwise, the subscribe schedules a 5s retry loop until the first partial arrives and populates the snapshot.
+   - If absent → the table has no accumulated state yet. The service POSTs to `wsCommandsUrl/resubscribe/{table}` so that `broadcast` will begin streaming it. If broadcast rejects (HTTP 400) the table is genuinely unknown and the client receives an `Unknown table` error. Otherwise, the subscribe schedules a 5s retry loop until the first partial arrives and populates the snapshot.
 
 3. **Activation:** send the snapshot as a `partial`, then stream the queue from the snapshot's counter forward. Messages with counters less than or equal to the snapshot counter are filtered out by the elastic queue.
 
@@ -89,7 +89,7 @@ Consumed messages are applied to the snapshot store, emitted on the event bus, a
 
 ## Broadcast Commands
 
-The service makes one outbound HTTP call in the subscribe path: `POST {broadcastUrl}/resubscribe/{table}` when the requested table is not yet in the snapshot store. The response distinguishes "table in flight" (201 / other non-400 status → retry) from "genuinely unknown" (400 → reject the subscribe).
+The service makes one outbound HTTP call in the subscribe path: `POST {wsCommandsUrl}/resubscribe/{table}` when the requested table is not yet in the snapshot store. The response distinguishes "table in flight" (201 / other non-400 status → retry) from "genuinely unknown" (400 → reject the subscribe).
 
 ## Configuration
 
@@ -97,8 +97,8 @@ Requires RabbitMQ — see [infra packs](../../modules/infra/README.md).
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
+| `WS_COMMANDS_URL` | yes | `` | Base URL of the provider's commands API (broadcast/digger) |
 | `WS_PORT` | no | `` | WebSocket server port mapping on host |
-| `BROADCAST_URL` | yes | `` | Base URL of the broadcast service's commands API |
 
 ## Lifecycle
 

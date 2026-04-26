@@ -17,14 +17,14 @@ import {
   type SnapshotFixture,
 } from './helpers';
 
-const createTestService = (store: Record<string, SnapshotFixture> = {}, broadcastUrl = '') => {
+const createTestService = (store: Record<string, SnapshotFixture> = {}, wsCommandsUrl = '') => {
   const bus       = createBus();
   const registry  = new ClientRegistry();
   const snapshots = createSnapshots();
   const wss       = createServer(bus, registry, 0);
 
   primeSnapshots(snapshots, store);
-  setup(bus, { broadcastUrl }, registry, snapshots);
+  setup(bus, { wsCommandsUrl }, registry, snapshots);
 
   return {
     wss,

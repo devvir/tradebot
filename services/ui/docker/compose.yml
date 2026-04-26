@@ -15,6 +15,9 @@ services:
       VITE_BITMEX_WS_URL:      ${VITE_BITMEX_WS_URL:-wss://ws.bitmex.com/realtime}
       BITMEX_REST_PROXY_URL:   ${BITMEX_REST_PROXY_URL:-http://localhost:3101}
 
+      DIGGER_PROXY_URL:        ${DIGGER_PROXY_URL:-}
+      VITE_DIGGER_URL:         ${VITE_DIGGER_URL:-/digger}
+
     ports:
       - ${UI_PORT:-3000}:3000
 

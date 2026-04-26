@@ -15,7 +15,7 @@ const createTestService = (store: Record<string, SnapshotFixture> = {}) => {
   const wss       = createServer(bus, registry, 0);
 
   primeSnapshots(snapshots, store);
-  setup(bus, { broadcastUrl: '' }, registry, snapshots);
+  setup(bus, { wsCommandsUrl: '' }, registry, snapshots);
 
   return {
     wss,

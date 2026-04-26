@@ -3,7 +3,7 @@ import { Config } from './types';
 
 const loadConfig = (): Config => {
   const config = {
-    broadcastUrl: process.env.BROADCAST_URL ?? '',
+    wsCommandsUrl: process.env.WS_COMMANDS_URL ?? '',
   };
 
   validateConfig(config);
@@ -14,7 +14,7 @@ const loadConfig = (): Config => {
 };
 
 const validateConfig = (config: Config): void => {
-  if (! config.broadcastUrl) throw new Error('BROADCAST_URL is required');
+  if (! config.wsCommandsUrl) throw new Error('WS_COMMANDS_URL is required');
 };
 
 export default loadConfig();
