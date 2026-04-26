@@ -1,0 +1,43 @@
+# Digger Service — replays collected BitMEX data as a WS-compatible stream
+
+services:
+  digger:
+    build:
+      context: ../../..
+      dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
+      args:
+        SERVICE_NAME: digger
+
+    container_name: digger
+
+    environment:
+      DB_URL:      ${DB_URL}
+      DB_DATABASE: ${DB_DATABASE:-tradebot}
+      QUEUE_URL:   ${QUEUE_URL}
+
+      DIGGER_WAIT_IF:       ${DIGGER_WAIT_IF:-}
+      DIGGER_START_TIME:    ${DIGGER_START_TIME:-}
+      DIGGER_BATCH_SIZE:    ${DIGGER_BATCH_SIZE:-1000}
+      DIGGER_LOW_WATERMARK: ${DIGGER_LOW_WATERMARK:-5000}
+
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV:  ${APP_ENV:-prod}
+      TZ:        ${TZ:-UTC}
+
+    ports:
+      - "${DIGGER_PORT:-}:80"
+      - :3000
+
+    user: "1000:1000"
+
+    volumes:
+      - ../../../:/live
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+
+    restart: unless-stopped

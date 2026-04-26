@@ -1,0 +1,1 @@
+export { buildRestRouter } from './routes';
