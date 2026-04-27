@@ -54,12 +54,6 @@ describe('fetchSymbols', () => {
     expect(result.inactive.has('.BXBT')).toBe(false);
   });
 
-  it('throws when the HTTP response is not ok', async () => {
-    vi.mocked(global.fetch).mockResolvedValueOnce(makeResponse(null, false, 503));
-
-    await expect(fetchSymbols(BASE_URL)).rejects.toThrow('HTTP 503');
-  });
-
   it('calls the correct endpoint URL', async () => {
     vi.mocked(global.fetch).mockResolvedValueOnce(makeResponse([]));
 

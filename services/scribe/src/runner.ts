@@ -35,13 +35,19 @@ const processTable = async (
   logger.info({ table: table.name }, 'Starting');
 
   const getTasksFn = () => getTasks(table, getIndices);
-  const { initialDate, next } = await restoreProgress(table, fetch, store, cache, getTasksFn);
+  const { initialDate, next, closedDates } = await restoreProgress(table, fetch, store, cache, getTasksFn);
   let currentDate = initialDate;
 
   while (true) {
     if (currentDate >= todayUtc()) {
       logger.info({ table: table.name, date: currentDate }, 'Caught up — waiting for tomorrow');
       await sleepUntilTomorrow();
+    }
+
+    if (closedDates.has(currentDate)) {
+      logger.info({ table: table.name, date: currentDate }, 'Day already closed — skipping');
+      currentDate = nextDay(currentDate);
+      continue;
     }
 
     const tasks = await getTasks(table, getIndices);

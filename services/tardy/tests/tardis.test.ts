@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { _test_parseLine, _test_parseMinute, streamDate } from '../src/tardis';
+import { _test_parseLine, _test_parseMinute, streamMinute } from '../src/tardis';
 import type { TardyTable } from '../src/types';
 
 const ALL_TABLES: TardyTable[] = [
@@ -208,9 +208,9 @@ describe('tardis — parseMinute', () => {
   });
 });
 
-// ── streamDate ────────────────────────────────────────────────────────────────
+// ── streamMinute ──────────────────────────────────────────────────────────────
 
-describe('tardis — streamDate', () => {
+describe('tardis — streamMinute', () => {
   const mockFetch = vi.fn();
 
   beforeEach(() => {
@@ -218,31 +218,28 @@ describe('tardis — streamDate', () => {
     vi.stubGlobal('fetch', mockFetch);
   });
 
-  it('iterates all 1440 offsets and yields all parsed messages', async () => {
-    // Each minute response returns exactly one orderBookL2 insert so we can
-    // count total emissions and verify one per minute came through.
+  it('issues exactly one fetch per call and yields all parsed messages', async () => {
     mockFetch.mockImplementation(() => Promise.resolve(responseFromChunks([
       '2019-04-01T00:00:00.000Z {"table":"orderBookL2","action":"insert","data":[]}\n',
     ])));
 
-    const items = await collect(streamDate('20190401', ['orderBookL2']));
+    const items = await collect(streamMinute('20190401', 0, ['orderBookL2']));
 
-    expect(mockFetch).toHaveBeenCalledTimes(1440);
-    expect(items).toHaveLength(1440);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(items).toHaveLength(1);
   });
 
   it('builds URLs with from, offset, and encoded multi-channel filter', async () => {
     mockFetch.mockImplementation(() => Promise.resolve(responseFromChunks([''])));
 
-    await collect(streamDate('20190401', ['orderBookL2', 'instrument', 'liquidation']));
+    await collect(streamMinute('20190401', 0, ['orderBookL2', 'instrument', 'liquidation']));
 
-    const firstUrl = mockFetch.mock.calls[0]![0] as string;
+    const url = mockFetch.mock.calls[0]![0] as string;
 
-    expect(firstUrl).toContain('from=2019-04-01');
-    expect(firstUrl).toContain('offset=0');
+    expect(url).toContain('from=2019-04-01');
+    expect(url).toContain('offset=0');
 
-    // Decode the filter param and verify it carries all three requested channels.
-    const filterParam = new URL(firstUrl).searchParams.get('filters')!;
+    const filterParam = new URL(url).searchParams.get('filters')!;
     const parsed      = JSON.parse(filterParam);
 
     expect(parsed).toEqual([
@@ -252,17 +249,14 @@ describe('tardis — streamDate', () => {
     ]);
   });
 
-  it('iterates offsets sequentially from 0 to 1439', async () => {
+  it('passes the requested offset through to the URL', async () => {
     mockFetch.mockImplementation(() => Promise.resolve(responseFromChunks([''])));
 
-    await collect(streamDate('20190401', ['orderBookL2']));
+    await collect(streamMinute('20190401', 720, ['orderBookL2']));
 
-    const firstOffset  = new URL(mockFetch.mock.calls[0]![0] as string).searchParams.get('offset');
-    const midOffset    = new URL(mockFetch.mock.calls[720]![0] as string).searchParams.get('offset');
-    const lastOffset   = new URL(mockFetch.mock.calls[1439]![0] as string).searchParams.get('offset');
+    const url    = mockFetch.mock.calls[0]![0] as string;
+    const offset = new URL(url).searchParams.get('offset');
 
-    expect(firstOffset).toBe('0');
-    expect(midOffset).toBe('720');
-    expect(lastOffset).toBe('1439');
+    expect(offset).toBe('720');
   });
 });

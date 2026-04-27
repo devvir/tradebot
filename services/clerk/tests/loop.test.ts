@@ -9,6 +9,8 @@ vi.mock('../src/vault', () => ({
   listTables:     vi.fn(),
   listFiles:      vi.fn(),
   readFileGroups: vi.fn(),
+  isWsMessage:    (item: unknown): boolean =>
+    typeof item === 'object' && item !== null && 'action' in item && 'data' in item,
 }));
 
 vi.mock('../src/progress', () => ({

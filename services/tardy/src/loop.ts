@@ -1,7 +1,7 @@
 import { logger } from '@devvir/service-kit';
 import config from './config';
-import type { TardyTable, WsMessage } from './types';
-import { streamDate } from './tardis';
+import type { Buf, TardyTable } from './types';
+import { streamMinute, MINUTES_PER_DAY } from './tardis';
 import { listFiles, writeRows, closeFile, deleteFile } from './vault';
 
 const TABLES: TardyTable[] = [
@@ -50,28 +50,34 @@ export const syncDate = async (vaultUrl: string, date: string): Promise<void> =>
 
   logger.info({ date, tables: needed }, 'Fetching from Tardis');
 
-  const batches = new Map<TardyTable, WsMessage[]>(
-    needed.map(t => [t, []]),
+  const batches = new Map<TardyTable, Buf>(
+    needed.map(t => [t, { rows: [] }]),
   );
 
-  for await (const { table, msg } of streamDate(date, needed)) {
-    const buf = batches.get(table)!;
+  // Tardis serves data one minute per request. We flush every table's buffer
+  // at the end of each minute so sparse tables (e.g. announcement, with one
+  // row per day) don't sit in memory until the entire stream completes —
+  // their size threshold would never trigger on its own. High-volume tables
+  // (orderBookL2) flush early when the buffer fills mid-minute.
+  for (let offset = 0; offset < MINUTES_PER_DAY; offset++) {
+    for await (const { table, msg } of streamMinute(date, offset, needed)) {
+      const buf = batches.get(table)!;
 
-    buf.push(msg);
+      buf.rows.push(msg);
 
-    if (buf.length >= BATCH_SIZE) {
-      await writeRows(vaultUrl, table, date, buf.splice(0));
+      if (buf.rows.length >= BATCH_SIZE) {
+        await writeRows(vaultUrl, table, date, buf.rows.splice(0));
+      }
+    }
+
+    for (const [table, buf] of batches.entries()) {
+      if (buf.rows.length > 0) {
+        await writeRows(vaultUrl, table, date, buf.rows.splice(0));
+      }
     }
   }
 
-  // Flush remaining messages and close each table's file.
   for (const table of needed) {
-    const buf = batches.get(table)!;
-
-    if (buf.length > 0) {
-      await writeRows(vaultUrl, table, date, buf);
-    }
-
     await closeFile(vaultUrl, table, date);
 
     logger.info({ table, date }, 'Closed');

@@ -1,5 +1,6 @@
 import type { components } from '@devvir/bitmex-api/types';
 import { logger } from '@devvir/service-kit';
+import { withRetry } from './throttling';
 
 type Instrument = components['schemas']['Instrument'];
 type Symbols = { indices: string[]; inactive: Set<string> };
@@ -8,23 +9,27 @@ const PAGE_SIZE = 1000;
 
 export const fetchSymbols = async (baseUrl: string): Promise<Symbols> => {
   const all: Instrument[] = [];
-  let start = 0;
 
-  while (true) {
-    const url = `${baseUrl}/instrument?count=${PAGE_SIZE}&start=${start}&columns=symbol,state&reverse=false`;
-    const res = await fetch(url);
+  await withRetry('fetchSymbols', async () => {
+    all.length = 0;
+    let start  = 0;
 
-    if (! res.ok)
-      throw new Error(`Failed to fetch instrument list: HTTP ${res.status}`);
+    while (true) {
+      const url = `${baseUrl}/instrument?count=${PAGE_SIZE}&start=${start}&columns=symbol,state&reverse=false`;
+      const res = await fetch(url);
 
-    const page = (await res.json()) as Instrument[];
+      if (! res.ok)
+        throw new Error(`Failed to fetch instrument list: HTTP ${res.status}`);
 
-    all.push(...page);
+      const page = (await res.json()) as Instrument[];
 
-    if (page.length < PAGE_SIZE) break;
+      all.push(...page);
 
-    start += PAGE_SIZE;
-  }
+      if (page.length < PAGE_SIZE) break;
+
+      start += PAGE_SIZE;
+    }
+  });
 
   const indices  = all.filter(i =>   i.symbol.startsWith('.')).map(i => i.symbol);
   const inactive = new Set(all.filter(i => i.state !== 'Open').map(i => i.symbol));

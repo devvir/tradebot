@@ -1,10 +1,11 @@
 import { logger } from '@devvir/service-kit';
+import { withRetry } from './throttling';
 
 export const loadRegistryMap = async (registryUrl: string): Promise<Map<string, number>> => {
-  const [symbolsRes, currenciesRes] = await Promise.all([
+  const [symbolsRes, currenciesRes] = await withRetry('loadRegistryMap', () => Promise.all([
     fetch(`${registryUrl}/symbols`),
     fetch(`${registryUrl}/currencies`),
-  ]);
+  ]));
 
   const symbols    = await symbolsRes.json()    as Array<{ id: number; symbol: string }>;
   const currencies = await currenciesRes.json() as Array<{ id: number; currency: string }>;

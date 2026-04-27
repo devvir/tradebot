@@ -4,13 +4,37 @@ import { listTables, listFiles, readFileGroups, isWsMessage, type WsMessage } fr
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Create a mock fetch Response whose body streams NDJSON lines. */
-const ndjsonResponse = (items: (WsMessage | Record<string, unknown>)[], status = 200) => ({
-  ok:     status >= 200 && status < 300,
-  status,
-  json:   () => Promise.resolve({}),
-  body:   Readable.toWeb(Readable.from([items.map(i => JSON.stringify(i)).join('\n') + '\n'])),
-});
+/**
+ * Create a mock fetch Response whose body streams NDJSON lines.
+ * Honors `?skip=N` in the URL the same way vault does — server-side slice —
+ * so tests reflect the real contract: clerk receives only the un-skipped tail.
+ */
+const ndjsonResponse = (
+  items:  (WsMessage | Record<string, unknown>)[],
+  status: number = 200,
+  url:    string = '',
+) => {
+  const skip   = url ? Number(new URL(url, 'http://x').searchParams.get('skip')) || 0 : 0;
+  const sliced = items.slice(skip);
+  const body   = sliced.length
+    ? sliced.map(i => JSON.stringify(i)).join('\n') + '\n'
+    : '';
+
+  return {
+    ok:     status >= 200 && status < 300,
+    status,
+    json:   () => Promise.resolve({}),
+    body:   Readable.toWeb(Readable.from([body])),
+  };
+};
+
+/** Stub fetch with a handler that slices items based on the URL's ?skip= query. */
+const stubNdjsonFetch = (items: (WsMessage | Record<string, unknown>)[]): void => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((url: string) => Promise.resolve(ndjsonResponse(items, 200, url))),
+  );
+};
 
 /** Create a mock JSON response (for listFiles). */
 const jsonResponse = (data: unknown, status = 200) => ({
@@ -270,14 +294,14 @@ describe('readFileGroups — startFrom', () => {
     vi.unstubAllGlobals();
   });
 
-  it('skips groups before startFrom and passes absolute msgIndex for WS files', async () => {
+  it('passes ?skip=startFrom to vault and emits absolute msgIndex for WS files', async () => {
     const groups: WsMessage[] = [
       { action: 'insert', date: '2024-01-01T00:00:00.000Z', data: [{ symbol: 'XBTUSD' }] },
       { action: 'insert', date: '2024-01-01T01:00:00.000Z', data: [{ symbol: 'ETHUSD' }] },
       { action: 'insert', date: '2024-01-01T02:00:00.000Z', data: [{ symbol: 'SOLUSDT' }] },
     ];
 
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ndjsonResponse(groups)));
+    stubNdjsonFetch(groups);
 
     const captured: Array<{ msg: WsMessage; index: number }> = [];
 
@@ -285,21 +309,23 @@ describe('readFileGroups — startFrom', () => {
       captured.push({ msg: r as WsMessage, index });
     }, 1);
 
-    // 3 total groups, 2 published (groups 1 and 2), absolute indices preserved
+    // Vault sliced 1 row → clerk receives 2, total reported is startFrom + received
     expect(count).toBe(3);
     expect(captured).toHaveLength(2);
     expect(captured[0]!.index).toBe(1);
     expect(captured[1]!.index).toBe(2);
+
+    expect(fetch).toHaveBeenCalledWith('http://vault/files/trade/20240101?skip=1', expect.objectContaining({ signal: expect.any(Object) }));
   });
 
-  it('skips rows before startFrom and passes absolute msgIndex for REST files', async () => {
+  it('passes ?skip=startFrom to vault and emits absolute msgIndex for REST files', async () => {
     const rows = [
       { symbol: 'XBTUSD', price: 100 },
       { symbol: 'ETHUSD', price: 200 },
       { symbol: 'SOLUSDT', price: 300 },
     ];
 
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ndjsonResponse(rows)));
+    stubNdjsonFetch(rows);
 
     const groups: Array<{ rows: unknown[]; index: number }> = [];
 
@@ -310,15 +336,17 @@ describe('readFileGroups — startFrom', () => {
     expect(count).toBe(3);
     expect(groups).toHaveLength(1);
     expect(groups[0]!.index).toBe(2);
+
+    expect(fetch).toHaveBeenCalledWith('http://vault/files/funding/20240101?skip=2', expect.objectContaining({ signal: expect.any(Object) }));
   });
 
-  it('calls onGroup for all groups when startFrom is 0 (default)', async () => {
+  it('omits the ?skip= query when startFrom is 0 (default)', async () => {
     const rows = [
       { symbol: 'XBTUSD', price: 100 },
       { symbol: 'ETHUSD', price: 200 },
     ];
 
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ndjsonResponse(rows)));
+    stubNdjsonFetch(rows);
 
     const indices: number[] = [];
     await readFileGroups('http://vault', 'funding', '20240101', async (_, index) => {
@@ -326,6 +354,7 @@ describe('readFileGroups — startFrom', () => {
     });
 
     expect(indices).toEqual([0, 1]);
+    expect(fetch).toHaveBeenCalledWith('http://vault/files/funding/20240101', expect.objectContaining({ signal: expect.any(Object) }));
   });
 
   it('calls onGroup for nothing when startFrom equals total groups', async () => {
@@ -333,7 +362,7 @@ describe('readFileGroups — startFrom', () => {
       { symbol: 'XBTUSD', price: 100 },
     ];
 
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ndjsonResponse(rows)));
+    stubNdjsonFetch(rows);
 
     const called: unknown[] = [];
     const count = await readFileGroups('http://vault', 'funding', '20240101', async (r) => {

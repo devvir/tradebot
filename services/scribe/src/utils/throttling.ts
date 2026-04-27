@@ -2,6 +2,27 @@ import { logger } from '@devvir/service-kit';
 
 const PAUSE_THRESHOLD = 100;
 
+const RETRY_BASE_MS  = 5_000;
+const RETRY_MAX_MS   = 300_000;
+
+export const withRetry = async <T>(
+  label: string,
+  fn:    () => Promise<T>,
+): Promise<T> => {
+  let attempt = 0;
+
+  while (true) {
+    try {
+      return await fn();
+    } catch (err) {
+      attempt++;
+      const delay = Math.min(RETRY_BASE_MS * 2 ** (attempt - 1), RETRY_MAX_MS);
+      logger.warn({ label, attempt, delay, err }, 'Transient error — retrying');
+      await sleep(delay);
+    }
+  }
+};
+
 export const sleep = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
 

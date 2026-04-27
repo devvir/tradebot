@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { FilePair } from './types.js';
 
-const SUPPORTED_EXTENSIONS = ['.csv.gz'];
+const WS_FILE_PATTERN = /\/(announcement|chat|connected|instrument|liquidation|orderBookL2|publicNotifications)\/\d{4}\/[^/]+\.csv\.gz$/;
 
 /**
  * Derive the gaps root directory from the vault root directory.
@@ -130,28 +130,18 @@ function walkDir(dir: string): string[] {
 }
 
 function isSupportedFile(filePath: string): boolean {
-  return SUPPORTED_EXTENSIONS.some(ext => filePath.endsWith(ext));
+  return WS_FILE_PATTERN.test(filePath);
 }
 
 /** Find a vault file matching a relative path, trying .csv.gz then .csv. */
 function resolveVaultPath(vaultDir: string, rel: string): string | null {
-  const withoutExt = stripExtension(rel);
+  const candidate = path.join(vaultDir, stripExtension(rel) + '.csv.gz');
 
-  for (const ext of SUPPORTED_EXTENSIONS) {
-    const candidate = path.join(vaultDir, withoutExt + ext);
-
-    if (fs.existsSync(candidate)) {
-      return candidate;
-    }
-  }
-
-  return null;
+  return fs.existsSync(candidate) ? candidate : null;
 }
 
 function stripExtension(filePath: string): string {
-  const ext = SUPPORTED_EXTENSIONS.find(e => filePath.endsWith(e));
-
-  return ext ? filePath.slice(0, -ext.length) : filePath;
+  return filePath.endsWith('.csv.gz') ? filePath.slice(0, -'.csv.gz'.length) : filePath;
 }
 
 function buildOutputPath(vaultDir: string, rel: string): string {

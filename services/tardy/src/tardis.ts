@@ -1,7 +1,8 @@
 import type { TardyTable, WsMessage } from './types';
 
 const TARDIS_BASE_URL = 'https://api.tardis.dev/v1/data-feeds/bitmex';
-const MINUTES_PER_DAY = 1_440;
+
+export const MINUTES_PER_DAY = 1_440;
 
 export interface TardisMessage {
   table: TardyTable;
@@ -11,20 +12,23 @@ export interface TardisMessage {
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
- * Streams all messages for a given date from the Tardis API, yielding one
- * {table, msg} pair at a time. Fetches 1440 minute-buckets sequentially
- * using the offset param. No API key required (free tier).
+ * Fetches a single minute-bucket from Tardis and yields one {table, msg} pair
+ * at a time. The caller drives the offset loop so it can flush per-minute
+ * boundaries — sparse tables (e.g. announcement) need the minute boundary to
+ * land their rows in vault, since their own size threshold may never trigger.
+ * No API key required (free tier).
  */
-export async function* streamDate(date: string, tables: TardyTable[]): AsyncGenerator<TardisMessage> {
+export async function* streamMinute(
+  date:    string,
+  offset:  number,
+  tables:  TardyTable[],
+): AsyncGenerator<TardisMessage> {
   const filter  = JSON.stringify(tables.map(t => ({ channel: t })));
   const isoDate = toIsoDate(date);
+  const url     = `${TARDIS_BASE_URL}?from=${isoDate}&offset=${offset}&filters=${encodeURIComponent(filter)}`;
+  const res     = await fetchWithRetry(url);
 
-  for (let offset = 0; offset < MINUTES_PER_DAY; offset++) {
-    const url = `${TARDIS_BASE_URL}?from=${isoDate}&offset=${offset}&filters=${encodeURIComponent(filter)}`;
-    const res = await fetchWithRetry(url);
-
-    yield* parseMinute(res, tables);
-  }
+  yield* parseMinute(res, tables);
 }
 
 // ── Parsing ───────────────────────────────────────────────────────────────────

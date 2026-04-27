@@ -73,8 +73,8 @@ export const restoreProgress = async (
   store:    StoreService,
   cache:    RedisClient,
   getTasks: () => Promise<Task[]>,
-): Promise<{ initialDate: string; next: Map<string, string> }> => {
-  const { resumeFrom } = await prepareTable(table.name, store);
+): Promise<{ initialDate: string; next: Map<string, string>; closedDates: Set<string> }> => {
+  const { resumeFrom, closedDates } = await prepareTable(table.name, store);
   const tasks          = await getTasks();
   const next           = new Map<string, string>();
   let   initialDate    = resumeFrom ?? todayUtc();
@@ -107,7 +107,7 @@ export const restoreProgress = async (
   // will initialise them to initialDate on first encounter, same as before.
   if (resumeFrom) {
     logger.info({ table: table.name, resumeFrom, cached: next.size, uncached: uncached.length }, 'Resuming');
-    return { initialDate, next };
+    return { initialDate, next, closedDates };
   }
 
   // Cold start: probe only the tasks not found in cache.
@@ -129,7 +129,7 @@ export const restoreProgress = async (
 
   logger.info({ table: table.name, initialDate }, 'Cold start probe complete');
 
-  return { initialDate, next };
+  return { initialDate, next, closedDates };
 };
 
 // ── Vault startup ────────────────────────────────────────────────────────────
@@ -137,7 +137,7 @@ export const restoreProgress = async (
 const prepareTable = async (
   tableName: string,
   store:     StoreService,
-): Promise<{ resumeFrom: string | null }> => {
+): Promise<{ resumeFrom: string | null; closedDates: Set<string> }> => {
   logger.info({ table: tableName }, 'Checking vault');
 
   const files = await store.listFiles(tableName);
@@ -149,25 +149,29 @@ const prepareTable = async (
     }
   }
 
-  const lastClosed = Object.entries(files)
-    .filter(([, s]) => s === 'closed')
-    .map(([d]) => d)
-    .sort()
-    .at(-1) ?? null;
+  const closedDates = new Set(
+    Object.entries(files)
+      .filter(([, s]) => s === 'closed')
+      .map(([d]) => d),
+  );
 
-  if (lastClosed) {
-    logger.info({ table: tableName, lastClosed }, 'Vault ready — resuming from next day');
-  } else {
+  if (closedDates.size === 0) {
     logger.info({ table: tableName }, 'No existing vault files — will probe BitMEX for start date');
+    return { resumeFrom: null, closedDates };
   }
 
-  const vaultResume = lastClosed ? nextDay(lastClosed) : null;
+  // Walk forward from startDate (or earliest closed file) to find the first
+  // date that has no closed file. That is where download must resume.
+  const earliest   = [...closedDates].sort()[0];
+  const from       = config.startDate ?? earliest;
+  let   resumeFrom = from;
 
-  return { resumeFrom: max(vaultResume, config.startDate) };
+  while (closedDates.has(resumeFrom)) resumeFrom = nextDay(resumeFrom);
+
+  logger.info({ table: tableName, resumeFrom }, 'Vault ready — resuming from first gap');
+
+  return { resumeFrom, closedDates };
 };
-
-const max = (a: string | null, b: string | null): string | null =>
-  ! a ? b : ! b ? a : a > b ? a : b;
 
 // ── Date helpers ─────────────────────────────────────────────────────────────
 

@@ -15,6 +15,10 @@ export interface WsMessage {
   data:   Record<string, unknown>[];
 }
 
+export interface Buf {
+  rows: WsMessage[];
+}
+
 export interface Config {
   vaultUrl:  string;
   startDate: string;
