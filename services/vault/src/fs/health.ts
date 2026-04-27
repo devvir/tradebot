@@ -1,42 +1,48 @@
-import { logger } from '@devvir/service-kit';
-import { appendFileSync, existsSync, unlinkSync } from 'fs';
-import path from 'path';
-
-// ── Thresholds ─────────────────────────────────────────────────────────────────
+// Write-path health singleton.
 //
-// Vault goes unhealthy when FAILURE_THRESHOLD write failures (after all per-item
-// retries are exhausted) occur within FAILURE_WINDOW_MS. A single transient error
-// that clears on retry never contributes to the count.
+// Decouples write failures (deep in the async writer) from the HTTP route that
+// must reject new data. `fs/writer.ts` calls `recordFailure()` after a batch
+// exhausts all retries; `server/routes.ts` calls `isHealthy()` before
+// accepting `POST /rows` and returns 503 when unhealthy.
 
-const FAILURE_THRESHOLD  = 5;
-const FAILURE_WINDOW_MS  = 60_000;
+import path from 'path';
+import { appendFileSync, existsSync, unlinkSync } from 'fs';
+import { logger } from '@devvir/service-kit';
+import { DATA_DIR } from './paths';
+
+// ── Thresholds ────────────────────────────────────────────────────────────────
+//
+// Vault goes unhealthy when FAILURE_THRESHOLD write failures (after all
+// per-batch retries are exhausted) occur within FAILURE_WINDOW_MS. A single
+// transient error that clears on retry never contributes to the count.
+
+const FAILURE_THRESHOLD    = 5;
+const FAILURE_WINDOW_MS    = 60_000;
 const RECOVERY_INTERVAL_MS = 5_000;
 
-// ── State ──────────────────────────────────────────────────────────────────────
+// ── State ─────────────────────────────────────────────────────────────────────
 
 let healthy       = true;
 let failureReason: string | null = null;
 let recoveryTimer: ReturnType<typeof setTimeout> | null = null;
 
-const recentFailures: number[] = []; // timestamps of exhausted-retry failures
+const recentFailures: number[] = [];
 
 export const isHealthy        = (): boolean       => healthy;
 export const getFailureReason = (): string | null => failureReason;
 
-// ── Called when one item exhausts all retries ─────────────────────────────────
-
+/** Called from the writer when one batch exhausts all retries. */
 export const recordFailure = (reason: string): void => {
   const now    = Date.now();
   const cutoff = now - FAILURE_WINDOW_MS;
 
-  // Evict failures outside the window.
   while (recentFailures.length > 0 && recentFailures[0]! < cutoff) {
     recentFailures.shift();
   }
 
   recentFailures.push(now);
 
-  logger.warn({ reason, recentFailures: recentFailures.length, threshold: FAILURE_THRESHOLD }, 'Write item dropped after retries');
+  logger.warn({ reason, recentFailures: recentFailures.length, threshold: FAILURE_THRESHOLD }, 'Write batch dropped after retries');
 
   if (recentFailures.length >= FAILURE_THRESHOLD) {
     setUnhealthy(`${recentFailures.length} write failures in the last minute — last: ${reason}`);
@@ -56,7 +62,7 @@ const setUnhealthy = (reason: string): void => {
   scheduleRecovery();
 };
 
-export const setHealthy = (): void => {
+const setHealthy = (): void => {
   if (healthy) return;
 
   healthy       = true;
@@ -71,7 +77,7 @@ export const setHealthy = (): void => {
 // While unhealthy, attempt a canary write every RECOVERY_INTERVAL_MS.
 // Transitions back to healthy as soon as the probe succeeds.
 
-const CANARY_PATH = path.join('/data/vault', '.health-canary');
+const CANARY_PATH = path.join(DATA_DIR, '.health-canary');
 
 const scheduleRecovery = (): void => {
   if (recoveryTimer) return;
@@ -85,10 +91,26 @@ const scheduleRecovery = (): void => {
 const tryRecover = (): void => {
   try {
     appendFileSync(CANARY_PATH, '');
+
     if (existsSync(CANARY_PATH)) unlinkSync(CANARY_PATH);
+
     setHealthy();
   } catch (err) {
     logger.warn({ err }, 'Recovery probe failed — retrying');
+
     scheduleRecovery();
+  }
+};
+
+// ── Test helpers ──────────────────────────────────────────────────────────────
+
+export const _test_reset = (): void => {
+  healthy       = true;
+  failureReason = null;
+  recentFailures.length = 0;
+
+  if (recoveryTimer) {
+    clearTimeout(recoveryTimer);
+    recoveryTimer = null;
   }
 };

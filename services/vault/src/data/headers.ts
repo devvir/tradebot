@@ -1,7 +1,8 @@
 // Authoritative column lists per BitMEX table.
 //
-// Used by vault to initialise CSV file headers and pad sparse rows on write,
-// so callers never need to send empty-field defaults.
+// Used by vault when initialising new CSV files (header row) and by the
+// encoder when serialising rows into CSV — vault never infers columns from
+// incoming data because WS updates only include changed fields.
 //
 // Sources:
 //   - Vault files in /data/bitmex/vault  (observed, authoritative)
@@ -10,12 +11,12 @@
 
 export const TABLE_HEADERS: Record<string, string[]> = {
 
-  // ── From BitMEX Rest API ────────────────────────────────────────────────────
+  // ── From BitMEX REST API ────────────────────────────────────────────────────
 
-  funding:    ['timestamp', 'symbol', 'fundingInterval', 'fundingRate', 'fundingRateDaily'],
-  insurance:  ['currency', 'timestamp', 'walletBalance'],
-  settlement: ['timestamp', 'symbol', 'settlementType', 'settledPrice', 'optionStrikePrice', 'optionUnderlyingPrice', 'bankrupt', 'taxBase', 'taxRate'],
-  compositeIndex:      ['timestamp', 'symbol', 'indexSymbol', 'indexMultiplier', 'reference', 'lastPrice', 'sourcePrice', 'conversionIndex', 'conversionIndexPrice', 'weight', 'logged'],
+  funding:        ['timestamp', 'symbol', 'fundingInterval', 'fundingRate', 'fundingRateDaily'],
+  insurance:      ['currency', 'timestamp', 'walletBalance'],
+  settlement:     ['timestamp', 'symbol', 'settlementType', 'settledPrice', 'optionStrikePrice', 'optionUnderlyingPrice', 'bankrupt', 'taxBase', 'taxRate'],
+  compositeIndex: ['timestamp', 'symbol', 'indexSymbol', 'indexMultiplier', 'reference', 'lastPrice', 'sourcePrice', 'conversionIndex', 'conversionIndexPrice', 'weight', 'logged'],
 
   // ── Streamed from BitMEX WebSocket ─────────────────────────────────────────
   //

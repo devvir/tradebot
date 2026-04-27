@@ -2,22 +2,17 @@
 // Per-table cast map used when streaming NDJSON.
 //
 // Only fields that require non-string coercion are listed:
-//   'number'   — numeric fields (long, float, int, integer, number)
-//   'boolean'  — boolean fields
-//   'json'     — object / array fields (JSON.parse on read)
-//   'required' — string fields that BitMEX explicitly sends as empty string
-//                (preserved rather than dropped)
+//   'number'      — numeric fields
+//   'boolean'     — boolean fields
+//   'json'        — object / array fields (JSON.parse on read)
+//   'required'    — string fields BitMEX explicitly sends as empty string (preserved)
+//   'timestamp_D' — BitMEX timestamp format with 'D' separator → 'T'
 //
 // String / symbol / guid / timestamp / timespan fields are omitted — they pass
 // through as strings and are dropped when empty.
 
-export type CastType = 'number' | 'boolean' | 'json' | 'required' | 'timestamp_D';
+type CastType  = 'number' | 'boolean' | 'json' | 'required' | 'timestamp_D';
 type TableCasts = Record<string, CastType>;
-
-// Applied to every row regardless of table (vault-internal columns).
-// _date_ and _action_ are handled by createGroupTransform before applyRow runs,
-// so they do not appear here.
-export const GLOBAL_CASTS: TableCasts = {};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -28,13 +23,13 @@ const tsD  = (...fields: string[]): TableCasts => Object.fromEntries(fields.map(
 
 // ── Shared cast groups ────────────────────────────────────────────────────────
 
-const QUOTE_CASTS: TableCasts     = { ...num('bidSize', 'bidPrice', 'askPrice', 'askSize'), ...tsD('timestamp') };
-const TRADE_CASTS: TableCasts     = { ...num('size', 'price', 'grossValue', 'homeNotional', 'foreignNotional'), ...tsD('timestamp') };
-const TRADEBIN_CASTS: TableCasts  = num('open', 'high', 'low', 'close', 'trades', 'volume', 'vwap', 'lastSize', 'turnover', 'homeNotional', 'foreignNotional');
+const QUOTE_CASTS: TableCasts    = { ...num('bidSize', 'bidPrice', 'askPrice', 'askSize'), ...tsD('timestamp') };
+const TRADE_CASTS: TableCasts    = { ...num('size', 'price', 'grossValue', 'homeNotional', 'foreignNotional'), ...tsD('timestamp') };
+const TRADEBIN_CASTS: TableCasts = num('open', 'high', 'low', 'close', 'trades', 'volume', 'vwap', 'lastSize', 'turnover', 'homeNotional', 'foreignNotional');
 
 // ── Per-table casts ───────────────────────────────────────────────────────────
 
-export const TABLE_CASTS: Record<string, TableCasts> = {
+const TABLE_CASTS: Record<string, TableCasts> = {
 
   orderBook10: { ...json('bids', 'asks') },
 
@@ -153,4 +148,38 @@ export const TABLE_CASTS: Record<string, TableCasts> = {
 
   voucher: num('account', 'balance'),
 
+};
+
+/**
+ * Applies per-table type casts to a parsed row (field name → raw string value).
+ * Empty string values are dropped. Returns a typed row with only non-empty fields.
+ */
+export const applyCasts = (
+  raw:   Record<string, string>,
+  table: string,
+): Record<string, unknown> => {
+  const casts  = TABLE_CASTS[table] ?? {};
+  const result: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(raw)) {
+    const cast = casts[key];
+
+    if (cast === 'required') {
+      result[key] = value;
+    } else if (value === '') {
+      continue;
+    } else if (cast === 'number') {
+      result[key] = Number(value);
+    } else if (cast === 'boolean') {
+      result[key] = value === 'true';
+    } else if (cast === 'json') {
+      try { result[key] = JSON.parse(value); } catch { result[key] = value; }
+    } else if (cast === 'timestamp_D') {
+      result[key] = value.replace('D', 'T');
+    } else {
+      result[key] = value;
+    }
+  }
+
+  return result;
 };

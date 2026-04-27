@@ -1,38 +1,43 @@
-# Vault Service — Technical Reference
+# Vault
 
-## Overview
+Vault is a date-partitioned HTTP file store for BitMEX CSV data. It accepts rows from upstream services (journalist, tardy, scribe), buffers them in memory, and flushes to disk as concatenated gzip members. Courier stores complete pre-built files directly via PUT. Downstream consumers (clerk) read back sealed files as NDJSON.
 
-Vault is a purpose-built HTTP file store for date-partitioned CSV data. It accepts rows from upstream services — scribe (REST backfill), tardy (gap-filler), and journalist (live WebSocket feed) — buffers them in memory, and flushes to disk as concatenated gzip members. It manages the full lifecycle of each file from the initial open state through to the sealed state.
-
-Vault is not a database. It has no query capability. It is a write-optimised append store with a simple read-back interface for downstream consumers.
+Vault is not a database. It has no query capability. It is a write-optimised append store.
 
 ---
 
-## File Layout
+## File layout
 
-All files live under `/data/vault` (fixed, not configurable):
+All files live under `/data/vault` (fixed path):
 
 ```
-/data/vault/<table>/<yyyy>/<yyyymmdd>.csv.gz.tmp   ← open (being written)
-/data/vault/<table>/<yyyy>/<yyyymmdd>.csv.gz        ← closed (sealed)
+/data/vault/<table>/<yyyy>/<date>.csv.gz.tmp   ← open (being written)
+/data/vault/<table>/<yyyy>/<date>.csv.gz        ← closed (sealed)
 ```
 
-A date file is either open or closed — never both. Callers work in terms of `table` and `date` (e.g. `compositeIndex`, `20200101`); the on-disk extensions are a vault-internal concern.
+A file is either open or closed — never both. A closed file is permanent; it is never overwritten or appended to.
 
 ---
 
-## Items vs Messages
+## CSV format
 
-Vault distinguishes two payload types by the presence of an `action` field:
+All files are CSV with a fixed header row as their first line. Column order is defined by `TABLE_HEADERS` in `data/headers.ts` and is authoritative — vault never infers columns from incoming data, because WS update messages only include changed fields.
 
-**Items** — objects without `action`. Stored as plain rows. Used by scribe for REST tables (`trade`, `quote`, `funding`, etc.).
+**REST tables** (`funding`, `insurance`, `settlement`, `compositeIndex`): plain rows, no metadata columns.
 
-**Messages** — objects with `action` and a `data` array. These are BitMEX WebSocket messages sent by journalist. Vault stores the rows from `data` with two metadata columns prepended to the first row:
+**WS tables** (`orderBookL2`, `instrument`, `chat`, etc.): two metadata columns prepend every row — `_date_` and `_action_`. These are message-level, not per-row:
 
-- `_date_` — `message.date` if present, otherwise the current wall-clock time in ISO 8601 format
-- `_action_` — `message.action` (e.g. `partial`, `insert`, `update`, `delete`)
+- `_date_` and `_action_` are non-empty only on the **first line of each message**. Continuation lines (subsequent rows from the same `data` array) leave both columns empty — the line starts with `,`.
+- An empty `data: []` message still produces one line (with metadata, all data columns empty) so no message is lost.
+- A reader detects message boundaries by a non-empty `_date_` value.
 
-On read, a non-empty `_date_` value marks the start of a new message group. Vault reconstructs the original message shape: `{ action, date, data: [...rows] }`.
+---
+
+## Storage format
+
+Files are stored as gzip from the first byte. Each flush appends **one self-contained gzip member** (header + DEFLATE payload + CRC32 + trailer) to the `.csv.gz.tmp` file. Between any two flushes the file on disk is a fully valid multi-member gzip, readable by any standard tool.
+
+Each member starts DEFLATE with an empty sliding window, so patterns spanning member boundaries are not compressed across them. Files are roughly 5–10% larger than single-stream gzip. Acceptable given the durability gains.
 
 ---
 
@@ -42,153 +47,160 @@ All routes are relative to `http://vault`.
 
 ### `POST /files/:table/:date/rows`
 
-Accepts rows for buffered writing. Returns `202` immediately — the write is committed to an in-memory buffer and flushed to disk asynchronously.
+Buffers rows for async disk write. Returns `202` immediately.
 
-The body can be a single JSON object or a JSON array of objects. Each object is processed independently:
+**Body:** a single JSON object or a JSON array of objects. Each object is processed independently:
 
-- **No `action` field** — treated as a plain item (REST table row); stored as-is.
-- **Has `action` field** — treated as a WS message; `data` must be an array. Vault augments the first row of `data` with `_date_` and `_action_` before storing.
+- **No `action` field** — plain REST row, stored as-is.
+- **Has `action` field + `data` array** — WS message. The first row of `data` is enriched with `_date_` (message date, or wall-clock if absent) and `_action_` before encoding. An empty `data: []` still produces one metadata line.
 
-Returns `400` if a message has a missing or non-array `data` field, or if the body is not a JSON object / array of objects.  
-Returns `503` if vault is unhealthy (see Health section).  
-Returns `409` if the file is currently being closed.  
-Returns `418` if the file is already sealed.
+**Errors:**
+- `400` — body is not an object/array of objects, or a message has a missing/non-array `data` field.
+- `409` — file is closed, or a `POST /close` is in progress for this date.
+- `503` — vault is unhealthy (see Health section).
 
 ### `PUT /files/:table/:date`
 
-Stores a complete pre-built binary file (e.g. a raw gzip downloaded from S3). Written atomically: streamed to a `.tmp` path then renamed to `.csv.gz`. Returns `204` on success, `409` if any file for that date already exists.
+Stores a complete pre-built gzip file (courier). Streams directly to `.csv.gz.tmp`, then renames to `.csv.gz` atomically. All-or-nothing: a failed upload leaves an open file, which is silently discarded on the next PUT for the same date.
+
+- `204` — stored.
+- `409` — a sealed `.csv.gz` already exists. Sealed files are permanent.
+
+If an open `.csv.gz.tmp` exists (interrupted prior upload), it is discarded and the new upload proceeds.
 
 ### `POST /files/:table/:date/close`
 
-Seals an open file. Flushes the in-memory buffer as a final gzip member, then renames `.csv.gz.tmp` → `.csv.gz`. Returns `202` on success, `204` if already closed, `404` if no open file exists.
+Seals an open file. Fire-and-forget: returns `202` immediately. In the background, flushes the in-memory buffer as a final gzip member, then renames `.csv.gz.tmp` → `.csv.gz`. Further `POST /rows` calls for this date are rejected with `409` from this point on, regardless of whether the rename has completed.
 
 ### `DELETE /files/:table/:date`
 
-Drops an open file without flushing: waits for any in-flight flush to settle, clears the buffer, then unlinks the `.csv.gz.tmp`. Returns `204` on success, `404` if no open file exists.
+Discards an open file. Flushes and drops the in-memory buffer, then unlinks `.csv.gz.tmp`. Idempotent — returns `204` whether or not the file existed.
 
 ### `GET /files/:table/:date`
 
-Streams a file as `application/x-ndjson`, with field types cast from CSV. Works for both open and closed files; the closed `.csv.gz` takes priority if both exist. Returns `404` if neither file exists.
+Streams a **closed** file as `application/x-ndjson`. Open files return `404`.
 
-Output format depends on the table type:
+Output shape depends on the table type:
 
-- **REST tables** (no `_date_` column): one JSON object per line.
-- **WS tables** (with `_date_` column): rows are grouped by `_date_` boundaries. Each group is emitted as one line: `{ "action": "insert", "date": "...", "data": [{...}, ...] }`.
+- **REST tables:** one JSON object per line.
+- **WS tables:** rows are grouped into messages. Each message is one line: `{ "action": "insert", "date": "...", "data": [{...}, ...] }`.
+
+Optional `?skip=N`: vault skips the first N messages/rows server-side before streaming. For WS tables, a skip unit is one message; for REST tables, one row.
+
+- `404` — no closed file for this date.
 
 ### `GET /files/:table/:date/headers`
 
-Returns the CSV column names for the file as a JSON array.
+Returns the CSV column names of a closed file as a JSON array: `{ "columns": [...] }`.
 
-### `GET /tables`
-
-Returns an array of all table names that have data in vault. Returns `[]` when no tables exist.
+- `404` — no closed file, or the file is empty.
 
 ### `GET /files/:table`
 
-Returns a JSON object mapping date keys to their state:
+Returns a map of all dates for a table and their state:
 
 ```json
-{ "20200101": "closed", "20200102": "open" }
+{ "2024-01-01": "closed", "2024-01-02": "open" }
 ```
 
-Returns `{}` when no files exist for the table.
+- `404` — the table directory does not exist.
+
+### `GET /tables`
+
+Returns an array of all table names that have data in vault. Returns `[]` if none.
 
 ---
 
-## Write Path — How a Row Becomes a File
-
-A client calls `POST /files/:table/:date/rows`. The route validates the body and pushes the serialised row(s) into an in-memory buffer keyed by `table/date`. The HTTP response (`202`) returns immediately; the disk write is asynchronous.
-
-Two triggers cause the buffer to flush:
-
-- **Size:** when the buffer reaches 10,000 rows, a flush fires immediately.
-- **Time:** a debounce timer is reset on every incoming row. If 10 seconds pass without a new row, the timer fires and flushes whatever is buffered. Low-frequency tables are bounded by this; high-frequency ones flush by size before the timer reaches its limit.
-
-Each flush produces **one complete gzip member** appended to `.csv.gz.tmp`:
-
-1. The buffered rows are joined into a CSV string.
-2. The string is gzipped in full (in memory) via `zlib.gzip`.
-3. The compressed bytes are appended to the file via `fs.promises.appendFile`.
-4. `lastGoodOffset` is incremented by the compressed length.
-
-Concatenated gzip members are valid gzip (per RFC 1952). Decompressors reconstruct one continuous CSV. The CSV header is the first row of the first member; subsequent members are pure data.
-
-After every successful flush the file on disk is a fully readable `.gz`. There is no point at which the file requires a close step to become valid.
-
----
-
-## Atomicity and Consistency
-
-Each flush is atomic from the file's perspective: it either appends a complete gzip member or leaves the file at its previous state. The mechanism is `lastGoodOffset` plus `fs.promises.truncate`:
-
-- **Success:** `appendFile` resolves; `lastGoodOffset += compressed.length`. The file grew by one valid member.
-- **Failure:** `appendFile` rejects (disk full, EIO, etc.). The file may have partial bytes. `truncate(path, lastGoodOffset)` removes them. The same batch is retried with linear backoff (100 ms × attempt).
-- **Retries exhausted:** after 3 attempts the batch is dropped. `recordFailure` notifies the health system. The file remains a valid `.gz` up to `lastGoodOffset`.
-
-The file transitions only from one consistent state to the next. A partial flush never leaves data that gunzip cannot read.
-
-Concurrent flushes on the same file are prevented by a flush mutex (`flushing: Promise<void> | null`). The `while` loop inside the flush drains any rows that arrived during the flush, so buffer growth is bounded under sustained load.
-
----
-
-## File Lifecycle
+## Write pipeline
 
 ```
-POST /rows  →  buffer rows (in memory)
-                 ↓  (size trigger or debounce timer)
-              flush → gzip member → appendFile → lastGoodOffset advances
-                 ↓  (POST /close)
-              final flush → rename .csv.gz.tmp → .csv.gz
+POST /rows
+  → encode (Row / WsMessage → CSV lines)
+  → buffer.pushMany(lines)            [in-memory, table/date keyed]
+  → ticker (every 200 ms)
+      → buffers.flushReady()          [size ≥ 10k rows OR time ≥ 10s since last flush]
+      → prepend header if file new
+      → fs/writer.appendBatch()       [gzip member → ftruncate-safe append]
 ```
 
-`storeFile` (PUT) uses a separate `.tmp` path during upload; the `closing` set is held for the duration to prevent `insertRow` from racing onto the same destination path.
+All data passes through the buffer. No writes bypass it. Node's single-threaded event loop guarantees that the `isInitialized` check and the `appendBatch` call that follows are synchronous — no race on header prepending is possible.
 
----
+### Buffer flush triggers (both checked per tick, one pass)
 
-## Shutdown and Restart
-
-**Graceful shutdown** (SIGTERM / SIGINT):
-
-1. The HTTP server closes first, so no new connections arrive.
-2. `shuttingDown = true` — subsequent `insertRow` calls are silently dropped.
-3. For every open handle, the buffer is drained as a final gzip member.
-4. Files remain as `.csv.gz.tmp` — vault does not rename on shutdown. The next startup resumes appending to the same file.
-
-**Resume after restart:**
-
-The first `insertRow` for a `table/date` triggers handle creation. If `.csv.gz.tmp` already exists, `lastGoodOffset` is set to `statSync(path).size` and the CSV header is not re-written — the file already has it. If it does not exist, `lastGoodOffset = 0` and the header is the first entry of the first batch.
-
-This is correct after a clean shutdown: every byte on disk is part of a valid gzip member, so `file.size == lastGoodOffset`.
-
----
-
-## Known Limitation: Hard-Crash Recovery
-
-If vault is killed by SIGKILL / OOM / power loss **during** a write (not between flushes), the `.csv.gz.tmp` may have partial trailing bytes from the in-flight `appendFile`. On restart, `lastGoodOffset` is set from the current file size, which includes those partial bytes. Future flushes append after the corruption, making subsequent valid members unreachable by a standard gunzip pass.
-
-Clean shutdowns (SIGTERM / SIGINT) and graceful restarts are fully safe. The only path to corruption is a hard kill during the millisecond-wide window of an in-flight `appendFile`.
-
-The standard remedy — not currently implemented — is a sidecar offset file (`.csv.gz.tmp.offset`) written after each successful flush. On restart, the data file is truncated back to the sidecar offset before resuming.
-
----
-
-## Health Monitoring
-
-Vault exposes an `isHealthy()` gate checked on every `POST /rows` request. When unhealthy, inserts return `503` until recovery.
-
-Recovery is probed every 5 seconds via a canary write to `/data/vault/.health-canary`. Once the canary succeeds, vault transitions back to healthy.
-
-The unhealthy state is triggered by `recordFailure()` internally — currently on flush-retry exhaustion. The failure window is 5 failures within 60 seconds.
-
----
-
-## Tuning Constants
-
-| Constant | Value | Rationale |
+| Trigger | Threshold | Rationale |
 |---|---|---|
-| `BATCH_ROWS` | 10,000 | Memory ceiling per file; ~2–3 MB uncompressed for typical row sizes. |
-| `FLUSH_INTERVAL_MS` | 10,000 ms | Worst-case row age in the buffer for low-frequency tables. |
-| `MAX_RETRIES` | 3 | Total attempts before a batch is dropped. |
-| `RETRY_BACKOFF_MS` | 100 ms | Linear backoff base — attempt N waits `100 × N` ms. |
+| Size | 10,000 lines | Memory ceiling; leading trigger for high-frequency tables |
+| Time | 10 s since last flush | Catches low-frequency tables that never hit the size limit |
 
-Real-time `orderBookL2` (~5,000 rows/s) flushes by size every ~2 seconds. Low-frequency tables (`announcement`, `publicNotifications`) flush by timer 10 seconds after the last row. Historical backfills (tardy, scribe) flush by size.
+### Write safety
+
+Before each gzip member is appended, `lastGoodOffset` is read from the inode via `statSync` (metadata only — no disk I/O in the normal path). On failure:
+
+1. Truncate back to `lastGoodOffset` (`ftruncate` — inode size update only, no data copy).
+2. Retry up to 3 times with linear backoff (100 ms × attempt).
+3. If retries are exhausted: drop the batch, call `recordFailure` for health accounting.
+4. If truncate also fails: write a `.csv.gz.error` sidecar in the same year directory (timestamp, `lastGoodOffset`, both error messages, gzrecover note) and continue appending — new valid members written after the corrupt partial are recoverable with `gzrecover`. Halting writes would lose the rest of the day.
+
+### Write serialisation
+
+Each open file has a promise chain (`handle.writing`). Each `appendBatch` call appends to the tail of the chain. Concurrent callers queue in arrival order with no data loss — a boolean flag would require dropping data that has already left the buffer.
+
+---
+
+## Closing a file
+
+`POST /close` adds the key to an append-only `closing` set in the server layer (immediate write rejection), then fires `closeBucket(table, date)` asynchronously:
+
+```
+closeBucket:
+  lines = buffer.flush()
+  if no file on disk AND lines empty → no-op
+  if file not yet initialised → prepend header to lines
+  appendBatch(lines, seal=true)
+```
+
+When `seal=true`, `appendBatch` renames `.csv.gz.tmp` → `.csv.gz` after the final member is written. Because the rename chains onto the same write promise, it executes after all in-flight appends complete.
+
+---
+
+## Restart behaviour
+
+Vault never assumes it created the current open file. On restart, `isInitialized(table, date)` checks `handles.has(key) || existsSync(openPath(table, date))`. If a `.csv.gz.tmp` already exists on disk (from before the restart), it is treated as initialised — new appends continue without re-writing the header.
+
+---
+
+## Health
+
+`isHealthy()` is checked on every `POST /rows`. Returns `503` when unhealthy.
+
+Vault goes unhealthy when 5 batches exhaust all retries within 60 seconds — a signal of a systemic problem (disk full, filesystem read-only), not a transient blip. While unhealthy, vault probes every 5 seconds with a canary write to `/data/vault/.health-canary`. On success it returns to healthy.
+
+Clients on `503`: journalist holds data in memory and stops consuming from RabbitMQ; tardy backs off. Neither drops data.
+
+---
+
+## Shutdown
+
+On graceful shutdown, in order:
+
+1. HTTP server closes — no new requests accepted.
+2. Ticker stops.
+3. All in-memory buffers are flushed and handed to `appendBatch` (no seal — sealing is client-driven, not a shutdown concern).
+4. All open write chains are awaited before the process exits.
+
+Open files remain as `.csv.gz.tmp`. On the next start, writes resume by appending new gzip members.
+
+---
+
+## Tuning constants
+
+| Constant | Location | Value |
+|---|---|---|
+| `TICK_MS` | `data/ticker.ts` | 200 ms |
+| `STALE_THRESHOLD_MS` | `data/buffers.ts` | 10,000 ms |
+| `BATCH_SIZE` | `data/buffers.ts` | 10,000 lines |
+| `MAX_RETRIES` | `fs/writer.ts` | 3 |
+| `RETRY_BACKOFF_MS` | `fs/writer.ts` | 100 ms |
+| `FAILURE_THRESHOLD` | `fs/health.ts` | 5 failures |
+| `FAILURE_WINDOW_MS` | `fs/health.ts` | 60,000 ms |
+| `RECOVERY_INTERVAL_MS` | `fs/health.ts` | 5,000 ms |

@@ -1,49 +1,36 @@
-import express from 'express';
-import type { NextFunction, Request, Response } from 'express';
-import { logger, Service } from '@devvir/service-kit';
-import { registerRoutes } from './routes';
 import SK from '@devvir/service-kit';
-
-const PORT = 80;
+import type { Service } from '@devvir/service-kit';
+import { logger } from '@devvir/service-kit';
+import { createServer } from './server';
+import { startTicker, stopTicker } from './data/ticker';
+import { buffers } from './data/buffers';
+import { TABLE_HEADERS } from './data/headers';
+import { appendBatch, isInitialized, drainHandle } from './fs/writer';
 
 SK.run((service: Service) => {
-  const app = express();
+  createServer(service);
+  startTicker();
 
-  app.use(express.json({ limit: '50mb' }));
+  service.on('shutdown', async () => {
+    stopTicker();
 
-  registerRoutes(app);
+    const remaining = buffers.flushAll();
 
-  // Clients (journalist) occasionally drop connections mid-request when they
-  // time out and retry. Express surfaces this as a BadRequestError with
-  // type 'request.aborted' — it is not a server error and should not be logged.
-  app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    if (err && typeof err === 'object') {
-      const e = err as { type?: string; status?: number };
+    // Append every drained buffer (no seal — sealing is client-driven, not a
+    // shutdown concern). After scheduling, await each handle's write chain so
+    // we know the bytes are on disk before the process exits.
+    for (const { table, date, lines } of remaining) {
+      const finalLines = isInitialized(table, date)
+        ? lines
+        : [TABLE_HEADERS[table]!.join(','), ...lines];
 
-      if (e.type === 'request.aborted') {
-        if (! res.headersSent) res.status(499).end();
-        return;
-      }
-
-      // body-parser rejects non-object/array JSON (strict mode) with a 400 SyntaxError
-      if (e.status === 400 && err instanceof SyntaxError) {
-        if (! res.headersSent) res.status(400).json({ error: 'Invalid JSON body' });
-        return;
-      }
+      appendBatch(table, date, finalLines).catch((err) => {
+        logger.error({ err, table, date }, 'Final flush at shutdown failed');
+      });
     }
 
-    logger.error({ err }, 'Unhandled request error');
-    if (! res.headersSent) res.status(500).json({ error: 'Internal server error' });
-  });
+    await Promise.all(remaining.map(({ table, date }) => drainHandle(table, date)));
 
-  const server = app.listen(PORT, () => {
-    logger.info({ port: PORT }, 'Vault HTTP server listening');
+    logger.info('Vault shutdown drain complete');
   });
-
-  server.on('error', (err) => {
-    logger.error({ err }, 'HTTP server error');
-    service.shutdown('error');
-  });
-
-  service.on('shutdown', () => server.close());
 });

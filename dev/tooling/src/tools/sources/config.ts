@@ -3,9 +3,9 @@ import type { TableConfig } from './types';
 
 // Source of truth for table column definitions.
 // Resolves from our own `dist/` to vault's `dist/` — both packages must be built.
-// If this path breaks, vault/src/storage/headers.ts has likely moved — update here.
+// If this path breaks, vault/src/data/headers.ts has likely moved — update here.
 const VAULT_HEADERS_PATH = path.resolve(
-  __dirname, '../../../../../services/vault/dist/src/storage/headers',
+  __dirname, '../../../../../services/vault/dist/src/data/headers',
 );
 
 function loadTableHeaders(): Record<string, string[]> {
