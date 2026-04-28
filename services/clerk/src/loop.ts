@@ -1,5 +1,6 @@
 import { logger, Broker, type RedisClient } from '@devvir/service-kit';
-import { listTables, listFiles, readFileGroups, isWsMessage } from './vault';
+import { listTables, listFiles, readFileGroups } from './vault';
+import { isWsMessage } from './types';
 import { isDone, getOffset, setOffset, markDone } from './progress';
 import type { Config } from './types';
 
@@ -11,11 +12,13 @@ const POLL_INTERVAL_MS   = 60_000;
 
 export const runOnce = async (
   vaultUrl: string,
-  broker: Broker,
-  redis: RedisClient,
-  gate: Gate,
+  broker:   Broker,
+  redis:    RedisClient,
+  gate:     Gate,
+  filter:   string[] = [],
 ): Promise<void> => {
-  const tables = await listTables(vaultUrl);
+  const allTables = await listTables(vaultUrl);
+  const tables    = filter.length > 0 ? allTables.filter(t => filter.includes(t)) : allTables;
 
   const byDate = new Map<string, { table: string; state: string }[]>();
 
@@ -49,7 +52,7 @@ export const runLoop = async (
 
   while (! stopSignal.stopped) {
     try {
-      await runOnce(vaultUrl, broker, redis, gate);
+      await runOnce(vaultUrl, broker, redis, gate, config.tables);
     } catch (err) {
       logger.error({ err }, 'Error in clerk poll cycle');
     }

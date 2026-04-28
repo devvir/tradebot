@@ -12,6 +12,8 @@ services:
       DB_URL:      ${DB_URL}
       DB_DATABASE: ${DB_DATABASE:-tradebot}
 
+      DISTILLER_GENERATORS: ${DISTILLER_GENERATORS:-}
+
       NODE_ENV:  ${APP_ENV:-prod}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       TZ:        ${TZ:-UTC}

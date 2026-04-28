@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Readable } from 'node:stream';
-import { listTables, listFiles, readFileGroups, isWsMessage, type WsMessage } from '../src/vault';
+import { listTables, listFiles, readFileGroups } from '../src/vault';
+import { isWsMessage, type WsMessage } from '../src/types';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

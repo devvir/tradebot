@@ -110,6 +110,43 @@ describe('runOnce — date ordering', () => {
   });
 });
 
+// ── runOnce — table filtering ─────────────────────────────────────────────────
+
+describe('runOnce — table filtering', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(isDone).mockResolvedValue(false);
+    vi.mocked(getOffset).mockResolvedValue(0);
+    vi.mocked(readFileGroups).mockImplementation(makeReadFileGroups(1));
+  });
+
+  it('only processes tables in the filter list when filter is non-empty', async () => {
+    vi.mocked(listTables).mockResolvedValue(['trade', 'quote', 'orderBookL2']);
+    vi.mocked(listFiles).mockResolvedValue({ '20240101': 'closed' });
+
+    await runOnce('http://vault', makeBroker(), makeRedis(), noGate, ['trade', 'quote']);
+
+    const tables = vi.mocked(readFileGroups).mock.calls.map(([, table]) => table);
+
+    expect(tables).not.toContain('orderBookL2');
+    expect(tables).toContain('trade');
+    expect(tables).toContain('quote');
+  });
+
+  it('processes all tables when filter is empty', async () => {
+    vi.mocked(listTables).mockResolvedValue(['trade', 'quote', 'orderBookL2']);
+    vi.mocked(listFiles).mockResolvedValue({ '20240101': 'closed' });
+
+    await runOnce('http://vault', makeBroker(), makeRedis(), noGate, []);
+
+    const tables = vi.mocked(readFileGroups).mock.calls.map(([, table]) => table);
+
+    expect(tables).toContain('trade');
+    expect(tables).toContain('quote');
+    expect(tables).toContain('orderBookL2');
+  });
+});
+
 // ── processFile — publish batching ────────────────────────────────────────────
 
 describe('processFile — publish batching', () => {

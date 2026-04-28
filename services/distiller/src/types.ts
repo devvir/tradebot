@@ -77,7 +77,11 @@ export interface DerivedOutput {
   docs:       object[];
 }
 
+export const GENERATOR_NAMES = ['quote', 'trade', 'orderbook', 'instrument', 'partials'] as const;
+export type GeneratorName = typeof GENERATOR_NAMES[number];
+
 export interface Config {
-  database: string;
+  database:   string;
+  generators: GeneratorName[] | null;
   [key: string]: unknown;
 }

@@ -18,3 +18,10 @@ bins, quote bins, order book snapshots, and reconstructed instrument messages.
 | `quote` | `quoteBin1m`, `quoteBin5m`, `quoteBin1h`, `quoteBin1d` |
 | `orderBookL2` | `orderBook10`, `orderBookL2_25` |
 | `compositeIndex`, `quote`, `trade`, `funding`, `settlement` | `instrument` |
+
+## Environment Variables
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `DB_DATABASE` | yes | — | MongoDB database name |
+| `DISTILLER_GENERATORS` | no | _(all)_ | Comma-separated subset of generators to run: `quote`, `trade`, `orderbook`, `instrument`, `partials`. Empty or absent means run all. |

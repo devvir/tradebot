@@ -19,13 +19,15 @@ SK.run(async (service: Service) => {
 
   await bootstrap(mongo, config.database);
 
+  const g = config.generators;
+
   while (true) {
     await Promise.all([
-      distillQuotes(mongo, config.database),
-      distillTrades(mongo, config.database),
-      distillOrderBook(mongo, config.database),
-      distillInstrument(mongo, config.database),
-      distillPartials(mongo, config.database),
+      (! g || g.includes('quote'))      ? distillQuotes(mongo, config.database)      : null,
+      (! g || g.includes('trade'))      ? distillTrades(mongo, config.database)      : null,
+      (! g || g.includes('orderbook'))  ? distillOrderBook(mongo, config.database)   : null,
+      (! g || g.includes('instrument')) ? distillInstrument(mongo, config.database)  : null,
+      (! g || g.includes('partials'))   ? distillPartials(mongo, config.database)    : null,
     ]);
 
     logger.info('All aggregations complete — taking a nap...');

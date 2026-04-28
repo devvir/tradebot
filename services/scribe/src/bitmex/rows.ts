@@ -20,8 +20,7 @@ export const fetchOne = async (
   filter:  FetchFilter = {},
 ): Promise<Row | null> => {
   const url  = buildUrl(baseUrl, path, 0, 1, filter);
-  const res  = await fetchWithRetry(url);
-  const rows = (await res.json()) as Row[];
+  const rows = await fetchWithRetry(url);
 
   return rows[0] ?? null;
 };
@@ -49,8 +48,7 @@ export async function* rowIterator(
       { ...filter, startTime: blockStartTime ?? undefined },
     );
 
-    const res  = await fetchWithRetry(url);
-    const rows = (await res.json()) as Row[];
+    const rows = await fetchWithRetry(url);
 
     if (rows.length === 0) return;
 
@@ -94,14 +92,14 @@ const buildUrl = (
   return `${baseUrl}${path}?${params}`;
 };
 
-const fetchWithRetry = async (url: string): Promise<Response> => {
+const fetchWithRetry = async (url: string): Promise<Row[]> => {
   while (true) {
     try {
       const res = await fetch(url);
 
       await waitIfNeeded(res);
 
-      if (res.ok) return res;
+      if (res.ok) return (await res.json()) as Row[];
     } catch (err) {
       logger.warn({ err, url }, 'Network error — retrying in 3s');
       await sleep(3_000);

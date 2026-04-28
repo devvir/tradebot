@@ -1,52 +1,10 @@
 import { createInterface } from 'node:readline';
 import { Readable } from 'node:stream';
 import { logger } from '@devvir/service-kit';
+import type { Row, WsMessage, FileState } from './types';
 
-/** A row as returned by vault — values are already typed. */
-export type Row = Record<string, unknown>;
-
-/** A WS message as stored and returned by vault. */
-export type WsMessage = {
-  action: string;
-  date:   string;
-  data:   Row[];
-};
-
-/** Returns true if the parsed line is a WS message object. */
-export const isWsMessage = (item: unknown): item is WsMessage =>
-  typeof item === 'object' &&
-  item !== null &&
-  ! Array.isArray(item) &&
-  'action' in item &&
-  'date'   in item &&
-  'data'   in item &&
-  Array.isArray((item as WsMessage).data);
-
-type FileState = 'open' | 'closed';
-
-const RETRY_DELAY_MS = 5_000;
-
-// When skip=0 vault starts emitting immediately; 15 s is ample for headers.
-// When skip>0 vault must walk the file before the first byte arrives —
-// 10 GB orderBookL2 files can take well over a minute to walk to row 5M+.
-const FETCH_TIMEOUT_MS      = 15_000;
-const FETCH_TIMEOUT_SKIP_MS = 300_000;
-
-const vaultFetch = async (url: string): Promise<Response> => {
-  while (true) {
-    try {
-      const res = await fetch(url);
-
-      if (res.ok || res.status === 404) return res;
-
-      logger.warn({ url, status: res.status }, 'Vault HTTP error — retrying');
-    } catch (err) {
-      logger.warn({ url, err }, 'Vault unreachable — retrying');
-    }
-
-    await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
-  }
-};
+const RETRY_DELAY_MS   = 5_000;
+const FETCH_TIMEOUT_MS = 15_000;
 
 /** Returns all tables that have data in vault. */
 export const listTables = async (vaultUrl: string): Promise<string[]> => {
@@ -97,8 +55,16 @@ export const readFileGroups = async (
     ? `${vaultUrl}/files/${table}/${date}?skip=${startFrom}`
     : `${vaultUrl}/files/${table}/${date}`;
 
-  const timeout = startFrom > 0 ? FETCH_TIMEOUT_SKIP_MS : FETCH_TIMEOUT_MS;
-  const res     = await fetch(url, { signal: AbortSignal.timeout(timeout) });
+  const controller = new AbortController();
+  const timer      = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+  let res: Response;
+
+  try {
+    res = await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
 
   if (! res.ok) throw new Error(`Vault read failed for ${table}/${date}: HTTP ${res.status}`);
 
@@ -124,3 +90,18 @@ export const readFileGroups = async (
   return groupIndex;
 };
 
+const vaultFetch = async (url: string): Promise<Response> => {
+  while (true) {
+    try {
+      const res = await fetch(url);
+
+      if (res.ok || res.status === 404) return res;
+
+      logger.warn({ url, status: res.status }, 'Vault HTTP error — retrying');
+    } catch (err) {
+      logger.warn({ url, err }, 'Vault unreachable — retrying');
+    }
+
+    await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+  }
+};

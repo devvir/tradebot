@@ -16,6 +16,7 @@ processed exactly once.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
+| `CLERK_TABLES` | No | _(all)_ | Comma-separated table names to process. Empty means process all. |
 | `CLERK_BACKPRESSURE_LIMIT` | No | `100000` | Max messages in watched queues before pausing |
 | `CLERK_WATCH_QUEUES` | No | `assembler,registrar` | Comma-separated queue names to watch |
 

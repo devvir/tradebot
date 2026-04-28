@@ -19,6 +19,9 @@ in Redis so work already done is never repeated.
 Clerk discovers tables dynamically by calling `GET /tables` on vault at the start of
 each poll cycle. Vault returns whatever table directories exist under its data root.
 
+If `CLERK_TABLES` is set, only tables whose names appear in that list are processed;
+the rest are silently skipped. An unknown name simply matches nothing and has no effect.
+
 ## Poll Loop
 
 1. Calls `GET /tables` on vault to get the current list of tables.
@@ -89,5 +92,6 @@ next poll cycle.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
+| `CLERK_TABLES` | No | _(all)_ | Comma-separated table names to process. Empty means process all. |
 | `CLERK_BACKPRESSURE_LIMIT` | No | `100000` | Max messages in watched queues before pausing |
 | `CLERK_WATCH_QUEUES` | No | `assembler,registrar` | Comma-separated queue names to watch |
