@@ -6,6 +6,7 @@ import type { RunOptions, RunMode } from './types';
 import { collectFiles, buildSingleFilePair } from './discover';
 import { runDiagnose } from './fix/run';
 import { runMerge } from './merge/run';
+import { runCheck } from './check/run';
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
@@ -22,6 +23,11 @@ export async function run(
   }
 
   const opts = await resolveOptions(scope, cliMode);
+
+  if (opts.mode === 'check' || opts.mode === 'check-dry') {
+    runCheck(vaultDir, opts.scope, opts.mode === 'check-dry');
+    return;
+  }
 
   if (opts.mode === 'fix' || opts.mode === 'fix-dry') {
     const isDryRun = opts.mode === 'fix-dry';
@@ -57,7 +63,7 @@ function resolveVaultAndScope(cliScope: string | null): { vaultDir: string; scop
 
     return {
       vaultDir: (rawPath ?? '').trim(),
-      scope:    filter || null,
+      scope:    filter,
     };
   }
 
@@ -86,10 +92,12 @@ async function resolveOptions(
     ? cliMode
     : await selectFromList<RunMode>(
         [
-          { name: 'Fix             — scan and repair a vault file, write .fixed.csv.gz', value: 'fix'       },
-          { name: 'Merge           — merge a vault+gaps pair, write .merged.csv.gz',     value: 'merge'     },
-          { name: 'Fix (dry-run)   — scan and report, no output written',                value: 'fix-dry'   },
-          { name: 'Merge (dry-run) — smoke-test and report, no output written',          value: 'merge-dry' },
+          { name: 'Fix              — scan and repair a vault file, write .fixed.csv.gz', value: 'fix'       },
+          { name: 'Merge            — merge a vault+gaps pair, write .merged.csv.gz',     value: 'merge'     },
+          { name: 'Check            — verify gz integrity and recover corrupt files',      value: 'check'     },
+          { name: 'Fix (dry-run)    — scan and report, no output written',                value: 'fix-dry'   },
+          { name: 'Merge (dry-run)  — smoke-test and report, no output written',          value: 'merge-dry' },
+          { name: 'Check (dry-run)  — report corrupt files, no recovery',                 value: 'check-dry' },
         ],
         'Mode:',
       ) ?? 'fix';

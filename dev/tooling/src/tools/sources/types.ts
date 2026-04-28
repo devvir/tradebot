@@ -1,4 +1,4 @@
-export type RunMode = 'fix' | 'merge' | 'fix-dry' | 'merge-dry';
+export type RunMode = 'fix' | 'merge' | 'fix-dry' | 'merge-dry' | 'check' | 'check-dry';
 
 export interface TableConfig {
   /** Column name used as the canonical per-message timestamp. Null means use `_date_`. */

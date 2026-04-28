@@ -8,6 +8,7 @@ import { error } from '../shared/ui/logger';
  * Sub-commands:
  *   sources fix   [path] [--dry-run|-D] [--log <dir>]  — scan a single file; optionally write fixed output
  *   sources merge [path] [--dry-run|-D] [--log <dir>]  — merge a vault+gaps pair; optionally dry-run
+ *   sources check [path] [--dry-run|-D]                — verify gz integrity; recover corrupt files unless --dry-run
  *
  * Running `sources` with no sub-command drops into the interactive menu.
  * The `--log` flag lives only on the subcommands — declaring it on the
@@ -51,6 +52,19 @@ export function register(program: Command): void {
     .action(async (scopeArg: string | undefined, options: SourcesOpts) => {
       try {
         await run(scopeArg ?? null, options.dryRun ? 'merge-dry' : 'merge', options.log ?? null);
+      } catch (err) {
+        error((err as Error).message);
+        process.exit(1);
+      }
+    });
+
+  sources
+    .command('check [path]')
+    .description('Verify gz integrity of vault files; recover corrupt files unless --dry-run')
+    .option('-D, --dry-run', 'Report corrupt files only — do not run gzrecover')
+    .action(async (scopeArg: string | undefined, options: SourcesOpts) => {
+      try {
+        await run(scopeArg ?? null, options.dryRun ? 'check-dry' : 'check', null);
       } catch (err) {
         error((err as Error).message);
         process.exit(1);
