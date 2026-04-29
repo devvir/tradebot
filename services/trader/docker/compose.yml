@@ -1,4 +1,10 @@
-# Trader Service — Trading bot that places orders via the exchange WS/REST services
+# Trader Service — Trading bot orchestrator
+#
+# Connects to a BitMEX-compatible WS + REST endpoint and runs a strategy.
+# The same image works against our own ws/rest services or BitMEX directly:
+# only the URLs change. Every request is signed BitMEX-compatible (HMAC), and
+# our proxy forwards pre-signed requests verbatim — there is no logical branch
+# for "ours" vs "live" anywhere in the trader code.
 
 services:
   trader:
@@ -9,13 +15,21 @@ services:
         SERVICE_NAME: trader
 
     environment:
-      TRADER_WS_URL:           ${TRADER_WS_URL:-}
-      TRADER_REST_URL:         ${TRADER_REST_URL:-}
-      TRADER_ACCOUNT_ID:       ${TRADER_ACCOUNT_ID}
+      # Endpoints — default to our own ws/rest services on the shared network.
+      # Override in module .env to point at BitMEX directly.
+      TRADER_WS_URL:   ${TRADER_WS_URL:-ws://ws}
+      TRADER_REST_URL: ${TRADER_REST_URL:-http://rest}
+
+      # BitMEX api credentials (signing happens in-process)
+      TRADER_API_KEY:    ${TRADER_API_KEY}
+      TRADER_API_SECRET: ${TRADER_API_SECRET}
+
+      # Strategy
       TRADER_STRATEGY:         ${TRADER_STRATEGY:-range}
       TRADER_SYMBOL:           ${TRADER_SYMBOL:-XBTUSD}
       TRADER_TICK_INTERVAL_MS: ${TRADER_TICK_INTERVAL_MS:-30000}
 
+      # Runtime
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV:  ${APP_ENV:-prod}
       TZ:        ${TZ:-UTC}
@@ -24,6 +38,9 @@ services:
 
     volumes:
       - ../../../:/live
+
+    ports:
+      - :3000
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]

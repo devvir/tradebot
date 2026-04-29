@@ -2,6 +2,7 @@
  * Strategies module barrel
  */
 
-export { RangeStrategy } from './range';
-export { loadStrategy, STRATEGY_CONFIGS } from './config';
-export type { Strategy, PseudoOrder } from './types';
+export { BaseStrategy }                                from './strategy';
+export { RangeStrategy }                               from './range';
+export { loadStrategy, availableStrategies, STRATEGIES } from './registry';
+export type { Strategy, PseudoOrder, StrategyDefaults, StrategyEntry } from './types';

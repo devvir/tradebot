@@ -1,32 +1,33 @@
 import { logger, type Service } from '@devvir/service-kit';
 import SK from './service';
-import { DataCache, Connection, HttpRestClient } from './source';
+import { Connection, DataCache } from './source';
+import { HttpRestClient } from './rest';
 import { Orchestrator } from './core';
-import { loadStrategy, STRATEGY_CONFIGS } from './strategies';
-import type { Config } from './config';
+import { loadStrategy } from './strategies';
+import type { StrategyConfig } from './core';
+import type { Config } from './types';
 
 SK.run(async (service: Service) => {
   const config = service.config() as Config;
+  const creds  = { apiKey: config.apiKey, apiSecret: config.apiSecret };
 
-  const strategyConfig = STRATEGY_CONFIGS[config.strategy];
+  const { strategy, defaults } = loadStrategy(config.strategy);
 
-  if (! strategyConfig) {
-    throw new Error(`Unknown strategy: ${config.strategy}`);
-  }
+  const cfg: StrategyConfig = {
+    ...defaults,
+    symbol:         config.symbol,
+    tickIntervalMs: config.tickIntervalMs,
+  };
 
-  // Override symbol from env so it isn't hardcoded to the registry default
-  const activeConfig = { ...strategyConfig, symbol: config.symbol };
-
-  const cache       = new DataCache();
-  const connection  = new Connection({ wsUrl: config.wsUrl, restUrl: config.restUrl }, cache);
-  const restClient  = new HttpRestClient(config.restUrl, config.accountId);
+  const cache        = new DataCache();
+  const connection   = new Connection({ wsUrl: config.wsUrl }, creds, cache);
+  const restClient   = new HttpRestClient(config.restUrl, creds);
   const orchestrator = new Orchestrator(cache, restClient);
-  const strategy    = loadStrategy(config.strategy, config.symbol);
 
   await connection.connect();
-  await connection.subscribe(config.symbol, activeConfig.dependencies);
+  connection.subscribe(config.symbol, defaults.dependencies);
 
-  orchestrator.setStrategy(strategy, activeConfig);
+  orchestrator.setStrategy(strategy, cfg);
   await orchestrator.start();
 
   logger.info({ strategy: config.strategy, symbol: config.symbol }, 'Trader started');

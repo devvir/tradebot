@@ -1,15 +1,21 @@
-# Trade Module
+# Trade Module — runs the trader bot
 #
-# Infra: bouncer
+# Infra: none directly. Depends on a reachable BitMEX-compatible WS + REST
+# endpoint. The defaults point at the `ws` and `rest` services from the
+# `exchange/live` (or `exchange/replay`) module on the shared network, but
+# TRADER_WS_URL and TRADER_REST_URL can be set to BitMEX directly without
+# any code changes — every request is signed BitMEX-compatible.
 #
-# The executor service receives orders from clients and posts them to BitMEX via authenticated
-# websocket connections (keeps a connection pool for active clients).
+# Data flow (default deployment):
+#
+#   trader ──► ws   ──► broadcast/digger ──► ...     (market data)
+#   trader ──► rest ──► proxy ──► bouncer ──► BitMEX (orders)
 
 # Docker Compose Project (for all trading app modules)
 name: trade
 
 include:
-  - path: ../../../services/executor/docker/compose.yml
+  - path: ../../../services/trader/docker/compose.yml
 
 networks:
   default:

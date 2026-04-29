@@ -1,6 +1,9 @@
 ## API Dictionary
 https://support.bitmex.com/hc/en-gb/sections/6205576233885-API-Dictionary
 
+## Position Modes (Hedge mode, one-way, two-way positions)
+https://www.bitmex.com/app/positionModes
+
 ## Order Cost
 https://support.bitmex.com/hc/en-gb/articles/5932847366685-How-can-I-manually-calculate-what-the-Mark-Price-was-when-I-got-liquidated-on-Futures
 

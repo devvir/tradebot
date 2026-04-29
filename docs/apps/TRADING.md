@@ -1,111 +1,87 @@
 # Trading App
 
-Provides the services needed to run autonomous trading bots against a BitMEX-compatible exchange. A bot subscribes to market data, decides what orders it wants, and submits that intent to an executor that makes it real.
+Runs autonomous trading bots against a BitMEX-compatible exchange. A bot
+subscribes to market data on a WebSocket endpoint, decides what orders it
+wants on a fixed tick, and reconciles intent against the live order book
+via REST.
 
-## Design principle: separation of concerns
+## Design principle: one process, BitMEX-compatible
 
-Market analysis, order intent, order translation, and order execution are four distinct jobs. Each lives in its own service. No service knows about the concerns of the others.
+The trader is a single service. Strategy, planner, converge algorithm, REST
+client, and WS subscription all live in the same process. There is no
+intermediate queue, no inter-service HTTP, and no separate "executor".
 
-- **Signal** computes — it produces numbers from raw market data, no interpretation
-- **Trader** decides — it runs strategy logic and produces order intent
-- **Planner** translates — it converts strategy intent into fully-specified exchange-native orders
-- **Executor** executes — it reconciles desired vs live orders and fires the minimum REST calls
+Every request the trader makes — REST and WS — is signed BitMEX-compatible
+(HMAC-SHA256 of `verb + path + expires + body`). The same image works
+against our own `ws` / `rest` services or against BitMEX directly: only
+the URLs change. The proxy in front of our REST service forwards
+pre-signed requests verbatim, so there is no "ours vs live" branch
+anywhere in the trader code.
 
 ## Modules
 
 | Module | Description | Path |
 |---|---|---|
-| `trade` | Full trading pipeline: signal + trader + executor wired against the exchange app | [modules/trading/trade/](../../modules/trading/trade/) |
+| `trade` | Runs the trader bot. Connects to a BitMEX-compatible WS + REST endpoint. | [modules/trading/trade/](../../modules/trading/trade/) |
 
 ## Services
 
-| Service | Role |
-|---|---|
-| `signal` | Subscribes to public exchange WS, accumulates market state, publishes `MarketSnapshot` + `IndicatorUpdate` messages to RabbitMQ lazily (only for active consumer bindings) |
-| `trader` | Consumes signal output + private account WS, runs the active strategy, produces `DesiredState` via HTTP POST to executor on each tick |
-| `planner` | Translates strategy `OrderPlan` (relative prices, size expressions) into fully-specified `ExchangeOrderSpec` objects ready for submission. **Open question: service or in-process library within trader?** |
-| `executor` | Receives `DesiredState` via HTTP, tracks live orders via private WS (`bitmex-database`), runs converge algorithm, fires REST calls (amend → create → cancel) |
+| Service | Role | Docs |
+|---|---|---|
+| `trader` | Strategy orchestrator: subscribes to market data, runs a strategy each tick, reconciles desired vs live orders, fires signed REST calls. | [README](../../services/trader/README.md) · [TRADER.md](../services/TRADER.md) |
 
 ## External dependencies
 
-| Service | Role | Owned by |
-|---|---|---|
-| Exchange WS / REST | Market data and order execution | Exchange app or testnet directly |
-| RabbitMQ | Signal-to-trader message bus | Infrastructure |
-| **Bouncer** | Signs exchange auth requests on behalf of any service; never exposes secrets. Services request `{ apiKey, signature, expires }` for a given account at connection time — no service holds credentials directly. Supports account types: live, testnet, replay. | Shared across all apps |
-
-Bouncer is not part of the trading app. It is an independent service that any app can use when it needs authenticated exchange access.
+The trader needs a BitMEX-compatible WS + REST endpoint reachable on the
+shared network. In the default deployment this is provided by the
+[Exchange App](EXCHANGE.md), specifically its `ws` and `rest` services
+(reachable as `ws://ws` and `http://rest`). To run against BitMEX
+directly, set `TRADER_WS_URL=wss://www.bitmex.com/realtime` and
+`TRADER_REST_URL=https://www.bitmex.com` — no other change required.
 
 ## Data flow
 
 ```
-                           bouncer (auth)
-                          ╱      ╲      ╲
-                    signal    trader   executor
-                       │         │         │
-Exchange WS (public) ──┘         │         │
-                                 │         │
-Exchange WS (private: pos/mrgn) ─┘         │
-                                           │
-Exchange WS (private: order) ──────────────┘
-                                           │
-         signal ──[RabbitMQ]──► trader     │
-                                    │      │
-                         DesiredState (HTTP POST, X-Account header)
-                                    │      │
-                                    └─────►│
-                                       converge
-                                           │ REST calls
-                                           ▼
-                                    Exchange REST API
+                  ┌─ WS endpoint  ──► subscribe → cache ───┐
+                  │  (ws://ws or                            │ snapshot
+                  │   wss://www.bitmex.com/realtime)        │ each tick
+                  │                                         ▼
+        TRADER  ──┤                                   strategy.decide()
+                  │                                         │ orders
+                  │                                         ▼
+                  │                                   converge + apply
+                  │                                         │
+                  └─ REST endpoint ◄────── signed REST ─────┘
+                     (http://rest or
+                      https://www.bitmex.com)
 ```
 
-Each service calls bouncer once at WS connection setup (or reconnect). The `X-Account` header on Trader → Executor requests identifies which account's connection pool entry to use.
+The Exchange App handles the actual exchange-side complexity (forwarding
+to BitMEX, simulating in replay mode, broadcasting market data). The
+trader doesn't know or care which mode it's in.
 
-## Message interfaces
+## Strategies
 
-### DesiredState — Trader → Executor
+Strategies live under `services/trader/src/strategies/` and are registered
+in `registry.ts`. Each strategy declares its data dependencies (`quote`,
+`instrument`, etc.); the source layer translates these into BitMEX WS
+table subscriptions on connect.
 
-```typescript
-interface DesiredState {
-  symbol:    string;
-  tickSize:  number;          // needed by executor for amend threshold calculation
-  orders:    DesiredOrder[];  // fully-specified exchange-native specs
-  timestamp: string;
-}
+The bundled `range` strategy places one buy + one sell at ±1% from mid
+each tick. It exists to validate the end-to-end flow, not as a real
+trading strategy.
 
-interface DesiredOrder {
-  side:            'Buy' | 'Sell';
-  ordType:         'Limit' | 'Market' | 'Stop' | 'StopLimit' | 'MarketIfTouched' | 'LimitIfTouched' | 'Pegged';
-  orderQty?:       number;
-  price?:          number;
-  stopPx?:         number;
-  pegOffsetValue?: number;
-  pegPriceType?:   'TrailingStopPeg' | 'PrimaryPeg' | 'MarketPeg';
-  timeInForce?:    'GoodTillCancel' | 'ImmediateOrCancel' | 'FillOrKill' | 'Day';
-  execInst?:       string;    // comma-separated: 'ParticipateDoNotInitiate', 'ReduceOnly', 'Close', etc.
-}
-```
+## Authentication
 
-An empty `orders` array is valid — executor cancels all open orders it owns for that symbol.
+Every request — REST headers and WS connection URL — is signed using
+`TRADER_API_KEY` + `TRADER_API_SECRET` (BitMEX-compatible HMAC). No
+intermediate signing service is involved on the trader's request path.
+The Exchange App's proxy still relies on Bouncer when signing on
+behalf of unauthenticated callers, but the trader is always
+authenticated and bypasses that.
 
-### OrderPlan — Strategy → Planner (internal to Trader)
+## Configuration
 
-The strategy's expression of intent. Uses relative prices, size expressions, and high-level order type descriptions. The Planner resolves these into concrete `DesiredOrder` specs. Full vocabulary defined in [mental-model.html](../bot/mental-model.html) — Chapter 5.
-
-## Build order
-
-| Milestone | What gets built | Done when |
-|---|---|---|
-| M0 | Shared types in `shared/types` | Types compile, exported, documented |
-| M1 | Bouncer + Executor | Executor authenticates via bouncer; static DesiredState → correct REST calls on testnet |
-| M2 | Signal | Well-formed MarketSnapshot/IndicatorUpdate flow on queue |
-| M3 | Trader framework + market maker strategy | DesiredState with correct order layout flows to executor |
-| M4 | Integration | Orders appear on testnet matching strategy intent |
-| M5 | Exchange app wiring | Bot app works via exchange app instead of direct testnet |
-
-## Exchange abstraction
-
-All services connect to `WS_URL` and `REST_URL` environment variables. For M1–M4 these point directly to BitMEX testnet. For M5 and beyond they point to the exchange app's `ws` and `rest` services. No service code changes required — only env var changes.
-
-See [EXCHANGE.md](EXCHANGE.md) for the exchange app's WS and REST service details.
+See the [trade module README](../../modules/trading/trade/README.md) for
+the full env reference. The required values are `TRADER_API_KEY` and
+`TRADER_API_SECRET`; everything else has sensible defaults.

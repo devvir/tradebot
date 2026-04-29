@@ -2,23 +2,7 @@
  * Executor module types
  */
 
-import type { Order } from '../types';
 import type { OrderPlan } from '../planner/types';
-
-// ---- REST client interface --------------------------------------------
-
-export interface RestClient {
-  /** Create a new order; clOrdID tags it with tb_<symbol>_ prefix */
-  createOrder(order: OrderPlan, clOrdID: string): Promise<Order>;
-  /** Amend price and/or leavesQty. Returns null when the order is stale (404/not-found). */
-  amendOrder(orderID: string, amend: Omit<AmendOp, 'orderID'>): Promise<Order | null>;
-  /** Batch cancel one or more orders by ID */
-  cancelOrders(orderIDs: string[]): Promise<void>;
-  /** Fetch all open orders for the symbol (used to seed managed orders on startup) */
-  getOrders(symbol: string): Promise<Order[]>;
-}
-
-// ---- Converge types ---------------------------------------------------
 
 export interface AmendOp {
   orderID:    string;
@@ -37,16 +21,16 @@ export interface ConvergeResult {
   cancels: CancelOp[];
 }
 
-// ---- Apply result -----------------------------------------------------
-
 export interface ApplyResult {
-  created:      Order[];
-  amended:      Order[];
+  created:      import('../types').Order[];
+  amended:      import('../types').Order[];
   cancelledIds: string[];
-  summary: {
-    amends:       number;
-    creates:      number;
-    cancels:      number;
-    staleFallback: number;
-  };
+  summary:      ApplySummary;
+}
+
+export interface ApplySummary {
+  amends:        number;
+  creates:       number;
+  cancels:       number;
+  staleFallback: number;
 }

@@ -1,33 +1,44 @@
 /**
- * Core orchestrator: main loop that ties everything together.
+ * Trader orchestrator: the main loop that ties strategy, planner, and executor
+ * together against the live data cache.
  *
- * Tracks managed orders locally (seeded from REST on startup) so the converge
- * algorithm can produce a minimal changeset each tick without needing a private
- * WS subscription.
+ * Each tick:
+ *   1. Read the latest snapshot from the cache
+ *   2. Ask the strategy what orders it wants
+ *   3. Translate to fully-specified BitMEX orders (rounding, lot sizes)
+ *   4. Converge against the locally-tracked managed-orders list
+ *   5. Apply amend/create/cancel via REST and update the managed list
  *
- * clOrdID format: tb_<SYMBOL>_<6-digit-zero-padded-sequence>
- *   e.g. tb_XBTUSD_000001
+ * Tick scheduling: self-rescheduling. The next tick is queued only after the
+ * current one finishes, so a slow tick (REST retries) never overlaps with
+ * itself.
+ *
+ * clOrdID format: `tb_<SYMBOL>_<6-digit-zero-padded-sequence>`. The sequence
+ * is seeded from the highest existing managed order on startup so a quick
+ * restart can't reuse an ID that's still resting on the book.
  */
 
 import { logger } from '@devvir/service-kit';
 import type { Order } from '../types';
 import type { Strategy } from '../strategies';
 import type { DataCache } from '../source';
-import type { RestClient } from '../executor';
+import type { RestClient } from '../rest';
 import { converge, filterActiveOrders, applyConvergeResult } from '../executor';
-import type { ApplyContext, ApplyResult } from '../executor';
+import type { ApplyContext } from '../executor';
 import { translateOrders } from '../planner';
 import type { StrategyConfig } from './types';
+import { applyToOrderList, buildClOrdID, seedSequence } from './managed-orders';
 
 export class Orchestrator {
+  private readonly cache:      DataCache;
+  private readonly restClient: RestClient;
+
   private strategy:      Strategy | null = null;
   private config:        StrategyConfig | null = null;
-  private cache:         DataCache;
-  private restClient:    RestClient;
-  private running =      false;
-  private loopInterval:  NodeJS.Timeout | null = null;
   private managedOrders: Order[] = [];
   private orderSeq =     0;
+  private running =      false;
+  private tickTimer:     NodeJS.Timeout | null = null;
 
   constructor(cache: DataCache, restClient: RestClient) {
     this.cache      = cache;
@@ -44,33 +55,19 @@ export class Orchestrator {
       throw new Error('Strategy not set — call setStrategy() before start()');
     }
 
-    // Seed managed orders from the exchange so we don't orphan orders on restart
-    try {
-      const existing = await this.restClient.getOrders(this.config.symbol);
-
-      this.managedOrders = filterActiveOrders(existing, this.config.symbol);
-
-      logger.info({ count: this.managedOrders.length }, 'Seeded managed orders from REST');
-    } catch (err) {
-      logger.warn({ err }, 'Failed to seed managed orders — starting empty');
-    }
+    await this.seedManagedOrders();
 
     this.running = true;
-
-    this.loopInterval = setInterval(() => {
-      this.tick().catch((err: unknown) => logger.error({ err }, 'Orchestrator tick error'));
-    }, this.config.tickIntervalMs);
-
-    // First tick immediately so we don't wait a full interval on startup
     await this.tick();
+    this.scheduleNextTick();
   }
 
   async stop(): Promise<void> {
     this.running = false;
 
-    if (this.loopInterval) {
-      clearInterval(this.loopInterval);
-      this.loopInterval = null;
+    if (this.tickTimer) {
+      clearTimeout(this.tickTimer);
+      this.tickTimer = null;
     }
   }
 
@@ -80,69 +77,71 @@ export class Orchestrator {
 
   // ---- Private -----------------------------------------------------------
 
-  private nextClOrdID(): string {
-    this.orderSeq += 1;
+  private async seedManagedOrders(): Promise<void> {
+    const symbol = this.config!.symbol;
 
-    return `tb_${this.config!.symbol}_${String(this.orderSeq).padStart(6, '0')}`;
+    try {
+      const existing = await this.restClient.getOrders(symbol);
+
+      this.managedOrders = filterActiveOrders(existing, symbol);
+      this.orderSeq      = seedSequence(this.managedOrders, symbol);
+
+      logger.info({ count: this.managedOrders.length, orderSeq: this.orderSeq }, 'Seeded managed orders from REST');
+    } catch (err) {
+      logger.warn({ err }, 'Failed to seed managed orders — starting empty');
+      this.managedOrders = [];
+      this.orderSeq      = 0;
+    }
+  }
+
+  private nextClOrdID(): string {
+    const next = buildClOrdID(this.config!.symbol, this.orderSeq);
+
+    this.orderSeq = next.seq;
+
+    return next.id;
+  }
+
+  private scheduleNextTick(): void {
+    if (! this.running) return;
+
+    this.tickTimer = setTimeout(() => {
+      this.tick()
+        .catch((err: unknown) => logger.error({ err }, 'Orchestrator tick error'))
+        .finally(() => this.scheduleNextTick());
+    }, this.config!.tickIntervalMs);
   }
 
   private async tick(): Promise<void> {
-    if (! this.strategy || ! this.config) {
+    if (! this.strategy || ! this.config) return;
+
+    const symbol  = this.config.symbol;
+    const data    = this.cache.getAll();
+    const pseudo  = this.strategy.decide(data);
+    const planned = translateOrders(pseudo, symbol, data.instrument);
+    const live    = filterActiveOrders(this.managedOrders, symbol);
+    const result  = converge(planned, live, this.config.amendThreshold ?? 0);
+
+    if (result.amends.length === 0 && result.creates.length === 0 && result.cancels.length === 0) {
       return;
     }
 
-    try {
-      const data    = this.cache.getAll();
-      const pseudo  = this.strategy.decide(data);
-      const planned = translateOrders(pseudo, this.config.symbol, data.instrument);
-      const live    = filterActiveOrders(this.managedOrders, this.config.symbol);
-      const result  = converge(planned, live, this.config.amendThreshold ?? 0);
+    // Pre-allocate clOrdIDs for all creates so positional matching is stable
+    const creates = result.creates.map((c) => ({
+      order:   c.order,
+      clOrdID: this.nextClOrdID(),
+    }));
 
-      if (result.amends.length === 0 && result.creates.length === 0 && result.cancels.length === 0) {
-        return;
-      }
+    const ctx: ApplyContext = {
+      desired:     planned,
+      live,
+      nextClOrdID: () => this.nextClOrdID(),
+    };
 
-      // Assign clOrdIDs to all creates upfront (before any async calls)
-      const creates = result.creates.map((c) => ({
-        order:   c.order,
-        clOrdID: this.nextClOrdID(),
-      }));
+    const applied = await applyConvergeResult(result, creates, this.restClient, ctx);
 
-      const ctx: ApplyContext = {
-        desired:     planned,
-        live,
-        nextClOrdID: () => this.nextClOrdID(),
-      };
+    this.managedOrders = applyToOrderList(this.managedOrders, applied);
 
-      const applied = await applyConvergeResult(result, creates, this.restClient, ctx);
-
-      this.managedOrders = applyToOrderList(this.managedOrders, applied);
-
-      logger.info(applied.summary, 'Execution complete');
-    } catch (err) {
-      logger.error({ err }, 'Orchestrator tick error');
-    }
+    logger.info(applied.summary, 'Execution complete');
   }
-}
-
-/** Update the managed order list from a completed apply result. */
-function applyToOrderList(current: Order[], applied: ApplyResult): Order[] {
-  let orders = [...current];
-
-  // Add newly created orders
-  for (const order of applied.created) {
-    orders.push(order);
-  }
-
-  // Replace amended orders with the updated version returned by the exchange
-  for (const order of applied.amended) {
-    orders = orders.map((o) => (o.orderID === order.orderID ? order : o));
-  }
-
-  // Remove cancelled (and stale-fallback) orders
-  const cancelledSet = new Set(applied.cancelledIds);
-
-  orders = orders.filter((o) => ! cancelledSet.has(o.orderID));
-
-  return orders;
 }

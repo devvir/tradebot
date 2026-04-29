@@ -2,13 +2,12 @@
  * Core module types
  */
 
-import type { DataDependency } from '../types';
+import type { StrategyDefaults } from '../strategies/types';
 
-export interface StrategyConfig {
-  name:            string;
-  symbol:          string;
-  dependencies:    DataDependency[];
-  tickIntervalMs:  number;
-  /** Absolute price delta below which no amend is issued. Default: 0 (amend on any change). */
-  amendThreshold?: number;
+/**
+ * Runtime strategy configuration: registry defaults + the symbol to trade.
+ * Built by `index.ts` from the chosen strategy entry and the env-supplied symbol.
+ */
+export interface StrategyConfig extends StrategyDefaults {
+  symbol: string;
 }
