@@ -1,0 +1,27 @@
+{
+  "name": "@tradebot/teller",
+  "version": "1.0.0",
+  "description": "Private-exchange mock for the replay module — order management, fills, positions, and margin per training account",
+  "main": "dist/index.js",
+  "private": true,
+  "scripts": {
+    "build": "tsc -b",
+    "start": "node dist/src/index.js",
+    "dev": "ts-node src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@devvir/service-kit": "workspace:*",
+    "@tradebot/types": "workspace:*",
+    "@tradebot/utils": "workspace:*",
+    "express": "^5.2.1",
+    "mongodb": "^7.1.0",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/uuid": "^10.0.0"
+  }
+}
