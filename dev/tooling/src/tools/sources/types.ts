@@ -47,16 +47,27 @@ export interface Message {
   timestamp: string;
 }
 
-export interface FilePair {
-  basePath: string;
-  gapsPath: string | null;
+export interface SourceFile {
+  basePath:  string;
+  tableName: string;
+}
+
+export interface FileGroup {
+  /** YYYYMMDD day key. */
+  day: string;
+  /** Input file paths sorted alphabetically — sort order determines priority (first = highest). */
+  paths: string[];
+  /** Output path: <folder>/YYYYMMDD.merged.csv.gz */
   outputPath: string;
+  /** Table name derived from the containing folder path. */
   tableName: string;
 }
 
 export interface MergeResult {
   written: number;
   warnings: string[];
+  /** Lines written per source, indexed in the same order as the input paths. */
+  sourceCounts: number[];
 }
 
 export interface RunOptions {

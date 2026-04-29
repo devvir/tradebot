@@ -5,7 +5,7 @@ import { getTableConfig, getVaultColumns } from '../config';
 import { buildHeader } from '../headers';
 import { readFirstLine } from '../reader';
 import { createGzipWriter, createNullWriter, type Writer } from '../writer';
-import type { Header, FilePair } from '../types';
+import type { Header, SourceFile } from '../types';
 import type { FileCheck, MessageCheck, CheckContext } from '../checks/types';
 import { createIssueSummary, addToSummary, mergeSummaries } from '../checks/types';
 import { headerCheck, midStreamHeaderCheck } from '../checks/header';
@@ -18,7 +18,7 @@ import { reportIssues } from './report';
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 export async function runDiagnose(
-  pairs:    FilePair[],
+  pairs:    SourceFile[],
   isDryRun: boolean,
   logDir:   string | null,
 ): Promise<void> {
@@ -29,7 +29,14 @@ export async function runDiagnose(
 
 // ── Per-file orchestration ────────────────────────────────────────────────────
 
-async function diagnoseFile(pair: FilePair, isDryRun: boolean, logDir: string | null): Promise<void> {
+async function diagnoseFile(pair: SourceFile, isDryRun: boolean, logDir: string | null): Promise<void> {
+  const outputPath = fixedOutputPath(pair.basePath);
+
+  if (fs.existsSync(outputPath)) {
+    info(`Skipped (already fixed): ${pair.basePath}`);
+    return;
+  }
+
   const label = path.relative(process.cwd(), pair.basePath);
 
   section(label);
@@ -82,19 +89,14 @@ async function diagnoseFile(pair: FilePair, isDryRun: boolean, logDir: string | 
   }
 
   // Decide whether to write output.
-  const outputPath  = fixedOutputPath(pair.basePath);
-  const outputBlock = (! isDryRun) && fs.existsSync(outputPath);
-  const willWrite   = (! isDryRun) && ctx.header !== null && ! outputBlock;
+  const fixedPath = fixedOutputPath(pair.basePath);
+  const willWrite = (! isDryRun) && ctx.header !== null;
 
   if ((! isDryRun) && ctx.header === null) {
     warn('Cannot write fixed output: no valid header was recovered (source header malformed and table unknown to vault).');
   }
 
-  if (outputBlock) {
-    warn(`Output already exists: ${outputPath} — delete it first.`);
-  }
-
-  const writer: Writer = willWrite ? createGzipWriter(outputPath) : createNullWriter();
+  const writer: Writer = willWrite ? createGzipWriter(fixedPath) : createNullWriter();
 
   if (willWrite && ctx.header) {
     writer.writeHeader(ctx.header);
@@ -105,7 +107,7 @@ async function diagnoseFile(pair: FilePair, isDryRun: boolean, logDir: string | 
 
   if (willWrite) {
     await writer.close();
-    success(`Written: ${outputPath}`);
+    success(`Written: ${fixedPath}`);
   }
 
   const allIssues = mergeSummaries(prePassSummary, result.summary);

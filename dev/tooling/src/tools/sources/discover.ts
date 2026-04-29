@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { FilePair } from './types.js';
+import type { SourceFile } from './types.js';
 
-const WS_FILE_PATTERN = /\/(announcement|chat|connected|instrument|liquidation|orderBookL2|publicNotifications)\/\d{4}\/[^/]+\.csv\.gz$/;
+const WS_FILE_PATTERN    = /\/(announcement|chat|connected|instrument|liquidation|orderBookL2|publicNotifications)\/\d{4}\/[^/]+\.csv\.gz$/;
+const TABLE_NAME_PATTERN = /\/(announcement|chat|connected|instrument|liquidation|orderBookL2|publicNotifications)\/\d{4}\//;
 
 /**
  * Derive the gaps root directory from the vault root directory.
@@ -23,16 +24,9 @@ export function gapsDirFromVaultDir(vaultDir: string): string {
 }
 
 /**
- * Recursively collect all .csv and .csv.gz files under a directory,
+ * Recursively collect all .csv.gz files under a directory,
  * optionally filtered by a relative scope path.
  *
- * Scope may be:
- *  - empty / null         → entire directory
- *  - "instrument"         → only files under that table sub-directory
- *  - "instrument/2026"    → only files under that year sub-directory
- *  - "instrument/2026/20261102.csv.gz" → exactly that file
- */
-/**
  * Scope supports partial matching:
  *  - "instrument"                    → all files under instrument/
  *  - "instrument/2026"              → all files under instrument/2026/
@@ -59,7 +53,7 @@ export function collectFiles(rootDir: string, scope: string | null): string[] {
 
   // Partial filename match: scope is a prefix within its parent directory
   const parentDir = path.join(rootDir, path.dirname(scope));
-  const prefix = path.basename(scope);
+  const prefix    = path.basename(scope);
 
   if (! fs.existsSync(parentDir) || ! fs.statSync(parentDir).isDirectory()) {
     return [];
@@ -68,50 +62,20 @@ export function collectFiles(rootDir: string, scope: string | null): string[] {
   return walkDir(parentDir).filter(f => path.basename(f).startsWith(prefix));
 }
 
-/**
- * Build FilePair objects by pairing each gaps file with its vault counterpart.
- *
- * - Gaps files that have no matching vault file are skipped (returns null in
- *   the corresponding slot — callers filter these out and warn).
- * - Output path is always in the vault directory, with the extension
- *   replaced by .merged.csv.gz.
- */
-export function buildFilePairs(
-  vaultDir: string,
-  gapsDir: string,
-  gapsFiles: string[],
-): Array<FilePair | null> {
-  return gapsFiles.map(gapsPath => {
-    const rel = path.relative(gapsDir, gapsPath);
-    const vaultPath = resolveVaultPath(vaultDir, rel);
-
-    if (! vaultPath) {
-      return null;
-    }
-
-    const tableName = rel.split(path.sep)[0] ?? 'unknown';
-    const outputPath = buildOutputPath(vaultDir, rel);
-
-    return { basePath: vaultPath, gapsPath, outputPath, tableName };
-  });
-}
-
-/**
- * Build a FilePair for a single vault file (no gaps counterpart).
- * Used when a scope is given and no gaps file is required.
- */
-export function buildSingleFilePair(
-  vaultDir: string,
-  vaultPath: string,
-): FilePair {
-  const rel = path.relative(vaultDir, vaultPath);
-  const tableName = rel.split(path.sep)[0] ?? 'unknown';
-  const outputPath = buildOutputPath(vaultDir, rel);
-
-  return { basePath: vaultPath, gapsPath: null, outputPath, tableName };
+/** Build a SourceFile descriptor from an absolute vault file path. */
+export function buildSourceFile(vaultPath: string): SourceFile {
+  return {
+    basePath:  vaultPath,
+    tableName: tableNameFromPath(vaultPath),
+  };
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
+
+/** Extract the table name from an absolute file path. Falls back to 'unknown'. */
+function tableNameFromPath(filePath: string): string {
+  return TABLE_NAME_PATTERN.exec(filePath)?.[1] ?? 'unknown';
+}
 
 function walkDir(dir: string): string[] {
   const results: string[] = [];
@@ -130,21 +94,5 @@ function walkDir(dir: string): string[] {
 }
 
 function isSupportedFile(filePath: string): boolean {
-  return WS_FILE_PATTERN.test(filePath);
-}
-
-/** Find a vault file matching a relative path, trying .csv.gz then .csv. */
-function resolveVaultPath(vaultDir: string, rel: string): string | null {
-  const candidate = path.join(vaultDir, stripExtension(rel) + '.csv.gz');
-
-  return fs.existsSync(candidate) ? candidate : null;
-}
-
-function stripExtension(filePath: string): string {
-  return filePath.endsWith('.csv.gz') ? filePath.slice(0, -'.csv.gz'.length) : filePath;
-}
-
-function buildOutputPath(vaultDir: string, rel: string): string {
-  const withoutExt = stripExtension(rel);
-  return path.join(vaultDir, withoutExt + '.merged.csv.gz');
+  return WS_FILE_PATTERN.test(filePath) && ! path.basename(filePath).includes('.fixed.');
 }

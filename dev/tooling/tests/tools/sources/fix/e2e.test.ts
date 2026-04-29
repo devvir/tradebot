@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { runDiagnose } from '../../../../src/tools/sources/fix/run';
-import type { FilePair } from '../../../../src/tools/sources/types';
+import type { SourceFile } from '../../../../src/tools/sources/types';
 
 // ── Test harness ──────────────────────────────────────────────────────────────
 
@@ -80,14 +80,9 @@ function smallRow(date: string, action: string, id: number, title: string, conte
   return `${date},${action},${id},${title},${content}`;
 }
 
-/** Build a FilePair for a synthetic vault file. */
-function makePair(filePath: string, tableName: string): FilePair {
-  return {
-    basePath:   filePath,
-    gapsPath:   null,
-    outputPath: filePath.replace(/\.csv\.gz$/, '.fixed.csv.gz'),
-    tableName,
-  };
+/** Build a SourceFile descriptor for a synthetic vault file. */
+function makePair(filePath: string, tableName: string): SourceFile {
+  return { basePath: filePath, tableName };
 }
 
 /** The output path `runDiagnose` writes to (matches `fixedOutputPath`). */

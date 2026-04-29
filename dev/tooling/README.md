@@ -593,19 +593,19 @@ The tooling package loads environment variables in this order (later overrides e
 
 ## Sources Tool (`sources`)
 
-Sanitise and merge vault source data. Two subcommands: `fix` scans and repairs individual vault files; `merge` joins a vault+gaps file pair into a single output.
+Sanitise and merge vault source data. Two subcommands: `fix` scans and repairs individual vault files; `merge` performs an N-way merge of all `.csv.gz` files in a single folder, grouped by day.
 
 ### Usage
 
 ```bash
 ./tools sources fix   [path] [-D] [--log <dir>]
-./tools sources merge [path] [-D] [--log <dir>]
+./tools sources merge [path] [-D] [--log <dir>] [--from <date>]
 ./tools sources                        # interactive menu
 ```
 
 ### Path argument
 
-Accepted forms (same for both subcommands):
+For `fix` and `check`, the path argument scopes which vault files to process:
 
 | Form | Meaning |
 |------|---------|
@@ -616,10 +616,14 @@ Accepted forms (same for both subcommands):
 | `/abs/path` | Override vault dir; no filter |
 | `/abs/path:filter` | Override vault dir + relative filter |
 
+For `merge`, the path argument is a **single folder** to operate on. All `.csv.gz` files in that folder are grouped by their `YYYYMMDD` prefix and merged. The path defaults to `VAULT_DATA_DIR` if omitted; it may also be an absolute path.
+
 ### Options
 
-- `-D, --dry-run` — Scan and report only; no output written
-- `--log <dir>` — Write a `.log` file per task into this directory (one log per file or pair)
+- `-D, --dry-run` — Report what would be done without writing any output
+- `-y, --yes` — (`merge` only) Accept all merge confirmations without prompting — useful for cron jobs
+- `--log <dir>` — Write a `.log` file per task into this directory
+- `--from <date>` — (`merge` only) Skip all days strictly before this date. Accepts `YYYYMMDD` or `YYYY-MM-DD`. Filtered-out days are silently omitted from the plan — they do not appear as singletons, already-merged, or to-merge.
 
 ---
 
@@ -663,42 +667,64 @@ After filtering duplicates and mid-stream headers, remaining messages are **sort
 
 ### `sources merge`
 
-Merges a vault+gaps file pair into a single `.merged.csv.gz` output.
+Performs an N-way merge of all `.csv.gz` files in a single flat folder, grouped by their `YYYYMMDD` prefix. Each group produces a `YYYYMMDD.merged.csv.gz` output.
 
-- Requires both files (vault and gaps counterpart). Files without a pair are **skipped with a warning** — not an error.
-- Pre-validates that each file's first line starts with `_date_,`. If not, it fails and tells you to run `fix` first.
-- **Large tables** (`orderBookL2`, `instrument`): streaming two-pointer walk ordered by per-message `timestamp`, with deduplication in the overlap window.
-- **Small tables** (all others): load both files fully, deduplicate by content-hash, sort by receive time.
+**Naming convention for priority**: files within a group are sorted by the part of the basename *before* `.csv.gz`, so the primary file (`YYYYMMDD.csv.gz`) always leads any sibling that carries an extra infix between the date and the extension (e.g. `YYYYMMDD.csv.gz` precedes `YYYYMMDD.a.csv.gz`, and `.gap.1` precedes `.gap.2`). Name files accordingly to set source priority — the primary file is always highest priority.
+
+**Per-group behaviour**:
+- Groups with a single file are skipped — nothing to merge.
+- Groups that already contain `YYYYMMDD.merged.csv.gz` are skipped — delete it first to re-merge.
+- Groups with 2+ files are merged in a single streaming N-way walk ordered by the canonical timestamp (`timestamp` column for large tables, `_date_` for all others).
+
+**One source per timestamp, partials take precedence**: at each step the minimum canonical timestamp across all stream heads is found. Exactly one source contributes data at that timestamp:
+- For tables with a `timestamp` column, if any source has a `partial` at that timestamp, the lowest-index such source wins (partials are full state snapshots — preferred over deltas that may have started mid-stream).
+- Otherwise the highest-priority source (lowest alphabetical index) at that timestamp wins.
+
+All of the winner's messages at that timestamp are written; every other source's messages at the same timestamp are dropped — even if a non-winner happens to hold a partial there. This fills gaps cleanly: if source A is missing a period, source B provides it. Content is never compared — same-timestamp messages in non-winner sources are always skipped. The atom is the **WS message**, which may span multiple CSV rows (e.g. `partial` snapshots where only the first row has `_date_`); the whole message is written or skipped together.
+
+**Crash safety**: each group is written to `YYYYMMDD.merged.csv.gz.tmp` first and renamed on success. On startup, any leftover `.tmp` files from a previous interrupted run are deleted.
+
+**Dry-run** (`-D`) reports the full plan without writing anything:
+- Which `.tmp` crash files would be deleted
+- Which days are already merged (skipped)
+- Which days have only one file (skipped)
+- Which days would be merged, and from which files
 
 ```bash
-# Dry-run merge: analyse and report, no output
-./tools sources merge instrument -D
+# Dry-run: show plan without writing anything
+./tools sources merge /data/bitmex/vault/orderBookL2/2025 -D
 
-# Merge all paired files, write logs
-./tools sources merge --log /tmp/merge-logs
+# Merge all days in a folder — prompts Y/n/a per group (default: Y)
+./tools sources merge /data/bitmex/vault/orderBookL2/2025
 
-# Merge a specific year
-./tools sources merge trade/2025
+# Merge all tables under a root folder — accepts all without prompting
+./tools sources merge /data/bitmex/fixed -y
+
+# Merge only today across all tables (daily cron)
+./tools sources merge /data/bitmex/fixed --from 20260430 -y
+
+# Merge with log output
+./tools sources merge /data/bitmex/vault/trade/2025 --log /tmp/merge-logs -y
 ```
 
 ---
 
 ### Interactive menu
 
-Running `./tools sources` with no subcommand launches an interactive prompt for scope and mode:
+Running `./tools sources` with no subcommand launches an interactive prompt for path and mode:
 
 ```
 Fix           — scan, fix duplicates/order, write .fixed.csv.gz
-Merge         — merge vault+gaps pair into .merged.csv.gz
+Merge         — N-way merge all .csv.gz files in folder by day
 Fix (dry-run) — scan and report issues, no output written
-Merge (dry)   — smoke-test and report, no output written
+Merge (dry)   — report what would be merged, no output written
 ```
 
 ---
 
 ### Configuration
 
-- `VAULT_DATA_DIR` — Root directory of vault files (default: `/data/bitmex/vault`). Required unless an absolute path is passed directly.
+- `VAULT_DATA_DIR` — Root directory of vault files (default: `/data/bitmex/vault`). Used as the default path for all subcommands when no path argument is provided.
 
 ---
 

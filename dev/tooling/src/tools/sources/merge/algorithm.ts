@@ -1,163 +1,135 @@
-import crypto from 'node:crypto';
 import type { Message, MergeResult } from '../types';
 
-/** Divergences that resolve within this window trigger a short-gap warning. */
-const SHORT_GAP_THRESHOLD_MS = 1000;
-
 /**
- * Merge two ordered streams of Messages using a two-pointer walk on the
- * canonical timestamp field.
+ * Merge N ordered streams of Messages using an N-way walk on the canonical
+ * timestamp field.
  *
  * The canonical field is `timestamp` when `timestampCol` is set and the value
- * is present; otherwise `_date_`.
+ * is present in the message; otherwise `_date_`.
  *
- * Deduplication: a global `seen` set of content hashes ensures that any
- * message whose hash was already written is skipped, regardless of which file
- * it came from or what its canonical timestamp is. `_date_` is excluded from
- * the hash — it is local capture metadata, not part of the message content.
+ * Algorithm — one-source-per-timestamp, partials take precedence:
+ *   1. Find the minimum canonical timestamp `minTs` across all stream heads.
+ *   2. Pick the winner stream:
+ *      - When `timestampCol` is set and any head at `minTs` is a `partial`,
+ *        the lowest-index such stream wins (partials are the full source of
+ *        truth — preferred over deltas that may have started mid-stream).
+ *      - Otherwise the lowest-index stream at `minTs` wins (alphabetical
+ *        priority).
+ *   3. Write every message from the winner at `minTs`.
+ *   4. Advance every other stream past `minTs`, discarding those messages —
+ *      even if a non-winner happens to hold a partial there.
  *
- * Note on partials: partial messages are deduplicated by the same hash rule as
- * any other message. For tables with empty or fixed-content partials (e.g.
- * `connected`, most announcement-style tables), all but one occurrence will be
- * dropped. This is a deliberate trade-off: those partials carry no unique
- * content, so retaining duplicates adds noise without signal. The accepted
- * limitation is that we lose the ability to count reconnection events for those
- * tables.
+ * Exactly one source contributes data at any given canonical timestamp. This
+ * fills gaps cleanly: if source A is missing ts=T, source B (the next in
+ * priority) provides it. Content is never compared — same-timestamp messages
+ * in non-winner sources are always skipped, which is correct because gaps are
+ * coarse (seconds to minutes), not sub-millisecond.
  *
- * Throws if either file's canonical timestamps go backwards (corrupt timeline).
- * Warns if a divergence resolves in less than SHORT_GAP_THRESHOLD_MS.
+ * Assumes each source is already sorted by canonical timestamp (post `fix`).
+ * Throws if any stream's canonical timestamps go backwards.
  */
 export async function mergeTable(
-  aMessages:  AsyncIterable<Message>,
-  bMessages:  AsyncIterable<Message>,
-  write:      (msg: Message) => Promise<void>,
-  options:    { timestampCol: string | null; fileLabels?: { a: string; b: string } },
+  streams:  AsyncIterable<Message>[],
+  write:    (msg: Message) => Promise<void>,
+  options:  { timestampCol: string | null; fileLabels?: string[] },
 ): Promise<MergeResult> {
-  const { timestampCol, fileLabels = { a: 'base', b: 'gaps' } } = options;
+  const { timestampCol, fileLabels = [] } = options;
+
+  const labelFor = (i: number): string => fileLabels[i] ?? `stream-${i}`;
 
   const getCanonical = (msg: Message): string =>
     timestampCol && msg.timestamp ? msg.timestamp : msg.date;
 
-  const warnings: string[] = [];
   let written = 0;
+  const sourceCounts = new Array<number>(streams.length).fill(0);
 
-  /** Global dedup set — hashes of all messages written so far. */
-  const seen = new Set<string>();
+  // ── Initialise one iterator per stream ─────────────────────────────────────
 
-  const writeIfNew = async (msg: Message): Promise<void> => {
-    const key = messageKey(msg);
+  const iterators = streams.map(s => s[Symbol.asyncIterator]());
+  const heads: Array<{ msg: Message; ts: string } | null> = [];
+  const lastTs: string[] = new Array(streams.length).fill('');
 
-    if (seen.has(key)) {
-      return;
-    }
+  for (const iter of iterators) {
+    const next = await iter.next();
+    heads.push(next.done ? null : { msg: next.value, ts: getCanonical(next.value) });
+  }
 
-    seen.add(key);
-    await write(msg);
-    written++;
+  const advance = async (i: number): Promise<void> => {
+    const next = await iterators[i].next();
+    heads[i] = next.done ? null : { msg: next.value, ts: getCanonical(next.value) };
   };
 
-  const aIter = aMessages[Symbol.asyncIterator]();
-  const bIter = bMessages[Symbol.asyncIterator]();
+  // ── N-way walk ─────────────────────────────────────────────────────────────
 
-  let aNext = await aIter.next();
-  let bNext = await bIter.next();
+  while (true) {
+    // Find the minimum canonical timestamp across all active heads.
+    let minTs: string | null = null;
 
-  let lastATs = '';
-  let lastBTs = '';
+    for (const head of heads) {
+      if (head !== null && (minTs === null || head.ts < minTs)) {
+        minTs = head.ts;
+      }
+    }
 
-  /** Timestamp at which the current divergence began; null when in sync. */
-  let gapStart: string | null = null;
+    if (minTs === null) {
+      break; // all streams exhausted
+    }
 
-  // ── Main two-pointer loop ───────────────────────────────────────────────────
+    // Pick the winner. Partials take precedence over alphabetical order, but
+    // only when the canonical field is `timestamp` — small tables (canonical
+    // = `_date_`) follow plain first-source-wins. Source order is the
+    // tiebreaker among heads of the same kind.
+    let winnerIdx = -1;
 
-  while (! aNext.done && ! bNext.done) {
-    const aTs = getCanonical(aNext.value);
-    const bTs = getCanonical(bNext.value);
+    if (timestampCol) {
+      for (let i = 0; i < heads.length; i++) {
+        if (heads[i] !== null && heads[i]!.ts === minTs && heads[i]!.msg.action === 'partial') {
+          winnerIdx = i;
+          break;
+        }
+      }
+    }
 
-    checkMonotonicity(aTs, lastATs, fileLabels.a);
-    checkMonotonicity(bTs, lastBTs, fileLabels.b);
+    if (winnerIdx === -1) {
+      for (let i = 0; i < heads.length; i++) {
+        if (heads[i] !== null && heads[i]!.ts === minTs) {
+          winnerIdx = i;
+          break;
+        }
+      }
+    }
 
-    if (aTs === bTs) {
-      if (gapStart !== null) {
-        recordGapWarning(gapStart, aTs, warnings);
-        gapStart = null;
+    // Write all winner messages at minTs.
+    while (heads[winnerIdx] !== null && heads[winnerIdx]!.ts === minTs) {
+      const { msg, ts } = heads[winnerIdx]!;
+
+      checkMonotonicity(ts, lastTs[winnerIdx]!, labelFor(winnerIdx));
+      await write(msg);
+      written++;
+      sourceCounts[winnerIdx]++;
+      lastTs[winnerIdx] = ts;
+      await advance(winnerIdx);
+    }
+
+    // Advance all non-winner streams past minTs — their messages at this
+    // timestamp are owned by the winner.
+    for (let i = 0; i < heads.length; i++) {
+      if (i === winnerIdx) {
+        continue;
       }
 
-      await writeIfNew(aNext.value);
-      lastATs = aTs;
-      aNext = await aIter.next();
-
-      await writeIfNew(bNext.value);
-      lastBTs = bTs;
-      bNext = await bIter.next();
-    } else if (aTs < bTs) {
-      if (gapStart === null) {
-        gapStart = aTs;
+      while (heads[i] !== null && heads[i]!.ts === minTs) {
+        checkMonotonicity(heads[i]!.ts, lastTs[i]!, labelFor(i));
+        lastTs[i] = heads[i]!.ts;
+        await advance(i);
       }
-
-      await writeIfNew(aNext.value);
-      lastATs = aTs;
-      aNext = await aIter.next();
-    } else {
-      if (gapStart === null) {
-        gapStart = bTs;
-      }
-
-      await writeIfNew(bNext.value);
-      lastBTs = bTs;
-      bNext = await bIter.next();
     }
   }
 
-  // ── Drain remaining A messages ──────────────────────────────────────────────
-
-  while (! aNext.done) {
-    const aTs = getCanonical(aNext.value);
-
-    checkMonotonicity(aTs, lastATs, fileLabels.a);
-    await writeIfNew(aNext.value);
-    lastATs = aTs;
-    aNext = await aIter.next();
-  }
-
-  // ── Drain remaining B messages ──────────────────────────────────────────────
-
-  while (! bNext.done) {
-    const bTs = getCanonical(bNext.value);
-
-    checkMonotonicity(bTs, lastBTs, fileLabels.b);
-    await writeIfNew(bNext.value);
-    lastBTs = bTs;
-    bNext = await bIter.next();
-  }
-
-  return { written, warnings };
+  return { written, warnings: [], sourceCounts };
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
-
-/**
- * Stable deduplication key for a message.
- * Key = "<action>|<sha256 over all rows with _date_ blanked>".
- *
- * `_date_` is blanked because it is a local capture timestamp that differs
- * between sources for the same underlying event. All other fields are hashed
- * in column-insertion order, which is stable across sources for the same table.
- */
-function messageKey(msg: Message): string {
-  const hash = crypto.createHash('sha256');
-
-  for (const row of msg.rows) {
-    for (const [col, val] of Object.entries(row)) {
-      hash.update(col === '_date_' ? '' : (val ?? ''));
-      hash.update('\x1f');
-    }
-
-    hash.update('\n');
-  }
-
-  return `${msg.action}|${hash.digest('hex')}`;
-}
 
 /**
  * Throw if `current` is strictly less than `previous` (backwards in time).
@@ -177,28 +149,3 @@ function checkMonotonicity(current: string, previous: string, fileLabel: string)
     );
   }
 }
-
-/**
- * Compute gap duration and push a warning if it is below the threshold.
- */
-function recordGapWarning(gapStart: string, reSyncTs: string, warnings: string[]): void {
-  try {
-    const startMs    = new Date(gapStart).getTime();
-    const endMs      = new Date(reSyncTs).getTime();
-    const durationMs = endMs - startMs;
-
-    if (durationMs < SHORT_GAP_THRESHOLD_MS) {
-      warnings.push(
-        `Short gap detected: ${gapStart} → ${reSyncTs} (${durationMs}ms). ` +
-        `Expected gaps to be at least ${SHORT_GAP_THRESHOLD_MS}ms. ` +
-        `Review whether the algorithm is correctly aligned.`,
-      );
-    }
-  } catch {
-    // Unparseable timestamp — skip the duration check.
-  }
-}
-
-// ── Test exports ──────────────────────────────────────────────────────────────
-
-export const _test_messageKey = messageKey;

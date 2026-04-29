@@ -1,9 +1,10 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { input, selectFromList } from '../../shared/ui/prompts';
 import { warn, error, spacer } from '../../shared/ui/logger';
 import { getEnv } from '../../shared/utils/env';
 import type { RunOptions, RunMode } from './types';
-import { collectFiles, buildSingleFilePair } from './discover';
+import { collectFiles, buildSourceFile } from './discover';
 import { runDiagnose } from './fix/run';
 import { runMerge } from './merge/run';
 import { runCheck } from './check/run';
@@ -14,6 +15,8 @@ export async function run(
   cliScope: string | null,
   cliMode:  RunMode | null,
   logDir:   string | null,
+  fromDay:  string | null = null,
+  yesAll:   boolean = false,
 ): Promise<void> {
   const { vaultDir, scope } = resolveVaultAndScope(cliScope);
 
@@ -31,7 +34,8 @@ export async function run(
 
   if (opts.mode === 'fix' || opts.mode === 'fix-dry') {
     const isDryRun = opts.mode === 'fix-dry';
-    const pairs    = collectFiles(vaultDir, opts.scope).map(f => buildSingleFilePair(vaultDir, f));
+    const files    = collectFiles(vaultDir, opts.scope).filter(f => !fromDay || dayOfFile(f) >= fromDay);
+    const pairs    = files.map(f => buildSourceFile(f));
 
     if (pairs.length === 0) {
       warn('No files found. Nothing to fix.');
@@ -42,7 +46,39 @@ export async function run(
     return;
   }
 
-  await runMerge(vaultDir, opts.scope, opts.mode === 'merge-dry', logDir);
+  const folder = resolveMergeFolder(vaultDir, opts.scope);
+
+  await runMerge(folder, opts.mode === 'merge-dry', logDir, fromDay, yesAll);
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Extract the YYYYMMDD day prefix from a file path's basename.
+ * Returns '' for files that don't start with an 8-digit day, so they always pass the filter.
+ */
+function dayOfFile(filePath: string): string {
+  const base  = path.basename(filePath);
+  const match = base.match(/^(\d{8})/);
+
+  return match ? match[1]! : '';
+}
+
+// ── Merge folder resolution ───────────────────────────────────────────────────
+
+/**
+ * Resolve the target folder for the merge subcommand.
+ *
+ *  - null / blank → the vault directory itself
+ *  - absolute path → used as-is
+ *  - relative path → joined with the vault directory
+ */
+function resolveMergeFolder(vaultDir: string, scope: string | null): string {
+  if (! scope) {
+    return vaultDir;
+  }
+
+  return path.isAbsolute(scope) ? scope : path.join(vaultDir, scope);
 }
 
 // ── CLI resolution ───────────────────────────────────────────────────────────
@@ -84,20 +120,22 @@ async function resolveOptions(
 
   spacer();
 
+  const vaultDir = getEnv('VAULT_DATA_DIR', '/data/bitmex/vault') ?? '/data/bitmex/vault';
+
   const scopeInput = cliScope !== null
     ? cliScope
-    : await input('Scope (table, table/year, table/year/file — blank for all):');
+    : await input('Path (folder for merge; table/year scope for fix/check — blank for VAULT_DATA_DIR):', vaultDir);
 
   const mode = cliMode !== null
     ? cliMode
     : await selectFromList<RunMode>(
         [
-          { name: 'Fix              — scan and repair a vault file, write .fixed.csv.gz', value: 'fix'       },
-          { name: 'Merge            — merge a vault+gaps pair, write .merged.csv.gz',     value: 'merge'     },
-          { name: 'Check            — verify gz integrity and recover corrupt files',      value: 'check'     },
-          { name: 'Fix (dry-run)    — scan and report, no output written',                value: 'fix-dry'   },
-          { name: 'Merge (dry-run)  — smoke-test and report, no output written',          value: 'merge-dry' },
-          { name: 'Check (dry-run)  — report corrupt files, no recovery',                 value: 'check-dry' },
+          { name: 'Fix              — scan and repair a vault file, write .fixed.csv.gz',        value: 'fix'       },
+          { name: 'Merge            — N-way merge all files in a folder by day, .merged.csv.gz', value: 'merge'     },
+          { name: 'Check            — verify gz integrity and recover corrupt files',             value: 'check'     },
+          { name: 'Fix (dry-run)    — scan and report, no output written',                       value: 'fix-dry'   },
+          { name: 'Merge (dry-run)  — report what would be merged, no output written',           value: 'merge-dry' },
+          { name: 'Check (dry-run)  — report corrupt files, no recovery',                        value: 'check-dry' },
         ],
         'Mode:',
       ) ?? 'fix';

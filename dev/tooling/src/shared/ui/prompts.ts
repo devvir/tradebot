@@ -46,6 +46,25 @@ export async function confirm(message: string): Promise<boolean> {
   return answer.confirmed;
 }
 
+/** Y/n/a prompt. Returns 'yes', 'no', or 'all'. Default answer is Y. */
+export async function confirmYNA(message: string): Promise<'yes' | 'no' | 'all'> {
+  const answer = await inquirer.prompt([
+    {
+      type:    'input',
+      name:    'choice',
+      message: `${message} [Y/n/a]`,
+      default: '',
+    },
+  ]);
+
+  const raw = (answer.choice as string).trim().toLowerCase();
+
+  if (raw === 'n') { return 'no'; }
+  if (raw === 'a') { return 'all'; }
+
+  return 'yes';
+}
+
 export async function input(message: string, defaultValue: string | null = null): Promise<string> {
   const answer = await inquirer.prompt({
     type: 'input',
