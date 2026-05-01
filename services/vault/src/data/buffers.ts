@@ -1,8 +1,8 @@
 // In-memory buffers for streaming writes.
 //
-// One buffer per `table/date`. Buffers store CSV-encoded lines (the encoding
-// step happens in `data/encode.ts` before push). Strict FIFO; flushes are
-// synchronous and atomic — no interleaving is possible at the buffer level.
+// One buffer per `table/filename`. Buffers store CSV-encoded lines (the
+// encoding step happens in `data/encode.ts` before push). Strict FIFO; flushes
+// are synchronous and atomic — no interleaving is possible at the buffer level.
 
 import type { Buffer, FlushResult } from './types';
 
@@ -12,13 +12,13 @@ import type { Buffer, FlushResult } from './types';
 const STALE_THRESHOLD_MS = 10_000;
 const BATCH_SIZE         = 10_000;
 
-const createBuffer = (table: string, date: string): Buffer => {
+const createBuffer = (table: string, filename: string): Buffer => {
   const lines: string[] = [];
   let lastFlushedAt     = Date.now();
 
   return {
     table,
-    date,
+    filename,
 
     push(line)     { lines.push(line);     },
     pushMany(many) { lines.push(...many);  },
@@ -36,15 +36,15 @@ const createBuffer = (table: string, date: string): Buffer => {
 
 const map = new Map<string, Buffer>();
 
-/** Returns the buffer for a given table/date, creating it on first access. */
-const get = (table: string, date: string): Buffer => {
-  const key = `${table}/${date}`;
+/** Returns the buffer for a given table/filename, creating it on first access. */
+const get = (table: string, filename: string): Buffer => {
+  const key = `${table}/${filename}`;
 
   const existing = map.get(key);
 
   if (existing) return existing;
 
-  const buf = createBuffer(table, date);
+  const buf = createBuffer(table, filename);
 
   map.set(key, buf);
 
@@ -71,7 +71,7 @@ const flushReady = (): FlushResult[] => {
 
     if (! stale && ! full) continue;
 
-    results.push({ table: buf.table, date: buf.date, lines: buf.flush() });
+    results.push({ table: buf.table, filename: buf.filename, lines: buf.flush() });
   }
 
   return results;
@@ -87,7 +87,7 @@ const flushAll = (): FlushResult[] => {
   for (const buf of map.values()) {
     if (buf.count() === 0) continue;
 
-    results.push({ table: buf.table, date: buf.date, lines: buf.flush() });
+    results.push({ table: buf.table, filename: buf.filename, lines: buf.flush() });
   }
 
   return results;

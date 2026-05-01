@@ -19,17 +19,17 @@ SK.run((service: Service) => {
     // Append every drained buffer (no seal — sealing is client-driven, not a
     // shutdown concern). After scheduling, await each handle's write chain so
     // we know the bytes are on disk before the process exits.
-    for (const { table, date, lines } of remaining) {
-      const finalLines = isInitialized(table, date)
+    for (const { table, filename, lines } of remaining) {
+      const finalLines = isInitialized(table, filename)
         ? lines
         : [TABLE_HEADERS[table]!.join(','), ...lines];
 
-      appendBatch(table, date, finalLines).catch((err) => {
-        logger.error({ err, table, date }, 'Final flush at shutdown failed');
+      appendBatch(table, filename, finalLines).catch((err) => {
+        logger.error({ err, table, filename }, 'Final flush at shutdown failed');
       });
     }
 
-    await Promise.all(remaining.map(({ table, date }) => drainHandle(table, date)));
+    await Promise.all(remaining.map(({ table, filename }) => drainHandle(table, filename)));
 
     logger.info('Vault shutdown drain complete');
   });

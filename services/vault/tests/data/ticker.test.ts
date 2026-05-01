@@ -31,11 +31,22 @@ describe('ticker.tick', () => {
     _test_tick();
 
     expect(appendBatch).toHaveBeenCalledTimes(1);
-    const [table, date, lines] = vi.mocked(appendBatch).mock.calls[0]!;
+    const [table, filename, lines] = vi.mocked(appendBatch).mock.calls[0]!;
     expect(table).toBe('orderBookL2');
-    expect(date).toBe('2023-02-01');
+    expect(filename).toBe('2023-02-01');
     expect(lines[0]).toBe(TABLE_HEADERS['orderBookL2']!.join(','));
     expect(lines.length).toBe(10_001);
+  });
+
+  it('passes a suffixed filename straight through to appendBatch', () => {
+    const buf = buffers.get('orderBookL2', '2023-02-01.snapshot');
+    for (let i = 0; i < 10_000; i++) buf.push(`row-${i}`);
+
+    _test_tick();
+
+    const [table, filename] = vi.mocked(appendBatch).mock.calls[0]!;
+    expect(table).toBe('orderBookL2');
+    expect(filename).toBe('2023-02-01.snapshot');
   });
 
   it('does not prepend the header when the file is already initialised', () => {

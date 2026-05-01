@@ -11,7 +11,7 @@ An HTTP file store for date-partitioned CSV data. Accepts rows over HTTP, serial
 - **File listing** — returns a table's files mapped to their open/closed state
 - **Health monitoring** — gates inserts on storage health; returns 503 when unhealthy
 
-All data lives under `/data/vault` as `table/yyyy/yyyymmdd.csv.gz.tmp` (open) or `table/yyyy/yyyymmdd.csv.gz` (closed).
+All data lives under `/data/vault` as `table/yyyy/<filename>.csv.gz.tmp` (open) or `table/yyyy/<filename>.csv.gz` (closed). `<filename>` is the date (`20240101`) or, optionally, `<date>.<suffix>` when a client tags the file via `?suffix=` on any write endpoint.
 
 ## Development
 

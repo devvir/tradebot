@@ -38,19 +38,19 @@ const handles = new Map<string, Handle>();
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
- * Whether an open `.csv.gz.tmp` exists for table/date — in memory or on disk.
- * Disk is the source of truth: a `.tmp` may exist from before a restart with
- * headers and significant data already written. The in-memory short-circuit
- * is only an optimisation.
+ * Whether an open `.csv.gz.tmp` exists for table/filename — in memory or on
+ * disk. Disk is the source of truth: a `.tmp` may exist from before a restart
+ * with headers and significant data already written. The in-memory
+ * short-circuit is only an optimisation.
  */
-export const isInitialized = (table: string, date: string): boolean => {
-  const key = `${table}/${date}`;
+export const isInitialized = (table: string, filename: string): boolean => {
+  const key = `${table}/${filename}`;
 
-  return handles.has(key) || existsSync(openPath(table, date));
+  return handles.has(key) || existsSync(openPath(table, filename));
 };
 
 /**
- * Appends one gzip member to the open file for table/date. Per-handle
+ * Appends one gzip member to the open file for table/filename. Per-handle
  * serialisation: writes chain onto `handle.writing` so concurrent calls queue
  * in arrival order with no interleaving and no data loss. When `seal` is true,
  * after the write (or immediately if `lines` is empty) the file is renamed
@@ -62,29 +62,29 @@ export const isInitialized = (table: string, date: string): boolean => {
  * their own batch landing, not the chain in front of it.
  */
 export const appendBatch = (
-  table: string,
-  date:  string,
-  lines: string[],
-  seal:  boolean = false,
+  table:    string,
+  filename: string,
+  lines:    string[],
+  seal:     boolean = false,
 ): Promise<void> => {
-  const handle = getOrCreateHandle(table, date);
+  const handle = getOrCreateHandle(table, filename);
 
   const next = handle.writing.then(async () => {
     if (lines.length > 0) {
-      await writeMember(table, date, handle, lines);
+      await writeMember(table, filename, handle, lines);
     }
 
     if (seal) {
-      const open   = openPath(table, date);
-      const closed = closedPath(table, date);
+      const open   = openPath(table, filename);
+      const closed = closedPath(table, filename);
 
       try {
         renameSync(open, closed);
-        handles.delete(`${table}/${date}`);
+        handles.delete(`${table}/${filename}`);
 
-        logger.info({ table, date }, 'File sealed');
+        logger.info({ table, filename }, 'File sealed');
       } catch (err) {
-        logger.error({ err, table, date }, 'Seal rename failed');
+        logger.error({ err, table, filename }, 'Seal rename failed');
 
         throw err;
       }
@@ -105,11 +105,11 @@ export const appendBatch = (
  * the final `.csv.gz`. A crashed upload leaves an open file on disk, which
  * courier handles by deleting and re-uploading.
  */
-export const storeFile = async (table: string, date: string, source: Readable): Promise<void> => {
-  const tmp  = openPath(table, date);
-  const dest = closedPath(table, date);
+export const storeFile = async (table: string, filename: string, source: Readable): Promise<void> => {
+  const tmp  = openPath(table, filename);
+  const dest = closedPath(table, filename);
 
-  mkdirSync(yearDir(table, date), { recursive: true });
+  mkdirSync(yearDir(table, filename), { recursive: true });
 
   try {
     await pipeline(source, createWriteStream(tmp));
@@ -122,17 +122,17 @@ export const storeFile = async (table: string, date: string, source: Readable): 
 };
 
 /** Idempotent unlink of the .csv.gz.tmp file. Drops any in-memory handle. */
-export const deleteFile = (table: string, date: string): void => {
-  const path = openPath(table, date);
+export const deleteFile = (table: string, filename: string): void => {
+  const path = openPath(table, filename);
 
   if (existsSync(path)) unlinkSync(path);
 
-  handles.delete(`${table}/${date}`);
+  handles.delete(`${table}/${filename}`);
 };
 
 /** Awaits the write chain for a given file. Returns immediately if no handle. */
-export const drainHandle = async (table: string, date: string): Promise<void> => {
-  const handle = handles.get(`${table}/${date}`);
+export const drainHandle = async (table: string, filename: string): Promise<void> => {
+  const handle = handles.get(`${table}/${filename}`);
 
   if (! handle) return;
 
@@ -141,15 +141,15 @@ export const drainHandle = async (table: string, date: string): Promise<void> =>
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
-const getOrCreateHandle = (table: string, date: string): Handle => {
-  const key      = `${table}/${date}`;
+const getOrCreateHandle = (table: string, filename: string): Handle => {
+  const key      = `${table}/${filename}`;
   const existing = handles.get(key);
 
   if (existing) return existing;
 
-  mkdirSync(yearDir(table, date), { recursive: true });
+  mkdirSync(yearDir(table, filename), { recursive: true });
 
-  const path = openPath(table, date);
+  const path = openPath(table, filename);
 
   const handle: Handle = {
     path,
@@ -172,10 +172,10 @@ const getOrCreateHandle = (table: string, date: string): Handle => {
  * worse than a corrupted member that recovery tools can work around.
  */
 const writeMember = async (
-  table:  string,
-  date:   string,
-  handle: Handle,
-  lines:  string[],
+  table:    string,
+  filename: string,
+  handle:   Handle,
+  lines:    string[],
 ): Promise<void> => {
   // statSync reads inode metadata only — no disk I/O in the normal case.
   // Re-read on every member because a previous truncate-failure path may have
@@ -192,18 +192,18 @@ const writeMember = async (
 
       return;
     } catch (writeErr) {
-      logger.warn({ err: writeErr, attempt, table, date }, 'Append member failed');
+      logger.warn({ err: writeErr, attempt, table, filename }, 'Append member failed');
 
       try {
         // ftruncate modifies the inode size only — no data copy.
         await fsp.truncate(handle.path, handle.lastGoodOffset);
       } catch (truncErr) {
         logger.error(
-          { writeErr, truncErr, table, date, lastGoodOffset: handle.lastGoodOffset },
+          { writeErr, truncErr, table, filename, lastGoodOffset: handle.lastGoodOffset },
           'Truncate failed — file may have a corrupt partial member; continuing with new appends (recoverable via gzrecover)',
         );
 
-        writeErrorSidecar(table, date, handle.lastGoodOffset, writeErr as Error, truncErr as Error);
+        writeErrorSidecar(table, filename, handle.lastGoodOffset, writeErr as Error, truncErr as Error);
 
         return;
       }
@@ -214,9 +214,9 @@ const writeMember = async (
     }
   }
 
-  logger.error({ rows: lines.length, table, date }, 'Append retries exhausted, batch dropped');
+  logger.error({ rows: lines.length, table, filename }, 'Append retries exhausted, batch dropped');
 
-  recordFailure(`append retries exhausted for ${table}/${date}`);
+  recordFailure(`append retries exhausted for ${table}/${filename}`);
 };
 
 /**
@@ -226,13 +226,13 @@ const writeMember = async (
  */
 const writeErrorSidecar = (
   table:          string,
-  date:           string,
+  filename:       string,
   lastGoodOffset: number,
   writeErr:       Error,
   truncErr:       Error,
 ): void => {
   try {
-    const errPath = `${closedPath(table, date)}.error`;
+    const errPath = `${closedPath(table, filename)}.error`;
 
     const content = JSON.stringify({
       timestamp:      new Date().toISOString(),

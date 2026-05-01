@@ -31,16 +31,16 @@ export const stopTicker = (): void => {
 const tick = (): void => {
   const ready = buffers.flushReady();
 
-  for (const { table, date, lines } of ready) {
+  for (const { table, filename, lines } of ready) {
     // The init check and appendBatch call are both synchronous — the event
     // loop cannot yield between them, so no race is possible on header
     // prepending across concurrent batches for the same file.
-    const finalLines = isInitialized(table, date)
+    const finalLines = isInitialized(table, filename)
       ? lines
       : [headerLine(table), ...lines];
 
-    appendBatch(table, date, finalLines).catch((err) => {
-      logger.error({ err, table, date }, 'appendBatch failed');
+    appendBatch(table, filename, finalLines).catch((err) => {
+      logger.error({ err, table, filename }, 'appendBatch failed');
     });
   }
 };

@@ -14,14 +14,14 @@ import type { FileListing } from './types';
 
 /**
  * Streams the lines of a closed file, decompressing on the fly.
- * Throws NotFoundError if no closed file exists for the given table/date.
+ * Throws NotFoundError if no closed file exists for the given table/filename.
  * Open files are not readable — callers treat them as non-existent.
  */
-export async function* streamLines(table: string, date: string): AsyncGenerator<string> {
-  const path = closedPath(table, date);
+export async function* streamLines(table: string, filename: string): AsyncGenerator<string> {
+  const path = closedPath(table, filename);
 
   if (! existsSync(path)) {
-    throw new NotFoundError(`No closed file for ${table}/${date}`);
+    throw new NotFoundError(`No closed file for ${table}/${filename}`);
   }
 
   const src = createReadStream(path);
@@ -40,19 +40,30 @@ export async function* streamLines(table: string, date: string): AsyncGenerator<
   }
 }
 
-/** Returns whether the file for the given table/date is closed, open, or absent. */
-export const fileState = (table: string, date: string): 'closed' | 'open' | 'none' => {
-  if (existsSync(closedPath(table, date))) return 'closed';
-  if (existsSync(openPath(table, date)))   return 'open';
+/** Returns whether the file for the given table/filename is closed, open, or absent. */
+export const fileState = (table: string, filename: string): 'closed' | 'open' | 'none' => {
+  if (existsSync(closedPath(table, filename))) return 'closed';
+  if (existsSync(openPath(table, filename)))   return 'open';
 
   return 'none';
 };
 
-/** Lists all dates for a table and their state. Returns null if the table directory does not exist. */
-export const listFiles = (table: string): FileListing | null => {
+/**
+ * Lists filenames for a table and their state. Returns null if the table
+ * directory does not exist.
+ *
+ * `suffix` filters by the file tag:
+ *   - omitted / empty → bare-date files only (stem contains no `.`)
+ *   - `'snapshot'`    → suffixed files only (stem ends with `.snapshot`)
+ */
+export const listFiles = (table: string, suffix?: string): FileListing | null => {
   const dir = tableDir(table);
 
   if (! existsSync(dir)) return null;
+
+  const matches = suffix
+    ? (stem: string) => stem.endsWith(`.${suffix}`)
+    : (stem: string) => ! stem.includes('.');
 
   const result: FileListing = {};
 
@@ -62,10 +73,14 @@ export const listFiles = (table: string): FileListing | null => {
     if (! statSync(yDir).isDirectory()) continue;
 
     for (const file of readdirSync(yDir)) {
+      let stem: string;
+
       if (file.endsWith('.csv.gz.tmp')) {
-        result[file.replace('.csv.gz.tmp', '')] = 'open';
+        stem = file.replace('.csv.gz.tmp', '');
+        if (matches(stem)) result[stem] = 'open';
       } else if (file.endsWith('.csv.gz')) {
-        result[file.replace('.csv.gz', '')] = 'closed';
+        stem = file.replace('.csv.gz', '');
+        if (matches(stem)) result[stem] = 'closed';
       }
     }
   }

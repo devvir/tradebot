@@ -12,9 +12,9 @@ vi.mock('../../src/fs/paths', () => {
   // Resolve lazily so tmpDir is set by the time the mock is called.
   const dataDir    = () => tmpDir;
   const tableDir   = (table: string) => path.join(dataDir(), table);
-  const yearDir    = (table: string, date: string) => path.join(tableDir(table), date.slice(0, 4));
-  const openPath   = (table: string, date: string) => path.join(yearDir(table, date), `${date}.csv.gz.tmp`);
-  const closedPath = (table: string, date: string) => path.join(yearDir(table, date), `${date}.csv.gz`);
+  const yearDir    = (table: string, filename: string) => path.join(tableDir(table), filename.slice(0, 4));
+  const openPath   = (table: string, filename: string) => path.join(yearDir(table, filename), `${filename}.csv.gz.tmp`);
+  const closedPath = (table: string, filename: string) => path.join(yearDir(table, filename), `${filename}.csv.gz`);
 
   return { get DATA_DIR() { return dataDir(); }, tableDir, yearDir, openPath, closedPath };
 });
@@ -24,16 +24,16 @@ import { NotFoundError } from '../../src/fs/errors';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const makeClosedFile = (table: string, date: string, lines: string[]) => {
-  const dir = path.join(tmpDir, table, date.slice(0, 4));
+const makeClosedFile = (table: string, filename: string, lines: string[]) => {
+  const dir = path.join(tmpDir, table, filename.slice(0, 4));
   mkdirSync(dir, { recursive: true });
-  writeFileSync(path.join(dir, `${date}.csv.gz`), gzipSync(lines.join('\n') + '\n'));
+  writeFileSync(path.join(dir, `${filename}.csv.gz`), gzipSync(lines.join('\n') + '\n'));
 };
 
-const makeOpenFile = (table: string, date: string) => {
-  const dir = path.join(tmpDir, table, date.slice(0, 4));
+const makeOpenFile = (table: string, filename: string) => {
+  const dir = path.join(tmpDir, table, filename.slice(0, 4));
   mkdirSync(dir, { recursive: true });
-  writeFileSync(path.join(dir, `${date}.csv.gz.tmp`), '');
+  writeFileSync(path.join(dir, `${filename}.csv.gz.tmp`), '');
 };
 
 beforeEach(() => {
@@ -108,14 +108,30 @@ describe('listFiles', () => {
     expect(listFiles('trade')).toEqual({});
   });
 
-  it('lists closed and open files with correct states', () => {
-    makeClosedFile('trade', '2023-02-01', ['hdr']);
-    makeOpenFile('trade', '2023-02-02');
+  it('lists bare-date files with correct states, excludes suffixed files', () => {
+    makeClosedFile('trade', '2023-02-01',          ['hdr']);
+    makeOpenFile('trade',   '2023-02-02');
+    makeClosedFile('trade', '2023-02-01.snapshot', ['hdr']); // must not appear
 
     const result = listFiles('trade');
 
     expect(result['2023-02-01']).toBe('closed');
     expect(result['2023-02-02']).toBe('open');
+    expect(result['2023-02-01.snapshot']).toBeUndefined();
+  });
+
+  it('lists only suffixed files matching the requested suffix', () => {
+    makeClosedFile('trade', '2023-02-01',          ['hdr']); // bare — must not appear
+    makeClosedFile('trade', '2023-02-01.snapshot', ['hdr']);
+    makeOpenFile('trade',   '2023-02-02.snapshot');
+    makeClosedFile('trade', '2023-02-01.other',    ['hdr']); // different suffix — must not appear
+
+    const result = listFiles('trade', 'snapshot');
+
+    expect(result['2023-02-01.snapshot']).toBe('closed');
+    expect(result['2023-02-02.snapshot']).toBe('open');
+    expect(result['2023-02-01']).toBeUndefined();
+    expect(result['2023-02-01.other']).toBeUndefined();
   });
 });
 

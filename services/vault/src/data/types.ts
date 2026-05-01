@@ -7,8 +7,8 @@ export interface WsMessage {
 }
 
 export interface Buffer {
-  readonly table: string;
-  readonly date:  string;
+  readonly table:    string;
+  readonly filename: string;
 
   push(line: string): void;
   pushMany(lines: string[]): void;
@@ -21,7 +21,7 @@ export interface Buffer {
 }
 
 export interface FlushResult {
-  table: string;
-  date:  string;
-  lines: string[];
+  table:    string;
+  filename: string;
+  lines:    string[];
 }

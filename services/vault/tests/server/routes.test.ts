@@ -153,11 +153,32 @@ describe('GET /tables', () => {
 // ── GET /files/:table ─────────────────────────────────────────────────────────
 
 describe('GET /files/:table', () => {
-  it('returns the file listing for a table', async () => {
+  it('returns the file listing for a table (no suffix → bare-date files)', async () => {
     vi.mocked(listFiles).mockReturnValue({ '2023-02-01': 'closed', '2023-02-02': 'open' });
+
     const res = await request(app).get('/files/trade');
+
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ '2023-02-01': 'closed', '2023-02-02': 'open' });
+    expect(listFiles).toHaveBeenCalledWith('trade', undefined);
+  });
+
+  it('passes the suffix to listFiles when ?suffix= is provided', async () => {
+    vi.mocked(listFiles).mockReturnValue({ '2023-02-01.snapshot': 'closed' });
+
+    const res = await request(app).get('/files/trade?suffix=snapshot');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ '2023-02-01.snapshot': 'closed' });
+    expect(listFiles).toHaveBeenCalledWith('trade', 'snapshot');
+  });
+
+  it('treats an empty ?suffix= the same as no suffix', async () => {
+    vi.mocked(listFiles).mockReturnValue({});
+
+    await request(app).get('/files/trade?suffix=');
+
+    expect(listFiles).toHaveBeenCalledWith('trade', undefined);
   });
 
   it('returns 404 when the table directory does not exist', async () => {
@@ -322,7 +343,9 @@ describe('POST /files/:table/:date/rows', () => {
     expect(encode).not.toHaveBeenCalled();
   });
 
-  it('rejects further writes after a close has been requested', async () => {
+  it('rejects further writes while a close is in progress', async () => {
+    vi.mocked(closeBucket).mockReturnValue(new Promise(() => {})); // never resolves
+
     await request(app).post('/files/trade/2023-02-01/close').send();
 
     const res = await request(app)
@@ -349,5 +372,91 @@ describe('POST /files/:table/:date/close', () => {
     const res = await request(app).post('/files/trade/2023-02-01/close').send();
 
     expect(res.status).toBe(202);
+  });
+});
+
+// ── ?suffix= plumbing ─────────────────────────────────────────────────────────
+//
+// The route layer is the only place where date and suffix exist as separate
+// concepts. Past this boundary, the rest of vault sees a single `filename`
+// argument (`<date>` or `<date>.<suffix>`). These tests assert the composition
+// happens correctly on every endpoint that takes `:date`, and that omitting
+// `?suffix=` leaves behaviour identical to before suffixes existed.
+
+describe('?suffix= composition', () => {
+  it('POST /rows buffers under the suffixed filename', async () => {
+    const pushMany = vi.fn();
+    vi.mocked(buffers.get).mockReturnValue({ flush: vi.fn(), pushMany } as never);
+
+    const res = await request(app)
+      .post('/files/trade/2023-02-01/rows?suffix=snapshot')
+      .send({ symbol: 'X' });
+
+    expect(res.status).toBe(202);
+    expect(buffers.get).toHaveBeenCalledWith('trade', '2023-02-01.snapshot');
+    expect(fileState).toHaveBeenCalledWith('trade', '2023-02-01.snapshot');
+  });
+
+  it('POST /close passes the suffixed filename to closeBucket', async () => {
+    await request(app).post('/files/trade/2023-02-01/close?suffix=snapshot').send();
+    expect(closeBucket).toHaveBeenCalledWith('trade', '2023-02-01.snapshot');
+  });
+
+  it('PUT stores under the suffixed filename', async () => {
+    vi.mocked(fileState).mockReturnValue('none');
+    vi.mocked(storeFile).mockResolvedValue(undefined);
+
+    const res = await request(app)
+      .put('/files/trade/2023-02-01?suffix=snapshot')
+      .set('Content-Type', 'application/octet-stream')
+      .send(Buffer.from('bytes'));
+
+    expect(res.status).toBe(204);
+    expect(storeFile).toHaveBeenCalledWith('trade', '2023-02-01.snapshot', expect.anything());
+  });
+
+  it('DELETE removes the suffixed filename', async () => {
+    const flush = vi.fn();
+    vi.mocked(buffers.get).mockReturnValue({ flush } as never);
+
+    await request(app).delete('/files/trade/2023-02-01?suffix=snapshot');
+
+    expect(buffers.get).toHaveBeenCalledWith('trade', '2023-02-01.snapshot');
+    expect(deleteFile).toHaveBeenCalledWith('trade', '2023-02-01.snapshot');
+  });
+
+  it('GET decodes from the suffixed filename and respects skip', async () => {
+    vi.mocked(decodeFile).mockReturnValue(fromLines([]) as ReturnType<typeof decodeFile>);
+
+    await request(app).get('/files/trade/2023-02-01?suffix=snapshot&skip=3');
+
+    expect(decodeFile).toHaveBeenCalledWith('trade', '2023-02-01.snapshot', 3);
+  });
+
+  it('GET /headers reads from the suffixed filename', async () => {
+    vi.mocked(streamLines).mockReturnValue(
+      fromLines(['col1,col2']) as ReturnType<typeof streamLines>,
+    );
+
+    const res = await request(app).get('/files/trade/2023-02-01/headers?suffix=snapshot');
+
+    expect(res.status).toBe(200);
+    expect(streamLines).toHaveBeenCalledWith('trade', '2023-02-01.snapshot');
+  });
+
+  it('omitting ?suffix= falls through to the plain date filename (backwards compatible)', async () => {
+    vi.mocked(decodeFile).mockReturnValue(fromLines([]) as ReturnType<typeof decodeFile>);
+
+    await request(app).get('/files/trade/2023-02-01');
+
+    expect(decodeFile).toHaveBeenCalledWith('trade', '2023-02-01', 0);
+  });
+
+  it('an empty ?suffix= is treated the same as no suffix (no trailing dot)', async () => {
+    vi.mocked(decodeFile).mockReturnValue(fromLines([]) as ReturnType<typeof decodeFile>);
+
+    await request(app).get('/files/trade/2023-02-01?suffix=');
+
+    expect(decodeFile).toHaveBeenCalledWith('trade', '2023-02-01', 0);
   });
 });

@@ -1,6 +1,6 @@
 // Bucket close orchestrator.
 //
-// Drains the buffer for table/date, prepends the header if the file is not
+// Drains the buffer for table/filename, prepends the header if the file is not
 // yet initialised on disk, and hands the result to `fs/writer.appendBatch`
 // with `seal=true` so the writer renames `.csv.gz.tmp` → `.csv.gz` once the
 // final member is written. `data/` knows about buffers and headers; `fs/`
@@ -10,9 +10,9 @@ import { buffers } from './buffers';
 import { TABLE_HEADERS } from './headers';
 import { appendBatch, isInitialized } from '../fs/writer';
 
-export const closeBucket = (table: string, date: string): Promise<void> => {
-  const lines       = buffers.get(table, date).flush();
-  const initialised = isInitialized(table, date);
+export const closeBucket = (table: string, filename: string): Promise<void> => {
+  const lines       = buffers.get(table, filename).flush();
+  const initialised = isInitialized(table, filename);
 
   if (! initialised && lines.length === 0) {
     // Nothing to do — no open file, no buffered lines.
@@ -23,7 +23,7 @@ export const closeBucket = (table: string, date: string): Promise<void> => {
     ? lines
     : [headerLine(table), ...lines];
 
-  return appendBatch(table, date, finalLines, true);
+  return appendBatch(table, filename, finalLines, true);
 };
 
 const headerLine = (table: string): string => {

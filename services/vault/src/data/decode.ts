@@ -39,11 +39,11 @@ const parseCsvLine = (line: string): string[] => {
  * message), so only non-continuation lines advance the skip counter.
  */
 export async function* decodeFile(
-  table: string,
-  date:  string,
+  table:    string,
+  filename: string,
   skip = 0,
 ): AsyncGenerator<string> {
-  const lines = streamLines(table, date);
+  const lines = streamLines(table, filename);
   const first = await lines.next();
 
   if (first.done) return;

@@ -11,9 +11,9 @@ let tmpDir: string;
 vi.mock('../../src/fs/paths', () => {
   const dataDir    = () => tmpDir;
   const tableDir   = (table: string) => path.join(dataDir(), table);
-  const yearDir    = (table: string, date: string) => path.join(tableDir(table), date.slice(0, 4));
-  const openPath   = (table: string, date: string) => path.join(yearDir(table, date), `${date}.csv.gz.tmp`);
-  const closedPath = (table: string, date: string) => path.join(yearDir(table, date), `${date}.csv.gz`);
+  const yearDir    = (table: string, filename: string) => path.join(tableDir(table), filename.slice(0, 4));
+  const openPath   = (table: string, filename: string) => path.join(yearDir(table, filename), `${filename}.csv.gz.tmp`);
+  const closedPath = (table: string, filename: string) => path.join(yearDir(table, filename), `${filename}.csv.gz`);
 
   return { get DATA_DIR() { return dataDir(); }, tableDir, yearDir, openPath, closedPath };
 });
@@ -156,6 +156,19 @@ describe('appendBatch — seal', () => {
 
     expect(existsSync(openPath('trade', '2023-02-01'))).toBe(false);
     expect(existsSync(closedPath('trade', '2023-02-01'))).toBe(true);
+  });
+
+  it('writes a suffixed filename next to the bare-date file in the same year dir', async () => {
+    await appendBatch('trade', '2023-02-01',          ['bare']);
+    await appendBatch('trade', '2023-02-01.snapshot', ['snap']);
+
+    const bareTmp = openPath('trade', '2023-02-01');
+    const snapTmp = openPath('trade', '2023-02-01.snapshot');
+
+    expect(existsSync(bareTmp)).toBe(true);
+    expect(existsSync(snapTmp)).toBe(true);
+    expect(path.dirname(bareTmp)).toBe(path.dirname(snapTmp));
+    expect(readMembers(snapTmp)).toBe('snap\n');
   });
 
   it('seals even when the lines array is empty (no final member written)', async () => {

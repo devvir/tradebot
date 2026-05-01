@@ -7,22 +7,29 @@ afterEach(() => vi.useRealTimers());
 // ── Singleton behaviour ───────────────────────────────────────────────────────
 
 describe('buffers.get — identity', () => {
-  it('returns a buffer with the correct table and date', () => {
+  it('returns a buffer with the correct table and filename', () => {
     const buf = buffers.get('trade', '2023-02-01');
     expect(buf.table).toBe('trade');
-    expect(buf.date).toBe('2023-02-01');
+    expect(buf.filename).toBe('2023-02-01');
   });
 
   it('returns the same instance on subsequent calls', () => {
     expect(buffers.get('trade', '2023-02-01')).toBe(buffers.get('trade', '2023-02-01'));
   });
 
-  it('returns distinct instances for different table/date pairs', () => {
+  it('returns distinct instances for different table/filename pairs', () => {
     const a = buffers.get('trade', '2023-02-01');
     const b = buffers.get('quote', '2023-02-01');
     const c = buffers.get('trade', '2023-02-02');
     expect(a).not.toBe(b);
     expect(a).not.toBe(c);
+  });
+
+  it('treats a suffixed filename as a separate buffer from the bare date', () => {
+    const bare     = buffers.get('trade', '2023-02-01');
+    const suffixed = buffers.get('trade', '2023-02-01.snapshot');
+    expect(bare).not.toBe(suffixed);
+    expect(suffixed.filename).toBe('2023-02-01.snapshot');
   });
 });
 
@@ -111,7 +118,7 @@ describe('buffers.flushReady', () => {
     const result = buffers.flushReady();
     expect(result).toHaveLength(1);
     expect(result[0]!.table).toBe('trade');
-    expect(result[0]!.date).toBe('2023-02-01');
+    expect(result[0]!.filename).toBe('2023-02-01');
     expect(result[0]!.lines.length).toBe(size);
     expect(buf.count()).toBe(0);
   });
@@ -155,7 +162,7 @@ describe('buffers.flushAll', () => {
     buffers.get('chat',  '2023-02-01'); // empty — should be skipped
 
     const result = buffers.flushAll();
-    expect(result.map(r => `${r.table}/${r.date}`).sort()).toEqual(['quote/2023-02-01', 'trade/2023-02-01']);
+    expect(result.map(r => `${r.table}/${r.filename}`).sort()).toEqual(['quote/2023-02-01', 'trade/2023-02-01']);
   });
 
   it('clears the buffers it flushes', () => {

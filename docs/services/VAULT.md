@@ -11,11 +11,13 @@ Vault is not a database. It has no query capability. It is a write-optimised app
 All files live under `/data/vault` (fixed path):
 
 ```
-/data/vault/<table>/<yyyy>/<date>.csv.gz.tmp   ← open (being written)
-/data/vault/<table>/<yyyy>/<date>.csv.gz        ← closed (sealed)
+/data/vault/<table>/<yyyy>/<filename>.csv.gz.tmp   ← open (being written)
+/data/vault/<table>/<yyyy>/<filename>.csv.gz        ← closed (sealed)
 ```
 
-A file is either open or closed — never both. A closed file is permanent; it is never overwritten or appended to.
+`<filename>` is either the date (`20230201`) or `<date>.<suffix>` when a client tags the file (`20230201.snapshot`). The grouping directory `<yyyy>` is always the first four characters of the filename, so suffixed and bare-date files for the same day live side-by-side. A file is either open or closed — never both. A closed file is permanent; it is never overwritten or appended to.
+
+The suffix is opt-in. Date and suffix are separate concepts only at the HTTP boundary; everywhere past the route handler, vault deals in a single `filename` identifier.
 
 ---
 
@@ -44,6 +46,8 @@ Each member starts DEFLATE with an empty sliding window, so patterns spanning me
 ## HTTP API
 
 All routes are relative to `http://vault`.
+
+Every endpoint that takes `:date` also accepts an optional `?suffix=<value>` query parameter. When present, the file targeted is `<date>.<suffix>` instead of just `<date>`. Omitting it (or sending `?suffix=`) is identical to never having heard of suffixes — the file path, behaviour, and listing keys all collapse to the date alone. Suffixed and bare-date files for the same day are independent: they have separate buffers, independent open/closed state, and independent close/delete lifecycles.
 
 ### `POST /files/:table/:date/rows`
 
@@ -97,11 +101,13 @@ Returns the CSV column names of a closed file as a JSON array: `{ "columns": [..
 
 ### `GET /files/:table`
 
-Returns a map of all dates for a table and their state:
+Returns a map of all filenames for a table and their state:
 
 ```json
-{ "2024-01-01": "closed", "2024-01-02": "open" }
+{ "20240101": "closed", "20240102": "open", "20240102.snapshot": "open" }
 ```
+
+Suffixed files appear as additional keys. Clients that do not write suffixed files will not see them in their own listings unless another producer creates one.
 
 - `404` — the table directory does not exist.
 
@@ -116,7 +122,7 @@ Returns an array of all table names that have data in vault. Returns `[]` if non
 ```
 POST /rows
   → encode (Row / WsMessage → CSV lines)
-  → buffer.pushMany(lines)            [in-memory, table/date keyed]
+  → buffer.pushMany(lines)            [in-memory, table/filename keyed]
   → ticker (every 200 ms)
       → buffers.flushReady()          [size ≥ 10k rows OR time ≥ 10s since last flush]
       → prepend header if file new
@@ -149,7 +155,7 @@ Each open file has a promise chain (`handle.writing`). Each `appendBatch` call a
 
 ## Closing a file
 
-`POST /close` adds the key to an append-only `closing` set in the server layer (immediate write rejection), then fires `closeBucket(table, date)` asynchronously:
+`POST /close` adds the key to an append-only `closing` set in the server layer (immediate write rejection), then fires `closeBucket(table, filename)` asynchronously:
 
 ```
 closeBucket:
@@ -165,7 +171,7 @@ When `seal=true`, `appendBatch` renames `.csv.gz.tmp` → `.csv.gz` after the fi
 
 ## Restart behaviour
 
-Vault never assumes it created the current open file. On restart, `isInitialized(table, date)` checks `handles.has(key) || existsSync(openPath(table, date))`. If a `.csv.gz.tmp` already exists on disk (from before the restart), it is treated as initialised — new appends continue without re-writing the header.
+Vault never assumes it created the current open file. On restart, `isInitialized(table, filename)` checks `handles.has(key) || existsSync(openPath(table, filename))`. If a `.csv.gz.tmp` already exists on disk (from before the restart), it is treated as initialised — new appends continue without re-writing the header.
 
 ---
 

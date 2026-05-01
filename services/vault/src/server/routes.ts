@@ -3,6 +3,13 @@
 // Responsible for: parsing path params and request bodies, calling the
 // appropriate module (fs/, data/), and returning the correct HTTP status code.
 // No business logic, no file ops, no data transformation — thin by design.
+//
+// Date and suffix only exist at the boundary. Every endpoint accepts a `:date`
+// path param and an optional `?suffix=` query param. The handler immediately
+// composes them into a single `filename` (`<date>` or `<date>.<suffix>`) which
+// is the only identifier the rest of vault sees. Without `?suffix=`, the
+// filename is just the date — the on-disk path and behaviour match what
+// existed before suffixes were introduced.
 
 import { type Application, type Request, type Response } from 'express';
 import { Readable } from 'stream';
@@ -17,11 +24,19 @@ import { closeBucket } from '../data/close';
 import { NotFoundError } from '../fs/errors';
 import type { Row, WsMessage } from '../data/types';
 
-// Append-only set of `table/date` buckets the client has asked to seal. Once
-// added, all further row writes for that bucket are rejected. Never cleaned
-// up — after the rename, fileState='closed' would also produce a 409, so the
-// set is just an immediate barrier while the close completes.
+// Append-only set of `table/filename` buckets the client has asked to seal.
+// Once added, all further row writes for that bucket are rejected. Never
+// cleaned up — after the rename, fileState='closed' would also produce a 409,
+// so the set is just an immediate barrier while the close completes.
 const closing = new Set<string>();
+
+/** Reads optional `?suffix=` and returns `<date>` or `<date>.<suffix>`. */
+const filenameOf = (req: Request): string => {
+  const date   = req.params['date'] as string;
+  const suffix = typeof req.query['suffix'] === 'string' ? req.query['suffix'] : '';
+
+  return suffix ? `${date}.${suffix}` : date;
+};
 
 export const registerRoutes = (app: Application): void => {
 
@@ -33,11 +48,11 @@ export const registerRoutes = (app: Application): void => {
       return;
     }
 
-    const table = req.params['table'] as string;
-    const date  = req.params['date']  as string;
-    const key   = `${table}/${date}`;
+    const table    = req.params['table'] as string;
+    const filename = filenameOf(req);
+    const key      = `${table}/${filename}`;
 
-    if (closing.has(key) || fileState(table, date) === 'closed') {
+    if (closing.has(key) || fileState(table, filename) === 'closed') {
       res.status(409).json({ error: 'File is closed' });
       return;
     }
@@ -62,14 +77,14 @@ export const registerRoutes = (app: Application): void => {
       }
     }
 
-    const buf = buffers.get(table, date);
+    const buf = buffers.get(table, filename);
 
     try {
       for (const item of items as (Row | WsMessage)[]) {
         buf.pushMany(encode(table, item));
       }
     } catch (err) {
-      logger.error({ err, table, date }, 'Encode failed');
+      logger.error({ err, table, filename }, 'Encode failed');
       res.status(400).json({ error: (err as Error).message });
       return;
     }
@@ -83,15 +98,17 @@ export const registerRoutes = (app: Application): void => {
   // the file's write chain so any in-flight appends complete first.
 
   app.post('/files/:table/:date/close', (req: Request, res: Response) => {
-    const table = req.params['table'] as string;
-    const date  = req.params['date']  as string;
-    const key   = `${table}/${date}`;
+    const table    = req.params['table'] as string;
+    const filename = filenameOf(req);
+    const key      = `${table}/${filename}`;
 
     closing.add(key);
 
-    closeBucket(table, date).catch((err) => {
-      logger.error({ err, table, date }, 'closeBucket failed');
-    });
+    closeBucket(table, filename)
+      .then(() => closing.delete(key))
+      .catch((err) => {
+        logger.error({ err, table, filename }, 'closeBucket failed');
+      });
 
     res.status(202).end();
   });
@@ -99,12 +116,12 @@ export const registerRoutes = (app: Application): void => {
   // ── GET /files/:table/:date — stream rows as NDJSON ──────────────────────────
 
   app.get('/files/:table/:date', (req: Request, res: Response) => {
-    const table   = req.params['table'] as string;
-    const date    = req.params['date']  as string;
-    const skipRaw = Number(req.query['skip']);
-    const skip    = Number.isFinite(skipRaw) && skipRaw > 0 ? Math.floor(skipRaw) : 0;
+    const table    = req.params['table'] as string;
+    const filename = filenameOf(req);
+    const skipRaw  = Number(req.query['skip']);
+    const skip     = Number.isFinite(skipRaw) && skipRaw > 0 ? Math.floor(skipRaw) : 0;
 
-    const stream = Readable.from(decodeFile(table, date, skip));
+    const stream = Readable.from(decodeFile(table, filename, skip));
 
     // When the client drops the connection, destroy the source so the generator's
     // finally block runs and the underlying file handle is released.
@@ -114,13 +131,16 @@ export const registerRoutes = (app: Application): void => {
       if (err instanceof NotFoundError) {
         if (! res.headersSent) res.status(404).json({ error: err.message });
       } else {
-        logger.error({ err, table, date }, 'Read stream error');
+        logger.error({ err, table, filename }, 'Read stream error');
         if (! res.headersSent) res.status(500).json({ error: 'Read failed' });
         else res.destroy();
       }
     });
 
     res.setHeader('Content-Type', 'application/x-ndjson');
+
+    if (skip > 0) res.flushHeaders();
+
     stream.pipe(res);
   });
 
@@ -132,9 +152,9 @@ export const registerRoutes = (app: Application): void => {
   // file is permanent and returns 409.
 
   app.put('/files/:table/:date', async (req: Request, res: Response) => {
-    const table = req.params['table'] as string;
-    const date  = req.params['date']  as string;
-    const state = fileState(table, date);
+    const table    = req.params['table'] as string;
+    const filename = filenameOf(req);
+    const state    = fileState(table, filename);
 
     if (state === 'closed') {
       req.resume();
@@ -143,15 +163,15 @@ export const registerRoutes = (app: Application): void => {
     }
 
     if (state === 'open') {
-      buffers.get(table, date).flush();
-      deleteFile(table, date);
+      buffers.get(table, filename).flush();
+      deleteFile(table, filename);
     }
 
     try {
-      await storeFile(table, date, req as unknown as Readable);
+      await storeFile(table, filename, req as unknown as Readable);
       res.status(204).end();
     } catch (err) {
-      logger.error({ err, table, date }, 'Store failed');
+      logger.error({ err, table, filename }, 'Store failed');
       if (! res.headersSent) res.status(500).json({ error: 'Store failed' });
     }
   });
@@ -159,11 +179,11 @@ export const registerRoutes = (app: Application): void => {
   // ── DELETE /files/:table/:date — discard an open file ────────────────────────
 
   app.delete('/files/:table/:date', (req: Request, res: Response) => {
-    const table = req.params['table'] as string;
-    const date  = req.params['date']  as string;
+    const table    = req.params['table'] as string;
+    const filename = filenameOf(req);
 
-    buffers.get(table, date).flush();
-    deleteFile(table, date);
+    buffers.get(table, filename).flush();
+    deleteFile(table, filename);
 
     res.status(204).end();
   });
@@ -171,16 +191,16 @@ export const registerRoutes = (app: Application): void => {
   // ── GET /files/:table/:date/headers — return column names ────────────────────
 
   app.get('/files/:table/:date/headers', async (req: Request, res: Response) => {
-    const table = req.params['table'] as string;
-    const date  = req.params['date']  as string;
+    const table    = req.params['table'] as string;
+    const filename = filenameOf(req);
 
     try {
-      const lines = streamLines(table, date);
+      const lines = streamLines(table, filename);
       const first = await lines.next();
       await lines.return?.(undefined);
 
       if (first.done) {
-        res.status(404).json({ error: `No file for ${table}/${date}` });
+        res.status(404).json({ error: `No file for ${table}/${filename}` });
         return;
       }
 
@@ -191,16 +211,23 @@ export const registerRoutes = (app: Application): void => {
         return;
       }
 
-      logger.error({ err, table, date }, 'readHeaders failed');
+      logger.error({ err, table, filename }, 'readHeaders failed');
       res.status(500).json({ error: 'Failed to read headers' });
     }
   });
 
   // ── GET /files/:table — list files with open/closed state ────────────────────
+  //
+  // Optional `?suffix=<value>`: filters to files tagged with that suffix.
+  // Omitting it (or sending an empty value) returns only bare-date files.
 
   app.get('/files/:table', (req: Request, res: Response) => {
     const table  = req.params['table'] as string;
-    const result = listFiles(table);
+    const suffix = typeof req.query['suffix'] === 'string' && req.query['suffix']
+      ? req.query['suffix']
+      : undefined;
+
+    const result = listFiles(table, suffix);
 
     if (result === null) {
       res.status(404).json({ error: `No data for table '${table}'` });
