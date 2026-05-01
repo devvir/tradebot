@@ -55,10 +55,16 @@ const vaultFetch = async (url: string, init?: RequestInit, passThrough: number[]
   }
 };
 
+// ── URL helpers ───────────────────────────────────────────────────────────────
+
+const withSuffix = (url: string, suffix: string): string =>
+  suffix ? `${url}?suffix=${suffix}` : url;
+
 // ── Queries ───────────────────────────────────────────────────────────────────
 
-export const listFiles = async (vaultUrl: string, table: TardyTable): Promise<Record<string, FileState>> => {
-  const res = await vaultFetch(`${vaultUrl}/files/${table}`, undefined, [404]);
+export const listFiles = async (vaultUrl: string, table: TardyTable, suffix: string): Promise<Record<string, FileState>> => {
+  const url = withSuffix(`${vaultUrl}/files/${table}`, suffix);
+  const res = await vaultFetch(url, undefined, [404]);
 
   if (res.status === 404) return {};
 
@@ -67,9 +73,10 @@ export const listFiles = async (vaultUrl: string, table: TardyTable): Promise<Re
 
 // ── Writes ────────────────────────────────────────────────────────────────────
 
-export const writeRows = async (vaultUrl: string, table: TardyTable, date: string, rows: WsMessage[]): Promise<void> => {
+export const writeRows = async (vaultUrl: string, table: TardyTable, date: string, rows: WsMessage[], suffix: string): Promise<void> => {
+  const url = withSuffix(`${vaultUrl}/files/${table}/${date}/rows`, suffix);
   const res = await vaultFetch(
-    `${vaultUrl}/files/${table}/${date}/rows`,
+    url,
     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rows) },
     [409, 418],
   );
@@ -80,12 +87,14 @@ export const writeRows = async (vaultUrl: string, table: TardyTable, date: strin
   logger.warn({ table, date, status: res.status }, 'Vault file sealed — dropping batch');
 };
 
-export const closeFile = async (vaultUrl: string, table: TardyTable, date: string): Promise<void> => {
-  await vaultFetch(`${vaultUrl}/files/${table}/${date}/close`, { method: 'POST' }, [404]);
+export const closeFile = async (vaultUrl: string, table: TardyTable, date: string, suffix: string): Promise<void> => {
+  const url = withSuffix(`${vaultUrl}/files/${table}/${date}/close`, suffix);
+  await vaultFetch(url, { method: 'POST' }, [404]);
 };
 
-export const deleteFile = async (vaultUrl: string, table: TardyTable, date: string): Promise<void> => {
-  await vaultFetch(`${vaultUrl}/files/${table}/${date}`, { method: 'DELETE' }, [404]);
+export const deleteFile = async (vaultUrl: string, table: TardyTable, date: string, suffix: string): Promise<void> => {
+  const url = withSuffix(`${vaultUrl}/files/${table}/${date}`, suffix);
+  await vaultFetch(url, { method: 'DELETE' }, [404]);
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

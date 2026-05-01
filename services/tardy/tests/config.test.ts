@@ -23,6 +23,24 @@ describe('config — loading', () => {
     expect(config.vaultUrl).toBe('http://vault');
   }, 15_000);
 
+  it('reads TARDY_SUFFIX and defaults to empty string when absent', async () => {
+    process.env.VAULT_URL = 'http://vault';
+    delete process.env.TARDY_SUFFIX;
+
+    const { default: config } = await import('../src/config');
+
+    expect(config.suffix).toBe('');
+  });
+
+  it('reads TARDY_SUFFIX when set', async () => {
+    process.env.VAULT_URL    = 'http://vault';
+    process.env.TARDY_SUFFIX = 'tardy';
+
+    const { default: config } = await import('../src/config');
+
+    expect(config.suffix).toBe('tardy');
+  });
+
   it('uses the Tardis BitMEX genesis date (2019-03-30) as the default', async () => {
     process.env.VAULT_URL = 'http://vault';
     delete process.env.TARDY_START_DATE;

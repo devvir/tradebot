@@ -9,8 +9,9 @@ const DEFAULT_START_DATE = '20190330';
 
 const loadConfig = (): Config => {
   const config: Config = {
-    vaultUrl:  process.env.VAULT_URL ?? '',
+    vaultUrl:  process.env.VAULT_URL  ?? '',
     startDate: parseStartDate(process.env.TARDY_START_DATE),
+    suffix:    process.env.TARDY_SUFFIX ?? '',
   };
 
   if (! config.vaultUrl) throw new Error('VAULT_URL is required');

@@ -22,5 +22,6 @@ export interface Buf {
 export interface Config {
   vaultUrl:  string;
   startDate: string;
+  suffix:    string;
   [key: string]: unknown;
 }

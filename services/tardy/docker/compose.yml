@@ -14,6 +14,7 @@ services:
 
       # Config
       TARDY_START_DATE: ${TARDY_START_DATE:-}
+      TARDY_SUFFIX:     ${TARDY_SUFFIX:-}
 
       # Runtime
       LOG_LEVEL: ${LOG_LEVEL:-info}

@@ -44,7 +44,7 @@ export const syncAll = async (vaultUrl: string): Promise<void> => {
  * already closed.
  */
 export const syncDate = async (vaultUrl: string, date: string): Promise<void> => {
-  const needed = await resolveTables(vaultUrl, date);
+  const needed = await resolveTables(vaultUrl, date, config.suffix);
 
   if (needed.length === 0) return;
 
@@ -66,19 +66,19 @@ export const syncDate = async (vaultUrl: string, date: string): Promise<void> =>
       buf.rows.push(msg);
 
       if (buf.rows.length >= BATCH_SIZE) {
-        await writeRows(vaultUrl, table, date, buf.rows.splice(0));
+        await writeRows(vaultUrl, table, date, buf.rows.splice(0), config.suffix);
       }
     }
 
     for (const [table, buf] of batches.entries()) {
       if (buf.rows.length > 0) {
-        await writeRows(vaultUrl, table, date, buf.rows.splice(0));
+        await writeRows(vaultUrl, table, date, buf.rows.splice(0), config.suffix);
       }
     }
   }
 
   for (const table of needed) {
-    await closeFile(vaultUrl, table, date);
+    await closeFile(vaultUrl, table, date, config.suffix);
 
     logger.info({ table, date }, 'Closed');
   }
@@ -90,18 +90,19 @@ export const syncDate = async (vaultUrl: string, date: string): Promise<void> =>
  * Queries vault for each table and returns only those that need downloading.
  * Deletes any open files first (crash recovery) and excludes closed ones.
  */
-const resolveTables = async (vaultUrl: string, date: string): Promise<TardyTable[]> => {
-  const needed: TardyTable[] = [];
+const resolveTables = async (vaultUrl: string, date: string, suffix: string): Promise<TardyTable[]> => {
+  const needed:  TardyTable[] = [];
+  const fileKey = suffix ? `${date}.${suffix}` : date;
 
   for (const table of TABLES) {
-    const files = await listFiles(vaultUrl, table);
-    const state = files[date];
+    const files = await listFiles(vaultUrl, table, suffix);
+    const state = files[fileKey];
 
     if (state === 'closed') continue;
 
     if (state === 'open') {
       logger.info({ table, date }, 'Deleting open file (recovery)');
-      await deleteFile(vaultUrl, table, date);
+      await deleteFile(vaultUrl, table, date, suffix);
     }
 
     needed.push(table);
