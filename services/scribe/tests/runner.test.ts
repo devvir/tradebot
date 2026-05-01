@@ -99,6 +99,7 @@ describe('runAllTables — simple table', () => {
 
     const row   = tsRow(YESTERDAY);
     const fetch = makeFetch({
+      oldest: vi.fn().mockResolvedValue(tsRow(TWO_DAYS_AGO)),
       getDay: vi.fn().mockImplementation(() => rowGen([row])),
     });
     const store = makeStore({
@@ -115,7 +116,7 @@ describe('runAllTables — simple table', () => {
     expect(store.closeFile).toHaveBeenCalledWith('funding', YESTERDAY);
   });
 
-  it('skips oldest() probe when resuming from a closed date', async () => {
+  it('skips oldest() probe when cache has a start date', async () => {
     (tablesModule.TABLES as TableConfig[]).push(SIMPLE_TABLE);
 
     // Return a real row so the empty-day probe path is not triggered — this
@@ -126,11 +127,14 @@ describe('runAllTables — simple table', () => {
     const store = makeStore({
       listFiles: vi.fn().mockResolvedValue({ [TWO_DAYS_AGO]: 'closed' }),
     });
+    const cache = makeCache({
+      get: vi.fn().mockResolvedValue(YESTERDAY),
+    });
 
     stopAfter(1);
 
     await expect(
-      runAllTables(fetch, store, makeCache(), vi.fn().mockResolvedValue([]))
+      runAllTables(fetch, store, cache, vi.fn().mockResolvedValue([]))
     ).rejects.toThrow('stop');
 
     expect(fetch.oldest).not.toHaveBeenCalled();
@@ -179,6 +183,7 @@ describe('runAllTables — simple table', () => {
     const rows = Array.from({ length: 1001 }, () => tsRow(YESTERDAY));
 
     const fetch = makeFetch({
+      oldest: vi.fn().mockResolvedValue(tsRow(TWO_DAYS_AGO)),
       getDay: vi.fn().mockImplementation(() => rowGen(rows)),
     });
     const store = makeStore({
@@ -206,6 +211,7 @@ describe('runAllTables — compositeIndex', () => {
 
     const calledSymbols: string[] = [];
     const fetch = makeFetch({
+      oldest: vi.fn().mockResolvedValue(tsRow(TWO_DAYS_AGO)),
       getDay: vi.fn().mockImplementation((_t, _d, filter) => {
         if (filter?.symbol) calledSymbols.push(filter.symbol);
         return rowGen([]);
@@ -229,6 +235,7 @@ describe('runAllTables — compositeIndex', () => {
     (tablesModule.TABLES as TableConfig[]).push(COMPOSITE_TABLE);
 
     const fetch = makeFetch({
+      oldest: vi.fn().mockResolvedValue(tsRow(TWO_DAYS_AGO)),
       getDay: vi.fn().mockImplementation(() => rowGen([])),
     });
     const store = makeStore({
@@ -285,9 +292,13 @@ describe('runAllTables — next[id] tracking', () => {
   it('probes for next date and closes the day when getDay returns empty', async () => {
     (tablesModule.TABLES as TableConfig[]).push(SIMPLE_TABLE);
 
+    // Cold start probe (no startTime) returns TWO_DAYS_AGO so initialDate is
+    // a past date; the empty-day probe (with startTime) returns null so the
+    // probeNextDate fallback path is exercised.
     const fetch = makeFetch({
       getDay:  vi.fn().mockImplementation(() => rowGen([])),
-      oldest:  vi.fn().mockResolvedValue(null),
+      oldest:  vi.fn().mockImplementation((_t, filter) =>
+        Promise.resolve(filter?.startTime ? null : tsRow(TWO_DAYS_AGO))),
     });
     const store = makeStore({
       listFiles: vi.fn().mockResolvedValue({ [TWO_DAYS_AGO]: 'closed' }),

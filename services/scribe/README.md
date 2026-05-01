@@ -7,7 +7,7 @@ Fetches the full historical record from the BitMEX REST API and writes it to the
 - Iterates a fixed list of public BitMEX REST endpoints (compositeIndex, funding, insurance, settlement)
 - Paginates each endpoint oldest-first in blocks of 500 rows
 - Writes output as CSV files to vault, organised by table and date
-- Derives its resume point from vault on startup — no separate state store
+- Tracks per-task progress in Redis (`scribe_<table>_<id>`); on startup, picks up from the cached date, clamped by `SCRIBE_START_DATE`, falling back to a BitMEX probe on first run
 - Handles BitMEX's undocumented pagination caps via time-block pagination (see SCRIBE.md)
 
 ## Development

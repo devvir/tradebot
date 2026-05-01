@@ -43,14 +43,17 @@ For `compositeIndex`, all symbols are processed sequentially for each day before
 
 ## Startup Bootstrap
 
-On startup, scribe derives its resume point from the vault file listing for each table:
+On startup, scribe determines the resume date for each task (one task per table, except `compositeIndex` which has one task per index symbol):
 
 1. `GET /files/:table` — list all files
 2. Delete any `open` files (incomplete from a previous run)
-3. Resume from the day after the latest `closed` file
-4. If no closed files exist (first run), probe each task for its oldest available row via a single `start=0, count=1` request to find the actual data start date
+3. Read the task's last-saved progress date from Redis (key `scribe_<table>_<id>`)
+4. The lower bound is the later of `SCRIBE_START_DATE` and the cached date
+5. With a lower bound: walk forward through the closed-file set, returning the first date that has no closed file
+6. Without a lower bound (no cache, no env var): probe BitMEX with a single `start=0, count=1` request to find the symbol's first available row, cache it, and start there
+7. If the lower bound is already today or later, the task is caught up; the runner sleeps until UTC midnight
 
-No separate state store is used.
+The earliest resume date across all tasks for a table becomes the table's loop entry point.
 
 ---
 
@@ -66,13 +69,17 @@ BitMEX enforces a maximum `start` offset per endpoint (2,500,000 for all current
 Startup (per table, in parallel):
   1. GET /files/:table — list vault files
   2. DELETE any open files
-  3. If closed files exist: resume from dayAfter(latestClosed)
-  4. If no closed files: probe each task's oldest row to find initialDate
+  3. tasks = all index symbols (compositeIndex) or [default] (others)
+  4. For each task, compute the start date:
+       boundary = latest(SCRIBE_START_DATE, redis cached date)
+       if boundary >= today           → today (caught up)
+       else if boundary               → first date >= boundary not in closed-file set
+       else                           → probe BitMEX oldest row, cache it
+  5. initialDate = min(start dates across tasks)
 
 Per-table loop:
   loop:
     if currentDate >= today: sleep until UTC midnight
-    tasks = all symbols (compositeIndex) or [default] (others)
     for each task:
       skip if task's next date > currentDate
       fetch all rows for currentDate (startTime=day, endTime=nextDay, reverse=false)

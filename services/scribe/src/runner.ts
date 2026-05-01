@@ -5,7 +5,7 @@ import { sleep } from './utils/throttling';
 import type { FetchService, FetchFilter, Row } from './bitmex';
 import type { StoreService } from './vault';
 import type { TableConfig } from './types';
-import { probeNextDate, restoreProgress, todayUtc, nextDay } from './probing';
+import { probeNextDate, restoreProgress, saveProgress, todayUtc, nextDay } from './probing';
 
 const FLUSH_THRESHOLD = 1_000;
 
@@ -58,15 +58,15 @@ const processTable = async (
 
       logger.info({ table: table.name, currentDate, id }, 'Processing day');
 
-      const hasRows = await fetchAndWriteDay(filter, table, fetch, store, currentDate);
+      const foundRows = await fetchAndWriteDay(filter, table, fetch, store, currentDate);
 
-      if (hasRows) {
-        next.set(id, nextDay(currentDate));
-      } else {
-        logger.info({ table: table.name, id }, 'Empty day — probing');
-        const nextDate = await probeNextDate(table, fetch, cache, id, filter, currentDate);
-        next.set(id, nextDate);
-      }
+      const nextDate = foundRows
+        ? nextDay(currentDate)
+        : await probeNextDate(table, fetch, cache, id, filter, currentDate);
+
+      next.set(id, nextDate);
+
+      await saveProgress(cache, table.name, id, nextDate);
     }
 
     await store.closeFile(table.name, currentDate);

@@ -1,8 +1,3 @@
-/**
- * Probing logic for discovering where symbol data starts and handling BitMEX's
- * row-ID-based startTime quirk. Extracted from runner to keep the main loop
- * focused on iteration and storage.
- */
 import { logger } from '@devvir/service-kit';
 import type { RedisClient } from '@devvir/service-kit';
 import config from './config';
@@ -17,14 +12,15 @@ interface Task {
 
 const cacheKey = (table: string, id: string): string => `scribe_${table}_${id}`;
 
-/**
- * Determines the next date to process for a symbol whose current day was empty.
- *
- * First tries a startTime-based probe (fast, one request). If that returns
- * nothing — which happens when BitMEX's row-ID threshold hides the data — falls
- * back to a reverse query without startTime to check whether the symbol has any
- * data past currentDate.
- */
+export const saveProgress = async (
+  cache: RedisClient,
+  table: string,
+  id:    string,
+  date:  string,
+): Promise<void> => {
+  await cache.set(cacheKey(table, id), date);
+};
+
 export const probeNextDate = async (
   table:       TableConfig,
   fetch:       FetchService,
@@ -33,20 +29,19 @@ export const probeNextDate = async (
   filter:      FetchFilter,
   currentDate: string,
 ): Promise<string> => {
-  const probe    = await fetch.oldest(table, { ...filter, startTime: toIso(nextDay(currentDate)) });
-  let   nextDate = rowDate(probe);
+  logger.info({ table: table.name, id }, 'Empty day — probing');
+
+  let nextDate = await oldestDate(fetch, table, { ...filter, startTime: toIso(nextDay(currentDate)) });
 
   // BitMEX maps startTime to a row-ID threshold, not a timestamp comparison.
   // Sparse symbols whose rows sit at high row-IDs return empty even when data
-  // exists. Fall back to a reliable reverse query (no startTime) to decide
-  // whether the symbol is truly exhausted or just hidden by the row-ID bug.
+  // exists. Fall back to a reverse query (no startTime) to decide whether the
+  // symbol is truly exhausted or just hidden by the row-ID quirk.
   if (! nextDate) {
-    const last     = await fetch.newest(table, { symbol: filter.symbol });
-    const lastDate = rowDate(last);
+    const lastDate = await newestDate(fetch, table, { symbol: filter.symbol });
 
     if (lastDate && lastDate > currentDate) {
-      const first     = await fetch.oldest(table, { symbol: filter.symbol });
-      const firstDate = rowDate(first) ?? todayUtc();
+      const firstDate = await oldestDate(fetch, table, { symbol: filter.symbol }) ?? todayUtc();
 
       logger.info({ table: table.name, id, firstDate, lastDate }, 'Will start from first available date');
       nextDate = firstDate > currentDate ? firstDate : nextDay(currentDate);
@@ -56,17 +51,13 @@ export const probeNextDate = async (
     }
   }
 
-  await cache.set(cacheKey(table.name, id), nextDate);
+  await saveProgress(cache, table.name, id, nextDate);
 
   return nextDate;
 };
 
 // ── Cold start ───────────────────────────────────────────────────────────────
 
-/**
- * Cleans up vault state, then builds the next-date map from cache where
- * available, falling back to a live probe only for tasks with no cached value.
- */
 export const restoreProgress = async (
   table:    TableConfig,
   fetch:    FetchService,
@@ -74,103 +65,66 @@ export const restoreProgress = async (
   cache:    RedisClient,
   getTasks: () => Promise<Task[]>,
 ): Promise<{ initialDate: string; next: Map<string, string>; closedDates: Set<string> }> => {
-  const { resumeFrom, closedDates } = await prepareTable(table.name, store);
-  const tasks          = await getTasks();
-  const next           = new Map<string, string>();
-  let   initialDate    = resumeFrom ?? todayUtc();
+  const closedDates = await collectClosedDates(table.name, store);
+  const tasks       = await getTasks();
+  const next        = new Map<string, string>();
 
-  // Populate next from cache — avoids the 4000+ probe loop on restart.
-  const uncached: typeof tasks = [];
+  logger.info({ table: table.name, tasks: tasks.length }, 'Restoring progress');
 
-  logger.info({ table: table.name, tasks: tasks.length }, 'Checking cache');
+  for (const task of tasks.values())
+    next.set(task.id, await taskStartDate(table, fetch, cache, task, closedDates));
 
-  for (const task of tasks) {
-    const cached = await cache.get(cacheKey(table.name, task.id));
+  const initialDate = [...next.values()].reduce((a, b) => (a < b ? a : b), todayUtc());
 
-    if (cached) {
-      next.set(task.id, cached);
-
-      if (cached < initialDate) initialDate = cached;
-    } else {
-      uncached.push(task);
-    }
-  }
-
-  logger.info({ table: table.name, cached: next.size, uncached: uncached.length }, 'Cache check done');
-
-  // Never start before the vault's resume point — files before that are already
-  // closed and must not be re-written. Cached dates from a previous interrupted
-  // run may be earlier than resumeFrom; clamp them out.
-  if (resumeFrom && initialDate < resumeFrom) initialDate = resumeFrom;
-
-  // If resuming from vault history, skip probing uncached tasks — the main loop
-  // will initialise them to initialDate on first encounter, same as before.
-  if (resumeFrom) {
-    logger.info({ table: table.name, resumeFrom, cached: next.size, uncached: uncached.length }, 'Resuming');
-    return { initialDate, next, closedDates };
-  }
-
-  // Cold start: probe only the tasks not found in cache.
-  if (uncached.length > 0) {
-    logger.info({ table: table.name, total: tasks.length, cached: next.size, probing: uncached.length }, 'Cold start — probing uncached tasks');
-
-    for (const [i, { id, filter }] of uncached.entries()) {
-      const startDate = rowDate(await fetch.oldest(table, filter)) ?? todayUtc();
-
-      next.set(id, startDate);
-      await cache.set(cacheKey(table.name, id), startDate);
-
-      if (startDate < initialDate) initialDate = startDate;
-
-      if ((i + 1) % 100 === 0)
-        logger.info({ table: table.name, probed: i + 1, total: uncached.length }, 'Probing progress');
-    }
-  }
-
-  logger.info({ table: table.name, initialDate }, 'Cold start probe complete');
+  logger.info({ table: table.name, initialDate }, 'Progress restored');
 
   return { initialDate, next, closedDates };
 };
 
+const taskStartDate = async (
+  table:       TableConfig,
+  fetch:       FetchService,
+  cache:       RedisClient,
+  task:        Task,
+  closedDates: Set<string>,
+): Promise<string> => {
+  const today    = todayUtc();
+  const cached   = await cache.get(cacheKey(table.name, task.id));
+  const boundary = latest(config.startDate ?? null, cached);
+
+  if (! boundary) {
+    const probed = await oldestDate(fetch, table, task.filter) ?? today;
+
+    await saveProgress(cache, table.name, task.id, probed);
+
+    return probed;
+  }
+
+  if (boundary >= today) return today;
+
+  return firstUnclosed(boundary, closedDates);
+};
+
 // ── Vault startup ────────────────────────────────────────────────────────────
 
-const prepareTable = async (
+const collectClosedDates = async (
   tableName: string,
   store:     StoreService,
-): Promise<{ resumeFrom: string | null; closedDates: Set<string> }> => {
-  logger.info({ table: tableName }, 'Checking vault');
-
+): Promise<Set<string>> => {
   const files = await store.listFiles(tableName);
 
   for (const [date, state] of Object.entries(files)) {
     if (state === 'open') {
       await store.deleteFile(tableName, date);
-      logger.info({ table: tableName, date }, 'Deleted incomplete open file — will re-fetch');
+      logger.info({ table: tableName, date }, 'Deleted incomplete open file');
     }
   }
 
-  const closedDates = new Set(
+  return new Set(
     Object.entries(files)
       .filter(([, s]) => s === 'closed')
       .map(([d]) => d),
   );
-
-  if (closedDates.size === 0) {
-    logger.info({ table: tableName }, 'No existing vault files — will probe BitMEX for start date');
-    return { resumeFrom: null, closedDates };
-  }
-
-  // Walk forward from startDate (or earliest closed file) to find the first
-  // date that has no closed file. That is where download must resume.
-  const earliest   = [...closedDates].sort()[0];
-  const from       = config.startDate ?? earliest;
-  let   resumeFrom = from;
-
-  while (closedDates.has(resumeFrom)) resumeFrom = nextDay(resumeFrom);
-
-  logger.info({ table: tableName, resumeFrom }, 'Vault ready — resuming from first gap');
-
-  return { resumeFrom, closedDates };
 };
 
 // ── Date helpers ─────────────────────────────────────────────────────────────
@@ -185,6 +139,27 @@ export const nextDay = (date: string): string => {
 
   return new Date(Date.UTC(y, m, d + 1)).toISOString().slice(0, 10).replace(/-/g, '');
 };
+
+const latest = (a: string | null, b: string | null): string | null => {
+  if (! a) return b;
+  if (! b) return a;
+
+  return a > b ? a : b;
+};
+
+const firstUnclosed = (from: string, closedDates: Set<string>): string => {
+  let date = from;
+
+  while (closedDates.has(date)) date = nextDay(date);
+
+  return date;
+};
+
+const oldestDate = async (fetch: FetchService, table: TableConfig, filter: FetchFilter): Promise<string | null> =>
+  rowDate(await fetch.oldest(table, filter));
+
+const newestDate = async (fetch: FetchService, table: TableConfig, filter: FetchFilter): Promise<string | null> =>
+  rowDate(await fetch.newest(table, filter));
 
 const toIso = (date: string): string => {
   const y = date.slice(0, 4);
