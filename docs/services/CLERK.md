@@ -10,9 +10,9 @@ vault (closed .csv.gz files)
 ```
 
 Clerk is the entry point of the customs pipeline. It continuously scans vault for
-files (open or closed), reads them from the last known offset, and publishes new
-content to the `clerk` topic exchange for downstream processing. Progress is tracked
-in Redis so work already done is never repeated.
+closed files, reads them from the last known offset, and publishes their content to
+the `clerk` topic exchange for downstream processing. Progress is tracked in Redis
+so work already done is never repeated.
 
 ## Tables
 
@@ -25,17 +25,17 @@ the rest are silently skipped. An unknown name simply matches nothing and has no
 ## Poll Loop
 
 1. Calls `GET /tables` on vault to get the current list of tables.
-2. For each table, calls `GET /files/:table` in parallel to list all known files and their state (`open` / `closed`).
-3. Merges all `(date, table, state)` tuples and sorts by date ascending, then table name as tiebreaker.
-4. Skips files marked as done in Redis.
-4. For each remaining file, reads the stored offset from Redis and streams from that position.
-5. Publishes all new content; checkpoints the offset to Redis every 500 messages.
-6. On completion: closed files are marked done; open files have their offset updated.
-7. Sleeps 60 seconds and repeats.
+2. For each table, calls `GET /files/:table` in parallel to list known files and their state.
+3. Filters out anything not yet `closed` — open files are picked up on a later cycle once they close.
+4. Merges all `(date, table)` pairs and sorts by date ascending, then table name as tiebreaker.
+5. Skips files marked as done in Redis.
+6. For each remaining file, reads the stored offset from Redis and streams from that position.
+7. Publishes all new content; checkpoints the offset to Redis every 500 messages.
+8. On completion, marks the file done — a successful read implies vault served a closed file.
+9. Sleeps 60 seconds and repeats.
 
-Open files are polled on every cycle — each pass picks up only the rows added since
-the last offset. This gives near-real-time database ingestion for all tables without
-waiting for a day to close.
+Discovery is implemented separately in `discovery.ts` so the poll loop only ever sees
+files it can actually process.
 
 ## File Reading
 
@@ -70,16 +70,15 @@ Redis stores one key per file:
 
 ```
 clerk_progress:<table>:<date>  →  <offset>   # number of message groups published so far
-                               →  "done"     # closed file fully processed (never revisited)
+                               →  "done"     # file fully processed (never revisited)
 ```
 
-Offset is checkpointed every 500 published messages and again at the end of each
-cycle. On crash, clerk resumes from the last checkpoint — at most 499 messages are
-re-published. Registrar handles these duplicates silently via unique index on `_id`.
+Offset is checkpointed every 500 published messages. On crash, clerk resumes from the
+last checkpoint — at most 499 messages are re-published. Registrar handles these
+duplicates silently via unique index on `_id`.
 
-Open files are never marked done. Each poll cycle reads from the stored offset and
-advances it to the new end of the file. When a file is eventually closed, the next
-cycle clears the offset and marks it done.
+Once a file has been read end-to-end, its key is set to `"done"` and it is never
+revisited.
 
 ## Vault Resilience
 

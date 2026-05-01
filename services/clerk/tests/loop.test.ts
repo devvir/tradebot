@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { RedisClient } from '@devvir/service-kit';
 import type { RabbitMQ } from '@devvir/service-kit';
-import { runOnce } from '../src/loop';
+import { _test_processNextBatch as processNextBatch } from '../src/loop';
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
@@ -21,7 +21,7 @@ vi.mock('../src/progress', () => ({
 }));
 
 import { listTables, listFiles, readFileGroups } from '../src/vault';
-import { isDone, getOffset, setOffset } from '../src/progress';
+import { isDone, getOffset, setOffset, markDone } from '../src/progress';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -54,9 +54,9 @@ const makeReadFileGroups = (rowCount: number) =>
     return rowCount;
   });
 
-// ── runOnce — date ordering ───────────────────────────────────────────────────
+// ── processNextBatch — date ordering ───────────────────────────────────────────────────
 
-describe('runOnce — date ordering', () => {
+describe('processNextBatch — date ordering', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(isDone).mockResolvedValue(false);
@@ -82,15 +82,22 @@ describe('runOnce — date ordering', () => {
       return 1;
     });
 
-    await runOnce('http://vault', makeBroker(), makeRedis(), noGate);
+    const redis = makeRedis();
+    const broker = makeBroker();
+
+    // Each call processes one date batch — two calls needed for two dates.
+    // After the first call, mock isDone to reflect 20240101 as done so the
+    // second call advances to 20240102.
+    await processNextBatch('http://vault', broker, redis, noGate);
+    vi.mocked(isDone).mockImplementation(async (_r, _t, date) => date === '20240101');
+    await processNextBatch('http://vault', broker, redis, noGate);
 
     // Both tables for 20240101 must finish before either starts 20240102
-    const firstDate101 = order.findIndex(e => e.includes('20240101'));
     const lastDate101  = order.findLastIndex(e => e.includes('20240101'));
     const firstDate102 = order.findIndex(e => e.includes('20240102'));
 
+    expect(lastDate101).toBeGreaterThanOrEqual(0);
     expect(lastDate101).toBeLessThan(firstDate102);
-    expect(firstDate101).toBeGreaterThanOrEqual(0);
   });
 
   it('skips tables where listFiles returns null', async () => {
@@ -101,7 +108,7 @@ describe('runOnce — date ordering', () => {
     });
     vi.mocked(readFileGroups).mockImplementation(makeReadFileGroups(1));
 
-    await runOnce('http://vault', makeBroker(), makeRedis(), noGate);
+    await processNextBatch('http://vault', makeBroker(), makeRedis(), noGate);
 
     // readFileGroups should only have been called for 'trade', not 'unknown'
     const calls = vi.mocked(readFileGroups).mock.calls;
@@ -110,9 +117,9 @@ describe('runOnce — date ordering', () => {
   });
 });
 
-// ── runOnce — table filtering ─────────────────────────────────────────────────
+// ── processNextBatch — table filtering ─────────────────────────────────────────────────
 
-describe('runOnce — table filtering', () => {
+describe('processNextBatch — table filtering', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(isDone).mockResolvedValue(false);
@@ -124,7 +131,7 @@ describe('runOnce — table filtering', () => {
     vi.mocked(listTables).mockResolvedValue(['trade', 'quote', 'orderBookL2']);
     vi.mocked(listFiles).mockResolvedValue({ '20240101': 'closed' });
 
-    await runOnce('http://vault', makeBroker(), makeRedis(), noGate, ['trade', 'quote']);
+    await processNextBatch('http://vault', makeBroker(), makeRedis(), noGate, ['trade', 'quote']);
 
     const tables = vi.mocked(readFileGroups).mock.calls.map(([, table]) => table);
 
@@ -137,7 +144,7 @@ describe('runOnce — table filtering', () => {
     vi.mocked(listTables).mockResolvedValue(['trade', 'quote', 'orderBookL2']);
     vi.mocked(listFiles).mockResolvedValue({ '20240101': 'closed' });
 
-    await runOnce('http://vault', makeBroker(), makeRedis(), noGate, []);
+    await processNextBatch('http://vault', makeBroker(), makeRedis(), noGate, []);
 
     const tables = vi.mocked(readFileGroups).mock.calls.map(([, table]) => table);
 
@@ -163,7 +170,7 @@ describe('processFile — publish batching', () => {
     vi.mocked(readFileGroups).mockImplementation(makeReadFileGroups(ROW_COUNT));
     const exchange = makeExchange();
 
-    await runOnce('http://vault', makeBroker(exchange), makeRedis(), noGate);
+    await processNextBatch('http://vault', makeBroker(exchange), makeRedis(), noGate);
 
     expect(exchange.publish).toHaveBeenCalledTimes(ROW_COUNT);
   });
@@ -174,13 +181,13 @@ describe('processFile — publish batching', () => {
     vi.mocked(readFileGroups).mockImplementation(makeReadFileGroups(ROW_COUNT));
     const exchange = makeExchange();
 
-    await runOnce('http://vault', makeBroker(exchange), makeRedis(), noGate);
+    await processNextBatch('http://vault', makeBroker(exchange), makeRedis(), noGate);
 
     expect(exchange.publish).toHaveBeenCalledTimes(ROW_COUNT);
   });
 });
 
-// ── processFile — setOffset fire-and-forget ───────────────────────────────────
+// ── processFile — setOffset checkpoint ────────────────────────────────────────
 
 describe('processFile — setOffset checkpoint', () => {
   beforeEach(() => {
@@ -188,13 +195,13 @@ describe('processFile — setOffset checkpoint', () => {
     vi.mocked(isDone).mockResolvedValue(false);
     vi.mocked(getOffset).mockResolvedValue(0);
     vi.mocked(listTables).mockResolvedValue(['trade']);
-    vi.mocked(listFiles).mockResolvedValue({ '20240101': 'open' });
+    vi.mocked(listFiles).mockResolvedValue({ '20240101': 'closed' });
   });
 
-  it('calls setOffset at the 500-message checkpoint (not awaited, but still called)', async () => {
+  it('calls setOffset at the 500-message checkpoint', async () => {
     vi.mocked(readFileGroups).mockImplementation(makeReadFileGroups(500));
 
-    await runOnce('http://vault', makeBroker(), makeRedis(), noGate);
+    await processNextBatch('http://vault', makeBroker(), makeRedis(), noGate);
 
     // checkpoint fires at msgIndex 499 (index+1 === 500)
     expect(vi.mocked(setOffset)).toHaveBeenCalledWith(
@@ -202,15 +209,32 @@ describe('processFile — setOffset checkpoint', () => {
     );
   });
 
-  it('does not call the checkpoint setOffset for fewer than 500 messages', async () => {
+  it('does not call setOffset for fewer than 500 messages', async () => {
     vi.mocked(readFileGroups).mockImplementation(makeReadFileGroups(499));
 
-    await runOnce('http://vault', makeBroker(), makeRedis(), noGate);
+    await processNextBatch('http://vault', makeBroker(), makeRedis(), noGate);
 
-    // Only the final setOffset (open file) should have been called, not the checkpoint
-    const calls = vi.mocked(setOffset).mock.calls;
-    const checkpointCalls = calls.filter(([, , , offset]) => offset === 500);
+    expect(vi.mocked(setOffset)).not.toHaveBeenCalled();
+  });
+});
 
-    expect(checkpointCalls).toHaveLength(0);
+// ── processFile — closed-file marking ─────────────────────────────────────────
+
+describe('processFile — markDone', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(isDone).mockResolvedValue(false);
+    vi.mocked(getOffset).mockResolvedValue(0);
+    vi.mocked(listTables).mockResolvedValue(['trade']);
+    vi.mocked(listFiles).mockResolvedValue({ '20240101': 'closed' });
+    vi.mocked(readFileGroups).mockImplementation(makeReadFileGroups(10));
+  });
+
+  it('marks the file done after a successful read', async () => {
+    await processNextBatch('http://vault', makeBroker(), makeRedis(), noGate);
+
+    expect(vi.mocked(markDone)).toHaveBeenCalledWith(
+      expect.anything(), 'trade', '20240101',
+    );
   });
 });

@@ -73,6 +73,7 @@ const makeService = () => {
       config:   () => config,
       state:    (key?: string) => key !== undefined ? stateMap[key] : stateMap,
       setState: (key: string, value: unknown) => { stateMap[key] = value; return value; },
+      on:       vi.fn(),
     },
     config,
   };

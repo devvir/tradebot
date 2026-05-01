@@ -47,8 +47,10 @@ export const syncTable = async (vaultUrl: string, table: Table): Promise<void> =
 // re-runs syncAll to pick up the newly available prior-day dump.
 
 const scheduleNextPoll = (vaultUrl: string): void => {
+  logger.info('All files downloaded, will rescan in a few hours');
+
   setTimeout(async () => {
-    logger.info('Midnight UTC — checking for new files');
+    logger.info('Checking for new files');
 
     await syncAll(vaultUrl).catch(err => logger.error({ err }, 'Sync error'));
 

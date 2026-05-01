@@ -1,5 +1,6 @@
 import { logger, Broker, type RedisClient } from '@devvir/service-kit';
-import { listTables, listFiles, readFileGroups } from './vault';
+import { readFileGroups } from './vault';
+import { discoverFiles } from './discovery';
 import { isWsMessage } from './types';
 import { isDone, getOffset, setOffset, markDone } from './progress';
 import type { Config } from './types';
@@ -10,64 +11,63 @@ const OFFSET_CHECKPOINT  = 500;
 const PUBLISH_BATCH_SIZE = 500;
 const POLL_INTERVAL_MS   = 60_000;
 
-export const runOnce = async (
-  vaultUrl: string,
-  broker:   Broker,
-  redis:    RedisClient,
-  gate:     Gate,
-  filter:   string[] = [],
-): Promise<void> => {
-  const allTables = await listTables(vaultUrl);
-  const tables    = filter.length > 0 ? allTables.filter(t => filter.includes(t)) : allTables;
-
-  const byDate = new Map<string, { table: string; state: string }[]>();
-
-  await Promise.all(tables.map(async (table) => {
-    const files = await listFiles(vaultUrl, table);
-    if (! files) return;
-    for (const [date, state] of Object.entries(files)) {
-      const entry = byDate.get(date) ?? [];
-      entry.push({ table, state });
-      byDate.set(date, entry);
-    }
-  }));
-
-  for (const date of [...byDate.keys()].sort()) {
-    await Promise.all(
-      byDate.get(date)!.map(({ table, state }) =>
-        processFile(vaultUrl, table, date, state, broker, redis, gate),
-      ),
-    );
-  }
-};
-
 export const runLoop = async (
-  config: Config,
-  broker: Broker,
-  redis:  RedisClient,
-  gate:   Gate,
+  config:     Config,
+  broker:     Broker,
+  redis:      RedisClient,
+  gate:       Gate,
   stopSignal: { stopped: boolean },
 ): Promise<void> => {
   const { vaultUrl } = config;
 
   while (! stopSignal.stopped) {
     try {
-      await runOnce(vaultUrl, broker, redis, gate, config.tables);
+      const found = await processNextBatch(vaultUrl, broker, redis, gate, config.tables);
+
+      if (! found) {
+        logger.debug('Clerk sleeping until next poll');
+        await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+      }
     } catch (err) {
       logger.error({ err }, 'Error in clerk poll cycle');
+      await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
     }
-
-    logger.debug('Clerk sleeping until next poll');
-
-    await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
   }
+};
+
+/**
+ * Discovers vault files, finds the next unprocessed date batch, and processes
+ * it. Returns true if a batch was found and processed, false if everything is
+ * up to date.
+ */
+const processNextBatch = async (
+  vaultUrl: string,
+  broker:   Broker,
+  redis:    RedisClient,
+  gate:     Gate,
+  filter:   string[] = [],
+): Promise<boolean> => {
+  const batches = await discoverFiles(vaultUrl, filter);
+
+  for (const { date, tables } of batches) {
+    const doneChecks = await Promise.all(tables.map(t => isDone(redis, t, date)));
+
+    if (doneChecks.every(Boolean)) continue;
+
+    await Promise.all(
+      tables.map(table => processFile(vaultUrl, table, date, broker, redis, gate)),
+    );
+
+    return true;
+  }
+
+  return false;
 };
 
 const processFile = async (
   vaultUrl: string,
   table: string,
   date: string,
-  state: string,
   broker: Broker,
   redis: RedisClient,
   gate: Gate,
@@ -129,11 +129,13 @@ const processFile = async (
 
   await flush();
 
-  if (state === 'closed') {
-    await markDone(redis, table, date);
-  } else {
-    await setOffset(redis, table, date, totalGroups);
-  }
+  // A successful read implies the file was closed on disk (vault refuses
+  // open files), so we can safely mark it done.
+  await markDone(redis, table, date);
 
   logger.info({ table, date, totalGroups }, 'Vault file processed');
 };
+
+// ── Test exports ──────────────────────────────────────────────────────────────
+
+export const _test_processNextBatch = processNextBatch;
