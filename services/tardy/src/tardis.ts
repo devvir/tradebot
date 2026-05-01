@@ -88,7 +88,7 @@ const parseLine = (line: string, tables: TardyTable[]): TardisMessage | null => 
   // Truncate nanosecond precision to milliseconds (3 decimal places).
   const date = rawTs.slice(0, 23) + 'Z';
 
-  let parsed: { table?: unknown; action?: unknown; data?: unknown };
+  let parsed: { table?: unknown; action?: unknown; filter?: unknown; data?: unknown };
 
   try {
     parsed = JSON.parse(rawMsg) as typeof parsed;
@@ -111,11 +111,27 @@ const parseLine = (line: string, tables: TardyTable[]): TardisMessage | null => 
   return {
     table,
     msg: {
-      action: parsed.action,
+      action: encodeAction(parsed.action as string, parsed.filter),
       date,
       data:   parsed.data as Record<string, unknown>[],
     },
   };
+};
+
+/**
+ * Encodes a symbol filter into the action string for partial messages, so it
+ * survives vault storage and can be decoded by assembler on replay.
+ * e.g. action='partial' + filter={symbol:'XBTUSD'} → 'partial:XBTUSD'
+ * Non-partial actions and partials without a symbol filter are returned as-is.
+ */
+const encodeAction = (action: string, filter: unknown): string => {
+  if (action !== 'partial') return action;
+
+  const symbol = filter && typeof filter === 'object'
+    ? (filter as Record<string, unknown>).symbol
+    : undefined;
+
+  return typeof symbol === 'string' && symbol ? `partial:${symbol}` : action;
 };
 
 // ── HTTP ──────────────────────────────────────────────────────────────────────

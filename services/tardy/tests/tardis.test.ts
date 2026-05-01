@@ -82,13 +82,34 @@ describe('tardis — parseLine', () => {
     expect(_test_parseLine(line, ['orderBookL2'])).toBeNull();
   });
 
-  it('passes through all action types unchanged', () => {
-    for (const action of ['partial', 'insert', 'update', 'delete']) {
+  it('passes through insert, update and delete actions unchanged', () => {
+    for (const action of ['insert', 'update', 'delete']) {
       const line = `2019-04-01T00:00:00.000Z {"table":"liquidation","action":"${action}","data":[]}`;
       const result = _test_parseLine(line, ALL_TABLES);
 
       expect(result!.msg.action).toBe(action);
     }
+  });
+
+  it('encodes a symbol filter as partial:<symbol> on partial messages', () => {
+    const line = '2019-04-01T00:00:00.000Z {"table":"orderBookL2","action":"partial","filter":{"symbol":"XBTUSD"},"keys":["symbol","id","side"],"types":{},"data":[]}';
+    const result = _test_parseLine(line, ALL_TABLES);
+
+    expect(result!.msg.action).toBe('partial:XBTUSD');
+  });
+
+  it('leaves partial action unchanged when filter has no symbol', () => {
+    const line = '2019-04-01T00:00:00.000Z {"table":"instrument","action":"partial","filter":{},"data":[]}';
+    const result = _test_parseLine(line, ALL_TABLES);
+
+    expect(result!.msg.action).toBe('partial');
+  });
+
+  it('leaves partial action unchanged when filter is absent', () => {
+    const line = '2019-04-01T00:00:00.000Z {"table":"announcement","action":"partial","data":[]}';
+    const result = _test_parseLine(line, ALL_TABLES);
+
+    expect(result!.msg.action).toBe('partial');
   });
 
   it('passes data rows through without modification', () => {

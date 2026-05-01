@@ -24,14 +24,15 @@ export const reconstruct = (
     return null;
   }
 
-  const { action, data } = message;
+  const { data } = message;
+  const [action, filterSymbol] = decodeAction(message.action);
   const timestamp = (spec.types['timestamp'] ? data[0]['timestamp'] : message.date) as string;
 
   const result: ReconstructedMessage = { table, action, data, timestamp };
 
   if (action === 'partial') {
     result.types  = spec.types;
-    result.filter = spec.filter;
+    result.filter = filterSymbol !== undefined ? { symbol: filterSymbol } : spec.filter;
     result.keys   = spec.keys;
   }
 
@@ -41,4 +42,18 @@ export const reconstruct = (
   }
 
   return result;
+};
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Decodes a symbol-encoded action string produced by tardy.
+ * 'partial:XBTUSD' → ['partial', 'XBTUSD']
+ * 'partial'        → ['partial', undefined]
+ * 'insert'         → ['insert',  undefined]
+ */
+const decodeAction = (action: string): [string, string | undefined] => {
+  if (! action.startsWith('partial:')) return [action, undefined];
+
+  return ['partial', action.slice('partial:'.length)];
 };

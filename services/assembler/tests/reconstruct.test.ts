@@ -35,7 +35,7 @@ const msg = (action: string, data: Record<string, unknown>[], date = DATE): WsMe
 // ── partial action ────────────────────────────────────────────────────────────
 
 describe('reconstruct — partial', () => {
-  it('returns message with keys, types, and filter', () => {
+  it('returns message with keys, types, and empty filter for unfiltered partial', () => {
     const result = reconstruct('order', msg('partial', [orderRow()]));
 
     expect(result).not.toBeNull();
@@ -45,6 +45,19 @@ describe('reconstruct — partial', () => {
     expect(result!.keys!.length).toBeGreaterThan(0);
     expect(result!.types).toBeDefined();
     expect(result!.filter).toEqual({});
+  });
+
+  it('decodes partial:<symbol> into action=partial with symbol filter', () => {
+    const result = reconstruct('orderBookL2', msg('partial:XBTUSD', [{
+      symbol: 'XBTUSD', id: 1, side: 'Buy', size: 100, price: 29500,
+      timestamp: '2024-01-01T00:00:00.000Z',
+    }]));
+
+    expect(result).not.toBeNull();
+    expect(result!.action).toBe('partial');
+    expect(result!.filter).toEqual({ symbol: 'XBTUSD' });
+    expect(result!.keys).toBeDefined();
+    expect(result!.types).toBeDefined();
   });
 
   it('preserves data fields verbatim', () => {

@@ -80,6 +80,22 @@ export async function runPipeline(
       const mKey   = mSort.slice(0, 16);
 
       if (flushFloor !== null && mKey <= flushFloor) {
+        if (
+          ctx.tableName === 'instrument' &&
+          msg.action === 'update' &&
+          Date.parse(msg.date) - Date.parse(msg.timestamp) > 30 * 60 * 1000
+        ) {
+          const issue = {
+            type: 'wrong-order' as const,
+            date: msg.date,
+            message: `instrument update dropped: timestamp ${msg.timestamp} is more than 30 min before received time ${msg.date}`,
+          };
+
+          addToSummary(summary, issue);
+          log.issue(issue);
+          continue;
+        }
+
         const issue = {
           type: 'wrong-order' as const,
           date: msg.date,

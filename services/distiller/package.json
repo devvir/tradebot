@@ -12,7 +12,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@devvir/bitmex-database": "^1.1.4",
+    "@devvir/bitmex-database": "^1.2.0",
     "@devvir/service-kit": "workspace:*",
     "@tradebot/types": "workspace:*",
     "@tradebot/utils": "workspace:*",
