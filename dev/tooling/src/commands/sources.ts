@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { run } from '../tools/sources/index.js';
 import { parseFromDay } from '../tools/sources/merge/discover.js';
+import { runDaily } from '../tools/sources/daily/run.js';
 import { error } from '../shared/ui/logger';
 
 /**
@@ -10,6 +11,7 @@ import { error } from '../shared/ui/logger';
  *   sources fix   [path] [--dry-run|-D] [--log <dir>]                     — scan a single file; optionally write fixed output
  *   sources merge [path] [--dry-run|-D] [--log <dir>] [--from <YYYYMMDD>] — merge a vault+gaps pair; optionally dry-run
  *   sources check [path] [--dry-run|-D]                                    — verify gz integrity; recover corrupt files unless --dry-run
+ *   sources daily [--date <YYYYMMDD>]                                      — full daily ingestion pipeline
  *
  * Running `sources` with no sub-command drops into the interactive menu.
  * The `--log` flag lives only on the subcommands — declaring it on the
@@ -73,6 +75,19 @@ export function register(program: Command): void {
     .action(async (scopeArg: string | undefined, options: SourcesOpts) => {
       try {
         await run(scopeArg ?? null, options.dryRun ? 'check-dry' : 'check', null);
+      } catch (err) {
+        error((err as Error).message);
+        process.exit(1);
+      }
+    });
+
+  sources
+    .command('daily')
+    .description('Full daily ingestion pipeline: import, upload raw, fix, merge, fix, upload vault')
+    .option('--date <date>', 'Date to process (YYYYMMDD or YYYY-MM-DD); defaults to yesterday UTC')
+    .action(async (options: { date?: string }) => {
+      try {
+        await runDaily(options.date ?? null);
       } catch (err) {
         error((err as Error).message);
         process.exit(1);
