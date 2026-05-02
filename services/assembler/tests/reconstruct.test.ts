@@ -148,6 +148,44 @@ describe('reconstruct — timestamp', () => {
   });
 });
 
+// ── orderBookL2 defaults ──────────────────────────────────────────────────────
+
+describe('reconstruct — orderBookL2 defaults', () => {
+  const obRow = (overrides: Record<string, unknown> = {}) => ({
+    symbol: 'XBTUSD', id: 8799000000, side: 'Sell', size: 100, price: 10000,
+    ...overrides,
+  });
+
+  it('fills missing timestamp, transactTime, and pool from message date', () => {
+    const result = reconstruct('orderBookL2', msg('insert', [obRow()], '2019-06-01T00:00:00.000Z'));
+
+    expect(result!.data[0]).toMatchObject({
+      timestamp:    '2019-06-01T00:00:00.000Z',
+      transactTime: '2019-06-01T00:00:00.000Z',
+      pool:         'Primary',
+    });
+  });
+
+  it('does not overwrite existing timestamp, transactTime, or pool', () => {
+    const row = obRow({ timestamp: '2021-01-01T12:00:00.000Z', transactTime: '2021-01-01T11:59:59.000Z', pool: 'Backup' });
+    const result = reconstruct('orderBookL2', msg('insert', [row], '2021-06-01T00:00:00.000Z'));
+
+    expect(result!.data[0]).toMatchObject({
+      timestamp:    '2021-01-01T12:00:00.000Z',
+      transactTime: '2021-01-01T11:59:59.000Z',
+      pool:         'Backup',
+    });
+  });
+
+  it('does not apply defaults to other tables', () => {
+    const row = { symbol: 'XBTUSD', markPrice: 10000 };
+    const result = reconstruct('instrument', msg('partial', [row], '2019-06-01T00:00:00.000Z'));
+
+    expect(result!.data[0]).not.toHaveProperty('pool');
+    expect(result!.data[0]).not.toHaveProperty('transactTime');
+  });
+});
+
 // ── edge cases ────────────────────────────────────────────────────────────────
 
 describe('reconstruct — edge cases', () => {

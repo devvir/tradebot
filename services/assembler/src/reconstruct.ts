@@ -25,10 +25,11 @@ export const reconstruct = (
   }
 
   const { data } = message;
+  const resolvedData = table === 'orderBookL2' ? fillOrderBookDefaults(data, message.date) : data;
   const [action, filterSymbol] = decodeAction(message.action);
-  const timestamp = (spec.types['timestamp'] ? data[0]['timestamp'] : message.date) as string;
+  const timestamp = (spec.types['timestamp'] ? resolvedData[0]['timestamp'] : message.date) as string;
 
-  const result: ReconstructedMessage = { table, action, data, timestamp };
+  const result: ReconstructedMessage = { table, action, data: resolvedData, timestamp };
 
   if (action === 'partial') {
     result.types  = spec.types;
@@ -43,6 +44,31 @@ export const reconstruct = (
 
   return result;
 };
+
+// ── OrderBook defaults ────────────────────────────────────────────────────────
+
+/**
+ * Fills in missing `timestamp`, `transactTime`, and `pool` fields on
+ * orderBookL2 data items using the message reception date. Fields that are
+ * already present are never overwritten — these are defaults, not coercions.
+ *
+ * Pre-2023 BitMEX orderBookL2 data did not include some or all of these fields.
+ */
+const fillOrderBookDefaults = (
+  data:  Record<string, unknown>[],
+  date:  string,
+): Record<string, unknown>[] =>
+  data.map(item => {
+    if (item.timestamp && item.transactTime && item.pool)
+      return item;
+
+    return {
+      ...item,
+      timestamp:    item.timestamp    ?? date,
+      transactTime: item.transactTime ?? date,
+      pool:         item.pool         ?? 'Primary',
+    };
+  });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
