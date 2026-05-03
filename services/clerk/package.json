@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@devvir/service-kit": "workspace:*",
-    "@tradebot/utils": "workspace:*"
+    "@tradebot/utils": "workspace:*",
+    "undici": "^8.2.0"
   }
 }

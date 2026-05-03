@@ -31,3 +31,12 @@ export const isWsMessage = (item: unknown): item is WsMessage =>
   Array.isArray((item as WsMessage).data);
 
 export type FileState = 'open' | 'closed';
+
+/** Context passed to vault fetch error mapping for useful error messages. */
+export interface VaultReadContext {
+  table:      string;
+  date:       string;
+  startFrom:  number;
+  /** Absolute row index reached when the failure occurred (mid-stream only). */
+  msgIndex?:  number;
+}
