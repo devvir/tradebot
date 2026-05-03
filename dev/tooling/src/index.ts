@@ -15,6 +15,7 @@ import { register as registerMonitor } from './commands/monitor';
 import { register as registerSources } from './commands/sources.js';
 import { register as registerRemote } from './commands/remote.js';
 import { register as registerSynth } from './commands/synth.js';
+import { register as registerMapId } from './commands/mapId.js';
 
 interface Tool {
   id: string;
@@ -33,6 +34,7 @@ const tools: Tool[] = [
   { id: 'sources', name: 'Sources', description: 'Sanitise and diagnose vault source data' },
   { id: 'remote', name: 'Remote', description: 'Remote server operations (sync-env, pull)' },
   { id: 'synth', name: 'Synth', description: 'Synthetic data tools (index, generate)' },
+  { id: 'mapId', name: 'Map ID', description: 'Translate between vault record _id and ISO date' },
 ];
 
 async function main(): Promise<void> {
@@ -65,6 +67,7 @@ async function main(): Promise<void> {
   registerSources(program);
   registerRemote(program);
   registerSynth(program);
+  registerMapId(program);
 
   // Show interactive menu when no subcommand is given.
   // Preserve any global flags (-e, --env, -v, --verbose) so they survive the

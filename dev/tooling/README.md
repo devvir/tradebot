@@ -728,6 +728,45 @@ Merge (dry)   — report what would be merged, no output written
 
 ---
 
+## Map ID Tool (`mapId`)
+
+Translate between vault record `_id` values and ISO dates. Useful when inspecting raw MongoDB documents or building queries with `_id` range bounds.
+
+The vault `_id` is a 53-bit safe integer with layout:
+
+```
+_id = dateOffset * 2^39 + position * 2^12 + reserved
+```
+
+- `dateOffset` — days since 2000-01-01 UTC
+- `position` — message index within the day's vault file
+- `reserved` — 0 for registrar-produced IDs; 1–4095 for gap-fill events
+
+### Usage
+
+```bash
+tools mapId <value>
+```
+
+- **Numeric value** — decoded to ISO date, position, and reserved field
+- **Non-numeric value** — treated as a (partial) ISO date and encoded to the minimum `_id` for that date
+
+### Examples
+
+```bash
+# Encode: ISO date → minimum _id for that date
+tools mapId 2029-01-01         # → id  3864783371632640
+tools mapId 2029               # → id for 2029-01-01 (defaults month/day to 01)
+tools mapId 2029-06            # → id for 2029-06-01
+tools mapId 20190901           # → YYYYMMDD without dashes, same as 2019-09-01
+
+# Decode: _id → date + position + reserved
+tools mapId 3864783371632640   # → date 2029-01-01, position 0, reserved 0
+tools mapId 3864783375826951   # → date 2029-01-01, position 1023, reserved 7
+```
+
+---
+
 ## Interactive Menu
 
 Run without arguments to get an interactive menu:
@@ -761,7 +800,8 @@ dev/tooling/
 │   │   ├── signal.ts
 │   │   ├── monitor.ts
 │   │   ├── remote.ts
-│   │   └── sources.ts
+│   │   ├── sources.ts
+│   │   └── mapId.ts
 │   ├── tools/                # Tool implementations (isolated)
 │   │   ├── websocket/
 │   │   ├── mongodb/
@@ -799,7 +839,8 @@ dev/tooling/
 │           └── env.ts        # Environment loading
 ├── tests/
 │   ├── commands/
-│   │   └── register.test.ts  # Command registration smoke tests
+│   │   ├── register.test.ts  # Command registration smoke tests
+│   │   └── mapId.test.ts     # encodeDate, decodeId, normaliseDate unit tests
 │   ├── shared/
 │   │   └── utils/
 │   │       └── env.test.ts
