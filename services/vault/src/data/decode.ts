@@ -1,30 +1,5 @@
-import { streamLines } from '../fs/reader';
+import { streamRecords } from '../fs/reader';
 import { applyCasts } from './casts';
-
-/**
- * Parses a single CSV line into an array of field strings.
- * Handles quoted fields (e.g. JSON arrays/objects that contain commas).
- */
-const parseCsvLine = (line: string): string[] => {
-  const fields: string[] = [];
-  let   current          = '';
-  let   inQuotes         = false;
-
-  for (const ch of line) {
-    if (ch === '"') {
-      inQuotes = ! inQuotes;
-    } else if (ch === ',' && ! inQuotes) {
-      fields.push(current);
-      current = '';
-    } else {
-      current += ch;
-    }
-  }
-
-  fields.push(current);
-
-  return fields;
-};
 
 /**
  * Decodes a closed vault file into a stream of NDJSON lines.
@@ -35,20 +10,21 @@ const parseCsvLine = (line: string): string[] => {
  * REST files are emitted as plain row objects, one per line.
  *
  * `skip` skips the first N messages/items using a cheap heuristic:
- * for WS files, a line starting with ',' is a continuation row (not a new
- * message), so only non-continuation lines advance the skip counter.
+ * for WS files, a record whose first field is empty is a continuation row
+ * (not a new message), so only non-continuation records advance the skip
+ * counter.
  */
 export async function* decodeFile(
   table:    string,
   filename: string,
   skip = 0,
 ): AsyncGenerator<string> {
-  const lines = streamLines(table, filename);
-  const first = await lines.next();
+  const records = streamRecords(table, filename);
+  const first   = await records.next();
 
   if (first.done) return;
 
-  const cols  = parseCsvLine(first.value);
+  const cols  = first.value;
   const isWs  = cols[0] === '_date_';
 
   // For WS rows, columns 0 and 1 are metadata (_date_, _action_).
@@ -78,8 +54,8 @@ export async function* decodeFile(
     return out;
   };
 
-  for await (const line of lines) {
-    const isContinuation = isWs && line.startsWith(',');
+  for await (const record of records) {
+    const isContinuation = isWs && record[0] === '';
 
     if (! isContinuation) {
       // Crossing into a new message — update skip state.
@@ -96,21 +72,19 @@ export async function* decodeFile(
 
     if (skippingCurrent) continue;
 
-    const fields = parseCsvLine(line);
-
     if (isWs) {
       if (! isContinuation) {
-        groupDate   = fields[0] ?? '';
-        groupAction = fields[1] ?? '';
-        const row   = applyFields(fields.slice(2), dataCols, table);
+        groupDate   = record[0] ?? '';
+        groupAction = record[1] ?? '';
+        const row   = applyFields(record.slice(2), dataCols, table);
 
         if (Object.keys(row).length > 0) groupRows.push(row);
       } else {
-        const row = applyFields(fields.slice(2), dataCols, table);
+        const row = applyFields(record.slice(2), dataCols, table);
         groupRows.push(row);
       }
     } else {
-      yield JSON.stringify(applyFields(fields, dataCols, table)) + '\n';
+      yield JSON.stringify(applyFields(record, dataCols, table)) + '\n';
     }
   }
 

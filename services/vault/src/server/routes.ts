@@ -14,7 +14,7 @@
 import { type Application, type Request, type Response } from 'express';
 import { Readable } from 'stream';
 import { logger } from '@devvir/service-kit';
-import { streamLines, listFiles, listTables, fileState } from '../fs/reader';
+import { streamRecords, listFiles, listTables, fileState } from '../fs/reader';
 import { storeFile, deleteFile } from '../fs/writer';
 import { isHealthy, getFailureReason } from '../fs/health';
 import { decodeFile } from '../data/decode';
@@ -195,16 +195,16 @@ export const registerRoutes = (app: Application): void => {
     const filename = filenameOf(req);
 
     try {
-      const lines = streamLines(table, filename);
-      const first = await lines.next();
-      await lines.return?.(undefined);
+      const records = streamRecords(table, filename);
+      const first   = await records.next();
+      await records.return?.(undefined);
 
       if (first.done) {
         res.status(404).json({ error: `No file for ${table}/${filename}` });
         return;
       }
 
-      res.json({ columns: first.value.split(',') });
+      res.json({ columns: first.value });
     } catch (err) {
       if (err instanceof NotFoundError) {
         res.status(404).json({ error: (err as Error).message });

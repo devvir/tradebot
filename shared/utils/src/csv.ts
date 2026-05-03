@@ -34,15 +34,19 @@ const csvValue = (val: unknown): string => {
 /**
  * Create a CSV parser stream that reads vault-format files.
  *
- * `columns = true`     → first record of the stream is the header (default).
+ * `columns = true`     → first record of the stream is the header (default);
+ *                        records are emitted as `Record<string, string>` keyed
+ *                        by column name.
  * `columns = string[]` → file has no header row; use the supplied columns and
  *                        treat the first record as data.
+ * `columns = false`    → header-agnostic mode; records are emitted as raw
+ *                        `string[]` arrays in column order. The caller is
+ *                        responsible for interpreting the header record.
  *
- * Records are emitted as `Record<string, string>` keyed by column name.
  * `skip_empty_lines` drops fully-empty CSV records (not blank lines inside
  * quoted fields — those are data and are preserved by the parser).
  */
-export const createCsvParser = (columns: true | string[] = true): Parser =>
+export const createCsvParser = (columns: false | true | string[] = true): Parser =>
   parse({
     columns,
     cast:             false,

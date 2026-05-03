@@ -11,10 +11,10 @@ vi.mock('../../src/data/decode', () => ({
 }));
 
 vi.mock('../../src/fs/reader', () => ({
-  streamLines: vi.fn(),
-  listFiles:   vi.fn(),
-  listTables:  vi.fn(),
-  fileState:   vi.fn(),
+  streamRecords: vi.fn(),
+  listFiles:     vi.fn(),
+  listTables:    vi.fn(),
+  fileState:     vi.fn(),
 }));
 
 vi.mock('../../src/fs/writer', () => ({
@@ -40,7 +40,7 @@ vi.mock('../../src/data/close', () => ({
 }));
 
 import { decodeFile } from '../../src/data/decode';
-import { streamLines, listFiles, listTables, fileState } from '../../src/fs/reader';
+import { streamRecords, listFiles, listTables, fileState } from '../../src/fs/reader';
 import { storeFile, deleteFile } from '../../src/fs/writer';
 import { isHealthy, getFailureReason } from '../../src/fs/health';
 import { buffers } from '../../src/data/buffers';
@@ -50,6 +50,11 @@ import { closeBucket } from '../../src/data/close';
 /** Make an async generator from an array of strings. */
 async function* fromLines(lines: string[]) {
   for (const l of lines) yield l;
+}
+
+/** Make an async generator from an array of CSV records. */
+async function* fromRecords(records: string[][]) {
+  for (const r of records) yield r;
 }
 
 const app = express();
@@ -235,9 +240,9 @@ describe('GET /files/:table/:date', () => {
 // ── GET /files/:table/:date/headers ───────────────────────────────────────────
 
 describe('GET /files/:table/:date/headers', () => {
-  it('returns the columns from the first line', async () => {
-    vi.mocked(streamLines).mockReturnValue(
-      fromLines(['symbol,price,size']) as ReturnType<typeof streamLines>,
+  it('returns the columns from the first record', async () => {
+    vi.mocked(streamRecords).mockReturnValue(
+      fromRecords([['symbol', 'price', 'size']]) as ReturnType<typeof streamRecords>,
     );
 
     const res = await request(app).get('/files/trade/2023-02-01/headers');
@@ -247,7 +252,7 @@ describe('GET /files/:table/:date/headers', () => {
   });
 
   it('returns 404 when the file has no content', async () => {
-    vi.mocked(streamLines).mockReturnValue(fromLines([]) as ReturnType<typeof streamLines>);
+    vi.mocked(streamRecords).mockReturnValue(fromRecords([]) as ReturnType<typeof streamRecords>);
 
     const res = await request(app).get('/files/trade/2023-02-01/headers');
 
@@ -255,9 +260,9 @@ describe('GET /files/:table/:date/headers', () => {
   });
 
   it('returns 404 when the file does not exist', async () => {
-    async function* throwNotFound(): AsyncGenerator<string> { throw new NotFoundError('missing'); yield ''; }
+    async function* throwNotFound(): AsyncGenerator<string[]> { throw new NotFoundError('missing'); yield []; }
 
-    vi.mocked(streamLines).mockReturnValue(throwNotFound() as ReturnType<typeof streamLines>);
+    vi.mocked(streamRecords).mockReturnValue(throwNotFound() as ReturnType<typeof streamRecords>);
 
     const res = await request(app).get('/files/trade/2023-02-01/headers');
 
@@ -434,14 +439,14 @@ describe('?suffix= composition', () => {
   });
 
   it('GET /headers reads from the suffixed filename', async () => {
-    vi.mocked(streamLines).mockReturnValue(
-      fromLines(['col1,col2']) as ReturnType<typeof streamLines>,
+    vi.mocked(streamRecords).mockReturnValue(
+      fromRecords([['col1', 'col2']]) as ReturnType<typeof streamRecords>,
     );
 
     const res = await request(app).get('/files/trade/2023-02-01/headers?suffix=snapshot');
 
     expect(res.status).toBe(200);
-    expect(streamLines).toHaveBeenCalledWith('trade', '2023-02-01.snapshot');
+    expect(streamRecords).toHaveBeenCalledWith('trade', '2023-02-01.snapshot');
   });
 
   it('omitting ?suffix= falls through to the plain date filename (backwards compatible)', async () => {

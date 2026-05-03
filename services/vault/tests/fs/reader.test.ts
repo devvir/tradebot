@@ -19,7 +19,7 @@ vi.mock('../../src/fs/paths', () => {
   return { get DATA_DIR() { return dataDir(); }, tableDir, yearDir, openPath, closedPath };
 });
 
-import { streamLines, fileState, listFiles, listTables } from '../../src/fs/reader';
+import { streamRecords, fileState, listFiles, listTables } from '../../src/fs/reader';
 import { NotFoundError } from '../../src/fs/errors';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -44,37 +44,84 @@ afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
-// ── streamLines ───────────────────────────────────────────────────────────────
+// ── streamRecords ─────────────────────────────────────────────────────────────
 
-describe('streamLines', () => {
-  it('yields lines from a closed gzip file', async () => {
+describe('streamRecords', () => {
+  it('yields parsed records from a closed gzip file', async () => {
     makeClosedFile('trade', '2023-02-01', ['header,col', 'a,1', 'b,2']);
 
-    const lines: string[] = [];
+    const records: string[][] = [];
 
-    for await (const l of streamLines('trade', '2023-02-01')) {
-      lines.push(l);
+    for await (const r of streamRecords('trade', '2023-02-01')) {
+      records.push(r);
     }
 
-    expect(lines).toEqual(['header,col', 'a,1', 'b,2']);
+    expect(records).toEqual([['header', 'col'], ['a', '1'], ['b', '2']]);
   });
 
   it('throws NotFoundError if the closed file does not exist', async () => {
     await expect(async () => {
-      for await (const _ of streamLines('trade', '2023-02-01')) { /* consume */ }
+      for await (const _ of streamRecords('trade', '2023-02-01')) { /* consume */ }
     }).rejects.toThrow(NotFoundError);
   });
 
-  it('does not yield empty lines', async () => {
+  it('skips empty CSV records', async () => {
     makeClosedFile('trade', '2023-02-01', ['a,1', '', 'b,2']);
 
-    const lines: string[] = [];
+    const records: string[][] = [];
 
-    for await (const l of streamLines('trade', '2023-02-01')) {
-      lines.push(l);
+    for await (const r of streamRecords('trade', '2023-02-01')) {
+      records.push(r);
     }
 
-    expect(lines).not.toContain('');
+    expect(records).toEqual([['a', '1'], ['b', '2']]);
+  });
+
+  it('preserves a quoted field containing newlines as a single record', async () => {
+    // Mimics announcement / chat / publicNotifications storage: a quoted
+    // field with embedded newlines spans multiple physical lines on disk
+    // but must read back as one record.
+    makeClosedFile('chat', '2023-02-01', [
+      '_date_,_action_,id,message',
+      '2023-02-01T00:00:00Z,insert,1,"line one',
+      'line two',
+      'line three"',
+    ]);
+
+    const records: string[][] = [];
+
+    for await (const r of streamRecords('chat', '2023-02-01')) {
+      records.push(r);
+    }
+
+    expect(records).toHaveLength(2);
+    expect(records[1]).toEqual([
+      '2023-02-01T00:00:00Z',
+      'insert',
+      '1',
+      'line one\nline two\nline three',
+    ]);
+  });
+
+  it('preserves embedded commas and doubled quotes inside a quoted field', async () => {
+    makeClosedFile('announcement', '2023-02-01', [
+      '_date_,_action_,id,title,content',
+      '2023-02-01T00:00:00Z,insert,42,"Title, with comma","<a href=""https://x.test"">link</a>"',
+    ]);
+
+    const records: string[][] = [];
+
+    for await (const r of streamRecords('announcement', '2023-02-01')) {
+      records.push(r);
+    }
+
+    expect(records[1]).toEqual([
+      '2023-02-01T00:00:00Z',
+      'insert',
+      '42',
+      'Title, with comma',
+      '<a href="https://x.test">link</a>',
+    ]);
   });
 });
 

@@ -23,15 +23,17 @@ The suffix is opt-in. Date and suffix are separate concepts only at the HTTP bou
 
 ## CSV format
 
-All files are CSV with a fixed header row as their first line. Column order is defined by `TABLE_HEADERS` in `data/headers.ts` and is authoritative — vault never infers columns from incoming data, because WS update messages only include changed fields.
+All files are CSV with a fixed header row as their first record. Column order is defined by `TABLE_HEADERS` in `data/headers.ts` and is authoritative — vault never infers columns from incoming data, because WS update messages only include changed fields.
+
+Field values are RFC 4180 escaped: any field containing `,`, `"`, or `\n` is wrapped in `"..."` with embedded `"` doubled. Quoted fields with embedded newlines (e.g. announcement bodies, chat messages, public notifications) span multiple physical lines on disk but read back as a single logical record. Vault uses `csv-parse` (via the shared `createCsvParser` helper) end-to-end on the read path, so multi-line quoted fields round-trip correctly.
 
 **REST tables** (`funding`, `insurance`, `settlement`, `compositeIndex`): plain rows, no metadata columns.
 
 **WS tables** (`orderBookL2`, `instrument`, `chat`, etc.): two metadata columns prepend every row — `_date_` and `_action_`. These are message-level, not per-row:
 
-- `_date_` and `_action_` are non-empty only on the **first line of each message**. Continuation lines (subsequent rows from the same `data` array) leave both columns empty — the line starts with `,`.
-- An empty `data: []` message still produces one line (with metadata, all data columns empty) so no message is lost.
-- A reader detects message boundaries by a non-empty `_date_` value.
+- `_date_` and `_action_` are non-empty only on the **first record of each message**. Continuation rows (subsequent rows from the same `data` array) leave both columns empty.
+- An empty `data: []` message still produces one record (with metadata, all data columns empty) so no message is lost.
+- A reader detects message boundaries by a non-empty `_date_` field.
 
 ---
 
