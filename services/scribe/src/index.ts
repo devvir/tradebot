@@ -1,17 +1,22 @@
 import type { RedisClient } from '@devvir/service-kit';
 import SK from './service';
 import { createFetchService } from './bitmex';
+import { logMetrics } from './bitmex/metrics';
 import { createStoreService } from './vault';
 import { fetchSymbols } from './utils/symbols';
 import { loadRegistryMap } from './utils/registry';
 import { runAllTables } from './runner';
 import type { Config } from './types';
 
+const METRICS_INTERVAL_MS = 5 * 60 * 1_000;
+
 SK.run(async (service) => {
   const config = service.config() as Config;
   const cache  = await service.providers.connect('redis') as RedisClient;
   const fetch  = createFetchService(config.bitmexRestUrl);
   const store  = createStoreService(config.vaultUrl);
+
+  setInterval(logMetrics, METRICS_INTERVAL_MS).unref();
 
   /**
    * Discover recently added indexes before processing a new day

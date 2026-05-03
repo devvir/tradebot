@@ -68,47 +68,56 @@ describe('FetchService — oldest', () => {
 });
 
 // ── getRows ───────────────────────────────────────────────────────────────────
+//
+// rowIterator fetches PAGES_PER_BATCH (=10) pages in parallel per iteration.
+// An incomplete batch (any page short or empty) triggers a block transition:
+// blockStartTime advances to the last seen row's timestamp and start resets to 0.
 
 describe('FetchService — getRows', () => {
   beforeEach(() => vi.spyOn(global, 'fetch'));
   afterEach(() => vi.restoreAllMocks());
 
-  it('yields all rows from a single partial page', async () => {
+  it('yields rows from a partial first page in the batch', async () => {
     const rows = [{ id: 1 }, { id: 2 }];
     vi.mocked(global.fetch).mockResolvedValue(okJson(rows));
 
     const result = await collect(createFetchService(BASE_URL).getRows(mkTable()));
 
     expect(result).toEqual(rows);
-    expect(vi.mocked(global.fetch)).toHaveBeenCalledTimes(1);
+    // 10 fetches issued in the batch; partial first page stops yielding after it.
+    // No timestamp on the rows → cannot advance block → returns.
+    expect(vi.mocked(global.fetch)).toHaveBeenCalledTimes(10);
   });
 
-  it('paginates through multiple pages, advancing start offset', async () => {
-    const page1 = Array.from({ length: 500 }, (_, i) => ({ id: i }));
-    const page2 = [{ id: 500 }];
+  it('paginates across the batch in offset order', async () => {
+    const fullRows = (start: number) =>
+      Array.from({ length: 500 }, (_, i) => ({ id: start + i }));
 
+    // First batch (no startTime): pages at offsets 0..4500.
+    //   Pages 0..1 are full (1000 rows total), page 2 returns 1 row → batch incomplete.
+    //   Without a timestamp on the rows the block transition can't fire, so iteration ends.
     vi.mocked(global.fetch).mockImplementation(async (url) => {
       const u = String(url);
-      if (u.includes('start=0&')) return okJson(page1);
-      return okJson(page2);
+      if (u.includes('start=0&'))    return okJson(fullRows(0));
+      if (u.includes('start=500&'))  return okJson(fullRows(500));
+      if (u.includes('start=1000&')) return okJson([{ id: 1000 }]);
+      return okJson([]);
     });
 
     const result = await collect(createFetchService(BASE_URL).getRows(mkTable()));
 
-    expect(result).toHaveLength(501);
-    expect(vi.mocked(global.fetch)).toHaveBeenCalledTimes(2);
-
-    const secondUrl = vi.mocked(global.fetch).mock.calls[1]![0] as string;
-    expect(secondUrl).toContain('start=500');
+    expect(result).toHaveLength(1001);
+    expect(result[0]).toEqual({ id: 0 });
+    expect(result[1000]).toEqual({ id: 1000 });
   });
 
-  it('stops immediately on an empty first page', async () => {
+  it('stops after the first batch when all pages are empty', async () => {
     vi.mocked(global.fetch).mockResolvedValue(okJson([]));
 
     const result = await collect(createFetchService(BASE_URL).getRows(mkTable()));
 
     expect(result).toHaveLength(0);
-    expect(vi.mocked(global.fetch)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(global.fetch)).toHaveBeenCalledTimes(10);
   });
 
   it('applies symbol and startTime filters', async () => {
@@ -126,25 +135,85 @@ describe('FetchService — getRows', () => {
     expect(url.searchParams.get('startTime')).toBe('2020-01-01T00:00:00.000Z');
   });
 
-  it('performs a block transition when start exceeds maxStart − 1000', async () => {
+  it('issues PAGES_PER_BATCH parallel fetches at offsets [start, start+page, …]', async () => {
+    vi.mocked(global.fetch).mockResolvedValue(okJson([]));
+
+    await collect(createFetchService(BASE_URL).getRows(mkTable()));
+
+    const calls  = vi.mocked(global.fetch).mock.calls;
+    const starts = calls.map(c => new URL(String(c[0])).searchParams.get('start'));
+
+    expect(starts).toEqual(['0', '500', '1000', '1500', '2000', '2500', '3000', '3500', '4000', '4500']);
+  });
+
+  it('preemptively advances the block when a full batch pushes start past maxStart − pageSize', async () => {
     const timestamp = '2020-01-01T00:00:00.000Z';
-    // maxStart=999 → threshold=499. After a full page (start=500 > 499), transition fires.
     const fullPage  = Array.from({ length: 500 }, () => ({ timestamp }));
 
-    // First call: no startTime param → return full page to trigger transition.
-    // Second call: has startTime (block transition happened) → return empty to stop.
+    // No startTime → return full pages (forces preemptive transition after a full batch).
+    // With startTime → return empty (terminates the iterator).
+    vi.mocked(global.fetch).mockImplementation(async (url) =>
+      String(url).includes('startTime=') ? okJson([]) : okJson(fullPage)
+    );
+
+    // maxStart=4999, pageSize=500 → after a full batch start=5000 > 4499 → transition.
+    const result = await collect(createFetchService(BASE_URL).getRows(mkTable({ maxStart: 4999 })));
+
+    expect(result).toHaveLength(500 * 10);
+
+    const calls = vi.mocked(global.fetch).mock.calls;
+    expect(calls).toHaveLength(20);
+
+    // First batch: 10 calls without startTime.
+    for (let i = 0; i < 10; i++)
+      expect(String(calls[i]![0])).not.toContain('startTime=');
+
+    // Second batch: 10 calls with startTime, start reset to [0, 500, …, 4500].
+    const secondBatchStarts = calls.slice(10).map(c => new URL(String(c[0])).searchParams.get('start'));
+    expect(secondBatchStarts).toEqual(['0', '500', '1000', '1500', '2000', '2500', '3000', '3500', '4000', '4500']);
+
+    for (let i = 10; i < 20; i++)
+      expect(String(calls[i]![0])).toContain('startTime=');
+  });
+
+  it('advances the block when the batch is incomplete (bug bypass)', async () => {
+    const timestamp = '2020-01-01T00:00:00.000Z';
+    const fullPage  = Array.from({ length: 500 }, () => ({ timestamp }));
+
+    // First batch: page 0 full, pages 1..9 empty (simulates the BitMEX cap mid-batch).
+    // Second batch (with startTime): all empty → terminates.
     vi.mocked(global.fetch).mockImplementation(async (url) => {
-      return String(url).includes('startTime=') ? okJson([]) : okJson(fullPage);
+      const u = String(url);
+      if (u.includes('startTime='))  return okJson([]);
+      if (u.includes('start=0&'))    return okJson(fullPage);
+      return okJson([]);
     });
 
-    const result = await collect(createFetchService(BASE_URL).getRows(mkTable({ maxStart: 999 })));
+    const result = await collect(createFetchService(BASE_URL).getRows(mkTable()));
 
+    // 500 rows from page 0 of the first batch.
     expect(result).toHaveLength(500);
-    expect(vi.mocked(global.fetch)).toHaveBeenCalledTimes(2);
 
-    const secondUrl = vi.mocked(global.fetch).mock.calls[1]![0] as string;
-    expect(secondUrl).toContain('start=0');
-    expect(secondUrl).toContain('startTime=');
+    // Two batches: 20 calls total. The second batch carries startTime — the transition fired
+    // even though the iterator was nowhere near maxStart.
+    const calls = vi.mocked(global.fetch).mock.calls;
+    expect(calls).toHaveLength(20);
+
+    for (let i = 10; i < 20; i++)
+      expect(String(calls[i]![0])).toContain('startTime=');
+  });
+
+  it('returns when an incomplete batch has no timestamp to advance the block to', async () => {
+    // Rows with no timestamp/date: cannot advance blockStartTime, so iteration ends.
+    vi.mocked(global.fetch).mockImplementation(async (url) =>
+      String(url).includes('start=0&') ? okJson([{ id: 1 }]) : okJson([])
+    );
+
+    const result = await collect(createFetchService(BASE_URL).getRows(mkTable()));
+
+    expect(result).toEqual([{ id: 1 }]);
+    // Single batch, then return — no second batch is attempted.
+    expect(vi.mocked(global.fetch)).toHaveBeenCalledTimes(10);
   });
 });
 
@@ -166,7 +235,17 @@ describe('FetchService — getDay', () => {
 
   it('yields rows from the API for that day', async () => {
     const rows = [{ timestamp: '2020-01-01T12:00:00.000Z', price: 7000 }];
-    vi.mocked(global.fetch).mockResolvedValue(okJson(rows));
+
+    // Return rows only on the first-page, original-startTime fetch. Any post-transition
+    // fetch (with startTime set to the row's own timestamp) returns empty so the
+    // iterator terminates rather than looping on the same row.
+    vi.mocked(global.fetch).mockImplementation(async (url) => {
+      const u = String(url);
+      if (u.includes('startTime=2020-01-01T00%3A00%3A00.000Z') && u.includes('start=0&'))
+        return okJson(rows);
+
+      return okJson([]);
+    });
 
     const result = await collect(createFetchService(BASE_URL).getDay(mkTable(), '20200101'));
 

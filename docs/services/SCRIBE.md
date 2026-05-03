@@ -57,9 +57,18 @@ The earliest resume date across all tasks for a table becomes the table's loop e
 
 ---
 
+## Page Fetching — Parallel Mega-Pages
+
+The row iterator issues `PAGES_PER_BATCH` (10) page requests in parallel per iteration — a "mega-page" of `pageSize × 10` rows. Yields are in offset order, so output is byte-identical to a fully sequential iterator. The rate limit (180 req/min) is the throughput ceiling; sequential per-page fetching falls well short of it because each request is awaited before the next is issued. Issuing pages in parallel closes that gap and lets the rate limiter become the actual bound.
+
 ## Time-Block Pagination
 
-BitMEX enforces a maximum `start` offset per endpoint (2,500,000 for all current tables). Exceeding it returns HTTP 400. The row iterator handles this transparently: when `start` approaches the limit (`> maxStart - pageSize`), it advances `startTime` to the last seen row's timestamp and resets `start = 0`. This is invisible to the caller — the day fetch sees an uninterrupted stream of rows.
+BitMEX enforces a maximum `start` offset per endpoint (2,500,000 for all current tables). Exceeding it returns HTTP 400. The row iterator handles this transparently with two transition triggers:
+
+- **Preemptive:** when every page in the batch is full and `start` is about to exceed `maxStart - pageSize`, advance `startTime` to the last seen row's timestamp and reset `start = 0`.
+- **Reactive (bug bypass):** when at least one full page came back but a later page in the same batch was short or empty, the cap struck mid-batch — apply the same transition. BitMEX maps `startTime` to a row-ID threshold rather than a timestamp comparison, so an incomplete result that arrived after some full pages is the bug's signature, not the end of data. Advancing the block re-anchors the row-ID window and resumes the stream.
+
+Iteration ends when the first page of a batch is already short or empty (treated as end of data, matching the original single-page iterator's semantics) or when an incomplete batch carries no timestamp to advance to. With `PAGES_PER_BATCH = 1` the reactive trigger is unreachable and the iterator collapses to the original sequential behavior.
 
 ---
 
@@ -83,7 +92,9 @@ Per-table loop:
     for each task:
       skip if task's next date > currentDate
       fetch all rows for currentDate (startTime=day, endTime=nextDay, reverse=false)
-      buffer rows, flush to vault every 1,000 rows
+        — each iteration of rowIterator issues 10 page fetches in parallel
+      buffer rows, flush to vault every 10,000 rows (writes pipelined: next batch
+        is collected in parallel with the previous write)
       if day was empty: probe next populated row date
     POST /files/:table/:currentDate/close
     currentDate = nextDay(currentDate)

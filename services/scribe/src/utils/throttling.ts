@@ -1,6 +1,6 @@
 import { logger } from '@devvir/service-kit';
 
-const PAUSE_THRESHOLD = 100;
+const PAUSE_THRESHOLD = 80;
 
 const RETRY_BASE_MS  = 5_000;
 const RETRY_MAX_MS   = 300_000;

@@ -1,7 +1,9 @@
 import { logger } from '@devvir/service-kit';
 import { waitIfNeeded, sleep } from '../utils/throttling';
+import { recordFetch } from './metrics';
 
 const DEFAULT_PAGE_SIZE = 500;
+const PAGES_PER_BATCH   = 10;
 
 export type Row = Record<string, unknown>;
 
@@ -28,9 +30,26 @@ export const fetchOne = async (
 // Streams rows from the BitMEX API, handling pagination and block transitions
 // transparently. The caller sees a flat sequence of rows with no page boundaries.
 //
-// Block transitions: BitMEX silently caps the `start` offset per startTime bucket
-// at an undocumented limit. When maxStart is set and start exceeds the threshold,
-// blockStartTime advances to the last seen timestamp and start resets to 0.
+// Each iteration issues PAGES_PER_BATCH page fetches in parallel — a "mega-page"
+// of pageSize × PAGES_PER_BATCH rows. Yields are in offset order, so output is
+// byte-identical to a fully sequential iterator.
+//
+// Block transitions: BitMEX silently caps the `start` offset per startTime
+// bucket at an undocumented limit. Two transitions handle this:
+//
+//   - Preemptive (full batch): when every page in the batch is full and start
+//     is about to exceed `maxStart - pageSize`, advance blockStartTime to the
+//     last seen timestamp and reset start to 0.
+//
+//   - Reactive (bug bypass): when at least one full page came back but a later
+//     page in the batch was short or empty, the cap was hit mid-batch — same
+//     transition. The batch boundary is the only thing that distinguishes
+//     "bug struck mid-stream" (some full + some not) from "data ended" (first
+//     page already short or empty), so the iterator returns in the latter
+//     case to match the original single-page semantics.
+//
+// With PAGES_PER_BATCH = 1 the reactive path is unreachable (no later page
+// can be incomplete) and the iterator behaves identically to the original.
 export async function* rowIterator(
   baseUrl:  string,
   path:     string,
@@ -43,29 +62,53 @@ export async function* rowIterator(
   let blockStartTime = filter.startTime ?? null;
 
   while (true) {
-    const url  = buildUrl(
-      baseUrl, path, start, pageSize,
-      { ...filter, startTime: blockStartTime ?? undefined },
-    );
+    const inFlight: Promise<Row[]>[] = [];
 
-    const rows = await fetchWithRetry(url);
+    for (let i = 0; i < PAGES_PER_BATCH; i++) {
+      const url = buildUrl(
+        baseUrl, path, start + i * pageSize, pageSize,
+        { ...filter, startTime: blockStartTime ?? undefined },
+      );
 
-    if (rows.length === 0) return;
+      inFlight.push(fetchWithRetry(url));
+    }
 
-    for (const row of rows) yield row;
+    const pages = await Promise.all(inFlight);
 
-    start += rows.length;
+    let fullPages = 0;
+    let totalRows = 0;
+    let lastTs:   string | undefined;
 
-    if (rows.length < pageSize) return;
+    for (const rows of pages) {
+      if (rows.length === 0) break;
 
-    if (maxStart !== null && start > maxStart - pageSize) {
+      for (const row of rows) yield row;
+
+      totalRows += rows.length;
+
       const lastRow = rows[rows.length - 1]!;
-      const lastTs  = (lastRow['timestamp'] ?? lastRow['date']) as string | undefined;
+      const ts      = (lastRow['timestamp'] ?? lastRow['date']) as string | undefined;
+      if (ts) lastTs = ts;
 
-      if (lastTs) {
+      if (rows.length < pageSize) break;
+
+      fullPages++;
+    }
+
+    if (totalRows === 0) return;
+
+    if (fullPages === PAGES_PER_BATCH) {
+      start += PAGES_PER_BATCH * pageSize;
+
+      if (maxStart !== null && start > maxStart - pageSize && lastTs) {
         blockStartTime = lastTs;
         start          = 0;
       }
+    } else if (fullPages > 0 && lastTs) {
+      blockStartTime = lastTs;
+      start          = 0;
+    } else {
+      return;
     }
   }
 }
@@ -99,10 +142,21 @@ const fetchWithRetry = async (url: string): Promise<Row[]> => {
 
       await waitIfNeeded(res);
 
-      if (res.ok) return (await res.json()) as Row[];
+      if (res.ok) {
+        recordFetch(parseRemaining(res));
+        return (await res.json()) as Row[];
+      }
     } catch (err) {
       logger.warn({ err, url }, 'Network error — retrying in 3s');
       await sleep(3_000);
     }
   }
+};
+
+const parseRemaining = (res: Response): number | null => {
+  const raw = res.headers.get('x-ratelimit-remaining');
+  if (raw === null) return null;
+
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) ? n : null;
 };

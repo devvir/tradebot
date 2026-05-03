@@ -179,8 +179,8 @@ describe('runAllTables — simple table', () => {
   it('flushes mid-buffer at FLUSH_THRESHOLD and again at end', async () => {
     (tablesModule.TABLES as TableConfig[]).push(SIMPLE_TABLE);
 
-    // 1001 rows — triggers one mid-flush at 1000 and one final flush.
-    const rows = Array.from({ length: 1001 }, () => tsRow(YESTERDAY));
+    // 10_001 rows — triggers one mid-flush at FLUSH_THRESHOLD (10_000) and one final flush.
+    const rows = Array.from({ length: 10_001 }, () => tsRow(YESTERDAY));
 
     const fetch = makeFetch({
       oldest: vi.fn().mockResolvedValue(tsRow(TWO_DAYS_AGO)),
@@ -319,5 +319,88 @@ describe('runAllTables — next[id] tracking', () => {
       expect.anything(),
       expect.objectContaining({ startTime: expect.any(String) }),
     );
+  });
+});
+
+// ── Tests: atomic per-day Redis confirmation ─────────────────────────────────
+//
+// Symbols with data must only have their progress written to Redis after the
+// day's closeFile has succeeded. A crash mid-loop must leave Redis untouched
+// for those symbols so the open .csv.gz.tmp (which gets wiped on restart) is
+// re-fetched cleanly. Empty-day symbols save eagerly via probeNextDate —
+// they have no data in the open file to lose.
+
+describe('runAllTables — atomic per-day Redis confirmation', () => {
+  beforeEach(() => { (tablesModule.TABLES as TableConfig[]).length = 0; });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('saves data-bearing symbol progress only after closeFile', async () => {
+    (tablesModule.TABLES as TableConfig[]).push(COMPOSITE_TABLE);
+
+    const fetch = makeFetch({
+      oldest: vi.fn().mockResolvedValue(tsRow(TWO_DAYS_AGO)),
+      getDay: vi.fn().mockImplementation(() => rowGen([tsRow(YESTERDAY)])),
+    });
+    const store = makeStore({
+      listFiles: vi.fn().mockResolvedValue({ [TWO_DAYS_AGO]: 'closed' }),
+    });
+    const cache = makeCache();
+
+    stopAfter(1);
+
+    await expect(
+      runAllTables(fetch, store, cache, vi.fn().mockResolvedValue(['.A', '.B']))
+    ).rejects.toThrow('stop');
+
+    const setMock    = vi.mocked(cache.set);
+    const closeMock  = vi.mocked(store.closeFile);
+    const today      = offsetDate(0); // nextDay(YESTERDAY)
+    const closeOrder = closeMock.mock.invocationCallOrder[0]!;
+
+    for (const symbol of ['.A', '.B']) {
+      const idx = setMock.mock.calls.findIndex(c =>
+        c[0] === `scribe_compositeIndex_${symbol}` && c[1] === today,
+      );
+
+      expect(idx, `saveProgress for ${symbol} → ${today}`).toBeGreaterThanOrEqual(0);
+      expect(setMock.mock.invocationCallOrder[idx]!).toBeGreaterThan(closeOrder);
+    }
+  });
+
+  it('still saves progress eagerly for empty-day (probed) symbols', async () => {
+    (tablesModule.TABLES as TableConfig[]).push(SIMPLE_TABLE);
+
+    // Cold-start oldest (no startTime) returns TWO_DAYS_AGO; empty-day probe
+    // (with startTime) returns null; newest also null → probeNextDate sets
+    // the symbol as exhausted (todayUtc) and saves immediately.
+    const fetch = makeFetch({
+      getDay:  vi.fn().mockImplementation(() => rowGen([])),
+      newest:  vi.fn().mockResolvedValue(null),
+      oldest:  vi.fn().mockImplementation((_t, filter) =>
+        Promise.resolve(filter?.startTime ? null : tsRow(TWO_DAYS_AGO))),
+    });
+    const store = makeStore({
+      listFiles: vi.fn().mockResolvedValue({ [TWO_DAYS_AGO]: 'closed' }),
+    });
+    const cache = makeCache();
+
+    stopAfter(1);
+
+    await expect(
+      runAllTables(fetch, store, cache, vi.fn().mockResolvedValue([]))
+    ).rejects.toThrow('stop');
+
+    const setMock    = vi.mocked(cache.set);
+    const closeMock  = vi.mocked(store.closeFile);
+    const today      = offsetDate(0);
+    const closeOrder = closeMock.mock.invocationCallOrder[0]!;
+
+    // probeNextDate's save (today) ran inside the loop, before closeFile.
+    const probeIdx = setMock.mock.calls.findIndex(c =>
+      c[0] === 'scribe_funding_default' && c[1] === today,
+    );
+
+    expect(probeIdx).toBeGreaterThanOrEqual(0);
+    expect(setMock.mock.invocationCallOrder[probeIdx]!).toBeLessThan(closeOrder);
   });
 });

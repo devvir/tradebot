@@ -2,12 +2,13 @@ import { logger } from '@devvir/service-kit';
 import type { RedisClient } from '@devvir/service-kit';
 import { TABLES } from './utils/tables';
 import { sleep } from './utils/throttling';
-import type { FetchService, FetchFilter, Row } from './bitmex';
+import type { FetchService, FetchFilter } from './bitmex';
+import { createBufferedWriter } from './vault';
 import type { StoreService } from './vault';
 import type { TableConfig } from './types';
 import { probeNextDate, restoreProgress, saveProgress, todayUtc, nextDay } from './probing';
 
-const FLUSH_THRESHOLD = 1_000;
+const FLUSH_THRESHOLD = 10_000;
 
 interface Task {
   id:     string;
@@ -52,6 +53,16 @@ const processTable = async (
 
     const tasks = await getTasks(table, getIndices);
 
+    /**
+     * Symbols with data: defer the Redis confirmation until after `closeFile`
+     * so the day is all-or-nothing. A crash mid-loop leaves Redis untouched
+     * for these symbols, so on restart the open .csv.gz.tmp gets wiped and
+     * the whole day is re-fetched cleanly. Empty-day symbols save eagerly
+     * via `probeNextDate` — they have no data in the open file to lose, and
+     * persisting immediately spares the probe on restart.
+     */
+    const dataSymbols = new Set<string>();
+
     for (const { id, filter } of tasks) {
       if (! next.has(id)) next.set(id, currentDate); // new symbol: start from current date
       if (next.get(id)! > currentDate) continue;
@@ -60,16 +71,19 @@ const processTable = async (
 
       const foundRows = await fetchAndWriteDay(filter, table, fetch, store, currentDate);
 
-      const nextDate = foundRows
-        ? nextDay(currentDate)
-        : await probeNextDate(table, fetch, cache, id, filter, currentDate);
-
-      next.set(id, nextDate);
-
-      await saveProgress(cache, table.name, id, nextDate);
+      if (foundRows) {
+        next.set(id, nextDay(currentDate));
+        dataSymbols.add(id);
+      } else {
+        next.set(id, await probeNextDate(table, fetch, cache, id, filter, currentDate));
+      }
     }
 
     await store.closeFile(table.name, currentDate);
+
+    for (const id of dataSymbols)
+      await saveProgress(cache, table.name, id, next.get(id)!);
+
     logger.info({ table: table.name, date: currentDate }, 'Day closed');
     currentDate = nextDay(currentDate);
   }
@@ -84,19 +98,15 @@ const fetchAndWriteDay = async (
   store:  StoreService,
   currentDate: string,
 ): Promise<boolean> => {
-  const buffer: Row[] = [];
+  const writer = createBufferedWriter(store, table.name, currentDate, FLUSH_THRESHOLD);
   let   hasRows = false;
 
   for await (const row of fetch.getDay(table, currentDate, filter)) {
     hasRows = true;
-    buffer.push(row);
-
-    if (buffer.length >= FLUSH_THRESHOLD)
-      await store.writeRows(table.name, currentDate, buffer.splice(0));
+    await writer.push(row);
   }
 
-  if (buffer.length > 0)
-    await store.writeRows(table.name, currentDate, buffer.splice(0));
+  await writer.close();
 
   return hasRows;
 };
