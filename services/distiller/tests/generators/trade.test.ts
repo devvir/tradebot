@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { MongoClient, Db } from 'mongodb';
+import { registry } from '@devvir/service-kit';
 import { distillTrades } from '../../src/generators/trade';
 
 const { mongoPort } = JSON.parse(
@@ -49,22 +50,21 @@ describe('distillTrades', () => {
     client = new MongoClient(mongoUrl);
     await client.connect();
     db = client.db(DB_NAME);
+
+    registry.add({
+      spec:      () => ({ name: 'distiller' }),
+      config:    () => ({ database: DB_NAME }),
+      providers: { get: () => client },
+    } as any);
   });
 
   afterAll(async () => {
+    registry.clear();
     await client?.close();
   });
 
   beforeEach(async () => {
     await Promise.all(ALL_COLLS.map(c => db.collection(c).deleteMany({})));
-
-    await db.collection(SOURCE).createIndex({ timestamp: 1 });
-    await db.collection(SOURCE).createIndex({ symbol: 1, timestamp: -1 });
-
-    for (const coll of [BIN1M, BIN5M, BIN1H, BIN1D]) {
-      await db.collection(coll).createIndex({ timestamp: 1 });
-      await db.collection(coll).createIndex({ symbol: 1, timestamp: -1 });
-    }
   });
 
   // ── Empty source ─────────────────────────────────────────────────────────

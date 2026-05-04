@@ -1,29 +1,11 @@
 import type { MongoClient, Collection, Db } from 'mongodb';
-import { logger }                           from '@devvir/service-kit';
-
-import type { InstrumentItem, InstrumentMsg } from '../types';
-
-import {
-  INSTRUMENT_KEYS,
-  INSTRUMENT_TYPES,
-  INSTRUMENT_FILTER,
-} from './instrument.seeds';
+import { logger } from '@devvir/service-kit';
+import { ensureIndex } from '../indexes';
+import { INSTRUMENT_KEYS, INSTRUMENT_TYPES, INSTRUMENT_FILTER } from './instrument.seeds';
 import { fetchDayEvents, processDayEvents } from './instrument.events';
-import {
-  createRunState,
-  seedRunState,
-  applyMonthlyReset,
-} from './instrument.state';
-import {
-  DAY_ID_STRIDE,
-  addDay,
-  makeId,
-  offsetToDate,
-} from './instrument.ids';
-
-/* ------------------------------------------------------------------ */
-/*  Public API                                                         */
-/* ------------------------------------------------------------------ */
+import { createRunState, seedRunState, applyMonthlyReset } from './instrument.state';
+import { DAY_ID_STRIDE, addDay, makeId, offsetToDate } from './instrument.ids';
+import type { InstrumentItem, InstrumentMsg } from '../types';
 
 /**
  * Generate `instrument` WebSocket-shaped messages from the five vault sources
@@ -44,6 +26,14 @@ import {
  * and duplicate-key errors are ignored.
  */
 export async function distillInstrument(mongo: MongoClient, database: string): Promise<void> {
+  const collections = [ 'compositeIndex', 'settlement', 'funding', 'instrument' ];
+
+  await Promise.all(collections.map(collection => ensureIndex(collection, [
+    { timestamp: 1 },
+    { action: 1, timestamp: 1 },
+    { symbol: 1, timestamp: 1 },
+  ])));
+
   const db   = mongo.db(database);
   const coll = db.collection<InstrumentMsg>('instrument');
 

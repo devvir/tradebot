@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { MongoClient, Db } from 'mongodb';
+import { registry } from '@devvir/service-kit';
 
 import {
   distillPartials,
@@ -40,9 +41,16 @@ describe('distillPartials', () => {
     client = new MongoClient(mongoUrl);
     await client.connect();
     db = client.db(DB_NAME);
+
+    registry.add({
+      spec:      () => ({ name: 'distiller' }),
+      config:    () => ({ database: DB_NAME }),
+      providers: { get: () => client },
+    } as any);
   });
 
   afterAll(async () => {
+    registry.clear();
     await client?.close();
   });
 

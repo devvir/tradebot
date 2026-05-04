@@ -1,5 +1,6 @@
 import type { MongoClient, Collection, Db } from 'mongodb';
 import { logger } from '@devvir/service-kit';
+import { ensureIndex } from '../indexes';
 import type { QuoteBin } from '../types';
 
 const POOL       = 'Primary';
@@ -22,6 +23,14 @@ const COARSER_BINS: CoarserConfig[] = [
 ];
 
 export async function distillQuotes(mongo: MongoClient, database: string): Promise<void> {
+  const collections = [ 'quote', 'quoteBin1m', 'quoteBin5m', 'quoteBin1h', 'quoteBin1d' ];
+
+  await Promise.all(collections.map(collection => ensureIndex(collection, [
+    { timestamp: 1 },
+    { action: 1, timestamp: 1 },
+    { symbol: 1, timestamp: 1 },
+  ])));
+
   const db = mongo.db(database);
 
   let done1m = false;

@@ -1,6 +1,7 @@
 import type { MongoClient, Collection, Db, Document } from 'mongodb';
 import { logger } from '@devvir/service-kit';
 import { trades2bins, bins2bins, matchDocs, floorToBin } from './trade.bins';
+import { ensureIndex } from '../indexes';
 import type { BinSize, Range } from './types';
 
 const COLL_TRADE = 'trade';
@@ -8,8 +9,15 @@ const COLL_BIN1M = 'tradeBin1m';
 const BATCH_SIZE = 30; // minutes for 1m bins, days for coarser bins
 const POLL_MS    = 5_000;
 
-
 export async function distillTrades(mongo: MongoClient, database: string): Promise<void> {
+  const collections = [ 'trade', 'tradeBin1m', 'tradeBin5m', 'tradeBin1h', 'tradeBin1d' ];
+
+  await Promise.all(collections.map(collection => ensureIndex(collection, [
+    { timestamp: 1 },
+    { action: 1, timestamp: 1 },
+    { symbol: 1, timestamp: 1 },
+  ])));
+
   const db = mongo.db(database);
 
   let done1m = false;

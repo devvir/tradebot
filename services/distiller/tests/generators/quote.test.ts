@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { MongoClient, Db } from 'mongodb';
+import { registry } from '@devvir/service-kit';
 import { distillQuotes, _test_periodToTimestamp, _test_addDays, _test_buildPipeline } from '../../src/generators/quote';
 
 const { mongoPort } = JSON.parse(
@@ -36,20 +37,22 @@ describe('distillQuotes', () => {
     client = new MongoClient(mongoUrl);
     await client.connect();
     db = client.db();
+
+    registry.add({
+      spec:      () => ({ name: 'distiller' }),
+      config:    () => ({ database: DB_NAME }),
+      providers: { get: () => client },
+    } as any);
   });
 
   afterAll(async () => {
+    registry.clear();
     await client?.close();
   });
 
   beforeEach(async () => {
     await db.collection(SOURCE).deleteMany({});
     await db.collection(TARGET).deleteMany({});
-
-    await db.collection(SOURCE).createIndex({ timestamp: 1 });
-    await db.collection(SOURCE).createIndex({ symbol: 1, timestamp: -1 });
-    await db.collection(TARGET).createIndex({ timestamp: 1 });
-    await db.collection(TARGET).createIndex({ symbol: 1, timestamp: -1 });
   });
 
   // ── Unit: periodToTimestamp ──────────────────────────────────────────────

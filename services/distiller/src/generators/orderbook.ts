@@ -2,6 +2,7 @@ import type { MongoClient } from 'mongodb';
 import { createTable, BitmexTable } from '@devvir/bitmex-database';
 import type { BitmexMessage, Table, TableTypeMap } from '@devvir/bitmex-database';
 import { logger } from '@devvir/service-kit';
+import { ensureIndex } from '../indexes';
 
 type OBL2Item  = TableTypeMap[BitmexTable.OrderBookL2];
 type OBL2Table = Table<TableTypeMap[BitmexTable.OrderBookL2]>;
@@ -22,64 +23,15 @@ interface StoredOrderBook {
   timestamp: string;
 }
 
-/** Extract top-N bids (desc) and asks (asc) for a given symbol from the table view. */
-const extractTop = (
-  table:  OBL2Table,
-  symbol: string,
-  topN:   number,
-): { bids: [number, number][]; asks: [number, number][] } => {
-  const bids: [number, number][] = [];
-  const asks: [number, number][] = [];
+export const distillOrderBook = async (mongo: MongoClient, database: string): Promise<void> => {
+  const collections = [ 'orderBookL2', 'orderBookL2_25', 'orderBook10' ];
 
-  for (const level of table.view().data) {
-    if (level.symbol !== symbol) continue;
-    if (level.side === 'Buy')  bids.push([level.price!, level.size!]);
-    if (level.side === 'Sell') asks.push([level.price!, level.size!]);
-  }
+  await Promise.all(collections.map(collection => ensureIndex(collection, [
+    { timestamp: 1 },
+    { action: 1, timestamp: 1 },
+    { symbol: 1, timestamp: 1 },
+  ])));
 
-  bids.sort((a, b) => b[0] - a[0]);
-  asks.sort((a, b) => a[0] - b[0]);
-
-  return { bids: bids.slice(0, topN), asks: asks.slice(0, topN) };
-};
-
-const topChanged = (
-  prev: { bids: [number, number][]; asks: [number, number][] } | undefined,
-  next: { bids: [number, number][]; asks: [number, number][] },
-): boolean => {
-  if (! prev) return true;
-  if (prev.bids.length !== next.bids.length || prev.asks.length !== next.asks.length) return true;
-
-  for (let i = 0; i < next.bids.length; i++) {
-    if (prev.bids[i]![0] !== next.bids[i]![0] || prev.bids[i]![1] !== next.bids[i]![1]) return true;
-  }
-
-  for (let i = 0; i < next.asks.length; i++) {
-    if (prev.asks[i]![0] !== next.asks[i]![0] || prev.asks[i]![1] !== next.asks[i]![1]) return true;
-  }
-
-  return false;
-};
-
-const getResumeId = async (
-  mongo:    MongoClient,
-  database: string,
-): Promise<number> => {
-  // Resume from the minimum across all output collections so no data is missed.
-  const ids = await Promise.all(
-    OUTPUTS.map(({ collection }) =>
-      mongo.db(database).collection(collection)
-        .findOne({}, { sort: { _id: -1 }, projection: { _id: 1 } })
-        .then(doc => (doc ? (doc._id as unknown as number) : 0)),
-    ),
-  );
-  return Math.min(...ids);
-};
-
-export const distillOrderBook = async (
-  mongo:    MongoClient,
-  database: string,
-): Promise<void> => {
   const resumeId = await getResumeId(mongo, database);
 
   logger.debug({ resumeId }, 'orderBook: resuming from');
@@ -177,4 +129,60 @@ export const distillOrderBook = async (
   }
 
   logger.info({ processed }, 'Finished distilling orderBooks');
+};
+
+/**
+ * Extract top-N bids (desc) and asks (asc) for a given symbol from the table view.
+ */
+const extractTop = (
+  table:  OBL2Table,
+  symbol: string,
+  topN:   number,
+): { bids: [number, number][]; asks: [number, number][] } => {
+  const bids: [number, number][] = [];
+  const asks: [number, number][] = [];
+
+  for (const level of table.view().data) {
+    if (level.symbol !== symbol) continue;
+    if (level.side === 'Buy')  bids.push([level.price!, level.size!]);
+    if (level.side === 'Sell') asks.push([level.price!, level.size!]);
+  }
+
+  bids.sort((a, b) => b[0] - a[0]);
+  asks.sort((a, b) => a[0] - b[0]);
+
+  return { bids: bids.slice(0, topN), asks: asks.slice(0, topN) };
+};
+
+const topChanged = (
+  prev: { bids: [number, number][]; asks: [number, number][] } | undefined,
+  next: { bids: [number, number][]; asks: [number, number][] },
+): boolean => {
+  if (! prev) return true;
+  if (prev.bids.length !== next.bids.length || prev.asks.length !== next.asks.length) return true;
+
+  for (let i = 0; i < next.bids.length; i++) {
+    if (prev.bids[i]![0] !== next.bids[i]![0] || prev.bids[i]![1] !== next.bids[i]![1]) return true;
+  }
+
+  for (let i = 0; i < next.asks.length; i++) {
+    if (prev.asks[i]![0] !== next.asks[i]![0] || prev.asks[i]![1] !== next.asks[i]![1]) return true;
+  }
+
+  return false;
+};
+
+/**
+ * Resume from the minimum across all output collections so no data is missed.
+ */
+const getResumeId = async (mongo: MongoClient, database: string): Promise<number> => {
+  const ids = await Promise.all(
+    OUTPUTS.map(({ collection }) =>
+      mongo.db(database).collection(collection)
+        .findOne({}, { sort: { _id: -1 }, projection: { _id: 1 } })
+        .then(doc => (doc ? (doc._id as unknown as number) : 0)),
+    ),
+  );
+
+  return Math.min(...ids);
 };
