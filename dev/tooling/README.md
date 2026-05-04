@@ -593,131 +593,83 @@ The tooling package loads environment variables in this order (later overrides e
 
 ## Sources Tool (`sources`)
 
-Sanitise and merge vault source data. Two subcommands: `fix` scans and repairs individual vault files; `merge` performs an N-way merge of all `.csv.gz` files in a single folder, grouped by day.
+Sanitise vault source data. Two subcommands: `prepare` processes raw WS source files into clean, sorted, deduped daily outputs; `check` verifies the integrity of `.csv.gz` files and recovers corrupt ones.
 
 ### Usage
 
 ```bash
-./tools sources fix   [path] [-D] [--log <dir>]
-./tools sources merge [path] [-D] [--log <dir>] [--from <date>]
+./tools sources prepare [path] [-D] [--log <dir>] [--from <date>]
+./tools sources check   [path] [-D]
 ./tools sources                        # interactive menu
 ```
 
 ### Path argument
 
-For `fix` and `check`, the path argument scopes which vault files to process:
+All subcommands accept an optional `[path]` argument that scopes which files to operate on. When omitted you will be prompted; pressing Enter accepts the default (`VAULT_DATA_DIR`).
 
-| Form | Meaning |
-|------|---------|
-| _(blank)_ | All files under `VAULT_DATA_DIR` |
-| `table` | One table, all years |
-| `table/year` | One table, one year |
-| `table/year/prefix` | Narrowed by filename prefix |
-| `/abs/path` | Override vault dir; no filter |
-| `/abs/path:filter` | Override vault dir + relative filter |
-
-For `merge`, the path argument is a **single folder** to operate on. All `.csv.gz` files in that folder are grouped by their `YYYYMMDD` prefix and merged. The path defaults to `VAULT_DATA_DIR` if omitted; it may also be an absolute path.
+| Input | Resolves to |
+|-------|-------------|
+| _(omitted / enter)_ | `VAULT_DATA_DIR` (default: `/data/bitmex/vault`) |
+| `instrument` | `$VAULT_DATA_DIR/instrument` |
+| `instrument/2026` | `$VAULT_DATA_DIR/instrument/2026` |
+| `/data/bitmex/alt` | `/data/bitmex/alt` (absolute path, used as-is) |
 
 ### Options
 
 - `-D, --dry-run` — Report what would be done without writing any output
-- `-y, --yes` — (`merge` only) Accept all merge confirmations without prompting — useful for cron jobs
-- `--log <dir>` — Write a `.log` file per task into this directory
-- `--from <date>` — (`merge` only) Skip all days strictly before this date. Accepts `YYYYMMDD` or `YYYY-MM-DD`. Filtered-out days are silently omitted from the plan — they do not appear as singletons, already-merged, or to-merge.
+- `--log <dir>` — (`prepare` only) Write a `.log` file per day into this directory
+- `--from <date>` — (`prepare` only) Skip days before this date. Accepts `YYYYMMDD` or `YYYY-MM-DD`
 
 ---
 
-### `sources fix`
+### `sources prepare`
 
-Scans vault files for structural issues, writes a cleaned `.fixed.csv.gz` alongside each source file.
+Processes each raw WS source file into a clean, sorted, deduped daily output under `<folder>/prepared/YYYYMMDD.csv.gz`.
 
-**What it fixes** (skipped in output):
+Files are grouped by the `YYYYMMDD` prefix in their filename. Within each group, files are sorted by priority (the primary `YYYYMMDD.csv.gz` always leads siblings such as `YYYYMMDD.overflow-<day>.csv.gz`). The pipeline then reads, sorts by canonical timestamp, deduplicates, and writes the prepared output.
 
-| Issue | Description |
-|-------|-------------|
-| `duplicate` | Same message content seen more than once in a 15-minute sliding window (SHA-256 of all lines, receive time blanked) |
-| `header-in-wrong-row` | A header-looking row found mid-stream (concatenated files) |
-
-**What it reports as warnings only** (not fixable on a single file):
-
-| Issue | Description |
-|-------|-------------|
-| `bad-header` | First row is missing `_date_` or `_action_` columns, or file is empty |
-| `wrong-order` | A message's receive time is earlier than the previous message's |
-| `gap` | Forward jump in receive time > 1 second (large tables only: `orderBookL2`, `instrument`) |
-
-After filtering duplicates and mid-stream headers, remaining messages are **sorted by their canonical time field** — `timestamp` for large tables (`orderBookL2`, `instrument`), `_date_` for everything else. Sorting uses a bounded sliding-window bucket-flush so a 10GB file fixes in constant memory. Output is written to `<original>.fixed.csv.gz`.
-
-**Duplicate exemptions**:
-- `partial` messages in timeless (small) tables — reconnection snapshots, not true duplicates
-- `connected` table — ephemeral connection-state rows, exempt entirely
+**Crash safety**: each day is written to `<day>.csv.gz.tmp` first and renamed on success. Any leftover `.tmp` files from a previous interrupted run are skipped with a warning.
 
 ```bash
-# Dry-run: scan and report, no output
-./tools sources fix orderBookL2 -D
+# Dry-run: show what would be prepared without writing
+./tools sources prepare instrument -D
 
-# Fix all instrument files, write logs
-./tools sources fix instrument --log /tmp/fix-logs
+# Prepare all instrument files
+./tools sources prepare instrument
 
-# Fix a specific year with vault dir override
-./tools sources fix /data/bitmex/alt:trade/2025
+# Prepare from a specific date onward
+./tools sources prepare instrument/2026 --from 2026-01-01
+
+# Prepare with per-day log files
+./tools sources prepare instrument --log /tmp/prepare-logs
 ```
 
 ---
 
-### `sources merge`
+### `sources check`
 
-Performs an N-way merge of all `.csv.gz` files in a single flat folder, grouped by their `YYYYMMDD` prefix. Each group produces a `YYYYMMDD.merged.csv.gz` output.
-
-**Naming convention for priority**: files within a group are sorted by the part of the basename *before* `.csv.gz`, so the primary file (`YYYYMMDD.csv.gz`) always leads any sibling that carries an extra infix between the date and the extension (e.g. `YYYYMMDD.csv.gz` precedes `YYYYMMDD.a.csv.gz`, and `.gap.1` precedes `.gap.2`). Name files accordingly to set source priority — the primary file is always highest priority.
-
-**Per-group behaviour**:
-- Groups with a single file are skipped — nothing to merge.
-- Groups that already contain `YYYYMMDD.merged.csv.gz` are skipped — delete it first to re-merge.
-- Groups with 2+ files are merged in a single streaming N-way walk ordered by the canonical timestamp (`timestamp` column for large tables, `_date_` for all others).
-
-**One source per timestamp, partials take precedence**: at each step the minimum canonical timestamp across all stream heads is found. Exactly one source contributes data at that timestamp:
-- For tables with a `timestamp` column, if any source has a `partial` at that timestamp, the lowest-index such source wins (partials are full state snapshots — preferred over deltas that may have started mid-stream).
-- Otherwise the highest-priority source (lowest alphabetical index) at that timestamp wins.
-
-All of the winner's messages at that timestamp are written; every other source's messages at the same timestamp are dropped — even if a non-winner happens to hold a partial there. This fills gaps cleanly: if source A is missing a period, source B provides it. Content is never compared — same-timestamp messages in non-winner sources are always skipped. The atom is the **WS message**, which may span multiple CSV rows (e.g. `partial` snapshots where only the first row has `_date_`); the whole message is written or skipped together.
-
-**Crash safety**: each group is written to `YYYYMMDD.merged.csv.gz.tmp` first and renamed on success. On startup, any leftover `.tmp` files from a previous interrupted run are deleted.
-
-**Dry-run** (`-D`) reports the full plan without writing anything:
-- Which `.tmp` crash files would be deleted
-- Which days are already merged (skipped)
-- Which days have only one file (skipped)
-- Which days would be merged, and from which files
+Tests every `.csv.gz` file under the scoped path with `gzip -t`. Corrupt files are reported. Without `--dry-run`, each corrupt file is recovered with `gzrecover`; the output is written alongside the original as `<name>.recovered.csv.gz` (e.g. `20260403.csv.gz` → `20260403.recovered.csv.gz`).
 
 ```bash
-# Dry-run: show plan without writing anything
-./tools sources merge /data/bitmex/vault/orderBookL2/2025 -D
+# Dry-run: report corrupt files, no recovery
+./tools sources check instrument -D
 
-# Merge all days in a folder — prompts Y/n/a per group (default: Y)
-./tools sources merge /data/bitmex/vault/orderBookL2/2025
+# Check and recover all files under vault root
+./tools sources check
 
-# Merge all tables under a root folder — accepts all without prompting
-./tools sources merge /data/bitmex/fixed -y
-
-# Merge only today across all tables (daily cron)
-./tools sources merge /data/bitmex/fixed --from 20260430 -y
-
-# Merge with log output
-./tools sources merge /data/bitmex/vault/trade/2025 --log /tmp/merge-logs -y
+# Check a specific year folder
+./tools sources check instrument/2026
 ```
 
 ---
 
 ### Interactive menu
 
-Running `./tools sources` with no subcommand launches an interactive prompt for path and mode:
+Running `./tools sources` with no subcommand prompts for subcommand and path:
 
 ```
-Fix           — scan, fix duplicates/order, write .fixed.csv.gz
-Merge         — N-way merge all .csv.gz files in folder by day
-Fix (dry-run) — scan and report issues, no output written
-Merge (dry)   — report what would be merged, no output written
+Prepare — sort, dedup, gap-fill (merge) WS source files
+Check   — verify .csv.gz integrity; recover corrupt files
 ```
 
 ---
@@ -816,21 +768,20 @@ dev/tooling/
 │   │   │   ├── sync-env.ts   # Push .env files via scp
 │   │   │   └── pull.ts       # Pull files by md5 comparison
 │   │   └── sources/
-│   │       ├── index.ts      # Entry point, scope/vault resolution
-│   │       ├── diagnose.ts   # Diagnose orchestrator
-│   │       ├── config.ts     # Per-table config (tier, timestamp column)
-│   │       ├── discover.ts   # File discovery, pair building
-│   │       ├── headers.ts    # CSV header parsing
-│   │       ├── reader.ts     # File streaming, message parsing
+│   │       ├── index.ts      # Entry point, interactive submenu
+│   │       ├── discover.ts   # Shared: collectLeafFolders, parseFromDay
+│   │       ├── dryRun.ts     # Shared: setDryRun / isDryRun module singleton
+│   │       ├── tables.ts     # Shared: KNOWN_TABLES, per-table config
+│   │       ├── types.ts      # Shared types
 │   │       ├── writer.ts     # Gzip output writer
-│   │       ├── large-table.ts # Two-pointer streaming merge
-│   │       ├── small-table.ts # In-memory merge with dedup
-│   │       ├── types.ts
-│   │       └── checks/
-│   │           ├── types.ts      # FileCheck, MessageCheck, DiagnosticIssue
-│   │           ├── header.ts     # Pre-pass + mid-stream header checks
-│   │           ├── duplicates.ts # Sliding-window duplicate detection
-│   │           └── gaps.ts       # Wrong-order + gap checks
+│   │       ├── prepare/      # `sources prepare` subcommand
+│   │       │   ├── run.ts
+│   │       │   ├── overflow.ts
+│   │       │   ├── types.ts
+│   │       │   ├── tasks/
+│   │       │   └── utils/
+│   │       └── check/        # `sources check` subcommand
+│   │           └── run.ts
 │   └── shared/               # Shared utilities
 │       ├── ui/
 │       │   ├── logger.ts     # Colored output, formatting

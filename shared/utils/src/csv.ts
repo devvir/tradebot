@@ -45,10 +45,18 @@ const csvValue = (val: unknown): string => {
  *
  * `skip_empty_lines` drops fully-empty CSV records (not blank lines inside
  * quoted fields — those are data and are preserved by the parser).
+ *
+ * `relaxColumnCount` (default false): when true, rows whose field count does
+ * not match the column count are passed through to the consumer instead of
+ * throwing. Use this when the consumer wants to detect and report corruption
+ * itself rather than aborting the whole stream.
  */
-export const createCsvParser = (columns: false | true | string[] = true): Parser =>
-  parse({
-    columns,
-    cast:             false,
-    skip_empty_lines: true,
-  });
+export const createCsvParser = (
+  columns: false | true | string[] = true,
+  relaxColumnCount: boolean        = false,
+): Parser => parse({
+  columns,
+  cast: false,
+  skip_empty_lines: true,
+  relax_column_count: relaxColumnCount,
+});

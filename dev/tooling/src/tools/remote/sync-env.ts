@@ -1,8 +1,8 @@
 import { execSync } from 'node:child_process';
 import path from 'node:path';
-import { input } from '../../shared/ui/prompts.js';
-import { info, success, error, warn, section } from '../../shared/ui/logger.js';
-import { parseRemoteDest } from './types.js';
+import { input } from '../../shared/ui/prompts';
+import { info, success, error, warn, section } from '../../shared/ui/logger';
+import { parseRemoteDest } from './types';
 
 const rootDir = path.resolve(__dirname, '../../../../..');
 

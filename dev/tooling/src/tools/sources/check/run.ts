@@ -1,134 +1,110 @@
-import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import path from 'node:path';
-import { info, warn, error, success, section, spacer } from '../../../shared/ui/logger';
+import { error, info, section, spacer, success, warn } from '../log';
+import { collectLeafFolders, dayFromFilename } from '../discover';
+import { isDryRun, fromDay } from '../options';
 
-// ── Entry point ───────────────────────────────────────────────────────────────
+const execFileAsync = promisify(execFile);
 
-export function runCheck(
-  vaultDir: string,
-  scope:    string | null,
-  isDryRun: boolean,
-): void {
-  const files = collectGzFiles(vaultDir, scope);
+// ── gzip / gzrecover wrappers ─────────────────────────────────────────────────
 
-  if (files.length === 0) {
-    warn('No .gz files found. Nothing to check.');
-    return;
-  }
+async function isCorrupt(filePath: string): Promise<boolean> {
+  try {
+    await execFileAsync('gzip', ['-t', filePath]);
 
-  section(isDryRun ? 'GZ Health Check (dry-run)' : 'GZ Health Check');
-  spacer();
-  info(`Scanning ${vaultDir}${scope ? `/${scope}` : ''}…`);
-  spacer();
-
-  const corrupt: string[] = [];
-  let count = 0;
-
-  for (const f of files) {
-    count++;
-
-    const result = spawnSync('gzip', ['-t', f], { stdio: 'pipe' });
-
-    if (result.status !== 0) {
-      corrupt.push(f);
-      error(`CORRUPT: ${f}`);
-    }
-
-    if (count % 100 === 0) {
-      info(`  … ${count} files checked so far`);
-    }
-  }
-
-  spacer();
-  info(`Done. ${count} ${count === 1 ? 'file' : 'files'} checked.`);
-  spacer();
-
-  if (corrupt.length === 0) {
-    success('All files healthy.');
-    return;
-  }
-
-  warn(`${corrupt.length} corrupt ${corrupt.length === 1 ? 'file' : 'files'} found.`);
-  spacer();
-
-  if (isDryRun) {
-    info('Dry-run — skipping recovery. Corrupt files:');
-
-    for (const f of corrupt) {
-      info(`  ${f}`);
-    }
-
-    return;
-  }
-
-  info('Running gzrecover on corrupt files…');
-  spacer();
-
-  for (const f of corrupt) {
-    recoverFile(f);
+    return false;
+  } catch {
+    return true;
   }
 }
 
-// ── File collection ───────────────────────────────────────────────────────────
+async function recover(filePath: string): Promise<void> {
+  const ext     = '.csv.gz';
+  const base    = filePath.endsWith(ext) ? filePath.slice(0, -ext.length) : filePath;
+  const outPath = `${base}.recovered${ext}`;
 
-function collectGzFiles(rootDir: string, scope: string | null): string[] {
-  const root = scope ? path.join(rootDir, scope) : rootDir;
+  await execFileAsync('gzrecover', ['-o', outPath, filePath]);
+}
 
+// ── Main ──────────────────────────────────────────────────────────────────────
+
+/**
+ * `sources check` orchestrator.
+ *
+ * Walks every leaf folder under `root`, tests each .csv.gz with `gzip -t`,
+ * and (unless dry-run) recovers corrupt files via `gzrecover`.
+ * Files before the fromDay() cutoff are silently skipped.
+ */
+export async function runCheck(root: string): Promise<void> {
   if (! fs.existsSync(root)) {
-    return [];
+    error(`Path does not exist: ${root}`);
+    process.exit(1);
   }
 
-  const stat = fs.statSync(root);
+  const leafFolders = collectLeafFolders(root);
 
-  if (stat.isFile()) {
-    return isGzFile(path.basename(root)) ? [root] : [];
+  if (leafFolders.length === 0) {
+    warn(`No .csv.gz files found under: ${root}`);
+
+    return;
   }
 
-  return walkGzFiles(root);
-}
+  if (isDryRun()) {
+    section('Dry-run — reporting corrupt files only');
+    spacer();
+  }
 
-function walkGzFiles(dir: string): string[] {
-  const results: string[] = [];
+  const cutDay = fromDay();
 
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
+  let ok        = 0;
+  let corrupt   = 0;
+  let recovered = 0;
+  let failed    = 0;
 
-    if (entry.isDirectory()) {
-      results.push(...walkGzFiles(full));
-    } else if (entry.isFile() && isGzFile(entry.name)) {
-      results.push(full);
+  for (const leaf of leafFolders) {
+    const files = fs.readdirSync(leaf)
+      .filter(n => n.endsWith('.csv.gz'))
+      .filter(n => ! cutDay || (dayFromFilename(n) ?? '') >= cutDay)
+      .map(n => path.join(leaf, n))
+      .sort();
+
+    for (const file of files) {
+      if (! await isCorrupt(file)) {
+        ok++;
+        continue;
+      }
+
+      corrupt++;
+      warn(`Corrupt: ${file}`);
+
+      if (isDryRun()) {
+        continue;
+      }
+
+      try {
+        await recover(file);
+        info(`  Recovered → ${path.basename(file, '.csv.gz')}.recovered.csv.gz`);
+        recovered++;
+      } catch (err) {
+        error(`  Recovery failed: ${(err as Error).message}`);
+        failed++;
+      }
     }
   }
 
-  return results.sort();
-}
+  spacer();
 
-/** True for *.gz files but not gzrecover outputs (*.gz.*) or other derivatives. */
-function isGzFile(name: string): boolean {
-  return name.endsWith('.gz') && ! name.includes('.gz.');
-}
+  if (isDryRun()) {
+    info(`Done. OK: ${ok}. Corrupt: ${corrupt}.`);
 
-// ── Recovery ──────────────────────────────────────────────────────────────────
-
-function recoverFile(filePath: string): void {
-  info(`Recovering: ${filePath}`);
-
-  const result = spawnSync('gzrecover', [filePath], { stdio: 'pipe' });
-
-  if (result.error) {
-    error(`  gzrecover not available: ${result.error.message}`);
     return;
   }
 
-  const recoveredPath = filePath + '.recovered';
-
-  if (result.status === 0 && fs.existsSync(recoveredPath)) {
-    success(`  Recovered → ${recoveredPath}`);
-    return;
+  if (failed > 0) {
+    error(`Done. OK: ${ok}. Corrupt: ${corrupt}. Recovered: ${recovered}. Failed to recover: ${failed}.`);
+  } else {
+    success(`Done. OK: ${ok}. Corrupt: ${corrupt}. Recovered: ${recovered}.`);
   }
-
-  const stderr = result.stderr?.toString().trim();
-
-  warn(`  Recovery failed${stderr ? `: ${stderr}` : ' (unknown reason)'}`);
 }

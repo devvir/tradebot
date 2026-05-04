@@ -1,6 +1,6 @@
-import { selectTool } from '../../shared/ui/prompts.js';
-import { run as runSyncEnv } from './sync-env.js';
-import { run as runPull } from './pull.js';
+import { selectTool } from '../../shared/ui/prompts';
+import { run as runSyncEnv } from './sync-env';
+import { run as runPull } from './pull';
 
 type SubCommand = 'sync-env' | 'pull';
 

@@ -9,11 +9,11 @@ vi.mock('node:child_process', () => ({
   execSync: vi.fn(),
 }));
 
-vi.mock('../../src/shared/ui/prompts.js', () => ({
+vi.mock('../../src/shared/ui/prompts', () => ({
   input: vi.fn(),
 }));
 
-vi.mock('../../src/shared/ui/logger.js', () => ({
+vi.mock('../../src/shared/ui/logger', () => ({
   info: vi.fn(),
   success: vi.fn(),
   warn: vi.fn(),
@@ -23,10 +23,10 @@ vi.mock('../../src/shared/ui/logger.js', () => ({
 }));
 
 import { execSync } from 'node:child_process';
-import { input } from '../../src/shared/ui/prompts.js';
-import { parseRemoteDest } from '../../src/tools/remote/types.js';
-import { _test_findEnvFiles, run as runSyncEnv } from '../../src/tools/remote/sync-env.js';
-import { _test_localMd5, _test_listRemoteFiles, run as runPull } from '../../src/tools/remote/pull.js';
+import { input } from '../../src/shared/ui/prompts';
+import { parseRemoteDest } from '../../src/tools/remote/types';
+import { _test_findEnvFiles, run as runSyncEnv } from '../../src/tools/remote/sync-env';
+import { _test_localMd5, _test_listRemoteFiles, run as runPull } from '../../src/tools/remote/pull';
 
 // ── Tests: parseRemoteDest ────────────────────────────────────────────────────
 

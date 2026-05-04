@@ -1,4 +1,22 @@
+import fs from 'node:fs';
 import { C } from '../utils/colors';
+
+let debugStream: fs.WriteStream | null = null;
+
+export function openDebugLog(filePath: string): void {
+  debugStream = fs.createWriteStream(filePath, { flags: 'a' });
+}
+
+export function closeDebugLog(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (! debugStream) { resolve(); return; }
+
+    debugStream.end((err?: Error | null) => {
+      debugStream = null;
+      if (err) reject(err); else resolve();
+    });
+  });
+}
 
 export function info(message: string): void {
   console.log(`${C.cyan}ℹ${C.reset} ${message}`);
@@ -17,8 +35,9 @@ export function error(message: string): void {
 }
 
 export function debug(message: string): void {
-  if (process.env.DEBUG) {
+  if (process.env.LOG_LEVEL === 'debug') {
     console.log(`${C.dim}${message}${C.reset}`);
+    debugStream?.write(message + '\n');
   }
 }
 

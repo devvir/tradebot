@@ -2,10 +2,10 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
-import { input } from '../../shared/ui/prompts.js';
-import { success, error, section, spacer } from '../../shared/ui/logger.js';
-import { parseRemoteDest } from './types.js';
-import type { RemoteDest } from './types.js';
+import { input } from '../../shared/ui/prompts';
+import { success, error, section, spacer } from '../../shared/ui/logger';
+import { parseRemoteDest } from './types';
+import type { RemoteDest } from './types';
 
 // ── Public ────────────────────────────────────────────────────────────────────
 

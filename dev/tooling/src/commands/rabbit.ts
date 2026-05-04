@@ -1,6 +1,6 @@
 import { Command } from 'commander';
-import { run as runRabbitTool } from '../tools/rabbitmq/index.js';
-import { error } from '../shared/ui/logger.js';
+import { run as runRabbitTool } from '../tools/rabbitmq/index';
+import { error } from '../shared/ui/logger';
 
 export function register(program: Command): void {
   program

@@ -1,98 +1,61 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { SourceFile } from './types.js';
 
-const WS_FILE_PATTERN    = /\/(announcement|chat|connected|instrument|liquidation|orderBookL2|publicNotifications)\/\d{4}\/[^/]+\.csv\.gz$/;
-const TABLE_NAME_PATTERN = /\/(announcement|chat|connected|instrument|liquidation|orderBookL2|publicNotifications)\/\d{4}\//;
+const DAY_PREFIX_RE = /^(\d{8})/;
 
 /**
- * Derive the gaps root directory from the vault root directory.
- * Replaces the last occurrence of "/vault" in the path with "/gaps".
+ * Extract the YYYYMMDD day prefix from a bare filename.
+ * Returns null when the filename does not start with 8 digits.
  */
-export function gapsDirFromVaultDir(vaultDir: string): string {
-  const normalised = vaultDir.replace(/\/$/, '');
-  const idx = normalised.lastIndexOf('/vault');
+export function dayFromFilename(name: string): string | null {
+  return DAY_PREFIX_RE.exec(path.basename(name))?.[1] ?? null;
+}
 
-  if (idx === -1) {
+/**
+ * Parse a user-supplied date string into a normalized YYYYMMDD key.
+ *
+ * Accepts `YYYYMMDD` or `YYYY-MM-DD`; strips `-` then validates `^\d{8}$`.
+ * Returns `null` for null / blank input. Throws a descriptive error on
+ * anything else so the caller can surface it before starting any I/O.
+ */
+export function parseFromDay(raw: string | null | undefined): string | null {
+  if (! raw) return null;
+
+  const stripped = raw.replace(/-/g, '');
+
+  if (! /^\d{8}$/.test(stripped)) {
     throw new Error(
-      `Cannot derive gaps directory: VAULT_DATA_DIR does not contain "/vault".\n` +
-      `  VAULT_DATA_DIR = ${vaultDir}`,
+      `Invalid --from date: "${raw}". Expected YYYYMMDD or YYYY-MM-DD (e.g. 20260101 or 2026-01-01).`,
     );
   }
 
-  return normalised.slice(0, idx) + '/gaps' + normalised.slice(idx + '/vault'.length);
+  return stripped;
 }
 
 /**
- * Recursively collect all .csv.gz files under a directory,
- * optionally filtered by a relative scope path.
+ * Walk `root` and return every directory that directly contains at least one
+ * `*.csv.gz` file. Descends into subdirectories that do not themselves contain
+ * any `.csv.gz` files, so the typical `table/year/` structure is handled
+ * transparently.
  *
- * Scope supports partial matching:
- *  - "instrument"                    → all files under instrument/
- *  - "instrument/2026"              → all files under instrument/2026/
- *  - "instrument/2026/20261102"     → any file whose name starts with 20261102
- *  - "chat/2026/202602"            → any file whose name starts with 202602
- *  - "instrument/2026/20261102.csv" → that exact file
+ * When `root` is already a leaf (contains `.csv.gz` directly) it is returned
+ * as the sole element.
  */
-export function collectFiles(rootDir: string, scope: string | null): string[] {
-  if (! scope) {
-    return fs.existsSync(rootDir) ? walkDir(rootDir) : [];
+export function collectLeafFolders(root: string): string[] {
+  const entries = fs.readdirSync(root, { withFileTypes: true });
+  const hasCsvGz = entries.some(e => e.isFile() && e.name.endsWith('.csv.gz'));
+
+  if (hasCsvGz) {
+    return [root];
   }
 
-  const fullPath = path.join(rootDir, scope);
+  const leaves: string[] = [];
 
-  // Exact file match
-  if (fs.existsSync(fullPath) && fs.statSync(fullPath).isFile()) {
-    return isSupportedFile(fullPath) ? [fullPath] : [];
-  }
-
-  // Exact directory match
-  if (fs.existsSync(fullPath) && fs.statSync(fullPath).isDirectory()) {
-    return walkDir(fullPath);
-  }
-
-  // Partial filename match: scope is a prefix within its parent directory
-  const parentDir = path.join(rootDir, path.dirname(scope));
-  const prefix    = path.basename(scope);
-
-  if (! fs.existsSync(parentDir) || ! fs.statSync(parentDir).isDirectory()) {
-    return [];
-  }
-
-  return walkDir(parentDir).filter(f => path.basename(f).startsWith(prefix));
-}
-
-/** Build a SourceFile descriptor from an absolute vault file path. */
-export function buildSourceFile(vaultPath: string): SourceFile {
-  return {
-    basePath:  vaultPath,
-    tableName: tableNameFromPath(vaultPath),
-  };
-}
-
-// ── Internal helpers ──────────────────────────────────────────────────────────
-
-/** Extract the table name from an absolute file path. Falls back to 'unknown'. */
-function tableNameFromPath(filePath: string): string {
-  return TABLE_NAME_PATTERN.exec(filePath)?.[1] ?? 'unknown';
-}
-
-function walkDir(dir: string): string[] {
-  const results: string[] = [];
-
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-
+  for (const entry of entries) {
     if (entry.isDirectory()) {
-      results.push(...walkDir(full));
-    } else if (entry.isFile() && isSupportedFile(full)) {
-      results.push(full);
+      leaves.push(...collectLeafFolders(path.join(root, entry.name)));
     }
   }
 
-  return results;
-}
-
-function isSupportedFile(filePath: string): boolean {
-  return WS_FILE_PATTERN.test(filePath) && ! path.basename(filePath).includes('.fixed.');
+  return leaves;
 }

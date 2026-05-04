@@ -1,5 +1,15 @@
 import path from 'node:path';
-import type { TableConfig } from './types';
+import { TableConfig } from './types';
+
+export const KNOWN_TABLES = new Set([
+  'announcement',
+  'chat',
+  'connected',
+  'instrument',
+  'liquidation',
+  'orderBookL2',
+  'publicNotifications',
+]);
 
 // Source of truth for table column definitions.
 // Resolves from our own `dist/` to vault's `dist/` — both packages must be built.
@@ -17,7 +27,7 @@ function loadTableHeaders(): Record<string, string[]> {
   } catch {
     throw new Error(
       `Cannot load vault table headers from: ${VAULT_HEADERS_PATH}\n` +
-      `Build vault first ("pnpm build" in services/vault), or check the path in config.ts.`,
+      `Build vault first ("pnpm build" in services/vault), or check the path in tables.ts.`,
     );
   }
 
@@ -76,6 +86,8 @@ function tableConfigs(): Record<string, TableConfig> {
   return result;
 }
 
+// ── Existing API (kept for fix, merge, checks) ────────────────────────────────
+
 /** Returns the config for a known table, or a safe default for unknown ones. */
 export function getTableConfig(tableName: string): TableConfig {
   return tableConfigs()[tableName] ?? { timestampCol: null, gapThresholdMs: null };
@@ -83,9 +95,52 @@ export function getTableConfig(tableName: string): TableConfig {
 
 /**
  * Returns the authoritative column list for a table from vault's TABLE_HEADERS,
- * or null when the table is unknown. Used by the fix pipeline to recover when
- * the source file's own header is missing or malformed.
+ * or null when the table is unknown.
  */
 export function getVaultColumns(tableName: string): string[] | null {
-  return tableHeaders()[tableName] ?? null;
+  return _columnOverrides.get(tableName) ?? tableHeaders()[tableName] ?? null;
 }
+
+// ── Prepare pipeline API ──────────────────────────────────────────────────────
+
+const FIXED_PARTIAL_TABLES: ReadonlySet<string> = new Set([
+  'announcement',
+  'chat',
+  'connected',
+  'liquidation',
+  'publicNotifications',
+]);
+
+/** True for tables whose source partials are noise — READ drops them, HEADER writes synthetic one. */
+export function hasFixedPartials(tableName: string): boolean {
+  return FIXED_PARTIAL_TABLES.has(tableName);
+}
+
+/**
+ * Gap threshold (ms) for MERGE source-switching.
+ * 1ms for tables with an exchange timestamp (instrument, orderBookL2);
+ * 60_000ms for timeless tables and everything else.
+ */
+export function potentialGapThresholdMs(tableName: string): number {
+  if (! hasFixedPartials(tableName)) {
+    const cols = getVaultColumns(tableName);
+
+    if (cols && cols.includes('timestamp')) {
+      return 1;
+    }
+  }
+
+  return 60_000;
+}
+
+// ── Test exports ──────────────────────────────────────────────────────────────
+
+const _columnOverrides: Map<string, string[]> = new Map();
+
+export const _test_setColumns = (tableName: string, columns: string[]): void => {
+  _columnOverrides.set(tableName, columns);
+};
+
+export const _test_clearColumns = (tableName: string): void => {
+  _columnOverrides.delete(tableName);
+};

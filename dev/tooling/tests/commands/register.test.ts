@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { Command } from 'commander';
-import { register as registerWs } from '../../src/commands/ws.js';
-import { register as registerDb } from '../../src/commands/db.js';
-import { register as registerRabbit } from '../../src/commands/rabbit.js';
-import { register as registerBouncer } from '../../src/commands/bouncer.js';
-import { register as registerBroadcast } from '../../src/commands/broadcast.js';
-import { register as registerSignal } from '../../src/commands/signal.js';
-import { register as registerRemote } from '../../src/commands/remote.js';
+import { register as registerWs } from '../../src/commands/ws';
+import { register as registerDb } from '../../src/commands/db';
+import { register as registerRabbit } from '../../src/commands/rabbit';
+import { register as registerBouncer } from '../../src/commands/bouncer';
+import { register as registerBroadcast } from '../../src/commands/broadcast';
+import { register as registerSignal } from '../../src/commands/signal';
+import { register as registerRemote } from '../../src/commands/remote';
 
 function optionLongs(cmd: Command): string[] {
   return cmd.options.map(o => o.long ?? '');

@@ -1,13 +1,5 @@
-export type RunMode = 'fix' | 'merge' | 'fix-dry' | 'merge-dry' | 'check' | 'check-dry';
-
 export interface TableConfig {
-  /** Column name used as the canonical per-message timestamp. Null means use `_date_`. */
-  timestampCol: string | null;
-
-  /**
-   * Forward-jump threshold in ms above which the gap check fires.
-   * Null means the gap check is disabled for this table.
-   */
+  timestampCol:   string | null;
   gapThresholdMs: number | null;
 }
 
@@ -45,32 +37,4 @@ export interface Message {
 
   /** Value of the `timestamp` column on the message-start row. Empty when the column is absent. */
   timestamp: string;
-}
-
-export interface SourceFile {
-  basePath:  string;
-  tableName: string;
-}
-
-export interface FileGroup {
-  /** YYYYMMDD day key. */
-  day: string;
-  /** Input file paths sorted alphabetically — sort order determines priority (first = highest). */
-  paths: string[];
-  /** Output path: <folder>/YYYYMMDD.merged.csv.gz */
-  outputPath: string;
-  /** Table name derived from the containing folder path. */
-  tableName: string;
-}
-
-export interface MergeResult {
-  written: number;
-  warnings: string[];
-  /** Lines written per source, indexed in the same order as the input paths. */
-  sourceCounts: number[];
-}
-
-export interface RunOptions {
-  scope: string | null;
-  mode: RunMode;
 }

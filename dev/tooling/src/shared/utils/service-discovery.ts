@@ -1,5 +1,5 @@
 import Dockerode from 'dockerode';
-import { selectFromList } from '../ui/prompts.js';
+import { selectFromList } from '../ui/prompts';
 
 interface DiscoveryResult {
   host: string;

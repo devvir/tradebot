@@ -1,6 +1,6 @@
 import { Command } from 'commander';
-import { run as runBroadcastTool } from '../tools/broadcast/index.js';
-import { error } from '../shared/ui/logger.js';
+import { run as runBroadcastTool } from '../tools/broadcast/index';
+import { error } from '../shared/ui/logger';
 
 export function register(program: Command): void {
   program

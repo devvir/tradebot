@@ -1,5 +1,5 @@
 import inquirer from 'inquirer';
-import { info } from './logger.js';
+import { info } from './logger';
 
 interface ToolOption {
   id: string;

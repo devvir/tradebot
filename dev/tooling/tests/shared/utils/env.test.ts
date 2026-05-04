@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseEnvFile, loadEnv } from '../../../src/shared/utils/env.js';
+import { parseEnvFile, loadEnv } from '../../../src/shared/utils/env';
 
 function writeTmp(name: string, content: string): string {
   const file = path.join(os.tmpdir(), name);

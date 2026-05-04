@@ -1,9 +1,9 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { info, success, warn, error, debug, section, heading, table } from '../../../src/shared/ui/logger.js';
+import { info, success, warn, error, debug, section, heading, table } from '../../../src/shared/ui/logger';
 
 afterEach(() => {
   vi.restoreAllMocks();
-  delete process.env.DEBUG;
+  delete process.env.LOG_LEVEL;
 });
 
 function captured(): string {
@@ -47,16 +47,23 @@ describe('error', () => {
 });
 
 describe('debug', () => {
-  it('prints nothing when DEBUG is not set', () => {
+  it('prints nothing when LOG_LEVEL is not set', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
-    delete process.env.DEBUG;
+    delete process.env.LOG_LEVEL;
     debug('hidden');
     expect(vi.mocked(console.log)).not.toHaveBeenCalled();
   });
 
-  it('prints message when DEBUG=1', () => {
+  it('prints nothing when LOG_LEVEL is set to something other than debug', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
-    process.env.DEBUG = '1';
+    process.env.LOG_LEVEL = 'info';
+    debug('hidden');
+    expect(vi.mocked(console.log)).not.toHaveBeenCalled();
+  });
+
+  it('prints message when LOG_LEVEL=debug', () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    process.env.LOG_LEVEL = 'debug';
     debug('visible');
     expect(captured()).toContain('visible');
   });

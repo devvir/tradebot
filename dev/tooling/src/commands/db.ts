@@ -1,6 +1,6 @@
 import { Command } from 'commander';
-import { run as runMongoDBTool } from '../tools/mongodb/index.js';
-import { error } from '../shared/ui/logger.js';
+import { run as runMongoDBTool } from '../tools/mongodb/index';
+import { error } from '../shared/ui/logger';
 
 export function register(program: Command): void {
   program

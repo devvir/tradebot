@@ -1,6 +1,6 @@
 import { Command } from 'commander';
-import { run } from '../tools/remote/index.js';
-import { error } from '../shared/ui/logger.js';
+import { run } from '../tools/remote/index';
+import { error } from '../shared/ui/logger';
 
 function handleError(err: unknown): never {
   error((err as Error).message);

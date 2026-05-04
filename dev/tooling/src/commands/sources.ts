@@ -1,34 +1,64 @@
+import path from 'node:path';
 import { Command } from 'commander';
-import { run } from '../tools/sources/index.js';
-import { parseFromDay } from '../tools/sources/merge/discover.js';
-import { runDaily } from '../tools/sources/daily/run.js';
+import { run } from '../tools/sources/index';
+import { parseFromDay } from '../tools/sources/discover';
+import { setDryRun, setFromDay, setLogPath } from '../tools/sources/options';
+import { runPrepare } from '../tools/sources/prepare/run';
+import { runCheck } from '../tools/sources/check/run';
+import { input } from '../shared/ui/prompts';
 import { error } from '../shared/ui/logger';
+import { getEnv } from '../shared/utils/env';
+
+// ── Path resolution ───────────────────────────────────────────────────────────
+
+const DEFAULT_VAULT_DIR = '/data/bitmex/vault';
+
+function vaultDir(): string {
+  return getEnv('VAULT_DATA_DIR', DEFAULT_VAULT_DIR) ?? DEFAULT_VAULT_DIR;
+}
 
 /**
- * Register the `sources` command group.
+ * Resolve a user-supplied path argument into an absolute directory.
  *
- * Sub-commands:
- *   sources fix   [path] [--dry-run|-D] [--log <dir>]                     — scan a single file; optionally write fixed output
- *   sources merge [path] [--dry-run|-D] [--log <dir>] [--from <YYYYMMDD>] — merge a vault+gaps pair; optionally dry-run
- *   sources check [path] [--dry-run|-D]                                    — verify gz integrity; recover corrupt files unless --dry-run
- *   sources daily [--date <YYYYMMDD>]                                      — full daily ingestion pipeline
- *
- * Running `sources` with no sub-command drops into the interactive menu.
- * The `--log` flag lives only on the subcommands — declaring it on the
- * parent as well caused commander to route the value to whichever command
- * encountered the flag first.
+ * Accepted formats:
+ *  - omitted / empty  → VAULT_DATA_DIR
+ *  - absolute path    → used as-is
+ *  - relative path    → joined with VAULT_DATA_DIR
  */
-type SourcesOpts = { dryRun?: boolean; log?: string };
-type FixOpts     = SourcesOpts & { from?: string };
-type MergeOpts   = SourcesOpts & { from?: string; yes?: boolean };
+function resolvePath(pathArg: string | undefined | null): string {
+  if (! pathArg) return vaultDir();
+  if (path.isAbsolute(pathArg)) return pathArg;
+
+  return path.join(vaultDir(), pathArg);
+}
+
+/**
+ * Resolve the --log option value into a full log file path or null.
+ *
+ *  - absent (undefined)  → null (no logging)
+ *  - present, no value   → `<cwd>/<subcommand>.log`
+ *  - present with value  → `<dir>/<subcommand>.log` (dir resolved relative to cwd)
+ */
+function resolveLogPath(logArg: string | boolean | undefined, subcommand: string): string | null {
+  if (logArg === undefined) return null;
+
+  const dirArg = logArg === true ? '' : logArg;
+  const dir    = ! dirArg
+    ? process.cwd()
+    : path.isAbsolute(dirArg) ? dirArg : path.join(process.cwd(), dirArg);
+
+  return path.join(dir, `${subcommand}.log`);
+}
+
+// ── Registration ──────────────────────────────────────────────────────────────
 
 export function register(program: Command): void {
   const sources = program
-    .command('sources [path]')
+    .command('sources')
     .description('Sanitise and merge vault source data')
-    .action(async (scopeArg: string | undefined) => {
+    .action(async () => {
       try {
-        await run(scopeArg ?? null, null, null);
+        await run();
       } catch (err) {
         error((err as Error).message);
         process.exit(1);
@@ -36,32 +66,20 @@ export function register(program: Command): void {
     });
 
   sources
-    .command('fix [path]')
-    .description('Scan a vault file for issues; write a fixed copy unless --dry-run')
-    .option('-D, --dry-run', 'Scan and report only — do not write the fixed file')
-    .option('--log <dir>',   'Write a per-task log file into this directory')
-    .option('--from <date>', 'Skip files dated before this date; accepts YYYYMMDD or YYYY-MM-DD')
-    .action(async (scopeArg: string | undefined, options: FixOpts) => {
+    .command('prepare [path]')
+    .description('Sort, dedup, gap-fill source files into prepared/YYYYMMDD.csv.gz')
+    .option('-D, --dry-run',    'Report what would be prepared without writing any output')
+    .option('--log [dir]',      'Write logs; optional dir (default: current directory)')
+    .option('--from <date>',    'Skip days before this date; accepts YYYYMMDD or YYYY-MM-DD')
+    .action(async (pathArg: string | undefined, options: { dryRun?: boolean; log?: string | boolean; from?: string }) => {
       try {
-        const fromDay = parseFromDay(options.from ?? null);
-        await run(scopeArg ?? null, options.dryRun ? 'fix-dry' : 'fix', options.log ?? null, fromDay);
-      } catch (err) {
-        error((err as Error).message);
-        process.exit(1);
-      }
-    });
+        const root = resolvePath(pathArg ?? await input('Path:', vaultDir()));
 
-  sources
-    .command('merge [path]')
-    .description('N-way merge all *.csv.gz files in a folder by day (YYYYMMDD prefix); outputs YYYYMMDD.merged.csv.gz')
-    .option('-D, --dry-run', 'Report what would be merged without writing any output')
-    .option('-y, --yes',     'Accept all merge confirmations without prompting')
-    .option('--log <dir>',   'Write a per-day log file into this directory')
-    .option('--from <date>', 'Skip days before this date; accepts YYYYMMDD or YYYY-MM-DD')
-    .action(async (scopeArg: string | undefined, options: MergeOpts) => {
-      try {
-        const fromDay = parseFromDay(options.from ?? null);
-        await run(scopeArg ?? null, options.dryRun ? 'merge-dry' : 'merge', options.log ?? null, fromDay, options.yes ?? false);
+        setDryRun(options.dryRun ?? false);
+        setFromDay(parseFromDay(options.from ?? null));
+        setLogPath(resolveLogPath(options.log, 'prepare'));
+
+        await runPrepare(root);
       } catch (err) {
         error((err as Error).message);
         process.exit(1);
@@ -70,24 +88,19 @@ export function register(program: Command): void {
 
   sources
     .command('check [path]')
-    .description('Verify gz integrity of vault files; recover corrupt files unless --dry-run')
-    .option('-D, --dry-run', 'Report corrupt files only — do not run gzrecover')
-    .action(async (scopeArg: string | undefined, options: SourcesOpts) => {
+    .description('Verify .csv.gz integrity with gzip -t; recover corrupt files with gzrecover')
+    .option('-D, --dry-run', 'Report corrupt files without recovering them')
+    .option('--log [dir]',   'Write logs; optional dir (default: current directory)')
+    .option('--from <date>', 'Skip files before this date; accepts YYYYMMDD or YYYY-MM-DD')
+    .action(async (pathArg: string | undefined, options: { dryRun?: boolean; log?: string | boolean; from?: string }) => {
       try {
-        await run(scopeArg ?? null, options.dryRun ? 'check-dry' : 'check', null);
-      } catch (err) {
-        error((err as Error).message);
-        process.exit(1);
-      }
-    });
+        const root = resolvePath(pathArg ?? await input('Path:', vaultDir()));
 
-  sources
-    .command('daily')
-    .description('Full daily ingestion pipeline: import, upload raw, fix, merge, fix, upload vault')
-    .option('--date <date>', 'Date to process (YYYYMMDD or YYYY-MM-DD); defaults to yesterday UTC')
-    .action(async (options: { date?: string }) => {
-      try {
-        await runDaily(options.date ?? null);
+        setDryRun(options.dryRun ?? false);
+        setFromDay(parseFromDay(options.from ?? null));
+        setLogPath(resolveLogPath(options.log, 'check'));
+
+        await runCheck(root);
       } catch (err) {
         error((err as Error).message);
         process.exit(1);

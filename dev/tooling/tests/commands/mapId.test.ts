@@ -9,7 +9,7 @@ import {
   _test_dateToOffset,
   _test_offsetToIso,
   _test_ID_THRESHOLD,
-} from '../../src/commands/mapId.js';
+} from '../../src/commands/mapId';
 
 const SHIFT_39 = 549_755_813_888;
 const SHIFT_12 = 4_096;

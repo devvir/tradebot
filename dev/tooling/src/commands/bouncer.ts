@@ -1,6 +1,6 @@
 import { Command } from 'commander';
-import { run as runBouncerTool, add as addAccount } from '../tools/bouncer/index.js';
-import { error } from '../shared/ui/logger.js';
+import { run as runBouncerTool, add as addAccount } from '../tools/bouncer/index';
+import { error } from '../shared/ui/logger';
 
 export function register(program: Command): void {
   const bouncer = program

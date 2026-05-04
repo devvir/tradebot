@@ -1,21 +1,21 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
-import { loadEnv } from './shared/utils/env.js';
-import { selectTool } from './shared/ui/prompts.js';
-import { heading, spacer } from './shared/ui/logger.js';
+import { loadEnv } from './shared/utils/env';
+import { selectTool } from './shared/ui/prompts';
+import { heading, spacer } from './shared/ui/logger';
 
-import { register as registerWs } from './commands/ws.js';
-import { register as registerDb } from './commands/db.js';
-import { register as registerRabbit } from './commands/rabbit.js';
-import { register as registerBouncer } from './commands/bouncer.js';
-import { register as registerBroadcast } from './commands/broadcast.js';
-import { register as registerSignal } from './commands/signal.js';
+import { register as registerWs } from './commands/ws';
+import { register as registerDb } from './commands/db';
+import { register as registerRabbit } from './commands/rabbit';
+import { register as registerBouncer } from './commands/bouncer';
+import { register as registerBroadcast } from './commands/broadcast';
+import { register as registerSignal } from './commands/signal';
 import { register as registerMonitor } from './commands/monitor';
-import { register as registerSources } from './commands/sources.js';
-import { register as registerRemote } from './commands/remote.js';
-import { register as registerSynth } from './commands/synth.js';
-import { register as registerMapId } from './commands/mapId.js';
+import { register as registerSources } from './commands/sources';
+import { register as registerRemote } from './commands/remote';
+import { register as registerSynth } from './commands/synth';
+import { register as registerMapId } from './commands/mapId';
 
 interface Tool {
   id: string;

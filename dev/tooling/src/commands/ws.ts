@@ -1,6 +1,6 @@
 import { Command } from 'commander';
-import { run as runWebSocketTool } from '../tools/websocket/index.js';
-import { error } from '../shared/ui/logger.js';
+import { run as runWebSocketTool } from '../tools/websocket/index';
+import { error } from '../shared/ui/logger';
 
 export function register(program: Command): void {
   program

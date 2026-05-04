@@ -1,6 +1,6 @@
 import { Command } from 'commander';
-import { run as runSignalTool } from '../tools/signal/index.js';
-import { error } from '../shared/ui/logger.js';
+import { run as runSignalTool } from '../tools/signal/index';
+import { error } from '../shared/ui/logger';
 
 export function register(program: Command): void {
   program
