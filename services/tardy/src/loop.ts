@@ -2,6 +2,7 @@ import { logger } from '@devvir/service-kit';
 import config from './config';
 import type { Buf, TardyTable } from './types';
 import { streamMinute, MINUTES_PER_DAY } from './tardis';
+import type { TardisMessage } from './tardis';
 import { listFiles, writeRows, closeFile, deleteFile } from './vault';
 
 const TABLES: TardyTable[] = [
@@ -14,7 +15,8 @@ const TABLES: TardyTable[] = [
   'publicNotifications',
 ];
 
-const BATCH_SIZE = 10_000;
+const BATCH_SIZE  = 100_000;
+const CONCURRENCY = 3;
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
@@ -31,9 +33,8 @@ export const syncAll = async (vaultUrl: string): Promise<void> => {
 
   logger.info({ count: dates.length }, 'Checking target dates');
 
-  for (const date of dates) {
+  for (const date of dates)
     await syncDate(vaultUrl, date);
-  }
 
   logger.info('Sync complete');
 };
@@ -54,27 +55,36 @@ export const syncDate = async (vaultUrl: string, date: string): Promise<void> =>
     needed.map(t => [t, { rows: [] }]),
   );
 
-  // Tardis serves data one minute per request. We flush every table's buffer
-  // at the end of each minute so sparse tables (e.g. announcement, with one
-  // row per day) don't sit in memory until the entire stream completes —
-  // their size threshold would never trigger on its own. High-volume tables
-  // (orderBookL2) flush early when the buffer fills mid-minute.
+  // Fetch up to CONCURRENCY minutes ahead in parallel, then process and write
+  // in offset order. Vault backpressure is natural: writeRows awaits vault,
+  // so the loop only advances when vault has accepted the current batch.
+  const inFlight: Promise<TardisMessage[]>[] = [];
+  let nextToLaunch = 0;
+
+  while (nextToLaunch < Math.min(CONCURRENCY, MINUTES_PER_DAY)) {
+    inFlight.push(collectMinute(date, nextToLaunch++, needed));
+  }
+
   for (let offset = 0; offset < MINUTES_PER_DAY; offset++) {
-    for await (const { table, msg } of streamMinute(date, offset, needed)) {
+    if (nextToLaunch < MINUTES_PER_DAY) {
+      inFlight.push(collectMinute(date, nextToLaunch++, needed));
+    }
+
+    const messages = await inFlight.shift()!;
+
+    for (const { table, msg } of messages) {
       const buf = batches.get(table)!;
 
       buf.rows.push(msg);
 
-      if (buf.rows.length >= BATCH_SIZE) {
+      if (buf.rows.length >= BATCH_SIZE)
         await writeRows(vaultUrl, table, date, buf.rows.splice(0), config.suffix);
-      }
     }
 
-    for (const [table, buf] of batches.entries()) {
-      if (buf.rows.length > 0) {
+    // End-of-minute flush: drain sparse tables that won't hit the batch threshold.
+    for (const [table, buf] of batches.entries())
+      if (buf.rows.length > 0)
         await writeRows(vaultUrl, table, date, buf.rows.splice(0), config.suffix);
-      }
-    }
   }
 
   for (const table of needed) {
@@ -83,6 +93,45 @@ export const syncDate = async (vaultUrl: string, date: string): Promise<void> =>
     logger.info({ table, date }, 'Closed');
   }
 };
+
+// ── Minute collection ────────────────────────────────────────────────────────
+
+const RETRY_BASE_MS = 1_000;
+const MAX_RETRY_MS  = 5 * 60 * 1_000; // 5 minutes
+
+/**
+ * Collects all messages from a single Tardis minute-bucket into an array.
+ * Called concurrently for multiple offsets; results are consumed in order.
+ * Retries the full stream on network errors.
+ */
+const collectMinute = async (
+  date:   string,
+  offset: number,
+  tables: TardyTable[],
+): Promise<TardisMessage[]> => {
+  let attempt = 0;
+
+  for (;;) {
+    try {
+      const messages: TardisMessage[] = [];
+
+      for await (const msg of streamMinute(date, offset, tables)) {
+        messages.push(msg);
+      }
+
+      return messages;
+    } catch (err) {
+      const delay = Math.min(RETRY_BASE_MS * Math.pow(2, attempt), MAX_RETRY_MS);
+
+      logger.warn({ date, offset, attempt, delay, err }, 'Stream error — retrying');
+      await sleep(delay);
+      attempt++;
+    }
+  }
+};
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise(resolve => setTimeout(resolve, ms));
 
 // ── Table resolution ──────────────────────────────────────────────────────────
 
@@ -188,3 +237,6 @@ const msToNextMidnightUTC = (): number => {
 
   return midnight.getTime() - now.getTime();
 };
+
+// ─── test exports ──────────────────────────────────────────────────────────────
+export const _test_BATCH_SIZE = BATCH_SIZE;

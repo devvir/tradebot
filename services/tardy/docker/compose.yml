@@ -7,6 +7,7 @@ services:
       dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
       args:
         SERVICE_NAME: tardy
+        NODE_MEMORY_MB: 4096
 
     environment:
       # Dependencies

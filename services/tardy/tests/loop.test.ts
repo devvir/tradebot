@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { targetDates, syncDate } from '../src/loop';
+import { targetDates, syncDate, _test_BATCH_SIZE } from '../src/loop';
 import type { TardyTable, WsMessage } from '../src/types';
 
 vi.mock('../src/vault', () => ({
@@ -206,7 +206,7 @@ describe('loop — syncDate', () => {
 
     // Yield 10,001 messages within one minute to trigger an early size flush
     // followed by an end-of-minute flush of the remainder.
-    const messages = Array.from({ length: 10_001 }, () => ({ table: 'liquidation' as const, msg }));
+    const messages = Array.from({ length: _test_BATCH_SIZE + 1 }, () => ({ table: 'liquidation' as const, msg }));
 
     mockMinute(0, messages);
 
@@ -217,7 +217,7 @@ describe('loop — syncDate', () => {
     const firstCallRows  = vi.mocked(vault.writeRows).mock.calls[0]![3];
     const secondCallRows = vi.mocked(vault.writeRows).mock.calls[1]![3];
 
-    expect(firstCallRows).toHaveLength(10_000);
+    expect(firstCallRows).toHaveLength(_test_BATCH_SIZE);
     expect(secondCallRows).toHaveLength(1);
 
     expect(vault.closeFile).toHaveBeenCalledWith(VAULT_URL, 'liquidation', DATE, '');
