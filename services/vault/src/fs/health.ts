@@ -1,9 +1,21 @@
 // Write-path health singleton.
 //
-// Decouples write failures (deep in the async writer) from the HTTP route that
-// must reject new data. `fs/writer.ts` calls `recordFailure()` after a batch
-// exhausts all retries; `server/routes.ts` calls `isHealthy()` before
-// accepting `POST /rows` and returns 503 when unhealthy.
+// Two distinct concerns, kept separate so one offending file does not block
+// every other write:
+//
+//   - Storage health (global). When write failures pile up across all writes
+//     within FAILURE_WINDOW_MS, vault returns 503 to ALL clients until a
+//     canary write succeeds. This is the "the disk is broken" signal.
+//
+//   - Per-path backpressure (local). When a single file's inflight write
+//     count crosses the writer threshold, that one file's path is added to a
+//     throttled set. Routes return 429 only for requests targeting a
+//     throttled file; every other path is unaffected.
+//
+// `fs/writer.ts` calls `recordFailure()` after a batch exhausts all retries,
+// and `setBackpressure(path, busy, count)` as a per-handle inflight count
+// crosses the busy/resume thresholds. `server/routes.ts` calls `isHealthy()`
+// for the 503 check and `isThrottled(table, filename)` for the 429 check.
 
 import path from 'path';
 import { appendFileSync, existsSync, unlinkSync } from 'fs';
@@ -22,14 +34,43 @@ const RECOVERY_INTERVAL_MS = 5_000;
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
-let healthy       = true;
+let healthy            = true;
 let failureReason: string | null = null;
 let recoveryTimer: ReturnType<typeof setTimeout> | null = null;
+
+const throttledPaths = new Set<string>();
 
 const recentFailures: number[] = [];
 
 export const isHealthy        = (): boolean       => healthy;
 export const getFailureReason = (): string | null => failureReason;
+
+/** True when this specific file is currently shedding load (returns 429). */
+export const isThrottled = (table: string, filename: string): boolean => {
+  return throttledPaths.has(`${table}/${filename}`);
+};
+
+/**
+ * Called from the writer when a single file's inflight write count crosses
+ * the busy threshold (busy=true) or drains back below the resume threshold
+ * (busy=false). Throttle is per-path: only requests for that exact
+ * `table/filename` are rejected with 429; other files keep flowing.
+ */
+export const setBackpressure = (path: string, busy: boolean, count: number = 0): void => {
+  if (busy) {
+    if (throttledPaths.has(path)) return;
+
+    throttledPaths.add(path);
+
+    logger.warn({ path, inflightCount: count }, 'Vault path throttled — returning 429 to write clients');
+  } else {
+    if (! throttledPaths.has(path)) return;
+
+    throttledPaths.delete(path);
+
+    logger.info({ path }, 'Vault path throttle cleared — resuming normal operation');
+  }
+};
 
 /** Called from the writer when one batch exhausts all retries. */
 export const recordFailure = (reason: string): void => {
@@ -105,8 +146,9 @@ const tryRecover = (): void => {
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
 export const _test_reset = (): void => {
-  healthy       = true;
-  failureReason = null;
+  healthy            = true;
+  failureReason      = null;
+  throttledPaths.clear();
   recentFailures.length = 0;
 
   if (recoveryTimer) {

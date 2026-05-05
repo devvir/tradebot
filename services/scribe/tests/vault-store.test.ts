@@ -15,15 +15,15 @@ const jsonResponse = (data: unknown): Response =>
 // ── writeRows ─────────────────────────────────────────────────────────────────
 
 describe('StoreService — writeRows', () => {
-  beforeEach(() => vi.spyOn(global, 'fetch'));
-  afterEach(() => vi.restoreAllMocks());
+  beforeEach(() => vi.stubGlobal('fetch', vi.fn()));
+  afterEach(() => vi.unstubAllGlobals());
 
   it('POSTs JSON rows to the correct endpoint', async () => {
-    vi.mocked(global.fetch).mockResolvedValue(okResponse(202));
+    vi.mocked(fetch).mockResolvedValue(okResponse(202));
 
     await createStoreService(VAULT_URL).writeRows('funding', '20200101', [{ price: 100 }]);
 
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(fetch).toHaveBeenCalledWith(
       `${VAULT_URL}/files/funding/20200101/rows`,
       expect.objectContaining({
         method:  'POST',
@@ -33,12 +33,20 @@ describe('StoreService — writeRows', () => {
     );
   });
 
-  it('throws when vault returns an error', async () => {
-    vi.mocked(global.fetch).mockResolvedValue(errResponse(503));
+  it('retries on 503 until vault recovers', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(errResponse(503))
+      .mockResolvedValue(okResponse(202));
 
-    await expect(
-      createStoreService(VAULT_URL).writeRows('funding', '20200101', []),
-    ).rejects.toThrow('HTTP 503');
+    vi.useFakeTimers();
+
+    const result = createStoreService(VAULT_URL).writeRows('funding', '20200101', []);
+
+    await vi.advanceTimersByTimeAsync(6_000);
+    vi.useRealTimers();
+
+    await expect(result).resolves.toBeUndefined();
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 });
 

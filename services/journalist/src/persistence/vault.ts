@@ -53,7 +53,14 @@ export const writeToVault = async (
     if (! vaultDown) {
       vaultDown = true;
       const body = await res.text().catch(() => '');
-      logger.warn({ table, date, status: res.status, body }, 'Vault write failed — buffering until it recovers');
+
+      if (res.status === 429) {
+        logger.info({ table, date, body }, 'Vault throttled this path — buffering until it clears');
+      } else if (res.status === 503) {
+        logger.warn({ table, date, body }, 'Vault storage unhealthy — buffering until it recovers');
+      } else {
+        logger.warn({ table, date, status: res.status, body }, 'Vault write failed — buffering until it recovers');
+      }
     }
   } catch (err) {
     if (! vaultDown) {

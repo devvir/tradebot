@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { listFiles, writeRows, closeFile, deleteFile, _test_resetRetry } from '../src/vault';
+import { listFiles, writeRows, closeFile, deleteFile, _test_setDelays } from '../src/vault';
 import type { WsMessage } from '../src/types';
 
 const mockFetch = vi.fn();
@@ -8,12 +8,15 @@ vi.stubGlobal('fetch', mockFetch);
 
 const VAULT_URL = 'http://vault';
 
+// Zero delays so retry tests don't block. Restored on each beforeEach.
+_test_setDelays(0, 0);
+
 // ── listFiles ─────────────────────────────────────────────────────────────────
 
 describe('vault — listFiles', () => {
   beforeEach(() => {
     mockFetch.mockReset();
-    _test_resetRetry();
+    _test_setDelays(0, 0);
   });
 
   it('returns file state map from vault (no suffix)', async () => {
@@ -49,12 +52,21 @@ describe('vault — listFiles', () => {
     expect(result).toEqual({});
   });
 
-  it('throws after max retries on persistent non-ok, non-404 response', async () => {
-    mockFetch.mockResolvedValue({ ok: false, status: 503 });
+  it('retries 503 indefinitely until vault recovers', async () => {
+    mockFetch
+      .mockResolvedValueOnce({ ok: false, status: 503 })
+      .mockResolvedValueOnce({ ok: false, status: 503 })
+      .mockResolvedValueOnce({ ok: false, status: 503 })
+      .mockResolvedValue({
+        ok:     true,
+        status: 200,
+        json:   () => Promise.resolve({ '20190401': 'closed' }),
+      });
 
-    await expect(listFiles(VAULT_URL, 'orderBookL2', '')).rejects.toThrow('max retries exhausted');
+    const result = await listFiles(VAULT_URL, 'orderBookL2', '');
 
-    expect(mockFetch).toHaveBeenCalledTimes(10);
+    expect(mockFetch).toHaveBeenCalledTimes(4);
+    expect(result).toEqual({ '20190401': 'closed' });
   });
 });
 
@@ -63,7 +75,7 @@ describe('vault — listFiles', () => {
 describe('vault — writeRows', () => {
   beforeEach(() => {
     mockFetch.mockReset();
-    _test_resetRetry();
+    _test_setDelays(0, 0);
   });
 
   const rows: WsMessage[] = [
@@ -108,15 +120,28 @@ describe('vault — writeRows', () => {
     await expect(writeRows(VAULT_URL, 'orderBookL2', '20190401', rows, '')).resolves.toBeUndefined();
   });
 
-  it('throws after max retries on persistent error status', async () => {
-    mockFetch.mockResolvedValue({ ok: false, status: 500 });
+  it('retries 429 (path throttled) until vault accepts the write', async () => {
+    mockFetch
+      .mockResolvedValueOnce({ ok: false, status: 429 })
+      .mockResolvedValueOnce({ ok: false, status: 429 })
+      .mockResolvedValue({ ok: true, status: 202 });
 
-    await expect(writeRows(VAULT_URL, 'orderBookL2', '20190401', rows, '')).rejects.toThrow('max retries exhausted');
+    await writeRows(VAULT_URL, 'orderBookL2', '20190401', rows, '');
 
-    expect(mockFetch).toHaveBeenCalledTimes(10);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
   });
 
-  it('retries on failure and succeeds when vault recovers', async () => {
+  it('retries 503 (storage unhealthy) until vault recovers', async () => {
+    mockFetch
+      .mockResolvedValueOnce({ ok: false, status: 503 })
+      .mockResolvedValue({ ok: true, status: 202 });
+
+    await writeRows(VAULT_URL, 'orderBookL2', '20190401', rows, '');
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries on other non-OK status until vault recovers', async () => {
     mockFetch
       .mockResolvedValueOnce({ ok: false, status: 500 })
       .mockResolvedValueOnce({ ok: false, status: 500 })
@@ -143,7 +168,7 @@ describe('vault — writeRows', () => {
 describe('vault — closeFile', () => {
   beforeEach(() => {
     mockFetch.mockReset();
-    _test_resetRetry();
+    _test_setDelays(0, 0);
   });
 
   it('POSTs to the close endpoint (no suffix)', async () => {
@@ -173,12 +198,6 @@ describe('vault — closeFile', () => {
 
     await expect(closeFile(VAULT_URL, 'orderBookL2', '20190401', '')).resolves.toBeUndefined();
   });
-
-  it('throws after max retries on persistent error status', async () => {
-    mockFetch.mockResolvedValue({ ok: false, status: 500 });
-
-    await expect(closeFile(VAULT_URL, 'orderBookL2', '20190401', '')).rejects.toThrow('max retries exhausted');
-  });
 });
 
 // ── deleteFile ────────────────────────────────────────────────────────────────
@@ -186,7 +205,7 @@ describe('vault — closeFile', () => {
 describe('vault — deleteFile', () => {
   beforeEach(() => {
     mockFetch.mockReset();
-    _test_resetRetry();
+    _test_setDelays(0, 0);
   });
 
   it('sends DELETE to the correct vault endpoint (no suffix)', async () => {
@@ -215,11 +234,5 @@ describe('vault — deleteFile', () => {
     mockFetch.mockResolvedValue({ ok: false, status: 404 });
 
     await expect(deleteFile(VAULT_URL, 'instrument', '20190401', '')).resolves.toBeUndefined();
-  });
-
-  it('throws after max retries on persistent error status', async () => {
-    mockFetch.mockResolvedValue({ ok: false, status: 500 });
-
-    await expect(deleteFile(VAULT_URL, 'instrument', '20190401', '')).rejects.toThrow('max retries exhausted');
   });
 });

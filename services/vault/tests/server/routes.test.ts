@@ -25,10 +25,11 @@ vi.mock('../../src/fs/writer', () => ({
 vi.mock('../../src/fs/health', () => ({
   isHealthy:        vi.fn(() => true),
   getFailureReason: vi.fn(() => null),
+  isThrottled:      vi.fn(() => false),
 }));
 
 vi.mock('../../src/data/buffers', () => ({
-  buffers: { get: vi.fn(() => ({ flush: vi.fn(), pushMany: vi.fn() })) },
+  buffers: { get: vi.fn(() => ({ flush: vi.fn(), pushMany: vi.fn() })), remove: vi.fn() },
 }));
 
 vi.mock('../../src/data/encode', () => ({
@@ -42,7 +43,7 @@ vi.mock('../../src/data/close', () => ({
 import { decodeFile } from '../../src/data/decode';
 import { streamRecords, listFiles, listTables, fileState } from '../../src/fs/reader';
 import { storeFile, deleteFile } from '../../src/fs/writer';
-import { isHealthy, getFailureReason } from '../../src/fs/health';
+import { isHealthy, getFailureReason, isThrottled } from '../../src/fs/health';
 import { buffers } from '../../src/data/buffers';
 import { encode } from '../../src/data/encode';
 import { closeBucket } from '../../src/data/close';
@@ -67,6 +68,7 @@ beforeEach(() => {
 
   // Default mock returns — individual tests can override.
   vi.mocked(isHealthy).mockReturnValue(true);
+  vi.mocked(isThrottled).mockReturnValue(false);
   vi.mocked(fileState).mockReturnValue('none');
   vi.mocked(buffers.get).mockReturnValue({ flush: vi.fn(), pushMany: vi.fn() } as never);
   vi.mocked(encode).mockReturnValue(['encoded-line']);
@@ -310,6 +312,32 @@ describe('POST /files/:table/:date/rows', () => {
 
     expect(res.status).toBe(503);
     expect(encode).not.toHaveBeenCalled();
+  });
+
+  it('returns 429 when the target file is throttled', async () => {
+    vi.mocked(isThrottled).mockImplementation((table, filename) =>
+      table === 'trade' && filename === '2023-02-01',
+    );
+
+    const res = await request(app)
+      .post('/files/trade/2023-02-01/rows')
+      .send({ symbol: 'X' });
+
+    expect(res.status).toBe(429);
+    expect(encode).not.toHaveBeenCalled();
+  });
+
+  it('does not return 429 for other paths when one is throttled', async () => {
+    vi.mocked(isThrottled).mockImplementation((table, filename) =>
+      table === 'trade' && filename === '2023-02-01',
+    );
+
+    const res = await request(app)
+      .post('/files/orderBookL2/2023-02-01/rows')
+      .send({ symbol: 'X' });
+
+    expect(res.status).toBe(202);
+    expect(encode).toHaveBeenCalledTimes(1);
   });
 
   it('returns 409 when fileState is closed', async () => {

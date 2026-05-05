@@ -2,56 +2,59 @@ import { logger } from '@devvir/service-kit';
 import type { FileState, TardyTable, WsMessage } from './types';
 
 // ── Retry config ──────────────────────────────────────────────────────────────
+//
+// Vault errors are all recoverable from tardy's perspective:
+//   - 429        a single path is throttled by vault's per-file backpressure
+//   - 503        vault storage is globally unhealthy (canary recovers it)
+//   - network    vault is restarting, starting, or unreachable
+//   - other 5xx  unexpected, treat the same as network — back off and retry
+//
+// Tardy has no useful work to do while vault is unavailable. Crashing would
+// not fix any of these conditions and a restart loses in-memory buffers — so
+// retries are uncapped, with capped exponential backoff to avoid hammering.
 
-const MAX_RETRIES   = 10;
-const INITIAL_DELAY = 1_000;
-const MAX_DELAY     = 30_000;
-
-let retryCount   = 0;
-let currentDelay = INITIAL_DELAY;
-
-const resetRetry = (): void => {
-  retryCount   = 0;
-  currentDelay = INITIAL_DELAY;
-};
-
-const advanceBackoff = (): void => {
-  currentDelay = Math.min(currentDelay * 2, MAX_DELAY);
-};
+let initialDelayMs = 1_000;
+let maxDelayMs     = 30_000;
 
 // ── Core fetch ────────────────────────────────────────────────────────────────
 
 /**
- * Fetches a vault URL with retry and exponential backoff.
- * Pass-through statuses are returned immediately without retrying — they are
- * expected non-ok codes (e.g. 404 "not found", 409 "sealed") that the caller
- * handles as normal business logic, not failures.
- * Resets retry state on every success. Throws after MAX_RETRIES failures.
+ * Fetches a vault URL, retrying indefinitely until either an OK response or
+ * a `passThrough` status (an expected non-OK the caller handles as business
+ * logic, e.g. 404 "not found", 409 "sealed"). Each call carries its own
+ * backoff state, so a sustained throttle on one path does not slow down
+ * subsequent calls to other paths.
  */
 const vaultFetch = async (url: string, init?: RequestInit, passThrough: number[] = []): Promise<Response> => {
+  let delay = initialDelayMs;
+
+  const backoff = async (): Promise<void> => {
+    await sleep(delay);
+    delay = Math.min(delay * 2, maxDelayMs);
+  };
+
   for (;;) {
+    let res: Response;
+
     try {
-      const res = await fetch(url, init);
-
-      if (res.ok || passThrough.includes(res.status)) {
-        resetRetry();
-        return res;
-      }
-
-      throw new Error(`HTTP ${res.status}`);
+      res = await fetch(url, init);
     } catch (err) {
-      retryCount++;
-
-      if (retryCount >= MAX_RETRIES) {
-        logger.fatal({ url, retries: retryCount, err: (err as Error).message }, 'Vault: max retries exhausted — shutting down');
-        throw new Error(`Vault max retries exhausted after ${retryCount} attempts on ${url}: ${(err as Error).message}`);
-      }
-
-      logger.warn({ url, retry: retryCount, nextDelayMs: currentDelay, err: (err as Error).message }, 'Vault request failed — retrying');
-
-      await sleep(currentDelay);
-      advanceBackoff();
+      logger.warn({ url, nextDelayMs: delay, err: (err as Error).message }, 'Vault unreachable — backing off');
+      await backoff();
+      continue;
     }
+
+    if (res.ok || passThrough.includes(res.status)) return res;
+
+    if (res.status === 429) {
+      logger.info({ url, nextDelayMs: delay }, 'Vault throttled this path — backing off');
+    } else if (res.status === 503) {
+      logger.warn({ url, nextDelayMs: delay }, 'Vault storage unhealthy — backing off');
+    } else {
+      logger.warn({ url, status: res.status, nextDelayMs: delay }, 'Vault request failed — backing off');
+    }
+
+    await backoff();
   }
 };
 
@@ -104,7 +107,7 @@ const sleep = (ms: number): Promise<void> =>
 
 // ── Test aliases (do not use outside of tests) ────────────────────────────────
 
-export const _test_resetRetry = (): void => {
-  retryCount   = 0;
-  currentDelay = 0; // keep delays instant so tests don't block
+export const _test_setDelays = (initial: number, max: number): void => {
+  initialDelayMs = initial;
+  maxDelayMs     = max;
 };

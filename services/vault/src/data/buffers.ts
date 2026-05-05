@@ -93,7 +93,11 @@ const flushAll = (): FlushResult[] => {
   return results;
 };
 
-export const buffers = { get, flushReady, flushAll };
+const remove = (table: string, filename: string): void => {
+  map.delete(`${table}/${filename}`);
+};
+
+export const buffers = { get, flushReady, flushAll, remove };
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 

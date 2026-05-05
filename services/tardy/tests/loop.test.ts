@@ -197,14 +197,14 @@ describe('loop — syncDate', () => {
     expect(vault.writeRows).toHaveBeenCalledWith(VAULT_URL, 'instrument',  DATE, [instRow], '');
   });
 
-  it('flushes mid-minute when a table batch hits BATCH_SIZE (10,000)', async () => {
+  it('flushes mid-minute when a table batch hits BATCH_SIZE (20,000)', async () => {
     vi.mocked(vault.listFiles).mockImplementation(async (_url, table) =>
       table === 'liquidation' ? {} : { [DATE]: 'closed' },
     );
 
     const msg = { action: 'insert', date: '2019-04-01T00:00:00.000Z', data: [] };
 
-    // Yield 10,001 messages within one minute to trigger an early size flush
+    // Yield 20,001 messages within one minute to trigger an early size flush
     // followed by an end-of-minute flush of the remainder.
     const messages = Array.from({ length: _test_BATCH_SIZE + 1 }, () => ({ table: 'liquidation' as const, msg }));
 

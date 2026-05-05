@@ -20,17 +20,25 @@ import { pipeline } from 'stream/promises';
 import type { Readable } from 'stream';
 import { logger } from '@devvir/service-kit';
 import { yearDir, openPath, closedPath } from './paths';
-import { recordFailure } from './health';
+import { recordFailure, setBackpressure } from './health';
 
 const gzipAsync = promisify(gzip);
 
 const MAX_RETRIES      = 3;
 const RETRY_BACKOFF_MS = 100;
 
+// Per-file throttle (429): a single file's inflight writes crossing
+// MAX_INFLIGHT marks just that path as throttled; other files keep flowing.
+// The throttle clears once that file's inflight drains back to INFLIGHT_RESUME
+// (hysteresis prevents oscillation when clients retry with backoff).
+const MAX_INFLIGHT    = 15;
+const INFLIGHT_RESUME = 5;
+
 interface Handle {
   path:           string;
   writing:        Promise<void>;
   lastGoodOffset: number;
+  inflightCount:  number;
 }
 
 const handles = new Map<string, Handle>();
@@ -68,6 +76,11 @@ export const appendBatch = (
   seal:     boolean = false,
 ): Promise<void> => {
   const handle = getOrCreateHandle(table, filename);
+  const key    = `${table}/${filename}`;
+
+  handle.inflightCount++;
+
+  if (handle.inflightCount > MAX_INFLIGHT) setBackpressure(key, true, handle.inflightCount);
 
   const next = handle.writing.then(async () => {
     if (lines.length > 0) {
@@ -80,7 +93,7 @@ export const appendBatch = (
 
       try {
         renameSync(open, closed);
-        handles.delete(`${table}/${filename}`);
+        handles.delete(key);
 
         logger.info({ table, filename }, 'File sealed');
       } catch (err) {
@@ -95,6 +108,19 @@ export const appendBatch = (
   // subsequent write for this file. The original `next` promise still rejects
   // for the caller awaiting this specific batch.
   handle.writing = next.catch(() => undefined);
+
+  // Decrement inflight when this batch's chain slot settles (success or fail).
+  // The caught promise never rejects so .then() always fires. Crossing back
+  // down through INFLIGHT_RESUME clears this path's throttle exactly once.
+  handle.writing.then(() => {
+    const prev = handle.inflightCount;
+
+    handle.inflightCount--;
+
+    if (prev > INFLIGHT_RESUME && handle.inflightCount <= INFLIGHT_RESUME) {
+      setBackpressure(key, false);
+    }
+  });
 
   return next;
 };
@@ -155,6 +181,7 @@ const getOrCreateHandle = (table: string, filename: string): Handle => {
     path,
     writing:        Promise.resolve(),
     lastGoodOffset: existsSync(path) ? statSync(path).size : 0,
+    inflightCount:  0,
   };
 
   handles.set(key, handle);
@@ -250,4 +277,7 @@ const writeErrorSidecar = (
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
+export const _test_inflightCount = (table: string, filename: string): number => {
+  return handles.get(`${table}/${filename}`)?.inflightCount ?? 0;
+};
 export const _test_reset = (): void => { handles.clear(); };

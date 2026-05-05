@@ -12,6 +12,8 @@ import { appendBatch, isInitialized } from '../fs/writer';
 
 export const closeBucket = (table: string, filename: string): Promise<void> => {
   const lines       = buffers.get(table, filename).flush();
+  buffers.remove(table, filename);
+
   const initialised = isInitialized(table, filename);
 
   if (! initialised && lines.length === 0) {

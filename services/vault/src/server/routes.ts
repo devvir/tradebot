@@ -16,7 +16,7 @@ import { Readable } from 'stream';
 import { logger } from '@devvir/service-kit';
 import { streamRecords, listFiles, listTables, fileState } from '../fs/reader';
 import { storeFile, deleteFile } from '../fs/writer';
-import { isHealthy, getFailureReason } from '../fs/health';
+import { isHealthy, getFailureReason, isThrottled } from '../fs/health';
 import { decodeFile } from '../data/decode';
 import { encode } from '../data/encode';
 import { buffers } from '../data/buffers';
@@ -51,6 +51,11 @@ export const registerRoutes = (app: Application): void => {
     const table    = req.params['table'] as string;
     const filename = filenameOf(req);
     const key      = `${table}/${filename}`;
+
+    if (isThrottled(table, filename)) {
+      res.status(429).json({ error: `Too many inflight writes for ${key}` });
+      return;
+    }
 
     if (closing.has(key) || fileState(table, filename) === 'closed') {
       res.status(409).json({ error: 'File is closed' });
@@ -164,6 +169,7 @@ export const registerRoutes = (app: Application): void => {
 
     if (state === 'open') {
       buffers.get(table, filename).flush();
+      buffers.remove(table, filename);
       deleteFile(table, filename);
     }
 
@@ -183,6 +189,7 @@ export const registerRoutes = (app: Application): void => {
     const filename = filenameOf(req);
 
     buffers.get(table, filename).flush();
+    buffers.remove(table, filename);
     deleteFile(table, filename);
 
     res.status(204).end();
