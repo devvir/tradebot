@@ -1,19 +1,10 @@
 import { logger } from '@devvir/service-kit';
 import { waitIfNeeded, sleep } from '../utils/throttling';
 import { recordFetch } from './metrics';
+import type { Row, FetchFilter } from './types';
 
 const DEFAULT_PAGE_SIZE = 500;
 const PAGES_PER_BATCH   = 10;
-
-export type Row = Record<string, unknown>;
-
-export interface FetchFilter {
-  symbol?:    string;
-  startTime?: string;
-  endTime?:   string;
-  count?:     number;
-  reverse?:   boolean;
-}
 
 // Returns the first matching row, or null.
 export const fetchOne = async (
@@ -131,6 +122,7 @@ const buildUrl = (
   if (filter.symbol)    params.set('symbol',    filter.symbol);
   if (filter.startTime) params.set('startTime', filter.startTime);
   if (filter.endTime)   params.set('endTime',   filter.endTime);
+  if (filter.filter)    params.set('filter',    JSON.stringify(filter.filter));
 
   return `${baseUrl}${path}?${params}`;
 };

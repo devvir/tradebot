@@ -93,6 +93,8 @@ const taskStartDate = async (
   const boundary = latest(config.startDate ?? null, cached);
 
   if (! boundary) {
+    logger.info(`Checking start date for task ${task.id}`);
+
     const probed = await oldestDate(fetch, table, task.filter) ?? today;
 
     await saveProgress(cache, table.name, task.id, probed);

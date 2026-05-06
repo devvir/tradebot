@@ -1,15 +1,6 @@
 import { fetchOne, rowIterator } from './rows';
-import type { FetchFilter, Row } from './rows';
+import type { Row, FetchFilter, FetchService } from './types';
 import type { TableConfig } from '../types';
-
-export type { FetchFilter };
-
-export interface FetchService {
-  oldest(table: TableConfig, filter?: FetchFilter): Promise<Row | null>;
-  newest(table: TableConfig, filter?: FetchFilter): Promise<Row | null>;
-  getRows(table: TableConfig, filter?: FetchFilter): AsyncIterable<Row>;
-  getDay(table: TableConfig, date: string, filter?: FetchFilter): AsyncIterable<Row>;
-}
 
 export const createFetchService = (baseUrl: string): FetchService => ({
   oldest: (table, filter = {}) =>

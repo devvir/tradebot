@@ -1,10 +1,11 @@
 // ── Configuration ─────────────────────────────────────────────────────────────
 
 export interface Config {
-  bitmexRestUrl: string;
-  vaultUrl:      string;
-  registryUrl:   string;
-  startDate:     string | null;
+  bitmexRestUrl:  string;
+  vaultUrl:       string;
+  registryUrl:    string;
+  startDate:      string | null;
+  indexTickOnly:  boolean;
   [key: string]: unknown;
 }
 

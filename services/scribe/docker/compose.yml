@@ -16,7 +16,8 @@ services:
       REGISTRY_URL: ${REGISTRY_URL}
 
       # Config
-      SCRIBE_START_DATE: ${SCRIBE_START_DATE:-}
+      SCRIBE_START_DATE:       ${SCRIBE_START_DATE:-}
+      SCRIBE_INDEX_TICK_ONLY:  ${SCRIBE_INDEX_TICK_ONLY:-true}
 
       # Runtime
       NODE_ENV: ${APP_ENV:-prod}

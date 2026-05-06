@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { registry, SK_CONFIG } from '@devvir/service-kit';
 import { runAllTables } from '../src/runner';
 import type { TableConfig } from '../src/types';
 import type { FetchService, Row } from '../src/bitmex';
@@ -20,6 +21,23 @@ vi.mock('../src/utils/tables', () => ({
 
 import * as tablesModule from '../src/utils/tables';
 import { sleep }         from '../src/utils/throttling';
+
+// ── Registry setup ────────────────────────────────────────────────────────────
+
+const makeConfig = (overrides: Record<string, unknown> = {}) => ({
+  indexTickOnly: false,
+  ...overrides,
+});
+
+const registerScribe = (overrides: Record<string, unknown> = {}) => {
+  registry.add({
+    spec:   () => ({ name: 'scribe' }),
+    config: () => makeConfig(overrides),
+  } as any);
+};
+
+beforeEach(() => { registerScribe(); });
+afterEach(()  => { registry.clear(); });
 
 // ── Fixed tables ─────────────────────────────────────────────────────────────
 
@@ -252,6 +270,33 @@ describe('runAllTables — compositeIndex', () => {
       expect.anything(),
       YESTERDAY,
       { symbol: '.BXBT', count: 1000 },
+    );
+  });
+
+  it('appends BMI reference filter when indexTickOnly is true', async () => {
+    registry.clear();
+    registerScribe({ indexTickOnly: true });
+
+    (tablesModule.TABLES as TableConfig[]).push(COMPOSITE_TABLE);
+
+    const fetch = makeFetch({
+      oldest: vi.fn().mockResolvedValue(tsRow(TWO_DAYS_AGO)),
+      getDay: vi.fn().mockImplementation(() => rowGen([])),
+    });
+    const store = makeStore({
+      listFiles: vi.fn().mockResolvedValue({ [TWO_DAYS_AGO]: 'closed' }),
+    });
+
+    stopAfter(1);
+
+    await expect(
+      runAllTables(fetch, store, makeCache(), vi.fn().mockResolvedValue(['.BXBT']))
+    ).rejects.toThrow('stop');
+
+    expect(fetch.getDay).toHaveBeenCalledWith(
+      expect.anything(),
+      YESTERDAY,
+      { symbol: '.BXBT', count: 1000, filter: { reference: 'BMI' } },
     );
   });
 });

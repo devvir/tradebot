@@ -1,11 +1,11 @@
-import { logger } from '@devvir/service-kit';
+import { logger, registry, SK_CONFIG } from '@devvir/service-kit';
 import type { RedisClient } from '@devvir/service-kit';
 import { TABLES } from './utils/tables';
 import { sleep } from './utils/throttling';
 import type { FetchService, FetchFilter } from './bitmex';
 import { createBufferedWriter } from './vault';
 import type { StoreService } from './vault';
-import type { TableConfig } from './types';
+import type { Config, TableConfig } from './types';
 import { probeNextDate, restoreProgress, saveProgress, todayUtc, nextDay } from './probing';
 
 const FLUSH_THRESHOLD = 10_000;
@@ -123,9 +123,13 @@ const getTasks = async (
   }];
 
   const indices = await getIndices();
+
+  const config       = registry.get('scribe', SK_CONFIG) as unknown as Config;
+  const customFilter = config.indexTickOnly ? { filter: { reference: 'BMI' } } : {};
+
   return indices.map(symbol => ({
     id: symbol,
-    filter: { symbol, count: 1000 },
+    filter: { symbol, count: 1000, ...customFilter },
   }));
 };
 
