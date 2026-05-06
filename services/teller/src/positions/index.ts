@@ -50,7 +50,7 @@ export function applyFill(
   const isFlat = currentQty === 0;
 
   // Is this fill increasing or decreasing the position?
-  const increases = isFlat || (isBuy ? ! isLong : isLong);
+  const increases = isFlat || (isBuy ? isLong : ! isLong);
 
   if (increases) {
     const prevQty = Math.abs(currentQty);
