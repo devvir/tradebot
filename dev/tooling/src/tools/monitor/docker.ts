@@ -19,8 +19,9 @@ export function cpuPercent(stats: any): string {
 
 function memUsage(stats: any): string {
   try {
-    const cache = stats.memory_stats.stats?.cache ?? 0;
-    const used = stats.memory_stats.usage - cache;
+    // cgroups v2 has inactive_file but not cache; v1 has cache; Docker CLI uses the same precedence
+    const reclaimable = stats.memory_stats.stats?.inactive_file ?? stats.memory_stats.stats?.cache ?? 0;
+    const used = stats.memory_stats.usage - reclaimable;
     const limit = stats.memory_stats.limit;
 
     if (! Number.isFinite(used) || ! Number.isFinite(limit)) return '- / -';
@@ -36,7 +37,7 @@ function memUsage(stats: any): string {
 function extractLogTimestamp(buf: Buffer): string {
   try {
     // Docker multiplexed stream: 8-byte header (stream type + size) + message
-    const raw = buf.length > 8 && (buf[0] === 1 || buf[0] === 2) ? buf.slice(8) : buf;
+    const raw = buf.length > 8 && (buf[0] === 1 || buf[0] === 2) ? buf.subarray(8) : buf;
     const text = raw.toString('utf8');
     const match = text.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)/);
     return match ? fmtAgo(match[1]) : 'N/A';
