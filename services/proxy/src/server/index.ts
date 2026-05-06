@@ -6,7 +6,7 @@ import type { Config } from '../types';
 
 const HTTP_PORT = 80;
 
-export function startServer(config: Config): Server {
+export function createApp(config: Config): express.Application {
   const app = express();
 
   app.use(express.raw({ type: '*/*' }));
@@ -23,7 +23,11 @@ export function startServer(config: Config): Server {
     });
   });
 
-  const server = app.listen(HTTP_PORT, () => {
+  return app;
+}
+
+export function startServer(config: Config): Server {
+  const server = createApp(config).listen(HTTP_PORT, () => {
     logger.info({ port: HTTP_PORT }, 'Proxy server listening');
   });
 

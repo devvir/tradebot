@@ -7,7 +7,7 @@ import { setupRoutes } from './routes.js';
 
 const HTTP_PORT = 80;
 
-export const startServer = (db: Db): http.Server => {
+export const createApp = (db: Db): express.Application => {
   const app = express().use(express.json());
 
   setupRoutes(app, db);
@@ -22,7 +22,11 @@ export const startServer = (db: Db): http.Server => {
     res.status(500).json({ error: 'Internal server error' });
   });
 
-  const server = http.createServer(app);
+  return app;
+};
+
+export const startServer = (db: Db): http.Server => {
+  const server = http.createServer(createApp(db));
 
   server.listen(HTTP_PORT, () => {
     logger.info({ port: HTTP_PORT }, 'Registry HTTP server listening');

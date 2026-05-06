@@ -197,6 +197,12 @@ importers:
       '@types/express':
         specifier: ^5.0.0
         version: 5.0.6
+      '@types/supertest':
+        specifier: ^6.0.3
+        version: 6.0.3
+      supertest:
+        specifier: ^7.1.0
+        version: 7.2.2
 
   services/broadcast:
     dependencies:
@@ -317,6 +323,12 @@ importers:
       '@types/express':
         specifier: ^5.0.6
         version: 5.0.6
+      '@types/supertest':
+        specifier: ^6.0.3
+        version: 6.0.3
+      supertest:
+        specifier: ^7.1.0
+        version: 7.2.2
 
   services/registrar:
     dependencies:
@@ -348,9 +360,15 @@ importers:
       '@types/express':
         specifier: ^5.0.0
         version: 5.0.6
+      '@types/supertest':
+        specifier: ^6.0.3
+        version: 6.0.3
       mongodb:
         specifier: ^7.1.1
         version: 7.2.0
+      supertest:
+        specifier: ^7.1.0
+        version: 7.2.2
 
   services/rest:
     dependencies:

@@ -1,7 +1,7 @@
 import { vi, describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { MongoClient, Db } from 'mongodb';
-import http from 'node:http';
-import { startServer } from '../src/server/index.js';
+import request from 'supertest';
+import { createApp } from '../src/server/index.js';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
@@ -12,55 +12,28 @@ const mongoUrl = process.env['DB_URL']!;
 
 let client: MongoClient;
 let db: Db;
-let server: http.Server;
-let baseUrl: string;
+let app: ReturnType<typeof createApp>;
 
 beforeAll(async () => {
   client = new MongoClient(mongoUrl);
   await client.connect();
-  db = client.db('test_registry_server');
-
-  server = startServer(db, { database: 'test_registry_server' });
-
-  await new Promise<void>((resolve) => {
-    server.once('listening', () => {
-      const addr = server.address() as { port: number };
-
-      baseUrl = `http://127.0.0.1:${addr.port}`;
-      resolve();
-    });
-  });
+  db  = client.db('test_registry_server');
+  app = createApp(db);
 });
 
 afterAll(async () => {
-  await new Promise<void>((resolve, reject) => {
-    server.close((err) => (err ? reject(err) : resolve()));
-  });
-
   await db.dropDatabase();
   await client.close();
 });
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-const get = (path: string) => fetch(`${baseUrl}${path}`);
-
-const post = (path: string, body: unknown) =>
-  fetch(`${baseUrl}${path}`, {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify(body),
-  });
 
 // ── GET /symbols ──────────────────────────────────────────────────────────────
 
 describe('GET /symbols', () => {
   it('returns an empty array initially', async () => {
-    const res  = await get('/symbols');
-    const body = await res.json() as unknown[];
+    const res = await request(app).get('/symbols');
 
     expect(res.status).toBe(200);
-    expect(body).toEqual([]);
+    expect(res.body).toEqual([]);
   });
 });
 
@@ -68,37 +41,34 @@ describe('GET /symbols', () => {
 
 describe('POST /symbols', () => {
   it('registers a new symbol and returns id + symbol', async () => {
-    const res  = await post('/symbols', { symbol: 'XBTUSD' });
-    const body = await res.json() as Record<string, unknown>;
+    const res = await request(app).post('/symbols').send({ symbol: 'XBTUSD' });
 
     expect(res.status).toBe(200);
-    expect(body['id']).toBe(0);
-    expect(body['symbol']).toBe('XBTUSD');
+    expect(res.body['id']).toBe(0);
+    expect(res.body['symbol']).toBe('XBTUSD');
   });
 
   it('is idempotent — returns the same id on re-registration', async () => {
-    const res  = await post('/symbols', { symbol: 'XBTUSD' });
-    const body = await res.json() as Record<string, unknown>;
+    const res = await request(app).post('/symbols').send({ symbol: 'XBTUSD' });
 
     expect(res.status).toBe(200);
-    expect(body['id']).toBe(0);
+    expect(res.body['id']).toBe(0);
   });
 
   it('assigns the next id to a new symbol', async () => {
-    const res  = await post('/symbols', { symbol: 'ETHUSD' });
-    const body = await res.json() as Record<string, unknown>;
+    const res = await request(app).post('/symbols').send({ symbol: 'ETHUSD' });
 
-    expect(body['id']).toBe(1);
+    expect(res.body['id']).toBe(1);
   });
 
   it('returns 400 for an empty symbol', async () => {
-    const res = await post('/symbols', { symbol: '' });
+    const res = await request(app).post('/symbols').send({ symbol: '' });
 
     expect(res.status).toBe(400);
   });
 
   it('returns 400 when symbol field is missing', async () => {
-    const res = await post('/symbols', {});
+    const res = await request(app).post('/symbols').send({});
 
     expect(res.status).toBe(400);
   });
@@ -108,8 +78,8 @@ describe('POST /symbols', () => {
 
 describe('GET /symbols after inserts', () => {
   it('returns all registered symbols sorted by id', async () => {
-    const res  = await get('/symbols');
-    const body = await res.json() as Array<{ id: number; symbol: string }>;
+    const res  = await request(app).get('/symbols');
+    const body = res.body as Array<{ id: number; symbol: string }>;
 
     expect(res.status).toBe(200);
     expect(body.map((e) => e.symbol)).toContain('XBTUSD');
@@ -122,23 +92,21 @@ describe('GET /symbols after inserts', () => {
 
 describe('POST /currencies', () => {
   it('registers a currency and returns id + currency', async () => {
-    const res  = await post('/currencies', { currency: 'XBT' });
-    const body = await res.json() as Record<string, unknown>;
+    const res = await request(app).post('/currencies').send({ currency: 'XBT' });
 
     expect(res.status).toBe(200);
-    expect(body['id']).toBe(0);
-    expect(body['currency']).toBe('XBT');
+    expect(res.body['id']).toBe(0);
+    expect(res.body['currency']).toBe('XBT');
   });
 
   it('currency ids are independent from symbol ids', async () => {
-    const res  = await post('/currencies', { currency: 'ETH' });
-    const body = await res.json() as Record<string, unknown>;
+    const res = await request(app).post('/currencies').send({ currency: 'ETH' });
 
-    expect(body['id']).toBe(1);
+    expect(res.body['id']).toBe(1);
   });
 
   it('returns 400 for missing currency field', async () => {
-    const res = await post('/currencies', {});
+    const res = await request(app).post('/currencies').send({});
 
     expect(res.status).toBe(400);
   });
@@ -148,8 +116,8 @@ describe('POST /currencies', () => {
 
 describe('GET /currencies', () => {
   it('returns all registered currencies sorted by id', async () => {
-    const res  = await get('/currencies');
-    const body = await res.json() as Array<{ id: number; currency: string }>;
+    const res  = await request(app).get('/currencies');
+    const body = res.body as Array<{ id: number; currency: string }>;
 
     expect(res.status).toBe(200);
     expect(body.length).toBeGreaterThanOrEqual(2);
