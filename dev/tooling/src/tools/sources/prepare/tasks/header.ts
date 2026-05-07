@@ -1,24 +1,12 @@
-import { rowToCsv } from '@tradebot/utils';
+import type { Writable } from 'node:stream';
 import { getVaultColumns, hasFixedPartials } from '../../tables';
-import type { Writer } from '../../writer';
 
 /**
- * HEADER — write the CSV header row to a writer, plus a synthetic `partial`
- * row at midnight when the table has fixed/empty partials.
- *
- * `tableName` is the only knob: HEADER looks up the column list and the
- * partial-shape rule itself. The columns array is intentionally not in the
- * signature — that detail is HEADER's responsibility, not the caller's.
- *
- * Synthetic partial shape (per design):
- *  - `connected`                                     → all-zero counters: `<date>,partial,0,0,0`
- *  - `announcement`, `chat`, `publicNotifications`,
- *    `liquidation`                                   → empty for every column after `_action_`
- *
- * `<day>` is the YYYYMMDD of the group/target date being processed.
+ * Write the CSV header row, plus a synthetic `partial` row at midnight for
+ * tables that have fixed/empty partials.
  */
 export function writeOutputHeader(
-  writer:    Writer,
+  out:       Writable,
   tableName: string,
   day:       string,
 ): void {
@@ -27,55 +15,34 @@ export function writeOutputHeader(
   if (! columns)
     throw new Error(`writeOutputHeader: no vault columns for table "${tableName}"`);
 
-  writer.writeHeader({
-    columns,
-    hasTimestamp: columns.includes('timestamp'),
-  });
+  out.write(columns.join(',') + '\n');
 
   if (! hasFixedPartials(tableName))
     return;
 
   const isoDay = `${day.slice(0, 4)}-${day.slice(4, 6)}-${day.slice(6, 8)}T00:00:00.000Z`;
-  const row    = buildSyntheticPartial(tableName, columns, isoDay);
+  const line   = buildSyntheticPartial(tableName, columns, isoDay);
 
-  // The synthetic partial is written as a single raw CSV line; bypassing
-  // `writeMessage` keeps HEADER from needing a real `Message` shape. Errors
-  // surface when the orchestrator awaits `writer.close()`.
-  writer.writeRaw([rowToCsv(row, columns)]).catch(() => { /* surfaces on close() */ });
+  out.write(line + '\n');
 }
 
 /**
- * Construct the synthetic partial row.
- *
- * `connected` is the only fixed-partial table whose "empty" partial carries
- * data: a tuple of zero counters (`id, users, bots`). All other fixed-partial
- * tables (announcement, chat, publicNotifications, liquidation) have empty
- * values for every column after `_action_`.
- *
- * The decision is made by table identity, not by column name. Several tables
- * share column names like `id` (chat message ID, announcement ID) but those
- * must be empty in their synthetic partial — only `connected` zeros them.
+ * `connected` is the only fixed-partial table whose synthetic partial
+ * carries zero-valued counters; every other table emits empty fields after
+ * `_action_`. The decision is by table identity, not column name — multiple
+ * tables share column names like `id` but only `connected` zeros them.
  */
 function buildSyntheticPartial(
   tableName: string,
   columns:   string[],
   isoDay:    string,
-): Record<string, string> {
-  const row: Record<string, string> = {};
+): string {
+  return columns.map((_col, i) => {
+    if (i === 0) return isoDay;
+    if (i === 1) return 'partial';
 
-  for (const col of columns) {
-    if (col === '_date_') {
-      row[col] = isoDay;
-    } else if (col === '_action_') {
-      row[col] = 'partial';
-    } else if (tableName === 'connected') {
-      row[col] = '0';
-    } else {
-      row[col] = '';
-    }
-  }
-
-  return row;
+    return tableName === 'connected' ? '0' : '';
+  }).join(',');
 }
 
 // ── Test exports ──────────────────────────────────────────────────────────────

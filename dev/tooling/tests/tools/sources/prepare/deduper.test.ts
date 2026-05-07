@@ -1,27 +1,6 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { dedup, _test_computeHash } from '../../../../src/tools/sources/prepare/tasks/deduper';
-import { _test_setColumns, _test_clearColumns } from '../../../../src/tools/sources/tables';
+import { describe, it, expect } from 'vitest';
+import { dedup, _test_TABLE_CONFIG } from '../../../../src/tools/sources/prepare/tasks/deduper';
 import type { Action, PreparedMessage } from '../../../../src/tools/sources/prepare/types';
-
-// ── Test columns ─────────────────────────────────────────────────────────────
-
-const TEST_COLS = ['_date_', '_action_', 'val'];
-
-// Table → strategy mapping used by deduper:
-//   announcement → hash
-//   orderBookL2  → contiguous
-//   liquidation  → hybrid
-beforeAll(() => {
-  _test_setColumns('announcement', TEST_COLS);
-  _test_setColumns('orderBookL2',  TEST_COLS);
-  _test_setColumns('liquidation',  TEST_COLS);
-});
-
-afterAll(() => {
-  _test_clearColumns('announcement');
-  _test_clearColumns('orderBookL2');
-  _test_clearColumns('liquidation');
-});
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -36,174 +15,316 @@ function msg(opts: {
   const ts     = date.slice(0, 23);
 
   return {
-    rows:      [{ _date_: date, _action_: action, val }],
+    rows:      [`${date},${action},${val}`],
     date,
     action,
-    timestamp: '',
+    timestamp: null,
     ts,
     tsMs:      Date.parse(ts + 'Z'),
   };
 }
 
-async function* batches(...batches: PreparedMessage[][]): AsyncGenerator<PreparedMessage[]> {
-  for (const b of batches) {
-    yield b;
-  }
+async function* batches(...groups: PreparedMessage[][]): AsyncGenerator<PreparedMessage[]> {
+  for (const g of groups) yield g;
 }
 
 async function collect(gen: AsyncGenerator<PreparedMessage[]>): Promise<PreparedMessage[]> {
   const out: PreparedMessage[] = [];
 
-  for await (const batch of gen) {
-    out.push(...batch);
-  }
+  for await (const batch of gen) out.push(...batch);
 
   return out;
 }
 
-// ── computeHash ─────────────────────────────────────────────────────────────
+function addMs(base: string, ms: number): string {
+  return new Date(Date.parse(base) + ms).toISOString();
+}
 
-describe('computeHash', () => {
-  it('blanks _date_ and includes everything else', () => {
-    const cols = ['_date_', '_action_', 'symbol'];
-    const a = _test_computeHash('insert', [{ _date_: 'x', _action_: 'insert', symbol: 'XBT' }], cols);
-    const b = _test_computeHash('insert', [{ _date_: 'y', _action_: 'insert', symbol: 'XBT' }], cols);
+// ── Content key ───────────────────────────────────────────────────────────────
 
-    expect(a).toBe(b); // _date_ blanked → identical hash
+describe('content key', () => {
+  it('excludes _date_ (before first comma): different dates, same content → treated as identical', async () => {
+    const a  = msg({ date: '2026-01-01T12:00:00.000Z', action: 'insert', val: 'X' });
+    const a2 = msg({ date: '2026-01-01T12:00:00.001Z', action: 'insert', val: 'X' });
+
+    const out = await collect(dedup(batches([a, a2]), 'announcement'));
+
+    expect(out).toHaveLength(1);
   });
 
-  it('differs when non-_date_ fields differ', () => {
-    const cols = ['_date_', '_action_', 'symbol'];
-    const a = _test_computeHash('insert', [{ _date_: 'x', _action_: 'insert', symbol: 'XBT' }], cols);
-    const b = _test_computeHash('insert', [{ _date_: 'x', _action_: 'insert', symbol: 'ETH' }], cols);
+  it('includes everything after the first comma: different val → different content', async () => {
+    const a = msg({ date: '2026-01-01T12:00:00.000Z', action: 'insert', val: 'X' });
+    const b = msg({ date: '2026-01-01T12:00:00.000Z', action: 'insert', val: 'Y' });
 
-    expect(a).not.toBe(b);
-  });
-});
-
-// ── hash strategy ────────────────────────────────────────────────────────────
-
-describe('dedup — hash strategy', () => {
-  it('drops messages whose content was seen earlier', async () => {
-    const a  = msg({ date: '2026-01-01T12:00:00.000Z', val: 'XBT' });
-    const b  = msg({ date: '2026-01-01T12:00:01.000Z', val: 'ETH' });
-    const a2 = msg({ date: '2026-01-01T12:00:02.000Z', val: 'XBT' });  // same as a
-
-    const out = await collect(dedup(batches([a, b, a2]), 'announcement'));
-
-    expect(out.map(m => m.date)).toEqual([
-      '2026-01-01T12:00:00.000Z',
-      '2026-01-01T12:00:01.000Z',
-    ]);
-  });
-
-  it('keeps every hash for the lifetime of the stream (no window)', async () => {
-    const a1 = msg({ date: '2026-01-01T12:00:00.000Z', val: 'A' });
-    const b  = msg({ date: '2026-01-01T12:30:00.000Z', val: 'B' });
-    const c  = msg({ date: '2026-01-01T13:00:00.000Z', val: 'C' });
-    const a2 = msg({ date: '2026-01-01T18:00:00.000Z', val: 'A' });  // 6h later — still dropped
-
-    const out = await collect(dedup(batches([a1], [b], [c], [a2]), 'announcement'));
-
-    expect(out.map(m => m.date)).toEqual([
-      '2026-01-01T12:00:00.000Z',
-      '2026-01-01T12:30:00.000Z',
-      '2026-01-01T13:00:00.000Z',
-    ]);
-  });
-
-  it('passes partials through unconditionally', async () => {
-    const p1 = msg({ date: '2026-01-01T12:00:00.000Z', action: 'partial', val: 'X' });
-    const p2 = msg({ date: '2026-01-01T12:01:00.000Z', action: 'partial', val: 'X' });  // same content
-
-    const out = await collect(dedup(batches([p1, p2]), 'announcement'));
+    const out = await collect(dedup(batches([a, b]), 'announcement'));
 
     expect(out).toHaveLength(2);
   });
 });
 
-// ── contiguous strategy ─────────────────────────────────────────────────────
+// ── Partials ──────────────────────────────────────────────────────────────────
 
-describe('dedup — contiguous strategy', () => {
-  it('drops only adjacent identical messages', async () => {
-    const a1 = msg({ date: '2026-01-01T12:00:00.000Z', val: 'A' });
-    const a2 = msg({ date: '2026-01-01T12:00:01.000Z', val: 'A' });   // adjacent dup → drop
-    const b  = msg({ date: '2026-01-01T12:00:02.000Z', val: 'B' });
-    const a3 = msg({ date: '2026-01-01T12:00:03.000Z', val: 'A' });   // non-adjacent → keep
-    const a4 = msg({ date: '2026-01-01T12:00:04.000Z', val: 'A' });   // adjacent dup → drop
+describe('partials', () => {
+  it('partial passes through unconditionally even with identical content', async () => {
+    const p1 = msg({ date: '2026-01-01T12:00:00.000Z', action: 'partial', val: 'X' });
+    const p2 = msg({ date: '2026-01-01T12:00:01.000Z', action: 'partial', val: 'X' });
 
-    const out = await collect(dedup(batches([a1, a2, b, a3, a4]), 'orderBookL2'));
+    const out = await collect(dedup(batches([p1, p2]), 'announcement'));
 
-    expect(out.map(m => m.date)).toEqual([
-      '2026-01-01T12:00:00.000Z',
-      '2026-01-01T12:00:02.000Z',
-      '2026-01-01T12:00:03.000Z',
-    ]);
+    expect(out).toHaveLength(2);
   });
 
-  it('preserves oscillation when content alternates', async () => {
-    const inputs = [
-      msg({ date: '2026-01-01T12:00:00.000Z', val: 'plus'  }),
-      msg({ date: '2026-01-01T12:00:01.000Z', val: 'minus' }),
-      msg({ date: '2026-01-01T12:00:02.000Z', val: 'plus'  }),  // oscillates back — must keep
-    ];
+  it('partial:<symbol> passes through unconditionally', async () => {
+    const p1 = msg({ date: '2026-01-01T12:00:00.000Z', action: 'partial:XBTUSD', val: 'X' });
+    const p2 = msg({ date: '2026-01-01T12:00:01.000Z', action: 'partial:XBTUSD', val: 'X' });
 
-    const out = await collect(dedup(batches(inputs), 'orderBookL2'));
+    const out = await collect(dedup(batches([p1, p2]), 'orderBookL2'));
+
+    expect(out).toHaveLength(2);
+  });
+
+  it('partial does not update the contiguous lastHash (orderBookL2 update)', async () => {
+    const u1 = msg({ date: '2026-01-01T12:00:00.000Z', action: 'update', val: 'A' });
+    const p  = msg({ date: '2026-01-01T12:00:01.000Z', action: 'partial', val: 'X' });
+    const u2 = msg({ date: '2026-01-01T12:00:02.000Z', action: 'update', val: 'A' }); // contiguous with u1 via lastHash → drop
+
+    const out = await collect(dedup(batches([u1, p, u2]), 'orderBookL2'));
+
+    expect(out.map(m => m.action)).toEqual(['update', 'partial']);
+  });
+});
+
+// ── announcement / publicNotifications / liquidation ─────────────────────────
+// Global hash, no time constraint — all actions (insert, update, delete).
+// Any repeat of the same content, anywhere in the stream, is dropped.
+
+describe('dedup — announcement / publicNotifications / liquidation', () => {
+  it('drops a non-adjacent insert dupe', async () => {
+    const a  = msg({ date: '2026-01-01T12:00:00.000Z', action: 'insert', val: 'X' });
+    const b  = msg({ date: '2026-01-01T12:00:01.000Z', action: 'insert', val: 'Y' });
+    const a2 = msg({ date: '2026-01-01T12:00:02.000Z', action: 'insert', val: 'X' }); // non-adjacent dup → drop
+
+    const out = await collect(dedup(batches([a, b, a2]), 'announcement'));
+
+    expect(out).toHaveLength(2);
+  });
+
+  it('drops a non-adjacent update dupe', async () => {
+    const u1 = msg({ date: '2026-01-01T12:00:00.000Z', action: 'update', val: 'A' });
+    const u2 = msg({ date: '2026-01-01T12:00:01.000Z', action: 'update', val: 'B' });
+    const u3 = msg({ date: '2026-01-01T12:00:02.000Z', action: 'update', val: 'A' }); // non-adjacent dup → drop
+
+    for (const table of ['announcement', 'publicNotifications', 'liquidation']) {
+      const out = await collect(dedup(batches([u1, u2, u3]), table));
+
+      expect(out).toHaveLength(2);
+    }
+  });
+
+  it('drops same content regardless of how much time has elapsed', async () => {
+    const a  = msg({ date: '2026-01-01T12:00:00.000Z', action: 'insert', val: 'X' });
+    const a2 = msg({ date: '2026-01-01T18:00:00.000Z', action: 'insert', val: 'X' }); // 6h later — still dropped
+
+    const out = await collect(dedup(batches([a], [a2]), 'liquidation'));
+
+    expect(out).toHaveLength(1);
+  });
+});
+
+// ── chat ─────────────────────────────────────────────────────────────────────
+// Insert / delete: global hash, no time constraint.
+// Update: global hash within 10s — same content repeated after 10s is kept.
+
+describe('dedup — chat', () => {
+  it('insert: drops non-adjacent dup regardless of time (global hash, no window)', async () => {
+    const a  = msg({ date: '2026-01-01T12:00:00.000Z', action: 'insert', val: 'msg1' });
+    const b  = msg({ date: '2026-01-01T12:00:01.000Z', action: 'insert', val: 'msg2' });
+    const a2 = msg({ date: '2026-01-01T14:00:00.000Z', action: 'insert', val: 'msg1' }); // 2h later — still dropped
+
+    const out = await collect(dedup(batches([a, b, a2]), 'chat'));
+
+    expect(out).toHaveLength(2);
+  });
+
+  it('update: drops same content seen within updateWindow (covers cross-source lag)', async () => {
+    const base   = '2026-01-01T12:00:00.000Z';
+    const window = _test_TABLE_CONFIG.chat.updateWindow!;
+    const u1     = msg({ date: base,                      action: 'update', val: 'A' });
+    const u2     = msg({ date: addMs(base, window - 1),   action: 'update', val: 'A' }); // 1ms inside window → drop
+
+    const out = await collect(dedup(batches([u1, u2]), 'chat'));
+
+    expect(out).toHaveLength(1);
+  });
+
+  it('update: keeps same content once updateWindow has elapsed', async () => {
+    const base   = '2026-01-01T12:00:00.000Z';
+    const window = _test_TABLE_CONFIG.chat.updateWindow!;
+    const u1     = msg({ date: base,                      action: 'update', val: 'A' });
+    const u2     = msg({ date: addMs(base, window + 1),   action: 'update', val: 'A' }); // 1ms past window → keep
+
+    const out = await collect(dedup(batches([u1], [u2]), 'chat'));
+
+    expect(out).toHaveLength(2);
+  });
+
+  it('update: non-adjacent same content within updateWindow is still dropped (global hash, not contiguous)', async () => {
+    const base   = '2026-01-01T12:00:00.000Z';
+    const window = _test_TABLE_CONFIG.chat.updateWindow!;
+    const u1     = msg({ date: base,                      action: 'update', val: 'A' });
+    const u2     = msg({ date: addMs(base, 1000),         action: 'update', val: 'B' });
+    const u3     = msg({ date: addMs(base, 2000),         action: 'update', val: 'A' }); // non-adjacent but within window → drop
+
+    expect(2000).toBeLessThan(window);
+
+    const out = await collect(dedup(batches([u1, u2, u3]), 'chat'));
+
+    expect(out).toHaveLength(2);
+  });
+});
+
+// ── instrument ────────────────────────────────────────────────────────────────
+// Insert / delete: global hash, no time constraint.
+// Update: contiguous only — only adjacent identical messages are dropped.
+
+describe('dedup — instrument', () => {
+  it('insert: drops non-adjacent dup (global hash)', async () => {
+    const a  = msg({ date: '2026-01-01T12:00:00.000Z', action: 'insert', val: 'X' });
+    const b  = msg({ date: '2026-01-01T12:00:01.000Z', action: 'insert', val: 'Y' });
+    const a2 = msg({ date: '2026-01-01T12:00:02.000Z', action: 'insert', val: 'X' }); // non-adjacent dup → drop
+
+    const out = await collect(dedup(batches([a, b, a2]), 'instrument'));
+
+    expect(out).toHaveLength(2);
+  });
+
+  it('update: drops adjacent dup', async () => {
+    const u1 = msg({ date: '2026-01-01T12:00:00.000Z', action: 'update', val: 'A' });
+    const u2 = msg({ date: '2026-01-01T12:00:01.000Z', action: 'update', val: 'A' }); // adjacent dup → drop
+
+    const out = await collect(dedup(batches([u1, u2]), 'instrument'));
+
+    expect(out).toHaveLength(1);
+  });
+
+  it('update: keeps non-adjacent dup (contiguous, not global hash)', async () => {
+    const u1 = msg({ date: '2026-01-01T12:00:00.000Z', action: 'update', val: 'A' });
+    const u2 = msg({ date: '2026-01-01T12:00:01.000Z', action: 'update', val: 'B' });
+    const u3 = msg({ date: '2026-01-01T12:00:02.000Z', action: 'update', val: 'A' }); // non-adjacent → keep
+
+    const out = await collect(dedup(batches([u1, u2, u3]), 'instrument'));
 
     expect(out).toHaveLength(3);
   });
 
-  it('passes partials through but does not anchor lastHash', async () => {
+  it('update: preserves oscillation', async () => {
     const inputs = [
-      msg({ date: '2026-01-01T12:00:00.000Z', val: 'A' }),
-      msg({ date: '2026-01-01T12:00:01.000Z', action: 'partial', val: 'X' }),
-      msg({ date: '2026-01-01T12:00:02.000Z', val: 'A' }),  // adjacent to last non-partial → drop
+      msg({ date: '2026-01-01T12:00:00.000Z', action: 'update', val: 'up'   }),
+      msg({ date: '2026-01-01T12:00:01.000Z', action: 'update', val: 'down' }),
+      msg({ date: '2026-01-01T12:00:02.000Z', action: 'update', val: 'up'   }),
     ];
 
-    const out = await collect(dedup(batches(inputs), 'orderBookL2'));
+    const out = await collect(dedup(batches(inputs), 'instrument'));
 
-    // expected: d0, d1 (partial) — d2 is contiguous w/ d0 via lastHash
-    expect(out.map(m => m.date)).toEqual([
-      '2026-01-01T12:00:00.000Z',
-      '2026-01-01T12:00:01.000Z',
-    ]);
+    expect(out).toHaveLength(3);
   });
 });
 
-// ── hybrid strategy ─────────────────────────────────────────────────────────
+// ── orderBookL2 ───────────────────────────────────────────────────────────────
+// Insert / delete: bounded hash (100) — catches ghost-sub dupes that may not be
+// strictly adjacent due to interleaving of two source streams at the same ms.
+// Update: contiguous only — same-ms oscillations are real events and must be kept.
 
-describe('dedup — hybrid strategy (liquidation)', () => {
-  it('hash-deduplicates inserts and deletes; contiguous-deduplicates updates', async () => {
-    const inputs = [
-      msg({ date: '2026-01-01T12:00:00.000Z', action: 'insert', val: 'I1' }),
-      msg({ date: '2026-01-01T12:00:01.000Z', action: 'update', val: 'U1' }),
-      msg({ date: '2026-01-01T12:00:02.000Z', action: 'update', val: 'U1' }),  // contiguous dup → drop
-      msg({ date: '2026-01-01T12:00:03.000Z', action: 'update', val: 'U2' }),
-      msg({ date: '2026-01-01T12:00:04.000Z', action: 'update', val: 'U1' }),  // not contiguous → keep
-      msg({ date: '2026-01-01T12:00:05.000Z', action: 'insert', val: 'I1' }),  // hash dup of earlier → drop
-      msg({ date: '2026-01-01T12:00:06.000Z', action: 'delete', val: 'D1' }),
-      msg({ date: '2026-01-01T12:00:07.000Z', action: 'delete', val: 'D1' }),  // hash dup → drop
-    ];
+describe('dedup — orderBookL2', () => {
+  it('insert: drops adjacent dup', async () => {
+    const a  = msg({ date: '2026-01-01T12:00:00.000Z', action: 'insert', val: 'X' });
+    const a2 = msg({ date: '2026-01-01T12:00:00.001Z', action: 'insert', val: 'X' }); // adjacent dup → drop
 
-    const out = await collect(dedup(batches(inputs), 'liquidation'));
+    const out = await collect(dedup(batches([a, a2]), 'orderBookL2'));
 
-    expect(out.map(m => `${m.action}|${m.date}`)).toEqual([
-      'insert|2026-01-01T12:00:00.000Z',
-      'update|2026-01-01T12:00:01.000Z',
-      'update|2026-01-01T12:00:03.000Z',
-      'update|2026-01-01T12:00:04.000Z',
-      'delete|2026-01-01T12:00:06.000Z',
+    expect(out).toHaveLength(1);
+  });
+
+  it('insert: drops non-adjacent dup within bounded store (ghost sub interleaving)', async () => {
+    // S1.E1 and S2.E1 are ghost dups but interleaved by S1.E2 from the merged stream.
+    const s1_e1 = msg({ date: '2026-01-01T12:00:00.000Z', action: 'insert', val: 'X' });
+    const s1_e2 = msg({ date: '2026-01-01T12:00:00.001Z', action: 'insert', val: 'Y' }); // different content
+    const s2_e1 = msg({ date: '2026-01-01T12:00:00.002Z', action: 'insert', val: 'X' }); // ghost dup of s1_e1 → drop
+
+    const out = await collect(dedup(batches([s1_e1, s1_e2, s2_e1]), 'orderBookL2'));
+
+    expect(out.map(m => m.date)).toEqual([
+      '2026-01-01T12:00:00.000Z',
+      '2026-01-01T12:00:00.001Z',
     ]);
   });
 
-  it('keeps insert/delete hashes for the lifetime of the stream', async () => {
-    const inputs = [
-      msg({ date: '2026-01-01T12:00:00.000Z', action: 'insert', val: 'I1' }),
-      msg({ date: '2026-01-01T18:00:00.000Z', action: 'insert', val: 'I1' }),  // 6h later — still dropped
-    ];
+  it('update: drops adjacent dup', async () => {
+    const u1 = msg({ date: '2026-01-01T12:00:00.000Z', action: 'update', val: 'A' });
+    const u2 = msg({ date: '2026-01-01T12:00:01.000Z', action: 'update', val: 'A' }); // adjacent dup → drop
 
-    const out = await collect(dedup(batches(inputs), 'liquidation'));
+    const out = await collect(dedup(batches([u1, u2]), 'orderBookL2'));
 
     expect(out).toHaveLength(1);
+  });
+
+  it('update: keeps non-adjacent dup (contiguous — same-ms oscillations are real)', async () => {
+    const u1 = msg({ date: '2026-01-01T12:00:00.000Z', action: 'update', val: 'A' });
+    const u2 = msg({ date: '2026-01-01T12:00:01.000Z', action: 'update', val: 'B' });
+    const u3 = msg({ date: '2026-01-01T12:00:02.000Z', action: 'update', val: 'A' }); // non-adjacent → keep
+
+    const out = await collect(dedup(batches([u1, u2, u3]), 'orderBookL2'));
+
+    expect(out).toHaveLength(3);
+  });
+});
+
+// ── connected ─────────────────────────────────────────────────────────────────
+// Update: contiguous within 15s. Snapshots repeat every 30s — the 15s window
+// catches ghost-sub dupes (ms apart) without dropping the next real snapshot.
+
+describe('dedup — connected', () => {
+  it('drops adjacent dup within updateWindow', async () => {
+    const base   = '2026-01-01T12:00:00.000Z';
+    const window = _test_TABLE_CONFIG.connected.updateWindow!;
+    const u1     = msg({ date: base,                    action: 'update', val: 'count5' });
+    const u2     = msg({ date: addMs(base, window - 1), action: 'update', val: 'count5' }); // 1ms inside window → drop
+
+    const out = await collect(dedup(batches([u1, u2]), 'connected'));
+
+    expect(out).toHaveLength(1);
+  });
+
+  it('keeps same content once updateWindow has elapsed (next real snapshot)', async () => {
+    const base   = '2026-01-01T12:00:00.000Z';
+    const window = _test_TABLE_CONFIG.connected.updateWindow!;
+    const u1     = msg({ date: base,                    action: 'update', val: 'count5' });
+    const u2     = msg({ date: addMs(base, window + 1), action: 'update', val: 'count5' }); // 1ms past window → keep
+
+    const out = await collect(dedup(batches([u1], [u2]), 'connected'));
+
+    expect(out).toHaveLength(2);
+  });
+
+  it('keeps non-adjacent same content regardless of window (oscillation)', async () => {
+    const u1 = msg({ date: '2026-01-01T12:00:00.000Z', action: 'update', val: 'count5' });
+    const u2 = msg({ date: '2026-01-01T12:00:01.000Z', action: 'update', val: 'count6' }); // different → keep
+    const u3 = msg({ date: '2026-01-01T12:00:02.000Z', action: 'update', val: 'count5' }); // non-adjacent — keep regardless of window
+
+    const out = await collect(dedup(batches([u1, u2, u3]), 'connected'));
+
+    expect(out).toHaveLength(3);
+  });
+
+  it('adjacent dup past updateWindow is not dropped (window is relative to stored ts)', async () => {
+    const base   = '2026-01-01T12:00:00.000Z';
+    const window = _test_TABLE_CONFIG.connected.updateWindow!;
+    const u1     = msg({ date: base,                    action: 'update', val: 'count5' });
+    // u2 is adjacent to u1 (u1 is still lastKey) but past the window → keep
+    const u2     = msg({ date: addMs(base, window + 1), action: 'update', val: 'count5' });
+
+    const out = await collect(dedup(batches([u1], [u2]), 'connected'));
+
+    expect(out).toHaveLength(2);
   });
 });

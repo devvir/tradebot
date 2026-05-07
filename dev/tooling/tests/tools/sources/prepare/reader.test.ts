@@ -5,9 +5,9 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import {
   read,
-  _test_isoToMs,
   _test_ISO_DATE_RE,
 } from '../../../../src/tools/sources/prepare/tasks/reader';
+import { _test_isoToMs } from '../../../../src/tools/sources/prepare/tasks/ts-resolver';
 import { _test_setColumns, _test_clearColumns } from '../../../../src/tools/sources/tables';
 import type { ReadIssue } from '../../../../src/tools/sources/prepare/types';
 
@@ -197,7 +197,7 @@ describe('read — sanity checks', () => {
       '2026-01-01T12:00:01.000Z,update,2026-01-01T12:00:01.000Z,XBT,101',
     ].join('\n') + '\n');
 
-    const { messages, issues } = await readAll(file);
+    const { messages, issues } = await readAll(file, FIXED_TABLE);
 
     expect(messages).toHaveLength(1);
     expect(messages[0]?.date).toBe('2026-01-01T12:00:01.000Z');
@@ -229,5 +229,56 @@ describe('read — partials', () => {
 
     expect(messages).toHaveLength(1);
     expect(messages[0]?.action).toBe('partial');
+  });
+});
+
+describe('read — filtered partials (partial:<symbol>)', () => {
+  it('accepts partial:<symbol> as a valid action', async () => {
+    const file = writeGz([
+      COLUMNS.join(','),
+      '2026-01-01T12:00:00.000Z,partial:XBTUSD,2026-01-01T12:00:00.000Z,XBTUSD,100',
+      '2026-01-01T12:00:01.000Z,update,2026-01-01T12:00:01.000Z,XBTUSD,101',
+    ].join('\n') + '\n');
+
+    const { messages, issues } = await readAll(file);
+
+    expect(issues).toEqual([]);
+    expect(messages).toHaveLength(2);
+    expect(messages[0]?.action).toBe('partial:XBTUSD');
+  });
+
+  it('preserves the full partial:<symbol> action string in output', async () => {
+    const file = writeGz([
+      COLUMNS.join(','),
+      '2026-01-01T12:00:00.000Z,partial:XBT7D_U105,2026-01-01T12:00:00.000Z,XBT7D_U105,50',
+    ].join('\n') + '\n');
+
+    const { messages } = await readAll(file);
+
+    expect(messages[0]?.action).toBe('partial:XBT7D_U105');
+  });
+
+  it('drops partial:<symbol> when fixedPartials is true', async () => {
+    const file = writeGz([
+      COLUMNS.join(','),
+      '2026-01-01T12:00:00.000Z,partial:XBTUSD,,XBTUSD,',
+      '2026-01-01T12:00:01.000Z,update,2026-01-01T12:00:01.000Z,XBTUSD,100',
+    ].join('\n') + '\n');
+
+    const { messages } = await readAll(file, FIXED_TABLE);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.action).toBe('update');
+  });
+
+  it('does not report partial:<symbol> as a validation issue', async () => {
+    const file = writeGz([
+      COLUMNS.join(','),
+      '2026-01-01T12:00:00.000Z,partial:ETHUSD,2026-01-01T12:00:00.000Z,ETHUSD,200',
+    ].join('\n') + '\n');
+
+    const { issues } = await readAll(file);
+
+    expect(issues).toEqual([]);
   });
 });

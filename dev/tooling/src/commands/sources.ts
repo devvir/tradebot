@@ -2,7 +2,7 @@ import path from 'node:path';
 import { Command } from 'commander';
 import { run } from '../tools/sources/index';
 import { parseFromDay } from '../tools/sources/discover';
-import { setDryRun, setFromDay, setLogPath } from '../tools/sources/options';
+import { setDryRun, setFromDay, setLogPath, setConcurrency } from '../tools/sources/options';
 import { runPrepare } from '../tools/sources/prepare/run';
 import { runCheck } from '../tools/sources/check/run';
 import { input } from '../shared/ui/prompts';
@@ -50,12 +50,23 @@ function resolveLogPath(logArg: string | boolean | undefined, subcommand: string
   return path.join(dir, `${subcommand}.log`);
 }
 
+type GlobalOpts = {
+  dryRun?:      boolean;
+  log?:         string | boolean;
+  from?:        string;
+  concurrency?: string;
+};
+
 // ── Registration ──────────────────────────────────────────────────────────────
 
 export function register(program: Command): void {
   const sources = program
     .command('sources')
     .description('Sanitise and merge vault source data')
+    .option('-D, --dry-run',         'Skip writes; run the full pipeline without producing output files')
+    .option('--log [dir]',           'Write logs; optional dir (default: current directory)')
+    .option('--from <date>',         'Skip days before this date; accepts YYYYMMDD or YYYY-MM-DD')
+    .option('-C, --concurrency <n>', 'Number of dates to process in parallel (default: 1)', '1')
     .action(async () => {
       try {
         await run();
@@ -68,16 +79,15 @@ export function register(program: Command): void {
   sources
     .command('prepare [path]')
     .description('Sort, dedup, gap-fill source files into prepared/YYYYMMDD.csv.gz')
-    .option('-D, --dry-run',    'Report what would be prepared without writing any output')
-    .option('--log [dir]',      'Write logs; optional dir (default: current directory)')
-    .option('--from <date>',    'Skip days before this date; accepts YYYYMMDD or YYYY-MM-DD')
-    .action(async (pathArg: string | undefined, options: { dryRun?: boolean; log?: string | boolean; from?: string }) => {
+    .action(async (pathArg: string | undefined, _options: object, command: Command) => {
       try {
         const root = resolvePath(pathArg ?? await input('Path:', vaultDir()));
+        const opts = command.optsWithGlobals<GlobalOpts>();
 
-        setDryRun(options.dryRun ?? false);
-        setFromDay(parseFromDay(options.from ?? null));
-        setLogPath(resolveLogPath(options.log, 'prepare'));
+        setDryRun(opts.dryRun ?? false);
+        setFromDay(parseFromDay(opts.from ?? null));
+        setLogPath(resolveLogPath(opts.log, 'prepare'));
+        setConcurrency(Math.max(1, parseInt(opts.concurrency ?? '1', 10)));
 
         await runPrepare(root);
       } catch (err) {
@@ -89,16 +99,15 @@ export function register(program: Command): void {
   sources
     .command('check [path]')
     .description('Verify .csv.gz integrity with gzip -t; recover corrupt files with gzrecover')
-    .option('-D, --dry-run', 'Report corrupt files without recovering them')
-    .option('--log [dir]',   'Write logs; optional dir (default: current directory)')
-    .option('--from <date>', 'Skip files before this date; accepts YYYYMMDD or YYYY-MM-DD')
-    .action(async (pathArg: string | undefined, options: { dryRun?: boolean; log?: string | boolean; from?: string }) => {
+    .action(async (pathArg: string | undefined, _options: object, command: Command) => {
       try {
         const root = resolvePath(pathArg ?? await input('Path:', vaultDir()));
+        const opts = command.optsWithGlobals<GlobalOpts>();
 
-        setDryRun(options.dryRun ?? false);
-        setFromDay(parseFromDay(options.from ?? null));
-        setLogPath(resolveLogPath(options.log, 'check'));
+        setDryRun(opts.dryRun ?? false);
+        setFromDay(parseFromDay(opts.from ?? null));
+        setLogPath(resolveLogPath(opts.log, 'check'));
+        setConcurrency(Math.max(1, parseInt(opts.concurrency ?? '1', 10)));
 
         await runCheck(root);
       } catch (err) {

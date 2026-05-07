@@ -21,6 +21,10 @@ import { parse, type Parser } from 'csv-parse';
 export const rowToCsv = (row: Record<string, unknown>, cols: string[]): string =>
   cols.map(col => csvValue(row[col])).join(',');
 
+/** Serialize a pre-ordered string array into a single CSV line (no trailing newline). */
+export const arrayToCsv = (row: string[]): string =>
+  row.map(csvStringValue).join(',');
+
 const csvValue = (val: unknown): string => {
   if (val === null || val === undefined) return '';
 
@@ -30,6 +34,11 @@ const csvValue = (val: unknown): string => {
     ? `"${s.replace(/"/g, '""')}"`
     : s;
 };
+
+const csvStringValue = (s: string): string =>
+  s.includes(',') || s.includes('"') || s.includes('\n')
+    ? `"${s.replace(/"/g, '""')}"`
+    : s;
 
 /**
  * Create a CSV parser stream that reads vault-format files.

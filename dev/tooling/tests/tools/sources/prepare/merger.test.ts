@@ -20,7 +20,7 @@ function msg(tsMs: number, label: string = `m-${tsMs}`): PreparedMessage {
     rows:      [{ _date_: ts + 'Z', _action_: 'update', label }],
     date:      ts + 'Z',
     action:    'update',
-    timestamp: '',
+    timestamp: null,
     ts,
     tsMs,
   };

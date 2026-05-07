@@ -4,30 +4,21 @@ export interface TableConfig {
 }
 
 /**
- * Describes the CSV schema used to read and write a sources file.
- * Records read from `csv-parse` are keyed by column name, so no column indices
- * are stored — lookups go through the known column names (`_date_`, `_action_`,
- * and optionally `timestamp`).
- */
-export interface Header {
-  /** Column names in file order — used to serialize output rows. */
-  columns: string[];
-
-  /** True if the `timestamp` column is present in this file's schema. */
-  hasTimestamp: boolean;
-}
-
-/**
  * A single BitMEX WS message parsed from a sources CSV file.
  *
  * A message is one or more parsed records. The first record (`rows[0]`) carries
  * the non-empty `_date_` and `_action_` values; subsequent continuation records
  * (if any) have empty `_date_` and hold overflow row data for multi-row actions
  * such as `insert` of a multi-row snapshot.
+ *
+ * Rows are pre-ordered string arrays matching the table's column order exactly
+ * as read from disk. Column identity is positional: `_date_` is always index 0,
+ * `_action_` always index 1. The order is an invariant — nothing in the pipeline
+ * reorders values within a row.
  */
 export interface Message {
-  /** One or more CSV records parsed for this message (first row is the message-start row). */
-  rows: Record<string, string>[];
+  /** One or more CSV rows for this message, each a complete pre-normalized CSV line. */
+  rows: string[];
 
   /** Value of the `_date_` column on the message-start row. */
   date: string;

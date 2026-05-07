@@ -1,10 +1,9 @@
-import fs from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import path from 'node:path';
 import { error, info, section, spacer, success, warn } from '../log';
-import { collectLeafFolders, dayFromFilename } from '../discover';
-import { isDryRun, fromDay } from '../options';
+import { resolveSourceFiles } from '../discover';
+import { isDryRun } from '../options';
 
 const execFileAsync = promisify(execFile);
 
@@ -31,21 +30,13 @@ async function recover(filePath: string): Promise<void> {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 /**
- * `sources check` orchestrator.
- *
- * Walks every leaf folder under `root`, tests each .csv.gz with `gzip -t`,
- * and (unless dry-run) recovers corrupt files via `gzrecover`.
- * Files before the fromDay() cutoff are silently skipped.
+ * `sources check` orchestrator. Tests every `.csv.gz` resolved from `root`
+ * with `gzip -t` and (unless dry-run) recovers corrupt files via `gzrecover`.
  */
 export async function runCheck(root: string): Promise<void> {
-  if (! fs.existsSync(root)) {
-    error(`Path does not exist: ${root}`);
-    process.exit(1);
-  }
+  const files = resolveSourceFiles(root);
 
-  const leafFolders = collectLeafFolders(root);
-
-  if (leafFolders.length === 0) {
+  if (files.length === 0) {
     warn(`No .csv.gz files found under: ${root}`);
 
     return;
@@ -56,41 +47,29 @@ export async function runCheck(root: string): Promise<void> {
     spacer();
   }
 
-  const cutDay = fromDay();
-
   let ok        = 0;
   let corrupt   = 0;
   let recovered = 0;
   let failed    = 0;
 
-  for (const leaf of leafFolders) {
-    const files = fs.readdirSync(leaf)
-      .filter(n => n.endsWith('.csv.gz'))
-      .filter(n => ! cutDay || (dayFromFilename(n) ?? '') >= cutDay)
-      .map(n => path.join(leaf, n))
-      .sort();
+  for (const file of files) {
+    if (! await isCorrupt(file)) {
+      ok++;
+      continue;
+    }
 
-    for (const file of files) {
-      if (! await isCorrupt(file)) {
-        ok++;
-        continue;
-      }
+    corrupt++;
+    warn(`Corrupt: ${file}`);
 
-      corrupt++;
-      warn(`Corrupt: ${file}`);
+    if (isDryRun()) continue;
 
-      if (isDryRun()) {
-        continue;
-      }
-
-      try {
-        await recover(file);
-        info(`  Recovered → ${path.basename(file, '.csv.gz')}.recovered.csv.gz`);
-        recovered++;
-      } catch (err) {
-        error(`  Recovery failed: ${(err as Error).message}`);
-        failed++;
-      }
+    try {
+      await recover(file);
+      info(`  Recovered → ${path.basename(file, '.csv.gz')}.recovered.csv.gz`);
+      recovered++;
+    } catch (err) {
+      error(`  Recovery failed: ${(err as Error).message}`);
+      failed++;
     }
   }
 

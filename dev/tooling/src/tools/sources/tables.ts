@@ -116,6 +116,22 @@ export function hasFixedPartials(tableName: string): boolean {
   return FIXED_PARTIAL_TABLES.has(tableName);
 }
 
+const SIMPLE_PARSING_TABLES: ReadonlySet<string> = new Set([
+  'connected',
+  'instrument',
+  'liquidation',
+  'orderBookL2',
+]);
+
+/**
+ * True when every field in the table is a number, symbol, or ISO timestamp —
+ * no free text that could contain commas, quotes, or newlines. READ can skip
+ * the full RFC 4180 parser and split on commas directly.
+ */
+export function allowsSimplifiedParsing(tableName: string): boolean {
+  return SIMPLE_PARSING_TABLES.has(tableName);
+}
+
 /**
  * Gap threshold (ms) for MERGE source-switching.
  * 1ms for tables with an exchange timestamp (instrument, orderBookL2);

@@ -1,164 +1,97 @@
 import fs from 'node:fs';
-import path from 'node:path';
-import { error, info, success, section, spacer, warn, openDebugLog, closeDebugLog } from '../log';
-import { collectLeafFolders } from '../discover';
-import { isDryRun, fromDay, logPath } from '../options';
-import { createGzipWriter } from '../writer';
-import { createOverflow, type Overflow } from './overflow';
+import { Writable } from 'node:stream';
+import { createWriter } from '@devvir/zipper';
+import { closeDebugLog, setupDebugLog } from '../log';
+import { resolveSourceFiles } from '../discover';
+import { concurrency, isDryRun } from '../options';
+import { runOrchestrator } from './orchestrator';
+import { createSourceActor } from './source-actor';
 import { dedup } from './tasks/deduper';
 import { writeOutputHeader } from './tasks/header';
 import { merge } from './tasks/merger';
-import { createSourceActor } from './tasks/sorter';
 import { write } from './tasks/writer';
 import { discoverGroups } from './utils/discover';
-import { writeGroupLog } from './utils/log';
-import type { PrepareGroup, ReadIssue } from './types';
+import { preflight } from './utils/preflight';
+import {
+  createStatsCollector,
+  recordGroupFailure,
+  recordGroupResult,
+  reportNoSourcesFound,
+  reportPreFlight,
+  reportProcessing,
+  reportRunSummary,
+} from './utils/report';
+import type { PrepareGroup, StatsCollector } from './types';
 
 /**
- * `sources prepare` orchestrator.
- *
- * Composes the per-table pipeline declared in `config.ts` over the groups
- * returned by `discover.ts`, then writes outputs and logs. Every other file
- * in this directory is independently testable; this one wires them together.
+ * `sources prepare` entry point. With `-C >= 2`, short-circuits to the
+ * subprocess orchestrator. With `-C 1`, runs the READ → SORT → MERGE →
+ * DEDUP → WRITE pipeline sequentially over each discovered group.
  */
 export async function runPrepare(root: string): Promise<void> {
-  if (! fs.existsSync(root)) {
-    error(`Path does not exist: ${root}`);
-    process.exit(1);
-  }
+  const files = resolveSourceFiles(root);
 
-  const leafFolders = collectLeafFolders(root);
-
-  if (leafFolders.length === 0) {
-    warn(`No .csv.gz files found under: ${root}`);
+  if (files.length === 0) {
+    reportNoSourcesFound(root);
 
     return;
   }
 
-  const logDir = logPath();
+  if (concurrency() > 1) {
+    await runOrchestrator(files);
 
-  if (logDir && process.env.LOG_LEVEL === 'debug') {
-    fs.mkdirSync(logDir, { recursive: true });
-    openDebugLog(path.join(logDir, 'debug.log'));
+    return;
   }
 
-  if (isDryRun())  { section('Dry-run plan'); spacer(); }
-  if (fromDay())   { info(`From: ${fromDay()} (days before this are skipped)`); spacer(); }
+  setupDebugLog();
+  reportPreFlight();
+
+  const groups = discoverGroups(files);
 
   let processed = 0;
   let skipped   = 0;
   let failed    = 0;
 
   try {
-    for (const leaf of leafFolders) {
-      const groups = discoverGroups(leaf);
+    for (const group of groups) {
+      const result = await processGroup(group);
 
-      if (groups.length === 0) {
-        continue;
-      }
-
-      if (leafFolders.length > 1) {
-        section(leaf);
-        spacer();
-      }
-
-      for (const group of groups) {
-        const result = await processGroup(group);
-
-        if (result === 'processed') processed++;
-        else if (result === 'failed') failed++;
-        else                          skipped++;
-      }
+      if      (result === 'processed') processed++;
+      else if (result === 'failed')    failed++;
+      else                              skipped++;
     }
 
-    spacer();
-
-    if (failed > 0) {
-      error(`Done. Processed: ${processed}. Skipped: ${skipped}. Failed: ${failed}.`);
-    } else {
-      info(`Done. Processed: ${processed}. Skipped: ${skipped}.`);
-    }
+    reportRunSummary({ processed, skipped, failed });
   } finally {
     await closeDebugLog();
   }
+
+  if (failed > 0) process.exit(1);
 }
 
 // ── One group at a time ──────────────────────────────────────────────────────
 
-async function processGroup(
-  group: PrepareGroup,
-): Promise<'processed' | 'skipped' | 'failed'> {
-  section(`${group.day}  (${group.tableName})`);
-  spacer();
+async function processGroup(group: PrepareGroup): Promise<'processed' | 'skipped' | 'failed'> {
+  const decision = preflight(group);
 
-  const finalPath = path.join(group.outputDir, group.outputName);
-  const tmpPath   = `${finalPath}.tmp`;
+  if ('outcome' in decision) return decision.outcome;
 
-  if (fs.existsSync(finalPath)) {
-    info(`Skipped (already prepared): ${finalPath}`);
-    spacer();
+  const { tmpPath, finalPath, inputBytes } = decision.proceed;
 
-    return 'skipped';
-  }
+  reportProcessing(group, inputBytes);
 
-  if (fs.existsSync(tmpPath)) {
-    warn(`Skipped (in-progress or crashed): ${tmpPath}`);
-    spacer();
-
-    return 'skipped';
-  }
-
-  info(`Sources (${group.paths.length}):`);
-
-  for (const p of group.paths) {
-    info(`  ${path.basename(p)}`);
-  }
-
-  spacer();
-
-  if (isDryRun()) {
-    info(`Would write: ${finalPath}`);
-    spacer();
-
-    return 'processed';
-  }
-
-  const overflow = createOverflow();
-  const issues:    ReadIssue[]            = [];
-  const dropped    = { count: 0 };
+  const stats = createStatsCollector(group);
 
   try {
-    const stats          = await runPipeline(group, overflow, issues, dropped, tmpPath, finalPath);
-    const overflowResult = await overflow.flush(group.folder, group.day, group.tableName);
+    const { written } = await runPipeline(group, stats, tmpPath, finalPath);
 
-    reportResult(finalPath, stats, dropped.count, issues.length, overflowResult.byDay);
-
-    writeGroupLog(group, {
-      written:       stats.written,
-      overflowed:    stats.overflowed,
-      overflowByDay: overflowResult.byDay,
-      dedupDrops:    dropped.count,
-      issues,
-    });
-
-    spacer();
+    recordGroupResult(group, stats, finalPath, written);
 
     return 'processed';
   } catch (err) {
-    const errMsg = (err instanceof Error ? err.message : String(err));
+    const errMsg = err instanceof Error ? err.message : String(err);
 
-    error(`FAILED ${group.day} (${group.tableName}): ${errMsg}`);
-
-    writeGroupLog(group, {
-      written:       0,
-      overflowed:    0,
-      overflowByDay: new Map(),
-      dedupDrops:    dropped.count,
-      issues,
-      error:         errMsg,
-    });
-
-    spacer();
+    recordGroupFailure(group, stats, errMsg);
 
     return 'failed';
   }
@@ -167,74 +100,41 @@ async function processGroup(
 // ── Pipeline composition ─────────────────────────────────────────────────────
 
 async function runPipeline(
-  group:    PrepareGroup,
-  overflow: Overflow,
-  issues:   ReadIssue[],
-  dropped:  { count: number },
-  tmpPath:  string,
+  group:     PrepareGroup,
+  stats:     StatsCollector,
+  tmpPath:   string,
   finalPath: string,
-): Promise<{ written: number; overflowed: number }> {
-  fs.mkdirSync(group.outputDir, { recursive: true });
+): Promise<{ written: number }> {
+  const dryRun = isDryRun();
 
-  const writer = createGzipWriter(tmpPath);
+  if (! dryRun) fs.mkdirSync(group.outputDir, { recursive: true });
 
-  writeOutputHeader(writer, group.tableName, group.day);
+  const writer = dryRun ? null : createWriter(tmpPath);
+  const stream = writer
+    ? writer.stream()
+    : new Writable({ write(_, __, cb) { cb(); } });
 
-  const onIssue = (i: ReadIssue): void => { issues.push(i); };
-  const onDrop  = ():            void => { dropped.count++; };
+  writeOutputHeader(stream, group.tableName, group.day);
 
-  // One source actor per file. Each actor spins up READ + SORT in the
-  // background, fed and drained through bounded queues. All sources read
-  // concurrently from disk via libuv, which is the primary throughput win
-  // over the previous lazy pull pipeline.
-  const sources = group.paths.map(sourcePath =>
-    createSourceActor(group.tableName, sourcePath, onIssue),
+  /** One source actor per file — all sources read from disk concurrently. */
+  const sources = group.paths.map((sourcePath, i) =>
+    createSourceActor(group.tableName, sourcePath, stats.onIssue, count => stats.recordRead(i, count)),
   );
 
   try {
-    const stats = await write(
-      dedup(merge(sources, group.tableName), group.tableName, onDrop),
-      group.day,
-      writer,
-      overflow,
+    const result = await write(
+      dedup(merge(sources, group.tableName, stats.recordMergeContribs), group.tableName, stats.onDrop),
+      stream,
     );
 
-    await writer.close();
-    fs.renameSync(tmpPath, finalPath);
+    if (writer) {
+      await writer.close();
+      fs.renameSync(tmpPath, finalPath);
+    }
 
-    return stats;
+    return result;
   } catch (err) {
-    safeUnlink(tmpPath);
+    if (writer) try { fs.unlinkSync(tmpPath); } catch { /* best effort */ }
     throw err;
   }
 }
-
-// ── Reporting ────────────────────────────────────────────────────────────────
-
-function reportResult(
-  outputPath:    string,
-  stats:         { written: number; overflowed: number },
-  dedupDrops:    number,
-  validation:    number,
-  overflowByDay: Map<string, number>,
-): void {
-  success(`Written: ${stats.written.toLocaleString()} → ${outputPath}`);
-
-  if (stats.overflowed > 0) {
-    info(`Overflow (${stats.overflowed.toLocaleString()} messages):`);
-
-    for (const [day, count] of overflowByDay) {
-      info(`  ${day}: ${count.toLocaleString()}`);
-    }
-  }
-
-  if (dedupDrops > 0)  info(`Dedup drops: ${dedupDrops.toLocaleString()}`);
-  if (validation > 0)  warn(`Validation drops: ${validation.toLocaleString()} (logged)`);
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-function safeUnlink(p: string): void {
-  try { fs.unlinkSync(p); } catch { /* best effort */ }
-}
-

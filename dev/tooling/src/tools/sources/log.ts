@@ -25,30 +25,71 @@ export const debug         = _debug;
 export const openDebugLog  = _openDebugLog;
 export const closeDebugLog = _closeDebugLog;
 
+/**
+ * Open a debug log file alongside the command log when `LOG_LEVEL=debug` is
+ * set AND `--log` was passed. No-op otherwise. The file is named `debug.log`
+ * and lives in the same directory as the command log.
+ */
+export function setupDebugLog(): void {
+  const logFile = logPath();
+
+  if (! logFile)                            return;
+  if (process.env.LOG_LEVEL !== 'debug')    return;
+
+  const logDir = path.dirname(logFile);
+
+  fs.mkdirSync(logDir, { recursive: true });
+  _openDebugLog(path.join(logDir, 'debug.log'));
+}
+
 // ── Tier 2 — command log (plain-text, written when --log is set) ──────────────
 
 /**
- * Append a plain-text line to the log file set by --log.
- * No-op when logPath() is null (--log was not passed).
+ * Append a plain-text line to the log file set by --log, prefixed with a
+ * UTC timestamp. No-op when logPath() is null (--log was not passed).
  */
 export function log(message: string): void {
   const filePath = logPath();
 
   if (! filePath) return;
 
+  const ts = new Date().toISOString();
+
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.appendFileSync(filePath, message + '\n');
+  fs.appendFileSync(filePath, `[${ts}] ${message}\n`);
+}
+
+/**
+ * Append multiple lines to the log file set by --log. The first line is
+ * prefixed with a UTC timestamp; subsequent lines are indented to align.
+ * No-op when logPath() is null (--log was not passed).
+ */
+export function logLines(lines: string[]): void {
+  const filePath = logPath();
+
+  if (! filePath) return;
+
+  const ts     = new Date().toISOString();
+  const prefix = `[${ts}] `;
+  const indent = ' '.repeat(prefix.length);
+
+  const content = lines
+    .map((line, i) => (i === 0 ? prefix + line : indent + line))
+    .join('\n') + '\n';
+
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.appendFileSync(filePath, content);
 }
 
 // ── Tier 3 — bucket log (per processed file/group) ───────────────────────────
 
 /**
  * Write a plain-text log file for one processed unit (e.g. one prepared day).
- * Written to `<logPath>/<filename>` when --log was passed,
- * otherwise to `<fallbackDir>/<filename>`.
+ * Always written to `<fallbackDir>/<filename>` — next to the output files.
+ * --log controls general command logs only and does not redirect bucket logs.
  *
  * @param filename    - Bare filename, e.g. `20260403.log`
- * @param fallbackDir - Directory to use when --log was not passed
+ * @param fallbackDir - Directory to write the log into (always used)
  * @param lines       - Content lines (joined with newlines)
  */
 export function writeBucketLog(
@@ -56,7 +97,9 @@ export function writeBucketLog(
   fallbackDir: string,
   lines:       string[],
 ): string | null {
-  const dir = (logPath() ? path.dirname(logPath()!) : null) ?? fallbackDir;
+  if (logPath()) return null;
+
+  const dir = fallbackDir;
 
   try {
     fs.mkdirSync(dir, { recursive: true });

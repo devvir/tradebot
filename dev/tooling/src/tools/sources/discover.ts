@@ -1,15 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { KNOWN_TABLES } from './tables';
+import { fromDay } from './options';
 
 const DAY_PREFIX_RE = /^(\d{8})/;
-
-/**
- * Extract the YYYYMMDD day prefix from a bare filename.
- * Returns null when the filename does not start with 8 digits.
- */
-export function dayFromFilename(name: string): string | null {
-  return DAY_PREFIX_RE.exec(path.basename(name))?.[1] ?? null;
-}
 
 /**
  * Parse a user-supplied date string into a normalized YYYYMMDD key.
@@ -33,29 +27,158 @@ export function parseFromDay(raw: string | null | undefined): string | null {
 }
 
 /**
- * Walk `root` and return every directory that directly contains at least one
- * `*.csv.gz` file. Descends into subdirectories that do not themselves contain
- * any `.csv.gz` files, so the typical `table/year/` structure is handled
- * transparently.
+ * Resolve an absolute path argument into the list of `.csv.gz` files to
+ * process. Patterns are tried in this order:
  *
- * When `root` is already a leaf (contains `.csv.gz` directly) it is returned
- * as the sole element.
+ *   3.  <table>/<YYYY>/(\d{1,7} | YYYYMMDD | YYYYMMDD.csv.gz)
+ *       Day prefix, exact day, or exact file. Year dir must exist.
+ *   4a. <table>/\d{1,3}
+ *       Year prefix (e.g. "202" matches all 202x). Table dir must exist.
+ *   4b. <table>/\d{4}
+ *       Whole year. Year dir must exist.
+ *   5.  <table>
+ *       Whole table. Table dir must exist.
+ *   6.  <any-other-existing-dir>
+ *       Treated as a base whose direct children are KNOWN_TABLES (no recursion).
+ *
+ * Throws when the resolved dir does not exist. Returns `[]` (no error) when
+ * the dir is valid but contains nothing matching. Applies the `fromDay()`
+ * filter to the result.
  */
-export function collectLeafFolders(root: string): string[] {
-  const entries = fs.readdirSync(root, { withFileTypes: true });
-  const hasCsvGz = entries.some(e => e.isFile() && e.name.endsWith('.csv.gz'));
+export function resolveSourceFiles(absPath: string): string[] {
+  const normalized = absPath.replace(/\/+$/, '') || absPath;
+  const last       = path.basename(normalized);
+  const last2      = path.basename(path.dirname(normalized));
+  const last3      = path.basename(path.dirname(path.dirname(normalized)));
 
-  if (hasCsvGz) {
-    return [root];
+  const files = (() => {
+    if (KNOWN_TABLES.has(last3) && /^\d{4}$/.test(last2))    return resolvePattern3(normalized, last);
+    if (KNOWN_TABLES.has(last2) && /^\d{1,3}$/.test(last))   return resolvePattern4a(normalized, last);
+    if (KNOWN_TABLES.has(last2) && /^\d{4}$/.test(last))     return resolvePattern4b(normalized);
+    if (KNOWN_TABLES.has(last))                              return resolvePattern5(normalized);
+
+    return resolvePattern6(normalized);
+  })();
+
+  return applyFromDayFilter(files).filter(notAlreadyPrepared);
+}
+
+/**
+ * Skip files whose day already has a prepared output (final or in-progress).
+ * For `<dir>/<day>.<infix>.csv.gz`, checks `<dir>/prepared/<day>.csv.gz[.tmp]`.
+ */
+function notAlreadyPrepared(file: string): boolean {
+  const day      = path.basename(file).slice(0, 8);
+  const prepared = path.join(path.dirname(file), 'prepared', `${day}.csv.gz`);
+
+  return ! fs.existsSync(prepared) && ! fs.existsSync(`${prepared}.tmp`);
+}
+
+// ── Pattern resolvers ────────────────────────────────────────────────────────
+
+function resolvePattern3(normalized: string, last: string): string[] {
+  const yearDir = path.dirname(normalized);
+
+  ensureDir(yearDir);
+
+  // 1-8 digit day prefix → match all matching files (incl. `.<infix>.csv.gz` siblings)
+  if (/^\d{1,8}$/.test(last)) {
+    return listCsvGzWithPrefix(yearDir, last);
   }
 
-  const leaves: string[] = [];
+  // Exact file: YYYYMMDD[.<infix>].csv.gz → just that one file
+  if (/^\d{8}(?:\..+)?\.csv\.gz$/.test(last)) {
+    const file = path.join(yearDir, last);
 
-  for (const entry of entries) {
-    if (entry.isDirectory()) {
-      leaves.push(...collectLeafFolders(path.join(root, entry.name)));
-    }
+    return fs.existsSync(file) ? [file] : [];
   }
 
-  return leaves;
+  throw new Error(
+    `Invalid sources path: "${last}" must be 1-8 digits or YYYYMMDD[.infix].csv.gz`,
+  );
+}
+
+function resolvePattern4a(normalized: string, yearPrefix: string): string[] {
+  const tableDir = path.dirname(normalized);
+
+  ensureDir(tableDir);
+
+  const years = listYearDirs(tableDir).filter(y => path.basename(y).startsWith(yearPrefix));
+
+  return years.flatMap(listCsvGz);
+}
+
+function resolvePattern4b(normalized: string): string[] {
+  ensureDir(normalized);
+
+  return listCsvGz(normalized);
+}
+
+function resolvePattern5(normalized: string): string[] {
+  ensureDir(normalized);
+
+  return listYearDirs(normalized).flatMap(listCsvGz);
+}
+
+function resolvePattern6(normalized: string): string[] {
+  ensureDir(normalized);
+
+  const tableDirs = fs.readdirSync(normalized, { withFileTypes: true })
+    .filter(e => e.isDirectory() && KNOWN_TABLES.has(e.name))
+    .map(e => path.join(normalized, e.name));
+
+  return tableDirs.flatMap(t => listYearDirs(t).flatMap(listCsvGz));
+}
+
+// ── Listing helpers ──────────────────────────────────────────────────────────
+
+function listCsvGz(dir: string): string[] {
+  return fs.readdirSync(dir)
+    .filter(n => n.endsWith('.csv.gz') && DAY_PREFIX_RE.test(n))
+    .map(n => path.join(dir, n))
+    .sort();
+}
+
+function listCsvGzWithPrefix(dir: string, prefix: string): string[] {
+  return fs.readdirSync(dir)
+    .filter(n => n.endsWith('.csv.gz') && n.startsWith(prefix) && DAY_PREFIX_RE.test(n))
+    .map(n => path.join(dir, n))
+    .sort();
+}
+
+function listYearDirs(tableDir: string): string[] {
+  return fs.readdirSync(tableDir, { withFileTypes: true })
+    .filter(e => e.isDirectory() && /^\d{4}$/.test(e.name))
+    .map(e => path.join(tableDir, e.name))
+    .sort();
+}
+
+// ── Validation ───────────────────────────────────────────────────────────────
+
+function ensureDir(p: string): void {
+  let stat;
+
+  try {
+    stat = fs.statSync(p);
+  } catch {
+    throw new Error(`Path does not exist: ${p}`);
+  }
+
+  if (! stat.isDirectory()) {
+    throw new Error(`Path exists but is not a directory: ${p}`);
+  }
+}
+
+// ── --from filter ────────────────────────────────────────────────────────────
+
+function applyFromDayFilter(files: string[]): string[] {
+  const cutDay = fromDay();
+
+  if (! cutDay) return files;
+
+  return files.filter(f => {
+    const m = DAY_PREFIX_RE.exec(path.basename(f));
+
+    return m ? m[1]! >= cutDay : false;
+  });
 }

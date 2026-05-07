@@ -11,3 +11,6 @@
 	path = packages/service-kit
 	url = https://github.com/devvir/service-kit.git
 	branch = main
+[submodule "packages/zipper"]
+	path = packages/zipper
+	url = git@github.com:devvir/zipper.git

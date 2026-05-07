@@ -1,69 +1,63 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import { PrepareGroup } from '../types';
 import { KNOWN_TABLES } from '../../tables';
-import { fromDay } from '../../options';
 
 const DAY_PREFIX_RE = /^(\d{8})/;
 
-export function discoverGroups(folder: string): PrepareGroup[] {
-  const tableName = tableNameFromFolder(folder);
-  const cutDay    = fromDay();
-  const entries   = fs.readdirSync(folder, { withFileTypes: true });
+/**
+ * Group a flat list of `.csv.gz` file paths into PrepareGroups by
+ * (parent folder, day). Each file's parent folder is the raw source folder;
+ * `outputDir` is `<folder>/prepared`, `tableName` is derived from the path.
+ */
+export function discoverGroups(files: string[]): PrepareGroup[] {
+  const byKey = new Map<string, { folder: string; day: string; paths: string[] }>();
 
-  const csvGzNames = sortByPrioritySortKey(
-    entries.filter(e => e.isFile() && e.name.endsWith('.csv.gz')).map(e => e.name),
-  );
+  for (const file of files) {
+    const folder = path.dirname(file);
+    const m      = DAY_PREFIX_RE.exec(path.basename(file));
 
-  const byDay = new Map<string, string[]>();
-
-  for (const name of csvGzNames) {
-    const m = DAY_PREFIX_RE.exec(name);
-
-    if (! m) {
-      continue;
-    }
+    if (! m) continue;
 
     const day = m[1]!;
+    const key = `${folder}\0${day}`;
 
-    if (cutDay && day < cutDay)
-      continue;
+    if (! byKey.has(key)) byKey.set(key, { folder, day, paths: [] });
 
-    if (! byDay.has(day))
-      byDay.set(day, []);
-
-    byDay.get(day)!.push(path.join(folder, name));
+    byKey.get(key)!.paths.push(file);
   }
 
-  const outputDir = path.join(folder, 'prepared');
-  const out: PrepareGroup[] = [];
+  const groups: PrepareGroup[] = [];
 
-  for (const [day, paths] of [...byDay.entries()].sort()) {
-    out.push({
+  for (const { folder, day, paths } of byKey.values()) {
+    groups.push({
       day,
       folder,
-      tableName,
-      paths,
-      outputDir,
+      tableName:  tableNameFromFolder(folder),
+      paths:      sortByPrioritySortKey(paths),
+      outputDir:  path.join(folder, 'prepared'),
       outputName: `${day}.csv.gz`,
     });
   }
 
-  return out;
+  return groups.sort((a, b) =>
+    a.folder !== b.folder ? a.folder.localeCompare(b.folder) :
+    a.day.localeCompare(b.day),
+  );
 }
 
 /**
- * Sort .csv.gz filenames with the `.csv.gz` extension stripped before
- * comparison. This is purely alphabetical — the primary file
- * (`YYYYMMDD.csv.gz`) naturally precedes any sibling that carries an extra
- * infix because `'20260411' < '20260411.a'` in standard string order (prefix
- * of a longer string sorts first). With the full names, a naive sort would
- * reverse this because `'a' < 'c'` at the first differing character.
+ * Sort by stem (extension stripped) so the primary file `YYYYMMDD.csv.gz`
+ * precedes any sibling with an infix. Stripping is required: with full
+ * names, `'20260411.a.csv.gz' < '20260411.csv.gz'` because `'a' < 'c'`.
  */
-function sortByPrioritySortKey(csvGzNames: string[]): string[] {
-  const key = (name: string): string => name.slice(0, -'.csv.gz'.length);
+function sortByPrioritySortKey(filePaths: string[]): string[] {
+  const key = (p: string): string => {
+    const name = path.basename(p);
 
-  return [...csvGzNames].sort((a, b) => {
+    return name.slice(0, -'.csv.gz'.length);
+  };
+
+  return [...filePaths].sort((a, b) => {
     const ka = key(a);
     const kb = key(b);
 
@@ -72,9 +66,8 @@ function sortByPrioritySortKey(csvGzNames: string[]): string[] {
 }
 
 /**
- * Derive a table name from a folder path by searching for a known table name
- * among the path components, walking from the deepest component upward.
- * Falls back to the folder's basename when no known table is found.
+ * Walk path components from deepest to root looking for a `KNOWN_TABLES`
+ * match; fall back to the folder's basename.
  */
 function tableNameFromFolder(folder: string): string {
   const parts = folder.split(path.sep);

@@ -5,37 +5,28 @@ import type { PreparedMessage } from '../types';
 const plog = (msg: string): void => { debug(`[${new Date().toISOString()}] ${msg}`); };
 
 /**
- * MERGE — N-way gap-aware merge.
- *
- * Stays on the highest-priority active source as long as its next message
- * falls within `gapThreshold` ms of the last emitted message. When a gap is
- * detected (or the source is exhausted), advance every other source past the
- * already-covered range (drop its messages there — they are duplicates of
- * what the higher source already provided), then switch to the
- * highest-priority source whose head is at or beyond `nextMs`.
- *
- * Priority is index order: index 0 is the highest. The orchestrator passes
- * sources in alphabetical (filename) order.
- *
- * Sources are already sorted by `ts` upstream (SORT). This step does not
- * re-sort.
+ * N-way gap-aware merge across sorted sources. Stays on the highest-priority
+ * source as long as its next message is within `gapThreshold` ms of the last
+ * emitted; on a gap, drains every other source past the already-covered range
+ * (those would be duplicates) and switches to the next available source.
+ * Priority is index order — index 0 wins ties.
  */
 export async function* merge(
-  sources:   AsyncGenerator<PreparedMessage[]>[],
-  tableName: string,
+  sources:    AsyncGenerator<PreparedMessage[]>[],
+  tableName:  string,
+  onComplete: (contributedBySource: number[]) => void = () => { /* no-op */ },
 ): AsyncGenerator<PreparedMessage[]> {
-  if (sources.length === 0) {
-    return;
-  }
+  if (sources.length === 0) return;
 
-  const gapThreshold = potentialGapThresholdMs(tableName);
-  const batchSize    = 10_000;
-  const peekables    = sources.map(s => new Peekable(s));
+  const gapThreshold        = potentialGapThresholdMs(tableName);
+  const batchSize           = 10_000;
+  const peekables           = sources.map(s => new Peekable(s));
+  const contributedBySource = sources.map(() => 0);
   const batch:       PreparedMessage[] = [];
   let   batchN     = 0;
   let   totalMerged = 0;
 
-  // ── Pick initial source: lowest head tsMs, priority breaks ties ──────────
+  // Initial source: lowest head tsMs; priority breaks ties.
   let activeIdx = -1;
   let activeMs  = Infinity;
 
@@ -49,18 +40,18 @@ export async function* merge(
   }
 
   if (activeIdx === -1) {
+    onComplete(contributedBySource);
+
     return; // all sources empty
   }
 
-  // ── N-way walk ──────────────────────────────────────────────────────────
   while (true) {
     const message = await peekables[activeIdx]!.pop();
 
-    if (message === null) {
-      break; // active source exhausted with no fallback (shouldn't happen here)
-    }
+    if (message === null) break;
 
     batch.push(message);
+    contributedBySource[activeIdx]!++;
 
     if (batch.length >= batchSize) {
       batchN++;
@@ -71,18 +62,13 @@ export async function* merge(
 
     const nextMs = message.tsMs + gapThreshold;
 
-    // Stay on the current source if its next message is within range.
     const currentHead = await peekables[activeIdx]!.peek();
 
-    if (currentHead !== null && currentHead.tsMs <= nextMs) {
-      continue;
-    }
+    if (currentHead !== null && currentHead.tsMs <= nextMs) continue;
 
-    // Switch. First, drain messages from every source whose head falls at or
-    // before `message.tsMs` — those are covered by what the active source
-    // already emitted and would be duplicates. Messages AFTER `message.tsMs`
-    // are gap-fillers and must be kept. Then select the source with the
-    // lowest remaining head; priority breaks ties.
+    // Gap: drop already-covered messages from every other source (heads <=
+    // current ts are duplicates of what we just emitted), then jump to the
+    // next available source.
     for (const p of peekables) {
       let head = await p.peek();
 
@@ -104,9 +90,7 @@ export async function* merge(
       }
     }
 
-    if (nextActive === -1) {
-      break; // all sources exhausted
-    }
+    if (nextActive === -1) break;
 
     activeIdx = nextActive;
   }
@@ -119,14 +103,12 @@ export async function* merge(
   }
 
   plog(`[MERGE] done — ${batchN} batches, ${totalMerged} msgs total`);
+  onComplete(contributedBySource);
 }
 
 /**
- * One-message lookahead adapter over an `AsyncGenerator<PreparedMessage[]>`.
- *
- * `peek()` returns the head without consuming; `pop()` returns and consumes.
- * Holds at most one batch worth of buffered messages — refills lazily when
- * the current batch is exhausted.
+ * One-message lookahead over a batched async generator. Refills lazily one
+ * batch at a time.
  */
 export class Peekable {
   private current: PreparedMessage[] = [];

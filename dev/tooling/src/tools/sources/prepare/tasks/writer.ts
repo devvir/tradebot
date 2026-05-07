@@ -1,67 +1,50 @@
+import type { Writable } from 'node:stream';
 import { debug } from '../../../../shared/ui/logger';
-import type { Writer } from '../../writer';
 import type { Message } from '../../types';
-import type { Overflow } from '../overflow';
 import type { PreparedMessage } from '../types';
 
 const plog = (msg: string): void => { debug(`[${new Date().toISOString()}] ${msg}`); };
 
 /**
- * WRITE — consume the post-DEDUP stream, route in-day messages to `writer`
- * and out-of-day messages to `overflow.add()`.
- *
- * Day membership: `message.date.slice(0, 8) === groupDay`. The exchange
- * timestamp is irrelevant — file naming across all sources is reception-time
- * based.
- *
- * In-day messages within a batch are flushed in one `writer.writeMessages()`
- * call; the writer's promise chain serialises ordering while the call returns
- * immediately, allowing this loop to keep consuming from DEDUP without
- * blocking on disk I/O.
- *
- * The writer's `.tmp` → rename dance is the orchestrator's responsibility,
- * not WRITE's.
+ * Consume `source` and write each message's rows as CSV lines to `out`.
+ * Each batch is concatenated to one `out.write()` call so back-pressure
+ * pauses the producer cleanly on `'drain'`.
  */
 export async function write(
-  source:   AsyncGenerator<PreparedMessage[]>,
-  groupDay: string,
-  writer:   Writer,
-  overflow: Overflow,
-): Promise<{ written: number; overflowed: number }> {
-  let written    = 0;
-  let overflowed = 0;
+  source: AsyncGenerator<PreparedMessage[]>,
+  out:    Writable,
+): Promise<{ written: number }> {
+  let written = 0;
 
   for await (const batch of source) {
-    const inDay:     Message[] = [];
-    let   batchOver: number    = 0;
+    if (batch.length === 0) continue;
 
-    for (const msg of batch) {
-      if (msg.date.slice(0, 4) + msg.date.slice(5, 7) + msg.date.slice(8, 10) === groupDay) {
-        inDay.push({
-          rows:      msg.rows,
-          date:      msg.date,
-          action:    msg.action,
-          timestamp: msg.timestamp,
-        });
+    written += batch.length;
 
-        written++;
-      } else {
-        overflow.add(msg);
-        overflowed++;
-        batchOver++;
-      }
-    }
+    plog(`[WRITE] batch: ${batch.length} msgs | total written: ${written}`);
 
-    if (batchOver > 0) {
-      plog(`[WRITE:overflow] batch: ${batchOver} msgs | total overflow: ${overflowed}`);
-    }
+    await flushBatch(out, batch as Message[]);
+  }
 
-    if (inDay.length > 0) {
-      plog(`[WRITE] batch: ${inDay.length} msgs | total written: ${written}`);
+  return { written };
+}
 
-      await writer.writeMessages(inDay);
+async function flushBatch(out: Writable, batch: Message[]): Promise<void> {
+  const lines: string[] = [];
+
+  for (const msg of batch) {
+    for (const row of msg.rows) {
+      lines.push(row);
     }
   }
 
-  return { written, overflowed };
+  const data = lines.join('\n') + '\n';
+
+  if (! out.write(data)) {
+    await new Promise<void>(resolve => out.once('drain', resolve));
+  }
 }
+
+// ── Test exports ──────────────────────────────────────────────────────────────
+
+export const _test_flushBatch = flushBatch;
