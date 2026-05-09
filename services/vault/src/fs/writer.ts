@@ -19,6 +19,7 @@ import { promisify } from 'util';
 import { pipeline } from 'stream/promises';
 import type { Readable } from 'stream';
 import { logger } from '@devvir/service-kit';
+import config from '../config';
 import { yearDir, openPath, closedPath } from './paths';
 import { recordFailure, setBackpressure } from './health';
 
@@ -214,7 +215,10 @@ const writeMember = async (
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const compressed = await gzipAsync(buffer);
+      const compressed = await gzipAsync(buffer, {
+        level: config.compressionLevel,
+      });
+
       await fsp.appendFile(handle.path, compressed);
 
       return;

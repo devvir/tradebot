@@ -12,6 +12,8 @@ services:
     container_name: vault
 
     environment:
+      VAULT_COMPRESSION_LEVEL: ${VAULT_COMPRESSION_LEVEL:-6}
+
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV:  ${APP_ENV:-prod}
       TZ:        ${TZ:-UTC}
