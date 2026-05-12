@@ -25,9 +25,10 @@ export const writeToVault = async (
   table:    BitmexTable,
   date:     string,
   rows:     unknown[],
+  suffix:   string,
 ): Promise<boolean> => {
   try {
-    const res = await fetch(`${vaultUrl}/files/${table}/${date}/rows`, {
+    const res = await fetch(withSuffix(`${vaultUrl}/files/${table}/${date}/rows`, suffix), {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify(rows),
@@ -76,10 +77,11 @@ export const closeVaultFile = async (
   vaultUrl: string,
   table:    BitmexTable,
   date:     string,
+  suffix:   string,
 ): Promise<void> => {
   while (true) {
     try {
-      const res = await fetch(`${vaultUrl}/files/${table}/${date}/close`, { method: 'POST' });
+      const res = await fetch(withSuffix(`${vaultUrl}/files/${table}/${date}/close`, suffix), { method: 'POST' });
 
       if (res.ok || res.status === 404) return;
 
@@ -91,3 +93,6 @@ export const closeVaultFile = async (
     await waitForVault();
   }
 };
+
+const withSuffix = (url: string, suffix: string): string =>
+  suffix ? `${url}?suffix=${suffix}` : url;

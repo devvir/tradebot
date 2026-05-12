@@ -1,11 +1,13 @@
 import { logger, type RabbitMQ, type Service } from '@devvir/service-kit';
 import SK from './service';
-import { isBitmexDataMessage } from './types';
+import { Config, isBitmexDataMessage } from './types';
 import { createBuffer } from './persistence/buffer';
 
 SK.run(async (service: Service) => {
+  const { vaultUrl, vaultSuffix } = service.config() as Config;
+
   const broker = await service.providers.connect('rabbitmq') as RabbitMQ.Broker;
-  const buffer = createBuffer(service.config('vaultUrl') as string);
+  const buffer = createBuffer(vaultUrl, vaultSuffix);
 
   const stop = await broker.getQueue()!.consume(async (message, { ack, metadata }) => {
     if (! isBitmexDataMessage(message))

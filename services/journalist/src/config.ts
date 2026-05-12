@@ -4,8 +4,9 @@ import type { Config } from './types';
 
 const loadConfig = (): Config => {
   const config: Config = {
-    rabbitmqUrl: sanitizeUrl(process.env.QUEUE_URL || ''),
-    vaultUrl:    process.env.VAULT_URL ?? '',
+    rabbitmqUrl:  sanitizeUrl(process.env.QUEUE_URL || ''),
+    vaultUrl:     process.env.VAULT_URL ?? '',
+    vaultSuffix:  process.env.JOURNALIST_SUFFIX ?? '',
   };
 
   validateConfig(config);

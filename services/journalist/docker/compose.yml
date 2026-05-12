@@ -12,6 +12,8 @@ services:
       QUEUE_URL:  ${QUEUE_URL}
       VAULT_URL:  ${VAULT_URL}
 
+      JOURNALIST_SUFFIX: ${JOURNALIST_SUFFIX:-}
+
       NODE_ENV:  ${APP_ENV:-prod}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       TZ:        ${TZ:-UTC}

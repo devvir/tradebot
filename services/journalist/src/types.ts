@@ -11,8 +11,9 @@ export {
 };
 
 export interface Config {
-  rabbitmqUrl: string;
-  vaultUrl:    string;
+  rabbitmqUrl:   string;
+  vaultUrl:      string;
+  vaultSuffix:   string;
   [key: string]: unknown;
 }
 

@@ -6,7 +6,7 @@ const FLUSH_SIZE     = 1_000;
 const FLUSH_INTERVAL = 1_000;
 const CLOSE_DELAY_MS = 60 * 60 * 1_000;
 
-export const createBuffer = (vaultUrl: string) => {
+export const createBuffer = (vaultUrl: string, suffix: string) => {
   const buffers    = new Map<string, TableBuffer>();
   // Per-table promise chain — ensures all operations for a given table execute
   // in order, one at a time. Flushes are serialized; the day-close is always
@@ -60,7 +60,7 @@ export const createBuffer = (vaultUrl: string) => {
   const writeWithRetry = async (table: BitmexTable, day: string, messages: WsMessage[]): Promise<void> => {
     let pressured = false;
 
-    while (! await writeToVault(vaultUrl, table, day, messages)) {
+    while (! await writeToVault(vaultUrl, table, day, messages, suffix)) {
       if (! pressured) { pressured = true; pressureOn(); }
       await waitForVault();
     }
@@ -133,7 +133,7 @@ export const createBuffer = (vaultUrl: string) => {
       // Fire independently — NOT on the per-table chain. The close of an old
       // day must never block writes for the new day. Vault coordinates its own
       // drain/close ordering via the `closing` gate.
-      closeVaultFile(vaultUrl, table, date).catch(err =>
+      closeVaultFile(vaultUrl, table, date, suffix).catch(err =>
         logger.error({ err, table, date }, 'Close failed'),
       );
     }, CLOSE_DELAY_MS));
