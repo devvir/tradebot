@@ -47,12 +47,16 @@ export async function confirm(message: string): Promise<boolean> {
 }
 
 /** Y/n/a prompt. Returns 'yes', 'no', or 'all'. Default answer is Y. */
-export async function confirmYNA(message: string): Promise<'yes' | 'no' | 'all'> {
+export async function confirmYNA(
+  message:       string,
+  defaultAnswer: 'yes' | 'no' = 'yes',
+): Promise<'yes' | 'no' | 'all'> {
+  const hint  = defaultAnswer === 'no' ? '[y/N/a]' : '[Y/n/a]';
   const answer = await inquirer.prompt([
     {
       type:    'input',
       name:    'choice',
-      message: `${message} [Y/n/a]`,
+      message: `${message} ${hint}`,
       default: '',
     },
   ]);
@@ -61,8 +65,9 @@ export async function confirmYNA(message: string): Promise<'yes' | 'no' | 'all'>
 
   if (raw === 'n') { return 'no'; }
   if (raw === 'a') { return 'all'; }
+  if (raw === 'y') { return 'yes'; }
 
-  return 'yes';
+  return defaultAnswer === 'no' ? 'no' : 'yes';
 }
 
 export async function input(message: string, defaultValue: string | null = null): Promise<string> {

@@ -5,8 +5,18 @@ import { fromDay } from './options';
 
 const DAY_PREFIX_RE = /^(\d{8})/;
 
+/**
+ * The suffix portion of a source filename: one or more `.segment` groups,
+ * each segment being any run of non-dot characters. The filesystem decides
+ * which characters are valid — this pattern just accepts them.
+ *
+ * Single source of truth for "what is a suffix", shared with the vault-path
+ * parser in `scan/parse.ts`.
+ */
+export const SUFFIX_PATTERN = '(?:\\.[^.]+)+';
+
 /** Matches only suffixed source files, e.g. `20260412.local.csv.gz`. */
-export const SUFFIXED_SOURCE_RE = /^\d{8}\.\w+\.csv\.gz$/;
+export const SUFFIXED_SOURCE_RE = new RegExp(`^\\d{8}${SUFFIX_PATTERN}\\.csv\\.gz$`);
 
 /**
  * Parse a user-supplied date string into a normalized YYYYMMDD key.

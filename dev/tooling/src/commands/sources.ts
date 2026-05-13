@@ -2,9 +2,11 @@ import path from 'node:path';
 import { Command } from 'commander';
 import { run } from '../tools/sources/index';
 import { parseFromDay } from '../tools/sources/discover';
-import { setDryRun, setFromDay, setLogPath, setConcurrency } from '../tools/sources/options';
+import { setDryRun, setFromDay, setLogPath, setConcurrency, setYes } from '../tools/sources/options';
 import { runPrepare } from '../tools/sources/prepare/run';
 import { runCheck } from '../tools/sources/check/run';
+import { runStatus } from '../tools/sources/status/run';
+import { runUpdate } from '../tools/sources/update/run';
 import { input } from '../shared/ui/prompts';
 import { error } from '../shared/ui/logger';
 import { getEnv } from '../shared/utils/env';
@@ -55,6 +57,7 @@ type GlobalOpts = {
   log?:         string | boolean;
   from?:        string;
   concurrency?: string;
+  yes?:         boolean;
 };
 
 // ── Registration ──────────────────────────────────────────────────────────────
@@ -110,6 +113,43 @@ export function register(program: Command): void {
         setConcurrency(Math.max(1, parseInt(opts.concurrency ?? '1', 10)));
 
         await runCheck(root);
+      } catch (err) {
+        error((err as Error).message);
+        process.exit(1);
+      }
+    });
+
+  sources
+    .command('status')
+    .description('Read-only audit; print the current state of local, remotes, and Mega')
+    .action(async (_options: object, command: Command) => {
+      try {
+        const opts = command.optsWithGlobals<GlobalOpts>();
+
+        setFromDay(parseFromDay(opts.from ?? null));
+        setLogPath(resolveLogPath(opts.log, 'status'));
+
+        await runStatus();
+      } catch (err) {
+        error((err as Error).message);
+        process.exit(1);
+      }
+    });
+
+  sources
+    .command('update')
+    .description('Audit local + remotes + Mega; pull, prepare, and upload to reach a consistent state')
+    .option('-y, --yes', 'Skip confirmation prompts (for cron / automation)')
+    .action(async (_options: object, command: Command) => {
+      try {
+        const opts = command.optsWithGlobals<GlobalOpts>();
+
+        setYes(opts.yes ?? false);
+        setFromDay(parseFromDay(opts.from ?? null));
+        setLogPath(resolveLogPath(opts.log, 'update'));
+        setConcurrency(Math.max(1, parseInt(opts.concurrency ?? '1', 10)));
+
+        await runUpdate();
       } catch (err) {
         error((err as Error).message);
         process.exit(1);
