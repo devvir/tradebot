@@ -585,27 +585,27 @@ The tooling package loads environment variables in this order (later overrides e
 | `DB_URL` | `mongodb://localhost:27017/tradebot` | db, signal | `mongodb://localhost:27017/tradebot` |
 | `QUEUE_URL` | `amqp://guest:guest@localhost:5672` | rabbit, broadcast | `amqp://guest:guest@localhost:5672` |
 | `RABBITMQ_MGMT_URL` | `http://localhost:15672/api` | rabbit | `http://localhost:15672/api` |
-| `VAULT_DATA_DIR` | `/data/bitmex/vault` | sources | `/data/bitmex/vault` |
+| `VAULT_DATA_DIR` | `/data/bitmex/vault` | data | `/data/bitmex/vault` |
 
 ---
 
 ---
 
-## Sources Tool (`sources`)
+## Data Tool (`data`)
 
-Sanitise vault source data. Two subcommands: `prepare` processes raw WS source files into clean, sorted, deduped daily outputs; `check` verifies the integrity of `.csv.gz` files and recovers corrupt ones.
+Manage vault data: prepare raw WS source files, sync with remotes and Mega, inspect vault state, and recover corrupt files.
 
 ### Usage
 
 ```bash
-./tools sources prepare [path] [-D] [--log <dir>] [--from <date>]
-./tools sources check   [path] [-D]
-./tools sources                        # interactive menu
+./tools data prepare [path] [-D] [--log <dir>] [--from <date>] [-C <n>]
+./tools data recover [path] [-D]
+./tools data status
+./tools data sync   [--from <date>] [--log <dir>] [-C <n>] [-y]
+./tools data                        # interactive menu
 ```
 
-### Path argument
-
-All subcommands accept an optional `[path]` argument that scopes which files to operate on. When omitted you will be prompted; pressing Enter accepts the default (`VAULT_DATA_DIR`).
+### Path argument (`prepare` and `recover`)
 
 | Input | Resolves to |
 |-------|-------------|
@@ -614,69 +614,94 @@ All subcommands accept an optional `[path]` argument that scopes which files to 
 | `instrument/2026` | `$VAULT_DATA_DIR/instrument/2026` |
 | `/data/bitmex/alt` | `/data/bitmex/alt` (absolute path, used as-is) |
 
-### Options
+### Shared options
 
-- `-D, --dry-run` — Report what would be done without writing any output
-- `--log <dir>` — (`prepare` only) Write a `.log` file per day into this directory
-- `--from <date>` — (`prepare` only) Skip days before this date. Accepts `YYYYMMDD` or `YYYY-MM-DD`
-
----
-
-### `sources prepare`
-
-Processes each raw WS source file into a clean, sorted, deduped daily output under `<folder>/prepared/YYYYMMDD.csv.gz`.
-
-Files are grouped by the `YYYYMMDD` prefix in their filename. Within each group, files are sorted by priority (the primary `YYYYMMDD.csv.gz` always leads siblings such as `YYYYMMDD.overflow-<day>.csv.gz`). The pipeline then reads, sorts by canonical timestamp, deduplicates, and writes the prepared output.
-
-**Crash safety**: each day is written to `<day>.csv.gz.tmp` first and renamed on success. Any leftover `.tmp` files from a previous interrupted run are skipped with a warning.
-
-```bash
-# Dry-run: show what would be prepared without writing
-./tools sources prepare instrument -D
-
-# Prepare all instrument files
-./tools sources prepare instrument
-
-# Prepare from a specific date onward
-./tools sources prepare instrument/2026 --from 2026-01-01
-
-# Prepare with per-day log files
-./tools sources prepare instrument --log /tmp/prepare-logs
-```
+| Flag | Subcommands | Effect |
+|------|-------------|--------|
+| `-D, --dry-run` | prepare, recover | Report only — no writes |
+| `--from <date>` | prepare, sync | Skip days before this date (`YYYYMMDD` or `YYYY-MM-DD`) |
+| `--log [dir]` | prepare, recover, sync | Write a log file into `<dir>` (default: cwd) |
+| `-C, --concurrency <n>` | prepare, sync | Parallel workers for prepare (default: 1) |
+| `-y, --yes` | sync | Auto-accept all tasks except abnormal ones |
 
 ---
 
-### `sources check`
+### `data prepare`
 
-Tests every `.csv.gz` file under the scoped path with `gzip -t`. Corrupt files are reported. Without `--dry-run`, each corrupt file is recovered with `gzrecover`; the output is written alongside the original as `<name>.recovered.csv.gz` (e.g. `20260403.csv.gz` → `20260403.recovered.csv.gz`).
+Processes raw WS source files into clean, sorted, deduped daily buckets. Files are grouped by `YYYYMMDD` prefix; the pipeline reads, sorts by canonical timestamp, deduplicates, and writes the output. Each day is written to `<day>.csv.gz.tmp` first and renamed on success.
 
 ```bash
-# Dry-run: report corrupt files, no recovery
-./tools sources check instrument -D
-
-# Check and recover all files under vault root
-./tools sources check
-
-# Check a specific year folder
-./tools sources check instrument/2026
+./tools data prepare instrument -D           # dry-run
+./tools data prepare instrument
+./tools data prepare instrument/2026 --from 2026-01-01
+./tools data prepare instrument --log /tmp/prepare-logs
+./tools data prepare -C 4                    # parallel workers
 ```
+
+See [DATA-PREPARE.md](../../docs/tooling/DATA-PREPARE.md) for full pipeline details.
+
+---
+
+### `data recover`
+
+Tests every `.csv.gz` under the scoped path with `gzip -t`. Without `--dry-run`, corrupt files are recovered with `gzrecover` and written alongside the original as `<name>.recovered.csv` (plain CSV, not gzip). The scrambled tail is pruned at the last valid timestamp row.
+
+```bash
+./tools data recover instrument -D           # dry-run: report only
+./tools data recover                         # recover all under vault root
+./tools data recover instrument/2026
+```
+
+See [DATA-RECOVER.md](../../docs/tooling/DATA-RECOVER.md) for recovery details.
+
+---
+
+### `data status`
+
+Read-only audit. Scans local disk, all configured remotes, and Mega cold storage; prints a wide per-table grid showing what's where. Nothing is written or prompted.
+
+```bash
+./tools data status
+```
+
+See [DATA-STATUS.md](../../docs/tooling/DATA-STATUS.md) for grid layout and vocabulary.
+
+---
+
+### `data sync`
+
+Scans the vault, identifies files that exist but haven't completed their pipeline journey, and offers to move them along. Tasks in order: clean rsync temps → pull from remotes → back up sources to Mega → prepare → back up buckets to Mega → cleanup. Each task is previewed before execution with a `[Y/n/a]` prompt.
+
+```bash
+./tools data sync
+./tools data sync -y                         # unattended (skips abnormal tasks)
+./tools data sync --from 2026-01-01
+./tools data sync -C 4                       # parallel prepare workers
+```
+
+See [DATA-SYNC.md](../../docs/tooling/DATA-SYNC.md) for task derivation and execution details.
 
 ---
 
 ### Interactive menu
 
-Running `./tools sources` with no subcommand prompts for subcommand and path:
+Running `./tools data` with no subcommand prompts for a subcommand then a path:
 
 ```
 Prepare — sort, dedup, gap-fill (merge) WS source files
-Check   — verify .csv.gz integrity; recover corrupt files
+Recover — verify .csv.gz integrity; recover corrupt files
+Status  — read-only audit of local, remotes, and Mega
+Sync    — audit + sync local, remotes, and Mega
 ```
 
 ---
 
 ### Configuration
 
-- `VAULT_DATA_DIR` — Root directory of vault files (default: `/data/bitmex/vault`). Used as the default path for all subcommands when no path argument is provided.
+- `VAULT_DATA_DIR` — Root directory of vault files (default: `/data/bitmex/vault`)
+- `VAULT_REMOTES` — Comma-separated `name=user@host:/path` pairs for rsync remotes
+- `SOURCES_MEGA_RAW` — Mega path for raw WS source backups
+- `SOURCES_MEGA_VAULT` — Mega path for prepared bucket backups
 
 ---
 
@@ -752,7 +777,7 @@ dev/tooling/
 │   │   ├── signal.ts
 │   │   ├── monitor.ts
 │   │   ├── remote.ts
-│   │   ├── sources.ts
+│   │   ├── data.ts
 │   │   └── mapId.ts
 │   ├── tools/                # Tool implementations (isolated)
 │   │   ├── websocket/
@@ -767,21 +792,17 @@ dev/tooling/
 │   │   │   ├── types.ts      # RemoteDest, parseRemoteDest
 │   │   │   ├── sync-env.ts   # Push .env files via scp
 │   │   │   └── pull.ts       # Pull files by md5 comparison
-│   │   └── sources/
+│   │   └── data/
 │   │       ├── index.ts      # Entry point, interactive submenu
-│   │       ├── discover.ts   # Shared: collectLeafFolders, parseFromDay
-│   │       ├── dryRun.ts     # Shared: setDryRun / isDryRun module singleton
+│   │       ├── discover.ts   # Shared: resolveCsvGzFiles, parseFromDay, SUFFIX_PATTERN
+│   │       ├── options.ts    # Shared state: dryRun, fromDay, logPath, concurrency
 │   │       ├── tables.ts     # Shared: KNOWN_TABLES, per-table config
 │   │       ├── types.ts      # Shared types
-│   │       ├── writer.ts     # Gzip output writer
-│   │       ├── prepare/      # `sources prepare` subcommand
-│   │       │   ├── run.ts
-│   │       │   ├── overflow.ts
-│   │       │   ├── types.ts
-│   │       │   ├── tasks/
-│   │       │   └── utils/
-│   │       └── check/        # `sources check` subcommand
-│   │           └── run.ts
+│   │       ├── scan/         # Scanner (shared by status and sync)
+│   │       ├── prepare/      # `data prepare` subcommand
+│   │       ├── recover/      # `data recover` subcommand
+│   │       ├── status/       # `data status` subcommand
+│   │       └── sync/         # `data sync` subcommand
 │   └── shared/               # Shared utilities
 │       ├── ui/
 │       │   ├── logger.ts     # Colored output, formatting
@@ -799,16 +820,11 @@ dev/tooling/
 │       ├── remote.test.ts    # parseRemoteDest, findEnvFiles, listRemoteFiles, localMd5, run()
 │       ├── monitor.test.ts
 │       ├── bouncer.test.ts
-│       └── sources/
-│           ├── checks/
-│           │   ├── header.test.ts
-│           │   ├── duplicates.test.ts
-│           │   └── gaps.test.ts
-│           ├── fix/
-│           │   └── helpers.test.ts
-│           └── merge/
-│               ├── large-table.test.ts
-│               └── small-table.test.ts
+│       └── data/
+│           ├── prepare/
+│           ├── recover/
+│           ├── scan/
+│           └── status/
 ├── .env                      # Dev tooling overrides (loaded after root .env)
 ├── package.json
 ├── tsconfig.json

@@ -12,7 +12,7 @@ import { register as registerBouncer } from './commands/bouncer';
 import { register as registerBroadcast } from './commands/broadcast';
 import { register as registerSignal } from './commands/signal';
 import { register as registerMonitor } from './commands/monitor';
-import { register as registerSources } from './commands/sources';
+import { register as registerData } from './commands/data';
 import { register as registerRemote } from './commands/remote';
 import { register as registerSynth } from './commands/synth';
 import { register as registerMapId } from './commands/mapId';
@@ -31,7 +31,7 @@ const tools: Tool[] = [
   { id: 'broadcast', name: 'Broadcast', description: 'Monitor broadcast exchange messages' },
   { id: 'signal', name: 'Signal', description: 'View signals and indicators from Signal service' },
   { id: 'monitor', name: 'Monitor', description: 'Live dashboard: Docker containers and RabbitMQ queues' },
-  { id: 'sources', name: 'Sources', description: 'Sanitise and diagnose vault source data' },
+  { id: 'data', name: 'Data', description: 'Prepare, sync, and recover vault data' },
   { id: 'remote', name: 'Remote', description: 'Remote server operations (sync-env, pull)' },
   { id: 'synth', name: 'Synth', description: 'Synthetic data tools (index, generate)' },
   { id: 'mapId', name: 'Map ID', description: 'Translate between vault record _id and ISO date' },
@@ -64,7 +64,7 @@ async function main(): Promise<void> {
   registerBroadcast(program);
   registerSignal(program);
   registerMonitor(program);
-  registerSources(program);
+  registerData(program);
   registerRemote(program);
   registerSynth(program);
   registerMapId(program);
