@@ -78,7 +78,7 @@ export function register(program: Command): void {
 
   sources
     .command('prepare [path]')
-    .description('Sort, dedup, gap-fill source files into prepared/YYYYMMDD.csv.gz')
+    .description('Sort, dedup, gap-fill WS source files into WS buckets')
     .action(async (pathArg: string | undefined, _options: object, command: Command) => {
       try {
         const root = resolvePath(pathArg ?? await input('Path:', vaultDir()));

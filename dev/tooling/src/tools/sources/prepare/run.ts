@@ -1,8 +1,9 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { Writable } from 'node:stream';
 import { createWriter } from '@devvir/zipper';
 import { closeDebugLog, setupDebugLog } from '../log';
-import { resolveSourceFiles } from '../discover';
+import { noBucketYet, resolveCsvGzFiles, SUFFIXED_SOURCE_RE } from '../discover';
 import { concurrency, isDryRun } from '../options';
 import { runOrchestrator } from './orchestrator';
 import { createSourceActor } from './source-actor';
@@ -29,7 +30,10 @@ import type { PrepareGroup, StatsCollector } from './types';
  * DEDUP → WRITE pipeline sequentially over each discovered group.
  */
 export async function runPrepare(root: string): Promise<void> {
-  const files = resolveSourceFiles(root);
+  // Keep only suffixed sources whose day's bucket isn't already built.
+  const files = resolveCsvGzFiles(root)
+    .filter(f => SUFFIXED_SOURCE_RE.test(path.basename(f)))
+    .filter(noBucketYet);
 
   if (files.length === 0) {
     reportNoSourcesFound(root);

@@ -1,6 +1,6 @@
 # sources prepare
 
-`sources prepare` reads all source `.csv.gz` files for each table/day group, merges them into a single sorted, deduplicated stream, and writes `prepared/YYYYMMDD.csv.gz` alongside the raw source folder.
+`sources prepare` reads all suffixed source `.csv.gz` files for each table/day group, merges them into a single sorted, deduplicated stream, and writes the resulting bucket `YYYYMMDD.csv.gz` in the same folder. Source files are recognised by their suffix (`YYYYMMDD.<infix>.csv.gz`); buckets have no infix.
 
 ---
 
@@ -226,7 +226,7 @@ The `.tmp` → rename dance is the orchestrator's responsibility, not WRITE's.
 With `-C 1` (default): groups are processed sequentially in the same process. With `-C ≥ 2`: delegates immediately to the subprocess orchestrator (`orchestrator.ts`) and returns.
 
 Per group (C=1 path):
-1. Skip if `prepared/YYYYMMDD.csv.gz` or its `.tmp` already exists.
+1. Skip if `YYYYMMDD.csv.gz` or its `.tmp` already exists in the source folder.
 2. Wire the pipeline, drive it to completion, rename `.tmp` → final path.
 3. Write per-group and command logs.
 
@@ -265,7 +265,7 @@ Each child process is an independent run of the same binary with `-C 1` (default
 
 ## File discovery (`discover.ts`)
 
-`resolveSourceFiles(absPath)` turns the path argument into a sorted list of absolute `.csv.gz` file paths. It matches the path against these patterns in order:
+`resolveCsvGzFiles(absPath)` turns the path argument into a sorted list of absolute `.csv.gz` file paths — sources and buckets alike. It matches the path against these patterns in order:
 
 | # | Pattern | Validation | Files collected |
 |---|---------|------------|-----------------|
@@ -277,11 +277,16 @@ Each child process is an independent run of the same binary with `-C 1` (default
 
 `<table>` refers to one of the 7 known BitMEX table names (`KNOWN_TABLES`). Patterns 3–5 are recognised by matching path components against that set.
 
-`prepared/` subdirectories are never entered — pattern matching targets year dirs directly, and listing within year dirs filters for `*.csv.gz` files only.
+The `--from` filter is applied centrally in `resolveCsvGzFiles` after collection. Empty result (`[]`) is not an error.
 
-The `--from` filter is applied centrally in `resolveSourceFiles` after collection. Empty result (`[]`) is not an error.
+**Caller-side filtering.** `resolveCsvGzFiles` returns every `.csv.gz` it finds; it does not distinguish sources from buckets. `sources prepare` narrows the result with two filters:
 
-**Group assembly** (`utils/discover.ts`): files are grouped by `(parentDir, day)`. Within each group, files are sorted by stem priority so `YYYYMMDD.csv.gz` (bare) precedes `YYYYMMDD.a.csv.gz`, `YYYYMMDD.overflow-SOURCEDAY.csv.gz`, etc. (sort strips the `.csv.gz` extension to preserve this ordering). Output path is always `<parentDir>/prepared/YYYYMMDD.csv.gz`.
+- `SUFFIXED_SOURCE_RE` (in `discover.ts`) — keeps only suffixed sources, excluding bare buckets that share the folder.
+- `noBucketYet` (in `discover.ts`) — drops sources whose `<dir>/<day>.csv.gz[.tmp]` is already present.
+
+`sources check` applies neither filter — it checks every gzip regardless of role.
+
+**Group assembly** (`utils/discover.ts`): files are grouped by `(parentDir, day)`. Within each group, files are sorted lexicographically by filename for stable ordering. Output path is `<parentDir>/YYYYMMDD.csv.gz` — same folder as the sources.
 
 **Table name** is derived by walking path components upward for the first `KNOWN_TABLES` match; falls back to the folder basename.
 
@@ -299,7 +304,7 @@ Three tiers, mutually exclusive between tiers 2 and 3:
 - `prepare.log` — per-group sections appended as they complete: per-source read counts, merge contributions, dedup drops by action, malformatted rows.
 - `debug.log` — verbose internal events, written only when `LOG_LEVEL=debug` is also set.
 
-**Tier 3 — bucket logs** (when `--log` is absent): `prepared/YYYYMMDD.log` written next to each output file. Human-readable: sources, written count, dedup drop count, validation drop sample (capped at 50).
+**Tier 3 — bucket logs** (when `--log` is absent): `YYYYMMDD.log` written next to each output file. Human-readable: sources, written count, dedup drop count, validation drop sample (capped at 50).
 
 **With `-C ≥ 2`:** all children share the same `<dir>/prepare.log` (and `<dir>/debug.log`). Linux's atomic-append guarantee covers per-bucket sections under 4 KB; larger sections may interleave on rare noisy buckets.
 
@@ -368,4 +373,4 @@ Flags:
 <base>                                  any dir whose direct children include KNOWN_TABLES
 ```
 
-`prepare` only creates new files and never modifies originals. To re-run a group: delete `prepared/YYYYMMDD.csv.gz` (and `.log` if desired) and run again.
+`prepare` only creates new files and never modifies originals. To re-run a group: delete `YYYYMMDD.csv.gz` (and `.log` if desired) and run again — the source files in the same folder are untouched.

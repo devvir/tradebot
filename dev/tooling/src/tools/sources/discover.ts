@@ -5,6 +5,9 @@ import { fromDay } from './options';
 
 const DAY_PREFIX_RE = /^(\d{8})/;
 
+/** Matches only suffixed source files, e.g. `20260412.local.csv.gz`. */
+export const SUFFIXED_SOURCE_RE = /^\d{8}\.\w+\.csv\.gz$/;
+
 /**
  * Parse a user-supplied date string into a normalized YYYYMMDD key.
  *
@@ -27,8 +30,9 @@ export function parseFromDay(raw: string | null | undefined): string | null {
 }
 
 /**
- * Resolve an absolute path argument into the list of `.csv.gz` files to
- * process. Patterns are tried in this order:
+ * Resolve an absolute path argument into the list of `.csv.gz` files under it.
+ * Returns sources and buckets alike — filtering by file type is a caller
+ * concern. Patterns are tried in this order:
  *
  *   3.  <table>/<YYYY>/(\d{1,7} | YYYYMMDD | YYYYMMDD.csv.gz)
  *       Day prefix, exact day, or exact file. Year dir must exist.
@@ -45,7 +49,7 @@ export function parseFromDay(raw: string | null | undefined): string | null {
  * the dir is valid but contains nothing matching. Applies the `fromDay()`
  * filter to the result.
  */
-export function resolveSourceFiles(absPath: string): string[] {
+export function resolveCsvGzFiles(absPath: string): string[] {
   const normalized = absPath.replace(/\/+$/, '') || absPath;
   const last       = path.basename(normalized);
   const last2      = path.basename(path.dirname(normalized));
@@ -60,18 +64,19 @@ export function resolveSourceFiles(absPath: string): string[] {
     return resolvePattern6(normalized);
   })();
 
-  return applyFromDayFilter(files).filter(notAlreadyPrepared);
+  return applyFromDayFilter(files);
 }
 
 /**
- * Skip files whose day already has a prepared output (final or in-progress).
- * For `<dir>/<day>.<infix>.csv.gz`, checks `<dir>/prepared/<day>.csv.gz[.tmp]`.
+ * For a suffixed source file `<dir>/<day>.<infix>.csv.gz`, returns true when
+ * no bucket `<dir>/<day>.csv.gz` (or its `.tmp`) is already present. Used by
+ * `sources prepare` to skip days whose bucket is already built.
  */
-function notAlreadyPrepared(file: string): boolean {
-  const day      = path.basename(file).slice(0, 8);
-  const prepared = path.join(path.dirname(file), 'prepared', `${day}.csv.gz`);
+export function noBucketYet(file: string): boolean {
+  const day    = path.basename(file).slice(0, 8);
+  const bucket = path.join(path.dirname(file), `${day}.csv.gz`);
 
-  return ! fs.existsSync(prepared) && ! fs.existsSync(`${prepared}.tmp`);
+  return ! fs.existsSync(bucket) && ! fs.existsSync(`${bucket}.tmp`);
 }
 
 // ── Pattern resolvers ────────────────────────────────────────────────────────

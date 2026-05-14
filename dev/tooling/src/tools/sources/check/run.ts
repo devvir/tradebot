@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import path from 'node:path';
 import { error, info, section, spacer, success, warn } from '../log';
-import { resolveSourceFiles } from '../discover';
+import { resolveCsvGzFiles } from '../discover';
 import { isDryRun } from '../options';
 
 const execFileAsync = promisify(execFile);
@@ -34,7 +34,7 @@ async function recover(filePath: string): Promise<void> {
  * with `gzip -t` and (unless dry-run) recovers corrupt files via `gzrecover`.
  */
 export async function runCheck(root: string): Promise<void> {
-  const files = resolveSourceFiles(root);
+  const files = resolveCsvGzFiles(root);
 
   if (files.length === 0) {
     warn(`No .csv.gz files found under: ${root}`);

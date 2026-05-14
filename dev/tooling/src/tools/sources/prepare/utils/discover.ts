@@ -6,8 +6,8 @@ const DAY_PREFIX_RE = /^(\d{8})/;
 
 /**
  * Group a flat list of `.csv.gz` file paths into PrepareGroups by
- * (parent folder, day). Each file's parent folder is the raw source folder;
- * `outputDir` is `<folder>/prepared`, `tableName` is derived from the path.
+ * (parent folder, day). The output bucket is written to the same folder as
+ * its sources; `tableName` is derived from the path.
  */
 export function discoverGroups(files: string[]): PrepareGroup[] {
   const byKey = new Map<string, { folder: string; day: string; paths: string[] }>();
@@ -33,8 +33,8 @@ export function discoverGroups(files: string[]): PrepareGroup[] {
       day,
       folder,
       tableName:  tableNameFromFolder(folder),
-      paths:      sortByPrioritySortKey(paths),
-      outputDir:  path.join(folder, 'prepared'),
+      paths:      [...paths].sort(),
+      outputDir:  folder,
       outputName: `${day}.csv.gz`,
     });
   }
@@ -43,26 +43,6 @@ export function discoverGroups(files: string[]): PrepareGroup[] {
     a.folder !== b.folder ? a.folder.localeCompare(b.folder) :
     a.day.localeCompare(b.day),
   );
-}
-
-/**
- * Sort by stem (extension stripped) so the primary file `YYYYMMDD.csv.gz`
- * precedes any sibling with an infix. Stripping is required: with full
- * names, `'20260411.a.csv.gz' < '20260411.csv.gz'` because `'a' < 'c'`.
- */
-function sortByPrioritySortKey(filePaths: string[]): string[] {
-  const key = (p: string): string => {
-    const name = path.basename(p);
-
-    return name.slice(0, -'.csv.gz'.length);
-  };
-
-  return [...filePaths].sort((a, b) => {
-    const ka = key(a);
-    const kb = key(b);
-
-    return ka < kb ? -1 : ka > kb ? 1 : 0;
-  });
 }
 
 /**
