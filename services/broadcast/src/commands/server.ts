@@ -2,7 +2,7 @@ import express from 'express';
 import { logger } from '@devvir/service-kit';
 import { SubscribeHandler, UnsubscribeHandler } from '../types';
 
-const COMMAND_SERVER_PORT = 80;
+const COMMAND_SERVER_PORT = 8000;
 
 export const startCommandServer = (
   onSubscribe: SubscribeHandler,

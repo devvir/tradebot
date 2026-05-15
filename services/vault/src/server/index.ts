@@ -10,7 +10,7 @@ import { logger } from '@devvir/service-kit';
 import { registerRoutes } from './routes';
 import { errorMiddleware } from './middleware';
 
-const PORT = 80;
+const PORT = 8000;
 
 export const createServer = (service: Service): void => {
   const app = express();

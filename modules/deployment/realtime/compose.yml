@@ -1,0 +1,23 @@
+# Realtime Deployment — Journal + required infra
+
+name: realtime
+
+include:
+  - path: ../../../services/broadcast/docker/compose.yml
+  - path: ../../../services/journalist/docker/compose.yml
+  - path: ../../../services/rabbitmq/docker/compose.yml
+  - path: ../../../services/vault/docker/compose.yml
+
+services:
+  journal-pipe:
+    extends:
+      file: ../../../services/pipe/docker/compose.yml
+      service: pipe
+    environment:
+      PIPE_BINDINGS: "topic:broadcast > journalist@topic:journalist"
+
+networks:
+  default:
+    name: ${PROJECT_NAME:-tradebot}-network
+    external: true
+

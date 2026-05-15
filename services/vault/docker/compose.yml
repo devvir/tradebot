@@ -19,7 +19,7 @@ services:
       TZ:        ${TZ:-UTC}
 
     ports:
-      - "${VAULT_PORT:-}:80"
+      - ${VAULT_PORT:-}:8000
       - :3000
 
     user: "1000:1000"
