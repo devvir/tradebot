@@ -12,7 +12,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@devvir/zipper": "workspace:*",
+    "@devvir/zipper": "^0.1.0",
     "@tradebot/utils": "workspace:*",
     "amqplib": "^0.10.9",
     "axios": "^1.15.2",

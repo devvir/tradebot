@@ -10,8 +10,8 @@
 // correctly — a line-based reader would fragment them at the embedded `\n`
 // before any consumer could see them as a single field.
 
-import { existsSync, createReadStream, readdirSync, statSync } from 'fs';
-import { createGunzip } from 'zlib';
+import { existsSync, readdirSync, statSync } from 'fs';
+import { createReader } from '@devvir/zipper';
 import { createCsvParser } from '@tradebot/utils';
 import { DATA_DIR, tableDir, openPath, closedPath } from './paths';
 import { NotFoundError } from './errors';
@@ -32,15 +32,15 @@ export async function* streamRecords(table: string, filename: string): AsyncGene
     throw new NotFoundError(`No closed file for ${table}/${filename}`);
   }
 
-  const src    = createReadStream(path);
-  const parser = src.pipe(createGunzip()).pipe(createCsvParser(false));
+  const reader = createReader(path);
+  const parser = reader.stream().pipe(createCsvParser(false));
 
   try {
     for await (const record of parser as AsyncIterable<string[]>) {
       yield record;
     }
   } finally {
-    src.destroy();
+    await reader.close();
   }
 }
 

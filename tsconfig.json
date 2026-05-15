@@ -27,7 +27,6 @@
     { "path": "shared/types" },
     { "path": "shared/utils" },
     { "path": "packages/rabbitmq" },
-    { "path": "packages/service-kit" },
-    { "path": "packages/zipper" }
+    { "path": "packages/service-kit" }
   ]
 }

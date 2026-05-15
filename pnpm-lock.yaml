@@ -29,7 +29,7 @@ importers:
         version: 4.1.6(vitest@4.1.6)
       knip:
         specifier: ^6.10.0
-        version: 6.13.1(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)
+        version: 6.14.0(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)
       nx:
         specifier: 22.6.3
         version: 22.6.3
@@ -49,8 +49,8 @@ importers:
   dev/tooling:
     dependencies:
       '@devvir/zipper':
-        specifier: workspace:*
-        version: link:../../packages/zipper
+        specifier: ^0.1.0
+        version: 0.1.0
       '@tradebot/utils':
         specifier: workspace:*
         version: link:../../shared/utils
@@ -171,21 +171,6 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.1
-        version: 4.1.6(@types/node@25.8.0)(@vitest/coverage-v8@4.1.6)(vite@8.0.13(@types/node@25.8.0)(jiti@2.7.0)(yaml@2.9.0))
-
-  packages/zipper:
-    devDependencies:
-      '@types/node':
-        specifier: ^25.6.0
-        version: 25.8.0
-      '@vitest/coverage-v8':
-        specifier: ^4.1.5
-        version: 4.1.6(vitest@4.1.6)
-      typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.5
         version: 4.1.6(@types/node@25.8.0)(@vitest/coverage-v8@4.1.6)(vite@8.0.13(@types/node@25.8.0)(jiti@2.7.0)(yaml@2.9.0))
 
   services/assembler:
@@ -504,6 +489,9 @@ importers:
       '@devvir/service-kit':
         specifier: workspace:*
         version: link:../../packages/service-kit
+      '@devvir/zipper':
+        specifier: ^0.1.0
+        version: 0.1.0
       '@tradebot/utils':
         specifier: workspace:*
         version: link:../../shared/utils
@@ -1128,6 +1116,9 @@ packages:
 
   '@devvir/elastic-queue@1.0.0':
     resolution: {integrity: sha512-r8A/6ukj7i21CL0MINECKi4xYgudOFIfB6+23tyQb/3dh2d/ISfVDh9MBzI3jyG51NpwBUznxVu9qipq0DaNmg==}
+
+  '@devvir/zipper@0.1.0':
+    resolution: {integrity: sha512-luD5UIr1uHV44s+Q180M3a1M4dWptz0u7H2tkMrvRORMdTnUdhQ4qNrA0g1TAXehY7yLISIy+8tLfyTc/fkitQ==}
 
   '@emnapi/core@1.10.0':
     resolution: {integrity: sha512-yq6OkJ4p82CAfPl0u9mQebQHKPJkY7WrIuk205cTYnYe+k2Z8YBh11FrbRG/H6ihirqcacOgl2BIO8oyMQLeXw==}
@@ -2444,8 +2435,8 @@ packages:
     engines: {node: '>=0.10.0'}
     hasBin: true
 
-  electron-to-chromium@1.5.355:
-    resolution: {integrity: sha512-LUPZhKzZPYSPme1jEYohpkA+ybYCJztr1quAdBd7E7h3+VOBVcKkwwtBJu41nrjawrRzfb8mtMfzWozoaK0ZIQ==}
+  electron-to-chromium@1.5.356:
+    resolution: {integrity: sha512-9NgFd7m5t5MCJ5rUSjJITUXAH9mEGlrlofnMf4YEr+pz6JlP7cWmTAH+JFmbPnaSW8koVTkuW7pacORWAnA5Yw==}
 
   emoji-regex@10.6.0:
     resolution: {integrity: sha512-toUI84YS5YmxW219erniWD0CIVOo46xGKColeNQRgOzDorgBi1v4D71/OFzgD9GO2UGKIv1C3Sp8DAn0+j5w7A==}
@@ -2891,8 +2882,8 @@ packages:
   jsonc-parser@3.2.0:
     resolution: {integrity: sha512-gfFQZrcTc8CnKXp6Y4/CBT3fTc0OVuDofpre4aEeEpSBPV5X5v4+Vmx+8snU7RLPrNHPKSgLxGo9YuQzz20o+w==}
 
-  knip@6.13.1:
-    resolution: {integrity: sha512-hvSnb+YDpDWW1LXub4U0JFfkQhscwgInWuQOv99WTutPZavf1cEP3GwxzEzO2JJpGI9yATk6l0jPLY1V3fp1sQ==}
+  knip@6.14.0:
+    resolution: {integrity: sha512-yEI9ysdGQ3h77gLObvovH0KUYs6ITtJ1f6owmXRalOO32TbolYvHY7Z+2AEOXqw0ZWeh9219/agh2K/GmtfsxQ==}
     engines: {node: ^20.19.0 || >=22.12.0}
     hasBin: true
 
@@ -3746,8 +3737,8 @@ packages:
   thenify@3.3.1:
     resolution: {integrity: sha512-RVZSIV5IG10Hk3enotrhvz0T9em6cyHBLkH/YAZuKqd8hRkKhSfCGIcP2KUY0EPxndzANBmNllzWPwak+bheSw==}
 
-  thread-stream@4.1.0:
-    resolution: {integrity: sha512-Bw6h2iBDt16v6iHLChBIoVYU8CBo9GPsW8TG7h1hRVhqKhIkH6N8qkxNSmiOZTKsCLPbtWG4ViWLkU6KeKXpig==}
+  thread-stream@4.2.0:
+    resolution: {integrity: sha512-e2zZ96wSChazBsbENf/Pcm/4swHt2cEKQ92rhUjkL9GCKiTDJIaTBenjE/m9DXi0QBmTMDkFDdOomUy20A1tDQ==}
     engines: {node: '>=20'}
 
   tinybench@2.9.0:
@@ -4836,6 +4827,8 @@ snapshots:
 
   '@devvir/elastic-queue@1.0.0': {}
 
+  '@devvir/zipper@0.1.0': {}
+
   '@emnapi/core@1.10.0':
     dependencies:
       '@emnapi/wasi-threads': 1.2.1
@@ -5829,7 +5822,7 @@ snapshots:
     dependencies:
       baseline-browser-mapping: 2.10.29
       caniuse-lite: 1.0.30001792
-      electron-to-chromium: 1.5.355
+      electron-to-chromium: 1.5.356
       node-releases: 2.0.44
       update-browserslist-db: 1.2.3(browserslist@4.28.2)
 
@@ -6137,7 +6130,7 @@ snapshots:
     dependencies:
       jake: 10.9.4
 
-  electron-to-chromium@1.5.355: {}
+  electron-to-chromium@1.5.356: {}
 
   emoji-regex@10.6.0: {}
 
@@ -6571,7 +6564,7 @@ snapshots:
 
   jsonc-parser@3.2.0: {}
 
-  knip@6.13.1(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0):
+  knip@6.14.0(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0):
     dependencies:
       fdir: 6.5.0(picomatch@4.0.4)
       formatly: 0.3.0
@@ -7042,7 +7035,7 @@ snapshots:
       real-require: 0.2.0
       safe-stable-stringify: 2.5.0
       sonic-boom: 4.2.1
-      thread-stream: 4.1.0
+      thread-stream: 4.2.0
 
   postcss@8.5.14:
     dependencies:
@@ -7496,7 +7489,7 @@ snapshots:
     dependencies:
       any-promise: 1.3.0
 
-  thread-stream@4.1.0:
+  thread-stream@4.2.0:
     dependencies:
       real-require: 1.0.0
 
