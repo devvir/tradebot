@@ -8,10 +8,10 @@
 
 ## Data flows
 
-Four one-way flows. Remotes are pull-only; Mega is push-only.
+Four one-way flows plus an optional local cleanup step. Remotes are pull-only; Mega is push-only.
 
 ```
-remote(s)  ──pull──▶  local sources  ──prepare──▶  local buckets
+remote(s)  ──pull──▶  local sources  ──prepare──▶  local buckets  ──(delete)──▶  ∅
                             │                             │
                         back up                      back up
                             │                             │
@@ -25,6 +25,7 @@ remote(s)  ──pull──▶  local sources  ──prepare──▶  local buc
 | **back up sources** | Local WS sources → `SOURCES_MEGA_RAW` | push-only |
 | **prepare** | Local WS sources → local bucket | local |
 | **back up buckets** | Local buckets → `SOURCES_MEGA_VAULT` | push-only |
+| **delete local buckets** | Local buckets already in Mega → deleted | local, optional |
 
 ---
 
@@ -54,8 +55,9 @@ Right before showing each task that consumes a prior task's output, the interact
 | `clean-rsync-temps`, `pull` | nothing — first in the pipeline, nothing earlier could have changed |
 | `backup-source`, `prepare`, `backup-bucket` | local disk only — `scanLocal` is re-run and overlaid onto the existing state via `refreshLocal(state)` |
 | `cleanup` | full re-scan (local + remotes + Mega via `scanAll`) — cleanup decisions depend on which sources still exist on remotes and which buckets actually made it to Mega |
+| `delete-local-buckets` | full re-scan — needs current Mega state to ensure it only proposes buckets that are actually there |
 
-The cleanup full re-scan is the only one that goes back over the network. Everything else is a quick local walk.
+The cleanup and delete-local-buckets full re-scans are the ones that go back over the network. Everything else is a quick local walk.
 
 ### 0. Clean rsync temps (pre-flight)
 
@@ -100,6 +102,14 @@ Each file carries a `fromPrepare` flag so the summary can show the breakdown. Ap
 
 At execution time, predicted-prepare files that aren't on disk yet are silently skipped — the next run picks them up. After the upload batch, every file is verified against Mega (see Execution → Upload verification).
 
+### 5. Delete local buckets (optional)
+
+Find local buckets that are already present in `SOURCES_MEGA_VAULT` — their local copy is now redundant. Groups them by `(table, year)` and prompts once per range.
+
+**This step is always manual.** It is never auto-run under `-y` / `--yes` and does not support the `a` (accept-all) option from other tasks. The prompt is `y/N/q` per range, with `N` as the default. `q` stops asking and skips remaining ranges.
+
+**Execution:** `fs.unlinkSync` each bucket file in the range. Failures are reported but do not abort the remaining ranges.
+
 ---
 
 ## Summary
@@ -113,6 +123,7 @@ After scanning, `data sync` prints a summary before asking to execute anything. 
   • 12 dates for 2 tables can be prepared (sources → bucket)  ⚠ review required
   • 14 (7 present, 7 prepared) bucket files from 4 tables can be backed up in Mega
   • 28 (14 local, 14 remote) source files from 4 tables can be moved to .trash
+  • 9 local bucket files from 2 tables can be deleted (backed up in Mega) (2 ranges)
 ```
 
 Backup-source and backup-bucket counts are **predictive** — they include files that will exist locally after the previous step (pull / prepare) runs. The breakdown after each count shows what's already on disk versus what depends on the prior step succeeding. The breakdown is omitted when all files are already present (no dependency to flag).
@@ -132,6 +143,8 @@ Run this task? [Y/n/a]  (Y = yes, n = skip, a = accept all remaining)
 For tasks flagged abnormal (`isAbnormal: true`) the hint changes to `[y/N/a]` — N is the default — and a `⚠` warning explaining why precedes the prompt.
 
 With `-y` / `--yes` set, all tasks are auto-accepted without prompting, **except** abnormal ones, which are skipped with a warning. This is the same mechanism for every task type — prepare days missing collector sources, cleanup with the "bucket-built-without-this-source" pattern, etc.
+
+**Delete-local-buckets is always manual.** Even under `-y` or after accepting all, this task is skipped with a notice. It uses its own `y/N/q` prompt per range — there is no `a` option. `q` stops asking and skips the remaining ranges.
 
 ---
 
@@ -163,7 +176,6 @@ The normal expectation is that sources for a day move in lockstep: either all ar
 
 **What's never touched:**
 
-- Buckets — they continue through a separate import pipeline (MongoDB ingest) outside this script's scope.
 - Anything in `.trash` — the user empties it manually when satisfied.
 
 ---
@@ -176,10 +188,10 @@ src/tools/data/
 
   sync/
     run.ts         runSync() — entry point: find rsync temps → scan → derive → summarise → execute
-    tasks.ts       deriveTasks(state) → Task[];  findRsyncTemps(localBase) → CleanRsyncTempsTask | null
+    tasks.ts       deriveTasks(state) → Task[];  findRsyncTemps(localBase) → CleanRsyncTempsTask | null;  deleteLocalBucketsTask(state) → DeleteLocalBucketsTask | null
     types.ts       Task union + all task/file interfaces
     display.ts     printSummary(tasks) — bullet list; printPreview(task) — file preview
-    interactive.ts runInteractive(tasks, state) — Y/n/a loop with abnormal-task guards; refreshes local state and re-derives each task in `live` mode right before showing its preview, so what you see and run matches actual disk state, not the initial prediction
+    interactive.ts runInteractive(tasks, state) — Y/n/a loop with abnormal-task guards; delete-local-buckets uses a separate per-range y/N/q loop and is never auto-run; refreshes local or full state before each task
 ```
 
 **Cross-subcommand rule:** `sync/` never imports from `status/`. Shared code lives at `data/` or `data/scan/`.
@@ -194,6 +206,7 @@ src/tools/data/
 - **Prepare:** spawn `data prepare <vault>` as a subprocess with inherited stdio, so its progress streams live. `-C` and `--from` are forwarded. `data prepare` discovers preparable days itself, so no path/group arguments are passed — it processes the whole vault. A non-zero exit is reported as a warning but does not abort the run; a re-run picks up anything missed.
 - **Back up buckets:** `mega-put -c <local-bucket-file> <SOURCES_MEGA_VAULT>/<table>/<year>/` per file. Buckets live alongside their sources in the year dir, so no promotion step is needed. The batch is verified afterwards (see Upload verification).
 - **Cleanup:** re-scan first; then for each file, `fs.renameSync` (local) or one SSH call running a shell snippet (remote). Single SSH per remote file. The remote snippet checks the source exists (exit 100 if not — distinguished from real failures), compares its byte size against the local counterpart when one is on disk (exit 101 on mismatch), then does mkdir + collision-safe `mv`.
+- **Delete local buckets:** re-scan first (needs fresh Mega state); then for each confirmed range, `fs.unlinkSync` each bucket file. Never auto-run.
 
 **Upload verification.** After each `mega-put` batch, one `mega-ls -l` is run per destination directory and the Mega-reported byte size of every uploaded file is compared against the local file. A file missing from Mega, or whose size differs, is counted as a failure — so a silent or partial upload is caught before the next run treats the file as done.
 
@@ -206,7 +219,7 @@ src/tools/data/
 | `--from <date>` | Restrict days to ≥ this date (`YYYYMMDD` or `YYYY-MM-DD`). |
 | `--log [dir]` | Mirror output to `<dir>/update.log` (default `<cwd>`). |
 | `-C, --concurrency <n>` | Parallel workers for `prepare`. No effect on other tasks. |
-| `-y, --yes` | Auto-accept all tasks — except abnormal prepare tasks, which are skipped. |
+| `-y, --yes` | Auto-accept all tasks — except abnormal tasks (skipped with a warning) and `delete-local-buckets` (always skipped; must be confirmed manually). |
 
 ---
 

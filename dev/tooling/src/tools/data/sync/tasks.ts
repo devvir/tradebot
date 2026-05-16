@@ -10,6 +10,8 @@ import {
   CleanRsyncTempsTask,
   CleanupFile,
   CleanupTask,
+  DeleteLocalBucketsRange,
+  DeleteLocalBucketsTask,
   PrepareGroup,
   PrepareTask,
   PullFile,
@@ -70,6 +72,10 @@ export function deriveTasks(state: VaultState, mode: DerivationMode = 'live'): T
   const cleanup = cleanupTask(state, preparedDays);
 
   if (cleanup) tasks.push(cleanup);
+
+  const deleteLocalBuckets = deleteLocalBucketsTask(state);
+
+  if (deleteLocalBuckets) tasks.push(deleteLocalBuckets);
 
   return tasks;
 }
@@ -459,6 +465,49 @@ function byCleanupOrder(a: CleanupFile, b: CleanupFile): number {
   if (a.day      !== b.day)      return a.day.localeCompare(b.day);
 
   return a.suffix.localeCompare(b.suffix);
+}
+
+// ── Delete local buckets ──────────────────────────────────────────────────────
+
+/**
+ * Finds local buckets that are already backed up in Mega and can be removed
+ * from local storage. Grouped by (table, year). Only offered interactively —
+ * never auto-run.
+ */
+export function deleteLocalBucketsTask(state: VaultState): DeleteLocalBucketsTask | null {
+  const byTableYear = new Map<string, DeleteLocalBucketsRange>();
+
+  for (const table of state.tables) {
+    for (const day of table.days.values()) {
+      if (before(day))       continue;
+      if (! day.localBucket) continue;
+      if (! day.megaBucket)  continue;
+
+      const year = day.day.slice(0, 4);
+      const key  = `${table.name}/${year}`;
+
+      let range = byTableYear.get(key);
+
+      if (! range) {
+        range = { table: table.name, year, days: [] };
+        byTableYear.set(key, range);
+      }
+
+      range.days.push(day.day);
+    }
+  }
+
+  if (byTableYear.size === 0) return null;
+
+  const ranges = [...byTableYear.values()];
+
+  for (const r of ranges) r.days.sort();
+
+  ranges.sort((a, b) => (
+    a.table === b.table ? a.year.localeCompare(b.year) : a.table.localeCompare(b.table)
+  ));
+
+  return { kind: 'delete-local-buckets', ranges, isAbnormal: false, abnormalWarning: '' };
 }
 
 // ── Rsync temp detection ──────────────────────────────────────────────────────

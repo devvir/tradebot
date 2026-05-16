@@ -3,7 +3,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { C } from '../../../shared/utils/colors';
-import { confirmYNA } from '../../../shared/ui/prompts';
+import { confirmYNA, confirmYNQ } from '../../../shared/ui/prompts';
 import { info, spacer, success, warn } from '../log';
 import { concurrency, fromDay, isYes } from '../options';
 import { printPreview } from './display';
@@ -20,6 +20,7 @@ import {
   CleanupLocalFile,
   CleanupRemoteFile,
   CleanupTask,
+  DeleteLocalBucketsTask,
   PrepareTask,
   PullTask,
   Task,
@@ -53,6 +54,17 @@ export async function runInteractive(tasks: Task[], state: VaultState): Promise<
 
     printPreview(task);
     spacer();
+
+    // Delete-local-buckets is always manual — never auto-run, no A option.
+    if (task.kind === 'delete-local-buckets') {
+      if (isYes() || acceptAll) {
+        info('Delete local buckets: manual confirmation required — skipped in unattended mode.');
+        continue;
+      }
+
+      await executeDeleteLocalBuckets(task, state.config.localBase);
+      continue;
+    }
 
     if (task.isAbnormal) {
       warn(`⚠ ${task.abnormalWarning}`);
@@ -113,6 +125,13 @@ async function liveTaskFor(predicted: Task, state: VaultState): Promise<Task | n
     return deriveTasks(fresh, 'live').find(t => t.kind === 'cleanup') ?? null;
   }
 
+  if (predicted.kind === 'delete-local-buckets') {
+    info('Re-scanning to verify Mega backup state …');
+    const fresh = await scanAll(state.config);
+
+    return deriveTasks(fresh, 'live').find(t => t.kind === 'delete-local-buckets') ?? null;
+  }
+
   return predicted;
 }
 
@@ -153,6 +172,52 @@ async function execute(task: Task, localBase: string): Promise<void> {
     await executeCleanup(task);
 
     return;
+  }
+}
+
+async function executeDeleteLocalBuckets(task: DeleteLocalBucketsTask, localBase: string): Promise<void> {
+  for (const range of task.ranges) {
+    const first = range.days[0]!;
+    const last  = range.days[range.days.length - 1]!;
+    const span  = first === last ? first : `${first} → ${last}`;
+
+    console.log(`  ${C.dim}${range.table}/${range.year}${C.reset}  ${range.days.length} day${range.days.length === 1 ? '' : 's'}  ${C.dim}(${span})${C.reset}`);
+
+    const choice = await confirmYNQ('Delete this range from local?');
+
+    if (choice === 'quit') {
+      info('Stopped — remaining ranges skipped.');
+      break;
+    }
+
+    if (choice === 'no') {
+      warn(`Skipped: ${range.table}/${range.year}`);
+      spacer();
+      continue;
+    }
+
+    let ok   = 0;
+    let fail = 0;
+
+    for (const day of range.days) {
+      const filePath = path.join(localBase, range.table, range.year, `${day}.csv.gz`);
+
+      try {
+        fs.unlinkSync(filePath);
+        ok++;
+      } catch (err) {
+        warn(`Failed to delete ${range.table}/${range.year}/${day}.csv.gz: ${(err as Error).message}`);
+        fail++;
+      }
+    }
+
+    if (fail === 0) {
+      success(`Deleted ${ok} bucket file${ok === 1 ? '' : 's'} from ${range.table}/${range.year}`);
+    } else {
+      warn(`Deleted ${ok}, failed ${fail} — check permissions`);
+    }
+
+    spacer();
   }
 }
 
@@ -584,11 +649,12 @@ async function listMegaDirSizes(dir: string): Promise<Map<string, number>> {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function taskLabel(task: Task): string {
-  if (task.kind === 'clean-rsync-temps') return 'Remove rsync temp files';
-  if (task.kind === 'pull')              return `Pull from ${task.remote}`;
-  if (task.kind === 'backup-source')     return 'Back up sources to Mega';
-  if (task.kind === 'prepare')           return 'Prepare source files';
-  if (task.kind === 'backup-bucket')     return 'Back up buckets to Mega';
+  if (task.kind === 'clean-rsync-temps')    return 'Remove rsync temp files';
+  if (task.kind === 'pull')                 return `Pull from ${task.remote}`;
+  if (task.kind === 'backup-source')        return 'Back up sources to Mega';
+  if (task.kind === 'prepare')              return 'Prepare source files';
+  if (task.kind === 'backup-bucket')        return 'Back up buckets to Mega';
+  if (task.kind === 'delete-local-buckets') return 'Delete local buckets (backed up in Mega)';
 
   return 'Move completed sources to .trash';
 }

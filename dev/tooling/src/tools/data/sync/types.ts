@@ -124,6 +124,23 @@ export interface CleanupTask extends AbnormalFlag {
   files: CleanupFile[];
 }
 
+// ── Delete local buckets ──────────────────────────────────────────────────────
+
+export interface DeleteLocalBucketsRange {
+  table: string;
+  year:  string;
+  days:  string[];   // YYYYMMDD, sorted
+}
+
+/**
+ * A range that has a local bucket AND a Mega bucket — the local copy can
+ * be deleted. Never auto-run under -y; always requires per-range confirmation.
+ */
+export interface DeleteLocalBucketsTask extends AbnormalFlag {
+  kind:   'delete-local-buckets';
+  ranges: DeleteLocalBucketsRange[];
+}
+
 // ── Union ─────────────────────────────────────────────────────────────────────
 
 export type Task =
@@ -132,4 +149,5 @@ export type Task =
   | PrepareTask
   | BackupSourceTask
   | BackupBucketTask
-  | CleanupTask;
+  | CleanupTask
+  | DeleteLocalBucketsTask;

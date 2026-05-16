@@ -5,6 +5,7 @@ import {
   BackupSourceTask,
   CleanRsyncTempsTask,
   CleanupTask,
+  DeleteLocalBucketsTask,
   PrepareTask,
   PullTask,
   Task,
@@ -40,11 +41,12 @@ export function printSummary(tasks: Task[]): void {
 }
 
 function summaryLine(task: Task): string {
-  if (task.kind === 'clean-rsync-temps') return cleanRsyncTempsSummary(task);
-  if (task.kind === 'pull')              return pullSummary(task);
-  if (task.kind === 'backup-source')     return backupSourceSummary(task);
-  if (task.kind === 'prepare')           return prepareSummary(task);
-  if (task.kind === 'backup-bucket')     return backupBucketSummary(task);
+  if (task.kind === 'clean-rsync-temps')    return cleanRsyncTempsSummary(task);
+  if (task.kind === 'pull')                 return pullSummary(task);
+  if (task.kind === 'backup-source')        return backupSourceSummary(task);
+  if (task.kind === 'prepare')              return prepareSummary(task);
+  if (task.kind === 'backup-bucket')        return backupBucketSummary(task);
+  if (task.kind === 'delete-local-buckets') return deleteLocalBucketsSummary(task);
 
   return cleanupSummary(task);
 }
@@ -104,6 +106,16 @@ function backupBucketSummary(task: BackupBucketTask): string {
   return `${count} bucket file${n === 1 ? '' : 's'} from ${tables} table${tables === 1 ? '' : 's'} can be backed up in Mega`;
 }
 
+function deleteLocalBucketsSummary(task: DeleteLocalBucketsTask): string {
+  const n      = task.ranges.reduce((sum, r) => sum + r.days.length, 0);
+  const tables = new Set(task.ranges.map(r => r.table)).size;
+  const ranges = task.ranges.length;
+
+  const rangeNote = ranges > 1 ? ` ${C.dim}(${ranges} ranges)${C.reset}` : '';
+
+  return `${C.bold}${n}${C.reset} local bucket file${n === 1 ? '' : 's'} from ${tables} table${tables === 1 ? '' : 's'} can be deleted (backed up in Mega)${rangeNote}`;
+}
+
 /**
  * Renders the `(X present, Y pulled/prepared)` annotation. Returns an empty
  * string when there's nothing conditional — keeps the line clean when the
@@ -145,6 +157,18 @@ export function printPreview(task: Task): void {
       const range = first === last ? first : `${first} → ${last}`;
 
       console.log(`  ${C.dim}${g.table}/${g.year}${C.reset}  ${g.days.length} day${g.days.length === 1 ? '' : 's'}  ${C.dim}(${range})${C.reset}`);
+    }
+
+    return;
+  }
+
+  if (task.kind === 'delete-local-buckets') {
+    for (const r of task.ranges) {
+      const first = r.days[0]!;
+      const last  = r.days[r.days.length - 1]!;
+      const range = first === last ? first : `${first} → ${last}`;
+
+      console.log(`  ${C.dim}${r.table}/${r.year}${C.reset}  ${r.days.length} day${r.days.length === 1 ? '' : 's'}  ${C.dim}(${range})${C.reset}`);
     }
 
     return;

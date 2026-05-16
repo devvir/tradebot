@@ -70,6 +70,25 @@ export async function confirmYNA(
   return defaultAnswer === 'no' ? 'no' : 'yes';
 }
 
+/** y/N/q prompt. Returns 'yes', 'no', or 'quit'. Default is N. */
+export async function confirmYNQ(message: string): Promise<'yes' | 'no' | 'quit'> {
+  const answer = await inquirer.prompt([
+    {
+      type:    'input',
+      name:    'choice',
+      message: `${message} [y/N/q]`,
+      default: '',
+    },
+  ]);
+
+  const raw = (answer.choice as string).trim().toLowerCase();
+
+  if (raw === 'y') return 'yes';
+  if (raw === 'q') return 'quit';
+
+  return 'no';
+}
+
 export async function input(message: string, defaultValue: string | null = null): Promise<string> {
   const answer = await inquirer.prompt({
     type: 'input',
