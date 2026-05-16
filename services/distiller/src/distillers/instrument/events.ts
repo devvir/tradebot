@@ -3,17 +3,17 @@ import { BitmexTable }                        from '@devvir/bitmex-database';
 import type { BitmexMessage, TableTypeMap }   from '@devvir/bitmex-database';
 import { logger }                             from '@devvir/service-kit';
 
-import type { InstrumentItem, InstrumentMsg, CompositeIndexRow } from '../types';
+import type { InstrumentItem, InstrumentMsg, CompositeIndexRow } from '../../types';
 import type {
   InstrumentRunState,
   InstrumentSource,
   InstrumentSymCacheEntry,
   InstrumentTaggedEvent,
-} from './types';
+} from '../types';
 
-import { getFirstSeedForSymbol } from './instrument.seeds';
-import { createRolling, addTrade, computeMinuteBlock } from './instrument.rolling';
-import { makeId, toMs }            from './instrument.ids';
+import { getFirstSeedForSymbol } from './seeds';
+import { createRolling, addTrade, computeMinuteBlock } from './rolling';
+import { makeId, toMs }            from './ids';
 
 type QuoteDoc      = TableTypeMap[BitmexTable.Quote]      & { _id: number };
 type TradeDoc      = TableTypeMap[BitmexTable.Trade]      & { _id: number };

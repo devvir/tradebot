@@ -1,4 +1,4 @@
-import type { InstrumentItem } from '../types';
+import type { InstrumentItem } from '../../types';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */

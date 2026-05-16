@@ -24,57 +24,94 @@ boundary without replaying the full history.
 
 ## Processing Loop
 
-All derivations run in parallel once per cycle, then the service sleeps 1 hour:
+All derivations run as parallel infinite loops. Each loop is driven by a `DateWalker`
+that blocks until the next ready date:
 
 ```
-while true:
-  parallel:
-    distillTrades      → phase 1 (raw → 1m) then phase 2 (1m → 5m/1h/1d)
-    distillQuotes      → phase 1 (raw → 1m) then phase 2 (1m → 5m/1h/1d)
-    distillOrderBook   → batch replay of L2 delta stream
-    distillInstrument  → daily partials + event-driven updates from 5 vault sources
-    distillPartials    → per-table daily snapshots into `_partials_`
-  sleep 1h
+parallel:
+  distillTrades:    for each date from walker → generate 1m / 5m / 1h / 1d bins
+  distillQuotes:    for each date from walker → generate 1m bins, then coarser copies
+  distillOrderBook: batch replay of L2 delta stream
+  distillInstrument: daily partials + event-driven updates from 5 vault sources
+  distillPartials:  per-table daily snapshots into `_partials_`
 ```
 
-Each derivation goes all the way to the tip in a single call — no artificial batching
-between cycles. The first run after a long data gap processes the entire backlog before
-sleeping.
+### DateWalker
 
-## Trade — Two-Phase Derivation
+`dateWalker(target, source)` is a blocking infinite iterator. It watches two sets of
+Redis keys to find dates ready for processing:
 
-### Phase 1 — raw → tradeBin1m
+- **Customs markers** (`customs:{source}:{date}` = `'done'`): owned by Registrar.
+  A `'done'` value is the post-MongoDB confirmation — every message for that bucket
+  has been successfully inserted. The walker yields a date as soon as it is customs-done
+  in every required source; no hold or drain time is needed because `'done'` already
+  proves the data is in MongoDB.
+- **Distiller markers** (`distiller_{target}_{date}`): written by the walker itself when
+  the caller calls `next()` for the following date. A date already marked done is skipped.
+  Before yielding any candidate, the walker does a cheap `GET` on that key to guard against
+  a stale distCache — if the key is already set, the cache is force-expired and the scan
+  repeats immediately.
 
-Aggregates raw source documents into 1-minute OHLCV bins using a MongoDB `$group`
-pipeline, chunked by calendar day for memory efficiency. Progress is tracked by the
-highest `_id` in `tradeBin1m` — on restart, processing resumes from there.
+When the caller calls `next()`, the walker atomically marks the *previous* date as done
+before scanning for the next one. This means: if the service crashes mid-day, the
+incomplete day is not marked done and will be re-processed on restart. Every generator
+is idempotent — re-running a date overwrites or silently skips duplicates.
 
-**Completeness guarantee:** the current calendar day is always skipped. A day is
-confirmed complete by the existence of at least one document belonging to the following
-day in the source collection. This ensures no 1m bin is ever built from a partial
-minute's worth of data.
+When no date is ready, the walker sleeps 30 seconds and retries.
 
-Phase 1 short-circuits when there are no complete days to process, in which case
-phase 2 is skipped for that cycle.
+### Shutdown
 
-### Phase 2 — tradeBin1m → 5m/1h/1d
+The service uses a best-effort shutdown pattern. Each distiller increments a shared
+`distillers` counter before entering its loop, checks a `stopping` flag at the start of
+each iteration, and decrements + breaks when the flag is set. The shutdown handler sets
+`stopping = true` and waits for `distillers` to reach zero. If a distiller does not notice
+the flag in time, the OS sends SIGKILL after ~30 seconds.
 
-Rolls up `tradeBin1m` into larger bins using the same `$group` / `$merge` pattern,
-chunked by calendar year. Because phase 1 only produces complete-day data, every
-coarser bin derived from it is guaranteed to be complete — no cutoff logic is needed.
+## Trade Distillation
 
-Resume is independent of phase 1: it queries the last document in `tradeBin1d`, maps
-back to the corresponding year boundary in `tradeBin1m`, and resumes from there.
+For each date from the walker, four bin sizes are generated in order: 1m → 5m → 1h → 1d.
 
-## Transforms
+### raw → tradeBin1m
 
-### trade → tradeBin1m/5m/1h/1d
+Aggregates raw `trade` documents for the calendar day into 1-minute OHLCV bins using a
+MongoDB `$group` / `$merge` pipeline. Trade timestamps are mid-period (the trade at
+00:05:00 belongs to the 00:05 minute, not 00:04), so the match range is `[from, to)`.
+Bins are timestamped at end-of-period: the 1m bin for 00:04 has `timestamp=00:05:00.000Z`.
 
-Groups trades into fixed time buckets aligned to UTC. Each bin records:
+### tradeBin1m → 5m/1h/1d
+
+Rolls up the 1m bins for the same calendar day into coarser sizes using `$group` /
+`$merge`. Bin timestamps are end-of-period, so they must be shifted back by 1ms before
+truncating to avoid off-by-one grouping at boundaries.
+
+### Open correction — patchBoundaries
+
+BitMEX defines `open` as the previous bin's close, not the first trade's price. Within
+a day, `$setWindowFields $shift` wires this up in the aggregation pipeline. Across day
+boundaries (where two independently-processed days meet), a post-aggregation patch step
+is needed.
+
+After generating bins for a day N, `patchBoundaries` runs for each bin size. It finds
+all symbols that appear in day N, then for each symbol:
+
+1. **Anchor patch**: patch the open of day N's first bin using day N-1's last close
+   (day N was just generated; day N-1 was processed earlier).
+2. **Peek patch**: patch the open of day N+1's first bin using day N's last close
+   (day N+1 may have been processed out of order before day N).
+
+Both patches are scoped to symbols that appear in day N — the only bins our run could
+have affected. The anchor-and-peek pattern means processing N → N+1 and processing
+N+1 → N both produce identical final documents.
+
+## Document Shapes
+
+### Trade bins
+
+Each trade bin records:
 
 | Field | Description |
 |---|---|
-| `_id` | `_id` of the first source document in the bin |
+| `_id` | `_id` of the first source trade in the bin |
 | `timestamp` | End of the period (ISO 8601) |
 | `symbol` | Instrument symbol |
 | `open/high/low/close` | Prices |
@@ -84,41 +121,9 @@ Groups trades into fixed time buckets aligned to UTC. Each bin records:
 | `lastSize` | Size of the last trade |
 | `turnover/homeNotional/foreignNotional` | Present when source has them |
 
-### quote → quoteBin1m/5m/1h/1d
+### Quote bins
 
-Quote distillation uses a different approach from trade distillation — there is no
-aggregation across the source documents within a period. Instead, each bin is a
-**snapshot**: the last-seen ask and the last-seen bid within the minute, which may
-come from different source documents.
-
-**Phase 1 — raw → quoteBin1m**
-
-Iterates the `quote` collection in full-day batches. For each batch, a MongoDB
-aggregation pipeline groups by `(minute, symbol)` and uses `$top` (sorted by `_id`
-descending, nulling out missing sides) to independently find the highest-`_id`
-document that had an `askPrice` and the highest-`_id` document that had a `bidPrice`.
-The two are merged in TypeScript into a single `QuoteBin`.
-
-Resume is driven by the latest timestamp in `quoteBin1m`. The start day for each run
-reprocesses the last recorded day (crash-safe). The upper bound is derived from the
-latest quote's timestamp: the current minute is always excluded to avoid generating a
-bin from an incomplete minute.
-
-**Phase 2 — quoteBin1m → 5m/1h/1d**
-
-The coarser bins are not re-aggregated — they are verbatim copies of selected
-`quoteBin1m` documents, filtered by timestamp pattern:
-
-| Target | Condition |
-|---|---|
-| `quoteBin5m` | minute divisible by 5 (`HH:00`, `HH:05`, … `HH:55`) |
-| `quoteBin1h` | minute = 00 (`HH:00:00.000Z`) |
-| `quoteBin1d` | midnight (`T00:00:00.000Z`) |
-
-Each run copies up to 10,000 new documents per target, resuming from the last
-existing entry in each target collection.
-
-Each bin records:
+Each quote bin records:
 
 | Field | Description |
 |---|---|
@@ -261,9 +266,3 @@ and makes downstream consumers' day-boundary queries trivial.
 Partials are written with `insertOne` and E11000 (duplicate key) errors are
 silently ignored — re-running a range is idempotent.
 
-## Duplicate Handling
-
-Trade bins use `$merge` with `whenMatched: 'replace'` — re-running a range produces
-identical documents that overwrite in place. Quote bins and order book documents use
-`insertMany` with E11000 (duplicate key) errors silently ignored, achieving the same
-idempotency.

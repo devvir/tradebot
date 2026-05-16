@@ -1,8 +1,8 @@
-import type { MongoClient } from 'mongodb';
+import type { Db } from 'mongodb';
 import { createTable, BitmexTable } from '@devvir/bitmex-database';
 import type { BitmexMessage, Table, TableTypeMap } from '@devvir/bitmex-database';
 import { logger } from '@devvir/service-kit';
-import { ensureIndex } from '../indexes';
+import { ensureIndex } from '../utils/indexes';
 
 type OBL2Item  = TableTypeMap[BitmexTable.OrderBookL2];
 type OBL2Table = Table<TableTypeMap[BitmexTable.OrderBookL2]>;
@@ -23,16 +23,16 @@ interface StoredOrderBook {
   timestamp: string;
 }
 
-export const distillOrderBook = async (mongo: MongoClient, database: string): Promise<void> => {
+export const distillOrderBook = async (db: Db): Promise<void> => {
   const collections = [ 'orderBookL2', 'orderBookL2_25', 'orderBook10' ];
 
-  await Promise.all(collections.map(collection => ensureIndex(collection, [
+  await Promise.all(collections.map(collection => ensureIndex(db, collection, [
     { timestamp: 1 },
     { action: 1, timestamp: 1 },
     { symbol: 1, timestamp: 1 },
   ])));
 
-  const resumeId = await getResumeId(mongo, database);
+  const resumeId = await getResumeId(db);
 
   logger.debug({ resumeId }, 'orderBook: resuming from');
 
@@ -49,8 +49,7 @@ export const distillOrderBook = async (mongo: MongoClient, database: string): Pr
   let processed = 0;
 
   while (true) {
-    const batch = await mongo
-      .db(database)
+    const batch = await db
       .collection(COLLECTION_IN)
       .find({ _id: { $gt: lastId } } as any)
       .sort({ _id: 1 })
@@ -116,7 +115,7 @@ export const distillOrderBook = async (mongo: MongoClient, database: string): Pr
       const { toInsert } = state[i]!;
       if (toInsert.length === 0) continue;
 
-      await mongo.db(database).collection(collection)
+      await db.collection(collection)
         .insertMany(toInsert as any[], { ordered: false })
         .catch((err: any) => {
           if (err?.code !== 11000) throw err;
@@ -175,10 +174,10 @@ const topChanged = (
 /**
  * Resume from the minimum across all output collections so no data is missed.
  */
-const getResumeId = async (mongo: MongoClient, database: string): Promise<number> => {
+const getResumeId = async (db: Db): Promise<number> => {
   const ids = await Promise.all(
     OUTPUTS.map(({ collection }) =>
-      mongo.db(database).collection(collection)
+      db.collection(collection)
         .findOne({}, { sort: { _id: -1 }, projection: { _id: 1 } })
         .then(doc => (doc ? (doc._id as unknown as number) : 0)),
     ),

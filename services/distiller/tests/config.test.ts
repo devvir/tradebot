@@ -4,49 +4,49 @@ vi.hoisted(() => {
   process.env.DB_DATABASE = 'test_config';
 });
 
-import { _test_parseGenerators } from '../src/config';
+import { _test_parseDistillers } from '../src/config';
 
-const parseGenerators = _test_parseGenerators;
+const parseDistillers = _test_parseDistillers;
 
-describe('parseGenerators', () => {
+describe('parseDistillers', () => {
   it('returns null when env var is absent', () => {
-    expect(parseGenerators(undefined)).toBeNull();
+    expect(parseDistillers(undefined)).toBeNull();
   });
 
   it('returns null for an empty string', () => {
-    expect(parseGenerators('')).toBeNull();
+    expect(parseDistillers('')).toBeNull();
   });
 
   it('returns null for a whitespace-only string', () => {
-    expect(parseGenerators('   ')).toBeNull();
+    expect(parseDistillers('   ')).toBeNull();
   });
 
-  it('parses a single generator', () => {
-    expect(parseGenerators('quote')).toEqual(['quote']);
+  it('parses a single distiller', () => {
+    expect(parseDistillers('quote')).toEqual(['quote']);
   });
 
-  it('parses multiple generators', () => {
-    expect(parseGenerators('quote,trade,orderbook')).toEqual(['quote', 'trade', 'orderbook']);
+  it('parses multiple distillers', () => {
+    expect(parseDistillers('quote,trade,orderbook')).toEqual(['quote', 'trade', 'orderbook']);
   });
 
-  it('parses all five generators', () => {
-    expect(parseGenerators('quote,trade,orderbook,instrument,partials')).toEqual(
+  it('parses all five distillers', () => {
+    expect(parseDistillers('quote,trade,orderbook,instrument,partials')).toEqual(
       ['quote', 'trade', 'orderbook', 'instrument', 'partials'],
     );
   });
 
   it('trims whitespace around names', () => {
-    expect(parseGenerators(' quote , trade ')).toEqual(['quote', 'trade']);
+    expect(parseDistillers(' quote , trade ')).toEqual(['quote', 'trade']);
   });
 
-  it('throws for an unknown generator name', () => {
-    expect(() => parseGenerators('quote,unknown')).toThrow(
-      'DISTILLER_GENERATORS: unknown generator "unknown"',
+  it('throws for an unknown distiller name', () => {
+    expect(() => parseDistillers('quote,unknown')).toThrow(
+      'DISTILLER_DISTILLERS: unknown distiller "unknown"',
     );
   });
 
-  it('throws listing the valid generator names in the error', () => {
-    expect(() => parseGenerators('bogus')).toThrow(
+  it('throws listing the valid distiller names in the error', () => {
+    expect(() => parseDistillers('bogus')).toThrow(
       'Valid: quote, trade, orderbook, instrument, partials',
     );
   });

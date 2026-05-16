@@ -2,8 +2,8 @@ import type { Collection } from 'mongodb';
 import { BitmexTable, createTable } from '@devvir/bitmex-database';
 import type { BitmexFieldType }     from '@devvir/bitmex-database';
 
-import type { InstrumentItem, InstrumentMsg } from '../types';
-import type { InstrumentRunState }            from './types';
+import type { InstrumentItem, InstrumentMsg } from '../../types';
+import type { InstrumentRunState }            from '../types';
 
 import {
   getSeedState,
@@ -11,8 +11,8 @@ import {
   INSTRUMENT_KEYS,
   INSTRUMENT_TYPES,
   INSTRUMENT_FILTER,
-} from './instrument.seeds';
-import { makeId } from './instrument.ids';
+} from './seeds';
+import { makeId } from './ids';
 
 /* ------------------------------------------------------------------ */
 /*  Public API                                                         */

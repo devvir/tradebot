@@ -7,8 +7,8 @@ bins, quote bins, order book snapshots, and reconstructed instrument messages.
 
 - Reads `trade`, `quote`, `orderBookL2`, `compositeIndex`, `funding`, and `settlement` collections
 - Produces trade bins, quote bins, order book snapshots, and `instrument` messages
-- Resumes from the last processed document on restart (progress tracked in MongoDB via `_id`)
-- Runs all derivations in parallel; sleeps 1 hour between cycles
+- Processes one calendar day at a time, driven by Redis progress markers written by the Clerk service
+- All derivations run in parallel; each blocks on its own date walker until the next day is ready
 
 ## Derived Collections
 
@@ -23,5 +23,8 @@ bins, quote bins, order book snapshots, and reconstructed instrument messages.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
+| `DB_URL` | yes | — | MongoDB connection URL |
 | `DB_DATABASE` | yes | — | MongoDB database name |
-| `DISTILLER_GENERATORS` | no | _(all)_ | Comma-separated subset of generators to run: `quote`, `trade`, `orderbook`, `instrument`, `partials`. Empty or absent means run all. |
+| `CACHE_URL` | yes | — | Redis connection URL |
+| `CACHE_PASS` | yes | — | Redis password |
+| `DISTILLER_DISTILLERS` | no | _(all)_ | Comma-separated subset of distillers to run: `quote`, `trade`, `orderbook`, `instrument`, `partials`. Empty or absent means run all. |

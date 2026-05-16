@@ -1,5 +1,6 @@
 import type { Document } from 'mongodb';
-import type { BinSize, Range } from './types';
+import type { BinSize, Range } from '../types';
+import { startOfDayId } from '../../utils/ids';
 
 const BIN_CONFIG: Record<BinSize, { unit: string; amount: number }> = {
   '1m': { unit: 'minute', amount: 1 },
@@ -78,8 +79,8 @@ export function bins2bins(binSize: BinSize): Document[] {
 
 /**
  * Returns the $match stage for the given range, sized to full bins.
- * - trades2bins: trade timestamps are mid-period → [from, to)
- * - bins2bins:   bin timestamps are period-end   → (from, to]
+ * - trades2bins: matches raw `trade` by _id range [from, to) — no timestamp index needed
+ * - bins2bins:   matches bin collections by timestamp (from, to]
  */
 export function matchDocs(
   transform: (binSize: BinSize) => Document[],
@@ -91,13 +92,8 @@ export function matchDocs(
 
   return transform === trades2bins
     ? [{ $match: {
-        timestamp: { $gte: from, $lt: to },
-        side:      { $in: ['Buy', 'Sell'] },
-        $expr: { $and: [
-          // Compare ts up to milliseconds (old trade entries include nanoseconds)
-          { $gte: [{ $substrCP: ['$timestamp', 0, 23] }, from.slice(0, 23)] },
-          { $lt:  [{ $substrCP: ['$timestamp', 0, 23] }, to.slice(0, 23)] },
-        ] },
+        _id:  { $gte: startOfDayId(from), $lt: startOfDayId(to) },
+        side: { $in: ['Buy', 'Sell'] },
       } }]
     : [{ $match: { timestamp: { $gt:  from, $lte: to } } }];
 }

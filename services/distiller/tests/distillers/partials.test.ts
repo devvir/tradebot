@@ -2,14 +2,13 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { MongoClient, Db } from 'mongodb';
-import { registry } from '@devvir/service-kit';
 
 import {
   distillPartials,
   _test_nextDay,
   _test_dayStartId,
   _test_synthesizeBinMidnight,
-} from '../../src/generators/partials';
+} from '../../src/distillers/partials';
 
 const { mongoPort } = JSON.parse(
   readFileSync(resolve(__dirname, '../.ports.json'), 'utf8'),
@@ -27,9 +26,6 @@ const SOURCE_COLLS = [
   'quoteBin1m', 'quoteBin5m', 'quoteBin1h', 'quoteBin1d',
 ];
 
-/** dayStartId for a YYYY-MM-DD string — mirrors registrar. */
-const idForDay = (day: string): number => _test_dayStartId(day);
-
 /** Small helper: an _id inside `day` (dayStart + offset). */
 const idIn = (day: string, offset: number): number => _test_dayStartId(day) + offset;
 
@@ -41,16 +37,9 @@ describe('distillPartials', () => {
     client = new MongoClient(mongoUrl);
     await client.connect();
     db = client.db(DB_NAME);
-
-    registry.add({
-      spec:      () => ({ name: 'distiller' }),
-      config:    () => ({ database: DB_NAME }),
-      providers: { get: () => client },
-    } as any);
   });
 
   afterAll(async () => {
-    registry.clear();
     await client?.close();
   });
 
@@ -157,7 +146,7 @@ describe('distillPartials', () => {
      ──────────────────────────────────────────────────────────────────── */
 
   it('writes no partials when sources are empty', async () => {
-    await distillPartials(client, DB_NAME);
+    await distillPartials(db);
 
     const count = await db.collection(PARTIALS).countDocuments();
 
@@ -181,7 +170,7 @@ describe('distillPartials', () => {
       { _id: idIn(dayC, 1) as any, timestamp: `${dayC}T08:00:00.000Z`, symbol: 'XBTUSD', side: 'Sell', price: 120, size: 1 },
     ]);
 
-    await distillPartials(client, DB_NAME);
+    await distillPartials(db);
 
     const partials = await db.collection(PARTIALS).find({ table: 'trade' }).sort({ _id: 1 }).toArray();
 
@@ -215,7 +204,7 @@ describe('distillPartials', () => {
       { _id: idIn(day, 2) as any, timestamp: `${day}T11:00:00.000Z`, symbol: 'XBTUSD', side: 'Buy', price: 101, size: 1 },
     ]);
 
-    await distillPartials(client, DB_NAME);
+    await distillPartials(db);
 
     const partials = await db.collection(PARTIALS).find({ table: 'trade' }).toArray();
 
@@ -251,7 +240,7 @@ describe('distillPartials', () => {
       { _id: idIn(dayC, 1) as any, timestamp: `${dayC}T09:00:00.000Z`, symbol: 'XBTUSD', side: 'Buy', price: 220, size: 1 },
     ]);
 
-    await distillPartials(client, DB_NAME);
+    await distillPartials(db);
 
     const partials = await db.collection(PARTIALS).find({ table: 'trade' }).sort({ _id: 1 }).toArray();
 
@@ -285,7 +274,7 @@ describe('distillPartials', () => {
       { _id: idIn(dayB, 1) as any, timestamp: `${dayB}T00:30:00.000Z`, symbol: 'XBTUSD', open: 105, high: 106, low: 104, close: 106, volume: 100, trades: 1, vwap: 105, lastSize: 1, turnover: 10, homeNotional: 1, foreignNotional: 1 },
     ]);
 
-    await distillPartials(client, DB_NAME);
+    await distillPartials(db);
 
     const partial = await db.collection(PARTIALS).findOne({ _id: `tradeBin1m-${dayB}` } as any);
 
@@ -320,7 +309,7 @@ describe('distillPartials', () => {
       { _id: idIn(dayB, 1) as any, timestamp: `${dayB}T01:00:00.000Z`, symbol: 'XBTUSD', bidPrice: 200, bidSize:  5, askPrice: 201, askSize: 3 },
     ]);
 
-    await distillPartials(client, DB_NAME);
+    await distillPartials(db);
 
     const partial = await db.collection(PARTIALS).findOne({ _id: `quoteBin1m-${dayB}` } as any);
 
@@ -379,7 +368,7 @@ describe('distillPartials', () => {
       },
     ]);
 
-    await distillPartials(client, DB_NAME);
+    await distillPartials(db);
 
     const partial = await db.collection(PARTIALS).findOne({ _id: `orderBookL2-${dayB}` } as any);
 

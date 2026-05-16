@@ -4,5 +4,8 @@ import config from './config';
 export default SKFactory({
   name:          'distiller',
   mongodb:       true,
+  redis:         true,
   trackMessages: true,
-}).declare({ config });
+  state:         { stopping: false, distillers: 0 },
+  config,
+});

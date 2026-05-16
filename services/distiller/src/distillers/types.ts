@@ -1,7 +1,7 @@
 import type { BitmexTable, Table, TableTypeMap } from '@devvir/bitmex-database';
 
 import type { InstrumentItem, CompositeIndexRow } from '../types';
-import type { RollingState }                     from './instrument.rolling';
+import type { RollingState }                     from './instrument/rolling';
 
 export type BinSize = '1m' | '5m' | '1h' | '1d';
 
@@ -11,10 +11,10 @@ export type Range = {
 };
 
 /* ------------------------------------------------------------------ */
-/*  Instrument generator                                              */
+/*  Instrument distiller                                              */
 /* ------------------------------------------------------------------ */
 
-/** Vault source that contributes to the instrument generator. */
+/** Vault source that contributes to the instrument distiller. */
 export type InstrumentSource = 'compositeIndex' | 'quote' | 'trade' | 'funding' | 'settlement';
 
 /** Lightweight per-symbol cache for fields that depend on multiple sources. */
@@ -49,7 +49,7 @@ export interface InstrumentRunState {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Partials generator                                                */
+/*  Partials distiller                                                */
 /* ------------------------------------------------------------------ */
 
 /**

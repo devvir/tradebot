@@ -1,13 +1,13 @@
 import { logger } from '@devvir/service-kit';
-import { GENERATOR_NAMES } from './types';
-import type { Config, GeneratorName } from './types';
+import { DISTILLER_NAMES } from './types';
+import type { Config, DistillerName } from './types';
 
-const VALID_GENERATORS = new Set<string>(GENERATOR_NAMES);
+const VALID_DISTILLERS = new Set<string>(DISTILLER_NAMES);
 
 export const loadConfig = (): Config => {
   const config: Config = {
     database:   process.env.DB_DATABASE ?? '',
-    generators: parseGenerators(process.env.DISTILLER_GENERATORS),
+    distillers: parseDistillers(process.env.DISTILLER_DISTILLERS),
   };
 
   if (! config.database)
@@ -20,26 +20,26 @@ export const loadConfig = (): Config => {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function parseGenerators(raw: string | undefined): GeneratorName[] | null {
+function parseDistillers(raw: string | undefined): DistillerName[] | null {
   if (! raw || ! raw.trim()) return null;
 
   const names = raw.split(',').map(s => s.trim()).filter(Boolean);
 
   for (const name of names) {
-    if (! VALID_GENERATORS.has(name)) {
+    if (! VALID_DISTILLERS.has(name)) {
       throw new Error(
-        `DISTILLER_GENERATORS: unknown generator "${name}". ` +
-        `Valid: ${GENERATOR_NAMES.join(', ')}`,
+        `DISTILLER_DISTILLERS: unknown distiller "${name}". ` +
+        `Valid: ${DISTILLER_NAMES.join(', ')}`,
       );
     }
   }
 
-  return names as GeneratorName[];
+  return names as DistillerName[];
 }
 
 export default loadConfig();
 
 // ── Test exports ──────────────────────────────────────────────────────────────
 
-export const _test_loadConfig    = loadConfig;
-export const _test_parseGenerators = parseGenerators;
+export const _test_loadConfig      = loadConfig;
+export const _test_parseDistillers = parseDistillers;

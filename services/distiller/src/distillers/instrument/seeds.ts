@@ -3,7 +3,7 @@ import { join }         from 'node:path';
 
 import type { BitmexFieldType } from '@devvir/bitmex-database';
 
-import type { InstrumentItem } from '../types';
+import type { InstrumentItem } from '../../types';
 
 /* ------------------------------------------------------------------ */
 /*  Seed file parsing                                                  */

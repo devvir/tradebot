@@ -2,10 +2,10 @@ import { vi, describe, it, expect, beforeEach } from 'vitest';
 import type { Collection }                        from 'mongodb';
 import { BitmexTable }                           from '@devvir/bitmex-database';
 
-import type { InstrumentMsg }        from '../../src/types';
-import type { InstrumentTaggedEvent } from '../../src/generators/types';
+import type { InstrumentMsg }        from '../../../src/types';
+import type { InstrumentTaggedEvent } from '../../../src/distillers/types';
 
-vi.mock('../../src/generators/instrument.seeds', () => ({
+vi.mock('../../../src/distillers/instrument/seeds', () => ({
   getFirstSeedForSymbol: vi.fn(),
   getSeedState:          vi.fn(() => new Map()),
   hasSeedForDate:        vi.fn(() => false),
@@ -14,10 +14,10 @@ vi.mock('../../src/generators/instrument.seeds', () => ({
   INSTRUMENT_FILTER:     {},
 }));
 
-import { processDayEvents }             from '../../src/generators/instrument.events';
-import { createRunState, seedRunState } from '../../src/generators/instrument.state';
-import { getFirstSeedForSymbol }        from '../../src/generators/instrument.seeds';
-import type { InstrumentRunState }      from '../../src/generators/types';
+import { processDayEvents }             from '../../../src/distillers/instrument/events';
+import { createRunState, seedRunState } from '../../../src/distillers/instrument/state';
+import { getFirstSeedForSymbol }        from '../../../src/distillers/instrument/seeds';
+import type { InstrumentRunState }      from '../../../src/distillers/types';
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */

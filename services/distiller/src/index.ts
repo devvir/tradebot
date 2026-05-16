@@ -1,37 +1,39 @@
-import type { MongoClient } from 'mongodb';
-import { type Service, logger } from '@devvir/service-kit';
+import type { MongoClient, Db } from 'mongodb';
 import SK from './service';
-import { ensureSharedIndexes } from './indexes';
-import { distillQuotes } from './generators/quote';
-import { distillTrades } from './generators/trade';
-import { distillOrderBook } from './generators/orderbook';
-import { distillInstrument } from './generators/instrument';
-import { distillPartials } from './generators/partials';
+import { ensureSharedIndexes } from './utils/indexes';
+import { distillQuotes } from './distillers/quote';
+import { distillTrades } from './distillers/trade';
+import { distillOrderBook } from './distillers/orderbook';
+import { distillInstrument } from './distillers/instrument';
+import { distillPartials } from './distillers/partials';
 import type { Config } from './types';
 
-const SLEEP_MS = 3_600_000;
+SK.run(async (service) => {
+  const config = service.config() as Config;
+  const mongo  = await service.providers.connect('mongodb') as MongoClient;
+  const db: Db = mongo.db(config.database);
+
+  await service.providers.connect('redis');
+
+  await ensureSharedIndexes(db);
+
+  service.on('shutdown', async () => {
+    service.setState('stopping', true);
+
+    while ((service.state('distillers') as number) > 0) {
+      await sleep(100);
+    }
+  });
+
+  const d = config.distillers;
+
+  await Promise.all([
+    (! d || d.includes('quote'))      ? distillQuotes(db, service)     : null,
+    (! d || d.includes('trade'))      ? distillTrades(db, service)     : null,
+    (! d || d.includes('orderbook'))  ? distillOrderBook(db)           : null,
+    (! d || d.includes('instrument')) ? distillInstrument(db)          : null,
+    (! d || d.includes('partials'))   ? distillPartials(db)            : null,
+  ].filter(Boolean));
+});
 
 const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms));
-
-SK.run(async (service: Service) => {
-  const config = service.config() as Config;
-  const mongo = await service.providers.connect('mongodb') as MongoClient;
-
-  await ensureSharedIndexes();
-
-  const g = config.generators;
-
-  while (true) {
-    await Promise.all([
-      (! g || g.includes('quote'))      ? distillQuotes(mongo, config.database)      : null,
-      (! g || g.includes('trade'))      ? distillTrades(mongo, config.database)      : null,
-      (! g || g.includes('orderbook'))  ? distillOrderBook(mongo, config.database)   : null,
-      (! g || g.includes('instrument')) ? distillInstrument(mongo, config.database)  : null,
-      (! g || g.includes('partials'))   ? distillPartials(mongo, config.database)    : null,
-    ]);
-
-    logger.info('All aggregations complete — taking a nap...');
-
-    await sleep(SLEEP_MS);
-  }
-});

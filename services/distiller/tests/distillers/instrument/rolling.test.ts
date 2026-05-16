@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createRolling, addTrade, computeMinuteBlock } from '../../src/generators/instrument.rolling';
+import { createRolling, addTrade, computeMinuteBlock } from '../../../src/distillers/instrument/rolling';
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */

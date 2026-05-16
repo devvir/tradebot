@@ -11,8 +11,10 @@ services:
     environment:
       DB_URL:      ${DB_URL}
       DB_DATABASE: ${DB_DATABASE:-tradebot}
+      CACHE_URL:   ${CACHE_URL}
+      CACHE_PASS:  ${CACHE_PASS}
 
-      DISTILLER_GENERATORS: ${DISTILLER_GENERATORS:-}
+      DISTILLER_DISTILLERS: ${DISTILLER_DISTILLERS:-}
 
       NODE_ENV:  ${APP_ENV:-prod}
       LOG_LEVEL: ${LOG_LEVEL:-info}

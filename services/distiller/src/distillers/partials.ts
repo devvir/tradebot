@@ -1,8 +1,7 @@
-import type { MongoClient, Collection, Db } from 'mongodb';
-import { createTable, BitmexTable as BT } from '@devvir/bitmex-database';
+import type { Collection, Db } from 'mongodb';import { createTable, BitmexTable as BT } from '@devvir/bitmex-database';
 import type { BitmexMessage, Table } from '@devvir/bitmex-database';
 import { logger } from '@devvir/service-kit';
-import { ensureIndex } from '../indexes';
+import { ensureIndex } from '../utils/indexes';
 import { TABLE_SPECS } from '@tradebot/utils';
 import type { TableSpec } from '@tradebot/utils';
 import { PartialConfig, StoredPartial } from './types';
@@ -37,14 +36,12 @@ const CONFIGS: PartialConfig[] = [
   { table: BT.QuoteBin1d,  collection: 'quoteBin1d',  shape: 'item',  binFlavor: 'quote' },
 ];
 
-export const distillPartials = async (mongo: MongoClient, database: string): Promise<void> => {
-  await ensureIndex('_partials_', [
+export const distillPartials = async (db: Db): Promise<void> => {
+  await ensureIndex(db, '_partials_', [
     { timestamp: 1 },
     { action: 1, timestamp: 1 },
     { symbol: 1, timestamp: 1 },
   ]);
-
-  const db = mongo.db(database);
 
   await Promise.all(CONFIGS.map(tableCfg =>
     distillOneTable(db, tableCfg).catch((err: unknown) =>
