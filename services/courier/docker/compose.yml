@@ -10,7 +10,9 @@ services:
 
     environment:
       # Dependencies
-      VAULT_URL: ${VAULT_URL}
+      VAULT_URL:  ${VAULT_URL}
+      CACHE_URL:  ${CACHE_URL}
+      CACHE_PASS: ${CACHE_PASS}
 
       # Config
       COURIER_START_DATE: ${COURIER_START_DATE:-}

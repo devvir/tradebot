@@ -1,10 +1,13 @@
 import { logger } from '@devvir/service-kit';
-import { Config } from './types';
+import { Config, Table } from './types';
+
+const TABLES = ['trade', 'quote'] as Table[];
 
 const loadConfig = (): Config => {
   const config: Config = {
-    vaultUrl:  process.env.VAULT_URL ?? '',
+    vaultUrl: process.env.VAULT_URL ?? '',
     startDate: parseStartDate(process.env.COURIER_START_DATE),
+    tables: TABLES,
   };
 
   if (! config.vaultUrl) throw new Error('VAULT_URL is required');

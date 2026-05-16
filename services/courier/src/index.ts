@@ -1,9 +1,15 @@
+import type { RedisClient } from '@devvir/service-kit';
 import SK from './service';
-import { runLoop } from './loop';
+import { syncTable, scheduleNextPoll } from './loop';
 import type { Config } from './types';
 
 SK.run(async (service) => {
-  const { vaultUrl } = service.config() as Config;
+  const { vaultUrl, tables } = service.config() as Config;
+  const redis                = await service.providers.connect('redis') as RedisClient;
 
-  await runLoop(vaultUrl);
+  for (const table of tables) {
+    await syncTable(vaultUrl, table, redis);
+  }
+
+  scheduleNextPoll(vaultUrl, tables, redis);
 });

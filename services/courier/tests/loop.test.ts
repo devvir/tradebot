@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { syncTable, syncAll } from '../src/loop';
+import type { RedisClient } from '@devvir/service-kit';
+import { syncTable } from '../src/loop';
 
 vi.mock('../src/download', () => ({
   listVaultDates: vi.fn(),
@@ -7,6 +8,9 @@ vi.mock('../src/download', () => ({
 }));
 
 import * as download from '../src/download';
+
+const makeRedis = (storedDate: string | null = null): RedisClient =>
+  ({ get: vi.fn().mockResolvedValue(storedDate), set: vi.fn().mockResolvedValue(undefined) }) as unknown as RedisClient;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -41,7 +45,7 @@ describe('loop — syncTable', () => {
 
     vi.mocked(download.listVaultDates).mockResolvedValue(existing);
 
-    await syncTable('http://vault', 'trade');
+    await syncTable('http://vault', 'trade', makeRedis());
 
     expect(download.fetchAndStore).toHaveBeenCalledTimes(2);
     expect(download.fetchAndStore).toHaveBeenCalledWith('http://vault', 'trade', '20250103');
@@ -58,7 +62,7 @@ describe('loop — syncTable', () => {
 
     vi.mocked(download.listVaultDates).mockResolvedValue(existing);
 
-    await syncTable('http://vault', 'trade');
+    await syncTable('http://vault', 'trade', makeRedis());
 
     expect(download.fetchAndStore).not.toHaveBeenCalled();
 
@@ -71,7 +75,7 @@ describe('loop — syncTable', () => {
 
     vi.mocked(download.listVaultDates).mockResolvedValue([]);
 
-    await syncTable('http://vault', 'trade');
+    await syncTable('http://vault', 'trade', makeRedis());
 
     // Should download 20141122, 20141123, 20141124
     expect(download.fetchAndStore).toHaveBeenCalledTimes(3);
@@ -83,20 +87,3 @@ describe('loop — syncTable', () => {
   });
 });
 
-// ── syncAll ───────────────────────────────────────────────────────────────────
-
-describe('loop — syncAll', () => {
-  it('syncs both trade and quote tables', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2025-01-03T12:00:00Z'));
-
-    vi.mocked(download.listVaultDates).mockResolvedValue(dateRange('20141122', '20250102'));
-
-    await syncAll('http://vault');
-
-    expect(download.listVaultDates).toHaveBeenCalledWith('http://vault', 'trade');
-    expect(download.listVaultDates).toHaveBeenCalledWith('http://vault', 'quote');
-
-    vi.useRealTimers();
-  });
-});

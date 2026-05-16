@@ -3,5 +3,6 @@ import config from './config';
 
 export default SKFactory({
   name: 'courier',
+  redis: true,
   config,
 });
