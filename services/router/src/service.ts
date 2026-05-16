@@ -4,4 +4,6 @@ import config from './config';
 export default SKFactory({
   name: 'router',
   rabbitmq: true,
-}).declare({ config, state: { counter: 0 } });
+  config,
+  state: { counter: 0 },
+});

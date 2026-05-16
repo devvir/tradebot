@@ -3,4 +3,5 @@ import config from './config';
 
 export default SKFactory({
   name: 'bouncer',
-}).declare({ config });
+  config,
+});

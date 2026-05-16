@@ -14,4 +14,6 @@ export default SKFactory({
   name: 'broadcast',
   rabbitmq: { topology: { exchanges: { broadcast: { type: 'topic' } } } },
   trackMessages: true,
-}).declare({ config, state });
+  config,
+  state,
+});

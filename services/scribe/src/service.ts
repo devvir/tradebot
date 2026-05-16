@@ -4,4 +4,5 @@ import config from './config';
 export default SKFactory({
   name: 'scribe',
   redis: true,
-}).declare({ config });
+  config,
+});

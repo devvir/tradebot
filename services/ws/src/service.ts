@@ -18,4 +18,5 @@ export default SKFactory({
   name: 'ws',
   rabbitmq: { topology },
   trackMessages: true,
-}).declare({ config });
+  config,
+});

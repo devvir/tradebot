@@ -12,4 +12,5 @@ export default SKFactory({
   name: 'clerk',
   rabbitmq: { topology },
   redis: true,
-}).declare({ config });
+  config,
+});

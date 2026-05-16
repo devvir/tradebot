@@ -20,7 +20,6 @@ const publisherTopology = {
 export default SKFactory({
   name: 'assembler',
   trackMessages: true,
-}).declare({
   config,
 
   providers: {

@@ -4,4 +4,5 @@ import config from './config.js';
 export default SKFactory({
   name: 'registry',
   mongodb: true,
-}).declare({ config });
+  config,
+});

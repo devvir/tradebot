@@ -5,8 +5,7 @@ import type { ServerResponse } from 'node:http';
 const MESSAGE_LOG_INTERVAL = 20_000;
 const HEALTH_INACTIVITY_MS = 30_000;
 
-export interface SKFactoryConfig {
-  name:           string;
+interface SKFactorySpec extends Spec {
   rabbitmq?:      boolean | { topology?: TopologySpec };
   mongodb?:       boolean;
   redis?:         boolean;
@@ -20,33 +19,44 @@ export interface SKFactoryConfig {
  *   - Health check on port 3000
  *   - Optional message tracking with activity-based health (trackMessages: true)
  *
+ * Accepts any valid SK spec field directly (name, state, config, etc.).
+ * The shortcut keys (rabbitmq, mongodb, redis, trackMessages) are translated
+ * into their spec equivalents and merged with whatever the caller passed.
+ *
  * Usage:
- *   SKFactory({ name: 'writer', rabbitmq: { topology }, mongodb: true, redis: true, trackMessages: true })
- *     .declare({ config })
- *     .run(async (service) => { ... service.emit('message') ... });
+ *   SKFactory({
+ *     name: 'writer',
+ *     config,
+ *     rabbitmq: { topology },
+ *     mongodb: true,
+ *     redis: true,
+ *     trackMessages: true,
+ *   }).run(async (service) => { ... service.emit('message') ... });
  */
-export const SKFactory = (config: SKFactoryConfig): ServiceKit => {
-  const providers: Record<string, ProviderSpec> = {};
+export const SKFactory = (factorySpec: SKFactorySpec): ServiceKit => {
+  const { rabbitmq, mongodb, redis, trackMessages, ...passthroughSpec } = factorySpec;
 
-  if (config.rabbitmq) {
+  const providers: Record<string, ProviderSpec> = { ...passthroughSpec.providers };
+
+  if (rabbitmq) {
     providers.rabbitmq = {
       url:       process.env.QUEUE_URL || '',
       useBroker: true,
       retry:     { strategy: 'exponential', attempts: 10 },
-      ...(typeof config.rabbitmq === 'object' && config.rabbitmq.topology
-        ? { topology: config.rabbitmq.topology }
+      ...(typeof rabbitmq === 'object' && rabbitmq.topology
+        ? { topology: rabbitmq.topology }
         : {}),
     };
   }
 
-  if (config.mongodb) {
+  if (mongodb) {
     providers.mongodb = {
       url:   process.env.DB_URL || '',
       retry: { strategy: 'exponential', attempts: 10 },
     };
   }
 
-  if (config.redis) {
+  if (redis) {
     providers.redis = {
       url:      process.env.CACHE_URL || '',
       password: process.env.CACHE_PASS || '',
@@ -54,16 +64,20 @@ export const SKFactory = (config: SKFactoryConfig): ServiceKit => {
     };
   }
 
+  const trackState = trackMessages ? { messages: 0, lastMessageAt: null } : {};
+
   const spec: Spec = {
-    name: config.name,
-    healthcheck: { port: 3000 },
+    ...passthroughSpec,
+    healthcheck: passthroughSpec.healthcheck ?? { port: 3000 },
     ...(Object.keys(providers).length > 0 ? { providers } : {}),
-    ...(config.trackMessages ? { state: { messages: 0, lastMessageAt: null } } : {}),
+    ...(Object.keys({ ...trackState, ...passthroughSpec.state }).length > 0
+      ? { state: { ...trackState, ...passthroughSpec.state } }
+      : {}),
   };
 
   const bindings: Bindings = {};
 
-  if (config.trackMessages) {
+  if (trackMessages) {
     bindings.onMessage = async (service: Service) => {
       service.increment('messages');
       service.setState('lastMessageAt', Date.now());

@@ -20,4 +20,5 @@ export default SKFactory({
   mongodb: true,
   rabbitmq: { topology },
   trackMessages: true,
-}).declare({ config });
+  config,
+});

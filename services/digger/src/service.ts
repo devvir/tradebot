@@ -19,4 +19,6 @@ export default SKFactory({
   rabbitmq:      { topology: { exchanges: { replay: { type: 'topic' } } } },
   mongodb:       true,
   trackMessages: true,
-}).declare({ config, state });
+  config,
+  state,
+});
