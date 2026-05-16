@@ -19,6 +19,7 @@ export default SKFactory({
   name: 'registrar',
   mongodb: true,
   rabbitmq: { topology },
+  redis: true,
   trackMessages: true,
   config,
 });

@@ -1,5 +1,6 @@
 import type { MongoClient } from 'mongodb';
 import { logger } from '@devvir/service-kit';
+import { record } from './progress';
 import type { PendingEntry } from './types';
 
 const MAX_RETRIES   = 3;
@@ -23,7 +24,7 @@ export const flushBatch = async (
         { ordered: false },
       );
 
-      entries.forEach(e => e.ack());
+      ackStored(entries);
       logger.debug({ collection, count: entries.length }, 'Batch inserted');
       return;
     } catch (err: unknown) {
@@ -32,7 +33,7 @@ export const flushBatch = async (
 
       // E11000 duplicate key — tolerate and ack (already persisted)
       if (isMongoError(err) && (err as any).code === 11000) {
-        entries.forEach(e => e.ack());
+        ackStored(entries);
         logger.debug({ collection, count: entries.length }, 'Duplicate key on insert — already persisted, acking');
         return;
       }
@@ -46,5 +47,13 @@ export const flushBatch = async (
         logger.error({ collection, count: entries.length }, 'Batch insert failed after max retries — nacking');
       }
     }
+  }
+};
+
+/** Ack each entry and bump its bucket's progress counter — both halves of "safely stored". */
+const ackStored = (entries: PendingEntry[]): void => {
+  for (const e of entries) {
+    e.ack();
+    record(e.table, e.date, e.msgIndex);
   }
 };

@@ -1,13 +1,23 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { MongoClient } from 'mongodb';
 import { flushBatch } from '../src/insert';
+import { _test_buckets as buckets, _test_reset as resetProgress } from '../src/progress';
 import type { PendingEntry } from '../src/types';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const makeEntry = (id: number, doc = {}): PendingEntry & { ack: ReturnType<typeof vi.fn>; nack: ReturnType<typeof vi.fn> } => ({
+const makeEntry = (
+  id: number,
+  doc:      Record<string, unknown> = {},
+  table:    string                  = 'trade',
+  date:     string                  = '20260101',
+  msgIndex: number                  = id,
+): PendingEntry & { ack: ReturnType<typeof vi.fn>; nack: ReturnType<typeof vi.fn> } => ({
   _id:  id,
   doc,
+  table,
+  date,
+  msgIndex,
   ack:  vi.fn(),
   nack: vi.fn(),
 });
@@ -18,6 +28,10 @@ const makeMongoClient = (insertManyImpl: () => Promise<unknown>): MongoClient =>
 
   return { db: vi.fn(() => db) } as unknown as MongoClient;
 };
+
+beforeEach(() => {
+  resetProgress();
+});
 
 // ── no-op on empty batch ──────────────────────────────────────────────────────
 
@@ -47,21 +61,46 @@ describe('flushBatch — success', () => {
   });
 
   it('passes _id merged into the document', async () => {
-    let inserted: unknown;
-    const mongo = makeMongoClient(() => {
-      inserted = args;
-      return Promise.resolve({});
-    });
+    let captured: Array<Record<string, unknown>> | undefined;
 
-    // Capture args via spy
-    const collection = mongo.db('').collection('');
-    const spy = vi.spyOn(collection, 'insertMany').mockResolvedValue({ insertedCount: 1 } as never);
+    const collection = {
+      insertMany: vi.fn().mockImplementation((docs: Array<Record<string, unknown>>) => {
+        captured = docs;
+        return Promise.resolve({ insertedCount: docs.length });
+      }),
+    };
+    const mongo = { db: vi.fn(() => ({ collection: vi.fn(() => collection) })) } as unknown as MongoClient;
 
     const entries = [makeEntry(99, { symbol: 'XBTUSD' })];
+
     await flushBatch(mongo, 'tradebot', 'trade', entries);
 
-    const docs = spy.mock.calls[0]![0] as Array<Record<string, unknown>>;
-    expect(docs[0]).toMatchObject({ _id: 99, symbol: 'XBTUSD' });
+    expect(captured?.[0]).toMatchObject({ _id: 99, symbol: 'XBTUSD' });
+  });
+
+  it('bumps the in-memory progress counter for each entry on success', async () => {
+    const entries = [
+      makeEntry(1, {}, 'trade', '20260101', 7),
+      makeEntry(2, {}, 'trade', '20260101', 12),
+    ];
+    const mongo = makeMongoClient(() => Promise.resolve({}));
+
+    await flushBatch(mongo, 'tradebot', 'trade', entries);
+
+    expect(buckets.get('trade:20260101')?.counter).toBe(12);
+  });
+
+  it('tracks per-bucket counters independently when batches span buckets', async () => {
+    const entries = [
+      makeEntry(1, {}, 'trade', '20260101', 5),
+      makeEntry(2, {}, 'trade', '20260102', 8),
+    ];
+    const mongo = makeMongoClient(() => Promise.resolve({}));
+
+    await flushBatch(mongo, 'tradebot', 'trade', entries);
+
+    expect(buckets.get('trade:20260101')?.counter).toBe(5);
+    expect(buckets.get('trade:20260102')?.counter).toBe(8);
   });
 });
 
@@ -80,6 +119,19 @@ describe('flushBatch — duplicate key', () => {
 
     expect(entries[0]!.ack).toHaveBeenCalledOnce();
     expect(entries[0]!.nack).not.toHaveBeenCalled();
+  });
+
+  it('bumps the progress counter on E11000 (already stored counts as stored)', async () => {
+    const entries = [makeEntry(1, {}, 'trade', '20260101', 42)];
+    const mongo   = makeMongoClient(() => {
+      const err: NodeJS.ErrnoException = new Error('E11000 duplicate key error');
+      (err as any).code = 11000;
+      return Promise.reject(err);
+    });
+
+    await flushBatch(mongo, 'tradebot', 'trade', entries);
+
+    expect(buckets.get('trade:20260101')?.counter).toBe(42);
   });
 });
 
@@ -127,5 +179,16 @@ describe('flushBatch — max retries exhausted', () => {
     expect(entries[0]!.nack).toHaveBeenCalledWith(true);
     expect(entries[1]!.nack).toHaveBeenCalledWith(true);
     expect(entries[0]!.ack).not.toHaveBeenCalled();
+  });
+
+  it('does not bump the progress counter when the batch is nacked', async () => {
+    const mongo   = makeMongoClient(() => Promise.reject(new Error('persistent failure')));
+    const entries = [makeEntry(1, {}, 'trade', '20260101', 99)];
+    const promise = flushBatch(mongo, 'tradebot', 'trade', entries);
+
+    await vi.runAllTimersAsync();
+    await promise;
+
+    expect(buckets.has('trade:20260101')).toBe(false);
   });
 });

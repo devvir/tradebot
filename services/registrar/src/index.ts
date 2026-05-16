@@ -3,15 +3,17 @@ import { type Service } from '@devvir/service-kit';
 import SK from './service';
 import { makeId } from './id';
 import { flushBatch } from './insert';
-import type { Broker, ConsumerEvent, Config, PendingEntry } from './types';
+import * as progress from './progress';
+import type { Broker, ConsumerEvent, Config, PendingEntry, RedisClient, ControlMessage } from './types';
 
 SK.run(async (service: Service) => {
   const config = service.config() as Config;
 
-  const [ mongo, broker ] = await service.providers.connect([
+  const [ mongo, broker, redis ] = await service.providers.connect([
     'mongodb',
     'rabbitmq',
-  ]) as [ MongoClient, Broker ];
+    'redis',
+  ]) as [ MongoClient, Broker, RedisClient ];
 
   const queue = broker.getQueue()!;
 
@@ -33,7 +35,14 @@ SK.run(async (service: Service) => {
 
   const flushTimer = setInterval(flush, config.flushIntervalMs);
 
+  progress.start(redis, config.progressIntervalMs);
+
   const stopConsuming = await queue.consume(async (message: unknown, { ack, nack, metadata }: ConsumerEvent) => {
+    if (metadata.routingKey === 'control') {
+      handleControl(message, service);
+      return ack();
+    }
+
     const table    = metadata.headers?.['x-table']     as string | undefined;
     const date     = metadata.headers?.['x-date']      as string | undefined;
     const msgIndex = metadata.headers?.['x-msg-index'] as number | undefined;
@@ -43,9 +52,9 @@ SK.run(async (service: Service) => {
       return ack();
     }
 
-    const doc  = message as Record<string, unknown>;
-    const id   = makeId(date, msgIndex);
-    const entry: PendingEntry = { _id: id, doc, ack, nack };
+    const doc   = message as Record<string, unknown>;
+    const id    = makeId(date, msgIndex);
+    const entry: PendingEntry = { _id: id, doc, table, date, msgIndex, ack, nack };
 
     if (! batchStore[table])
       batchStore[table] = [];
@@ -57,6 +66,7 @@ SK.run(async (service: Service) => {
 
   service.on('shutdown', async () => {
     clearInterval(flushTimer);
+    progress.stop();
 
     if (stopConsuming)
       await stopConsuming();
@@ -64,3 +74,24 @@ SK.run(async (service: Service) => {
     await flush();
   });
 });
+
+/**
+ * Validate a `control` routing-key payload and forward it to progress. Bad
+ * payloads are logged and dropped — we always ack to keep the queue moving.
+ */
+const handleControl = (message: unknown, service: Service): void => {
+  if (! isControlMessage(message)) {
+    service.logger.warn({ message }, 'Malformed control message — discarding');
+    return;
+  }
+
+  progress.recordControl(message);
+};
+
+const isControlMessage = (m: unknown): m is ControlMessage =>
+  typeof m === 'object' &&
+  m !== null &&
+  (m as ControlMessage).type === 'complete' &&
+  typeof (m as ControlMessage).table === 'string' &&
+  typeof (m as ControlMessage).date === 'string' &&
+  typeof (m as ControlMessage).highestIndex === 'number';
