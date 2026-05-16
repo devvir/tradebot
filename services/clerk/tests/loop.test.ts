@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { RedisClient } from '@devvir/service-kit';
 import type { RabbitMQ } from '@devvir/service-kit';
 import { _test_processNextBatch as processNextBatch } from '../src/loop';
+import type { Config } from '../src/types';
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
@@ -9,21 +10,30 @@ vi.mock('../src/vault', () => ({
   listTables:     vi.fn(),
   listFiles:      vi.fn(),
   readFileGroups: vi.fn(),
-  isWsMessage:    (item: unknown): boolean =>
-    typeof item === 'object' && item !== null && 'action' in item && 'data' in item,
 }));
 
 vi.mock('../src/progress', () => ({
-  isDone:    vi.fn().mockResolvedValue(false),
-  getOffset: vi.fn().mockResolvedValue(0),
-  setOffset: vi.fn().mockResolvedValue(undefined),
-  markDone:  vi.fn().mockResolvedValue(undefined),
+  readProgress: vi.fn().mockResolvedValue({ state: 'pending', startFrom: 0 }),
+}));
+
+vi.mock('../src/metrics', () => ({
+  recordPublish: vi.fn(),
 }));
 
 import { listTables, listFiles, readFileGroups } from '../src/vault';
-import { isDone, getOffset, setOffset, markDone } from '../src/progress';
+import { readProgress } from '../src/progress';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+const makeConfig = (overrides: Partial<Config> = {}): Config => ({
+  vaultUrl:        'http://vault',
+  tables:          [],
+  waitIf:          {},
+  fileConcurrency: 6,
+  readBufferHigh:  5_000,
+  readBufferLow:   2_500,
+  ...overrides,
+});
 
 const makeExchange = () => ({
   publish: vi.fn().mockResolvedValue(undefined),
@@ -33,71 +43,40 @@ const makeBroker = (exchange = makeExchange()) => ({
   getExchange: vi.fn(() => exchange),
 } as unknown as RabbitMQ.Broker);
 
+/**
+ * Builds an array of N brokers all backed by the same exchange mock, so
+ * `exchange.publish.mock.calls` aggregates calls from every worker.
+ */
+const makeBrokers = (count: number, exchange = makeExchange()): RabbitMQ.Broker[] =>
+  Array.from({ length: count }, () => makeBroker(exchange));
+
 const makeRedis = () => ({
   get: vi.fn().mockResolvedValue(null),
   set: vi.fn().mockResolvedValue('OK'),
 } as unknown as RedisClient);
 
-const noGate = async () => {};
-
-// Simulates a vault file with N object rows
+// Simulates a vault file with N raw NDJSON lines
 const makeReadFileGroups = (rowCount: number) =>
   vi.fn().mockImplementation(async (
     _url: string,
     _table: string,
     _date: string,
-    onGroup: (row: Record<string, unknown>, index: number) => Promise<void>,
+    onGroup: (line: string, index: number) => Promise<void>,
+    startFrom: number = 0,
   ) => {
-    for (let i = 0; i < rowCount; i++) {
-      await onGroup({ id: i }, i);
+    for (let i = startFrom; i < rowCount; i++) {
+      await onGroup(`{"id":${i}}`, i);
     }
     return rowCount;
   });
 
-// ── processNextBatch — date ordering ───────────────────────────────────────────────────
+// ── processNextBatch — discovery & filtering ──────────────────────────────────
 
-describe('processNextBatch — date ordering', () => {
+describe('processNextBatch — discovery & filtering', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(isDone).mockResolvedValue(false);
-    vi.mocked(getOffset).mockResolvedValue(0);
-  });
-
-  it('processes all tables for a date before moving to the next date', async () => {
-    vi.mocked(listTables).mockResolvedValue(['trade', 'quote']);
-    vi.mocked(listFiles).mockImplementation(async (_url, table) => {
-      if (table === 'trade') return { '20240101': 'closed', '20240102': 'closed' };
-      if (table === 'quote') return { '20240101': 'closed', '20240102': 'closed' };
-      return null;
-    });
-
-    const order: string[] = [];
-
-    vi.mocked(readFileGroups).mockImplementation(async (
-      _url, table, date, onGroup,
-    ) => {
-      order.push(`start:${table}:${date}`);
-      await onGroup({ id: 0 }, 0);
-      order.push(`end:${table}:${date}`);
-      return 1;
-    });
-
-    const redis = makeRedis();
-    const broker = makeBroker();
-
-    // Each call processes one date batch — two calls needed for two dates.
-    // After the first call, mock isDone to reflect 20240101 as done so the
-    // second call advances to 20240102.
-    await processNextBatch('http://vault', broker, redis, noGate);
-    vi.mocked(isDone).mockImplementation(async (_r, _t, date) => date === '20240101');
-    await processNextBatch('http://vault', broker, redis, noGate);
-
-    // Both tables for 20240101 must finish before either starts 20240102
-    const lastDate101  = order.findLastIndex(e => e.includes('20240101'));
-    const firstDate102 = order.findIndex(e => e.includes('20240102'));
-
-    expect(lastDate101).toBeGreaterThanOrEqual(0);
-    expect(lastDate101).toBeLessThan(firstDate102);
+    vi.mocked(readProgress).mockResolvedValue({ state: 'pending', startFrom: 0 });
+    vi.mocked(readFileGroups).mockImplementation(makeReadFileGroups(1));
   });
 
   it('skips tables where listFiles returns null', async () => {
@@ -106,32 +85,19 @@ describe('processNextBatch — date ordering', () => {
       if (table === 'trade') return { '20240101': 'closed' };
       return null;
     });
-    vi.mocked(readFileGroups).mockImplementation(makeReadFileGroups(1));
 
-    await processNextBatch('http://vault', makeBroker(), makeRedis(), noGate);
+    await processNextBatch(makeConfig(), makeBrokers(6), makeRedis(), new Set());
 
-    // readFileGroups should only have been called for 'trade', not 'unknown'
     const calls = vi.mocked(readFileGroups).mock.calls;
 
     expect(calls.every(([, table]) => table === 'trade')).toBe(true);
-  });
-});
-
-// ── processNextBatch — table filtering ─────────────────────────────────────────────────
-
-describe('processNextBatch — table filtering', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.mocked(isDone).mockResolvedValue(false);
-    vi.mocked(getOffset).mockResolvedValue(0);
-    vi.mocked(readFileGroups).mockImplementation(makeReadFileGroups(1));
   });
 
   it('only processes tables in the filter list when filter is non-empty', async () => {
     vi.mocked(listTables).mockResolvedValue(['trade', 'quote', 'orderBookL2']);
     vi.mocked(listFiles).mockResolvedValue({ '20240101': 'closed' });
 
-    await processNextBatch('http://vault', makeBroker(), makeRedis(), noGate, ['trade', 'quote']);
+    await processNextBatch(makeConfig({ tables: ['trade', 'quote'] }), makeBrokers(6), makeRedis(), new Set());
 
     const tables = vi.mocked(readFileGroups).mock.calls.map(([, table]) => table);
 
@@ -144,7 +110,7 @@ describe('processNextBatch — table filtering', () => {
     vi.mocked(listTables).mockResolvedValue(['trade', 'quote', 'orderBookL2']);
     vi.mocked(listFiles).mockResolvedValue({ '20240101': 'closed' });
 
-    await processNextBatch('http://vault', makeBroker(), makeRedis(), noGate, []);
+    await processNextBatch(makeConfig(), makeBrokers(6), makeRedis(), new Set());
 
     const tables = vi.mocked(readFileGroups).mock.calls.map(([, table]) => table);
 
@@ -152,89 +118,204 @@ describe('processNextBatch — table filtering', () => {
     expect(tables).toContain('quote');
     expect(tables).toContain('orderBookL2');
   });
+
+  it('skips files where readProgress returns done', async () => {
+    vi.mocked(listTables).mockResolvedValue(['trade']);
+    vi.mocked(listFiles).mockResolvedValue({ '20240101': 'closed' });
+    vi.mocked(readProgress).mockResolvedValue({ state: 'done' });
+
+    await processNextBatch(makeConfig(), makeBrokers(6), makeRedis(), new Set());
+
+    expect(readFileGroups).not.toHaveBeenCalled();
+  });
+
+  it('skips files already completed in this run', async () => {
+    vi.mocked(listTables).mockResolvedValue(['trade']);
+    vi.mocked(listFiles).mockResolvedValue({ '20240101': 'closed' });
+
+    const completed = new Set(['trade:20240101']);
+
+    await processNextBatch(makeConfig(), makeBrokers(6), makeRedis(), completed);
+
+    expect(readFileGroups).not.toHaveBeenCalled();
+  });
 });
 
-// ── processFile — publish batching ────────────────────────────────────────────
+// ── processNextBatch — independence across files ──────────────────────────────
 
-describe('processFile — publish batching', () => {
+describe('processNextBatch — file independence', () => {
   beforeEach(() => {
-    vi.mocked(isDone).mockResolvedValue(false);
-    vi.mocked(getOffset).mockResolvedValue(0);
+    vi.clearAllMocks();
+    vi.mocked(readProgress).mockResolvedValue({ state: 'pending', startFrom: 0 });
+  });
+
+  it('processes every not-done file in a single call (no per-date barrier)', async () => {
+    vi.mocked(listTables).mockResolvedValue(['trade', 'quote']);
+    vi.mocked(listFiles).mockImplementation(async (_url, table) => {
+      if (table === 'trade') return { '20240101': 'closed', '20240102': 'closed' };
+      if (table === 'quote') return { '20240101': 'closed', '20240102': 'closed' };
+      return null;
+    });
+    vi.mocked(readFileGroups).mockImplementation(makeReadFileGroups(1));
+
+    await processNextBatch(makeConfig(), makeBrokers(6), makeRedis(), new Set());
+
+    // All four files should be processed in the same cycle.
+    const calls = vi.mocked(readFileGroups).mock.calls.map(([, t, d]) => `${t}:${d}`).sort();
+
+    expect(calls).toEqual([
+      'quote:20240101',
+      'quote:20240102',
+      'trade:20240101',
+      'trade:20240102',
+    ]);
+  });
+});
+
+// ── processFile — per-message publish ─────────────────────────────────────────
+
+describe('processFile — per-message publish', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(readProgress).mockResolvedValue({ state: 'pending', startFrom: 0 });
     vi.mocked(listTables).mockResolvedValue(['trade']);
     vi.mocked(listFiles).mockResolvedValue({ '20240101': 'closed' });
   });
 
-  it('calls publish once per message', async () => {
+  it('calls publish once per message plus one control message', async () => {
     const ROW_COUNT = 300;
 
     vi.mocked(readFileGroups).mockImplementation(makeReadFileGroups(ROW_COUNT));
     const exchange = makeExchange();
 
-    await processNextBatch('http://vault', makeBroker(exchange), makeRedis(), noGate);
+    await processNextBatch(makeConfig(), makeBrokers(6, exchange), makeRedis(), new Set());
 
-    expect(exchange.publish).toHaveBeenCalledTimes(ROW_COUNT);
+    expect(exchange.publish).toHaveBeenCalledTimes(ROW_COUNT + 1);
   });
 
-  it('publishes all messages even when count is not a multiple of the batch size', async () => {
-    const ROW_COUNT = 750;  // 1 full batch of 500 + 250 remainder
+  it('publishes all messages regardless of count', async () => {
+    const ROW_COUNT = 750;  // > one window of 500
 
     vi.mocked(readFileGroups).mockImplementation(makeReadFileGroups(ROW_COUNT));
     const exchange = makeExchange();
 
-    await processNextBatch('http://vault', makeBroker(exchange), makeRedis(), noGate);
+    await processNextBatch(makeConfig(), makeBrokers(6, exchange), makeRedis(), new Set());
 
-    expect(exchange.publish).toHaveBeenCalledTimes(ROW_COUNT);
+    expect(exchange.publish).toHaveBeenCalledTimes(ROW_COUNT + 1);
+  });
+
+  it('publishes data messages with persistent: false', async () => {
+    const exchange = makeExchange();
+
+    vi.mocked(readFileGroups).mockImplementation(makeReadFileGroups(5));
+
+    await processNextBatch(makeConfig(), makeBrokers(6, exchange), makeRedis(), new Set());
+
+    const dataCalls = exchange.publish.mock.calls.filter(([, rk]) => rk !== 'control');
+
+    for (const call of dataCalls) {
+      const opts = call[2] as { persistent?: boolean };
+
+      expect(opts.persistent).toBe(false);
+    }
+  });
+
+  it('publishes the control message with the broker default (persistent)', async () => {
+    const exchange = makeExchange();
+
+    vi.mocked(readFileGroups).mockImplementation(makeReadFileGroups(5));
+
+    await processNextBatch(makeConfig(), makeBrokers(6, exchange), makeRedis(), new Set());
+
+    const controlCall = exchange.publish.mock.calls.find(([, rk]) => rk === 'control')!;
+    const opts        = controlCall[2] as { persistent?: boolean } | undefined;
+
+    // No options passed → broker default (persistent: true) applies.
+    expect(opts?.persistent).toBeUndefined();
+  });
+
+  it('publishes items in order within a single file', async () => {
+    const ROW_COUNT = 1_000;
+    const exchange  = makeExchange();
+
+    vi.mocked(readFileGroups).mockImplementation(makeReadFileGroups(ROW_COUNT));
+
+    await processNextBatch(makeConfig(), makeBrokers(6, exchange), makeRedis(), new Set());
+
+    const dataCalls = exchange.publish.mock.calls.filter(([, rk]) => rk !== 'control');
+    const indices   = dataCalls.map(([, , opts]) => (opts as { headers: { 'x-msg-index': number } }).headers['x-msg-index']);
+
+    expect(indices).toEqual(indices.slice().sort((a, b) => a - b));
+    expect(indices[0]).toBe(0);
+    expect(indices[indices.length - 1]).toBe(ROW_COUNT - 1);
   });
 });
 
-// ── processFile — setOffset checkpoint ────────────────────────────────────────
+// ── processFile — resume from registrar's offset ──────────────────────────────
 
-describe('processFile — setOffset checkpoint', () => {
+describe('processFile — resume', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(isDone).mockResolvedValue(false);
-    vi.mocked(getOffset).mockResolvedValue(0);
+    vi.mocked(listTables).mockResolvedValue(['trade']);
+    vi.mocked(listFiles).mockResolvedValue({ '20240101': 'closed' });
+    vi.mocked(readFileGroups).mockImplementation(makeReadFileGroups(0));
+  });
+
+  it('passes readProgress.startFrom as the vault skip offset', async () => {
+    vi.mocked(readProgress).mockResolvedValue({ state: 'pending', startFrom: 500 });
+
+    await processNextBatch(makeConfig(), makeBrokers(6), makeRedis(), new Set());
+
+    expect(readFileGroups).toHaveBeenCalledWith(
+      expect.anything(), 'trade', '20240101', expect.anything(), 500,
+    );
+  });
+});
+
+// ── processFile — control message ─────────────────────────────────────────────
+
+describe('processFile — control message', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(readProgress).mockResolvedValue({ state: 'pending', startFrom: 0 });
     vi.mocked(listTables).mockResolvedValue(['trade']);
     vi.mocked(listFiles).mockResolvedValue({ '20240101': 'closed' });
   });
 
-  it('calls setOffset at the 500-message checkpoint', async () => {
-    vi.mocked(readFileGroups).mockImplementation(makeReadFileGroups(500));
+  it('publishes a complete control message after data, with highestIndex = totalGroups - 1', async () => {
+    const ROW_COUNT = 10;
+    const exchange  = makeExchange();
 
-    await processNextBatch('http://vault', makeBroker(), makeRedis(), noGate);
+    vi.mocked(readFileGroups).mockImplementation(makeReadFileGroups(ROW_COUNT));
 
-    // checkpoint fires at msgIndex 499 (index+1 === 500)
-    expect(vi.mocked(setOffset)).toHaveBeenCalledWith(
-      expect.anything(), 'trade', '20240101', 500,
-    );
+    await processNextBatch(makeConfig(), makeBrokers(6, exchange), makeRedis(), new Set());
+
+    const lastCall = exchange.publish.mock.calls[exchange.publish.mock.calls.length - 1]!;
+
+    expect(lastCall[0]).toEqual({ type: 'complete', table: 'trade', date: '20240101', highestIndex: ROW_COUNT - 1 });
+    expect(lastCall[1]).toBe('control');
   });
 
-  it('does not call setOffset for fewer than 500 messages', async () => {
-    vi.mocked(readFileGroups).mockImplementation(makeReadFileGroups(499));
+  it('sends highestIndex: -1 for an empty file', async () => {
+    const exchange = makeExchange();
 
-    await processNextBatch('http://vault', makeBroker(), makeRedis(), noGate);
+    vi.mocked(readFileGroups).mockImplementation(makeReadFileGroups(0));
 
-    expect(vi.mocked(setOffset)).not.toHaveBeenCalled();
-  });
-});
+    await processNextBatch(makeConfig(), makeBrokers(6, exchange), makeRedis(), new Set());
 
-// ── processFile — closed-file marking ─────────────────────────────────────────
+    const controlCall = exchange.publish.mock.calls.find(([, rk]) => rk === 'control');
 
-describe('processFile — markDone', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.mocked(isDone).mockResolvedValue(false);
-    vi.mocked(getOffset).mockResolvedValue(0);
-    vi.mocked(listTables).mockResolvedValue(['trade']);
-    vi.mocked(listFiles).mockResolvedValue({ '20240101': 'closed' });
-    vi.mocked(readFileGroups).mockImplementation(makeReadFileGroups(10));
+    expect(controlCall).toBeDefined();
+    expect(controlCall![0]).toEqual({ type: 'complete', table: 'trade', date: '20240101', highestIndex: -1 });
   });
 
-  it('marks the file done after a successful read', async () => {
-    await processNextBatch('http://vault', makeBroker(), makeRedis(), noGate);
+  it('adds successfully-published files to the in-memory completed set', async () => {
+    vi.mocked(readFileGroups).mockImplementation(makeReadFileGroups(1));
 
-    expect(vi.mocked(markDone)).toHaveBeenCalledWith(
-      expect.anything(), 'trade', '20240101',
-    );
+    const completed = new Set<string>();
+
+    await processNextBatch(makeConfig(), makeBrokers(6), makeRedis(), completed);
+
+    expect(completed.has('trade:20240101')).toBe(true);
   });
 });

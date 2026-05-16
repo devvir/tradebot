@@ -1,24 +1,32 @@
 # Clerk Service
 
-Scans vault for closed files across all BitMEX tables and publishes their rows to
-RabbitMQ for downstream processing. Tracks progress in Redis so each file is
-processed exactly once.
+Scans vault for closed files across all BitMEX tables and publishes their rows
+to RabbitMQ for downstream processing. Reads progress from Redis to know what
+to skip and where to resume from; registrar owns the writes.
 
 ## What it does
 
-- Discovers closed vault files via `GET /files/:table` and skips already-processed ones
-- WS files: publishes one `data` message per WS message group to `topic:clerk`
-- REST files: publishes one `item` message per row to `topic:clerk`
+- Discovers closed vault files via `GET /files/:table`
+- Skips buckets already finalized in Redis (`customs:<table>:<date>` = `'done'`)
+- Skips buckets already completed this run via an in-memory set
+- Resumes mid-file from registrar's last confirmed msgIndex (`stored + 1`)
+- WS files: publishes one `message` per WS group; REST files: one `record` per row
+- Emits a `complete` control message per file so registrar can finalize the bucket
+- Publishes data with `persistent: false` and the control message with the broker
+  default — see the docs for the rationale
 - Applies backpressure when downstream queues exceed capacity
-- Repeats on a configurable poll interval
 
 ## Configuration
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `CLERK_TABLES` | No | _(all)_ | Comma-separated table names to process. Empty means process all. |
-| `CLERK_BACKPRESSURE_LIMIT` | No | `100000` | Max messages in watched queues before pausing |
-| `CLERK_WATCH_QUEUES` | No | `assembler,registrar` | Comma-separated queue names to watch |
+| `VAULT_URL` | Yes | — | Base URL of vault |
+| `CLERK_TABLES` | No | _(all)_ | Comma-separated table names to process |
+| `CLERK_WATCH_QUEUES` | | Comma-separated queues to watch for backpressure: queue1:limit1,queue2:limit2 |
+| `CLERK_FILE_CONCURRENCY` | No | `6` | Max files processed concurrently |
+| `CLERK_READ_BUFFER_HIGH` | No | `100000` | Buffer high watermark (pause read) |
+| `CLERK_READ_BUFFER_LOW` | No | `50000` | Buffer low watermark (resume read) |
+| `CLERK_INFLIGHT_LIMIT` | No | `5000` | Max in-flight publish acks per file |
 
 ## Development
 

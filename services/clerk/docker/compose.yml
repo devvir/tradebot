@@ -14,8 +14,7 @@ services:
       QUEUE_URL:  ${QUEUE_URL}
       VAULT_URL:  ${VAULT_URL}
 
-      CLERK_BACKPRESSURE_LIMIT: ${CLERK_BACKPRESSURE_LIMIT:-100000}
-      CLERK_WATCH_QUEUES:       ${CLERK_WATCH_QUEUES:-assembler,registrar}
+      CLERK_WATCH_QUEUES:       ${CLERK_WATCH_QUEUES:-}
       CLERK_TABLES:             ${CLERK_TABLES:-}
 
       NODE_ENV:  ${APP_ENV:-prod}

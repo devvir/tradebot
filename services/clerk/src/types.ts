@@ -1,34 +1,63 @@
-import type { RabbitMQ } from '@devvir/service-kit';
-
-export type Broker = RabbitMQ.Broker;
+export type { Broker } from '@devvir/rabbitmq';
 
 export interface Config {
-  vaultUrl:       string;
-  tables:         string[];
-  maxReady:       number;
-  watchQueues:    string[];
-  [key: string]:  unknown;
+  queueUrl:        string;
+  vaultUrl:        string;
+  tables:          string[];
+  /** Per-queue depth thresholds that pause publishing when exceeded. */
+  waitIf:          Record<string, number>;
+  /** Number of parallel workers. Each owns its own broker / connection / channel. */
+  fileConcurrency: number;
+  /** Buffered items between ReadTask and PublishTask; push pauses at high, resumes at low. */
+  readBufferHigh:  number;
+  readBufferLow:   number;
+  [key: string]:   unknown;
 }
 
-/** A row as returned by vault — values are already typed. */
-export type Row = Record<string, unknown>;
+export interface BufferItem {
+  /** Raw NDJSON line from vault — passed through to RabbitMQ untouched. */
+  line:     string;
+  msgIndex: number;
+}
 
-/** A WS message as stored and returned by vault. */
-export interface WsMessage {
-  action: string;
+export interface FileWork {
+  table: string;
+  date:  string;
+}
+
+/**
+ * Sent by clerk to registrar on the `control` routing key when a file has been
+ * fully published. `highestIndex` is the 0-based absolute index of the last
+ * message in the file (count - 1, or -1 for an empty file).
+ */
+export interface ControlMessage {
+  type:         'complete';
+  table:        string;
+  date:         string;
+  highestIndex: number;
+}
+
+export interface DateBatch {
   date:   string;
-  data:   Row[];
+  tables: string[];
 }
 
-/** Returns true if the parsed line is a WS message object. */
-export const isWsMessage = (item: unknown): item is WsMessage =>
-  typeof item === 'object' &&
-  item !== null &&
-  ! Array.isArray(item) &&
-  'action' in item &&
-  'date'   in item &&
-  'data'   in item &&
-  Array.isArray((item as WsMessage).data);
+export interface BoundedBuffer<T> {
+  /** Push one item. Resolves immediately unless backpressure is active. */
+  push(item: T): Promise<void>;
+
+  /**
+   * Pop the oldest item. Resolves with the item, or `undefined` if the buffer
+   * has been closed and is empty (use this as the end-of-stream signal).
+   */
+  pop(): Promise<T | undefined>;
+
+  /** Signal that no further items will be pushed. Idempotent. */
+  close(): void;
+
+  /** Current number of buffered items. */
+  size(): number;
+}
 
 export type FileState = 'open' | 'closed';
 

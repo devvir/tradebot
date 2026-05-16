@@ -1,9 +1,5 @@
 import { listTables, listFiles } from './vault';
-
-export interface DateBatch {
-  date:   string;
-  tables: string[];
-}
+import type { DateBatch } from './types';
 
 /**
  * Discovers closed vault files across all tables and groups them by date.

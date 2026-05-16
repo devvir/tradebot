@@ -2,7 +2,7 @@ import { createInterface } from 'node:readline';
 import { Readable } from 'node:stream';
 import { Agent, fetch as undiciFetch } from 'undici';
 import { logger } from '@devvir/service-kit';
-import type { Row, WsMessage, FileState, VaultReadContext } from './types';
+import type { FileState, VaultReadContext } from './types';
 
 const RETRY_DELAY_MS       = 5_000;
 const FETCH_TIMEOUT_MS     = 15_000;
@@ -36,18 +36,16 @@ export const listFiles = async (
 };
 
 /**
- * Streams a vault file (NDJSON) and calls onGroup for each entry,
- * starting from the entry at absolute index `startFrom` (default 0).
+ * Streams a vault file (NDJSON) and calls onGroup for each line, starting
+ * from the entry at absolute index `startFrom` (default 0).
  *
  * When `startFrom > 0` we ask vault to skip the first `startFrom` rows
  * server-side via `?skip=N`, so the response stream begins at that absolute
- * index. Every received row is therefore live data — nothing is dropped
+ * index. Every received line is therefore live data — nothing is dropped
  * on this side.
  *
- * WS files:   each line is a WsMessage object `{ action, date, data }`.
- * REST files: each line is a plain Row object.
- *
- * Use `isWsMessage` to distinguish the two shapes in the callback.
+ * Lines are yielded as raw strings without parsing. Clerk publishes them
+ * as-is to RabbitMQ; only downstream consumers need to interpret them.
  *
  * `msgIndex` is always the absolute index from the start of the file,
  * so it can be used directly as the new offset after publishing.
@@ -58,7 +56,7 @@ export const readFileGroups = async (
   vaultUrl: string,
   table: string,
   date: string,
-  onGroup: (item: WsMessage | Row, msgIndex: number) => Promise<void>,
+  onGroup: (line: string, msgIndex: number) => Promise<void>,
   startFrom = 0,
 ): Promise<number> => {
   const url = startFrom > 0
@@ -99,11 +97,9 @@ export const readFileGroups = async (
 
   try {
     for await (const line of lines) {
-      if (! line.trim()) continue;
+      if (! line.length) continue;
 
-      const item = JSON.parse(line) as WsMessage | Row;
-
-      await onGroup(item, groupIndex);
+      await onGroup(line, groupIndex);
 
       groupIndex++;
     }

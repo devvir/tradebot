@@ -1,45 +1,43 @@
+/**
+ * Read-only view of the customs pipeline progress for each (table, date).
+ *
+ * Registrar owns these keys — clerk never writes them. Each key
+ * (`customs:<table>:<date>`) is one of:
+ *
+ *   - missing:           bucket has no progress yet (no message stored)
+ *   - numeric string:    the highest msgIndex stored in MongoDB so far
+ *   - `'done:<count>'`:  registrar has confirmed the whole bucket is stored;
+ *                        `count` is the total number of messages in the bucket
+ *
+ * Clerk consults this to decide what to skip and where to resume from. The
+ * `<count>` suffix is informational for other consumers — clerk only cares
+ * whether the bucket is done.
+ */
+
 import type { RedisClient } from '@devvir/service-kit';
 
-const key = (table: string, date: string): string => `clerk_progress:${table}:${date}`;
+export type Progress =
+  | { state: 'done' }
+  | { state: 'pending'; startFrom: number };
 
-// Returns the number of message groups already published for a file.
-// Returns 0 if the file has never been processed (or is marked done, which
-// means the caller should have checked isDone first).
-export const getOffset = async (
+const key = (table: string, date: string): string => `customs:${table}:${date}`;
+
+/**
+ * Reads the registrar-owned progress for a file. `startFrom` is the absolute
+ * 0-based index of the next message clerk should request from vault — it is
+ * `stored + 1` because `stored` was already inserted into MongoDB.
+ */
+export const readProgress = async (
   redis: RedisClient,
   table: string,
-  date: string,
-): Promise<number> => {
+  date:  string,
+): Promise<Progress> => {
   const val = await redis.get(key(table, date));
-  if (val === null || val === 'done') return 0;
-  return parseInt(val, 10);
-};
 
-// Returns true if the file has been fully processed and sealed.
-// Only closed files are ever marked done.
-export const isDone = async (
-  redis: RedisClient,
-  table: string,
-  date: string,
-): Promise<boolean> => {
-  return (await redis.get(key(table, date))) === 'done';
-};
+  if (val === null)           return { state: 'pending', startFrom: 0 };
+  if (val.startsWith('done')) return { state: 'done' };
 
-// Persists the current offset (number of groups published from file start).
-export const setOffset = async (
-  redis: RedisClient,
-  table: string,
-  date: string,
-  offset: number,
-): Promise<void> => {
-  await redis.set(key(table, date), String(offset));
-};
+  const stored = parseInt(val, 10);
 
-// Marks a closed file as permanently done — will never be revisited.
-export const markDone = async (
-  redis: RedisClient,
-  table: string,
-  date: string,
-): Promise<void> => {
-  await redis.set(key(table, date), 'done');
+  return { state: 'pending', startFrom: stored + 1 };
 };

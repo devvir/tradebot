@@ -1,30 +1,34 @@
-import { logger, Broker, type RedisClient } from '@devvir/service-kit';
+import { logger, type RedisClient } from '@devvir/service-kit';
 import { readFileGroups } from './vault';
 import { discoverFiles } from './discovery';
-import { isWsMessage } from './types';
-import { isDone, getOffset, setOffset, markDone } from './progress';
-import type { Config } from './types';
+import { readProgress } from './progress';
+import { publishTask, publishControl } from './publisher';
+import { createBoundedBuffer } from './buffer';
+import type { Broker, Config, BufferItem, FileWork, BoundedBuffer } from './types';
 
-type Gate = () => Promise<void>;
+const POLL_INTERVAL_MS = 60_000;
 
-const OFFSET_CHECKPOINT  = 500;
-const PUBLISH_BATCH_SIZE = 500;
-const POLL_INTERVAL_MS   = 60_000;
+// ── Top-level ─────────────────────────────────────────────────────────────────
 
 export const runLoop = async (
   config:     Config,
-  broker:     Broker,
+  brokers:    Broker[],
   redis:      RedisClient,
-  gate:       Gate,
   stopSignal: { stopped: boolean },
 ): Promise<void> => {
-  const { vaultUrl } = config;
+  /**
+   * Files completed in this run. Acts as a fast-path filter so the next poll
+   * cycle won't re-pick a file while registrar's `'done'` flag is still
+   * propagating through Redis. Starts empty — on a cold start, only Redis
+   * decides what to skip.
+   */
+  const completedThisRun = new Set<string>();
 
   while (! stopSignal.stopped) {
     try {
-      const found = await processNextBatch(vaultUrl, broker, redis, gate, config.tables);
+      const processed = await processNextBatch(config, brokers, redis, completedThisRun);
 
-      if (! found) {
+      if (! processed && ! stopSignal.stopped) {
         logger.debug('Clerk sleeping until next poll');
         await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
       }
@@ -36,105 +40,155 @@ export const runLoop = async (
 };
 
 /**
- * Discovers vault files, finds the next unprocessed date batch, and processes
- * it. Returns true if a batch was found and processed, false if everything is
- * up to date.
+ * Discovers vault files and processes every not-yet-done one across the broker
+ * pool — one worker per broker. Files marked `done` in Redis OR already
+ * completed in this run are skipped. Returns true if at least one file was
+ * scheduled.
  */
 const processNextBatch = async (
-  vaultUrl: string,
-  broker:   Broker,
-  redis:    RedisClient,
-  gate:     Gate,
-  filter:   string[] = [],
+  config:           Config,
+  brokers:          Broker[],
+  redis:            RedisClient,
+  completedThisRun: Set<string>,
 ): Promise<boolean> => {
-  const batches = await discoverFiles(vaultUrl, filter);
+  const todo = await pendingWork(config, redis, completedThisRun);
 
-  for (const { date, tables } of batches) {
-    const doneChecks = await Promise.all(tables.map(t => isDone(redis, t, date)));
+  if (todo.length === 0) return false;
 
-    if (doneChecks.every(Boolean)) continue;
+  await runWorkers(config, brokers, todo, completedThisRun);
 
-    await Promise.all(
-      tables.map(table => processFile(vaultUrl, table, date, broker, redis, gate)),
-    );
-
-    return true;
-  }
-
-  return false;
+  return true;
 };
 
-const processFile = async (
-  vaultUrl: string,
-  table: string,
-  date: string,
-  broker: Broker,
-  redis: RedisClient,
-  gate: Gate,
+// ── Discovery & filtering ─────────────────────────────────────────────────────
+
+type PendingFile = FileWork & { startFrom: number };
+
+/**
+ * Returns every file that's known to vault, not marked done in Redis, and not
+ * already completed in this run. Each entry includes the absolute msgIndex to
+ * resume from (0 for new files).
+ */
+const pendingWork = async (
+  config:           Config,
+  redis:            RedisClient,
+  completedThisRun: Set<string>,
+): Promise<PendingFile[]> => {
+  const batches = await discoverFiles(config.vaultUrl, config.tables);
+
+  const candidates: FileWork[] = [];
+
+  for (const { date, tables } of batches) {
+    for (const table of tables) {
+      candidates.push({ table, date });
+    }
+  }
+
+  if (candidates.length === 0) return [];
+
+  const progresses = await Promise.all(
+    candidates.map(w => readProgress(redis, w.table, w.date)),
+  );
+
+  const todo: PendingFile[] = [];
+
+  for (let i = 0; i < candidates.length; i++) {
+    const work = candidates[i]!;
+    const prog = progresses[i]!;
+
+    if (prog.state === 'done') continue;
+    if (completedThisRun.has(workKey(work.table, work.date))) continue;
+
+    todo.push({ ...work, startFrom: prog.startFrom });
+  }
+
+  return todo;
+};
+
+// ── Worker pool ───────────────────────────────────────────────────────────────
+
+/**
+ * Runs one worker per broker, each draining files from a shared queue. Workers
+ * exit when the queue is empty. A failure on one file does not abort the
+ * worker — it's logged and the file is retried next cycle.
+ */
+const runWorkers = async (
+  config:           Config,
+  brokers:          Broker[],
+  todo:             PendingFile[],
+  completedThisRun: Set<string>,
 ): Promise<void> => {
-  if (await isDone(redis, table, date)) return;
+  let nextIdx = 0;
 
-  const startFrom = await getOffset(redis, table, date);
-
-  logger.info({ table, date, startFrom }, 'Processing vault file');
-
-  const outExchange = broker.getExchange()!;
-
-  const pending: Promise<void>[] = [];
-
-  const flush = async (): Promise<void> => {
-    if (pending.length === 0) return;
-    await Promise.all(pending);
-    pending.length = 0;
+  const takeNext = (): PendingFile | undefined => {
+    const i = nextIdx++;
+    return i < todo.length ? todo[i] : undefined;
   };
 
-  let publishedCount = 0;
+  const worker = async (broker: Broker): Promise<void> => {
+    while (true) {
+      const next = takeNext();
+      if (! next) return;
 
-  const totalGroups = await readFileGroups(vaultUrl, table, date, async (rows, msgIndex) => {
-    await gate();
+      const { table, date, startFrom } = next;
 
-    const routingKey = isWsMessage(rows) ? 'message' : 'record';
-
-    if (publishedCount === 0) {
-      logger.debug({ table, date, msgIndex, routingKey }, 'First item received from vault');
+      try {
+        await processFile(config, broker, table, date, startFrom);
+        completedThisRun.add(workKey(table, date));
+      } catch (err) {
+        logger.error({ err, table, date }, 'processFile failed — will retry next cycle');
+      }
     }
+  };
 
-    pending.push(outExchange.publish(rows, routingKey, {
-      headers: {
-        'x-table':     table,
-        'x-date':      date,
-        'x-msg-index': msgIndex,
-      },
-    }));
+  await Promise.all(brokers.map(b => worker(b)));
+};
 
-    publishedCount++;
+// ── Per-file pipeline ─────────────────────────────────────────────────────────
 
-    if (pending.length >= PUBLISH_BATCH_SIZE) {
-      await flush();
-    }
+const processFile = async (
+  config:    Config,
+  broker:    Broker,
+  table:     string,
+  date:      string,
+  startFrom: number,
+): Promise<void> => {
+  logger.info({ table, date, startFrom }, 'Processing vault file');
 
-    if ((msgIndex + 1) % OFFSET_CHECKPOINT === 0) {
-      // Flush before persisting the offset so we never advance the Redis
-      // checkpoint past messages still in the publish queue. Without this,
-      // a crash between setOffset and the next flush would silently drop
-      // those in-flight messages on resume (vault would skip past them).
-      await flush();
+  const buffer = createBoundedBuffer<BufferItem>(config.readBufferHigh, config.readBufferLow);
 
-      logger.debug({ table, date, msgIndex, publishedCount }, 'Clerk publish checkpoint');
-      await setOffset(redis, table, date, msgIndex + 1);
-    }
-  }, startFrom);
+  const [ totalGroups ] = await Promise.all([
+    readTask(config, table, date, buffer, startFrom),
+    publishTask(broker, table, date, buffer),
+  ]);
 
-  logger.debug({ table, date, totalGroups, publishedCount, startFrom }, 'readFileGroups complete');
-
-  await flush();
-
-  // A successful read implies the file was closed on disk (vault refuses
-  // open files), so we can safely mark it done.
-  await markDone(redis, table, date);
+  await publishControl(broker, table, date, totalGroups - 1);
 
   logger.info({ table, date, totalGroups }, 'Vault file processed');
 };
+
+/**
+ * Streams the vault file and pushes raw NDJSON lines into the buffer. Closes
+ * the buffer in `finally` so PublishTask sees the end-of-stream signal whether
+ * the read succeeded or failed.
+ */
+const readTask = async (
+  config:    Config,
+  table:     string,
+  date:      string,
+  buffer:    BoundedBuffer<BufferItem>,
+  startFrom: number,
+): Promise<number> => {
+  try {
+    return await readFileGroups(config.vaultUrl, table, date, async (line, msgIndex) => {
+      await buffer.push({ line, msgIndex });
+    }, startFrom);
+  } finally {
+    buffer.close();
+  }
+};
+
+const workKey = (table: string, date: string): string => `${table}:${date}`;
 
 // ── Test exports ──────────────────────────────────────────────────────────────
 
