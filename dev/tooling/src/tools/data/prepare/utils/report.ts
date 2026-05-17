@@ -1,11 +1,9 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { getActiveBackend } from '@devvir/zipper';
-import { error, info, log, logLines, section, spacer, success, warn, writeBucketLog } from '../../log';
+import { error, info, log, logLines, section, spacer, success, warn } from '../../log';
 import { fromDay, isDryRun } from '../../options';
-import type { CommandLogData, GroupLogData, PrepareGroup, ReadIssue, StatsCollector } from '../types';
-
-const ISSUE_SAMPLE_LIMIT = 50;
+import type { CommandLogData, PrepareGroup, ReadIssue, StatsCollector } from '../types';
 
 // ── Stats collector ──────────────────────────────────────────────────────────
 
@@ -115,7 +113,7 @@ export function reportProcessing(group: PrepareGroup, inputBytes: number): void 
 
 /**
  * Success path: terminal "Written: N → path" plus dedup/validation drop
- * counts, plus the per-group log file and global command-log entry.
+ * counts, and the per-group section appended to the global command log.
  */
 export function recordGroupResult(
   group:     PrepareGroup,
@@ -127,12 +125,6 @@ export function recordGroupResult(
 
   if (stats.dropped.count > 0) info(`Dedup drops: ${stats.dropped.count.toLocaleString()}`);
   if (stats.issues.length > 0) warn(`Validation drops: ${stats.issues.length.toLocaleString()} (logged)`);
-
-  writeGroupLog(group, {
-    written,
-    dedupDrops: stats.dropped.count,
-    issues:     stats.issues,
-  });
 
   writeCommandLog(group, {
     readCounts:    stats.readCounts,
@@ -147,8 +139,8 @@ export function recordGroupResult(
 }
 
 /**
- * Failure path: terminal `FAILED <day> (<table>): <msg>`, plus per-group log
- * and global command-log entry both annotated with the error.
+ * Failure path: terminal `FAILED <day> (<table>): <msg>`, with the error also
+ * appended to the global command log.
  */
 export function recordGroupFailure(
   group:  PrepareGroup,
@@ -156,13 +148,6 @@ export function recordGroupFailure(
   errMsg: string,
 ): void {
   error(`FAILED ${group.day} (${group.tableName}): ${errMsg}`);
-
-  writeGroupLog(group, {
-    written:    0,
-    dedupDrops: stats.dropped.count,
-    issues:     stats.issues,
-    error:      errMsg,
-  });
 
   writeCommandLog(group, {
     readCounts:    stats.readCounts,
@@ -177,46 +162,7 @@ export function recordGroupFailure(
   spacer();
 }
 
-// ── Internal: log file writers ───────────────────────────────────────────────
-
-/**
- * Per-group log file `<day>.log` written next to the prepared output.
- * Sources, written count, dedup drops, and a sample of validation drops.
- */
-function writeGroupLog(group: PrepareGroup, data: GroupLogData): string | null {
-  const lines: string[] = [
-    `Day:    ${group.day}`,
-    `Table:  ${group.tableName}`,
-    `Folder: ${group.folder}`,
-    '',
-    'Sources:',
-    ...group.paths.map(p => `  ${p}`),
-    '',
-  ];
-
-  if (data.error) {
-    lines.push(`FAILED: ${data.error}`, '');
-  }
-
-  lines.push(
-    `Written:     ${data.written.toLocaleString()}`,
-    `Dedup drops: ${data.dedupDrops.toLocaleString()}`,
-  );
-
-  if (data.issues.length > 0) {
-    lines.push('', `Validation drops (${data.issues.length}):`);
-
-    for (const issue of data.issues.slice(0, ISSUE_SAMPLE_LIMIT)) {
-      lines.push(`  [${issue.date || '(no date)'}] ${issue.reason}`);
-    }
-
-    if (data.issues.length > ISSUE_SAMPLE_LIMIT) {
-      lines.push(`  … ${(data.issues.length - ISSUE_SAMPLE_LIMIT).toLocaleString()} more`);
-    }
-  }
-
-  return writeBucketLog(`${group.day}.log`, group.outputDir, lines);
-}
+// ── Internal: command-log writer ─────────────────────────────────────────────
 
 /**
  * Per-group section appended to the global `prepare.log`. Per-source read

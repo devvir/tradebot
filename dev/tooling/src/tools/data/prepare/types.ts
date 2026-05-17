@@ -39,13 +39,6 @@ export interface PrepareGroup {
   outputName: string;       // <day>.csv.gz
 }
 
-export interface GroupLogData {
-  written:    number;
-  dedupDrops: number;
-  issues:     ReadIssue[];
-  error?:     string;
-}
-
 /** Sanity-check failure emitted by READ when discarding a message. */
 export interface ReadIssue {
   reason: string;

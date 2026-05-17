@@ -271,3 +271,42 @@ export const TABLE_SPECS: Record<BitmexTable, TableSpec> = {
   },
 
 };
+
+/**
+ * Tables whose vault files store reconstructed WS message envelopes
+ * (`{ action, date, data[] }`) rather than per-row REST records. Used to
+ * decide, at task creation time, whether a bucket flows through the
+ * assembler stage or straight to the writer queue, and — when reading a
+ * vault file back — which rows are message-opening vs continuation rows.
+ *
+ * Typed as `ReadonlySet<string>` because consumers (e.g. vault) look up
+ * arbitrary table-name strings, including tables outside the `BitmexTable`
+ * union such as `compositeIndex`.
+ */
+export const WS_TABLES: ReadonlySet<string> = new Set([
+  'announcement',
+  'chat',
+  'connected',
+  'instrument',
+  'liquidation',
+  'orderBookL2',
+  'publicNotifications',
+]);
+
+/**
+ * Tables whose fields can contain commas, double quotes, or embedded newlines —
+ * free-text content such as announcement bodies, chat messages, and notification
+ * text. Reading these requires a full RFC 4180 CSV parser; a line-based reader
+ * would fragment a quoted field at its embedded `\n` before any consumer saw it
+ * as a single field.
+ *
+ * Every other table holds only numbers, symbols, and ISO timestamps — no
+ * quoting — so each physical line is exactly one record and a plain comma split
+ * (several times faster) is correct. This is the single source of truth both
+ * vault and the data-prepare tool read from.
+ */
+export const FREE_TEXT_TABLES: ReadonlySet<string> = new Set([
+  'announcement',
+  'chat',
+  'publicNotifications',
+]);

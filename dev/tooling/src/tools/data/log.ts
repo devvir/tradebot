@@ -13,7 +13,13 @@ import {
 } from '../../shared/ui/logger';
 import { logPath } from './options';
 
-// ── Tier 1 — stdout (re-exported from shared logger) ─────────────────────────
+// Two-tier logging:
+//   - stdout (re-exported from the shared logger)
+//   - command log (plain-text file, written only when --log is set)
+//
+// LOG_LEVEL=debug additionally opens `debug.log` alongside the command log.
+
+// ── Stdout (re-exported from shared logger) ──────────────────────────────────
 
 export const info          = _info;
 export const success       = _success;
@@ -42,7 +48,7 @@ export function setupDebugLog(): void {
   _openDebugLog(path.join(logDir, 'debug.log'));
 }
 
-// ── Tier 2 — command log (plain-text, written when --log is set) ──────────────
+// ── Command log (plain-text, written when --log is set) ──────────────────────
 
 /**
  * Append a plain-text line to the log file set by --log, prefixed with a
@@ -79,46 +85,5 @@ export function logLines(lines: string[]): void {
 
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.appendFileSync(filePath, content);
-}
-
-// ── Tier 3 — bucket log (per processed file/group) ───────────────────────────
-
-/**
- * Write a plain-text log file for one processed unit (e.g. one prepared day).
- * Always written to `<fallbackDir>/<filename>` — next to the output files.
- * --log controls general command logs only and does not redirect bucket logs.
- *
- * @param filename    - Bare filename, e.g. `20260403.log`
- * @param fallbackDir - Directory to write the log into (always used)
- * @param lines       - Content lines (joined with newlines)
- */
-export function writeBucketLog(
-  filename:    string,
-  fallbackDir: string,
-  lines:       string[],
-): string | null {
-  if (logPath()) return null;
-
-  const dir = fallbackDir;
-
-  try {
-    fs.mkdirSync(dir, { recursive: true });
-  } catch {
-    _warn(`Cannot create log directory: ${dir}`);
-
-    return null;
-  }
-
-  const filePath = path.join(dir, filename);
-
-  try {
-    fs.writeFileSync(filePath, lines.join('\n') + '\n');
-
-    return filePath;
-  } catch {
-    _warn(`Failed to write log: ${filePath}`);
-
-    return null;
-  }
 }
 

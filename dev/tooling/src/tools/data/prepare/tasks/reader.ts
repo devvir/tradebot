@@ -45,7 +45,7 @@ export async function* read(
 
   const records = allowsSimplifiedParsing(tableName)
     ? splitRecords(byteSrc)
-    : csvRecords(byteSrc, columns.length, dateIdx, onIssue);
+    : csvRecords(byteSrc, columns.length, dateIdx);
 
   const tsResolver = createTsResolver();
 
@@ -157,7 +157,6 @@ async function* csvRecords(
   src:         NodeJS.ReadableStream,
   expectedLen: number,
   dateIdx:     number,
-  _onIssue:    (issue: ReadIssue) => void,
 ): AsyncGenerator<RecordResult> {
   const parser = createCsvParser(false, true);
 

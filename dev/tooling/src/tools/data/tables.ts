@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { FREE_TEXT_TABLES } from '@tradebot/utils';
 import { TableConfig } from './types';
 
 export const KNOWN_TABLES = new Set([
@@ -116,20 +117,16 @@ export function hasFixedPartials(tableName: string): boolean {
   return FIXED_PARTIAL_TABLES.has(tableName);
 }
 
-const SIMPLE_PARSING_TABLES: ReadonlySet<string> = new Set([
-  'connected',
-  'instrument',
-  'liquidation',
-  'orderBookL2',
-]);
-
 /**
  * True when every field in the table is a number, symbol, or ISO timestamp —
  * no free text that could contain commas, quotes, or newlines. READ can skip
  * the full RFC 4180 parser and split on commas directly.
+ *
+ * Derived from the central FREE_TEXT_TABLES set so data-prepare and vault
+ * classify tables identically.
  */
 export function allowsSimplifiedParsing(tableName: string): boolean {
-  return SIMPLE_PARSING_TABLES.has(tableName);
+  return ! FREE_TEXT_TABLES.has(tableName);
 }
 
 /**
