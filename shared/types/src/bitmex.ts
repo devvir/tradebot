@@ -25,7 +25,7 @@ export type BitmexFieldType =
   | 'timestamp';
 
 /**
- * All possible BitMEX WebSocket tmessageable names
+ * All possible BitMEX WebSocket table names
  */
 export type BitmexTable =
   // ── Public ──────────────────────────────────────────────────────────────────
