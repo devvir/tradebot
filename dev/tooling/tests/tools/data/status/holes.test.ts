@@ -106,17 +106,58 @@ describe('computeHoles — settlement rule', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('clamps the effective start to SETTLEMENT_API_START', async () => {
+  it('covers pre-2026 history (no SETTLEMENT_API_START clamp)', async () => {
+    // One non-2025 settlement returned; every day in 2025-01 should be filled
+    // because none of them are in the settlement-days set.
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok:   true,
-      json: async () => [],
+      json: async () => [{ timestamp: '2017-06-15T12:00:00.000Z' }],
     }));
 
-    // fromDay before SETTLEMENT_API_START (2026-01-01) — should still succeed, just empty fills
     const result = await computeHoles('settlement', restTable(), '20250101', '20250131');
 
-    expect(result.filled.size).toBe(0);  // before API start, nothing fetched
-    expect(result.notes).toHaveLength(0);
+    expect(result.filled.size).toBe(31);
+    expect(result.filled.has('20250115')).toBe(true);
+    expect(result.notes.some(n => n.toLowerCase().includes('settlement'))).toBe(true);
+  });
+
+  it('paginates: walks start=0, 500, … until a short page', async () => {
+    // Page 1 (start=0): 500 rows — keep going
+    // Page 2 (start=500): 2 rows — stop
+    const page1 = Array.from({ length: 500 }, (_, i) => ({
+      timestamp: `2017-${String((i % 12) + 1).padStart(2, '0')}-15T12:00:00.000Z`,
+    }));
+    const page2 = [
+      { timestamp: '2026-01-08T12:00:00.000Z' },
+      { timestamp: '2026-02-08T12:00:00.000Z' },
+    ];
+
+    const fetchSpy = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => page1 })
+      .mockResolvedValueOnce({ ok: true, json: async () => page2 });
+
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const result = await computeHoles('settlement', restTable(), '20260101', '20260131');
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy.mock.calls[0]![0]).toContain('start=0');
+    expect(fetchSpy.mock.calls[1]![0]).toContain('start=500');
+    expect(result.filled.has('20260108')).toBe(false);  // page-2 settlement day — not filled
+    expect(result.filled.has('20260109')).toBe(true);   // non-settlement — filled
+  });
+
+  it('returns null and fail caption when a mid-pagination page fails', async () => {
+    const page1 = Array.from({ length: 500 }, () => ({ timestamp: '2017-01-01T12:00:00.000Z' }));
+
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => page1 })
+      .mockRejectedValue(new Error('network error')));
+
+    const result = await computeHoles('settlement', restTable(), '20260101', '20260110');
+
+    expect(result.filled.size).toBe(0);
+    expect(result.notes.some(n => n.includes('Failed to fetch'))).toBe(true);
   });
 });
 

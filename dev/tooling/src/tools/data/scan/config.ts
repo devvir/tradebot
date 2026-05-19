@@ -26,9 +26,8 @@ export function loadConfig(): ScanConfig {
 function requiredEnv(name: string): string {
   const value = getEnv(name);
 
-  if (! value) {
+  if (! value)
     throw new Error(`Missing required env var: ${name}. Set it in dev/tooling/.env`);
-  }
 
   return value;
 }

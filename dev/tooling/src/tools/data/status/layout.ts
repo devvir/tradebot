@@ -6,6 +6,7 @@ import {
   CellState,
   DayKind,
   Range,
+  databaseState,
   localState,
   megaState,
   remoteState,
@@ -20,17 +21,19 @@ import {
  *   table state → day-by-day walk → maximal ranges → group identical tables
  */
 
-/** Identical tables (same origin, ranges, notes) collapse into one group. */
+/** Visually identical tables (same origin and ranges) collapse into one group. */
 export interface TableGroup {
   names:  string[];
   origin: TableOrigin;
   ranges: Range[];
-  notes:  string[];            // verbatim from holes.ts; display dedupes them
+  notes:  string[];            // union of members' captions; display dedupes them
 }
 
 export interface Layout {
   scannedAt: Date;
   locations: string[];         // ['Local', '<remote>', …, 'Mega']
+  today:     string;           // YYYYMMDD — display uses it to label the today range
+  yesterday: string;           // YYYYMMDD — display labels matching endpoints as "yesterday"
   groups:    TableGroup[];
 }
 
@@ -45,7 +48,7 @@ interface TableLayout {
 
 export async function buildLayout(state: VaultState): Promise<Layout> {
   const remoteNames     = state.config.remotes.map(r => r.name);
-  const locations       = ['Local', ...remoteNames, 'Mega'];
+  const locations       = ['Local', ...remoteNames, 'Mega', 'Database'];
   const now             = new Date();
   const today           = todayYmd(now);
   const yesterday       = previousDay(today);
@@ -60,6 +63,8 @@ export async function buildLayout(state: VaultState): Promise<Layout> {
   return {
     scannedAt: state.scannedAt,
     locations,
+    today,
+    yesterday,
     groups:    groupTables(tables),
   };
 }
@@ -154,6 +159,7 @@ function dayStates(
   for (const rn of remoteNames) cells.push(remoteState(ds, rn, dayKind, isWs));
 
   cells.push(megaState(ds, table.origin, dayKind, hasTar));
+  cells.push(databaseState(ds, dayKind));
 
   return cells;
 }
@@ -165,26 +171,47 @@ function allAbsent(states: CellState[]): boolean {
 // ── Grouping (layer 4) ───────────────────────────────────────────────────────
 
 /**
- * Collapses tables sharing the same origin, ranges, and notes into one group.
- * The grouping key is a structural JSON of those fields — no presentation
- * text leaks in, so label tweaks downstream can't change grouping.
+ * Collapses tables sharing the same origin and ranges into one group. Grouping
+ * is purely by visual identity (the displayed cells) — notes are excluded from
+ * the key, so two tables that render identically merge even when one had holes
+ * filled and the other never needed it. The merged group carries the union of
+ * its members' notes; display dedupes them globally.
+ *
+ * The first non-today range's `startKey` is normalised to its 4-char year for
+ * the grouping key only (the stored `Range` is untouched). Tables that started
+ * in different months of the same year therefore merge when they would
+ * otherwise be identical — matching how the display renders the first range's
+ * start as just the year.
  */
 function groupTables(tables: TableLayout[]): TableGroup[] {
   const byKey = new Map<string, TableGroup>();
 
   for (const t of tables) {
-    const key = JSON.stringify({ origin: t.origin, ranges: t.ranges, notes: t.notes });
+    const key = JSON.stringify({ origin: t.origin, ranges: groupingRanges(t.ranges) });
     const existing = byKey.get(key);
 
     if (existing) {
       existing.names.push(t.name);
+
+      for (const note of t.notes) {
+        if (! existing.notes.includes(note)) existing.notes.push(note);
+      }
+
       continue;
     }
 
-    byKey.set(key, { names: [t.name], origin: t.origin, ranges: t.ranges, notes: t.notes });
+    byKey.set(key, { names: [t.name], origin: t.origin, ranges: t.ranges, notes: [...t.notes] });
   }
 
   return Array.from(byKey.values());
+}
+
+function groupingRanges(ranges: Range[]): Range[] {
+  return ranges.map((r, i) =>
+    i === 0 && ! r.isToday
+      ? { ...r, startKey: r.startKey.slice(0, 4) }
+      : r
+  );
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

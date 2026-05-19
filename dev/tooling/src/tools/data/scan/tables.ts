@@ -13,19 +13,21 @@ export interface TableMeta {
  * are downloaded historically (current downloads can target any past date).
  */
 export const ALL_TABLES: TableMeta[] = [
-  { name: 'announcement',        origin: 'ws'                 },
-  { name: 'chat',                origin: 'ws'                 },
-  { name: 'connected',           origin: 'ws'                 },
-  { name: 'instrument',          origin: 'ws'                 },
-  { name: 'liquidation',         origin: 'ws'                 },
-  { name: 'orderBookL2',         origin: 'ws'                 },
-  { name: 'publicNotifications', origin: 'ws'                 },
-  { name: 'compositeIndex',      origin: 'rest'               },
-  { name: 'funding',             origin: 'rest'               },
-  { name: 'insurance',           origin: 'rest'               },
-  { name: 'settlement',          origin: 'rest'               },
-  { name: 'trade',               origin: 'rest'               },
-  { name: 'quote',               origin: 'rest'               },
+  { name: 'announcement',        origin: 'ws' },
+  { name: 'chat',                origin: 'ws' },
+  { name: 'connected',           origin: 'ws' },
+  { name: 'instrument',          origin: 'ws' },
+  { name: 'liquidation',         origin: 'ws' },
+  { name: 'orderBookL2',         origin: 'ws' },
+  { name: 'publicNotifications', origin: 'ws' },
+
+  { name: 'compositeIndex',      origin: 'rest' },
+  { name: 'funding',             origin: 'rest' },
+  { name: 'insurance',           origin: 'rest' },
+  { name: 'quote',               origin: 'rest' },
+  { name: 'settlement',          origin: 'rest' },
+  { name: 'tick',                origin: 'rest' },
+  { name: 'trade',               origin: 'rest' },
 ];
 
 export const ALL_TABLE_NAMES: ReadonlySet<string> = new Set(ALL_TABLES.map(t => t.name));

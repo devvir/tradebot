@@ -52,6 +52,14 @@ export interface DayState {
 
   /** Bucket exists in `SOURCES_MEGA_VAULT`. */
   megaBucket: boolean;
+
+  /**
+   * Mongo import status, sourced from farmer's `farm:<table>:<date>` Redis key:
+   *   - `done`    — farmer has confirmed every message of the bucket is stored
+   *   - `partial` — farmer is mid-import (numeric counter present in Redis)
+   *   - `absent`  — no Redis key (not imported, or never started)
+   */
+  database: 'done' | 'partial' | 'absent';
 }
 
 export interface TableState {

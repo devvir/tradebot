@@ -1,8 +1,10 @@
 import { C } from '../../../shared/utils/colors';
 import { info, spacer } from '../log';
+import { isYes } from '../options';
 import { loadConfig } from '../scan/config';
 import { scanAll } from '../scan';
 import { checkMegaAvailable } from '../scan/mega';
+import { runStatus } from '../status/run';
 import { deriveTasks, findRsyncTemps } from './tasks';
 import { printSummary } from './display';
 import { runInteractive } from './interactive';
@@ -39,4 +41,11 @@ export async function runSync(): Promise<void> {
 
   printSummary(tasks);
   await runInteractive(tasks, state);
+
+  // In interactive mode, show the resulting vault state (keeps refreshing).
+  // Under `-y` (cron / automation), skip entirely — no one is watching.
+  if (! isYes()) {
+    spacer();
+    await runStatus({ watch: true });
+  }
 }

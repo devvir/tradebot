@@ -32,6 +32,8 @@ export type CellState =
   | { kind: 'sources' }
   | { kind: 'stored' }
   | { kind: 'missing' }
+  | { kind: 'importing' }      // farmer is mid-import for this (table, day)
+  | { kind: 'imported' }       // farmer has confirmed every message stored in mongo
   | { kind: 'half'; bucket: 'stored' | 'missing'; sources: 'stored' | 'missing' };
 
 /**
@@ -149,4 +151,23 @@ export function megaState(
     bucket:  hasBucket  ? 'stored' : 'missing',
     sources: hasSources ? 'stored' : 'missing',
   };
+}
+
+/**
+ * Database column: reflects farmer's mongo-import status.
+ *
+ *   - `done`    → `imported`   (terminal good state)
+ *   - `partial` → `importing`  (in-flight; optimistic — will eventually complete)
+ *   - `absent`  → `missing` on past days (should be there), `absent` on
+ *                 today/pending (farmer only works on settled days, not
+ *                 expected to have a value yet)
+ */
+export function databaseState(ds: DayState | undefined, dayKind: DayKind): CellState {
+  const status = ds?.database ?? 'absent';
+
+  if (status === 'done')    return { kind: 'imported'  };
+  if (status === 'partial') return { kind: 'importing' };
+  if (dayKind === 'past')   return { kind: 'missing'   };
+
+  return { kind: 'absent' };
 }

@@ -1,5 +1,6 @@
 import { fromDay } from '../options';
 import { ALL_TABLES } from './tables';
+import { DatabaseEntry, scanDatabase } from './database';
 import { DayState, ScanConfig, TableState, VaultState } from './types';
 import { LocalEntry, scanLocal } from './local';
 import { MegaScan, scanMega } from './mega';
@@ -67,6 +68,7 @@ function emptyDay(day: string): DayState {
     localBucket:       false,
     localBucketTmp:    false,
     megaBucket:        false,
+    database:          'absent',
   };
 }
 
@@ -88,14 +90,15 @@ function asMap(tables: TableState[]): Map<string, TableState> {
 export async function scanAll(config: ScanConfig): Promise<VaultState> {
   const local = scanLocal(config.localBase);
 
-  const [mega, ...remoteResults] = await Promise.all([
+  const [mega, database, ...remoteResults] = await Promise.all([
     scanMega(config.megaVault, config.megaRaw),
+    scanDatabase(),
     ...config.remotes.map(r => scanRemote(r)),
   ]);
 
   const remote: RemoteEntry[] = remoteResults.flat();
 
-  const tables = buildTables(local, remote, mega);
+  const tables = buildTables(local, remote, mega, database);
 
   return {
     config,
@@ -110,9 +113,10 @@ export async function scanAll(config: ScanConfig): Promise<VaultState> {
  * end so day filtering remains consistent across scanners.
  */
 function buildTables(
-  local:  LocalEntry[],
-  remote: RemoteEntry[],
-  mega:   MegaScan,
+  local:    LocalEntry[],
+  remote:   RemoteEntry[],
+  mega:     MegaScan,
+  database: DatabaseEntry[],
 ): TableState[] {
   const states = new Map<string, TableState>();
 
@@ -164,6 +168,12 @@ function buildTables(
     if (state) state.megaTars.push(t.year);
   }
 
+  for (const e of database) {
+    const day = ensureDay(states, e.table, e.day);
+
+    day.database = e.status;
+  }
+
   for (const state of states.values()) {
     state.megaTars.sort((a, b) => a - b);
 
@@ -202,6 +212,7 @@ function ensureDay(states: Map<string, TableState>, table: string, day: string):
       localBucket:       false,
       localBucketTmp:    false,
       megaBucket:        false,
+      database:          'absent',
     };
     state.days.set(day, entry);
   }

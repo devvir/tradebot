@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { localState, remoteState, megaState } from '../../../../src/tools/data/status/state';
+import { databaseState, localState, remoteState, megaState } from '../../../../src/tools/data/status/state';
 import type { DayState } from '../../../../src/tools/data/scan/types';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -15,6 +15,7 @@ function ds(opts: Partial<DayState> = {}): DayState {
     localBucket:       false,
     localBucketTmp:    false,
     megaBucket:        false,
+    database:          'absent',
     ...opts,
   };
 }
@@ -157,5 +158,41 @@ describe('megaState', () => {
     expect(megaState(ds({ megaSources: ['.local'] }), 'ws', 'past', false)).toEqual({
       kind: 'half', bucket: 'missing', sources: 'stored',
     });
+  });
+});
+
+// ── databaseState ─────────────────────────────────────────────────────────────
+
+describe('databaseState', () => {
+  it('done → imported', () => {
+    expect(databaseState(ds({ database: 'done' }), 'past')).toEqual({ kind: 'imported' });
+    expect(databaseState(ds({ database: 'done' }), 'today')).toEqual({ kind: 'imported' });
+    expect(databaseState(ds({ database: 'done' }), 'pending')).toEqual({ kind: 'imported' });
+  });
+
+  it('partial → importing (regardless of dayKind — optimistic)', () => {
+    expect(databaseState(ds({ database: 'partial' }), 'past')).toEqual({ kind: 'importing' });
+    expect(databaseState(ds({ database: 'partial' }), 'today')).toEqual({ kind: 'importing' });
+    expect(databaseState(ds({ database: 'partial' }), 'pending')).toEqual({ kind: 'importing' });
+  });
+
+  it('absent + past → missing (farmer should have imported it)', () => {
+    expect(databaseState(ds(), 'past')).toEqual({ kind: 'missing' });
+  });
+
+  it('absent + today → absent (farmer only works on settled days)', () => {
+    expect(databaseState(ds(), 'today')).toEqual({ kind: 'absent' });
+  });
+
+  it('absent + pending → absent (not yet expected)', () => {
+    expect(databaseState(ds(), 'pending')).toEqual({ kind: 'absent' });
+  });
+
+  it('undefined ds + past → missing', () => {
+    expect(databaseState(undefined, 'past')).toEqual({ kind: 'missing' });
+  });
+
+  it('undefined ds + today → absent', () => {
+    expect(databaseState(undefined, 'today')).toEqual({ kind: 'absent' });
   });
 });
