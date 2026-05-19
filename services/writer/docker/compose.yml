@@ -1,0 +1,38 @@
+# Writer Service — HTTP→MongoDB bulk insert endpoint.
+
+services:
+  writer:
+    build:
+      context: ../../..
+      dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
+      args:
+        SERVICE_NAME: writer
+
+    deploy:
+      replicas: ${WRITER_REPLICAS:-1}
+
+    environment:
+      DB_URL:                   ${DB_URL}
+      DB_DATABASE:              ${DB_DATABASE:-tradebot}
+      WRITER_IGNORE_DUPLICATES: ${WRITER_IGNORE_DUPLICATES:-true}
+
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV:  ${APP_ENV:-prod}
+      TZ:        ${TZ:-UTC}
+
+    ports:
+      - :80
+
+    user: "1000:1000"
+
+    volumes:
+      - ../../../:/live
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+
+    restart: unless-stopped

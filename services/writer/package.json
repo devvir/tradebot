@@ -1,0 +1,24 @@
+{
+  "name": "@tradebot/writer",
+  "version": "0.0.1",
+  "description": "HTTP→MongoDB insert service — receives JSON arrays and bulk-inserts them",
+  "main": "dist/src/index.js",
+  "private": true,
+  "scripts": {
+    "build": "tsc -b",
+    "start": "node dist/src/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@devvir/service-kit": "workspace:*",
+    "@tradebot/utils": "workspace:*",
+    "express": "^5.2.1",
+    "mongodb": "^7.2.0"
+  },
+  "devDependencies": {
+    "@types/express":   "^5.0.0",
+    "@types/supertest": "^6.0.3",
+    "supertest":        "^7.2.2"
+  }
+}
