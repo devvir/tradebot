@@ -109,7 +109,7 @@ const query = async (
  *
  *   rest-origin → exact `timestamp >= clock` (cheap with the symbol+timestamp index).
  *   ws-origin   → minimum `_id` for the calendar day containing `clock` (the
- *                 day-aligned encoding in registrar's `_id` makes this O(log n)).
+ *                 day-aligned `_id` encoding makes this O(log n)).
  *                 The stream may emit a few messages slightly before `clock`; that's
  *                 fine because the snapshot at `clock` already covers earlier state.
  */

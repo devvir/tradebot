@@ -210,15 +210,15 @@ moment the request is received.
 
 ### The pipeline
 
-WS-collected data flows through:
+Data flows from vault into MongoDB via farmer:
+
 ```
-BitMEX WS → scribe → vault → clerk → assembler → registrar → MongoDB
+vault (closed .csv.gz) → farmer → MongoDB tradebot / <table>
 ```
 
-The **assembler** reconstructs WS messages from raw vault CSV rows. It re-attaches
-the static `keys` and `types` fields onto `partial` messages.
-
-The **registrar** inserts messages into MongoDB with a deterministic numeric `_id`:
+Farmer reconstructs WS messages from raw vault CSV rows, re-attaching the static
+`keys` and `types` fields onto `partial` messages. Each document is assigned a
+deterministic numeric `_id`:
 ```
 _id = dateOffset × 2^39 + msgIndex × 2^12
 ```
@@ -540,7 +540,7 @@ carry trailing docs into the next cursor. Mitigated by the 5k low-watermark.
 `exhausted = true` permanently halts fetching. For sessions where collection is
 ongoing, change to a retry-after-delay approach.
 
-**Pre-1970 / pre-2000 dates**
-Registrar's `_id` encoding starts at 2000-01-01. Any data older than that
+**Pre-2000 dates**
+The `_id` encoding starts at 2000-01-01. Any data older than that
 (unlikely but possible for synthetic backfills) would need a different indexing
 strategy.

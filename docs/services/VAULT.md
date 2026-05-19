@@ -1,6 +1,6 @@
 # Vault
 
-Vault is a date-partitioned HTTP file store for BitMEX CSV data. It accepts rows from upstream services (journalist, tardy, scribe), buffers them in memory, and flushes to disk as concatenated gzip members. Courier stores complete pre-built files directly via PUT. Downstream consumers (clerk) read back sealed files as NDJSON.
+Vault is a date-partitioned HTTP file store for BitMEX CSV data. It accepts rows from upstream services (journalist, tardy, scribe), buffers them in memory, and flushes to disk as concatenated gzip members. Courier stores complete pre-built files directly via PUT. Downstream consumers (e.g. farmer) read back sealed files as NDJSON.
 
 Vault is not a database. It has no query capability. It is a write-optimised append store.
 

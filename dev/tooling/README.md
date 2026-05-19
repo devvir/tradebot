@@ -717,7 +717,7 @@ _id = dateOffset * 2^39 + position * 2^12 + reserved
 
 - `dateOffset` — days since 2000-01-01 UTC
 - `position` — message index within the day's vault file
-- `reserved` — 0 for registrar-produced IDs; 1–4095 for gap-fill events
+- `reserved` — 0 for farmer-produced IDs; 1–4095 for gap-fill events
 
 ### Usage
 

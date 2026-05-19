@@ -41,11 +41,11 @@ parallel:
 `dateWalker(target, source)` is a blocking infinite iterator. It watches two sets of
 Redis keys to find dates ready for processing:
 
-- **Customs markers** (`customs:{source}:{date}` = `'done'`): owned by Registrar.
-  A `'done'` value is the post-MongoDB confirmation — every message for that bucket
-  has been successfully inserted. The walker yields a date as soon as it is customs-done
-  in every required source; no hold or drain time is needed because `'done'` already
-  proves the data is in MongoDB.
+- **Farm markers** (`farm:{source}:{date}` = `'done:<messages>'`): owned by farmer.
+  A `done:*` value is the post-MongoDB confirmation — every message for that bucket
+  has been successfully inserted. The walker yields a date as soon as it is
+  farm-done in every required source; no hold or drain time is needed because
+  `done:*` already proves the data is in MongoDB.
 - **Distiller markers** (`distiller_{target}_{date}`): written by the walker itself when
   the caller calls `next()` for the following date. A date already marked done is skipped.
   Before yielding any candidate, the walker does a cheap `GET` on that key to guard against
@@ -230,7 +230,7 @@ On the first run, no stored partial exists:
 On every later run, the latest stored partial for the table is loaded and applied
 as a `partial` message. Consumption then resumes from `_id > dayStartId(date) - 1`
 in the source collection, using the same deterministic `dateOffset × 2^39` `_id`
-layout as the registrar (epoch: 2000-01-01 UTC).
+layout (epoch: 2000-01-01 UTC).
 
 ### Day-boundary emit
 

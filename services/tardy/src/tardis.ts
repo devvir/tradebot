@@ -120,7 +120,7 @@ const parseLine = (line: string, tables: TardyTable[]): TardisMessage | null => 
 
 /**
  * Encodes a symbol filter into the action string for partial messages, so it
- * survives vault storage and can be decoded by assembler on replay.
+ * survives vault storage and can be decoded by farmer on import.
  * e.g. action='partial' + filter={symbol:'XBTUSD'} → 'partial:XBTUSD'
  * Non-partial actions and partials without a symbol filter are returned as-is.
  */

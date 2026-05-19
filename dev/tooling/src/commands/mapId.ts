@@ -8,7 +8,7 @@ import { error } from '../shared/ui/logger';
  *
  *   dateOffset — days since 2000-01-01 UTC (14 bits)
  *   msgIndex   — message position within the day's vault file (27 bits)
- *   reserved   — always 0 for registrar-produced IDs; 1–4095 for gap-fill events (12 bits)
+ *   reserved   — always 0 for farmer-produced IDs; 1–4095 for gap-fill events (12 bits)
  *
  * Minimum real id (day 1 after epoch, position 0, reserved 0) = 2^39 ≈ 549 billion.
  * Maximum YYYYMMDD date value (20991231) = ~21 million.

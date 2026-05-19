@@ -80,7 +80,7 @@ export const backfillSnapshot = async (
 /**
  * Find the most recent stored partial whose data timestamp ≤ X.
  *
- * The stored doc's `_id` is day-aligned (registrar's encoding). To bound the
+ * The stored doc's `_id` is day-aligned. To bound the
  * MongoDB scan we limit by `_id < firstIdAfterDay(X)`, then walk descending
  * results checking each doc's data[0].timestamp against X.
  */

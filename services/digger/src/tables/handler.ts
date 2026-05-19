@@ -76,8 +76,8 @@ const MS_PER_DAY    = 86_400_000;
 const SHIFT_39      = 549_755_813_888;
 
 /**
- * Decode the day-granularity timestamp encoded into registrar's numeric `_id`.
- * `_id = dateOffset × 2^39 + msgIndex × 2^12` (see registrar/src/id.ts).
+ * Decode the day-granularity timestamp encoded in the numeric `_id`.
+ * `_id = dateOffset × 2^39 + msgIndex × 2^12` (see farmer/src/write/id.ts).
  */
 export const timestampFromId = (doc: MongoDoc): number =>
   Math.floor(doc._id / SHIFT_39) * MS_PER_DAY + EPOCH_2000_MS;

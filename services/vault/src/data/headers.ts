@@ -7,7 +7,7 @@
 // Sources:
 //   - Vault files in /data/bitmex/vault  (observed, authoritative)
 //   - journalist CHAT_SCHEMA             (chat has extra fields missing from the partial WS message)
-//   - BitMEX OpenAPI + assembler specs   (tables not yet observed in vault)
+//   - BitMEX OpenAPI + TABLE_SPECS       (tables not yet observed in vault)
 
 export const TABLE_HEADERS: Record<string, string[]> = {
 

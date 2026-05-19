@@ -5,7 +5,7 @@ import type { MongoDoc, TakeResult, BitmexAction } from '../../types';
 /**
  * instrument — WS-origin.
  *
- * Stored by registrar as complete WS messages. Republish by stripping `_id`
+ * Stored by farmer as complete WS messages. Republish by stripping `_id`
  * and injecting `table` back (not stored in MongoDB).
  * Partials carry keys/types/filter from TABLE_SPECS.
  */

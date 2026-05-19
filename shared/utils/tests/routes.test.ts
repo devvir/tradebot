@@ -274,38 +274,38 @@ describe('& fan-out expansion', () => {
 
 // ── Real-world pipe syntax ────────────────────────────────────────────────────
 
-describe('pipe-style customs pipeline', () => {
-  it('parses clerk→assembler binding with key filter', () => {
-    const rules = parseRules('| fragment@topic:clerk(key:fragment) > fanout:assembler');
+describe('multi-stage pipe syntax', () => {
+  it('parses topic→fanout binding with key filter', () => {
+    const rules = parseRules('| fragment@topic:source(key:fragment) > fanout:stage-a');
     expect(rules).toHaveLength(1);
     expect(rules[0]!.source).toEqual({
       queue:      'fragment',
-      exchange:   { name: 'clerk', type: 'topic' },
+      exchange:   { name: 'source', type: 'topic' },
       routingKey: { value: 'fragment' },
     });
-    expect(rules[0]!.destination).toEqual({ exchange: { name: 'assembler', type: 'fanout' } });
+    expect(rules[0]!.destination).toEqual({ exchange: { name: 'stage-a', type: 'fanout' } });
   });
 
-  it('parses clerk→registrar binding with key filter', () => {
-    const rules = parseRules('| record@topic:clerk(key:record) > fanout:registrar');
+  it('parses topic→fanout binding with different key filter', () => {
+    const rules = parseRules('| record@topic:source(key:record) > fanout:stage-b');
     expect(rules[0]!.source).toEqual({
       queue:      'record',
-      exchange:   { name: 'clerk', type: 'topic' },
+      exchange:   { name: 'source', type: 'topic' },
       routingKey: { value: 'record' },
     });
   });
 
-  it('parses assembled→registrar binding (no key)', () => {
-    const rules = parseRules('| topic:assembled > fanout:registrar');
-    expect(rules[0]!.source).toEqual({ exchange: { name: 'assembled', type: 'topic' } });
-    expect(rules[0]!.destination).toEqual({ exchange: { name: 'registrar', type: 'fanout' } });
+  it('parses topic→fanout binding with no key', () => {
+    const rules = parseRules('| topic:stage-a > fanout:stage-b');
+    expect(rules[0]!.source).toEqual({ exchange: { name: 'stage-a', type: 'topic' } });
+    expect(rules[0]!.destination).toEqual({ exchange: { name: 'stage-b', type: 'fanout' } });
   });
 
-  it('parses all three customs rules together', () => {
+  it('parses three rules together', () => {
     const rules = parseRules(`
-      | fragment@topic:clerk(key:fragment) > fanout:assembler
-      | record@topic:clerk(key:record)     > fanout:registrar
-      | topic:assembled                    > fanout:registrar
+      | fragment@topic:source(key:fragment) > fanout:stage-a
+      | record@topic:source(key:record)     > fanout:stage-b
+      | topic:stage-a                       > fanout:stage-b
     `);
     expect(rules).toHaveLength(3);
   });

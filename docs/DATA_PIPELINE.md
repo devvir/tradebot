@@ -10,7 +10,7 @@ Two modules handle data acquisition:
 - **depot**: courier (S3) + scribe (REST) write to vault
 - **journal**: broadcast (WS) → journalist writes to vault
 
-Both modules write to the same vault storage layout. A separate **stage 2** pipeline (customs module) reads those files and loads them into MongoDB.
+Both modules write to the same vault storage layout. A separate **stage 2** pipeline reads those files and loads them into MongoDB.
 
 ---
 
@@ -113,7 +113,7 @@ journalist adds one field to every row:
 
 Message boundaries are preserved by vault internally. When journalist sends a batch
 of rows to vault, vault tags each group with a `_head_` marker in the CSV (a
-vault-internal detail). When clerk later reads the file, vault's NDJSON stream
+vault-internal detail). When farmer later reads the file, vault's NDJSON stream
 already reconstructs the groups — each line is a JSON array of rows belonging to
 one original WS message.
 
@@ -126,31 +126,24 @@ Example — three consecutive WS messages as journal sees them:
 
 ---
 
-## Stage 2 — Load (customs module)
+## Stage 2 — Load (farm module)
 
-The customs module reads closed vault files and loads them into MongoDB.
+The farm module reads closed vault files and loads them into MongoDB.
 
 ```
 vault (closed .csv.gz)
-  └─ clerk
-       ├─ WS tables   ──→ topic:clerk  data  ──→ assembler ──→ topic:assembled  record ─┐
-       └─ REST tables ──→ topic:clerk  item  ───────────────────────────────────────────┘
-                                                                                          └─→ registrar → MongoDB tradebot
+  └─ farmer ──→ MongoDB tradebot / <table>    (clean docs)
+           └─→ MongoDB farmer   / <table>    (forensics)
 ```
 
-**clerk** polls vault for files it hasn't processed yet, sorted by date across all
-tables. For WS files, vault's NDJSON stream emits one array of rows per original WS
-message; clerk publishes each array as a `data` message. For REST files, each line is
-a single row object published as an `item`. Progress is tracked in Redis.
-
-**assembler** consumes `data` messages. It strips the `action` field from each row,
-reconstructs the original WS message shape (adding `keys`, `types`, and
-`filter` metadata for `partial` actions from a static per-table spec), and republishes
-as a `record`.
-
-**registrar** consumes `record` messages. It assigns a deterministic 53-bit `_id` and
-bulk-inserts documents into `MongoDB tradebot / <table>`. Duplicate inserts are silently
-acked. Transient errors are retried up to 3 times before nacking.
+**farmer** discovers vault buckets it has not yet imported and streams each via
+vault's NDJSON endpoint. For REST tables, each NDJSON line is one flat record
+that becomes one MongoDB document. For WS tables, vault emits one reconstructed
+message per line (`{ action, date, data[] }`); farmer re-attaches `keys`, `types`,
+and `filter` metadata for `partial` actions (from a static per-table spec) and
+stores the full envelope as one document. Each document is assigned a deterministic
+`_id`. Corrupt rows go to `MongoDB farmer / <table>` for forensics. Progress is
+tracked in Redis under `farm:<table>:<date>`.
 
 ### ID scheme
 
@@ -168,7 +161,7 @@ _id = dateOffset × 2³⁹ + msgIndex × 2¹² + reserved
 
 ## Stage 3 — Derive (distiller service)
 
-Distiller reads raw collections written by registrar and produces derived collections.
+Distiller reads raw collections written by farmer and produces derived collections.
 
 ```
 MongoDB tradebot

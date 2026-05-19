@@ -88,10 +88,10 @@ describe('buildTopology', () => {
   });
 
   it('includes routingKey in exchangeBinding when specified', () => {
-    const topology = buildTopology(withDefaults(parseBindings('topic:clerk(key:fragment) > fanout:assembler')));
+    const topology = buildTopology(withDefaults(parseBindings('topic:source(key:fragment) > fanout:stage-a')));
 
     expect(topology.exchangeBindings).toContainEqual({
-      source: 'clerk', destination: 'assembler', routingKey: 'fragment',
+      source: 'source', destination: 'stage-a', routingKey: 'fragment',
     });
   });
 

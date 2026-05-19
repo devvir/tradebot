@@ -16,8 +16,7 @@ export const ensureIndex = async (db: Db, collection: string, index: Index | Ind
 
 /**
  * Indexes for collections that have no distiller: they are written by other
- * services (journalist, registrar) and distiller cannot own them in a
- * distiller. Ensured once at startup.
+ * services (farmer) and cannot be owned by a distiller. Ensured once at startup.
  */
 export const ensureSharedIndexes = async (db: Db): Promise<void> => {
   const ts  = BY_TIMESTAMP;
