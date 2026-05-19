@@ -1,15 +1,16 @@
 import { logger, registry, SK_PROVIDERS } from '@devvir/service-kit';
 import type { RedisClient } from '@devvir/service-kit';
 
-const REFRESH_MS = 30 * 1_000;
+const REFRESH_MS             = 30 * 1_000;
+const SOURCE_PROGRESS_PREFIX = 'farm';
 
 // ── Module-level state ────────────────────────────────────────────────────────
 
-/** Per-source cache of customs-done dates (registrar-confirmed in MongoDB). */
-const customsCache = new Map<string, { dates: Set<string>; at: number }>();
+/** Per-source cache of source-done dates (importer-confirmed in MongoDB). */
+const sourceCache = new Map<string, { dates: Set<string>; at: number }>();
 
 /** Per-target cache of distiller-done dates. */
-const distCache    = new Map<string, { dates: Set<string>; at: number }>();
+const distCache   = new Map<string, { dates: Set<string>; at: number }>();
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -42,7 +43,7 @@ export function dateWalker(
 
         const now = Date.now();
 
-        await maybeRefreshCustoms(redis, sources, now);
+        await maybeRefreshSources(redis, sources, now);
         await maybeRefreshDist(redis, target, now);
 
         const candidate = findCandidate(sources, target);
@@ -78,15 +79,15 @@ export function dateWalker(
 
 function findCandidate(sources: string[], target: string): string | null {
   const distDone   = distCache.get(target)?.dates ?? new Set<string>();
-  const firstDates = customsCache.get(sources[0]!)?.dates ?? new Set<string>();
+  const firstDates = sourceCache.get(sources[0]!)?.dates ?? new Set<string>();
   const candidates: string[] = [];
 
   for (const date of firstDates) {
     if (distDone.has(date)) continue;
 
-    // Must be customs-done in every source — a `'done:<count>'` value means
-    // registrar has confirmed every message for that bucket is in MongoDB.
-    if (! sources.every(s => customsCache.get(s)?.dates.has(date))) continue;
+    // Must be done in every source — `done:<count>` means the importer has
+    // confirmed every message of that bucket is in MongoDB.
+    if (! sources.every(s => sourceCache.get(s)?.dates.has(date))) continue;
 
     candidates.push(date);
   }
@@ -98,16 +99,17 @@ function findCandidate(sources: string[], target: string): string | null {
   return candidates[0]!;
 }
 
-async function maybeRefreshCustoms(redis: RedisClient, sources: string[], now: number): Promise<void> {
+async function maybeRefreshSources(redis: RedisClient, sources: string[], now: number): Promise<void> {
   for (const src of sources) {
-    const entry = customsCache.get(src);
+    const entry = sourceCache.get(src);
 
     if (entry && now - entry.at < REFRESH_MS) continue;
 
-    const raw   = await scanDone(redis, `customs:${src}:*`, `customs:${src}:`);
-    const dates = new Set(Array.from(raw).map(yyyymmddToIso));
+    const prefix = `${SOURCE_PROGRESS_PREFIX}:${src}:`;
+    const raw    = await scanDone(redis, `${prefix}*`, prefix);
+    const dates  = new Set(Array.from(raw).map(yyyymmddToIso));
 
-    customsCache.set(src, { dates, at: now });
+    sourceCache.set(src, { dates, at: now });
   }
 }
 
@@ -143,7 +145,7 @@ async function scanDone(redis: RedisClient, pattern: string, strip: string): Pro
   return dates;
 }
 
-/** Customs and distiller keys use YYYYMMDD; internal dates are YYYY-MM-DD. */
+/** Source and distiller keys use YYYYMMDD; internal dates are YYYY-MM-DD. */
 function yyyymmddToIso(d: string): string {
   return `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`;
 }
@@ -156,10 +158,10 @@ const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
 
 // ── Test exports ──────────────────────────────────────────────────────────────
 
-export const _test_findCandidate    = findCandidate;
-export const _test_customsCache     = customsCache;
-export const _test_distCache        = distCache;
-export const _test_reset            = (): void => {
-  customsCache.clear();
+export const _test_findCandidate = findCandidate;
+export const _test_sourceCache   = sourceCache;
+export const _test_distCache     = distCache;
+export const _test_reset         = (): void => {
+  sourceCache.clear();
   distCache.clear();
 };

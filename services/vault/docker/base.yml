@@ -1,0 +1,35 @@
+# Vault base service definition.
+# Extend this to create vault instances — the writer (compose.yml) or the farm
+# module's read-only harvester replicas. Holds everything that extends cleanly;
+# compose.yml is the "last stop" for what does not (container_name, ports).
+
+services:
+  vault:
+    build:
+      context: ../../..
+      dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
+      args:
+        SERVICE_NAME: vault
+        NODE_MEMORY_MB: 4096
+
+    environment:
+      VAULT_COMPRESSION_LEVEL: ${VAULT_COMPRESSION_LEVEL:-6}
+
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV:  ${APP_ENV:-prod}
+      TZ:        ${TZ:-UTC}
+
+    user: "1000:1000"
+
+    volumes:
+      - ../../../:/live
+      - ${VAULT_DATA_DIR:-/data/bitmex/vault}:/data/vault
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    restart: unless-stopped

@@ -1,0 +1,44 @@
+# Farm Module
+#
+# Infra: cache, db, vault
+#
+# Data flow:
+#   farmer    → reads closed vault buckets
+#             → bulk-inserts into MongoDB tradebot / <table>
+#
+#   distiller → reads raw collections from MongoDB
+#             → produces derived collections (bins, order book snapshots, partials)
+#
+# Progress in Redis: farm:<table>:<date>
+
+# Docker Compose Project
+name: transform
+
+include:
+  - path: ../../../services/farmer/docker/compose.yml
+  - path: ../../../services/writer/docker/compose.yml
+  - path: ../../../services/distiller/docker/compose.yml
+
+services:
+  # Read-only vault replica pool. farmer reads closed CSV.gz buckets from here,
+  # spreading the gunzip/parse CPU cost across replicas instead of pinning the
+  # single writer vault on one core. Reads only — the data mount is :ro.
+  harvester:
+    extends:
+      file: ../../../services/vault/docker/base.yml
+      service: vault
+
+    deploy:
+      replicas: 2
+
+    volumes:
+      - ${VAULT_DATA_DIR:-/data/bitmex/vault}:/data/vault:ro
+
+    ports:
+      - :8000
+      - :3000
+
+networks:
+  default:
+    name: ${PROJECT_NAME:-tradebot}-network
+    external: true
