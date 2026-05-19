@@ -13,6 +13,7 @@
 
 import { type Application, type Request, type Response } from 'express';
 import { Readable } from 'stream';
+import { statSync } from 'fs';
 import { logger } from '@devvir/service-kit';
 import { streamRecords, listFiles, listTables, fileState } from '../fs/reader';
 import { storeFile, deleteFile } from '../fs/writer';
@@ -22,6 +23,7 @@ import { encode } from '../data/encode';
 import { buffers } from '../data/buffers';
 import { closeBucket } from '../data/close';
 import { NotFoundError } from '../fs/errors';
+import { closedPath, openPath } from '../fs/paths';
 import type { Row, WsMessage } from '../data/types';
 
 // Append-only set of `table/filename` buckets the client has asked to seal.
@@ -248,6 +250,34 @@ export const registerRoutes = (app: Application): void => {
 
   app.get('/tables', (_req: Request, res: Response) => {
     res.json(listTables());
+  });
+
+  // ── GET /stats/:table/:date — inode stats for one bucket file ────────────────
+  //
+  // Returns size, modification time, and creation time straight from the inode.
+  // No streaming, no decoding — single `stat()` syscall. Returns 404 if no
+  // file (open or closed) exists for the given `(table, date)`. `state`
+  // disambiguates which file was statted.
+
+  app.get('/stats/:table/:date', (req: Request, res: Response) => {
+    const table    = req.params['table'] as string;
+    const filename = req.params['date']  as string;
+    const state    = fileState(table, filename);
+
+    if (state === 'none') {
+      res.status(404).json({ error: `No file for ${table}/${filename}` });
+      return;
+    }
+
+    const path = state === 'closed' ? closedPath(table, filename) : openPath(table, filename);
+    const st   = statSync(path);
+
+    res.json({
+      state,
+      size:      st.size,
+      mtime:     st.mtimeMs,
+      birthtime: st.birthtimeMs,
+    });
   });
 };
 
