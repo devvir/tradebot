@@ -24,15 +24,17 @@ boundary without replaying the full history.
 
 ## Processing Loop
 
-All derivations run as parallel infinite loops. Each loop is driven by a `DateWalker`
-that blocks until the next ready date:
+All derivations run as parallel infinite loops. The trade, quote, orderbook and
+partials loops are each driven by a `DateWalker` that blocks until the next ready
+date; the instrument loop instead walks the `instrument` collection in `_id`
+order from a Redis anchor.
 
 ```
 parallel:
   distillTrades:    for each date from walker → generate 1m / 5m / 1h / 1d bins
   distillQuotes:    for each date from walker → generate 1m bins, then coarser copies
   distillOrderBook: batch replay of L2 delta stream
-  distillInstrument: daily partials + event-driven updates from 5 vault sources
+  distillInstrument: forward _id walk — fills gaps in real data with synthetic approximations
   distillPartials:  per-table daily snapshots into `_partials_`
 ```
 
@@ -163,26 +165,41 @@ new documents.
 
 ### instrument → instrument collection
 
-Reconstructs historical BitMEX `instrument` WebSocket messages (daily `partial`
-snapshots + event-driven `insert`/`update` deltas) from five vault sources:
-`compositeIndex`, `quote`, `trade`, `funding`, and `settlement`. One document per
-unique event; a daily `partial` at `00:00:00` snapshots all active instruments.
+The `instrument` collection is a continuous BitMEX `instrument` WebSocket stream
+from 2019-04-01 onward, mixing **real** documents (imported by farmer) with
+**synthetic** documents the distiller generates to fill gaps. A document's `_id`
+reserved field tells them apart: `0` for real, non-zero for synthetic.
 
-A symbol's first appearance in the vault stream produces an `insert` enriched with
-semi-static fields from the nearest future Tardis snapshot (tickSize, lotSize,
-multiplier, margin rates, etc.). Subsequent events produce `update` messages carrying
-only the changed fields. Symbols with no Tardis record at any point are skipped with
-a one-time warning.
+Unlike the bin distillers, this one does not reproduce data that was captured —
+it fills the holes where real data is missing, with a knowing best-effort
+approximation. The instrument stream is the primary signal for liquidation
+detection in replay, so synthetic fill is per-event, never aggregated.
 
-On Tardis anchor dates (1st of month, 2019-04-01 onwards), the accumulator is reset
-to the full Tardis snapshot before emitting the daily partial, giving accurate
-anchor-point fields (`openInterest`, `impactPrices`). Between anchors, only
-vault-derived fields are updated.
+**The walk.** A single forward pass over the collection in `_id` order from an
+anchor — the `_id` of the last unfiltered partial, held in Redis. Each document
+is applied to an in-memory `bitmex-database` accumulator. An unfiltered partial,
+real or synthetic, advances the anchor. At every hour boundary the walk crosses,
+a partial is emitted unless one landed in the prior 30 minutes.
 
-Before Tardis coverage (Dec 2016 → April 2019), the daily partial contains only
-vault-derived fields. The data converges toward accuracy as Tardis anchors arrive.
+**Gap detection and fill.** A silence longer than 120 seconds between consecutive
+documents is a gap — whole missing days and intra-day holes are handled the same
+way. The gap is filled by replaying the proxy tables (`compositeIndex`, `quote`,
+`trade`, `funding`; `settlement` where present) against the running state,
+emitting single-symbol `update` deltas plus the per-minute 24h-stats cron. Only
+symbols already known from real data are synthesized. An unconditional partial
+closes every gap, marking the synthetic→real boundary.
 
-See [instrument.md](../ai/Distiller/instrument.md) for the full technical design.
+**Synthetic `_id`s and shifts.** Synthetic documents take the reserved `_id`
+values between consecutive real documents. When a gap needs more than the 255
+available, the real documents after it are shifted forward into the day's slot
+space — a server-side `$merge` copy to the shifted `_id`s, then a bulk delete of
+the originals, since `_id` is immutable.
+
+**Boundary.** Only the settled range is processed — up to the earliest date any
+of the five tables has a vault bucket not yet confirmed imported in MongoDB. At
+the boundary the walk idles and re-checks.
+
+See [INSTRUMENT_DISTILLER.md](../planning/INSTRUMENT_DISTILLER.md) for the full design.
 
 ## Partials — Daily Snapshots
 

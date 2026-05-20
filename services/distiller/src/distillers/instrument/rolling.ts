@@ -1,25 +1,5 @@
 import type { InstrumentItem } from '../../types';
-
-/* ------------------------------------------------------------------ */
-/*  Types                                                              */
-/* ------------------------------------------------------------------ */
-
-export interface RollingState {
-  window:       { ms: number; size: number; grossValue: number; homeNotional: number; foreignNotional: number }[];
-  priceHistory: { ms: number; price: number }[];
-
-  /** Running sums over `window` — maintained on every push/shift, O(1) per trade. */
-  volume24h:          number;
-  turnover24h:        number;
-  homeNotional24h:    number;
-  foreignNotional24h: number;
-
-  totalVolume:   number;
-  totalTurnover: number;
-
-  /** Last vwap emitted on a minute-cron tick; used for change detection. */
-  lastVwap: number | undefined;
-}
+import type { RollingState }   from './types';
 
 /* ------------------------------------------------------------------ */
 /*  Public API                                                         */
@@ -123,6 +103,8 @@ export function computeMinuteBlock(state: RollingState, ms: number): Partial<Ins
 /*  Internals                                                          */
 /* ------------------------------------------------------------------ */
 
+const WINDOW_MS = 86_400_000;
+
 /** Drop window entries older than 24h, subtracting them from the running sums. */
 function evictWindow(state: RollingState, ms: number): void {
   const cutoff = ms - WINDOW_MS;
@@ -158,5 +140,3 @@ function olderPrice(state: RollingState, ms: number): number | undefined {
 
   return undefined;
 }
-
-const WINDOW_MS = 86_400_000;

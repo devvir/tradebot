@@ -9,14 +9,15 @@ import type { TableTypeMap, BitmexTable, BitmexFieldType } from '@devvir/bitmex-
 /** Instrument row type from the bitmex-database / bitmex-api swagger schema. */
 export type InstrumentItem = TableTypeMap[BitmexTable.Instrument];
 
-/** Generated instrument WS message document stored in the instrument collection. */
+/** An instrument WS message document stored in the instrument collection. */
 export interface InstrumentMsg {
-  _id:     number;
-  action:  'partial' | 'insert' | 'update' | 'delete';
-  keys?:   string[];
-  types?:  Record<string, BitmexFieldType>;
-  filter?: Record<string, unknown>;
-  data:    Partial<InstrumentItem>[];
+  _id:       number;
+  action:    'partial' | 'insert' | 'update' | 'delete';
+  timestamp: string;
+  keys?:     string[];
+  types?:    Record<string, BitmexFieldType>;
+  filter?:   Record<string, unknown>;
+  data:      Partial<InstrumentItem>[];
 }
 
 /** A row from the compositeIndex vault collection. */
@@ -83,5 +84,6 @@ export type DistillerName = typeof DISTILLER_NAMES[number];
 export interface Config {
   database:   string;
   distillers: DistillerName[] | null;
+  vaultUrl:   string;
   [key: string]: unknown;
 }

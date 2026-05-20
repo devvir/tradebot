@@ -31,7 +31,7 @@ SK.run(async (service) => {
     (! d || d.includes('quote'))      ? distillQuotes(db, service)     : null,
     (! d || d.includes('trade'))      ? distillTrades(db, service)     : null,
     (! d || d.includes('orderbook'))  ? distillOrderBook(db)           : null,
-    (! d || d.includes('instrument')) ? distillInstrument(db)          : null,
+    (! d || d.includes('instrument')) ? distillInstrument(db, service) : null,
     (! d || d.includes('partials'))   ? distillPartials(db)            : null,
   ].filter(Boolean));
 });

@@ -8,6 +8,7 @@ export const loadConfig = (): Config => {
   const config: Config = {
     database:   process.env.DB_DATABASE ?? '',
     distillers: parseDistillers(process.env.DISTILLER_DISTILLERS),
+    vaultUrl:   process.env.VAULT_URL ?? '',
   };
 
   if (! config.database)

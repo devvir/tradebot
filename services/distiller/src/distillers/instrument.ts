@@ -1,180 +1,105 @@
-import type { Collection, Db } from 'mongodb';import { logger } from '@devvir/service-kit';
-import { ensureIndex } from '../utils/indexes';
-import { INSTRUMENT_KEYS, INSTRUMENT_TYPES, INSTRUMENT_FILTER } from './instrument/seeds';
-import { fetchDayEvents, processDayEvents } from './instrument/events';
-import { createRunState, seedRunState, applyMonthlyReset } from './instrument/state';
-import { DAY_ID_STRIDE, addDay, makeId, offsetToDate } from './instrument/ids';
-import type { InstrumentItem, InstrumentMsg } from '../types';
+import type { Db }                        from 'mongodb';
+import { registry, SK_PROVIDERS, logger } from '@devvir/service-kit';
+import type { Service, RedisClient }      from '@devvir/service-kit';
+import { parseMongoId }                   from '@tradebot/utils';
+
+import config                                  from '../config';
+import type { InstrumentMsg }                  from '../types';
+import { createAccumulator, applyMessage }     from './instrument/accumulator';
+import { Provider }                            from './instrument/provider';
+import { Writer, RESUME_KEY, deleteOriginals } from './instrument/writer';
+import { Walker }                              from './instrument/walker';
 
 /**
- * Generate `instrument` WebSocket-shaped messages from the five vault sources
- * (compositeIndex, quote, trade, funding, settlement).
+ * Reconstruct a continuous `instrument` collection — real farmer-imported
+ * documents interleaved with synthetic gap fill — one hour at a time.
  *
- * Output shape per day:
- *  - one start-of-day `partial` snapshot at msgIndex 0
- *  - N `insert`/`update` deltas (first appearance of a symbol → insert,
- *    subsequent events → update)
- *
- * The partial on the very first day is intentionally empty when no prior
- * Tardis snapshot covers the coverage-start date — the table then converges
- * organically as inserts arrive. Tardis monthly anchors (April 2019 onwards)
- * reset the accumulator to the full snapshot and fill in semi-static fields
- * that no vault source captures.
- *
- * Re-runs are safe: `_id`s are deterministic, the write uses `ordered: false`,
- * and duplicate-key errors are ignored.
+ * See `docs/planning/INSTRUMENT_DISTILLER.md` for the full design.
  */
-export async function distillInstrument(db: Db): Promise<void> {
-  const collections = [ 'compositeIndex', 'settlement', 'funding', 'instrument' ];
+export async function distillInstrument(db: Db, service: Service): Promise<void> {
+  if (! config.vaultUrl) throw new Error('VAULT_URL is required for the instrument distiller');
 
-  await Promise.all(collections.map(collection => ensureIndex(db, collection, [
-    { timestamp: 1 },
-    { action: 1, timestamp: 1 },
-    { symbol: 1, timestamp: 1 },
-  ])));
+  const redis = registry.get('distiller', SK_PROVIDERS).get('redis') as RedisClient;
+  const acc   = createAccumulator();
+  const prov  = new Provider();
 
-  const coll = db.collection<InstrumentMsg>('instrument');
+  const anchorId = await bootstrap(db, redis);
 
-  const window = await findCoverageWindow(db);
+  let startHour: string;
+  let writer:    Writer;
 
-  if (! window) {
-    logger.info('Distilling instrument: no vault data — skipping');
-    return;
-  }
+  if (anchorId !== null) {
+    const anchor = await db.collection<InstrumentMsg>('instrument').findOne({ _id: anchorId });
 
-  const { start: coverageStart, end: lastDay } = window;
-  const resumeDay = await findResumeDay(coll, coverageStart, lastDay);
+    if (! anchor) {
+      logger.error({ anchor: anchorId }, 'instrument: anchor document missing — cannot resume');
 
-  if (resumeDay >= lastDay) {
-    logger.info('Distilling instrument: already up to date');
-    return;
-  }
-
-  logger.info({ resumeDay, lastDay }, 'Distilling instrument (resume)');
-
-  const state = createRunState();
-
-  await seedRunState(coll, state, resumeDay, coverageStart);
-
-  let currentDay = resumeDay;
-  let batch:     InstrumentMsg[] = [];
-
-  const flush = async (): Promise<void> => {
-    if (batch.length === 0) return;
-
-    const toWrite = batch;
-
-    batch = [];
-    await coll.insertMany(toWrite, { ordered: false }).catch(ignoreDuplicateKeyErrors);
-  };
-
-  while (currentDay < lastDay) {
-    if (currentDay.slice(8) === '01')
-      logger.info(`Distilling instrument: month of ${currentDay}`);
-
-    applyMonthlyReset(state, currentDay);
-
-    batch.push({
-      _id:    makeId(currentDay, 0),
-      action: 'partial',
-      keys:   INSTRUMENT_KEYS,
-      types:  INSTRUMENT_TYPES,
-      filter: INSTRUMENT_FILTER,
-      data:   state.table.snapshot() as Partial<InstrumentItem>[],
-    });
-
-    const dayStart = `${currentDay}T00:00:00.000Z`;
-    const dayEnd   = `${addDay(currentDay)}T00:00:00.000Z`;
-    const events   = await fetchDayEvents(db, dayStart, dayEnd);
-
-    let dayDocs = 1;
-
-    for (const doc of processDayEvents(state, currentDay, events)) {
-      batch.push(doc);
-      dayDocs++;
-
-      if (batch.length >= BATCH_SIZE) await flush();
+      return;
     }
 
-    logger.debug({ day: currentDay, docs: dayDocs }, 'Distilling instrument: day written');
+    applyMessage(acc, anchor);
+    startHour = anchor.timestamp.slice(0, 13);
+    writer    = new Writer(db, anchorId);
 
-    currentDay = addDay(currentDay);
+    await prov.primeWindow(db, Date.parse(anchor.timestamp));
+    logger.info({ anchor: anchorId, from: startHour }, 'instrument: resumed');
+
+  } else {
+    const first = await firstDataHour(db);
+
+    if (! first) {
+      logger.warn('instrument: no instrument data — nothing to distil');
+
+      return;
+    }
+
+    startHour = first;
+    writer    = new Writer(db, null);
+    logger.info({ from: startHour }, 'instrument: cold start');
   }
 
-  await flush();
-
-  logger.info('Distilling instrument: complete');
+  await new Walker(db, service, config.vaultUrl, prov, writer, acc, startHour).run();
 }
 
 /* ------------------------------------------------------------------ */
 /*  Internals                                                          */
 /* ------------------------------------------------------------------ */
 
-const BATCH_SIZE = 10_000;
-
 /**
- * Coverage starts at the latest first-timestamp across all five sources,
- * and ends at the earliest last-timestamp — only days with data from every
- * source are produced.
+ * Read the resume key. If the last hour stopped at `sealed`, finish it — delete
+ * its originals, mark `complete`. Returns the anchor `_id` to resume from, or
+ * `null` for a cold start.
  */
-async function findCoverageWindow(db: Db): Promise<{ start: string; end: string } | null> {
-  const sources = ['compositeIndex', 'quote', 'trade', 'funding', 'settlement'];
+async function bootstrap(db: Db, redis: RedisClient): Promise<number | null> {
+  const raw = await redis.get(RESUME_KEY);
 
-  const [firstDocs, lastDocs] = await Promise.all([
-    Promise.all(sources.map(s => db.collection(s).findOne<{ timestamp: string }>(
-      {},
-      { sort: { timestamp: 1 }, projection: { timestamp: 1 } },
-    ))),
-    Promise.all(sources.map(s => db.collection(s).findOne<{ timestamp: string }>(
-      {},
-      { sort: { timestamp: -1 }, projection: { timestamp: 1 } },
-    ))),
-  ]);
+  if (! raw) return null;
 
-  if (firstDocs.some(d => ! d) || lastDocs.some(d => ! d)) return null;
+  const parts      = raw.split(':');
+  const anchorId   = Number(parts[0]);
+  const consumedId = Number(parts[1]);
+  const phase      = parts[2];
 
-  const start = firstDocs
-    .map(d => d!.timestamp.slice(0, 10))
-    .reduce((max, ts) => ts > max ? ts : max);
+  if (phase === 'sealed') {
+    if (consumedId > 0) {
+      const coll = db.collection<InstrumentMsg>('instrument');
 
-  const end = lastDocs
-    .map(d => d!.timestamp.slice(0, 10))
-    .reduce((min, ts) => ts < min ? ts : min);
+      await deleteOriginals(coll, parseMongoId(consumedId).date, consumedId);
+    }
 
-  if (start >= end) return null;
+    await redis.set(RESUME_KEY, `${anchorId}:${consumedId}:complete`);
+    logger.info({ anchor: anchorId }, 'instrument: finished a sealed hour on bootstrap');
+  }
 
-  return { start, end };
+  return anchorId;
 }
 
-/**
- * Find the most recent day whose start-of-day partial was written. Those are
- * the only documents with `_id % DAY_ID_STRIDE === 1` (msgIndex = 0), so the
- * modulo predicate matches them uniquely. Returns the first day that still
- * needs processing (= day of the last partial, which is re-run idempotently).
- */
-async function findResumeDay(
-  coll:          Collection<InstrumentMsg>,
-  coverageStart: string,
-  lastDay:       string,
-): Promise<string> {
-  const boundary = makeId(addDay(lastDay), 0);
-
-  const found = await coll.findOne<{ _id: number }>(
-    { _id: { $mod: [DAY_ID_STRIDE, 1], $lt: boundary } } as Parameters<typeof coll.findOne>[0],
-    { sort: { _id: -1 }, projection: { _id: 1 } },
+/** The `YYYY-MM-DDTHH` hour of the first original instrument document. */
+async function firstDataHour(db: Db): Promise<string | null> {
+  const doc = await db.collection<InstrumentMsg>('instrument').findOne(
+    { $expr: { $eq: [{ $mod: ['$_id', 4] }, 0] } },
+    { sort: { _id: 1 }, projection: { timestamp: 1 } },
   );
 
-  if (! found) return coverageStart;
-
-  return offsetToDate(Math.floor(found._id / DAY_ID_STRIDE));
-}
-
-function ignoreDuplicateKeyErrors(err: unknown): void {
-  const e = err as { code?: number; writeErrors?: { code: number }[] };
-
-  if (e.code === 11000) return;
-
-  if (e.writeErrors?.every(w => w.code === 11000)) return;
-
-  throw err;
+  return doc ? doc.timestamp.slice(0, 13) : null;
 }
