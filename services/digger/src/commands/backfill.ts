@@ -1,4 +1,5 @@
 import { logger } from '@devvir/service-kit';
+import { startOfDayMongoId } from '@tradebot/utils';
 import type { Collection, MongoClient } from 'mongodb';
 import * as snapshots from '../snapshots';
 import { wsPayload, timestampFromId } from '../tables/handler';
@@ -31,9 +32,7 @@ import type { BitmexTable, Config, MongoDoc, TableBuffer } from '../types';
  * within at most a couple of days of any X is essentially guaranteed.
  */
 
-const EPOCH_2000_MS = Date.UTC(2000, 0, 1);
-const MS_PER_DAY    = 86_400_000;
-const SHIFT_39      = 549_755_813_888;
+const MS_PER_DAY = 86_400_000;
 
 /** How many recent partials to scan before giving up. ~1 per reconnect (~1h). */
 const PARTIAL_SCAN_LIMIT = 100;
@@ -140,7 +139,7 @@ const timestampFor = (doc: MongoDoc): number => {
 
 /** First `_id` value possible for the calendar day AFTER the day containing `epochMs`. */
 const firstIdAfterDay = (epochMs: number): number =>
-  (Math.floor((epochMs - EPOCH_2000_MS) / MS_PER_DAY) + 1) * SHIFT_39;
+  startOfDayMongoId(new Date(epochMs + MS_PER_DAY).toISOString());
 
 // ── Test-only ─────────────────────────────────────────────────────────────────
 

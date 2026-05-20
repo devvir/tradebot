@@ -1,6 +1,6 @@
 import type { Document } from 'mongodb';
+import { startOfDayMongoId } from '@tradebot/utils';
 import type { BinSize, Range } from '../types';
-import { startOfDayId } from '../../utils/ids';
 
 const BIN_CONFIG: Record<BinSize, { unit: string; amount: number }> = {
   '1m': { unit: 'minute', amount: 1 },
@@ -92,7 +92,7 @@ export function matchDocs(
 
   return transform === trades2bins
     ? [{ $match: {
-        _id:  { $gte: startOfDayId(from), $lt: startOfDayId(to) },
+        _id:  { $gte: startOfDayMongoId(from), $lt: startOfDayMongoId(to) },
         side: { $in: ['Buy', 'Sell'] },
       } }]
     : [{ $match: { timestamp: { $gt:  from, $lte: to } } }];

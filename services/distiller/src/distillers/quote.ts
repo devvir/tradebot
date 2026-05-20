@@ -1,9 +1,9 @@
 import type { Db } from 'mongodb';
 import { logger } from '@devvir/service-kit';
 import type { Service } from '@devvir/service-kit';
+import { startOfDayMongoId } from '@tradebot/utils';
 import { ensureIndex } from '../utils/indexes';
 import { dateWalker } from '../utils/dates';
-import { startOfDayId } from '../utils/ids';
 import type { QuoteBin } from '../types';
 
 const POOL   = 'Primary';
@@ -114,7 +114,7 @@ function buildPipeline(from: string, to: string) {
   return [
     {
       $match: {
-        _id: { $gte: startOfDayId(from), $lt: startOfDayId(to) },
+        _id: { $gte: startOfDayMongoId(from), $lt: startOfDayMongoId(to) },
       },
     },
 

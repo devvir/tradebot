@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { MongoClient } from 'mongodb';
+import { startOfDayMongoId } from '@tradebot/utils';
 import * as clock from '../src/clock';
 import { initialFill, triggerFetch, _test_buildFilter } from '../src/websocket/fetcher';
 import { createBuffer } from '../src/websocket/buffer';
@@ -34,11 +35,7 @@ describe('buildFilter — first fetch, rest-origin', () => {
 describe('buildFilter — first fetch, ws-origin', () => {
   it('uses minId derived from the calendar day of the clock', () => {
     const seek        = new Date('2025-01-15T12:30:00.000Z').getTime();
-    const EPOCH_2000  = Date.UTC(2000, 0, 1);
-    const MS_PER_DAY  = 86_400_000;
-    const SHIFT_39    = 549_755_813_888;
-    const dayOffset   = Math.floor((seek - EPOCH_2000) / MS_PER_DAY);
-    const expectedMin = dayOffset * SHIFT_39;
+    const expectedMin = startOfDayMongoId('2025-01-15');
 
     clock.set(seek);
 

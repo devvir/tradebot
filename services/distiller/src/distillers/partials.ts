@@ -2,15 +2,13 @@ import type { Collection, Db } from 'mongodb';import { createTable, BitmexTable 
 import type { BitmexMessage, Table } from '@devvir/bitmex-database';
 import { logger } from '@devvir/service-kit';
 import { ensureIndex } from '../utils/indexes';
-import { TABLE_SPECS } from '@tradebot/utils';
+import { startOfDayMongoId, TABLE_SPECS } from '@tradebot/utils';
 import type { TableSpec } from '@tradebot/utils';
 import { PartialConfig, StoredPartial } from './types';
 import { BitmexAction } from '@tradebot/types';
 
 const COLLECTION = '_partials_';
 const BATCH_SIZE = 10_000;
-const DAY_MS     = 86_400_000;
-const EPOCH_MS   = Date.UTC(2000, 0, 1);
 
 /**
  * One config per supported table. orderBookL2_25 is intentionally skipped.
@@ -77,7 +75,7 @@ const distillOneTable = async (db: Db, cfg: PartialConfig): Promise<void> => {
       applyDoc(table, cfg, { action: 'partial', data: [] }, spec);
   } else {
     applyDoc(table, cfg, { action: 'partial', data: last.data as Record<string, unknown>[] }, spec);
-    lastId = dayStartId(last.date) - 1;
+    lastId = startOfDayMongoId(last.date) - 1;
   }
 
   let currentDay: string | null = null;
@@ -194,13 +192,6 @@ const nextDay = (day: string): string => {
   return d.toISOString().slice(0, 10);
 };
 
-const dayStartId = (day: string): number => {
-  const ms        = Date.parse(`${day}T00:00:00.000Z`);
-  const dayOffset = (ms - EPOCH_MS) / DAY_MS;
-
-  return dayOffset * Math.pow(2, 39);
-};
-
 /**
  * For bin tables, replace each item with a midnight entry if its timestamp
  * isn't already midnight:
@@ -250,6 +241,5 @@ const synthesizeBinMidnight = (
 /*  Test-only exports                                                 */
 /* ------------------------------------------------------------------ */
 
-export const _test_nextDay              = nextDay;
-export const _test_dayStartId           = dayStartId;
-export const _test_synthesizeBinMidnight = synthesizeBinMidnight;
+export const _test_nextDay               = nextDay;
+export const _test_synthesizeBinMidnight  = synthesizeBinMidnight;

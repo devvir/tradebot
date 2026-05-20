@@ -1,13 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { MongoClient } from 'mongodb';
+import { makeMongoId, startOfDayMongoId } from '@tradebot/utils';
 import { backfillSnapshot, _test_timestampFor, _test_firstIdAfterDay } from '../src/commands/backfill';
 import { createBuffer } from '../src/websocket/buffer';
 import * as snapshots from '../src/snapshots';
 import type { Config, MongoDoc } from '../src/types';
 
 // ── Pure helpers (unit) ───────────────────────────────────────────────────────
-
-const SHIFT_39 = 549_755_813_888;
 
 describe('timestampFor', () => {
   it('reads from data[0].timestamp when present', () => {
@@ -18,7 +17,7 @@ describe('timestampFor', () => {
   });
 
   it('falls back to _id-decoded day when no data timestamp', () => {
-    const doc = { _id: SHIFT_39, data: [{}] };
+    const doc = { _id: startOfDayMongoId('2000-01-02'), data: [{}] };
 
     expect(_test_timestampFor(doc)).toBe(Date.UTC(2000, 0, 2));
   });
@@ -27,9 +26,8 @@ describe('timestampFor', () => {
 describe('firstIdAfterDay', () => {
   it('returns the first _id of the day after epochMs', () => {
     const epoch = Date.UTC(2025, 5, 1);
-    const expectedDayOffset = (epoch - Date.UTC(2000, 0, 1)) / 86_400_000 + 1;
 
-    expect(_test_firstIdAfterDay(epoch)).toBe(expectedDayOffset * SHIFT_39);
+    expect(_test_firstIdAfterDay(epoch)).toBe(startOfDayMongoId('2025-06-02'));
   });
 
   it('day-aligns regardless of intra-day position', () => {
@@ -67,12 +65,9 @@ beforeEach(async () => {
   snapshots._test_reset();
 });
 
-// Helper: build registrar-style _id for a given day offset + msgIndex.
-const makeId = (dayOffset: number, msgIndex: number): number =>
-  dayOffset * SHIFT_39 + msgIndex * 4_096;
-
-const dayOffset = (date: string): number =>
-  Math.floor((new Date(date).getTime() - Date.UTC(2000, 0, 1)) / 86_400_000);
+/** Build a vault-style _id for a calendar day (YYYY-MM-DD) + 0-based slot. */
+const makeId = (date: string, slot: number): number =>
+  makeMongoId(date, slot + 1);
 
 describe('backfillSnapshot — no stored partial', () => {
   it('returns false when the collection is empty', async () => {
@@ -89,7 +84,7 @@ describe('backfillSnapshot — no stored partial', () => {
 
 describe('backfillSnapshot — partial only, no deltas', () => {
   it('seeds snapshots and sets buffer.cursor', async () => {
-    const day = dayOffset('2025-01-15');
+    const day = '2025-01-15';
     const partialDoc = {
       _id:    makeId(day, 0),
       action: 'partial',
@@ -119,7 +114,7 @@ describe('backfillSnapshot — partial only, no deltas', () => {
 
 describe('backfillSnapshot — partial + deltas up to X', () => {
   it('applies deltas and stops at X', async () => {
-    const day = dayOffset('2025-01-15');
+    const day = '2025-01-15';
     const docs = [
       {
         _id:    makeId(day, 0),
@@ -164,7 +159,7 @@ describe('backfillSnapshot — partial + deltas up to X', () => {
 
 describe('backfillSnapshot — picks the latest partial before X', () => {
   it('skips later partials and uses the most recent one ≤ X', async () => {
-    const day = dayOffset('2025-01-15');
+    const day = '2025-01-15';
     const docs = [
       {
         _id:    makeId(day, 0),

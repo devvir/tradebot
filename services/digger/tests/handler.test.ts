@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { makeMongoId, startOfDayMongoId } from '@tradebot/utils';
 import {
   timestampFromId,
   timestampFromData,
@@ -7,11 +8,10 @@ import {
   makeEmptyPartial,
 } from '../src/tables/handler';
 
-// ── Constants (mirrored from handler.ts) ──────────────────────────────────────
+// ── Test reference constants ──────────────────────────────────────────────────
 
 const EPOCH_2000_MS = Date.UTC(2000, 0, 1);
 const MS_PER_DAY    = 86_400_000;
-const SHIFT_39      = 549_755_813_888;
 
 // ── timestampFromId ───────────────────────────────────────────────────────────
 
@@ -20,13 +20,13 @@ describe('timestampFromId', () => {
     expect(timestampFromId({ _id: 0 })).toBe(EPOCH_2000_MS);
   });
 
-  it('returns epoch-2000 + 1 day for _id = SHIFT_39', () => {
-    expect(timestampFromId({ _id: SHIFT_39 })).toBe(EPOCH_2000_MS + MS_PER_DAY);
+  it('returns epoch-2000 + 1 day for the first _id of 2000-01-02', () => {
+    expect(timestampFromId({ _id: startOfDayMongoId('2000-01-02') })).toBe(EPOCH_2000_MS + MS_PER_DAY);
   });
 
-  it('ignores sub-day bits (msgIndex and reserved)', () => {
-    // _id with dateOffset=1, msgIndex=999, reserved=42
-    const id = 1 * SHIFT_39 + 999 * 4_096 + 42;
+  it('ignores sub-day bits (slot and reserved)', () => {
+    /** _id on 2000-01-02 with slot=999, reserved=42 */
+    const id = makeMongoId('2000-01-02', 1000, 42);
 
     expect(timestampFromId({ _id: id })).toBe(EPOCH_2000_MS + MS_PER_DAY);
   });
@@ -43,19 +43,19 @@ describe('timestampFromData', () => {
   });
 
   it('falls back to _id decode when data has no timestamp field', () => {
-    const doc = { _id: SHIFT_39, data: [{ symbol: 'XBTUSD' }] };
+    const doc = { _id: startOfDayMongoId('2000-01-02'), data: [{ symbol: 'XBTUSD' }] };
 
     expect(timestampFromData(doc)).toBe(EPOCH_2000_MS + MS_PER_DAY);
   });
 
   it('falls back to _id decode when data array is empty', () => {
-    const doc = { _id: SHIFT_39, data: [] };
+    const doc = { _id: startOfDayMongoId('2000-01-02'), data: [] };
 
     expect(timestampFromData(doc)).toBe(EPOCH_2000_MS + MS_PER_DAY);
   });
 
   it('falls back to _id decode when data is absent', () => {
-    const doc = { _id: SHIFT_39 };
+    const doc = { _id: startOfDayMongoId('2000-01-02') };
 
     expect(timestampFromData(doc)).toBe(EPOCH_2000_MS + MS_PER_DAY);
   });

@@ -10,7 +10,7 @@
  */
 
 import { logger, registry, type MongoClient } from '@devvir/service-kit';
-import { makeId } from './id';
+import { makeMongoId } from '@tradebot/utils';
 import type { BitmexTable } from '@tradebot/types';
 
 const ERROR_DB = 'farmer';
@@ -25,7 +25,7 @@ export const recordError = async (
 
   try {
     await mongo.db(ERROR_DB).collection(table).insertOne({
-      _id:     makeId(date, position),
+      _id:     makeMongoId(date, position),
       message: raw,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any);

@@ -10,7 +10,7 @@ import {
   _test_generateCoarser,
   _test_COARSER_BINS,
 } from '../../src/distillers/quote';
-import { startOfDayId } from '../../src/utils/ids';
+import { startOfDayMongoId } from '@tradebot/utils';
 
 const { mongoPort } = JSON.parse(
   readFileSync(resolve(__dirname, '../.ports.json'), 'utf8'),
@@ -28,8 +28,8 @@ const BIN1D   = 'quoteBin1d';
 const ALL_COLLS = [SOURCE, BIN1M, BIN5M, BIN1H, BIN1D];
 
 const DATE  = '2020-01-01';
-const D     = startOfDayId(DATE);
-const D_P1  = startOfDayId('2020-01-02');
+const D     = startOfDayMongoId(DATE);
+const D_P1  = startOfDayMongoId('2020-01-02');
 
 /** Insert a quote into the source collection. */
 const insertQuote = (

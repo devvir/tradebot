@@ -2,17 +2,13 @@ import { describe, it, expect } from 'vitest';
 import { Command } from 'commander';
 import {
   encodeDate,
-  decodeId,
   register,
   _test_normaliseDate,
   _test_isDateLike,
-  _test_dateToOffset,
-  _test_offsetToIso,
   _test_ID_THRESHOLD,
 } from '../../src/commands/mapId';
 
-const SHIFT_39 = 549_755_813_888;
-const SHIFT_12 = 4_096;
+const SHIFT_38 = 274_877_906_944;
 
 // ─── normaliseDate ─────────────────────────────────────────────────────────────
 
@@ -94,24 +90,7 @@ describe('ID_THRESHOLD', () => {
   });
 
   it('is below the minimum real id (day 1 after epoch)', () => {
-    expect(_test_ID_THRESHOLD).toBeLessThan(1 * SHIFT_39);
-  });
-});
-
-// ─── dateToOffset / offsetToIso round-trip ─────────────────────────────────────
-
-describe('dateToOffset / offsetToIso', () => {
-  it('epoch date 2000-01-01 has offset 0', () => {
-    expect(_test_dateToOffset('20000101')).toBe(0);
-  });
-
-  it('round-trips a known date', () => {
-    const offset = _test_dateToOffset('20290101');
-    expect(_test_offsetToIso(offset)).toBe('2029-01-01');
-  });
-
-  it('round-trips the first day after epoch', () => {
-    expect(_test_offsetToIso(_test_dateToOffset('20000102'))).toBe('2000-01-02');
+    expect(_test_ID_THRESHOLD).toBeLessThan(1 * SHIFT_38);
   });
 });
 
@@ -134,55 +113,8 @@ describe('encodeDate', () => {
     expect(encodeDate('20190901')).toBe(encodeDate('2019-09-01'));
   });
 
-  it('produces a multiple of SHIFT_39 (position and reserved are 0)', () => {
-    const id = encodeDate('2029-06-15');
-    expect(id % SHIFT_39).toBe(0);
-  });
-
-  it('is consistent with the registrar id layout', () => {
-    const offset = _test_dateToOffset('20291231');
-    expect(encodeDate('20291231')).toBe(offset * SHIFT_39);
-  });
-});
-
-// ─── decodeId ──────────────────────────────────────────────────────────────────
-
-describe('decodeId', () => {
-  it('decodes epoch id 0', () => {
-    const { date, position, reserved } = decodeId(0);
-    expect(date).toBe('2000-01-01');
-    expect(position).toBe(0);
-    expect(reserved).toBe(0);
-  });
-
-  it('decodes a pure date id (position=0, reserved=0)', () => {
-    const id = encodeDate('2029-01-01');
-    const { date, position, reserved } = decodeId(id);
-    expect(date).toBe('2029-01-01');
-    expect(position).toBe(0);
-    expect(reserved).toBe(0);
-  });
-
-  it('decodes position correctly', () => {
-    const base = encodeDate('2029-01-01');
-    const id   = base + 42 * SHIFT_12;
-    expect(decodeId(id).position).toBe(42);
-  });
-
-  it('decodes reserved correctly', () => {
-    const base = encodeDate('2029-01-01');
-    const id   = base + 7;
-    expect(decodeId(id).reserved).toBe(7);
-  });
-
-  it('round-trips encodeDate through decodeId', () => {
-    const original = '2025-08-22';
-    const id       = encodeDate(original);
-    expect(decodeId(id).date).toBe(original);
-  });
-
-  it('handles Number.MAX_SAFE_INTEGER boundary', () => {
-    expect(() => decodeId(Number.MAX_SAFE_INTEGER)).not.toThrow();
+  it('produces a multiple of SHIFT_38 (position and reserved are 0)', () => {
+    expect(encodeDate('2029-06-15') % SHIFT_38).toBe(0);
   });
 });
 

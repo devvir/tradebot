@@ -8,7 +8,7 @@ import {
   _test_generate1h,
   _test_generate1d,
 } from '../../src/distillers/trade';
-import { startOfDayId } from '../../src/utils/ids';
+import { startOfDayMongoId } from '@tradebot/utils';
 
 const { mongoPort } = JSON.parse(
   readFileSync(resolve(__dirname, '../.ports.json'), 'utf8'),
@@ -30,9 +30,9 @@ const DATE_P1  = '2020-01-02';   // day N+1
 const DATE_P2  = '2020-01-03';   // day N+2 (for gap-fill tests)
 const DATE_M1  = '2019-12-31';   // day N-1
 
-const D     = startOfDayId(DATE);
-const D_P1  = startOfDayId(DATE_P1);
-const D_P2  = startOfDayId(DATE_P2);
+const D     = startOfDayMongoId(DATE);
+const D_P1  = startOfDayMongoId(DATE_P1);
+const D_P2  = startOfDayMongoId(DATE_P2);
 
 /** Insert a raw trade into the source collection. */
 const insertTrade = (

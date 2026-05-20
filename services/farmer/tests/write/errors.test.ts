@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { registry } from '@devvir/service-kit';
 import type { MongoClient } from 'mongodb';
 import { recordError, _test_ERROR_DB as ERROR_DB } from '../../src/write/errors';
-import { makeId } from '../../src/write/id';
+import { makeMongoId } from '@tradebot/utils';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -39,7 +39,7 @@ describe('recordError — happy path', () => {
     expect(m.db).toHaveBeenCalledWith(ERROR_DB);
     expect(m.collection).toHaveBeenCalledWith('trade');
     expect(m.insertOne).toHaveBeenCalledWith({
-      _id:     makeId('20240315', 42),
+      _id:     makeMongoId('20240315', 42),
       message: 'corrupt-line',
     });
   });

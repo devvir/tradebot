@@ -1,5 +1,6 @@
 import { type MongoClient } from 'mongodb';
 import { logger } from '@devvir/service-kit';
+import { startOfDayMongoId } from '@tradebot/utils';
 import { enqueue } from './buffer';
 import { TABLE_HANDLERS } from '../tables';
 import * as clock from '../clock';
@@ -136,13 +137,9 @@ const buildFilter = (
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const EPOCH_2000_MS = Date.UTC(2000, 0, 1);
-const MS_PER_DAY    = 86_400_000;
-const SHIFT_39      = 549_755_813_888;
-
 /** First `_id` value possible for the calendar day containing `epochMs`. */
 const minIdForDate = (epochMs: number): number =>
-  Math.floor((epochMs - EPOCH_2000_MS) / MS_PER_DAY) * SHIFT_39;
+  startOfDayMongoId(new Date(epochMs).toISOString());
 
 // ── Test-only ─────────────────────────────────────────────────────────────────
 

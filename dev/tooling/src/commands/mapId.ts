@@ -1,25 +1,23 @@
 import { Command } from 'commander';
+import { parseMongoId, startOfDayMongoId } from '@tradebot/utils';
 import { C } from '../shared/utils/colors';
 import { error } from '../shared/ui/logger';
 
 /**
- * Vault record _id layout (53-bit safe integer):
- *   _id = dateOffset * 2^39 + msgIndex * 2^12 + reserved
+ * `mapId` translates between a vault record `_id` and the calendar date it
+ * encodes. Numeric inputs ≥ ID_THRESHOLD are treated as ids and decoded;
+ * everything else is treated as a (possibly partial) date and encoded to the
+ * minimum `_id` for that day.
  *
- *   dateOffset — days since 2000-01-01 UTC (14 bits)
- *   msgIndex   — message position within the day's vault file (27 bits)
- *   reserved   — always 0 for farmer-produced IDs; 1–4095 for gap-fill events (12 bits)
+ * The 53-bit `_id` layout itself lives in `@tradebot/utils` (mongoIds.ts) —
+ * this command only owns the date-vs-id disambiguation.
  *
- * Minimum real id (day 1 after epoch, position 0, reserved 0) = 2^39 ≈ 549 billion.
- * Maximum YYYYMMDD date value (20991231) = ~21 million.
- * ID_THRESHOLD (100 million) cleanly separates the two spaces.
+ * ID_THRESHOLD (100 million) cleanly separates the two input spaces: the
+ * largest YYYYMMDD value (20991231 ≈ 21M) sits well below it, and the smallest
+ * real id (day 1 after epoch = 2^38 ≈ 274 billion) well above.
  */
 
-const EPOCH_MS     = Date.UTC(2000, 0, 1);
-const MS_PER_DAY   = 86_400_000;
-const SHIFT_39     = 549_755_813_888;  // 2^39
-const SHIFT_12     = 4_096;            // 2^12
-const ID_THRESHOLD = 100_000_000;      // numeric values >= this are treated as ids
+const ID_THRESHOLD = 100_000_000;   // numeric values >= this are treated as ids
 
 /** Normalise a partial ISO date string to YYYYMMDD, defaulting month/day to 01. */
 const normaliseDate = (input: string): string => {
@@ -59,36 +57,12 @@ const isDateLike = (value: string): boolean => {
   return true;
 };
 
-const dateToOffset = (ymd: string): number => {
-  const y = parseInt(ymd.slice(0, 4), 10);
-  const m = parseInt(ymd.slice(4, 6), 10) - 1;
-  const d = parseInt(ymd.slice(6, 8), 10);
-
-  return (Date.UTC(y, m, d) - EPOCH_MS) / MS_PER_DAY;
-};
-
-const offsetToIso = (offset: number): string =>
-  new Date(EPOCH_MS + offset * MS_PER_DAY).toISOString().slice(0, 10);
-
 /** Encode a date string (full or partial ISO / YYYYMMDD) to the minimum _id for that date. */
-export const encodeDate = (input: string): number => {
-  const ymd = normaliseDate(input);
-
-  return dateToOffset(ymd) * SHIFT_39;
-};
-
-/** Decode a vault _id into its constituent fields. */
-export const decodeId = (id: number): { date: string; position: number; reserved: number } => {
-  const dateOffset = Math.floor(id / SHIFT_39);
-  const remainder  = id % SHIFT_39;
-  const position   = Math.floor(remainder / SHIFT_12);
-  const reserved   = remainder % SHIFT_12;
-
-  return { date: offsetToIso(dateOffset), position, reserved };
-};
+export const encodeDate = (input: string): number =>
+  startOfDayMongoId(normaliseDate(input));
 
 /**
- * Register the `map` command.
+ * Register the `mapId` command.
  *
  *   tools mapId 2029-01-01          — date/partial ISO → minimum _id for that date
  *   tools mapId 20190901            — YYYYMMDD (numeric but < threshold) → minimum _id
@@ -100,9 +74,9 @@ export function register(program: Command): void {
     .description('Map between vault record _id and ISO date (numeric ≥ 100M → decode, date → encode)')
     .action((value: string) => {
       try {
-        const asNumber = parseInt(value, 10);
+        const asNumber  = parseInt(value, 10);
         const isNumeric = /^\d+$/.test(value);
-        const isId = isNumeric && asNumber >= ID_THRESHOLD;
+        const isId      = isNumeric && asNumber >= ID_THRESHOLD;
 
         if (isId) {
           if (! Number.isSafeInteger(asNumber)) {
@@ -110,7 +84,7 @@ export function register(program: Command): void {
             process.exit(1);
           }
 
-          const { date, position, reserved } = decodeId(asNumber);
+          const { date, position, reserved } = parseMongoId(asNumber);
 
           console.log(`${C.cyan}date${C.reset}      ${C.bold}${date}${C.reset}`);
           console.log(`${C.cyan}position${C.reset}  ${position}`);
@@ -133,6 +107,4 @@ export function register(program: Command): void {
 // ─── test exports ──────────────────────────────────────────────────────────────
 export const _test_normaliseDate = normaliseDate;
 export const _test_isDateLike    = isDateLike;
-export const _test_dateToOffset  = dateToOffset;
-export const _test_offsetToIso   = offsetToIso;
 export const _test_ID_THRESHOLD  = ID_THRESHOLD;

@@ -1,5 +1,6 @@
 import { vi, describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { MongoClient } from 'mongodb';
+import { makeMongoId } from '@tradebot/utils';
 import * as clock from '../src/clock';
 import * as snapshots from '../src/snapshots';
 import { subscribe, unsubscribe, resubscribe } from '../src/commands/subscribe';
@@ -39,13 +40,9 @@ const makeState = (): State => ({
   lastMessageAt:  null,
 });
 
-const SHIFT_39 = 549_755_813_888;
-
-const makeId = (dayOffset: number, msgIndex: number): number =>
-  dayOffset * SHIFT_39 + msgIndex * 4_096;
-
-const dayFor = (date: string): number =>
-  Math.floor((new Date(date).getTime() - Date.UTC(2000, 0, 1)) / 86_400_000);
+/** Build a vault-style _id for a calendar day (YYYY-MM-DD) + 0-based slot. */
+const makeId = (date: string, slot: number): number =>
+  makeMongoId(date, slot + 1);
 
 beforeAll(async () => {
   client = new MongoClient(process.env['DB_URL']!);
@@ -147,7 +144,7 @@ describe('subscribe — REST-origin trade', () => {
 
 describe('subscribe — WS-origin instrument with stored partial', () => {
   it('runs backfill, seeds snapshots, publishes a partial built from MongoDB', async () => {
-    const day = dayFor('2025-01-15');
+    const day = '2025-01-15';
 
     await client.db(DB).collection('instrument').insertMany([
       {

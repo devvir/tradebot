@@ -2,11 +2,11 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { MongoClient, Db } from 'mongodb';
+import { startOfDayMongoId } from '@tradebot/utils';
 
 import {
   distillPartials,
   _test_nextDay,
-  _test_dayStartId,
   _test_synthesizeBinMidnight,
 } from '../../src/distillers/partials';
 
@@ -27,7 +27,7 @@ const SOURCE_COLLS = [
 ];
 
 /** Small helper: an _id inside `day` (dayStart + offset). */
-const idIn = (day: string, offset: number): number => _test_dayStartId(day) + offset;
+const idIn = (day: string, offset: number): number => startOfDayMongoId(day) + offset;
 
 describe('distillPartials', () => {
   let client: MongoClient;
@@ -64,21 +64,6 @@ describe('distillPartials', () => {
 
     it('rolls over year boundary', () => {
       expect(_test_nextDay('2020-12-31')).toBe('2021-01-01');
-    });
-  });
-
-  describe('dayStartId', () => {
-    it('returns 0 for 2000-01-01 (the epoch)', () => {
-      expect(_test_dayStartId('2000-01-01')).toBe(0);
-    });
-
-    it('matches the registrar formula (dayOffset * 2^39)', () => {
-      expect(_test_dayStartId('2000-01-02')).toBe(Math.pow(2, 39));
-      expect(_test_dayStartId('2000-01-11')).toBe(10 * Math.pow(2, 39));
-    });
-
-    it('stays within MAX_SAFE_INTEGER for current dates', () => {
-      expect(_test_dayStartId('2026-04-21')).toBeLessThan(Number.MAX_SAFE_INTEGER);
     });
   });
 

@@ -7,7 +7,7 @@ import {
   _test_sliceCount            as sliceCount,
 } from '../../src/write/flush';
 import { Task, type StopSignal } from '../../src/orchestration';
-import { makeId } from '../../src/write/id';
+import { makeMongoId } from '@tradebot/utils';
 import { admit, initInflight, _test_reset as resetInflight } from '../../src/write/inflight';
 import type { Item } from '../../src/types';
 import type { TableBatches } from '../../src/write/dispatch';
@@ -82,7 +82,7 @@ describe('buildBody — injects _id and assembles a JSON-array body', () => {
     const parsed = JSON.parse(body) as Array<{ _id: number; symbol: string; price: number }>;
 
     expect(parsed).toHaveLength(1);
-    expect(parsed[0]!._id).toBe(makeId('20240315', 42));
+    expect(parsed[0]!._id).toBe(makeMongoId('20240315', 42));
     expect(parsed[0]!.symbol).toBe('XBTUSD');
     expect(parsed[0]!.price).toBe(100);
   });
@@ -100,9 +100,9 @@ describe('buildBody — injects _id and assembles a JSON-array body', () => {
 
     expect(parsed.map(d => d.symbol)).toEqual(['A', 'B', 'C']);
     expect(parsed.map(d => d._id)).toEqual([
-      makeId('20240315', 1),
-      makeId('20240315', 2),
-      makeId('20240315', 3),
+      makeMongoId('20240315', 1),
+      makeMongoId('20240315', 2),
+      makeMongoId('20240315', 3),
     ]);
   });
 });
@@ -196,7 +196,7 @@ describe('startFlush — successful POST', () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(postedBody).toHaveLength(3);
-    expect((postedBody as { _id: number }[])[0]!._id).toBe(makeId(task.date, 1));
+    expect((postedBody as { _id: number }[])[0]!._id).toBe(makeMongoId(task.date, 1));
     expect(task.messages).toBe(3);
     expect(task.pending).toBe(0);
 

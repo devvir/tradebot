@@ -37,10 +37,10 @@
  */
 
 import { logger } from '@devvir/service-kit';
+import { makeMongoId } from '@tradebot/utils';
 import type { BitmexTable } from '@tradebot/types';
 import { recordWrite } from '../metrics';
 import { release } from './inflight';
-import { makeId } from './id';
 import type { Item } from '../types';
 import type { TableBatches } from './dispatch';
 
@@ -172,7 +172,7 @@ const buildBody = (batch: Item[]): string => {
 
   for (let i = 0; i < batch.length; i++) {
     const item = batch[i]!;
-    const id   = makeId(item.task.date, item.position);
+    const id   = makeMongoId(item.task.date, item.position);
 
     parts[i] = `{"_id":${id},${item.content.slice(1)}`;
   }
