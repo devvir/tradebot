@@ -15,10 +15,11 @@ import { type Application, type Request, type Response } from 'express';
 import { Readable } from 'stream';
 import { statSync } from 'fs';
 import { logger } from '@devvir/service-kit';
-import { streamRecords, listFiles, listTables, fileState } from '../fs/reader';
+import { listFiles, listTables, fileState } from '../fs/reader';
 import { storeFile, deleteFile } from '../fs/writer';
 import { isHealthy, getFailureReason, isThrottled } from '../fs/health';
 import { decodeFile } from '../data/decode';
+import { createParser } from '../data/parse';
 import { encode } from '../data/encode';
 import { buffers } from '../data/buffers';
 import { closeBucket } from '../data/close';
@@ -204,7 +205,7 @@ export const registerRoutes = (app: Application): void => {
     const filename = filenameOf(req);
 
     try {
-      const records = streamRecords(table, filename);
+      const records = createParser(table).read(filename);
       const first   = await records.next();
       await records.return?.(undefined);
 

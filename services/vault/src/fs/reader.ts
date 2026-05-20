@@ -1,31 +1,26 @@
 // Filesystem read operations.
 //
-// Responsible for: streaming closed files as parsed CSV records, checking
-// file existence, listing files in a table directory, and walking the
-// directory structure to enumerate all tables and dates.
+// Responsible for: opening closed files as decompressed byte streams, checking
+// file existence, listing files in a table directory, and walking the directory
+// structure to enumerate all tables and dates.
 //
-// Vault stores only gzipped CSV, so the reader knows the format end-to-end.
-// Routing CSV through the shared parser is what lets fields containing
-// embedded newlines (e.g. announcement bodies, chat messages) round-trip
-// correctly — a line-based reader would fragment them at the embedded `\n`
-// before any consumer could see them as a single field.
+// Turning those bytes into records is the parser's concern — see data/parse.ts,
+// which owns the CSV format and the per-table parsing strategy.
 
 import { existsSync, readdirSync, statSync } from 'fs';
 import { createReader } from '@devvir/zipper';
-import { createCsvParser } from '@tradebot/utils';
 import { DATA_DIR, tableDir, openPath, closedPath } from './paths';
 import { NotFoundError } from './errors';
-import type { FileListing } from './types';
+import type { FileListing, OpenedFile } from './types';
 
 /**
- * Streams the records of a closed file, decompressing and CSV-parsing on the
- * fly. The first record is the header row; subsequent records are data rows.
- * Each record is a `string[]` in column order.
+ * Opens a closed file as a decompressed byte stream. The caller MUST invoke
+ * the returned `close` once finished to release the underlying file handle.
  *
  * Throws NotFoundError if no closed file exists for the given table/filename.
  * Open files are not readable — callers treat them as non-existent.
  */
-export async function* streamRecords(table: string, filename: string): AsyncGenerator<string[]> {
+export const openClosedFile = (table: string, filename: string): OpenedFile => {
   const path = closedPath(table, filename);
 
   if (! existsSync(path)) {
@@ -33,16 +28,12 @@ export async function* streamRecords(table: string, filename: string): AsyncGene
   }
 
   const reader = createReader(path);
-  const parser = reader.stream().pipe(createCsvParser(false));
 
-  try {
-    for await (const record of parser as AsyncIterable<string[]>) {
-      yield record;
-    }
-  } finally {
-    await reader.close();
-  }
-}
+  return {
+    stream: reader.stream(),
+    close:  () => reader.close(),
+  };
+};
 
 /** Returns whether the file for the given table/filename is closed, open, or absent. */
 export const fileState = (table: string, filename: string): 'closed' | 'open' | 'none' => {

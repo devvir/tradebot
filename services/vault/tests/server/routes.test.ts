@@ -11,10 +11,13 @@ vi.mock('../../src/data/decode', () => ({
 }));
 
 vi.mock('../../src/fs/reader', () => ({
-  streamRecords: vi.fn(),
-  listFiles:     vi.fn(),
-  listTables:    vi.fn(),
-  fileState:     vi.fn(),
+  listFiles:  vi.fn(),
+  listTables: vi.fn(),
+  fileState:  vi.fn(),
+}));
+
+vi.mock('../../src/data/parse', () => ({
+  createParser: vi.fn(),
 }));
 
 vi.mock('../../src/fs/writer', () => ({
@@ -41,7 +44,8 @@ vi.mock('../../src/data/close', () => ({
 }));
 
 import { decodeFile } from '../../src/data/decode';
-import { streamRecords, listFiles, listTables, fileState } from '../../src/fs/reader';
+import { createParser } from '../../src/data/parse';
+import { listFiles, listTables, fileState } from '../../src/fs/reader';
 import { storeFile, deleteFile } from '../../src/fs/writer';
 import { isHealthy, getFailureReason, isThrottled } from '../../src/fs/health';
 import { buffers } from '../../src/data/buffers';
@@ -57,6 +61,14 @@ async function* fromLines(lines: string[]) {
 async function* fromRecords(records: string[][]) {
   for (const r of records) yield r;
 }
+
+const headersRead = vi.fn();
+
+/** Configures createParser so the /headers route streams the given records. */
+const mockHeaders = (records: AsyncGenerator<string[]>) => {
+  headersRead.mockReturnValue(records);
+  vi.mocked(createParser).mockReturnValue({ read: headersRead } as never);
+};
 
 const app = express();
 app.use(express.json());
@@ -243,9 +255,7 @@ describe('GET /files/:table/:date', () => {
 
 describe('GET /files/:table/:date/headers', () => {
   it('returns the columns from the first record', async () => {
-    vi.mocked(streamRecords).mockReturnValue(
-      fromRecords([['symbol', 'price', 'size']]) as ReturnType<typeof streamRecords>,
-    );
+    mockHeaders(fromRecords([['symbol', 'price', 'size']]));
 
     const res = await request(app).get('/files/trade/2023-02-01/headers');
 
@@ -254,7 +264,7 @@ describe('GET /files/:table/:date/headers', () => {
   });
 
   it('returns 404 when the file has no content', async () => {
-    vi.mocked(streamRecords).mockReturnValue(fromRecords([]) as ReturnType<typeof streamRecords>);
+    mockHeaders(fromRecords([]));
 
     const res = await request(app).get('/files/trade/2023-02-01/headers');
 
@@ -264,7 +274,7 @@ describe('GET /files/:table/:date/headers', () => {
   it('returns 404 when the file does not exist', async () => {
     async function* throwNotFound(): AsyncGenerator<string[]> { throw new NotFoundError('missing'); yield []; }
 
-    vi.mocked(streamRecords).mockReturnValue(throwNotFound() as ReturnType<typeof streamRecords>);
+    mockHeaders(throwNotFound());
 
     const res = await request(app).get('/files/trade/2023-02-01/headers');
 
@@ -467,14 +477,13 @@ describe('?suffix= composition', () => {
   });
 
   it('GET /headers reads from the suffixed filename', async () => {
-    vi.mocked(streamRecords).mockReturnValue(
-      fromRecords([['col1', 'col2']]) as ReturnType<typeof streamRecords>,
-    );
+    mockHeaders(fromRecords([['col1', 'col2']]));
 
     const res = await request(app).get('/files/trade/2023-02-01/headers?suffix=snapshot');
 
     expect(res.status).toBe(200);
-    expect(streamRecords).toHaveBeenCalledWith('trade', '2023-02-01.snapshot');
+    expect(createParser).toHaveBeenCalledWith('trade');
+    expect(headersRead).toHaveBeenCalledWith('2023-02-01.snapshot');
   });
 
   it('omitting ?suffix= falls through to the plain date filename (backwards compatible)', async () => {

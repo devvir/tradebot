@@ -1,46 +1,46 @@
-import { streamRecords } from '../fs/reader';
+import { WS_TABLES } from '@tradebot/utils';
+import { createParser } from './parse';
 import { applyCasts } from './casts';
 
 /**
  * Decodes a closed vault file into a stream of NDJSON lines.
  *
- * WS files (first column is `_date_`) are reconstructed into message envelopes:
+ * WS tables are reconstructed into message envelopes:
  *   { action, date, data: Row[] }
  *
- * REST files are emitted as plain row objects, one per line.
+ * REST tables are emitted as plain row objects, one per line.
  *
- * `skip` skips the first N messages/items using a cheap heuristic:
- * for WS files, a record whose first field is empty is a continuation row
- * (not a new message), so only non-continuation records advance the skip
- * counter.
+ * `skip` drops the first N messages. Skipping — and the parsing strategy
+ * behind it — is owned by the parser; see data/parse.ts.
  */
 export async function* decodeFile(
   table:    string,
   filename: string,
   skip = 0,
 ): AsyncGenerator<string> {
-  const records = streamRecords(table, filename);
+  const records = createParser(table).read(filename, skip);
   const first   = await records.next();
 
   if (first.done) return;
 
-  const cols  = first.value;
-  const isWs  = cols[0] === '_date_';
+  const cols = first.value;
 
-  // For WS rows, columns 0 and 1 are metadata (_date_, _action_).
-  // Data columns start at index 2.
-  const dataCols = isWs ? cols.slice(2) : cols;
+  // REST files emit one plain row object per record.
+  if (! WS_TABLES.has(table)) {
+    for await (const record of records) {
+      yield JSON.stringify(applyFields(record, cols, table)) + '\n';
+    }
 
-  // ── Skip state ──────────────────────────────────────────────────────────────
+    return;
+  }
+
+  // WS rows carry two metadata columns (_date_, _action_); data starts at 2.
+  const dataCols = cols.slice(2);
+
+  // ── Message accumulation ────────────────────────────────────────────────────
   //
-  // msgsToSkip counts down as we cross message boundaries.
-  // skippingCurrent stays true until we finish skipping the current message,
-  // preventing its continuation rows from leaking into the output.
-
-  let msgsToSkip      = skip;
-  let skippingCurrent = msgsToSkip > 0;
-
-  // ── WS accumulation state ───────────────────────────────────────────────────
+  // A record with a non-empty `_date_` opens a message; records with an empty
+  // `_date_` are continuation rows that extend the message in flight.
 
   let groupDate   = '';
   let groupAction = '';
@@ -51,53 +51,36 @@ export async function* decodeFile(
     groupDate   = '';
     groupAction = '';
     groupRows   = [];
+
     return out;
   };
 
   for await (const record of records) {
-    const isContinuation = isWs && record[0] === '';
+    const row = applyFields(record.slice(2), dataCols, table);
 
-    if (! isContinuation) {
-      // Crossing into a new message — update skip state.
-      if (msgsToSkip > 0) {
-        msgsToSkip--;
-        skippingCurrent = true;
-      } else {
-        // Emit any accumulated WS group before starting the next one.
-        if (isWs && groupDate) yield emitGroup();
-
-        skippingCurrent = false;
-      }
+    if (record[0] === '') {
+      groupRows.push(row);
+      continue;
     }
 
-    if (skippingCurrent) continue;
+    if (groupDate) yield emitGroup();
 
-    if (isWs) {
-      if (! isContinuation) {
-        groupDate   = record[0] ?? '';
-        groupAction = record[1] ?? '';
-        const row   = applyFields(record.slice(2), dataCols, table);
+    groupDate   = record[0] ?? '';
+    groupAction = record[1] ?? '';
 
-        if (Object.keys(row).length > 0) groupRows.push(row);
-      } else {
-        const row = applyFields(record.slice(2), dataCols, table);
-        groupRows.push(row);
-      }
-    } else {
-      yield JSON.stringify(applyFields(record, dataCols, table)) + '\n';
-    }
+    if (Object.keys(row).length > 0) groupRows.push(row);
   }
 
-  if (isWs && groupDate) yield emitGroup();
+  if (groupDate) yield emitGroup();
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /** Zips parsed field values with their column names and applies casts. */
 const applyFields = (
-  fields:   string[],
-  cols:     string[],
-  table:    string,
+  fields: string[],
+  cols:   string[],
+  table:  string,
 ): Record<string, unknown> => {
   const raw: Record<string, string> = {};
 

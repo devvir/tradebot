@@ -278,7 +278,7 @@ export const TABLE_SPECS: Record<BitmexTable, TableSpec> = {
  * decide, at task creation time, whether a bucket flows through the
  * assembler stage or straight to the writer queue.
  */
-export const WS_TABLES = new Set<BitmexTable>([
+export const WS_TABLES = new Set<string>([
   'announcement',
   'chat',
   'connected',

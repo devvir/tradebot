@@ -25,3 +25,11 @@ export interface FlushResult {
   filename: string;
   lines:    string[];
 }
+
+export interface VaultParser {
+  /**
+   * Streams a closed file's records — `string[]` in column order, the header
+   * row first — skipping the first `skip` messages.
+   */
+  read(filename: string, skip?: number): AsyncGenerator<string[]>;
+}

@@ -1,20 +1,25 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { decodeFile } from '../../src/data/decode';
 
-// Mock the fs layer — decode.ts calls streamRecords internally.
-vi.mock('../../src/fs/reader', () => ({
-  streamRecords: vi.fn(),
+// Mock the parser — decode.ts streams records via createParser internally.
+vi.mock('../../src/data/parse', () => ({
+  createParser: vi.fn(),
 }));
 
-import { streamRecords } from '../../src/fs/reader';
+import { createParser } from '../../src/data/parse';
 
 /** Helper: make an async generator from an array of records. */
 async function* fromRecords(records: string[][]) {
   for (const r of records) yield r;
 }
 
-const mockRecords = (records: string[][]) =>
-  vi.mocked(streamRecords).mockReturnValue(fromRecords(records) as ReturnType<typeof streamRecords>);
+const read = vi.fn();
+
+/** Configures createParser to stream the given records via its `read` method. */
+const mockRecords = (records: string[][]) => {
+  read.mockReturnValue(fromRecords(records));
+  vi.mocked(createParser).mockReturnValue({ read } as never);
+};
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -39,24 +44,6 @@ describe('REST file decoding', () => {
     expect(JSON.parse(out[1]!)).toEqual({ symbol: 'ETHUSD', count: '3',  total: '1500' });
   });
 
-  it('skips the first N rows when skip > 0', async () => {
-    mockRecords([
-      ['symbol', 'price'],
-      ['XBTUSD', '30000'],
-      ['ETHUSD', '2000'],
-      ['XRPUSD', '0.5'],
-    ]);
-
-    const out: string[] = [];
-
-    for await (const line of decodeFile('funding', '2023-02-01', 1)) {
-      out.push(line);
-    }
-
-    expect(out).toHaveLength(2);
-    expect(JSON.parse(out[0]!)).toMatchObject({ symbol: 'ETHUSD' });
-  });
-
   it('returns nothing for a header-only file', async () => {
     mockRecords([['symbol', 'price']]);
 
@@ -67,6 +54,15 @@ describe('REST file decoding', () => {
     }
 
     expect(out).toHaveLength(0);
+  });
+
+  it('forwards the table to createParser and the skip to read', async () => {
+    mockRecords([['symbol', 'price']]);
+
+    for await (const _ of decodeFile('funding', '2023-02-01', 7)) { /* consume */ }
+
+    expect(createParser).toHaveBeenCalledWith('funding');
+    expect(read).toHaveBeenCalledWith('2023-02-01', 7);
   });
 });
 
@@ -83,7 +79,7 @@ describe('WS file decoding', () => {
 
     const out: string[] = [];
 
-    for await (const line of decodeFile('quote', '2023-02-01')) {
+    for await (const line of decodeFile('orderBookL2', '2023-02-01')) {
       out.push(line);
     }
 
@@ -99,25 +95,6 @@ describe('WS file decoding', () => {
     expect(second.data).toHaveLength(1);
   });
 
-  it('skips continuation rows belonging to skipped messages', async () => {
-    mockRecords([
-      ['_date_', '_action_', 'symbol', 'price'],
-      ['2023-02-01T00:00:00.000Z', 'partial', 'XBTUSD', '30000'],
-      ['', '', '', ''],
-      ['', '', '', ''],
-      ['2023-02-01T00:01:00.000Z', 'update',  'XBTUSD', '30100'],
-    ]);
-
-    const out: string[] = [];
-
-    for await (const line of decodeFile('quote', '2023-02-01', 1)) {
-      out.push(line);
-    }
-
-    expect(out).toHaveLength(1);
-    expect(JSON.parse(out[0]!).action).toBe('update');
-  });
-
   it('handles a quoted field containing a comma', async () => {
     mockRecords([
       ['_date_', '_action_', 'symbol', 'note'],
@@ -126,7 +103,7 @@ describe('WS file decoding', () => {
 
     const out: string[] = [];
 
-    for await (const line of decodeFile('quote', '2023-02-01')) {
+    for await (const line of decodeFile('orderBookL2', '2023-02-01')) {
       out.push(line);
     }
 
@@ -135,7 +112,7 @@ describe('WS file decoding', () => {
   });
 
   it('preserves embedded newlines inside a quoted WS field', async () => {
-    // Reader hands decode pre-parsed records, so the embedded newline that
+    // The parser hands decode pre-parsed records, so the embedded newline that
     // would have been a multi-line stretch on disk arrives here as a single
     // field value in the record.
     mockRecords([
