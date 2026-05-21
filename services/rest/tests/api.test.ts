@@ -2,8 +2,8 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createServer as createHttpServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { createServer } from '../src/server';
-import { MockedService } from './mocks';
+import express from 'express';
+import { buildRouter } from '../src/routes';
 
 // ── Mock data backend ─────────────────────────────────────────────────────────
 
@@ -81,8 +81,7 @@ beforeAll(() => new Promise<void>((resolve) => {
     const dataUrl = `http://127.0.0.1:${backendPort}`;
 
     // Start REST server pointing at mock backend
-    const service = new MockedService(dataUrl);
-    const app = createServer(service as any);
+    const app = express().use(buildRouter({ dataUrl }));
     server = createHttpServer(app);
     server.listen(0, () => {
       const { port } = server.address() as AddressInfo;

@@ -1,8 +1,29 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import express, { type Application, type ErrorRequestHandler } from 'express';
 import request from 'supertest';
 import type { Db } from 'mongodb';
-import { createApp } from '../src/server';
+import { buildRouter, type InsertCounter } from '../src/server';
 import type { Config } from '../src/types';
+
+// ── App assembly ──────────────────────────────────────────────────────────────
+
+// Error handler mirroring the Net express server kind: oversize bodies → 413.
+const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
+  if ((err as { type?: string })?.type === 'entity.too.large') {
+    res.status(413).json({ error: 'request body too large' });
+
+    return;
+  }
+
+  res.status((err as { status?: number })?.status ?? 500)
+     .json({ error: (err as Error)?.message ?? 'error' });
+};
+
+const makeApp = (db: Db, config: Config, counter: InsertCounter): Application =>
+  express()
+    .use(express.json({ limit: '32mb' }))
+    .use(buildRouter(db, config, counter))
+    .use(errorHandler);
 
 // ── Mongo mock ────────────────────────────────────────────────────────────────
 
@@ -34,7 +55,7 @@ beforeEach(() => {
 describe('GET /health', () => {
   it('returns 200 with { ok: true }', async () => {
     const { db } = makeDb(async () => ({ insertedCount: 0 }));
-    const app    = createApp(db, config, counter);
+    const app    = makeApp(db, config, counter);
 
     const res = await request(app).get('/health');
 
@@ -48,7 +69,7 @@ describe('GET /health', () => {
 describe('POST /write/:table — happy path', () => {
   it('routes to the right collection and returns inserted count', async () => {
     const { db, collection, collectionSpy } = makeDb(async () => ({ insertedCount: 3 }));
-    const app = createApp(db, config, counter);
+    const app = makeApp(db, config, counter);
 
     const docs = [{ _id: 1, a: 1 }, { _id: 2, a: 2 }, { _id: 3, a: 3 }];
 
@@ -66,7 +87,7 @@ describe('POST /write/:table — happy path', () => {
 
   it('uses ordered: false so partial batches still insert', async () => {
     const { db, collection } = makeDb(async () => ({ insertedCount: 1 }));
-    const app                = createApp(db, config, counter);
+    const app                = makeApp(db, config, counter);
 
     await request(app)
       .post('/write/quote')
@@ -82,7 +103,7 @@ describe('POST /write/:table — happy path', () => {
 describe('POST /write/:table — input validation', () => {
   it('returns 400 when body is not an array', async () => {
     const { db, collection } = makeDb(async () => ({ insertedCount: 0 }));
-    const app                = createApp(db, config, counter);
+    const app                = makeApp(db, config, counter);
 
     const res = await request(app)
       .post('/write/trade')
@@ -96,7 +117,7 @@ describe('POST /write/:table — input validation', () => {
 
   it('returns 400 when body is an empty array', async () => {
     const { db, collection } = makeDb(async () => ({ insertedCount: 0 }));
-    const app                = createApp(db, config, counter);
+    const app                = makeApp(db, config, counter);
 
     const res = await request(app)
       .post('/write/trade')
@@ -115,7 +136,7 @@ describe('POST /write/:table — duplicate key (E11000)', () => {
 
   it('returns 200 with duplicates: true when ignoreDuplicates is on', async () => {
     const { db } = makeDb(async () => { throw dupError(2); });
-    const app    = createApp(db, { ...config, ignoreDuplicates: true }, counter);
+    const app    = makeApp(db, { ...config, ignoreDuplicates: true }, counter);
 
     const res = await request(app)
       .post('/write/trade')
@@ -129,7 +150,7 @@ describe('POST /write/:table — duplicate key (E11000)', () => {
 
   it('returns 409 when ignoreDuplicates is off, reporting partial inserts', async () => {
     const { db } = makeDb(async () => { throw dupError(2); });
-    const app    = createApp(db, { ...config, ignoreDuplicates: false }, counter);
+    const app    = makeApp(db, { ...config, ignoreDuplicates: false }, counter);
 
     const res = await request(app)
       .post('/write/trade')
@@ -147,7 +168,7 @@ describe('POST /write/:table — duplicate key (E11000)', () => {
 describe('POST /write/:table — mongo error', () => {
   it('returns 500 with the error message when insertMany rejects', async () => {
     const { db } = makeDb(async () => { throw new Error('connection lost'); });
-    const app    = createApp(db, config, counter);
+    const app    = makeApp(db, config, counter);
 
     const res = await request(app)
       .post('/write/trade')
@@ -165,11 +186,11 @@ describe('POST /write/:table — mongo error', () => {
 describe('POST /write/:table — body too large', () => {
   it('returns 413 when the body exceeds the limit', async () => {
     const { db, collection } = makeDb(async () => ({ insertedCount: 0 }));
-    const app                = createApp(db, config, counter);
+    const app                = makeApp(db, config, counter);
 
     /** Build a payload bigger than 32 MB by repeating a fat string. */
-    const fat   = 'x'.repeat(2_000_000);
-    const docs  = Array.from({ length: 20 }, (_, i) => ({ _id: i, fat }));
+    const fat  = 'x'.repeat(2_000_000);
+    const docs = Array.from({ length: 20 }, (_, i) => ({ _id: i, fat }));
 
     const res = await request(app)
       .post('/write/trade')

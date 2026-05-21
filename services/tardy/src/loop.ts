@@ -1,4 +1,5 @@
 import { logger } from '@devvir/service-kit';
+import type { FetchClientHandle } from '@devvir/service-kit';
 import config from './config';
 import type { Buf, TardyTable } from './types';
 import { streamMinute, MINUTES_PER_DAY } from './tardis';
@@ -20,21 +21,21 @@ const CONCURRENCY = 3;
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
-export const runLoop = async (vaultUrl: string): Promise<void> => {
-  await syncAll(vaultUrl);
+export const runLoop = async (vault: FetchClientHandle): Promise<void> => {
+  await syncAll(vault);
 
-  scheduleNextPoll(vaultUrl);
+  scheduleNextPoll(vault);
 };
 
 // ── Sync ──────────────────────────────────────────────────────────────────────
 
-export const syncAll = async (vaultUrl: string): Promise<void> => {
+export const syncAll = async (vault: FetchClientHandle): Promise<void> => {
   const dates = targetDates(config.startDate);
 
   logger.info({ count: dates.length }, 'Checking target dates');
 
   for (const date of dates)
-    await syncDate(vaultUrl, date);
+    await syncDate(vault, date);
 
   logger.info('Sync complete');
 };
@@ -44,8 +45,8 @@ export const syncAll = async (vaultUrl: string): Promise<void> => {
  * Tardis, and writes to vault. Skips the date entirely if all tables are
  * already closed.
  */
-export const syncDate = async (vaultUrl: string, date: string): Promise<void> => {
-  const needed = await resolveTables(vaultUrl, date, config.suffix);
+export const syncDate = async (vault: FetchClientHandle, date: string): Promise<void> => {
+  const needed = await resolveTables(vault, date, config.suffix);
 
   if (needed.length === 0) return;
 
@@ -78,17 +79,17 @@ export const syncDate = async (vaultUrl: string, date: string): Promise<void> =>
       buf.rows.push(msg);
 
       if (buf.rows.length >= BATCH_SIZE)
-        await writeRows(vaultUrl, table, date, buf.rows.splice(0), config.suffix);
+        await writeRows(vault, table, date, buf.rows.splice(0), config.suffix);
     }
 
     // End-of-minute flush: drain sparse tables that won't hit the batch threshold.
     for (const [table, buf] of batches.entries())
       if (buf.rows.length > 0)
-        await writeRows(vaultUrl, table, date, buf.rows.splice(0), config.suffix);
+        await writeRows(vault, table, date, buf.rows.splice(0), config.suffix);
   }
 
   for (const table of needed) {
-    await closeFile(vaultUrl, table, date, config.suffix);
+    await closeFile(vault, table, date, config.suffix);
 
     logger.info({ table, date }, 'Closed');
   }
@@ -139,19 +140,19 @@ const sleep = (ms: number): Promise<void> =>
  * Queries vault for each table and returns only those that need downloading.
  * Deletes any open files first (crash recovery) and excludes closed ones.
  */
-const resolveTables = async (vaultUrl: string, date: string, suffix: string): Promise<TardyTable[]> => {
+const resolveTables = async (vault: FetchClientHandle, date: string, suffix: string): Promise<TardyTable[]> => {
   const needed:  TardyTable[] = [];
   const fileKey = suffix ? `${date}.${suffix}` : date;
 
   for (const table of TABLES) {
-    const files = await listFiles(vaultUrl, table, suffix);
+    const files = await listFiles(vault, table, suffix);
     const state = files[fileKey];
 
     if (state === 'closed') continue;
 
     if (state === 'open') {
       logger.info({ table, date }, 'Deleting open file (recovery)');
-      await deleteFile(vaultUrl, table, date, suffix);
+      await deleteFile(vault, table, date, suffix);
     }
 
     needed.push(table);
@@ -165,13 +166,13 @@ const resolveTables = async (vaultUrl: string, date: string, suffix: string): Pr
 // Self-rescheduling timer that fires at UTC midnight. A new first-of-month
 // date becomes eligible roughly once a month, so daily checks are sufficient.
 
-const scheduleNextPoll = (vaultUrl: string): void => {
+const scheduleNextPoll = (vault: FetchClientHandle): void => {
   setTimeout(async () => {
     logger.info('Midnight UTC — checking for new first-of-month dates');
 
-    await syncAll(vaultUrl).catch(err => logger.error({ err }, 'Sync error'));
+    await syncAll(vault).catch(err => logger.error({ err }, 'Sync error'));
 
-    scheduleNextPoll(vaultUrl);
+    scheduleNextPoll(vault);
   }, msToNextMidnightUTC());
 };
 

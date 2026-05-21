@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { FetchClientHandle } from '@devvir/service-kit';
 import { targetDates, syncDate, _test_BATCH_SIZE } from '../src/loop';
 import type { TardyTable, WsMessage } from '../src/types';
 
@@ -16,7 +17,7 @@ vi.mock('../src/tardis', () => ({
   MINUTES_PER_DAY: 3,
 }));
 
-// Config is a module-level singleton — mock it so tests don't need VAULT_URL.
+// Config is a module-level singleton — mock it so tests don't need vaultClient.
 vi.mock('../src/config', () => ({
   default: { vaultUrl: 'http://vault', startDate: '20190401', suffix: '' },
 }));
@@ -115,8 +116,9 @@ describe('loop — targetDates', () => {
 // ── syncDate ──────────────────────────────────────────────────────────────────
 
 describe('loop — syncDate', () => {
-  const VAULT_URL = 'http://vault';
-  const DATE      = '20190401';
+  // Sentinel — syncDate only threads it through to the mocked vault fns.
+  const vaultClient = {} as FetchClientHandle;
+  const DATE        = '20190401';
 
   // Helper: builds a streamMinute mock that returns the given messages on the
   // specified offset and empty generators for every other offset. Keeps tests
@@ -145,7 +147,7 @@ describe('loop — syncDate', () => {
   it('skips a date when all 7 tables are already closed', async () => {
     vi.mocked(vault.listFiles).mockResolvedValue({ [DATE]: 'closed' });
 
-    await syncDate(VAULT_URL, DATE);
+    await syncDate(vaultClient, DATE);
 
     expect(tardis.streamMinute).not.toHaveBeenCalled();
   });
@@ -159,10 +161,10 @@ describe('loop — syncDate', () => {
       { table: 'orderBookL2', msg: { action: 'insert', date: '2019-04-01T00:00:00.000Z', data: [] } },
     ]);
 
-    await syncDate(VAULT_URL, DATE);
+    await syncDate(vaultClient, DATE);
 
     expect(tardis.streamMinute).toHaveBeenCalledWith(DATE, 0, ['orderBookL2']);
-    expect(vault.closeFile).toHaveBeenCalledWith(VAULT_URL, 'orderBookL2', DATE, '');
+    expect(vault.closeFile).toHaveBeenCalledWith(vaultClient, 'orderBookL2', DATE, '');
   });
 
   it('deletes an open file and re-includes that table', async () => {
@@ -172,9 +174,9 @@ describe('loop — syncDate', () => {
 
     mockMinute(0, []);
 
-    await syncDate(VAULT_URL, DATE);
+    await syncDate(vaultClient, DATE);
 
-    expect(vault.deleteFile).toHaveBeenCalledWith(VAULT_URL, 'instrument', DATE, '');
+    expect(vault.deleteFile).toHaveBeenCalledWith(vaultClient, 'instrument', DATE, '');
     expect(tardis.streamMinute).toHaveBeenCalledWith(DATE, 0, ['instrument']);
   });
 
@@ -191,10 +193,10 @@ describe('loop — syncDate', () => {
       { table: 'instrument',  msg: instRow },
     ]);
 
-    await syncDate(VAULT_URL, DATE);
+    await syncDate(vaultClient, DATE);
 
-    expect(vault.writeRows).toHaveBeenCalledWith(VAULT_URL, 'orderBookL2', DATE, [obRow],   '');
-    expect(vault.writeRows).toHaveBeenCalledWith(VAULT_URL, 'instrument',  DATE, [instRow], '');
+    expect(vault.writeRows).toHaveBeenCalledWith(vaultClient, 'orderBookL2', DATE, [obRow],   '');
+    expect(vault.writeRows).toHaveBeenCalledWith(vaultClient, 'instrument',  DATE, [instRow], '');
   });
 
   it('flushes mid-minute when a table batch hits BATCH_SIZE (20,000)', async () => {
@@ -210,7 +212,7 @@ describe('loop — syncDate', () => {
 
     mockMinute(0, messages);
 
-    await syncDate(VAULT_URL, DATE);
+    await syncDate(vaultClient, DATE);
 
     expect(vault.writeRows).toHaveBeenCalledTimes(2);
 
@@ -220,7 +222,7 @@ describe('loop — syncDate', () => {
     expect(firstCallRows).toHaveLength(_test_BATCH_SIZE);
     expect(secondCallRows).toHaveLength(1);
 
-    expect(vault.closeFile).toHaveBeenCalledWith(VAULT_URL, 'liquidation', DATE, '');
+    expect(vault.closeFile).toHaveBeenCalledWith(vaultClient, 'liquidation', DATE, '');
   });
 
   it('flushes every table at the end of each minute even if no size threshold is hit', async () => {
@@ -243,11 +245,11 @@ describe('loop — syncDate', () => {
       })();
     });
 
-    await syncDate(VAULT_URL, DATE);
+    await syncDate(vaultClient, DATE);
 
     // One writeRows call at the end of minute 0 — not deferred to stream end.
     expect(vault.writeRows).toHaveBeenCalledTimes(1);
-    expect(vault.writeRows).toHaveBeenCalledWith(VAULT_URL, 'announcement', DATE, [msg], '');
+    expect(vault.writeRows).toHaveBeenCalledWith(vaultClient, 'announcement', DATE, [msg], '');
   });
 
   it('flushes per minute when data spans multiple minutes', async () => {
@@ -268,7 +270,7 @@ describe('loop — syncDate', () => {
       })();
     });
 
-    await syncDate(VAULT_URL, DATE);
+    await syncDate(vaultClient, DATE);
 
     expect(vault.writeRows).toHaveBeenCalledTimes(3);
     expect(vi.mocked(vault.writeRows).mock.calls[0]![3]).toEqual([m0]);
@@ -283,10 +285,10 @@ describe('loop — syncDate', () => {
 
     mockMinute(0, []);
 
-    await syncDate(VAULT_URL, DATE);
+    await syncDate(vaultClient, DATE);
 
-    expect(vault.closeFile).toHaveBeenCalledWith(VAULT_URL, 'chat',      DATE, '');
-    expect(vault.closeFile).toHaveBeenCalledWith(VAULT_URL, 'connected', DATE, '');
+    expect(vault.closeFile).toHaveBeenCalledWith(vaultClient, 'chat',      DATE, '');
+    expect(vault.closeFile).toHaveBeenCalledWith(vaultClient, 'connected', DATE, '');
     expect(vault.writeRows).not.toHaveBeenCalled();
   });
 });

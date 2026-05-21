@@ -1,5 +1,5 @@
 import { logger } from '@devvir/service-kit';
-import type { RedisClient } from '@devvir/service-kit';
+import type { FetchClientHandle, RedisClient } from '@devvir/service-kit';
 import config from './config';
 import type { Table } from './types';
 import { fetchAndStore, listVaultDates } from './download';
@@ -9,8 +9,8 @@ const redisKey = (table: Table): string => `courier_${table}`;
 const DEFAULT_START_DATE = '20141122';
 
 // Fetches all dates not yet in vault for a given table, in chronological order.
-export const syncTable = async (vaultUrl: string, table: Table, redis: RedisClient): Promise<void> => {
-  const existing    = new Set(await listVaultDates(vaultUrl, table));
+export const syncTable = async (vault: FetchClientHandle, table: Table, redis: RedisClient): Promise<void> => {
+  const existing    = new Set(await listVaultDates(vault, table));
   const configStart = config.startDate ?? DEFAULT_START_DATE;
   const startDate   = await redis.get(redisKey(table)) ?? configStart;
   const needed      = dateRange(startDate, yesterdayUTC());
@@ -24,23 +24,23 @@ export const syncTable = async (vaultUrl: string, table: Table, redis: RedisClie
   logger.info({ table, count: missing.length, startDate }, 'Downloading missing dates');
 
   for (const date of missing) {
-    await fetchAndStore(vaultUrl, table, date);
+    await fetchAndStore(vault, table, date);
     await redis.set(redisKey(table), nextDay(date));
   }
 };
 
 // ── Polling ───────────────────────────────────────────────────────────────────
 
-export const scheduleNextPoll = (vaultUrl: string, tables: Table[], redis: RedisClient): void => {
-  logger.info('All files downloaded, will rescan in a few hours');
+export const scheduleNextPoll = (vault: FetchClientHandle, tables: Table[], redis: RedisClient): void => {
+  logger.info('All files downloaded, will rescan soon');
 
   setTimeout(async () => {
     logger.info('Checking for new files');
 
     for (const table of tables)
-      await syncTable(vaultUrl, table, redis).catch(err => logger.error({ err }, 'Sync error'));
+      await syncTable(vault, table, redis).catch(err => logger.error({ err }, 'Sync error'));
 
-    scheduleNextPoll(vaultUrl, tables, redis);
+    scheduleNextPoll(vault, tables, redis);
   }, 3 * 60 * 60 * 1000); // 3 hours
 };
 

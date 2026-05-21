@@ -1,9 +1,7 @@
-import { logger } from '@devvir/service-kit';
+import type { FetchClientHandle } from '@devvir/service-kit';
 
 type Row       = Record<string, unknown>;
 type FileState = 'open' | 'closed';
-
-const RETRY_DELAY_MS = 5_000;
 
 export interface StoreService {
   writeRows(table: string, date: string, rows: Row[]): Promise<void>;
@@ -12,67 +10,37 @@ export interface StoreService {
   listFiles(table: string): Promise<Record<string, FileState>>;
 }
 
-export const createStoreService = (vaultUrl: string, retryDelayMs = RETRY_DELAY_MS): StoreService => {
-  const vaultFetch = async (url: string, init?: RequestInit): Promise<Response> => {
-    while (true) {
-      let res: Response;
+/**
+ * Vault access for scribe. Retry against a recovering vault (429/503/network,
+ * uncapped) and unreachable/recovered logging are handled by the `vault`
+ * client — see service.ts.
+ */
+export const createStoreService = (vault: FetchClientHandle): StoreService => ({
+  writeRows: async (table, date, rows) => {
+    const res = await vault.request(`/files/${table}/${date}/rows`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(rows),
+    });
 
-      try {
-        res = await fetch(url, init);
-      } catch (err) {
-        logger.warn({ url }, `Vault unreachable — retrying in ${retryDelayMs / 1000}s`);
-        await new Promise(r => setTimeout(r, retryDelayMs));
-        continue;
-      }
+    if (! res.ok) throw new Error(`Vault write failed for ${table}/${date}: HTTP ${res.status}`);
+  },
 
-      if (res.status === 429) {
-        logger.info({ url }, `Vault throttled this path — retrying in ${retryDelayMs / 1000}s`);
-        await new Promise(r => setTimeout(r, retryDelayMs));
+  closeFile: async (table, date) => {
+    const res = await vault.request(`/files/${table}/${date}/close`, { method: 'POST' });
 
-        continue;
-      }
+    if (! res.ok && res.status !== 404) throw new Error(`Vault close failed for ${table}/${date}: HTTP ${res.status}`);
+  },
 
-      if (res.status === 503) {
-        logger.warn({ url }, `Vault storage unhealthy — retrying in ${retryDelayMs / 1000}s`);
-        await new Promise(r => setTimeout(r, retryDelayMs));
+  deleteFile: async (table, date) => {
+    const res = await vault.request(`/files/${table}/${date}`, { method: 'DELETE' });
 
-        continue;
-      }
+    if (! res.ok && res.status !== 404) throw new Error(`Vault delete failed for ${table}/${date}: HTTP ${res.status}`);
+  },
 
-      return res;
-    }
-  };
+  listFiles: async (table) => {
+    const files = await vault.get<Record<string, FileState>>(`/files/${table}`, { passThrough: [404] });
 
-  return {
-    writeRows: async (table, date, rows) => {
-      const res = await vaultFetch(`${vaultUrl}/files/${table}/${date}/rows`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(rows),
-      });
-
-      if (! res.ok) throw new Error(`Vault write failed for ${table}/${date}: HTTP ${res.status}`);
-    },
-
-    closeFile: async (table, date) => {
-      const res = await vaultFetch(`${vaultUrl}/files/${table}/${date}/close`, { method: 'POST' });
-
-      if (! res.ok && res.status !== 404) throw new Error(`Vault close failed for ${table}/${date}: HTTP ${res.status}`);
-    },
-
-    deleteFile: async (table, date) => {
-      const res = await vaultFetch(`${vaultUrl}/files/${table}/${date}`, { method: 'DELETE' });
-
-      if (! res.ok && res.status !== 404) throw new Error(`Vault delete failed for ${table}/${date}: HTTP ${res.status}`);
-    },
-
-    listFiles: async (table) => {
-      const res = await vaultFetch(`${vaultUrl}/files/${table}`);
-
-      if (res.status === 404) return {};
-      if (! res.ok) throw new Error(`Vault list failed for ${table}: HTTP ${res.status}`);
-
-      return res.json() as Promise<Record<string, FileState>>;
-    },
-  };
-};
+    return files ?? {};
+  },
+});

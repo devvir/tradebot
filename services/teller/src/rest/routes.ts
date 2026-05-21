@@ -23,7 +23,6 @@ import type { AmendFields } from '../types';
 
 export function buildRouter(): express.Router {
   const router = express.Router();
-  router.use(express.json());
 
   // ── Account middleware ───────────────────────────────────────────────────────
 

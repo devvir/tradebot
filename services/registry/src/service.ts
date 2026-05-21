@@ -5,4 +5,5 @@ export default SKFactory({
   name: 'registry',
   mongodb: true,
   config,
+  servers: { name: 'api', type: 'express' },
 });

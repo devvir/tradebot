@@ -24,6 +24,11 @@ export const createServer = (service: Service): void => {
     logger.info({ port: PORT }, 'Vault HTTP server listening');
   });
 
+  // Vault receives uploads of unbounded size (courier streams hundreds of MB).
+  // Disable the per-request deadline so a large but healthy upload is not cut
+  // off mid-stream with a 408.
+  server.requestTimeout = 0;
+
   server.on('error', (err) => {
     logger.error({ err }, 'HTTP server error');
     service.shutdown('error');

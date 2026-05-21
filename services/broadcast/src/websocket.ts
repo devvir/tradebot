@@ -2,10 +2,20 @@ import WebSocket from 'ws';
 import { logger, type Service } from '@devvir/service-kit';
 import type { ConnectOptions, EndpointDefinition, MessageHandler } from './types';
 
-const RECONNECT_DELAY_MS = 200;
+const RECONNECT_DELAY_MS     = 200;
 const MAX_RECONNECT_DELAY_MS = 15_000;
+const HEARTBEAT_INTERVAL_MS  = 30_000;
 
-let reconnectDelayMs = RECONNECT_DELAY_MS;
+/** Node socket error codes that are routine and expected — logged concisely, without a stack trace. */
+const KNOWN_NETWORK_CODES = new Set([
+  'ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN',
+  'ETIMEDOUT', 'ENETUNREACH', 'EHOSTUNREACH', 'EPIPE',
+]);
+
+interface ReconnectState {
+  delayMs: number;
+  timer:   NodeJS.Timeout | null;
+}
 
 /**
  * Connect to a BitMEX WebSocket endpoint.
@@ -13,6 +23,10 @@ let reconnectDelayMs = RECONNECT_DELAY_MS;
  * Handles lifecycle (heartbeat, pong, reconnect with backoff). The caller
  * receives the WebSocket and is responsible for tracking it. On reconnect, the
  * `onReconnect` callback provides the replacement instance.
+ *
+ * Reconnection is single-flight: a failed connection emits both `error` and
+ * `close`, and a sustained outage emits those pairs repeatedly — but only one
+ * reconnect attempt is ever in flight, so attempts never pile up.
  */
 export const connect = (
   endpoint:  EndpointDefinition,
@@ -22,6 +36,8 @@ export const connect = (
 ): WebSocket => {
   const { credentials, accountId, onReconnect } = options;
   const label = accountId ?? 'guest';
+
+  const reconnect: ReconnectState = { delayMs: RECONNECT_DELAY_MS, timer: null };
 
   const doConnect = (): WebSocket => {
     if (service.state('isShuttingDown')) return null!;
@@ -34,6 +50,7 @@ export const connect = (
 
     const ws = new WebSocket(url).setMaxListeners(0);
     let pingInterval: NodeJS.Timeout | null = null;
+    let errorLogged = false;
 
     ws.on('open', () => {
       logger.info(`Connected to ${endpoint.name} (${label})`);
@@ -41,7 +58,7 @@ export const connect = (
       service.setState('lastMessageTime', Date.now());
       pingInterval = startHeartbeat(ws);
 
-      reconnectDelayMs = RECONNECT_DELAY_MS;
+      reconnect.delayMs = RECONNECT_DELAY_MS;
     });
 
     ws.on('ping', () => ws.pong());
@@ -49,26 +66,56 @@ export const connect = (
     ws.on('message', (msg: Buffer) => onMessage(msg, accountId));
 
     ws.on('error', (err: Error) => {
-      logger.error({ err }, `${endpoint.name} WebSocket error (${label})`);
-      scheduleReconnect(() => {
-        const next = doConnect();
-        if (next) onReconnect?.(next);
-      });
+      errorLogged = true;
+
+      const known = describeError(err);
+
+      if (known)
+        logger.warn(`${endpoint.name} WebSocket (${label}): ${known}`);
+      else
+        logger.error({ err }, `${endpoint.name} WebSocket error (${label})`);
+
+      // A 429 means we are already reconnecting too fast — skip the ramp and
+      // back off at the cap immediately.
+      if (isRateLimited(err)) reconnect.delayMs = MAX_RECONNECT_DELAY_MS;
+
+      scheduleReconnect();
     });
 
     ws.on('close', (code: number, reason: Buffer) => {
-      logger.warn({ code, reason: reason.toString() }, `${endpoint.name} closed (${label})`);
-
       if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
 
-      if (! service.state('isShuttingDown'))
-        scheduleReconnect(() => {
-          const next = doConnect();
-          if (next) onReconnect?.(next);
-        });
+      // A close following an error is expected — the error line already covered it.
+      if (! errorLogged)
+        logger.warn({ code, reason: reason.toString() }, `${endpoint.name} closed (${label})`);
+
+      scheduleReconnect();
     });
 
     return ws;
+  };
+
+  /**
+   * Schedule a single reconnect attempt. Single-flight: if an attempt is
+   * already pending this is a no-op, so the `error` + `close` pair from one
+   * failure (and any repeats) collapse into exactly one attempt.
+   */
+  const scheduleReconnect = (): void => {
+    if (reconnect.timer) return;
+    if (service.state('isShuttingDown')) return;
+
+    const delay = reconnect.delayMs;
+
+    logger.info(`Reconnecting to ${endpoint.name} (${label}) in ${delay}ms`);
+
+    reconnect.timer = setTimeout(() => {
+      reconnect.timer = null;
+
+      const next = doConnect();
+      if (next) onReconnect?.(next);
+    }, delay);
+
+    reconnect.delayMs = Math.min(reconnect.delayMs * 2, MAX_RECONNECT_DELAY_MS);
   };
 
   return doConnect();
@@ -76,12 +123,28 @@ export const connect = (
 
 // ── Private helpers ───────────────────────────────────────────────────────────
 
-const scheduleReconnect = (reconnect: () => void): void => {
-  setTimeout(reconnect, reconnectDelayMs);
-  reconnectDelayMs = Math.min(reconnectDelayMs * 2, MAX_RECONNECT_DELAY_MS);
+/**
+ * Describe a known/expected connection failure as a short phrase, or return
+ * `null` for an unexpected error (which the caller logs in full, with stack).
+ */
+const describeError = (err: Error): string | null => {
+  if (isRateLimited(err)) return 'rate limited (HTTP 429) — backing off';
+
+  const code = (err as NodeJS.ErrnoException).code;
+  if (code && KNOWN_NETWORK_CODES.has(code)) return `network unavailable (${code})`;
+
+  const httpStatus = err.message.match(/Unexpected server response: (\d+)/);
+  if (httpStatus) return `server returned HTTP ${httpStatus[1]}`;
+
+  if (/socket hang up/i.test(err.message)) return 'socket hang up';
+
+  return null;
 };
+
+const isRateLimited = (err: Error): boolean =>
+  /Unexpected server response: 429\b/.test(err.message);
 
 const startHeartbeat = (ws: WebSocket): NodeJS.Timeout =>
   setInterval(() => {
     if (ws.readyState === WebSocket.OPEN) ws.ping();
-  }, 30000);
+  }, HEARTBEAT_INTERVAL_MS);

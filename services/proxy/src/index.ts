@@ -1,11 +1,12 @@
-import type { Service } from '@devvir/service-kit';
+import type { Service, ExpressServerHandle } from '@devvir/service-kit';
 import SK from './service';
-import { startServer } from './server';
+import { buildRouter } from './server/routes';
 import type { Config } from './types';
 
-SK.run((service: Service) => {
-  const config = service.config() as Config;
-  const server = startServer(config);
+SK.run(async (service: Service) => {
+  const api = service.servers.get('api') as ExpressServerHandle;
 
-  service.on('shutdown', () => server.close());
+  api.addRoutes(buildRouter(service.config() as Config));
+
+  await api.start();
 });

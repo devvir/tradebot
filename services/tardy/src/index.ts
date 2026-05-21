@@ -1,9 +1,9 @@
+import type { FetchClientHandle } from '@devvir/service-kit';
 import SK from './service';
 import { runLoop } from './loop';
-import type { Config } from './types';
 
 SK.run(async (service) => {
-  const { vaultUrl } = service.config() as Config;
+  const vault = service.clients.get('vault') as FetchClientHandle;
 
-  await runLoop(vaultUrl);
+  await runLoop(vault);
 });

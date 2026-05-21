@@ -7,8 +7,7 @@
  *  5. Start HTTP server (private REST API + internal control endpoints).
  *  6. Start RabbitMQ consumers (trade fills, instrument cache).
  */
-import express from 'express';
-import { type Service, logger } from '@devvir/service-kit';
+import { type Service, type ExpressServerHandle, type FetchClientHandle, logger } from '@devvir/service-kit';
 import SK from './service';
 import { bootstrap } from './db/bootstrap';
 import { buildRouter } from './rest/routes';
@@ -18,15 +17,12 @@ import * as positions from './positions';
 import * as marginModule from './margin';
 import * as db from './db';
 import * as publisher from './publisher';
-import type { Config } from './types';
 
 SK.run(async (service: Service) => {
   await service.providers.connect(['mongodb', 'rabbitmq']);
 
-  const config = service.config() as Config;
-
   await bootstrap();
-  await subscribeDigger(config.diggerUrl);
+  await subscribeDigger(service.clients.get('digger') as FetchClientHandle);
 
   // Mark price updates arrive via instrument.update messages. The instrument
   // consumer emits 'markPrice' events on the service so this handler can run
@@ -37,9 +33,11 @@ SK.run(async (service: Service) => {
     );
   });
 
-  const app = express();
-  app.use(buildRouter());
-  app.listen(config.port, () => logger.info({ port: config.port }, 'Teller HTTP server started'));
+  const api = service.servers.get('api') as ExpressServerHandle;
+
+  api.addRoutes(buildRouter());
+
+  await api.start();
 
   await startTradeConsumer(service);
   await startInstrumentConsumer(service);
@@ -84,9 +82,14 @@ async function handleMarkPrice(symbol: string, markPrice: number, replayTs: stri
 
 // ── Digger subscription ────────────────────────────────────────────────────────
 
-async function subscribeDigger(diggerUrl: string): Promise<void> {
+/**
+ * Subscribe digger to the tables teller consumes. The `digger` fetch client
+ * retries transient failures (5xx, network errors) against a still-starting
+ * digger; a non-retryable status still surfaces as a thrown error.
+ */
+async function subscribeDigger(digger: FetchClientHandle): Promise<void> {
   for (const table of ['trade', 'instrument']) {
-    const res = await fetch(`${diggerUrl}/subscribe/${table}`, { method: 'POST' });
+    const res = await digger.request(`/subscribe/${table}`, { method: 'POST' });
 
     if (! res.ok) {
       throw new Error(`Failed to subscribe digger to ${table}: HTTP ${res.status}`);

@@ -1,7 +1,8 @@
 import { vi, describe, it, expect, beforeAll, afterAll } from 'vitest';
+import express, { type Application, type ErrorRequestHandler } from 'express';
 import { MongoClient, Db } from 'mongodb';
 import request from 'supertest';
-import { createApp } from '../src/server/index.js';
+import { buildRouter } from '../src/server/routes.js';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
@@ -10,15 +11,22 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 
 const mongoUrl = process.env['DB_URL']!;
 
+// Minimal error handler — turns validateBody's `status`-carrying errors into
+// responses, mirroring what the Net express server kind does in production.
+const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
+  res.status((err as { status?: number })?.status ?? 500)
+     .json({ error: (err as Error)?.message ?? 'Error' });
+};
+
 let client: MongoClient;
 let db: Db;
-let app: ReturnType<typeof createApp>;
+let app: Application;
 
 beforeAll(async () => {
   client = new MongoClient(mongoUrl);
   await client.connect();
   db  = client.db('test_registry_server');
-  app = createApp(db);
+  app = express().use(express.json()).use(buildRouter(db)).use(errorHandler);
 });
 
 afterAll(async () => {

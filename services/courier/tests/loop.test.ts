@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { RedisClient } from '@devvir/service-kit';
+import type { FetchClientHandle, RedisClient } from '@devvir/service-kit';
 import { syncTable } from '../src/loop';
 
 vi.mock('../src/download', () => ({
@@ -8,6 +8,9 @@ vi.mock('../src/download', () => ({
 }));
 
 import * as download from '../src/download';
+
+/** Sentinel — `syncTable` only passes it straight through to the mocked download fns. */
+const vault = {} as FetchClientHandle;
 
 const makeRedis = (storedDate: string | null = null): RedisClient =>
   ({ get: vi.fn().mockResolvedValue(storedDate), set: vi.fn().mockResolvedValue(undefined) }) as unknown as RedisClient;
@@ -45,11 +48,11 @@ describe('loop — syncTable', () => {
 
     vi.mocked(download.listVaultDates).mockResolvedValue(existing);
 
-    await syncTable('http://vault', 'trade', makeRedis());
+    await syncTable(vault, 'trade', makeRedis());
 
     expect(download.fetchAndStore).toHaveBeenCalledTimes(2);
-    expect(download.fetchAndStore).toHaveBeenCalledWith('http://vault', 'trade', '20250103');
-    expect(download.fetchAndStore).toHaveBeenCalledWith('http://vault', 'trade', '20250104');
+    expect(download.fetchAndStore).toHaveBeenCalledWith(vault, 'trade', '20250103');
+    expect(download.fetchAndStore).toHaveBeenCalledWith(vault, 'trade', '20250104');
 
     vi.useRealTimers();
   });
@@ -62,7 +65,7 @@ describe('loop — syncTable', () => {
 
     vi.mocked(download.listVaultDates).mockResolvedValue(existing);
 
-    await syncTable('http://vault', 'trade', makeRedis());
+    await syncTable(vault, 'trade', makeRedis());
 
     expect(download.fetchAndStore).not.toHaveBeenCalled();
 
@@ -75,15 +78,14 @@ describe('loop — syncTable', () => {
 
     vi.mocked(download.listVaultDates).mockResolvedValue([]);
 
-    await syncTable('http://vault', 'trade', makeRedis());
+    await syncTable(vault, 'trade', makeRedis());
 
     // Should download 20141122, 20141123, 20141124
     expect(download.fetchAndStore).toHaveBeenCalledTimes(3);
-    expect(download.fetchAndStore).toHaveBeenNthCalledWith(1, 'http://vault', 'trade', '20141122');
-    expect(download.fetchAndStore).toHaveBeenNthCalledWith(2, 'http://vault', 'trade', '20141123');
-    expect(download.fetchAndStore).toHaveBeenNthCalledWith(3, 'http://vault', 'trade', '20141124');
+    expect(download.fetchAndStore).toHaveBeenNthCalledWith(1, vault, 'trade', '20141122');
+    expect(download.fetchAndStore).toHaveBeenNthCalledWith(2, vault, 'trade', '20141123');
+    expect(download.fetchAndStore).toHaveBeenNthCalledWith(3, vault, 'trade', '20141124');
 
     vi.useRealTimers();
   });
 });
-

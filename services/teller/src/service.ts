@@ -28,4 +28,6 @@ export default SKFactory({
   trackMessages: true,
   config:        config as any,
   state:         state as any,
+  servers:       { name: 'api', type: 'express', port: config.port },
+  clients:       { name: 'digger', type: 'fetch', url: config.diggerUrl },
 });

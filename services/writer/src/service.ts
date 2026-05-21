@@ -5,4 +5,5 @@ export default SKFactory({
   name:    'writer',
   mongodb: true,
   config,
+  servers: { name: 'api', type: 'express', json: { limit: '32mb' } },
 });

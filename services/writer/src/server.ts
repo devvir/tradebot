@@ -1,52 +1,38 @@
 /**
- * HTTP server: single endpoint that takes a JSON array of docs and bulk-
- * inserts them into mongo. Callers are responsible for batch sizing — the
- * writer is intentionally dumb so its throughput stays a clean comparison
- * point against the original prototype.
+ * Writer HTTP surface: a single endpoint that bulk-inserts a JSON array of docs
+ * into mongo. Callers size their own batches — the writer is deliberately dumb
+ * so its throughput stays a clean comparison point against the prototype.
  *
  * Safety only at the edges:
- *   - 32 MB body cap (413 if exceeded)
- *   - 400 if body is not a non-empty array
- *   - duplicate-key (E11000) is reported as success when
- *     `config.ignoreDuplicates` is set; otherwise it falls through to 500
- *   - any other mongo failure surfaces as 500 with the error message
- *
- * Throughput is logged every 5s by `startServer`. `createApp` is exposed
- * separately so tests can exercise the surface with supertest, no port.
+ *   - 32 MB body cap (the express server kind's `json` limit → 413)
+ *   - 400 if the body is not a non-empty array
+ *   - duplicate-key (E11000) → success when `ignoreDuplicates` is set, else 409
+ *   - any other mongo failure → 500 with the error message
  */
 
-import http from 'node:http';
-import express, { type Request, type Response, type NextFunction, type Application } from 'express';
 import { logger } from '@devvir/service-kit';
+import { Router } from 'express';
 import type { Db, Document } from 'mongodb';
 import type { Config } from './types';
 
-const HTTP_PORT     = 80;
-const BODY_LIMIT_MB = 32;
-const METRICS_MS    = 5_000;
+const METRICS_MS = 5_000;
 
-/** Callback fired by every successful insert. Used by `startServer` to drive metrics; tests can pass their own. */
+/** Callback fired by every successful insert — feeds the throughput metrics. */
 export type InsertCounter = (n: number) => void;
 
-const noopCounter: InsertCounter = () => {};
+// ── Routes ────────────────────────────────────────────────────────────────────
 
-// ── Public API ────────────────────────────────────────────────────────────────
+/** Build the writer's route table. Body parsing is the express server kind's job. */
+export const buildRouter = (db: Db, config: Config, counter: InsertCounter): Router => {
+  const router = Router();
 
-/**
- * Build the express app. Exposed separately from `startServer` so tests can
- * exercise the HTTP surface (supertest) without binding a port.
- */
-export const createApp = (db: Db, config: Config, counter: InsertCounter = noopCounter): Application => {
-  const app = express();
-
-  app.use(express.json({ limit: `${BODY_LIMIT_MB}mb` }));
-
-  app.post('/write/:table', async (req: Request, res: Response, next: NextFunction) => {
+  router.post('/write/:table', async (req, res) => {
     const table = String(req.params.table);
     const docs  = req.body as Document[];
 
     if (! Array.isArray(docs) || docs.length === 0) {
       res.status(400).json({ error: 'body must be a non-empty array' });
+
       return;
     }
 
@@ -56,15 +42,9 @@ export const createApp = (db: Db, config: Config, counter: InsertCounter = noopC
       counter(result.insertedCount);
       res.json({ inserted: result.insertedCount });
     } catch (err) {
-      /** Duplicate-key is the caller's fault, not the server's, so report it
-       *  as a 4xx — either 200 (success) when the caller has opted into
-       *  idempotent retries via `ignoreDuplicates`, or 409 (Conflict) when
-       *  they want to know about the conflict.
-       *
-       *  Farmer assigns deterministic `_id`s and retries forever, so it runs
-       *  with `ignoreDuplicates=true` to short-circuit the retry-after-
-       *  partial-success loop. Other callers may rely on `_id` collisions
-       *  to surface real bugs and should set the flag to `false`. */
+      /** Duplicate-key is the caller's fault, not the server's: report success
+       *  (idempotent re-runs) or 409, per `ignoreDuplicates`. Farmer assigns
+       *  deterministic `_id`s and retries forever, so it runs with the flag on. */
       if ((err as { code?: number }).code === 11000) {
         const inserted = (err as { result?: { insertedCount?: number } }).result?.insertedCount ?? 0;
 
@@ -72,67 +52,52 @@ export const createApp = (db: Db, config: Config, counter: InsertCounter = noopC
 
         if (config.ignoreDuplicates) {
           res.json({ inserted, duplicates: true });
+
           return;
         }
 
         res.status(409).json({ inserted, error: 'duplicate key' });
+
         return;
       }
 
-      next(err);
+      logger.error({ err }, 'Writer insert failed');
+      res.status(500).json({ error: (err as Error).message ?? 'internal error' });
     }
   });
 
-  app.get('/health', (_req, res) => {
+  router.get('/health', (_req, res) => {
     res.json({ ok: true });
   });
 
-  app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    if ((err as { type?: string }).type === 'entity.too.large') {
-      res.status(413).json({ error: 'request body too large' });
-      return;
-    }
-
-    logger.error({ err }, 'Writer request failed');
-    res.status(500).json({ error: (err as Error).message ?? 'internal error' });
-  });
-
-  return app;
+  return router;
 };
 
-export const startServer = (db: Db, config: Config): http.Server => {
-  let totalInserted   = 0;
-  let lastReportAt    = Date.now();
-  let lastReportCount = 0;
+// ── Metrics ───────────────────────────────────────────────────────────────────
 
-  const counter: InsertCounter = (n) => {
-    totalInserted += n;
-  };
+/**
+ * Start the throughput metrics loop — logs inserted/s every 5s. Returns the
+ * counter the routes feed, and a `stop` to clear the loop on shutdown.
+ */
+export const startMetrics = (): { counter: InsertCounter; stop: () => void } => {
+  let total     = 0;
+  let lastAt    = Date.now();
+  let lastCount = 0;
 
-  const reportTimer = setInterval(() => {
+  const counter: InsertCounter = (n) => { total += n; };
+
+  const timer = setInterval(() => {
     const now     = Date.now();
-    const elapsed = (now - lastReportAt) / 1000;
-    const delta   = totalInserted - lastReportCount;
+    const elapsed = (now - lastAt) / 1000;
+    const delta   = total - lastCount;
 
-    logger.info(
-      { totalInserted, delta, rate: Math.round(delta / elapsed) },
-      'Writer metrics',
-    );
+    logger.info({ totalInserted: total, delta, rate: Math.round(delta / elapsed) }, 'Writer metrics');
 
-    lastReportAt    = now;
-    lastReportCount = totalInserted;
+    lastAt    = now;
+    lastCount = total;
   }, METRICS_MS);
 
-  reportTimer.unref();
+  timer.unref();
 
-  const app    = createApp(db, config, counter);
-  const server = http.createServer(app);
-
-  server.listen(HTTP_PORT, () => {
-    logger.info({ port: HTTP_PORT }, 'Writer HTTP server listening');
-  });
-
-  server.on('close', () => clearInterval(reportTimer));
-
-  return server;
+  return { counter, stop: () => clearInterval(timer) };
 };

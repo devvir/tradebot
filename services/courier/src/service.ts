@@ -5,4 +5,5 @@ export default SKFactory({
   name: 'courier',
   redis: true,
   config,
+  clients: { name: 'vault', type: 'fetch', url: config.vaultUrl },
 });

@@ -250,4 +250,35 @@ describe('reconnection', () => {
     vi.advanceTimersByTime(30_000);
     expect((result as any).ping).toHaveBeenCalledTimes(1);
   });
+
+  it('schedules only one reconnect when error and close both fire', () => {
+    const { service } = makeService();
+    const onReconnect = vi.fn();
+
+    const original = connect(endpoint(), service as any, vi.fn(), { onReconnect });
+
+    // A real connection failure emits both events — they must collapse into one attempt.
+    original.emit('error', new Error('ECONNREFUSED'));
+    original.emit('close', 1006, Buffer.from('abnormal'));
+
+    vi.runAllTimers();
+
+    expect(onReconnect).toHaveBeenCalledOnce();
+  });
+
+  it('jumps straight to the maximum backoff after a 429', () => {
+    const { service } = makeService();
+    const onReconnect = vi.fn();
+
+    const original = connect(endpoint(), service as any, vi.fn(), { onReconnect });
+
+    original.emit('error', new Error('Unexpected server response: 429'));
+
+    // Normal first backoff is 200ms — a 429 must skip the ramp to the 15s cap.
+    vi.advanceTimersByTime(14_999);
+    expect(onReconnect).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(1);
+    expect(onReconnect).toHaveBeenCalledOnce();
+  });
 });

@@ -1,14 +1,12 @@
-import { logger, Service } from '@devvir/service-kit';
+import type { Service, ExpressServerHandle } from '@devvir/service-kit';
 import SK from './service';
-import { createServer, startServer } from './server';
-
-const API_PORT = 80;
+import { buildRouter } from './routes';
+import type { Config } from './types';
 
 SK.run(async (service: Service) => {
-  const app = createServer(service);
-  const server = startServer(app, API_PORT);
+  const api = service.servers.get('api') as ExpressServerHandle;
 
-  service.on('shutdown', async () => {
-    await server.close(() => logger.info('Rest Server closed'));
-  });
+  api.addRoutes(buildRouter(service.config() as Config));
+
+  await api.start();
 });

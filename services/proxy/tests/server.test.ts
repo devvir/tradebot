@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import request from 'supertest';
-import { createApp } from '../src/server';
+import express from 'express';
+import { buildRouter } from '../src/server/routes';
 import type { Config } from '../src/types';
 
 const CONFIG: Config = {
@@ -20,7 +21,7 @@ const MOCK_SIGN = {
   expires:   1711234567,
 };
 
-const app = createApp(CONFIG);
+const app = express().use(express.raw({ type: '*/*' })).use(buildRouter(CONFIG));
 
 // ── Fetch mocking ─────────────────────────────────────────────────────────────
 

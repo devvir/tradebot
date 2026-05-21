@@ -1,30 +1,34 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import type { FetchClientHandle } from '@devvir/service-kit';
 import { createStoreService } from '../src/vault';
 
-const VAULT_URL = 'http://vault';
+// Retry, backoff, and transition logging are the `vault` client's job (covered
+// by service-kit's tests). These cover scribe's store logic: paths and response
+// handling.
 
-const okResponse = (status = 200): Response =>
-  ({ ok: true, status, headers: new Headers() } as unknown as Response);
+type MockVault = FetchClientHandle & {
+  get:     ReturnType<typeof vi.fn>;
+  request: ReturnType<typeof vi.fn>;
+};
 
-const errResponse = (status: number): Response =>
-  ({ ok: false, status, headers: new Headers() } as unknown as Response);
+const makeVault = (): MockVault =>
+  ({ get: vi.fn(), request: vi.fn() }) as unknown as MockVault;
 
-const jsonResponse = (data: unknown): Response =>
-  ({ ok: true, status: 200, headers: new Headers(), json: () => Promise.resolve(data) } as unknown as Response);
+const okRes  = (status = 200): Response => ({ ok: true,  status }) as Response;
+const errRes = (status: number): Response => ({ ok: false, status }) as Response;
 
 // ── writeRows ─────────────────────────────────────────────────────────────────
 
 describe('StoreService — writeRows', () => {
-  beforeEach(() => vi.stubGlobal('fetch', vi.fn()));
-  afterEach(() => vi.unstubAllGlobals());
-
   it('POSTs JSON rows to the correct endpoint', async () => {
-    vi.mocked(fetch).mockResolvedValue(okResponse(202));
+    const vault = makeVault();
 
-    await createStoreService(VAULT_URL).writeRows('funding', '20200101', [{ price: 100 }]);
+    vault.request.mockResolvedValue(okRes(202));
 
-    expect(fetch).toHaveBeenCalledWith(
-      `${VAULT_URL}/files/funding/20200101/rows`,
+    await createStoreService(vault).writeRows('funding', '20200101', [{ price: 100 }]);
+
+    expect(vault.request).toHaveBeenCalledWith(
+      '/files/funding/20200101/rows',
       expect.objectContaining({
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -33,119 +37,108 @@ describe('StoreService — writeRows', () => {
     );
   });
 
-  it('retries on 503 until vault recovers', async () => {
-    vi.mocked(fetch)
-      .mockResolvedValueOnce(errResponse(503))
-      .mockResolvedValue(okResponse(202));
+  it('throws when vault rejects the write', async () => {
+    const vault = makeVault();
 
-    vi.useFakeTimers();
+    vault.request.mockResolvedValue(errRes(500));
 
-    const result = createStoreService(VAULT_URL).writeRows('funding', '20200101', []);
-
-    await vi.advanceTimersByTimeAsync(6_000);
-    vi.useRealTimers();
-
-    await expect(result).resolves.toBeUndefined();
-    expect(fetch).toHaveBeenCalledTimes(2);
+    await expect(createStoreService(vault).writeRows('funding', '20200101', []))
+      .rejects.toThrow('HTTP 500');
   });
 });
 
 // ── closeFile ─────────────────────────────────────────────────────────────────
 
 describe('StoreService — closeFile', () => {
-  beforeEach(() => vi.spyOn(global, 'fetch'));
-  afterEach(() => vi.restoreAllMocks());
-
   it('POSTs to the close endpoint', async () => {
-    vi.mocked(global.fetch).mockResolvedValue(okResponse(204));
+    const vault = makeVault();
 
-    await createStoreService(VAULT_URL).closeFile('funding', '20200101');
+    vault.request.mockResolvedValue(okRes(204));
 
-    expect(global.fetch).toHaveBeenCalledWith(
-      `${VAULT_URL}/files/funding/20200101/close`,
+    await createStoreService(vault).closeFile('funding', '20200101');
+
+    expect(vault.request).toHaveBeenCalledWith(
+      '/files/funding/20200101/close',
       expect.objectContaining({ method: 'POST' }),
     );
   });
 
   it('does not throw on 404 (file already gone)', async () => {
-    vi.mocked(global.fetch).mockResolvedValue(errResponse(404));
+    const vault = makeVault();
 
-    await expect(
-      createStoreService(VAULT_URL).closeFile('funding', '20200101'),
-    ).resolves.toBeUndefined();
+    vault.request.mockResolvedValue(errRes(404));
+
+    await expect(createStoreService(vault).closeFile('funding', '20200101')).resolves.toBeUndefined();
   });
 
   it('throws on other errors', async () => {
-    vi.mocked(global.fetch).mockResolvedValue(errResponse(500));
+    const vault = makeVault();
 
-    await expect(
-      createStoreService(VAULT_URL).closeFile('funding', '20200101'),
-    ).rejects.toThrow('HTTP 500');
+    vault.request.mockResolvedValue(errRes(500));
+
+    await expect(createStoreService(vault).closeFile('funding', '20200101')).rejects.toThrow('HTTP 500');
   });
 });
 
 // ── deleteFile ────────────────────────────────────────────────────────────────
 
 describe('StoreService — deleteFile', () => {
-  beforeEach(() => vi.spyOn(global, 'fetch'));
-  afterEach(() => vi.restoreAllMocks());
-
   it('sends a DELETE request to the correct endpoint', async () => {
-    vi.mocked(global.fetch).mockResolvedValue(okResponse(204));
+    const vault = makeVault();
 
-    await createStoreService(VAULT_URL).deleteFile('funding', '20200101');
+    vault.request.mockResolvedValue(okRes(204));
 
-    expect(global.fetch).toHaveBeenCalledWith(
-      `${VAULT_URL}/files/funding/20200101`,
+    await createStoreService(vault).deleteFile('funding', '20200101');
+
+    expect(vault.request).toHaveBeenCalledWith(
+      '/files/funding/20200101',
       expect.objectContaining({ method: 'DELETE' }),
     );
   });
 
   it('does not throw on 404', async () => {
-    vi.mocked(global.fetch).mockResolvedValue(errResponse(404));
+    const vault = makeVault();
 
-    await expect(
-      createStoreService(VAULT_URL).deleteFile('funding', '20200101'),
-    ).resolves.toBeUndefined();
+    vault.request.mockResolvedValue(errRes(404));
+
+    await expect(createStoreService(vault).deleteFile('funding', '20200101')).resolves.toBeUndefined();
   });
 
   it('throws on other errors', async () => {
-    vi.mocked(global.fetch).mockResolvedValue(errResponse(500));
+    const vault = makeVault();
 
-    await expect(
-      createStoreService(VAULT_URL).deleteFile('funding', '20200101'),
-    ).rejects.toThrow('HTTP 500');
+    vault.request.mockResolvedValue(errRes(500));
+
+    await expect(createStoreService(vault).deleteFile('funding', '20200101')).rejects.toThrow('HTTP 500');
   });
 });
 
 // ── listFiles ─────────────────────────────────────────────────────────────────
 
 describe('StoreService — listFiles', () => {
-  beforeEach(() => vi.spyOn(global, 'fetch'));
-  afterEach(() => vi.restoreAllMocks());
-
   it('returns the file listing from vault', async () => {
+    const vault   = makeVault();
     const listing = { '20200101': 'closed', '20200102': 'open' };
-    vi.mocked(global.fetch).mockResolvedValue(jsonResponse(listing));
 
-    const result = await createStoreService(VAULT_URL).listFiles('funding');
+    vault.get.mockResolvedValue(listing);
 
-    expect(result).toEqual(listing);
+    expect(await createStoreService(vault).listFiles('funding')).toEqual(listing);
+    expect(vault.get).toHaveBeenCalledWith('/files/funding', { passThrough: [404] });
   });
 
-  it('returns an empty object when vault returns 404', async () => {
-    vi.mocked(global.fetch).mockResolvedValue(errResponse(404));
+  it('returns an empty object when vault returns 404 (passThrough → null)', async () => {
+    const vault = makeVault();
 
-    const result = await createStoreService(VAULT_URL).listFiles('funding');
+    vault.get.mockResolvedValue(null);
 
-    expect(result).toEqual({});
+    expect(await createStoreService(vault).listFiles('funding')).toEqual({});
   });
 
   it('throws on other errors', async () => {
-    vi.mocked(global.fetch).mockResolvedValue(errResponse(500));
+    const vault = makeVault();
 
-    await expect(
-      createStoreService(VAULT_URL).listFiles('funding'),
-    ).rejects.toThrow('HTTP 500');
+    vault.get.mockRejectedValue(new Error('GET /files/funding failed (HTTP 500)'));
+
+    await expect(createStoreService(vault).listFiles('funding')).rejects.toThrow('HTTP 500');
   });
 });

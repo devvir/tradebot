@@ -1,4 +1,4 @@
-import type { RedisClient } from '@devvir/service-kit';
+import type { RedisClient, FetchClientHandle } from '@devvir/service-kit';
 import SK from './service';
 import { createFetchService } from './bitmex';
 import { logMetrics } from './bitmex/metrics';
@@ -14,7 +14,7 @@ SK.run(async (service) => {
   const config = service.config() as Config;
   const cache  = await service.providers.connect('redis') as RedisClient;
   const fetch  = createFetchService(config.bitmexRestUrl);
-  const store  = createStoreService(config.vaultUrl);
+  const store  = createStoreService(service.clients.get('vault') as FetchClientHandle);
 
   setInterval(logMetrics, METRICS_INTERVAL_MS).unref();
 
