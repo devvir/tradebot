@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { registry, SK_CONFIG } from '@devvir/service-kit';
 import { runAllTables } from '../src/runner';
 import type { TableConfig } from '../src/types';
 import type { FetchService, Row } from '../src/bitmex';
@@ -22,35 +21,20 @@ vi.mock('../src/utils/tables', () => ({
 import * as tablesModule from '../src/utils/tables';
 import { sleep }         from '../src/utils/throttling';
 
-// ── Registry setup ────────────────────────────────────────────────────────────
-
-const makeConfig = (overrides: Record<string, unknown> = {}) => ({
-  indexTickOnly: false,
-  ...overrides,
-});
-
-const registerScribe = (overrides: Record<string, unknown> = {}) => {
-  registry.add({
-    spec:   () => ({ name: 'scribe' }),
-    config: () => makeConfig(overrides),
-  } as any);
-};
-
-beforeEach(() => { registerScribe(); });
-afterEach(()  => { registry.clear(); });
-
 // ── Fixed tables ─────────────────────────────────────────────────────────────
 
 const SIMPLE_TABLE: TableConfig = {
   name:     'funding',
   path:     '/funding',
   maxStart: null,
+  count:    500,
 };
 
 const COMPOSITE_TABLE: TableConfig = {
   name:     'compositeIndex',
   path:     '/instrument/compositeIndex',
   maxStart: null,
+  count:    1000,
 };
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
@@ -216,6 +200,32 @@ describe('runAllTables — simple table', () => {
 
     expect(store.writeRows).toHaveBeenCalledTimes(2);
   });
+
+  it('propagates a single-task table filter to getDay', async () => {
+    (tablesModule.TABLES as TableConfig[]).push({
+      name: 'tick', path: '/trade', maxStart: null, count: 1000, filter: { size: 0 },
+    });
+
+    const fetch = makeFetch({
+      oldest: vi.fn().mockResolvedValue(tsRow(TWO_DAYS_AGO)),
+      getDay: vi.fn().mockImplementation(() => rowGen([])),
+    });
+    const store = makeStore({
+      listFiles: vi.fn().mockResolvedValue({ [TWO_DAYS_AGO]: 'closed' }),
+    });
+
+    stopAfter(1);
+
+    await expect(
+      runAllTables(fetch, store, makeCache(), vi.fn().mockResolvedValue([]))
+    ).rejects.toThrow('stop');
+
+    expect(fetch.getDay).toHaveBeenCalledWith(
+      expect.anything(),
+      YESTERDAY,
+      { count: 1000, filter: { size: 0 } },
+    );
+  });
 });
 
 // ── Tests: compositeIndex ─────────────────────────────────────────────────────
@@ -273,11 +283,8 @@ describe('runAllTables — compositeIndex', () => {
     );
   });
 
-  it('appends BMI reference filter when indexTickOnly is true', async () => {
-    registry.clear();
-    registerScribe({ indexTickOnly: true });
-
-    (tablesModule.TABLES as TableConfig[]).push(COMPOSITE_TABLE);
+  it('propagates the table filter to per-symbol getDay calls', async () => {
+    (tablesModule.TABLES as TableConfig[]).push({ ...COMPOSITE_TABLE, filter: { reference: 'BMI' } });
 
     const fetch = makeFetch({
       oldest: vi.fn().mockResolvedValue(tsRow(TWO_DAYS_AGO)),

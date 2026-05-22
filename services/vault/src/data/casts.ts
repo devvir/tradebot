@@ -50,6 +50,8 @@ const TABLE_CASTS: Record<string, TableCasts> = {
 
   liquidation: num('price', 'leavesQty'),
 
+  tick: num('price'),
+
   instrument: {
     ...num(
       'instrumentID', 'maxOrderQty', 'lotSize', 'multiplier',

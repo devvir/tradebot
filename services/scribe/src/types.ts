@@ -13,4 +13,6 @@ export interface TableConfig {
   name:     string;
   path:     string;
   maxStart: number | null;
+  count: number;
+  filter?:  Record<string, unknown>;
 }

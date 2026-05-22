@@ -17,6 +17,7 @@ export const TABLE_HEADERS: Record<string, string[]> = {
   insurance:      ['currency', 'timestamp', 'walletBalance'],
   settlement:     ['timestamp', 'symbol', 'settlementType', 'settledPrice', 'optionStrikePrice', 'optionUnderlyingPrice', 'bankrupt', 'taxBase', 'taxRate'],
   compositeIndex: ['timestamp', 'symbol', 'indexSymbol', 'indexMultiplier', 'reference', 'lastPrice', 'sourcePrice', 'conversionIndex', 'conversionIndexPrice', 'weight', 'logged'],
+  tick:           ['timestamp', 'symbol', 'price', 'tickDirection'],
 
   // ── Streamed from BitMEX WebSocket ─────────────────────────────────────────
   //
