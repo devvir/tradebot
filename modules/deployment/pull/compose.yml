@@ -1,0 +1,13 @@
+# Pull Deployment — Scribe + required infra (vault, cache)
+
+name: pull
+
+include:
+  # - path: ../../../services/vault/docker/compose.yml
+  - path: ../../../services/redis/docker/compose.yml
+  - path: ../../../services/scribe/docker/compose.yml
+
+networks:
+  default:
+    name: ${PROJECT_NAME:-tradebot}-network
+    external: true
