@@ -30,7 +30,7 @@ export const listVaultDates = async (vault: FetchClientHandle, table: Table): Pr
  * S3 for a fresh stream rather than replay a consumed one. The PUT therefore
  * runs with the client's own retry disabled — this loop owns it.
  */
-export const fetchAndStore = async (vault: FetchClientHandle, table: Table, date: string): Promise<void> => {
+export const fetchAndStore = async (vault: FetchClientHandle, table: Table, date: string): Promise<boolean> => {
   const url = `${S3_BASE_URL}/${table}/${date}.csv.gz`;
 
   let attempt = 0;
@@ -42,9 +42,9 @@ export const fetchAndStore = async (vault: FetchClientHandle, table: Table, date
       const s3Res = await fetch(url);
 
       if (s3Res.status === 404) {
-        logger.warn({ table, date }, 'File not found on S3 (404) — skipping');
+        logger.info({ table, date }, 'File not yet published on S3 (404)');
 
-        return;
+        return false;
       }
 
       if (! s3Res.ok)   throw new Error(`S3 HTTP ${s3Res.status}`);
@@ -60,14 +60,14 @@ export const fetchAndStore = async (vault: FetchClientHandle, table: Table, date
       if (vaultRes.status === 409) {
         logger.info({ table, date }, 'File already in vault — skipping');
 
-        return;
+        return true;
       }
 
       if (! vaultRes.ok) throw new Error(`Vault PUT HTTP ${vaultRes.status}`);
 
       logger.info({ table, date }, 'Stored in vault');
 
-      return;
+      return true;
     } catch (err) {
       attempt++;
 
@@ -80,6 +80,8 @@ export const fetchAndStore = async (vault: FetchClientHandle, table: Table, date
       await sleep(delay);
     }
   }
+
+  throw new Error('unreachable');
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

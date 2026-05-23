@@ -40,15 +40,16 @@ describe('download — listVaultDates', () => {
 describe('download — fetchAndStore', () => {
   beforeEach(() => mockFetch.mockReset());
 
-  it('fetches from S3 and PUTs to vault', async () => {
+  it('fetches from S3, PUTs to vault, and returns true', async () => {
     const body  = new ReadableStream();
     const vault = makeVault();
 
     mockFetch.mockResolvedValueOnce({ ok: true, status: 200, body });
     vault.request.mockResolvedValue({ ok: true, status: 204 });
 
-    await fetchAndStore(vault, 'trade', '20250101');
+    const result = await fetchAndStore(vault, 'trade', '20250101');
 
+    expect(result).toBe(true);
     expect(mockFetch).toHaveBeenCalledWith(
       'https://s3-eu-west-1.amazonaws.com/public.bitmex.com/data/trade/20250101.csv.gz',
     );
@@ -58,23 +59,24 @@ describe('download — fetchAndStore', () => {
     );
   });
 
-  it('skips silently when S3 returns 404', async () => {
+  it('returns false when S3 returns 404 (not yet published)', async () => {
     const vault = makeVault();
 
     mockFetch.mockResolvedValueOnce({ ok: false, status: 404 });
 
-    await fetchAndStore(vault, 'trade', '20250101');
+    const result = await fetchAndStore(vault, 'trade', '20250101');
 
+    expect(result).toBe(false);
     expect(vault.request).not.toHaveBeenCalled();
   });
 
-  it('skips silently when vault returns 409 (already exists)', async () => {
+  it('returns true when vault returns 409 (already exists)', async () => {
     const vault = makeVault();
 
     mockFetch.mockResolvedValueOnce({ ok: true, status: 200, body: new ReadableStream() });
     vault.request.mockResolvedValue({ ok: false, status: 409 });
 
-    await expect(fetchAndStore(vault, 'trade', '20250101')).resolves.toBeUndefined();
+    await expect(fetchAndStore(vault, 'trade', '20250101')).resolves.toBe(true);
   });
 
   it('retries on transient failure then succeeds', async () => {

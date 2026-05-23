@@ -4,7 +4,7 @@ import { syncTable } from '../src/loop';
 
 vi.mock('../src/download', () => ({
   listVaultDates: vi.fn(),
-  fetchAndStore:  vi.fn().mockResolvedValue(undefined),
+  fetchAndStore:  vi.fn().mockResolvedValue(true),
 }));
 
 import * as download from '../src/download';
@@ -36,7 +36,7 @@ const dateRange = (from: string, to: string): string[] => {
 describe('loop — syncTable', () => {
   beforeEach(() => {
     vi.mocked(download.fetchAndStore).mockReset();
-    vi.mocked(download.fetchAndStore).mockResolvedValue(undefined);
+    vi.mocked(download.fetchAndStore).mockResolvedValue(true);
   });
 
   it('calls fetchAndStore only for dates not already in vault', async () => {
@@ -53,6 +53,59 @@ describe('loop — syncTable', () => {
     expect(download.fetchAndStore).toHaveBeenCalledTimes(2);
     expect(download.fetchAndStore).toHaveBeenCalledWith(vault, 'trade', '20250103');
     expect(download.fetchAndStore).toHaveBeenCalledWith(vault, 'trade', '20250104');
+
+    vi.useRealTimers();
+  });
+
+  it('resumes from the day after the last successfully downloaded date in redis', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-01-05T12:00:00Z')); // yesterday = 20250104
+
+    vi.mocked(download.listVaultDates).mockResolvedValue([]);
+
+    const redis = makeRedis('20250102'); // last success = 20250102 → resume from 20250103
+
+    await syncTable(vault, 'trade', redis);
+
+    expect(download.fetchAndStore).toHaveBeenCalledTimes(2);
+    expect(download.fetchAndStore).toHaveBeenNthCalledWith(1, vault, 'trade', '20250103');
+    expect(download.fetchAndStore).toHaveBeenNthCalledWith(2, vault, 'trade', '20250104');
+
+    vi.useRealTimers();
+  });
+
+  it('advances redis to the date just downloaded after each success', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-01-05T12:00:00Z'));
+
+    vi.mocked(download.listVaultDates).mockResolvedValue(dateRange('20141122', '20250102'));
+
+    const redis = makeRedis();
+
+    await syncTable(vault, 'trade', redis);
+
+    expect(redis.set).toHaveBeenNthCalledWith(1, 'courier_trade', '20250103');
+    expect(redis.set).toHaveBeenNthCalledWith(2, 'courier_trade', '20250104');
+
+    vi.useRealTimers();
+  });
+
+  it('stops without advancing redis when a date is not yet published (404)', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-01-05T12:00:00Z')); // yesterday = 20250104
+
+    vi.mocked(download.listVaultDates).mockResolvedValue(dateRange('20141122', '20250102'));
+    vi.mocked(download.fetchAndStore)
+      .mockResolvedValueOnce(true)   // 20250103 stored
+      .mockResolvedValueOnce(false); // 20250104 not yet published
+
+    const redis = makeRedis();
+
+    await syncTable(vault, 'trade', redis);
+
+    expect(download.fetchAndStore).toHaveBeenCalledTimes(2);
+    expect(redis.set).toHaveBeenCalledTimes(1);
+    expect(redis.set).toHaveBeenCalledWith('courier_trade', '20250103');
 
     vi.useRealTimers();
   });
