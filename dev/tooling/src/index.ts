@@ -15,7 +15,6 @@ import { register as registerMonitor } from './commands/monitor';
 import { register as registerData } from './commands/data';
 import { register as registerRemote } from './commands/remote';
 import { register as registerSynth } from './commands/synth';
-import { register as registerMapId } from './commands/mapId';
 
 interface Tool {
   id: string;
@@ -25,7 +24,7 @@ interface Tool {
 
 const tools: Tool[] = [
   { id: 'ws', name: 'WebSocket', description: 'Connect to BitMEX WebSocket with authentication' },
-  { id: 'db', name: 'MongoDB', description: 'Query and explore MongoDB database' },
+  { id: 'db', name: 'MongoDB', description: 'Stats, dump, id translation, and REPL' },
   { id: 'rabbit', name: 'RabbitMQ', description: 'Monitor RabbitMQ queues and streams' },
   { id: 'bouncer', name: 'Bouncer', description: 'View accounts and auth tokens from Bouncer' },
   { id: 'broadcast', name: 'Broadcast', description: 'Monitor broadcast exchange messages' },
@@ -34,7 +33,6 @@ const tools: Tool[] = [
   { id: 'data', name: 'Data', description: 'Prepare, sync, and recover vault data' },
   { id: 'remote', name: 'Remote', description: 'Remote server operations (sync-env, pull)' },
   { id: 'synth', name: 'Synth', description: 'Synthetic data tools (index, generate)' },
-  { id: 'mapId', name: 'Map ID', description: 'Translate between vault record _id and ISO date' },
 ];
 
 async function main(): Promise<void> {
@@ -67,7 +65,6 @@ async function main(): Promise<void> {
   registerData(program);
   registerRemote(program);
   registerSynth(program);
-  registerMapId(program);
 
   // Show interactive menu when no subcommand is given.
   // Preserve any global flags (-e, --env, -v, --verbose) so they survive the

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const entry = path.join(__dirname, 'dev/tooling/dist/index.js');
 
-const child = spawn('node', [entry, ...process.argv.slice(2)], {
+const child = spawn(process.execPath, [entry, ...process.argv.slice(2)], {
   cwd: __dirname,
   stdio: 'inherit',
   env: { ...process.env, WORKSPACE_ROOT: __dirname },

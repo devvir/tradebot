@@ -39,12 +39,32 @@ describe('db command', () => {
     expect(cmd!.aliases()).toContain('database');
   });
 
-  it('has --collection and --list options', () => {
+  it('exposes stats, dump, restore, purge, id, and repl subcommands', () => {
     const program = new Command();
     registerDb(program);
-    const longs = optionLongs(program.commands.find(c => c.name() === 'db')!);
-    expect(longs).toContain('--collection');
-    expect(longs).toContain('--list');
+    const db = program.commands.find(c => c.name() === 'db')!;
+    const subNames = db.commands.map(c => c.name());
+    expect(subNames).toContain('stats');
+    expect(subNames).toContain('dump');
+    expect(subNames).toContain('restore');
+    expect(subNames).toContain('purge');
+    expect(subNames).toContain('id');
+    expect(subNames).toContain('repl');
+  });
+
+  it('dump has --out option', () => {
+    const program = new Command();
+    registerDb(program);
+    const db   = program.commands.find(c => c.name() === 'db')!;
+    const dump = db.commands.find(c => c.name() === 'dump')!;
+    expect(optionLongs(dump)).toContain('--out');
+  });
+
+  it('has no options on the top-level db command', () => {
+    const program = new Command();
+    registerDb(program);
+    const db = program.commands.find(c => c.name() === 'db')!;
+    expect(optionLongs(db)).toHaveLength(0);
   });
 });
 
