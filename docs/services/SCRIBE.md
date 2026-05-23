@@ -37,7 +37,7 @@ vault://<table>/<yyyy>/<yyyymmdd>.csv.gz
 
 Files transition from `open` (being written) to `closed` (finalized and compressed) once all data for that day has been confirmed.
 
-For `compositeIndex`, all symbols are processed sequentially for each day before the file is closed. Symbol order is determined by registry ID ascending, so the ordering is stable across restarts.
+For `compositeIndex`, all symbols are processed sequentially for each day before the file is closed. Symbol order is determined by an ID assigned on first sight and persisted in the Redis hash `scribe:indices` (symbol → id), so the ordering is stable across restarts. Newly discovered indices are appended with the next sequential ID.
 
 ---
 

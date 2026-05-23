@@ -57,7 +57,7 @@ describe('TABLES — indexTickOnly filter', () => {
   beforeEach(() => { vi.resetModules(); });
 
   const loadTables = async (indexTickOnly: boolean) => {
-    vi.doMock('../src/config', () => ({ default: { indexTickOnly } }));
+    vi.doMock('../src/config', () => ({ default: { indexTickOnly, tables: [] } }));
 
     return (await import('../src/utils/tables')).TABLES;
   };

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { runAllTables } from '../src/runner';
+import { processTable } from '../src/runner';
 import type { TableConfig } from '../src/types';
 import type { FetchService, Row } from '../src/bitmex';
 import type { StoreService } from '../src/vault';
@@ -12,14 +12,37 @@ vi.mock('../src/utils/throttling', () => ({
   waitIfNeeded: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock('../src/utils/symbols', () => ({
+  getOrderedIndices: vi.fn().mockResolvedValue([]),
+}));
+
 // TABLES is mutable so each test can inject just the table it needs.
 vi.mock('../src/utils/tables', () => ({
   TABLES:    [] as TableConfig[],
   PAGE_SIZE: 500,
 }));
 
-import * as tablesModule from '../src/utils/tables';
-import { sleep }         from '../src/utils/throttling';
+import * as tablesModule    from '../src/utils/tables';
+import { sleep }            from '../src/utils/throttling';
+import { getOrderedIndices } from '../src/utils/symbols';
+
+/**
+ * Mirrors index.ts: process every TABLES entry concurrently. Tests use this
+ * via a small wrapper that also seeds the indices the compositeIndex loop
+ * sees, so each test stays a single call.
+ */
+const runAllTables = (
+  fetch:   FetchService,
+  store:   StoreService,
+  cache:   RedisClient,
+  indices: string[],
+): Promise<unknown> => {
+  vi.mocked(getOrderedIndices).mockResolvedValue(indices);
+
+  return Promise.all(
+    (tablesModule.TABLES as TableConfig[]).map(t => processTable(t, fetch, store, cache)),
+  );
+};
 
 // ── Fixed tables ─────────────────────────────────────────────────────────────
 
@@ -111,7 +134,7 @@ describe('runAllTables — simple table', () => {
     stopAfter(1);
 
     await expect(
-      runAllTables(fetch, store, makeCache(), vi.fn().mockResolvedValue([]))
+      runAllTables(fetch, store, makeCache(), [])
     ).rejects.toThrow('stop');
 
     expect(store.writeRows).toHaveBeenCalledWith('funding', YESTERDAY, [row]);
@@ -136,7 +159,7 @@ describe('runAllTables — simple table', () => {
     stopAfter(1);
 
     await expect(
-      runAllTables(fetch, store, cache, vi.fn().mockResolvedValue([]))
+      runAllTables(fetch, store, cache, [])
     ).rejects.toThrow('stop');
 
     expect(fetch.oldest).not.toHaveBeenCalled();
@@ -156,7 +179,7 @@ describe('runAllTables — simple table', () => {
     stopAfter(1);
 
     await expect(
-      runAllTables(fetch, store, makeCache(), vi.fn().mockResolvedValue([]))
+      runAllTables(fetch, store, makeCache(), [])
     ).rejects.toThrow('stop');
 
     expect(fetch.oldest).toHaveBeenCalled();
@@ -172,7 +195,7 @@ describe('runAllTables — simple table', () => {
     stopAfter(1);
 
     await expect(
-      runAllTables(makeFetch(), store, makeCache(), vi.fn().mockResolvedValue([]))
+      runAllTables(makeFetch(), store, makeCache(), [])
     ).rejects.toThrow('stop');
 
     expect(store.deleteFile).toHaveBeenCalledWith('funding', '20200101');
@@ -195,7 +218,7 @@ describe('runAllTables — simple table', () => {
     stopAfter(1);
 
     await expect(
-      runAllTables(fetch, store, makeCache(), vi.fn().mockResolvedValue([]))
+      runAllTables(fetch, store, makeCache(), [])
     ).rejects.toThrow('stop');
 
     expect(store.writeRows).toHaveBeenCalledTimes(2);
@@ -217,7 +240,7 @@ describe('runAllTables — simple table', () => {
     stopAfter(1);
 
     await expect(
-      runAllTables(fetch, store, makeCache(), vi.fn().mockResolvedValue([]))
+      runAllTables(fetch, store, makeCache(), [])
     ).rejects.toThrow('stop');
 
     expect(fetch.getDay).toHaveBeenCalledWith(
@@ -252,7 +275,7 @@ describe('runAllTables — compositeIndex', () => {
     stopAfter(1);
 
     await expect(
-      runAllTables(fetch, store, makeCache(), vi.fn().mockResolvedValue(['.BXBT', '.ETHXBT']))
+      runAllTables(fetch, store, makeCache(), ['.BXBT', '.ETHXBT'])
     ).rejects.toThrow('stop');
 
     expect(calledSymbols).toContain('.BXBT');
@@ -273,7 +296,7 @@ describe('runAllTables — compositeIndex', () => {
     stopAfter(1);
 
     await expect(
-      runAllTables(fetch, store, makeCache(), vi.fn().mockResolvedValue(['.BXBT']))
+      runAllTables(fetch, store, makeCache(), ['.BXBT'])
     ).rejects.toThrow('stop');
 
     expect(fetch.getDay).toHaveBeenCalledWith(
@@ -297,7 +320,7 @@ describe('runAllTables — compositeIndex', () => {
     stopAfter(1);
 
     await expect(
-      runAllTables(fetch, store, makeCache(), vi.fn().mockResolvedValue(['.BXBT']))
+      runAllTables(fetch, store, makeCache(), ['.BXBT'])
     ).rejects.toThrow('stop');
 
     expect(fetch.getDay).toHaveBeenCalledWith(
@@ -334,7 +357,7 @@ describe('runAllTables — next[id] tracking', () => {
     stopAfter(1);
 
     await expect(
-      runAllTables(fetch, store, makeCache(), vi.fn().mockResolvedValue(['.EARLY', '.LATE']))
+      runAllTables(fetch, store, makeCache(), ['.EARLY', '.LATE'])
     ).rejects.toThrow('stop');
 
     expect(calledSymbols).toContain('.EARLY');
@@ -359,7 +382,7 @@ describe('runAllTables — next[id] tracking', () => {
     stopAfter(1);
 
     await expect(
-      runAllTables(fetch, store, makeCache(), vi.fn().mockResolvedValue([]))
+      runAllTables(fetch, store, makeCache(), [])
     ).rejects.toThrow('stop');
 
     // Nothing to write on an empty day.
@@ -401,7 +424,7 @@ describe('runAllTables — atomic per-day Redis confirmation', () => {
     stopAfter(1);
 
     await expect(
-      runAllTables(fetch, store, cache, vi.fn().mockResolvedValue(['.A', '.B']))
+      runAllTables(fetch, store, cache, ['.A', '.B'])
     ).rejects.toThrow('stop');
 
     const setMock    = vi.mocked(cache.set);
@@ -439,7 +462,7 @@ describe('runAllTables — atomic per-day Redis confirmation', () => {
     stopAfter(1);
 
     await expect(
-      runAllTables(fetch, store, cache, vi.fn().mockResolvedValue([]))
+      runAllTables(fetch, store, cache, [])
     ).rejects.toThrow('stop');
 
     const setMock    = vi.mocked(cache.set);

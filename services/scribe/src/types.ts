@@ -3,9 +3,9 @@
 export interface Config {
   bitmexRestUrl:  string;
   vaultUrl:       string;
-  registryUrl:    string;
   startDate:      string | null;
   indexTickOnly:  boolean;
+  tables:         string[];
   [key: string]: unknown;
 }
 

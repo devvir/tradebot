@@ -13,11 +13,11 @@ services:
       CACHE_URL:    ${CACHE_URL}
       CACHE_PASS:   ${CACHE_PASS}
       VAULT_URL:    ${VAULT_URL}
-      REGISTRY_URL: ${REGISTRY_URL}
 
       # Config
       SCRIBE_START_DATE:       ${SCRIBE_START_DATE:-}
       SCRIBE_INDEX_TICK_ONLY:  ${SCRIBE_INDEX_TICK_ONLY:-true}
+      SCRIBE_TABLES:           ${SCRIBE_TABLES:-}
 
       # Runtime
       NODE_ENV: ${APP_ENV:-prod}

@@ -1,7 +1,8 @@
 import { logger } from '@devvir/service-kit';
 import type { RedisClient } from '@devvir/service-kit';
-import { TABLES } from './utils/tables';
+import config from './config';
 import { sleep } from './utils/throttling';
+import { getOrderedIndices } from './utils/symbols';
 import type { FetchService, FetchFilter } from './bitmex';
 import { createBufferedWriter } from './vault';
 import type { StoreService } from './vault';
@@ -15,27 +16,17 @@ interface Task {
   filter: FetchFilter;
 }
 
-export const runAllTables = async (
+// ── Table loop ────────────────────────────────────────────────────────────────
+
+export const processTable = async (
+  table: TableConfig,
   fetch: FetchService,
   store: StoreService,
   cache: RedisClient,
-  getIndices: () => Promise<string[]>,
-): Promise<void> => {
-  await Promise.all(TABLES.map(table => processTable(table, fetch, store, cache, getIndices)));
-};
-
-// ── Table loop ────────────────────────────────────────────────────────────────
-
-const processTable = async (
-  table:      TableConfig,
-  fetch:      FetchService,
-  store:      StoreService,
-  cache:      RedisClient,
-  getIndices: () => Promise<string[]>,
 ): Promise<void> => {
   logger.info({ table: table.name }, 'Starting');
 
-  const getTasksFn = () => getTasks(table, getIndices);
+  const getTasksFn = () => getTasks(table, cache);
   const { initialDate, next, closedDates } = await restoreProgress(table, fetch, store, cache, getTasksFn);
   let currentDate = initialDate;
 
@@ -51,7 +42,7 @@ const processTable = async (
       continue;
     }
 
-    const tasks = await getTasks(table, getIndices);
+    const tasks = await getTasks(table, cache);
 
     /**
      * Symbols with data: defer the Redis confirmation until after `closeFile`
@@ -114,8 +105,8 @@ const fetchAndWriteDay = async (
 // ── Task helpers ──────────────────────────────────────────────────────────────
 
 const getTasks = async (
-  table:      TableConfig,
-  getIndices: () => Promise<string[]>,
+  table: TableConfig,
+  cache: RedisClient,
 ): Promise<Task[]> => {
   const filterClause = table.filter ? { filter: table.filter } : {};
 
@@ -124,7 +115,7 @@ const getTasks = async (
     filter: { count: table.count, ...filterClause },
   }];
 
-  const indices = await getIndices();
+  const indices = await getOrderedIndices(cache, config.bitmexRestUrl);
 
   return indices.map(symbol => ({
     id: symbol,

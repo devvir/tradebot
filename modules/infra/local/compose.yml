@@ -20,7 +20,6 @@ name: infrastructure
 include:
   - path: ../../../services/vault/docker/compose.yml
   - path: ../../../services/bouncer/docker/compose.yml
-  - path: ../../../services/registry/docker/compose.yml
 
 services:
   queue:

@@ -6,10 +6,10 @@ const BITMEX_REST_URL = 'https://www.bitmex.com/api/v1';
 const loadConfig = (): Config => {
   const config: Config = {
     bitmexRestUrl: BITMEX_REST_URL,
-    vaultUrl:      process.env.VAULT_URL      ?? '',
-    registryUrl:   process.env.REGISTRY_URL   ?? '',
+    vaultUrl:      process.env.VAULT_URL ?? '',
     startDate:     parseStartDate(process.env.SCRIBE_START_DATE),
     indexTickOnly: parseBool(process.env.SCRIBE_INDEX_TICK_ONLY),
+    tables:        parseList(process.env.SCRIBE_TABLES),
   };
 
   validateConfig(config);
@@ -20,12 +20,14 @@ const loadConfig = (): Config => {
 };
 
 const validateConfig = (config: Config): void => {
-  if (! config.vaultUrl)    throw new Error('VAULT_URL is required');
-  if (! config.registryUrl) throw new Error('REGISTRY_URL is required');
+  if (! config.vaultUrl) throw new Error('VAULT_URL is required');
 };
 
 const parseBool = (raw: string | undefined): boolean =>
   ['1', 'on', 'true'].includes(raw?.trim().toLowerCase() ?? '');
+
+const parseList = (raw: string | undefined): string[] =>
+  raw?.split(',').map(s => s.trim()).filter(Boolean) ?? [];
 
 const parseStartDate = (raw: string | undefined): string | null => {
   if (! raw) return null;

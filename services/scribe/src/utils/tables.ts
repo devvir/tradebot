@@ -5,10 +5,14 @@ export const PAGE_SIZE = 500;
 
 const indexFilter = config.indexTickOnly ? { reference: 'BMI' } : undefined;
 
-export const TABLES: TableConfig[] = [
+const ALL_TABLES: TableConfig[] = [
   { name: 'compositeIndex', path: '/instrument/compositeIndex', maxStart: 2500000, count: 1000, filter: indexFilter },
   { name: 'tick',           path: '/trade',                     maxStart: 100000,  count: 1000, filter: { size: 0 } },
   { name: 'funding',        path: '/funding',                   maxStart: 2500000, count: 500                       },
   { name: 'insurance',      path: '/insurance',                 maxStart: 2500000, count: 500                       },
   { name: 'settlement',     path: '/settlement',                maxStart: 2500000, count: 500                       },
 ];
+
+export const TABLES: TableConfig[] = config.tables.length === 0
+  ? ALL_TABLES
+  : ALL_TABLES.filter(t => config.tables.includes(t.name));

@@ -3,9 +3,8 @@ import SK from './service';
 import { createFetchService } from './bitmex';
 import { logMetrics } from './bitmex/metrics';
 import { createStoreService } from './vault';
-import { fetchSymbols } from './utils/symbols';
-import { loadRegistryMap } from './utils/registry';
-import { runAllTables } from './runner';
+import { TABLES } from './utils/tables';
+import { processTable } from './runner';
 import type { Config } from './types';
 
 const METRICS_INTERVAL_MS = 5 * 60 * 1_000;
@@ -18,18 +17,5 @@ SK.run(async (service) => {
 
   setInterval(logMetrics, METRICS_INTERVAL_MS).unref();
 
-  /**
-   * Discover recently added indexes before processing a new day
-   * (used in the /instrument/compositeIndex per-index loop)
-   */
-  const getIndices = async (): Promise<string[]> => {
-    const [map, { indices }] = await Promise.all([
-      loadRegistryMap(config.registryUrl),
-      fetchSymbols(config.bitmexRestUrl),
-    ]);
-
-    return [...indices].sort((a, b) => (map.get(a) ?? 0) - (map.get(b) ?? 0));
-  };
-
-  await runAllTables(fetch, store, cache, getIndices);
+  await Promise.all(TABLES.map(table => processTable(table, fetch, store, cache)));
 });
