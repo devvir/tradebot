@@ -9,14 +9,12 @@ import { runStatus } from '../tools/data/status/run';
 import { runSync } from '../tools/data/sync/run';
 import { input } from '../shared/ui/prompts';
 import { error } from '../shared/ui/logger';
-import { getEnv } from '../shared/utils/env';
+import { requiredEnv } from '../shared/utils/env';
 
 // ── Path resolution ───────────────────────────────────────────────────────────
 
-const DEFAULT_VAULT_DIR = '/data/bitmex/vault';
-
 function vaultDir(): string {
-  return getEnv('VAULT_DATA_DIR', DEFAULT_VAULT_DIR) ?? DEFAULT_VAULT_DIR;
+  return requiredEnv('VAULT_DATA_DIR');
 }
 
 /**

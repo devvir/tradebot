@@ -4,6 +4,7 @@ import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { input } from '../../shared/ui/prompts';
 import { success, error, section, spacer } from '../../shared/ui/logger';
+import { requiredEnv } from '../../shared/utils/env';
 import { parseRemoteDest } from './types';
 import type { RemoteDest } from './types';
 
@@ -22,7 +23,8 @@ export async function run(source?: string): Promise<void> {
     process.exit(1);
   }
 
-  const localBase = await input('Local destination path:', '/data/bitmex/remote');
+  const defaultLocal = path.join(requiredEnv('BITMEX_DATA_DIR'), 'remote');
+  const localBase    = await input('Local destination path:', defaultLocal);
 
   section(`Syncing ${rawSrc} → ${localBase}`);
 

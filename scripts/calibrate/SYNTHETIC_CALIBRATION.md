@@ -88,10 +88,10 @@ By tracking each order ID through its lifecycle in the `orderBookL2` stream, we 
 
 ## Source data
 
-All source data lives on the filesystem as gzipped CSV files under `/data/bitmex/vault/`. MongoDB is not involved in calibration.
+All source data lives on the filesystem as gzipped CSV files under `${VAULT_DATA_DIR}/`. MongoDB is not involved in calibration.
 
 ```
-/data/bitmex/vault/<stream>/<year>/YYYYMMDD.csv.gz
+${VAULT_DATA_DIR}/<stream>/<year>/YYYYMMDD.csv.gz
 ```
 
 Streams relevant to calibration: `orderBookL2`, `quote`, `trade`.

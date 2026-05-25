@@ -23,7 +23,7 @@ services:
 
     volumes:
       - ../../../:/live
-      - ${VAULT_DATA_DIR:-/data/bitmex/vault}:/data/vault
+      - ${VAULT_DATA_DIR:?VAULT_DATA_DIR is not defined}:/data/vault
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]

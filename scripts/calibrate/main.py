@@ -11,11 +11,15 @@ from convert import (
 )
 from prereqs import check_prereqs
 
-DEFAULT_DATA_DIR = os.environ.get('DATA_DIR', '/data/bitmex')
+DATA_DIR_ENV = os.environ.get('DATA_DIR')
+
+if not DATA_DIR_ENV:
+    print('DATA_DIR is not set — define it in .env', file=sys.stderr)
+    sys.exit(1)
 
 
 @click.group()
-@click.option('--data-dir', default=DEFAULT_DATA_DIR, envvar='DATA_DIR', show_default=True,
+@click.option('--data-dir', default=DATA_DIR_ENV, envvar='DATA_DIR', show_default=True,
               help='Vault data root directory.')
 @click.pass_context
 def cli(ctx: click.Context, data_dir: str) -> None:

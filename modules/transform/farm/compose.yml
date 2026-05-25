@@ -32,7 +32,7 @@ services:
       replicas: 2
 
     volumes:
-      - ${VAULT_DATA_DIR:-/data/bitmex/vault}:/data/vault:ro
+      - ${VAULT_DATA_DIR:?VAULT_DATA_DIR must be set in .env}:/data/vault:ro
 
     ports:
       - :8000

@@ -259,6 +259,7 @@ describe('sync-env run()', () => {
 
 describe('pull run()', () => {
   let tmpDir: string;
+  let prevBitmexDir: string | undefined;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -267,11 +268,20 @@ describe('pull run()', () => {
     }) as any);
     vi.spyOn(console, 'log').mockImplementation(() => {});
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pull-test-'));
+
+    // pull.ts derives its default Local destination from BITMEX_DATA_DIR.
+    // Tests override the prompt response anyway, but the prompt's default
+    // is computed at call time and would throw without this.
+    prevBitmexDir = process.env['BITMEX_DATA_DIR'];
+    process.env['BITMEX_DATA_DIR'] = tmpDir;
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
     fs.rmSync(tmpDir, { recursive: true, force: true });
+
+    if (prevBitmexDir === undefined) delete process.env['BITMEX_DATA_DIR'];
+    else                              process.env['BITMEX_DATA_DIR'] = prevBitmexDir;
   });
 
   it('rejects with process.exit(1) for an invalid source format', async () => {

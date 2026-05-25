@@ -537,7 +537,7 @@ Downloads files from a remote path to a local directory. Before transferring eac
 # Pull vault files from a remote host
 ./tools remote pull
 # Prompt: Remote source (user@host:/remote/path): deploy@10.0.0.1:/data/vault
-# Prompt: Local destination path: /data/bitmex/vault
+# Prompt: Local destination path: ${BITMEX_DATA_DIR}/remote
 ```
 
 Output labels each file as `missing` or `changed` before pulling it. Files that are already up to date are silently skipped.
@@ -585,7 +585,7 @@ The tooling package loads environment variables in this order (later overrides e
 | `DB_URL` | `mongodb://localhost:27017/tradebot` | db, signal | `mongodb://localhost:27017/tradebot` |
 | `QUEUE_URL` | `amqp://guest:guest@localhost:5672` | rabbit, broadcast | `amqp://guest:guest@localhost:5672` |
 | `RABBITMQ_MGMT_URL` | `http://localhost:15672/api` | rabbit | `http://localhost:15672/api` |
-| `VAULT_DATA_DIR` | `/data/bitmex/vault` | data | `/data/bitmex/vault` |
+| `VAULT_DATA_DIR` | `${BITMEX_DATA_DIR}/vault` | data | Required |
 
 ---
 
@@ -609,10 +609,10 @@ Manage vault data: prepare raw WS source files, sync with remotes and Mega, insp
 
 | Input | Resolves to |
 |-------|-------------|
-| _(omitted / enter)_ | `VAULT_DATA_DIR` (default: `/data/bitmex/vault`) |
-| `instrument` | `$VAULT_DATA_DIR/instrument` |
-| `instrument/2026` | `$VAULT_DATA_DIR/instrument/2026` |
-| `/data/bitmex/alt` | `/data/bitmex/alt` (absolute path, used as-is) |
+| _(omitted / enter)_ | `${VAULT_DATA_DIR}` |
+| `instrument` | `${VAULT_DATA_DIR}/instrument` |
+| `instrument/2026` | `${VAULT_DATA_DIR}/instrument/2026` |
+| `/tmp/alt-vault` | `/tmp/alt-vault` (absolute path, used as-is) |
 
 ### Shared options
 
@@ -698,7 +698,7 @@ Sync    — audit + sync local, remotes, and Mega
 
 ### Configuration
 
-- `VAULT_DATA_DIR` — Root directory of vault files (default: `/data/bitmex/vault`)
+- `VAULT_DATA_DIR` — Root directory of vault files (required; defined in `.env`)
 - `VAULT_REMOTES` — Comma-separated `name=user@host:/path` pairs for rsync remotes
 - `SOURCES_MEGA_RAW` — Mega path for raw WS source backups
 - `SOURCES_MEGA_VAULT` — Mega path for prepared bucket backups

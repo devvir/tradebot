@@ -105,7 +105,7 @@ Plain ASCII, append-only.
 ```
 ════════════════════════════════════════════════════════════════════════
 2026-05-24 15:00:00Z  —  restore  —  args: quote 2024 2025
-output: /storage/bitmex/dumps
+output: ${DB_DUMP_DIR}
 
 targets (2):
   quote/2024.archive.gz  (local + mega, 1.2GB)
@@ -117,8 +117,8 @@ results:
   total: 2 ok, 0 failed
 
 removed from local (2):
-  /storage/bitmex/dumps/quote/2024.archive.gz
-  /storage/bitmex/dumps/quote/2025.archive.gz
+  ${DB_DUMP_DIR}/quote/2024.archive.gz
+  ${DB_DUMP_DIR}/quote/2025.archive.gz
 ```
 
 ---

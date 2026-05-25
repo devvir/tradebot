@@ -1,35 +1,24 @@
-import { getEnv } from '../../../shared/utils/env';
+import { getEnv, requiredEnv } from '../../../shared/utils/env';
 import { RemoteConfig, ScanConfig } from './types';
-
-const DEFAULT_VAULT_DIR = '/data/bitmex/vault';
 
 /**
  * Resolves the `ScanConfig` from environment variables.
  *
  * Required:
+ *   - `VAULT_DATA_DIR`     — local vault root
  *   - `SOURCES_MEGA_VAULT` — Mega path for ready buckets
  *   - `SOURCES_MEGA_RAW`   — Mega path for raw WS source files
  *
  * Optional:
- *   - `VAULT_DATA_DIR`         — local vault root (default `/data/bitmex/vault`)
  *   - `SOURCES_REMOTE_VAULTS`  — comma-separated `<name>:<user>@<host>:<path>`
  */
 export function loadConfig(): ScanConfig {
   const megaVault = requiredEnv('SOURCES_MEGA_VAULT');
   const megaRaw   = requiredEnv('SOURCES_MEGA_RAW');
-  const localBase = getEnv('VAULT_DATA_DIR', DEFAULT_VAULT_DIR) ?? DEFAULT_VAULT_DIR;
+  const localBase = requiredEnv('VAULT_DATA_DIR');
   const remotes   = parseRemotes(getEnv('SOURCES_REMOTE_VAULTS', '') ?? '');
 
   return { localBase, remotes, megaVault, megaRaw };
-}
-
-function requiredEnv(name: string): string {
-  const value = getEnv(name);
-
-  if (! value)
-    throw new Error(`Missing required env var: ${name}. Set it in dev/tooling/.env`);
-
-  return value;
 }
 
 /**

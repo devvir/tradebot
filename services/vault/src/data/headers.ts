@@ -5,7 +5,7 @@
 // incoming data because WS updates only include changed fields.
 //
 // Sources:
-//   - Vault files in /data/bitmex/vault  (observed, authoritative)
+//   - Vault files in VAULT_DATA_DIR  (observed, authoritative)
 //   - journalist CHAT_SCHEMA             (chat has extra fields missing from the partial WS message)
 //   - BitMEX OpenAPI + TABLE_SPECS       (tables not yet observed in vault)
 

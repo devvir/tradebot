@@ -1,4 +1,5 @@
 import { selectFromList, input } from '../../shared/ui/prompts';
+import { requiredEnv } from '../../shared/utils/env';
 import { setDryRun, setFromDay, setLogPath, setYes } from './options';
 import { runPrepare } from './prepare/run';
 import { runRecover } from './recover/run';
@@ -17,8 +18,6 @@ const subcommands: { name: string; value: Subcommand }[] = [
 ];
 
 // ── Entry point ───────────────────────────────────────────────────────────────
-
-const DEFAULT_VAULT_DIR = '/data/bitmex/vault';
 
 export async function run(): Promise<void> {
   const choice = (await selectFromList<Subcommand>(subcommands, 'Select operation:')) ?? 'prepare';
@@ -40,7 +39,8 @@ export async function run(): Promise<void> {
     return;
   }
 
-  const root = (await input('Path:', process.env['VAULT_DATA_DIR'] ?? DEFAULT_VAULT_DIR)) || (process.env['VAULT_DATA_DIR'] ?? DEFAULT_VAULT_DIR);
+  const vaultDir = requiredEnv('VAULT_DATA_DIR');
+  const root     = (await input('Path:', vaultDir)) || vaultDir;
 
   if (choice === 'prepare') {
     await runPrepare(root);

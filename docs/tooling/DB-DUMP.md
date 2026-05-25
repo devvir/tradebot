@@ -113,7 +113,7 @@ Plain ASCII, append-only, one entry per confirmed run. Safe to `tail -f`.
 ```
 ════════════════════════════════════════════════════════════════════════
 2026-05-23 12:00:00Z  —  dump  —  args: quote 2014 2015
-output: /storage/bitmex/dumps
+output: ${DB_DUMP_DIR}
 
 skipped (1):
   quote/2014.archive.gz  (local + mega)
@@ -163,7 +163,7 @@ Written once, immediately after the user confirms the proceed prompt. No entry i
 
 ```
 mongorestore --uri=$DB_URL --db=$DB_DATABASE --gzip \
-             --archive=/storage/bitmex/dumps/quote/2024.archive.gz
+             --archive=${DB_DUMP_DIR}/quote/2024.archive.gz
 ```
 
 Each archive contains its own collection name and metadata, so `mongorestore` recreates the target collection automatically. Use `--nsTo` / `--nsFrom` to restore into a different collection name if needed.

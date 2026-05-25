@@ -2,7 +2,7 @@
 Discovery and conversion of vault source files to Parquet.
 
 Source layout:
-  /data/bitmex/vault/<stream>/<year>/YYYYMMDD.csv.gz  (one file per day)
+  ${VAULT_DATA_DIR}/<stream>/<year>/YYYYMMDD.csv.gz  (one file per day)
 
 Parquet output mirrors the source under <data_dir>/parquet/vault/:
   <data_dir>/parquet/vault/<stream>/<year>/YYYYMMDD.parquet

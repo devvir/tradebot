@@ -70,5 +70,18 @@ export function getEnv(key: string, defaultValue?: string): string | undefined {
   return process.env[key] ?? defaultValue;
 }
 
+/**
+ * Read an env var that MUST be set. Throws a clear error naming the variable
+ * when it's missing or empty, instead of letting a hardcoded fallback in the
+ * consumer make the value un-configurable.
+ */
+export function requiredEnv(key: string): string {
+  const value = process.env[key];
+
+  if (! value) throw new Error(`${key} is not set — define it in .env`);
+
+  return value;
+}
+
 // Exported for testing
 export { parseEnvFile };

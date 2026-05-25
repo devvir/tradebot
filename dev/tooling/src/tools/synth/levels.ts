@@ -6,7 +6,7 @@ import path from 'node:path';
 import { createClient } from 'redis';
 import { MongoBulkWriteError } from 'mongodb';
 import { connectMongo } from '../../shared/connections/mongodb';
-import { getEnv } from '../../shared/utils/env';
+import { getEnv, requiredEnv } from '../../shared/utils/env';
 import { info, success, warn, error } from '../../shared/ui/logger';
 import type { PriceLevel } from './types';
 
@@ -28,7 +28,7 @@ export async function runLevels(): Promise<void> {
   await collection.createIndex({ symbol: 1, price: 1 });
 
   try {
-    const files = discoverFiles('/data/bitmex');
+    const files = discoverFiles(requiredEnv('BITMEX_DATA_DIR'));
 
     info(`Found ${files.length} vault files after ${CUTOFF}`);
 

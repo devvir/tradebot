@@ -60,7 +60,7 @@ Sources: `tradebot_unpacked` MongoDB (WS keys from partial messages — authorit
   - `unknown` — insufficient data to determine; empty in what we have but low activity makes this inconclusive
 - **Actions** — which action values the table emits after the initial partial; verified against `tradebot_archive` (`_id % 4`: 0=partial, 1=insert, 2=update, 3=delete)
 - **REST** — paginated REST endpoint to fetch historical data; `—` means no endpoint
-- **Since** — earliest date with data in `/data/bitmex/vault/`; `N/A` means no vault data collected yet
+- **Since** — earliest date with data in `${VAULT_DATA_DIR}/`; `N/A` means no vault data collected yet
 
 ---
 

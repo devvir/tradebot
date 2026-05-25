@@ -151,7 +151,7 @@ Included for completeness. Unlikely to be useful for data collection or trading 
 - **filter** — whether a JSON-encoded `filter` object is accepted to narrow results by any field (e.g. `{"side":"Buy"}`)
 - **columns** — whether a comma-separated or JSON-encoded `columns` list is accepted to select a subset of response fields
 - **WS table** — the WebSocket table that streams equivalent data; see `WS_TABLES.md` for subscription details
-- **Since** — earliest date with data in `/data/bitmex/vault/`; `—` means no vault data collected
+- **Since** — earliest date with data in `${VAULT_DATA_DIR}/`; `—` means no vault data collected
 
 ---
 

@@ -13,7 +13,7 @@ The scanner lives at `data/scan/` so `data sync` can reuse it without depending 
 | **source file** | WS-origin `.csv.gz` with a collector suffix (e.g. `.local`, `.mtav`, `.tardis`). Needs preparation before use. |
 | **bucket** | Ready-to-use `.csv.gz` with no suffix, one per table/day. WS buckets come from `data prepare`; REST buckets are written directly by collection services. |
 | **`.tmp` file** | A `.csv.gz.tmp` alongside a regular file name — collection or download in progress. |
-| **local** | `VAULT_DATA_DIR` on this machine (default `/data/bitmex/vault`). |
+| **local** | `${VAULT_DATA_DIR}` on this machine. |
 | **remote** | Named SSH host listed in `SOURCES_REMOTE_VAULTS`. Holds its own vault — WS source files only. |
 | **Mega** | Mega cloud, accessed via `mega-cmd` aliases. Two roots: `SOURCES_MEGA_VAULT` (buckets) and `SOURCES_MEGA_RAW` (raw WS sources). The grid treats them as one logical "Mega" column. |
 
@@ -53,7 +53,7 @@ Sources and their resulting bucket live side by side; they're distinguished by s
 
 | Variable | Description |
 |---|---|
-| `VAULT_DATA_DIR` | Local vault root (set in root `.env`, default `/data/bitmex/vault`). |
+| `VAULT_DATA_DIR` | Local vault root (defined in root `.env`, derived from `BITMEX_DATA_DIR`). |
 | `SOURCES_REMOTE_VAULTS` | Comma-separated remotes. Format: `<name>:<user>@<host>:<path>`. |
 | `SOURCES_MEGA_VAULT` | Mega path for ready buckets (current: `/User/Tradebot/vault`). |
 | `SOURCES_MEGA_RAW` | Mega path for raw WS source files (current: `/User/Tradebot/wsSources/fs`). |
