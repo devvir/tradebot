@@ -2,12 +2,14 @@ import { logger, type RabbitMQ, type Service } from '@devvir/service-kit';
 import SK from './service';
 import { Config, isBitmexDataMessage } from './types';
 import { createBuffer } from './persistence/buffer';
+import { createCloser } from './persistence/closer';
 
 SK.run(async (service: Service) => {
   const { vaultUrl, vaultSuffix } = service.config() as Config;
 
   const broker = await service.providers.connect('rabbitmq') as RabbitMQ.Broker;
   const buffer = createBuffer(vaultUrl, vaultSuffix);
+  const closer = createCloser(vaultUrl, vaultSuffix, buffer.flushAll);
 
   const stop = await broker.getQueue()!.consume(async (message, { ack, metadata }) => {
     if (! isBitmexDataMessage(message))
@@ -22,8 +24,11 @@ SK.run(async (service: Service) => {
     }
 
     const { data, action, table } = message;
+    const day = date.slice(0, 10).replace(/-/g, '');
 
-    await buffer.receive(table, { action, date, data }).catch(err =>
+    closer.track(table, day);
+
+    await buffer.receive(table, day, { action, date, data }).catch(err =>
       logger.error({ err, table, action }, 'Unexpected error processing message — dropping'),
     );
 

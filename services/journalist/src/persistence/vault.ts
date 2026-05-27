@@ -73,6 +73,24 @@ export const writeToVault = async (
   return false;
 };
 
+/**
+ * Lists files in vault for a table. Returns a map of date stem → state, or
+ * `null` if the table has no directory in vault. Throws on network/non-ok
+ * responses so the caller can reschedule.
+ */
+export const listVaultFiles = async (
+  vaultUrl: string,
+  table:    BitmexTable,
+  suffix:   string,
+): Promise<Record<string, 'open' | 'closed'> | null> => {
+  const res = await fetch(withSuffix(`${vaultUrl}/files/${table}`, suffix));
+
+  if (res.status === 404) return null;
+  if (! res.ok) throw new Error(`Vault list ${table} → ${res.status}`);
+
+  return res.json() as Promise<Record<string, 'open' | 'closed'>>;
+};
+
 export const closeVaultFile = async (
   vaultUrl: string,
   table:    BitmexTable,

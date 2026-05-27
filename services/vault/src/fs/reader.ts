@@ -63,6 +63,8 @@ export const listFiles = (table: string, suffix?: string): FileListing | null =>
   const result: FileListing = {};
 
   for (const year of readdirSync(dir)) {
+    if (! /^\d{4}$/.test(year)) continue;
+
     const yDir = `${dir}/${year}`;
 
     if (! statSync(yDir).isDirectory()) continue;
@@ -72,11 +74,18 @@ export const listFiles = (table: string, suffix?: string): FileListing | null =>
 
       if (file.endsWith('.csv.gz.tmp')) {
         stem = file.replace('.csv.gz.tmp', '');
-        if (matches(stem)) result[stem] = 'open';
       } else if (file.endsWith('.csv.gz')) {
         stem = file.replace('.csv.gz', '');
-        if (matches(stem)) result[stem] = 'closed';
+      } else {
+        continue;
       }
+
+      // Stem must start with YYYYMMDD where YYYY matches the year dir.
+      if (! /^\d{8}(\.|$)/.test(stem) || stem.slice(0, 4) !== year)
+        continue;
+
+      if (matches(stem))
+        result[stem] = file.endsWith('.tmp') ? 'open' : 'closed';
     }
   }
 

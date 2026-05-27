@@ -23,7 +23,12 @@ export type WsMessage = {
   data:   BitmexDataItem[];
 };
 
+export interface BufferedEntry {
+  day: string;
+  msg: WsMessage;
+}
+
 export interface TableBuffer {
-  messages: WsMessage[];
+  messages: BufferedEntry[];
   timer:    ReturnType<typeof setTimeout> | null;
 }

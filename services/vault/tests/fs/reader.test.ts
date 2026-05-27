@@ -48,9 +48,9 @@ afterEach(() => {
 
 describe('openClosedFile', () => {
   it('opens a closed file as a decompressed byte stream', async () => {
-    makeClosedFile('trade', '2023-02-01', ['header,col', 'a,1']);
+    makeClosedFile('trade', '20230201', ['header,col', 'a,1']);
 
-    const { stream, close } = openClosedFile('trade', '2023-02-01');
+    const { stream, close } = openClosedFile('trade', '20230201');
 
     let data = '';
 
@@ -64,7 +64,7 @@ describe('openClosedFile', () => {
   });
 
   it('throws NotFoundError if the closed file does not exist', () => {
-    expect(() => openClosedFile('trade', '2023-02-01')).toThrow(NotFoundError);
+    expect(() => openClosedFile('trade', '20230201')).toThrow(NotFoundError);
   });
 });
 
@@ -72,17 +72,17 @@ describe('openClosedFile', () => {
 
 describe('fileState', () => {
   it('returns "closed" when the .csv.gz exists', () => {
-    makeClosedFile('trade', '2023-02-01', ['hdr']);
-    expect(fileState('trade', '2023-02-01')).toBe('closed');
+    makeClosedFile('trade', '20230201', ['hdr']);
+    expect(fileState('trade', '20230201')).toBe('closed');
   });
 
   it('returns "open" when only the .tmp exists', () => {
-    makeOpenFile('trade', '2023-02-01');
-    expect(fileState('trade', '2023-02-01')).toBe('open');
+    makeOpenFile('trade', '20230201');
+    expect(fileState('trade', '20230201')).toBe('open');
   });
 
   it('returns "none" when no file exists', () => {
-    expect(fileState('trade', '2023-02-01')).toBe('none');
+    expect(fileState('trade', '20230201')).toBe('none');
   });
 });
 
@@ -99,29 +99,49 @@ describe('listFiles', () => {
   });
 
   it('lists bare-date files with correct states, excludes suffixed files', () => {
-    makeClosedFile('trade', '2023-02-01',          ['hdr']);
-    makeOpenFile('trade',   '2023-02-02');
-    makeClosedFile('trade', '2023-02-01.snapshot', ['hdr']); // must not appear
+    makeClosedFile('trade', '20230201',          ['hdr']);
+    makeOpenFile('trade',   '20230202');
+    makeClosedFile('trade', '20230201.snapshot', ['hdr']); // must not appear
 
     const result = listFiles('trade');
 
-    expect(result['2023-02-01']).toBe('closed');
-    expect(result['2023-02-02']).toBe('open');
-    expect(result['2023-02-01.snapshot']).toBeUndefined();
+    expect(result['20230201']).toBe('closed');
+    expect(result['20230202']).toBe('open');
+    expect(result['20230201.snapshot']).toBeUndefined();
   });
 
   it('lists only suffixed files matching the requested suffix', () => {
-    makeClosedFile('trade', '2023-02-01',          ['hdr']); // bare — must not appear
-    makeClosedFile('trade', '2023-02-01.snapshot', ['hdr']);
-    makeOpenFile('trade',   '2023-02-02.snapshot');
-    makeClosedFile('trade', '2023-02-01.other',    ['hdr']); // different suffix — must not appear
+    makeClosedFile('trade', '20230201',          ['hdr']); // bare — must not appear
+    makeClosedFile('trade', '20230201.snapshot', ['hdr']);
+    makeOpenFile('trade',   '20230202.snapshot');
+    makeClosedFile('trade', '20230201.other',    ['hdr']); // different suffix — must not appear
 
     const result = listFiles('trade', 'snapshot');
 
-    expect(result['2023-02-01.snapshot']).toBe('closed');
-    expect(result['2023-02-02.snapshot']).toBe('open');
-    expect(result['2023-02-01']).toBeUndefined();
-    expect(result['2023-02-01.other']).toBeUndefined();
+    expect(result['20230201.snapshot']).toBe('closed');
+    expect(result['20230202.snapshot']).toBe('open');
+    expect(result['20230201']).toBeUndefined();
+    expect(result['20230201.other']).toBeUndefined();
+  });
+
+  it('ignores files outside the <table>/YYYY/YYYYMMDD layout', () => {
+    // Operators sometimes rename year dirs to pause processing (e.g. `2025.paused`).
+    // Vault must only enumerate dirs matching /^\d{4}$/, and only files whose
+    // 8-digit date prefix begins with that same year.
+    mkdirSync(path.join(tmpDir, 'trade', '2023.paused'), { recursive: true });
+    writeFileSync(path.join(tmpDir, 'trade', '2023.paused', '20230201.csv.gz'), gzipSync('hdr\n'));
+
+    mkdirSync(path.join(tmpDir, 'trade', 'archive'), { recursive: true });
+    writeFileSync(path.join(tmpDir, 'trade', 'archive', '20230201.csv.gz'), gzipSync('hdr\n'));
+
+    // Year dir exists but the file inside is from a different year — must be ignored.
+    mkdirSync(path.join(tmpDir, 'trade', '2023'), { recursive: true });
+    writeFileSync(path.join(tmpDir, 'trade', '2023', '20240101.csv.gz'), gzipSync('hdr\n'));
+
+    // Legitimate file in the right place — must still be listed.
+    makeClosedFile('trade', '20230301', ['hdr']);
+
+    expect(listFiles('trade')).toEqual({ '20230301': 'closed' });
   });
 });
 
