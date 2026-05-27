@@ -17,3 +17,9 @@ export interface SignRestResult {
   signature: string;
   expires:   number;
 }
+
+/** Parsed `x-testnet` header — `explicit` flags whether the caller sent it at all. */
+export interface TestnetHint {
+  explicit: boolean;
+  testnet:  boolean;
+}

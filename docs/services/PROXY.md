@@ -11,10 +11,24 @@ Proxy is a standalone service. Any service that needs authenticated access to Bi
 ## Responsibilities
 
 - **Accept** any HTTP request (method, path, query string, body)
+- **Target** live or testnet per the `x-testnet` header (per-request, not per-deployment)
 - **Identify** the target account from the `x-account-id` header or `api-key` header
 - **Sign** the request through Bouncer (`POST /sign/rest`)
-- **Forward** the signed request to the correct BitMEX environment with auth headers (`api-key`, `api-expires`, `api-signature`)
+- **Forward** the signed request to the chosen BitMEX environment with auth headers (`api-key`, `api-expires`, `api-signature`)
 - **Return** the BitMEX response verbatim — status code, body, content-type
+
+---
+
+## Environment Selection (`x-testnet`)
+
+A single proxy instance serves both BitMEX environments; the choice is per-request, not per-deployment. The `x-testnet` header (`true|1` → testnet, anything else / absent → live) drives the selection.
+
+Interaction with authentication:
+
+- **Anonymous** (no `x-account-id` / `api-key`): the header alone decides; default is live.
+- **Authenticated**: the account's own environment (`account.type`) is authoritative — the keys only work against the environment they were issued for. If `x-testnet` is also present and disagrees with the account, the request is rejected with `400` rather than silently choosing one. A matching `x-testnet` is accepted (the client may always send it for clarity).
+
+The header is stripped before forwarding upstream so BitMEX never sees it.
 
 ---
 
@@ -67,8 +81,9 @@ Upstream:  GET https://www.bitmex.com/api/v1/order?symbol=XBTUSD&count=10
 
 Most headers from the caller are forwarded unchanged (e.g. `Content-Type`, `Accept`). The following are stripped before forwarding:
 
-- `x-account-id` (internal, not a BitMEX header)
+- `x-account-id`, `x-testnet` (internal, not BitMEX headers)
 - `host`, `connection`, `transfer-encoding` (hop-by-hop)
+- `content-encoding`, `content-length` (`fetch()` auto-decompresses, so the upstream values would no longer match the body)
 
 In the account-id flow, any `api-*` headers from the caller are replaced by the signed headers from Bouncer.
 

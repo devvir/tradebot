@@ -1,57 +1,20 @@
 # Live Module — Exchange App
 #
-# Infra: queue-rt, bouncer, redis
+# Infra: bouncer (from infra/local)
 #
-# Wires live BitMEX data into a fully BitMEX-compatible API surface.
-# Bots connect to ws and rest as if they were BitMEX.
+# Bots and the UI connect to live (or testnet) BitMEX directly:
+#   - WebSocket: clients open a connection to BitMEX themselves
+#   - REST:      clients go through `proxy`, which signs via Bouncer and
+#                forwards transparently to live or testnet
 #
-# Data flow:
-#
-#   BitMEX WS ──► broadcast ──► [broadcast exchange] ──► ws.deltas@default ──► ws ◄── bots
-#
-#   bots ──► rest ──► proxy ──► BitMEX REST API
-#                └── (auth via Bouncer)
+# Per-request environment selection is driven by the `x-testnet` header on
+# proxy calls (and by the BitMEX URL the client picks for WS).
 
 # Docker Compose Project (for all exchange app modules)
 name: exchange
 
 include:
-  - path: ../../../services/ws/docker/compose.yml
-  - path: ../../../services/rest/docker/compose.yml
   - path: ../../../services/proxy/docker/compose.yml
-
-services:
-  feed:
-    extends:
-      file: ../../../services/broadcast/docker/compose.yml
-      service: broadcast
-
-    depends_on:
-      live-pipe:
-        condition: service_completed_successfully
-
-  live-pipe:
-    extends:
-      file: ../../../services/pipe/docker/compose.yml
-      service: pipe
-
-    environment:
-      PIPE_BINDINGS: topic:broadcast > ws.deltas@topic:deltas
-
-  # trader:
-  #   extends:
-  #     file: ../../../services/trader/docker/compose.yml
-  #     service: trader
-
-  #   environment:
-  #     TRADER_WS_URL:   ${TRADER_WS_URL:-ws://ws}
-  #     TRADER_REST_URL: ${TRADER_REST_URL:-http://rest}
-
-  #   depends_on:
-  #     ws:
-  #       condition: service_healthy
-  #     rest:
-  #       condition: service_healthy
 
 networks:
   default:

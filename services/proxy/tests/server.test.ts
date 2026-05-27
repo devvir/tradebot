@@ -327,4 +327,107 @@ describe('Proxy — response passthrough', () => {
     const headers = opts.headers as Record<string, string>;
     expect(headers['transfer-encoding']).toBeUndefined();
   });
+
+  it('preserves upstream response headers other than transport-layer ones', async () => {
+    const upstreamRes = new Response('{"ok":true}', {
+      status:  200,
+      headers: {
+        'content-type':           'application/json',
+        'x-ratelimit-remaining':  '299',
+        'x-bitmex-request-id':    'abc-123',
+      },
+    });
+
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(makeJson(MOCK_ACCOUNT))
+      .mockResolvedValueOnce(makeJson(MOCK_SIGN))
+      .mockResolvedValueOnce(upstreamRes),
+    );
+
+    const res = await request(app).get('/order').set('x-account-id', 'test-account');
+
+    expect(res.headers['x-ratelimit-remaining']).toBe('299');
+    expect(res.headers['x-bitmex-request-id']).toBe('abc-123');
+    expect(res.headers['content-type']).toMatch(/application\/json/);
+  });
+});
+
+// ── x-testnet header ──────────────────────────────────────────────────────────
+
+describe('Proxy — x-testnet (anonymous)', () => {
+  it('defaults to live when no x-testnet header is set', async () => {
+    const mockFetch = vi.fn().mockResolvedValueOnce(makeUpstream('{"ok":true}'));
+    vi.stubGlobal('fetch', mockFetch);
+
+    await request(app).get('/instrument');
+
+    const upstreamUrl = mockFetch.mock.calls[0]![0] as string;
+    expect(upstreamUrl).toBe('https://www.bitmex.com/api/v1/instrument');
+  });
+
+  it('targets testnet when x-testnet: true', async () => {
+    const mockFetch = vi.fn().mockResolvedValueOnce(makeUpstream('{"ok":true}'));
+    vi.stubGlobal('fetch', mockFetch);
+
+    await request(app).get('/instrument').set('x-testnet', 'true');
+
+    const upstreamUrl = mockFetch.mock.calls[0]![0] as string;
+    expect(upstreamUrl).toBe('https://testnet.bitmex.com/api/v1/instrument');
+  });
+
+  it('targets live when x-testnet: false', async () => {
+    const mockFetch = vi.fn().mockResolvedValueOnce(makeUpstream('{"ok":true}'));
+    vi.stubGlobal('fetch', mockFetch);
+
+    await request(app).get('/instrument').set('x-testnet', 'false');
+
+    const upstreamUrl = mockFetch.mock.calls[0]![0] as string;
+    expect(upstreamUrl).toBe('https://www.bitmex.com/api/v1/instrument');
+  });
+
+  it('strips x-testnet from the upstream forward', async () => {
+    const mockFetch = vi.fn().mockResolvedValueOnce(makeUpstream('{"ok":true}'));
+    vi.stubGlobal('fetch', mockFetch);
+
+    await request(app).get('/instrument').set('x-testnet', 'true');
+
+    const [, opts] = mockFetch.mock.calls[0] as [string, RequestInit];
+    const headers = opts.headers as Record<string, string>;
+    expect(headers['x-testnet']).toBeUndefined();
+  });
+});
+
+describe('Proxy — x-testnet (mismatch with account env → 400)', () => {
+  it('400s when x-account-id resolves to testnet but x-testnet: false', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(makeJson(MOCK_ACCOUNT)));
+
+    const res = await request(app).get('/order')
+      .set('x-account-id', 'test-account')
+      .set('x-testnet',    'false');
+
+    expect(res.status).toBe(400);
+  });
+
+  it('passes through when x-account-id (testnet) matches x-testnet: true', async () => {
+    const mockFetch = mockAccountThenSignThenBitmex();
+    vi.stubGlobal('fetch', mockFetch);
+
+    const res = await request(app).get('/order')
+      .set('x-account-id', 'test-account')
+      .set('x-testnet',    'true');
+
+    expect(res.status).toBe(200);
+  });
+
+  it('400s when real credentials resolve to testnet but x-testnet: false', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(makeJson([MOCK_ACCOUNT])));
+
+    const res = await request(app).get('/order')
+      .set('api-key',       'real-bitmex-key')
+      .set('api-signature', 'caller-precomputed-sig')
+      .set('api-expires',   '1711234567')
+      .set('x-testnet',     'false');
+
+    expect(res.status).toBe(400);
+  });
 });

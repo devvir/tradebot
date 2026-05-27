@@ -2,11 +2,10 @@ import type { BitmexFieldType, BitmexTable } from '@tradebot/types';
 
 /**
  * Static per-table specs derived from live BitMEX WebSocket partial messages.
- * Source: services/ws/tests/fixtures.ts (authoritative keys + types per table).
  *
- * Tables not in the WS fixture set (csastate, isolation, leverage,
- * mamAllocation, voucher, privateNotifications) are approximated from
- * the type definitions in bitmex-database/src/types.ts.
+ * Tables that don't appear in a `partial` (csastate, isolation, leverage,
+ * mamAllocation, voucher, privateNotifications) are approximated from the
+ * type definitions in bitmex-database/src/types.ts.
  */
 
 export interface TableSpec {
