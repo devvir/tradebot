@@ -57,7 +57,7 @@ const admitItems = async (task: Task, n: number): Promise<void> => {
 };
 
 const FLUSH_INTERVAL = 50;
-const WRITER_URL     = 'http://writer';
+const LIBRARIAN_URL     = 'http://writer';
 const CAP            = 100_000;
 
 beforeEach(() => {
@@ -162,7 +162,7 @@ describe('startFlush — no-op when batches are empty', () => {
     const fetchSpy = mockFetch(async () => okResponse());
 
     const batches: TableBatches = new Map();
-    const timer = startFlush(WRITER_URL, batches, FLUSH_INTERVAL, CAP);
+    const timer = startFlush(LIBRARIAN_URL, batches, FLUSH_INTERVAL, CAP);
 
     await vi.advanceTimersByTimeAsync(FLUSH_INTERVAL * 5);
 
@@ -189,7 +189,7 @@ describe('startFlush — successful POST', () => {
 
     await admitItems(task, items.length);
 
-    const timer = startFlush(WRITER_URL, batches, FLUSH_INTERVAL, CAP);
+    const timer = startFlush(LIBRARIAN_URL, batches, FLUSH_INTERVAL, CAP);
 
     await vi.advanceTimersByTimeAsync(FLUSH_INTERVAL);
     await vi.advanceTimersByTimeAsync(0);
@@ -213,12 +213,12 @@ describe('startFlush — successful POST', () => {
 
     await admitItems(task, 1);
 
-    const timer = startFlush(WRITER_URL, batches, FLUSH_INTERVAL, CAP);
+    const timer = startFlush(LIBRARIAN_URL, batches, FLUSH_INTERVAL, CAP);
 
     await vi.advanceTimersByTimeAsync(FLUSH_INTERVAL);
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(fetchSpy).toHaveBeenCalledWith(`${WRITER_URL}/write/orderBookL2`, expect.any(Object));
+    expect(fetchSpy).toHaveBeenCalledWith(`${LIBRARIAN_URL}/orderBookL2`, expect.any(Object));
     clearInterval(timer);
   });
 });
@@ -236,7 +236,7 @@ describe('startFlush — duplicate batches', () => {
 
     await admitItems(task, 1);
 
-    const timer = startFlush(WRITER_URL, batches, FLUSH_INTERVAL, CAP);
+    const timer = startFlush(LIBRARIAN_URL, batches, FLUSH_INTERVAL, CAP);
 
     await vi.advanceTimersByTimeAsync(FLUSH_INTERVAL);
     await vi.advanceTimersByTimeAsync(0);
@@ -269,7 +269,7 @@ describe('startFlush — transient error retry', () => {
 
     await admitItems(task, 1);
 
-    const timer = startFlush(WRITER_URL, batches, FLUSH_INTERVAL, CAP);
+    const timer = startFlush(LIBRARIAN_URL, batches, FLUSH_INTERVAL, CAP);
 
     await vi.advanceTimersByTimeAsync(FLUSH_INTERVAL);
     await vi.advanceTimersByTimeAsync(0);
@@ -302,7 +302,7 @@ describe('startFlush — shutdown', () => {
 
     await admitItems(task, 1);
 
-    const timer = startFlush(WRITER_URL, batches, FLUSH_INTERVAL, CAP);
+    const timer = startFlush(LIBRARIAN_URL, batches, FLUSH_INTERVAL, CAP);
 
     await vi.advanceTimersByTimeAsync(FLUSH_INTERVAL);
     await vi.advanceTimersByTimeAsync(0);
@@ -336,7 +336,7 @@ describe('startFlush — wireBytesCap', () => {
     await admitItems(task, 1);
 
     /** cap = exactly one item's worth of bytes → only one in flight at a time. */
-    const timer = startFlush(WRITER_URL, batches, FLUSH_INTERVAL, first.size);
+    const timer = startFlush(LIBRARIAN_URL, batches, FLUSH_INTERVAL, first.size);
 
     await vi.advanceTimersByTimeAsync(FLUSH_INTERVAL);
     await vi.advanceTimersByTimeAsync(0);
@@ -376,7 +376,7 @@ describe('startFlush — wireBytesCap', () => {
     await admitItems(tradeTask, 1);
     await admitItems(obTask, 1);
 
-    const timer = startFlush(WRITER_URL, batches, FLUSH_INTERVAL, CAP);
+    const timer = startFlush(LIBRARIAN_URL, batches, FLUSH_INTERVAL, CAP);
 
     await vi.advanceTimersByTimeAsync(FLUSH_INTERVAL);
     await vi.advanceTimersByTimeAsync(0);
@@ -402,7 +402,7 @@ describe('startFlush — wireBytesCap', () => {
 
     await admitItems(task, 1);
 
-    const timer = startFlush(WRITER_URL, batches, FLUSH_INTERVAL, CAP);
+    const timer = startFlush(LIBRARIAN_URL, batches, FLUSH_INTERVAL, CAP);
 
     await vi.advanceTimersByTimeAsync(FLUSH_INTERVAL);
     await vi.advanceTimersByTimeAsync(0);

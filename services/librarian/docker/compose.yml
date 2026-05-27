@@ -1,20 +1,20 @@
-# Writer Service — HTTP→MongoDB bulk insert endpoint.
+# Librarian Service — HTTP↔MongoDB bulk-insert and batched-read endpoints.
 
 services:
-  writer:
+  librarian:
     build:
       context: ../../..
       dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
       args:
-        SERVICE_NAME: writer
+        SERVICE_NAME: librarian
 
     deploy:
-      replicas: ${WRITER_REPLICAS:-1}
+      replicas: ${LIBRARIAN_REPLICAS:-1}
 
     environment:
-      DB_URL:                   ${DB_URL}
-      DB_DATABASE:              ${DB_DATABASE:-tradebot}
-      WRITER_IGNORE_DUPLICATES: ${WRITER_IGNORE_DUPLICATES:-true}
+      DB_URL:                      ${DB_URL}
+      DB_DATABASE:                 ${DB_DATABASE:-tradebot}
+      LIBRARIAN_IGNORE_DUPLICATES: ${LIBRARIAN_IGNORE_DUPLICATES:-true}
 
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV:  ${APP_ENV:-prod}

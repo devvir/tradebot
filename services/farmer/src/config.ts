@@ -8,7 +8,7 @@ const loadConfig = (): Config => {
   const config: Config = {
     database:           process.env.DB_DATABASE ?? '',
     vaultUrl:           process.env.VAULT_URL   ?? '',
-    writerUrl:          process.env.WRITER_URL  ?? '',
+    librarianUrl:          process.env.LIBRARIAN_URL  ?? '',
     tables:             tables.split(',').map(s => s.trim()).filter(Boolean) as BitmexTable[],
     fileConcurrency:    parseInt(process.env.FARMER_FILE_CONCURRENCY     ?? '10'),
     readBufferHigh:     parseInt(process.env.FARMER_READ_BUFFER_HIGH     ?? '1000000'),
@@ -26,8 +26,8 @@ const loadConfig = (): Config => {
   if (! config.vaultUrl)
     throw new Error('VAULT_URL is required');
 
-  if (! config.writerUrl)
-    throw new Error('WRITER_URL is required');
+  if (! config.librarianUrl)
+    throw new Error('LIBRARIAN_URL is required');
 
   logger.info(config, 'Configuration loaded and validated!');
 

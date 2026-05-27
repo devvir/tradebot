@@ -7,7 +7,7 @@ export type RedisClient = SKRedisClient;
 export interface Config {
   database:           string;
   vaultUrl:           string;
-  writerUrl:          string;
+  librarianUrl:          string;
   tables:             BitmexTable[];
   fileConcurrency:    number;
   readBufferHigh:     number;

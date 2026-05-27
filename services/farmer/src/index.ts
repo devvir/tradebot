@@ -46,7 +46,7 @@ SK.run(async (service: Service) => {
   void startAssemble(assemblerQueue, writerQueue);
   void startDispatch(writerQueue, batches);
 
-  const flushTimer   = startFlush(config.writerUrl, batches, config.flushIntervalMs, config.wireBytesCap);
+  const flushTimer   = startFlush(config.librarianUrl, batches, config.flushIntervalMs, config.wireBytesCap);
   const metricsTimer = setInterval(logMetrics, config.metricsIntervalMs);
 
   metricsTimer.unref();

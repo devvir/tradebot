@@ -3,8 +3,9 @@
 # Infra: cache, db, vault
 #
 # Data flow:
-#   farmer    → reads closed vault buckets
-#             → bulk-inserts into MongoDB tradebot / <table>
+#   farmer    → reads closed buckets from vault (replica pool as harvester)
+#             → sends writes to librarian (replica pool as writer)
+#             → librarian bulk-inserts into MongoDB tradebot / <table>
 #
 #   distiller → reads raw collections from MongoDB
 #             → produces derived collections (bins, order book snapshots, partials)
@@ -15,21 +16,27 @@
 name: transform
 
 include:
-  - path: ../../../services/farmer/docker/compose.yml
-  - path: ../../../services/writer/docker/compose.yml
   - path: ../../../services/distiller/docker/compose.yml
 
 services:
-  # Read-only vault replica pool. farmer reads closed CSV.gz buckets from here,
-  # spreading the gunzip/parse CPU cost across replicas instead of pinning the
-  # single writer vault on one core. Reads only — the data mount is :ro.
+  # Read-only vault replica pool. spreads CPU cost across farm-owned Vault replicas.
+  farm:
+    extends:
+      file: ../../../services/farmer/docker/compose.yml
+      service: farmer
+
+    environment:
+      LIBRARIAN_URL: ${WRITER_URL:-http://writer}
+      VAULT_URL: ${HARVESTER_URL:-http://harvester:8000}
+
+  # Read-only vault replica pool. spreads CPU cost across farm-owned Vault replicas.
   harvester:
     extends:
       file: ../../../services/vault/docker/base.yml
       service: vault
 
     deploy:
-      replicas: 2
+      replicas: ${HARVESTER_REPLICAS:-2}
 
     volumes:
       - ${VAULT_DATA_DIR:?VAULT_DATA_DIR must be set in .env}:/data/vault:ro
@@ -37,6 +44,18 @@ services:
     ports:
       - :8000
       - :3000
+
+  # Librarian replica pool, unloads and spreads mongo resource needs for farmer's writes.
+  writer:
+    extends:
+      file: ../../../services/librarian/docker/compose.yml
+      service: librarian
+
+    deploy:
+      replicas: ${WRITER_REPLICAS:-2}
+
+    environment:
+      LIBRARIAN_IGNORE_DUPLICATES: "true"
 
 networks:
   default:

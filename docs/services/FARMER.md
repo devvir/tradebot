@@ -5,9 +5,10 @@
 Farmer takes the raw vault data (gzipped CSV per table+date) and turns it into
 the cleaned, reconstructed, deterministically-keyed Mongo collections the
 replay engine needs. A single in-process pipeline reads from vault, transforms
-each item, and hands the resulting documents to the [Writer](WRITER.md) sidecar
-for bulk insertion. Progress is checkpointed in Redis so work resumes cleanly
-across restarts.
+each item, and hands the resulting documents to a dedicated write-only sidecar
+— a [Librarian](LIBRARIAN.md) instance configured as farmer's writer (referred
+to throughout this doc simply as "the writer"). Progress is checkpointed in
+Redis so work resumes cleanly across restarts.
 
 If the only goal were "move bytes from vault to Mongo", the service would be
 twenty lines. The extra surface is five layered concerns:
@@ -87,7 +88,7 @@ WS │         │ REST
         │
    flush (50ms timer or cap headroom)
         │
-   POST /write/:table  ─→  Writer service  ─→  MongoDB
+   POST /:table  ─→  Librarian  ─→  MongoDB
 ```
 
 `JSON.parse` and `reconstruct()` errors fork to the `farmer.<table>`
@@ -271,7 +272,7 @@ hard ceiling on rows the producer-side has outstanding.
 | `JSON.parse` throws | Write `{ _id, message: raw }` to `farmer.<table>` (direct `insertOne`). Bump progress. | Bytes got corrupted between vault and farmer. Preserve for forensics; the `_id` matches where the doc would have lived in `tradebot.<table>`. |
 | `reconstruct()` throws | Same as parse throw. | Same cause — vault constructs the JSON itself, so a shape mismatch is post-vault corruption. |
 | `TABLE_SPECS` lookup miss (unknown table) | `service.shutdown('Unknown table ${table}')` | Config drift between vault and code. Operator must look. |
-| Writer responds `200 { duplicates: true }` | Treat as success. Bump progress. | The writer's `WRITER_IGNORE_DUPLICATES=true` setting means it has handled the `E11000` for us; idempotent retry path. |
+| Writer responds `200 { duplicates: true }` | Treat as success. Bump progress. | The writer (a librarian instance) runs with `LIBRARIAN_IGNORE_DUPLICATES=true`, so it has handled the `E11000` for us; idempotent retry path. |
 | Writer responds non-2xx, or fetch throws | Retry forever, exponential backoff `1s → 2 → 4 → 8 → 16 → 30s`. | Transient infra (writer restarting, mongo blip) resolves in seconds. Persistent issues hang loudly on the batch; data is never silently dropped. |
 | `stopSignal.triggered` mid-retry | Abandon the batch, log. | Items are re-streamed and re-inserted on next start; `_id` collision keeps it idempotent. |
 
@@ -381,7 +382,7 @@ src/
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `VAULT_URL` | Yes | — | Base URL of the vault service |
-| `WRITER_URL` | Yes | `http://writer` | Base URL of the writer service |
+| `LIBRARIAN_URL` | Yes | — | Base URL of the librarian writer service |
 | `DB_DATABASE` | Yes | — | Target database (writer reads its own `DB_DATABASE`; farmer's value is used only for the `farmer.<table>` forensics writes) |
 | `CACHE_URL` | Yes | — | Redis connection string |
 | `FARMER_TABLES` | No | (all) | Comma-separated table filter |

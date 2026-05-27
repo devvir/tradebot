@@ -51,7 +51,7 @@ const MAX_BYTES_PER_REQUEST = 5_000_000;
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export const startFlush = (
-  writerUrl:       string,
+  librarianUrl:       string,
   batches:         TableBatches,
   flushIntervalMs: number,
   wireBytesCap:    number,
@@ -72,7 +72,7 @@ export const startFlush = (
         release(batch.length);   // hand off writer-queue inflight
         wireBytes += bytes;      // claim wire-side inflight
 
-        void postBatch(writerUrl, table, batch)
+        void postBatch(librarianUrl, table, batch)
           .finally(() => { wireBytes -= bytes; });
       }
     }
@@ -115,7 +115,7 @@ const sumBytes = (items: Item[], count: number): number => {
 };
 
 const postBatch = async (
-  writerUrl: string,
+  librarianUrl: string,
   table:     BitmexTable,
   batch:     Item[],
 ): Promise<void> => {
@@ -125,7 +125,7 @@ const postBatch = async (
 
   while (true) {
     try {
-      const res = await fetch(`${writerUrl}/write/${table}`, {
+      const res = await fetch(`${librarianUrl}/${table}`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body,

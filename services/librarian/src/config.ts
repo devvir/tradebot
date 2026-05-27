@@ -6,7 +6,7 @@ const loadConfig = (): Config => {
     database:         process.env.DB_DATABASE ?? '',
     /** When true, `E11000` duplicate-key responses are reported as success.
      *  Farmer relies on this for idempotent re-runs; other use cases can flip it off. */
-    ignoreDuplicates: (process.env.WRITER_IGNORE_DUPLICATES ?? 'true').toLowerCase() === 'true',
+    ignoreDuplicates: (process.env.LIBRARIAN_IGNORE_DUPLICATES ?? 'true').toLowerCase() === 'true',
   };
 
   if (! config.database)

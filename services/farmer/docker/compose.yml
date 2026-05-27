@@ -9,12 +9,12 @@ services:
         SERVICE_NAME: farmer
 
     environment:
-      DB_URL:      ${DB_URL}
-      DB_DATABASE: ${DB_DATABASE:-tradebot}
-      CACHE_URL:   ${CACHE_URL}
-      CACHE_PASS:  ${CACHE_PASS}
-      VAULT_URL:   ${VAULT_URL}
-      WRITER_URL:  ${WRITER_URL:-http://writer}
+      DB_URL:        ${DB_URL}
+      DB_DATABASE:   ${DB_DATABASE:-tradebot}
+      CACHE_URL:     ${CACHE_URL}
+      CACHE_PASS:    ${CACHE_PASS}
+      VAULT_URL:     ${VAULT_URL}
+      LIBRARIAN_URL: ${LIBRARIAN_URL}
 
       FARMER_TABLES:                ${FARMER_TABLES:-}
       FARMER_FILE_CONCURRENCY:      ${FARMER_FILE_CONCURRENCY:-10}

@@ -2,9 +2,10 @@
 
 Reads closed vault files (gzipped CSV per table+date), reconstructs the
 original BitMEX WebSocket envelopes for WS-origin tables, assigns deterministic
-`_id`s, and bulk-inserts the cleaned documents into MongoDB via the
-[Writer](../writer/README.md) sidecar. Progress is checkpointed in Redis so a
-restart resumes mid-file.
+`_id`s, and bulk-inserts the cleaned documents into MongoDB via a dedicated
+write-only sidecar — a [Librarian](../librarian/README.md) instance configured
+as farmer's writer (referenced throughout this doc simply as "the writer").
+Progress is checkpointed in Redis so a restart resumes mid-file.
 
 A single in-process pipeline replaces what was previously a three-service
 chain (clerk + assembler + registrar) coupled by RabbitMQ. Mongo writes are
@@ -32,7 +33,7 @@ its native rate.
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `VAULT_URL` | Yes | — | Base URL of vault |
-| `WRITER_URL` | Yes | `http://writer` | Base URL of the writer service |
+| `LIBRARIAN_URL` | Yes | — | Base URL of the librarian sidecar that handles farmer's mongo writes |
 | `DB_DATABASE` | Yes | — | Target database (writer reads its own `DB_DATABASE`; farmer's value is used only for the forensics path) |
 | `CACHE_URL` | Yes | — | Redis connection string |
 | `FARMER_TABLES` | No | _(all)_ | Comma-separated table filter |

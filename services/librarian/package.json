@@ -1,7 +1,7 @@
 {
-  "name": "@tradebot/writer",
+  "name": "@tradebot/librarian",
   "version": "0.0.1",
-  "description": "HTTP→MongoDB insert service — receives JSON arrays and bulk-inserts them",
+  "description": "HTTP↔MongoDB sidecar — bulk-insert and batched-read endpoints on the project's main database",
   "main": "dist/src/index.js",
   "private": true,
   "scripts": {
