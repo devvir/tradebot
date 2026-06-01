@@ -1,5 +1,20 @@
 export type WsAction = 'partial' | 'insert' | 'update' | 'delete';
 
+/** The three data environments the UI can target. */
+export type Env = 'live' | 'testnet' | 'replay';
+
+/** Per-environment wiring — where REST/WS go and what headers REST needs. */
+export interface EnvConfig {
+  restPath: string;
+  wsUrl:    string;
+  headers:  Record<string, string>;
+}
+
+export interface EnvContextValue {
+  env:    Env;
+  setEnv: (env: Env) => void;
+}
+
 export interface OrderBookLevel {
   symbol: string;
   id:     number;

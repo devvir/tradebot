@@ -11,12 +11,14 @@ services:
     command: ["sh", "-c", "cd services/ui && pnpm install --ignore-scripts && pnpm dev"]
 
     environment:
-      VITE_BITMEX_REST_URL:    ${VITE_BITMEX_REST_URL:-/api/v1}
-      VITE_BITMEX_WS_URL:      ${VITE_BITMEX_WS_URL:-wss://ws.bitmex.com/realtime}
-      BITMEX_REST_PROXY_URL:   ${BITMEX_REST_PROXY_URL:-http://localhost:3101}
+      # REST proxy target — required. The UI hits /api/v1/* and Vite forwards
+      # it here. The `x-testnet` header on each REST call tells the proxy
+      # whether to target live or testnet BitMEX.
+      UI_REST_PROXY:  ${UI_REST_PROXY:-http://proxy}
 
-      DIGGER_PROXY_URL:        ${DIGGER_PROXY_URL:-}
-      VITE_DIGGER_URL:         ${VITE_DIGGER_URL:-/digger}
+      # Replay backend — optional. Set by modules that wire digger; absent
+      # otherwise. When unset, the Replay option in the env dropdown is greyed out.
+      UI_REPLAY_HOST: ${UI_REPLAY_HOST:-}
 
     ports:
       - ${UI_PORT:-3000}:3000

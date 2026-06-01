@@ -261,3 +261,10 @@ function trimBuffer(
     return ms >= bufferLeftMs && ms <= bufferRightMs;
   });
 }
+
+// ── Test-only exports ─────────────────────────────────────────────────────────
+
+export const _test_toCandle           = toCandle;
+export const _test_mergeCandles       = mergeCandles;
+export const _test_computeNeededFetch = computeNeededFetch;
+export const _test_trimBuffer         = trimBuffer;

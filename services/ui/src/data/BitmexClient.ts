@@ -24,9 +24,12 @@ export class BitmexClient {
 
   constructor(
     private readonly restUrl: string,
-    wsBaseUrl: string,
+    wsUrl: string,
+    /** Extra headers attached to every REST call. Used to flag `x-testnet` on
+     *  testnet env so the proxy targets the right BitMEX environment. */
+    private readonly headers: Record<string, string> = {},
   ) {
-    this.ws = new WsClient(`${wsBaseUrl}/realtime`);
+    this.ws = new WsClient(wsUrl);
   }
 
   /**
@@ -46,7 +49,7 @@ export class BitmexClient {
       qs.set(k, String(v));
     }
 
-    const res = await fetch(`${this.restUrl}/${table}?${qs}`);
+    const res = await fetch(`${this.restUrl}/${table}?${qs}`, { headers: this.headers });
 
     if (! res.ok) {
       throw new Error(`REST /${table} failed: ${res.status}`);

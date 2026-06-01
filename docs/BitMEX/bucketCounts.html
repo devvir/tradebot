@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>BitMEX Data Explorer</title>
+  <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --sidebar-w:   210px;
+      --bg:          #0d1117;
+      --bg-sidebar:  #010409;
+      --bg-card:     #161b22;
+      --border:      #21262d;
+      --border-card: #30363d;
+      --text:        #c9d1d9;
+      --text-dim:    #8b949e;
+      --text-muted:  #6e7681;
+      --text-bright: #e6edf3;
+      --accent:      #58a6ff;
+    }
+
+    body {
+      display: flex;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 13px;
+      min-height: 100vh;
+    }
+
+    /* ── Sidebar ── */
+    .sidebar {
+      position: fixed;
+      top: 0; left: 0;
+      width: var(--sidebar-w);
+      height: 100vh;
+      overflow-y: auto;
+      background: var(--bg-sidebar);
+      border-right: 1px solid var(--border);
+      padding: 20px 0 40px;
+      z-index: 100;
+    }
+
+    .sidebar-brand {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--text-bright);
+      padding: 0 16px 20px;
+      letter-spacing: 0.04em;
+    }
+
+    .nav-group { margin-bottom: 20px; }
+
+    .nav-group-label {
+      font-size: 0.68rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      padding: 0 16px 6px;
+    }
+
+    .nav-link {
+      display: block;
+      padding: 5px 16px;
+      color: var(--text-dim);
+      text-decoration: none;
+      font-size: 0.8rem;
+      border-left: 2px solid transparent;
+      transition: color 0.15s, border-color 0.15s;
+    }
+
+    .nav-link:hover  { color: var(--text); }
+    .nav-link.active { color: var(--accent); border-left-color: var(--accent); }
+
+    /* ── Main ── */
+    .main {
+      margin-left: var(--sidebar-w);
+      padding: 28px 28px 60px;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .section {
+      margin-bottom: 56px;
+      scroll-margin-top: 24px;
+    }
+
+    .section-header { margin-bottom: 4px; }
+
+    .section-title {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--text-bright);
+    }
+
+    .section-desc {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-bottom: 20px;
+      line-height: 1.6;
+    }
+
+    /* ── Cards ── */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      border-radius: 8px;
+      padding: 14px 16px 10px;
+      margin-bottom: 20px;
+    }
+
+    .card-label {
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+    }
+
+    .chart     { width: 100%; height: 400px; }
+    .chart-lg  { width: 100%; height: 440px; }
+    .chart-sm  { width: 100%; height: 340px; }
+
+    .placeholder {
+      height: 400px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      font-size: 0.78rem;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Sidebar ── -->
+<nav class="sidebar">
+  <div class="sidebar-brand">BitMEX Data</div>
+
+  <div class="nav-group">
+    <div class="nav-group-label">Message Counts</div>
+    <a class="nav-link" href="#overview">Overview</a>
+    <a class="nav-link" href="#seasonality">Seasonality</a>
+  </div>
+</nav>
+
+<!-- ── Main content ── -->
+<main class="main">
+
+  <!-- Overview -->
+  <section class="section" id="overview">
+    <div class="section-header">
+      <div class="section-title">Overview</div>
+    </div>
+    <p class="section-desc">
+      Message counts per bucket. Log scale. Tardis samples (1 day/month) shown as dots; self-collected WS data (from 2026-03-08) as lines.
+    </p>
+
+    <div class="card">
+      <div class="card-label">Daily — trade · quote</div>
+      <div class="chart-lg" id="chart-daily"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-label">Trade / quote ratio — liquidity taking vs providing</div>
+      <div class="chart" id="chart-ratio"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-label">Monthly snapshots — orderBookL2 · instrument · liquidation</div>
+      <div class="chart-lg" id="chart-monthly"></div>
+    </div>
+  </section>
+
+  <!-- Seasonality -->
+  <section class="section" id="seasonality">
+    <div class="section-header">
+      <div class="section-title">Seasonality</div>
+    </div>
+    <p class="section-desc">
+      Distribution of daily message counts normalised by period median (÷ week median for DoW, ÷ month median for DoM, ÷ year median for MoY).
+      A value of 1.0 = typical day for that period. Box = IQR, whiskers = 5th–95th pct.
+      trade and quote only (daily data).
+    </p>
+
+    <div class="card">
+      <div class="card-label">Day of week</div>
+      <div class="chart-sm" id="chart-dow"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-label">Day of month</div>
+      <div class="chart-sm" id="chart-dom"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-label">Month of year</div>
+      <div class="chart-sm" id="chart-moy"></div>
+    </div>
+  </section>
+
+</main>
+
+<script>
+// ── Constants ──────────────────────────────────────────────────────────────
+
+const TARDIS_CUTOFF = '2026-03-08';
+
+const COLORS = {
+  trade:       '#58a6ff',
+  quote:       '#3fb950',
+  orderBookL2: '#ff7b72',
+  instrument:  '#ffa657',
+  liquidation: '#f78166',
+};
+
+const EVENTS = [
+  ['2017-12-17', 'BTC ATH ~$19.7k'],
+  ['2018-12-15', 'Bear bottom ~$3.2k'],
+  ['2020-03-12', 'Black Thursday'],
+  ['2021-11-10', 'BTC ATH ~$69k'],
+  ['2022-11-08', 'FTX collapse'],
+  ['2024-01-10', 'BTC ETF approval'],
+];
+
+const DOW_LABELS  = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const MOY_LABELS  = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// ── Plotly theme ───────────────────────────────────────────────────────────
+
+const THEME = {
+  paper_bgcolor: '#161b22',
+  plot_bgcolor:  '#161b22',
+  font:          { color: '#8b949e', size: 11 },
+};
+
+function axisStyle(extra = {}) {
+  return { gridcolor: '#21262d', zerolinecolor: '#30363d', ...extra };
+}
+
+function baseLayout(extra = {}) {
+  return {
+    ...THEME,
+    margin:    { t: 10, b: 60, l: 70, r: 20 },
+    showlegend: true,
+    legend:    { bgcolor: 'transparent', bordercolor: 'transparent' },
+    hovermode: 'x unified',
+    ...extra,
+  };
+}
+
+function eventShapes() {
+  return EVENTS.map(([d]) => ({
+    type: 'line', x0: d, x1: d, yref: 'paper', y0: 0, y1: 1,
+    line: { color: 'rgba(255,255,100,0.15)', width: 1, dash: 'dot' },
+  }));
+}
+
+function eventAnnotations() {
+  return EVENTS.map(([d, label]) => ({
+    x: d, y: 0.02, yref: 'paper', yanchor: 'bottom', xanchor: 'center',
+    text: label, showarrow: false, textangle: -90,
+    font: { size: 9, color: 'rgba(255,255,100,0.35)' },
+    bgcolor: 'transparent',
+  }));
+}
+
+const CFG = { responsive: true, displayModeBar: true, scrollZoom: true };
+
+// ── Data utilities ─────────────────────────────────────────────────────────
+
+function parseCSV(text) {
+  const tables = {};
+  const lines  = text.trim().split('\n').slice(1);
+
+  for (const line of lines) {
+    const [table, dateStr, countStr] = line.split(',');
+
+    if (! tables[table]) {
+      tables[table] = [];
+    }
+
+    tables[table].push({ date: dateStr, count: Number(countStr) });
+  }
+
+  return tables;
+}
+
+function median(arr) {
+  const s = [...arr].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+
+  return s.length % 2 !== 0 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+function percentile(arr, p) {
+  const s = [...arr].sort((a, b) => a - b);
+  const i = (p / 100) * (s.length - 1);
+  const lo = Math.floor(i);
+
+  return s[lo] + (s[Math.ceil(i)] - s[lo]) * (i - lo);
+}
+
+/** Divide each record's count by the median of all records sharing the same keyFn output. */
+function normalizeByKey(records, keyFn) {
+  const groups = {};
+
+  for (const r of records) {
+    const k = keyFn(r.date);
+
+    if (! groups[k]) groups[k] = [];
+
+    groups[k].push(r.count);
+  }
+
+  const meds = {};
+
+  for (const [k, vals] of Object.entries(groups)) {
+    meds[k] = median(vals);
+  }
+
+  return records.map(r => ({ ...r, norm: r.count / meds[keyFn(r.date)] }));
+}
+
+// Key functions for normalisation windows
+function isoWeekKey(dateStr) {
+  const d   = new Date(dateStr + 'T12:00:00Z');
+  const jan = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const wk  = Math.ceil(((d - jan) / 86400000 + jan.getUTCDay() + 1) / 7);
+
+  return `${d.getUTCFullYear()}-W${wk}`;
+}
+
+function yearMonthKey(dateStr) {
+  return dateStr.slice(0, 7); // 'YYYY-MM'
+}
+
+function yearKey(dateStr) {
+  return dateStr.slice(0, 4); // 'YYYY'
+}
+
+// ── Renderers ──────────────────────────────────────────────────────────────
+
+function renderOverview(tables) {
+  // Daily: trade + quote — plain line traces
+  const dailyNames = ['trade', 'quote'];
+
+  const dailyTraces = dailyNames
+    .filter(n => tables[n])
+    .map(n => ({
+      name: n,
+      x:    tables[n].map(r => r.date),
+      y:    tables[n].map(r => r.count),
+      type: 'scatter', mode: 'lines',
+      line: { color: COLORS[n], width: 1.5 },
+      hovertemplate: `<b>${n}</b>: %{y:,.0f}<extra></extra>`,
+    }));
+
+  Plotly.newPlot('chart-daily', dailyTraces, baseLayout({
+    xaxis: axisStyle({ type: 'date', tickformat: '%b %Y' }),
+    yaxis: axisStyle({ type: 'log', title: 'messages (log)', tickformat: '~s' }),
+    shapes:      eventShapes(),
+    annotations: eventAnnotations(),
+  }), CFG);
+
+  // Monthly: two segments — Tardis dots + self-collected line
+  const monthlyNames = ['orderBookL2', 'instrument', 'liquidation'];
+  const monthlyTraces = [];
+
+  for (const n of monthlyNames) {
+    if (! tables[n]) continue;
+
+    const tardis = tables[n].filter(r => r.date <  TARDIS_CUTOFF);
+    const live   = tables[n].filter(r => r.date >= TARDIS_CUTOFF);
+
+    if (tardis.length) {
+      monthlyTraces.push({
+        name: `${n} (Tardis)`,
+        x:    tardis.map(r => r.date),
+        y:    tardis.map(r => r.count),
+        type: 'scatter', mode: 'markers',
+        marker: { color: COLORS[n], size: 5, opacity: 0.6 },
+        legendgroup: n,
+        hovertemplate: `<b>${n}</b>: %{y:,.0f}<extra></extra>`,
+      });
+    }
+
+    if (live.length) {
+      monthlyTraces.push({
+        name: n,
+        x:    live.map(r => r.date),
+        y:    live.map(r => r.count),
+        type: 'scatter', mode: 'lines',
+        line: { color: COLORS[n], width: 1.5 },
+        legendgroup: n,
+        hovertemplate: `<b>${n}</b>: %{y:,.0f}<extra></extra>`,
+      });
+    }
+  }
+
+  Plotly.newPlot('chart-monthly', monthlyTraces, baseLayout({
+    xaxis: axisStyle({ type: 'date', tickformat: '%b %Y' }),
+    yaxis: axisStyle({ type: 'log', title: 'messages (log)', tickformat: '~s' }),
+    shapes:      eventShapes(),
+    annotations: eventAnnotations(),
+  }), CFG);
+
+  // Trade / quote ratio
+  if (tables['trade'] && tables['quote']) {
+    const quoteByDate = new Map(tables['quote'].map(r => [r.date, r.count]));
+
+    const ratioPoints = tables['trade']
+      .filter(r => quoteByDate.has(r.date) && quoteByDate.get(r.date) > 0)
+      .map(r => ({ date: r.date, ratio: r.count / quoteByDate.get(r.date) }));
+
+    const rolling = ratioPoints.map((r, i) => {
+      const window = ratioPoints.slice(Math.max(0, i - 13), i + 14).map(p => p.ratio);
+
+      return median(window);
+    });
+
+    Plotly.newPlot('chart-ratio', [
+      {
+        name: 'daily',
+        x:    ratioPoints.map(r => r.date),
+        y:    ratioPoints.map(r => r.ratio),
+        type: 'scatter', mode: 'lines',
+        line: { color: '#8b949e', width: 0.8 },
+        opacity: 0.4,
+        hovertemplate: '<b>daily</b>: %{y:.3f}<extra></extra>',
+      },
+      {
+        name: '28-day rolling median',
+        x:    ratioPoints.map(r => r.date),
+        y:    rolling,
+        type: 'scatter', mode: 'lines',
+        line: { color: '#ffa657', width: 2 },
+        hovertemplate: '<b>28d median</b>: %{y:.3f}<extra></extra>',
+      },
+    ], baseLayout({
+      xaxis: axisStyle({ type: 'date', tickformat: '%b %Y' }),
+      yaxis: axisStyle({ title: 'trades / quotes', type: 'log' }),
+      shapes:      eventShapes(),
+      annotations: eventAnnotations(),
+    }), CFG);
+  }
+}
+
+function renderSeasonality(tables) {
+  const dailyNames = ['trade', 'quote'];
+
+  function boxTrace(name, xs, ys) {
+    return {
+      type: 'box', name,
+      x: xs, y: ys,
+      boxpoints:   'all',
+      jitter:      0.4,
+      pointpos:    0,
+      whiskerwidth: 0.6,
+      line:       { color: COLORS[name] },
+      fillcolor:  COLORS[name] + '30',
+      marker:     { color: COLORS[name] + '22', size: 3, line: { width: 0 } },
+      hovertemplate: '<b>%{x}</b><br>median: %{median:.2f}<extra>' + name + '</extra>',
+    };
+  }
+
+  function seasonLayout(categoryArray, ymax) {
+    return baseLayout({
+      boxmode: 'group',
+      xaxis: axisStyle({ categoryorder: 'array', categoryarray: categoryArray }),
+      yaxis: axisStyle({ title: 'relative to period median', zeroline: true, zerolinewidth: 1, range: [0, ymax] }),
+      hovermode: 'x',
+    });
+  }
+
+  function ymaxFor(traces) {
+    const all = traces.flatMap(t => t.y);
+
+    return Math.max(2, percentile(all, 97));
+  }
+
+  const dowTraces = [];
+  const domTraces = [];
+  const moyTraces = [];
+
+  for (const n of dailyNames) {
+    if (! tables[n]) continue;
+
+    const byWeek  = normalizeByKey(tables[n], isoWeekKey);
+    const byMonth = normalizeByKey(tables[n], yearMonthKey);
+    const byYear  = normalizeByKey(tables[n], yearKey);
+
+    // Day of week (Mon=1 … Sun=0 in JS, remap to Mon-first)
+    dowTraces.push(boxTrace(
+      n,
+      byWeek.map(r => DOW_LABELS[(new Date(r.date + 'T12:00:00Z').getUTCDay() + 6) % 7]),
+      byWeek.map(r => r.norm),
+    ));
+
+    // Day of month
+    domTraces.push(boxTrace(
+      n,
+      byMonth.map(r => String(new Date(r.date + 'T12:00:00Z').getUTCDate())),
+      byMonth.map(r => r.norm),
+    ));
+
+    // Month of year
+    moyTraces.push(boxTrace(
+      n,
+      byYear.map(r => MOY_LABELS[new Date(r.date + 'T12:00:00Z').getUTCMonth()]),
+      byYear.map(r => r.norm),
+    ));
+  }
+
+  const domLabels = Array.from({ length: 31 }, (_, i) => String(i + 1));
+
+  Plotly.newPlot('chart-dow', dowTraces, seasonLayout(DOW_LABELS, ymaxFor(dowTraces)), CFG);
+  Plotly.newPlot('chart-dom', domTraces, seasonLayout(domLabels,  ymaxFor(domTraces)), CFG);
+  Plotly.newPlot('chart-moy', moyTraces, seasonLayout(MOY_LABELS, ymaxFor(moyTraces)), CFG);
+}
+
+// ── Lazy loading ───────────────────────────────────────────────────────────
+
+async function main() {
+  const text   = await fetch('bucketCounts.csv').then(r => r.text());
+  const tables = parseCSV(text);
+
+  const rendered = new Set();
+
+  function maybeRender(id) {
+    if (rendered.has(id)) return;
+
+    rendered.add(id);
+
+    if (id === 'overview')    renderOverview(tables);
+    if (id === 'seasonality') renderSeasonality(tables);
+  }
+
+  // Always render the first visible section immediately
+  maybeRender('overview');
+
+  const observer = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      if (entry.isIntersecting) {
+        maybeRender(entry.target.id);
+      }
+    }
+  }, { rootMargin: '200px' });
+
+  for (const section of document.querySelectorAll('.section[id]')) {
+    observer.observe(section);
+  }
+}
+
+// ── Sidebar active state ───────────────────────────────────────────────────
+
+(function initNav() {
+  const links    = document.querySelectorAll('.nav-link');
+  const sections = document.querySelectorAll('.section[id]');
+
+  const io = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      if (! entry.isIntersecting) continue;
+
+      links.forEach(a => a.classList.toggle('active', a.getAttribute('href') === '#' + entry.target.id));
+    }
+  }, { threshold: 0.3 });
+
+  sections.forEach(s => io.observe(s));
+})();
+
+main().catch(err =>
+  document.querySelector('.main').insertAdjacentHTML('afterbegin',
+    `<p style="color:#ff7b72;padding:12px">Error: ${err.message}</p>`)
+);
+</script>
+</body>
+</html>

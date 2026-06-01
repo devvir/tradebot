@@ -1,24 +1,39 @@
-import { createContext, useContext, useMemo, type ReactNode } from 'react';
+/**
+ * Builds the data clients for the currently-selected environment and exposes
+ * them via context. Use `key={env}` on this provider from the caller so that
+ * an env switch unmounts the whole subtree — widgets cleanly unsubscribe from
+ * the old WS, and a fresh client wires up to the new env.
+ */
+
+import { createContext, useContext, useEffect, useMemo, type ReactNode } from 'react';
 import { BitmexClient } from './BitmexClient';
 import { DiggerClient } from './DiggerClient';
+import { useEnv } from './EnvProvider';
+import { ENV_CONFIGS } from './envs';
+
+declare const __REPLAY_ENABLED__: boolean;
 
 const BitmexContext = createContext<BitmexClient | null>(null);
 const DiggerContext = createContext<DiggerClient | null>(null);
 
 export function DataProvider({ children }: { children: ReactNode }) {
-  // Created once for the app lifetime — no effect cleanup needed.
-  // useEffect destroy would fire on StrictMode's double-invoke and permanently
-  // poison the client's reconnect flag before widgets even subscribe.
-  const bitmex = useMemo(() => new BitmexClient(
-    import.meta.env.VITE_BITMEX_REST_URL as string,
-    import.meta.env.VITE_BITMEX_WS_URL   as string,
-  ), []);
+  const { env } = useEnv();
 
-  const diggerUrl = import.meta.env.VITE_DIGGER_URL as string | undefined;
-  const digger    = useMemo(
-    () => diggerUrl ? new DiggerClient(diggerUrl) : null,
-    [diggerUrl],
+  const bitmex = useMemo(() => {
+    const cfg = ENV_CONFIGS[env];
+
+    return new BitmexClient(cfg.restPath, cfg.wsUrl, cfg.headers);
+  }, [env]);
+
+  const digger = useMemo(
+    () => __REPLAY_ENABLED__ && env === 'replay' ? new DiggerClient('/replay') : null,
+    [env],
   );
+
+  /** Close the WS when this provider unmounts (e.g. env-switch via `key`).
+   *  `WsClient.destroy()` is idempotent, so StrictMode's double-mount won't
+   *  poison the instance. */
+  useEffect(() => () => bitmex.destroy(), [bitmex]);
 
   return (
     <BitmexContext.Provider value={bitmex}>
@@ -39,7 +54,12 @@ export function useBitmex(): BitmexClient {
   return client;
 }
 
-/** Returns null when digger is not configured (e.g. live mode). */
+/** Returns null when digger is not configured (e.g. live or testnet env). */
 export function useDigger(): DiggerClient | null {
   return useContext(DiggerContext);
 }
+
+// ── Test-only exports ─────────────────────────────────────────────────────────
+
+export const _test_BitmexContext = BitmexContext;
+export const _test_DiggerContext = DiggerContext;

@@ -1,6 +1,7 @@
 import './styles/bitmex.css';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { DataProvider } from './data/DataProvider';
+import { EnvProvider, useEnv } from './data/EnvProvider';
 import { Header }       from './components/Header';
 import { ContractBar }  from './components/ContractBar';
 import { Sidebar }      from './components/Sidebar';
@@ -26,9 +27,14 @@ function BottomBar() {
   );
 }
 
-function MarketView() {
+/** Inner shell: `key={env}` forces a full unmount/remount of the data layer
+ *  and all widgets on env switch — they cleanly unsubscribe from the old WS
+ *  and rewire to the new client. */
+function EnvKeyedShell() {
+  const { env } = useEnv();
+
   return (
-    <DataProvider>
+    <DataProvider key={env}>
       <div className="app-shell">
         <Header />
         <ContractBar />
@@ -39,6 +45,14 @@ function MarketView() {
         <BottomBar />
       </div>
     </DataProvider>
+  );
+}
+
+function MarketView() {
+  return (
+    <EnvProvider>
+      <EnvKeyedShell />
+    </EnvProvider>
   );
 }
 

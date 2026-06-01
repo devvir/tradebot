@@ -102,3 +102,7 @@ function computeVisible(
 
   return closed.slice(leftIdx, rightIdx + 1);
 }
+
+// ── Test-only exports ─────────────────────────────────────────────────────────
+
+export const _test_computeVisible = computeVisible;

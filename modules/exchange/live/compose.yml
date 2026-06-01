@@ -15,6 +15,7 @@ name: exchange
 
 include:
   - path: ../../../services/proxy/docker/compose.yml
+  - path: ../../../services/ui/docker/compose.yml
 
 networks:
   default:

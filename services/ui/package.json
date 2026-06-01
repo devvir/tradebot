@@ -4,20 +4,26 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "typecheck": "tsc",
-    "preview": "vite preview"
+    "dev":        "vite",
+    "build":      "vite build",
+    "typecheck":  "tsc",
+    "preview":    "vite preview",
+    "test":       "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
+    "react":            "^19.0.0",
+    "react-dom":        "^19.0.0",
     "react-grid-layout": "^2.2.3",
     "react-router-dom": "^7.14.1"
   },
   "devDependencies": {
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
-    "@vitejs/plugin-react": "^6.0.1"
+    "@testing-library/jest-dom":   "^6.6.3",
+    "@testing-library/react":      "^16.1.0",
+    "@testing-library/user-event": "^14.5.2",
+    "@types/react":                "^19.0.0",
+    "@types/react-dom":            "^19.0.0",
+    "@vitejs/plugin-react":        "^6.0.1",
+    "jsdom":                       "^26.0.0"
   }
 }

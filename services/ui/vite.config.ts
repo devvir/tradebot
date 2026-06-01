@@ -1,27 +1,46 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// Server-side vars (no VITE_ prefix) — read at Vite startup, never sent to browser.
-// Vite proxies browser requests to these targets, keeping the browser on the same
-// origin and avoiding CORS entirely.
-const REST_TARGET   = process.env.BITMEX_REST_PROXY_URL ?? 'http://localhost:3101';
-const DIGGER_TARGET = process.env.DIGGER_PROXY_URL      ?? '';
+/**
+ * Vite dev-server proxies — keep the browser same-origin, no CORS dance.
+ *
+ *   /api/v1     →  UI_REST_PROXY     (default http://proxy)
+ *   /replay     →  UI_REPLAY_HOST    (REST, rewritten to upstream root)
+ *   /replay-ws  →  UI_REPLAY_HOST    (WS, ws: true, rewritten to upstream root)
+ *
+ * `__REPLAY_ENABLED__` is a build-time boolean exposed to the browser bundle —
+ * the env dropdown uses it to gate the Replay option.
+ */
+const REST_PROXY     = process.env.UI_REST_PROXY  ?? 'http://proxy';
+const REPLAY_HOST    = process.env.UI_REPLAY_HOST ?? '';
+const REPLAY_ENABLED = Boolean(REPLAY_HOST);
 
 export default defineConfig({
   plugins: [react()],
+
+  define: {
+    __REPLAY_ENABLED__: JSON.stringify(REPLAY_ENABLED),
+  },
+
   server: {
     port: 3000,
     host: true,
     proxy: {
       '/api/v1': {
-        target:      REST_TARGET,
+        target:       REST_PROXY,
         changeOrigin: true,
       },
-      ...(DIGGER_TARGET ? {
-        '/digger': {
-          target:      DIGGER_TARGET,
+      ...(REPLAY_ENABLED ? {
+        '/replay': {
+          target:       REPLAY_HOST,
           changeOrigin: true,
-          rewrite:     (path: string) => path.replace(/^\/digger/, ''),
+          rewrite:      (path: string) => path.replace(/^\/replay/, ''),
+        },
+        '/replay-ws': {
+          target:       REPLAY_HOST,
+          changeOrigin: true,
+          ws:           true,
+          rewrite:      (path: string) => path.replace(/^\/replay-ws/, ''),
         },
       } : {}),
     },

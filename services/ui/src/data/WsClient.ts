@@ -2,12 +2,18 @@ import type { WsAction } from '../types';
 
 type ChannelHandler<T = unknown> = (action: WsAction, data: T[]) => void;
 
-/** Manages a single WebSocket connection with ref-counted per-channel subscriptions. */
+/**
+ * Manages a single WebSocket connection with ref-counted per-channel subscriptions.
+ *
+ * `destroy()` closes the connection but is not terminal — a subsequent
+ * `subscribe()` will reopen. This keeps the client tolerant of React
+ * StrictMode's double-mount, where the same instance gets destroyed then
+ * re-used.
+ */
 export class WsClient {
   private ws:             WebSocket | null = null;
   private listeners:      Map<string, Set<ChannelHandler>> = new Map();
   private connected:      boolean = false;
-  private destroyed:      boolean = false;
   private reconnectDelay: number  = 1_000;
 
   constructor(private readonly url: string) {}
@@ -34,7 +40,6 @@ export class WsClient {
   }
 
   destroy() {
-    this.destroyed = true;
     this.ws?.close();
     this.ws = null;
   }
@@ -58,7 +63,7 @@ export class WsClient {
   }
 
   private connect() {
-    if (this.ws || this.destroyed) {
+    if (this.ws) {
       return;
     }
 
@@ -128,7 +133,7 @@ export class WsClient {
       this.connected = false;
       this.ws        = null;
 
-      if (! this.destroyed && this.listeners.size > 0) {
+      if (this.listeners.size > 0) {
         setTimeout(() => this.connect(), this.reconnectDelay);
         this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30_000);
       }

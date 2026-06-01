@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useDigger } from '../data/DataProvider';
+import { EnvSwitcher } from './EnvSwitcher';
 
 const NAV_LINKS = [
   { label: 'Buy Crypto', href: 'https://www.bitmex.com/app/buyCrypto' },
@@ -104,7 +105,10 @@ export function Header() {
         </div>
       </nav>
 
-      {/* Replay clock picker — only rendered when digger is configured */}
+      {/* Env switcher (Live / Testnet / Replay) */}
+      <EnvSwitcher />
+
+      {/* Replay clock picker — only rendered in replay env (when digger is configured) */}
       <ReplayClock />
 
       {/* End items */}

@@ -23,6 +23,7 @@ Thumbs.db
 *.tsbuildinfo
 .pnpm-store/
 **/.ports.json
+**/coverage/
 
 # Python
 .venv/
