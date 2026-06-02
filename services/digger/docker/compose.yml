@@ -1,4 +1,5 @@
-# Digger Service — replays collected BitMEX data as a WS-compatible stream
+# Digger Service — the replay engine. Serves replayed BitMEX data as ws + rest,
+# reading ready-made messages from the provider (no mongo, no broker).
 
 services:
   digger:
@@ -8,25 +9,26 @@ services:
       args:
         SERVICE_NAME: digger
 
-    container_name: digger
-
     environment:
-      DB_URL:      ${DB_URL}
-      DB_DATABASE: ${DB_DATABASE:-tradebot}
-      QUEUE_URL:   ${QUEUE_URL}
+      PROVIDER_WS_URL:   ${PROVIDER_WS_URL:-http://provider}
+      PROVIDER_REST_URL: ${PROVIDER_REST_URL:-http://provider-rest}
 
-      DIGGER_WAIT_IF:       ${DIGGER_WAIT_IF:-}
       DIGGER_START_TIME:    ${DIGGER_START_TIME:-}
       DIGGER_BATCH_SIZE:    ${DIGGER_BATCH_SIZE:-1000}
       DIGGER_LOW_WATERMARK: ${DIGGER_LOW_WATERMARK:-5000}
+      DIGGER_BP_HIGH:       ${DIGGER_BP_HIGH:-4000000}
+      DIGGER_BP_LOW:        ${DIGGER_BP_LOW:-1000000}
 
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV:  ${APP_ENV:-prod}
       TZ:        ${TZ:-UTC}
 
+    # Internal ports (fixed by config defaults): ws 80, rest 8000, control 8001.
+    # Host mappings are empty by default (random); set in the module .env.
     ports:
-      - "${DIGGER_PORT:-}:80"
-      - :3000
+      - "${DIGGER_WS_PORT:-}:80"
+      - "${DIGGER_REST_PORT:-}:8000"
+      - "${DIGGER_CONTROL_PORT:-}:8001"
 
     user: "1000:1000"
 

@@ -1,26 +1,27 @@
 {
   "name": "@tradebot/digger",
-  "version": "1.0.0",
-  "description": "Replay data pump — reads MongoDB collections and publishes to the replay exchange in WS message format",
-  "main": "dist/index.js",
+  "version": "2.0.0",
+  "description": "Replay engine — synchronization + serving: the replay clock, k-way merge over the provider, and BitMEX-compatible ws + rest servers with slowest-client backpressure",
+  "main": "dist/src/index.js",
   "private": true,
   "scripts": {
     "build": "tsc -b",
     "start": "node dist/src/index.js",
-    "dev": "ts-node src/index.ts",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@devvir/bitmex-database": "^1.2.0",
     "@devvir/service-kit": "workspace:*",
     "@tradebot/types": "workspace:*",
     "@tradebot/utils": "workspace:*",
-    "express": "^5.2.1",
-    "mongodb": "^7.1.0"
+    "express": "^5.2.1"
   },
   "devDependencies": {
-    "@types/express": "^5.0.0"
+    "@types/express":   "^5.0.0",
+    "@types/supertest": "^6.0.3",
+    "@types/ws":        "^8.5.12",
+    "supertest":        "^7.2.2",
+    "ws":               "^8.18.0"
   }
 }

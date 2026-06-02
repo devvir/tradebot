@@ -1,74 +1,38 @@
-import * as clock from '../clock';
+import * as clock from '../core/clock';
+import type { RestParams } from '../core/types';
 
 /**
- * BitMEX-style REST query parameters, normalised. Mirrors the public BitMEX
- * API so clients can swap the base URL between live and replay without code
- * changes.
- *
- * "Now" in replay means whatever the clock says. When the request doesn't
- * pin both ends of a time range, the missing bound resolves against `clock`
- * just like a live BitMEX call would resolve against wall-clock time.
+ * Parse a BitMEX REST query into normalised params, with the clock applied as a
+ * hard **ceiling**: no record after "now" is ever served. So
+ * `endTime = min(endTime ?? clock, clock)`; a future-anchored query collapses to
+ * "the last N that exist," exactly like live BitMEX.
  */
-export interface RestParams {
-  symbol?:    string;
-  count:      number;
-  start:      number;
-  reverse:    boolean;
-  startTime?: number;
-  endTime?:   number;
-  columns?:   string[];
-}
 
 const DEFAULT_COUNT = 100;
 const MAX_COUNT     = 500;
 
-// ── Public API ────────────────────────────────────────────────────────────────
-
-/**
- * Parse and normalise a request's query string. Throws on malformed values so
- * the route handler can return 400 with a clean error.
- */
-export const parseRestParams = (query: Record<string, unknown>): RestParams => {
-  const reverse   = parseBool(query.reverse);
-  const now       = clock.fetch() ?? Date.now();
-  const startTime = parseTime(query.startTime);
-  const endTime   = parseTime(query.endTime) ?? (reverse ? now : undefined);
+export const parseParams = (q: Record<string, unknown>): RestParams => {
+  const now = clock.fetch();
 
   return {
-    symbol:    parseString(query.symbol),
-    count:     parseCount(query.count),
-    start:     parseNonNegativeInt(query.start, 0),
-    reverse,
-    startTime,
-    endTime,
-    columns:   parseColumns(query.columns),
+    symbol:    typeof q.symbol === 'string' && q.symbol.length > 0 ? q.symbol : undefined,
+    count:     clampCount(q.count),
+    start:     nonNeg(q.start),
+    reverse:   q.reverse === 'true' || q.reverse === true,
+    startTime: parseTime(q.startTime),
+    endTime:   capEnd(parseTime(q.endTime), now),
+    columns:   parseColumns(q.columns),
+    depth:     parseDepth(q.depth),
   };
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const parseString = (raw: unknown): string | undefined =>
-  typeof raw === 'string' && raw.length > 0 ? raw : undefined;
+/** No data after the clock: `endTime = min(endTime ?? now, now)`. */
+const capEnd = (endTime: number | undefined, now: number | null): number | undefined => {
+  if (now === null) return endTime;
 
-const parseBool = (raw: unknown): boolean =>
-  raw === true || raw === 'true' || raw === '1';
-
-const parseCount = (raw: unknown): number => {
-  const n = parseNonNegativeInt(raw, DEFAULT_COUNT);
-
-  return Math.min(n, MAX_COUNT);
-};
-
-const parseNonNegativeInt = (raw: unknown, fallback: number): number => {
-  if (raw === undefined || raw === null || raw === '') return fallback;
-
-  const n = Number(raw);
-
-  if (! Number.isFinite(n) || n < 0) {
-    throw httpError(400, `Invalid integer: ${raw}`);
-  }
-
-  return Math.floor(n);
+  return endTime !== undefined ? Math.min(endTime, now) : now;
 };
 
 const parseTime = (raw: unknown): number | undefined => {
@@ -77,14 +41,30 @@ const parseTime = (raw: unknown): number | undefined => {
   if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
 
   if (typeof raw === 'string') {
+    const n = Number(raw);
+
+    if (Number.isFinite(n)) return n;
+
     const ms = Date.parse(raw);
 
-    if (! Number.isFinite(ms)) throw httpError(400, `Invalid time: ${raw}`);
-
-    return ms;
+    if (Number.isFinite(ms)) return ms;
   }
 
-  throw httpError(400, `Invalid time: ${raw}`);
+  return undefined;
+};
+
+const clampCount = (raw: unknown): number => {
+  const n = Number(raw);
+
+  if (! Number.isFinite(n) || n <= 0) return DEFAULT_COUNT;
+
+  return Math.min(Math.floor(n), MAX_COUNT);
+};
+
+const nonNeg = (raw: unknown): number => {
+  const n = Number(raw);
+
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 };
 
 const parseColumns = (raw: unknown): string[] | undefined => {
@@ -93,5 +73,11 @@ const parseColumns = (raw: unknown): string[] | undefined => {
   return raw.split(',').map(s => s.trim()).filter(Boolean);
 };
 
-const httpError = (status: number, message: string): Error =>
-  Object.assign(new Error(message), { httpStatus: status });
+/** orderBook/L2 `depth` — non-negative integer (0 = full); undefined when absent. */
+const parseDepth = (raw: unknown): number | undefined => {
+  if (raw === undefined || raw === null || raw === '') return undefined;
+
+  const n = Number(raw);
+
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : undefined;
+};

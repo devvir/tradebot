@@ -1,34 +1,32 @@
-import { type Service, type Broker } from '@devvir/service-kit';
-import { type MongoClient } from 'mongodb';
+import { type Service, type FetchClientHandle } from '@devvir/service-kit';
 import SK from './service';
-import * as clock from './clock';
-import { startHttpServer } from './http';
-import { runStream } from './websocket';
-import type { Config, State } from './types';
+import config from './config';
+import * as clock from './core/clock';
+import { Provider } from './provider';
+import { Reader } from './reader';
+import { startWs } from './ws';
+import { startRest } from './rest';
+import { startControl } from './management';
 
 /**
  * Boot order:
- *   1. Connect to MongoDB and RabbitMQ.
- *   2. Seed the replay clock from `DIGGER_START_TIME` if provided. Without it,
- *      subscriptions return 400 until `POST /set-clock` is called.
- *   3. Start the HTTP server (commands + REST API).
- *   4. Run the streaming engine. Idles until the first subscribe command;
- *      returns when shutdown is requested.
- *
- * Indexes are owned by distiller — not created here.
+ *   1. Seed the clock from DIGGER_START_TIME (frozen until a client subscribes;
+ *      unset → subscribes 400 until POST /set-clock).
+ *   2. Build the provider seam from the two fetch clients.
+ *   3. Bring up the ws engine (server + hub + pacer + loop), the rest server, and
+ *      the control server.
  */
 SK.run(async (service: Service) => {
-  const config = service.config() as Config;
-  const state  = service.state()  as State;
-
-  const mongo  = await service.providers.connect('mongodb') as MongoClient;
-  const broker = await service.providers.connect('rabbitmq') as Broker;
-
-  state.broker = broker;
-
   if (config.startTime !== undefined) clock.set(config.startTime);
 
-  startHttpServer(state, config, mongo, broker);
+  const providerWs   = service.clients.get('provider-ws')   as FetchClientHandle;
+  const providerRest = service.clients.get('provider-rest') as FetchClientHandle;
 
-  await runStream(state, config, mongo, broker);
+  const provider = new Provider(providerWs, providerRest);
+  const reader   = new Reader(provider, config);
+
+  const ws = await startWs(service, reader, config);
+
+  await startRest(service, provider);
+  await startControl(service, ws, reader);
 });

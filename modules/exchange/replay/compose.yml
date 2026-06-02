@@ -1,40 +1,76 @@
 # Replay Module — Exchange App
 #
-# Infra: queue-rt, mongodb, bouncer, redis
-#
-# Wires replayed BitMEX data into a fully BitMEX-compatible API surface.
-# Bots connect to ws and rest as if they were BitMEX.
+# Serves replayed BitMEX data over a fully BitMEX-compatible ws + rest surface.
+# Bots connect to digger as if it were BitMEX. No RabbitMQ.
 #
 # Data flow:
 #
-#   mongodb ──► digger ──► [replay exchange] ──► ws.deltas@topic:deltas ──► ws ◄── bots
+#   mongodb ──► librarian ──► provider ──► digger ──► ws + rest ◄── bots
+#                (dump I/O)   (shaping)    (timeline)
 #
-#   bots ──► rest ──► digger ──► mongodb
+# Two read paths, isolated end-to-end so the ws firehose never delays rest:
+#   stream: librarian (pool) ─► provider (pool)      ─► digger ws
+#   rest:   librarian-rest    ─► provider-rest (×1)   ─► digger rest
 
-# Docker Compose Project (for all exchange app modules)
 name: exchange
 
-include:
-  - path: ../../../services/ws/docker/compose.yml
-  - path: ../../../services/rest/docker/compose.yml
-
 services:
+  # ── Stream path (firehose, replicated) ──────────────────────────────────────
+  librarian:
+    extends:
+      file: ../../../services/librarian/docker/compose.yml
+      service: librarian
+    environment:
+      DB_URL:      ${DB_URL}
+      DB_DATABASE: ${DB_DATABASE:-tradebot}
+    deploy:
+      replicas: ${REPLAY_LIBRARIAN_REPLICAS:-3}
+
+  provider:
+    extends:
+      file: ../../../services/provider/docker/compose.yml
+      service: provider
+    environment:
+      LIBRARIAN_URL: http://librarian
+    deploy:
+      replicas: ${REPLAY_PROVIDER_REPLICAS:-3}
+    depends_on:
+      - librarian
+
+  # ── REST path (dedicated, single instance) ──────────────────────────────────
+  librarian-rest:
+    extends:
+      file: ../../../services/librarian/docker/compose.yml
+      service: librarian
+    environment:
+      DB_URL:      ${DB_URL}
+      DB_DATABASE: ${DB_DATABASE:-tradebot}
+    deploy:
+      replicas: 1
+
+  provider-rest:
+    extends:
+      file: ../../../services/provider/docker/compose.yml
+      service: provider
+    environment:
+      LIBRARIAN_URL: http://librarian-rest
+    deploy:
+      replicas: 1
+    depends_on:
+      - librarian-rest
+
+  # ── Replay engine ───────────────────────────────────────────────────────────
   digger:
     extends:
       file: ../../../services/digger/docker/compose.yml
       service: digger
-
-    depends_on:
-      replay-pipe:
-        condition: service_completed_successfully
-
-  replay-pipe:
-    extends:
-      file: ../../../services/pipe/docker/compose.yml
-      service: pipe
-
     environment:
-      PIPE_BINDINGS: topic:replay > ws.deltas@topic:deltas
+      PROVIDER_WS_URL:   http://provider
+      PROVIDER_REST_URL: http://provider-rest
+      DIGGER_START_TIME: ${DIGGER_START_TIME:-}
+    depends_on:
+      - provider
+      - provider-rest
 
 networks:
   default:
