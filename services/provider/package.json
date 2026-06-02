@@ -1,0 +1,25 @@
+{
+  "name": "@tradebot/provider",
+  "version": "0.0.1",
+  "description": "Replay data provider — reads from librarian and serves BitMEX data in ws-message or rest-record format, abstracting storage from digger",
+  "main": "dist/src/index.js",
+  "private": true,
+  "scripts": {
+    "build": "tsc -b",
+    "start": "node dist/src/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@devvir/bitmex-database": "^1.2.0",
+    "@devvir/service-kit": "workspace:*",
+    "@tradebot/types": "workspace:*",
+    "@tradebot/utils": "workspace:*",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "@types/express":   "^5.0.0",
+    "@types/supertest": "^6.0.3",
+    "supertest":        "^7.2.2"
+  }
+}

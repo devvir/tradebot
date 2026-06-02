@@ -1,0 +1,39 @@
+# Provider Service — reads from librarian, serves BitMEX data in the requested
+# format (ws messages / rest records), abstracting storage. Stateless; scale via
+# replicas. Extended per-alias by the replay module (a ws-firehose instance and a
+# dedicated rest instance, each pointing at the matching librarian).
+
+services:
+  provider:
+    build:
+      context: ../../..
+      dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
+      args:
+        SERVICE_NAME: provider
+
+    deploy:
+      replicas: ${PROVIDER_REPLICAS:-1}
+
+    environment:
+      LIBRARIAN_URL: ${LIBRARIAN_URL:-http://librarian}
+
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV:  ${APP_ENV:-prod}
+      TZ:        ${TZ:-UTC}
+
+    ports:
+      - :80
+
+    user: "1000:1000"
+
+    volumes:
+      - ../../../:/live
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+
+    restart: unless-stopped

@@ -345,6 +345,34 @@ importers:
         specifier: workspace:*
         version: link:../../shared/utils
 
+  services/provider:
+    dependencies:
+      '@devvir/bitmex-database':
+        specifier: ^1.2.0
+        version: 1.2.0
+      '@devvir/service-kit':
+        specifier: workspace:*
+        version: link:../../packages/service-kit
+      '@tradebot/types':
+        specifier: workspace:*
+        version: link:../../shared/types
+      '@tradebot/utils':
+        specifier: workspace:*
+        version: link:../../shared/utils
+      express:
+        specifier: ^5.2.1
+        version: 5.2.1
+    devDependencies:
+      '@types/express':
+        specifier: ^5.0.0
+        version: 5.0.6
+      '@types/supertest':
+        specifier: ^6.0.3
+        version: 6.0.3
+      supertest:
+        specifier: ^7.2.2
+        version: 7.2.2
+
   services/proxy:
     dependencies:
       '@devvir/service-kit':
