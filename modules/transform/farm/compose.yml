@@ -20,7 +20,7 @@ include:
 
 services:
   # Read-only vault replica pool. spreads CPU cost across farm-owned Vault replicas.
-  farm:
+  farmer:
     extends:
       file: ../../../services/farmer/docker/compose.yml
       service: farmer

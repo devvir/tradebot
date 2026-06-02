@@ -24,7 +24,7 @@
  *   - **empty `data` array (rows = 0)** — drop. Replay can synthesize
  *     these, storing them is wasted space.
  *   - **success** — mutate the item in place (`content` becomes the
- *     wire envelope, `rows` is set), admit to the inflight gate, push
+ *     wire envelope, `rows` is set), admit to the staging gate, push
  *     onto the writer queue.
  *   - **structural error or parse throw on the fallback path** — write
  *     the original content to `farmer.<table>` for forensics, bump the
@@ -36,7 +36,7 @@
 import { logger, registry } from '@devvir/service-kit';
 import type { BitmexTable } from '@tradebot/types';
 import { recordError } from '../write/errors';
-import { admit } from '../write/inflight';
+import { admit } from '../write/staging';
 import { reconstruct, UnknownTableError, type WsMessage } from './reconstruct';
 import { templateFor } from './templates';
 import type { BoundedBuffer, Item } from '../types';
@@ -72,7 +72,7 @@ export const startAssemble = async (
         continue;
       }
 
-      await admit(1);
+      await admit(item.size);
       item.task.admit();
       await writerQueue.push(item);
     }

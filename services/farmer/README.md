@@ -7,10 +7,9 @@ write-only sidecar — a [Librarian](../librarian/README.md) instance configured
 as farmer's writer (referenced throughout this doc simply as "the writer").
 Progress is checkpointed in Redis so a restart resumes mid-file.
 
-A single in-process pipeline replaces what was previously a three-service
-chain (clerk + assembler + registrar) coupled by RabbitMQ. Mongo writes are
-offloaded over HTTP to the writer so farmer's event loop can run the reader at
-its native rate.
+A single in-process pipeline (read → infer → assemble → dispatch → flush) does
+the whole job; Mongo writes are offloaded over HTTP to the writer so farmer's
+event loop can run the reader at its native rate.
 
 ## What it does
 
@@ -20,9 +19,10 @@ its native rate.
 - Routes by table type: REST records pass through; WS messages are
   reconstructed (timestamp normalization, partial decoration, legacy backfills)
 - Assigns `_id = makeId(date, index)` — deterministic, idempotent on retry
-- Batches docs per-table by **row count** (not item count, since a single WS
-  partial can carry tens of thousands of rows) and POSTs each batch to the
-  writer service
+- Batches docs per-table by **byte size** (each POST capped at 20 MiB, since a
+  single WS partial can carry tens of thousands of rows and run to MBs) and
+  POSTs each batch to the writer, round-robined fairly across tables so a fat
+  table can't starve the others
 - Captures parse/reconstruct failures into `farmer.<table>` (direct mongo
   write — error volume is too low to justify the HTTP hop)
 - Shuts down loudly when it sees an unknown table (config drift)
@@ -38,13 +38,10 @@ its native rate.
 | `CACHE_URL` | Yes | — | Redis connection string |
 | `FARMER_TABLES` | No | _(all)_ | Comma-separated table filter |
 | `FARMER_FILE_CONCURRENCY` | No | `10` | Parallel reader workers |
-| `FARMER_READ_BUFFER_HIGH` | No | `1000000` | Reader queue high watermark |
-| `FARMER_READ_BUFFER_LOW` | No | `500000` | Reader queue low watermark |
-| `FARMER_INFLIGHT_CAP` | No | `500000` | Global in-flight cap (rows on the wire to the writer) |
-| `FARMER_WIRE_CAP_MB` | No | `20` | Max batch size to send to Writer at once, in megabytes |
+| `FARMER_INFLIGHT_CAP` | No | `20` | Max concurrent POSTs in flight to the writer; staging + read-buffer byte ceilings derive from it |
 | `FARMER_FLUSH_INTERVAL_MS` | No | `100` | Per-table batch dispatch timer |
-| `FARMER_PROGRESS_INTERVAL_MS` | No | `1000` | Per-task Redis progress tick |
-| `FARMER_METRICS_INTERVAL_MS` | No | `60000` | Throughput metrics log interval |
+
+The per-task Redis progress tick (1 s) and metrics log interval (60 s) are fixed constants, not env knobs.
 
 ## Development
 

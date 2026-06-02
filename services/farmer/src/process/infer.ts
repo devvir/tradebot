@@ -5,12 +5,12 @@
  *   - REST → writer queue (passed through with `raw` still set; the
  *            flusher parses on the way to mongo)
  *
- * Admission to the writer queue goes through the inflight gate; the
- * assembler queue is unbounded relative to inflight because assembly
- * always pushes to the writer queue itself (where the gate is checked).
+ * Admission to the writer queue goes through the staging byte gate; the
+ * assembler queue is not gated here because assembly always pushes to the
+ * writer queue itself (where the gate is checked).
  */
 
-import { admit } from '../write/inflight';
+import { admit } from '../write/staging';
 import type { BoundedBuffer, Item } from '../types';
 
 const BATCH_MAX = 10_000;
@@ -29,7 +29,7 @@ export const startInfer = async (
       if (item.task.type === 'ws') {
         await assemblerQueue.push(item);
       } else {
-        await admit(1);
+        await admit(item.size);
         item.task.admit();
         await writerQueue.push(item);
       }

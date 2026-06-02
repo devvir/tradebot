@@ -11,7 +11,7 @@ import {
 } from '../../src/process/assemble';
 import { createBoundedBuffer } from '../../src/buffer';
 import { Task } from '../../src/orchestration';
-import { initInflight, _test_reset as resetInflight, inflightSize } from '../../src/write/inflight';
+import { initStaging, _test_reset as resetStaging, stagedBytes } from '../../src/write/staging';
 import type { Item } from '../../src/types';
 import type { BitmexTable } from '@tradebot/types';
 import type { Service } from '@devvir/service-kit';
@@ -67,8 +67,8 @@ const setupRegistry = (mongo: MongoClient, service: Service & { shutdown: () => 
 };
 
 beforeEach(() => {
-  resetInflight();
-  initInflight(100_000);
+  resetStaging();
+  initStaging(100_000);
   vi.mocked(registry.get).mockReset();
 });
 
@@ -164,7 +164,7 @@ describe('startAssemble — common string path', () => {
     expect(item.content.endsWith('}')).toBe(true);
     expect(item.content).toContain('"timestamp":"2024-06-15T12:34:00.000Z"'); /** first row's ts */
     expect(item.size).toBe(item.content.length);
-    expect(inflightSize()).toBe(1);
+    expect(stagedBytes()).toBe(item.size);
 
     inQ.close();
     await loop;
@@ -242,7 +242,7 @@ describe('startAssemble — empty data drop', () => {
 
     expect(task.messages).toBe(1);
     expect(task.pending).toBe(0);
-    expect(inflightSize()).toBe(0);
+    expect(stagedBytes()).toBe(0);
     expect(outQ.size()).toBe(0);
 
     inQ.close();

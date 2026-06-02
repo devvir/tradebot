@@ -7,16 +7,13 @@ export type RedisClient = SKRedisClient;
 export interface Config {
   database:           string;
   vaultUrl:           string;
-  librarianUrl:          string;
+  librarianUrl:       string;
   tables:             BitmexTable[];
   fileConcurrency:    number;
-  readBufferHigh:     number;
-  readBufferLow:      number;
+  /** Max concurrent POSTs in flight to the librarian. The one throughput knob;
+   *  staging + read-buffer byte ceilings are derived from it in `index.ts`. */
   inflightCap:        number;
-  wireBytesCap:       number;
   flushIntervalMs:    number;
-  progressIntervalMs: number;
-  metricsIntervalMs:  number;
   [key: string]:      unknown;
 }
 
@@ -54,9 +51,12 @@ export interface Item {
   size:     number;
 }
 
-export interface BoundedBufferOpts {
+export interface BoundedBufferOpts<T> {
   highWater: number;
   lowWater:  number;
+  /** Per-item weight summed against the watermarks. Defaults to `() => 1`
+   *  (item count); pass `i => i.size` to make the watermarks bound bytes. */
+  sizeOf?:   (item: T) => number;
   /** Fired the first time `push` blocks at the high watermark. */
   onPause?:  () => void;
   /** Fired when `push` resumes after draining to the low watermark. */

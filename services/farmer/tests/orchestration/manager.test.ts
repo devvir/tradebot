@@ -1,10 +1,12 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
-  _test_buildPending    as buildPending,
-  _test_pickTable       as pickTable,
-  _test_trackCompletion as trackCompletion,
-  _test_seedInFlight    as seedInFlight,
-  _test_resetManager    as resetManager,
+  nextTask,
+  _test_buildPending     as buildPending,
+  _test_pickTable        as pickTable,
+  _test_trackCompletion  as trackCompletion,
+  _test_seedInFlight     as seedInFlight,
+  _test_resetManager     as resetManager,
+  _test_primeForHandout  as primeForHandout,
   releaseTask,
 } from '../../src/orchestration/manager';
 import { Task } from '../../src/orchestration/task';
@@ -100,6 +102,26 @@ describe('buildPending — in-flight filter', () => {
     );
 
     expect(out.get('trade')).toEqual([{ date: '20240315', skip: 100 }]);
+  });
+});
+
+// ── nextTask: hands out from the pending list ─────────────────────────────────
+
+describe('nextTask — hands out from the pending list', () => {
+  beforeEach(() => { vi.useFakeTimers(); resetManager(); });
+  afterEach(() => vi.useRealTimers());
+
+  it('drains seeded buckets in order without waiting on a refresh', async () => {
+    primeForHandout([
+      { table: 'trade' as BitmexTable, date: '20240315' },
+      { table: 'trade' as BitmexTable, date: '20240316' },
+    ]);
+
+    const first  = await nextTask();
+    const second = await nextTask();
+
+    expect(first?.table).toBe('trade');
+    expect([first?.date, second?.date]).toEqual(['20240315', '20240316']);
   });
 });
 

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { startInfer } from '../../src/process/infer';
 import { createBoundedBuffer } from '../../src/buffer';
 import { Task } from '../../src/orchestration';
-import { initInflight, inflightSize, _test_reset as resetInflight } from '../../src/write/inflight';
+import { initStaging, stagedBytes, _test_reset as resetStaging } from '../../src/write/staging';
 import type { Item } from '../../src/types';
 import type { BitmexTable } from '@tradebot/types';
 
@@ -13,7 +13,7 @@ const makeTask = (table: BitmexTable): Task => new Task({
   stopSignal: { triggered: false },
 });
 
-const item = (task: Task, position: number): Item => ({ task, position, raw: 'x' });
+const item = (task: Task, position: number): Item => ({ task, position, content: 'x', size: 1 });
 
 /** Drain N items from the queue across however many batches `pop` returns. */
 const drain = async <T>(q: ReturnType<typeof createBoundedBuffer<T>>, n: number): Promise<T[]> => {
@@ -31,14 +31,14 @@ const drain = async <T>(q: ReturnType<typeof createBoundedBuffer<T>>, n: number)
 };
 
 beforeEach(() => {
-  resetInflight();
-  initInflight(100_000);
+  resetStaging();
+  initStaging(100_000);
 });
 
-// ── REST items go straight to writer queue, gated by inflight ─────────────────
+// ── REST items go straight to writer queue, gated by staging ──────────────────
 
 describe('startInfer — REST items', () => {
-  it('forwards REST items to the writer queue and admits them to the inflight gate', async () => {
+  it('forwards REST items to the writer queue and admits them to the staging gate', async () => {
     const readerQ   = createBoundedBuffer<Item>({ highWater: 10, lowWater: 5 });
     const assembleQ = createBoundedBuffer<Item>({ highWater: 10, lowWater: 5 });
     const writerQ   = createBoundedBuffer<Item>({ highWater: 10, lowWater: 5 });
@@ -55,7 +55,7 @@ describe('startInfer — REST items', () => {
     expect(out[0]).toMatchObject({ position: 1 });
     expect(out[1]).toMatchObject({ position: 2 });
 
-    expect(inflightSize()).toBe(2);
+    expect(stagedBytes()).toBe(2);
     expect(assembleQ.size()).toBe(0);
 
     readerQ.close();
@@ -63,10 +63,10 @@ describe('startInfer — REST items', () => {
   });
 });
 
-// ── WS items go to the assembler queue (no inflight gate yet) ─────────────────
+// ── WS items go to the assembler queue (no staging gate yet) ──────────────────
 
 describe('startInfer — WS items', () => {
-  it('forwards WS items to the assembler queue without admitting inflight', async () => {
+  it('forwards WS items to the assembler queue without admitting to staging', async () => {
     const readerQ   = createBoundedBuffer<Item>({ highWater: 10, lowWater: 5 });
     const assembleQ = createBoundedBuffer<Item>({ highWater: 10, lowWater: 5 });
     const writerQ   = createBoundedBuffer<Item>({ highWater: 10, lowWater: 5 });
@@ -83,7 +83,7 @@ describe('startInfer — WS items', () => {
     expect(out[0]).toMatchObject({ position: 1 });
     expect(out[1]).toMatchObject({ position: 2 });
 
-    expect(inflightSize()).toBe(0);
+    expect(stagedBytes()).toBe(0);
     expect(writerQ.size()).toBe(0);
 
     readerQ.close();
@@ -117,7 +117,7 @@ describe('startInfer — mixed routing', () => {
     expect(asmbls[0]).toMatchObject({ task: ob,    position: 1 });
     expect(asmbls[1]).toMatchObject({ task: ob,    position: 2 });
 
-    expect(inflightSize()).toBe(2);
+    expect(stagedBytes()).toBe(2);
 
     readerQ.close();
     await loop;

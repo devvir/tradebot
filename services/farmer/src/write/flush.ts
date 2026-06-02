@@ -1,12 +1,16 @@
 /**
  * Per-table batch flusher.
  *
- * Runs on a periodic timer. Each tick walks `batches` and starts as many
- * HTTP POSTs to the writer service as fit under the wire-side byte cap.
- * Multiple concurrent posts per table are allowed (each fetch runs in its
- * own async branch). Items hand off from the writer-queue inflight gate
- * (`release`) to the wire-side counter (`wireBytes`) at splice time; the
- * writer queue reopens for the next round immediately.
+ * Runs on a periodic timer. Each tick round-robins a fixed budget of
+ * concurrent in-flight requests across all tables with pending items — one
+ * batch per table per pass, looping until the budget is exhausted — starting
+ * from a rotating offset. This keeps a single fat table (e.g. orderBookL2)
+ * from hogging every slot and starving the tables inserted into `batches`
+ * after it. Each batch is one POST capped at `MAX_BYTES_PER_REQUEST`, so a
+ * slot is a slot regardless of size; `maxInFlightRequests` bounds how many
+ * run at once. Splicing a batch out `release`s its bytes from the staging
+ * gate (unblocking the readers) and claims one in-flight request slot, freed
+ * again when the POST settles.
  *
  * Batching is bounded by **bytes** (`item.size`), not item count. A
  * single WS partial may carry tens of thousands of rows and run to MBs
@@ -40,40 +44,71 @@ import { logger } from '@devvir/service-kit';
 import { makeMongoId } from '@tradebot/utils';
 import type { BitmexTable } from '@tradebot/types';
 import { recordWrite } from '../metrics';
-import { release } from './inflight';
+import { release } from './staging';
 import type { Item } from '../types';
 import type { TableBatches } from './dispatch';
 
-const RETRY_INITIAL_MS      = 1_000;
-const RETRY_MAX_MS          = 30_000;
-const MAX_BYTES_PER_REQUEST = 5_000_000;
+const RETRY_INITIAL_MS = 1_000;
+const RETRY_MAX_MS     = 30_000;
+
+/**
+ * Hard ceiling on a single POST body. The binding constraint is the
+ * librarian's 32 MiB express body limit (plus mongo's 48 MiB message / 16 MiB
+ * per-doc limits). Internal, not an env knob — a safety bound, not a tuning
+ * surface — and the staging + read-buffer byte ceilings derive from it.
+ */
+export const MAX_BYTES_PER_REQUEST = 8 * 1024 * 1024;
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export const startFlush = (
-  librarianUrl:       string,
-  batches:         TableBatches,
-  flushIntervalMs: number,
-  wireBytesCap:    number,
+  librarianUrl:        string,
+  batches:             TableBatches,
+  flushIntervalMs:     number,
+  maxInFlightRequests: number,
 ): NodeJS.Timeout => {
-  /** Total content bytes currently inside in-flight HTTP requests (sum across all tables). */
-  let wireBytes = 0;
+  /** POSTs sent and not yet settled (sum across all tables). */
+  let inFlightRequests = 0;
+  /** Rotating start offset so no table is permanently served first when slots saturate. */
+  let cursor           = 0;
 
+  /**
+   * Round-robin the in-flight request budget across tables: one batch per
+   * table per pass, looping until every slot is busy or a full pass ships
+   * nothing. The pass starts at a rotating offset, so a fat early table can no
+   * longer hog the slots and starve tables inserted after it.
+   */
   const tick = (): void => {
-    for (const [table, items] of batches) {
-      while (items.length > 0) {
+    const tables = [...batches.keys()];
+
+    if (tables.length === 0) return;
+
+    const start = cursor++ % tables.length;
+
+    let progressed = true;
+
+    while (progressed) {
+      progressed = false;
+
+      for (let i = 0; i < tables.length; i++) {
+        if (inFlightRequests >= maxInFlightRequests) return;
+
+        const table = tables[(start + i) % tables.length]!;
+        const items = batches.get(table);
+
+        if (! items || items.length === 0) continue;
+
         const count = sliceCount(items);
         const bytes = sumBytes(items, count);
-
-        if (wireBytes + bytes > wireBytesCap) break;
-
         const batch = items.splice(0, count);
 
-        release(batch.length);   // hand off writer-queue inflight
-        wireBytes += bytes;      // claim wire-side inflight
+        release(bytes);       // out of the staging gate → unblocks the readers
+        inFlightRequests++;   // claim an in-flight request slot
 
         void postBatch(librarianUrl, table, batch)
-          .finally(() => { wireBytes -= bytes; });
+          .finally(() => { inFlightRequests--; });
+
+        progressed = true;
       }
     }
   };
@@ -89,7 +124,7 @@ export const startFlush = (
 
 /**
  * Decide how many items to ship in the next batch, bounded by
- * `MAX_ROWS_PER_REQUEST` worth of `item.size` (bytes). Always takes at
+ * `MAX_BYTES_PER_REQUEST` worth of `item.size` (bytes). Always takes at
  * least one item — if the first item alone already exceeds the cap
  * (e.g. a huge partial), it ships alone so progress can still be made.
  */
@@ -189,8 +224,7 @@ const onSuccess = (batch: Item[]): void => {
 
 // ── Test-only exports ─────────────────────────────────────────────────────────
 
-export const _test_RETRY_INITIAL_MS     = RETRY_INITIAL_MS;
-export const _test_RETRY_MAX_MS         = RETRY_MAX_MS;
-export const _test_MAX_BYTES_PER_REQUEST = MAX_BYTES_PER_REQUEST;
-export const _test_buildBody            = buildBody;
-export const _test_sliceCount           = sliceCount;
+export const _test_RETRY_INITIAL_MS = RETRY_INITIAL_MS;
+export const _test_RETRY_MAX_MS     = RETRY_MAX_MS;
+export const _test_buildBody        = buildBody;
+export const _test_sliceCount       = sliceCount;

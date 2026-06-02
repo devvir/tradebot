@@ -203,3 +203,47 @@ describe('createBoundedBuffer — onPause / onResume callbacks', () => {
     expect(buf.size()).toBe(2);
   });
 });
+
+// ── byte-mode (sizeOf) ────────────────────────────────────────────────────────
+
+describe('createBoundedBuffer — byte-mode (sizeOf)', () => {
+  it('bounds on summed bytes, not item count', async () => {
+    const buf = createBoundedBuffer<{ size: number }>({
+      highWater: 100, lowWater: 50, sizeOf: i => i.size,
+    });
+
+    await buf.push({ size: 60 });
+    await buf.push({ size: 60 }); /** total 120 — only 2 items, but over highWater */
+
+    let settled = false;
+
+    /** A tiny push still blocks: the gate is bytes, not the 2-item count. */
+    void buf.push({ size: 1 }).then(() => { settled = true; });
+
+    await flush();
+    expect(settled).toBe(false);
+    expect(buf.size()).toBe(2);
+  });
+
+  it('resumes once popped bytes drain below lowWater', async () => {
+    const buf = createBoundedBuffer<{ size: number }>({
+      highWater: 100, lowWater: 30, sizeOf: i => i.size,
+    });
+
+    await buf.push({ size: 60 });
+    await buf.push({ size: 60 }); /** total 120 */
+
+    let settled = false;
+
+    void buf.push({ size: 60 }).then(() => { settled = true; });
+
+    await flush();
+    expect(settled).toBe(false);
+
+    /** Pop both buffered items (120 bytes) → total 0 <= lowWater → resume. */
+    await buf.pop(2);
+    await flush();
+
+    expect(settled).toBe(true);
+  });
+});

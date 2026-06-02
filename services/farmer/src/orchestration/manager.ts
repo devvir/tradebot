@@ -27,6 +27,8 @@ import { Task, type StopSignal } from './task';
 const STALE_TTL_MS           = 60_000;
 const EMPTY_POLL_INTERVAL_MS = 1_000;
 const WEIGHT_EXPONENT        = 0.2;
+/** How often each active Task checkpoints its confirmed frontier to Redis. */
+const PROGRESS_INTERVAL_MS   = 1_000;
 
 interface PendingDate {
   date: string;
@@ -44,33 +46,28 @@ export const nextTask = async (): Promise<Task | undefined> => {
   init();
 
   while (! stopSignal!.triggered) {
-    /**
-     * Refresh whenever stale, even if the list still has work. Stale flips
-     * back at most once per minute, so this is at most ~1 refresh per minute
-     * of activity — well worth it to pick up new vault files mid-backlog.
-     */
-    if (stale) await refresh();
+    if (totalPending() > 0) {
+      const task = takeTask();
 
-    if (totalPending() === 0) {
-      await sleep(EMPTY_POLL_INTERVAL_MS);
-      continue;
+      /**
+       * Hand the worker its task immediately, then refresh the list in the
+       * background if it's gone stale. The worker never waits on a vault scan
+       * while there's work to drain. `refresh()` is deduped, and `buildPending`
+       * excludes anything in `inFlight` — and `takeTask` adds this bucket there
+       * before the async refresh runs — so it can't reappear in the new list.
+       */
+      if (stale) void refresh();
+
+      return task;
     }
 
-    const tables       = Array.from(pending.keys());
-    const table        = pickTable(tables);
-    const queue        = pending.get(table)!;
-    const { date, skip } = queue.shift()!;
-
-    if (queue.length === 0) pending.delete(table);
-
-    inFlight.add(keyFor(table, date));
-
-    return new Task({
-      table, date, skip,
-      intervalMs: intervalMs!,
-      stopSignal: stopSignal!,
-      onComplete: trackCompletion,
-    });
+    /**
+     * Nothing to hand out. If the list is stale, scan now (blocking is
+     * harmless — there's no work either way); otherwise wait for the periodic
+     * refresh to surface new buckets.
+     */
+    if (stale) await refresh();
+    else await sleep(EMPTY_POLL_INTERVAL_MS);
   }
 
   return undefined;
@@ -99,7 +96,6 @@ const sizeApprox: Map<BitmexTable, number>           = new Map();
 const inFlight: Set<string>                          = new Set();
 
 let stopSignal: StopSignal | null                    = null;
-let intervalMs: number | null                        = null;
 let vaultUrl:   string | null                        = null;
 let filter:     BitmexTable[]                        = [];
 
@@ -112,7 +108,6 @@ const init = (): void => {
   const config  = service.config() as Config;
 
   stopSignal = { triggered: false };
-  intervalMs = config.progressIntervalMs;
   vaultUrl   = config.vaultUrl;
   filter     = config.tables;
 
@@ -291,6 +286,27 @@ const keyFor = (table: BitmexTable, date: string): string => `${table}:${date}`;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/** Pull the next bucket off the list (ordering picks the table, oldest date
+ *  first), mark it in-flight, and wrap it in a Task. Caller has checked the
+ *  list is non-empty. */
+const takeTask = (): Task => {
+  const tables         = Array.from(pending.keys());
+  const table          = pickTable(tables);
+  const queue          = pending.get(table)!;
+  const { date, skip } = queue.shift()!;
+
+  if (queue.length === 0) pending.delete(table);
+
+  inFlight.add(keyFor(table, date));
+
+  return new Task({
+    table, date, skip,
+    intervalMs: PROGRESS_INTERVAL_MS,
+    stopSignal: stopSignal!,
+    onComplete: trackCompletion,
+  });
+};
+
 const totalPending = (): number => {
   let n = 0;
 
@@ -313,6 +329,21 @@ export const _test_trackCompletion        = trackCompletion;
 export const _test_seedInFlight           = (table: BitmexTable, date: string): void => {
   inFlight.add(keyFor(table, date));
 };
+/** Seed a fresh (non-stale) pending list and a live stopSignal so `nextTask`
+ *  hands out from it directly — `init()` short-circuits on the set stopSignal,
+ *  so no registry/vault is touched. */
+export const _test_primeForHandout        = (buckets: Array<{ table: BitmexTable; date: string; skip?: number }>): void => {
+  stopSignal = { triggered: false };
+  stale      = false;
+  pending    = new Map();
+
+  for (const { table, date, skip } of buckets) {
+    const queue = pending.get(table) ?? [];
+
+    queue.push({ date, skip: skip ?? 0 });
+    pending.set(table, queue);
+  }
+};
 export const _test_resetManager           = (): void => {
   pending    = new Map();
   stale      = true;
@@ -321,7 +352,6 @@ export const _test_resetManager           = (): void => {
   sizeApprox.clear();
   inFlight.clear();
   stopSignal = null;
-  intervalMs = null;
   vaultUrl   = null;
   filter     = [];
 

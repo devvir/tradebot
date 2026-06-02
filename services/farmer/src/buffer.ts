@@ -2,29 +2,38 @@
  * Single-producer / single-consumer bounded async buffer with high/low water
  * mark backpressure.
  *
- *   - `push(item)` blocks when size >= `highWater`; resumes once a `pop`
- *     drains the buffer down to `lowWater` (hysteresis prevents thrashing).
+ *   - `push(item)` blocks when the buffered total >= `highWater`; resumes once
+ *     a `pop` drains it down to `lowWater` (hysteresis prevents thrashing).
  *   - `pop(max)` blocks while the buffer is empty but open. Resolves with up
  *     to `max` items as one batch, or with `undefined` once `close()` is
  *     called and the buffer has been drained. Batched popping avoids the
  *     O(N) `Array.shift` cost on every item.
  *
+ * The "total" the watermarks bound is `sum(sizeOf(item))`. With the default
+ * `sizeOf` (`() => 1`) that's the item count; pass `sizeOf: i => i.size` to
+ * bound by bytes instead, so the memory ceiling stops depending on how big
+ * each item happens to be. `pop(max)` always counts items, not the total —
+ * `max` caps how many items come back in one batch regardless of mode.
+ *
  * Optional `onPause` / `onResume` callbacks let an outside observer (metrics,
- * logging) react to backpressure transitions without polling `size()`.
+ * logging) react to backpressure transitions without polling.
  *
  * The implementation is JS-single-threaded — no locks needed.
  */
 
 import type { BoundedBuffer, BoundedBufferOpts } from './types';
 
-export const createBoundedBuffer = <T>(opts: BoundedBufferOpts): BoundedBuffer<T> => {
+export const createBoundedBuffer = <T>(opts: BoundedBufferOpts<T>): BoundedBuffer<T> => {
   const { highWater, lowWater, onPause, onResume } = opts;
+  const sizeOf = opts.sizeOf ?? ((): number => 1);
 
   if (lowWater > highWater) {
     throw new Error(`lowWater (${lowWater}) must not exceed highWater (${highWater})`);
   }
 
   const items: T[] = [];
+  /** Sum of `sizeOf(item)` across buffered items — what the watermarks bound. */
+  let total        = 0;
   let closed       = false;
   let paused       = false;
 
@@ -32,7 +41,7 @@ export const createBoundedBuffer = <T>(opts: BoundedBufferOpts): BoundedBuffer<T
   let popWaiters:  Array<() => void> = [];
 
   const wakePushers = (): void => {
-    if (items.length > lowWater || pushWaiters.length === 0) return;
+    if (total > lowWater || pushWaiters.length === 0) return;
 
     if (paused) {
       paused = false;
@@ -58,7 +67,7 @@ export const createBoundedBuffer = <T>(opts: BoundedBufferOpts): BoundedBuffer<T
     push: async (item: T): Promise<void> => {
       if (closed) throw new Error('push to closed buffer');
 
-      while (items.length >= highWater) {
+      while (total >= highWater) {
         if (! paused) {
           paused = true;
           onPause?.();
@@ -68,6 +77,7 @@ export const createBoundedBuffer = <T>(opts: BoundedBufferOpts): BoundedBuffer<T
       }
 
       items.push(item);
+      total += sizeOf(item);
       wakePoppers();
     },
 
@@ -79,6 +89,8 @@ export const createBoundedBuffer = <T>(opts: BoundedBufferOpts): BoundedBuffer<T
       if (items.length === 0) return undefined;
 
       const batch = items.splice(0, max);
+
+      for (const item of batch) total -= sizeOf(item);
 
       wakePushers();
 

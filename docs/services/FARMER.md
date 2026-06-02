@@ -26,14 +26,15 @@ gaps (e.g. pre-2023 `orderBookL2` rows missing `timestamp`/`transactTime`/
 
 **Normalization.** Every document gets a reliable timestamp (native if the
 table has one, reception date otherwise) and a deterministic `_id` packed as
-`dateOffset × 2³⁹ + slot × 2¹² + reserved` — a 53-bit safe integer that lets
+`dateOffset × 2³⁸ + slot × 2⁸ + reserved` — a 53-bit safe integer that lets
 date-range queries ride Mongo's natural `_id` index. `slot = position − 1`
-internally; see [id.ts](../../services/farmer/src/write/id.ts).
+internally; built by `makeMongoId` in `@tradebot/utils`.
 
 **Throughput.** Mongo writes are CPU-heavy enough (BSON encoding, driver
 work) that doing them in-process forces the reader and the writer to share one
 Node event loop. Offloading to the writer service over HTTP recovers the
-reader's natural rate (~40k/s) at the cost of one TCP round-trip per batch.
+reader's natural rate (~60k/s on an otherwise-idle box) at the cost of one TCP
+round-trip per batch.
 
 **Maintainability.** New BitMEX quirks appear regularly. A well-structured
 pipeline (read → infer → assemble → dispatch) keeps new guards landing in one
@@ -47,7 +48,7 @@ isolated in their own submodule and reachable only through `nextTask()`.
 | **bucket** | One gzipped CSV at `<table>/<year>/<YYMMDD>.csv.gz`. The unit of stored data. |
 | **record** | A REST item — one CSV row → one Mongo document. |
 | **message** | A WS item — one or more CSV rows (continuation rows have empty `_date_`+`action`), reassembled by vault into a single object. |
-| **item** | Record or message, with its 1-based `position` in the bucket file, its `task`, and its `rows` count (1 for REST, `parsed.data.length` for WS). |
+| **item** | Record or message, with its 1-based `position` in the bucket file, its `task`, its `content` (the wire-ready JSON string), and its byte `size`. |
 | **task** | A bucket that needs importing. Owns its progress and lifecycle; carries the shared `stopSignal`. |
 | **progress** | Stored in Redis as `<messages>` while in-flight, `done:<messages>` once complete. |
 
@@ -63,7 +64,7 @@ N readers (one per task — workers feed and move on)
         │
         ▼
  ┌──────────────┐
- │  reader q    │  200k high / 50k low
+ │  reader q    │  byte-bounded: readBufferBytes (derived, ≤ 1 GiB)
  └──────┬───────┘
         │
    infer (by task.type)
@@ -71,22 +72,21 @@ N readers (one per task — workers feed and move on)
 WS │         │ REST
    ▼         │
  ┌──────────────┐
- │ assembler q  │
+ │ assembler q  │  byte-bounded: readBufferBytes
  └──────┬───────┘
         │
-   parse + reconstruct
-   (sets item.rows = parsed.data.length)
+   assemble: content → wire envelope, set item.size
         │         │
-        ▼         ▼
+        ▼         ▼   admit(item.size) → staging byte gate (stagingBytes)
  ┌──────────────┐
- │  writer q    │  global in-flight cap: 100k rows
+ │  writer q    │
  └──────┬───────┘
         │
    dispatch (by table)
         │
    per-table batches
         │
-   flush (50ms timer or cap headroom)
+   flush (100 ms timer; round-robin under the in-flight request cap)
         │
    POST /:table  ─→  Librarian  ─→  MongoDB
 ```
@@ -102,24 +102,29 @@ property set (V8 hidden-class friendly):
 
 ```ts
 interface Item {
-  task:     Task;
-  position: number;                       // 1-based: first message of a file is position 1
-  raw?:     string;                       // present from reader; cleared after parse
-  parsed?:  Record<string, unknown>;      // populated by assembler (WS) or at write (REST)
-  rows:     number;                       // 1 for REST; parsed.data.length for WS
+  task:     Task;       // shared per-bucket pointer (table, date, type, stopSignal)
+  position: number;     // 1-based: first message of a file is position 1
+  content:  string;     // a JSON string beginning with `{` — the doc as it goes on the wire
+  size:     number;     // byte length of `content`
 }
 ```
 
 `table`, `date`, `type`, and `stopSignal` live on `item.task` — one shared
-pointer per bucket, not duplicated per item. Fields are mutated in place
-across stages; we never spread/clone to add a property. The mongo doc is
-built by mutating `item.parsed` (or the freshly-parsed `JSON.parse(item.raw)`)
-to add `_id`, then handing it to the writer in a JSON array body.
+pointer per bucket, not duplicated per item. `content` is mutated in place
+across stages; we never spread/clone to add a property:
 
-`rows` is set by the producer of each item: the reader defaults it to `1`,
-and assemble overwrites it with `parsed.data.length` once the WS message is
-reconstructed. The flusher reads it to bound each HTTP batch by total row
-count rather than item count.
+- the **reader** sets `content` to the vault NDJSON line as-is (REST docs are
+  already wire-ready; WS lines are the raw envelope)
+- **assemble** (WS only) replaces `content` with the reconstructed wire
+  envelope — template-spliced for the common case, parse + `reconstruct()` +
+  stringify for the rare fallbacks
+- the **flusher** injects `_id` into `content` by string surgery on the way out
+
+No `JSON.parse` runs on the hot path: keeping everything as text avoids the
+hidden-class churn and GC pressure that nested POJOs cause at this volume.
+`size` tracks `content`'s byte length — the reader sets it to the line length,
+assemble re-sets it after splicing the envelope — and is the unit the staging
+gate and the flusher's batching both bound by.
 
 ## Orchestration
 
@@ -230,39 +235,51 @@ the averages. There's no benefit to persisting them.
 
 ## Flushing
 
-The flusher runs on a 50 ms timer. Each tick walks the per-table batches and
-launches as many HTTP POSTs as fit under the wire-side inflight cap.
-Concurrent posts per table are allowed: each `fetch` runs in its own async
-branch, so a slow request on one table never blocks the next.
+The flusher runs on a 100 ms timer. Each tick round-robins a fixed budget of
+concurrent in-flight requests across the per-table batches — one batch per
+table per pass, from a rotating start offset, looping until every slot is busy
+or a full pass ships nothing. That rotating round-robin is what stops a fat
+table (orderBookL2) from claiming every slot and starving the tables
+dispatched into `batches` after it. Each `fetch` runs in its own async branch,
+so a slow request on one table never blocks another.
 
-### Row-based batching
+### Byte-based batching
 
-Batches are bounded by **rows**, not item count. A single WS partial may
-carry tens of thousands of rows; an item-count cap easily blows past the
-writer's 32 MB body limit. The flusher caps each request at
-`MAX_ROWS_PER_REQUEST` rows (50 000), summing `item.rows` across the slice.
+Batches are bounded by **bytes** (`item.size`), not item count. A single WS
+partial may carry tens of thousands of rows and run to MBs on its own, so an
+item-count cap easily blows past the librarian's 32 MiB body limit. The flusher
+caps each request at `MAX_BYTES_PER_REQUEST` (20 MiB), summing `item.size`
+across the slice.
 
-The first item in any slice is always taken, even if its row count alone
-exceeds the cap. A 70 000-row `orderBookL2` partial ships alone — the writer
-either accepts it (mongo's per-doc 16 MB limit permitting) or surfaces an
-error that the retry loop catches. Splitting a single WS partial into
-multiple inserts isn't an option without changing the on-the-wire shape, so
-"send and let the writer decide" is the only sensible behaviour.
+The first item in any slice is always taken, even if it alone exceeds the cap.
+A huge `orderBookL2` partial ships alone — the librarian either accepts it
+(mongo's per-doc 16 MiB limit permitting) or surfaces an error the retry loop
+catches. Splitting a single WS message isn't possible without changing the
+on-the-wire shape, so "send and let the writer decide" is the only option.
 
-### Inflight gate
+### In-flight request cap
 
-A single global counter caps how many rows are currently being held by
-in-flight HTTP requests (default cap 100 000). Items move through two stages:
+The one throughput knob is `FARMER_INFLIGHT_CAP` — how many POSTs may be in
+flight to the librarian at once. A slot is a slot regardless of batch size
+(each batch is ≤ `MAX_BYTES_PER_REQUEST`), so a request count maps directly to
+"how many requests the writer replicas juggle" and stays meaningful no matter
+how big the messages are — unlike a byte or item cap, whose real-world load
+drifts with message size. Mongo is the floor; this knob exists so farmer keeps
+it busy without flooding it.
 
-1. Admitted to the writer queue (post-parse for WS, direct for REST) →
-   incremented by 1 per item via the per-item `admit` gate.
-2. Spliced out into a per-table batch and shipped via HTTP → released from
-   the per-item gate, and the row count is added to the wire inflight.
-3. Response received → the row count comes off the wire inflight.
+### Staging gate
 
-The two-stage design lets the writer queue empty as soon as items have been
-handed to a `fetch` call (so dispatch can advance), while still keeping a
-hard ceiling on rows the producer-side has outstanding.
+A single global byte counter (`staging`) bounds everything processed but not
+yet shipped — the writer queue plus the per-table batches. infer/assemble call
+`admit(item.size)` before pushing onto the writer queue; flush calls
+`release(bytes)` when it splices a batch out to POST it. Its cap is
+`stagingBytes = FARMER_INFLIGHT_CAP × MAX_BYTES_PER_REQUEST` — one full
+send-set held ready, so the flusher never starves between reads. When it fills,
+`admit` blocks, and that is what propagates backpressure to the readers.
+
+This is "ready to send", distinct from "in flight": an item is counted by the
+staging gate until its batch is spliced for a POST, then by the in-flight
+request cap until the response lands. Never both, never neither.
 
 ## Drops, errors, shutdown
 
@@ -281,14 +298,17 @@ hard ceiling on rows the producer-side has outstanding.
 When the writer (or mongo behind it) is slow:
 
 ```
-HTTP responses lag → wire inflight stays near cap → flusher stops launching →
-batches build up → writer queue admission waits → assembler push blocks →
-reader queue fills past high watermark → reader push blocks →
-vault HTTP body backs up → TCP throttles vault server-side
+HTTP responses lag → in-flight request slots stay full → flusher stops
+launching → per-table batches build up → staging byte gate fills →
+admit blocks → assembler / writer-queue pushes block → reader-queue bytes
+fill past the high watermark → reader push blocks → vault HTTP body backs up →
+TCP throttles the vault server-side
 ```
 
-No external queue-depth polling, no broker. Memory is bounded by the queue
-sizes and the wire inflight cap together.
+No external queue-depth polling, no broker. The footprint is byte-bounded end
+to end and flat regardless of message size: the two read buffers
+(`readBufferBytes` each), staging (`stagingBytes`), and the in-flight bodies
+(`FARMER_INFLIGHT_CAP × MAX_BYTES_PER_REQUEST`).
 
 ## Recovery & idempotency
 
@@ -297,7 +317,7 @@ Restart from scratch is always safe:
 - Tasks read their resume point via `progress.get` on creation. Items already
   inserted produce `E11000` on the second pass, which the writer handles as
   success and farmer treats as a normal `200` ack.
-- `_id` is `dateOffset * 2³⁹ + (position - 1) * 2¹² + reserved` — deterministic
+- `_id` is `dateOffset * 2³⁸ + (position - 1) * 2⁸ + reserved` — deterministic
   from `(date, position)`. Two runs over the same bucket produce identical
   `_id`s. Empty file → `setTotalMessages(0)` → `done:0`.
 - Buckets that returned from `progress.listDone()` at refresh time are skipped
@@ -364,17 +384,16 @@ src/
 
   process/
     infer.ts            reader queue → assembler queue (WS) or writer queue (REST)
-    assemble.ts         assembler queue → parse → reconstruct → writer queue
-                        (sets item.rows = parsed.data.length)
+    assemble.ts         assembler queue → wire envelope (template splice; parse +
+                        reconstruct on the rare fallbacks) → writer queue
     reconstruct.ts      WS reconstruction (timestamp, partial decoration, legacy backfills)
 
   write/
-    inflight.ts         per-item admission gate (writer-side backpressure)
+    staging.ts          staging byte gate (producer-side backpressure)
     dispatch.ts         writer queue → per-table batches
-    flush.ts            per-table HTTP POSTs to the writer + retry loop
-                        row-based batching via MAX_ROWS_PER_REQUEST
+    flush.ts            per-table HTTP POSTs to the writer + retry loop;
+                        byte-based batching, round-robin under the request cap
     errors.ts           farmer.<table> error writes (direct insertOne)
-    id.ts               makeId(date, position) — translates position - 1 to legacy slot
 ```
 
 ## Configuration
@@ -387,10 +406,8 @@ src/
 | `CACHE_URL` | Yes | — | Redis connection string |
 | `FARMER_TABLES` | No | (all) | Comma-separated table filter |
 | `FARMER_FILE_CONCURRENCY` | No | `10` | Parallel reader workers |
-| `FARMER_READ_BUFFER_HIGH` | No | `1000000` | Reader queue high watermark |
-| `FARMER_READ_BUFFER_LOW` | No | `500000` | Reader queue low watermark |
-| `FARMER_INFLIGHT_CAP` | No | `500000` | Wire-side inflight cap (rows in-flight to the writer) |
-| `FARMER_WIRE_CAP_MB` | No | `20` | Max batch size to send to Writer, in Mb |
+| `FARMER_INFLIGHT_CAP` | No | `20` | Max concurrent POSTs in flight to the writer; `stagingBytes` (= cap × 20 MiB) and the read-buffer byte ceilings derive from it |
 | `FARMER_FLUSH_INTERVAL_MS` | No | `100` | Per-table batch dispatch timer |
-| `FARMER_PROGRESS_INTERVAL_MS` | No | `1000` | Per-task Redis progress tick |
-| `FARMER_METRICS_INTERVAL_MS` | No | `60000` | Throughput metrics log interval |
+
+The per-task Redis progress tick (1 s) and the metrics log interval (60 s) are
+fixed constants, not env knobs.

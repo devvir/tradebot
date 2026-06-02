@@ -1,14 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   startFlush,
-  _test_buildBody             as buildBody,
-  _test_RETRY_INITIAL_MS      as RETRY_INITIAL_MS,
-  _test_MAX_BYTES_PER_REQUEST as MAX_BYTES_PER_REQUEST,
-  _test_sliceCount            as sliceCount,
+  MAX_BYTES_PER_REQUEST,
+  _test_buildBody        as buildBody,
+  _test_RETRY_INITIAL_MS as RETRY_INITIAL_MS,
+  _test_sliceCount       as sliceCount,
 } from '../../src/write/flush';
 import { Task, type StopSignal } from '../../src/orchestration';
 import { makeMongoId } from '@tradebot/utils';
-import { admit, initInflight, _test_reset as resetInflight } from '../../src/write/inflight';
+import { admit, initStaging, _test_reset as resetStaging } from '../../src/write/staging';
 import type { Item } from '../../src/types';
 import type { TableBatches } from '../../src/write/dispatch';
 import type { BitmexTable } from '@tradebot/types';
@@ -62,8 +62,8 @@ const CAP            = 100_000;
 
 beforeEach(() => {
   vi.useFakeTimers();
-  resetInflight();
-  initInflight(CAP);
+  resetStaging();
+  initStaging(CAP);
 });
 
 afterEach(() => {
@@ -320,10 +320,10 @@ describe('startFlush — shutdown', () => {
   });
 });
 
-// ── wireBytesCap ──────────────────────────────────────────────────────────────
+// ── in-flight request cap ─────────────────────────────────────────────────────
 
-describe('startFlush — wireBytesCap', () => {
-  it('pauses flushing when the cap is reached and resumes when a POST completes', async () => {
+describe('startFlush — in-flight request cap', () => {
+  it('stops at the request cap and resumes when a POST settles', async () => {
     const task  = makeTask('trade');
     const first = makeItem(task, 1);
 
@@ -335,15 +335,15 @@ describe('startFlush — wireBytesCap', () => {
 
     await admitItems(task, 1);
 
-    /** cap = exactly one item's worth of bytes → only one in flight at a time. */
-    const timer = startFlush(LIBRARIAN_URL, batches, FLUSH_INTERVAL, first.size);
+    /** cap = 1 request → only one POST in flight at a time. */
+    const timer = startFlush(LIBRARIAN_URL, batches, FLUSH_INTERVAL, 1);
 
     await vi.advanceTimersByTimeAsync(FLUSH_INTERVAL);
     await vi.advanceTimersByTimeAsync(0);
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
 
-    /** Queue another item — cap is still full, so the next tick should not flush. */
+    /** Queue another item — the one slot is still busy, so no further POST. */
     batches.get(task.table)!.push(makeItem(task, 2));
     await admitItems(task, 1);
 
@@ -352,7 +352,7 @@ describe('startFlush — wireBytesCap', () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
 
-    /** Release the first; cap frees and the next tick flushes the second. */
+    /** Settle the first; the slot frees and the next tick flushes the second. */
     release();
     await vi.advanceTimersByTimeAsync(FLUSH_INTERVAL);
     await vi.advanceTimersByTimeAsync(0);
@@ -419,6 +419,48 @@ describe('startFlush — wireBytesCap', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
 
     releases.forEach(r => r());
+
+    clearInterval(timer);
+  });
+});
+
+// ── fairness across tables ────────────────────────────────────────────────────
+
+describe('startFlush — fairness across tables', () => {
+  it('round-robins the slots so a late-inserted table is not starved by an early backlog', async () => {
+    /** 15 MiB items → one item per POST (a second would overflow the 20 MiB
+     *  per-request cap). With a 3-request cap and hung fetches, the slots stay
+     *  full for the whole tick. `trade` is inserted first with a deep backlog,
+     *  `quote` last with a single item — the greedy loop would have spent all
+     *  three slots on `trade`; round-robin must hand `quote` one of them. */
+    const SIZE    = 15 * 1024 * 1024;
+    const MAX_REQ = 3;
+
+    const big   = makeTask('trade');
+    const small = makeTask('quote');
+
+    const bigItems   = Array.from({ length: 10 }, (_, i) => makeItem(big, i + 1, undefined, SIZE));
+    const smallItems = [ makeItem(small, 1, undefined, SIZE) ];
+
+    /** fetch hangs so every claimed slot stays busy for the whole tick. */
+    const fetchSpy = mockFetch(() => new Promise<Response>(() => {}));
+
+    const batches: TableBatches = new Map([
+      [big.table,   bigItems],
+      [small.table, smallItems],
+    ]);
+
+    await admitItems(big, bigItems.length);
+    await admitItems(small, smallItems.length);
+
+    const timer = startFlush(LIBRARIAN_URL, batches, FLUSH_INTERVAL, MAX_REQ);
+
+    await vi.advanceTimersByTimeAsync(FLUSH_INTERVAL);
+
+    const postedTables = fetchSpy.mock.calls.map(c => (c[0] as string).split('/').pop());
+
+    expect(fetchSpy).toHaveBeenCalledTimes(MAX_REQ);
+    expect(postedTables).toContain('quote');
 
     clearInterval(timer);
   });

@@ -2,37 +2,30 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   admit,
   release,
-  initInflight,
-  inflightSize,
+  initStaging,
+  stagedBytes,
   _test_reset as reset,
-} from '../../src/write/inflight';
+} from '../../src/write/staging';
 
 const flush = () => new Promise<void>(r => setImmediate(r));
 
 beforeEach(() => reset());
 
-// ── Admit increases the counter ───────────────────────────────────────────────
+// ── Admit increases the staged byte total ─────────────────────────────────────
 
-describe('inflight — admit', () => {
-  it('increments the in-flight count', async () => {
-    initInflight(10);
+describe('staging — admit', () => {
+  it('adds the admitted bytes to the staged total', async () => {
+    initStaging(10);
 
     await admit(1);
-    expect(inflightSize()).toBe(1);
+    expect(stagedBytes()).toBe(1);
 
     await admit(3);
-    expect(inflightSize()).toBe(4);
-  });
-
-  it('defaults count to 1', async () => {
-    initInflight(10);
-
-    await admit();
-    expect(inflightSize()).toBe(1);
+    expect(stagedBytes()).toBe(4);
   });
 
   it('returns immediately when below cap', async () => {
-    initInflight(10);
+    initStaging(10);
 
     const start = Date.now();
     await admit(5);
@@ -42,12 +35,12 @@ describe('inflight — admit', () => {
 
 // ── Admit blocks at the cap ───────────────────────────────────────────────────
 
-describe('inflight — admit blocks when cap is reached', () => {
-  it('a push that would exceed cap waits until release', async () => {
-    initInflight(2);
+describe('staging — admit blocks when cap is reached', () => {
+  it('an admit that would exceed cap waits until release', async () => {
+    initStaging(2);
 
     await admit(2);
-    expect(inflightSize()).toBe(2);
+    expect(stagedBytes()).toBe(2);
 
     let settled = false;
 
@@ -55,17 +48,17 @@ describe('inflight — admit blocks when cap is reached', () => {
 
     await flush();
     expect(settled).toBe(false);
-    expect(inflightSize()).toBe(2);
+    expect(stagedBytes()).toBe(2);
 
     release(1);
     await flush();
 
     expect(settled).toBe(true);
-    expect(inflightSize()).toBe(2);
+    expect(stagedBytes()).toBe(2);
   });
 
-  it('multi-item admit blocks if it would exceed cap', async () => {
-    initInflight(4);
+  it('a multi-byte admit blocks if it would exceed cap', async () => {
+    initStaging(4);
 
     await admit(3);
 
@@ -79,18 +72,18 @@ describe('inflight — admit blocks when cap is reached', () => {
     release(1);
     await flush();
 
-    /** current is now 2; 2 + 3 = 5 still > cap (4) — stays blocked. */
+    /** staged is now 2; 2 + 3 = 5 still > cap (4) — stays blocked. */
     expect(settled).toBe(false);
 
     release(1);
     await flush();
 
-    /** current is now 1; 1 + 3 = 4 NOT > cap — admit succeeds. */
+    /** staged is now 1; 1 + 3 = 4 NOT > cap — admit succeeds. */
     expect(settled).toBe(true);
   });
 
   it('all queued waiters get a chance when a release arrives', async () => {
-    initInflight(3);
+    initStaging(3);
 
     await admit(3);
 
@@ -108,7 +101,7 @@ describe('inflight — admit blocks when cap is reached', () => {
     await flush();
     await flush();
 
-    /** Two should fit (current went 1 → 2 → 3 after two admits); the third
+    /** Two should fit (staged went 1 → 2 → 3 after two admits); the third
      *  has to wait again because 3 + 1 > 3. */
     expect(results.length).toBe(2);
 
@@ -122,37 +115,37 @@ describe('inflight — admit blocks when cap is reached', () => {
 
 // ── Release ───────────────────────────────────────────────────────────────────
 
-describe('inflight — release', () => {
-  it('decrements the in-flight count', async () => {
-    initInflight(10);
+describe('staging — release', () => {
+  it('subtracts the released bytes from the staged total', async () => {
+    initStaging(10);
 
     await admit(5);
     release(2);
-    expect(inflightSize()).toBe(3);
+    expect(stagedBytes()).toBe(3);
   });
 
   it('clamps to zero rather than going negative', async () => {
-    initInflight(10);
+    initStaging(10);
 
     await admit(1);
     release(5);
 
-    expect(inflightSize()).toBe(0);
+    expect(stagedBytes()).toBe(0);
   });
 });
 
 // ── Reinitialization ──────────────────────────────────────────────────────────
 
-describe('inflight — initInflight resets the cap', () => {
+describe('staging — initStaging resets the cap', () => {
   it('changes the active cap', async () => {
-    initInflight(2);
+    initStaging(2);
     await admit(2);
 
-    initInflight(10);
-    /** Existing in-flight stays as is; new cap applies to future admits. */
-    expect(inflightSize()).toBe(2);
+    initStaging(10);
+    /** Existing staged stays as is; new cap applies to future admits. */
+    expect(stagedBytes()).toBe(2);
 
     await admit(5);
-    expect(inflightSize()).toBe(7);
+    expect(stagedBytes()).toBe(7);
   });
 });
