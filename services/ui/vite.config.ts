@@ -4,16 +4,24 @@ import react from '@vitejs/plugin-react';
 /**
  * Vite dev-server proxies — keep the browser same-origin, no CORS dance.
  *
- *   /api/v1     →  UI_REST_PROXY     (default http://proxy)
- *   /replay     →  UI_REPLAY_HOST    (REST, rewritten to upstream root)
- *   /replay-ws  →  UI_REPLAY_HOST    (WS, ws: true, rewritten to upstream root)
+ *   /api/v1          →  UI_REST_PROXY (default http://proxy)  — live/testnet REST
+ *   /replay          →  digger REST    (rewritten /replay → /api/v1)
+ *   /replay-ws       →  digger WS      (ws: true, rewritten to upstream root)
+ *   /replay-control  →  digger control (rewritten to upstream root)
  *
- * `__REPLAY_ENABLED__` is a build-time boolean exposed to the browser bundle —
- * the env dropdown uses it to gate the Replay option.
+ * Digger exposes three host-mapped ports. Set `UI_DIGGER_HOST` (e.g. `localhost`)
+ * to enable the Replay env; ports default to the replay module's mappings.
+ * `__REPLAY_ENABLED__` is a build-time boolean — the env dropdown gates Replay on it.
  */
-const REST_PROXY     = process.env.UI_REST_PROXY  ?? 'http://proxy';
-const REPLAY_HOST    = process.env.UI_REPLAY_HOST ?? '';
-const REPLAY_ENABLED = Boolean(REPLAY_HOST);
+const REST_PROXY = process.env.UI_REST_PROXY ?? 'http://proxy';
+
+const DIGGER_HOST         = process.env.UI_DIGGER_HOST         ?? '';
+const DIGGER_WS_PORT      = process.env.UI_DIGGER_WS_PORT      ?? '8180';
+const DIGGER_REST_PORT    = process.env.UI_DIGGER_REST_PORT    ?? '3101';
+const DIGGER_CONTROL_PORT = process.env.UI_DIGGER_CONTROL_PORT ?? '8280';
+
+const REPLAY_ENABLED = Boolean(DIGGER_HOST);
+const digger = (port: string): string => `http://${DIGGER_HOST}:${port}`;
 
 export default defineConfig({
   plugins: [react()],
@@ -30,17 +38,24 @@ export default defineConfig({
         target:       REST_PROXY,
         changeOrigin: true,
       },
+
+      /** Replay rules — the specific prefixes must precede the generic `/replay`. */
       ...(REPLAY_ENABLED ? {
-        '/replay': {
-          target:       REPLAY_HOST,
-          changeOrigin: true,
-          rewrite:      (path: string) => path.replace(/^\/replay/, ''),
-        },
         '/replay-ws': {
-          target:       REPLAY_HOST,
+          target:       digger(DIGGER_WS_PORT),
           changeOrigin: true,
           ws:           true,
           rewrite:      (path: string) => path.replace(/^\/replay-ws/, ''),
+        },
+        '/replay-control': {
+          target:       digger(DIGGER_CONTROL_PORT),
+          changeOrigin: true,
+          rewrite:      (path: string) => path.replace(/^\/replay-control/, ''),
+        },
+        '/replay': {
+          target:       digger(DIGGER_REST_PORT),
+          changeOrigin: true,
+          rewrite:      (path: string) => path.replace(/^\/replay/, '/api/v1'),
         },
       } : {}),
     },

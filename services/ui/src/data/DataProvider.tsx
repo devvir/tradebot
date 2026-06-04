@@ -26,7 +26,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   }, [env]);
 
   const digger = useMemo(
-    () => __REPLAY_ENABLED__ && env === 'replay' ? new DiggerClient('/replay') : null,
+    () => __REPLAY_ENABLED__ && env === 'replay' ? new DiggerClient('/replay-control') : null,
     [env],
   );
 

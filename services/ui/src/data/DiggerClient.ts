@@ -10,9 +10,9 @@ export class DiggerClient {
 
   /**
    * Move the replay clock to `timestamp` (epoch ms).
-   * Digger pauses, purges downstream queues, resets its snapshot accumulator,
-   * re-primes all active subscriptions at the new position, then resumes.
-   * Returns when the operation is complete and fresh data is about to flow.
+   * Digger pauses the stream, resets its accumulator and buffers, re-primes all
+   * active subscriptions at the new position, then resumes. Returns when the
+   * operation is complete and fresh data is about to flow.
    */
   async setClock(timestamp: number): Promise<void> {
     const res = await fetch(`${this.baseUrl}/set-clock?timestamp=${timestamp}`, {
