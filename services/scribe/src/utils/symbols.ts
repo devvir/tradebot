@@ -1,7 +1,6 @@
 import type { components } from '@devvir/bitmex-api/types';
-import type { RedisClient } from '@devvir/service-kit';
-import { logger } from '@devvir/service-kit';
-import { withRetry } from './throttling';
+import type { RedisClient, FetchClientHandle } from '@devvir/service-kit';
+import { registry, logger } from '@devvir/service-kit';
 
 type Instrument = components['schemas']['Instrument'];
 type Symbols = { indices: string[]; inactive: Set<string> };
@@ -29,27 +28,18 @@ export const getOrderedIndices = async (
 
 export const fetchSymbols = async (baseUrl: string): Promise<Symbols> => {
   const all: Instrument[] = [];
+  let start = 0;
 
-  await withRetry('fetchSymbols', async () => {
-    all.length = 0;
-    let start  = 0;
+  while (true) {
+    const url  = `${baseUrl}/instrument?count=${PAGE_SIZE}&start=${start}&columns=symbol,state&reverse=false`;
+    const page = (await client().get<Instrument[]>(url)) ?? [];
 
-    while (true) {
-      const url = `${baseUrl}/instrument?count=${PAGE_SIZE}&start=${start}&columns=symbol,state&reverse=false`;
-      const res = await fetch(url);
+    all.push(...page);
 
-      if (! res.ok)
-        throw new Error(`Failed to fetch instrument list: HTTP ${res.status}`);
+    if (page.length < PAGE_SIZE) break;
 
-      const page = (await res.json()) as Instrument[];
-
-      all.push(...page);
-
-      if (page.length < PAGE_SIZE) break;
-
-      start += PAGE_SIZE;
-    }
-  });
+    start += PAGE_SIZE;
+  }
 
   const indices  = all.filter(i =>   i.symbol.startsWith('.')).map(i => i.symbol);
   const inactive = new Set(all.filter(i => i.state !== 'Open').map(i => i.symbol));
@@ -60,6 +50,16 @@ export const fetchSymbols = async (baseUrl: string): Promise<Symbols> => {
 };
 
 // ── Private ──────────────────────────────────────────────────────────────────
+
+let bitmex: FetchClientHandle | null = null;
+
+/** Anonymous BitMEX client (retries on 429/5xx) for the one-off symbol-list fetch. */
+const client = (): FetchClientHandle =>
+  (bitmex ??= registry.get('scribe').clients.create({
+    type:    'fetch',
+    name:    'bitmex-symbols',
+    retryOn: [429, 502, 503, 504],
+  }) as FetchClientHandle);
 
 const registerIndices = async (
   cache:   RedisClient,

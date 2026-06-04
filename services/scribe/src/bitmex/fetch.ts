@@ -1,4 +1,5 @@
 import { fetchOne, rowIterator } from './rows';
+import { dateToIso, nextDay } from '../utils';
 import type { Row, FetchFilter, FetchService } from './types';
 import type { TableConfig } from '../types';
 
@@ -47,21 +48,3 @@ async function* dayIterator(
     yield row;
   }
 }
-
-// ── Date helpers ──────────────────────────────────────────────────────────────
-
-const dateToIso = (date: string): string => {
-  const y = date.slice(0, 4);
-  const m = date.slice(4, 6);
-  const d = date.slice(6, 8);
-
-  return `${y}-${m}-${d}T00:00:00.000Z`;
-};
-
-const nextDay = (date: string): string => {
-  const y = parseInt(date.slice(0, 4));
-  const m = parseInt(date.slice(4, 6)) - 1;
-  const d = parseInt(date.slice(6, 8));
-
-  return new Date(Date.UTC(y, m, d + 1)).toISOString().slice(0, 10).replace(/-/g, '');
-};

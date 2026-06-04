@@ -7,9 +7,9 @@ import type { RedisClient } from '@devvir/service-kit';
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
 
-vi.mock('../src/utils/throttling', () => ({
-  sleep:        vi.fn().mockResolvedValue(undefined),
-  waitIfNeeded: vi.fn().mockResolvedValue(undefined),
+vi.mock('../src/utils', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../src/utils')>(),
+  sleep: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('../src/utils/symbols', () => ({
@@ -23,7 +23,7 @@ vi.mock('../src/utils/tables', () => ({
 }));
 
 import * as tablesModule    from '../src/utils/tables';
-import { sleep }            from '../src/utils/throttling';
+import { sleep }            from '../src/utils';
 import { getOrderedIndices } from '../src/utils/symbols';
 
 /**

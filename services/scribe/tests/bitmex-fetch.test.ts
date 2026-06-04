@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createFetchService } from '../src/bitmex';
+import { _test_MAX_IN_FLIGHT as MAX_IN_FLIGHT } from '../src/bitmex/rows';
 import type { TableConfig } from '../src/types';
 
-vi.mock('../src/utils/throttling', () => ({
-  waitIfNeeded: vi.fn().mockResolvedValue(undefined),
-  sleep:        vi.fn().mockResolvedValue(undefined),
+vi.mock('../src/utils', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../src/utils')>(),
+  sleep: vi.fn().mockResolvedValue(undefined),
 }));
 
 const BASE_URL = 'https://www.bitmex.com/api/v1';
@@ -69,9 +70,11 @@ describe('FetchService — oldest', () => {
 
 // ── getRows ───────────────────────────────────────────────────────────────────
 //
-// rowIterator fetches PAGES_PER_BATCH (=10) pages in parallel per iteration.
-// An incomplete batch (any page short or empty) triggers a block transition:
-// blockStartTime advances to the last seen row's timestamp and start resets to 0.
+// rowIterator streams pages through a bounded ring (up to MAX_IN_FLIGHT in flight,
+// flushed in strict offset order). A short/empty page or the maxStart offset cap
+// ends a window; blockStartTime then reanchors to the last seen row's tsField and
+// a fresh window opens at start=0. The ring fires a little look-ahead, so these
+// tests assert the rows and the reanchor points, not exact request counts.
 
 describe('FetchService — getRows', () => {
   beforeEach(() => vi.spyOn(global, 'fetch'));
@@ -84,9 +87,10 @@ describe('FetchService — getRows', () => {
     const result = await collect(createFetchService(BASE_URL).getRows(mkTable()));
 
     expect(result).toEqual(rows);
-    // 10 fetches issued in the batch; partial first page stops yielding after it.
+
+    // MAX_IN_FLIGHT fetches issued in the batch; partial first page stops yielding after it.
     // No timestamp on the rows → cannot advance block → returns.
-    expect(vi.mocked(global.fetch)).toHaveBeenCalledTimes(10);
+    expect(vi.mocked(global.fetch)).toHaveBeenCalledTimes(MAX_IN_FLIGHT);
   });
 
   it('paginates across the batch in offset order', async () => {
@@ -117,7 +121,7 @@ describe('FetchService — getRows', () => {
     const result = await collect(createFetchService(BASE_URL).getRows(mkTable()));
 
     expect(result).toHaveLength(0);
-    expect(vi.mocked(global.fetch)).toHaveBeenCalledTimes(10);
+    expect(vi.mocked(global.fetch)).toHaveBeenCalledTimes(MAX_IN_FLIGHT);
   });
 
   it('applies symbol and startTime filters', async () => {
@@ -135,7 +139,7 @@ describe('FetchService — getRows', () => {
     expect(url.searchParams.get('startTime')).toBe('2020-01-01T00:00:00.000Z');
   });
 
-  it('issues PAGES_PER_BATCH parallel fetches at offsets [start, start+page, …]', async () => {
+  it('issues MAX_IN_FLIGHT parallel fetches at offsets [start, start+page, …]', async () => {
     vi.mocked(global.fetch).mockResolvedValue(okJson([]));
 
     await collect(createFetchService(BASE_URL).getRows(mkTable()));
@@ -143,71 +147,65 @@ describe('FetchService — getRows', () => {
     const calls  = vi.mocked(global.fetch).mock.calls;
     const starts = calls.map(c => new URL(String(c[0])).searchParams.get('start'));
 
-    expect(starts).toEqual(['0', '500', '1000', '1500', '2000', '2500', '3000', '3500', '4000', '4500']);
+    expect(starts).toEqual(Array.from({ length: MAX_IN_FLIGHT }, (_, i) => String(i * 500)));
   });
 
-  it('preemptively advances the block when a full batch pushes start past maxStart − pageSize', async () => {
+  it('reanchors at the maxStart offset cap and never launches past it', async () => {
+    const PAGE      = 500;
+    const maxStart  = 4999;
+    const pages     = Math.floor(maxStart / PAGE) + 1; // pages that fit under the cap (independent of ring size)
     const timestamp = '2020-01-01T00:00:00.000Z';
-    const fullPage  = Array.from({ length: 500 }, () => ({ timestamp }));
+    const fullPage  = Array.from({ length: PAGE }, () => ({ timestamp }));
 
-    // No startTime → return full pages (forces preemptive transition after a full batch).
-    // With startTime → return empty (terminates the iterator).
+    // Unanchored window returns full pages (until the cap); the reanchored window is empty → end.
     vi.mocked(global.fetch).mockImplementation(async (url) =>
       String(url).includes('startTime=') ? okJson([]) : okJson(fullPage)
     );
 
-    // maxStart=4999, pageSize=500 → after a full batch start=5000 > 4499 → transition.
-    const result = await collect(createFetchService(BASE_URL).getRows(mkTable({ maxStart: 4999 })));
+    const result = await collect(createFetchService(BASE_URL).getRows(mkTable({ maxStart })));
 
-    expect(result).toHaveLength(500 * 10);
+    // Exactly the pages that fit under maxStart, then a reanchored (empty) window.
+    expect(result).toHaveLength(PAGE * pages);
 
-    const calls = vi.mocked(global.fetch).mock.calls;
-    expect(calls).toHaveLength(20);
+    const params = vi.mocked(global.fetch).mock.calls.map(c => new URL(String(c[0])).searchParams);
 
-    // First batch: 10 calls without startTime.
-    for (let i = 0; i < 10; i++)
-      expect(String(calls[i]![0])).not.toContain('startTime=');
+    // No fetch is ever launched past the cap.
+    expect(params.every(p => Number(p.get('start')) <= maxStart)).toBe(true);
 
-    // Second batch: 10 calls with startTime, start reset to [0, 500, …, 4500].
-    const secondBatchStarts = calls.slice(10).map(c => new URL(String(c[0])).searchParams.get('start'));
-    expect(secondBatchStarts).toEqual(['0', '500', '1000', '1500', '2000', '2500', '3000', '3500', '4000', '4500']);
-
-    for (let i = 10; i < 20; i++)
-      expect(String(calls[i]![0])).toContain('startTime=');
+    // First window opens unanchored; the second reanchored to the row timestamp at start=0.
+    expect(params[0]!.get('startTime')).toBeNull();
+    expect(params.some(p => p.get('startTime') === timestamp && p.get('start') === '0')).toBe(true);
   });
 
-  it('advances the block when the batch is incomplete (bug bypass)', async () => {
+  it('reanchors mid-window when data ends before the offset cap (bug bypass)', async () => {
     const timestamp = '2020-01-01T00:00:00.000Z';
     const fullPage  = Array.from({ length: 500 }, () => ({ timestamp }));
 
-    // First batch: page 0 full, pages 1..9 empty (simulates the BitMEX cap mid-batch).
-    // Second batch (with startTime): all empty → terminates.
+    // start=0 (no startTime) is full; everything past it is empty — BitMEX's
+    // undocumented mid-window cap. With a timestamp present the window reanchors to
+    // it and a fresh window opens at start=0, even though maxStart was never reached.
     vi.mocked(global.fetch).mockImplementation(async (url) => {
       const u = String(url);
-      if (u.includes('startTime='))  return okJson([]);
-      if (u.includes('start=0&'))    return okJson(fullPage);
+      if (u.includes('startTime=')) return okJson([]);
+      if (u.includes('start=0&'))   return okJson(fullPage);
       return okJson([]);
     });
 
     const result = await collect(createFetchService(BASE_URL).getRows(mkTable()));
 
-    // 500 rows from page 0 of the first batch.
     expect(result).toHaveLength(500);
 
-    // Two batches: 20 calls total. The second batch carries startTime — the transition fired
-    // even though the iterator was nowhere near maxStart.
-    const calls = vi.mocked(global.fetch).mock.calls;
-    expect(calls).toHaveLength(20);
+    const params = vi.mocked(global.fetch).mock.calls.map(c => new URL(String(c[0])).searchParams);
 
-    for (let i = 10; i < 20; i++)
-      expect(String(calls[i]![0])).toContain('startTime=');
+    // First window unanchored; the second reanchored to the row timestamp at start=0.
+    expect(params[0]!.get('startTime')).toBeNull();
+    expect(params.some(p => p.get('startTime') === timestamp && p.get('start') === '0')).toBe(true);
   });
 
-  it('force-advances the block when a batch ends on its own anchor (no progress)', async () => {
-    // Reproduces a backfilled island (e.g. .BUSDP 2023-10-23): querying startTime=T
-    // returns a full page then a short page both ending at T, so lastTs === blockStartTime.
-    // Re-anchoring to T would re-fetch the identical window forever. The guard commits the
-    // batch and force-advances startTime by one millisecond; the next batch is empty → end.
+  it('force-advances startTime by 1ms when a window ends on its own anchor (no progress)', async () => {
+    // Backfilled island (e.g. .BUSDP 2023-10-23): querying startTime=T returns a full
+    // page then a short page both ending at T, so lastTs === blockStartTime. Reanchoring
+    // to T would refetch the identical window forever; the guard steps the anchor +1ms.
     const T     = '2023-10-23T05:47:40.000Z';
     const TPlus = '2023-10-23T05:47:40.001Z';
     const full  = Array.from({ length: 500 }, () => ({ timestamp: T }));
@@ -220,32 +218,30 @@ describe('FetchService — getRows', () => {
       if (u.includes(`startTime=${encT}`) && u.includes('start=0&'))   return okJson(full);
       if (u.includes(`startTime=${encT}`) && u.includes('start=500&')) return okJson([{ timestamp: T }]);
 
-      return okJson([]); // remaining pages of batch 1, and all of batch 2 (startTime=T+1ms)
+      return okJson([]);
     });
 
     const result = await collect(
       createFetchService(BASE_URL).getRows(mkTable(), { startTime: T }),
     );
 
-    // The 501 rows of the stalled batch are committed exactly once — no infinite loop.
+    // The 501 rows are committed exactly once — no infinite loop.
     expect(result).toHaveLength(501);
 
-    // Two batches only: the second re-anchored one millisecond forward (not back to T).
-    const calls      = vi.mocked(global.fetch).mock.calls;
-    const startTimes = calls.map(c => new URL(String(c[0])).searchParams.get('startTime'));
+    const params = vi.mocked(global.fetch).mock.calls.map(c => new URL(String(c[0])).searchParams);
 
-    expect(calls).toHaveLength(20);
-    expect(startTimes.slice(0, 10)).toEqual(Array(10).fill(T));
-    expect(startTimes.slice(10)).toEqual(Array(10).fill(TPlus));
+    // The next window force-advanced to T+1ms; it never re-anchored back to T.
+    expect(params.some(p => p.get('startTime') === T     && p.get('start') === '0')).toBe(true);
+    expect(params.some(p => p.get('startTime') === TPlus && p.get('start') === '0')).toBe(true);
   });
 
   it('re-anchors on the configured tsField (logged), not timestamp', async () => {
-    // compositeIndex sorts/filters on `logged`, not `timestamp`. The block re-anchor
-    // must use the row's `logged`, so the second batch's startTime is the last logged
-    // value (06:00) — never the rows' event timestamp (01:00).
+    // compositeIndex sorts/filters on `logged`, not `timestamp`. The reanchor must use
+    // the row's `logged` (06:00) — never the event timestamp (01:00).
     const S    = '2023-10-23T00:00:00.000Z';
     const L1   = '2023-10-23T06:00:00.000Z';
-    const full = Array.from({ length: 500 }, () => ({ timestamp: '2023-10-23T01:00:00.000Z', logged: L1 }));
+    const TS   = '2023-10-23T01:00:00.000Z';
+    const full = Array.from({ length: 500 }, () => ({ timestamp: TS, logged: L1 }));
 
     const encS = '2023-10-23T00%3A00%3A00.000Z';
 
@@ -254,18 +250,18 @@ describe('FetchService — getRows', () => {
 
       if (u.includes(`startTime=${encS}`) && u.includes('start=0&')) return okJson(full);
 
-      return okJson([]); // rest of batch 1, then batch 2 at startTime=L1
+      return okJson([]);
     });
 
     await collect(
       createFetchService(BASE_URL).getRows(mkTable({ tsField: 'logged' }), { startTime: S, count: 500 }),
     );
 
-    const startTimes = vi.mocked(global.fetch).mock.calls
-      .map(c => new URL(String(c[0])).searchParams.get('startTime'));
+    const params = vi.mocked(global.fetch).mock.calls.map(c => new URL(String(c[0])).searchParams);
 
-    expect(startTimes.slice(0, 10)).toEqual(Array(10).fill(S));
-    expect(startTimes.slice(10)).toEqual(Array(10).fill(L1));
+    expect(params.some(p => p.get('startTime') === S  && p.get('start') === '0')).toBe(true);
+    expect(params.some(p => p.get('startTime') === L1 && p.get('start') === '0')).toBe(true);
+    expect(params.some(p => p.get('startTime') === TS)).toBe(false); // never the event timestamp
   });
 
   it('returns when an incomplete batch has no timestamp to advance the block to', async () => {
@@ -278,7 +274,7 @@ describe('FetchService — getRows', () => {
 
     expect(result).toEqual([{ id: 1 }]);
     // Single batch, then return — no second batch is attempted.
-    expect(vi.mocked(global.fetch)).toHaveBeenCalledTimes(10);
+    expect(vi.mocked(global.fetch)).toHaveBeenCalledTimes(MAX_IN_FLIGHT);
   });
 });
 

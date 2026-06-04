@@ -1,6 +1,7 @@
 import { logger } from '@devvir/service-kit';
 import type { RedisClient } from '@devvir/service-kit';
 import config from './config';
+import { todayUtc, nextDay, dateToIso } from './utils';
 import type { FetchService, FetchFilter, Row } from './bitmex';
 import type { StoreService } from './vault';
 import type { TableConfig } from './types';
@@ -31,7 +32,7 @@ export const probeNextDate = async (
 ): Promise<string> => {
   logger.info({ table: table.name, id }, 'Empty day — probing');
 
-  let nextDate = await oldestDate(fetch, table, { ...filter, startTime: toIso(nextDay(currentDate)) });
+  let nextDate = await oldestDate(fetch, table, { ...filter, startTime: dateToIso(nextDay(currentDate)) });
 
   // BitMEX maps startTime to a row-ID threshold, not a timestamp comparison.
   // Sparse symbols whose rows sit at high row-IDs return empty even when data
@@ -131,17 +132,6 @@ const collectClosedDates = async (
 
 // ── Date helpers ─────────────────────────────────────────────────────────────
 
-export const todayUtc = (): string =>
-  new Date().toISOString().slice(0, 10).replace(/-/g, '');
-
-export const nextDay = (date: string): string => {
-  const y = parseInt(date.slice(0, 4));
-  const m = parseInt(date.slice(4, 6)) - 1;
-  const d = parseInt(date.slice(6, 8));
-
-  return new Date(Date.UTC(y, m, d + 1)).toISOString().slice(0, 10).replace(/-/g, '');
-};
-
 const latest = (a: string | null, b: string | null): string | null => {
   if (! a) return b;
   if (! b) return a;
@@ -162,14 +152,6 @@ const oldestDate = async (fetch: FetchService, table: TableConfig, filter: Fetch
 
 const newestDate = async (fetch: FetchService, table: TableConfig, filter: FetchFilter): Promise<string | null> =>
   rowDate(await fetch.newest(table, filter));
-
-const toIso = (date: string): string => {
-  const y = date.slice(0, 4);
-  const m = date.slice(4, 6);
-  const d = date.slice(6, 8);
-
-  return `${y}-${m}-${d}T00:00:00.000Z`;
-};
 
 const rowDate = (row: Row | null): string | null => {
   if (! row) return null;

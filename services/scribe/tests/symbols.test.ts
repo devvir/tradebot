@@ -59,7 +59,7 @@ describe('fetchSymbols', () => {
 
     await fetchSymbols(BASE_URL);
 
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(vi.mocked(global.fetch).mock.calls[0]![0]).toBe(
       `${BASE_URL}/instrument?count=1000&start=0&columns=symbol,state&reverse=false`
     );
   });
@@ -75,8 +75,7 @@ describe('fetchSymbols', () => {
     await fetchSymbols(BASE_URL);
 
     expect(global.fetch).toHaveBeenCalledTimes(2);
-    expect(global.fetch).toHaveBeenNthCalledWith(
-      2,
+    expect(vi.mocked(global.fetch).mock.calls[1]![0]).toBe(
       `${BASE_URL}/instrument?count=1000&start=1000&columns=symbol,state&reverse=false`
     );
   });

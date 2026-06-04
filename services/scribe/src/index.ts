@@ -7,7 +7,7 @@ import { TABLES } from './utils/tables';
 import { processTable } from './runner';
 import type { Config } from './types';
 
-const METRICS_INTERVAL_MS = 5 * 60 * 1_000;
+const METRICS_INTERVAL_MS = 60 * 1_000;
 
 SK.run(async (service) => {
   const config = service.config() as Config;

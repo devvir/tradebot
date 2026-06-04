@@ -1,10 +1,11 @@
 import { logger } from '@devvir/service-kit';
-import { waitIfNeeded, sleep } from '../utils/throttling';
-import { recordFetch } from './metrics';
+import { sleep } from '../utils';
+import { recordFetch, record429 } from './metrics';
+import { pickIdentity, reportRemaining, pace } from './identities';
 import type { Row, FetchFilter } from './types';
 
 const DEFAULT_PAGE_SIZE = 500;
-const PAGES_PER_BATCH   = 10;
+const MAX_IN_FLIGHT     = 20; // ring size — how many pages may run ahead of the oldest unflushed one
 
 // Returns the first matching row, or null.
 export const fetchOne = async (
@@ -21,26 +22,12 @@ export const fetchOne = async (
 // Streams rows from the BitMEX API, handling pagination and block transitions
 // transparently. The caller sees a flat sequence of rows with no page boundaries.
 //
-// Each iteration issues PAGES_PER_BATCH page fetches in parallel — a "mega-page"
-// of pageSize × PAGES_PER_BATCH rows. Yields are in offset order, so output is
-// byte-identical to a fully sequential iterator.
-//
-// Block transitions: BitMEX silently caps the `start` offset per startTime
-// bucket at an undocumented limit. Two transitions handle this:
-//
-//   - Preemptive (full batch): when every page in the batch is full and start
-//     is about to exceed `maxStart - pageSize`, advance blockStartTime to the
-//     last seen timestamp and reset start to 0.
-//
-//   - Reactive (bug bypass): when at least one full page came back but a later
-//     page in the batch was short or empty, the cap was hit mid-batch — same
-//     transition. The batch boundary is the only thing that distinguishes
-//     "bug struck mid-stream" (some full + some not) from "data ended" (first
-//     page already short or empty), so the iterator returns in the latter
-//     case to match the original single-page semantics.
-//
-// With PAGES_PER_BATCH = 1 the reactive path is unreachable (no later page
-// can be incomplete) and the iterator behaves identically to the original.
+// Within a startTime-block, pages are fetched through a bounded ring (see
+// streamBlock): up to MAX_IN_FLIGHT requests run concurrently, but never more
+// than MAX_IN_FLIGHT ahead of the oldest one not yet flushed, so output stays in
+// strict offset order. A block ends when a short/empty page arrives or the
+// `maxStart` offset cap is reached; we then reanchor `blockStartTime` to the last
+// row's tsField and start a fresh block at offset 0, until the data is exhausted.
 export async function* rowIterator(
   baseUrl:  string,
   path:     string,
@@ -48,64 +35,98 @@ export async function* rowIterator(
   tsField:  string | undefined,
   filter:   FetchFilter = {},
 ): AsyncGenerator<Row> {
-  const pageSize     = filter.count ?? DEFAULT_PAGE_SIZE;
+  const pageSize = filter.count ?? DEFAULT_PAGE_SIZE;
 
-  let start          = 0;
   let blockStartTime = filter.startTime ?? null;
 
   while (true) {
-    const inFlight: Promise<Row[]>[] = [];
+    const next = yield* streamBlock(baseUrl, path, maxStart, tsField, pageSize, blockStartTime, filter);
 
-    for (let i = 0; i < PAGES_PER_BATCH; i++) {
-      const url = buildUrl(
-        baseUrl, path, start + i * pageSize, pageSize,
-        { ...filter, startTime: blockStartTime ?? undefined },
-      );
+    if (next === null) return; // data exhausted
 
-      inFlight.push(fetchWithRetry(url));
-    }
-
-    const pages = await Promise.all(inFlight);
-
-    let fullPages = 0;
-    let totalRows = 0;
-    let lastTs:   string | undefined;
-
-    for (const rows of pages) {
-      if (rows.length === 0) break;
-
-      for (const row of rows) yield row;
-
-      totalRows += rows.length;
-
-      const lastRow = rows[rows.length - 1]!;
-      const ts      = pickTime(lastRow, tsField);
-      if (ts) lastTs = ts;
-
-      if (rows.length < pageSize) break;
-
-      fullPages++;
-    }
-
-    if (totalRows === 0) return;
-
-    if (fullPages === PAGES_PER_BATCH) {
-      start += PAGES_PER_BATCH * pageSize;
-
-      if (maxStart !== null && start > maxStart - pageSize && lastTs) {
-        blockStartTime = reanchor(blockStartTime, lastTs);
-        start          = 0;
-      }
-    } else if (fullPages > 0 && lastTs) {
-      blockStartTime = reanchor(blockStartTime, lastTs);
-      start          = 0;
-    } else {
-      return;
-    }
+    blockStartTime = next;
   }
 }
 
 // ── Private ───────────────────────────────────────────────────────────────────
+
+/**
+ * Streams one startTime-block in strict offset order through a bounded ring of
+ * MAX_IN_FLIGHT concurrent fetches, and returns the next `blockStartTime` to
+ * reanchor to — or `null` when the data is exhausted.
+ *
+ * The ring is the whole trick: each turn we `await` the *oldest* outstanding
+ * request (the one with the most time to have finished — usually already
+ * resolved), flush it, then launch the next offset into its freed slot. So we
+ * stay ~MAX_IN_FLIGHT in flight without ever waiting on a whole batch at once,
+ * and because slots are filled and drained in the same order, flushing is FIFO —
+ * byte-identical to a sequential fetch. Launches stop at the `maxStart` offset
+ * cap so we never speculatively fetch past it.
+ *
+ * A block ends on the first short/empty page (window exhausted) or when the cap
+ * is hit. If we made progress, we reanchor to the last row's tsField (the `+1ms`
+ * no-progress safeguard lives in `reanchor`); otherwise the data is done. Any
+ * look-ahead still in flight past that point is abandoned by returning — fetching
+ * a few extra pages is cheap, and dropping them keeps the output ordered.
+ */
+async function* streamBlock(
+  baseUrl:        string,
+  path:           string,
+  maxStart:       number | null,
+  tsField:        string | undefined,
+  pageSize:       number,
+  blockStartTime: string | null,
+  filter:         FetchFilter,
+): AsyncGenerator<Row, string | null> {
+  const ring: (Promise<Row[]> | null)[] = new Array(MAX_IN_FLIGHT).fill(null);
+
+  let launchOffset = 0;
+  let progressed   = false;
+  let lastTs:      string | undefined;
+
+  const launch = (slot: number): void => {
+    if (maxStart !== null && launchOffset > maxStart) {
+      ring[slot] = null; // past the offset cap — stop launching; the empty slot ends the block
+
+      return;
+    }
+
+    const url = buildUrl(
+      baseUrl, path, launchOffset, pageSize,
+      { ...filter, startTime: blockStartTime ?? undefined },
+    );
+
+    ring[slot]    = fetchWithRetry(url);
+    launchOffset += pageSize;
+  };
+
+  for (let s = 0; s < MAX_IN_FLIGHT; s++) launch(s);
+
+  // The block ends here if we saw data (reanchor for the next window) or not (done).
+  const endOfBlock = (): string | null => (progressed && lastTs ? reanchor(blockStartTime, lastTs) : null);
+
+  for (let index = 0; ; index++) {
+    const slot    = index % MAX_IN_FLIGHT;
+    const pending = ring[slot];
+
+    if (pending === null) return endOfBlock(); // drained up to the offset cap
+
+    const rows = await pending;
+    ring[slot] = null;
+
+    if (rows.length === 0) return endOfBlock(); // empty page in order — window exhausted
+
+    for (const row of rows) yield row;
+
+    const ts = pickTime(rows[rows.length - 1]!, tsField);
+    if (ts) lastTs = ts;
+
+    if (rows.length < pageSize) return endOfBlock(); // short page — window exhausted
+
+    progressed = true;
+    launch(slot); // full page — top the ring back up
+  }
+}
 
 /**
  * Reads the field BitMEX sorts and filters startTime on for this table, so the
@@ -159,26 +180,39 @@ const buildUrl = (
 
 const fetchWithRetry = async (url: string): Promise<Row[]> => {
   while (true) {
-    try {
-      const res = await fetch(url);
+    const identity = await pickIdentity();
 
-      await waitIfNeeded(res);
+    try {
+      const t0  = Date.now();
+      const res = await identity.client.request(url);
+
+      reportRemaining(identity, res);
 
       if (res.ok) {
-        recordFetch(parseRemaining(res));
+        recordFetch(Date.now() - t0); // 2xx consumed a token — counts even if this page is later discarded
+        await pace(); // post-response backpressure; the ring's other slots keep flowing while this one waits
         return (await res.json()) as Row[];
       }
+
+      if (res.status === 429) {
+        // Bucket exhausted (already zeroed by reportRemaining). pace() backs off
+        // only if *every* bucket is dry; otherwise it returns ~0 and the re-pick
+        // routes straight to a bucket that still has budget.
+        record429();
+        logger.warn({ identity: identity.name, url }, 'Rate limited (429) — routing to another identity');
+        await pace();
+        continue;
+      }
+
+      logger.warn({ status: res.status, url }, 'HTTP error — retrying in 3s');
+      await sleep(3_000);
     } catch (err) {
-      logger.warn({ err, url }, 'Network error — retrying in 3s');
+      logger.warn({ err, url }, 'Request failed — retrying in 3s');
       await sleep(3_000);
     }
   }
 };
 
-const parseRemaining = (res: Response): number | null => {
-  const raw = res.headers.get('x-ratelimit-remaining');
-  if (raw === null) return null;
+// ── Test access ───────────────────────────────────────────────────────────────
 
-  const n = parseInt(raw, 10);
-  return Number.isFinite(n) ? n : null;
-};
+export const _test_MAX_IN_FLIGHT = MAX_IN_FLIGHT;

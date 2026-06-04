@@ -18,6 +18,7 @@ services:
       SCRIBE_START_DATE:       ${SCRIBE_START_DATE:-}
       SCRIBE_INDEX_TICK_ONLY:  ${SCRIBE_INDEX_TICK_ONLY:-true}
       SCRIBE_TABLES:           ${SCRIBE_TABLES:-}
+      SCRIBE_IDENTITIES:       ${SCRIBE_IDENTITIES:-}
 
       # Runtime
       NODE_ENV: ${APP_ENV:-prod}

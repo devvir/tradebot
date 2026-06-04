@@ -1,13 +1,13 @@
 import { logger } from '@devvir/service-kit';
 import type { RedisClient } from '@devvir/service-kit';
 import config from './config';
-import { sleep } from './utils/throttling';
 import { getOrderedIndices } from './utils/symbols';
 import type { FetchService, FetchFilter } from './bitmex';
 import { createBufferedWriter } from './vault';
 import type { StoreService } from './vault';
 import type { TableConfig } from './types';
-import { probeNextDate, restoreProgress, saveProgress, todayUtc, nextDay } from './probing';
+import { probeNextDate, restoreProgress, saveProgress } from './probing';
+import { sleep, todayUtc, nextDay } from './utils';
 
 const FLUSH_THRESHOLD = 10_000;
 
