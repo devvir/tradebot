@@ -10,7 +10,7 @@ export const createFetchService = (baseUrl: string): FetchService => ({
     fetchOne(baseUrl, table.path, { ...filter, reverse: true }),
 
   getRows: (table, filter = {}) =>
-    rowIterator(baseUrl, table.path, table.maxStart, filter),
+    rowIterator(baseUrl, table.path, table.maxStart, table.tsField, filter),
 
   getDay: (table, date, filter = {}) =>
     dayIterator(baseUrl, table, date, filter),
@@ -18,13 +18,13 @@ export const createFetchService = (baseUrl: string): FetchService => ({
 
 // ── Day iterator ─────────────────────────────────────────────────────────────
 
-// BitMEX maps endTime to an absolute row-ID threshold rather than doing a
-// timestamp comparison. Rows inserted late (sparse symbols backfilled after
-// other symbols have advanced past midnight) carry row-IDs beyond that
-// threshold even though their timestamps fall within the requested day. Using
-// exactly T00:00:00.000Z as endTime therefore returns empty for such symbols.
-// Fix: extend the fetch window by 24 h so those rows are included, then drop
-// any row whose timestamp falls outside [startTime, endTime).
+// startTime/endTime, sort order and pagination all key off the table's operative
+// clock — `logged` (insertion) for compositeIndex, `timestamp` otherwise (see
+// tsField). The day is cut on that same field. BitMEX maps endTime to a row-ID
+// threshold, so a row inserted late can fall beyond an exact-midnight endTime
+// even when it belongs in the day; we over-fetch by 24 h and drop any row whose
+// tsField lands in the next day. Cutting on the sort field makes the boundary
+// `return` safe — the stream is monotonic in it.
 async function* dayIterator(
   baseUrl: string,
   table:   TableConfig,
@@ -35,12 +35,12 @@ async function* dayIterator(
   const endIso   = dateToIso(nextDay(date));
   const fetchEnd = dateToIso(nextDay(nextDay(date)));
 
-  for await (const row of rowIterator(baseUrl, table.path, table.maxStart, {
+  for await (const row of rowIterator(baseUrl, table.path, table.maxStart, table.tsField, {
     ...filter,
     startTime: startIso,
     endTime:   fetchEnd,
   })) {
-    const ts = (row['timestamp'] ?? row['date']) as string | undefined;
+    const ts = (table.tsField ? row[table.tsField] : (row['timestamp'] ?? row['date'])) as string | undefined;
 
     if (ts && ts >= endIso) return;
 

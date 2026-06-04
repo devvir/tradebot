@@ -45,6 +45,7 @@ export async function* rowIterator(
   baseUrl:  string,
   path:     string,
   maxStart: number | null,
+  tsField:  string | undefined,
   filter:   FetchFilter = {},
 ): AsyncGenerator<Row> {
   const pageSize     = filter.count ?? DEFAULT_PAGE_SIZE;
@@ -78,7 +79,7 @@ export async function* rowIterator(
       totalRows += rows.length;
 
       const lastRow = rows[rows.length - 1]!;
-      const ts      = (lastRow['timestamp'] ?? lastRow['date']) as string | undefined;
+      const ts      = pickTime(lastRow, tsField);
       if (ts) lastTs = ts;
 
       if (rows.length < pageSize) break;
@@ -92,11 +93,11 @@ export async function* rowIterator(
       start += PAGES_PER_BATCH * pageSize;
 
       if (maxStart !== null && start > maxStart - pageSize && lastTs) {
-        blockStartTime = lastTs;
+        blockStartTime = reanchor(blockStartTime, lastTs);
         start          = 0;
       }
     } else if (fullPages > 0 && lastTs) {
-      blockStartTime = lastTs;
+      blockStartTime = reanchor(blockStartTime, lastTs);
       start          = 0;
     } else {
       return;
@@ -105,6 +106,35 @@ export async function* rowIterator(
 }
 
 // ── Private ───────────────────────────────────────────────────────────────────
+
+/**
+ * Reads the field BitMEX sorts and filters startTime on for this table, so the
+ * pagination math uses the same clock as the filter. `logged` (insertion time)
+ * for compositeIndex; `timestamp` (falling back to `date`) otherwise.
+ */
+const pickTime = (row: Row, tsField: string | undefined): string | undefined =>
+  (tsField ? row[tsField] : (row['timestamp'] ?? row['date'])) as string | undefined;
+
+/**
+ * Picks the next blockStartTime for a transition.
+ *
+ * Normally the block advances to the last row's tsField value. When that value
+ * does not move strictly past the current anchor, the batch made no forward
+ * progress: every row shared one tsField instant (e.g. a backfill burst all
+ * inserted at the same `logged`), so re-anchoring to it would re-fetch the
+ * identical window forever. The rows are already yielded; step the anchor one
+ * millisecond forward. startTime is millisecond-exact on tsField, so +1ms clears
+ * the instant in a single step; any rows sharing it beyond the offset cap are
+ * unreachable and dropped — unavoidable and bounded.
+ */
+const reanchor = (current: string | null, lastTs: string): string => {
+  if (current === null || lastTs > current) return lastTs;
+
+  return addMs(current, 1);
+};
+
+const addMs = (iso: string, ms: number): string =>
+  new Date(new Date(iso).getTime() + ms).toISOString();
 
 const buildUrl = (
   baseUrl: string,

@@ -203,6 +203,71 @@ describe('FetchService — getRows', () => {
       expect(String(calls[i]![0])).toContain('startTime=');
   });
 
+  it('force-advances the block when a batch ends on its own anchor (no progress)', async () => {
+    // Reproduces a backfilled island (e.g. .BUSDP 2023-10-23): querying startTime=T
+    // returns a full page then a short page both ending at T, so lastTs === blockStartTime.
+    // Re-anchoring to T would re-fetch the identical window forever. The guard commits the
+    // batch and force-advances startTime by one millisecond; the next batch is empty → end.
+    const T     = '2023-10-23T05:47:40.000Z';
+    const TPlus = '2023-10-23T05:47:40.001Z';
+    const full  = Array.from({ length: 500 }, () => ({ timestamp: T }));
+
+    const encT = '2023-10-23T05%3A47%3A40.000Z';
+
+    vi.mocked(global.fetch).mockImplementation(async (url) => {
+      const u = String(url);
+
+      if (u.includes(`startTime=${encT}`) && u.includes('start=0&'))   return okJson(full);
+      if (u.includes(`startTime=${encT}`) && u.includes('start=500&')) return okJson([{ timestamp: T }]);
+
+      return okJson([]); // remaining pages of batch 1, and all of batch 2 (startTime=T+1ms)
+    });
+
+    const result = await collect(
+      createFetchService(BASE_URL).getRows(mkTable(), { startTime: T }),
+    );
+
+    // The 501 rows of the stalled batch are committed exactly once — no infinite loop.
+    expect(result).toHaveLength(501);
+
+    // Two batches only: the second re-anchored one millisecond forward (not back to T).
+    const calls      = vi.mocked(global.fetch).mock.calls;
+    const startTimes = calls.map(c => new URL(String(c[0])).searchParams.get('startTime'));
+
+    expect(calls).toHaveLength(20);
+    expect(startTimes.slice(0, 10)).toEqual(Array(10).fill(T));
+    expect(startTimes.slice(10)).toEqual(Array(10).fill(TPlus));
+  });
+
+  it('re-anchors on the configured tsField (logged), not timestamp', async () => {
+    // compositeIndex sorts/filters on `logged`, not `timestamp`. The block re-anchor
+    // must use the row's `logged`, so the second batch's startTime is the last logged
+    // value (06:00) — never the rows' event timestamp (01:00).
+    const S    = '2023-10-23T00:00:00.000Z';
+    const L1   = '2023-10-23T06:00:00.000Z';
+    const full = Array.from({ length: 500 }, () => ({ timestamp: '2023-10-23T01:00:00.000Z', logged: L1 }));
+
+    const encS = '2023-10-23T00%3A00%3A00.000Z';
+
+    vi.mocked(global.fetch).mockImplementation(async (url) => {
+      const u = String(url);
+
+      if (u.includes(`startTime=${encS}`) && u.includes('start=0&')) return okJson(full);
+
+      return okJson([]); // rest of batch 1, then batch 2 at startTime=L1
+    });
+
+    await collect(
+      createFetchService(BASE_URL).getRows(mkTable({ tsField: 'logged' }), { startTime: S, count: 500 }),
+    );
+
+    const startTimes = vi.mocked(global.fetch).mock.calls
+      .map(c => new URL(String(c[0])).searchParams.get('startTime'));
+
+    expect(startTimes.slice(0, 10)).toEqual(Array(10).fill(S));
+    expect(startTimes.slice(10)).toEqual(Array(10).fill(L1));
+  });
+
   it('returns when an incomplete batch has no timestamp to advance the block to', async () => {
     // Rows with no timestamp/date: cannot advance blockStartTime, so iteration ends.
     vi.mocked(global.fetch).mockImplementation(async (url) =>
