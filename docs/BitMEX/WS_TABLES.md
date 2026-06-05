@@ -173,3 +173,61 @@ MAM (Multi-Account Manager) fund allocation. Tracks how margin currency is distr
 
 ### voucher
 Account credit vouchers. Each record represents a voucher with a balance, currency, expiry, type, and a link to a master voucher (`masterVoucherId`). Keyed by `voucherId` (a GUID). The partial was empty in the observed sample — vouchers are likely rare promotional credits. Actions are unknown; given the expiry field, deletes or updates are plausible when vouchers are spent or expire.
+
+---
+
+## Authoritative channel list
+
+`GET /api/v1/schema/websocketHelp` returns the canonical, machine-readable list of
+subscribable channels — more complete than `swagger.json` (which has no `OrderBook10`
+definition at all). Verified 2026-06-05:
+
+- **Public (22):** `announcement, connected, chat, publicNotifications, instrument, settlement, funding, insurance, liquidation, orderBookL2, orderBookL2_25, orderBook10, quote, trade, quoteBin{1m,5m,1h,1d}, tradeBin{1m,5m,1h,1d}`.
+- **Auth-required (13):** `privateNotifications, campaigns, privateChat, account, wallet, affiliate, margin, position, transact, order, execution, tradingBotInstance, competitionEntityStats`.
+
+Trust this over the swagger and over our own `shared/utils/src/channels.ts`, whose
+`PRIVATE_CHANNELS` has drifted: it lists `csastate, isolation, leverage, mamAllocation, voucher`
+(not advertised here) and is missing `campaigns, privateChat, account, tradingBotInstance, competitionEntityStats`.
+A bogus subscribe (`{op:subscribe, args:["notARealChannel"]}`) is *not* a useful
+source — it only returns `400 Unknown table: … Please see the documentation`.
+
+## Liquidity pools (`pool` field)
+
+BitMEX splits market-data into **Primary** (public book), **Secondary** (protected,
+eligible market makers post passively), and **Aggregated** (both blended). The pool
+view is chosen by an **explicit selector, not by authentication** — auth and guest
+both default to `Aggregated`:
+
+- **WS:** colon-suffix the subscription arg — `orderBookL2:XBTUSD:Primary` (also
+  `:Secondary`, `:Aggregated`). For an **all-symbol** subscription, use the
+  **empty-symbol** form `orderBookL2::Primary` to pool-filter every symbol in one
+  subscription. The ack drops the suffix (reports `subscribe: "orderBookL2"`, pool in
+  `ack.pool` only — so two pool subs both ack as `orderBookL2`). `orderBook10` and
+  `orderBookL2_25` honor it too. The URL `?pool=` param and op-level `pool`/`filter`
+  fields are **silently ignored** — only the colon form works.
+- **REST:** `&pool=Primary|Secondary|Aggregated` on `/orderBook/L2`, `/trade`, `/quote`
+  (undocumented in swagger but works). Invalid value → `400 'pool' must be one of Primary/Secondary/Aggregated`.
+
+Per-table behaviour:
+
+- **Book** (`orderBookL2`, `orderBookL2_25`, `orderBook10`): pool selectable;
+  `Aggregated` merges both pools into one row per price (merge logic unverified — do
+  not assume a plain sum). Every action (`partial`/`insert`/`update`/`delete`) carries
+  `pool` on every row, so a mixed stream is splittable by pool downstream.
+- **`trade` / `quote`**: rows carry `pool` valued only `Primary` or `Secondary` (an
+  event is in one pool — there is no "Aggregated" row). Selector `Aggregated` (= the
+  default) returns the **union** of both, each row keeping its tag; `Primary`/`Secondary`
+  filter. In practice the default tape is ~100% Primary for `trade` (Secondary prints
+  are minutes apart) and ~95% for `quote` — effectively the Primary tape, not a blend.
+- **Bins** (`tradeBin*`, `quoteBin*`): pool-selectable — default Aggregated, `::Primary` returns a Primary-tagged bin. Whether the values are strictly Primary-computed is unverified; verify before trusting, else rebuild from raw.
+- **`instrument`**: REST row carries `pool=Primary`, but the WS row is `pool=null` and the `::Pool` filter is a **no-op** — don't fan it out per pool (duplicates the stream).
+- **No `pool`:** `liquidation, settlement, funding, insurance` and the platform/archive channels.
+
+For an ordinary (Directional) account, which only trades Primary, the default
+**Aggregated book** overstates reachable liquidity (it folds in Secondary depth).
+Secondary is currently negligible (~1–2% of book depth, near-0% of trades), so the
+default data is very close to Primary — but collect Primary explicitly going forward,
+optionally Secondary for signals, and don't store Aggregated as canonical.
+
+Full review, codebase impact, and the broadcast change: [docs/planning/POOLS.md](../planning/POOLS.md).
+References: [WS API](https://www.bitmex.com/app/wsAPI), [Protected pools](https://www.bitmex.com/app/protectedLiquidityPools), `GET /api/v1/schema/websocketHelp`.

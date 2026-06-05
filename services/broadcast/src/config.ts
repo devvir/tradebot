@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { logger } from '@devvir/service-kit';
 import { redactCredentials, redactUrl, sanitizeUrl, channelPreset, type RealtimeChannelPreset } from '@tradebot/utils';
+import { parsePools, expandChannels } from './pools';
 import type { Config } from './types';
 
 export const BITMEX_WS_URLS = {
@@ -17,6 +18,7 @@ export const BITMEX_WS_URLS = {
 const loadConfig = (): Config => {
   const bitmexEnv = usesTestnet() ? 'testnet' : 'live';
   const preset = process.env.BROADCAST_FEED_PRESET ?? 'feed';
+  const pools  = parsePools(process.env.BROADCAST_POOLS);
 
   const config: Config = {
     env: bitmexEnv,
@@ -24,7 +26,8 @@ const loadConfig = (): Config => {
     rabbitmqUrl:  sanitizeUrl(process.env.QUEUE_URL   || ''),
     realtimeWsUrl: BITMEX_WS_URLS.realtime[bitmexEnv],
     platformWsUrl: BITMEX_WS_URLS.platform[bitmexEnv],
-    channels: channelPreset(preset as RealtimeChannelPreset),
+    channels: expandChannels(channelPreset(preset as RealtimeChannelPreset), pools),
+    pools,
     bouncerUrl:   process.env.BOUNCER_URL ?? '',
     bouncerToken: process.env.BOUNCER_TOKEN ?? '',
   };

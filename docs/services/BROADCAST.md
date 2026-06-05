@@ -91,7 +91,7 @@ The optional `x-account-id` header selects the connection:
 2. Look up the pool entry for `accountId:endpointName`
 3. If no entry (authenticated only): fetch credentials from Bouncer, establish a new connection, wait for open
 4. Send `{ op: "subscribe", args: [channel] }` on the connection
-5. Wait for BitMEX to confirm with `{ subscribe: channel, success: true }`, up to a **5-second total deadline** (covering credential fetch + open wait + confirmation wait combined)
+5. Wait for BitMEX to confirm with `{ subscribe: <base>, success: true }`, up to a **5-second total deadline** (covering credential fetch + open wait + confirmation wait combined). For pool-suffixed channels the ack carries the bare table plus `pool`, so confirmation matches on base channel + `ack.pool` (see Pool Filtering)
 6. Increment `subscriptionCount`
 
 ### Unsubscribe flow
@@ -141,6 +141,7 @@ Channels are routed to the realtime or platform endpoint based on `PLATFORM_CHAN
 |----------|----------|---------|-------------|
 | `BITMEX_TESTNET` | No | `false` | Use BitMEX testnet (`true`) or live (`false`) |
 | `BROADCAST_FEED_PRESET` | No | `feed` | Preset channel set for guest connections |
+| `BROADCAST_POOLS` | No | `default` | Liquidity pools to collect per pool-filterable table (see Pool Filtering) |
 
 ### Channel Presets (`BROADCAST_FEED_PRESET`)
 
@@ -151,6 +152,17 @@ Channels are routed to the realtime or platform endpoint based on `PLATFORM_CHAN
 | `primary` | `instrument`, `orderBookL2`, `quote`, `trade` |
 | `secondary` | `liquidation`, `settlement`, `funding`, `insurance` |
 | `redundant` | Binned candle/quote channels |
+| `pooled` | Channels that carry a `pool` (book family + `trade` + `quote` + bins); pairs with `BROADCAST_POOLS` |
+
+### Pool Filtering (`BROADCAST_POOLS`)
+
+BitMEX splits market data into liquidity pools — **Primary** (the public book), **Secondary** (a protected book), and **Aggregated** (both blended, the default since the 2026-04-30 rollout). `BROADCAST_POOLS` (csv of `default`, `primary`, `secondary`, `aggregated`, case-insensitive) selects which pools the preset's channels are collected from. The pool is **not** selected by authentication — it is an explicit per-subscription filter.
+
+For each requested non-`default` pool, the preset's **pool-filterable** channels are subscribed with the empty-symbol form `<channel>::<Pool>` (e.g. `orderBookL2::Primary`), which pool-filters every symbol in a single subscription. `default` keeps the bare subscription. Requesting `primary,secondary` issues **two** subscriptions per filterable table; both pools' messages flow on the same routing key, interleaved, each row self-labeled by its `pool` field (so downstream can split them).
+
+Pool-filterable channels are the book, trade, and quote families — `orderBookL2`, `orderBookL2_25`, `orderBook10`, `trade`, `quote`, `tradeBin{1m,5m,1h,1d}`, `quoteBin{1m,5m,1h,1d}` (see `POOL_FILTERABLE_CHANNELS` in `src/pools.ts`). Channels where the filter is a no-op (notably `instrument`) are **excluded** and subscribed once regardless of the requested pools, so they are never duplicated. `default` and `aggregated` yield the same rows (the only difference is the bare vs explicit `::Aggregated` subscription).
+
+The subscribe ack drops the pool suffix — acking `orderBookL2::Primary` as `{ subscribe: "orderBookL2", pool: "Primary", success: true }` — and two pool subs both ack the bare table, so subscription confirmation matches on the **base channel + `ack.pool`** (`parseChannel` in `src/pools.ts`).
 
 ## Reconnection Strategy
 

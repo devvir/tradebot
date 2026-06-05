@@ -1,6 +1,7 @@
 import WebSocket from 'ws';
 import { logger, type Service } from '@devvir/service-kit';
 import * as pool from '../pool';
+import { parseChannel } from '../pools';
 import type { MessageHandler } from '../types';
 
 const SUBSCRIBE_TIMEOUT_MS = 5_000;
@@ -85,6 +86,11 @@ const waitForOpen = (ws: WebSocket, timeoutMs: number): Promise<void> => {
 };
 
 const waitForSubscription = (ws: WebSocket, channel: string, timeoutMs: number): Promise<void> => {
+  // The ack drops the pool suffix (acking `orderBookL2::Primary` as
+  // `subscribe: "orderBookL2"` with the pool in `ack.pool`), and two pool subs on
+  // one connection both ack the bare table — so match on base channel + pool.
+  const { base, pool: poolFilter } = parseChannel(channel);
+
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       ws.off('message', onMsg);
@@ -95,7 +101,7 @@ const waitForSubscription = (ws: WebSocket, channel: string, timeoutMs: number):
       try {
         const data = JSON.parse(msg.toString());
 
-        if (data.subscribe === channel) {
+        if (data.subscribe === base && (! poolFilter || data.pool === poolFilter)) {
           clearTimeout(timer);
 
           ws.off('message', onMsg);

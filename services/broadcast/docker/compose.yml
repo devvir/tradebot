@@ -14,6 +14,7 @@ services:
       # BitMEX Connection (testnet or live)
       BITMEX_TESTNET: ${BITMEX_TESTNET:-false}
       BROADCAST_FEED_PRESET: ${BROADCAST_FEED_PRESET:-none}
+      BROADCAST_POOLS: ${BROADCAST_POOLS:-default}
 
       # Queue
       QUEUE_URL: ${QUEUE_URL}

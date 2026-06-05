@@ -44,6 +44,17 @@ export const REALTIME_CHANNELS = [
   ...REALTIME_REDUNDANT_CHANNELS,
 ] as const;
 
+/**
+ * Channels that carry a liquidity `pool`.
+ */
+export const POOLED_CHANNELS = [
+  'instrument',
+  'orderBookL2', 'orderBookL2_25', 'orderBook10',
+  'trade', 'quote',
+  'tradeBin1m', 'tradeBin5m', 'tradeBin1h', 'tradeBin1d',
+  'quoteBin1m', 'quoteBin5m', 'quoteBin1h', 'quoteBin1d',
+] as const;
+
 export const PLATFORM_CHANNELS = [
   'announcement',
   'chat',
@@ -67,6 +78,7 @@ export const CHANNEL_PRESETS = {
   primary: REALTIME_PRIMARY_CHANNELS,
   secondary: REALTIME_SECONDARY_CHANNELS,
   redundant: REALTIME_REDUNDANT_CHANNELS,
+  pooled: POOLED_CHANNELS,
   platform: PLATFORM_CHANNELS,
   private: PRIVATE_CHANNELS,
 } as const;

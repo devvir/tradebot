@@ -18,7 +18,7 @@ HTTP service that owns raw data file storage. Accepts JSON rows (serialised to C
 
 ### broadcast
 
-Connects to the BitMEX WebSocket API and publishes every message to the `broadcast` topic exchange with routing key `{table}.{action}` (e.g. `trade.insert`, `orderBookL2.update`). Subscriptions are configured via `BROADCAST_FEED_PRESET` or the commands API at runtime.
+Connects to the BitMEX WebSocket API and publishes every message to the `broadcast` topic exchange with routing key `{table}.{action}` (e.g. `trade.insert`, `orderBookL2.update`). Subscriptions are configured via `BROADCAST_FEED_PRESET` (which channels) and `BROADCAST_POOLS` (which liquidity pools), or the commands API at runtime. With `BROADCAST_POOLS=primary,secondary,aggregated` the same table arrives once per pool, each row self-labeled by its `pool` field — useful for recording all pools side by side for analysis.
 
 ### journalist
 
@@ -58,3 +58,4 @@ Each row in a file contains all original BitMEX fields plus:
 | Variable                | Default              | Purpose                                                   |
 |-------------------------|----------------------|-----------------------------------------------------------|
 | `BROADCAST_FEED_PRESET` | `none`               | Channel preset to subscribe on startup                    |
+| `BROADCAST_POOLS`       | `default`            | Liquidity pools to collect (`default,primary,secondary,aggregated`); see [BROADCAST.md](../services/BROADCAST.md#pool-filtering-broadcast_pools) |

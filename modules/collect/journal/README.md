@@ -25,6 +25,8 @@ tb ps journal          # Check service status
 
 Copy `.env.example` to `.env` and update as needed.
 
+Key knobs: `BROADCAST_FEED_PRESET` (which channels) and `BROADCAST_POOLS` (which liquidity pools — `default,primary,secondary,aggregated`; set to `primary,secondary,aggregated` to record every pool side by side for analysis).
+
 See each service's documentation for the full list of available environment variables:
 
 - [Broadcast](../../../services/broadcast/README.md)

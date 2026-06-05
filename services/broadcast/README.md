@@ -31,7 +31,8 @@ Requires RabbitMQ and Bouncer — see [infra packs](../../modules/infra/README.m
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `BROADCAST_FEED_PRESET` | No | `none` | Preset channel set (`none`, `core`, `feed`, `archive`, `primary`, `secondary`, `redundant`) |
+| `BROADCAST_FEED_PRESET` | No | `none` | Preset channel set (`none`, `core`, `feed`, `archive`, `primary`, `secondary`, `redundant`, `pooled`) |
+| `BROADCAST_POOLS` | No | `default` | Liquidity pools to collect, csv of `default`, `primary`, `secondary`, `aggregated` (case-insensitive). `default` keeps bare subscriptions (Aggregated since the rollout); each explicit pool adds one subscription per pool-filterable table (`orderBookL2::Primary`, …). `primary,secondary` collects both, interleaved and self-labeled |
 | `BROADCAST_PORT` | No | — | Broadcast Commands Server port mapping on host |
 
 ## Runtime Command API

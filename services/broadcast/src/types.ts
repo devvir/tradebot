@@ -9,6 +9,18 @@ export {
   isBitmexUnsubscriptionMessage,
 } from '@tradebot/types';
 
+/** The three BitMEX liquidity pools selectable on a market-data subscription. */
+export type Pool = 'Primary' | 'Secondary' | 'Aggregated';
+
+/** A `BROADCAST_POOLS` entry: an explicit pool, or `default` (bare subscription). */
+export type PoolFilter = 'default' | Pool;
+
+/** A subscription arg split into its base channel and (optional) pool suffix. */
+export interface ParsedChannel {
+  base:  string;
+  pool?: Pool;
+}
+
 export interface Config {
   env: 'live' | 'testnet';
   workerUuid: string;
@@ -16,6 +28,7 @@ export interface Config {
   realtimeWsUrl: string;
   platformWsUrl: string;
   channels: readonly string[];
+  pools:    readonly PoolFilter[];
   bouncerUrl:   string;
   bouncerToken: string;
   [key: string]: unknown;
