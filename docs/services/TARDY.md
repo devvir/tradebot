@@ -4,6 +4,8 @@
 
 ```
 Tardis API  →  tardy  →  vault (POST /files/:table/:date/rows)
+                  ↕
+            cache (redis) — per-table download progress
 ```
 
 Tardy fills a gap in the historical dataset that neither courier (S3 gzips) nor scribe (REST API) can cover: the seven BitMEX WebSocket-only tables. It uses the Tardis free tier, which provides data for the first day of each calendar month with no API key required.
@@ -32,12 +34,27 @@ On startup and at each UTC midnight:
 
 1. Compute all first-of-month dates from the configured start date through the current eligibility cutoff. The default start date is the Tardis BitMEX archive genesis (2019-03-30); iteration advances to the first first-of-month on or after that, so the first target date is 2019-04-01.
 2. For each date in chronological order:
-   a. Query `GET /files/:table` on vault for each of the seven tables.
-   b. Tables with a `closed` file are skipped. Tables with an `open` file are deleted first (crash recovery), then re-included. Tables with no file are included.
-   c. If all seven tables are closed, the date is skipped entirely.
+   a. For each of the seven tables, consult the progress mark (see [Progress Tracking](#progress-tracking)). Any date at or below a table's mark is already complete and is skipped without contacting vault.
+   b. For the remaining tables, query `GET /files/:table` on vault. A `closed` file means the date is already stored, so its mark is advanced and the table skipped. An `open` file is deleted first (crash recovery), then re-included. A table with no file is included.
+   c. If no tables remain, the date is skipped entirely.
    d. Otherwise, stream all 1,440 minute-buckets from Tardis for the needed tables.
-   e. Flush batches of 10,000 messages per table to vault during streaming.
-   f. After the stream ends, flush any remaining messages and close each table's vault file.
+   e. Flush batches of messages per table to vault during streaming.
+   f. After the stream ends, flush any remaining messages, close each table's vault file, and advance that table's progress mark to this date.
+
+## Progress Tracking
+
+Tardy persists download progress in the shared cache (redis) so it does not re-download dates whose vault files have already been cold-storaged and removed from this machine. Vault's own file listing is not a durable record of what tardy has done — once a file is processed and archived elsewhere, vault no longer holds it.
+
+Progress is a per-table high-water mark, keyed `tardy:<table>`, holding the last first-of-month date (`YYYYMMDD`) that was fully downloaded and closed for that table. Tables are tracked independently because the set of tables tardy collects can change over time, and a date is only ever considered complete for a table once that table's file is closed.
+
+Because dates are processed in ascending order, the mark only ever moves forward. There are two paths that advance it:
+
+- **Catch-up:** when a date past the mark is found already `closed` in vault — dates stored before progress tracking existed, or before they were recorded — the mark jumps to that date with no download.
+- **Completion:** when a needed table finishes streaming and its vault file is closed.
+
+Any target date at or below a table's mark is skipped on a pure redis lookup, with no vault round-trip. This is the mechanism that lets tardy stay correct after vault files are removed.
+
+The cache backend is hidden behind a small progress module; the rest of the service only asks for progress to be fetched or saved and is agnostic to where it lives.
 
 ## Tardis API
 
@@ -104,17 +121,19 @@ Startup:
   targetDates(startDate) → [20190401, 20190501, ...]    // startDate default = 20190330
   for each date:
     resolveTables(date) → tables needing download
-      GET /files/:table for each of the 7 tables
-      closed → skip
-      open   → DELETE /files/:table/:date, then include
-      absent → include
+      for each of the 7 tables:
+        date <= getProgress(table) → skip (no vault call)
+        else GET /files/:table:
+          closed → setProgress(table, date), skip
+          open   → DELETE /files/:table/:date, then include
+          absent → include
     if no tables needed: skip date
     streamDate(date, tables):
       for offset = 0..1439:
         GET Tardis API (all needed channels in one request)
         parse each line → { table, msg: { action, date, data } }
-        accumulate per-table; flush to vault when batch hits 10,000
-    for each table: flush remaining + POST /files/:table/:date/close
+        accumulate per-table; flush to vault when batch fills
+    for each table: flush remaining + POST /files/:table/:date/close + setProgress(table, date)
 
 Scheduling:
   setTimeout to next UTC midnight → repeat

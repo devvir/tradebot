@@ -5,6 +5,7 @@ import type { Buf, TardyTable } from './types';
 import { streamMinute, MINUTES_PER_DAY } from './tardis';
 import type { TardisMessage } from './tardis';
 import { listFiles, writeRows, closeFile, deleteFile } from './vault';
+import { getProgress, setProgress } from './progress';
 
 const TABLES: TardyTable[] = [
   'announcement',
@@ -90,6 +91,7 @@ export const syncDate = async (vault: FetchClientHandle, date: string): Promise<
 
   for (const table of needed) {
     await closeFile(vault, table, date, config.suffix);
+    await setProgress(table, date);
 
     logger.info({ table, date }, 'Closed');
   }
@@ -137,18 +139,31 @@ const sleep = (ms: number): Promise<void> =>
 // ── Table resolution ──────────────────────────────────────────────────────────
 
 /**
- * Queries vault for each table and returns only those that need downloading.
- * Deletes any open files first (crash recovery) and excludes closed ones.
+ * Returns only the tables that still need downloading for this date.
+ *
+ * The per-table progress mark is the fast path: any date at or below it is
+ * already done, so it is skipped without touching vault (whose files are
+ * cold-storaged and removed once processed). Past the mark, vault is the
+ * source of truth — closed files advance the mark (catching up dates stored
+ * before progress was tracked, or before they were recorded), open files are
+ * deleted for crash recovery, and anything else is queued for download.
  */
 const resolveTables = async (vault: FetchClientHandle, date: string, suffix: string): Promise<TardyTable[]> => {
   const needed:  TardyTable[] = [];
   const fileKey = suffix ? `${date}.${suffix}` : date;
 
   for (const table of TABLES) {
+    const mark = await getProgress(table);
+
+    if (mark && date <= mark) continue;
+
     const files = await listFiles(vault, table, suffix);
     const state = files[fileKey];
 
-    if (state === 'closed') continue;
+    if (state === 'closed') {
+      await setProgress(table, date);
+      continue;
+    }
 
     if (state === 'open') {
       logger.info({ table, date }, 'Deleting open file (recovery)');

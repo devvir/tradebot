@@ -3,6 +3,7 @@ import config from './config';
 
 export default SKFactory({
   name: 'tardy',
+  redis: true,
   config,
   clients: {
     name:    'vault',

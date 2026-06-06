@@ -11,7 +11,9 @@ services:
 
     environment:
       # Dependencies
-      VAULT_URL: ${VAULT_URL}
+      CACHE_URL:  ${CACHE_URL}
+      CACHE_PASS: ${CACHE_PASS}
+      VAULT_URL:  ${VAULT_URL}
 
       # Config
       TARDY_START_DATE: ${TARDY_START_DATE:-}

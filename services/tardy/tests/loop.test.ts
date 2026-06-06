@@ -22,8 +22,17 @@ vi.mock('../src/config', () => ({
   default: { vaultUrl: 'http://vault', startDate: '20190401', suffix: '' },
 }));
 
-import * as vault  from '../src/vault';
-import * as tardis from '../src/tardis';
+// Progress is backed by redis via the SK registry, which isn't wired up in
+// unit tests. Mock it: no recorded mark by default, so the watermark fast path
+// stays inert and vault remains the source of truth.
+vi.mock('../src/progress', () => ({
+  getProgress: vi.fn().mockResolvedValue(null),
+  setProgress: vi.fn().mockResolvedValue(undefined),
+}));
+
+import * as vault    from '../src/vault';
+import * as tardis   from '../src/tardis';
+import * as progress from '../src/progress';
 
 // ── targetDates ───────────────────────────────────────────────────────────────
 
@@ -142,6 +151,8 @@ describe('loop — syncDate', () => {
     vi.mocked(vault.closeFile).mockReset().mockResolvedValue(undefined);
     vi.mocked(vault.deleteFile).mockReset().mockResolvedValue(undefined);
     vi.mocked(tardis.streamMinute).mockReset();
+    vi.mocked(progress.getProgress).mockReset().mockResolvedValue(null);
+    vi.mocked(progress.setProgress).mockReset().mockResolvedValue(undefined);
   });
 
   it('skips a date when all 7 tables are already closed', async () => {
@@ -290,5 +301,53 @@ describe('loop — syncDate', () => {
     expect(vault.closeFile).toHaveBeenCalledWith(vaultClient, 'chat',      DATE, '');
     expect(vault.closeFile).toHaveBeenCalledWith(vaultClient, 'connected', DATE, '');
     expect(vault.writeRows).not.toHaveBeenCalled();
+  });
+
+  it('skips a date at or below the progress mark without touching vault', async () => {
+    vi.mocked(progress.getProgress).mockResolvedValue(DATE);
+
+    await syncDate(vaultClient, DATE);
+
+    // Watermark covers DATE for every table — no vault lookup, no streaming.
+    expect(vault.listFiles).not.toHaveBeenCalled();
+    expect(tardis.streamMinute).not.toHaveBeenCalled();
+  });
+
+  it('still downloads a date above the progress mark', async () => {
+    vi.mocked(progress.getProgress).mockResolvedValue('20190301');
+    vi.mocked(vault.listFiles).mockImplementation(async (_url, table) =>
+      table === 'instrument' ? {} : { [DATE]: 'closed' },
+    );
+
+    mockMinute(0, [
+      { table: 'instrument', msg: { action: 'partial', date: '2019-04-01T00:00:00.000Z', data: [] } },
+    ]);
+
+    await syncDate(vaultClient, DATE);
+
+    expect(tardis.streamMinute).toHaveBeenCalledWith(DATE, 0, ['instrument']);
+  });
+
+  it('advances the progress mark for a table closed in vault but not yet recorded', async () => {
+    vi.mocked(vault.listFiles).mockResolvedValue({ [DATE]: 'closed' });
+
+    await syncDate(vaultClient, DATE);
+
+    // No download needed, but every already-closed table catches the mark up.
+    expect(progress.setProgress).toHaveBeenCalledWith('orderBookL2', DATE);
+    expect(tardis.streamMinute).not.toHaveBeenCalled();
+  });
+
+  it('records the progress mark after a table is downloaded and closed', async () => {
+    vi.mocked(vault.listFiles).mockImplementation(async (_url, table) =>
+      table === 'liquidation' ? {} : { [DATE]: 'closed' },
+    );
+
+    mockMinute(0, []);
+
+    await syncDate(vaultClient, DATE);
+
+    expect(vault.closeFile).toHaveBeenCalledWith(vaultClient, 'liquidation', DATE, '');
+    expect(progress.setProgress).toHaveBeenCalledWith('liquidation', DATE);
   });
 });
