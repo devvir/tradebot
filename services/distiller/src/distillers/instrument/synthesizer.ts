@@ -1,3 +1,4 @@
+import { isReferenceSymbol } from './accumulator';
 import type {
   Accumulator,
   CompositeIndexRow,
@@ -7,6 +8,41 @@ import type {
   InstrumentSymCacheEntry,
   TickRow,
 } from './types';
+
+/* ------------------------------------------------------------------ */
+/*  Mark-method families                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * `markMethod` families (see `docs/BitMEX/FAIR_PRICE_MARKING.md`). Two families
+ * drive where `markPrice` comes from in a gap:
+ *
+ * - **fair** — marked off the index (`markPrice = index + fairBasis`). `FairPrice`,
+ *   and the fallback for index-marked methods we don't reproduce exactly
+ *   (`IndicativeSettlePrice`, `FairPriceStox`) and for an unknown method.
+ * - **last** — marked off the instrument's own last trade (`markPrice = lastPrice`).
+ *   `LastPrice`/`LastPricePreLaunch` (exact), and the fallback for `LastPriceAdjusted`
+ *   (needs a Yield Index we don't collect) and `LastPriceProtected` (its
+ *   maintenance-margin band + ratchet are not reproduced — best-effort `lastPrice`).
+ */
+const LAST_PRICE_METHODS = new Set(['LastPrice', 'LastPricePreLaunch', 'LastPriceAdjusted', 'LastPriceProtected']);
+
+/** Methods reproduced exactly by their own formula — anything else is a fallback. */
+const EXACT_METHODS = new Set(['FairPrice', 'LastPrice', 'LastPricePreLaunch']);
+
+/** The marking family for `markMethod` — `last` for the LastPrice family, else `fair`. */
+export function markFamily(markMethod: string | undefined): 'fair' | 'last' {
+  return markMethod !== undefined && LAST_PRICE_METHODS.has(markMethod) ? 'last' : 'fair';
+}
+
+/**
+ * Whether `markMethod` is handled by a same-family fallback rather than reproduced
+ * exactly — so the caller can record it (auditable, never silently approximated).
+ * An absent method defaults to `fair` (the dominant behaviour) and is not flagged.
+ */
+export function isMarkFallback(markMethod: string | undefined): boolean {
+  return markMethod !== undefined && markMethod !== '' && ! EXACT_METHODS.has(markMethod);
+}
 
 /* ------------------------------------------------------------------ */
 /*  Public API                                                         */
@@ -108,6 +144,14 @@ export function deriveFields(
 ): void {
   const entry: InstrumentSymCacheEntry = acc.symCache.get(sym) ?? {};
 
+  // Last-price-marked instruments mark off their own last trade — the index fan-out
+  // leaves their `markPrice` alone, so set it here from `lastPrice`. (Exact for
+  // `LastPrice`/`LastPricePreLaunch`; best-effort fallback for the rest of the
+  // family — see `docs/BitMEX/FAIR_PRICE_MARKING.md`.)
+  if (fields.lastPrice !== undefined && markFamily(entry.markMethod) === 'last') {
+    setMarkAndLimits(fields, fields.lastPrice);
+  }
+
   if (fields.lastPrice !== undefined) entry.lastPrice = fields.lastPrice;
   if (fields.markPrice !== undefined) entry.markPrice = fields.markPrice;
   if (fields.bidPrice  !== undefined) entry.bidPrice  = fields.bidPrice;
@@ -144,10 +188,15 @@ export function deriveFields(
 /* ------------------------------------------------------------------ */
 
 /**
- * Per-symbol fields for every instrument referencing `indexSymbol`, from the
- * index value. The index value is `indicativeSettlePrice`; `markPrice` is the
- * Fair Price — the index plus the symbol's last-known `fairBasis`, carried from
- * the accumulator (near-constant within a gap). Limit bands ride on `markPrice`.
+ * Per-symbol fields driven by an index value:
+ *
+ * - The **index symbol itself** (when it is a known reference series) gets its own
+ *   value — `lastPrice` and `markPrice` both equal the index. These reference
+ *   deltas are throttled downstream (the Walker's `Conflator`); here the
+ *   transform stays pure.
+ * - **Every trading instrument referencing the index** gets the fan-out: the index
+ *   is `indicativeSettlePrice`; `markPrice` is the Fair Price (index + the symbol's
+ *   last-known `fairBasis`, carried from the accumulator); limit bands ride on it.
  */
 function indexUpdate(
   indexSymbol: string,
@@ -156,20 +205,35 @@ function indexUpdate(
 ): Map<string, Partial<InstrumentItem>> {
   const result = new Map<string, Partial<InstrumentItem>>();
 
+  if (isReferenceSymbol(indexSymbol) && acc.knownSymbols.has(indexSymbol) && ! acc.settled.has(indexSymbol)) {
+    result.set(indexSymbol, { lastPrice: index, markPrice: index });
+  }
+
   for (const sym of acc.refMap.get(indexSymbol) ?? []) {
     if (acc.settled.has(sym)) continue;
 
-    const markPrice = index + (acc.symCache.get(sym)?.fairBasis ?? 0);
+    const entry  = acc.symCache.get(sym);
+    const fields: Partial<InstrumentItem> = { indicativeSettlePrice: index };
 
-    result.set(sym, {
-      indicativeSettlePrice: index,
-      markPrice,
-      limitUpPrice:          markPrice * 1.10,
-      limitDownPrice:        markPrice * 0.90,
-    });
+    // Fair/index-marked symbols mark off the index. Last-price-marked symbols mark
+    // off their own trades, so their `markPrice` comes from the trade/rolling path
+    // (`deriveFields`) and is left untouched by the index fan-out.
+    if (markFamily(entry?.markMethod) === 'fair') {
+      setMarkAndLimits(fields, index + (entry?.fairBasis ?? 0));
+    }
+
+    result.set(sym, fields);
   }
 
   return result;
+}
+
+/** Set `markPrice` and the limit bands that ride on it (×1.10 / ×0.90) — the single
+ *  place those band factors are defined, used by both the fair and last paths. */
+function setMarkAndLimits(fields: Partial<InstrumentItem>, mark: number): void {
+  fields.markPrice     = mark;
+  fields.limitUpPrice  = mark * 1.10;
+  fields.limitDownPrice = mark * 0.90;
 }
 
 /** Round `value` to the nearest multiple of `tick`, division-based to avoid drift. */

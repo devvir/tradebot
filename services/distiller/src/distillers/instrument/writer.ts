@@ -4,6 +4,7 @@ import { registry, SK_PROVIDERS }                 from '@devvir/service-kit';
 import type { RedisClient }                       from '@devvir/service-kit';
 
 import type { InstrumentMsg } from './types';
+import { recordDoc }         from './record';
 
 /** Single Redis key holding the resume anchor `_id` and the commit phase. */
 export const RESUME_KEY = 'distiller_instrument';
@@ -52,6 +53,7 @@ export class Writer {
     const _id = makeMongoId(date, this.position, isReal ? 2 : 1);
 
     this.batch.push({ _id, ...doc });
+    recordDoc(isReal, date);
 
     if (this.batch.length >= BATCH_SIZE) await this.flush();
 

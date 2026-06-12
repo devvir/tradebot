@@ -20,7 +20,7 @@ export interface InstrumentMsg {
   data:      Partial<InstrumentItem>[];
 }
 
-/** A row from the compositeIndex vault collection. */
+/** A row from the compositeIndex collection. */
 export interface CompositeIndexRow {
   _id:         number;
   timestamp:   string;
@@ -84,6 +84,5 @@ export type DistillerName = typeof DISTILLER_NAMES[number];
 export interface Config {
   database:   string;
   distillers: DistillerName[] | null;
-  vaultUrl:   string;
   [key: string]: unknown;
 }

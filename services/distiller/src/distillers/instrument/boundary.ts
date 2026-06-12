@@ -1,89 +1,141 @@
 import { registry, SK_PROVIDERS, logger } from '@devvir/service-kit';
 import type { RedisClient }               from '@devvir/service-kit';
 
-import { UNIVERSE_START, GATING_TABLES } from './types';
+import { GATING_TABLES } from './types';
 
-const RETRY_DELAY_MS = 2_000;
-const MAX_RETRIES    = 4;
+/** A date never gates the universe — the non-constraining boundary for an uncollected table. */
+const FAR_FUTURE = '9999-12-31';
+
+let lastBoundary: string | null = null;
 
 /**
  * Derive the exclusive end of the settled date range the distiller may process.
  *
- * The boundary is the earliest date any gating table has a vault bucket that is
- * not yet `done:*` in Redis — the minimum across per-table boundaries. Re-run at
- * startup and on every idle wait, in case farmer has imported more meanwhile.
+ * The sole authority is the Redis `farm:{table}:{date}` markers that farmer
+ * writes as it imports data into MongoDB — the persistent summary of what is in
+ * the database. Vault is a transient import stage whose files are removed once
+ * imported; it is never consulted.
+ *
+ * Per gating table a marker is `done:*` (settled in MongoDB), a bare number
+ * (mid-import), or absent. The table's boundary is the day after its furthest
+ * `done` date; the universe boundary is the minimum across the gating tables,
+ * recomputed at startup and on each idle wait. `settlement` is deliberately not
+ * a gating table — see GATING_TABLES.
  *
  * The distiller processes whole hours strictly before this date.
  */
-export async function computeBoundary(vaultUrl: string): Promise<string> {
-  const redis = registry.get('distiller', SK_PROVIDERS).get('redis') as RedisClient;
+export async function computeBoundary(): Promise<string> {
+  const redis   = registry.get('distiller', SK_PROVIDERS).get('redis') as RedisClient;
+  const markers = await loadMarkers(redis);
 
-  const boundaries = await Promise.all(
-    GATING_TABLES.map(table => tableBoundary(vaultUrl, redis, table)),
-  );
+  const boundaries = GATING_TABLES.map(table => tableBoundary(markers.get(table) ?? []));
+  const boundary   = boundaries.reduce((min, b) => (b < min ? b : min));
 
-  const boundary = boundaries.reduce((min, b) => (b < min ? b : min));
-
-  logger.info({ start: UNIVERSE_START, boundary }, 'instrument: universe boundary');
+  if (boundary !== lastBoundary) {
+    logger.info({ boundary }, 'Instrument distiller: universe boundary');
+    lastBoundary = boundary;
+  }
 
   return boundary;
 }
 
+/**
+ * The earliest date for which **every** gating table has a `done` marker — the
+ * cold-start point. Before it, at least one required source is missing, so there
+ * is nothing to distil yet. Returns `null` if no such date exists.
+ */
+export async function firstCompleteDate(): Promise<string | null> {
+  const redis   = registry.get('distiller', SK_PROVIDERS).get('redis') as RedisClient;
+  const markers = await loadMarkers(redis);
+
+  const doneDates = GATING_TABLES.map(
+    table => new Set((markers.get(table) ?? []).filter(m => m.done).map(m => m.date)),
+  );
+
+  if (doneDates.some(set => set.size === 0)) return null;
+
+  let common = [...doneDates[0]!];
+
+  for (const set of doneDates.slice(1)) common = common.filter(date => set.has(date));
+
+  if (common.length === 0) return null;
+
+  common.sort();
+
+  return isoDate(common[0]!);
+}
+
 // ── Internals ─────────────────────────────────────────────────────────────────
 
+interface Marker { date: string; done: boolean; }
+
 /**
- * The earliest date `table` has a vault bucket not yet `done:*` in Redis. When
- * every bucket is imported, the boundary is the day after the last. A date with
- * no vault file is never collected — it is skipped, not treated as a boundary.
+ * The boundary a single table imposes — the day after the furthest date it has
+ * fully imported (`done`). Everything up to that date is taken as complete: an
+ * absent date below it is a real gap BitMEX never published, which the distiller
+ * synthesises from the other proxies rather than waiting on.
+ *
+ * Farmer imports out of order — it takes whatever buckets are available and
+ * back-fills older dates that appear late — so the frontier is the furthest
+ * `done` date, not a contiguous run. Dates still importing (`pending`) aren't
+ * `done`, so they never extend the frontier. A table with no `done` markers was
+ * never collected and does not gate, returning a non-constraining date.
  */
-async function tableBoundary(vaultUrl: string, redis: RedisClient, table: string): Promise<string> {
-  const dates = await vaultDates(vaultUrl, table);
+function tableBoundary(markers: Marker[]): string {
+  let maxDone: string | null = null;
 
-  if (dates.length === 0) return UNIVERSE_START;
+  for (const m of markers) {
+    if (m.done && (maxDone === null || m.date > maxDone)) maxDone = m.date;
+  }
 
-  const keys   = dates.map(d => `farm:${table}:${d}`);
+  if (maxDone === null) return FAR_FUTURE;
+
+  return addDay(isoDate(maxDone));
+}
+
+/** Read every `farm:{table}:{date}` marker from Redis, grouped by table. */
+async function loadMarkers(redis: RedisClient): Promise<Map<string, Marker[]>> {
+  const keys: string[] = [];
+
+  for await (const key of redis.scanIterator({ MATCH: 'farm:*', COUNT: 500 })) {
+    keys.push(key as unknown as string);
+  }
+
+  const out = new Map<string, Marker[]>();
+
+  if (keys.length === 0) return out;
+
   const values = await redis.mGet(keys);
 
-  for (let i = 0; i < dates.length; i++) {
+  for (let i = 0; i < keys.length; i++) {
+    const parts = keys[i]!.split(':');
     const value = values[i];
 
-    if (value === null || ! value.startsWith('done')) return isoDate(dates[i]!);
-  }
+    if (parts.length !== 3 || value === null) continue;
 
-  return addDay(isoDate(dates[dates.length - 1]!));
-}
+    const table = parts[1]!;
+    const date  = parts[2]!;
+    const done  = value.startsWith('done');
 
-/** Sorted `YYYYMMDD` dates that have a bucket file for `table` in vault. */
-async function vaultDates(vaultUrl: string, table: string): Promise<string[]> {
-  const files = await fetchVaultFiles(`${vaultUrl}/files/${table}`);
+    const list = out.get(table);
 
-  if (! files) return [];
-
-  return Object.keys(files).sort();
-}
-
-async function fetchVaultFiles(url: string): Promise<Record<string, unknown> | null> {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      const res = await fetch(url);
-
-      if (res.status === 404) return null;
-
-      if (! res.ok) throw new Error(`vault HTTP ${res.status}`);
-
-      return await res.json() as Record<string, unknown>;
-    } catch (err) {
-      if (attempt >= MAX_RETRIES) throw err;
-
-      logger.warn({ url, err }, 'instrument: vault unreachable — retrying');
-      await sleep(RETRY_DELAY_MS);
+    if (list) {
+      list.push({ date, done });
+    } else {
+      out.set(table, [{ date, done }]);
     }
   }
+
+  return out;
 }
 
 function isoDate(yyyymmdd: string): string {
   return `${yyyymmdd.slice(0, 4)}-${yyyymmdd.slice(4, 6)}-${yyyymmdd.slice(6, 8)}`;
 }
+
+// ── Test-only exports ─────────────────────────────────────────────────────────
+
+export const _test_tableBoundary = tableBoundary;
 
 function addDay(date: string): string {
   const d = new Date(`${date}T00:00:00.000Z`);
@@ -92,5 +144,3 @@ function addDay(date: string): string {
 
   return d.toISOString().slice(0, 10);
 }
-
-const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms));

@@ -2,9 +2,10 @@ import type { Db }           from 'mongodb';
 import { startOfDayMongoId } from '@tradebot/utils';
 
 import type { Reader } from './reader';
+import { recordGaps } from './record';
 import { createRolling, addTrade, computeMinuteBlock } from './rolling';
 import type {
-  EventRow, EventSource, HourBuckets, RollingState, StreamItem, TradeRow,
+  EventRow, EventSource, HourBuckets, InstrumentItem, RollingState, StreamItem, TradeRow,
 } from './types';
 
 /** A silence at least this long between real instrument docs is a gap to fill. */
@@ -37,9 +38,12 @@ export class Provider {
   }
 
   /**
-   * Rebuild the rolling 24h window on resume by replaying the trades and
-   * minute-crons of the ~25 h before `anchorMs`. Emits nothing — it only brings
-   * the window, and each symbol's `lastVwap`, to its state as of the anchor.
+   * Rebuild the rolling 24h window on resume by streaming the ~25 h of trades
+   * before `anchorMs` straight into the minute bins — never materialized as an
+   * array. Emits nothing. The minute bins are order-insensitive within
+   * data-prepare's disorder bound, so no sort is needed; each symbol's
+   * `lastVwap` is then brought to its as-of-anchor value by running the last
+   * pre-anchor cron, which is what a live walk would have left it at.
    */
   async primeWindow(db: Db, anchorMs: number): Promise<void> {
     const fromMs = anchorMs - PRIME_LEAD_MS;
@@ -50,23 +54,29 @@ export class Provider {
       .find({ _id: { $gte: loId, $lt: hiId } })
       .sort({ _id: 1 });
 
-    const trades: TradeRow[] = [];
-
     for await (const t of cursor) {
       const ms = toMs(t.timestamp);
 
-      if (ms >= fromMs && ms < anchorMs) trades.push(t);
+      if (ms >= fromMs && ms < anchorMs) this.applyTrade(t, ms);
     }
 
-    trades.sort(byTime);
-    this.feedWindow(trades, fromMs, anchorMs);
+    const lastCron = firstCron(anchorMs) - CRON_PERIOD_MS;
+
+    for (const w of this.window.values()) computeMinuteBlock(w, lastCron);
   }
 
-  /** The timestamp-ordered stream of one hour, ready for the Walker. */
-  async getHourlyData(hour: string): Promise<StreamItem[]> {
+  /**
+   * The next hour's timestamp-ordered stream, ready for the Walker — or `null`
+   * when the Reader has drained. The Reader picks the hour: the oldest buffered.
+   */
+  async getHourlyData(): Promise<{ hour: string; items: StreamItem[] } | null> {
     if (! this.reader) throw new Error('instrument: provider has no reader attached');
 
-    const buckets   = await this.reader.pop(hour);
+    const served = await this.reader.pop();
+
+    if (! served) return null;
+
+    const { hour, buckets } = served;
     const hourStart = Date.parse(`${hour}:00:00.000Z`);
     const hourEnd   = hourStart + HOUR_MS;
 
@@ -74,6 +84,8 @@ export class Provider {
 
     const spans = gapSpans(hourStart, hourEnd, buckets.instrument);
     const inGap = (ms: number): boolean => spans.some(s => ms > s.start && ms < s.end);
+
+    recordGaps(hour.slice(0, 10), spans.length, spans.reduce((a, s) => a + (s.end - s.start), 0));
 
     // Feed the window with every trade; collect rolling items only inside gaps.
     const rolling = this.feedWindow(buckets.trade, hourStart, hourEnd, inGap);
@@ -99,7 +111,7 @@ export class Provider {
 
     items.sort(compareItems);
 
-    return items;
+    return { hour, items };
   }
 
   /* ---------------------------------------------------------------- */
@@ -126,24 +138,11 @@ export class Provider {
       if (tradeMs >= toMs2 && cronMs >= toMs2) break;
 
       if (tradeMs < toMs2 && tradeMs <= cronMs) {
-        const t   = trades[ti++]!;
-        const sym = t.symbol;
+        const t     = trades[ti++]!;
+        const delta = this.applyTrade(t, tradeMs);
 
-        if (! sym || t.size === undefined || t.price === undefined) continue;
-
-        let w = this.window.get(sym);
-
-        if (! w) {
-          w = createRolling();
-          this.window.set(sym, w);
-        }
-
-        const delta = addTrade(
-          w, tradeMs, t.size, t.price,
-          t.grossValue ?? 0, t.homeNotional ?? 0, t.foreignNotional ?? 0, t.tickDirection ?? '',
-        );
-
-        if (collectIf?.(tradeMs)) out.push({ kind: 'rolling', ms: tradeMs, symbol: sym, fields: delta });
+        if (delta && collectIf?.(tradeMs))
+          out.push({ kind: 'rolling', ms: tradeMs, symbol: t.symbol!, fields: delta });
 
       } else {
         const ms = cronMs;
@@ -164,6 +163,28 @@ export class Provider {
 
     return out;
   }
+
+  /**
+   * Fold one trade into its symbol's rolling state, creating the state on first
+   * sight. Returns the trade-driven delta, or `null` for an unusable row.
+   */
+  private applyTrade(t: TradeRow, ms: number): Partial<InstrumentItem> | null {
+    const sym = t.symbol;
+
+    if (! sym || t.size === undefined || t.price === undefined) return null;
+
+    let w = this.window.get(sym);
+
+    if (! w) {
+      w = createRolling();
+      this.window.set(sym, w);
+    }
+
+    return addTrade(
+      w, ms, t.size, t.price,
+      t.grossValue ?? 0, t.homeNotional ?? 0, t.foreignNotional ?? 0, t.tickDirection ?? '',
+    );
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -175,7 +196,15 @@ const PRIORITY: Record<string, number> = {
   real: 0, compositeIndex: 1, tick: 1, quote: 2, rolling: 3, funding: 4, settlement: 5,
 };
 
-/** The gap spans inside an hour — silences over `GAP_THRESHOLD_MS`. */
+/**
+ * The gap spans inside an hour — silences over `GAP_THRESHOLD_MS`.
+ *
+ * The Reader buckets every row by its own hour key, so every doc here already lands
+ * inside `[hourStart, hourEnd)`; the in-hour check below is a cheap defensive
+ * assertion of that invariant (it never fires in practice). It was load-bearing under
+ * the old reference-fold, which placed foreign-timestamp rows into a bucket — that
+ * fold is gone.
+ */
 function gapSpans(hourStart: number, hourEnd: number, realDocs: { timestamp: string }[]): Span[] {
   const spans: Span[] = [];
 
@@ -183,6 +212,8 @@ function gapSpans(hourStart: number, hourEnd: number, realDocs: { timestamp: str
 
   for (const doc of realDocs) {
     const ms = toMs(doc.timestamp);
+
+    if (ms < hourStart || ms >= hourEnd) continue;   // defensive; can't fire (see above)
 
     if (ms - prev > GAP_THRESHOLD_MS) spans.push({ start: prev, end: ms });
 
@@ -237,11 +268,13 @@ function sortByTime(buckets: HourBuckets): void {
   buckets.settlement.sort(byTime);
 }
 
+/**
+ * Chronological comparator with `_id` tie-break. BitMEX timestamps are
+ * fixed-width ISO-8601 UTC strings, so lexicographic order is chronological —
+ * compared directly to keep the hot sort free of per-comparison allocations.
+ */
 function byTime(a: { timestamp: string; _id: number }, b: { timestamp: string; _id: number }): number {
-  const ma = toMs(a.timestamp);
-  const mb = toMs(b.timestamp);
-
-  return ma !== mb ? ma - mb : a._id - b._id;
+  return a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : a._id - b._id;
 }
 
 /** First `:15`-past-the-minute cron mark at or after `ms`. */
@@ -257,6 +290,10 @@ function toMs(ts: string): number {
 function isoDate(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);
 }
+
+/* ── Test-only exports ──────────────────────────────────────────────────────── */
+
+export const _test_gapSpans = gapSpans;
 
 function addDay(date: string): string {
   const d = new Date(`${date}T00:00:00.000Z`);

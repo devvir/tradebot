@@ -12,13 +12,14 @@ export type ProxySource = 'compositeIndex' | 'tick' | 'quote' | 'trade' | 'fundi
 /** Every table the distiller reads — the walked `instrument` plus the six proxies. */
 export type SourceTable = 'instrument' | ProxySource;
 
-/** First date with any instrument data; the universe starts here. */
-export const UNIVERSE_START = '2019-04-01';
-
 /**
  * Tables whose import progress bounds the universe — `instrument` plus the five
- * gating proxies. `settlement` is sparse and never gates; it is consumed where
- * present.
+ * gating proxies.
+ *
+ * `settlement` is deliberately excluded: it is so sparse (often one or two dates
+ * in a month) that gating on it would hold the whole universe a month back
+ * waiting for the next entry. Whatever settlement data exists is consumed within
+ * the boundary the other tables define; none of it is assumed missing.
  */
 export const GATING_TABLES: SourceTable[] = ['instrument', 'compositeIndex', 'tick', 'quote', 'trade', 'funding'];
 
@@ -62,6 +63,53 @@ export interface HourBuckets {
   settlement:     SettlementRow[];
 }
 
+/** The oldest hour the Reader serves, with that hour's buckets. */
+export interface ServedHour {
+  hour:    string;
+  buckets: HourBuckets;
+}
+
+// ── Reader partitions ─────────────────────────────────────────────────────────
+
+/**
+ * A contiguous `_id` sub-range to read as one unit — the raw output of partition
+ * discovery (`partitions.ts`), before the Reader wraps it in read state. A
+ * symbol-major (clustered) proxy table yields one partition per symbol run; a
+ * time-ordered table yields a single whole-day partition. `hiExcl` is exclusive.
+ */
+export interface Partition {
+  lo:     number;
+  hiExcl: number;
+}
+
+/** An `_id` paired with its symbol — one endpoint or probe in boundary discovery. */
+export interface BoundaryProbe {
+  id:  number;
+  sym: string;
+}
+
+/**
+ * One read cursor over a `Partition`: the Reader's per-partition read state. Each
+ * partition is read ahead independently to the warm horizon, so a last-sorted
+ * cluster's early-hour rows are read before serving passes them.
+ */
+export interface PartitionCursor {
+  lo:        number;
+  hiExcl:    number;
+  cursor:    number;
+  frontier:  string;
+  firstHour: string;
+  done:      boolean;
+}
+
+// ── Conflator ─────────────────────────────────────────────────────────────────
+
+/** One net-changed conflated delta the Conflator emits on a tick boundary. */
+export interface ConflatorEmit {
+  symbol: string;
+  fields: Partial<InstrumentItem>;
+}
+
 // ── The Walker's input stream ─────────────────────────────────────────────────
 
 /**
@@ -79,12 +127,35 @@ export type StreamItem =
 
 // ── Rolling 24h window ────────────────────────────────────────────────────────
 
-/** Per-symbol 24h rolling window backing the trade-driven stats block. */
-export interface RollingState {
-  window:       { ms: number; size: number; grossValue: number; homeNotional: number; foreignNotional: number }[];
-  priceHistory: { ms: number; price: number }[];
+/** One minute's trade aggregates inside the rolling window. `ms` is minute-aligned. */
+export interface RollingMinuteBin {
+  ms:              number;
+  size:            number;
+  grossValue:      number;
+  homeNotional:    number;
+  foreignNotional: number;
+}
 
-  /** Running sums over `window` — maintained on every push/shift, O(1) per trade. */
+/** The last trade of one minute — exact `ms` and price, for `prevPrice24h`. */
+export interface RollingPricePoint {
+  ms:    number;
+  price: number;
+}
+
+/**
+ * Per-symbol 24h rolling window backing the trade-driven stats block. Holds
+ * per-minute aggregates — never individual trades — so memory is bounded by the
+ * window's minute count (~1441 per symbol) regardless of trade volume. The
+ * `head` indexes mark each array's first live entry: eviction advances them and
+ * the arrays are compacted periodically — no per-element `shift()`.
+ */
+export interface RollingState {
+  window:       RollingMinuteBin[];
+  windowHead:   number;
+  priceHistory: RollingPricePoint[];
+  priceHead:    number;
+
+  /** Running sums over the live window — maintained incrementally, O(1) per trade. */
   volume24h:          number;
   turnover24h:        number;
   homeNotional24h:    number;
@@ -101,12 +172,13 @@ export interface RollingState {
 
 /** Per-symbol cache for fields derived from more than one source. */
 export interface InstrumentSymCacheEntry {
-  lastPrice?: number;
-  markPrice?: number;
-  bidPrice?:  number;
-  askPrice?:  number;
-  tickSize?:  number;
-  fairBasis?: number;
+  lastPrice?:  number;
+  markPrice?:  number;
+  bidPrice?:   number;
+  askPrice?:   number;
+  tickSize?:   number;
+  fairBasis?:  number;
+  markMethod?: string;
 }
 
 /**

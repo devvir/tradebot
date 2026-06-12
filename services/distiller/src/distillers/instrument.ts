@@ -1,11 +1,11 @@
 import type { Db }                        from 'mongodb';
 import { registry, SK_PROVIDERS, logger } from '@devvir/service-kit';
 import type { Service, RedisClient }      from '@devvir/service-kit';
-import { parseMongoId }                   from '@tradebot/utils';
+import { parseMongoId, startOfDayMongoId } from '@tradebot/utils';
 
-import config                                  from '../config';
 import type { InstrumentMsg }                  from '../types';
 import { createAccumulator, applyMessage }     from './instrument/accumulator';
+import { firstCompleteDate }                   from './instrument/boundary';
 import { Provider }                            from './instrument/provider';
 import { Writer, RESUME_KEY, deleteOriginals } from './instrument/writer';
 import { Walker }                              from './instrument/walker';
@@ -14,51 +14,61 @@ import { Walker }                              from './instrument/walker';
  * Reconstruct a continuous `instrument` collection — real farmer-imported
  * documents interleaved with synthetic gap fill — one hour at a time.
  *
- * See `docs/planning/INSTRUMENT_DISTILLER.md` for the full design.
+ * See `docs/services/DISTILLER_INSTRUMENT.md` for the full design.
  */
 export async function distillInstrument(db: Db, service: Service): Promise<void> {
-  if (! config.vaultUrl) throw new Error('VAULT_URL is required for the instrument distiller');
-
   const redis = registry.get('distiller', SK_PROVIDERS).get('redis') as RedisClient;
   const acc   = createAccumulator();
   const prov  = new Provider();
 
   const anchorId = await bootstrap(db, redis);
 
-  let startHour: string;
-  let writer:    Writer;
+  let servedThrough = '';
+  let coldStartId   = 0;
+  let writer:        Writer;
 
   if (anchorId !== null) {
     const anchor = await db.collection<InstrumentMsg>('instrument').findOne({ _id: anchorId });
 
     if (! anchor) {
-      logger.error({ anchor: anchorId }, 'instrument: anchor document missing — cannot resume');
+      logger.error({ anchor: anchorId }, 'Instrument distiller: anchor document missing, cannot resume');
 
       return;
     }
 
     applyMessage(acc, anchor);
-    startHour = anchor.timestamp.slice(0, 13);
-    writer    = new Writer(db, anchorId);
+
+    // The anchor seals an hour at its end boundary, so its timestamp hour is the
+    // next hour to walk; the hour before it is the last one already served.
+    servedThrough = hourBefore(anchor.timestamp.slice(0, 13));
+    writer        = new Writer(db, anchorId);
+
+    const primeStart = Date.now();
+
+    logger.info({ anchor: anchorId }, 'Instrument distiller: priming rolling window');
 
     await prov.primeWindow(db, Date.parse(anchor.timestamp));
-    logger.info({ anchor: anchorId, from: startHour }, 'instrument: resumed');
+
+    logger.info(
+      { anchor: anchorId, served: servedThrough, primeMs: Date.now() - primeStart },
+      'Instrument distiller: resumed',
+    );
 
   } else {
-    const first = await firstDataHour(db);
+    const date = await firstCompleteDate();
 
-    if (! first) {
-      logger.warn('instrument: no instrument data — nothing to distil');
+    if (! date) {
+      logger.warn('Instrument distiller: no date where all source tables are complete; nothing to distil');
 
       return;
     }
 
-    startHour = first;
-    writer    = new Writer(db, null);
-    logger.info({ from: startHour }, 'instrument: cold start');
+    coldStartId = startOfDayMongoId(date);
+    writer      = new Writer(db, null);
+    logger.info({ from: date }, 'Instrument distiller: cold start');
   }
 
-  await new Walker(db, service, config.vaultUrl, prov, writer, acc, startHour).run();
+  await new Walker(db, service, prov, writer, acc, servedThrough, coldStartId).run();
 }
 
 /* ------------------------------------------------------------------ */
@@ -88,18 +98,17 @@ async function bootstrap(db: Db, redis: RedisClient): Promise<number | null> {
     }
 
     await redis.set(RESUME_KEY, `${anchorId}:${consumedId}:complete`);
-    logger.info({ anchor: anchorId }, 'instrument: finished a sealed hour on bootstrap');
+    logger.info({ anchor: anchorId }, 'Instrument distiller: finished sealed hour on bootstrap');
   }
 
   return anchorId;
 }
 
-/** The `YYYY-MM-DDTHH` hour of the first original instrument document. */
-async function firstDataHour(db: Db): Promise<string | null> {
-  const doc = await db.collection<InstrumentMsg>('instrument').findOne(
-    { $expr: { $eq: [{ $mod: ['$_id', 4] }, 0] } },
-    { sort: { _id: 1 }, projection: { timestamp: 1 } },
-  );
+/** The `YYYY-MM-DDTHH` key one hour before `hour`. */
+function hourBefore(hour: string): string {
+  const d = new Date(`${hour}:00:00.000Z`);
 
-  return doc ? doc.timestamp.slice(0, 13) : null;
+  d.setUTCHours(d.getUTCHours() - 1);
+
+  return d.toISOString().slice(0, 13);
 }

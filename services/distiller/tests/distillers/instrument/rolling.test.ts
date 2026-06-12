@@ -37,7 +37,9 @@ describe('createRolling', () => {
     const s = createRolling();
 
     expect(s.window).toEqual([]);
+    expect(s.windowHead).toBe(0);
     expect(s.priceHistory).toEqual([]);
+    expect(s.priceHead).toBe(0);
     expect(s.totalVolume).toBe(0);
     expect(s.totalTurnover).toBe(0);
     expect(s.volume24h).toBe(0);
@@ -94,24 +96,57 @@ describe('addTrade — running state sums', () => {
   });
 });
 
+describe('addTrade — minute binning', () => {
+  it('folds same-minute trades into one aggregate bin', () => {
+    const s = createRolling();
+
+    trade(s, 1_000, 100, 50_000, { grossValue: 200_000, homeNotional: 0.002, foreignNotional: 100 });
+    trade(s, 59_000, 200, 51_000, { grossValue: 400_000, homeNotional: 0.004, foreignNotional: 200 });
+
+    expect(s.window.length).toBe(1);
+    expect(s.window[0]).toEqual({ ms: 0, size: 300, grossValue: 600_000, homeNotional: 0.006, foreignNotional: 300 });
+  });
+
+  it('opens a new bin per minute', () => {
+    const s = createRolling();
+
+    trade(s, 1_000,  100, 50_000);
+    trade(s, 61_000,  50, 51_000);
+
+    expect(s.window.length).toBe(2);
+    expect(s.window.map(b => b.ms)).toEqual([0, 60_000]);
+  });
+
+  it('folds an out-of-order trade into its own earlier bin', () => {
+    const s = createRolling();
+
+    trade(s, 1_000,   100, 50_000);
+    trade(s, 181_000,  50, 51_000);  // minute 3
+    trade(s, 61_000,   25, 50_500);  // minute 1, late
+
+    expect(s.window.map(b => b.ms)).toEqual([0, 60_000, 180_000]);
+    expect(s.volume24h).toBe(175);
+  });
+});
+
 describe('addTrade — 24h rolling window eviction', () => {
-  it('evicts entries older than 24h from the window and subtracts them from running sums', () => {
+  it('evicts bins whose whole minute precedes the cutoff, subtracting their sums', () => {
     const s = createRolling();
 
     trade(s, 1000, 100, 50_000, { grossValue: 200_000, homeNotional: 0.002, foreignNotional: 100 });
 
-    // New trade at exactly t+24h+1ms — old entry should be evicted
-    const newMs = 1000 + DAY_MS + 1;
+    // The first trade's bin spans 0..60s; one minute past t+24h it is fully stale.
+    const newMs = 1000 + DAY_MS + 60_001;
 
     trade(s, newMs, 50, 51_000, { grossValue: 100_000, homeNotional: 0.001, foreignNotional: 50 });
 
-    expect(s.window.length).toBe(1);
+    expect(s.window.length - s.windowHead).toBe(1);
     expect(s.volume24h).toBe(50);
     expect(s.homeNotional24h).toBeCloseTo(0.001);
     expect(s.foreignNotional24h).toBe(50);
   });
 
-  it('keeps entries exactly at the 24h boundary in the window', () => {
+  it('keeps a bin whose minute straddles the 24h boundary', () => {
     const s = createRolling();
 
     trade(s, 1000, 100, 50_000);
@@ -119,6 +154,21 @@ describe('addTrade — 24h rolling window eviction', () => {
 
     expect(s.window.length).toBe(2);
     expect(s.volume24h).toBe(150);
+  });
+
+  it('keeps the window bounded by minute count regardless of trade volume', () => {
+    const s = createRolling();
+
+    // 26 h of trades, four per minute — per-trade storage would hold ~6240
+    // entries; minute bins must stay ≤ one day's worth.
+    for (let m = 0; m < 26 * 60; m++) {
+      for (let k = 0; k < 4; k++) trade(s, m * 60_000 + k * 15_000, 1, 50_000);
+    }
+
+    expect(s.window.length - s.windowHead).toBeLessThanOrEqual(1_441);
+    expect(s.window.length).toBeLessThanOrEqual(1_441 + 1_024);
+    expect(s.priceHistory.length).toBeLessThanOrEqual(1_441 + 1_024);
+    expect(s.volume24h).toBe(4 * 1_441);
   });
 });
 
@@ -226,12 +276,12 @@ describe('computeMinuteBlock', () => {
     expect(block.prevPrice24h).toBeUndefined();
   });
 
-  it('evicts stale window entries even when called with no new trades', () => {
+  it('evicts stale window bins even when called with no new trades', () => {
     const s = createRolling();
 
     trade(s, 1000, 100, 50_000, { grossValue: 200_000, homeNotional: 0.002, foreignNotional: 100 });
 
-    const block = computeMinuteBlock(s, 1000 + DAY_MS + 1);
+    const block = computeMinuteBlock(s, 1000 + DAY_MS + 60_001);
 
     expect(s.window.length).toBe(0);
     expect(block.volume24h).toBe(0);

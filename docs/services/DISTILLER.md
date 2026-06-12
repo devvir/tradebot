@@ -34,7 +34,7 @@ parallel:
   distillTrades:    for each date from walker → generate 1m / 5m / 1h / 1d bins
   distillQuotes:    for each date from walker → generate 1m bins, then coarser copies
   distillOrderBook: batch replay of L2 delta stream
-  distillInstrument: forward _id walk — fills gaps in real data with synthetic approximations
+  distillInstrument: forward hour-by-hour walk — fills gaps in real data with synthetic approximations
   distillPartials:  per-table daily snapshots into `_partials_`
 ```
 
@@ -165,41 +165,28 @@ new documents.
 
 ### instrument → instrument collection
 
-The `instrument` collection is a continuous BitMEX `instrument` WebSocket stream
-from 2019-04-01 onward, mixing **real** documents (imported by farmer) with
-**synthetic** documents the distiller generates to fill gaps. A document's `_id`
-reserved field tells them apart: `0` for real, non-zero for synthetic.
+The `instrument` collection is a continuous BitMEX `instrument` WebSocket stream,
+mixing **real** documents (imported by farmer) with **synthetic** documents the
+distiller generates to fill gaps. Three kinds coexist, told apart by the `_id`
+reserved byte (`_id % 4`): `0` original (farmer's raw input), `2` processed-real
+(an original rewritten into the distilled stream), `1` synthetic (gap fill).
+Behind the distiller's frontier the collection holds only processed and synthetic
+documents; ahead of it, farmer's untouched originals wait.
 
-Unlike the bin distillers, this one does not reproduce data that was captured —
-it fills the holes where real data is missing, with a knowing best-effort
-approximation. The instrument stream is the primary signal for liquidation
-detection in replay, so synthetic fill is per-event, never aggregated.
+Unlike the bin distillers, this one does not reproduce data that was captured — it
+fills the holes where real data is missing with a knowing best-effort approximation.
+**Real data always wins**, and synthetic fill is per-event (never lossily aggregated)
+because the instrument stream is the primary liquidation signal in replay. It is a
+six-actor pipeline (Reader, Provider, Synthesizer, Merger, Walker, Writer) that walks
+one hour at a time, sealing each with an anchor partial, with the universe bounded by
+farmer's Redis `farm:` markers.
 
-**The walk.** A single forward pass over the collection in `_id` order from an
-anchor — the `_id` of the last unfiltered partial, held in Redis. Each document
-is applied to an in-memory `bitmex-database` accumulator. An unfiltered partial,
-real or synthetic, advances the anchor. At every hour boundary the walk crosses,
-a partial is emitted unless one landed in the prior 30 minutes.
-
-**Gap detection and fill.** A silence longer than 120 seconds between consecutive
-documents is a gap — whole missing days and intra-day holes are handled the same
-way. The gap is filled by replaying the proxy tables (`compositeIndex`, `quote`,
-`trade`, `funding`; `settlement` where present) against the running state,
-emitting single-symbol `update` deltas plus the per-minute 24h-stats cron. Only
-symbols already known from real data are synthesized. An unconditional partial
-closes every gap, marking the synthetic→real boundary.
-
-**Synthetic `_id`s and shifts.** Synthetic documents take the reserved `_id`
-values between consecutive real documents. When a gap needs more than the 255
-available, the real documents after it are shifted forward into the day's slot
-space — a server-side `$merge` copy to the shifted `_id`s, then a bulk delete of
-the originals, since `_id` is immutable.
-
-**Boundary.** Only the settled range is processed — up to the earliest date any
-of the five tables has a vault bucket not yet confirmed imported in MongoDB. At
-the boundary the walk idles and re-checks.
-
-See [INSTRUMENT_DISTILLER.md](../planning/INSTRUMENT_DISTILLER.md) for the full design.
+This generator is large enough to have its own reference:
+**[DISTILLER_INSTRUMENT.md](DISTILLER_INSTRUMENT.md)** — the full design (partition-aware
+reading, gap detection, the rolling 24 h window, mark-method synthesis, the Conflator that
+throttles order-book and reference fields to 5 s, determinism and crash recovery). For the
+BitMEX feed itself — fields, cadences, proxy-derivability — see
+[docs/BitMEX/INSTRUMENT.md](../BitMEX/INSTRUMENT.md).
 
 ## Partials — Daily Snapshots
 

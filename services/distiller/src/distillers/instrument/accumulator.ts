@@ -63,7 +63,11 @@ export function rebuildCaches(acc: Accumulator): void {
 
     if (item.state === 'Settled') settled.add(sym);
 
-    if (item.referenceSymbol) {
+    // A reference (`.`-prefixed) series is not a trading instrument, so it is never
+    // a fan-out target: an index value maps to the *trading* symbols that reference
+    // it, not to other index series. (The index symbol's own value is synthesized
+    // separately and throttled — see the Synthesizer and `Conflator`.)
+    if (item.referenceSymbol && ! isReferenceSymbol(sym)) {
       const peers = refMap.get(item.referenceSymbol);
 
       if (peers) {
@@ -75,12 +79,13 @@ export function rebuildCaches(acc: Accumulator): void {
 
     const entry: InstrumentSymCacheEntry = {};
 
-    if (item.lastPrice !== undefined) entry.lastPrice = item.lastPrice;
-    if (item.markPrice !== undefined) entry.markPrice = item.markPrice;
-    if (item.bidPrice  !== undefined) entry.bidPrice  = item.bidPrice;
-    if (item.askPrice  !== undefined) entry.askPrice  = item.askPrice;
-    if (item.tickSize  !== undefined) entry.tickSize  = item.tickSize;
-    if (item.fairBasis !== undefined) entry.fairBasis = item.fairBasis;
+    if (item.lastPrice  !== undefined) entry.lastPrice  = item.lastPrice;
+    if (item.markPrice  !== undefined) entry.markPrice  = item.markPrice;
+    if (item.bidPrice   !== undefined) entry.bidPrice   = item.bidPrice;
+    if (item.askPrice   !== undefined) entry.askPrice   = item.askPrice;
+    if (item.tickSize   !== undefined) entry.tickSize   = item.tickSize;
+    if (item.fairBasis  !== undefined) entry.fairBasis  = item.fairBasis;
+    if (item.markMethod !== undefined) entry.markMethod = item.markMethod;
 
     symCache.set(sym, entry);
   }
@@ -89,4 +94,9 @@ export function rebuildCaches(acc: Accumulator): void {
   acc.knownSymbols = knownSymbols;
   acc.symCache     = symCache;
   acc.settled      = settled;
+}
+
+/** Reference/index series (e.g. `.BXBT`, `.BVOL24H`) — carry a leading dot. */
+export function isReferenceSymbol(symbol: string | undefined): boolean {
+  return typeof symbol === 'string' && symbol.startsWith('.');
 }
