@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { TABLES, PAGE_SIZE } from '../src/utils/tables';
+import { TABLES, PAGE_SIZE } from '../src/utils/settings';
 
 describe('TABLES configuration', () => {
-  it('has exactly 5 tables', () => {
-    expect(TABLES).toHaveLength(5);
+  it('has exactly 9 tables', () => {
+    expect(TABLES).toHaveLength(9);
   });
 
   it('PAGE_SIZE is 500', () => {
@@ -49,17 +49,52 @@ describe('TABLES configuration', () => {
       expect(byName.tick!.filter).toEqual({ size: 0 });
     });
   });
+
+  describe('per-symbol subtask resolvers', () => {
+    const byName = Object.fromEntries(TABLES.map((t) => [t.name, t]));
+
+    it('compositeIndex and quote tables define a symbols resolver; trade does not', () => {
+      expect(typeof byName.compositeIndex!.symbols).toBe('function');
+      expect(typeof byName.quote!.symbols).toBe('function');
+      expect(typeof byName['quote.secondary']!.symbols).toBe('function');
+      expect(byName.trade!.symbols).toBeUndefined();
+    });
+  });
+
+  describe('trade / quote pool split', () => {
+    const byName = Object.fromEntries(TABLES.map((t) => [t.name, t]));
+
+    it('canonical tables select Primary, secondary tables select Secondary', () => {
+      expect(byName.trade!.filter).toEqual({ pool: 'Primary' });
+      expect(byName.quote!.filter).toEqual({ pool: 'Primary' });
+      expect(byName['trade.secondary']!.filter).toEqual({ pool: 'Secondary' });
+      expect(byName['quote.secondary']!.filter).toEqual({ pool: 'Secondary' });
+    });
+
+    it('both trade tables start from 2026-04-01 and drop referential prints', () => {
+      for (const name of ['trade', 'trade.secondary']) {
+        expect(byName[name]!.from).toBe('20260401');
+        expect(byName[name]!.keep!({ size: 0 })).toBe(false);
+        expect(byName[name]!.keep!({ size: 5 })).toBe(true);
+      }
+    });
+
+    it('both quote tables start from 2026-04-01', () => {
+      expect(byName.quote!.from).toBe('20260401');
+      expect(byName['quote.secondary']!.from).toBe('20260401');
+    });
+  });
 });
 
 describe('TABLES — indexTickOnly filter', () => {
-  // `tables.ts` computes compositeIndex's filter at module load from config, so
+  // settings.ts computes compositeIndex's filter at module load from config, so
   // each branch needs the module re-evaluated against a freshly mocked config.
   beforeEach(() => { vi.resetModules(); });
 
   const loadTables = async (indexTickOnly: boolean) => {
     vi.doMock('../src/config', () => ({ default: { indexTickOnly, tables: [] } }));
 
-    return (await import('../src/utils/tables')).TABLES;
+    return (await import('../src/utils/settings')).TABLES;
   };
 
   it('compositeIndex carries the BMI filter when indexTickOnly is true', async () => {

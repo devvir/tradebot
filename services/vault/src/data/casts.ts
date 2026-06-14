@@ -48,6 +48,9 @@ const TABLE_CASTS: Record<string, TableCasts> = {
   tradeBin1h: TRADEBIN_CASTS,
   tradeBin1d: TRADEBIN_CASTS,
 
+  'quote.secondary': QUOTE_CASTS,
+  'trade.secondary': TRADE_CASTS,
+
   liquidation: num('price', 'leavesQty'),
 
   tick: num('price'),

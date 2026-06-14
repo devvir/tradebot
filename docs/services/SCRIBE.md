@@ -8,16 +8,30 @@ Fetches historical data from the BitMEX REST API and writes it to the vault serv
 
 ## Tables
 
-| Table name       | REST path                     | Symbol iteration       |
-|------------------|-------------------------------|------------------------|
-| `compositeIndex` | `/instrument/compositeIndex`  | per index symbol       |
-| `funding`        | `/funding`                    | none                   |
-| `insurance`      | `/insurance`                  | none                   |
-| `settlement`     | `/settlement`                 | none                   |
+| Table name        | REST path                    | Subtasks (symbols) | `filter`            | Notes                           |
+|-------------------|------------------------------|--------------------|---------------------|---------------------------------|
+| `compositeIndex`  | `/instrument/compositeIndex` | per index symbol   | `{reference:BMI}`\* | `tsField: logged`               |
+| `funding`         | `/funding`                   | none               | —                   |                                 |
+| `insurance`       | `/insurance`                 | none               | —                   |                                 |
+| `settlement`      | `/settlement`                | none               | —                   |                                 |
+| `tick`            | `/trade`                     | none               | `{size:0}`          | referential (index) prints      |
+| `trade`           | `/trade`                     | none               | `{pool:Primary}`    | `from: 20260401`, `keep size≠0` |
+| `trade.secondary` | `/trade`                     | none               | `{pool:Secondary}`  | `from: 20260401`, `keep size≠0` |
+| `quote`           | `/quote`                     | per trading symbol | `{pool:Primary}`    | `from: 20260401`                |
+| `quote.secondary` | `/quote`                     | per trading symbol | `{pool:Secondary}`  | `from: 20260401`                |
 
-`/instrument` is fetched to build the index symbol list for `compositeIndex`. It is not written to vault.
+\* `compositeIndex` carries the BMI filter only when `SCRIBE_INDEX_TICK_ONLY` is set.
 
-All tables use `reverse=false` (oldest-first). Page size is 500 rows for all tables except `compositeIndex`, which uses 1,000. Each day is fetched with `startTime = midnight of that day` and `endTime = midnight of the following day`. The current day is never written to vault — processing pauses at today's date and resumes after midnight.
+Each table is one entry in [settings.ts](../../services/scribe/src/utils/settings.ts). The runner is generic — it reads four optional fields and never names a table:
+
+- **`symbols?`** — a resolver `(cache, baseUrl) => Promise<string[]>`. Present ⇒ the table fans out into one subtask per returned symbol (each carrying that `symbol` plus the table's static `filter`); absent ⇒ a single default task with no symbol. `compositeIndex` uses `getOrderedIndices` (the `.`-prefixed index symbols); `quote` uses `getTradingSymbols` (non-`.` symbols — referential symbols have no order book, so no quotes). Both order their symbols by a **stable registration ID** held in a Redis hash (`scribe:indices` / `scribe:symbols`): a newly-listed symbol is appended with the next ID, so existing symbols never shift. That keeps a day's output reproducible — re-fetching it later yields a byte-identical file even if symbols listed in between, which is what makes regression diffs reliable. The list is computed at runtime, which is why this is a function rather than static data.
+- **`filter?`** — the server-side BitMEX filter, including pool selection. `filter={"pool":"Primary"}` filters trade/quote to that pool exactly as the `?pool=` selector does; pool is encoded in the table name, so there is no `pool` column anywhere.
+- **`keep?`** — a post-fetch row predicate, for conditions BitMEX can't express server-side. `trade` uses `row => row.size !== 0` to drop the referential index prints (there is no `size != 0` server filter). Kept on `trade.secondary` too (a no-op there — Secondary has no referential prints).
+- **`from?`** — a hard `yyyymmdd` floor on the first date, combined with `SCRIBE_START_DATE`. `trade`/`quote` start at `2026-04-01`; earlier history is bulk-collected from S3 by the courier service. The floor sets only the initial position — once progress passes it, the saved cursor resumes forward.
+
+`/instrument` is fetched to build the symbol lists; it is not written to vault.
+
+All tables use `reverse=false` (oldest-first). Page size is 500 rows except `compositeIndex`, `tick`, `trade`, `quote` (1,000). Each day is fetched with `startTime = midnight of that day` and `endTime = midnight of the following day`. The current day is never written to vault — processing pauses at today's date and resumes after midnight.
 
 ---
 
@@ -46,7 +60,7 @@ vault://<table>/<yyyy>/<yyyymmdd>.csv.gz
 
 Files transition from `open` (being written) to `closed` (finalized and compressed) once all data for that day has been confirmed.
 
-For `compositeIndex`, all symbols are processed sequentially for each day before the file is closed. Symbol order is determined by an ID assigned on first sight and persisted in the Redis hash `scribe:indices` (symbol → id), so the ordering is stable across restarts. Newly discovered indices are appended with the next sequential ID.
+For per-symbol tables (`compositeIndex`, `quote`), all symbols are processed sequentially for each day before the file is closed. Symbol order is determined by an ID assigned on first sight and persisted in a Redis hash (`scribe:indices` for indices, `scribe:symbols` for trading symbols), so the ordering is stable across restarts. Newly discovered symbols are appended with the next sequential ID — existing symbols never move, so a re-fetched day is byte-identical to the original.
 
 ---
 
@@ -57,7 +71,7 @@ On startup, scribe determines the resume date for each task (one task per table,
 1. `GET /files/:table` — list all files
 2. Delete any `open` files (incomplete from a previous run)
 3. Read the task's last-saved progress date from Redis (key `scribe_<table>_<id>`)
-4. The lower bound is the later of `SCRIBE_START_DATE` and the cached date
+4. The lower bound is the later of `SCRIBE_START_DATE`, the table's `from` floor, and the cached date
 5. With a lower bound: walk forward through the closed-file set, returning the first date that has no closed file
 6. Without a lower bound (no cache, no env var): probe BitMEX with a single `start=0, count=1` request to find the symbol's first available row, cache it, and start there
 7. If the lower bound is already today or later, the task is caught up; the runner sleeps until UTC midnight
@@ -74,7 +88,7 @@ This is a pipeline, not a barrier: a slow page (or one a worker is pacing/retryi
 
 ## Time-Block Pagination
 
-BitMEX enforces a maximum `start` offset per endpoint (2,500,000 for all current tables), and also an undocumented cap that can surface earlier as a short/empty page. The iterator walks offsets in order within a `startTime`-block and transitions when a window ends:
+BitMEX enforces a maximum `start` offset per endpoint (`maxStart`, e.g. 2,500,000 for most tables, 100,000 for `trade`/`tick`), and also an undocumented cap that can surface earlier as a short/empty page. The iterator walks offsets in order within a `startTime`-block and transitions when a window ends:
 
 - **Offset cap:** launches stop once `start` would exceed `maxStart`, so the iterator never speculatively fetches past the cap. Once the in-flight pages up to it drain, the block reanchors.
 - **Window exhausted:** a short or empty page in offset order ends the block. If the block made progress and a `tsField` is present, `startTime` reanchors to the last row's `tsField` and a fresh window opens at `start = 0`; otherwise the data is exhausted and iteration ends.
@@ -90,9 +104,9 @@ BitMEX enforces a maximum `start` offset per endpoint (2,500,000 for all current
 Startup (per table, in parallel):
   1. GET /files/:table — list vault files
   2. DELETE any open files
-  3. tasks = all index symbols (compositeIndex) or [default] (others)
+  3. tasks = table.symbols(...) → one per symbol, or [default] when no resolver
   4. For each task, compute the start date:
-       boundary = latest(SCRIBE_START_DATE, redis cached date)
+       boundary = latest(SCRIBE_START_DATE, table.from, redis cached date)
        if boundary >= today           → today (caught up)
        else if boundary               → first date >= boundary not in closed-file set
        else                           → probe BitMEX oldest row, cache it

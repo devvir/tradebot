@@ -39,10 +39,12 @@ export const probeNextDate = async (
   // exists. Fall back to a reverse query (no startTime) to decide whether the
   // symbol is truly exhausted or just hidden by the row-ID quirk.
   if (! nextDate) {
-    const lastDate = await newestDate(fetch, table, { symbol: filter.symbol });
+    const tableFilter = table.filter ? { filter: table.filter } : {};
+
+    const lastDate = await newestDate(fetch, table, { symbol: filter.symbol, ...tableFilter });
 
     if (lastDate && lastDate > currentDate) {
-      const firstDate = await oldestDate(fetch, table, { symbol: filter.symbol }) ?? todayUtc();
+      const firstDate = await oldestDate(fetch, table, { symbol: filter.symbol, ...tableFilter }) ?? todayUtc();
 
       logger.info({ table: table.name, id, firstDate, lastDate }, 'Will start from first available date');
       nextDate = firstDate > currentDate ? firstDate : nextDay(currentDate);
@@ -91,7 +93,8 @@ const taskStartDate = async (
 ): Promise<string> => {
   const today    = todayUtc();
   const cached   = await cache.get(cacheKey(table.name, task.id));
-  const boundary = latest(config.startDate ?? null, cached);
+  const floor    = latest(config.startDate ?? null, table.from ?? null);
+  const boundary = latest(floor, cached);
 
   if (! boundary) {
     logger.info(`Checking start date for task ${task.id}`);

@@ -131,7 +131,7 @@ async function* streamBlock(
 /**
  * Reads the field BitMEX sorts and filters startTime on for this table, so the
  * pagination math uses the same clock as the filter. `logged` (insertion time)
- * for compositeIndex; `timestamp` (falling back to `date`) otherwise.
+ * for tables that set `tsField`; `timestamp` (falling back to `date`) otherwise.
  */
 const pickTime = (row: Row, tsField: string | undefined): string | undefined =>
   (tsField ? row[tsField] : (row['timestamp'] ?? row['date'])) as string | undefined;

@@ -17,12 +17,12 @@ vi.mock('../src/utils/symbols', () => ({
 }));
 
 // TABLES is mutable so each test can inject just the table it needs.
-vi.mock('../src/utils/tables', () => ({
+vi.mock('../src/utils/settings', () => ({
   TABLES:    [] as TableConfig[],
   PAGE_SIZE: 500,
 }));
 
-import * as tablesModule    from '../src/utils/tables';
+import * as tablesModule    from '../src/utils/settings';
 import { sleep }            from '../src/utils';
 import { getOrderedIndices } from '../src/utils/symbols';
 
@@ -58,6 +58,7 @@ const COMPOSITE_TABLE: TableConfig = {
   path:     '/instrument/compositeIndex',
   maxStart: null,
   count:    1000,
+  symbols:  getOrderedIndices,   // mocked per-test via runAllTables
 };
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
@@ -362,6 +363,40 @@ describe('runAllTables — next[id] tracking', () => {
 
     expect(calledSymbols).toContain('.EARLY');
     expect(calledSymbols).not.toContain('.LATE');
+  });
+
+  it('carries the table filter into the probe fallback reverse-queries', async () => {
+    // A filtered table (compositeIndex reference:BMI, quote.secondary pool:Secondary):
+    // the "exhausted vs hidden by the row-ID quirk" fallback must reverse-query with
+    // the table filter, not just the symbol — otherwise an unfiltered match (e.g.
+    // Primary data) makes the filtered pool look populated and the loop scans empty
+    // days for results that never come.
+    (tablesModule.TABLES as TableConfig[]).push({ ...COMPOSITE_TABLE, filter: { reference: 'BMI' } });
+
+    const fetch = makeFetch({
+      // cold-start oldest (no startTime) → past date; empty-day probe oldest
+      // (with startTime) → null → triggers the fallback reverse-queries.
+      oldest: vi.fn().mockImplementation((_t, filter) =>
+        Promise.resolve(filter?.startTime ? null : tsRow(TWO_DAYS_AGO))),
+      newest: vi.fn().mockResolvedValue(tsRow(YESTERDAY)),
+      getDay: vi.fn().mockImplementation(() => rowGen([])),
+    });
+    const store = makeStore({ listFiles: vi.fn().mockResolvedValue({}) });
+
+    stopAfter(1);
+
+    await expect(
+      runAllTables(fetch, store, makeCache(), ['.BXBT'])
+    ).rejects.toThrow('stop');
+
+    expect(fetch.newest).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ symbol: '.BXBT', filter: { reference: 'BMI' } }),
+    );
+    expect(fetch.oldest).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ symbol: '.BXBT', filter: { reference: 'BMI' } }),
+    );
   });
 
   it('probes for next date and closes the day when getDay returns empty', async () => {

@@ -1,7 +1,6 @@
 import { logger } from '@devvir/service-kit';
 import type { RedisClient } from '@devvir/service-kit';
 import config from './config';
-import { getOrderedIndices } from './utils/symbols';
 import type { FetchService, FetchFilter } from './bitmex';
 import { createBufferedWriter } from './vault';
 import type { StoreService } from './vault';
@@ -93,6 +92,8 @@ const fetchAndWriteDay = async (
   let   hasRows = false;
 
   for await (const row of fetch.getDay(table, currentDate, filter)) {
+    if (table.keep && ! table.keep(row)) continue;
+
     hasRows = true;
     await writer.push(row);
   }
@@ -110,14 +111,14 @@ const getTasks = async (
 ): Promise<Task[]> => {
   const filterClause = table.filter ? { filter: table.filter } : {};
 
-  if (table.name !== 'compositeIndex') return [{
+  if (! table.symbols) return [{
     id: 'default',
     filter: { count: table.count, ...filterClause },
   }];
 
-  const indices = await getOrderedIndices(cache, config.bitmexRestUrl);
+  const symbols = await table.symbols(cache, config.bitmexRestUrl);
 
-  return indices.map(symbol => ({
+  return symbols.map(symbol => ({
     id: symbol,
     filter: { symbol, count: table.count, ...filterClause },
   }));

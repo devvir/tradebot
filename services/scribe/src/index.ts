@@ -3,7 +3,7 @@ import SK from './service';
 import { createFetchService } from './bitmex';
 import { logMetrics } from './bitmex/metrics';
 import { createStoreService } from './vault';
-import { TABLES } from './utils/tables';
+import { TABLES } from './utils/settings';
 import { processTable } from './runner';
 import type { Config } from './types';
 

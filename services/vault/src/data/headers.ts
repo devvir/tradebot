@@ -19,6 +19,14 @@ export const TABLE_HEADERS: Record<string, string[]> = {
   compositeIndex: ['timestamp', 'symbol', 'indexSymbol', 'indexMultiplier', 'reference', 'lastPrice', 'sourcePrice', 'conversionIndex', 'conversionIndexPrice', 'weight', 'logged'],
   tick:           ['timestamp', 'symbol', 'price', 'tickDirection'],
 
+  // trade/quote: columns match the BitMEX S3 daily buckets exactly so scribe's
+  // REST-collected files read identically to courier's historical ones. Pool is
+  // encoded in the table name (`.secondary`), so there is no pool column.
+  trade:               ['timestamp', 'symbol', 'side', 'size', 'price', 'tickDirection', 'trdMatchID', 'grossValue', 'homeNotional', 'foreignNotional', 'trdType'],
+  'trade.secondary':   ['timestamp', 'symbol', 'side', 'size', 'price', 'tickDirection', 'trdMatchID', 'grossValue', 'homeNotional', 'foreignNotional', 'trdType'],
+  quote:               ['timestamp', 'symbol', 'bidSize', 'bidPrice', 'askPrice', 'askSize'],
+  'quote.secondary':   ['timestamp', 'symbol', 'bidSize', 'bidPrice', 'askPrice', 'askSize'],
+
   // ── Streamed from BitMEX WebSocket ─────────────────────────────────────────
   //
   // WS table rows are stored with two metadata columns at the start:

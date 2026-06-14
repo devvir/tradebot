@@ -3,27 +3,39 @@ import type { RedisClient, FetchClientHandle } from '@devvir/service-kit';
 import { registry, logger } from '@devvir/service-kit';
 
 type Instrument = components['schemas']['Instrument'];
-type Symbols = { indices: string[]; inactive: Set<string> };
+type Symbols = { indices: string[]; trading: string[]; inactive: Set<string> };
 
 const PAGE_SIZE = 1000;
 
 const INDICES_HASH = 'scribe:indices';
+const SYMBOLS_HASH = 'scribe:symbols';
 
 /**
- * Fetch all BitMEX indices ordered by their stable registration ID.
- *
- * The ID-to-symbol mapping lives in a Redis hash; any index newly seen on
- * BitMEX is assigned the next sequential ID, so order is preserved across
- * restarts and matches the historical registry that previously held it.
+ * BitMEX `.`-prefixed reference indices, ordered by their stable registration
+ * ID (see {@link orderByRegistry}).
  */
 export const getOrderedIndices = async (
   cache:   RedisClient,
   baseUrl: string,
 ): Promise<string[]> => {
   const { indices } = await fetchSymbols(baseUrl);
-  const idMap       = await registerIndices(cache, indices);
 
-  return [...indices].sort((a, b) => (idMap.get(a) ?? 0) - (idMap.get(b) ?? 0));
+  return orderByRegistry(cache, INDICES_HASH, indices);
+};
+
+/**
+ * Trading symbols (everything not a `.`-prefixed reference index), ordered by
+ * their stable registration ID (see {@link orderByRegistry}). All states are
+ * included — inactive/expired contracts still carry order-book history worth
+ * collecting.
+ */
+export const getTradingSymbols = async (
+  cache:   RedisClient,
+  baseUrl: string,
+): Promise<string[]> => {
+  const { trading } = await fetchSymbols(baseUrl);
+
+  return orderByRegistry(cache, SYMBOLS_HASH, trading);
 };
 
 export const fetchSymbols = async (baseUrl: string): Promise<Symbols> => {
@@ -42,11 +54,12 @@ export const fetchSymbols = async (baseUrl: string): Promise<Symbols> => {
   }
 
   const indices  = all.filter(i =>   i.symbol.startsWith('.')).map(i => i.symbol);
+  const trading  = all.filter(i => ! i.symbol.startsWith('.')).map(i => i.symbol);
   const inactive = new Set(all.filter(i => i.state !== 'Open').map(i => i.symbol));
 
-  logger.info({ indices: indices.length, inactive: inactive.size }, 'Symbol list loaded');
+  logger.info({ indices: indices.length, trading: trading.length, inactive: inactive.size }, 'Symbol list loaded');
 
-  return { indices, inactive };
+  return { indices, trading, inactive };
 };
 
 // ── Private ──────────────────────────────────────────────────────────────────
@@ -61,28 +74,47 @@ const client = (): FetchClientHandle =>
     retryOn: [429, 502, 503, 504],
   }) as FetchClientHandle);
 
-const registerIndices = async (
+/**
+ * Order a symbol list by a stable registration ID held in a Redis hash. Any
+ * symbol newly seen on BitMEX is assigned the next sequential ID and appended,
+ * so existing symbols never change position — order is preserved across restarts
+ * even as the set grows. This makes a day's output reproducible: re-fetching it
+ * later (e.g. to diff against a baseline when validating a change) yields a
+ * byte-identical file even if symbols listed in between.
+ */
+const orderByRegistry = async (
   cache:   RedisClient,
-  indices: string[],
+  hashKey: string,
+  symbols: string[],
+): Promise<string[]> => {
+  const idMap = await registerSymbols(cache, hashKey, symbols);
+
+  return [...symbols].sort((a, b) => (idMap.get(a) ?? 0) - (idMap.get(b) ?? 0));
+};
+
+const registerSymbols = async (
+  cache:   RedisClient,
+  hashKey: string,
+  symbols: string[],
 ): Promise<Map<string, number>> => {
-  const existing = await cache.hGetAll(INDICES_HASH) as Record<string, string>;
+  const existing = await cache.hGetAll(hashKey) as Record<string, string>;
   const idMap    = new Map<string, number>(
     Object.entries(existing).map(([sym, id]) => [sym, Number(id)]),
   );
 
-  const fresh = indices.filter(s => ! idMap.has(s));
+  const fresh = symbols.filter(s => ! idMap.has(s));
 
   let nextId = idMap.size > 0 ? Math.max(...idMap.values()) + 1 : 0;
 
   for (const symbol of fresh) {
     const id = nextId++;
 
-    await cache.hSet(INDICES_HASH, symbol, String(id));
+    await cache.hSet(hashKey, symbol, String(id));
     idMap.set(symbol, id);
   }
 
   if (fresh.length > 0)
-    logger.info({ added: fresh.length, total: idMap.size }, 'Registered new indices');
+    logger.info({ hashKey, added: fresh.length, total: idMap.size }, 'Registered new symbols');
 
   return idMap;
 };
