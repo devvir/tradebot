@@ -280,7 +280,11 @@ async function executeBackupSource(task: BackupSourceTask): Promise<void> {
   for (const file of task.files) {
     info(`  ${file.table}/${file.year}/${file.day}.${file.suffix}.csv.gz`);
 
-    const megaDir = path.dirname(file.megaPath);
+    // Trailing slash is required: mega-put uploads INTO a path ending in `/`,
+    // but treats a slash-less path whose last segment doesn't exist yet as the
+    // destination *filename* — so every file would upload as "<year>" and
+    // overwrite the previous. The `/` forces folder semantics (`-c` creates it).
+    const megaDir = path.dirname(file.megaPath) + '/';
 
     try {
       await execFileAsync('mega-put', ['-c', file.localPath, megaDir]);
@@ -356,7 +360,11 @@ async function executeBackupBucket(task: BackupBucketTask): Promise<void> {
 
     info(`  ${file.table}/${file.year}/${file.day}.csv.gz`);
 
-    const megaDir = path.dirname(file.megaPath);
+    // Trailing slash is required: mega-put uploads INTO a path ending in `/`,
+    // but treats a slash-less path whose last segment doesn't exist yet as the
+    // destination *filename* — so every file would upload as "<year>" and
+    // overwrite the previous. The `/` forces folder semantics (`-c` creates it).
+    const megaDir = path.dirname(file.megaPath) + '/';
 
     try {
       await execFileAsync('mega-put', ['-c', file.localPath, megaDir]);

@@ -2,7 +2,7 @@
 
 `tools db restore <args>` re-imports `mongodump` archives back into MongoDB. Pulls anything missing from Mega first, then runs `mongorestore --gzip --archive=…` per matched file.
 
-Same arg parser as [dump](./DB-DUMP.md), [purge](./DB-PURGE.md), [stats](./DB-STATS.md): collection names + date filters (`YYYY` / `YYYYMM` / `YYYYMMDD`, dashes optional) + the `all` keyword.
+Same arg parser as [dump](./DB-DUMP.md), [purge](./DB-PURGE.md), [stats](./DB-STATS.md): collection names + date filters (`YYYY` / `YYYYMM` / `YYYYMMDD`, dashes optional) + the `all` keyword. Plus an optional `--database` / `-D` flag to restore into a different database (see *Restoring into a different database* below).
 
 ---
 
@@ -63,9 +63,28 @@ The user is expected not to produce overlapping dumps in the first place; this i
 mongorestore --uri=$DB_URL --archive=<localPath> --gzip --verbose
 ```
 
-No `--db` / `--collection` overrides — the archive carries its own db+coll metadata from the original `mongodump --db --collection`. If you dumped from `tradebot.quote`, you restore to `tradebot.quote`.
+By default there are no `--db` / `--collection` overrides — the archive carries its own db+coll metadata from the original `mongodump --db --collection`, so an archive dumped from `tradebot.quote` restores to `tradebot.quote`.
 
 Verbose stderr is parsed for `<ns>  <count>` lines (the running document counter) and the `finished restoring … (N documents)` completion line. Same parser shape as the dump's mongodump wrapper.
+
+---
+
+## Restoring into a different database (`--database` / `-D`)
+
+To restore archives into a **different** database than they were dumped from — e.g. a side database to hold an old run as reference while you compare it against a fresh one — pass `--database <name>` (alias `-D`; `--database=<name>` also works):
+
+```
+tools db restore instrument 201906 --database tradebot_oldrun
+tools db restore instrument 2019 -D tradebot_oldrun
+```
+
+- **The collection name is kept** — only the database changes: `tradebot.instrument` → `tradebot_oldrun.instrument`.
+- Implemented with mongorestore namespace remapping — `--nsFrom='<sourceDb>.*' --nsTo='<targetDb>.*'` is appended, where `<sourceDb>` is the live `DB_DATABASE` (read from the connectivity check). The target db need not exist; mongorestore creates it.
+- Applies to **every** archive in the run.
+- It's a no-op when the target equals the source db. The flag is stripped from the args before the date/collection parser, so it can appear anywhere.
+- Prints `Target database override: <name>` up front, so the retarget is visible before the confirm.
+
+This is the supported way to keep a reference copy without spinning a separate mongo instance: dump the range, re-import/re-run on the source db, then `restore … --database <side-db>` whenever you want both side by side.
 
 ---
 
@@ -128,7 +147,7 @@ removed from local (2):
 | Variable | Required | Description |
 |---|---|---|
 | `DB_URL` | yes | MongoDB connection URI (passed to mongorestore via `--uri`). |
-| `DB_DATABASE` | no | Only used for the quick connectivity check before kicking off workers. The actual restore targets the db baked into the archive. |
+| `DB_DATABASE` | no | The quick connectivity check before kicking off workers, and the **source** namespace for the `--database`/`-D` remap (`--nsFrom='<DB_DATABASE>.*'`). Without `--database`, the restore targets the db baked into the archive. |
 | `DB_DUMP_DIR` | no | Where archives live locally and where `restore.log` is written. Default `./db-dump`. |
 | `DB_DUMP_MEGA_DIR` | no | Mega base path for download lookups. Unset → discovery only checks local; targets that need Mega are flagged as `NOT FOUND`. |
 | `DB_RESTORE_CONCURRENCY` | no | Parallel mongorestore workers. Default `4`. |

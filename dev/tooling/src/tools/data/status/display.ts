@@ -82,11 +82,18 @@ function addGroup(cliTable: Table.Table, g: TableGroup, ctx: LabelContext): void
 
 // ── Name column ──────────────────────────────────────────────────────────────
 
+/**
+ * Presentational only: shorten secondary-pool table names for output width —
+ * `<base>.secondary` → `<base>#2` (e.g. `trade.secondary` → `trade#2`). Generic
+ * across any future `.secondary` table; never changes the real stored name.
+ */
+const displayName = (s: string): string => s.replace(/\.secondary\b/g, '#2');
+
 function nameLabel(g: TableGroup, textColor: string): string {
   const status      = deriveStatus(g);
   const statusColor = status === 'up to date' ? C.green : C.yellow;
   const origin      = g.origin.toUpperCase();
-  const names       = g.names.map(n => `${textColor}${n}${C.reset}`).join('\n');
+  const names       = g.names.map(n => `${textColor}${displayName(n)}${C.reset}`).join('\n');
 
   return `${names}\n${C.dim}${origin} · ${C.reset}${statusColor}${status}${C.reset}`;
 }
@@ -216,6 +223,6 @@ function printNotes(groups: TableGroup[]): void {
   spacer();
 
   for (const note of unique) {
-    console.log(`  ${C.dim}${note}${C.reset}`);
+    console.log(`  ${C.dim}${displayName(note)}${C.reset}`);
   }
 }

@@ -76,25 +76,16 @@ function getWithProgress(
   const start = Date.now();
 
   return new Promise<void>((resolve, reject) => {
+    // mega-get runs in the foreground and blocks until the download completes.
+    // Progress is read out-of-band from `mega-transfers`, matched on the remote
+    // SOURCEPATH — downloads here are sequential, so the path is unambiguous.
     const proc = spawn(
       'mega-get',
-      ['--print-tag-at-start', remotePath, `${localDir}/`],
-      { stdio: ['ignore', 'pipe', 'pipe'] },
+      [remotePath, `${localDir}/`],
+      { stdio: ['ignore', 'ignore', 'pipe'] },
     );
 
-    let tag:        string | null = null;
-    let stdoutBuf  = '';
     let stderrTail = '';
-
-    proc.stdout!.on('data', (chunk: Buffer) => {
-      stdoutBuf += chunk.toString();
-
-      if (! tag) {
-        const m = stdoutBuf.match(/Tag\s*=\s*(\d+)/);
-
-        if (m) tag = m[1];
-      }
-    });
 
     proc.stderr!.on('data', (chunk: Buffer) => {
       stderrTail = (stderrTail + chunk.toString()).slice(-1024);
@@ -103,22 +94,17 @@ function getWithProgress(
     const poll = setInterval(async () => {
       const elapsedMs = Date.now() - start;
 
-      if (! tag) {
-        onProgress(null, elapsedMs);
-        return;
-      }
-
       try {
         const { stdout } = await execFileAsync('mega-transfers', [
           '--only-downloads',
           '--col-separator=|',
-          '--output-cols=TAG,PROGRESS',
+          '--output-cols=SOURCEPATH,PROGRESS',
         ]);
 
         for (const line of stdout.split('\n')) {
           const parts = line.split('|');
 
-          if (parts[0] === tag) {
+          if (parts[0] === remotePath) {
             const m = parts[1]?.match(/(\d+(?:\.\d+)?)\s*%/);
 
             if (m) {

@@ -62,6 +62,7 @@ export async function executeRestore(
   const uri      = mongoUri();
   const outcomes: RestoreOutcome[] = new Array(total);
   const progress = new ProgressBlock(total);
+  const { nsFrom, nsTo } = options;
 
   let next = 0;
 
@@ -70,7 +71,7 @@ export async function executeRestore(
       const idx    = next++;
       const target = ready[idx];
 
-      outcomes[idx] = await restoreOne(uri, target, idx, total, progress);
+      outcomes[idx] = await restoreOne(uri, target, idx, total, progress, nsFrom, nsTo);
     }
   }
 
@@ -93,6 +94,8 @@ async function restoreOne(
   idx:      number,
   total:    number,
   progress: ProgressBlock,
+  nsFrom?:  string,
+  nsTo?:    string,
 ): Promise<RestoreOutcome> {
   const prefix = `[${idx + 1}/${total}] ${target.collection} [${target.key}]`;
   const start  = Date.now();
@@ -113,6 +116,8 @@ async function restoreOne(
     const result = await runMongoRestore({
       uri,
       archivePath: target.local!.path,
+      nsFrom,
+      nsTo,
       onProgress:  p => progress.pairUpdate(key, p.done),
     });
 
@@ -148,6 +153,11 @@ function runMongoRestore(opts: MongoRestoreOptions): Promise<MongoRestoreResult>
     '--gzip',
     '--verbose',
   ];
+
+  // Namespace remap (e.g. restore into a side database for comparison).
+  if (opts.nsFrom && opts.nsTo) {
+    args.push(`--nsFrom=${opts.nsFrom}`, `--nsTo=${opts.nsTo}`);
+  }
 
   const start = Date.now();
 

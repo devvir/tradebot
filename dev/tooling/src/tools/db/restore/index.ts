@@ -19,6 +19,8 @@ import { downloadMissing } from './download';
 import { executeRestore } from './import';
 import { appendRestoreLog } from './log';
 import { neededDownloadBytes, computeSpaceMode, getAvailableBytes } from './space';
+import { listLocalCollections } from '../utils/sync';
+import { listMegaCollections } from '../utils/mega';
 import type { RestoreTarget } from './types';
 
 const DEFAULT_DUMP_DIR = './db-dump';
@@ -49,14 +51,23 @@ export async function runRestore(args: string[]): Promise<void> {
 
   const outDir = getEnv('DB_DUMP_DIR') ?? DEFAULT_DUMP_DIR;
 
-  const { dates, rawCollections, useAll } = parseArgs(args);
+  // Optional `--database`/`-D <name>` retargets the restore into a different
+  // database (e.g. a side db for comparison), via mongorestore's `--nsTo`.
+  const { value: targetDb, rest } = extractValueFlag(args, ['--database', '-D']);
+
+  if (targetDb) info(`Target database override: ${C.yellow}${targetDb}${C.reset} (restoring into a side database)`);
+
+  const { dates, rawCollections, useAll } = parseArgs(rest);
 
   // Discover collections from local + mega (not from mongo — restore creates
-  // collections, so they need not exist in the live DB yet). For an `all`
-  // request without local/mega anchors we can't enumerate, so we connect
-  // briefly just to get the collection list as a fallback for `all`.
+  // collections, so they need not exist in the live DB yet). A collection
+  // present only on Mega is still valid: the union below keeps it from being
+  // rejected as "unknown" before discovery runs.
+  const megaBase         = getEnv('DB_DUMP_MEGA_DIR') ?? null;
   const localCollections = listLocalCollections(outDir);
-  const collections      = resolveCollections(rawCollections, useAll, dates, localCollections);
+  const megaCollections  = megaBase ? await listMegaCollections(megaBase) : [];
+  const allCollections   = [...new Set([...localCollections, ...megaCollections])].sort();
+  const collections      = resolveCollections(rawCollections, useAll, dates, allCollections);
   const pairs            = buildPairs(collections, dates);
 
   if (pairs.length === 0) {
@@ -133,11 +144,17 @@ export async function runRestore(args: string[]): Promise<void> {
 
   spacer();
   // Quick connectivity sanity check before kicking off mongorestore workers.
-  const { client } = await connectDbTool();
+  // Also yields the source database name, needed to build the namespace remap.
+  const { client, db } = await connectDbTool();
+  const sourceDb = db.databaseName;
   await client.close();
 
+  const remap = targetDb && targetDb !== sourceDb
+    ? { nsFrom: `${sourceDb}.*`, nsTo: `${targetDb}.*` }
+    : {};
+
   spacer();
-  const outcomes = await executeRestore(targets);
+  const outcomes = await executeRestore(targets, remap);
 
   spacer();
   const okCount  = outcomes.filter(o => ! o.error).length;
@@ -188,13 +205,27 @@ function heldBackReason(t: RestoreTarget): string {
   return `size mismatch (local ${fmtBytes(t.local!.size)}, mega ${fmtBytes(t.mega.size)})`;
 }
 
-// ── Internals ────────────────────────────────────────────────────────────────
+/**
+ * Pull a single value flag (`--name value`, `--name=value`, or any of its aliases)
+ * out of the arg list, returning the value and the remaining args. Unmatched args
+ * pass through untouched so the date/collection parser sees only what it expects.
+ */
+function extractValueFlag(args: string[], names: string[]): { value?: string; rest: string[] } {
+  const rest: string[] = [];
+  let value: string | undefined;
 
-function listLocalCollections(outDir: string): string[] {
-  if (! fs.existsSync(outDir)) return [];
+  for (let i = 0; i < args.length; i++) {
+    const arg    = args[i]!;
+    const inline = names.find(n => arg.startsWith(`${n}=`));
 
-  return fs.readdirSync(outDir, { withFileTypes: true })
-    .filter(e => e.isDirectory())
-    .map(e => e.name)
-    .sort();
+    if (inline) {
+      value = arg.slice(inline.length + 1);
+    } else if (names.includes(arg)) {
+      value = args[++i];
+    } else {
+      rest.push(arg);
+    }
+  }
+
+  return { value, rest };
 }

@@ -70,6 +70,10 @@ const TABLE_START: Record<string, string> = {
   quote:          '20141122',
   tick:           '20141106',
   trade:          '20141122',
+
+  // Secondary liquidity pool — first data mid-April 2026
+  'quote.secondary': '20260414',
+  'trade.secondary': '20260416',
 };
 
 const PRE_HISTORY_RULES: SyncHoleRule[] = Object.entries(TABLE_START).map(([table, start]) => ({
@@ -84,7 +88,13 @@ const CHAT_CONNECTED_MISSING_DAYS = new Set([
 ]);
 
 const COMPOSITEINDEX_MISSING_DAYS = new Set([
-  '20190106', '20230313', '20230314', '20230315',
+  '20190106', '20190107', '20230313', '20230314', '20230315',
+]);
+
+// trade.secondary: the Secondary pool was barely active in its first days, with
+// no trades at all on these dates. quote.secondary has no such gaps.
+const TRADE_SECONDARY_MISSING_DAYS = new Set([
+  '20260417', '20260419', '20260420', '20260421',
 ]);
 
 const RULES: HoleRule[] = [
@@ -102,7 +112,7 @@ const RULES: HoleRule[] = [
   },
   {
     kind:      'sync',
-    caption:   'CompositeIndex: BitMEX published no data for 2019-01-06, and 2023-03-13/15.',
+    caption:   'CompositeIndex: BitMEX published no data for 2019-01-06/07, and 2023-03-13/15.',
     appliesTo: (table) => table === 'compositeIndex',
     isFilled:  (day) => COMPOSITEINDEX_MISSING_DAYS.has(day),
   },
@@ -113,6 +123,12 @@ const RULES: HoleRule[] = [
     failCaption: 'Failed to fetch settlement dates from BitMEX; the displayed data may be inaccurate.',
     appliesTo:   (table) => table === 'settlement',
     buildFilled: (fromDay, toDay) => fetchSettlementFills(fromDay, toDay),
+  },
+  {
+    kind:      'sync',
+    caption:   'trade.secondary: Secondary pool barely active at launch — no trades on 2026-04-17/19/20/21.',
+    appliesTo: (table) => table === 'trade.secondary',
+    isFilled:  (day) => TRADE_SECONDARY_MISSING_DAYS.has(day),
   },
 ];
 

@@ -38,6 +38,8 @@ export type MongoRestoreProgress = {
 export type MongoRestoreOptions = {
   uri:         string;
   archivePath: string;
+  nsFrom?:     string;   // remap source namespace, e.g. "tradebot.*"
+  nsTo?:       string;   // remap destination namespace, e.g. "tradebot_oldrun.*"
   onProgress?: (p: MongoRestoreProgress) => void;
 };
 
@@ -64,6 +66,8 @@ export type SpaceMode = 'reject' | 'download-only-offer' | 'warn-then-proceed' |
 
 export type ExecuteRestoreOptions = {
   concurrency?: number;
+  nsFrom?:      string;   // namespace remap applied to every restored archive
+  nsTo?:        string;
 };
 
 export type RestoreOutcome = {

@@ -70,6 +70,15 @@ export async function listMegaDirSized(dir: string): Promise<Map<string, number>
   }
 }
 
+/**
+ * List collection subdirectory names under a Mega dump base dir (one entry per
+ * collection). Returns an empty list if Mega is unavailable or the base dir
+ * doesn't exist — same fail-soft behaviour as `listMegaDir`.
+ */
+export async function listMegaCollections(base: string): Promise<string[]> {
+  return [...await listMegaDir(base)].sort();
+}
+
 export function posixJoin(...parts: string[]): string {
   return parts.join('/').replace(/\/+/g, '/');
 }
@@ -82,8 +91,11 @@ export function posixJoin(...parts: string[]): string {
  *   - A year is "complete" if a `YYYY.archive.gz` file exists, OR if all 12
  *     `YYYYMM.archive.gz` files for that year exist.
  *   - The tip is, in order of preference:
- *       1. the latest contiguous month inside the first incomplete year
- *          (if January through M are all present);
+ *       1. the latest contiguous month inside the first incomplete year. The
+ *          run starts at January when a complete year precedes it (so it stays
+ *          contiguous with the prior December), otherwise it starts at the
+ *          earliest month actually present — a collection whose backups begin
+ *          mid-year (e.g. only `202604`) is not assumed to start in January;
  *       2. the latest fully-complete year before any gap.
  *
  * Returns `"YYYY"`, `"YYYY-MM"`, or `null` when nothing is contiguous from
@@ -133,13 +145,18 @@ export function computeMegaTip(filenames: Set<string>): string | null {
   }
 
   // `year` now points at the first incomplete year. Find the longest run of
-  // present months starting from January.
+  // present months. The run starts at January only when a complete year
+  // precedes it (to stay contiguous with that year's December); otherwise it
+  // starts at the earliest month present, so backups that legitimately begin
+  // mid-year are honoured rather than discarded.
   const incompleteMonths = yearMonths.get(year);
 
   if (incompleteMonths) {
+    const startMonth = lastCompleteYear !== null ? 1 : Math.min(...incompleteMonths);
+
     let lastContiguousMonth = 0;
 
-    for (let m = 1; m <= 12; m++) {
+    for (let m = startMonth; m <= 12; m++) {
       if (incompleteMonths.has(m)) lastContiguousMonth = m;
       else                          break;
     }

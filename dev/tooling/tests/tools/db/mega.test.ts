@@ -50,8 +50,18 @@ describe('computeMegaTip', () => {
     expect(computeMegaTip(files('201501', '201502'))).toBe('2015-02');
   });
 
-  it('returns null when months are present but not contiguous from January', () => {
-    expect(computeMegaTip(files('201502', '201503'))).toBeNull();
+  it('returns the contiguous month run when backups begin mid-year', () => {
+    // no complete year precedes, so the run starts at the earliest month present
+    expect(computeMegaTip(files('201502', '201503'))).toBe('2015-03');
+  });
+
+  it('returns the tip for a single mid-year archive (quote.secondary case)', () => {
+    expect(computeMegaTip(files('202604'))).toBe('2026-04');
+  });
+
+  it('stops at a gap within a mid-year run', () => {
+    // starts at the earliest present month (April), April–May contiguous, July gapped
+    expect(computeMegaTip(files('202604', '202605', '202607'))).toBe('2026-05');
   });
 
   it('ignores YYYYMMDD (day) keys for tip computation', () => {
