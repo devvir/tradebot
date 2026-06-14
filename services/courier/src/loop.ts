@@ -4,39 +4,48 @@ import config from './config';
 import type { Table } from './types';
 import { fetchAndStore, listVaultDates } from './download';
 
-const redisKey = (table: Table): string => `courier_${table}`;
+const redisKey   = (table: Table): string => `courier_${table}`;
+const missingKey = (table: Table): string => `${redisKey(table)}:missing`;
 
 const DEFAULT_START_DATE = '20141122';
 
 // Fetches all dates not yet in vault for a given table, in chronological order.
-// Redis stores the last successfully downloaded date; next run resumes from the
-// day after.
+// Two redis keys track progress: `courier_<table>` is the date we've checked
+// through, `courier_<table>:missing` the dates we checked but S3 hadn't
+// published yet (a permanent hole, or just the trailing edge). Both holes and
+// the unchecked range up to yesterday are attempted every cycle, so a missing
+// bucket never blocks later dates and is re-downloaded once it appears.
 export const syncTable = async (vault: FetchClientHandle, table: Table, redis: RedisClient): Promise<void> => {
   const existing       = new Set(await listVaultDates(vault, table));
   const configStart    = config.startDate ?? DEFAULT_START_DATE;
-  const lastSuccessful = await redis.get(redisKey(table));
-  const startDate      = lastSuccessful ? nextDay(lastSuccessful) : configStart;
-  const needed         = dateRange(startDate, yesterdayUTC());
-  const missing        = needed.filter(d => ! existing.has(d));
+  const checkedThrough = await redis.get(redisKey(table));
+  const startDate      = checkedThrough ? nextDay(checkedThrough) : configStart;
+  const yesterday      = yesterdayUTC();
 
-  if (missing.length === 0) {
-    logger.info({ table }, 'No new dates to download');
-    return;
-  }
+  const knownMissing = await redis.sMembers(missingKey(table));
+  const toFetch      = [...new Set([...knownMissing, ...dateRange(startDate, yesterday)])]
+    .filter(d => d <= yesterday && ! existing.has(d))
+    .sort();
 
-  logger.info({ table, count: missing.length, startDate }, 'Downloading missing dates');
+  logger.info({ table, count: toFetch.length, startDate }, 'Downloading missing dates');
 
-  for (const date of missing) {
+  const stillMissing: string[] = [];
+
+  for (const date of toFetch) {
     const published = await fetchAndStore(vault, table, date);
 
-    /** Not yet published on S3 — stop here; later dates won't be published either. */
     if (! published) {
       logger.info({ table, date }, 'Not yet published — will retry on next poll');
-      break;
+      stillMissing.push(date);
     }
-
-    await redis.set(redisKey(table), date);
   }
+
+  /** Recreate the missing set each cycle so cleared holes drop off automatically. */
+  await redis.set(redisKey(table), yesterday);
+  await redis.del(missingKey(table));
+
+  if (stillMissing.length > 0)
+    await redis.sAdd(missingKey(table), stillMissing);
 };
 
 // ── Polling ───────────────────────────────────────────────────────────────────

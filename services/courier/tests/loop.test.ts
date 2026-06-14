@@ -12,8 +12,14 @@ import * as download from '../src/download';
 /** Sentinel — `syncTable` only passes it straight through to the mocked download fns. */
 const vault = {} as FetchClientHandle;
 
-const makeRedis = (storedDate: string | null = null): RedisClient =>
-  ({ get: vi.fn().mockResolvedValue(storedDate), set: vi.fn().mockResolvedValue(undefined) }) as unknown as RedisClient;
+const makeRedis = (storedDate: string | null = null, missing: string[] = []): RedisClient =>
+  ({
+    get:      vi.fn().mockResolvedValue(storedDate),
+    set:      vi.fn().mockResolvedValue(undefined),
+    sMembers: vi.fn().mockResolvedValue(missing),
+    sAdd:     vi.fn().mockResolvedValue(undefined),
+    del:      vi.fn().mockResolvedValue(undefined),
+  }) as unknown as RedisClient;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -74,38 +80,64 @@ describe('loop — syncTable', () => {
     vi.useRealTimers();
   });
 
-  it('advances redis to the date just downloaded after each success', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2025-01-05T12:00:00Z'));
-
-    vi.mocked(download.listVaultDates).mockResolvedValue(dateRange('20141122', '20250102'));
-
-    const redis = makeRedis();
-
-    await syncTable(vault, 'trade', redis);
-
-    expect(redis.set).toHaveBeenNthCalledWith(1, 'courier_trade', '20250103');
-    expect(redis.set).toHaveBeenNthCalledWith(2, 'courier_trade', '20250104');
-
-    vi.useRealTimers();
-  });
-
-  it('stops without advancing redis when a date is not yet published (404)', async () => {
+  it('advances the checked-through key to yesterday after a clean pass', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2025-01-05T12:00:00Z')); // yesterday = 20250104
 
     vi.mocked(download.listVaultDates).mockResolvedValue(dateRange('20141122', '20250102'));
-    vi.mocked(download.fetchAndStore)
-      .mockResolvedValueOnce(true)   // 20250103 stored
-      .mockResolvedValueOnce(false); // 20250104 not yet published
 
     const redis = makeRedis();
 
     await syncTable(vault, 'trade', redis);
 
-    expect(download.fetchAndStore).toHaveBeenCalledTimes(2);
     expect(redis.set).toHaveBeenCalledTimes(1);
-    expect(redis.set).toHaveBeenCalledWith('courier_trade', '20250103');
+    expect(redis.set).toHaveBeenCalledWith('courier_trade', '20250104');
+    expect(redis.del).toHaveBeenCalledWith('courier_trade:missing');
+    expect(redis.sAdd).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
+  });
+
+  it('records a hole in the missing set but keeps downloading later dates', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-01-06T12:00:00Z')); // yesterday = 20250105
+
+    vi.mocked(download.listVaultDates).mockResolvedValue(dateRange('20141122', '20250102'));
+    vi.mocked(download.fetchAndStore)
+      .mockResolvedValueOnce(true)    // 20250103 stored
+      .mockResolvedValueOnce(false)   // 20250104 not yet published (a hole)
+      .mockResolvedValueOnce(true)    // 20250105 stored — not blocked by the hole
+      .mockResolvedValue(true);
+
+    const redis = makeRedis();
+
+    await syncTable(vault, 'trade', redis);
+
+    expect(download.fetchAndStore).toHaveBeenCalledTimes(3);
+    expect(redis.set).toHaveBeenCalledWith('courier_trade', '20250105');
+    expect(redis.sAdd).toHaveBeenCalledWith('courier_trade:missing', ['20250104']);
+
+    vi.useRealTimers();
+  });
+
+  it('retries a previously missing hole and clears it once published', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-01-08T12:00:00Z')); // yesterday = 20250107
+
+    // Checked through 20250107 already; 20250104 was recorded as a hole and is
+    // still absent from vault — so it's the only date retried this cycle.
+    const existing = dateRange('20141122', '20250107').filter(d => d !== '20250104');
+
+    vi.mocked(download.listVaultDates).mockResolvedValue(existing);
+
+    const redis = makeRedis('20250107', ['20250104']);
+
+    await syncTable(vault, 'trade', redis);
+
+    expect(download.fetchAndStore).toHaveBeenCalledTimes(1);
+    expect(download.fetchAndStore).toHaveBeenCalledWith(vault, 'trade', '20250104');
+    expect(redis.del).toHaveBeenCalledWith('courier_trade:missing');
+    expect(redis.sAdd).not.toHaveBeenCalled();
 
     vi.useRealTimers();
   });
