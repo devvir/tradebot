@@ -7,7 +7,6 @@ import {
   read,
   _test_ISO_DATE_RE,
 } from '../../../../src/tools/data/prepare/tasks/reader';
-import { _test_isoToMs } from '../../../../src/tools/data/prepare/tasks/ts-resolver';
 import { _test_setColumns, _test_clearColumns } from '../../../../src/tools/data/tables';
 import type { ReadIssue } from '../../../../src/tools/data/prepare/types';
 
@@ -80,15 +79,6 @@ describe('ISO_DATE_RE', () => {
   it('rejects malformed', () => {
     expect(_test_ISO_DATE_RE.test('not a date')).toBe(false);
     expect(_test_ISO_DATE_RE.test('2026-01-01')).toBe(false);
-  });
-});
-
-// ── isoToMs ─────────────────────────────────────────────────────────────────
-
-describe('isoToMs', () => {
-  it('matches Date.parse on canonical ISO', () => {
-    expect(_test_isoToMs('2026-01-01T00:00:00.000')).toBe(Date.parse('2026-01-01T00:00:00.000Z'));
-    expect(_test_isoToMs('2026-06-15T12:34:56.789')).toBe(Date.parse('2026-06-15T12:34:56.789Z'));
   });
 });
 

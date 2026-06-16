@@ -10,7 +10,7 @@ import { createSourceActor } from './source-actor';
 import { dedup } from './tasks/deduper';
 import { writeOutputHeader } from './tasks/header';
 import { merge } from './tasks/merger';
-import { write } from './tasks/writer';
+import { write } from '../tasks/writer';
 import { discoverGroups } from './utils/discover';
 import { preflight } from './utils/preflight';
 import {

@@ -7,6 +7,7 @@ import { runPrepare } from '../tools/data/prepare/run';
 import { runRecover } from '../tools/data/recover/run';
 import { runStatus } from '../tools/data/status/run';
 import { runSync } from '../tools/data/sync/run';
+import { runDedup } from '../tools/data/dedup/run';
 import { input } from '../shared/ui/prompts';
 import { error } from '../shared/ui/logger';
 import { requiredEnv } from '../shared/utils/env';
@@ -148,6 +149,26 @@ export function register(program: Command): void {
         setConcurrency(Math.max(1, parseInt(opts.concurrency ?? '1', 10)));
 
         await runSync();
+      } catch (err) {
+        error((err as Error).message);
+        process.exit(1);
+      }
+    });
+
+  data
+    .command('dedup [path]')
+    .description('Content-hash dedup source files; writes <original>.dedup.csv.gz siblings')
+    .option('-T, --threshold <ms>', 'Max lag (ms) behind the monotonic clock to treat an already-seen message as a duplicate', '500')
+    .action(async (pathArg: string | undefined, options: { threshold?: string }, command: Command) => {
+      try {
+        const root        = resolvePath(pathArg ?? await input('Path:', vaultDir()));
+        const opts        = command.optsWithGlobals<GlobalOpts>();
+        const thresholdMs = Math.max(0, parseInt(options.threshold ?? '500', 10));
+
+        setDryRun(opts.dryRun ?? false);
+        setFromDay(parseFromDay(opts.from ?? null));
+
+        await runDedup(root, thresholdMs);
       } catch (err) {
         error((err as Error).message);
         process.exit(1);

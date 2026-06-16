@@ -1,7 +1,6 @@
 import type { Writable } from 'node:stream';
-import { debug } from '../../../../shared/ui/logger';
-import type { Message } from '../../types';
-import type { PreparedMessage } from '../types';
+import { debug } from '../../../shared/ui/logger';
+import type { Message } from '../types';
 
 const plog = (msg: string): void => { debug(`[${new Date().toISOString()}] ${msg}`); };
 
@@ -10,8 +9,8 @@ const plog = (msg: string): void => { debug(`[${new Date().toISOString()}] ${msg
  * Each batch is concatenated to one `out.write()` call so back-pressure
  * pauses the producer cleanly on `'drain'`.
  */
-export async function write(
-  source: AsyncGenerator<PreparedMessage[]>,
+export async function write<T extends Message>(
+  source: AsyncGenerator<T[]>,
   out:    Writable,
 ): Promise<{ written: number }> {
   let written = 0;
@@ -23,7 +22,7 @@ export async function write(
 
     plog(`[WRITE] batch: ${batch.length} msgs | total written: ${written}`);
 
-    await flushBatch(out, batch as Message[]);
+    await flushBatch(out, batch);
   }
 
   return { written };

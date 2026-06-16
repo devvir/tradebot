@@ -30,18 +30,14 @@ Each group (one table, one day) runs this pipeline:
 ## Data model
 
 ```typescript
-type Action = 'partial' | 'insert' | 'update' | 'delete' | `partial:${string}`;
-
-interface PreparedMessage {
-  rows:      string[];   // raw CSV lines — rows[0] is the message-start row
-  date:      string;     // _date_ field value (reception time, UTC ISO)
+interface PreparedMessage extends Message {
   action:    Action;
-  timestamp: string;     // timestamp column value on message-start row, or ''
-
-  ts:   string;          // canonical sort key: timestamp.slice(0,23) || date.slice(0,23)
-  tsMs: number;          // ts as epoch ms, computed once by READ via Date.UTC()
+  ts:        string;          // canonical sort key: timestamp.slice(0,23) || date.slice(0,23)
+  tsMs:      number;          // ts as epoch ms, computed once by READ via Date.UTC()
 }
 ```
+
+`PreparedMessage` extends the base `Message` type (`rows`, `date`, `action`, `timestamp`) from `tools/data/types.ts`. The `action` field narrows `string` to the `Action` union.
 
 **`rows` are raw CSV strings**, not parsed objects. READ validates and normalises them into canonical form (via `arrayToCsv` for tables that need full RFC 4180 parsing, or raw `readline` for tables with no free-text fields). Downstream steps treat rows as opaque strings and write them directly.
 
@@ -207,15 +203,15 @@ Since timestamp is part of the content key, dupes only exist within a single ms 
 ## WRITE
 
 ```typescript
-async function write(
-  source: AsyncGenerator<PreparedMessage[]>,
-  writer: Writer,
+async function write<T extends Message>(
+  source: AsyncGenerator<T[]>,
+  out:    Writable,
 ): Promise<{ written: number }>
 ```
 
-Consumes the post-DEDUP stream and writes all messages to the gzip writer. Each batch is flushed via a single `writer.writeMessages()` call; the writer's promise chain serialises output ordering while returning immediately, so WRITE keeps consuming without blocking on disk I/O.
+Consumes the post-DEDUP stream and writes all messages to the gzip writer. Each batch is concatenated into a single `out.write()` call; back-pressure pauses the producer on `'drain'`.
 
-The `.tmp` → rename dance is the orchestrator's responsibility, not WRITE's.
+`write` lives at `tools/data/tasks/writer.ts` (common level) and is shared by `prepare` and `dedup`. The `.tmp` → rename dance is the orchestrator's responsibility, not WRITE's.
 
 ---
 
@@ -327,19 +323,24 @@ Three tiers, mutually exclusive between tiers 2 and 3:
 dev/tooling/src/tools/data/
   discover.ts             — resolveSourceFiles: path pattern matching, file collection
   tables.ts               — table config (columns, fixed partials, parsing path, gap threshold)
+  time.ts                 — isoToMs / msToIso: positional ISO↔epoch-ms (shared by prepare and dedup)
+  types.ts                — Message base type (rows, date, action, timestamp)
+
+  tasks/
+    writer.ts             — WRITE: consume stream, flush to gzip writer (shared by prepare and dedup)
 
   prepare/
     run.ts                — entry point: resolves files, sequential pipeline (C=1)
     orchestrator.ts       — subprocess pool for C≥2: slot management, child spawning
-    types.ts              — PreparedMessage, DedupConfig, DedupStore, ReadIssue, etc.
+    types.ts              — PreparedMessage (extends Message), DedupConfig, DedupStore, ReadIssue, etc.
 
     tasks/
       reader.ts           — READ: parse, validate, emit PreparedMessage batches
+      ts-resolver.ts      — per-file ts/tsMs resolution (uses common time.ts)
       sorter.ts           — SORT: minute-bucket accumulator + BoundedQueue + actor wiring
       merger.ts           — MERGE: N-way gap-aware merge + Peekable adapter
       deduper.ts          — DEDUP: per-table store config, hash store implementations
       header.ts           — HEADER: CSV header row + synthetic midnight partial
-      writer.ts           — WRITE: consume stream, flush to gzip writer
 
     utils/
       discover.ts         — group assembly from file list, filename priority sort

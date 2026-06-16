@@ -1,3 +1,5 @@
+import { isoToMs, msToIso } from '../../time';
+
 /**
  * Per-file resolver that maps a message's raw `timestamp` and `_date_` to the
  * canonical sort key `ts` and its epoch-ms form `tsMs`.
@@ -41,30 +43,3 @@ export function createTsResolver(): TsResolver {
   };
 }
 
-// ── Internal: ISO ms conversion ──────────────────────────────────────────────
-
-/**
- * Epoch ms from a 23-char ISO string. Positional arithmetic — no locale or
- * timezone parsing.
- */
-function isoToMs(ts: string): number {
-  const year   = +ts.slice(0, 4);
-  const month  = +ts.slice(5, 7) - 1;
-  const day    = +ts.slice(8, 10);
-  const hour   = +ts.slice(11, 13);
-  const minute = +ts.slice(14, 16);
-  const second = +ts.slice(17, 19);
-  const millis = ts.length > 20 ? +ts.slice(20, 23) : 0;
-
-  return Date.UTC(year, month, day, hour, minute, second, millis);
-}
-
-/** Inverse of `isoToMs` — 23-char ISO string from epoch ms. */
-function msToIso(ms: number): string {
-  return new Date(ms).toISOString().slice(0, 23);
-}
-
-// ── Test exports ──────────────────────────────────────────────────────────────
-
-export const _test_isoToMs = isoToMs;
-export const _test_msToIso = msToIso;

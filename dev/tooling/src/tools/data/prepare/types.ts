@@ -1,3 +1,5 @@
+import type { Message } from '../types';
+
 export type Action = 'partial' | 'insert' | 'update' | 'delete' | `partial:${string}`;
 
 export const ACTIONS: ReadonlySet<string> = new Set([
@@ -13,19 +15,16 @@ export function isPartialAction(action: string): boolean {
 }
 
 /**
- * One BitMEX WS message after parsing and validation. `rows[0]` is the
- * message-start row (non-empty `_date_`); later entries are continuation
- * rows. `ts` is the canonical sort key: `(timestamp || _date_).slice(0, 23)`.
+ * A fully-parsed BitMEX WS message. Extends the base `Message` with resolved
+ * timestamp fields used by the prepare pipeline's sorter, merger, and deduper.
+ *
+ * `ts` is the canonical sort key: `(timestamp || _date_).slice(0, 23)`.
  * `tsMs` is `ts` as epoch ms.
  */
-export interface PreparedMessage {
-  rows:      string[];
-  date:      string;
+export interface PreparedMessage extends Message {
   action:    Action;
-  timestamp: string | null;
-
-  ts:   string;
-  tsMs: number;
+  ts:        string;
+  tsMs:      number;
 }
 
 // ── Prepare discovery ─────────────────────────────────────────────────────────

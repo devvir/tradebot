@@ -26,6 +26,6 @@ export interface Message {
   /** Value of the `_action_` column on the message-start row. */
   action: string;
 
-  /** Value of the `timestamp` column on the message-start row. Empty when the column is absent. */
-  timestamp: string;
+  /** Value of the `timestamp` column on the message-start row. Null when the table has no timestamp column. */
+  timestamp: string | null;
 }
