@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createFetchService } from '../src/bitmex';
 import { _test_MAX_IN_FLIGHT as MAX_IN_FLIGHT } from '../src/bitmex/rows';
+import { _test_resetPool, acquireSlot, releaseSlot } from '../src/bitmex/pool';
+import { _test_resetIdentities } from '../src/bitmex/identities';
+import { sleep } from '../src/utils';
 import type { TableConfig } from '../src/types';
 
 vi.mock('../src/utils', async (importOriginal) => ({
@@ -20,11 +23,28 @@ const mkTable = (overrides: Partial<TableConfig> = {}): TableConfig => ({
 const okJson = (data: unknown): Response =>
   ({ ok: true, status: 200, headers: new Headers(), json: () => Promise.resolve(data) } as unknown as Response);
 
+// A 2xx whose rate-limit header is low, so reportRemaining drives the budget under
+// the waterline and pace() engages.
+const okBudget = (remaining: string): Response =>
+  ({ ok: true, status: 200, headers: new Headers({ 'x-ratelimit-remaining': remaining }), json: () => Promise.resolve([{ id: 1 }]) } as unknown as Response);
+
 const collect = async <T>(iter: AsyncIterable<T>): Promise<T[]> => {
   const result: T[] = [];
   for await (const item of iter) result.push(item);
   return result;
 };
+
+/** Drain the microtask/macrotask queue so all settle-able async work completes. */
+const flush = async (): Promise<void> => {
+  for (let i = 0; i < 12; i++) await new Promise(resolve => setImmediate(resolve));
+};
+
+// Reset the shared fetch pool and identity budgets before every test so one test's
+// state (held slots, drained budget) can't leak into the next.
+beforeEach(() => {
+  _test_resetPool();
+  _test_resetIdentities();
+});
 
 // ── oldest ────────────────────────────────────────────────────────────────────
 
@@ -311,5 +331,109 @@ describe('FetchService — getDay', () => {
     const result = await collect(createFetchService(BASE_URL).getDay(mkTable(), '20200101'));
 
     expect(result).toEqual(rows);
+  });
+});
+
+// ── shared pool & pacing ────────────────────────────────────────────────────────
+
+describe('fetch pool — concurrency & pacing', () => {
+  // Default to a fully-mocked fetch so the pure-pool tests (which don't fetch) never
+  // reach real `undici`, even if a prior integration test left a worker in flight.
+  beforeEach(() => { vi.spyOn(global, 'fetch').mockResolvedValue(okJson([])); });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.mocked(sleep).mockResolvedValue(undefined); // restore the immediate-resolve sleep for other tests
+  });
+
+  it('caps total in-flight at the pool size across tables, even while workers pace', async () => {
+    // Multi-table pacing independence — the headline. Every response reports a low
+    // budget, so pace() always engages; sleep never resolves, parking each worker in
+    // its pace. If a paced worker released its slot, the other tables' waiters would
+    // dispatch and the total fetches would run past the pool cap (the bug). Holding
+    // the slot through pace() keeps the true concurrency bound at MAX_IN_FLIGHT no
+    // matter how many tables are active.
+    vi.mocked(global.fetch).mockResolvedValue(okBudget('1'));
+    vi.mocked(sleep).mockImplementation(() => new Promise<void>(() => { /* never resolves: park pacers */ }));
+
+    const iters = Array.from({ length: 3 }, () =>
+      createFetchService(BASE_URL).getRows(mkTable())[Symbol.asyncIterator](),
+    );
+
+    iters.forEach(it => { void it.next(); }); // kick each ring off; they never complete (parked in pace)
+
+    await flush();
+
+    expect(vi.mocked(global.fetch).mock.calls.length).toBeLessThanOrEqual(MAX_IN_FLIGHT);
+  });
+
+  it('admits up to MAX_IN_FLIGHT immediately, then queues the rest (lone-table saturation)', async () => {
+    for (let i = 0; i < MAX_IN_FLIGHT; i++) await acquireSlot(); // a lone consumer takes every slot
+
+    let granted = false;
+    void acquireSlot().then(() => { granted = true; });
+    await flush();
+    expect(granted).toBe(false); // pool full → the next acquire waits
+
+    releaseSlot();
+    await flush();
+    expect(granted).toBe(true); // a freed slot wakes the waiter
+  });
+
+  it('hands a freed slot to the longest-waiting requester (FIFO / fair)', async () => {
+    for (let i = 0; i < MAX_IN_FLIGHT; i++) await acquireSlot();
+
+    const order: number[] = [];
+    void acquireSlot().then(() => order.push(1));
+    void acquireSlot().then(() => order.push(2));
+    await flush();
+
+    releaseSlot(); await flush();
+    releaseSlot(); await flush();
+
+    expect(order).toEqual([1, 2]);
+  });
+
+  it('does not let an unpaired release inflate the pool past its size', async () => {
+    releaseSlot();
+    releaseSlot(); // unpaired releases — must not raise capacity above MAX_IN_FLIGHT
+
+    let admitted = 0;
+
+    for (let i = 0; i < MAX_IN_FLIGHT + 2; i++) {
+      let granted = false;
+      void acquireSlot().then(() => { granted = true; });
+      await flush();
+      if (granted) admitted++;
+    }
+
+    expect(admitted).toBe(MAX_IN_FLIGHT); // the two stray releases added no capacity
+  });
+
+  it('returns the slot after a request exception, so a later fetch is not starved', async () => {
+    let thrown = false;
+
+    vi.mocked(global.fetch).mockImplementation(async () => {
+      if (! thrown) {
+        thrown = true;
+        throw new Error('boom');
+      }
+
+      return okJson([]);
+    });
+
+    await collect(createFetchService(BASE_URL).getRows(mkTable()));
+    await flush();
+
+    // The pool is fully restored — every slot acquires immediately again.
+    let admitted = 0;
+
+    for (let i = 0; i < MAX_IN_FLIGHT; i++) {
+      let granted = false;
+      void acquireSlot().then(() => { granted = true; });
+      await flush();
+      if (granted) admitted++;
+    }
+
+    expect(admitted).toBe(MAX_IN_FLIGHT);
   });
 });

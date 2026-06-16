@@ -31,7 +31,7 @@ Each table is one entry in [settings.ts](../../services/scribe/src/utils/setting
 
 `/instrument` is fetched to build the symbol lists; it is not written to vault.
 
-All tables use `reverse=false` (oldest-first). Page size is 500 rows except `compositeIndex`, `tick`, `trade`, `quote` (1,000). Each day is fetched with `startTime = midnight of that day` and `endTime = midnight of the following day`. The current day is never written to vault — processing pauses at today's date and resumes after midnight.
+All tables use `reverse=false` (oldest-first). Page size defaults to `PAGE_SIZE`; the high-volume tables (`compositeIndex`, `tick`, `trade`, `quote`) override `count` upward. Each day is fetched with `startTime = midnight of that day` and `endTime = midnight of the following day`. The current day is never written to vault — processing pauses at today's date and resumes after midnight.
 
 ---
 
@@ -42,11 +42,11 @@ BitMEX rate-limits anonymous ("guest") requests at 180/min per IP and authentica
 Two pieces govern throughput, deliberately decoupled:
 
 - **Routing.** Each request goes out as the identity with the most estimated budget, where budget is the last reported `x-ratelimit-remaining` plus the refill accrued since. On dispatch that identity's estimate is **decremented by one** — counting the in-flight request immediately so the next pick (the page pipeline runs several ahead) fans out to other buckets instead of stacking on the same one; the next response re-anchors the estimate to the real header value, so the imprecision is bounded and self-correcting. A drained identity is simply skipped, and a 429 zeroes its bucket so the picker moves off it at once.
-- **Pacing.** After each response the worker waits `(waterline − combinedBudget) × pace_ms` (currently 60 and 500ms), and *only* when the **combined** budget across every identity has fallen below the waterline — while the pool still has budget, no one waits. The total is the right measure because routing pools the budget: three buckets at 30/25/25 are 85 of headroom and keep fetching even though no single one is high. The wait is per-worker, never a shared stop, so other in-flight requests keep the pipe full while one paces. The one legitimate reason to stop fetching is the rate limit itself — i.e. the whole pool running dry — and that is exactly when every worker pauses.
+- **Pacing.** After each response the worker waits in proportion to how far the **combined** budget across all identities has dropped below `WATERLINE` — roughly `(WATERLINE − combinedBudget) × PACE_MS` — and only once it's below it; while the pool still has budget, no one waits. The total is the right measure because routing pools the budget: a few buckets each individually low can still sum to plenty of headroom and keep fetching. `WATERLINE` is tuned to sit a comfortable margin above empty (so a burst never trips a 429) but well below the buckets' summed cap (so refill is never wasted at the top); `PACE_MS` sets how sharply the wait grows. The wait is per-worker, never a shared stop, so other in-flight requests keep the pipe full while one paces. The one legitimate reason to stop fetching is the rate limit itself — i.e. the whole pool running dry — and that is exactly when every worker pauses.
 
-A 429 is handled in the fetch loop, not retried on the same client: the bucket is zeroed (it climbs back via the refill estimate), logged, and the request re-picks — routing straight to a bucket that still has budget, with `pace()` as the backstop when *all* are dry. 502/503/504 are retried inside the SK client with capped backoff; any other non-ok status logs and sleeps 3s before retry.
+A 429 is handled in the fetch loop, not retried on the same client: the bucket is zeroed (it climbs back via the refill estimate), logged and counted, and the request re-picks — routing straight to a bucket that still has budget, with `pace()` as the backstop when *all* are dry. The same page is retried until it succeeds, so a 429 never drops data. 502/503/504 are retried inside the SK client with capped backoff; any other non-ok status logs and sleeps briefly before retry.
 
-Beyond ~6–7 identities a second ceiling appears: the combined refill rate exceeds what `PAGES_PER_BATCH` parallel requests can issue at the prevailing round-trip latency. At that point the batch size is the lever to raise, independently of pacing.
+With enough identities a second ceiling appears: the combined refill rate can exceed what `MAX_IN_FLIGHT` concurrent requests can issue at the prevailing round-trip latency. That's a concurrency limit rather than a pacing one — `MAX_IN_FLIGHT` (the shared pool size) is the lever to raise, independently of the waterline.
 
 ---
 
@@ -82,13 +82,15 @@ The earliest resume date across all tasks for a table becomes the table's loop e
 
 ## Page Fetching — Bounded Ring Pipeline
 
-The row iterator streams pages through a bounded ring of `MAX_IN_FLIGHT` (10) slots. Each turn it `await`s the **oldest** outstanding request — the one with the most time to have finished, usually already resolved — flushes its rows, then launches the next offset into that freed slot. So up to `MAX_IN_FLIGHT` requests stay productive, but the iterator is never more than `MAX_IN_FLIGHT` pages ahead of the oldest unflushed one. Because slots fill and drain in the same order, flushing is FIFO — output is byte-identical to a sequential fetch, deterministic across runs.
+The row iterator streams pages through a bounded ring of `MAX_IN_FLIGHT` slots. Each turn it `await`s the **oldest** outstanding request — the one with the most time to have finished, usually already resolved — flushes its rows, then launches the next offset into that freed slot. So up to `MAX_IN_FLIGHT` requests stay productive, but the iterator is never more than `MAX_IN_FLIGHT` pages ahead of the oldest unflushed one. Because slots fill and drain in the same order, flushing is FIFO — output is byte-identical to a sequential fetch, deterministic across runs.
 
 This is a pipeline, not a barrier: a slow page (or one a worker is pacing/retrying) only holds its own slot while the others keep flowing; nothing waits on a whole batch at once. The only thing that idles the pipeline is the rate limit — i.e. the shared budget pool running dry (see Pacing).
 
+**Shared across tables.** Tables run concurrently, each with its own ordering ring, but they all draw from one service-wide pool of `MAX_IN_FLIGHT` slots ([pool.ts](../../services/scribe/src/bitmex/pool.ts)): a page takes a slot before it's dispatched and holds it **through pacing** — releasing only once the worker has finished its post-response wait, not merely when the response lands. That detail is load-bearing: a paced worker keeps its slot occupied, so when the budget is low and everyone is pacing, the pool admits fewer requests and global admission falls to the refill rate. Release the slot *before* pacing and, with ≥2 active tables, the freed slot is handed straight to another table's waiter that fires immediately — pacing throttles nothing and the pool admits at full concurrency, draining the budget into 429s. So the *total* in flight is capped at `MAX_IN_FLIGHT` however many tables are backfilling — a lone table saturates the pool, several share it fairly (a freed slot goes to the longest waiter), and pacing governs the rate identically regardless of table count. The ring size equals the pool size so the single-table case is unchanged.
+
 ## Time-Block Pagination
 
-BitMEX enforces a maximum `start` offset per endpoint (`maxStart`, e.g. 2,500,000 for most tables, 100,000 for `trade`/`tick`), and also an undocumented cap that can surface earlier as a short/empty page. The iterator walks offsets in order within a `startTime`-block and transitions when a window ends:
+BitMEX enforces a maximum `start` offset per endpoint (the per-table `maxStart` — in the millions for most tables, lower for the high-volume `trade`/`tick` endpoints), and also an undocumented cap that can surface earlier as a short/empty page. The iterator walks offsets in order within a `startTime`-block and transitions when a window ends:
 
 - **Offset cap:** launches stop once `start` would exceed `maxStart`, so the iterator never speculatively fetches past the cap. Once the in-flight pages up to it drain, the block reanchors.
 - **Window exhausted:** a short or empty page in offset order ends the block. If the block made progress and a `tsField` is present, `startTime` reanchors to the last row's `tsField` and a fresh window opens at `start = 0`; otherwise the data is exhausted and iteration ends.
@@ -118,9 +120,9 @@ Per-table loop:
     for each task:
       skip if task's next date > currentDate
       fetch all rows for currentDate (startTime=day, endTime=nextDay, reverse=false)
-        — each iteration of rowIterator issues 10 page fetches in parallel
-      buffer rows, flush to vault every 10,000 rows (writes pipelined: next batch
-        is collected in parallel with the previous write)
+        — rowIterator streams pages through a ring of up to MAX_IN_FLIGHT in flight
+      apply the table's `keep` predicate, buffer rows, flush to vault past the
+        buffer threshold (writes pipelined with the next page fetches)
       if day was empty: probe next populated row date
     POST /files/:table/:currentDate/close
     currentDate = nextDay(currentDate)

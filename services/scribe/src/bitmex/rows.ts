@@ -2,10 +2,10 @@ import { logger } from '@devvir/service-kit';
 import { sleep } from '../utils';
 import { recordFetch, record429 } from './metrics';
 import { pickIdentity, reportRemaining, pace } from './identities';
+import { MAX_IN_FLIGHT, acquireSlot, releaseSlot } from './pool';
 import type { Row, FetchFilter } from './types';
 
 const DEFAULT_PAGE_SIZE = 500;
-const MAX_IN_FLIGHT     = 20; // ring size — how many pages may run ahead of the oldest unflushed one
 
 // Returns the first matching row, or null.
 export const fetchOne = async (
@@ -100,31 +100,39 @@ async function* streamBlock(
     launchOffset += pageSize;
   };
 
-  for (let s = 0; s < MAX_IN_FLIGHT; s++) launch(s);
+  try {
+    for (let s = 0; s < MAX_IN_FLIGHT; s++) launch(s);
 
-  // The block ends here if we saw data (reanchor for the next window) or not (done).
-  const endOfBlock = (): string | null => (progressed && lastTs ? reanchor(blockStartTime, lastTs) : null);
+    // The block ends here if we saw data (reanchor for the next window) or not (done).
+    const endOfBlock = (): string | null => (progressed && lastTs ? reanchor(blockStartTime, lastTs) : null);
 
-  for (let index = 0; ; index++) {
-    const slot    = index % MAX_IN_FLIGHT;
-    const pending = ring[slot];
+    for (let index = 0; ; index++) {
+      const slot    = index % MAX_IN_FLIGHT;
+      const pending = ring[slot];
 
-    if (pending === null) return endOfBlock(); // drained up to the offset cap
+      if (pending === null) return endOfBlock(); // drained up to the offset cap
 
-    const rows = await pending;
-    ring[slot] = null;
+      const rows = await pending;
+      ring[slot] = null;
 
-    if (rows.length === 0) return endOfBlock(); // empty page in order — window exhausted
+      if (rows.length === 0) return endOfBlock(); // empty page in order — window exhausted
 
-    for (const row of rows) yield row;
+      for (const row of rows) yield row;
 
-    const ts = pickTime(rows[rows.length - 1]!, tsField);
-    if (ts) lastTs = ts;
+      const ts = pickTime(rows[rows.length - 1]!, tsField);
+      if (ts) lastTs = ts;
 
-    if (rows.length < pageSize) return endOfBlock(); // short page — window exhausted
+      if (rows.length < pageSize) return endOfBlock(); // short page — window exhausted
 
-    progressed = true;
-    launch(slot); // full page — top the ring back up
+      progressed = true;
+      launch(slot); // full page — top the ring back up
+    }
+  } finally {
+    // Whatever look-ahead is still in flight when the block ends — or when the
+    // consumer stops early — is abandoned by design. Swallow each pending
+    // settlement so a late socket error on a page nobody will await can't
+    // surface as an unhandled rejection and crash the process.
+    for (const pending of ring) pending?.catch(() => {});
   }
 }
 
@@ -180,18 +188,48 @@ const buildUrl = (
 
 const fetchWithRetry = async (url: string): Promise<Row[]> => {
   while (true) {
-    const identity = await pickIdentity();
+    await acquireSlot(); // take a slot from the service-wide pool before hitting BitMEX
 
     try {
-      const t0  = Date.now();
-      const res = await identity.client.request(url);
+      const identity = await pickIdentity();
+      const t0       = Date.now();
+
+      let res: Response;
+
+      try {
+        res = await identity.client.request(url);
+      } catch (err) {
+        logger.warn({ err, url }, 'Request failed — retrying in 3s');
+        await sleep(3_000);
+        continue;
+      }
 
       reportRemaining(identity, res);
 
       if (res.ok) {
         recordFetch(Date.now() - t0); // 2xx consumed a token — counts even if this page is later discarded
-        await pace(); // post-response backpressure; the ring's other slots keep flowing while this one waits
-        return (await res.json()) as Row[];
+
+        let rows: Row[];
+
+        // The socket can drop mid-body even after a 2xx header (undici
+        // UND_ERR_SOCKET / "terminated") — the partial response is unusable.
+        // The client only retries the header phase, so guard the body read here
+        // and treat a failed read like any transient request failure: re-fetch.
+        try {
+          rows = (await res.json()) as Row[];
+        } catch (err) {
+          logger.warn({ err, url }, 'Response body read failed — retrying in 3s');
+          await sleep(3_000);
+          continue;
+        }
+
+        // Hold the slot THROUGH pace(): an occupied slot is the throttle. Releasing
+        // before pacing would hand the slot to another table's waiter, which fires
+        // immediately — so with ≥2 active tables the pool would admit at full
+        // concurrency regardless of pace() and overshoot the budget into 429s.
+        await pace();
+
+        return rows;
       }
 
       if (res.status === 429) {
@@ -206,9 +244,8 @@ const fetchWithRetry = async (url: string): Promise<Row[]> => {
 
       logger.warn({ status: res.status, url }, 'HTTP error — retrying in 3s');
       await sleep(3_000);
-    } catch (err) {
-      logger.warn({ err, url }, 'Request failed — retrying in 3s');
-      await sleep(3_000);
+    } finally {
+      releaseSlot(); // released only after pacing/parsing/backoff — see the pace() note above
     }
   }
 };

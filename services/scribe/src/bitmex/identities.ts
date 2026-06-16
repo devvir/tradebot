@@ -202,3 +202,9 @@ export const _test_available   = available;
 export const _test_paceMs      = paceMs;
 export const _test_WATERLINE   = WATERLINE;
 export const _test_PACE_MS     = PACE_MS;
+
+/** Drop the lazily-built identities so the next pick re-seeds full budgets — keeps tests isolated. */
+export const _test_resetIdentities = (): void => {
+  identities = [];
+  ready      = null;
+};
