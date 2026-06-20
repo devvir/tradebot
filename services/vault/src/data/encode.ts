@@ -1,12 +1,12 @@
 // Row / WS message → CSV line encoding.
 //
 // The conversion happens here, before lines are pushed into the buffer, so the
-// buffer only ever sees ready-to-write strings. `TABLE_HEADERS` is the
+// buffer only ever sees ready-to-write strings. `headersFor` gives the
 // authoritative column ordering for every table — never inferred from data,
 // because WS update messages only include changed fields.
 
 import { rowToCsv } from '@tradebot/utils';
-import { TABLE_HEADERS } from './headers';
+import { headersFor } from './headers';
 import type { Row, WsMessage } from './types';
 
 /**
@@ -20,7 +20,7 @@ import type { Row, WsMessage } from './types';
  * metadata so the message itself is not lost.
  */
 export const encode = (table: string, item: Row | WsMessage): string[] => {
-  const cols = TABLE_HEADERS[table];
+  const cols = headersFor(table);
 
   if (! cols) throw new Error(`No header definition for table '${table}'`);
 

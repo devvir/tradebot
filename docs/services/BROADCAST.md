@@ -10,25 +10,21 @@ It also exposes an HTTP command interface on port 80 for runtime channel subscri
 
 ### Connection Model
 
-The service manages two kinds of connections:
+Connections are keyed by three dimensions — **endpoint**, **account**, and **liquidity pool** — and created on demand the first time a subscription needs that combination, then reused.
 
-**Guest connections** (permanent, established on startup):
-1. **Realtime endpoint** (`wss://www.bitmex.com/realtime`) — core market data: instruments, quotes, trades, order books
-2. **Platform endpoint** (`wss://www.bitmex.com/realtimePlatform`) — system announcements, chat, notifications
+**Endpoints:**
+1. **Realtime** (`wss://www.bitmex.com/realtime`) — core market data: instruments, quotes, trades, order books
+2. **Platform** (`wss://www.bitmex.com/realtimePlatform`) — system announcements, chat, notifications
 
-Both are configured with a preset channel set (see `BROADCAST_FEED_PRESET`) and subscribe on open.
+**Guest connections** (permanent) are established on startup from the preset channel set (see `BROADCAST_FEED_PRESET`). Because pool-filtered subscriptions live on their own socket (see Pool Filtering), a guest with e.g. `BROADCAST_POOLS=primary,secondary` opens several realtime sockets — one per requested pool, plus a no-pool socket for the bare and non-fanned channels — alongside the single platform socket.
 
-**Authenticated connections** (on-demand, per-account):
-- Created when a subscribe command arrives with an `x-account-id` header
-- BitMEX credentials are fetched from the Bouncer service and embedded in the WebSocket URL as query parameters
-- Keyed by `${accountId}:${endpointName}` in the connection pool
-- Closed automatically when the last subscription for that account+endpoint is removed
+**Authenticated connections** (on-demand, per-account) are created when a subscribe command arrives with an `x-account-id` header; BitMEX credentials are fetched from the Bouncer service and embedded in the WebSocket URL. They are closed automatically when their last subscription is removed.
 
 All connections share the same message handler and publish to the same RabbitMQ exchange.
 
 ### Connection Pool
 
-The pool (`src/pool.ts`) maintains a `Map<string, PoolEntry>` keyed as `${accountId}:${endpointName}`. Guest entries use an empty accountId (`:realtime`, `:platform`). A guest connection is just a connection with `accountId = undefined` — same code path, same subscribe/unsubscribe logic.
+The pool (`src/pool.ts`) maintains a `Map<string, PoolEntry>` keyed as `${accountId}:${endpointName}:${pool}` (`poolKey`). Every part is optional: a guest no-pool realtime socket is `:realtime:`, a guest Primary socket is `:realtime:Primary`, an authenticated socket is `acct-1:realtime:`. Different key → different socket; same key → reuse. No pool/account logic lives here — the caller derives the pool from the channel suffix (`parseChannel`) and passes it as a key part; the pool stays generic.
 
 Each entry holds:
 - **`ws`** — the active WebSocket, updated in place when the connection reconnects
@@ -56,6 +52,8 @@ BitMEX WebSocket
         │    x-worker-uuid           — broadcast instance UUID for per-instance deduplication
         │    x-bitmex-version        — BitMEX WebSocket API version
         │    x-bitmex-published-at   — ISO-8601 timestamp of receipt
+        │    x-account-id            — owning account for an authenticated stream (empty for guest)
+        │    x-bitmex-pool           — the connection's pool filter (empty for the no-pool socket)
         ↓
  RabbitMQ Topic Exchange `broadcast`
     └─ Downstream consumers bind their own queues with routing key patterns
@@ -152,17 +150,16 @@ Channels are routed to the realtime or platform endpoint based on `PLATFORM_CHAN
 | `primary` | `instrument`, `orderBookL2`, `quote`, `trade` |
 | `secondary` | `liquidation`, `settlement`, `funding`, `insurance` |
 | `redundant` | Binned candle/quote channels |
-| `pooled` | Channels that carry a `pool` (book family + `trade` + `quote` + bins); pairs with `BROADCAST_POOLS` |
 
 ### Pool Filtering (`BROADCAST_POOLS`)
 
 BitMEX splits market data into liquidity pools — **Primary** (the public book), **Secondary** (a protected book), and **Aggregated** (both blended, the default since the 2026-04-30 rollout). `BROADCAST_POOLS` (csv of `default`, `primary`, `secondary`, `aggregated`, case-insensitive) selects which pools the preset's channels are collected from. The pool is **not** selected by authentication — it is an explicit per-subscription filter.
 
-For each requested non-`default` pool, the preset's **pool-filterable** channels are subscribed with the empty-symbol form `<channel>::<Pool>` (e.g. `orderBookL2::Primary`), which pool-filters every symbol in a single subscription. `default` keeps the bare subscription. Requesting `primary,secondary` issues **two** subscriptions per filterable table; both pools' messages flow on the same routing key, interleaved, each row self-labeled by its `pool` field (so downstream can split them).
+For each requested non-`default` pool, the **fannable** channels are subscribed with the empty-symbol form `<channel>::<Pool>` (e.g. `orderBookL2::Primary`), which pool-filters every symbol in one subscription, **on that pool's own socket** (the connection key includes the pool). `default` keeps the bare subscription on the no-pool socket. Requesting `primary,secondary` opens a Primary socket and a Secondary socket, each subscribing the fannable channels once; both pools' messages flow to the same exchange/routing key, stamped with the connection's pool in the `x-bitmex-pool` header so downstream can split them without inspecting row contents. The per-pool socket is required because BitMEX keys a subscription by its bare topic and rejects the same topic twice on one connection.
 
-Pool-filterable channels are the book, trade, and quote families — `orderBookL2`, `orderBookL2_25`, `orderBook10`, `trade`, `quote`, `tradeBin{1m,5m,1h,1d}`, `quoteBin{1m,5m,1h,1d}` (see `POOL_FILTERABLE_CHANNELS` in `src/pools.ts`). Channels where the filter is a no-op (notably `instrument`) are **excluded** and subscribed once regardless of the requested pools, so they are never duplicated. `default` and `aggregated` yield the same rows (the only difference is the bare vs explicit `::Aggregated` subscription).
+A channel is fannable when it carries a `pool` **and** BitMEX honours its filter. The poolable set is `POOLED_CHANNELS` (`@tradebot/utils`); `fanByPool` (`src/pools.ts`) subtracts the `POOL_FILTER_IGNORED` exception. That exception is `instrument`: it is poolable (it has a `pool` field and accepts the filter) but BitMEX silently ignores the filter, so it is subscribed once, unfiltered, on the no-pool socket — since each pool has its own socket, fanning it would not be rejected as a duplicate; every pool's socket would just return the same full stream, duplicating the data. The exception is confined to `POOL_FILTER_IGNORED`; nothing downstream treats `instrument` specially. `default` and `aggregated` yield the same rows (bare vs explicit `::Aggregated`).
 
-The subscribe ack drops the pool suffix — acking `orderBookL2::Primary` as `{ subscribe: "orderBookL2", pool: "Primary", success: true }` — and two pool subs both ack the bare table, so subscription confirmation matches on the **base channel + `ack.pool`** (`parseChannel` in `src/pools.ts`).
+The subscribe ack drops the pool suffix — acking `orderBookL2::Primary` as `{ subscribe: "orderBookL2", pool: "Primary", success: true }` — so subscription confirmation matches on the **base channel + `ack.pool`** (`parseChannel` / `waitForSubscription`).
 
 ## Reconnection Strategy
 

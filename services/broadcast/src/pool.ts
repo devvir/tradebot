@@ -15,8 +15,8 @@ const pool = new Map<string, PoolEntry>();
 export const endpointForChannel = (channel: string): 'platform' | 'realtime' =>
   (PLATFORM_CHANNELS as readonly string[]).includes(channel) ? 'platform' : 'realtime';
 
-export const poolKey = (endpointName: string, accountId?: string): string =>
-  `${accountId ?? ''}:${endpointName}`;
+export const poolKey = (endpointName: string, accountId?: string, pool?: string): string =>
+  `${accountId ?? ''}:${endpointName}:${pool ?? ''}`;
 
 export const makeEndpoint = (config: Config, name: 'realtime' | 'platform'): EndpointDefinition => ({
   name,
@@ -36,8 +36,9 @@ export const getOrConnect = async (
   service:      Service,
   onMessage:    MessageHandler,
   accountId?:   string,
+  poolFilter?:  string,
 ): Promise<PoolEntry> => {
-  const key      = poolKey(endpointName, accountId);
+  const key      = poolKey(endpointName, accountId, poolFilter);
   const existing = pool.get(key);
 
   if (existing) return existing;
@@ -52,12 +53,12 @@ export const getOrConnect = async (
   const ws = connect(endpoint, service, onMessage, {
     credentials,
     accountId,
+    pool: poolFilter,
     onReconnect: (newWs) => {
       const e = pool.get(key);
       if (! e) return;
 
       e.ws = newWs;
-      if (! accountId) service.setState(endpointName, newWs);
 
       // Resubscribe tracked channels after the new connection opens
       if (e.channels.size > 0) {
@@ -71,9 +72,6 @@ export const getOrConnect = async (
   service.on('shutdown', () => ws.close());
 
   entry.ws = ws;
-
-  if (! accountId)
-    service.setState(endpointName, ws);
 
   return entry;
 };

@@ -39,14 +39,19 @@ const makeMockWs = (url = ''): MockWs => {
  * Configure a mockWs so that a subscribe `send` call automatically emits the
  * subscription confirmation on the next tick (process.nextTick is not faked by
  * vi.useFakeTimers).
+ *
+ * Faithful to BitMEX: the ack drops the `::Pool` suffix, acking the bare table
+ * with the pool carried separately in `ack.pool`.
  */
 const autoConfirm = (ws: MockWs): void => {
   ws.send.mockImplementation((raw: string) => {
     const msg = JSON.parse(raw);
 
     if (msg.op === 'subscribe') {
+      const [base, pool] = String(msg.args[0]).split('::');
+
       process.nextTick(() => {
-        ws.emit('message', Buffer.from(JSON.stringify({ subscribe: msg.args[0], success: true })));
+        ws.emit('message', Buffer.from(JSON.stringify({ subscribe: base, pool, success: true })));
       });
     }
   });
@@ -171,17 +176,101 @@ describe('subscribe: guest connection', () => {
 
     expect(ws.close).not.toHaveBeenCalled();
   });
+});
 
-  it('updates service state for guest connections (health check)', async () => {
+// ── subscribe (pooled) ────────────────────────────────────────────────────────
+
+describe('subscribe: pooled channels', () => {
+  it('opens a separate connection per pool for the same table', async () => {
+    const { service } = makeService();
+    const primaryWs   = makeMockWs();
+    const secondaryWs = makeMockWs();
+
+    autoConfirm(primaryWs);
+    autoConfirm(secondaryWs);
+    mockConnect.mockReturnValueOnce(primaryWs).mockReturnValueOnce(secondaryWs);
+
+    await subscribe('orderBookL2::Primary',   service as any, vi.fn());
+    await subscribe('orderBookL2::Secondary', service as any, vi.fn());
+
+    // Same table, two pools — BitMEX forbids that on one client, so each pool
+    // gets its own connection (this is the whole point of the pool key).
+    expect(mockConnect).toHaveBeenCalledTimes(2);
+
+    expect(primaryWs.send).toHaveBeenCalledWith(
+      JSON.stringify({ op: 'subscribe', args: ['orderBookL2::Primary'] }),
+    );
+    expect(secondaryWs.send).toHaveBeenCalledWith(
+      JSON.stringify({ op: 'subscribe', args: ['orderBookL2::Secondary'] }),
+    );
+  });
+
+  it('reuses one connection for different tables of the same pool', async () => {
     const { service } = makeService();
     const ws = makeMockWs();
 
     autoConfirm(ws);
     mockConnect.mockReturnValue(ws);
 
-    await subscribe('trade', service as any, vi.fn());
+    await subscribe('orderBookL2::Primary', service as any, vi.fn());
+    await subscribe('trade::Primary',       service as any, vi.fn());
 
-    expect(service.state('realtime')).toBe(ws);
+    expect(mockConnect).toHaveBeenCalledTimes(1);
+    expect(ws.send).toHaveBeenCalledTimes(2);
+  });
+
+  it('confirms against the suffix-dropped ack — matches on base channel + pool', async () => {
+    const { service } = makeService();
+    const ws = makeMockWs();
+
+    // BitMEX acks `orderBookL2::Primary` as { subscribe: 'orderBookL2', pool: 'Primary' }.
+    ws.send.mockImplementation((raw: string) => {
+      const msg = JSON.parse(raw);
+
+      if (msg.op === 'subscribe')
+        process.nextTick(() =>
+          ws.emit('message', Buffer.from(
+            JSON.stringify({ subscribe: 'orderBookL2', pool: 'Primary', success: true }),
+          )),
+        );
+    });
+
+    mockConnect.mockReturnValue(ws);
+
+    await expect(
+      subscribe('orderBookL2::Primary', service as any, vi.fn()),
+    ).resolves.toBeUndefined();
+  });
+
+  it('does NOT confirm when the ack carries a different pool', async () => {
+    const { service } = makeService();
+    const ws = makeMockWs();
+
+    // An ack for the WRONG pool (Secondary) must not satisfy a Primary subscribe.
+    ws.send.mockImplementation((raw: string) => {
+      const msg = JSON.parse(raw);
+
+      if (msg.op === 'subscribe')
+        process.nextTick(() =>
+          ws.emit('message', Buffer.from(
+            JSON.stringify({ subscribe: 'orderBookL2', pool: 'Secondary', success: true }),
+          )),
+        );
+    });
+
+    mockConnect.mockReturnValue(ws);
+
+    const pending = subscribe('orderBookL2::Primary', service as any, vi.fn());
+    const settled = vi.fn();
+
+    pending.then(settled, settled);
+
+    // Let the (mismatched) ack fire, then run out the subscribe deadline (5s).
+    await Promise.resolve();
+    expect(settled).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(6_000);
+    await expect(pending).rejects.toThrow(/timed out/);
   });
 });
 
@@ -221,19 +310,6 @@ describe('subscribe: authenticated connection', () => {
 
     expect(options.credentials).toEqual(creds);
     expect(options.accountId).toBe('account-42');
-  });
-
-  it('does NOT update service state for authenticated connections', async () => {
-    const { service } = makeService();
-    const ws = makeMockWs();
-
-    autoConfirm(ws);
-    mockBouncer();
-    mockConnect.mockReturnValue(ws);
-
-    await subscribe('trade', service as any, vi.fn(), 'account-42');
-
-    expect(service.state('realtime')).toBeUndefined();
   });
 
   it('rejects when bouncer returns a 401', async () => {

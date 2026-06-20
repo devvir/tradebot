@@ -1,347 +1,236 @@
-# BitMEX Protected Liquidity Pools — impact review & plan
+# BitMEX Protected Liquidity Pools — behaviour, consequences & plan
 
-BitMEX segments market-data into liquidity pools and exposes a `pool` field across
-the market-data API. This doc captures what the change is, how to select a pool,
-what is and isn't recoverable, what in the codebase is affected, and the plan. All
-the "how it actually behaves" claims below are verified against the live API
-(2026‑06‑05), not inferred from docs — BitMEX's swagger is incomplete here.
+BitMEX splits market data into liquidity pools and exposes a `pool` field across the
+market-data API. This doc states what the pools are, how to select one, **what the
+`Aggregated` stream actually is at the byte level**, what can and cannot be recovered
+from it, and the collection plan.
+
+The pool-selection mechanics are corroborated by live capture (we hold real
+per-pool `quote.secondary`/`trade.secondary` slices, which only exist because the
+selector works). The **level/id model and the no-merge result are proven from raw
+`orderBookL2` data** — XBTUSD, 2026‑05‑14, the post-flip Aggregated stream — and the
+method is recorded below so it can be re-derived, not taken on faith.
 
 ## TL;DR
 
-- Liquidity is split into **Primary** (the standard public book), **Secondary** (a
-  protected book where eligible market makers post passively), and **Aggregated**
-  (Primary + Secondary blended into one book).
-- **The pool view is selected explicitly per request/subscription — not by identity
-  or authentication.** Default (no selector) is **Aggregated**, for guest *and*
-  authenticated connections alike. Authentication is irrelevant to which pool you
-  receive.
-  - **REST:** `?pool=Primary|Secondary|Aggregated` query param (undocumented in
-    swagger, which lists only `symbol` and `depth` — but it works).
-  - **WS:** colon-suffix on the subscription arg — `orderBookL2:SYMBOL:Pool` for one
-    symbol, or **`orderBookL2::Pool` (empty symbol) to pool-filter *all* symbols in a
-    single subscription** (the form broadcast needs). The ack echoes the channel
-    *without* the suffix (`subscribe: "orderBookL2"`) but reports the pool in `ack.pool`.
-- **All three pools are readable by an unauthenticated connection — including
-  Secondary.** Secondary is not hidden from data consumers; it is simply thin
-  (often 0–2 levels on a given symbol). The access restriction in BitMEX's "Client
-  Classification" table is about **order entry** (who may *post* to Secondary —
-  DMMs, passive only), **not** market-data visibility.
-- **Canonical collection = Primary, uniformly across every table**, selected via the
-  pool selector. No authentication required.
-- **Secondary is collectable directly** (`pool=Secondary` / `orderBookL2:SYM:Secondary`)
-  for signals/analysis. Store it in a separate, non-training namespace. **No
-  Aggregated − Primary diff is needed** — you read each pool straight from the API.
-- **Aggregated is the default.** It collapses both pools into one row per price
-  (tagged `Aggregated`); the exact merge logic (simple sum vs cross-resolving) is
-  **unverified** and needs time-series data. Don't store it as canonical regardless.
-- **Nothing in the accumulator (`@devvir/bitmex-database`) needs to change** — it is
-  fully key-driven from the partial (verified).
+- Liquidity is split into **Primary** (the standard public book a normal trader sees
+  and executes against), **Secondary** (a protected book; **order-entry restricted**
+  to eligible passive makers, but its **data is readable** by anyone), and
+  **Aggregated** (both pools combined into one stream).
+- **Pool is chosen by an explicit selector, never by auth.** Default (no selector) is
+  **Aggregated**.
+- **BitMEX does NOT merge price levels.** In the Aggregated stream the two pools'
+  levels at the same `(symbol, side, price)` are **two separate rows with two
+  different `id`s and their own sizes** — never one summed row. The source is
+  lossless; only the **pool label is fused** (every row is stamped `Aggregated`).
+- **You still cannot recover the pools from the Aggregated stream.** The `id` is an
+  opaque, ephemeral per-level handle that carries no pool (or side) information and is
+  never reused, so there is **no lookup** that maps an Aggregated `id` back to a pool.
+  The information that would separate them (the per-pool tag) was discarded at the
+  source.
+- **Therefore Aggregated is the worst tier to collect:** it can't be decomposed, it
+  doesn't match the Primary `quote`/`trade` we already collect (tier mismatch), and it
+  isn't even an executable book (it shows Secondary depth a normal account can't hit).
+- **Canonical collection = Primary, uniformly across every table.** Capture
+  `orderBookL2` with `pool=Primary` (it is currently riding the Aggregated default),
+  and optionally capture Secondary as a separate, labelled stream. Never store
+  Aggregated as canonical.
 
-## What a protected liquidity pool is (plain language)
+## The three pools
 
-Market makers post the resting bids/asks everyone trades against. They are
-vulnerable to being "picked off" by fast/informed flow right before the price
-moves, so they defend themselves with wider, smaller quotes — worse prices for
-everyone. BitMEX created a **protected pool** where eligible makers post passively,
-shielded from toxic flow, so they quote **tighter spreads and deeper size**.
-Aggressive/ineligible flow trades in the public (Primary) book.
+- **Primary** — the standard public order book. What an ordinary (Directional)
+  account routes to and trades against. This is the canonical view.
+- **Secondary** — a protected book where eligible market makers post passively.
+  **Order entry** is restricted (DMMs, passive only); **market data is open** to any
+  connection via the pool selector. On XBTUSD it rests characteristically **huge,
+  stable, round sizes** (~1,019,000 contracts per level on 2026‑05‑14) — institutional
+  resting liquidity, not retail flow.
+- **Aggregated** — both pools streamed together. The default. **Not** a merged book:
+  it is the union of the two pools' levels, every row relabelled `Aggregated`.
 
-"Protected from" = protected from toxic/predatory order flow. The protection is on
-*order matching* (who may rest/route orders where), not on who may *observe* the
-book.
+### Access (order entry vs data)
 
-## The three pool views
-
-- **Primary** — the standard public order book. What an ordinary account routes to
-  and trades against.
-- **Secondary** — the protected book (tighter, deeper). **Order-entry** access is
-  restricted (DMMs, passive only — see Client Classification); **data** is readable
-  by anyone via the pool selector.
-- **Aggregated** — Primary + Secondary blended into a single book. The default
-  view. One row per price tagged `Aggregated`; the merge logic is unverified (see
-  "How the Aggregated book is built").
-
-### Client Classification (order entry, not data)
-
-| Classification | Order entry access |
+| Classification | Order-entry access |
 |---|---|
-| Directional (individuals, some institutions) | Primary + Aggregated |
+| Directional (individuals, most institutions) | Primary + Aggregated |
 | DMM | Primary + Secondary (passive only) |
-| Institutional (most institutional traders) | Primary only |
+| Institutional | Primary only |
 
-Our account is Directional: it can only *route orders* to Primary/Aggregated, never
-post into Secondary. This says nothing about reading Secondary data, which is open.
+Our account is Directional — it can only route orders to **Primary**. This is why
+Primary, not Aggregated, is the realistic book: an ordinary market order can only
+consume Primary liquidity. A 1M-size Aggregated bid that is mostly Secondary would
+**not** fill a normal seller; they'd take the small Primary part and walk to the next
+level. Order-entry access says nothing about *reading* Secondary, which is open.
 
-### Why "skip the protected order" is not a paradox
+## How to select a pool
 
-Price-time priority is a guarantee *within one book*, not across separate books. The
-protected order is not in the book an ineligible order routes to, so there is no
-better price being "skipped" — it is liquidity in a venue you can't route to. If a
-level shows `1000 @ 100` in Aggregated but `600` is Primary and `400` is Secondary,
-an ordinary market order fills the reachable `600` at `100` and walks the rest of
-*its* book; the `400` is never touched.
+Same schema everywhere; the pool is chosen by an explicit selector. Auth is
+irrelevant.
 
-## How to select a pool (verified 2026‑06‑05)
+- **REST:** `?pool=Primary|Secondary|Aggregated` query param (works despite being
+  absent from swagger).
+- **WS:** colon-suffix on the subscription arg — `orderBookL2:SYMBOL:Pool` for one
+  symbol, or the **empty-symbol double-colon** form `orderBookL2::Pool` to apply the
+  pool to **all** symbols in a single subscription (the broadcast case). The ack drops
+  the suffix (`subscribe: "orderBookL2"`) and reports the pool in `ack.pool` — so two
+  pool subscriptions on one connection both ack as the bare channel and must be
+  disambiguated by `ack.pool`.
 
-Same schema, pool chosen by explicit selector. Auth does not change the result.
+For `trade`/`quote` the selector filters per-pool, and the default/`Aggregated` is the
+**union** of the individually-tagged events (each row keeps its own `Primary`/
+`Secondary` tag — there is no summed "Aggregated" trade or quote). For the **book**,
+`Aggregated` is the combined level stream described below.
 
-**REST** `GET /orderBook/L2?symbol=XBTUSD&pool=<Pool>` (guest):
+## The level / id model (proven, XBTUSD 2026‑05‑14)
 
-| selector | result |
-|---|---|
-| `pool=Primary` | 3504 rows, all `Primary` |
-| `pool=Aggregated` | 3519 rows, all `Aggregated` |
-| `pool=Secondary` | 2 rows, all `Secondary` |
-| *(none)* | Aggregated (default) |
+A **level** is the ephemeral life of non-zero size at a `(symbol, price, side, pool)`
+tuple — from `insert`, through any `update`s/`partial`s, to `delete`. Crossing zero,
+or the price crossing to the opposite side, **ends the level** (a `delete`); a later
+occupancy at the same price is a **new level**.
 
-**WS** `{op:"subscribe", args:["orderBookL2:XBTUSD:<Pool>"]}` (guest):
+- **`id` is the key of a live level for its lifetime**, and BitMEX keys the table by
+  `(symbol, id, side)`. Every `update`/`delete` references that exact `id`.
+- **`id` is opaque and not derivable from price.** The legacy price-encoding scheme
+  was deprecated (May 2023); `price` now rides on every row precisely because it can
+  no longer be computed from `id`. Empirically one price (Sell 79604.2) carried **132
+  distinct ids** over the day — one per occupancy.
+- **`id` is not reused.** A genuine new occupancy always gets a fresh id. (Apparent
+  "reuse" in the 2026‑05‑14 slice is ghost-subscription **duplication**: a re-delivered
+  `insert` with an **identical `(id, transactTime)`** but a later collector
+  `timestamp`. Dedup on `(id, transactTime)`.)
+- **`id` encodes neither side nor pool.** Of 5,775,337 distinct XBTUSD ids in the day,
+  **zero** appeared on both sides — a level never changes side (it would cross zero
+  first). And the two pools' ids are interleaved (paired-collision deltas ±15…±2687,
+  mixed sign); ids are not even one global counter (across 122 symbols they span
+  ~2.3e9–2.1e11, i.e. per-symbol ranges). Nothing in the id distinguishes a pool.
 
-| arg | ack.pool | partial |
-|---|---|---|
-| `orderBookL2:XBTUSD:Primary` | `Primary` | 3502 rows, all Primary |
-| `orderBookL2:XBTUSD:Secondary` | `Secondary` | 1 row, Secondary |
-| `orderBookL2:XBTUSD:Aggregated` | `Aggregated` | 3469 rows, all Aggregated |
-| `orderBookL2:XBTUSD` *(no suffix)* | `Aggregated` | Aggregated (default) |
+## What "Aggregated" actually is — NO merge (proven)
 
-A bare `orderBookL2:SYMBOL` returns Aggregated whether or not the connection is
-authenticated (verified: signed and guest both default to Aggregated).
+BitMEX does **not** collapse the two pools into one summed row. Both pools' levels
+coexist as **separate rows with distinct ids**.
 
-### Filtering all symbols at once (the broadcast case)
+Proof method (re-derivable): scan the Aggregated stream for two items in **one WS
+message** (one action, one timestamp) at the same `(side, price)` with **different
+ids** and both live (`size` present). A single message carries one action, so this
+cannot be a delete/insert swap — it is two coexisting levels. Eight such cases were
+found on XBTUSD/2026‑05‑14; in every one the two ids carried **separate sizes** (e.g.
+Sell 79604.2 → `id …955439` size **400** and `id …954594` size **1019400**), and the
+large size matched the contemporaneous **`quote.secondary`** exactly (secondary ask
+79604.2 size 1019400). The most coexisting live ids at any one `(price, side)` was
+**2** — the pool count — never 3.
 
-A subscription with no symbol (`orderBookL2`) streams all symbols. To pool-filter it
-**without** fanning out into one subscription per symbol, use the **empty-symbol
-double-colon** form — `orderBookL2::Primary` — which applies the pool to every symbol
-in a single subscription. Verified: `trade::Primary` → 1134 symbols, all Primary;
-`orderBookL2::Secondary` → all Secondary. Every other plausible mechanism is silently
-ignored except the last:
+So: the Aggregated stream is **lossless at the source** (two ids, two sizes, summable
+or separable in principle) but the **pool label is fused** — every row reads
+`Aggregated`, with nothing to say which id is Primary and which is Secondary.
 
-| attempt | result |
-|---|---|
-| URL `wss://…/realtime?pool=Primary` | ignored (returns union) |
-| op field `{op:subscribe, args:["quote"], pool:"Primary"}` | ignored (returns union) |
-| op field `{op:subscribe, args:["quote"], filter:{pool:"Primary"}}` | ignored (returns union) |
-| arg `quote:Primary` | `400 Unknown symbol PRIMARY` (taken as a symbol) |
-| **arg `quote::Primary`** | **works — all symbols, Primary only** |
+### Replaying the Aggregated book
 
-The ack drops the suffix (reports `subscribe: "orderBookL2"`, pool in `ack.pool`).
+Maintain state keyed by `(symbol, id, side)`; apply `insert`/`update`/`delete` by
+`id`. The deltas are **id-addressed, not price-addressed**, so two pools at one price
+are never ambiguous — each delta lands on its own id. To render a price ladder, **sum
+the live ids per `(symbol, side, price)`** (within a side). This reproduces the true
+combined depth and is unambiguous; no preprocessing is required to replay the
+*combined* book.
 
-### `trade` / `quote` selector semantics differ from the book
+What you **cannot** do is read each pool's trajectory out of it: the ladder shows the
+sum, not the Primary-vs-Secondary split, and (per the id model) there is no way to
+attribute the split. And the combined book is **not an executable book** — a normal
+account can't take the Secondary portion — so its depth overstates fillable size.
 
-A `trade`/`quote` row's `pool` is only ever `Primary` or `Secondary` — an event
-executes in one pool, there is no summed "Aggregated" event. So the selector means:
+## Pools cannot be recovered from the Aggregated stream
 
-- `pool=Primary` / `pool=Secondary` → filter to that pool.
-- `pool=Aggregated` **and no selector (the default)** → the unfiltered **union** of
-  both pools, each row keeping its own tag. `Aggregated` is *not* Primary-only: e.g.
-  quote `Aggregated` → `Primary:460, Secondary:40`. It only *looks* Primary-only
-  when Secondary is empty in the window (common for `trade`, where Secondary prints
-  are rare).
-- invalid value → `400` `'pool' must be one of Primary/Secondary/Aggregated.`
+There is **no mechanism** to label an Aggregated `id` with its pool:
 
-Consistent principle across the API: `Aggregated` = combine both pools (book → one
-merged row per price tagged `Aggregated`; trade/quote → union of the individually
-tagged events); `Primary`/`Secondary` → filter. Behavior is identical for `trade` and
-`quote`, guest and authenticated. In practice the default **trade** tape is ~100%
-Primary (Secondary prints are minutes apart, so a 1000-row window is usually all
-Primary) and **quote** ~95% Primary — so the default trade/quote data is effectively
-the Primary tape, not a blend. Only the **book** has real `Aggregated`-tagged rows.
+- The id is **ephemeral and never reused**, so a lookup table built from any past
+  per-pool capture only ever holds retired ids; every new Aggregated delta carries a
+  fresh id you have never seen.
+- The id carries **no pool structure** (interleaved, per-symbol ranges, mixed-sign
+  neighbour deltas).
+- The only signal that ever attributes a pool is matching a level's **size** to the
+  per-pool `quote`/`quote.secondary` — and that reaches **top-of-book only**, never
+  depth. Useful to *verify* (as above), useless to *reconstruct*.
 
-### REST vs WS paths for the book families
+**Consequence:** any window collected Aggregated-only is permanently fused — Primary
+and Secondary cannot be separated from it by any post-processing. Per-pool data can
+only come from capturing the per-pool subscriptions directly.
 
-REST exposes only `/orderBook/L2?symbol=&depth=N` (`depth=10` → 20 rows,
-`depth=25` → 50; pool selector via `&pool=`). There is **no REST path** for
-`orderBook10` or `orderBookL2_25` (both `404`), and the legacy `/orderBook` is gone
-(`404`). Those two are **WS-only** channels; over WS both exist and **honor the pool
-selector** — `orderBook10:SYM:Primary`, `orderBookL2_25:SYM:Primary` — and both
-carry a `pool` field. The swagger models only `OrderBookL2` (there is no
-`OrderBook10` or `orderBookL2_25` definition at all), so their pool support was
-established by live WS test, not the spec.
+## Tier consistency (the three streams must describe one reality)
 
-## Pool support per table
+For coherent replay, the book, `quote`, and `trade` must be at the **same pool tier**
+at every instant — otherwise the fill engine matches trades against levels that never
+existed in that book (phantom fills) and depth features read liquidity the bot can't
+hit.
 
-`pool` is declared on these swagger definitions: **Execution, Order, OrderBookL2,
-Quote, Trade, TradeBin**. Behavior per table:
+Today this is **violated**: `orderBookL2` rides the Aggregated default while base
+`quote`/`trade` are **Primary** (their `.secondary` counterparts are captured
+separately). Evidence: at price-coincidence instants base `quote` showed primary-scale
+sizes while Secondary sat separately at ~1.0M — base quote is Primary-only, not a sum.
+
+Resolve it **downward, not upward**: capture `orderBookL2` at `pool=Primary` so it
+matches the already-Primary `quote`/`trade`. (Merging `quote`/`trade` *up* to an
+aggregate is both wrong-tier — non-executable — and impossible to do exactly, since
+quotes are top-of-book only and can't reconstruct aggregated depth.)
+
+## Per-table pool behaviour
 
 | Table | How pool appears | Notes |
 |---|---|---|
-| `orderBookL2` (+ `_25`, `orderBook10`) | one row per price; pool **selectable** | Aggregated merges both pools into one row per price (merge logic unverified). Pick the pool you want. |
-| `trade` | **per-row tagged** `Primary`/`Secondary` | A trade prints in one pool. Guest stream carries both, filterable. ~0.5–1% Secondary. |
-| `quote` | **per-row tagged** | Interleaved Primary/Secondary quote updates. ~5–7% Secondary. |
-| `tradeBin` / `quoteBin` (1m/5m/1h/1d) | **pool-selectable** | Default is Aggregated, but `::Primary` returns a Primary-tagged bin (`ack.pool=Primary`). Whether the OHLCV is strictly Primary-computed vs relabeled is unverified — verify before trusting, else rebuild from raw `trade`/`quote`. |
-| `order` / `execution` (private) | your order/fill's pool | For a Directional account, Primary/Aggregated only. |
-| `liquidation`, `settlement`, `funding`, `insurance` | **no pool** | Not affected. |
-| `instrument` | REST row `pool=Primary`; WS row `pool=null` | Fanned out like the other pooled tables; the WS `::Pool` filter **appears** to be a no-op (all three pools return the same items, `pool=null`) — to be confirmed by collected data, not assumed. |
+| `orderBookL2` (+ `_25`, `orderBook10`) | level stream; pool **selectable** | `Aggregated` = union of both pools' levels (separate ids, **not** merged). Pick `Primary`. |
+| `trade` | per-row tagged `Primary`/`Secondary` | A fill prints in one pool. Default/`Aggregated` = union of tagged rows. Secondary prints rare. |
+| `quote` | per-row tagged | Interleaved Primary/Secondary top-of-book. Secondary rests ~1.0M sizes. |
+| `tradeBin`/`quoteBin` | pool-selectable | Whether `::Primary` OHLCV is strictly Primary-computed vs relabelled is **unverified** — rebuild from raw Primary `trade`/`quote` rather than trust. |
+| `order`/`execution` (private) | your order/fill's pool | Directional account → Primary/Aggregated only. |
+| `instrument` | REST `pool=Primary`, WS `pool=null` | The pool selector is **accepted but silently ignored** (all pools return the same items); instrument is not pool-partitioned. Out of scope. |
+| `liquidation`/`settlement`/`funding`/`insurance` | no pool | Unaffected. |
 
 ## Data sources — what carries pool
 
-- **Live WS / REST:** pool-selectable (book) or per-row pool-tagged (trade/quote).
-  The only source from which per-pool data can be obtained.
-- **BitMEX S3 daily dumps:** **no `pool` column at all** on `trade` or `quote`
-  (verified headers), and the book/quote dumps are the Aggregated/BBO view. The S3
-  `trade` dump is the full tape with both pools mixed and **unlabeled** — cannot be
-  split. S3 is pool-blind by construction.
-- **tardis.dev dumps:** `orderBookL2` comes through as `Aggregated` (they ride
-  BitMEX's default). No per-pool data.
+- **Live WS / REST:** the **only** source of per-pool data — book selectable per
+  subscription, `trade`/`quote` per-row tagged. Must capture per-pool going forward.
+- **BitMEX S3 daily dumps:** no `pool` column; both pools mixed and **unlabelled** —
+  pool-blind, cannot be split.
+- **tardis.dev:** `orderBookL2` rides BitMEX's Aggregated default — no per-pool data.
 
-**Consequence:** pool-tagged history can only come from our own live capture going
-forward. S3/tardis backfill is pool-agnostic and cannot be coerced into a single
-pool view.
+## The already-collected Aggregated window (lost at the pool level)
 
-## How the Aggregated book is built — open question
+The `orderBookL2` we collected on the default subscription is Aggregated: fused labels,
+wrong tier vs our Primary `quote`/`trade`, and on ghost-sub dates additionally
+contaminated by duplicate inserts. None of that is recoverable to Primary by
+post-processing. Treat it as a **hole**: re-collect forward at `pool=Primary`, and
+either exclude the window from training or replay it only as an explicitly-labelled,
+non-executable aggregate. (On dup dates, dedup on `(id, transactTime)` first.)
 
-We do **not** know how BitMEX merges the two pools into the Aggregated book, and we
-must **not** assume it is a naive per-price sum. A naive sum of two independently-valid
-books can be **crossed** — e.g. Secondary ask below Primary bid: each book is fine on
-its own, but the union shows bids above asks (two spreads), which is not a tradeable
-book. So either BitMEX resolves crosses into one coherent book, or Aggregated is a
-display construct that can be incoherent and needs processing before use. Snapshots
-can't distinguish these — Secondary is currently too thin and sits outside Primary's
-touch, so nothing crosses today. Settling it requires collecting the Aggregated delta
-stream over time and comparing against Primary (the deferred analysis). For collection
-it is **moot**: an ordinary account trades Primary, so we store Primary and never
-trade or train off Aggregated.
+## Collection plan
 
-## The realism problem (why Primary is canonical)
-
-For honest replay/training the stored market must be internally **coherent**: every
-table a slice of the *same* book at the same instant. An ordinary (Directional)
-account only ever interacts with **Primary**, so Primary is the canonical view.
-Mixing pool views across tables — e.g. a Primary book against an Aggregated/mixed
-trade tape — produces an incoherent market: the fill engine would match trades
-against levels that never existed in that book (phantom fills), and depth/imbalance
-features would read liquidity the bot could never hit. That is the
-"binance + bitmex mixed together" failure mode. So: **pick Primary, and every table
-conforms to it.**
-
-## Already-collected Aggregated window (not recoverable)
-
-The default-Aggregated book we collected (post‑30‑Apr, before applying the selector)
-stores **one `Aggregated`-tagged row per price** with no per-pool breakdown (ids are
-deterministic from price and `pool` is not in the dedup key `['symbol','id','side']`,
-so the two pools can't coexist as separate rows at one price). Whatever the merge
-logic, the Primary component was never stored separately, so Primary is
-**unrecoverable** from it. That window is lost at the pool level; re-collect forward
-with the selector, or exclude it from training. (Trades in that window are only
-salvageable where the per-row `pool` tag was populated — S3 has no tag at all.) In
-practice the gap is small — Secondary is ~1–2% of book depth and near‑0% of trades —
-so the stored Aggregated is very close to Primary, which is why extracting it isn't
-worth the effort.
-
-## Codebase impact
-
-### Not affected — verified
-
-- **`@devvir/bitmex-database` accumulator.** Fully key-driven from each partial:
-  `newState` reads `keys` off the partial; insert/update/delete index via
-  `makeIndexKey(table, item, state.keys)`. `tableSchemas` is only for zod
-  validation, never keying. Whatever BitMEX declares in `keys`, the accumulator
-  obeys — no change regardless of pool.
-- **`orderBookL2` key in `TABLE_SPECS`** (`['symbol','id','side']`,
-  [shared/utils/src/tables.ts](../../shared/utils/src/tables.ts)) — still correct;
-  BitMEX kept the key. The replay path rebuilds keys from this spec
-  ([services/farmer/src/process/reconstruct.ts](../../services/farmer/src/process/reconstruct.ts)),
-  so it must keep matching BitMEX — and it does.
-
-### Affected — broadcast + farmer (the substantive change)
-
-The collector ([services/broadcast](../../services/broadcast)) subscribes the bare,
-all-symbol channels over WS → Aggregated. The plan splits the work across the pipeline
-so vault stays untouched:
-
-**broadcast** — driven by a new `BROADCAST_POOLS` env (csv of `default, primary,
-secondary, aggregated`, case-insensitive):
-- For each requested non-`default` pool, subscribe the **all-symbol empty-symbol
-  form** per pool-affected table — `orderBookL2::Primary`, `trade::Primary`,
-  `quote::Primary`. `default` keeps today's bare subscription; `primary,secondary`
-  issues **two** subscriptions per table (individual per-pool messages, never
-  Aggregated). `default` and `aggregated` store the same rows.
-- broadcast fans out the pool **uniformly across the pooled set** (`POOLED_CHANNELS`:
-  `instrument`, `orderBookL2`, `orderBookL2_25`, `orderBook10`, `trade`, `quote`,
-  `tradeBin{1m,5m,1h,1d}`, `quoteBin{1m,5m,1h,1d}`) with **no per-table special-casing**.
-  Whether the filter actually partitions a given table (apparent no-op on `instrument`;
-  `::Aggregated` duplicates the union on `trade`/`quote`) is left to collected data to
-  confirm before any prod-time pruning. This is the analysis-correct default.
-- **No authentication** — the selector works on the guest connection.
-- **Ack ambiguity (must handle):** the ack drops the suffix, reporting `subscribe:
-  "orderBookL2"` with the pool only in `ack.pool`. Two pool subs on one connection
-  both ack as `orderBookL2`, so the subscription-confirmation in `commands.ts` and the
-  resubscribe set in `pool.ts` — which key on the channel string — must become
-  pool-aware (match `ack.pool`, or track the full arg).
-
-**vault** — no changes. Every orderBookL2 action carries `pool` on every row (verified:
-`partial`/`insert`/`update`/`delete` all 100% tagged, both pools), so the intermixed
-stream is losslessly splittable later.
-
-**farmer (assembler)** — splits by pool during the vault→mongo import. The orderBookL2
-key is `['symbol','id','side']` with **no `pool`**, and `id` is derived from price, so
-a Secondary delta at price X shares the Primary level's `id` — feeding a mixed stream
-to one accumulator corrupts the book. So farmer runs a **separate accumulator per
-pool** and routes Primary → the canonical `orderBookL2` collection (unchanged for
-consumers), Secondary → a separate store. Same-table-with-`pool`-field is a non-starter
-for the reconstructed book for this reason.
-
-### Affected — value/label assumptions that hardcode `Primary`
-
-| Location | Issue |
-|---|---|
-| [services/distiller/src/distillers/quote.ts](../../services/distiller/src/distillers/quote.ts) (`const POOL = 'Primary'`) | Stamps every synthesized quote bin `Primary`; should carry the source pool through. |
-| [services/farmer/src/process/reconstruct.ts](../../services/farmer/src/process/reconstruct.ts) (`pool ?? 'Primary'`) | Backfill default + docstring assume "always Primary"; stale. |
-| [services/distiller/tests/distillers/quote.test.ts](../../services/distiller/tests/distillers/quote.test.ts) | Asserts `pool === 'Primary'`. |
-| [services/farmer/tests/process/reconstruct.test.ts](../../services/farmer/tests/process/reconstruct.test.ts) | Fixture/assertion pins `Primary`. |
-| [docs/services/DISTILLER.md](../services/DISTILLER.md) ("`pool` \| Always `Primary`") | Now false. |
-| [docs/BitMEX/WS_TABLES.md](../BitMEX/WS_TABLES.md) (`pool: "Primary"` in the partial filter) | Default is Aggregated; pool is selected. |
-
-`pool` is typed `'symbol'` across these tables in `TABLE_SPECS`, so it stores fine;
-the issue is purely the assumed *value*.
+1. **Capture `orderBookL2` at `pool=Primary`** (all-symbol `orderBookL2::Primary`),
+   matching the Primary `quote`/`trade` already collected. Stop storing the Aggregated
+   default as canonical.
+2. **Capture Secondary separately** (optional, `::Secondary`) into a labelled,
+   non-training namespace for signals — never mixed into the Primary book.
+3. **Rebuild bins from raw Primary** `trade`/`quote` rather than trusting BitMEX's
+   pooled `tradeBin`/`quoteBin`.
+4. **Handle the ack ambiguity:** two pool subscriptions ack as the bare channel;
+   key subscription tracking on `ack.pool`, not the channel string.
+5. **Mark the pool seam** in canonical `orderBookL2` (Aggregated before the per-table
+   flip, Primary after) and the ghost-sub dup dates as known-contaminated.
 
 ## Timeline (effective dates)
 
-- **2026‑01‑28** (testnet) / **2026‑02‑03** (prod) — `pool` field added (empty
-  initially) to REST `order`/`execution`/`quote`(+bucketed)/`trade`(+bucketed) and
-  the WS orderbook/quote/trade families. Additive.
-- **2026‑04‑30 06:00 UTC** — default view for public subscriptions becomes
-  **Aggregated**. (This is the change that altered our collected data.)
-- **2026‑05‑13** (testnet) / **2026‑05‑19** (prod) — `pool` populated on WS
-  subscribe acks.
+- **2026‑02‑03** (prod) — `pool` field added (initially empty) to the pooled REST/WS
+  tables. Additive.
+- **2026‑04‑30 06:00 UTC** — announced default flip to Aggregated for public
+  subscriptions. The **per-table effective flip differs**: XBTUSD `orderBookL2` was
+  still Primary on 2026‑05‑01 and fully Aggregated by 2026‑05‑14 (exact per-table flip
+  ≈ 2026‑05‑06; pin it from `data.pool` of the first/last doc per day if needed).
+- **2026‑05‑19** (prod) — `pool` populated on WS subscribe acks.
 
-## Recommended plan
+## Open / to confirm
 
-1. **Collect Primary canonically** — drive broadcast via `BROADCAST_POOLS`; for
-   `primary` it subscribes the all-symbol empty-symbol form (`orderBookL2::Primary`,
-   `trade::Primary`, …) on every pool-affected table. Farmer splits by pool on import.
-   No per-symbol fan-out, no authentication.
-2. **Rebuild bins from raw Primary** — don't store BitMEX's Aggregated `tradeBin`/
-   `quoteBin`; bin the Primary-filtered `trade`/`quote` yourself.
-3. **Collect Secondary directly for signals** (optional) — `:Secondary`
-   subscriptions into a separate, non-training namespace, walled off from the replay
-   accumulator and teller. No diff required.
-4. **Don't store Aggregated as canonical.** It's the default blend; not the
-   tradeable book.
-5. **The post‑30‑Apr Aggregated window is lossy** — re-collect forward with the
-   selector, or exclude it from training. It cannot be reduced to Primary.
-6. **Fix the hardcoded `Primary` spots and stale docs** (table above) to carry the
-   source pool through rather than assert a constant. Low-risk cleanup.
-
-## Open questions / notes
-
-- WS authentication "took" was not independently confirmed (no private-channel
-  test), but it's moot: auth does not select the pool, the selector does.
-- Secondary **order-entry** eligibility (DMM rules) only matters if a bot ever
-  trades as an eligible participant — not relevant to data collection.
-- **How Aggregated merges the two books** (sum vs cross-resolving) is unknown — see
-  "How the Aggregated book is built". A temporary journal collecting all three pools
-  for a couple of days can settle it, and decide whether reverse-engineering the
-  Aggregated-only weeks is feasible/worthwhile.
-- **Are BitMEX's Primary bins truly Primary-computed?** `tradeBin`/`quoteBin`
-  `::Primary` returns Primary-tagged bins (verified), but whether the OHLCV is computed
-  from Primary prints only — vs a relabeled Aggregated bin — is unverified. Confirm
-  before trusting them instead of rebuilding from raw Primary.
-- **Are the S3 `trade`/`quote` dumps Primary or the union?** No `pool` column; test by
-  checking whether a known Secondary `trdMatchID` appears in that day's S3 dump —
-  present ⇒ union (Aggregated-equivalent), absent ⇒ Primary-only.
-- **Canonical `orderBookL2` crosses a pool seam** at 2026‑04‑30: Aggregated before,
-  Primary after. Rows self-describe via `pool`, but book depth steps across the seam —
-  mark it or treat the pre-fix window as known-contaminated.
+- **Exact per-table Aggregated-flip date** for `orderBookL2` (≈05‑06) — low priority.
+- **Are BitMEX's `::Primary` bins Primary-computed** or relabelled Aggregated? Rebuild
+  from raw until confirmed.
+- **Non-overlap of the 5,776 ghost-sub duplicate inserts** (delete strictly between
+  the two inserts) was inferred from same-spot, seconds-apart recreation, not proven.
 
 ## Sources
 
@@ -349,4 +238,5 @@ the issue is purely the assumed *value*.
 - [API Update: Introducing the 'pool' Field](https://www.bitmex.com/blog/api-change-03-02-2026)
 - [API Update: 'pool' field on WS subscription response](https://www.bitmex.com/blog/api-update-introducing-the-pool-field-to-ws-subscription-response)
 - BitMEX WS API reference: https://www.bitmex.com/app/wsAPI
-- Protected pools user guide (JS-rendered): https://www.bitmex.com/app/protectedLiquidityPools
+- Raw evidence: XBTUSD `orderBookL2`/`quote`/`quote.secondary`, 2026‑05‑14 (and 05‑01
+  pre-flip control) under `/storage/bitmex/Tmp.Pools/`.

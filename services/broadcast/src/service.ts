@@ -2,8 +2,6 @@ import { SKFactory } from '@tradebot/utils';
 import config from './config';
 
 const state = {
-  realtime: null,
-  platform: null,
   broker: null,
   isShuttingDown: false,
   lastMessageTime: Date.now(),

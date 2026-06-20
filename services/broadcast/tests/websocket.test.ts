@@ -146,7 +146,7 @@ describe('ping and message events', () => {
 
     result.emit('message', payload);
 
-    expect(onMessage).toHaveBeenCalledWith(payload, undefined);
+    expect(onMessage).toHaveBeenCalledWith(payload, undefined, undefined);
   });
 
   it('forwards accountId to the handler when set in options', () => {
@@ -159,7 +159,20 @@ describe('ping and message events', () => {
 
     result.emit('message', payload);
 
-    expect(onMessage).toHaveBeenCalledWith(payload, 'acc-42');
+    expect(onMessage).toHaveBeenCalledWith(payload, 'acc-42', undefined);
+  });
+
+  it('forwards the pool to the handler when set in options', () => {
+    const { service } = makeService();
+    const onMessage = vi.fn();
+
+    const result = connect(endpoint(), service as any, onMessage, { pool: 'Secondary' });
+
+    const payload = Buffer.from('{"table":"orderBookL2","action":"insert","data":[]}');
+
+    result.emit('message', payload);
+
+    expect(onMessage).toHaveBeenCalledWith(payload, undefined, 'Secondary');
   });
 });
 

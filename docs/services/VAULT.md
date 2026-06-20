@@ -25,6 +25,8 @@ The suffix is opt-in. Date and suffix are separate concepts only at the HTTP bou
 
 All files are CSV with a fixed header row as their first record. Column order is defined by `TABLE_HEADERS` in `data/headers.ts` and is authoritative — vault never infers columns from incoming data, because WS update messages only include changed fields.
 
+**Pseudo-tables.** A dotted `<table>` (e.g. `orderBookL2.secondary`, `quote.secondary`) is a *pseudo-table* of the undotted real one — a pool or variant slice stored in its own directory but sharing the real table's columns. `baseTable` (`data/headers.ts`) strips the suffix for every header and cast lookup, so `headersFor`/`applyCasts` resolve `<table>.<anything>` to `<table>`. This is column-level only: storage stays separate (`orderBookL2.secondary/…`), and no per-variant entry is ever added to `TABLE_HEADERS`/`TABLE_CASTS` — one rule covers any pool, present or future. (This table-name suffix is independent of the per-file `<date>.<suffix>` filename tag below.)
+
 Field values are RFC 4180 escaped: any field containing `,`, `"`, or `\n` is wrapped in `"..."` with embedded `"` doubled. Quoted fields with embedded newlines (e.g. announcement bodies, chat messages, public notifications) span multiple physical lines on disk but read back as a single logical record. Vault uses `csv-parse` (via the shared `createCsvParser` helper) end-to-end on the read path, so multi-line quoted fields round-trip correctly.
 
 **REST tables** (`funding`, `insurance`, `settlement`, `compositeIndex`): plain rows, no metadata columns.

@@ -23,7 +23,7 @@ const loadConfig = (): Config => {
   const config: Config = {
     env: bitmexEnv,
     workerUuid: randomUUID(),
-    rabbitmqUrl:  sanitizeUrl(process.env.QUEUE_URL   || ''),
+    rabbitmqUrl:  sanitizeUrl(process.env.QUEUE_URL || ''),
     realtimeWsUrl: BITMEX_WS_URLS.realtime[bitmexEnv],
     platformWsUrl: BITMEX_WS_URLS.platform[bitmexEnv],
     channels: expandChannels(channelPreset(preset as RealtimeChannelPreset), pools),

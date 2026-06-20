@@ -17,7 +17,9 @@ export const subscribe = async (
   const endpointName = pool.endpointForChannel(channel);
   const deadline     = Date.now() + SUBSCRIBE_TIMEOUT_MS;
 
-  const entry = await pool.getOrConnect(endpointName, service, onMessage, accountId);
+  const { pool: poolFilter } = parseChannel(channel);
+
+  const entry = await pool.getOrConnect(endpointName, service, onMessage, accountId, poolFilter);
 
   let remaining = deadline - Date.now();
 
@@ -40,7 +42,8 @@ export const subscribe = async (
 
 export const unsubscribe = (channel: string, accountId?: string, keepOpen = false): void => {
   const endpointName = pool.endpointForChannel(channel);
-  const key          = pool.poolKey(endpointName, accountId);
+  const { pool: poolFilter } = parseChannel(channel);
+  const key          = pool.poolKey(endpointName, accountId, poolFilter);
   const entry        = pool.get(key);
 
   if (! entry)
@@ -87,8 +90,8 @@ const waitForOpen = (ws: WebSocket, timeoutMs: number): Promise<void> => {
 
 const waitForSubscription = (ws: WebSocket, channel: string, timeoutMs: number): Promise<void> => {
   // The ack drops the pool suffix (acking `orderBookL2::Primary` as
-  // `subscribe: "orderBookL2"` with the pool in `ack.pool`), and two pool subs on
-  // one connection both ack the bare table — so match on base channel + pool.
+  // `subscribe: "orderBookL2"` with the pool in `ack.pool`), so match on the base
+  // channel plus the ack's pool rather than the full suffixed arg.
   const { base, pool: poolFilter } = parseChannel(channel);
 
   return new Promise((resolve, reject) => {

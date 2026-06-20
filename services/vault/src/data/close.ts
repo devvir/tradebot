@@ -7,7 +7,7 @@
 // owns what "sealing" means.
 
 import { buffers } from './buffers';
-import { TABLE_HEADERS } from './headers';
+import { headersFor } from './headers';
 import { appendBatch, isInitialized } from '../fs/writer';
 
 export const closeBucket = (table: string, filename: string): Promise<void> => {
@@ -29,7 +29,7 @@ export const closeBucket = (table: string, filename: string): Promise<void> => {
 };
 
 const headerLine = (table: string): string => {
-  const cols = TABLE_HEADERS[table];
+  const cols = headersFor(table);
 
   if (! cols) throw new Error(`No header definition for table '${table}'`);
 

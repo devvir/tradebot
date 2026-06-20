@@ -63,13 +63,19 @@ describe('endpointForChannel', () => {
 // ── poolKey ───────────────────────────────────────────────────────────────────
 
 describe('poolKey', () => {
-  it('uses empty prefix for guest connections', () => {
-    expect(poolKey('realtime')).toBe(':realtime');
-    expect(poolKey('platform', undefined)).toBe(':platform');
+  it('uses empty account and pool segments for a guest, no-pool connection', () => {
+    expect(poolKey('realtime')).toBe(':realtime:');
+    expect(poolKey('platform', undefined)).toBe(':platform:');
   });
 
-  it('uses accountId prefix for authenticated connections', () => {
-    expect(poolKey('realtime', 'acct-1')).toBe('acct-1:realtime');
+  it('uses the accountId segment for authenticated connections', () => {
+    expect(poolKey('realtime', 'acct-1')).toBe('acct-1:realtime:');
+  });
+
+  it('adds the pool segment so each pool gets its own client', () => {
+    expect(poolKey('realtime', undefined, 'Primary')).toBe(':realtime:Primary');
+    expect(poolKey('realtime', undefined, 'Secondary')).toBe(':realtime:Secondary');
+    expect(poolKey('realtime', 'acct-1', 'Aggregated')).toBe('acct-1:realtime:Aggregated');
   });
 });
 

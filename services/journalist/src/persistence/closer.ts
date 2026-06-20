@@ -1,6 +1,6 @@
 import { logger } from '@devvir/service-kit';
 import { WS_TABLES } from '@tradebot/utils';
-import type { BitmexTable } from '../types';
+import type { VaultTable } from '../types';
 import { closeVaultFile, listVaultFiles } from './vault';
 
 const SCHEDULE_DELAY_MS = 5 * 60 * 1_000;
@@ -24,8 +24,8 @@ export const createCloser = (
   suffix:        string,
   beforeClosing: () => Promise<void>,
 ) => {
-  const lastDay     = new Map<BitmexTable, string>();
-  const tableTimers = new Map<BitmexTable, ReturnType<typeof setTimeout>>();
+  const lastDay     = new Map<VaultTable, string>();
+  const tableTimers = new Map<VaultTable, ReturnType<typeof setTimeout>>();
   let   globalTimer: ReturnType<typeof setTimeout> | null = null;
 
   // ── Scheduling ────────────────────────────────────────────────────────────
@@ -40,7 +40,9 @@ export const createCloser = (
 
       try {
         await beforeClosing();
-        await closeOpenBucketsBefore([...WS_TABLES] as BitmexTable[], today());
+        // Sweep the real WS tables plus any pseudo-tables we've actually seen
+        // (e.g. `orderBookL2.secondary`) — they advance with the realtime day too.
+        await closeOpenBucketsBefore([...new Set<VaultTable>([...WS_TABLES, ...lastDay.keys()] as VaultTable[])], today());
       } catch (err) {
         logger.warn({ err }, 'Global close failed — rescheduling');
         scheduleGlobal();
@@ -48,7 +50,7 @@ export const createCloser = (
     }, SCHEDULE_DELAY_MS);
   };
 
-  const scheduleTable = (table: BitmexTable): void => {
+  const scheduleTable = (table: VaultTable): void => {
     if (tableTimers.has(table)) return;
 
     logger.info({ table, delayMin: 5 }, 'Replay day advance — table close scheduled');
@@ -70,7 +72,7 @@ export const createCloser = (
 
   // Closes every open bucket strictly before `day` for the given tables.
   // Throws if listing fails; close calls retry internally in vault.ts.
-  const closeOpenBucketsBefore = async (tables: BitmexTable[], day: string): Promise<void> => {
+  const closeOpenBucketsBefore = async (tables: VaultTable[], day: string): Promise<void> => {
     let closed = 0;
 
     for (const table of tables) {
@@ -105,7 +107,7 @@ export const createCloser = (
    * startup), schedules a close pass — global for realtime, per-table for
    * replay.
    */
-  const track = (table: BitmexTable, day: string): void => {
+  const track = (table: VaultTable, day: string): void => {
     const prev = lastDay.get(table);
 
     if (prev && day <= prev) return;

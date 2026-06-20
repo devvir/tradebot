@@ -78,7 +78,6 @@ export const CHANNEL_PRESETS = {
   primary: REALTIME_PRIMARY_CHANNELS,
   secondary: REALTIME_SECONDARY_CHANNELS,
   redundant: REALTIME_REDUNDANT_CHANNELS,
-  pooled: POOLED_CHANNELS,
   platform: PLATFORM_CHANNELS,
   private: PRIVATE_CHANNELS,
 } as const;

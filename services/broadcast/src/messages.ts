@@ -22,7 +22,7 @@ export const createMessageHandler = (service: Service, onMessage: () => void): M
 
   let messageCount = 0;
 
-  return async (buffer: Buffer, accountId?: string): Promise<void> => {
+  return async (buffer: Buffer, accountId?: string, pool?: string): Promise<void> => {
     service.setState('lastMessageTime', Date.now());
 
     try {
@@ -47,6 +47,7 @@ export const createMessageHandler = (service: Service, onMessage: () => void): M
           'x-bitmex-version': state.apiVersion ?? '',
           'x-bitmex-published-at': new Date().toISOString(),
           'x-account-id': accountId ?? '',
+          'x-bitmex-pool': pool ?? '',
         },
       });
 

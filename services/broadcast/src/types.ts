@@ -48,19 +48,18 @@ export interface PoolEntry {
 export interface ConnectOptions {
   credentials?: Credentials;
   accountId?:   string;
+  pool?:        string;
   onReconnect?: (ws: WebSocket) => void;
 }
 
 export interface State {
-  realtime: WebSocket | null;
-  platform: WebSocket | null;
   broker: RabbitMQ.Broker | null;
   isShuttingDown: boolean;
   lastMessageTime: number;
   apiVersion: string | null;
 }
 
-export type MessageHandler = (msg: Buffer, accountId?: string) => void;
+export type MessageHandler = (msg: Buffer, accountId?: string, pool?: string) => void;
 
 export interface EndpointDefinition {
   name: 'realtime' | 'platform';

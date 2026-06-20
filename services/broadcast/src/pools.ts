@@ -31,7 +31,7 @@ export const expandChannels = (
   pools:    readonly PoolFilter[],
 ): string[] => {
   const expanded = channels.flatMap(channel =>
-    isPooled(channel)
+    fanByPool(channel)
       ? pools.map(pool => pool === 'default' ? channel : `${channel}::${pool}`)
       : [channel],
   );
@@ -66,10 +66,28 @@ export const parseChannel = (channel: string): ParsedChannel => {
 
 const POOL_NAMES: readonly Pool[] = ['Primary', 'Secondary', 'Aggregated'];
 
-/** The pooled channels (carry a `pool`) — the pools env applies to any of these. */
+/** Channels that carry a `pool` field (poolable). */
 const POOLED = new Set<string>(POOLED_CHANNELS);
 
 const isPooled = (channel: string): boolean => POOLED.has(channel);
+
+/**
+ * Pooled channels whose pool filter BitMEX currently accepts but SILENTLY IGNORES
+ * (every pool returns the same items — see docs/planning/POOLS.md). They ARE pooled
+ * (pool field present, filter accepted) — we just don't *treat* them as pooled when
+ * building subscriptions. Each pool gets its own client, so fanning these is NOT
+ * rejected as a duplicate topic; instead each client would return the full, identical
+ * stream, so we'd ingest the same data N times. They're subscribed once, unfiltered.
+ *
+ * TEMPORARY and self-contained: the ONLY place this exception lives. Drop a channel here
+ * if/when BitMEX honours its filter — nothing downstream is aware of it (the client pool
+ * keys purely off the channel's pool suffix).
+ */
+const POOL_FILTER_IGNORED = new Set<string>(['instrument']);
+
+/** Whether a channel should be fanned into one subscription per pool. */
+const fanByPool = (channel: string): boolean =>
+  isPooled(channel) && ! POOL_FILTER_IGNORED.has(channel);
 
 const normalizePool = (token: string): PoolFilter => {
   switch (token.toLowerCase()) {

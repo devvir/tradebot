@@ -17,6 +17,13 @@ export interface Config {
   [key: string]: unknown;
 }
 
+/**
+ * A vault routing key: a real BitMEX table, or a pool pseudo-table such as
+ * `orderBookL2.secondary`. The pool is encoded in the suffix; vault strips it
+ * (`baseTable`) for header/cast lookup but stores the pseudo-table separately.
+ */
+export type VaultTable = BitmexTable | `${BitmexTable}.${string}`;
+
 export type WsMessage = {
   action: BitmexAction;
   date:   string;

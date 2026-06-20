@@ -21,11 +21,10 @@ export const TABLE_HEADERS: Record<string, string[]> = {
 
   // trade/quote: columns match the BitMEX S3 daily buckets exactly so scribe's
   // REST-collected files read identically to courier's historical ones. Pool is
-  // encoded in the table name (`.secondary`), so there is no pool column.
+  // encoded in the table name (`.secondary`), so there is no pool column. The
+  // pseudo-table shares its base table's columns — see `baseTable`.
   trade:               ['timestamp', 'symbol', 'side', 'size', 'price', 'tickDirection', 'trdMatchID', 'grossValue', 'homeNotional', 'foreignNotional', 'trdType'],
-  'trade.secondary':   ['timestamp', 'symbol', 'side', 'size', 'price', 'tickDirection', 'trdMatchID', 'grossValue', 'homeNotional', 'foreignNotional', 'trdType'],
   quote:               ['timestamp', 'symbol', 'bidSize', 'bidPrice', 'askPrice', 'askSize'],
-  'quote.secondary':   ['timestamp', 'symbol', 'bidSize', 'bidPrice', 'askPrice', 'askSize'],
 
   // ── Streamed from BitMEX WebSocket ─────────────────────────────────────────
   //
@@ -59,3 +58,13 @@ export const TABLE_HEADERS: Record<string, string[]> = {
   orderBookL2:         [ '_date_', '_action_', 'symbol', 'id', 'side', 'size', 'price', 'transactTime', 'timestamp', 'pool' ],
   publicNotifications: [ '_date_', '_action_', 'title', 'body', 'ttl', 'closable', 'persist', 'sound' ],
 };
+
+/**
+ * The real table behind a name: a dotted name is a *pseudo-table* of the undotted
+ * real one (`quote.secondary` → `quote`) — a pool/variant slice that shares the
+ * real table's columns. Strip the suffix for every header/cast lookup.
+ */
+export const baseTable = (table: string): string => table.replace(/\..*/, '');
+
+/** Column list for a table or any of its pseudo-tables. */
+export const headersFor = (table: string): string[] | undefined => TABLE_HEADERS[baseTable(table)];

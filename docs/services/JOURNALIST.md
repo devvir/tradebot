@@ -92,7 +92,7 @@ Rows are written via `POST /files/:table/:date/rows`. The body is an **array of 
 ]
 ```
 
-The table name comes directly from the BitMEX message. The date (`YYYYMMDD`) is always `dayOf(streamTime)` at the time of the flush — not per-message. This is why all buffered messages for a given table always land in a single date file.
+The table name comes from the BitMEX message, with a **pool pseudo-table** suffix applied from the `x-bitmex-pool` header (`route.ts`): no pool, an empty header, or `Primary` keeps the base table (`orderBookL2`); any other pool becomes `<table>.<pool lowercased>` (`orderBookL2.secondary`). The pseudo-table is then just another table — its own buffer, write chain, day tracking, and vault directory follow from there. Journalist is agnostic about which tables may carry a pool; it honours the header value blindly (whether it makes sense is upstream's concern), and vault resolves the pseudo-table to its base for column lookup. The date (`YYYYMMDD`) is per the message's day at flush time.
 
 ---
 

@@ -11,6 +11,8 @@
 // String / symbol / guid / timestamp / timespan fields are omitted — they pass
 // through as strings and are dropped when empty.
 
+import { baseTable } from './headers';
+
 type CastType  = 'number' | 'boolean' | 'json' | 'required' | 'timestamp_D';
 type TableCasts = Record<string, CastType>;
 
@@ -47,9 +49,6 @@ const TABLE_CASTS: Record<string, TableCasts> = {
   tradeBin5m: TRADEBIN_CASTS,
   tradeBin1h: TRADEBIN_CASTS,
   tradeBin1d: TRADEBIN_CASTS,
-
-  'quote.secondary': QUOTE_CASTS,
-  'trade.secondary': TRADE_CASTS,
 
   liquidation: num('price', 'leavesQty'),
 
@@ -163,7 +162,7 @@ export const applyCasts = (
   raw:   Record<string, string>,
   table: string,
 ): Record<string, unknown> => {
-  const casts  = TABLE_CASTS[table] ?? {};
+  const casts  = TABLE_CASTS[baseTable(table)] ?? {};
   const result: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(raw)) {

@@ -4,7 +4,7 @@ import { logger } from '@devvir/service-kit';
 import { createServer } from './server';
 import { startTicker, stopTicker } from './data/ticker';
 import { buffers } from './data/buffers';
-import { TABLE_HEADERS } from './data/headers';
+import { headersFor } from './data/headers';
 import { appendBatch, isInitialized, drainHandle } from './fs/writer';
 
 SK.run((service: Service) => {
@@ -22,7 +22,7 @@ SK.run((service: Service) => {
     for (const { table, filename, lines } of remaining) {
       const finalLines = isInitialized(table, filename)
         ? lines
-        : [TABLE_HEADERS[table]!.join(','), ...lines];
+        : [headersFor(table)!.join(','), ...lines];
 
       appendBatch(table, filename, finalLines).catch((err) => {
         logger.error({ err, table, filename }, 'Final flush at shutdown failed');

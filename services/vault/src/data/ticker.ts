@@ -8,7 +8,7 @@
 
 import { logger } from '@devvir/service-kit';
 import { buffers } from './buffers';
-import { TABLE_HEADERS } from './headers';
+import { headersFor } from './headers';
 import { appendBatch, isInitialized } from '../fs/writer';
 
 const TICK_MS = 200;
@@ -46,7 +46,7 @@ const tick = (): void => {
 };
 
 const headerLine = (table: string): string => {
-  const cols = TABLE_HEADERS[table];
+  const cols = headersFor(table);
 
   if (! cols) throw new Error(`No header definition for table '${table}'`);
 

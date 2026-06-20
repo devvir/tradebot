@@ -34,8 +34,12 @@ export const connect = (
   onMessage: MessageHandler,
   options:   ConnectOptions = {},
 ): WebSocket => {
-  const { credentials, accountId, onReconnect } = options;
-  const label = accountId ?? 'guest';
+  const { credentials, accountId, pool, onReconnect } = options;
+
+  // The no-pool socket (e.g. instrument, whose pool filter is ignored) stays just
+  // `guest`/account; each per-pool socket appends its pool so the four guest
+  // connections are distinguishable in the logs.
+  const label = [accountId ?? 'guest', pool].filter(Boolean).join('/');
 
   const reconnect: ReconnectState = { delayMs: RECONNECT_DELAY_MS, timer: null };
 
@@ -63,7 +67,7 @@ export const connect = (
 
     ws.on('ping', () => ws.pong());
     ws.on('pong', () => logger.debug(`Pong from ${endpoint.name} (${label})`));
-    ws.on('message', (msg: Buffer) => onMessage(msg, accountId));
+    ws.on('message', (msg: Buffer) => onMessage(msg, accountId, pool));
 
     ws.on('error', (err: Error) => {
       errorLogged = true;
