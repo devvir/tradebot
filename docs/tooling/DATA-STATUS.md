@@ -10,7 +10,7 @@ The scanner lives at `data/scan/` so `data sync` can reuse it without depending 
 
 | Term | Meaning |
 |---|---|
-| **source file** | WS-origin `.csv.gz` with a collector suffix (e.g. `.local`, `.mtav`, `.tardis`). Needs preparation before use. |
+| **source file** | WS-origin `.csv.gz` with a collector suffix (e.g. `.local`, `.antel`, `.tardis`). Needs preparation before use. |
 | **bucket** | Ready-to-use `.csv.gz` with no suffix, one per table/day. WS buckets come from `data prepare`; REST buckets are written directly by collection services. |
 | **`.tmp` file** | A `.csv.gz.tmp` alongside a regular file name — collection or download in progress. |
 | **local** | `${VAULT_DATA_DIR}` on this machine. |
@@ -65,7 +65,7 @@ Sources and their resulting bucket live side by side; they're distinguished by s
 | Suffix | Collector |
 |---|---|
 | `.local` | journalist (this machine) |
-| `.<remote-name>` (e.g. `.mtav`) | journalist on the named remote, pulled via rsync |
+| `.<remote-name>` (e.g. `.antel`) | journalist on the named remote, pulled via rsync |
 | `.tardis` | tardy service |
 
 REST files have no suffix — they're buckets from birth.
@@ -269,7 +269,7 @@ Status ignores `--dry-run`, `--concurrency`, and `-y` — none apply to a read-o
 
 1. **`--from` push-down into scanners.** Currently the filter runs after Mega/local/remote scans return everything. For multi-year vaults `mega-find` returns a lot. Worth pushing the cutoff into the scanners?
 
-2. **Stale `.tmp` from interrupted pulls.** If a previous `rsync` was killed, an `.mtav.csv.gz.tmp` may sit locally with no upstream activity. Currently reads as `incomplete` (since it's not today). Distinct flag worth it?
+2. **Stale `.tmp` from interrupted pulls.** If a previous `rsync` was killed, an `.antel.csv.gz.tmp` may sit locally with no upstream activity. Currently reads as `incomplete` (since it's not today). Distinct flag worth it?
 
 3. **Today's REST in Mega.** Currently shows `—` for REST tables when Mega is empty for today. Plausibly we'd want `missing` once enough time has passed. Skipped for now — no time-of-day logic.
 

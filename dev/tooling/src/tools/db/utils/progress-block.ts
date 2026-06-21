@@ -4,9 +4,10 @@ import { fmtCount, fmtElapsed } from './format';
 import type { PlanRow } from '../types';
 import type { ActiveEntry } from '../types';
 
-const CLEAR_LINE   = '\x1b[K';
-const REDRAW_MS    = 250;   // coalesce updates: redraw at most 4×/sec
-const LABEL_WIDTH  = 36;    // truncated/padded collection [period] label
+const CLEAR_LINE       = '\x1b[K';
+const REDRAW_MS        = 250;     // coalesce updates: redraw at most 4×/sec
+const LABEL_WIDTH      = 36;      // truncated/padded collection [period] label
+const NONTTY_SNAP_MS   = 30_000;  // non-TTY: emit a progress snapshot at most every 30s
 
 /**
  * In-place multi-line progress block at the bottom of the terminal.
@@ -16,8 +17,10 @@ const LABEL_WIDTH  = 36;    // truncated/padded collection [period] label
  *   one row per active concurrent worker with its own %.
  *
  * Redraws are throttled to ~4/sec to avoid flicker under heavy progress
- * events. On non-TTY stdout (file redirect), the block is suppressed — only
- * the permanent log lines are emitted, so logs stay greppable.
+ * events. On non-TTY stdout (a pipe — e.g. `| tee` — or a `>` redirect) the
+ * in-place block can't work, so instead a plain per-active-worker progress
+ * snapshot is logged at most every `NONTTY_SNAP_MS`, keeping a long redirected
+ * run observable (and greppable) without the bottom block.
  */
 export class ProgressBlock {
   private active           = new Map<string, ActiveEntry>();
@@ -30,6 +33,7 @@ export class ProgressBlock {
   private pending          = false;
   private timer:           NodeJS.Timeout | null = null;
   private pendingLogs:     string[] = [];
+  private lastSnapshot     = 0;
 
   constructor(total: number) {
     this.total = total;
@@ -91,10 +95,21 @@ export class ProgressBlock {
 
   private redraw(): void {
     if (! this.isTty) {
-      // Non-TTY: just flush pending log lines, skip the live block.
+      // Non-TTY: flush completion lines, then (throttled) a plain progress
+      // snapshot of each active worker so a piped/redirected run stays visible.
       for (const line of this.pendingLogs) info(line);
 
       this.pendingLogs = [];
+
+      const now = Date.now();
+
+      if (this.active.size > 0 && now - this.lastSnapshot >= NONTTY_SNAP_MS) {
+        this.lastSnapshot = now;
+
+        for (const e of Array.from(this.active.values()).sort((a, b) => a.idx - b.idx)) {
+          info(this.renderActivePlain(e));
+        }
+      }
 
       return;
     }
@@ -138,8 +153,34 @@ export class ProgressBlock {
     return [header, ...rows];
   }
 
+  /**
+   * Rough ETA for one active worker: linear extrapolation from elapsed/%.
+   * `ETA —` until ≥1% so the first estimate isn't wildly off. Shared by both
+   * the TTY row and the non-TTY snapshot so they never drift apart.
+   */
+  private etaStr(e: ActiveEntry, pct: number): string {
+    if (pct < 1) return 'ETA —';
+
+    const elapsed = (Date.now() - e.start) / 1000;
+
+    return `~${fmtElapsed(elapsed / pct * (100 - pct))} left`;
+  }
+
+  /** Plain (no ANSI) one-line progress for non-TTY snapshots: static bar + %, counts and rough ETA. */
+  private renderActivePlain(e: ActiveEntry): string {
+    const period  = e.row.periodLabel ?? e.row.date?.label ?? 'all';
+    const pct     = e.row.count > 0 ? Math.min(100, e.done / e.row.count * 100) : 0;
+    const elapsed = (Date.now() - e.start) / 1000;
+    const idxStr  = (e.idx + 1).toString().padStart(String(this.total).length);
+    const filled  = Math.round(pct / 100 * 20);
+    const bar     = '█'.repeat(filled) + '░'.repeat(20 - filled);
+
+    return `  [${idxStr}/${this.total}] ${e.row.collection} [${period}]  ${bar} ${pct.toFixed(1).padStart(5)}%  `
+      + `${fmtCount(e.done)} / ${fmtCount(e.row.count)}  · ${fmtElapsed(elapsed)} elapsed, ${this.etaStr(e, pct)}`;
+  }
+
   private renderActive(e: ActiveEntry): string {
-    const period  = e.row.date?.label ?? 'all';
+    const period  = e.row.periodLabel ?? e.row.date?.label ?? 'all';
     const label   = padOrTruncate(`${e.row.collection} [${period}]`, LABEL_WIDTH);
     const pct     = e.row.count > 0 ? Math.min(100, e.done / e.row.count * 100) : 0;
     const pctStr  = `${pct.toFixed(1).padStart(5)}%`;
@@ -148,7 +189,7 @@ export class ProgressBlock {
     const elapsed = fmtElapsed((Date.now() - e.start) / 1000).padStart(6);
     const idxStr  = (e.idx + 1).toString().padStart(String(this.total).length);
 
-    return `  ${C.dim}[${idxStr}/${this.total}]${C.reset} ${label} ${bar} ${pctStr}  ${counts}  ${C.dim}${elapsed}${C.reset}`;
+    return `  ${C.dim}[${idxStr}/${this.total}]${C.reset} ${label} ${bar} ${pctStr}  ${counts}  ${C.dim}${elapsed}${C.reset}  ${C.dim}${this.etaStr(e, pct)}${C.reset}`;
   }
 }
 

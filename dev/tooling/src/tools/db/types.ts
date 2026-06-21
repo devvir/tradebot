@@ -27,6 +27,11 @@ export type Pair = {
 export type PlanRow = Pair & {
   count:      number;
   avgObjSize: number;
+
+  // Live-progress period label override. Set when the period is a plain key
+  // (e.g. restore, which targets whole archive files by key, not an _id range)
+  // and there is no `date` DateRange to read a label from.
+  periodLabel?: string;
 };
 
 /** Whether a pair's canonical file is present locally and/or on Mega. */

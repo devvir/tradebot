@@ -65,28 +65,58 @@ describe('content key', () => {
 // ── Partials ──────────────────────────────────────────────────────────────────
 
 describe('partials', () => {
-  it('partial passes through unconditionally even with identical content', async () => {
+  it('duplicate partial (identical content) is dropped — a stale re-delivery must not reset state', async () => {
     const p1 = msg({ date: '2026-01-01T12:00:00.000Z', action: 'partial', val: 'X' });
     const p2 = msg({ date: '2026-01-01T12:00:01.000Z', action: 'partial', val: 'X' });
+
+    const out = await collect(dedup(batches([p1, p2]), 'announcement'));
+
+    expect(out).toHaveLength(1);
+  });
+
+  it('a partial with fresh content (legit reconnect snapshot) is kept', async () => {
+    const p1 = msg({ date: '2026-01-01T12:00:00.000Z', action: 'partial', val: 'X' });
+    const p2 = msg({ date: '2026-01-01T12:00:01.000Z', action: 'partial', val: 'Y' });
 
     const out = await collect(dedup(batches([p1, p2]), 'announcement'));
 
     expect(out).toHaveLength(2);
   });
 
-  it('partial:<symbol> passes through unconditionally', async () => {
+  it('duplicate partial:<symbol> is dropped', async () => {
     const p1 = msg({ date: '2026-01-01T12:00:00.000Z', action: 'partial:XBTUSD', val: 'X' });
     const p2 = msg({ date: '2026-01-01T12:00:01.000Z', action: 'partial:XBTUSD', val: 'X' });
 
     const out = await collect(dedup(batches([p1, p2]), 'orderBookL2'));
 
+    expect(out).toHaveLength(1);
+  });
+
+  it('dedups large multi-row partials by their hashed content key', async () => {
+    // > MAX_LITERAL_KEY worth of rows → the key is hashed, not literal.
+    const big = (date: string, v: string): PreparedMessage => {
+      const rows = [`${date},partial,${v}`];
+
+      for (let i = 0; i < 600; i++) rows.push(`,,${v}-row${i}`);
+
+      const ts = date.slice(0, 23);
+
+      return { rows, date, action: 'partial', timestamp: null, ts, tsMs: Date.parse(ts + 'Z') };
+    };
+
+    const p1 = big('2026-01-01T12:00:00.000Z', 'X');
+    const p2 = big('2026-01-01T12:00:01.000Z', 'X'); // identical content → dropped
+    const p3 = big('2026-01-01T12:00:02.000Z', 'Y'); // different → kept
+
+    const out = await collect(dedup(batches([p1, p2, p3]), 'orderBookL2'));
+
     expect(out).toHaveLength(2);
   });
 
-  it('partial does not update the contiguous lastHash (orderBookL2 update)', async () => {
+  it('update and partial use separate stores (a partial between identical updates does not block the dedup)', async () => {
     const u1 = msg({ date: '2026-01-01T12:00:00.000Z', action: 'update', val: 'A' });
     const p  = msg({ date: '2026-01-01T12:00:01.000Z', action: 'partial', val: 'X' });
-    const u2 = msg({ date: '2026-01-01T12:00:02.000Z', action: 'update', val: 'A' }); // contiguous with u1 via lastHash → drop
+    const u2 = msg({ date: '2026-01-01T12:00:02.000Z', action: 'update', val: 'A' }); // still matches u1 in the update store → drop
 
     const out = await collect(dedup(batches([u1, p, u2]), 'orderBookL2'));
 
@@ -231,9 +261,11 @@ describe('dedup — instrument', () => {
 });
 
 // ── orderBookL2 ───────────────────────────────────────────────────────────────
-// Insert / delete: bounded hash (100) — catches ghost-sub dupes that may not be
-// strictly adjacent due to interleaving of two source streams at the same ms.
-// Update: contiguous only — same-ms oscillations are real events and must be kept.
+// All actions: bounded content dedup (10k retained). orderBookL2 has NO legit
+// dupes (antel.T0 = 0 on every clean day), so identical content (incl. both
+// timestamp fields) is always a true duplicate — updates included. Catches dupes
+// that aren't strictly adjacent (stream interleaving at the same ms). Partials are
+// sparse, so 10k is de-facto global for them.
 
 describe('dedup — orderBookL2', () => {
   it('insert: drops adjacent dup', async () => {
@@ -268,14 +300,17 @@ describe('dedup — orderBookL2', () => {
     expect(out).toHaveLength(1);
   });
 
-  it('update: keeps non-adjacent dup (contiguous — same-ms oscillations are real)', async () => {
+  it('update: drops non-adjacent dup (orderBookL2 has no legit oscillations)', async () => {
     const u1 = msg({ date: '2026-01-01T12:00:00.000Z', action: 'update', val: 'A' });
     const u2 = msg({ date: '2026-01-01T12:00:01.000Z', action: 'update', val: 'B' });
-    const u3 = msg({ date: '2026-01-01T12:00:02.000Z', action: 'update', val: 'A' }); // non-adjacent → keep
+    const u3 = msg({ date: '2026-01-01T12:00:02.000Z', action: 'update', val: 'A' }); // dup of u1, still in the keyed store → drop
 
     const out = await collect(dedup(batches([u1, u2, u3]), 'orderBookL2'));
 
-    expect(out).toHaveLength(3);
+    expect(out.map(m => m.date)).toEqual([
+      '2026-01-01T12:00:00.000Z',
+      '2026-01-01T12:00:01.000Z',
+    ]);
   });
 });
 

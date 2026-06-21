@@ -76,35 +76,35 @@ describe('localState', () => {
 
 describe('remoteState', () => {
   it('undefined ds → absent', () => {
-    expect(remoteState(undefined, 'mtav', 'past', true)).toEqual({ kind: 'absent' });
+    expect(remoteState(undefined, 'antel', 'past', true)).toEqual({ kind: 'absent' });
   });
 
   it('undefined ds, today, WS → missing', () => {
-    expect(remoteState(undefined, 'mtav', 'today', true)).toEqual({ kind: 'missing' });
+    expect(remoteState(undefined, 'antel', 'today', true)).toEqual({ kind: 'missing' });
   });
 
   it('undefined ds, today, REST → absent', () => {
-    expect(remoteState(undefined, 'mtav', 'today', false)).toEqual({ kind: 'absent' });
+    expect(remoteState(undefined, 'antel', 'today', false)).toEqual({ kind: 'absent' });
   });
 
   it('.tmp today → progress', () => {
-    expect(remoteState(ds({ remoteTmpSuffixes: { mtav: ['.mtav'] } }), 'mtav', 'today', true)).toEqual({ kind: 'progress' });
+    expect(remoteState(ds({ remoteTmpSuffixes: { antel: ['.antel'] } }), 'antel', 'today', true)).toEqual({ kind: 'progress' });
   });
 
   it('.tmp pending → pending', () => {
-    expect(remoteState(ds({ remoteTmpSuffixes: { mtav: ['.mtav'] } }), 'mtav', 'pending', true)).toEqual({ kind: 'pending' });
+    expect(remoteState(ds({ remoteTmpSuffixes: { antel: ['.antel'] } }), 'antel', 'pending', true)).toEqual({ kind: 'pending' });
   });
 
   it('.tmp past → incomplete', () => {
-    expect(remoteState(ds({ remoteTmpSuffixes: { mtav: ['.mtav'] } }), 'mtav', 'past', true)).toEqual({ kind: 'incomplete' });
+    expect(remoteState(ds({ remoteTmpSuffixes: { antel: ['.antel'] } }), 'antel', 'past', true)).toEqual({ kind: 'incomplete' });
   });
 
   it('sources present → sources', () => {
-    expect(remoteState(ds({ remoteSuffixes: { mtav: ['.mtav'] } }), 'mtav', 'past', true)).toEqual({ kind: 'sources' });
+    expect(remoteState(ds({ remoteSuffixes: { antel: ['.antel'] } }), 'antel', 'past', true)).toEqual({ kind: 'sources' });
   });
 
   it('sources for different remote → absent for queried remote', () => {
-    expect(remoteState(ds({ remoteSuffixes: { other: ['.other'] } }), 'mtav', 'past', true)).toEqual({ kind: 'absent' });
+    expect(remoteState(ds({ remoteSuffixes: { other: ['.other'] } }), 'antel', 'past', true)).toEqual({ kind: 'absent' });
   });
 });
 

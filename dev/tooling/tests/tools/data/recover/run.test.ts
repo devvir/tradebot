@@ -8,7 +8,11 @@ import {
   _test_isCorrupt,
   _test_lastTimestampOffset,
   _test_pruneScrambledTail,
-  _test_recover,
+  _test_recoverFile,
+  _test_rowSpec,
+  _test_sanitize,
+  _test_validMessage,
+  _test_validRow,
 } from '../../../../src/tools/data/recover/run';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -122,6 +126,85 @@ describe('pruneScrambledTail', () => {
   });
 });
 
+// ── validRow / validMessage ───────────────────────────────────────────────────
+
+// Layout: `_date_, _action_, symbol, timestamp` — `_date_` at 0, `timestamp` at 3.
+const SPEC = _test_rowSpec(['_date_', '_action_', 'symbol', 'timestamp']);
+
+const TS = '2026-04-11T00:00:00.020Z';
+
+describe('validRow', () => {
+  it('accepts a healthy first row', () => {
+    expect(_test_validRow(`${TS},update,XBTUSD,${TS}`, true, SPEC)).toBe(true);
+  });
+
+  it('accepts a healthy continuation row (empty _date_)', () => {
+    expect(_test_validRow(`,,ETHUSD,${TS}`, false, SPEC)).toBe(true);
+  });
+
+  it('rejects a non-ASCII byte', () => {
+    expect(_test_validRow(`${TS},update,XB\xffSD,${TS}`, true, SPEC)).toBe(false);
+  });
+
+  it('rejects a wrong column count', () => {
+    expect(_test_validRow(`${TS},update,XBTUSD,${TS},extra`, true, SPEC)).toBe(false);
+  });
+
+  it('rejects a first row whose _date_ is not ISO', () => {
+    expect(_test_validRow(`garbage,update,XBTUSD,${TS}`, true, SPEC)).toBe(false);
+  });
+
+  it('rejects a continuation row whose _date_ is non-empty', () => {
+    expect(_test_validRow(`${TS},,ETHUSD,${TS}`, false, SPEC)).toBe(false);
+  });
+
+  it('rejects a row with a non-ISO timestamp', () => {
+    expect(_test_validRow(`${TS},update,XBTUSD,nope`, true, SPEC)).toBe(false);
+  });
+});
+
+describe('validMessage', () => {
+  it('accepts a multi-row message when every row is healthy', () => {
+    expect(_test_validMessage([`${TS},update,XBTUSD,${TS}`, `,,ETHUSD,${TS}`], SPEC)).toBe(true);
+  });
+
+  it('rejects the whole message when any continuation row is garbage', () => {
+    expect(_test_validMessage([`${TS},update,XBTUSD,${TS}`, `,,ET\x00SD,${TS}`], SPEC)).toBe(false);
+  });
+});
+
+// ── sanitize (post-gzrecover) ─────────────────────────────────────────────────
+
+describe('sanitize', () => {
+  it('drops a garbage-corrupted message in the middle and keeps the healthy ones', async () => {
+    const header = '_date_,_action_,symbol,timestamp\n';
+    const m1     = `2026-04-11T00:00:00.000Z,update,XBTUSD,2026-04-11T00:00:00.000Z\n`;
+    // healthy multi-row message (first row + one continuation)
+    const m2     = `2026-04-11T00:00:01.000Z,update,XBTUSD,2026-04-11T00:00:01.000Z\n,,ETHUSD,2026-04-11T00:00:01.000Z\n`;
+    const m4     = `2026-04-11T00:00:03.000Z,update,SOLUSD,2026-04-11T00:00:03.000Z\n`;
+
+    // A corrupt member boundary: binary garbage with an embedded newline, so it
+    // splits into bad "lines" sitting between the healthy messages.
+    const garbage = Buffer.from([0x00, 0xff, 0x9d, 0x0a, 0x88, 0x12, 0x0a]);
+
+    const inPath  = path.join(dir, 'sanitize-in.csv');
+    const outPath = path.join(dir, 'sanitize-out.csv');
+
+    fs.writeFileSync(inPath, Buffer.concat([
+      Buffer.from(header + m1 + m2), garbage, Buffer.from(m4),
+    ]));
+
+    const stats = await _test_sanitize(inPath, outPath, SPEC);
+
+    // header passes through; m1, m2, m4 kept; the garbage message dropped.
+    expect(fs.readFileSync(outPath, 'utf8')).toBe(header + m1 + m2 + m4);
+    expect(stats.msgKept).toBe(3);
+    expect(stats.rowsKept).toBe(4);          // m1(1) + m2(2) + m4(1)
+    expect(stats.msgDropped).toBeGreaterThan(0);
+    expect(stats.rowsDropped).toBeGreaterThan(0);
+  });
+});
+
 // ── recover (needs gzrecover) ─────────────────────────────────────────────────
 
 describe.skipIf(! hasGzrecover())('recover', () => {
@@ -135,7 +218,7 @@ describe.skipIf(! hasGzrecover())('recover', () => {
 
     fs.writeFileSync(src, good.subarray(0, good.length - 8));   // corrupt it
 
-    const outPath = await _test_recover(src);
+    const outPath = await _test_recoverFile(src).then(o => o.outPath);
 
     expect(outPath.endsWith('.recovered.csv')).toBe(true);
     expect(outPath.endsWith('.csv.gz')).toBe(false);

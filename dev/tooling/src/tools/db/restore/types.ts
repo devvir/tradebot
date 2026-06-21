@@ -41,6 +41,7 @@ export type MongoRestoreOptions = {
   nsFrom?:     string;   // remap source namespace, e.g. "tradebot.*"
   nsTo?:       string;   // remap destination namespace, e.g. "tradebot_oldrun.*"
   onProgress?: (p: MongoRestoreProgress) => void;
+  logPath?:    string;   // where to write mongorestore's non-progress stderr
 };
 
 export type MongoRestoreResult = {
@@ -62,12 +63,26 @@ export type MongoRestoreResult = {
  */
 export type SpaceMode = 'reject' | 'download-only-offer' | 'warn-then-proceed' | 'proceed';
 
+// ── dump.log stats ───────────────────────────────────────────────────────────
+
+/**
+ * Per-archive figures recovered from `dump.log` (the plan table the dump step
+ * appends per run). `bytes` is the uncompressed BSON size (`docs × avgObjSize`),
+ * which is exactly the unit mongorestore reports as progress — so it serves as
+ * an accurate restore-progress denominator without scanning the archive.
+ */
+export type DumpStat = {
+  docs:  number;
+  bytes: number;
+};
+
 // ── Execution ────────────────────────────────────────────────────────────────
 
 export type ExecuteRestoreOptions = {
   concurrency?: number;
   nsFrom?:      string;   // namespace remap applied to every restored archive
   nsTo?:        string;
+  dumpStats?:   Map<string, DumpStat>;   // keyed `${collection}|${key}` (dashless period)
 };
 
 export type RestoreOutcome = {

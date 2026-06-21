@@ -8,6 +8,7 @@ import { runRecover } from '../tools/data/recover/run';
 import { runStatus } from '../tools/data/status/run';
 import { runSync } from '../tools/data/sync/run';
 import { runDedup } from '../tools/data/dedup/run';
+import { runRebucket } from '../tools/data/rebucket/run';
 import { input } from '../shared/ui/prompts';
 import { error } from '../shared/ui/logger';
 import { requiredEnv } from '../shared/utils/env';
@@ -159,16 +160,35 @@ export function register(program: Command): void {
     .command('dedup [path]')
     .description('Content-hash dedup source files; writes <original>.dedup.csv.gz siblings')
     .option('-T, --threshold <ms>', 'Max lag (ms) behind the monotonic clock to treat an already-seen message as a duplicate', '500')
-    .action(async (pathArg: string | undefined, options: { threshold?: string }, command: Command) => {
+    .option('-W, --window <millions>', 'Recency window size in millions of keys (split across two rotating sets); raise to catch far-apart ghost duplicates', '1')
+    .action(async (pathArg: string | undefined, options: { threshold?: string; window?: string }, command: Command) => {
       try {
-        const root        = resolvePath(pathArg ?? await input('Path:', vaultDir()));
-        const opts        = command.optsWithGlobals<GlobalOpts>();
-        const thresholdMs = Math.max(0, parseInt(options.threshold ?? '500', 10));
+        const root           = resolvePath(pathArg ?? await input('Path:', vaultDir()));
+        const opts           = command.optsWithGlobals<GlobalOpts>();
+        const thresholdMs    = Math.max(0, parseInt(options.threshold ?? '500', 10));
+        const windowMillions = Math.max(1, parseInt(options.window ?? '1', 10));
 
         setDryRun(opts.dryRun ?? false);
         setFromDay(parseFromDay(opts.from ?? null));
 
-        await runDedup(root, thresholdMs);
+        await runDedup(root, thresholdMs, windowMillions);
+      } catch (err) {
+        error((err as Error).message);
+        process.exit(1);
+      }
+    });
+
+  data
+    .command('rebucket [path]')
+    .description('One-time: refile CSV messages into day buckets by their timestamp; reads <day>.<infix>.csv, writes <day>.<infix>.rebucketed.csv (decompress/recompress with pigz yourself)')
+    .action(async (pathArg: string | undefined, _options: object, command: Command) => {
+      try {
+        const root = resolvePath(pathArg ?? await input('Path:', vaultDir()));
+        const opts = command.optsWithGlobals<GlobalOpts>();
+
+        setDryRun(opts.dryRun ?? false);
+
+        await runRebucket(root);
       } catch (err) {
         error((err as Error).message);
         process.exit(1);

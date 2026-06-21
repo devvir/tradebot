@@ -38,7 +38,7 @@ export interface PullFile {
 
 export interface PullTask extends AbnormalFlag {
   kind:   'pull';
-  remote: string;                 // remote name (e.g. "mtav")
+  remote: string;                 // remote name (e.g. "antel")
   user:   string;
   host:   string;
   files:  PullFile[];

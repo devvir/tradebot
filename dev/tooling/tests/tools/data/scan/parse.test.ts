@@ -52,11 +52,11 @@ describe('parseVaultPath — source files', () => {
   });
 
   it('parses a source file being downloaded (.tmp)', () => {
-    expect(parseVaultPath('orderBookL2/2026/20260101.mtav.csv.gz.tmp')).toEqual({
+    expect(parseVaultPath('orderBookL2/2026/20260101.antel.csv.gz.tmp')).toEqual({
       table:  'orderBookL2',
       year:   '2026',
       day:    '20260101',
-      suffix: 'mtav',
+      suffix: 'antel',
       isTmp:  true,
     });
   });

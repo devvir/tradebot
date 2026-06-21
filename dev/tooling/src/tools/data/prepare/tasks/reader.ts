@@ -49,6 +49,25 @@ export async function* read(
 
   const tsResolver = createTsResolver();
 
+  // Per-source monotonic clock (max canonical ts seen, in reception order).
+  // A partial is a snapshot, so it must sort no earlier than every delta already
+  // seen — otherwise replaying "reset to snapshot, then apply later deltas" would
+  // re-apply deltas the snapshot already contains. Pin a partial's sort key to
+  // max(clock, its own max-item ts); deltas keep their own ts and advance the
+  // clock. The clock starting empty (partial is the first message) falls back to
+  // the partial's own ts. Only `ts`/`tsMs` (the sort key) move — never the rows.
+  let clockTs   = '';
+  let clockTsMs = 0;
+
+  const advanceClock = (msg: PreparedMessage): void => {
+    if (isPartialAction(msg.action) && msg.ts < clockTs) {
+      msg.ts   = clockTs;
+      msg.tsMs = clockTsMs;
+    }
+
+    if (msg.ts > clockTs) { clockTs = msg.ts; clockTsMs = msg.tsMs; }
+  };
+
   const batch:       PreparedMessage[] = [];
   let   currentRows: string[]          = [];
   let   skipCurrent  = false;
@@ -94,6 +113,7 @@ export async function* read(
         finalizeMs += Date.now() - t0;
 
         if (msg) {
+          advanceClock(msg);
           batch.push(msg);
         }
       }
@@ -128,6 +148,7 @@ export async function* read(
     const msg = finalize(currentRows, dateIdx, actionIdx, timestampIdx, fixedPartials, tsResolver, onIssue);
 
     if (msg) {
+      advanceClock(msg);
       batch.push(msg);
     }
   }
@@ -200,9 +221,10 @@ function finalize(
   const splitTo = Math.max(actionIdx, timestampIdx === -1 ? 0 : timestampIdx) + 1;
   const fields  = rows[0]!.split(',', splitTo);
 
-  const date   = (fields[dateIdx]   ?? '').trim();
-  const action = (fields[actionIdx] ?? '').trim();
-  const tsRaw  = timestampIdx === -1 ? null : (fields[timestampIdx] ?? '').trim();
+  const date    = (fields[dateIdx]   ?? '').trim();
+  const action  = (fields[actionIdx] ?? '').trim();
+  const tsRaw   = timestampIdx === -1 ? null : (fields[timestampIdx] ?? '').trim();
+  const partial = isPartialAction(action);
 
   if (! ISO_DATE_RE.test(date)) {
     onIssue({ reason: `invalid _date_: "${date}"`, date });
@@ -210,11 +232,17 @@ function finalize(
     return null;
   }
 
-  if (! ACTIONS.has(action) && ! isPartialAction(action)) {
+  if (! ACTIONS.has(action) && ! partial) {
     onIssue({ reason: `invalid _action_: "${action}"`, date });
 
     return null;
   }
+
+  // A partial's items carry their own last-update times; its canonical ts is the
+  // max across them (the snapshot's emission boundary). Captured in the same row
+  // scan that validates the timestamps. Deltas share one ts, so `tsRaw` already
+  // is their max.
+  let maxTs = tsRaw;
 
   if (timestampIdx !== -1) {
     for (const row of rows) {
@@ -225,14 +253,16 @@ function finalize(
 
         return null;
       }
+
+      if (partial && t !== '' && (maxTs === null || maxTs === '' || t > maxTs)) maxTs = t;
     }
   }
 
-  if (fixedPartials && isPartialAction(action)) {
+  if (fixedPartials && partial) {
     return null;
   }
 
-  const { ts, tsMs } = tsResolver.resolve(tsRaw, date);
+  const { ts, tsMs } = tsResolver.resolve(partial ? maxTs : tsRaw, date);
 
   return {
     rows,

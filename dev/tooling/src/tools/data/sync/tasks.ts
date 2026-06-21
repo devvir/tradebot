@@ -514,7 +514,7 @@ export function deleteLocalBucketsTask(state: VaultState): DeleteLocalBucketsTas
 
 /**
  * Rsync pattern: `.ORIGINAL_FILENAME.XXXXXX` (leading dot, random alphanum suffix).
- * Example: `.20260512.mtav.csv.gz.TSAnTK`
+ * Example: `.20260512.antel.csv.gz.TSAnTK`
  */
 const RSYNC_TEMP_RE = /^\.\d{8}(?:\.[A-Za-z0-9_-]+)?\.csv\.gz\.[A-Za-z0-9]+$/;
 

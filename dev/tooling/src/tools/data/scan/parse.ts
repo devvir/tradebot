@@ -5,7 +5,7 @@ export interface ParsedVaultFile {
   table:  string;
   year:   string;
   day:    string;
-  suffix: string;        // '' for buckets, e.g. 'local' / 'mtav' / 'local.1' for source files
+  suffix: string;        // '' for buckets, e.g. 'local' / 'antel' / 'local.1' for source files
   isTmp:  boolean;       // true if the filename ends in `.tmp` (download in progress)
 }
 

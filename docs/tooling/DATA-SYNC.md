@@ -118,7 +118,7 @@ After scanning, `data sync` prints a summary before asking to execute anything. 
 
 ```
   • 1 interrupted rsync temp file can be removed
-  • 47 sources for 3 tables can be pulled from mtav
+  • 47 sources for 3 tables can be pulled from antel
   • 61 (54 present, 7 pulled) source files from 3 tables can be backed up in Mega
   • 12 dates for 2 tables can be prepared (sources → bucket)  ⚠ review required
   • 14 (7 present, 7 prepared) bucket files from 4 tables can be backed up in Mega

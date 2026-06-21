@@ -1,6 +1,6 @@
 # data recover
 
-`data recover` verifies the integrity of `.csv.gz` files in the vault and salvages the ones that are corrupt. It is the repair step for files that fail to decompress — typically caused by an interrupted write or a bad transfer.
+`data recover` verifies the integrity of `.csv.gz` files in the vault and salvages the ones that are corrupt. It is the repair step for files that fail to decompress — typically a crash or hard restart that left a gzip member unclosed, so that appending the next member corrupted the boundary (an interrupted write or bad transfer does the same). Only the busiest tables (instrument, orderBookL2) tend to be hit, since they're the ones with a member open long enough to be caught mid-flush.
 
 ---
 
@@ -10,7 +10,7 @@ For every `.csv.gz` resolved from the given path, in order:
 
 1. **Test** — run `gzip -t`. A file that decompresses cleanly is left untouched and reported `OK`.
 2. **Recover** — for a corrupt file, run `gzrecover` to salvage what it can.
-3. **Prune** — trim the scrambled tail that `gzrecover` leaves behind.
+3. **Sanitize** — drop every message touched by recovery garbage and keep all healthy ones (for free-text tables, which can't be field-validated, trim only the scrambled tail).
 
 Each file is announced before it is processed (`Checking <file> …`) and its result printed immediately after. Integrity testing a multi-GB file can take minutes, so this per-file feedback is the only signal that the run is alive.
 
@@ -28,22 +28,24 @@ The original corrupt file is never modified or deleted. The `.recovered.csv` lan
 
 ---
 
-## Tail pruning
+## Sanitizing
 
-`gzrecover` salvages as much as it can, but the bytes after the corruption point come out scrambled — the tail of the recovered CSV is almost always binary garbage rather than valid rows.
+`gzrecover` salvages as much as it can, but a crash-unclosed gzip member leaves binary garbage at **every** recovered member boundary — not just the tail. Sanitizing removes it message by message so the healthy data on both sides of each garbage block survives.
 
-Pruning trims this:
+A **message** is one logical record: a first row carrying a `_date_`, optionally followed by continuation rows that start with `,` (empty `_date_`). The recovered CSV is streamed and grouped back into messages, and a message is written to the output **only when every one of its rows is healthy**. A row is healthy when it is:
 
-1. Scan the recovered file for the **last line that begins with a valid ISO timestamp** (`YYYY-MM-DDTHH:MM:SS.mmmZ,` — the `_date_` field). `grep -aboE` reports the byte offset of every such line; the last one is the boundary.
-2. `ftruncate` the file at that offset. This drops the last timestamped row **and everything after it** — the last good-looking row sits on the corruption boundary and is not trusted.
+- **printable ASCII** — any byte outside `0x20–0x7e` is recovery garbage;
+- the table's **exact column count**;
+- carrying an **ISO `_date_`** on the message's first row (empty on continuation rows);
+- carrying an **ISO `timestamp`** (for tables that have that column).
 
-The scan streams `grep`'s output line by line, so a multi-GB file with millions of matches never buffers in memory.
+Any message containing a bad row is dropped whole — wherever it sits in the file — and the header row passes through verbatim. The column count and field positions come from the table's vault header, so the check is exact per table. Output is streamed with backpressure, so memory stays flat (single-message) regardless of file size; a day's `orderBookL2` is multi-GB.
 
-If no timestamped line is found at all, the file is left untouched (not truncated to nothing) and a warning is printed — the recovery produced nothing usable.
+The result is a clean `.recovered.csv` with a small hole exactly where each corruption block sat (typically a fraction of a percent of messages). That data is unrecoverable — the gzip garbage destroyed it — so dropping it is the correct outcome, not avoidable loss. Those holes are filled later when `data prepare` merges the multiple sources for the day.
 
-Pruning is best-effort: a `gzrecover` success is always counted as recovered. A prune failure, or a file with no valid timestamp, is a warning only — it never downgrades the result to failed.
+**Free-text / unknown tables** (announcement, chat, …) can't be split on commas safely — their fields may contain commas, quotes, or newlines — so they fall back to **tail trimming**: scan for the byte offset of the last line beginning with a valid ISO `_date_` (`grep -aboE`, streamed) and `ftruncate` there, dropping that row and everything after it. If no timestamped line exists, the file is left untouched and a warning is printed.
 
-This is the **bare minimum** cleaning. The pruned `.csv` may still need further sanitising (dedup, sort, gap-fill) before use — that is the job of `data prepare`, not this command.
+Sanitizing is best-effort: a `gzrecover` success is always counted as recovered. A sanitize/trim failure is a warning only — it never downgrades the result to failed. The cleaned `.csv` may still need dedup, sort, and cross-source gap-fill before use — that is the job of `data prepare`, not this command.
 
 ---
 
@@ -54,10 +56,13 @@ This is the **bare minimum** cleaning. The pruned `.csv` may still need further 
 ✓   OK
 ℹ Checking ${VAULT_DATA_DIR}/orderBookL2/2026/20260412.local.csv.gz …
 ⚠   Corrupt
-ℹ   Recovered & pruned → 20260412.local.recovered.csv
+ℹ   Recovered & sanitized → 20260412.local.recovered.csv
+ℹ     messages: kept 46,151,521, dropped 276,374  |  rows: kept 89,261,970, dropped 388,629
 
 ✓ Done. OK: 1. Corrupt: 1. Recovered: 1.
 ```
+
+A free-text table instead prints `Recovered & tail-trimmed → …` (or a warning when no valid timestamp was found).
 
 The summary line always reports `OK` / `Corrupt` / `Recovered` counts, plus `Failed to recover` when any `gzrecover` call failed outright.
 

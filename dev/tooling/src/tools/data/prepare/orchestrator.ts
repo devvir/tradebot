@@ -14,7 +14,7 @@ export async function runOrchestrator(files: string[]): Promise<void> {
   /**
    * One task per date. Bucket filenames must start with `YYYYMMDD`, so the
    * dir + first 8 chars of the basename uniquely identify the date. Merged-day
-   * siblings (e.g. `20260410.local.csv.gz` + `20260410.mtav.csv.gz`) collapse
+   * siblings (e.g. `20260410.local.csv.gz` + `20260410.antel.csv.gz`) collapse
    * to a single `…/20260410` prefix; the subprocess re-discovers all sources
    * for that date and merges them in its own `discoverGroups` pass.
    */

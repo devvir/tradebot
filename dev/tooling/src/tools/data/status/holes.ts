@@ -10,8 +10,11 @@ import { dashed, nextDay } from '../ranges';
  *
  * `SyncHoleRule`: pure date predicate, no external data.
  * `AsyncHoleRule`: fetches external data to determine which days are absent.
- *   Returns `null` on fetch failure — `computeHoles` adds `failCaption` in
- *   that case and skips filling so the raw missing rows remain visible.
+ *   Returns `null` on fetch failure — `computeHoles` adds `failCaption` and
+ *   fills the entire span in that case, so a sparse table (whose days are
+ *   overwhelmingly absent by design) is not drowned in useless "missing"
+ *   rows we cannot verify. We assume nothing is missing until BitMEX tells
+ *   us otherwise.
  *
  * holes.ts owns both silencing and acknowledgement — a filled gap is never
  * quietly hidden.
@@ -120,7 +123,7 @@ const RULES: HoleRule[] = [
   {
     kind:        'async',
     caption:     'Settlement: sparse table — just a few buckets per month; missing dates by design.',
-    failCaption: 'Failed to fetch settlement dates from BitMEX; the displayed data may be inaccurate.',
+    failCaption: 'Settlement: could not fetch dates from BitMEX — assuming nothing is missing for this sparse table.',
     appliesTo:   (table) => table === 'settlement',
     buildFilled: (fromDay, toDay) => fetchSettlementFills(fromDay, toDay),
   },
@@ -180,6 +183,10 @@ export async function computeHoles(
 
   for (const { rule, res } of asyncResults) {
     if (res === null) {
+      // Fetch failed: assume nothing is missing rather than flagging every
+      // day of a sparse table as a hole. Fill the whole span and surface the
+      // fail caption so the assumption is visible.
+      for (let d = fromDay; d <= toDay; d = nextDay(d)) filled.add(d);
       notes.push(rule.failCaption);
       continue;
     }
@@ -207,8 +214,8 @@ const SETTLEMENT_PAGE_SIZE = 500;
  *
  * Returns `null` if any page's fetch fails after all retries — partial
  * coverage would mis-mark real settlement days as missing in the un-fetched
- * range, which is worse than surfacing the failCaption and leaving the
- * raw missing rows visible.
+ * range. `computeHoles` treats the `null` as "assume nothing is missing" and
+ * fills the whole span, surfacing the failCaption instead.
  */
 async function fetchSettlementFills(fromDay: string, toDay: string): Promise<Set<string> | null> {
   if (fromDay > toDay) return new Set();

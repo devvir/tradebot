@@ -41,11 +41,11 @@ interface PreparedMessage extends Message {
 
 **`rows` are raw CSV strings**, not parsed objects. READ validates and normalises them into canonical form (via `arrayToCsv` for tables that need full RFC 4180 parsing, or raw `readline` for tables with no free-text fields). Downstream steps treat rows as opaque strings and write them directly.
 
-**`ts` is data-driven.** If the row has a non-empty `timestamp`, `ts = timestamp.slice(0, 23)`. Otherwise `ts = date.slice(0, 23)`. This handles older files that predate the timestamp column. All sort and dedup comparisons use `ts`; no `Date` calls in hot paths.
+**`ts` is data-driven.** For a delta, `ts = timestamp.slice(0, 23)` (all items share one timestamp); otherwise `ts = date.slice(0, 23)` (older files predating the timestamp column, or timeless tables). For a **`partial`**, `ts` is the **max** item timestamp — a partial is a snapshot whose items carry their own last-update times, so its emission boundary is the newest. READ also keeps a per-source **monotonic clock** (max `ts` seen, in reception order) and pins a partial's `ts` to `max(clock, max-item)`: a partial must sort no earlier than the deltas already seen, or replay ("reset to snapshot, then apply later deltas") would re-apply deltas the snapshot already contains. All sort and dedup comparisons use `ts`; no `Date` calls in hot paths.
 
 **`tsMs`** is used only by MERGE for gap arithmetic. Computed once via `Date.UTC()` (pure positional arithmetic).
 
-**`partial:SYMBOL`** — filtered partials, e.g. `partial:XBTUSD`. These are real-state-table partials that have been filtered by symbol at an earlier pipeline stage. They pass through DEDUP unconditionally, same as plain `partial`.
+**`partial:SYMBOL`** — filtered partials, e.g. `partial:XBTUSD`. These are real-state-table partials filtered by symbol at an earlier pipeline stage. They are deduped like plain `partial` (see DEDUP).
 
 ---
 
@@ -64,7 +64,7 @@ Writes the CSV header row plus, for fixed-partial tables, a synthetic `partial` 
 
 The `connected`-vs-other distinction is by table identity, not by column name — several tables share column names like `id` but those must be empty in their synthetics.
 
-**Real-state tables:** `instrument`, `orderBookL2`. Partials carry full snapshots with exchange timestamps; they sort and write naturally. No synthetic partial.
+**Real-state tables:** `instrument`, `orderBookL2`. Partials carry full snapshots with exchange timestamps; they sort (by their max-item ts, clock-pinned — see READ) and dedup (see DEDUP) naturally. No synthetic partial.
 
 HEADER looks up the column list itself via `getVaultColumns(tableName)`. The caller just passes `tableName` and `day`.
 
@@ -162,23 +162,25 @@ async function* dedup(
 ): AsyncGenerator<PreparedMessage[]>
 ```
 
-Per-table dedup driven by `TABLE_CONFIG` inside `deduper.ts`. Partials (plain and `partial:SYMBOL`) always pass through — they are never a duplicate.
+Per-table dedup driven by `TABLE_CONFIG` inside `deduper.ts`. **Partials (plain and `partial:SYMBOL`) are deduped like inserts/deletes** — same keyed store, count-bounded, no time window. A re-delivered/stale partial is byte-identical → dropped; a legit reconnect partial carries fresh state/timestamps → different key → kept. This matters: a partial *resets* consumer state, so a duplicate one applied late overwrites good state with an old snapshot — the opposite of "harmless". Partials are sparse, so a bounded count store still covers the whole file in practice.
 
-**Content key:** the joined CSV rows with `_date_` stripped (everything from the first comma onward). Two messages with the same exchange content but different reception times (`_date_`) are identical for dedup purposes.
+**Content key:** the joined CSV rows with `_date_` stripped (everything from the first comma onward). Two messages with the same exchange content but different reception times (`_date_`) are identical for dedup purposes. Keys at or under `MAX_LITERAL_KEY` (500 B) are kept literal; larger ones (partials / full-book snapshots) are replaced by a 64-bit hash computed incrementally so the multi-MB join is never materialised. The key derivation lives in `content-key.ts`, shared with the standalone `data dedup`.
 
-**Per-table config:**
+**Per-table config** (partials use the insert/delete column's store):
 
-| Table | insert / delete | update |
+| Table | insert / delete / partial | update |
 |-------|----------------|--------|
 | announcement, publicNotifications, liquidation | global hash, no window | global hash, no window |
 | chat | global hash, no window | global hash, drop if seen within 10 s |
 | instrument | global hash, no window | contiguous (last only), no window |
-| orderBookL2 | bounded key store (100), no window | contiguous (last only), no window |
+| orderBookL2 | bounded key store (10 000), no window | bounded key store (10 000), no window |
 | connected | — (never occurs²) | contiguous (last only), drop if seen within 15 s |
 
 ² connected has no insert or delete. Its state is a single object maintained entirely through updates; the initial state arrives via `partial` (dropped by READ, replaced by a synthetic midnight marker).
 
-**Why contiguous for instrument/orderBookL2 updates:** same-ms oscillations are real events and must not be over-dropped. Only strictly adjacent identical updates are dupes.
+**instrument updates are contiguous (last only):** same-ms oscillations are *real* events on instrument (~0.06%/day, measured on the clean antel source), so only strictly adjacent identical updates are dupes.
+
+**orderBookL2 dedups every action with a bounded key store (10 000):** orderBookL2 has *no* legit dupes (antel.T0 = 0 on every clean day — its ~50 ms conflation suppresses same-ms oscillations), so any message with identical content (incl. both timestamp fields) is a true duplicate, **updates included** — no need to preserve oscillations, and contiguous-only would miss same-ts dupes that interleave after the sort. Its insert/delete/update volume rules out an unbounded store, so a 10 000-key window (~10 k–20 k retained per action ≈ tens of MB worst-case at the 500 B literal cap) is used; partials are sparse (~dozen/day), so 10 000 is de-facto global for them. Stored keys are **flattened** (Buffer copy) to detach the `SlicedString` from its parent row — without it a store that large would pin tens of thousands of source rows alive.
 
 **Why bounded key store (100) for orderBookL2 inserts:** ghost subscription dupes are non-adjacent. Two source streams interleave at the same ms:
 

@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { section, info, success, warn, spacer } from '../../../shared/ui/logger';
 import { fmtBytes } from '../../../shared/utils/format';
 import { C } from '../../../shared/utils/colors';
@@ -17,6 +18,7 @@ import {
 } from './prompt';
 import { downloadMissing } from './download';
 import { executeRestore } from './import';
+import { parseDumpLog } from './dumplog';
 import { appendRestoreLog } from './log';
 import { neededDownloadBytes, computeSpaceMode, getAvailableBytes } from './space';
 import { listLocalCollections } from '../utils/sync';
@@ -153,8 +155,13 @@ export async function runRestore(args: string[]): Promise<void> {
     ? { nsFrom: `${sourceDb}.*`, nsTo: `${targetDb}.*` }
     : {};
 
+  // Accurate progress denominators: the uncompressed size each archive's dump
+  // recorded in dump.log (last occurrence wins). Missing entries fall back to a
+  // generic ratio in executeRestore.
+  const dumpStats = parseDumpLog(path.join(outDir, 'dump.log'));
+
   spacer();
-  const outcomes = await executeRestore(targets, remap);
+  const outcomes = await executeRestore(targets, { ...remap, dumpStats });
 
   spacer();
   const okCount  = outcomes.filter(o => ! o.error).length;

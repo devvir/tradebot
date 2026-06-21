@@ -6,7 +6,7 @@
 
 ## Why it exists
 
-BitMEX's WebSocket protocol has a ghost-subscription bug where a stale lingering connection briefly re-delivers the same event stream, injecting a burst of duplicate messages into the source file. On days where a clean alternative source exists (e.g. `mtav`), the duplicated source can simply be excluded from `prepare`. On days where the duplicated source is the only available data, `data dedup` can clean it directly.
+BitMEX's WebSocket protocol has a ghost-subscription bug where a stale lingering connection briefly re-delivers the same event stream, injecting a burst of duplicate messages into the source file. On days where a clean alternative source exists (e.g. `antel`), the duplicated source can simply be excluded from `prepare`. On days where the duplicated source is the only available data, `data dedup` can clean it directly.
 
 The expected result is the earliest (primary) stream, with parallel interleaved streams being discarded because they deliver their messages with a lag greater than `threshold`.
 
@@ -20,7 +20,7 @@ The expected result is the earliest (primary) stream, with parallel interleaved 
 
 3. **Ghost duplicates arrive late in `_date_` order** — the lagging stream delivers the same event after the primary stream has already moved past it. By the time a ghost message appears in the file, the monotonic clock has advanced beyond its timestamp by more than `threshold`.
 
-4. **`threshold` (default 500 ms)** — the measured floor below which legitimate same-content/different-event messages start being clipped. A control run on a ghost-free `mtav` file lost zero messages at `threshold ≥ 500 ms` and only ~150 of ~5 M below it (those legit duplicates clustered at 200–500 ms clock-lag, none beyond). Ghost lags run to seconds, far past 500 ms, so the default removes essentially all ghosts while losing no real data. Raise it for more safety margin; lowering below 500 ms trades a small number of real messages for a few extra benign duplicates.
+4. **`threshold` (default 500 ms)** — the measured floor below which legitimate same-content/different-event messages start being clipped. A control run on a ghost-free `antel` file lost zero messages at `threshold ≥ 500 ms` and only ~150 of ~5 M below it (those legit duplicates clustered at 200–500 ms clock-lag, none beyond). Ghost lags run to seconds, far past 500 ms, so the default removes essentially all ghosts while losing no real data. Raise it for more safety margin; lowering below 500 ms trades a small number of real messages for a few extra benign duplicates. **`threshold 0`** is a special aggressive mode (see Algorithm → *Why `<=`*): it additionally drops *co-temporal* duplicates (`timestamp == clock`) that no positive threshold can reach, at the cost of also dropping legitimate same-ms oscillations — use it only on sources known to be corrupted by co-temporal block-replay.
 
 ---
 
@@ -41,14 +41,16 @@ Maintains a **monotonic clock** = max `timestamp` seen so far (in ms). For each 
 1. Extract `timestamp` from the first row using `timestampIdx` (simple comma-split) and convert to epoch ms with the shared positional `isoToMs` (no `Date.parse`, no JSON parsing).
 2. Advance `clock = max(clock, timestampMs)`.
 3. Compute the **content key**: all rows joined, `_date_` stripped (everything from the first comma onward). `timestamp` is part of the content key — same BitMEX event = same key. A key longer than `MAX_LITERAL_KEY` (500 B) is replaced by a compact hash of the same content (see below); the choice is purely length-based — `action` is never inspected.
-4. **Drop** if: key already seen **and** `timestampMs < clock − threshold`.
+4. **Drop** if: key already seen **and** `timestampMs <= clock − threshold`. A message whose `timestamp` fails to parse (`NaN`) is never dropped, cannot advance the clock, and is logged via `warn`.
 5. **Keep** otherwise: record the key in the seen-set (a detached copy — see below).
 
-**Why this direction:** if a message's `timestamp` is more than `threshold` behind the current clock, the primary stream has already moved past that point. A message arriving that late with an already-seen content key is from a lagging parallel stream, not a legitimate re-occurrence.
+**Why this direction:** if a message's `timestamp` is at or more than `threshold` behind the current clock, the primary stream has already moved past that point. A message arriving that late with an already-seen content key is from a lagging parallel stream, not a legitimate re-occurrence.
+
+**Why `<=`, and what `threshold 0` buys.** The comparison is `<=`, not `<`, so `threshold 0` drops a duplicate whose `timestamp` *equals* the clock — a strictly co-temporal echo. At any non-zero threshold the `<=`/`<` distinction is a measure-zero boundary case and behaves identically; it only matters at `0`. This is the aggressive setting for pathological days: a collector that re-delivers a whole *block* of messages verbatim (same content, same exchange `timestamp`) produces echoes sitting at `timestamp == clock`, so no positive threshold and no window size can reach them — only `threshold 0` does (e.g. 2026-05-14 instrument/orderBookL2, where a ghost subscription block-replayed ~24% of the stream co-temporally). The cost: `threshold 0` also drops legitimate same-millisecond oscillations (assumption 2) — a measured ~5 k/day on a clean instrument file — so it is **opt-in for known-bad sources, not a default**.
 
 **Why `timestamp` is in the content key:** two streams delivering the same BitMEX event carry identical `timestamp` values — fixed by the exchange, not the collector — so the same event always collides on the same key. A recurrence at a *different* timestamp is simply a different event with a different key; the same-timestamp oscillation case is the one the `threshold` handles (assumption 2).
 
-**The seen-set is a rotating pair of `Set`s.** Keys go into `cur`; when it reaches the window size (500 000), `cur` becomes `prev` and a fresh `cur` starts. Membership is `cur.has(key) || prev.has(key)`, so a key is remembered for between 500 000 and 1 000 000 later keys, then forgotten. This bounds memory without per-entry eviction. A single `Map` with `keys().next()` eviction was tried and abandoned: deleting the head each time leaves tombstones the iterator must scan past, which collapses throughput once the window fills (measured ~20× slower on `orderBookL2`). Rotation has no such cost — discarding `prev` is one reference drop. The window of ≈500 k keys comfortably covers ghost-sub lag (seconds, ≈ a couple of busy `orderBookL2` minutes) while keeping the heap bounded — the alternative, an unbounded `Set` over a full day, exhausts it.
+**The seen-set is a rotating pair of `Set`s.** Keys go into `cur`; when it reaches the per-set window size, `cur` becomes `prev` and a fresh `cur` starts. Membership is `cur.has(key) || prev.has(key)`, so a key is remembered for between one and two per-set windows of later keys, then forgotten. This bounds memory without per-entry eviction. A single `Map` with `keys().next()` eviction was tried and abandoned: deleting the head each time leaves tombstones the iterator must scan past, which collapses throughput once the window fills (measured ~20× slower on `orderBookL2`). Rotation has no such cost — discarding `prev` is one reference drop. The total window is the two sets combined and is set by `--window` (in millions of keys, default 1 M → 500 k per set); it comfortably covers normal ghost-sub lag (seconds, ≈ a couple of busy `orderBookL2` minutes) while keeping the heap bounded — the alternative, an unbounded `Set` over a full day, exhausts it. Pathological days where a stream lags by hours can need a wider window (see [CLI](#cli)).
 
 **Why partials are deduped too:** a partial is a full state snapshot. When a ghost connection re-delivers an old partial, that copy is *stale* — it lacks the thousands of deltas that have since been applied. Keeping the stale partial while the surrounding ghost deltas are dropped would reset state to that old snapshot — the same damage as dropping every delta in between, far worse than the rare chance of clipping a real message. So partials go through the identical clock/threshold test. A legitimate re-`partial` (reconnect) carries a fresh `timestamp`, hence a different content key, and is always kept; only an exact stale duplicate is dropped.
 
@@ -70,10 +72,41 @@ For each input file `YYYYMMDD.<infix>.csv.gz`, writes `YYYYMMDD.<infix>.dedup.cs
 tools data dedup [path] [flags]
 
 Flags:
-  -T, --threshold <ms>    Max lag (ms) behind the clock to treat as a duplicate (default: 500)
-  -D, --dry-run           Run the full pipeline but do not write any output files
-  --from <date>           Skip files before this date (YYYYMMDD or YYYY-MM-DD)
+  -T, --threshold <ms>        Max lag (ms) behind the clock to treat as a duplicate (default: 500; 0 = aggressive, drops co-temporal echoes — see Algorithm)
+  -W, --window <millions>     Recency window size, in millions of keys (default: 1)
+  -D, --dry-run               Run the full pipeline but do not write any output files
+  --from <date>               Skip files before this date (YYYYMMDD or YYYY-MM-DD)
 ```
+
+### `--window`
+
+The window is the number of distinct content keys remembered while scanning. A
+duplicate is only catchable while its original is still in the window; once the
+original has rotated out, the duplicate is treated as new and kept.
+
+`--window` is expressed in **millions of keys**: `-W1` = 1 M (the default),
+`-W5` = 5 M, and so on. The value is split evenly across the two rotating sets,
+so `-W5` gives 2.5 M keys per set (membership spans between 2.5 M and 5 M keys
+of lookback). Only whole millions are accepted; values below 1 are clamped to 1.
+
+**When to raise it.** The default 1 M comfortably covers normal ghost-sub lag
+(seconds — a couple of busy `orderBookL2` minutes). But a stuck subscription can
+fall *hours* behind and replay stale events that land more than 1 M messages
+after their original; at 1 M those duplicates are already forgotten and survive.
+Widening the window to span the worst observed lag lets them be caught. (To size
+it, find the largest backward jump in `timestamp` versus the running maximum and
+convert that lag to a message count at the file's message rate.)
+
+**The cost is heap.** Memory is bounded by the window size, *not* the file size —
+the rotating sets never hold more than `2 × window` keys regardless of how many
+messages stream through. So heap grows linearly with `--window`: doubling the
+window roughly doubles the seen-set's footprint. Per-key cost depends on the
+table — `instrument` keys are mostly stored literally (~135–225 B), while
+`orderBookL2` keys are mostly large multi-row messages stored as fixed-size
+hashes (a few bytes), so `instrument` is the heavier table at a given window. As
+a rough ceiling, a 5 M window on `instrument` holds up to ~1 GB of key bytes
+plus `Set` overhead. Push the window too high and the process OOMs; raise it only
+as far as a pathological day actually requires.
 
 **`path`** is optional; defaults to `$VAULT_DATA_DIR`. Relative paths are joined with `$VAULT_DATA_DIR`. Accepts the same patterns as `data prepare`. Only `instrument` and `orderBookL2` files in the resolved list are processed; everything else is silently skipped.
 

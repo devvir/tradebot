@@ -1,13 +1,18 @@
+import { warn } from '../../../shared/ui/logger';
 import { isoToMs } from '../time';
 import type { Message } from '../types';
 import type { PruneStats } from './types';
 
 /**
- * Recency window: how many distinct content keys to remember while scanning
- * for duplicates. Implemented as two rotating sets, so at any moment between
- * `WINDOW` and `2 × WINDOW` keys are remembered. Ghost-sub duplicates arrive
- * within seconds of their original, so 500 k (≈ a couple of busy orderBookL2
- * minutes) is ample lookback while keeping memory bounded.
+ * Default size of ONE rotating set — half the total recency window. The window
+ * is two rotating sets, so at any moment between `WINDOW` and `2 × WINDOW` keys
+ * are remembered; the default of 500 k per set is a 1 M-key total window.
+ *
+ * Ghost-sub duplicates normally arrive within seconds of their original, so 1 M
+ * (≈ a couple of busy orderBookL2 minutes) is ample lookback while keeping
+ * memory bounded. Pathological days where a stuck stream lags by *hours* can
+ * push duplicates further apart than 1 M messages; the `--window` CLI flag
+ * raises the total window (in millions) for those — see `runDedup`.
  */
 const WINDOW = 500_000;
 
@@ -75,12 +80,15 @@ export async function* prune(
     for (const msg of batch) {
       const tsMs = extractTimestampMs(msg.rows[0]!, timestampIdx);
 
+      if (isNaN(tsMs))
+        warn(`Invalid timestamp in message: ${msg.rows[0]!.split(',', timestampIdx + 1)}`);
+
       if (! isNaN(tsMs) && tsMs > clock) clock = tsMs;
 
       const key  = contentKey(msg);
       const seen = cur.has(key) || prev.has(key);
 
-      if (seen && ! isNaN(tsMs) && tsMs < clock - thresholdMs) {
+      if (seen && ! isNaN(tsMs) && tsMs <= clock - thresholdMs) {
         stats.dropped++;
         continue;
       }

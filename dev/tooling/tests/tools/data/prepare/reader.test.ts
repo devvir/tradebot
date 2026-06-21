@@ -220,6 +220,36 @@ describe('read — partials', () => {
     expect(messages).toHaveLength(1);
     expect(messages[0]?.action).toBe('partial');
   });
+
+  it('a partial sorts by its MAX item timestamp, not the first row', async () => {
+    // Items in any order; the snapshot's emission boundary is the newest.
+    const file = writeGz([
+      COLUMNS.join(','),
+      '2026-01-01T12:00:05.000Z,partial,2026-01-01T10:00:00.000Z,A,1', // first item: stale
+      ',,2026-01-01T12:00:00.000Z,B,2',                                // newest item
+      ',,2026-01-01T11:00:00.000Z,C,3',
+    ].join('\n') + '\n');
+
+    const { messages } = await readAll(file, TABLE);
+
+    expect(messages[0]?.action).toBe('partial');
+    expect(messages[0]?.ts).toBe('2026-01-01T12:00:00.000'); // max item, not 10:00
+  });
+
+  it('a partial is pinned no earlier than the preceding delta (monotonic clock)', async () => {
+    // Partial's own max-item ts (11:00) is behind a delta already seen (12:00),
+    // so it must sort at/after that delta — not be replayed before it.
+    const file = writeGz([
+      COLUMNS.join(','),
+      '2026-01-01T12:00:00.000Z,update,2026-01-01T12:00:00.000Z,A,1',
+      '2026-01-01T12:00:05.000Z,partial,2026-01-01T11:00:00.000Z,B,2',
+    ].join('\n') + '\n');
+
+    const { messages } = await readAll(file, TABLE);
+
+    expect(messages.map(m => m.action)).toEqual(['update', 'partial']);
+    expect(messages[1]?.ts).toBe('2026-01-01T12:00:00.000'); // clock-pinned, not 11:00
+  });
 });
 
 describe('read — filtered partials (partial:<symbol>)', () => {

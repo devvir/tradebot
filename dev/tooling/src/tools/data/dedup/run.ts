@@ -14,7 +14,14 @@ import type { PruneStats } from './types';
 /** Tables for which ghost-subscription dedup is meaningful. */
 const DEDUP_TABLES = new Set(['instrument', 'orderBookL2']);
 
-export async function runDedup(root: string, thresholdMs: number): Promise<void> {
+/**
+ * `windowMillions` is the total recency window in millions of keys (CLI
+ * `--window`); it is split evenly across the two rotating sets, so each set
+ * holds `windowMillions × 500_000` keys. Larger windows catch duplicates that a
+ * badly lagging ghost stream delivers far behind their original, at the cost of
+ * proportionally more heap (see DATA-DEDUP.md).
+ */
+export async function runDedup(root: string, thresholdMs: number, windowMillions: number): Promise<void> {
   const files = resolveCsvGzFiles(root)
     .filter(f => isDedupCandidate(f, fs.existsSync));
 
@@ -24,7 +31,9 @@ export async function runDedup(root: string, thresholdMs: number): Promise<void>
     return;
   }
 
-  section(`Dedup — ${files.length} file(s), threshold ${thresholdMs}ms`);
+  const perSetWindow = windowMillions * 500_000;
+
+  section(`Dedup — ${files.length} file(s), threshold ${thresholdMs}ms, window ${windowMillions}M`);
 
   let totalKept    = 0;
   let totalDropped = 0;
@@ -50,7 +59,7 @@ export async function runDedup(root: string, thresholdMs: number): Promise<void>
 
     info(`${tableName}  ${path.basename(file)}`);
 
-    await processFile(file, outPath, columns, thresholdMs, timestampIdx, stats);
+    await processFile(file, outPath, columns, thresholdMs, timestampIdx, stats, perSetWindow);
 
     const total = stats.kept + stats.dropped;
     const pct   = total > 0 ? ((stats.dropped / total) * 100).toFixed(1) : '0.0';
@@ -78,6 +87,7 @@ async function processFile(
   thresholdMs:  number,
   timestampIdx: number,
   stats:        PruneStats,
+  perSetWindow: number,
 ): Promise<void> {
   const dryRun  = isDryRun();
   const tmpPath = outPath + '.tmp';
@@ -90,7 +100,7 @@ async function processFile(
   stream.write(columns.join(',') + '\n');
 
   try {
-    await write(prune(read(filePath), thresholdMs, stats, timestampIdx), stream);
+    await write(prune(read(filePath), thresholdMs, stats, timestampIdx, perSetWindow), stream);
 
     if (writer) {
       await writer.close();
