@@ -5,9 +5,9 @@ Consumes BitMEX WebSocket messages from RabbitMQ and writes them to the vault se
 ## What it does
 
 - Consumes all messages from the `journalist` topic exchange
-- Augments each row with the message's `action` field
-- Injects a synthetic `ts` field into rows from timeless tables (`connected`, `liquidation`, `publicNotifications`) using the stream clock, enabling time-synced replay
-- Closes the previous day's vault file when a new day appears in the stream
+- Files each message under its **event-time day** (the data items' `timestamp`), falling back to the collector reception time for timeless tables (`connected`, `liquidation`, `publicNotifications`) and empty messages
+- Carries each message's `action` and reception date through to vault, where they become the `_date_`/`_action_` columns
+- Closes the previous day's vault file once a new day has settled; diverts rows that arrive after a bucket is sealed to a `.tail` file rather than dropping them
 
 ## Development
 

@@ -1,7 +1,7 @@
 import { logger, type RabbitMQ, type Service } from '@devvir/service-kit';
 import SK from './service';
 import { Config, isBitmexDataMessage } from './types';
-import { poolTable } from './route';
+import { poolTable, bucketDay } from './route';
 import { createBuffer } from './persistence/buffer';
 import { createCloser } from './persistence/closer';
 
@@ -27,7 +27,7 @@ SK.run(async (service: Service) => {
     const { data, action } = message;
     const pool  = metadata.headers?.['x-bitmex-pool'] as string | undefined;
     const table = poolTable(message.table, pool);
-    const day   = date.slice(0, 10).replace(/-/g, '');
+    const day   = bucketDay(data, date);
 
     closer.track(table, day);
 

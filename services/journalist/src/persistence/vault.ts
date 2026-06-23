@@ -1,5 +1,5 @@
 import { logger } from '@devvir/service-kit';
-import type { VaultTable } from '../types';
+import type { VaultTable, WriteResult } from '../types';
 
 const RECOVERY_PAUSE_MS = 5_000;
 
@@ -26,7 +26,7 @@ export const writeToVault = async (
   date:     string,
   rows:     unknown[],
   suffix:   string,
-): Promise<boolean> => {
+): Promise<WriteResult> => {
   try {
     const res = await fetch(withSuffix(`${vaultUrl}/files/${table}/${date}/rows`, suffix), {
       method:  'POST',
@@ -40,15 +40,14 @@ export const writeToVault = async (
         logger.info({ table }, 'Vault recovered');
       }
 
-      return true;
+      return 'ok';
     }
 
-    // 409 = file is being gzipped right now; 418 = already sealed.
-    // Either way the file will never accept new rows — drop them rather
-    // than retrying forever against a permanent condition.
-    if (res.status === 409 || res.status === 418) {
-      logger.warn({ table, date, status: res.status, batches: rows.length }, 'Vault file closed — dropping rows');
-      return true;
+    // 409 = the bucket is sealed or mid-close and will never accept new rows.
+    // Signal the caller to divert these rows to the `.tail` safety valve
+    // rather than dropping them — a write this late means an assumption broke.
+    if (res.status === 409) {
+      return 'closed';
     }
 
     if (! vaultDown) {
@@ -70,7 +69,7 @@ export const writeToVault = async (
     }
   }
 
-  return false;
+  return 'unavailable';
 };
 
 /**

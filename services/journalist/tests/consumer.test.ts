@@ -112,35 +112,59 @@ describe('shutdown (flushAll)', () => {
 
 // ── Vault response handling ───────────────────────────────────────────────────
 
+/** All `/rows` POST URLs called since the last vi.restoreAllMocks(). */
+const rowUrls = (): string[] =>
+  vi.mocked(global.fetch).mock.calls
+    .filter(c => (c[1] as RequestInit | undefined)?.method === 'POST' && String(c[0]).includes('/rows'))
+    .map(c => String(c[0]));
+
 describe('vault response handling', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it('drops messages without retry on 409 (file closing)', async () => {
-    vi.spyOn(global, 'fetch').mockResolvedValue({ ok: false, status: 409 } as Response);
-    const buffer = createBuffer(VAULT, '');
+  it('diverts to the .tail safety valve on 409, never dropping rows', async () => {
+    // First attempt (bare suffix) → 409 sealed; retry must land on `<suffix>.tail`.
+    vi.spyOn(global, 'fetch').mockImplementation((url) =>
+      Promise.resolve({
+        ok:     String(url).includes('suffix=local.tail'),
+        status: String(url).includes('suffix=local.tail') ? 202 : 409,
+      } as Response),
+    );
+
+    const buffer = createBuffer(VAULT, 'local');
 
     await buffer.receive('trade', D(D1), msg(T(D1)));
     await buffer.flushAll();
 
-    const rowCalls = vi.mocked(global.fetch).mock.calls.filter(c =>
-      String(c[0]).includes('/rows'),
-    );
+    const urls = rowUrls();
 
-    expect(rowCalls).toHaveLength(1);
+    expect(urls).toContain(`${VAULT}/files/trade/20200101/rows?suffix=local`);
+    expect(urls).toContain(`${VAULT}/files/trade/20200101/rows?suffix=local.tail`);
   });
 
-  it('drops messages without retry on 418 (file sealed)', async () => {
-    vi.spyOn(global, 'fetch').mockResolvedValue({ ok: false, status: 418 } as Response);
+  it('uses a bare "tail" suffix when no base suffix is configured', async () => {
+    vi.spyOn(global, 'fetch').mockImplementation((url) =>
+      Promise.resolve({
+        ok:     String(url).includes('suffix=tail'),
+        status: String(url).includes('suffix=tail') ? 202 : 409,
+      } as Response),
+    );
+
     const buffer = createBuffer(VAULT, '');
 
     await buffer.receive('trade', D(D1), msg(T(D1)));
     await buffer.flushAll();
 
-    const rowCalls = vi.mocked(global.fetch).mock.calls.filter(c =>
-      String(c[0]).includes('/rows'),
-    );
+    expect(rowUrls()).toContain(`${VAULT}/files/trade/20200101/rows?suffix=tail`);
+  });
 
-    expect(rowCalls).toHaveLength(1);
+  it('does not divert to .tail on a normal write', async () => {
+    mockFetch();
+    const buffer = createBuffer(VAULT, 'local');
+
+    await buffer.receive('trade', D(D1), msg(T(D1)));
+    await buffer.flushAll();
+
+    expect(rowUrls().some(u => u.includes('tail'))).toBe(false);
   });
 });
 

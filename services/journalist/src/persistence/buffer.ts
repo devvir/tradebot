@@ -48,10 +48,29 @@ export const createBuffer = (vaultUrl: string, suffix: string) => {
 
   // ── Writing to vault ──────────────────────────────────────────────────────
 
-  const writeWithRetry = async (table: VaultTable, day: string, messages: WsMessage[]): Promise<void> => {
-    let pressured = false;
+  // The `.tail` safety valve: if a day's bucket is already sealed when a late
+  // message arrives for it, the rows are diverted to a sibling `<suffix>.tail`
+  // file instead of being dropped. Such a file is never closed, so a write to
+  // it can only succeed or hit a down vault — never `closed`. Seeing one means
+  // an assumption broke (a message arrived more than the close grace period
+  // late) and the data is preserved for manual handling.
+  const tailSuffix = suffix ? `${suffix}.tail` : 'tail';
 
-    while (! await writeToVault(vaultUrl, table, day, messages, suffix)) {
+  const writeWithRetry = async (table: VaultTable, day: string, messages: WsMessage[]): Promise<void> => {
+    let pressured       = false;
+    let activeSuffix    = suffix;
+
+    while (true) {
+      const result = await writeToVault(vaultUrl, table, day, messages, activeSuffix);
+
+      if (result === 'ok') break;
+
+      if (result === 'closed') {
+        logger.warn({ table, day, count: messages.length }, 'Bucket sealed — diverting late rows to .tail');
+        activeSuffix = tailSuffix;
+        continue;
+      }
+
       if (! pressured) { pressured = true; pressureOn(); }
       await waitForVault();
     }

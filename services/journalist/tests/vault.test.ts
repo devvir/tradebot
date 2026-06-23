@@ -11,88 +11,87 @@ beforeEach(async () => {
   ({ writeToVault, closeVaultFile } = await import('../src/persistence/vault'));
 });
 
-const VAULT = 'http://vault:3000';
-const TABLE = 'trade' as const;
-const DATE  = '20200101';
-const ROWS  = [{ action: 'insert', date: '2020-01-01T10:00:00.000Z', data: [] }];
+const VAULT  = 'http://vault:3000';
+const TABLE  = 'trade' as const;
+const DATE   = '20200101';
+const SUFFIX = 'local';
+const ROWS   = [{ action: 'insert', date: '2020-01-01T10:00:00.000Z', data: [] }];
 
 // ── writeToVault ──────────────────────────────────────────────────────────────
 
 describe('writeToVault', () => {
-  it('returns true on 202', async () => {
+  it('returns "ok" on 202', async () => {
     vi.spyOn(global, 'fetch').mockResolvedValueOnce({ ok: true, status: 202 } as Response);
 
-    expect(await writeToVault(VAULT, TABLE, DATE, ROWS)).toBe(true);
+    expect(await writeToVault(VAULT, TABLE, DATE, ROWS, SUFFIX)).toBe('ok');
   });
 
-  it('returns true on 409 (file closing) — drops without retry', async () => {
+  it('returns "closed" on 409 (bucket sealed/closing) — one call, no retry', async () => {
     vi.spyOn(global, 'fetch').mockResolvedValueOnce({ ok: false, status: 409 } as Response);
 
-    expect(await writeToVault(VAULT, TABLE, DATE, ROWS)).toBe(true);
+    expect(await writeToVault(VAULT, TABLE, DATE, ROWS, SUFFIX)).toBe('closed');
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 
-  it('returns true on 418 (file sealed) — drops without retry', async () => {
-    vi.spyOn(global, 'fetch').mockResolvedValueOnce({ ok: false, status: 418 } as Response);
-
-    expect(await writeToVault(VAULT, TABLE, DATE, ROWS)).toBe(true);
-    expect(global.fetch).toHaveBeenCalledTimes(1);
-  });
-
-  it('returns false on 503 — signals caller to retry', async () => {
+  it('returns "unavailable" on 503 — signals caller to retry', async () => {
     vi.spyOn(global, 'fetch').mockResolvedValueOnce({
       ok:      false,
       status:  503,
       text:    () => Promise.resolve('unhealthy'),
     } as unknown as Response);
 
-    expect(await writeToVault(VAULT, TABLE, DATE, ROWS)).toBe(false);
+    expect(await writeToVault(VAULT, TABLE, DATE, ROWS, SUFFIX)).toBe('unavailable');
   });
 
-  it('returns false on 500 — signals caller to retry', async () => {
+  it('returns "unavailable" on 429 (throttled) — signals caller to retry', async () => {
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+      ok:      false,
+      status:  429,
+      text:    () => Promise.resolve('too many inflight'),
+    } as unknown as Response);
+
+    expect(await writeToVault(VAULT, TABLE, DATE, ROWS, SUFFIX)).toBe('unavailable');
+  });
+
+  it('returns "unavailable" on 500 — signals caller to retry', async () => {
     vi.spyOn(global, 'fetch').mockResolvedValueOnce({
       ok:      false,
       status:  500,
       text:    () => Promise.resolve('internal error'),
     } as unknown as Response);
 
-    expect(await writeToVault(VAULT, TABLE, DATE, ROWS)).toBe(false);
+    expect(await writeToVault(VAULT, TABLE, DATE, ROWS, SUFFIX)).toBe('unavailable');
   });
 
-  it('returns false when fetch throws (network error)', async () => {
+  it('returns "unavailable" when fetch throws (network error)', async () => {
     vi.spyOn(global, 'fetch').mockRejectedValueOnce(new Error('ECONNREFUSED'));
 
-    expect(await writeToVault(VAULT, TABLE, DATE, ROWS)).toBe(false);
+    expect(await writeToVault(VAULT, TABLE, DATE, ROWS, SUFFIX)).toBe('unavailable');
   });
 
-  it('only makes one fetch call for 409 (no retry loop)', async () => {
-    vi.spyOn(global, 'fetch').mockResolvedValue({ ok: false, status: 409 } as Response);
-
-    await writeToVault(VAULT, TABLE, DATE, ROWS);
-
-    expect(global.fetch).toHaveBeenCalledTimes(1);
-  });
-
-  it('only makes one fetch call for 418 (no retry loop)', async () => {
-    vi.spyOn(global, 'fetch').mockResolvedValue({ ok: false, status: 418 } as Response);
-
-    await writeToVault(VAULT, TABLE, DATE, ROWS);
-
-    expect(global.fetch).toHaveBeenCalledTimes(1);
-  });
-
-  it('sends rows as JSON body to the correct URL', async () => {
+  it('sends rows as JSON body to the suffixed URL', async () => {
     vi.spyOn(global, 'fetch').mockResolvedValueOnce({ ok: true, status: 202 } as Response);
 
-    await writeToVault(VAULT, TABLE, DATE, ROWS);
+    await writeToVault(VAULT, TABLE, DATE, ROWS, SUFFIX);
 
     expect(global.fetch).toHaveBeenCalledWith(
-      `${VAULT}/files/${TABLE}/${DATE}/rows`,
+      `${VAULT}/files/${TABLE}/${DATE}/rows?suffix=${SUFFIX}`,
       expect.objectContaining({
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify(ROWS),
       }),
+    );
+  });
+
+  it('omits the suffix query when suffix is empty', async () => {
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce({ ok: true, status: 202 } as Response);
+
+    await writeToVault(VAULT, TABLE, DATE, ROWS, '');
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      `${VAULT}/files/${TABLE}/${DATE}/rows`,
+      expect.anything(),
     );
   });
 });
@@ -103,13 +102,13 @@ describe('closeVaultFile', () => {
   it('resolves on 204', async () => {
     vi.spyOn(global, 'fetch').mockResolvedValueOnce({ ok: true, status: 204 } as Response);
 
-    await expect(closeVaultFile(VAULT, TABLE, DATE)).resolves.toBeUndefined();
+    await expect(closeVaultFile(VAULT, TABLE, DATE, SUFFIX)).resolves.toBeUndefined();
   });
 
   it('resolves on 404 (file already gone — idempotent)', async () => {
     vi.spyOn(global, 'fetch').mockResolvedValueOnce({ ok: false, status: 404 } as Response);
 
-    await expect(closeVaultFile(VAULT, TABLE, DATE)).resolves.toBeUndefined();
+    await expect(closeVaultFile(VAULT, TABLE, DATE, SUFFIX)).resolves.toBeUndefined();
   });
 
   it('retries on 503 and eventually succeeds', async () => {
@@ -119,7 +118,7 @@ describe('closeVaultFile', () => {
       .mockResolvedValueOnce({ ok: false, status: 503 } as Response)
       .mockResolvedValueOnce({ ok: true,  status: 204 } as Response);
 
-    const done = closeVaultFile(VAULT, TABLE, DATE);
+    const done = closeVaultFile(VAULT, TABLE, DATE, SUFFIX);
 
     // Let the first fetch call complete, then advance past waitForVault's 5s pause.
     await vi.runAllTimersAsync();
@@ -137,7 +136,7 @@ describe('closeVaultFile', () => {
       .mockRejectedValueOnce(new Error('ECONNREFUSED'))
       .mockResolvedValueOnce({ ok: true, status: 204 } as Response);
 
-    const done = closeVaultFile(VAULT, TABLE, DATE);
+    const done = closeVaultFile(VAULT, TABLE, DATE, SUFFIX);
 
     await vi.runAllTimersAsync();
 
@@ -147,13 +146,13 @@ describe('closeVaultFile', () => {
     vi.useRealTimers();
   });
 
-  it('sends a POST to the correct close URL', async () => {
+  it('sends a POST to the suffixed close URL', async () => {
     vi.spyOn(global, 'fetch').mockResolvedValueOnce({ ok: true, status: 204 } as Response);
 
-    await closeVaultFile(VAULT, TABLE, DATE);
+    await closeVaultFile(VAULT, TABLE, DATE, SUFFIX);
 
     expect(global.fetch).toHaveBeenCalledWith(
-      `${VAULT}/files/${TABLE}/${DATE}/close`,
+      `${VAULT}/files/${TABLE}/${DATE}/close?suffix=${SUFFIX}`,
       { method: 'POST' },
     );
   });

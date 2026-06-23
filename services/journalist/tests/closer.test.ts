@@ -1,9 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// Mock WS_TABLES to a small, controlled set so global-close iteration is
-// predictable and we don't have to mock fetch responses for every real table.
+// Mock WS_TABLES + channel sets to a small, controlled universe so close
+// iteration is predictable. Realtime endpoint: `trade`/`quote`/`orderBookL2`
+// (timestamp-driven) + `liquidation` (date-driven — the closer's internal
+// DATE_DRIVEN_TABLES set, not mocked, knows `liquidation` is timeless).
+// Platform endpoint: `connected`.
 vi.mock('@tradebot/utils', () => ({
-  WS_TABLES: new Set(['trade', 'quote', 'orderBookL2']),
+  WS_TABLES:         new Set(['trade', 'quote', 'orderBookL2', 'liquidation', 'connected']),
+  REALTIME_CHANNELS: ['trade', 'quote', 'orderBookL2', 'liquidation'],
+  PLATFORM_CHANNELS: ['connected'],
 }));
 
 import { createCloser } from '../src/persistence/closer';
@@ -70,7 +75,7 @@ afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 // ── Mode detection ────────────────────────────────────────────────────────────
 
 describe('mode detection', () => {
-  it('new day equal to today → realtime: schedules a global close', async () => {
+  it('new day equal to today → live: schedules a close for the advancing endpoint', async () => {
     mockVault({
       trade:       { [YESTERDAY]: 'open' },
       quote:       { [YESTERDAY]: 'open' },
@@ -79,11 +84,11 @@ describe('mode detection', () => {
 
     const closer = createCloser(VAULT, SUFFIX, beforeFn);
 
-    closer.track('trade', TODAY); // first-seen at today — realtime
+    closer.track('trade', TODAY); // first-seen at today — live, realtime endpoint
 
     await vi.advanceTimersByTimeAsync(FIVE);
 
-    // All WS_TABLES were listed (global pass).
+    // All realtime-endpoint tables were listed.
     expect(listCalls('trade')).toBe(1);
     expect(listCalls('quote')).toBe(1);
     expect(listCalls('orderBookL2')).toBe(1);
@@ -114,10 +119,178 @@ describe('mode detection', () => {
   });
 });
 
+// ── Per-endpoint isolation ──────────────────────────────────────────────────────
+
+describe('per-endpoint close isolation', () => {
+  it('a platform message closes ONLY platform buckets, leaving realtime open', async () => {
+    mockVault({
+      connected:   { [YESTERDAY]: 'open' },
+      trade:       { [YESTERDAY]: 'open' },
+      orderBookL2: { [YESTERDAY]: 'open' },
+    });
+
+    const closer = createCloser(VAULT, SUFFIX, beforeFn);
+
+    closer.track('connected', TODAY); // platform crosses midnight
+
+    await vi.advanceTimersByTimeAsync(FIVE);
+
+    // Platform bucket closed...
+    expect(closeCalls('connected', YESTERDAY)).toBe(1);
+    // ...realtime buckets untouched — realtime may still be lagging the prev day.
+    expect(listCalls('trade')).toBe(0);
+    expect(listCalls('orderBookL2')).toBe(0);
+    expect(closeCalls('trade',       YESTERDAY)).toBe(0);
+    expect(closeCalls('orderBookL2', YESTERDAY)).toBe(0);
+  });
+
+  it('a realtime message does not close platform buckets', async () => {
+    mockVault({
+      connected: { [YESTERDAY]: 'open' },
+      trade:     { [YESTERDAY]: 'open' },
+    });
+
+    const closer = createCloser(VAULT, SUFFIX, beforeFn);
+
+    closer.track('trade', TODAY);
+
+    await vi.advanceTimersByTimeAsync(FIVE);
+
+    expect(closeCalls('trade', YESTERDAY)).toBe(1);
+    expect(listCalls('connected')).toBe(0);
+    expect(closeCalls('connected', YESTERDAY)).toBe(0);
+  });
+
+  it('the two endpoints schedule independently — both fire', async () => {
+    mockVault({
+      connected: { [YESTERDAY]: 'open' },
+      trade:     { [YESTERDAY]: 'open' },
+    });
+
+    const closer = createCloser(VAULT, SUFFIX, beforeFn);
+
+    closer.track('trade',     TODAY); // arms realtime
+    closer.track('connected', TODAY); // arms platform (separate timer)
+
+    await vi.advanceTimersByTimeAsync(FIVE);
+
+    expect(closeCalls('trade',     YESTERDAY)).toBe(1);
+    expect(closeCalls('connected', YESTERDAY)).toBe(1);
+  });
+
+  it('a realtime DATE-driven table (liquidation) closes ONLY itself, not the lagging timestamp tables', async () => {
+    mockVault({
+      liquidation: { [YESTERDAY]: 'open' },
+      trade:       { [YESTERDAY]: 'open' },
+      orderBookL2: { [YESTERDAY]: 'open' },
+    });
+
+    const closer = createCloser(VAULT, SUFFIX, beforeFn);
+
+    closer.track('liquidation', TODAY); // realtime endpoint, but `_date_`-driven
+
+    await vi.advanceTimersByTimeAsync(FIVE);
+
+    // liquidation seals itself (its `_date_` crossed)...
+    expect(closeCalls('liquidation', YESTERDAY)).toBe(1);
+    // ...but it must NOT sweep instrument/orderBookL2 — their data hasn't crossed yet.
+    expect(listCalls('trade')).toBe(0);
+    expect(listCalls('orderBookL2')).toBe(0);
+    expect(closeCalls('trade',       YESTERDAY)).toBe(0);
+    expect(closeCalls('orderBookL2', YESTERDAY)).toBe(0);
+  });
+
+  it('a realtime TIMESTAMP-driven table sweeps the whole realtime endpoint, liquidation included', async () => {
+    mockVault({
+      trade:       { [YESTERDAY]: 'open' },
+      orderBookL2: { [YESTERDAY]: 'open' },
+      liquidation: { [YESTERDAY]: 'open' },
+    });
+
+    const closer = createCloser(VAULT, SUFFIX, beforeFn);
+
+    closer.track('trade', TODAY); // timestamp-driven → data crossed → sweep realtime
+
+    await vi.advanceTimersByTimeAsync(FIVE);
+
+    // Data crossing means every realtime bucket (incl. the date-driven liquidation) is complete.
+    expect(closeCalls('trade',       YESTERDAY)).toBe(1);
+    expect(closeCalls('orderBookL2', YESTERDAY)).toBe(1);
+    expect(closeCalls('liquidation', YESTERDAY)).toBe(1);
+  });
+});
+
+// ── Per-pool close isolation ──────────────────────────────────────────────────
+
+describe('per-pool close isolation', () => {
+  it('a pooled realtime table closes ONLY its own pool, leaving the primary pool open', async () => {
+    mockVault({
+      'orderBookL2.secondary': { [YESTERDAY]: 'open' },
+      orderBookL2:             { [YESTERDAY]: 'open' },
+      trade:                   { [YESTERDAY]: 'open' },
+    });
+
+    const closer = createCloser(VAULT, SUFFIX, beforeFn);
+
+    closer.track('orderBookL2.secondary', TODAY); // secondary-pool client crosses
+
+    await vi.advanceTimersByTimeAsync(FIVE);
+
+    // The secondary-pool bucket seals...
+    expect(closeCalls('orderBookL2.secondary', YESTERDAY)).toBe(1);
+    // ...primary-pool realtime tables untouched — a separate client, its own lag.
+    expect(listCalls('orderBookL2')).toBe(0);
+    expect(listCalls('trade')).toBe(0);
+    expect(closeCalls('orderBookL2', YESTERDAY)).toBe(0);
+    expect(closeCalls('trade',       YESTERDAY)).toBe(0);
+  });
+
+  it('a primary-pool realtime cross does NOT close a seen pooled sibling', async () => {
+    mockVault({
+      trade:                   { [YESTERDAY]: 'open' },
+      orderBookL2:             { [YESTERDAY]: 'open' },
+      'orderBookL2.secondary': { [YESTERDAY]: 'open' },
+    });
+
+    const closer = createCloser(VAULT, SUFFIX, beforeFn);
+
+    // Register the pooled table as 'seen' on an earlier day so it's a real sweep
+    // candidate; its own per-table close targets buckets < TWO_AGO → none here.
+    closer.track('orderBookL2.secondary', TWO_AGO);
+    // Now a primary-pool table crosses to today.
+    closer.track('trade', TODAY);
+
+    await vi.advanceTimersByTimeAsync(FIVE);
+
+    // Primary-pool realtime group swept...
+    expect(closeCalls('trade',       YESTERDAY)).toBe(1);
+    expect(closeCalls('orderBookL2', YESTERDAY)).toBe(1);
+    // ...but the pooled sibling's YESTERDAY bucket is NOT pulled in by the cross.
+    expect(closeCalls('orderBookL2.secondary', YESTERDAY)).toBe(0);
+  });
+
+  it('the two pools schedule independently — both fire on their own cross', async () => {
+    mockVault({
+      orderBookL2:             { [YESTERDAY]: 'open' },
+      'orderBookL2.secondary': { [YESTERDAY]: 'open' },
+    });
+
+    const closer = createCloser(VAULT, SUFFIX, beforeFn);
+
+    closer.track('orderBookL2',           TODAY); // arms (realtime, '')
+    closer.track('orderBookL2.secondary', TODAY); // arms (realtime, 'secondary')
+
+    await vi.advanceTimersByTimeAsync(FIVE);
+
+    expect(closeCalls('orderBookL2',           YESTERDAY)).toBe(1);
+    expect(closeCalls('orderBookL2.secondary', YESTERDAY)).toBe(1);
+  });
+});
+
 // ── First-seen (startup recovery) ─────────────────────────────────────────────
 
 describe('first-seen day (startup recovery)', () => {
-  it('first message at today → schedules global close', async () => {
+  it('first message at today → schedules an endpoint close', async () => {
     mockVault({ trade: { [YESTERDAY]: 'open' } });
 
     const closer = createCloser(VAULT, SUFFIX, beforeFn);
@@ -156,7 +329,7 @@ describe('no-op cases', () => {
 
     await vi.advanceTimersByTimeAsync(FIVE);
 
-    // First call did schedule global (today is today). Re-running same-day is no-op.
+    // First call did schedule the realtime endpoint (today is today). Re-running same-day is no-op.
     // We just check no extra schedules happened by verifying only ONE pass ran:
     expect(listCalls('trade')).toBe(1);
   });
@@ -181,7 +354,7 @@ describe('no-op cases', () => {
 // ── Single-flight ─────────────────────────────────────────────────────────────
 
 describe('single-flight scheduling', () => {
-  it('multiple tables advancing to today only fire ONE global close', async () => {
+  it('multiple realtime tables advancing to today only fire ONE realtime close', async () => {
     mockVault({
       trade:       { [YESTERDAY]: 'open' },
       quote:       { [YESTERDAY]: 'open' },
@@ -196,7 +369,7 @@ describe('single-flight scheduling', () => {
 
     await vi.advanceTimersByTimeAsync(FIVE);
 
-    // One global pass → each table listed exactly once.
+    // One realtime-endpoint pass → each realtime table listed exactly once.
     expect(listCalls('trade')).toBe(1);
     expect(listCalls('quote')).toBe(1);
     expect(listCalls('orderBookL2')).toBe(1);
@@ -224,13 +397,13 @@ describe('single-flight scheduling', () => {
 
     const closer = createCloser(VAULT, SUFFIX, beforeFn);
 
-    closer.track('trade', TODAY); // schedules global
-    await vi.advanceTimersByTimeAsync(FIVE); // global runs
+    closer.track('trade', TODAY); // schedules realtime endpoint
+    await vi.advanceTimersByTimeAsync(FIVE); // it runs
 
     expect(listCalls('trade')).toBe(1);
 
-    // Now a late message from another table arrives advancing it to today —
-    // the global timer slot is free, so a new global is scheduled.
+    // Now a late message from another realtime table advances it to today —
+    // the realtime endpoint timer slot is free, so a new close is scheduled.
     closer.track('quote', TODAY);
     await vi.advanceTimersByTimeAsync(FIVE);
 
@@ -248,7 +421,7 @@ describe('listing and close selection', () => {
     });
 
     const closer = createCloser(VAULT, SUFFIX, beforeFn);
-    closer.track('trade', TODAY); // realtime → global
+    closer.track('trade', TODAY); // live → realtime endpoint
 
     await vi.advanceTimersByTimeAsync(FIVE);
 
@@ -364,7 +537,7 @@ describe('suffix round-trip', () => {
 // ── Retry on failure ─────────────────────────────────────────────────────────
 
 describe('retry on failure', () => {
-  it('reschedules a global close when listing fails, then succeeds', async () => {
+  it('reschedules the endpoint close when listing fails, then succeeds', async () => {
     let attempts = 0;
 
     vi.spyOn(global, 'fetch').mockImplementation((input, init) => {
