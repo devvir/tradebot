@@ -10,6 +10,8 @@ const loadConfig = (): Config => {
     startDate:     parseStartDate(process.env.SCRIBE_START_DATE),
     indexTickOnly: parseBool(process.env.SCRIBE_INDEX_TICK_ONLY),
     tables:        parseList(process.env.SCRIBE_TABLES),
+    inFlight:      parsePositiveInt(process.env.SCRIBE_IN_FLIGHT, 20),
+    rateWaterline: parsePositiveInt(process.env.SCRIBE_RATE_WATERLINE, 100),
   };
 
   validateConfig(config);
@@ -28,6 +30,17 @@ const parseBool = (raw: string | undefined): boolean =>
 
 const parseList = (raw: string | undefined): string[] =>
   raw?.split(',').map(s => s.trim()).filter(Boolean) ?? [];
+
+const parsePositiveInt = (raw: string | undefined, fallback: number): number => {
+  if (! raw?.trim()) return fallback;
+
+  const n = parseInt(raw, 10);
+
+  if (! Number.isInteger(n) || n <= 0)
+    throw new Error(`Expected a positive integer, got: ${raw}`);
+
+  return n;
+};
 
 const parseStartDate = (raw: string | undefined): string | null => {
   if (! raw) return null;

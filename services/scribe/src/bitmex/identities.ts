@@ -21,9 +21,9 @@ import type { Credential, Identity } from './types';
 
 const GUEST_SEED      = 180;
 const AUTH_SEED       = 120;
-const WATERLINE       = 100;  // throttle starts once the *combined* budget across all identities falls below this
-const PACE_MS         = 500; // graduated wait, in ms, per unit of combined budget below the waterline
-const REFILL_WINDOW_S = 60;  // BitMEX buckets refill their full limit over one minute
+const WATERLINE       = config.rateWaterline; // throttle combined budget; tunable via SCRIBE_RATE_WATERLINE
+const PACE_MS         = 500;  // graduated wait, in ms, per unit of combined budget below the waterline
+const REFILL_WINDOW_S = 60;   // BitMEX buckets refill their full limit over one minute
 const RETRY_ON        = [502, 503, 504]; // 429 is handled by the picker (route around it), not retried on the same bucket
 const VALIDATE_PATH   = '/instrument/compositeIndex?symbol=.BXBT&count=1';
 

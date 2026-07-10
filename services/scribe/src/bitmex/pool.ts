@@ -16,8 +16,10 @@
  * table on its own saturates the pool.
  */
 
-/** Max concurrent fetches across the whole service; also each table's ring size. */
-export const MAX_IN_FLIGHT = 20;
+import config from '../config';
+
+/** Max concurrent fetches across the whole service; also each table's ring size. Tunable via SCRIBE_IN_FLIGHT. */
+export const MAX_IN_FLIGHT = config.inFlight;
 
 let free = MAX_IN_FLIGHT;
 const waiters: (() => void)[] = [];

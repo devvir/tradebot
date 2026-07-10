@@ -1,13 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { TABLES, PAGE_SIZE } from '../src/utils/settings';
+import { TABLES } from '../src/utils/settings';
 
 describe('TABLES configuration', () => {
   it('has exactly 9 tables', () => {
     expect(TABLES).toHaveLength(9);
-  });
-
-  it('PAGE_SIZE is 500', () => {
-    expect(PAGE_SIZE).toBe(500);
   });
 
   it('every table has a name, a path starting with /, and a maxStart', () => {

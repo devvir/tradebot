@@ -5,6 +5,7 @@ import { pickIdentity, reportRemaining, pace } from './identities';
 import { MAX_IN_FLIGHT, acquireSlot, releaseSlot } from './pool';
 import type { Row, FetchFilter } from './types';
 
+const ALLOWED_MAX_START = 10000;
 const DEFAULT_PAGE_SIZE = 500;
 
 // Returns the first matching row, or null.
@@ -38,6 +39,9 @@ export async function* rowIterator(
   const pageSize = filter.count ?? DEFAULT_PAGE_SIZE;
 
   let blockStartTime = filter.startTime ?? null;
+
+  // BitMEX support recommended using a lower maxStart despite what the API allows
+  maxStart = maxStart ? Math.min(maxStart, ALLOWED_MAX_START) : null;
 
   while (true) {
     const next = yield* streamBlock(baseUrl, path, maxStart, tsField, pageSize, blockStartTime, filter);

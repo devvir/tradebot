@@ -19,6 +19,8 @@ Fetches the historical record from the BitMEX REST API and writes it to the vaul
 |---|---|
 | `SCRIBE_START_DATE` | Lower bound (`YYYYMMDD`) for the first run; ignored once Redis progress exists. |
 | `SCRIBE_IDENTITIES` | Optional `apiKey:apiSecret,apiKey:apiSecret,…` list. Each pair adds a 120/min authenticated bucket on top of the guest bucket. Default empty = guest only. Parsed in the fetch layer, never logged. |
+| `SCRIBE_IN_FLIGHT` | Max concurrent page fetches across the whole service (also each table's ring size). Default `20`. |
+| `SCRIBE_RATE_WATERLINE` | Combined rate-limit budget (across all identities) below which the fetch loop starts pacing. Default `100`. |
 
 ## Development
 

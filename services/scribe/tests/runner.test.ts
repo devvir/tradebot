@@ -18,8 +18,7 @@ vi.mock('../src/utils/symbols', () => ({
 
 // TABLES is mutable so each test can inject just the table it needs.
 vi.mock('../src/utils/settings', () => ({
-  TABLES:    [] as TableConfig[],
-  PAGE_SIZE: 500,
+  TABLES: [] as TableConfig[],
 }));
 
 import * as tablesModule    from '../src/utils/settings';

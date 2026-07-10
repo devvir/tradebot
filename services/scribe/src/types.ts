@@ -9,6 +9,8 @@ export interface Config {
   startDate:      string | null;
   indexTickOnly:  boolean;
   tables:         string[];
+  inFlight:       number;
+  rateWaterline:  number;
   [key: string]: unknown;
 }
 

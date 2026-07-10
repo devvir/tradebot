@@ -10,15 +10,17 @@ services:
 
     environment:
       # Dependencies
-      CACHE_URL:    ${CACHE_URL}
-      CACHE_PASS:   ${CACHE_PASS}
-      VAULT_URL:    ${VAULT_URL}
+      CACHE_URL:  ${CACHE_URL}
+      CACHE_PASS: ${CACHE_PASS}
+      VAULT_URL:  ${VAULT_URL}
 
       # Config
       SCRIBE_START_DATE:       ${SCRIBE_START_DATE:-}
       SCRIBE_INDEX_TICK_ONLY:  ${SCRIBE_INDEX_TICK_ONLY:-true}
       SCRIBE_TABLES:           ${SCRIBE_TABLES:-}
       SCRIBE_IDENTITIES:       ${SCRIBE_IDENTITIES:-}
+      SCRIBE_IN_FLIGHT:        ${SCRIBE_IN_FLIGHT:-20}
+      SCRIBE_RATE_WATERLINE:   ${SCRIBE_RATE_WATERLINE:-100}
 
       # Runtime
       NODE_ENV: ${APP_ENV:-prod}

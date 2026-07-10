@@ -2,8 +2,6 @@ import config from '../config';
 import type { TableConfig, RowFilter } from '../types';
 import { getOrderedIndices, getTradingSymbols } from './symbols';
 
-export const PAGE_SIZE = 500;
-
 /** S3/courier owns trade & quote history up to 2026-03-31; scribe takes over from here. */
 const TRADE_QUOTE_FROM = '20260401';
 
