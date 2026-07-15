@@ -10,22 +10,26 @@ The scanner lives at `data/scan/` so `data sync` can reuse it without depending 
 
 | Term | Meaning |
 |---|---|
-| **source file** | WS-origin `.csv.gz` with a collector suffix (e.g. `.local`, `.antel`, `.tardis`). Needs preparation before use. |
-| **bucket** | Ready-to-use `.csv.gz` with no suffix, one per table/day. WS buckets come from `data prepare`; REST buckets are written directly by collection services. |
+| **source file** | `.csv.gz` with a collector suffix (e.g. `.local`, `.antel`, `.tardis`, `.s3`, `.rest`). Belongs to a **sourced** table and needs preparation before use. |
+| **bucket** | Ready-to-use `.csv.gz` with no suffix, one per table/day. Sourced tables promote sources to buckets (`data prepare` for WS, `data resort` for `trade`/`quote`); unsourced REST buckets are written directly by collection services. |
+| **sourced / unsourced** | Whether a table has a sources → bucket preparation stage. Orthogonal to WS/REST origin: all WS tables are sourced, and so are the REST tables `trade`/`quote`; the remaining REST tables are unsourced (buckets from birth). |
 | **`.tmp` file** | A `.csv.gz.tmp` alongside a regular file name — collection or download in progress. |
 | **local** | `${VAULT_DATA_DIR}` on this machine. |
 | **remote** | Named SSH host listed in `SOURCES_REMOTE_VAULTS`. Holds its own vault — WS source files only. |
-| **Mega** | Mega cloud, accessed via `mega-cmd` aliases. Two roots: `SOURCES_MEGA_VAULT` (buckets) and `SOURCES_MEGA_RAW` (raw WS sources). The grid treats them as one logical "Mega" column. |
+| **Mega** | Mega cloud, accessed via `mega-cmd` aliases. Two roots: `SOURCES_MEGA_VAULT` (buckets) and `SOURCES_MEGA_RAW` (raw sources). The grid treats them as one logical "Mega" column. |
 
 ---
 
-## Tables (13 total)
+## Tables
 
-**WS (7):** `announcement`, `chat`, `connected`, `instrument`, `liquidation`, `orderBookL2`, `publicNotifications`
+Two orthogonal axes classify every table: **origin** (how it's collected) and **sourced** (whether it needs a sources → bucket preparation stage). They used to coincide (all-and-only WS tables were sourced) but no longer do.
 
-**REST (6):** `compositeIndex`, `funding`, `insurance`, `settlement`, `trade`, `quote`
+| | Sourced | Unsourced |
+|---|---|---|
+| **WS** | `announcement`, `chat`, `connected`, `instrument`, `liquidation`, `orderBookL2`, `orderBookL2.secondary`, `publicNotifications` | — |
+| **REST** | `trade`, `quote` | `compositeIndex`, `funding`, `insurance`, `settlement`, `tick` |
 
-`trade`/`quote` are downloaded from BitMEX S3 by `courier`; the other four REST tables are paginated by `scribe`. The status tool doesn't distinguish between them — both arrive on disk as direct buckets, no preparation needed.
+`trade`/`quote` are downloaded from BitMEX S3 by `courier` as symbol-major sources (`.s3`/`.rest`) and pass through `data resort` to become ts-major buckets — so, like WS tables, Mega must hold both their raw sources (`SOURCES_MEGA_RAW`) and their bucket (`SOURCES_MEGA_VAULT`). The other REST tables are paginated by `scribe` and arrive as direct buckets, no preparation needed.
 
 ---
 
@@ -36,14 +40,14 @@ The scanner lives at `data/scan/` so `data sync` can reuse it without depending 
   <table>/
     <year>/
       YYYYMMDD.csv.gz                ← bucket (suffix-less)
-      YYYYMMDD.<suffix>.csv.gz       ← source file (WS)
+      YYYYMMDD.<suffix>.csv.gz       ← source file (sourced tables)
       YYYYMMDD.csv.gz.tmp            ← bucket downloading (REST)
       YYYYMMDD.<suffix>.csv.gz.tmp   ← source file downloading
 ```
 
 Sources and their resulting bucket live side by side; they're distinguished by suffix presence. `data prepare` writes the bucket directly into the year folder.
 
-**Mega — year tarballs:** every year prior to the current one is stored as `YYYY.tar` directly inside the table dir (e.g. `<SOURCES_MEGA_VAULT>/orderBookL2/2021.tar`), replacing the year folder entirely. The current year keeps the normal `<year>/YYYYMMDD.csv.gz` layout.
+**Mega — year tarballs:** in *both* roots, every year prior to the current one is stored as `YYYY.tar` directly inside the table dir (e.g. `<SOURCES_MEGA_VAULT>/orderBookL2/2021.tar` for the bucket archive, `<SOURCES_MEGA_RAW>/trade/2015.tar` for the source archive), replacing the year folder entirely. The current year keeps the normal `<year>/YYYYMMDD.csv.gz` layout. Presence is the same rule for buckets and sources: the daily file exists (current year) or the year tar exists (prior years).
 
 **Local — never tarballed.**
 
@@ -56,7 +60,7 @@ Sources and their resulting bucket live side by side; they're distinguished by s
 | `VAULT_DATA_DIR` | Local vault root (defined in root `.env`, derived from `BITMEX_DATA_DIR`). |
 | `SOURCES_REMOTE_VAULTS` | Comma-separated remotes. Format: `<name>:<user>@<host>:<path>`. |
 | `SOURCES_MEGA_VAULT` | Mega path for ready buckets (current: `/User/Tradebot/vault`). |
-| `SOURCES_MEGA_RAW` | Mega path for raw WS source files (current: `/User/Tradebot/wsSources/fs`). |
+| `SOURCES_MEGA_RAW` | Mega path for raw source files (current: `/User/Tradebot/wsSources/fs`). |
 
 ---
 
@@ -67,8 +71,10 @@ Sources and their resulting bucket live side by side; they're distinguished by s
 | `.local` | journalist (this machine) |
 | `.<remote-name>` (e.g. `.antel`) | journalist on the named remote, pulled via rsync |
 | `.tardis` | tardy service |
+| `.s3` | courier (BitMEX S3 daily archives for `trade`/`quote`) |
+| `.rest` | scribe REST backfill for `trade`/`quote` |
 
-REST files have no suffix — they're buckets from birth.
+Unsourced REST tables (`compositeIndex`, `funding`, `insurance`, `settlement`, `tick`) have no suffix — they're buckets from birth.
 
 ---
 
@@ -143,8 +149,8 @@ src/tools/data/
 interface DayState {
   day: string;                                  // YYYYMMDD
 
-  localSuffixes:     string[];                  // finalized WS source files
-  localTmpSuffixes:  string[];                  // .tmp WS source files
+  localSuffixes:     string[];                  // finalized source files
+  localTmpSuffixes:  string[];                  // .tmp source files
   remoteSuffixes:    Record<string, string[]>;  // per remote name
   remoteTmpSuffixes: Record<string, string[]>;  // per remote name, .tmp
   megaSources:       string[];                  // suffixes in SOURCES_MEGA_RAW
@@ -157,8 +163,10 @@ interface DayState {
 interface TableState {
   name:     string;
   origin:   'ws' | 'rest';
+  sourced:  boolean;                            // has a sources → bucket stage; Mega must hold both
   days:     Map<string, DayState>;              // only days with data in any location
-  megaTars: number[];                           // years stored as <table>/YYYY.tar
+  megaBucketTars: number[];                     // years archived as <table>/YYYY.tar in SOURCES_MEGA_VAULT
+  megaSourceTars: number[];                     // years archived as <table>/YYYY.tar in SOURCES_MEGA_RAW
 }
 
 interface VaultState {
@@ -186,9 +194,9 @@ WS table names are **bold white**; REST names are standard white (slightly dimme
 
 | Cell | Color | Meaning |
 |---|---|---|
-| `stored` | green | Mega has the expected artifacts. For WS: both bucket (MEGA_VAULT) and sources (MEGA_RAW); for REST: just the bucket. A tar year also reads as `stored`. |
-| `sources stored` / `bucket missing` | green / yellow | WS Mega only. Sources uploaded; bucket not yet there. Two stacked lines in the same cell. |
-| `bucket stored` / `sources missing` | green / yellow | WS Mega only. Bucket uploaded; raw sources not there. |
+| `stored` | green | Mega has the expected artifacts. For a sourced table: both bucket (MEGA_VAULT) and sources (MEGA_RAW); for an unsourced table: just the bucket. A prior-year tar counts as that side present, so a fully-archived year reads `stored` (or `half` if only one side's tar exists). |
+| `sources stored` / `bucket missing` | green / yellow | Sourced-table Mega only. Sources uploaded; bucket not yet there. Two stacked lines in the same cell. |
+| `bucket stored` / `sources missing` | green / yellow | Sourced-table Mega only. Bucket uploaded; raw sources not there. |
 | `missing` | yellow | Gap that should have data. In Mega: any past day in the table's date range with no artifact. In local/remote: today for WS tables (live collection expected). |
 | `sources` | green | Source files present. |
 | `buckets` | green | Bucket file present. |

@@ -9,6 +9,8 @@ import { runStatus } from '../tools/data/status/run';
 import { runSync } from '../tools/data/sync/run';
 import { runDedup } from '../tools/data/dedup/run';
 import { runRebucket } from '../tools/data/rebucket/run';
+import { runResort } from '../tools/data/resort/run';
+import { runMergePools } from '../tools/data/merge-pools/run';
 import { input } from '../shared/ui/prompts';
 import { error } from '../shared/ui/logger';
 import { requiredEnv } from '../shared/utils/env';
@@ -172,6 +174,38 @@ export function register(program: Command): void {
         setFromDay(parseFromDay(opts.from ?? null));
 
         await runDedup(root, thresholdMs, windowMillions);
+      } catch (err) {
+        error((err as Error).message);
+        process.exit(1);
+      }
+    });
+
+  data
+    .command('resort [path]')
+    .description('Re-sort symbol-major flat buckets to timestamp-major with canonical ISO timestamps; writes <original>.resorted.csv.gz siblings')
+    .action(async (pathArg: string | undefined, _options: object, command: Command) => {
+      try {
+        const root = resolvePath(pathArg ?? await input('Path:', vaultDir()));
+        const opts = command.optsWithGlobals<GlobalOpts>();
+
+        setDryRun(opts.dryRun ?? false);
+        setFromDay(parseFromDay(opts.from ?? null));
+
+        await runResort(root);
+      } catch (err) {
+        error((err as Error).message);
+        process.exit(1);
+      }
+    });
+
+  data
+    .command('merge-pools [path]')
+    .description('One-time: merge <day>.primary + <day>.secondary quote sources into <day>.merged.csv.gz (symbol-major, pool column); originals untouched')
+    .action(async (pathArg: string | undefined) => {
+      try {
+        const root = resolvePath(pathArg ?? await input('Path:', vaultDir()));
+
+        await runMergePools(root);
       } catch (err) {
         error((err as Error).message);
         process.exit(1);

@@ -119,13 +119,17 @@ async function processFile(
 
 /**
  * A `.csv.gz` file is a dedup candidate when it belongs to a dedup-eligible
- * table, is not itself a `.dedup.csv.gz` output, and has not already been
- * deduped (no sibling output exists). `exists` is injected for testing.
+ * table (per-pool pseudo-tables inherit their base's eligibility:
+ * `orderBookL2.secondary` ≡ `orderBookL2`), is not itself a `.dedup.csv.gz`
+ * output, and has not already been deduped (no sibling output exists).
+ * `exists` is injected for testing.
  */
 function isDedupCandidate(filePath: string, exists: (p: string) => boolean): boolean {
-  if (! DEDUP_TABLES.has(tableNameFromPath(filePath))) return false;
-  if (filePath.endsWith('.dedup.csv.gz'))              return false;
-  if (exists(dedupOutputPath(filePath)))               return false;
+  const base = tableNameFromPath(filePath).split('.')[0]!;
+
+  if (! DEDUP_TABLES.has(base))           return false;
+  if (filePath.endsWith('.dedup.csv.gz')) return false;
+  if (exists(dedupOutputPath(filePath)))  return false;
 
   return true;
 }

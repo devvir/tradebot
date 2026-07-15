@@ -9,8 +9,19 @@ export const KNOWN_TABLES = new Set([
   'instrument',
   'liquidation',
   'orderBookL2',
+  'orderBookL2.secondary',
   'publicNotifications',
 ]);
+
+/**
+ * A per-pool pseudo-table shares everything with its base table — columns,
+ * gap threshold, partial semantics, dedup rules (`orderBookL2.secondary` ≡
+ * `orderBookL2`). Config lookups fall back to the base name when the full
+ * name has no entry.
+ */
+export function baseTable(tableName: string): string {
+  return tableName.split('.')[0]!;
+}
 
 // Source of truth for table column definitions.
 // Resolves from our own `dist/` to vault's `dist/` — both packages must be built.
@@ -89,17 +100,23 @@ function tableConfigs(): Record<string, TableConfig> {
 
 // ── Existing API (kept for fix, merge, checks) ────────────────────────────────
 
-/** Returns the config for a known table, or a safe default for unknown ones. */
+/** Returns the config for a known table (or its base table), or a safe default. */
 export function getTableConfig(tableName: string): TableConfig {
-  return tableConfigs()[tableName] ?? { timestampCol: null, gapThresholdMs: null };
+  return tableConfigs()[tableName]
+    ?? tableConfigs()[baseTable(tableName)]
+    ?? { timestampCol: null, gapThresholdMs: null };
 }
 
 /**
- * Returns the authoritative column list for a table from vault's TABLE_HEADERS,
- * or null when the table is unknown.
+ * Returns the authoritative column list for a table from vault's TABLE_HEADERS
+ * (falling back to the base table for per-pool pseudo-tables), or null when
+ * the table is unknown.
  */
 export function getVaultColumns(tableName: string): string[] | null {
-  return _columnOverrides.get(tableName) ?? tableHeaders()[tableName] ?? null;
+  return _columnOverrides.get(tableName)
+    ?? tableHeaders()[tableName]
+    ?? tableHeaders()[baseTable(tableName)]
+    ?? null;
 }
 
 // ── Prepare pipeline API ──────────────────────────────────────────────────────
@@ -114,7 +131,7 @@ const FIXED_PARTIAL_TABLES: ReadonlySet<string> = new Set([
 
 /** True for tables whose source partials are noise — READ drops them, HEADER writes synthetic one. */
 export function hasFixedPartials(tableName: string): boolean {
-  return FIXED_PARTIAL_TABLES.has(tableName);
+  return FIXED_PARTIAL_TABLES.has(baseTable(tableName));
 }
 
 /**
@@ -126,7 +143,7 @@ export function hasFixedPartials(tableName: string): boolean {
  * classify tables identically.
  */
 export function allowsSimplifiedParsing(tableName: string): boolean {
-  return ! FREE_TEXT_TABLES.has(tableName);
+  return ! FREE_TEXT_TABLES.has(baseTable(tableName));
 }
 
 /**

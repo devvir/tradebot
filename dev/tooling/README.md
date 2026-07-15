@@ -600,6 +600,7 @@ Manage vault data: prepare raw WS source files, sync with remotes and Mega, insp
 ```bash
 ./tools data prepare [path] [-D] [--log <dir>] [--from <date>] [-C <n>]
 ./tools data recover [path] [-D]
+./tools data resort  [path] [-D] [--from <date>]
 ./tools data status
 ./tools data sync   [--from <date>] [--log <dir>] [-C <n>] [-y]
 ./tools data                        # interactive menu
@@ -656,6 +657,28 @@ See [DATA-RECOVER.md](../../docs/tooling/DATA-RECOVER.md) for recovery details.
 
 ---
 
+### `data resort`
+
+Re-sorts collected (non-WS) flat buckets from symbol-major to timestamp-major,
+normalizing timestamps to canonical ISO (`YYYY-MM-DDTHH:MM:SS.mmmZ`). Targets
+BitMEX S3 daily buckets and scribe REST buckets (`trade`, `quote`, `tick`,
+`compositeIndex`). Never touches the source: writes a `<name>.resorted.csv.gz`
+sibling (`.tmp` while in progress), verified by row count before the rename.
+Files already sorted and canonical are clean-copied; files with a `.resorted`
+sibling are skipped, so re-runs resume cleanly. WS-structured files (`_date_`
+first column) are skipped — they are message-shaped and must go through
+`data prepare` instead.
+
+```bash
+./tools data resort quote -D                 # dry-run: verdicts only
+./tools data resort quote/2026
+./tools data resort trade --from 2026-04-01
+```
+
+See [DATA-RESORT.md](../../docs/tooling/DATA-RESORT.md) for design and rationale.
+
+---
+
 ### `data status`
 
 Read-only audit. Scans local disk, all configured remotes, and Mega cold storage; prints a wide per-table grid showing what's where. Nothing is written or prompted.
@@ -670,7 +693,7 @@ See [DATA-STATUS.md](../../docs/tooling/DATA-STATUS.md) for grid layout and voca
 
 ### `data sync`
 
-Scans the vault, identifies files that exist but haven't completed their pipeline journey, and offers to move them along. Tasks in order: clean rsync temps → pull from remotes → back up sources to Mega → prepare → back up buckets to Mega → cleanup. Each task is previewed before execution with a `[Y/n/a]` prompt.
+Scans the vault, identifies files that exist but haven't completed their pipeline journey, and offers to move them along. Tasks in order: clean rsync temps → pull from remotes → back up sources to Mega → prepare → resort (suffixed trade/quote sources → ts-major buckets) → back up buckets to Mega → cleanup. Each task is previewed before execution with a `[Y/n/a]` prompt.
 
 ```bash
 ./tools data sync

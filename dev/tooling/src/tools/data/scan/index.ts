@@ -122,10 +122,12 @@ function buildTables(
 
   for (const t of ALL_TABLES) {
     states.set(t.name, {
-      name:     t.name,
-      origin:   t.origin,
-      days:     new Map(),
-      megaTars: [],
+      name:           t.name,
+      origin:         t.origin,
+      sourced:        t.sourced,
+      days:           new Map(),
+      megaBucketTars: [],
+      megaSourceTars: [],
     });
   }
 
@@ -162,10 +164,16 @@ function buildTables(
     day.megaBucket = true;
   }
 
-  for (const t of mega.tars) {
+  for (const t of mega.bucketTars) {
     const state = states.get(t.table);
 
-    if (state) state.megaTars.push(t.year);
+    if (state) state.megaBucketTars.push(t.year);
+  }
+
+  for (const t of mega.sourceTars) {
+    const state = states.get(t.table);
+
+    if (state) state.megaSourceTars.push(t.year);
   }
 
   for (const e of database) {
@@ -175,7 +183,8 @@ function buildTables(
   }
 
   for (const state of states.values()) {
-    state.megaTars.sort((a, b) => a - b);
+    state.megaBucketTars.sort((a, b) => a - b);
+    state.megaSourceTars.sort((a, b) => a - b);
 
     for (const day of state.days.values()) {
       day.localSuffixes.sort();
@@ -230,6 +239,9 @@ function applyFromFilter(states: Map<string, TableState>): void {
       if (day < cut) state.days.delete(day);
     }
 
-    state.megaTars = state.megaTars.filter(y => y >= Number(cut.slice(0, 4)));
+    const cutYear = Number(cut.slice(0, 4));
+
+    state.megaBucketTars = state.megaBucketTars.filter(y => y >= cutYear);
+    state.megaSourceTars = state.megaSourceTars.filter(y => y >= cutYear);
   }
 }

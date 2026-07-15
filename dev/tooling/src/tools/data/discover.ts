@@ -58,20 +58,24 @@ export function parseFromDay(raw: string | null | undefined): string | null {
  * Throws when the resolved dir does not exist. Returns `[]` (no error) when
  * the dir is valid but contains nothing matching. Applies the `fromDay()`
  * filter to the result.
+ *
+ * `tables` is the set of directory names recognized as tables. It defaults to
+ * `KNOWN_TABLES`; a subcommand that handles additional tables (e.g. resort's
+ * flat REST/S3 tables) passes its own extended set — other callers are unaffected.
  */
-export function resolveCsvGzFiles(absPath: string): string[] {
+export function resolveCsvGzFiles(absPath: string, tables: ReadonlySet<string> = KNOWN_TABLES): string[] {
   const normalized = absPath.replace(/\/+$/, '') || absPath;
   const last       = path.basename(normalized);
   const last2      = path.basename(path.dirname(normalized));
   const last3      = path.basename(path.dirname(path.dirname(normalized)));
 
   const files = (() => {
-    if (KNOWN_TABLES.has(last3) && /^\d{4}$/.test(last2))    return resolvePattern3(normalized, last);
-    if (KNOWN_TABLES.has(last2) && /^\d{1,3}$/.test(last))   return resolvePattern4a(normalized, last);
-    if (KNOWN_TABLES.has(last2) && /^\d{4}$/.test(last))     return resolvePattern4b(normalized);
-    if (KNOWN_TABLES.has(last))                              return resolvePattern5(normalized);
+    if (tables.has(last3) && /^\d{4}$/.test(last2))    return resolvePattern3(normalized, last);
+    if (tables.has(last2) && /^\d{1,3}$/.test(last))   return resolvePattern4a(normalized, last);
+    if (tables.has(last2) && /^\d{4}$/.test(last))     return resolvePattern4b(normalized);
+    if (tables.has(last))                              return resolvePattern5(normalized);
 
-    return resolvePattern6(normalized);
+    return resolvePattern6(normalized, tables);
   })();
 
   return applyFromDayFilter(files);
@@ -135,11 +139,11 @@ function resolvePattern5(normalized: string): string[] {
   return listYearDirs(normalized).flatMap(listCsvGz);
 }
 
-function resolvePattern6(normalized: string): string[] {
+function resolvePattern6(normalized: string, tables: ReadonlySet<string>): string[] {
   ensureDir(normalized);
 
   const tableDirs = fs.readdirSync(normalized, { withFileTypes: true })
-    .filter(e => e.isDirectory() && KNOWN_TABLES.has(e.name))
+    .filter(e => e.isDirectory() && tables.has(e.name))
     .map(e => path.join(normalized, e.name));
 
   return tableDirs.flatMap(t => listYearDirs(t).flatMap(listCsvGz));

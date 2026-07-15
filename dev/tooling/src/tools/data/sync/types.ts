@@ -58,6 +58,28 @@ export interface PrepareTask extends AbnormalFlag {
   groups: PrepareGroup[];
 }
 
+// ── Resort ────────────────────────────────────────────────────────────────────
+
+export interface ResortFile {
+  table:        string;
+  year:         string;
+  day:          string;
+  suffix:       string;      // origin stamp: 's3' (courier) or 'rest' (scribe)
+  sourcePath:   string;      // <day>.<suffix>.csv.gz — never touched
+  resortedPath: string;      // <day>.<suffix>.resorted.csv.gz — resort's output
+  bucketPath:   string;      // <day>.csv.gz — the promoted final bucket
+}
+
+/**
+ * Symbol-major stamped sources (`.s3`/`.rest`) whose day has no bucket yet:
+ * run `data resort` on each, then promote the verified output to the bucket
+ * name so backup-bucket / cleanup see a normal bucket.
+ */
+export interface ResortTask extends AbnormalFlag {
+  kind:  'resort';
+  files: ResortFile[];
+}
+
 // ── Backup ────────────────────────────────────────────────────────────────────
 
 export interface BackupSourceFile {
@@ -147,6 +169,7 @@ export type Task =
   | CleanRsyncTempsTask
   | PullTask
   | PrepareTask
+  | ResortTask
   | BackupSourceTask
   | BackupBucketTask
   | CleanupTask

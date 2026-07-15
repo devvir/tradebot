@@ -110,52 +110,61 @@ describe('remoteState', () => {
 
 // ── megaState ─────────────────────────────────────────────────────────────────
 
+const UNSOURCED = false;
+const SOURCED   = true;
+const BUCKET    = true;
+const SOURCES   = true;
+const NONE      = false;
+
 describe('megaState', () => {
-  it('hasTar → stored regardless of other state', () => {
-    expect(megaState(undefined, 'rest', 'today', true)).toEqual({ kind: 'stored' });
-    expect(megaState(undefined, 'ws',   'today', true)).toEqual({ kind: 'stored' });
+  // ── unsourced (bucket is the only artifact) ──────────────────────────────────
+
+  it('unsourced + bucket → stored', () => {
+    expect(megaState(BUCKET, NONE, UNSOURCED, 'past')).toEqual({ kind: 'stored' });
   });
 
-  it('REST + hasBucket → stored', () => {
-    expect(megaState(ds({ megaBucket: true }), 'rest', 'past', false)).toEqual({ kind: 'stored' });
+  it('unsourced + no bucket + past day → missing', () => {
+    expect(megaState(NONE, NONE, UNSOURCED, 'past')).toEqual({ kind: 'missing' });
   });
 
-  it('REST + no bucket + past day → missing', () => {
-    expect(megaState(ds(), 'rest', 'past', false)).toEqual({ kind: 'missing' });
+  it('unsourced + no bucket + today → absent', () => {
+    expect(megaState(NONE, NONE, UNSOURCED, 'today')).toEqual({ kind: 'absent' });
   });
 
-  it('REST + no bucket + today → absent', () => {
-    expect(megaState(ds(), 'rest', 'today', false)).toEqual({ kind: 'absent' });
+  it('unsourced + no bucket + pending → absent (mega not expected yet)', () => {
+    expect(megaState(NONE, NONE, UNSOURCED, 'pending')).toEqual({ kind: 'absent' });
   });
 
-  it('REST + no bucket + pending → absent (mega not expected yet)', () => {
-    expect(megaState(ds(), 'rest', 'pending', false)).toEqual({ kind: 'absent' });
+  it('unsourced ignores sources (bucket is the only artifact)', () => {
+    expect(megaState(NONE, SOURCES, UNSOURCED, 'past')).toEqual({ kind: 'missing' });
   });
 
-  it('WS + bucket + sources → stored', () => {
-    expect(megaState(ds({ megaBucket: true, megaSources: ['.local'] }), 'ws', 'past', false)).toEqual({ kind: 'stored' });
+  // ── sourced (both bucket and sources expected) ───────────────────────────────
+
+  it('sourced + bucket + sources → stored', () => {
+    expect(megaState(BUCKET, SOURCES, SOURCED, 'past')).toEqual({ kind: 'stored' });
   });
 
-  it('WS + neither + past day → missing', () => {
-    expect(megaState(ds(), 'ws', 'past', false)).toEqual({ kind: 'missing' });
+  it('sourced + neither + past day → missing', () => {
+    expect(megaState(NONE, NONE, SOURCED, 'past')).toEqual({ kind: 'missing' });
   });
 
-  it('WS + neither + today → absent', () => {
-    expect(megaState(ds(), 'ws', 'today', false)).toEqual({ kind: 'absent' });
+  it('sourced + neither + today → absent', () => {
+    expect(megaState(NONE, NONE, SOURCED, 'today')).toEqual({ kind: 'absent' });
   });
 
-  it('WS + neither + pending → absent (mega not expected yet)', () => {
-    expect(megaState(ds(), 'ws', 'pending', false)).toEqual({ kind: 'absent' });
+  it('sourced + neither + pending → absent (mega not expected yet)', () => {
+    expect(megaState(NONE, NONE, SOURCED, 'pending')).toEqual({ kind: 'absent' });
   });
 
-  it('WS + bucket only → half: bucket stored, sources missing', () => {
-    expect(megaState(ds({ megaBucket: true }), 'ws', 'past', false)).toEqual({
+  it('sourced + bucket only → half: bucket stored, sources missing', () => {
+    expect(megaState(BUCKET, NONE, SOURCED, 'past')).toEqual({
       kind: 'half', bucket: 'stored', sources: 'missing',
     });
   });
 
-  it('WS + sources only → half: bucket missing, sources stored', () => {
-    expect(megaState(ds({ megaSources: ['.local'] }), 'ws', 'past', false)).toEqual({
+  it('sourced + sources only → half: bucket missing, sources stored (trade/quote 2014-2017)', () => {
+    expect(megaState(NONE, SOURCES, SOURCED, 'past')).toEqual({
       kind: 'half', bucket: 'missing', sources: 'stored',
     });
   });

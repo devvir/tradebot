@@ -166,16 +166,17 @@ describe('clock and drop condition', () => {
     const ahead  = addMs(base, 1000);
     const s      = stats();
 
-    // clock = base+1000, threshold = 1000. base < base+1000-1000 = base → false (not strictly less)
-    // So exactly at boundary: NOT dropped (< not <=).
+    // clock = base+1000, threshold = 1000. base <= base+1000-1000 = base → true.
+    // The boundary is inclusive (<=): with -T0 this is what catches co-temporal
+    // (ts == clock) collector block re-delivery.
     const out = await collect(prune(batches([
       msg(base,  base,  'X'),
       msg(ahead, ahead, 'Y'),  // clock = base+1000
-      msg(ahead, base,  'X'),  // ts=base, clock-threshold=base → base < base is false → kept
+      msg(ahead, base,  'X'),  // ts=base, clock-threshold=base → base <= base → dropped
     ]), 1000, s, TS_IDX));
 
-    expect(out).toHaveLength(3);
-    expect(s.dropped).toBe(0);
+    expect(out).toHaveLength(2);
+    expect(s.dropped).toBe(1);
   });
 
   it('duplicate 1ms past the threshold boundary is dropped', async () => {

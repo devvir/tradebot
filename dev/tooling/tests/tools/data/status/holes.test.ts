@@ -5,11 +5,11 @@ import type { TableState } from '../../../../src/tools/data/scan/types';
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function wsTable(name = 'orderBookL2'): TableState {
-  return { name, origin: 'ws', days: new Map(), megaTars: [] };
+  return { name, origin: 'ws', sourced: true, days: new Map(), megaBucketTars: [], megaSourceTars: [] };
 }
 
 function restTable(name = 'settlement'): TableState {
-  return { name, origin: 'rest', days: new Map(), megaTars: [] };
+  return { name, origin: 'rest', sourced: false, days: new Map(), megaBucketTars: [], megaSourceTars: [] };
 }
 
 afterEach(() => vi.restoreAllMocks());
@@ -87,13 +87,15 @@ describe('computeHoles — settlement rule', () => {
     expect(result.notes.some(n => n.toLowerCase().includes('settlement'))).toBe(true);
   });
 
-  it('adds a fail caption and fills nothing when fetch fails', async () => {
+  it('adds a fail caption and fills the whole span when fetch fails', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network error')));
 
     const result = await computeHoles('settlement', restTable(), '20260101', '20260110');
 
-    expect(result.filled.size).toBe(0);
-    expect(result.notes.some(n => n.includes('Failed to fetch'))).toBe(true);
+    // Fetch failed → assume nothing is missing for this sparse table: every day
+    // in the span is filled, and the fail caption surfaces the assumption.
+    expect(result.filled.size).toBe(10);
+    expect(result.notes.some(n => n.includes('could not fetch'))).toBe(true);
   });
 
   it('does not apply to non-settlement tables', async () => {
@@ -147,7 +149,7 @@ describe('computeHoles — settlement rule', () => {
     expect(result.filled.has('20260109')).toBe(true);   // non-settlement — filled
   });
 
-  it('returns null and fail caption when a mid-pagination page fails', async () => {
+  it('fills the whole span with the fail caption when a mid-pagination page fails', async () => {
     const page1 = Array.from({ length: 500 }, () => ({ timestamp: '2017-01-01T12:00:00.000Z' }));
 
     vi.stubGlobal('fetch', vi.fn()
@@ -156,8 +158,10 @@ describe('computeHoles — settlement rule', () => {
 
     const result = await computeHoles('settlement', restTable(), '20260101', '20260110');
 
-    expect(result.filled.size).toBe(0);
-    expect(result.notes.some(n => n.includes('Failed to fetch'))).toBe(true);
+    // Partial coverage is discarded (it would mis-mark real settlement days in
+    // the un-fetched range) — same assume-nothing-missing fallback as a full failure.
+    expect(result.filled.size).toBe(10);
+    expect(result.notes.some(n => n.includes('could not fetch'))).toBe(true);
   });
 });
 

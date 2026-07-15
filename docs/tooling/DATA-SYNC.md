@@ -11,21 +11,24 @@
 Four one-way flows plus an optional local cleanup step. Remotes are pull-only; Mega is push-only.
 
 ```
-remote(s)  ──pull──▶  local sources  ──prepare──▶  local buckets  ──(delete)──▶  ∅
-                            │                             │
-                        back up                      back up
-                            │                             │
-                            ▼                             ▼
-                       Mega raw                     Mega vault
+remote(s)  ──pull──▶  local sources  ──prepare / resort──▶  local buckets  ──(delete)──▶  ∅
+                            │                                     │
+                        back up                              back up
+                            │                                     │
+                            ▼                                     ▼
+                       Mega raw                             Mega vault
 ```
 
 | Flow | What moves | Direction |
 |---|---|---|
 | **pull** | WS source files from remote → local | pull-only |
-| **back up sources** | Local WS sources → `SOURCES_MEGA_RAW` | push-only |
+| **back up sources** | Local sources (WS + suffixed trade/quote) → `SOURCES_MEGA_RAW` | push-only |
 | **prepare** | Local WS sources → local bucket | local |
+| **resort** | Local suffixed trade/quote sources → local bucket (ts-major) | local |
 | **back up buckets** | Local buckets → `SOURCES_MEGA_VAULT` | push-only |
 | **delete local buckets** | Local buckets already in Mega → deleted | local, optional |
+
+Suffixed trade/quote files (`.s3` from courier, `.rest` from scribe) are **sources**, exactly like WS `.local`/`.antel`: symbol-major originals that archive to Mega raw untouched, while `data resort` turns them into the timestamp-major bucket the day is served from.
 
 ---
 
@@ -41,7 +44,7 @@ After scanning, `deriveTasks(state, mode)` walks the `VaultState` and produces a
 
 There are two derivation modes:
 
-- **`planned`** — used once at startup to print the summary. Tasks are forward-looking: `backup-source` includes suffixes that will arrive via pull (marked `fromPull`); `backup-bucket` includes buckets that will arrive via prepare (marked `fromPrepare`); `cleanup` includes everything post-pipeline. The counts reflect "if everything you're about to run succeeds".
+- **`planned`** — used once at startup to print the summary. Tasks are forward-looking: `backup-source` includes suffixes that will arrive via pull (marked `fromPull`); `backup-bucket` includes buckets that will arrive via prepare or resort (marked `fromPrepare`); `cleanup` includes everything post-pipeline. The counts reflect "if everything you're about to run succeeds".
 - **`live`** — used right before showing each task in the interactive loop, after refreshing the local-disk state. Predictive flags are off; a file is in the task only if it actually exists on disk now. If a prior task was skipped, failed, or is stubbed, its phantom outputs naturally drop out of the next task's view.
 
 The summary shows the planned counts, the interactive prompt shows the live ones — so the prompt always reflects reality, but the summary still tells you what the full run would do.
@@ -53,7 +56,7 @@ Right before showing each task that consumes a prior task's output, the interact
 | Task | What's refreshed |
 |---|---|
 | `clean-rsync-temps`, `pull` | nothing — first in the pipeline, nothing earlier could have changed |
-| `backup-source`, `prepare`, `backup-bucket` | local disk only — `scanLocal` is re-run and overlaid onto the existing state via `refreshLocal(state)` |
+| `backup-source`, `prepare`, `resort`, `backup-bucket` | local disk only — `scanLocal` is re-run and overlaid onto the existing state via `refreshLocal(state)` |
 | `cleanup` | full re-scan (local + remotes + Mega via `scanAll`) — cleanup decisions depend on which sources still exist on remotes and which buckets actually made it to Mega |
 | `delete-local-buckets` | full re-scan — needs current Mega state to ensure it only proposes buckets that are actually there |
 
@@ -73,9 +76,9 @@ rsync -az --ignore-existing <user>@<host>:<path>/<table>/<year>/<file> <local-pa
 
 Progress is printed per file (`Pulling <table>/<year>/<day>.<suffix>.csv.gz`) so long-running rsyncs are visible.
 
-### 2. Back up sources (WS only)
+### 2. Back up sources (WS + suffixed trade/quote)
 
-Collect every WS source file that will be local after the pull but is not yet in `SOURCES_MEGA_RAW`. This counts both currently-local suffixes and suffixes that will arrive via pull. Each file carries a `fromPull` flag so the summary can show the breakdown.
+Collect every source file that will be local after the pull but is not yet in `SOURCES_MEGA_RAW`. For WS tables this counts both currently-local suffixes and suffixes that will arrive via pull (each file carries a `fromPull` flag so the summary can show the breakdown). For the resort tables (trade/quote) the suffixed originals are local-only sources — every suffix except resort's own `.resorted` outputs is included.
 
 At execution time, files that aren't on disk (because the pull was skipped or failed) are silently skipped — the next run picks them up. After the upload batch, every file is verified against Mega (see Execution → Upload verification).
 
@@ -91,18 +94,24 @@ Collect every WS day that will have local source files (after pull) but has no b
 
 This ensures incomplete days are never silently prepared in unattended runs, and are always visible when running manually.
 
-### 4. Back up buckets (WS and REST)
+### 4. Resort (trade/quote)
 
-Collect every bucket that will exist locally after prepare runs but is not yet in `SOURCES_MEGA_VAULT`. A day whose only local bucket is a `.csv.gz.tmp` (still being written) is not collected — it's not a finalised bucket yet. This includes:
+Collect every day in the resort tables (`trade`, `quote`) that has exactly one suffixed source (any suffix except `.resorted`; `.tmp` files are excluded by the scan) and no bucket anywhere. Execution runs `data resort` on each source file (spawned like prepare, output streaming live), then **promotes** the verified `<day>.<sfx>.resorted.csv.gz` to the bucket name `<day>.csv.gz` — from there the normal backup-bucket / cleanup flows apply. The source file is never touched.
+
+A day with **more than one** suffixed source is ambiguous (which output becomes the bucket?): it is left out of the task and flagged abnormal for manual resolution. Resume-friendly: a `.resorted` file left by an interrupted run is promoted without re-sorting, and failed days are simply retried on the next run.
+
+### 5. Back up buckets (WS and REST)
+
+Collect every bucket that will exist locally after prepare and resort run but is not yet in `SOURCES_MEGA_VAULT`. A day whose only local bucket is a `.csv.gz.tmp` (still being written) is not collected — it's not a finalised bucket yet. This includes:
 
 - Buckets currently on disk under `<year>/` (`fromPrepare: false`)
-- WS days that the prepare task will produce a bucket for (`fromPrepare: true`)
+- WS days that the prepare task will produce a bucket for, and resort-table days the resort task will promote a bucket for (`fromPrepare: true`)
 
-Each file carries a `fromPrepare` flag so the summary can show the breakdown. Applies to both WS and REST (REST never has `fromPrepare: true`).
+Each file carries a `fromPrepare` flag so the summary can show the breakdown.
 
 At execution time, predicted-prepare files that aren't on disk yet are silently skipped — the next run picks them up. After the upload batch, every file is verified against Mega (see Execution → Upload verification).
 
-### 5. Delete local buckets (optional)
+### 6. Delete local buckets (optional)
 
 Find local buckets that are already present in `SOURCES_MEGA_VAULT` — their local copy is now redundant. Groups them by `(table, year)` and prompts once per range.
 
@@ -154,8 +163,8 @@ The last task in the pipeline. Sources that have completed their journey are mov
 
 **What gets trashed**, based on **predicted post-pipeline state** (i.e. assuming all prior tasks succeed):
 
-- **Local sources** for a day whose bucket exists (in local, Mega, or will be prepared). Includes suffixes that are currently local *and* suffixes that will be local after pull.
-- **Remote sources** for any day with a bucket somewhere (local or Mega) — the bucket made these sources redundant.
+- **Local sources** for a day whose bucket exists (in local, Mega, or will be prepared/resorted). For WS tables this includes suffixes that are currently local *and* suffixes that will be local after pull; for the resort tables it's the suffixed originals, superseded by the promoted bucket (and archived in Mega raw).
+- **Remote sources** (WS tables only) for any day with a bucket somewhere (local or Mega) — the bucket made these sources redundant.
 
 **Where they go**:
 

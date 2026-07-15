@@ -15,4 +15,4 @@ const child = spawn(process.execPath, [entry, ...process.argv.slice(2)], {
 
 process.on('SIGINT', () => child.kill('SIGINT'));
 process.on('SIGTERM', () => child.kill('SIGTERM'));
-child.on('exit', (code) => process.exit(code || 0));
+child.on('exit', (code, signal) => process.exit(code ?? (signal ? 1 : 0)));

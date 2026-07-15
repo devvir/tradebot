@@ -247,11 +247,33 @@ quotes are top-of-book only and can't reconstruct aggregated depth.)
 
 ## Data sources — what carries pool
 
-- **Live WS / REST:** the **only** source of per-pool data — book selectable per
-  subscription, `trade`/`quote` per-row tagged. Must capture per-pool going forward.
-- **BitMEX S3 daily dumps:** no `pool` column; both pools mixed and **unlabelled** —
-  pool-blind, cannot be split.
+- **Live WS / REST:** per-pool data — book selectable per subscription,
+  `trade`/`quote` per-row tagged.
+- **BitMEX S3 daily dumps:** carry a `pool` column **since 2026‑07‑14**. Before that
+  (from the pools rollout to 2026‑07‑13) they had no `pool` column; both pools mixed
+  and **unlabelled** — pool-blind, cannot be split. See "trade/quote S3 pool gap" below.
 - **tardis.dev:** `orderBookL2` rides BitMEX's Aggregated default — no per-pool data.
+
+## trade/quote S3 pool gap (mid‑Apr → 2026‑07‑13) and the REST rate-limit episode
+
+When BitMEX rolled out the pools they forgot to add the `pool` column to the daily
+trade/quote S3 buckets, which made those buckets useless for the whole missing-pool
+period: records from both pools mixed with no way to attribute them. They fixed it on
+**2026‑07‑14** — S3 buckets carry `pool` from that day on.
+
+Consequences for collection:
+
+- **The gap (mid‑April → 2026‑07‑13) is backfilled via REST** with scribe (`.rest`
+  source files), which is pool-aware. This is a one-time fill: once scribe finishes
+  those days it **retires from trade/quote permanently**.
+- **REST is not viable as an ongoing path.** BitMEX banned the account even while
+  honoring their documented 180 req/m limit. The ban was resolved amicably, but they
+  asked to stay under **3 req/m** — far below what realtime trade/quote collection
+  needs, so REST is reserved for the backfill only.
+- **Steady state: courier downloads the daily S3 buckets** (`.s3` source files) as
+  BitMEX prepares them. Like WS tables, these are *sources* — symbol-major, resorted
+  to ts-major buckets by `tools data resort` (trade/quote are `sourced` tables in the
+  vault tooling; see docs/tooling/DATA-STATUS.md).
 
 ## The already-collected Aggregated window (lost at the pool level)
 
@@ -285,6 +307,9 @@ non-executable aggregate. (On dup dates, dedup on `(id, transactTime)` first.)
   still Primary on 2026‑05‑01 and fully Aggregated by 2026‑05‑14 (exact per-table flip
   ≈ 2026‑05‑06; pin it from `data.pool` of the first/last doc per day if needed).
 - **2026‑05‑19** (prod) — `pool` populated on WS subscribe acks.
+- **2026‑07‑14** — `pool` column added to the daily trade/quote S3 buckets. Buckets
+  from the pools rollout through 2026‑07‑13 remain pool-blind (REST-backfilled via
+  scribe; see "trade/quote S3 pool gap").
 
 ## Open / to confirm
 

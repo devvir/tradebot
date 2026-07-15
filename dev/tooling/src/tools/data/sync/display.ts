@@ -8,6 +8,7 @@ import {
   DeleteLocalBucketsTask,
   PrepareTask,
   PullTask,
+  ResortTask,
   Task,
 } from './types';
 
@@ -45,6 +46,7 @@ function summaryLine(task: Task): string {
   if (task.kind === 'pull')                 return pullSummary(task);
   if (task.kind === 'backup-source')        return backupSourceSummary(task);
   if (task.kind === 'prepare')              return prepareSummary(task);
+  if (task.kind === 'resort')               return resortSummary(task);
   if (task.kind === 'backup-bucket')        return backupBucketSummary(task);
   if (task.kind === 'delete-local-buckets') return deleteLocalBucketsSummary(task);
 
@@ -93,6 +95,13 @@ function prepareSummary(task: PrepareTask): string {
   const tableCount = new Set(task.groups.map(g => g.table)).size;
 
   return `${C.bold}${dayCount}${C.reset} date${dayCount === 1 ? '' : 's'} for ${tableCount} table${tableCount === 1 ? '' : 's'} can be prepared (sources → bucket)`;
+}
+
+function resortSummary(task: ResortTask): string {
+  const tables = countDistinctTables(task.files);
+  const n      = task.files.length;
+
+  return `${C.bold}${n}${C.reset} date${n === 1 ? '' : 's'} for ${tables} table${tables === 1 ? '' : 's'} can be resorted (source → ts-major bucket)`;
 }
 
 function backupBucketSummary(task: BackupBucketTask): string {
@@ -174,7 +183,11 @@ export function printPreview(task: Task): void {
     return;
   }
 
-  if (task.kind === 'pull') {
+  if (task.kind === 'resort') {
+    task.files.slice(0, MAX_PREVIEW).forEach(f => {
+      console.log(`  ${C.dim}${f.table}/${f.year}/${C.reset}${f.day}.${f.suffix}.csv.gz ${C.dim}→${C.reset} ${f.day}.csv.gz`);
+    });
+  } else if (task.kind === 'pull') {
     task.files.slice(0, MAX_PREVIEW).forEach(f => {
       console.log(`  ${C.dim}${f.table}/${f.year}/${C.reset}${f.day}.${f.suffix}.csv.gz`);
     });

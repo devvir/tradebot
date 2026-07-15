@@ -74,9 +74,8 @@ const TABLE_START: Record<string, string> = {
   tick:           '20141106',
   trade:          '20141122',
 
-  // Secondary liquidity pool — first data mid-April 2026
-  'quote.secondary': '20260414',
-  'trade.secondary': '20260416',
+  // Secondary pool's book — own per-pool WS client since the 2026-07-15 pool split
+  'orderBookL2.secondary': '20260715',
 };
 
 const PRE_HISTORY_RULES: SyncHoleRule[] = Object.entries(TABLE_START).map(([table, start]) => ({
@@ -94,17 +93,13 @@ const COMPOSITEINDEX_MISSING_DAYS = new Set([
   '20190106', '20190107', '20230313', '20230314', '20230315',
 ]);
 
-// trade.secondary: the Secondary pool was barely active in its first days, with
-// no trades at all on these dates. quote.secondary has no such gaps.
-const TRADE_SECONDARY_MISSING_DAYS = new Set([
-  '20260417', '20260419', '20260420', '20260421',
-]);
-
 const RULES: HoleRule[] = [
   {
     kind:      'sync',
+    // Only WS tables that predate WS bucketing — a late-start WS table (e.g.
+    // orderBookL2.secondary) has no Tardis era; its pre-history rule covers it.
     caption:   `WS tables: only first day of each month exists before ${dashed(WS_BUCKETING_START)} (from Tardis).`,
-    appliesTo: (_table, origin) => origin === 'ws',
+    appliesTo: (table, origin) => origin === 'ws' && (TABLE_START[table] ?? '') < WS_BUCKETING_START,
     isFilled:  (day, _state) => day < WS_BUCKETING_START && day.slice(6, 8) !== '01',
   },
   {
@@ -126,12 +121,6 @@ const RULES: HoleRule[] = [
     failCaption: 'Settlement: could not fetch dates from BitMEX — assuming nothing is missing for this sparse table.',
     appliesTo:   (table) => table === 'settlement',
     buildFilled: (fromDay, toDay) => fetchSettlementFills(fromDay, toDay),
-  },
-  {
-    kind:      'sync',
-    caption:   'trade.secondary: Secondary pool barely active at launch — no trades on 2026-04-17/19/20/21.',
-    appliesTo: (table) => table === 'trade.secondary',
-    isFilled:  (day) => TRADE_SECONDARY_MISSING_DAYS.has(day),
   },
 ];
 

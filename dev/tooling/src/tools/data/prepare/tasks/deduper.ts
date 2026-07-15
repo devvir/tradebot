@@ -1,4 +1,5 @@
 import { debug } from '../../../../shared/ui/logger';
+import { baseTable } from '../../tables';
 import { contentKey } from '../../content-key';
 import type { Action, DedupConfig, DedupHandler, DedupStore, KeyStore, PreparedMessage } from '../types';
 
@@ -76,8 +77,16 @@ export async function* dedup(
 
 // ── Dedup store ───────────────────────────────────────────────────────────────
 
-function createDedupStore(tableName: keyof typeof TABLE_CONFIG): DedupStore {
-  const { globalLimit, updateLimit, updateWindow } = TABLE_CONFIG[tableName];
+function createDedupStore(tableName: string): DedupStore {
+  // Per-pool pseudo-tables inherit their base table's rules
+  // (`orderBookL2.secondary` ≡ `orderBookL2`).
+  const config = TABLE_CONFIG[tableName] ?? TABLE_CONFIG[baseTable(tableName)];
+
+  if (! config) {
+    throw new Error(`No dedup config for table "${tableName}" (base "${baseTable(tableName)}")`);
+  }
+
+  const { globalLimit, updateLimit, updateWindow } = config;
 
   const handlers: Record<Partial<Action>, DedupHandler> = {
     partial: storeHandler(globalLimit),

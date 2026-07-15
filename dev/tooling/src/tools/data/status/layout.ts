@@ -98,12 +98,12 @@ function buildTableRanges(
   inGraceWindow:   boolean,
   holes:           HoleResult,
 ): Range[] {
-  const startYear = computeStartYear(table);
-  const isWs      = table.origin === 'ws';
-  const tarSet    = new Set(table.megaTars);
+  const startYear    = computeStartYear(table);
+  const bucketTarSet = new Set(table.megaBucketTars);
+  const sourceTarSet = new Set(table.megaSourceTars);
 
   if (! startYear || `${startYear}0101` > yesterday) {
-    return [todayRange(table, today, remoteNames, isWs, tarSet)];
+    return [todayRange(table, today, remoteNames, bucketTarSet, sourceTarSet)];
   }
 
   const walked = buildRanges<CellState[]>({
@@ -112,7 +112,7 @@ function buildTableRanges(
     attrFor:  day => {
       const dayKind: DayKind = inGraceWindow && day === yesterday ? 'pending' : 'past';
 
-      return dayStates(table, day, remoteNames, dayKind, isWs, tarSet);
+      return dayStates(table, day, remoteNames, dayKind, bucketTarSet, sourceTarSet);
     },
     isFilled: day => holes.filled.has(day),
     equal:    statesEqual,
@@ -122,43 +122,48 @@ function buildTableRanges(
     .map(r => ({ startKey: r.start, endKey: r.end, states: r.attr, isToday: false }))
     .filter(r => ! allAbsent(r.states));
 
-  ranges.push(todayRange(table, today, remoteNames, isWs, tarSet));
+  ranges.push(todayRange(table, today, remoteNames, bucketTarSet, sourceTarSet));
 
   return ranges;
 }
 
 function todayRange(
-  table:       TableState,
-  today:       string,
-  remoteNames: string[],
-  isWs:        boolean,
-  tarSet:      Set<number>,
+  table:        TableState,
+  today:        string,
+  remoteNames:  string[],
+  bucketTarSet: Set<number>,
+  sourceTarSet: Set<number>,
 ): Range {
   return {
     startKey: today,
     endKey:   today,
-    states:   dayStates(table, today, remoteNames, 'today', isWs, tarSet),
+    states:   dayStates(table, today, remoteNames, 'today', bucketTarSet, sourceTarSet),
     isToday:  true,
   };
 }
 
 function dayStates(
-  table:       TableState,
-  day:         string,
-  remoteNames: string[],
-  dayKind:     DayKind,
-  isWs:        boolean,
-  tarSet:      Set<number>,
+  table:        TableState,
+  day:          string,
+  remoteNames:  string[],
+  dayKind:      DayKind,
+  bucketTarSet: Set<number>,
+  sourceTarSet: Set<number>,
 ): CellState[] {
-  const ds     = table.days.get(day);
-  const year   = Number(day.slice(0, 4));
-  const hasTar = tarSet.has(year);
+  const ds   = table.days.get(day);
+  const year = Number(day.slice(0, 4));
+  const isWs = table.origin === 'ws';
+
+  // Presence is the same rule for buckets and sources alike: a loose daily
+  // file this year, or that year's tar for prior years.
+  const hasBucket  = (!! ds && ds.megaBucket)             || bucketTarSet.has(year);
+  const hasSources = (!! ds && ds.megaSources.length > 0) || sourceTarSet.has(year);
 
   const cells: CellState[] = [localState(ds, dayKind, isWs)];
 
   for (const rn of remoteNames) cells.push(remoteState(ds, rn, dayKind, isWs));
 
-  cells.push(megaState(ds, table.origin, dayKind, hasTar));
+  cells.push(megaState(hasBucket, hasSources, table.sourced, dayKind));
   cells.push(databaseState(ds, dayKind));
 
   return cells;
@@ -225,7 +230,7 @@ function computeStartYear(table: TableState): number | null {
     if (min === null || y < min) min = y;
   }
 
-  for (const y of table.megaTars) {
+  for (const y of [...table.megaBucketTars, ...table.megaSourceTars]) {
     if (min === null || y < min) min = y;
   }
 

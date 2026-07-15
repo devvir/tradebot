@@ -23,6 +23,7 @@ import {
   DeleteLocalBucketsTask,
   PrepareTask,
   PullTask,
+  ResortTask,
   Task,
 } from './types';
 
@@ -112,6 +113,7 @@ export async function runInteractive(tasks: Task[], state: VaultState): Promise<
 async function liveTaskFor(predicted: Task, state: VaultState): Promise<Task | null> {
   if (predicted.kind === 'backup-source'
       || predicted.kind === 'prepare'
+      || predicted.kind === 'resort'
       || predicted.kind === 'backup-bucket') {
     refreshLocal(state);
 
@@ -158,6 +160,12 @@ async function execute(task: Task, localBase: string): Promise<void> {
 
   if (task.kind === 'prepare') {
     await executePrepare(task, localBase);
+
+    return;
+  }
+
+  if (task.kind === 'resort') {
+    await executeResort(task);
 
     return;
   }
@@ -341,6 +349,67 @@ async function executePrepare(_task: PrepareTask, localBase: string): Promise<vo
 
       resolve();
     });
+  });
+}
+
+/**
+ * Runs `data resort` on each suffixed source (spawned like prepare, so output
+ * streams live and a failure doesn't kill sync), then promotes the verified
+ * `<day>.<sfx>.resorted.csv.gz` to the bucket name `<day>.csv.gz`. The source
+ * file is never touched — backup-source archives it, cleanup trashes it later.
+ * A failed day is reported and skipped; re-running sync resumes it.
+ */
+async function executeResort(task: ResortTask): Promise<void> {
+  let ok   = 0;
+  let fail = 0;
+
+  for (const file of task.files) {
+    if (! fs.existsSync(file.sourcePath)) {
+      info(`  ${file.table}/${file.year}/${file.day}.${file.suffix}.csv.gz ${C.dim}(skipped — not on disk)${C.reset}`);
+      continue;
+    }
+
+    // Resume-friendly: a previous run may have left the .resorted output
+    // (verified by resort before rename) without promoting it.
+    if (! fs.existsSync(file.resortedPath)) {
+      const code = await spawnCli(['data', 'resort', file.sourcePath]);
+
+      if (code !== 0) {
+        warn(`Resort failed for ${file.table}/${file.day} (exit ${code}) — skipped; re-run to retry`);
+        fail++;
+        continue;
+      }
+    }
+
+    try {
+      if (fs.existsSync(file.bucketPath)) {
+        warn(`Bucket already exists for ${file.table}/${file.day} — leaving ${path.basename(file.resortedPath)} in place`);
+        fail++;
+        continue;
+      }
+
+      fs.renameSync(file.resortedPath, file.bucketPath);
+      ok++;
+    } catch (err) {
+      warn(`Promotion failed for ${file.table}/${file.day}: ${(err as Error).message}`);
+      fail++;
+    }
+  }
+
+  if (fail === 0) {
+    success(`Resorted and promoted ${ok} bucket${ok === 1 ? '' : 's'}`);
+  } else {
+    warn(`Resort: ${ok} ok, ${fail} failed — re-run to retry`);
+  }
+}
+
+/** Spawns this CLI with `args`, streaming output; resolves with the exit code. */
+function spawnCli(args: string[]): Promise<number | null> {
+  return new Promise(resolve => {
+    const child = spawn(process.argv[0]!, [process.argv[1]!, ...args], { stdio: 'inherit' });
+
+    child.on('error', () => resolve(-1));
+    child.on('close', code => resolve(code));
   });
 }
 
@@ -661,6 +730,7 @@ function taskLabel(task: Task): string {
   if (task.kind === 'pull')                 return `Pull from ${task.remote}`;
   if (task.kind === 'backup-source')        return 'Back up sources to Mega';
   if (task.kind === 'prepare')              return 'Prepare source files';
+  if (task.kind === 'resort')               return 'Resort sources into buckets';
   if (task.kind === 'backup-bucket')        return 'Back up buckets to Mega';
   if (task.kind === 'delete-local-buckets') return 'Delete local buckets (backed up in Mega)';
 

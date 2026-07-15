@@ -1,4 +1,3 @@
-import { TableOrigin } from '../scan/tables';
 import { DayState } from '../scan/types';
 
 /**
@@ -18,8 +17,8 @@ export type DayKind = 'today' | 'pending' | 'past';
  * Structured per-cell state. Pure data — no presentation strings or colors.
  * The display layer is the only place that decides labels and colors.
  *
- * The `half` kind captures Mega's split bucket/sources state for WS tables
- * (one half stored, the other missing); both stored is `stored`, both
+ * The `half` kind captures Mega's split bucket/sources state for sourced
+ * tables (one half stored, the other missing); both stored is `stored`, both
  * missing is `missing`.
  */
 export type CellState =
@@ -117,27 +116,33 @@ function tmpState(dayKind: DayKind, isWs: boolean): CellState {
  * Mega must hold everything from the table's first known day through the
  * last fully-closed day. `today` and `pending` are both still in flight —
  * absence in Mega is *expected* (`absent`), not a gap (`missing`).
+ *
+ * Takes the two presence booleans directly: whether the bucket is in Mega and
+ * whether the sources are. The caller decides presence uniformly (daily file
+ * this year, year-tar before) — this function doesn't care how storage works.
+ *
+ * The expected artifacts depend on whether the table is `sourced`, not on its
+ * WS/REST origin. A sourced table (all WS, plus `trade`/`quote`) must hold
+ * both the raw sources (`SOURCES_MEGA_RAW`) and the promoted bucket
+ * (`SOURCES_MEGA_VAULT`); either one alone is a `half` cell. An unsourced
+ * table's bucket is its only artifact.
  */
 export function megaState(
-  ds:      DayState | undefined,
-  origin:  TableOrigin,
-  dayKind: DayKind,
-  hasTar:  boolean,
+  hasBucket:  boolean,
+  hasSources: boolean,
+  sourced:    boolean,
+  dayKind:    DayKind,
 ): CellState {
-  if (hasTar) return { kind: 'stored' };
+  const isPastDay = dayKind === 'past';
 
-  const hasBucket  = !! ds && ds.megaBucket;
-  const hasSources = !! ds && ds.megaSources.length > 0;
-  const isPastDay  = dayKind === 'past';
-
-  if (origin === 'rest') {
+  if (! sourced) {
     if (hasBucket) return { kind: 'stored' };
     if (isPastDay) return { kind: 'missing' };
 
     return { kind: 'absent' };
   }
 
-  // WS
+  // Sourced: both raw sources and the promoted bucket are expected.
   if (hasBucket && hasSources) return { kind: 'stored' };
 
   if (! hasBucket && ! hasSources) {

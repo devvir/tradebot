@@ -277,6 +277,21 @@ describe('dedup — orderBookL2', () => {
     expect(out).toHaveLength(1);
   });
 
+  it('per-pool pseudo-table inherits the base table rules (orderBookL2.secondary)', async () => {
+    const a  = msg({ date: '2026-01-01T12:00:00.000Z', action: 'insert', val: 'X' });
+    const a2 = msg({ date: '2026-01-01T12:00:00.001Z', action: 'insert', val: 'X' }); // adjacent dup → drop
+
+    const out = await collect(dedup(batches([a, a2]), 'orderBookL2.secondary'));
+
+    expect(out).toHaveLength(1);
+  });
+
+  it('unknown table (no base config) throws instead of failing obscurely', async () => {
+    const a = msg({ date: '2026-01-01T12:00:00.000Z', action: 'insert', val: 'X' });
+
+    await expect(collect(dedup(batches([a]), 'noSuchTable'))).rejects.toThrow(/No dedup config/);
+  });
+
   it('insert: drops non-adjacent dup within bounded store (ghost sub interleaving)', async () => {
     // S1.E1 and S2.E1 are ghost dups but interleaved by S1.E2 from the merged stream.
     const s1_e1 = msg({ date: '2026-01-01T12:00:00.000Z', action: 'insert', val: 'X' });
