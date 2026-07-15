@@ -1,5 +1,4 @@
 import type { RedisClient } from '@devvir/service-kit';
-import type { Row } from './bitmex/types';
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -22,9 +21,6 @@ export interface Config {
  */
 export type SymbolResolver = (cache: RedisClient, baseUrl: string) => Promise<string[]>;
 
-/** Post-fetch row predicate: keep the row when true, drop it when false. */
-export type RowFilter = (row: Row) => boolean;
-
 export interface TableConfig {
   name:     string;
   path:     string;
@@ -36,11 +32,6 @@ export interface TableConfig {
    * run as a single task over all symbols.
    */
   symbols?: SymbolResolver;
-  /**
-   * Post-fetch row filter for conditions BitMEX can't express server-side (e.g.
-   * `size != 0` to drop referential trades). Applied per row as it streams.
-   */
-  keep?:    RowFilter;
   /**
    * Hard lower bound (yyyymmdd) on the first date to collect, combined with the
    * global `startDate`. Floors the initial position only — once progress passes

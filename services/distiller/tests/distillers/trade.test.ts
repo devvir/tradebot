@@ -126,6 +126,20 @@ describe('distillTrades', () => {
       expect(bins[1]!.timestamp).toBe(`${DATE}T10:02:00.000Z`);
     });
 
+    it('excludes Secondary trades, keeping Primary and legacy unpooled', async () => {
+      await insertTrade(db, D + 1, `${DATE}T10:00:10.000Z`, 100, 10);                          // legacy: no pool
+      await insertTrade(db, D + 2, `${DATE}T10:00:20.000Z`, 120, 5, { pool: 'Primary' });
+      await insertTrade(db, D + 3, `${DATE}T10:00:40.000Z`, 999, 7, { pool: 'Secondary' });    // must be dropped
+
+      await _test_generate1m(db, DATE);
+
+      const bin = await db.collection(BIN1M).findOne({ timestamp: `${DATE}T10:01:00.000Z` });
+
+      expect(bin!.trades).toBe(2);        // only the legacy + Primary trades
+      expect(bin!.volume).toBe(15);       // Secondary's size 7 excluded
+      expect(bin!.high).toBe(120);        // Secondary's 999 price never seen
+    });
+
     it('computes OHLCV correctly', async () => {
       await insertTrade(db, D + 1, `${DATE}T10:00:10.000Z`, 100, 10);
       await insertTrade(db, D + 2, `${DATE}T10:00:20.000Z`, 130, 5);

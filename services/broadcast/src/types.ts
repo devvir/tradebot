@@ -59,7 +59,7 @@ export interface State {
   apiVersion: string | null;
 }
 
-export type MessageHandler = (msg: Buffer, accountId?: string, pool?: string) => void;
+export type MessageHandler = (msg: Buffer, accountId?: string) => void;
 
 export interface EndpointDefinition {
   name: 'realtime' | 'platform';

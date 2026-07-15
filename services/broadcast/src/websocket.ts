@@ -36,8 +36,8 @@ export const connect = (
 ): WebSocket => {
   const { credentials, accountId, pool, onReconnect } = options;
 
-  // The no-pool socket (e.g. instrument, whose pool filter is ignored) stays just
-  // `guest`/account; each per-pool socket appends its pool so the four guest
+  // The no-pool socket (the non-fanned channels — trade, quote, instrument, …)
+  // stays just `guest`/account; each per-pool socket appends its pool so the guest
   // connections are distinguishable in the logs.
   const label = [accountId ?? 'guest', pool].filter(Boolean).join('/');
 
@@ -67,7 +67,7 @@ export const connect = (
 
     ws.on('ping', () => ws.pong());
     ws.on('pong', () => logger.debug(`Pong from ${endpoint.name} (${label})`));
-    ws.on('message', (msg: Buffer) => onMessage(msg, accountId, pool));
+    ws.on('message', (msg: Buffer) => onMessage(msg, accountId));
 
     ws.on('error', (err: Error) => {
       errorLogged = true;

@@ -1,14 +1,60 @@
-import type { BitmexDataItem, BitmexTable, VaultTable } from './types';
+import { POOL_FANOUT_CHANNELS } from '@tradebot/utils';
+import type { BitmexDataItem, BitmexTable, RouteGroup } from './types';
 
 /**
- * The vault table a message routes to, given upstream's `x-bitmex-pool` value.
- * No pool, an empty value, or `Primary` keeps the base table; any other pool
- * becomes the pseudo-table `<table>.<pool lowercased>` and flows on its own path
- * from there. Journalist is agnostic about which tables may carry a pool — it
- * just honours the header; whether the value makes sense is upstream's concern.
+ * Tables collected with one WS client per liquidity pool (order books + bins) —
+ * their default stream is the fused `Aggregated` pool, so each pool is captured
+ * through its own pool-filtered subscription. This is the single source of truth,
+ * shared with the closer: pool participates in routing (below) and in close
+ * scoping (each pool's bucket seals independently) only for these tables.
  */
-export const poolTable = (table: BitmexTable, pool?: string): VaultTable =>
-  pool && pool !== 'Primary' ? `${table}.${pool.toLowerCase()}` : table;
+const POOLED_FANOUT_TABLES: ReadonlySet<string> = new Set(POOL_FANOUT_CHANNELS);
+
+/** True for a base table or a per-pool pseudo-table (`orderBookL2.secondary`). */
+export const isPooledFanout = (table: string): boolean =>
+  POOLED_FANOUT_TABLES.has(table.split('.')[0]!);
+
+/**
+ * The vault table a group is stored under. For a pooled-fanout table, non-Primary
+ * data is routed to a per-pool pseudo-table (`orderBookL2` → `orderBookL2.secondary`)
+ * so each pool's bucket is written and closed independently — a lagging pool client
+ * can never stall or truncate another pool's bucket. Primary and non-pooled data
+ * keep the base name. A message's rows all share one pool (per-pool subscription),
+ * so the first row decides; an empty message keeps the base name.
+ */
+export const vaultTable = (table: string, data: BitmexDataItem[]): string => {
+  if (! isPooledFanout(table)) return table;
+
+  const pool = (data[0] as { pool?: string } | undefined)?.pool;
+
+  return pool && pool !== 'Primary' ? `${table}.${pool.toLowerCase()}` : table;
+};
+
+/**
+ * Split a message's data into per-target-table groups. Only `trade` fans out:
+ * real prints (`size !== 0`) stay in `trade`, while referential index prints
+ * (`size === 0`, on `.`-prefixed index symbols) go to the derived `tick` table —
+ * mirroring how scribe collects the two from REST. Every other table (including
+ * `quote`, which has no referential rows) yields a single unchanged group, as
+ * does an empty message so it is never lost.
+ */
+export const routeMessage = (table: BitmexTable, data: BitmexDataItem[]): RouteGroup[] => {
+  if (table !== 'trade' || data.length === 0)
+    return [{ table, data }];
+
+  const trades: BitmexDataItem[] = [];
+  const ticks:  BitmexDataItem[] = [];
+
+  for (const item of data)
+    ((item as { size?: number }).size === 0 ? ticks : trades).push(item);
+
+  const groups: RouteGroup[] = [];
+
+  if (trades.length) groups.push({ table: 'trade', data: trades });
+  if (ticks.length)  groups.push({ table: 'tick',  data: ticks });
+
+  return groups;
+};
 
 /**
  * The day bucket (YYYYMMDD) a message is filed under, from the message's exchange

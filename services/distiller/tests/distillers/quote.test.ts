@@ -151,6 +151,18 @@ describe('distillQuotes', () => {
       expect(results[0]!.ask).toEqual({ _id: D + 1, askPrice: 200, askSize: 10 });
     });
 
+    it('excludes Secondary quotes, keeping Primary and legacy unpooled', async () => {
+      await insertQuote(db, D + 1, `${DATE}T13:43:05.000000000`, { bidPrice: 100, bidSize: 5 });                        // legacy: no pool
+      await insertQuote(db, D + 2, `${DATE}T13:43:15.000000000`, { bidPrice: 110, bidSize: 6, pool: 'Primary' });
+      await insertQuote(db, D + 3, `${DATE}T13:43:25.000000000`, { bidPrice: 999, bidSize: 9, pool: 'Secondary' });    // must be dropped
+
+      const pipeline = _test_buildPipeline(`${DATE}T00:00:00`, '2020-01-02T00:00:00');
+      const results  = await db.collection(SOURCE).aggregate(pipeline).toArray();
+
+      // Last surviving bid is the Primary one; the later Secondary doc is ignored.
+      expect(results[0]!.bid).toEqual({ _id: D + 2, bidPrice: 110, bidSize: 6 });
+    });
+
     it('groups by symbol independently', async () => {
       await insertQuote(db, D + 1, `${DATE}T13:43:10.000000000`, { symbol: 'XBTUSD', bidPrice: 100, askPrice: 200 });
       await insertQuote(db, D + 2, `${DATE}T13:43:20.000000000`, { symbol: 'ETHUSD', bidPrice: 50,  askPrice: 60  });

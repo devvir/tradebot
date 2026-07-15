@@ -1,5 +1,5 @@
 import { logger } from '@devvir/service-kit';
-import type { VaultTable, TableBuffer, WsMessage } from '../types';
+import type { TableBuffer, WsMessage } from '../types';
 import { writeToVault, waitForVault } from './vault';
 
 const FLUSH_SIZE     = 1_000;
@@ -56,7 +56,7 @@ export const createBuffer = (vaultUrl: string, suffix: string) => {
   // late) and the data is preserved for manual handling.
   const tailSuffix = suffix ? `${suffix}.tail` : 'tail';
 
-  const writeWithRetry = async (table: VaultTable, day: string, messages: WsMessage[]): Promise<void> => {
+  const writeWithRetry = async (table: string, day: string, messages: WsMessage[]): Promise<void> => {
     let pressured       = false;
     let activeSuffix    = suffix;
 
@@ -84,7 +84,7 @@ export const createBuffer = (vaultUrl: string, suffix: string) => {
   // arguments — it must capture everything it needs from the call site so that
   // values like `day` and `messages` are frozen at enqueue time, not evaluated
   // when the chain eventually executes the task.
-  const enqueue = (table: VaultTable, task: () => Promise<void>): void => {
+  const enqueue = (table: string, task: () => Promise<void>): void => {
     const prev = tableChain.get(table) ?? Promise.resolve();
     const next = prev
       .then(task)
@@ -95,7 +95,7 @@ export const createBuffer = (vaultUrl: string, suffix: string) => {
   // ── Flushing ──────────────────────────────────────────────────────────────
 
   // Groups buffered entries by day and enqueues one write per day.
-  const flushEntries = (table: VaultTable, entries: { day: string; msg: WsMessage }[]): void => {
+  const flushEntries = (table: string, entries: { day: string; msg: WsMessage }[]): void => {
     if (entries.length === 0) return;
 
     const byDay = new Map<string, WsMessage[]>();
@@ -110,7 +110,7 @@ export const createBuffer = (vaultUrl: string, suffix: string) => {
     }
   };
 
-  const flushTableAsync = (table: VaultTable, buf: TableBuffer): void => {
+  const flushTableAsync = (table: string, buf: TableBuffer): void => {
     cancelTimer(buf);
     flushEntries(table, buf.messages.splice(0));
   };
@@ -120,13 +120,13 @@ export const createBuffer = (vaultUrl: string, suffix: string) => {
 
     buf.timer = setTimeout(() => {
       buf.timer = null;
-      flushTableAsync(table as VaultTable, buf);
+      flushTableAsync(table, buf);
     }, FLUSH_INTERVAL);
   };
 
   // ── Main entry point ──────────────────────────────────────────────────────
 
-  const receive = async (table: VaultTable, day: string, msg: WsMessage): Promise<void> => {
+  const receive = async (table: string, day: string, msg: WsMessage): Promise<void> => {
     await gate;
 
     const buf = getBuffer(table);
@@ -143,7 +143,7 @@ export const createBuffer = (vaultUrl: string, suffix: string) => {
 
   const flushAll = async (): Promise<void> => {
     for (const [table, buf] of buffers.entries())
-      flushTableAsync(table as VaultTable, buf);
+      flushTableAsync(table, buf);
 
     await Promise.all([...tableChain.values()]);
   };

@@ -92,8 +92,6 @@ const fetchAndWriteDay = async (
   let   hasRows = false;
 
   for await (const row of fetch.getDay(table, currentDate, filter)) {
-    if (table.keep && ! table.keep(row)) continue;
-
     hasRows = true;
     await writer.push(row);
   }

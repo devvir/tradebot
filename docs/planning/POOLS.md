@@ -123,6 +123,68 @@ So: the Aggregated stream is **lossless at the source** (two ids, two sizes, sum
 or separable in principle) but the **pool label is fused** — every row reads
 `Aggregated`, with nothing to say which id is Primary and which is Secondary.
 
+### Aggregated ≈ Primary ∪ Secondary (strong theory, not fully proven)
+
+The single-message proof above shows Aggregated does not *merge* levels. A whole-stream
+test then shows Aggregated is, to a very close approximation, the **union** of the two
+pools — the same ids, carried under the `Aggregated` label, with no fabricated content.
+
+**Method (re-derivable).** Collect all three pools simultaneously into one table
+(`BROADCAST_POOLS=aggregated,primary,secondary`), each row tagged by its `pool` column.
+Then, per `(symbol, id)`, record which pools it appears under (a 3-bit A/P/S flag) and
+tally the combinations. Union predicts: (a) every id is `Aggregated`+one pool (`AP-` or
+`A-S`), (b) **no** id in both pools (`-PS`/`APS` = 0, since ids are pool-unique), and
+(c) Aggregated's row/id counts ≈ Primary + Secondary.
+
+**Data-quality prerequisite — do not skip.** BitMEX WS sockets silently **stall** (stop
+serving a stream) for up to ~2 minutes, then close with a **1006**; the *data gap
+precedes the close*, and the client re-partials on reconnect. These stalls are random,
+per-connection, and unpreventable. A run with stalls produces large, misleading
+per-pool divergence (one pool missing a chunk the others have). **First verify clean
+data**: per-minute timestamp coverage (use `timestamp`, not reception `_date_`) must be
+non-zero for all three pools across the whole window; exclude any stall window before
+comparing. An early run that ignored this showed ~17% row divergence and huge boundary
+id sets — all collection artifact, not real.
+
+**Result (clean ~23-min window, all symbols, 2026-07-14).** Rows: Aggregated ≈ Primary +
+Secondary to **0.2%** (`Agg/(P+S) = 0.998`). Of 786 k distinct ids: **90 % matched**
+(`AP-`/`A-S`), **0** cross-pool (`-PS` = `APS` = 0 — confirming disjoint, pool-unique
+ids), and **~10 % boundary** (`A--`/`-P-`/`--S`). The boundary ids average **2.0 rows**
+(a bare insert→delete, no updates) vs **~5 rows** for matched ids — i.e. **short-lived
+levels**. Each pool is an independent ~50 ms-conflated socket, so a sub-window level
+(born and died between one socket's snapshots) is caught by one clock and missed by
+another; the three streams sample slightly different fleeting levels. Crucially the
+Aggregated-only set (`A--`) has the **identical profile** to the pool-only sets
+(`-P-`/`--S`) — same 2.0 avg rows — and since `-P-`/`--S` are unambiguously real pool
+levels Aggregated's clock missed, `A--` is almost certainly the same sampling noise, not
+fabricated Aggregated-exclusive content.
+
+**Why "not fully proven".** The conflation-sampling explanation for the ~10 % boundary
+is *inferred* from the 2-row symmetry, not directly demonstrated. One alternative was
+floated and disfavoured but not killed: Aggregated might **synthesize a coherent tip**
+(fake ids at best bid/ask) so the combined book isn't crossed — which would appear as
+`A--` ids clustered at the top of book. The symmetry argues against it (a fabricated tip
+would make `A--` stand out — longer-lived, tip-clustered — instead it blends into the
+sampling noise), but the explicit **tip-location test** (are `A--` ids at the top of
+book, and do Aggregated/Primary ever report the same `(timestamp, side, price)` under
+different ids) was **not run to completion**. Treat "Aggregated = union" as a strong,
+well-evidenced working assumption; run the tip test if a use case depends on it being
+exact.
+
+**Recommended definitive test (tardis cross-check).** The residual is dominated by
+conflation sampling, so the clean way to remove that confounder is a **finer** reference
+stream. tardis serves a *less-conflated* Aggregated tier (see the tardis-tier notes) and
+its daily orderBookL2 is **free to download for the 1st of each month** (e.g. Aug 1).
+Because it is finer, it should contain **nearly every id** our own 50 ms-stepped Primary
+and Secondary collectors capture. Test: for the same day, collect our per-pool
+Primary+Secondary, download tardis's high-granularity (Aggregated) orderBookL2, and check
+that `(ourPrimary ∪ ourSecondary)` ids are a near-complete subset of the tardis ids, with
+the residual `A--`/`-P-`/`--S` from our own run filled in by tardis's finer sampling. If
+so, the union holds and the boundary is confirmed as conflation sampling; tardis's extra
+ids are exactly the fleeting levels our coarser clocks dropped. (tardis is Aggregated-only
+— no per-pool split — so this validates the *union/coverage* direction, not the per-pool
+attribution, which the id model already rules out recovering.)
+
 ### Replaying the Aggregated book
 
 Maintain state keyed by `(symbol, id, side)`; apply `insert`/`update`/`delete` by
@@ -226,6 +288,10 @@ non-executable aggregate. (On dup dates, dedup on `(id, transactTime)` first.)
 
 ## Open / to confirm
 
+- **Aggregated = Primary ∪ Secondary** is validated as a *strong theory* (0 cross-pool
+  ids, rows match to 0.2%, ~10% short-lived boundary attributed to conflation sampling —
+  see "Aggregated ≈ Primary ∪ Secondary"). Not fully proven: the **tip-location test**
+  and the **tardis high-granularity cross-check** remain the way to make it exact.
 - **Exact per-table Aggregated-flip date** for `orderBookL2` (≈05‑06) — low priority.
 - **Are BitMEX's `::Primary` bins Primary-computed** or relabelled Aggregated? Rebuild
   from raw until confirmed.

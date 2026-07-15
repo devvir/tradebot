@@ -94,6 +94,10 @@ export function matchDocs(
     ? [{ $match: {
         _id:  { $gte: startOfDayMongoId(from), $lt: startOfDayMongoId(to) },
         side: { $in: ['Buy', 'Sell'] },
+        // Bins are Primary-only. `$ne` keeps legacy unpooled docs (no `pool`
+        // field, pre-pool data) and Primary, dropping only Secondary — which is
+        // collected for analysis/signals, never binned.
+        pool: { $ne: 'Secondary' },
       } }]
     : [{ $match: { timestamp: { $gt:  from, $lte: to } } }];
 }

@@ -8,25 +8,22 @@ Fetches historical data from the BitMEX REST API and writes it to the vault serv
 
 ## Tables
 
-| Table name        | REST path                    | Subtasks (symbols) | `filter`            | Notes                           |
-|-------------------|------------------------------|--------------------|---------------------|---------------------------------|
-| `compositeIndex`  | `/instrument/compositeIndex` | per index symbol   | `{reference:BMI}`\* | `tsField: logged`               |
-| `funding`         | `/funding`                   | none               | —                   |                                 |
-| `insurance`       | `/insurance`                 | none               | —                   |                                 |
-| `settlement`      | `/settlement`                | none               | —                   |                                 |
-| `tick`            | `/trade`                     | none               | `{size:0}`          | referential (index) prints      |
-| `trade`           | `/trade`                     | none               | `{pool:Primary}`    | `from: 20260401`, `keep size≠0` |
-| `trade.secondary` | `/trade`                     | none               | `{pool:Secondary}`  | `from: 20260401`, `keep size≠0` |
-| `quote`           | `/quote`                     | per trading symbol | `{pool:Primary}`    | `from: 20260401`                |
-| `quote.secondary` | `/quote`                     | per trading symbol | `{pool:Secondary}`  | `from: 20260401`                |
+| Table name        | REST path                    | Subtasks (symbols) | `filter`            | Notes                   |
+|-------------------|------------------------------|--------------------|---------------------|-------------------------|
+| `compositeIndex`  | `/instrument/compositeIndex` | per index symbol   | `{reference:BMI}`\* | `tsField: logged`       |
+| `funding`         | `/funding`                   | none               | —                   |                         |
+| `insurance`       | `/insurance`                 | none               | —                   |                         |
+| `settlement`      | `/settlement`                | none               | —                   |                         |
+| `tick`            | `/trade`                     | none               | `{size:0}`          | referential (index)     |
+| `trade`           | `/trade`                     | per trading symbol | —                   | `from: 20260416`        |
+| `quote`           | `/quote`                     | per trading symbol | —                   | `from: 20260414`        |
 
 \* `compositeIndex` carries the BMI filter only when `SCRIBE_INDEX_TICK_ONLY` is set.
 
-Each table is one entry in [settings.ts](../../services/scribe/src/utils/settings.ts). The runner is generic — it reads four optional fields and never names a table:
+Each table is one entry in [settings.ts](../../services/scribe/src/utils/settings.ts). The runner is generic — it reads three optional fields and never names a table:
 
-- **`symbols?`** — a resolver `(cache, baseUrl) => Promise<string[]>`. Present ⇒ the table fans out into one subtask per returned symbol (each carrying that `symbol` plus the table's static `filter`); absent ⇒ a single default task with no symbol. `compositeIndex` uses `getOrderedIndices` (the `.`-prefixed index symbols); `quote` uses `getTradingSymbols` (non-`.` symbols — referential symbols have no order book, so no quotes). Both order their symbols by a **stable registration ID** held in a Redis hash (`scribe:indices` / `scribe:symbols`): a newly-listed symbol is appended with the next ID, so existing symbols never shift. That keeps a day's output reproducible — re-fetching it later yields a byte-identical file even if symbols listed in between, which is what makes regression diffs reliable. The list is computed at runtime, which is why this is a function rather than static data.
-- **`filter?`** — the server-side BitMEX filter, including pool selection. `filter={"pool":"Primary"}` filters trade/quote to that pool exactly as the `?pool=` selector does; pool is encoded in the table name, so there is no `pool` column anywhere.
-- **`keep?`** — a post-fetch row predicate, for conditions BitMEX can't express server-side. `trade` uses `row => row.size !== 0` to drop the referential index prints (there is no `size != 0` server filter). Kept on `trade.secondary` too (a no-op there — Secondary has no referential prints).
+- **`symbols?`** — a resolver `(cache, baseUrl) => Promise<string[]>`. Present ⇒ the table fans out into one subtask per returned symbol (each carrying that `symbol` plus the table's static `filter`); absent ⇒ a single default task with no symbol. `compositeIndex` uses `getOrderedIndices` (the `.`-prefixed index symbols); `trade` and `quote` use `getTradingSymbols` (non-`.` symbols — referential symbols have no order book; their index prints are `tick`'s job, so the symbol filter is also what keeps referential prints out of `trade`). Both resolvers order their symbols by a **stable registration ID** held in a Redis hash (`scribe:indices` / `scribe:symbols`): a newly-listed symbol is appended with the next ID, so existing symbols never shift. That keeps a day's output reproducible — re-fetching it later yields a byte-identical file even if symbols listed in between, which is what makes regression diffs reliable. The list is computed at runtime, which is why this is a function rather than static data.
+- **`filter?`** — the server-side BitMEX filter. `trade`/`quote` carry none: the unfiltered fetch returns both liquidity pools, each row tagged by its own `pool` column.
 - **`from?`** — a hard `yyyymmdd` floor on the first date, combined with `SCRIBE_START_DATE`. `trade`/`quote` start at `2026-04-01`; earlier history is bulk-collected from S3 by the courier service. The floor sets only the initial position — once progress passes it, the saved cursor resumes forward.
 
 `/instrument` is fetched to build the symbol lists; it is not written to vault.
@@ -121,8 +118,8 @@ Per-table loop:
       skip if task's next date > currentDate
       fetch all rows for currentDate (startTime=day, endTime=nextDay, reverse=false)
         — rowIterator streams pages through a ring of up to MAX_IN_FLIGHT in flight
-      apply the table's `keep` predicate, buffer rows, flush to vault past the
-        buffer threshold (writes pipelined with the next page fetches)
+      buffer rows, flush to vault past the buffer threshold
+        (writes pipelined with the next page fetches)
       if day was empty: probe next populated row date
     POST /files/:table/:currentDate/close
     currentDate = nextDay(currentDate)

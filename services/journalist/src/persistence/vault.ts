@@ -1,5 +1,5 @@
 import { logger } from '@devvir/service-kit';
-import type { VaultTable, WriteResult } from '../types';
+import type { WriteResult } from '../types';
 
 const RECOVERY_PAUSE_MS = 5_000;
 
@@ -22,7 +22,7 @@ export const waitForVault = (): Promise<void> => {
 
 export const writeToVault = async (
   vaultUrl: string,
-  table:    VaultTable,
+  table:    string,
   date:     string,
   rows:     unknown[],
   suffix:   string,
@@ -79,7 +79,7 @@ export const writeToVault = async (
  */
 export const listVaultFiles = async (
   vaultUrl: string,
-  table:    VaultTable,
+  table:    string,
   suffix:   string,
 ): Promise<Record<string, 'open' | 'closed'> | null> => {
   const res = await fetch(withSuffix(`${vaultUrl}/files/${table}`, suffix));
@@ -92,7 +92,7 @@ export const listVaultFiles = async (
 
 export const closeVaultFile = async (
   vaultUrl: string,
-  table:    VaultTable,
+  table:    string,
   date:     string,
   suffix:   string,
 ): Promise<void> => {

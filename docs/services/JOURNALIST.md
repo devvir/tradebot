@@ -16,10 +16,9 @@ broadcast → exchange:broadcast
 
 Journalist consumes the `journalist` queue with a prefetch of 100. Each delivery must be a BitMEX **data** message (`isBitmexDataMessage` — carries `table` and `action`); anything else is logged and ignored.
 
-Two headers drive routing:
+One header drives routing:
 
 - **`x-bitmex-published-at`** — the collector's publish/reception time. It is **required**: a message without it cannot be filed and is logged as an error and acked (dropped). This value is stored verbatim as the `_date_` column and is the fallback bucket key (see [Day Bucketing](#day-bucketing)).
-- **`x-bitmex-pool`** — an optional pool selector (see [Table Routing](#table-routing)).
 
 A message is acked only after it has been handed to the buffer, and a `message` event is emitted for metrics.
 
@@ -27,7 +26,13 @@ A message is acked only after it has been handed to the buffer, and a `message` 
 
 ## Table Routing
 
-`route.ts`'s `poolTable` maps a message to its vault table. No pool, an empty header, or `Primary` keeps the base table (`orderBookL2`); any other pool becomes the pseudo-table `<table>.<pool lowercased>` (`orderBookL2.secondary`). From there the pseudo-table is just another table — its own buffer, write chain, day tracking, and vault directory follow. Journalist is agnostic about which tables may legitimately carry a pool; it honours the header value blindly (validity is upstream's concern), and vault resolves the pseudo-table back to its base for column lookup.
+`route.ts` maps a message's data to its vault table(s) in two steps: `routeMessage` (split by content) then `vaultTable` (pool → table name).
+
+`routeMessage` splits `trade` by `size`: real prints (`size !== 0`) go to `trade`, and referential index prints (`size === 0`, on `.`-prefixed index symbols) go to the derived `tick` table — mirroring how the two are collected from REST. Every other table passes straight through as one group.
+
+`vaultTable` then resolves the group's actual vault table. For most tables that's just the table name — `pool` rides along as an ordinary column, all pools sharing one bucket (`trade`, `quote`, `instrument`). But **pooled-fanout tables** (`POOL_FANOUT_CHANNELS` — the order-book family and bins, collected with one WS client per pool) route their non-`Primary` data to a per-pool pseudo-table: `orderBookL2` → `orderBookL2.secondary`. `Primary` and pool-less data keep the base name. This keeps each pool's bucket independent, so a lagging pool client can never stall or truncate another pool's file — and it lets `data prepare` merge each pool's sources on its own. A message's rows all share one pool (per-pool subscription), so the first row decides.
+
+Each resulting group is then just another table, with its own buffer, write chain, day tracking, and vault directory.
 
 ---
 
@@ -76,19 +81,17 @@ A bucket is "done" once the clock it's bucketed by has crossed midnight:
 - **date-driven** tables (the timeless ones — `connected`, `liquidation`, `announcement`, `chat`, `publicNotifications`; no `timestamp` field) are done when the **collector** crosses, i.e. their `_date_` ticks over (≈ on time).
 - **timestamp-driven** tables (`instrument`, `orderBookL2`) are done when the **data** crosses, i.e. their max exchange `timestamp` ticks over. Because reception `_date_` ≥ emit `timestamp`, a data crossing always happens *after* the collector crossed — so it's the safe (late) signal.
 
-WS clients run independently and can lag each other along **two** axes, so a close is scoped to a **group = (endpoint, pool)** and never seals a sibling in a different group:
-
-- **endpoint** — `platform` is steady; `realtime` can fall tens of minutes behind under backpressure. The endpoint is resolved from `REALTIME_CHANNELS` / `PLATFORM_CHANNELS`, matched on the base table with any pool suffix stripped.
-- **pool** — each liquidity pool is its own subscription/client, so a pooled table (`<table>.<pool>`, e.g. `orderBookL2.secondary`; unsuffixed = the primary pool) has its own lag. A smaller pool may be near-realtime while the primary lags far behind. The pool is matched as an **opaque suffix** — journalist never enumerates which pools can exist; it just refuses to sweep any table whose suffix (including no suffix) differs from the crossing table's.
+Clients run independently and can lag each other, so a close is scoped to an **endpoint** and never seals a table on another client. `platform` is steady; `realtime` can fall tens of minutes behind under backpressure. The endpoint is resolved from `REALTIME_CHANNELS` / `PLATFORM_CHANNELS`. **Pooled-fanout tables go further:** each is collected by one client per pool (`orderBookL2` and `orderBookL2.secondary` are separate buckets), so any pool can lag the others — each seals strictly in isolation, neither triggering nor joining an endpoint sweep (they're filtered out of it via `isPooledFanout`).
 
 Closes fire on the safe signal:
 
-- **platform table crosses** → close its `(platform, pool)` group.
-- **realtime timestamp-driven table crosses** → close its `(realtime, pool)` group (the data has crossed, so every date-driven bucket in the same group — `liquidation` — is already complete and safe to sweep).
-- **realtime date-driven table (`liquidation`) crosses** → close **just that table** — so it still seals if no timestamped realtime table is being collected, and promptly rather than waiting for the group sweep.
+- **platform table crosses** → close the platform endpoint.
+- **realtime timestamp-driven table crosses** → close the realtime endpoint (the data has crossed, so every date-driven bucket on it — `liquidation` — is already complete and safe to sweep). Pooled-fanout tables are excluded — they never ride another table's crossing.
+- **realtime date-driven table (`liquidation`) crosses** → close **just that table** — so it still seals if no timestamped realtime table is being collected, and promptly rather than waiting for the endpoint sweep.
+- **pooled-fanout table crosses** (any pool) → close **just that pool's bucket**.
 - **past day (replay) or a table in neither channel set** → close **just that table**.
 
-This is why a midnight `connected` (platform) no longer seals the lagging realtime buckets: it closes only platform. Likewise a near-realtime `orderBookL2.secondary` crossing midnight no longer seals the lagging primary `orderBookL2`: each pool seals when *its own* data crosses (~its own lag later), so late rows land in the bucket, not the `.tail` valve.
+This is why a midnight `connected` (platform) no longer seals the lagging realtime buckets: it closes only platform. The single-client realtime tables seal when *their own* data crosses (~their own lag later), and each pooled-fanout pool seals on its own crossing — so late rows land in the bucket, not the `.tail` valve.
 
 Before a close reaches vault, `beforeClosing` (the buffer's `flushAll`) drains buffered writes so anything still pending for the day being sealed lands first. `closeOpenBucketsBefore` then lists vault's files for the table(s) and closes every open bucket strictly before the target day. Close calls retry internally in `vault.ts`.
 
@@ -113,7 +116,7 @@ Rows are written via `POST /files/:table/:date/rows`. The body is a JSON array o
 ]
 ```
 
-The table name comes from the BitMEX message with a pool pseudo-table suffix applied (`route.ts`); vault resolves the pseudo-table to its base for column lookup. The date path segment (`YYYYMMDD`) is the message's [event-time day](#day-bucketing). A `?suffix=` query tags the file when a vault suffix is configured.
+The table name is the message's routed vault table (`route.ts` — the message's own table, or `tick` for referential `trade` prints). The date path segment (`YYYYMMDD`) is the message's [event-time day](#day-bucketing). A `?suffix=` query tags the file when a vault suffix is configured.
 
 ---
 

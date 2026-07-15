@@ -146,7 +146,7 @@ describe('ping and message events', () => {
 
     result.emit('message', payload);
 
-    expect(onMessage).toHaveBeenCalledWith(payload, undefined, undefined);
+    expect(onMessage).toHaveBeenCalledWith(payload, undefined);
   });
 
   it('forwards accountId to the handler when set in options', () => {
@@ -159,10 +159,10 @@ describe('ping and message events', () => {
 
     result.emit('message', payload);
 
-    expect(onMessage).toHaveBeenCalledWith(payload, 'acc-42', undefined);
+    expect(onMessage).toHaveBeenCalledWith(payload, 'acc-42');
   });
 
-  it('forwards the pool to the handler when set in options', () => {
+  it('does not forward the connection pool to the handler (pool rides in the row content)', () => {
     const { service } = makeService();
     const onMessage = vi.fn();
 
@@ -172,7 +172,7 @@ describe('ping and message events', () => {
 
     result.emit('message', payload);
 
-    expect(onMessage).toHaveBeenCalledWith(payload, undefined, 'Secondary');
+    expect(onMessage).toHaveBeenCalledWith(payload, undefined);
   });
 });
 

@@ -17,21 +17,30 @@ const makeVault = (): MockVault =>
 // ── listVaultDates ────────────────────────────────────────────────────────────
 
 describe('download — listVaultDates', () => {
-  it('returns the date keys vault reports', async () => {
+  it('lists only its own .s3 sources and returns bare dates', async () => {
     const vault = makeVault();
 
-    vault.get.mockResolvedValue({ '20250101': 'closed', '20250102': 'closed' });
+    vault.get.mockResolvedValue({ '20250101.s3': 'closed', '20250102.s3': 'closed' });
 
     expect(await listVaultDates(vault, 'trade')).toEqual(['20250101', '20250102']);
-    expect(vault.get).toHaveBeenCalledWith('/files/trade');
+    expect(vault.get).toHaveBeenCalledWith('/files/trade?suffix=s3', { passThrough: [404] });
   });
 
-  it('propagates a vault error', async () => {
+  it('returns an empty list when vault has no data for the table (404)', async () => {
     const vault = makeVault();
 
-    vault.get.mockRejectedValue(new Error('Vault list failed: HTTP 404'));
+    // The 404 passThrough resolves to null in the client — courier must not crash.
+    vault.get.mockResolvedValue(null);
 
-    await expect(listVaultDates(vault, 'trade')).rejects.toThrow('HTTP 404');
+    expect(await listVaultDates(vault, 'trade')).toEqual([]);
+  });
+
+  it('propagates a genuine vault error', async () => {
+    const vault = makeVault();
+
+    vault.get.mockRejectedValue(new Error('Vault list failed: HTTP 500'));
+
+    await expect(listVaultDates(vault, 'trade')).rejects.toThrow('HTTP 500');
   });
 });
 
@@ -54,7 +63,7 @@ describe('download — fetchAndStore', () => {
       'https://s3-eu-west-1.amazonaws.com/public.bitmex.com/data/trade/20250101.csv.gz',
     );
     expect(vault.request).toHaveBeenCalledWith(
-      '/files/trade/20250101',
+      '/files/trade/20250101?suffix=s3',
       expect.objectContaining({ method: 'PUT', body }),
     );
   });

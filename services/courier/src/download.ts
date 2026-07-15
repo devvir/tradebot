@@ -6,6 +6,14 @@ const S3_BASE_URL = 'https://s3-eu-west-1.amazonaws.com/public.bitmex.com/data';
 const MAX_RETRIES = 5;
 const RETRY_BASE  = 1_000;
 
+/**
+ * Origin stamp on every courier-written file (`<date>.s3.csv.gz`). The suffix
+ * marks these as sources, not final buckets — like journalist's `.local`/`.antel`
+ * — so nothing downstream (prepare, farm import, counting) picks them up until
+ * they've been resorted into the canonical bucket.
+ */
+const SUFFIX = 's3';
+
 // ── Vault queries ─────────────────────────────────────────────────────────────
 
 /**
@@ -14,9 +22,15 @@ const RETRY_BASE  = 1_000;
  * `vault` client.
  */
 export const listVaultDates = async (vault: FetchClientHandle, table: Table): Promise<string[]> => {
-  const files = await vault.get<Record<string, string>>(`/files/${table}`);
+  // A 404 means vault holds no data for this table yet — the normal starting
+  // state for a table courier has never populated. Treat it as an empty list.
+  // List only our own `.s3` sources; keys come back as `<date>.s3`, stripped
+  // back to the bare date the sync loop compares against.
+  const files = await vault.get<Record<string, string>>(
+    `/files/${table}?suffix=${SUFFIX}`, { passThrough: [404] },
+  );
 
-  return Object.keys(files ?? {});
+  return Object.keys(files ?? {}).map(stem => stem.split('.')[0]!);
 };
 
 // ── S3 → vault streaming ──────────────────────────────────────────────────────
@@ -50,7 +64,7 @@ export const fetchAndStore = async (vault: FetchClientHandle, table: Table, date
       if (! s3Res.ok)   throw new Error(`S3 HTTP ${s3Res.status}`);
       if (! s3Res.body) throw new Error('S3 response has no body');
 
-      const vaultRes = await vault.request(`/files/${table}/${date}`, {
+      const vaultRes = await vault.request(`/files/${table}/${date}?suffix=${SUFFIX}`, {
         method: 'PUT',
         body:   s3Res.body,
         duplex: 'half',

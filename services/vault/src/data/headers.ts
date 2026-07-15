@@ -19,12 +19,12 @@ export const TABLE_HEADERS: Record<string, string[]> = {
   compositeIndex: ['timestamp', 'symbol', 'indexSymbol', 'indexMultiplier', 'reference', 'lastPrice', 'sourcePrice', 'conversionIndex', 'conversionIndexPrice', 'weight', 'logged'],
   tick:           ['timestamp', 'symbol', 'price', 'tickDirection'],
 
-  // trade/quote: columns match the BitMEX S3 daily buckets exactly so scribe's
-  // REST-collected files read identically to courier's historical ones. Pool is
-  // encoded in the table name (`.secondary`), so there is no pool column. The
-  // pseudo-table shares its base table's columns — see `baseTable`.
-  trade:               ['timestamp', 'symbol', 'side', 'size', 'price', 'tickDirection', 'trdMatchID', 'grossValue', 'homeNotional', 'foreignNotional', 'trdType'],
-  quote:               ['timestamp', 'symbol', 'bidSize', 'bidPrice', 'askPrice', 'askSize'],
+  // trade/quote: columns match the BitMEX S3 daily buckets, plus a trailing
+  // `pool` column that every live row carries (Primary/Secondary — never
+  // Aggregated for these tables). Pool is a plain column, not a table split.
+  // S3 historical files predate the field and read back with no pool value.
+  trade:               ['timestamp', 'symbol', 'side', 'size', 'price', 'tickDirection', 'trdMatchID', 'grossValue', 'homeNotional', 'foreignNotional', 'trdType', 'pool'],
+  quote:               ['timestamp', 'symbol', 'bidSize', 'bidPrice', 'askPrice', 'askSize', 'pool'],
 
   // ── Streamed from BitMEX WebSocket ─────────────────────────────────────────
   //
@@ -52,7 +52,7 @@ export const TABLE_HEADERS: Record<string, string[]> = {
     'lowPrice', 'lastPrice', 'lastPriceProtected', 'lastTickDirection', 'lastChangePcnt', 'bidPrice', 'midPrice', 'askPrice',
     'impactBidPrice', 'impactMidPrice', 'impactAskPrice', 'hasLiquidity', 'openInterest', 'openValue', 'fairMethod', 'fairBasisRate',
     'fairBasis', 'fairPrice', 'markMethod', 'markPrice', 'referencePrice', 'indicativeSettlePrice', 'settledPriceAdjustmentRate',
-    'settledPrice', 'instantPnl', 'minTick', 'fundingBaseRate', 'fundingQuoteRate', 'farLegSymbol', 'nearLegSymbol', 'timestamp',
+    'settledPrice', 'instantPnl', 'minTick', 'fundingBaseRate', 'fundingQuoteRate', 'farLegSymbol', 'nearLegSymbol', 'timestamp', 'pool',
   ],
   liquidation:         [ '_date_', '_action_', 'orderID', 'symbol', 'side', 'price', 'leavesQty' ],
   orderBookL2:         [ '_date_', '_action_', 'symbol', 'id', 'side', 'size', 'price', 'transactTime', 'timestamp', 'pool' ],

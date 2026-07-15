@@ -13,14 +13,11 @@
 name: collect
 
 include:
+  - path: ../../../services/courier/docker/compose.yml
   - path: ../../../services/scribe/docker/compose.yml
 
-  # Tardis data will not be collected unless needed, from Jun 1st 2026 onward.
-  - path: ../../../services/tardy/docker/compose.yml
-
-  # Courier is disabled and may be removed in the future since S3 buckets do not reflect
-  # the new BitMEX pool rollout and thus became unreliable. Scribe handles trade/quote now.
-  # - path: ../../../services/courier/docker/compose.yml
+  # Tardis data will not be collected unless needed, from Aug 1st 2026 onward.
+  # - path: ../../../services/tardy/docker/compose.yml
 
 networks:
   default:

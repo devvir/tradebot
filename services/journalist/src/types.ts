@@ -18,18 +18,22 @@ export interface Config {
 }
 
 /**
- * A vault routing key: a real BitMEX table, or a pool pseudo-table such as
- * `orderBookL2.secondary`. The pool is encoded in the suffix; vault strips it
- * (`baseTable`) for header/cast lookup but stores the pseudo-table separately.
- */
-export type VaultTable = BitmexTable | `${BitmexTable}.${string}`;
-
-/**
  * The BitMEX WS client a table is fed by. The two clients run independently —
  * `platform` is steady while `realtime` can lag under backpressure — so day
  * closes are scoped per endpoint (see `closer.ts`).
  */
 export type Endpoint = 'realtime' | 'platform';
+
+/**
+ * A message's data routed to one vault table. Most messages yield a single group
+ * (their own table); a `trade` message splits into `trade` (real prints) and the
+ * derived `tick` table (referential index prints). `table` is a plain string
+ * because `tick` is not a BitMEX channel — it's a vault table name.
+ */
+export interface RouteGroup {
+  table: string;
+  data:  BitmexDataItem[];
+}
 
 export type WsMessage = {
   action: BitmexAction;

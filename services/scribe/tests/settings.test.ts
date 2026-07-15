@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TABLES } from '../src/utils/settings';
 
 describe('TABLES configuration', () => {
-  it('has exactly 9 tables', () => {
-    expect(TABLES).toHaveLength(9);
+  it('has exactly 7 tables', () => {
+    expect(TABLES).toHaveLength(7);
   });
 
   it('every table has a name, a path starting with /, and a maxStart', () => {
@@ -49,35 +49,24 @@ describe('TABLES configuration', () => {
   describe('per-symbol subtask resolvers', () => {
     const byName = Object.fromEntries(TABLES.map((t) => [t.name, t]));
 
-    it('compositeIndex and quote tables define a symbols resolver; trade does not', () => {
+    it('compositeIndex, trade, and quote define a symbols resolver', () => {
       expect(typeof byName.compositeIndex!.symbols).toBe('function');
+      expect(typeof byName.trade!.symbols).toBe('function');
       expect(typeof byName.quote!.symbols).toBe('function');
-      expect(typeof byName['quote.secondary']!.symbols).toBe('function');
-      expect(byName.trade!.symbols).toBeUndefined();
     });
   });
 
-  describe('trade / quote pool split', () => {
+  describe('trade / quote', () => {
     const byName = Object.fromEntries(TABLES.map((t) => [t.name, t]));
 
-    it('canonical tables select Primary, secondary tables select Secondary', () => {
-      expect(byName.trade!.filter).toEqual({ pool: 'Primary' });
-      expect(byName.quote!.filter).toEqual({ pool: 'Primary' });
-      expect(byName['trade.secondary']!.filter).toEqual({ pool: 'Secondary' });
-      expect(byName['quote.secondary']!.filter).toEqual({ pool: 'Secondary' });
+    it('collect unfiltered (no pool filter — rows carry their own pool)', () => {
+      expect(byName.trade!.filter).toBeUndefined();
+      expect(byName.quote!.filter).toBeUndefined();
     });
 
-    it('both trade tables start from 2026-04-01 and drop referential prints', () => {
-      for (const name of ['trade', 'trade.secondary']) {
-        expect(byName[name]!.from).toBe('20260401');
-        expect(byName[name]!.keep!({ size: 0 })).toBe(false);
-        expect(byName[name]!.keep!({ size: 5 })).toBe(true);
-      }
-    });
-
-    it('both quote tables start from 2026-04-01', () => {
-      expect(byName.quote!.from).toBe('20260401');
-      expect(byName['quote.secondary']!.from).toBe('20260401');
+    it('both start from 2026-04-01', () => {
+      expect(byName.trade!.from).toBe('20260416');
+      expect(byName.quote!.from).toBe('20260414');
     });
   });
 });

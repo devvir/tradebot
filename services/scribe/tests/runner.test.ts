@@ -365,11 +365,11 @@ describe('runAllTables — next[id] tracking', () => {
   });
 
   it('carries the table filter into the probe fallback reverse-queries', async () => {
-    // A filtered table (compositeIndex reference:BMI, quote.secondary pool:Secondary):
-    // the "exhausted vs hidden by the row-ID quirk" fallback must reverse-query with
-    // the table filter, not just the symbol — otherwise an unfiltered match (e.g.
-    // Primary data) makes the filtered pool look populated and the loop scans empty
-    // days for results that never come.
+    // A filtered table (compositeIndex reference:BMI, tick size:0): the
+    // "exhausted vs hidden by the row-ID quirk" fallback must reverse-query with
+    // the table filter, not just the symbol — otherwise an unfiltered match makes
+    // the filtered table look populated and the loop scans empty days for results
+    // that never come.
     (tablesModule.TABLES as TableConfig[]).push({ ...COMPOSITE_TABLE, filter: { reference: 'BMI' } });
 
     const fetch = makeFetch({

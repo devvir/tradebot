@@ -19,13 +19,15 @@ response body is piped straight to the vault PUT request.
 
 ## Download Flow
 
-1. On startup, calls `GET /files/:table` on vault to discover which dates are already present.
+1. On startup, calls `GET /files/:table?suffix=s3` on vault to discover which dates are already present.
 2. Computes the full date range from `2014-11-22` up to and including yesterday UTC.
 3. For each missing date, calls `fetchAndStore`:
    - Fetches `https://s3-eu-west-1.amazonaws.com/public.bitmex.com/data/<table>/<date>.csv.gz`
-   - Streams the response body to `PUT /files/:table/:date` on vault
+   - Streams the response body to `PUT /files/:table/:date?suffix=s3` on vault
    - `404` on S3 → file does not exist yet, skip silently
    - `409` from vault → already stored (e.g. from a previous run), skip
+
+Files are written with an `.s3` origin suffix (`<date>.s3.csv.gz`) — like journalist's `.local`/`.antel` — marking them as sources, not final buckets. Nothing downstream (prepare, farm import, counting) picks them up until `tools data resort` produces the canonical `<date>.csv.gz`.
 4. Schedules a self-rescheduling timer to fire at the next UTC midnight and repeat the sync.
 
 ## Retry Behaviour
