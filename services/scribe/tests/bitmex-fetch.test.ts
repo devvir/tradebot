@@ -175,16 +175,20 @@ describe('FetchService — getRows', () => {
     const maxStart  = 4999;
     const pages     = Math.floor(maxStart / PAGE) + 1; // pages that fit under the cap (independent of ring size)
     const timestamp = '2020-01-01T00:00:00.000Z';
+    const tsPlus    = '2020-01-01T00:00:00.001Z';
     const fullPage  = Array.from({ length: PAGE }, () => ({ timestamp }));
 
-    // Unanchored window returns full pages (until the cap); the reanchored window is empty → end.
+    // Every row shares one instant, so the whole first window is held at the cap
+    // and the copies dropped; the reanchored window (startTime inclusive)
+    // re-delivers the same full pages, ends on the cap again, and force-advances
+    // +1ms — flushing the held run. The +1ms window is empty → end.
     vi.mocked(global.fetch).mockImplementation(async (url) =>
-      String(url).includes('startTime=') ? okJson([]) : okJson(fullPage)
+      String(url).includes(encodeURIComponent(tsPlus)) ? okJson([]) : okJson(fullPage)
     );
 
     const result = await collect(createFetchService(BASE_URL).getRows(mkTable({ maxStart })));
 
-    // Exactly the pages that fit under maxStart, then a reanchored (empty) window.
+    // The re-delivered window's rows, emitted exactly once.
     expect(result).toHaveLength(PAGE * pages);
 
     const params = vi.mocked(global.fetch).mock.calls.map(c => new URL(String(c[0])).searchParams);
@@ -199,15 +203,20 @@ describe('FetchService — getRows', () => {
 
   it('reanchors mid-window when data ends before the offset cap (bug bypass)', async () => {
     const timestamp = '2020-01-01T00:00:00.000Z';
+    const encTs     = encodeURIComponent(timestamp);
     const fullPage  = Array.from({ length: 500 }, () => ({ timestamp }));
 
     // start=0 (no startTime) is full; everything past it is empty — BitMEX's
     // undocumented mid-window cap. With a timestamp present the window reanchors to
     // it and a fresh window opens at start=0, even though maxStart was never reached.
+    // startTime is inclusive, so the reanchored window re-delivers the same page;
+    // the held copies are dropped and the re-delivered ones emitted exactly once
+    // (flushed by the +1ms force-advance that follows).
     vi.mocked(global.fetch).mockImplementation(async (url) => {
       const u = String(url);
-      if (u.includes('startTime=')) return okJson([]);
-      if (u.includes('start=0&'))   return okJson(fullPage);
+      if (! u.includes('start=0&'))                          return okJson([]);
+      if (! u.includes('startTime='))                        return okJson(fullPage);
+      if (u.includes(`startTime=${encTs}`))                  return okJson(fullPage);
       return okJson([]);
     });
 
@@ -220,6 +229,40 @@ describe('FetchService — getRows', () => {
     // First window unanchored; the second reanchored to the row timestamp at start=0.
     expect(params[0]!.get('startTime')).toBeNull();
     expect(params.some(p => p.get('startTime') === timestamp && p.get('start') === '0')).toBe(true);
+  });
+
+  it('emits block-boundary rows exactly once (inclusive-reanchor dedup)', async () => {
+    // A block that ends mid-instant: the last rows of the window share T2, and the
+    // reanchored window (startTime=T2, inclusive) re-delivers them plus the rest of
+    // the instant that fell past the cap. Without the boundary hold the shared rows
+    // would be emitted twice — the scribe pagination-duplicate bug.
+    const T1   = '2020-01-01T00:00:00.000Z';
+    const T2   = '2020-01-01T00:00:01.000Z';
+    const enc2 = encodeURIComponent(T2);
+
+    // Full page: 490 rows at T1, then the first 10 rows of the T2 instant.
+    const page1 = [
+      ...Array.from({ length: 490 }, (_, i) => ({ timestamp: T1, id: i + 1 })),
+      ...Array.from({ length: 10  }, (_, i) => ({ timestamp: T2, id: 491 + i })),
+    ];
+
+    // Reanchored window: the same 10 T2 rows again, plus 5 more at T2 beyond the cap.
+    const page2 = Array.from({ length: 15 }, (_, i) => ({ timestamp: T2, id: 491 + i }));
+
+    vi.mocked(global.fetch).mockImplementation(async (url) => {
+      const u = String(url);
+      if (! u.includes('start=0&'))         return okJson([]);
+      if (! u.includes('startTime='))       return okJson(page1);
+      if (u.includes(`startTime=${enc2}`))  return okJson(page2);
+      return okJson([]);
+    });
+
+    // maxStart=499: exactly one page per block, so the first block is cut mid-T2.
+    const result = await collect(createFetchService(BASE_URL).getRows(mkTable({ maxStart: 499, count: 500 })));
+
+    // 490 T1 rows + the 15-row T2 instant — each id exactly once, in order.
+    expect(result).toHaveLength(505);
+    expect(result.map(r => (r as { id: number }).id)).toEqual(Array.from({ length: 505 }, (_, i) => i + 1));
   });
 
   it('force-advances startTime by 1ms when a window ends on its own anchor (no progress)', async () => {

@@ -21,7 +21,8 @@ export const fetchOne = async (
 };
 
 // Streams rows from the BitMEX API, handling pagination and block transitions
-// transparently. The caller sees a flat sequence of rows with no page boundaries.
+// transparently. The caller sees a flat sequence of rows with no page boundaries
+// and no block-boundary duplicates.
 //
 // Within a startTime-block, pages are fetched through a bounded ring (see
 // streamBlock): up to MAX_IN_FLIGHT requests run concurrently, but never more
@@ -29,6 +30,15 @@ export const fetchOne = async (
 // strict offset order. A block ends when a short/empty page arrives or the
 // `maxStart` offset cap is reached; we then reanchor `blockStartTime` to the last
 // row's tsField and start a fresh block at offset 0, until the data is exhausted.
+//
+// **Boundary hold:** the trailing run of rows at the stream's current max
+// tsField instant is held back, not emitted. A strictly newer instant proves the
+// run complete and flushes it; exhaustion flushes it. When a block ends *on* the
+// held instant, the reanchored window re-delivers every row at that instant from
+// offset 0 (startTime is inclusive) — the held copies are dropped and the fresh
+// ones re-buffered, so the boundary rows are emitted exactly once instead of
+// twice. When the reanchor steps past the instant (the +1ms no-progress skip),
+// the next window will NOT re-deliver, so the run is flushed instead.
 export async function* rowIterator(
   baseUrl:  string,
   path:     string,
@@ -43,10 +53,73 @@ export async function* rowIterator(
   // BitMEX support recommended using a lower maxStart despite what the API allows
   maxStart = maxStart ? Math.min(maxStart, ALLOWED_MAX_START) : null;
 
-  while (true) {
-    const next = yield* streamBlock(baseUrl, path, maxStart, tsField, pageSize, blockStartTime, filter);
+  let held:   Row[]         = [];
+  let heldTs: string | null = null;
 
-    if (next === null) return; // data exhausted
+  while (true) {
+    const block = streamBlock(baseUrl, path, maxStart, tsField, pageSize, blockStartTime, filter);
+
+    let next: string | null = null;
+
+    // Drive the block manually (instead of `yield*`) so each row passes through
+    // the boundary hold. The finally closes the block if the consumer stops us
+    // mid-yield, so its ring of in-flight look-ahead is always cleaned up.
+    try {
+      while (true) {
+        const r = await block.next();
+
+        if (r.done) {
+          next = r.value;
+          break;
+        }
+
+        const row = r.value;
+        const ts  = pickTime(row, tsField);
+
+        if (! ts) {
+          // No sort-field value: the row can't be placed on the clock. Emit in
+          // place when nothing is held; otherwise keep it inside the held run
+          // so output order is preserved.
+          if (held.length === 0) yield row;
+          else held.push(row);
+
+          continue;
+        }
+
+        if (heldTs !== null && ts > heldTs) {
+          // Strictly newer instant — the held run is provably complete.
+          yield* held.splice(0);
+        }
+
+        // Equal instants extend the run; an older ts can't happen (the stream
+        // is monotonic in the sort field) but would be kept too — never lost.
+        if (heldTs === null || ts > heldTs) heldTs = ts;
+
+        held.push(row);
+      }
+    } finally {
+      await block.return(null);
+    }
+
+    if (next === null) {
+      // Data exhausted — the held run is final.
+      yield* held;
+
+      return;
+    }
+
+    if (heldTs !== null && next > heldTs) {
+      // The +1ms no-progress skip: the next window starts strictly past the
+      // held instant and will not re-deliver it — flush now or lose the rows.
+      yield* held.splice(0);
+      heldTs = null;
+    } else if (heldTs !== null) {
+      // next === heldTs: the reanchored window re-delivers every row at the
+      // held instant from offset 0. Drop the held copies; the fresh ones are
+      // re-buffered as they arrive, so the boundary is emitted exactly once.
+      held   = [];
+      heldTs = null;
+    }
 
     blockStartTime = next;
   }
