@@ -1,6 +1,7 @@
 import { type MongoClient, type Service, type ExpressServerHandle } from '@devvir/service-kit';
 import SK from './service';
 import { buildRouter } from './server';
+import { makeDbResolver } from './db';
 import { startMetrics } from './metrics';
 import type { Config } from './types';
 
@@ -10,7 +11,7 @@ SK.run(async (service: Service) => {
   await service.providers.connect([ 'mongodb' ]);
 
   const mongo = service.providers.get('mongodb') as MongoClient;
-  const db    = mongo.db(config.database);
+  const dbFor = makeDbResolver(mongo, config.database);
 
   const { writeCounter, readCounter, stop } = startMetrics();
 
@@ -18,7 +19,7 @@ SK.run(async (service: Service) => {
 
   const api = service.servers.get('api') as ExpressServerHandle;
 
-  api.addRoutes(buildRouter(db, config, writeCounter, readCounter));
+  api.addRoutes(buildRouter(dbFor, config, writeCounter, readCounter));
 
   await api.start();
 });

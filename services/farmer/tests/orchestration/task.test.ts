@@ -92,6 +92,22 @@ describe('Task — construction', () => {
   it('marks non-WS tables with type=rest', () => {
     expect(make({ table: 'trade' }).type).toBe('rest');
   });
+
+  it('derives base, type and pooled from the base name of a qualified table', () => {
+    const task = make({ table: 'orderBookL2.secondary' as never });
+
+    expect(task.table).toBe('orderBookL2.secondary'); /** identity stays qualified */
+    expect(task.base).toBe('orderBookL2');
+    expect(task.type).toBe('ws');
+    expect(task.pooled).toBe(true);
+  });
+
+  it('flags pooled tables from TABLE_SPECS (types.pool)', () => {
+    expect(make({ table: 'trade' }).pooled).toBe(true);
+    expect(make({ table: 'quote' }).pooled).toBe(true);
+    expect(make({ table: 'instrument' }).pooled).toBe(false);
+    expect(make({ table: 'funding' }).pooled).toBe(false);
+  });
 });
 
 // ── noteDisposed / position witness ───────────────────────────────────────────

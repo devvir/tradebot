@@ -3,7 +3,8 @@ import express, { type Application, type ErrorRequestHandler } from 'express';
 import request from 'supertest';
 import type { Db } from 'mongodb';
 import { buildRouter } from '../src/server';
-import type { Config, InsertCounter, ReadCounter } from '../src/types';
+import { makeDbResolver } from '../src/db';
+import type { Config, DbResolver, InsertCounter, ReadCounter } from '../src/types';
 
 // ── App assembly ──────────────────────────────────────────────────────────────
 
@@ -19,11 +20,14 @@ const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
      .json({ error: (err as Error)?.message ?? 'error' });
 };
 
-const makeApp = (db: Db, config: Config, writeCounter: InsertCounter, readCounter: ReadCounter): Application =>
-  express()
+const makeApp = (db: Db | DbResolver, config: Config, writeCounter: InsertCounter, readCounter: ReadCounter): Application => {
+  const dbFor = typeof db === 'function' ? db : () => db;
+
+  return express()
     .use(express.json({ limit: '32mb' }))
-    .use(buildRouter(db, config, writeCounter, readCounter))
+    .use(buildRouter(dbFor, config, writeCounter, readCounter))
     .use(errorHandler);
+};
 
 // ── Mongo mock ────────────────────────────────────────────────────────────────
 
@@ -423,5 +427,77 @@ describe('GET /:table — mongo error', () => {
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ error: 'connection lost' });
     expect(readCounter).not.toHaveBeenCalled();
+  });
+});
+
+// ── ?db= — per-request database override ──────────────────────────────────────
+
+describe('?db= — per-request database override', () => {
+  it('POST routes to the named database; default otherwise', async () => {
+    const { db: mainDb, collection: mainCol } = makeDb({ insertImpl: async () => ({ insertedCount: 1 }) });
+    const { db: p2Db,   collection: p2Col   } = makeDb({ insertImpl: async () => ({ insertedCount: 1 }) });
+
+    const dbFor = vi.fn((name?: string) => (name === 'tradebot-p2' ? p2Db : mainDb));
+    const app   = makeApp(dbFor, config, writeCounter, readCounter);
+
+    const resDefault = await request(app).post('/trade').send([{ a: 1 }]);
+    const resP2      = await request(app).post('/trade').query({ db: 'tradebot-p2' }).send([{ a: 1 }]);
+
+    expect(resDefault.status).toBe(200);
+    expect(resP2.status).toBe(200);
+    expect(mainCol.insertMany).toHaveBeenCalledTimes(1);
+    expect(p2Col.insertMany).toHaveBeenCalledTimes(1);
+    expect(dbFor).toHaveBeenCalledWith(undefined);
+    expect(dbFor).toHaveBeenCalledWith('tradebot-p2');
+  });
+
+  it('GET routes to the named database', async () => {
+    const { db: mainDb } = makeDb();
+    const { db: p2Db, collection: p2Col } = makeDb({ findImpl: () => [{ _id: 1 }] });
+
+    const dbFor = vi.fn((name?: string) => (name === 'tradebot-p2' ? p2Db : mainDb));
+    const app   = makeApp(dbFor, config, writeCounter, readCounter);
+
+    const res = await request(app).get('/trade').query({ db: 'tradebot-p2' });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ docs: [{ _id: 1 }] });
+    expect(p2Col.find).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns 400 on an empty db param', async () => {
+    const { db, collection } = makeDb();
+    const app                = makeApp(db, config, writeCounter, readCounter);
+
+    const resPost = await request(app).post('/trade').query({ db: '' }).send([{ a: 1 }]);
+    const resGet  = await request(app).get('/trade').query({ db: '' });
+
+    expect(resPost.status).toBe(400);
+    expect(resGet.status).toBe(400);
+    expect(collection.insertMany).not.toHaveBeenCalled();
+    expect(collection.find).not.toHaveBeenCalled();
+  });
+});
+
+// ── makeDbResolver — handle caching ───────────────────────────────────────────
+
+describe('makeDbResolver', () => {
+  it('defaults to the configured database and caches handles per name', () => {
+    const dbSpy = vi.fn((name: string) => ({ name } as unknown as Db));
+    const mongo = { db: dbSpy } as unknown as Parameters<typeof makeDbResolver>[0];
+
+    const dbFor = makeDbResolver(mongo, 'tradebot');
+
+    const a = dbFor();
+    const b = dbFor();
+    const c = dbFor('tradebot-p2');
+    const d = dbFor('tradebot-p2');
+
+    expect(a).toBe(b);
+    expect(c).toBe(d);
+    expect(a).not.toBe(c);
+    expect(dbSpy).toHaveBeenCalledTimes(2);
+    expect(dbSpy).toHaveBeenCalledWith('tradebot');
+    expect(dbSpy).toHaveBeenCalledWith('tradebot-p2');
   });
 });

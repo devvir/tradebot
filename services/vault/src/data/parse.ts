@@ -20,6 +20,7 @@
 import readline from 'node:readline';
 import { createCsvParser, FREE_TEXT_TABLES, WS_TABLES } from '@tradebot/utils';
 import { openClosedFile } from '../fs/reader';
+import { baseTable } from './headers';
 import type { VaultParser } from './types';
 
 /**
@@ -28,7 +29,7 @@ import type { VaultParser } from './types';
  * the full RFC 4180 parser.
  */
 export const createParser = (table: string): VaultParser => {
-  const strategy = FREE_TEXT_TABLES.has(table) ? rfc4180 : commaSplit;
+  const strategy = FREE_TEXT_TABLES.has(baseTable(table)) ? rfc4180 : commaSplit;
 
   return {
     read: (filename: string, skip = 0) => strategy(table, filename, skip),
@@ -60,7 +61,7 @@ async function* commaSplit(
     // REST tables store one record per line — no continuation rows, so every
     // line opens a new message. WS tables mark continuation rows with an empty
     // `_date_`, which on disk is a leading comma.
-    const isContinuation = WS_TABLES.has(table)
+    const isContinuation = WS_TABLES.has(baseTable(table))
       ? (line: string) => line.startsWith(',')
       : () => false;
 

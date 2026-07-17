@@ -6,6 +6,8 @@ export type RedisClient = SKRedisClient;
 
 export interface Config {
   database:           string;
+  /** Target database for `pool=Secondary` items: `<database>-p2`. */
+  secondaryDatabase:  string;
   vaultUrl:           string;
   librarianUrl:       string;
   tables:             BitmexTable[];
@@ -49,7 +51,29 @@ export interface Item {
    * doesn't blow past the writer's body limit.
    */
   size:     number;
+  /**
+   * True when the item belongs to the Secondary liquidity pool and must land
+   * in the secondary database. Set by the reader to `false`; flipped by infer
+   * (REST records of pooled tables, substring scan) or assemble (WS messages,
+   * from the already-extracted per-message pool). Anything that is not
+   * exactly `Secondary` — Primary, Aggregated, empty, absent — stays `false`.
+   */
+  secondary: boolean;
 }
+
+/**
+ * One homogeneous outgoing batch: items for one base-table collection in one
+ * target database. `table` is the base (unqualified) name — it is both the
+ * POST path segment and the mongo collection.
+ */
+export interface Batch {
+  table:     string;
+  secondary: boolean;
+  items:     Item[];
+}
+
+/** Pending batches keyed by routing identity (base table + target db). */
+export type TableBatches = Map<string, Batch>;
 
 export interface BoundedBufferOpts<T> {
   highWater: number;

@@ -62,6 +62,16 @@ export const parseOrder = (raw: unknown): 1 | -1 | Error => {
   return new Error("order must be 'asc' or 'desc'");
 };
 
+/** `db` optionally targets a database other than the librarian's default. */
+export const parseDb = (raw: unknown): string | undefined | Error => {
+  if (raw === undefined) return undefined;
+
+  if (typeof raw !== 'string' || raw.length === 0)
+    return new Error('db must be a non-empty string');
+
+  return raw;
+};
+
 /** `filter` is an optional JSON object spread verbatim into the mongo query. */
 export const parseFilter = (raw: unknown): Filter<Document> | undefined | Error => {
   if (raw === undefined) return undefined;

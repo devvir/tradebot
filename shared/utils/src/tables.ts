@@ -272,6 +272,26 @@ export const TABLE_SPECS: Record<BitmexTable, TableSpec> = {
 };
 
 /**
+ * The base name of a possibly-qualified vault table: `orderBookL2.secondary` →
+ * `orderBookL2`. A `.qualifier` suffix scopes *storage* (e.g. per-pool buckets)
+ * and carries no schema meaning, so every knowledge lookup (specs, templates,
+ * WS/REST origin) keys on the base name and never needs to know which
+ * qualifiers exist.
+ */
+export const baseTable = (table: string): string => table.split('.')[0]!;
+
+/**
+ * Tables whose rows carry a `pool` field, derived from `TABLE_SPECS` so the
+ * specs stay the single source of truth. Consumers that route or filter by
+ * liquidity pool consult this set instead of maintaining their own list.
+ */
+export const POOLED_TABLES: ReadonlySet<string> = new Set(
+  Object.entries(TABLE_SPECS)
+    .filter(([ , spec ]) => 'pool' in spec.types)
+    .map(([ table ]) => table),
+);
+
+/**
  * Tables whose vault files store reconstructed WS message envelopes
  * (`{ action, date, data[] }`) rather than per-row REST records. Used to
  * decide, at task creation time, whether a bucket flows through the

@@ -7,10 +7,11 @@
 
 import { logger } from '@devvir/service-kit';
 import type { RequestHandler } from 'express';
-import type { Db, Document } from 'mongodb';
-import type { Config, InsertCounter } from '../types';
+import type { Document } from 'mongodb';
+import { parseDb } from '../query';
+import type { Config, DbResolver, InsertCounter } from '../types';
 
-export const makeWriteHandler = (db: Db, config: Config, counter: InsertCounter): RequestHandler => async (req, res) => {
+export const makeWriteHandler = (dbFor: DbResolver, config: Config, counter: InsertCounter): RequestHandler => async (req, res) => {
   const table = String(req.params.table);
   const docs  = req.body as Document[];
 
@@ -20,8 +21,16 @@ export const makeWriteHandler = (db: Db, config: Config, counter: InsertCounter)
     return;
   }
 
+  const db = parseDb(req.query.db);
+
+  if (db instanceof Error) {
+    res.status(400).json({ error: db.message });
+
+    return;
+  }
+
   try {
-    const result = await db.collection(table).insertMany(docs, { ordered: false });
+    const result = await dbFor(db).collection(table).insertMany(docs, { ordered: false });
 
     counter(result.insertedCount);
     res.json({ inserted: result.insertedCount });

@@ -18,6 +18,7 @@
  */
 
 import { logger, registry } from '@devvir/service-kit';
+import { baseTable } from '@tradebot/utils';
 import type { BitmexTable } from '@tradebot/types';
 import type { Config } from '../types';
 import { listFiles, listTables, statFile } from '../read/vault';
@@ -149,8 +150,10 @@ const doRefresh = async (): Promise<void> => {
 
 const fetchVaultClosed = async (): Promise<Array<{ table: BitmexTable; date: string }>> => {
   const allTables = await listTables(vaultUrl!);
+  /** The filter matches on base names, so `FARMER_TABLES=orderBookL2` also
+   *  covers its qualified variants (`orderBookL2.secondary`, …). */
   const tables    = filter.length > 0
-    ? allTables.filter(t => filter.includes(t as BitmexTable))
+    ? allTables.filter(t => filter.includes(baseTable(t) as BitmexTable))
     : allTables;
 
   const perTable = await Promise.all(tables.map(async (table) => {

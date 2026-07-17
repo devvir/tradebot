@@ -9,8 +9,7 @@ import {
 import { Task, type StopSignal } from '../../src/orchestration';
 import { makeMongoId } from '@tradebot/utils';
 import { admit, initStaging, _test_reset as resetStaging } from '../../src/write/staging';
-import type { Item } from '../../src/types';
-import type { TableBatches } from '../../src/write/dispatch';
+import type { Batch, Item, TableBatches } from '../../src/types';
 import type { BitmexTable } from '@tradebot/types';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -45,10 +44,15 @@ const makeItem = (task: Task, position: number, content?: string, size?: number)
   return {
     task,
     position,
-    content: body,
-    size:    size ?? body.length,
+    content:   body,
+    size:      size ?? body.length,
+    secondary: false,
   };
 };
+
+/** Build a `batches` entry the way dispatch would: keyed by routing identity. */
+const batchFor = (task: Task, items: Item[], secondary: boolean = false): [string, Batch] =>
+  [secondary ? `${task.base}:p2` : task.base, { table: task.base, secondary, items }];
 
 /** Mirror what infer/assemble do for each item: claim Gate A + bump task.pending. */
 const admitItems = async (task: Task, n: number): Promise<void> => {
@@ -57,7 +61,8 @@ const admitItems = async (task: Task, n: number): Promise<void> => {
 };
 
 const FLUSH_INTERVAL = 50;
-const LIBRARIAN_URL     = 'http://writer';
+const LIBRARIAN_URL  = 'http://writer';
+const SECONDARY_DB   = 'tradebot-p2';
 const CAP            = 100_000;
 
 beforeEach(() => {
@@ -162,7 +167,7 @@ describe('startFlush — no-op when batches are empty', () => {
     const fetchSpy = mockFetch(async () => okResponse());
 
     const batches: TableBatches = new Map();
-    const timer = startFlush(LIBRARIAN_URL, batches, FLUSH_INTERVAL, CAP);
+    const timer = startFlush(LIBRARIAN_URL, SECONDARY_DB, batches, FLUSH_INTERVAL, CAP);
 
     await vi.advanceTimersByTimeAsync(FLUSH_INTERVAL * 5);
 
@@ -185,11 +190,11 @@ describe('startFlush — successful POST', () => {
       return okResponse({ inserted: postedBody.length });
     });
 
-    const batches: TableBatches = new Map([[task.table, items.slice()]]);
+    const batches: TableBatches = new Map([ batchFor(task, items.slice()) ]);
 
     await admitItems(task, items.length);
 
-    const timer = startFlush(LIBRARIAN_URL, batches, FLUSH_INTERVAL, CAP);
+    const timer = startFlush(LIBRARIAN_URL, SECONDARY_DB, batches, FLUSH_INTERVAL, CAP);
 
     await vi.advanceTimersByTimeAsync(FLUSH_INTERVAL);
     await vi.advanceTimersByTimeAsync(0);
@@ -209,16 +214,41 @@ describe('startFlush — successful POST', () => {
 
     const fetchSpy = mockFetch(async () => okResponse());
 
-    const batches: TableBatches = new Map([[task.table, items]]);
+    const batches: TableBatches = new Map([ batchFor(task, items) ]);
 
     await admitItems(task, 1);
 
-    const timer = startFlush(LIBRARIAN_URL, batches, FLUSH_INTERVAL, CAP);
+    const timer = startFlush(LIBRARIAN_URL, SECONDARY_DB, batches, FLUSH_INTERVAL, CAP);
 
     await vi.advanceTimersByTimeAsync(FLUSH_INTERVAL);
     await vi.advanceTimersByTimeAsync(0);
 
     expect(fetchSpy).toHaveBeenCalledWith(`${LIBRARIAN_URL}/orderBookL2`, expect.any(Object));
+    clearInterval(timer);
+  });
+
+  it('posts secondary batches to the base collection with ?db=<secondaryDatabase>', async () => {
+    /** A qualified bucket's items post to the BASE table path — the qualifier
+     *  is storage-scoping only — with the db override carrying the routing. */
+    const task  = makeTask('orderBookL2.secondary' as BitmexTable);
+    const items = [makeItem(task, 1)];
+
+    items[0]!.secondary = true;
+
+    const fetchSpy = mockFetch(async () => okResponse());
+
+    const batches: TableBatches = new Map([ batchFor(task, items, true) ]);
+
+    await admitItems(task, 1);
+
+    const timer = startFlush(LIBRARIAN_URL, SECONDARY_DB, batches, FLUSH_INTERVAL, CAP);
+
+    await vi.advanceTimersByTimeAsync(FLUSH_INTERVAL);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(fetchSpy).toHaveBeenCalledWith(`${LIBRARIAN_URL}/orderBookL2?db=${SECONDARY_DB}`, expect.any(Object));
+    expect(task.messages).toBe(1);
+
     clearInterval(timer);
   });
 });
@@ -232,11 +262,11 @@ describe('startFlush — duplicate batches', () => {
 
     mockFetch(async () => okResponse({ inserted: 0, duplicates: true }));
 
-    const batches: TableBatches = new Map([[task.table, items]]);
+    const batches: TableBatches = new Map([ batchFor(task, items) ]);
 
     await admitItems(task, 1);
 
-    const timer = startFlush(LIBRARIAN_URL, batches, FLUSH_INTERVAL, CAP);
+    const timer = startFlush(LIBRARIAN_URL, SECONDARY_DB, batches, FLUSH_INTERVAL, CAP);
 
     await vi.advanceTimersByTimeAsync(FLUSH_INTERVAL);
     await vi.advanceTimersByTimeAsync(0);
@@ -265,11 +295,11 @@ describe('startFlush — transient error retry', () => {
       return okResponse();
     });
 
-    const batches: TableBatches = new Map([[task.table, items]]);
+    const batches: TableBatches = new Map([ batchFor(task, items) ]);
 
     await admitItems(task, 1);
 
-    const timer = startFlush(LIBRARIAN_URL, batches, FLUSH_INTERVAL, CAP);
+    const timer = startFlush(LIBRARIAN_URL, SECONDARY_DB, batches, FLUSH_INTERVAL, CAP);
 
     await vi.advanceTimersByTimeAsync(FLUSH_INTERVAL);
     await vi.advanceTimersByTimeAsync(0);
@@ -298,11 +328,11 @@ describe('startFlush — shutdown', () => {
 
     mockFetch(async () => errResponse(500, 'persistent'));
 
-    const batches: TableBatches = new Map([[task.table, items]]);
+    const batches: TableBatches = new Map([ batchFor(task, items) ]);
 
     await admitItems(task, 1);
 
-    const timer = startFlush(LIBRARIAN_URL, batches, FLUSH_INTERVAL, CAP);
+    const timer = startFlush(LIBRARIAN_URL, SECONDARY_DB, batches, FLUSH_INTERVAL, CAP);
 
     await vi.advanceTimersByTimeAsync(FLUSH_INTERVAL);
     await vi.advanceTimersByTimeAsync(0);
@@ -331,12 +361,12 @@ describe('startFlush — in-flight request cap', () => {
 
     const fetchSpy = mockFetch(() => new Promise<Response>(r => { release = () => r(okResponse()); }));
 
-    const batches: TableBatches = new Map([[task.table, [first]]]);
+    const batches: TableBatches = new Map([ batchFor(task, [first]) ]);
 
     await admitItems(task, 1);
 
     /** cap = 1 request → only one POST in flight at a time. */
-    const timer = startFlush(LIBRARIAN_URL, batches, FLUSH_INTERVAL, 1);
+    const timer = startFlush(LIBRARIAN_URL, SECONDARY_DB, batches, FLUSH_INTERVAL, 1);
 
     await vi.advanceTimersByTimeAsync(FLUSH_INTERVAL);
     await vi.advanceTimersByTimeAsync(0);
@@ -344,7 +374,7 @@ describe('startFlush — in-flight request cap', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
 
     /** Queue another item — the one slot is still busy, so no further POST. */
-    batches.get(task.table)!.push(makeItem(task, 2));
+    batches.get(task.base)!.items.push(makeItem(task, 2));
     await admitItems(task, 1);
 
     await vi.advanceTimersByTimeAsync(FLUSH_INTERVAL * 3);
@@ -369,14 +399,14 @@ describe('startFlush — in-flight request cap', () => {
     const fetchSpy = mockFetch(async () => okResponse());
 
     const batches: TableBatches = new Map([
-      [tradeTask.table, [makeItem(tradeTask, 1)]],
-      [obTask.table,    [makeItem(obTask, 1)]],
+      batchFor(tradeTask, [makeItem(tradeTask, 1)]),
+      batchFor(obTask,    [makeItem(obTask, 1)]),
     ]);
 
     await admitItems(tradeTask, 1);
     await admitItems(obTask, 1);
 
-    const timer = startFlush(LIBRARIAN_URL, batches, FLUSH_INTERVAL, CAP);
+    const timer = startFlush(LIBRARIAN_URL, SECONDARY_DB, batches, FLUSH_INTERVAL, CAP);
 
     await vi.advanceTimersByTimeAsync(FLUSH_INTERVAL);
     await vi.advanceTimersByTimeAsync(0);
@@ -398,11 +428,11 @@ describe('startFlush — in-flight request cap', () => {
     }));
 
     const list: Item[] = [makeItem(task, 1)];
-    const batches: TableBatches = new Map([[task.table, list]]);
+    const batches: TableBatches = new Map([ batchFor(task, list) ]);
 
     await admitItems(task, 1);
 
-    const timer = startFlush(LIBRARIAN_URL, batches, FLUSH_INTERVAL, CAP);
+    const timer = startFlush(LIBRARIAN_URL, SECONDARY_DB, batches, FLUSH_INTERVAL, CAP);
 
     await vi.advanceTimersByTimeAsync(FLUSH_INTERVAL);
     await vi.advanceTimersByTimeAsync(0);
@@ -446,14 +476,14 @@ describe('startFlush — fairness across tables', () => {
     const fetchSpy = mockFetch(() => new Promise<Response>(() => {}));
 
     const batches: TableBatches = new Map([
-      [big.table,   bigItems],
-      [small.table, smallItems],
+      batchFor(big,   bigItems),
+      batchFor(small, smallItems),
     ]);
 
     await admitItems(big, bigItems.length);
     await admitItems(small, smallItems.length);
 
-    const timer = startFlush(LIBRARIAN_URL, batches, FLUSH_INTERVAL, MAX_REQ);
+    const timer = startFlush(LIBRARIAN_URL, SECONDARY_DB, batches, FLUSH_INTERVAL, MAX_REQ);
 
     await vi.advanceTimersByTimeAsync(FLUSH_INTERVAL);
 

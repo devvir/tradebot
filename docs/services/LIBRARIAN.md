@@ -2,9 +2,10 @@
 
 ## Overview
 
-Librarian is a deliberately thin HTTP↔MongoDB proxy serving the project's main
-database (`DB_DATABASE`). It exposes two endpoints — bulk insert and batched
-read — and exists for one reason: to put the BSON-encoding and mongo I/O work
+Librarian is a deliberately thin HTTP↔MongoDB proxy. Requests target the
+default database (`DB_DATABASE`) unless they name another via `?db=`. It
+exposes two endpoints — bulk insert and batched read — and exists for one
+reason: to put the BSON-encoding and mongo I/O work
 on its own Node event loop, freeing the producer/consumer's loop to do its
 real job (streaming, parsing, reconstruction, in-memory buffering) without
 contention.
@@ -39,6 +40,12 @@ Body: a non-empty JSON array of documents. The librarian calls
 `db.collection(:table).insertMany(body, { ordered: false })` and returns one
 of:
 
+Query params:
+
+| Param | Required | Default | Description |
+|---|---|---|---|
+| `db` | No | `DB_DATABASE` | Target database for this request. `Db` handles are cached per name, so per-request overrides cost nothing. Empty string → `400`. |
+
 | Status | Body | Meaning |
 |---|---|---|
 | `200` | `{ inserted: <n> }` | All `n` docs inserted. |
@@ -61,6 +68,7 @@ Query params:
 | `before` | No | — | Upper `_id` cursor — the mirror of `from`. Applied as `{ _id: { $lte: before } }`. Combine with `from` for a bounded `_id` range. |
 | `order` | No | `asc` | `_id` sort direction: `asc` (default) or `desc`. |
 | `filter` | No | — | Optional JSON-encoded mongo filter document. Merged verbatim into the query. |
+| `db` | No | `DB_DATABASE` | Target database for this request — same semantics as on `POST`. |
 
 The final mongo query is `{ ...filter, ...(from/before → { _id: { $gte, $lte } }) }`,
 sorted `{ _id: order }`, limited.
@@ -144,15 +152,16 @@ sync.
 
 ```
 src/
-  index.ts        SK.run — connect mongo, hand the Db to the router
+  index.ts        SK.run — connect mongo, hand the db resolver to the router
   service.ts      SKFactory({ name: 'librarian', mongodb: true, config })
   config.ts       env: DB_DATABASE, LIBRARIAN_IGNORE_DUPLICATES
-  types.ts        Config interface + counter types
+  types.ts        Config interface, DbResolver, counter types
+  db.ts           db resolver — default database + per-request `?db=` overrides, cached handles
   server.ts       express router — the API surface (routes only)
   handlers/
     write.ts      POST /:table — bulk insertMany + E11000 handling
     read.ts       GET  /:table — find().sort({_id:1}).limit() with cursor
-  query.ts        parsers for `limit` / `from` / `filter` query params
+  query.ts        parsers for `limit` / `from` / `filter` / `db` query params
   metrics.ts      writes/reads throughput counters + 5s log loop
 ```
 

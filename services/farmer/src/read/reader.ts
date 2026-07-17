@@ -34,7 +34,7 @@ export const readBucket = async (
     /** `size` is the bytes the item contributes to the wire body. For REST it's
      *  the line itself; the WS path overwrites it in assemble.ts once the
      *  template-spliced envelope replaces `content`. */
-    const item: Item = { task, position, content: line, size: line.length };
+    const item: Item = { task, position, content: line, size: line.length, secondary: false };
 
     await readerQueue.push(item);
 

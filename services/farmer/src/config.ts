@@ -3,10 +3,12 @@ import type { BitmexTable } from '@tradebot/types';
 import type { Config } from './types';
 
 const loadConfig = (): Config => {
-  const tables = process.env.FARMER_TABLES ?? '';
+  const tables   = process.env.FARMER_TABLES ?? '';
+  const database = process.env.DB_DATABASE   ?? '';
 
   const config: Config = {
-    database:           process.env.DB_DATABASE   ?? '',
+    database,
+    secondaryDatabase:  database ? `${database}-p2` : '',
     vaultUrl:           process.env.VAULT_URL     ?? '',
     librarianUrl:       process.env.LIBRARIAN_URL ?? '',
     tables:             tables.split(',').map(s => s.trim()).filter(Boolean) as BitmexTable[],

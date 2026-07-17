@@ -48,6 +48,7 @@ const DATE_PREFIX       = '"date":"';
 const DATA_PREFIX       = '"data":[';
 const EMPTY_DATA_SUFFIX = '"data":[]}';
 const TIMESTAMP_RX      = /"timestamp":"([^"]+)"/;
+const POOL_RX           = /"pool":"([^"]+)"/;
 
 const ORDERBOOK_LEGACY_CUTOFF = '20230101';
 
@@ -88,7 +89,10 @@ export const startAssemble = async (
  * when the item is ready for the writer queue.
  */
 const assembleOne = async (item: Item): Promise<boolean> => {
-  const table   = item.task.table;
+  /** Knowledge lookups (specs, templates, legacy cutoffs) key on the base
+   *  name — a `.qualifier` (e.g. `orderBookL2.secondary`) scopes storage
+   *  only, and routing is decided by the rows' `pool`, never the name. */
+  const table   = item.task.base;
   const date    = item.task.date;
   const content = item.content;
 
@@ -130,6 +134,10 @@ const assembleOne = async (item: Item): Promise<boolean> => {
     ? (extractFirstRowTimestamp(dataSlice) ?? messageDate)
     : messageDate;
 
+  /** Routing only — the pool never enters the envelope; rows keep their own. */
+  if (item.task.pooled)
+    item.secondary = extractFirstRowPool(dataSlice) === 'Secondary';
+
   let template;
 
   try {
@@ -167,7 +175,7 @@ const parseFallback = async (item: Item): Promise<boolean> => {
   let recon;
 
   try {
-    recon = reconstruct(item.task.table, parsed);
+    recon = reconstruct(item.task.base, parsed);
   } catch (err) {
     if (err instanceof UnknownTableError) {
       await registry.get('farmer').shutdown(err.message);
@@ -185,8 +193,10 @@ const parseFallback = async (item: Item): Promise<boolean> => {
     return false;
   }
 
-  item.content = JSON.stringify(recon);
-  item.size    = item.content.length;
+  /** Rows are single-pool per message; the first row's pool routes the item. */
+  item.secondary = recon.data[0]!['pool'] === 'Secondary';
+  item.content   = JSON.stringify(recon);
+  item.size      = item.content.length;
 
   return true;
 };
@@ -262,6 +272,18 @@ const extractFirstRowTimestamp = (dataSlice: string): string | null => {
   return match ? match[1]! : null;
 };
 
+/**
+ * First-row `pool` scan. Only called for POOL_TABLES, whose rows are
+ * numeric/enum with no free text, so the first `"pool":"..."` match is the first
+ * row's pool — and, since the whole message is one pool, the message's pool.
+ * Null when the row carries no pool (legacy pre-pool orderBookL2).
+ */
+const extractFirstRowPool = (dataSlice: string): string | null => {
+  const match = POOL_RX.exec(dataSlice);
+
+  return match ? match[1]! : null;
+};
+
 // ── Test-only exports ─────────────────────────────────────────────────────────
 
 export const _test_EMPTY_DATA_SUFFIX        = EMPTY_DATA_SUFFIX;
@@ -269,4 +291,5 @@ export const _test_extractAction            = extractAction;
 export const _test_extractDate              = extractDate;
 export const _test_extractDataSlice         = extractDataSlice;
 export const _test_extractFirstRowTimestamp = extractFirstRowTimestamp;
+export const _test_extractFirstRowPool      = extractFirstRowPool;
 export const _test_ORDERBOOK_LEGACY_CUTOFF  = ORDERBOOK_LEGACY_CUTOFF;

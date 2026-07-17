@@ -1,5 +1,6 @@
 import { WS_TABLES } from '@tradebot/utils';
 import { createParser } from './parse';
+import { baseTable } from './headers';
 import { applyCasts } from './casts';
 
 /**
@@ -26,7 +27,7 @@ export async function* decodeFile(
   const cols = first.value;
 
   // REST files emit one plain row object per record.
-  if (! WS_TABLES.has(table)) {
+  if (! WS_TABLES.has(baseTable(table))) {
     for await (const record of records) {
       yield JSON.stringify(applyFields(record, cols, table)) + '\n';
     }

@@ -82,13 +82,13 @@ WS │         │ REST
  │  writer q    │
  └──────┬───────┘
         │
-   dispatch (by table)
+   dispatch (by base table + target db)
         │
-   per-table batches
+   homogeneous batches
         │
    flush (100 ms timer; round-robin under the in-flight request cap)
         │
-   POST /:table  ─→  Librarian  ─→  MongoDB
+   POST /:table[?db=…]  ─→  Librarian  ─→  MongoDB
 ```
 
 `JSON.parse` and `reconstruct()` errors fork to the `farmer.<table>`
@@ -102,16 +102,20 @@ property set (V8 hidden-class friendly):
 
 ```ts
 interface Item {
-  task:     Task;       // shared per-bucket pointer (table, date, type, stopSignal)
-  position: number;     // 1-based: first message of a file is position 1
-  content:  string;     // a JSON string beginning with `{` — the doc as it goes on the wire
-  size:     number;     // byte length of `content`
+  task:      Task;       // shared per-bucket pointer (table, base, pooled, date, type, stopSignal)
+  position:  number;     // 1-based: first message of a file is position 1
+  content:   string;     // a JSON string beginning with `{` — the doc as it goes on the wire
+  size:      number;     // byte length of `content`
+  secondary: boolean;    // pool=Secondary → ships to the secondary database
 }
 ```
 
 `table`, `date`, `type`, and `stopSignal` live on `item.task` — one shared
-pointer per bucket, not duplicated per item. `content` is mutated in place
-across stages; we never spread/clone to add a property:
+pointer per bucket, not duplicated per item. The task also carries `base` (the
+table name with any `.qualifier` stripped: `orderBookL2.secondary` →
+`orderBookL2`) and `pooled` (whether the base table's rows carry a `pool`
+field, derived from `TABLE_SPECS`). `content` is mutated in place across
+stages; we never spread/clone to add a property:
 
 - the **reader** sets `content` to the vault NDJSON line as-is (REST docs are
   already wire-ready; WS lines are the raw envelope)
@@ -125,6 +129,41 @@ hidden-class churn and GC pressure that nested POJOs cause at this volume.
 `size` tracks `content`'s byte length — the reader sets it to the line length,
 assemble re-sets it after splicing the envelope — and is the unit the staging
 gate and the flusher's batching both bound by.
+
+## Pool routing
+
+BitMEX runs separate liquidity pools; `pool=Secondary` data lives in its own
+database (`<DB_DATABASE>-p2`, same collection names) so the main database
+stays purely Primary. Farmer decides the target per item and the writer's
+`?db=` override carries it — nothing else in the pipeline changes.
+
+Three rules, all keyed on data rather than table names:
+
+- **Qualified buckets are just storage scoping.** A vault table like
+  `orderBookL2.secondary` is read and checkpointed under its qualified name,
+  but every knowledge lookup (specs, templates, WS/REST origin) and the target
+  collection use `task.base`. Farmer never interprets the qualifier — if the
+  collector later merges or re-splits files, nothing here changes.
+- **WS messages** (assemble): pooled tables' messages are single-pool (per-pool
+  subscriptions), so the first row's pool is the message's pool — assemble
+  scans it out of the data slice (parse-fallback reads it off the first row)
+  purely to set `item.secondary`. The envelope itself is never touched: rows
+  keep their own `pool` field, and the target database already says which pool
+  a message belongs to.
+- **Records** (infer): pooled tables' records carry a per-row `pool`; a plain
+  `content.includes('"pool":"Secondary"')` tags them — exact because pooled
+  tables have no free-text fields, and no JSON.parse enters the hot path.
+
+Which tables are pooled comes from `TABLE_SPECS` (`types.pool`), via the
+shared `POOLED_TABLES` set — the specs stay the single source of truth.
+Anything that is not exactly `Secondary` (Primary, Aggregated, empty, absent —
+including all pre-pool history) stays in the main database.
+
+Dispatch keys batches by routing identity (base table + target db), so every
+POST is homogeneous: one collection, one database. A consequence of the split:
+each database sees `_id` gaps at the positions routed to the other one —
+harmless for `_id`-range queries, but "contiguous positions" no longer holds
+within a single database.
 
 ## Orchestration
 
@@ -236,12 +275,13 @@ the averages. There's no benefit to persisting them.
 ## Flushing
 
 The flusher runs on a 100 ms timer. Each tick round-robins a fixed budget of
-concurrent in-flight requests across the per-table batches — one batch per
-table per pass, from a rotating start offset, looping until every slot is busy
-or a full pass ships nothing. That rotating round-robin is what stops a fat
-table (orderBookL2) from claiming every slot and starving the tables
+concurrent in-flight requests across the batches — one slice per batch per
+pass, from a rotating start offset, looping until every slot is busy or a
+full pass ships nothing. That rotating round-robin is what stops a fat
+table (orderBookL2) from claiming every slot and starving the batches
 dispatched into `batches` after it. Each `fetch` runs in its own async branch,
-so a slow request on one table never blocks another.
+so a slow request on one batch never blocks another. Secondary batches POST
+with `?db=<DB_DATABASE>-p2`; everything else targets the writer's default.
 
 ### Byte-based batching
 
@@ -383,15 +423,16 @@ src/
     reader.ts           per-task NDJSON streamer (→ reader queue)
 
   process/
-    infer.ts            reader queue → assembler queue (WS) or writer queue (REST)
+    infer.ts            reader queue → assembler queue (WS) or writer queue (REST);
+                        tags pooled records secondary via substring scan
     assemble.ts         assembler queue → wire envelope (template splice; parse +
                         reconstruct on the rare fallbacks) → writer queue
     reconstruct.ts      WS reconstruction (timestamp, partial decoration, legacy backfills)
 
   write/
     staging.ts          staging byte gate (producer-side backpressure)
-    dispatch.ts         writer queue → per-table batches
-    flush.ts            per-table HTTP POSTs to the writer + retry loop;
+    dispatch.ts         writer queue → batches keyed by base table + target db
+    flush.ts            per-batch HTTP POSTs to the writer + retry loop;
                         byte-based batching, round-robin under the request cap
     errors.ts           farmer.<table> error writes (direct insertOne)
 ```
@@ -402,7 +443,7 @@ src/
 |---|---|---|---|
 | `VAULT_URL` | Yes | — | Base URL of the vault service |
 | `LIBRARIAN_URL` | Yes | — | Base URL of the librarian writer service |
-| `DB_DATABASE` | Yes | — | Target database (writer reads its own `DB_DATABASE`; farmer's value is used only for the `farmer.<table>` forensics writes) |
+| `DB_DATABASE` | Yes | — | Target database (writer reads its own `DB_DATABASE`; farmer's value derives the secondary-pool database name `<DB_DATABASE>-p2` passed as the writer's `?db=` override, and must therefore match the writer's) |
 | `CACHE_URL` | Yes | — | Redis connection string |
 | `FARMER_TABLES` | No | (all) | Comma-separated table filter |
 | `FARMER_FILE_CONCURRENCY` | No | `10` | Parallel reader workers |

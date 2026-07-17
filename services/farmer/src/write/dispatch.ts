@@ -1,16 +1,14 @@
 /**
- * Pops from the writer queue and routes each item into its table's batch
- * buffer. The flusher (`flush.ts`) drains those buffers periodically.
+ * Pops from the writer queue and routes each item into its batch, keyed by
+ * routing identity: base table + target database (`secondary`). The flusher
+ * (`flush.ts`) drains those batches periodically.
  *
  * Dispatch is intentionally trivial — it doesn't allocate, doesn't decide,
  * doesn't talk to mongo. Keeping it small makes the pipeline shape obvious
  * and isolates the per-table state to the flusher.
  */
 
-import type { BoundedBuffer, Item } from '../types';
-import type { BitmexTable } from '@tradebot/types';
-
-export type TableBatches = Map<BitmexTable, Item[]>;
+import type { Batch, BoundedBuffer, Item, TableBatches } from '../types';
 
 const BATCH_MAX = 10_000;
 
@@ -24,14 +22,17 @@ export const startDispatch = async (
     if (! items) return;
 
     for (const item of items) {
-      let list = batches.get(item.task.table);
+      const table = item.task.base;
+      const key   = item.secondary ? `${table}:p2` : table;
 
-      if (! list) {
-        list = [];
-        batches.set(item.task.table, list);
+      let batch: Batch | undefined = batches.get(key);
+
+      if (! batch) {
+        batch = { table, secondary: item.secondary, items: [] };
+        batches.set(key, batch);
       }
 
-      list.push(item);
+      batch.items.push(item);
     }
   }
 };

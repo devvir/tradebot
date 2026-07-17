@@ -4,11 +4,11 @@ import { createBoundedBuffer } from './buffer';
 import { logMetrics, recordReadPause, recordReadResume, setReaderQueueProbe, startMetricsAdvance, stopMetricsAdvance } from './metrics';
 import { startInfer } from './process/infer';
 import { startAssemble } from './process/assemble';
-import { startDispatch, type TableBatches } from './write/dispatch';
+import { startDispatch } from './write/dispatch';
 import { startFlush, MAX_BYTES_PER_REQUEST } from './write/flush';
 import { initStaging } from './write/staging';
 import { runWorkers } from './loop';
-import type { Config, Item } from './types';
+import type { Config, Item, TableBatches } from './types';
 
 /** Read-ahead: stage two full send-sets behind what's in flight, hard-capped
  *  so a large `FARMER_INFLIGHT_CAP` can't blow the read buffers past 1 GiB. */
@@ -67,7 +67,7 @@ SK.run(async (service: Service) => {
   void startAssemble(assemblerQueue, writerQueue);
   void startDispatch(writerQueue, batches);
 
-  const flushTimer   = startFlush(config.librarianUrl, batches, config.flushIntervalMs, config.inflightCap);
+  const flushTimer   = startFlush(config.librarianUrl, config.secondaryDatabase, batches, config.flushIntervalMs, config.inflightCap);
   const metricsTimer = setInterval(logMetrics, METRICS_INTERVAL_MS);
 
   metricsTimer.unref();

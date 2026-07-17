@@ -1,12 +1,15 @@
 /**
- * Per-table batch flusher.
+ * Batch flusher. Batches are keyed by routing identity — base table + target
+ * database — so each POST is homogeneous: one collection, one db. Secondary-
+ * pool batches add `?db=<secondaryDatabase>` to the writer URL; everything
+ * else ships to the writer's default database.
  *
  * Runs on a periodic timer. Each tick round-robins a fixed budget of
- * concurrent in-flight requests across all tables with pending items — one
- * batch per table per pass, looping until the budget is exhausted — starting
+ * concurrent in-flight requests across all batches with pending items — one
+ * slice per batch per pass, looping until the budget is exhausted — starting
  * from a rotating offset. This keeps a single fat table (e.g. orderBookL2)
- * from hogging every slot and starving the tables inserted into `batches`
- * after it. Each batch is one POST capped at `MAX_BYTES_PER_REQUEST`, so a
+ * from hogging every slot and starving the batches inserted into `batches`
+ * after it. Each slice is one POST capped at `MAX_BYTES_PER_REQUEST`, so a
  * slot is a slot regardless of size; `maxInFlightRequests` bounds how many
  * run at once. Splicing a batch out `release`s its bytes from the staging
  * gate (unblocking the readers) and claims one in-flight request slot, freed
@@ -42,11 +45,9 @@
 
 import { logger } from '@devvir/service-kit';
 import { makeMongoId } from '@tradebot/utils';
-import type { BitmexTable } from '@tradebot/types';
 import { recordWrite } from '../metrics';
 import { release } from './staging';
-import type { Item } from '../types';
-import type { TableBatches } from './dispatch';
+import type { Batch, Item, TableBatches } from '../types';
 
 const RETRY_INITIAL_MS = 1_000;
 const RETRY_MAX_MS     = 30_000;
@@ -63,6 +64,7 @@ export const MAX_BYTES_PER_REQUEST = 8 * 1024 * 1024;
 
 export const startFlush = (
   librarianUrl:        string,
+  secondaryDatabase:   string,
   batches:             TableBatches,
   flushIntervalMs:     number,
   maxInFlightRequests: number,
@@ -79,33 +81,32 @@ export const startFlush = (
    * longer hog the slots and starve tables inserted after it.
    */
   const tick = (): void => {
-    const tables = [...batches.keys()];
+    const keys = [...batches.keys()];
 
-    if (tables.length === 0) return;
+    if (keys.length === 0) return;
 
-    const start = cursor++ % tables.length;
+    const start = cursor++ % keys.length;
 
     let progressed = true;
 
     while (progressed) {
       progressed = false;
 
-      for (let i = 0; i < tables.length; i++) {
+      for (let i = 0; i < keys.length; i++) {
         if (inFlightRequests >= maxInFlightRequests) return;
 
-        const table = tables[(start + i) % tables.length]!;
-        const items = batches.get(table);
+        const batch = batches.get(keys[(start + i) % keys.length]!);
 
-        if (! items || items.length === 0) continue;
+        if (! batch || batch.items.length === 0) continue;
 
-        const count = sliceCount(items);
-        const bytes = sumBytes(items, count);
-        const batch = items.splice(0, count);
+        const count = sliceCount(batch.items);
+        const bytes = sumBytes(batch.items, count);
+        const slice = batch.items.splice(0, count);
 
         release(bytes);       // out of the staging gate → unblocks the readers
         inFlightRequests++;   // claim an in-flight request slot
 
-        void postBatch(librarianUrl, table, batch)
+        void postBatch(librarianUrl, secondaryDatabase, batch, slice)
           .finally(() => { inFlightRequests--; });
 
         progressed = true;
@@ -150,17 +151,20 @@ const sumBytes = (items: Item[], count: number): number => {
 };
 
 const postBatch = async (
-  librarianUrl: string,
-  table:     BitmexTable,
-  batch:     Item[],
+  librarianUrl:      string,
+  secondaryDatabase: string,
+  batch:             Batch,
+  items:             Item[],
 ): Promise<void> => {
-  const body = buildBody(batch);
+  /** Base table = collection; secondary batches override the writer's target db. */
+  const url  = `${librarianUrl}/${batch.table}${batch.secondary ? `?db=${secondaryDatabase}` : ''}`;
+  const body = buildBody(items);
 
   let delayMs = RETRY_INITIAL_MS;
 
   while (true) {
     try {
-      const res = await fetch(`${librarianUrl}/${table}`, {
+      const res = await fetch(url, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body,
@@ -175,14 +179,14 @@ const postBatch = async (
       /** Response body is `{ inserted, duplicates? }`; both shapes are success. */
       await res.json();
 
-      onSuccess(batch);
+      onSuccess(items);
 
       return;
     } catch (err) {
-      logger.warn({ err, table, count: batch.length, delayMs }, 'Write to writer failed — retrying');
+      logger.warn({ err, table: batch.table, secondary: batch.secondary, count: items.length, delayMs }, 'Write to writer failed — retrying');
 
-      if (batch[0]!.task.stopSignal.triggered) {
-        logger.warn({ table, count: batch.length }, 'Shutdown signalled — abandoning batch');
+      if (items[0]!.task.stopSignal.triggered) {
+        logger.warn({ table: batch.table, count: items.length }, 'Shutdown signalled — abandoning batch');
 
         return;
       }
@@ -215,10 +219,10 @@ const buildBody = (batch: Item[]): string => {
   return `[${parts.join(',')}]`;
 };
 
-const onSuccess = (batch: Item[]): void => {
-  recordWrite(batch.length);
+const onSuccess = (items: Item[]): void => {
+  recordWrite(items.length);
 
-  for (const item of batch)
+  for (const item of items)
     item.task.noteDisposed(item.position, true);
 };
 

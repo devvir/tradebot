@@ -10,12 +10,20 @@
 
 import { logger } from '@devvir/service-kit';
 import type { RequestHandler } from 'express';
-import type { Db, Document, Filter } from 'mongodb';
-import { parseLimit, parseFrom, parseBefore, parseOrder, parseFilter } from '../query';
-import type { ReadCounter } from '../types';
+import type { Document, Filter } from 'mongodb';
+import { parseLimit, parseFrom, parseBefore, parseOrder, parseFilter, parseDb } from '../query';
+import type { DbResolver, ReadCounter } from '../types';
 
-export const makeReadHandler = (db: Db, counter: ReadCounter): RequestHandler => async (req, res) => {
+export const makeReadHandler = (dbFor: DbResolver, counter: ReadCounter): RequestHandler => async (req, res) => {
   const table = String(req.params.table);
+
+  const db = parseDb(req.query.db);
+
+  if (db instanceof Error) {
+    res.status(400).json({ error: db.message });
+
+    return;
+  }
 
   const limit = parseLimit(req.query.limit);
 
@@ -67,7 +75,7 @@ export const makeReadHandler = (db: Db, counter: ReadCounter): RequestHandler =>
   const query = { ...filter, ...(Object.keys(idBound).length > 0 ? { _id: idBound } : {}) } as unknown as Filter<Document>;
 
   try {
-    const docs = await db.collection(table).find(query).sort({ _id: order }).limit(limit).toArray();
+    const docs = await dbFor(db).collection(table).find(query).sort({ _id: order }).limit(limit).toArray();
 
     counter(docs.length);
     res.json({ docs });

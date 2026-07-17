@@ -95,6 +95,29 @@ describe('WS file decoding', () => {
     expect(second.data).toHaveLength(1);
   });
 
+  it('groups a qualified pseudo-table (orderBookL2.secondary) into envelopes like its base', async () => {
+    /** The WS/REST branch keys on the base name, so a per-pool bucket decodes
+     *  as WS envelopes — not plain rows — exactly like the real table. */
+    mockRecords([
+      ['_date_', '_action_', 'symbol', 'price', 'pool'],
+      ['2026-07-19T00:00:00.000Z', 'insert', 'XBTUSD', '30000', 'Secondary'],
+      ['', '', '', '', ''],
+    ]);
+
+    const out: string[] = [];
+
+    for await (const line of decodeFile('orderBookL2.secondary', '2026-07-19')) {
+      out.push(line);
+    }
+
+    expect(out).toHaveLength(1);
+
+    const msg = JSON.parse(out[0]!);
+    expect(msg.action).toBe('insert');
+    expect(msg.data).toHaveLength(2);
+    expect(msg.data[0]).toMatchObject({ pool: 'Secondary' });
+  });
+
   it('handles a quoted field containing a comma', async () => {
     mockRecords([
       ['_date_', '_action_', 'symbol', 'note'],

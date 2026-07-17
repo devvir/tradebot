@@ -8,6 +8,7 @@ import {
   _test_extractDate              as extractDate,
   _test_extractDataSlice         as extractDataSlice,
   _test_extractFirstRowTimestamp as extractFirstRowTimestamp,
+  _test_extractFirstRowPool      as extractFirstRowPool,
 } from '../../src/process/assemble';
 import { createBoundedBuffer } from '../../src/buffer';
 import { Task } from '../../src/orchestration';
@@ -37,14 +38,15 @@ const makeTask = (table: BitmexTable, date: string = '20240315'): Task => new Ta
 const wsItem = (task: Task, position: number, payload: unknown): Item => {
   const content = JSON.stringify(payload);
 
-  return { task, position, content, size: content.length };
+  return { task, position, content, size: content.length, secondary: false };
 };
 
 const rawItem = (task: Task, position: number, content: string): Item => ({
   task,
   position,
   content,
-  size: content.length,
+  size:      content.length,
+  secondary: false,
 });
 
 const makeMongoForErrors = () => {
@@ -132,6 +134,17 @@ describe('extractFirstRowTimestamp', () => {
   });
 });
 
+describe('extractFirstRowPool', () => {
+  it('returns the first row pool', () => {
+    expect(extractFirstRowPool('{"symbol":"X","pool":"Primary","price":1},{"pool":"Secondary"}'))
+      .toBe('Primary');
+  });
+
+  it('returns null when no pool is present (legacy pre-pool rows)', () => {
+    expect(extractFirstRowPool('{"symbol":"X","price":1}')).toBeNull();
+  });
+});
+
 // ── Success path — string template ────────────────────────────────────────────
 
 describe('startAssemble — common string path', () => {
@@ -163,8 +176,97 @@ describe('startAssemble — common string path', () => {
     expect(item.content.startsWith('{"table":"orderBookL2","action":"insert","data":[')).toBe(true);
     expect(item.content.endsWith('}')).toBe(true);
     expect(item.content).toContain('"timestamp":"2024-06-15T12:34:00.000Z"'); /** first row's ts */
+    expect(item.content).not.toContain('"pool"'); /** no pool in the rows → item stays primary */
     expect(item.size).toBe(item.content.length);
     expect(stagedBytes()).toBe(item.size);
+
+    inQ.close();
+    await loop;
+  });
+
+  it('tags secondary from the rows without touching the envelope', async () => {
+    const task = makeTask('orderBookL2');
+    const inQ  = createBoundedBuffer<Item>({ highWater: 10, lowWater: 5 });
+    const outQ = createBoundedBuffer<Item>({ highWater: 10, lowWater: 5 });
+
+    setupRegistry(makeMongoForErrors().mongo, makeService());
+
+    const loop = startAssemble(inQ, outQ);
+
+    await inQ.push(wsItem(task, 1, {
+      action: 'insert',
+      date:   '2024-06-15T12:34:56.789Z',
+      data:   [
+        { symbol: 'XBTUSD', id: 1, side: 'Buy', size: 100, price: 29_500, timestamp: '2024-06-15T12:34:00.000Z', pool: 'Secondary' },
+        { symbol: 'XBTUSD', id: 2, side: 'Buy', size: 50,  price: 29_490, timestamp: '2024-06-15T12:34:05.000Z', pool: 'Secondary' },
+      ],
+    }));
+
+    const item = (await outQ.pop(10))![0]!;
+
+    expect(item.content).toContain('"pool":"Secondary"'); /** rows keep their own pool */
+    // No root-level pool — the target database already says which pool it is.
+    expect(item.content).not.toMatch(/\],"timestamp":"[^"]+","pool":/);
+    expect(item.size).toBe(item.content.length);
+    expect(item.secondary).toBe(true); /** pool=Secondary → routed to the secondary db */
+
+    inQ.close();
+    await loop;
+  });
+
+  it('flags secondary only for pool=Secondary — Primary and Aggregated stay primary', async () => {
+    const task = makeTask('orderBookL2');
+    const inQ  = createBoundedBuffer<Item>({ highWater: 10, lowWater: 5 });
+    const outQ = createBoundedBuffer<Item>({ highWater: 10, lowWater: 5 });
+
+    setupRegistry(makeMongoForErrors().mongo, makeService());
+
+    const loop = startAssemble(inQ, outQ);
+
+    const row = (pool: string) =>
+      ({ symbol: 'XBTUSD', id: 1, side: 'Buy', size: 100, price: 29_500, timestamp: '2024-06-15T12:34:00.000Z', pool });
+
+    await inQ.push(wsItem(task, 1, { action: 'insert', date: '2024-06-15T12:34:56.789Z', data: [row('Primary')] }));
+    await inQ.push(wsItem(task, 2, { action: 'insert', date: '2024-06-15T12:34:56.789Z', data: [row('Aggregated')] }));
+    await inQ.push(wsItem(task, 3, { action: 'insert', date: '2024-06-15T12:34:56.789Z', data: [row('Secondary')] }));
+
+    const items: Item[] = [];
+
+    while (items.length < 3) {
+      const popped = await outQ.pop(3 - items.length);
+
+      if (! popped) break;
+
+      items.push(...popped);
+    }
+
+    expect(items.map(i => i.secondary)).toEqual([false, false, true]);
+
+    inQ.close();
+    await loop;
+  });
+
+  it('treats a qualified bucket (orderBookL2.secondary) exactly as its base table', async () => {
+    /** The qualifier scopes storage only: the wire envelope says the BASE
+     *  table, and routing still comes from the rows' pool. */
+    const task = makeTask('orderBookL2.secondary' as BitmexTable);
+    const inQ  = createBoundedBuffer<Item>({ highWater: 10, lowWater: 5 });
+    const outQ = createBoundedBuffer<Item>({ highWater: 10, lowWater: 5 });
+
+    setupRegistry(makeMongoForErrors().mongo, makeService());
+
+    const loop = startAssemble(inQ, outQ);
+
+    await inQ.push(wsItem(task, 1, {
+      action: 'insert',
+      date:   '2024-06-15T12:34:56.789Z',
+      data:   [{ symbol: 'XBTUSD', id: 1, side: 'Buy', size: 100, price: 29_500, timestamp: '2024-06-15T12:34:00.000Z', pool: 'Secondary' }],
+    }));
+
+    const item = (await outQ.pop(10))![0]!;
+
+    expect(item.content.startsWith('{"table":"orderBookL2","action":"insert"')).toBe(true);
+    expect(item.secondary).toBe(true);
 
     inQ.close();
     await loop;

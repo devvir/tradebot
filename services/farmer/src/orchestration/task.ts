@@ -23,7 +23,7 @@
  */
 
 import { logger } from '@devvir/service-kit';
-import { WS_TABLES } from '@tradebot/utils';
+import { WS_TABLES, POOLED_TABLES, baseTable } from '@tradebot/utils';
 import type { BitmexTable } from '@tradebot/types';
 import { markDone, markProgress } from './progress';
 
@@ -42,7 +42,13 @@ export interface TaskOptions {
 }
 
 export class Task {
+  /** Vault bucket name, possibly qualified (`orderBookL2.secondary`). Identity:
+   *  vault reads and progress keys. Knowledge lookups use `base`. */
   readonly table:     BitmexTable;
+  /** Unqualified table name — the specs/templates key and the target collection. */
+  readonly base:      BitmexTable;
+  /** True when the base table's rows carry a `pool` field (from `TABLE_SPECS`). */
+  readonly pooled:    boolean;
   readonly date:      string;
   readonly type:      'ws' | 'rest';
   readonly startTime: number;
@@ -67,8 +73,10 @@ export class Task {
 
   constructor(opts: TaskOptions) {
     this.table         = opts.table;
+    this.base          = baseTable(opts.table) as BitmexTable;
+    this.pooled        = POOLED_TABLES.has(this.base);
     this.date          = opts.date;
-    this.type          = WS_TABLES.has(opts.table) ? 'ws' : 'rest';
+    this.type          = WS_TABLES.has(this.base) ? 'ws' : 'rest';
     this.totalMessages = null;
     this.startTime     = Date.now();
     this.stopSignal    = opts.stopSignal;

@@ -13,7 +13,8 @@ const makeTask = (table: BitmexTable): Task => new Task({
   stopSignal: { triggered: false },
 });
 
-const item = (task: Task, position: number): Item => ({ task, position, content: 'x', size: 1 });
+const item = (task: Task, position: number, content: string = 'x'): Item =>
+  ({ task, position, content, size: content.length, secondary: false });
 
 /** Drain N items from the queue across however many batches `pop` returns. */
 const drain = async <T>(q: ReturnType<typeof createBoundedBuffer<T>>, n: number): Promise<T[]> => {
@@ -57,6 +58,33 @@ describe('startInfer — REST items', () => {
 
     expect(stagedBytes()).toBe(2);
     expect(assembleQ.size()).toBe(0);
+
+    readerQ.close();
+    await loop;
+  });
+});
+
+// ── Secondary-pool tagging on record-origin items ─────────────────────────────
+
+describe('startInfer — secondary-pool records', () => {
+  it('tags pooled-table records by their pool field; everything else stays primary', async () => {
+    const readerQ   = createBoundedBuffer<Item>({ highWater: 10, lowWater: 5 });
+    const assembleQ = createBoundedBuffer<Item>({ highWater: 10, lowWater: 5 });
+    const writerQ   = createBoundedBuffer<Item>({ highWater: 10, lowWater: 5 });
+
+    const loop = startInfer(readerQ, assembleQ, writerQ);
+
+    const trade   = makeTask('trade');       /** pooled (types.pool) */
+    const funding = makeTask('funding');     /** not pooled */
+
+    await readerQ.push(item(trade,   1, '{"symbol":"XBTUSD","pool":"Secondary","price":1}'));
+    await readerQ.push(item(trade,   2, '{"symbol":"XBTUSD","pool":"Primary","price":1}'));
+    await readerQ.push(item(trade,   3, '{"symbol":"XBTUSD","price":1}'));
+    await readerQ.push(item(funding, 1, '{"symbol":"XBTUSD","pool":"Secondary"}'));
+
+    const out = await drain(writerQ, 4);
+
+    expect(out.map(i => i.secondary)).toEqual([true, false, false, false]);
 
     readerQ.close();
     await loop;

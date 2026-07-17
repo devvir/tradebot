@@ -13,20 +13,19 @@
  */
 
 import { Router } from 'express';
-import type { Db } from 'mongodb';
 import { makeWriteHandler } from './handlers/write';
 import { makeReadHandler }  from './handlers/read';
-import type { Config, InsertCounter, ReadCounter } from './types';
+import type { Config, DbResolver, InsertCounter, ReadCounter } from './types';
 
-export const buildRouter = (db: Db, config: Config, writeCounter: InsertCounter, readCounter: ReadCounter): Router => {
+export const buildRouter = (dbFor: DbResolver, config: Config, writeCounter: InsertCounter, readCounter: ReadCounter): Router => {
   const router = Router();
 
   /** `/health` must be declared before `/:table` so the generic GET route
    *  doesn't swallow it as `table=health`. */
   router.get('/health', (_req, res) => { res.json({ ok: true }); });
 
-  router.post('/:table', makeWriteHandler(db, config, writeCounter));
-  router.get ('/:table', makeReadHandler (db, readCounter));
+  router.post('/:table', makeWriteHandler(dbFor, config, writeCounter));
+  router.get ('/:table', makeReadHandler (dbFor, readCounter));
 
   return router;
 };
