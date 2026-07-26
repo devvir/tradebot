@@ -1,0 +1,29 @@
+# UI Service - React SPA (Vite)
+
+services:
+  ui:
+    build:
+      context: ../../../..
+      dockerfile: docker/dev.node.Dockerfile
+      args:
+        SERVICE_NAME: _stub/ui
+
+    command: ["sh", "-c", "cd services/_stub/ui && pnpm install --ignore-scripts && pnpm dev"]
+
+    environment:
+      # REST proxy target — required. The UI hits /api/v1/* and Vite forwards
+      # it here. The `x-testnet` header on each REST call tells the proxy
+      # whether to target live or testnet BitMEX.
+      UI_REST_PROXY:  ${UI_REST_PROXY:-http://proxy}
+
+      # Replay backend — optional. Set by modules that wire digger; absent
+      # otherwise. When unset, the Replay option in the env dropdown is greyed out.
+      UI_REPLAY_HOST: ${UI_REPLAY_HOST:-}
+
+    ports:
+      - ${UI_PORT:-3000}:3000
+
+    volumes:
+      - ../../../../:/live
+
+    restart: unless-stopped

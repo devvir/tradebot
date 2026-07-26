@@ -15,7 +15,7 @@
 name: trade
 
 include:
-  - path: ../../../services/trader/docker/compose.yml
+  - path: ../../../services/_stub/trader/docker/compose.yml
 
 networks:
   default:

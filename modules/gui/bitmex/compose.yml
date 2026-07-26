@@ -6,7 +6,7 @@
 name: gui
 
 include:
-  - path: ../../../services/ui/docker/compose.yml
+  - path: ../../../services/_stub/ui/docker/compose.yml
 
 networks:
   default:

@@ -28,7 +28,7 @@ services:
 
   provider:
     extends:
-      file: ../../../services/provider/docker/compose.yml
+      file: ../../../services/_stub/provider/docker/compose.yml
       service: provider
     environment:
       LIBRARIAN_URL: http://librarian
@@ -50,7 +50,7 @@ services:
 
   provider-rest:
     extends:
-      file: ../../../services/provider/docker/compose.yml
+      file: ../../../services/_stub/provider/docker/compose.yml
       service: provider
     environment:
       LIBRARIAN_URL: http://librarian-rest
@@ -62,7 +62,7 @@ services:
   # ── Replay engine ───────────────────────────────────────────────────────────
   digger:
     extends:
-      file: ../../../services/digger/docker/compose.yml
+      file: ../../../services/_stub/digger/docker/compose.yml
       service: digger
     environment:
       PROVIDER_WS_URL:   http://provider

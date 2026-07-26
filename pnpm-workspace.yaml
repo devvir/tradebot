@@ -2,6 +2,7 @@ packages:
   - packages/*
   - shared/*
   - services/*
+  - services/_stub/*
   - dx
   - dev/tooling
 

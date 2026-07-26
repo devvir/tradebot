@@ -58,7 +58,7 @@ Optional (with sensible defaults):
 
 ## Strategies
 
-Strategies live in `services/trader/src/strategies/` and are registered in
+Strategies live in `services/_stub/trader/src/strategies/` and are registered in
 `registry.ts`. The bundled `range` strategy places one buy + one sell each
 tick at ±1% from mid — useful for verifying the end-to-end flow, not for
 making money.

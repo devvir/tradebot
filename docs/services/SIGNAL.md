@@ -310,7 +310,7 @@ Isolated so that lifting any of them into a standalone package requires zero cha
 ## File Structure
 
 ```
-services/signal/
+services/_stub/signal/
   src/
     infrastructure/
       mq/
@@ -369,7 +369,7 @@ services/signal/
 **Health check**: `GET http://localhost:3000/health`
 
 Dev compose mounts:
-- `services/signal/` — service source and venv
+- `services/_stub/signal/` — service source and venv
 - `packages/` — future shared Python packages (unused now, zero cost to mount)
 
 ---

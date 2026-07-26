@@ -246,7 +246,7 @@ containers, each with its own credentials.
 
 ## Tests
 
-Test files under `services/trader/tests/`:
+Test files under `services/_stub/trader/tests/`:
 
 | File | Covers |
 |---|---|
