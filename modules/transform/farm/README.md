@@ -24,7 +24,7 @@ Progress is checkpointed in Redis under `farm:<table>:<date>`.
 
 See each service's documentation for environment variables:
 
-- [Farmer](../../../services/farmer/README.md)
-- [Distiller](../../../services/distiller/README.md)
+- [Farmer](../../../services/.deprecated/farmer/README.md)
+- [Distiller](../../../services/.deprecated/distiller/README.md)
 
 For detailed technical documentation, see [docs/services/FARMER.md](../../../docs/services/FARMER.md).

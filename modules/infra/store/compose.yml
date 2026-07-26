@@ -39,7 +39,7 @@ services:
 
   db-feed:
     extends:
-      file: ../../../services/mongodb/docker/base.yml
+      file: ../../../services/.deprecated/mongodb/docker/base.yml
       service: mongodb
     container_name: db-feed
     command: mongod --quiet --setParameter logLevel=0 --wiredTigerCacheSizeGB=${DB_CACHE_SIZE_GB:-2}
@@ -51,7 +51,7 @@ services:
 
   db-store:
     extends:
-      file: ../../../services/mongodb/docker/base.yml
+      file: ../../../services/.deprecated/mongodb/docker/base.yml
       service: mongodb
     container_name: db-store
     command: mongod --quiet --setParameter logLevel=0 --wiredTigerCacheSizeGB=${DB_STORE_CACHE_SIZE_GB:-2}

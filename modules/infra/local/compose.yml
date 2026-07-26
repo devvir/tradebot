@@ -22,17 +22,17 @@ include:
   - path: ../../../services/bouncer/docker/compose.yml
 
 services:
-  queue:
-    extends:
-      file: ../../../services/rabbitmq/docker/base.yml
-      service: rabbitmq
-    hostname: queue
-    container_name: queue
-    ports:
-      - "${QUEUE_PORT:-}:5672"
-      - "${QUEUE_MGMT_PORT:-}:15672"
-    volumes:
-      - queue-data:/var/lib/rabbitmq
+  # queue:
+  #   extends:
+  #     file: ../../../services/rabbitmq/docker/base.yml
+  #     service: rabbitmq
+  #   hostname: queue
+  #   container_name: queue
+  #   ports:
+  #     - "${QUEUE_PORT:-}:5672"
+  #     - "${QUEUE_MGMT_PORT:-}:15672"
+  #   volumes:
+  #     - queue-data:/var/lib/rabbitmq
 
   queue-rt:
     extends:
@@ -48,24 +48,24 @@ services:
 
   # Single MongoDB instance aliased to db-store, db-replay, and db-audit.
   # Sufficient for local development; in production each gets its own instance.
-  db:
-    extends:
-      file: ../../../services/mongodb/docker/base.yml
-      service: mongodb
-    container_name: db
-    command: mongod --quiet --setParameter logLevel=0 --wiredTigerCacheSizeGB=${DB_CACHE_SIZE_GB:-2}
-    ports:
-      - "${DB_PORT:-}:27017"
-    volumes:
-      - db-data:/data/db
-      - db-config:/data/configdb
-    networks:
-      default:
-        aliases:
-          - db-feed
-          - db-store
-          - db-replay
-          - db-audit
+  # db:
+  #   extends:
+  #     file: ../../../services/.deprecated/mongodb/docker/base.yml
+  #     service: mongodb
+  #   container_name: db
+  #   command: mongod --quiet --setParameter logLevel=0 --wiredTigerCacheSizeGB=${DB_CACHE_SIZE_GB:-2}
+  #   ports:
+  #     - "${DB_PORT:-}:27017"
+  #   volumes:
+  #     - db-data:/data/db
+  #     - db-config:/data/configdb
+  #   networks:
+  #     default:
+  #       aliases:
+  #         - db-feed
+  #         - db-store
+  #         - db-replay
+  #         - db-audit
 
   cache:
     extends:
@@ -78,10 +78,10 @@ services:
       - cache-data:/data
 
 volumes:
-  queue-data:
+  # queue-data:
   queue-rt-data:
-  db-data:
-  db-config:
+  # db-data:
+  # db-config:
   cache-data:
 
 networks:

@@ -175,7 +175,7 @@ module that needs it. The pattern:
 services:
   writer:                                            # alias of your choice
     extends:
-      file: ../../../services/librarian/docker/compose.yml
+      file: ../../../services/.deprecated/librarian/docker/compose.yml
       service: librarian
     deploy:
       replicas: ${MODULE_WRITER_REPLICAS:-1}         # module owns the scaling

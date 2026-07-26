@@ -16,13 +16,13 @@
 name: transform
 
 include:
-  - path: ../../../services/distiller/docker/compose.yml
+  - path: ../../../services/.deprecated/distiller/docker/compose.yml
 
 services:
   # Read-only vault replica pool. spreads CPU cost across farm-owned Vault replicas.
   farmer:
     extends:
-      file: ../../../services/farmer/docker/compose.yml
+      file: ../../../services/.deprecated/farmer/docker/compose.yml
       service: farmer
 
     environment:
@@ -48,7 +48,7 @@ services:
   # Librarian replica pool, unloads and spreads mongo resource needs for farmer's writes.
   writer:
     extends:
-      file: ../../../services/librarian/docker/compose.yml
+      file: ../../../services/.deprecated/librarian/docker/compose.yml
       service: librarian
 
     deploy:

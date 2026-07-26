@@ -40,7 +40,7 @@ services:
 
   db-audit:
     extends:
-      file: ../../../services/mongodb/docker/base.yml
+      file: ../../../services/.deprecated/mongodb/docker/base.yml
       service: mongodb
     container_name: db-audit
     command: mongod --quiet --setParameter logLevel=0 --wiredTigerCacheSizeGB=${DB_AUDIT_CACHE_SIZE_GB:-2}

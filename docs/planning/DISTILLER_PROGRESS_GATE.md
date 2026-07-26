@@ -57,7 +57,7 @@ This convention applies only to **derived bin documents** (`tradeBin*`, `quoteBi
 
 ## 2 — The progress helper
 
-`services/distiller/src/dates.ts`. One module that owns *all* progress bookkeeping. Generators never read or write Redis directly.
+`services/.deprecated/distiller/src/dates.ts`. One module that owns *all* progress bookkeeping. Generators never read or write Redis directly.
 
 ### API
 
@@ -157,9 +157,9 @@ This is why we don't need a clean-slate-before-reprocess mechanism in the walker
 
 Today distiller declares only `mongodb: true`. To use the progress helper:
 
-- **`services/distiller/src/service.ts`** — add `redis: true` to the `SKFactory` call.
-- **`services/distiller/docker/compose.yml`** — add `CACHE_URL` and `CACHE_PASS` env passthroughs (matching farmer/scribe).
-- **`services/distiller/src/index.ts`** — connect redis alongside mongo, create a walker registry, wire `service.on('shutdown')` to close every walker in it, and pass `redis` and the registry into each generator. See the top-level loop sketch below.
+- **`services/.deprecated/distiller/src/service.ts`** — add `redis: true` to the `SKFactory` call.
+- **`services/.deprecated/distiller/docker/compose.yml`** — add `CACHE_URL` and `CACHE_PASS` env passthroughs (matching farmer/scribe).
+- **`services/.deprecated/distiller/src/index.ts`** — connect redis alongside mongo, create a walker registry, wire `service.on('shutdown')` to close every walker in it, and pass `redis` and the registry into each generator. See the top-level loop sketch below.
 
 ### Top-level loop and shutdown
 
@@ -195,7 +195,7 @@ The walker module could export a small registry helper (`createWalkerRegistry()`
 
 ### `makeId` placement
 
-**Not required for quote or trade.** Both work on `timestamp`-based queries, not `_id` ranges. This subsection is only relevant when we eventually refactor orderbook or partials, both of which read source data in `_id` order and would benefit from a shared `makeId(date, msgIndex, reserved?)` helper. At that point: extract from `services/farmer/src/write/id.ts` to `shared/utils` and import from both farmer and distiller.
+**Not required for quote or trade.** Both work on `timestamp`-based queries, not `_id` ranges. This subsection is only relevant when we eventually refactor orderbook or partials, both of which read source data in `_id` order and would benefit from a shared `makeId(date, msgIndex, reserved?)` helper. At that point: extract from `services/.deprecated/farmer/src/write/id.ts` to `shared/utils` and import from both farmer and distiller.
 
 Skipped for the quote/trade work in scope here.
 

@@ -18,7 +18,7 @@ services:
   # ── Stream path (firehose, replicated) ──────────────────────────────────────
   librarian:
     extends:
-      file: ../../../services/librarian/docker/compose.yml
+      file: ../../../services/.deprecated/librarian/docker/compose.yml
       service: librarian
     environment:
       DB_URL:      ${DB_URL}
@@ -40,7 +40,7 @@ services:
   # ── REST path (dedicated, single instance) ──────────────────────────────────
   librarian-rest:
     extends:
-      file: ../../../services/librarian/docker/compose.yml
+      file: ../../../services/.deprecated/librarian/docker/compose.yml
       service: librarian
     environment:
       DB_URL:      ${DB_URL}
