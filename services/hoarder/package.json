@@ -1,0 +1,20 @@
+{
+  "name": "@tradebot/hoarder",
+  "version": "1.0.0",
+  "description": "Multi-venue WebSocket collection service",
+  "main": "dist/index.js",
+  "private": true,
+  "scripts": {
+    "build": "tsc -b",
+    "start": "node dist/src/index.js",
+    "dev": "ts-node src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@devvir/service-kit": "workspace:*",
+    "@tradebot/utils": "workspace:*",
+    "ws": "^8.19.0"
+  }
+}

@@ -396,6 +396,18 @@ importers:
         specifier: workspace:*
         version: link:../../shared/utils
 
+  services/hoarder:
+    dependencies:
+      '@devvir/service-kit':
+        specifier: workspace:*
+        version: link:../../packages/service-kit
+      '@tradebot/utils':
+        specifier: workspace:*
+        version: link:../../shared/utils
+      ws:
+        specifier: ^8.19.0
+        version: 8.21.1
+
   services/journalist:
     dependencies:
       '@devvir/service-kit':
