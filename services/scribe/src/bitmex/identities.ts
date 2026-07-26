@@ -62,7 +62,7 @@ export const pickIdentity = async (): Promise<Identity> => {
  */
 export const pace = async (): Promise<void> => {
   const ms = paceMs(identities);
-
+  // /** Temp throttling to avoid being banned by BitMEX (again) */ await sleep(1000)
   if (ms > 0) await sleep(ms);
 };
 

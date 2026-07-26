@@ -9,6 +9,10 @@
 //   - journalist CHAT_SCHEMA             (chat has extra fields missing from the partial WS message)
 //   - BitMEX OpenAPI + TABLE_SPECS       (tables not yet observed in vault)
 
+// The four resolutions of each bin table share one column list.
+const TRADE_BIN = ['timestamp', 'symbol', 'open', 'high', 'low', 'close', 'trades', 'volume', 'vwap', 'lastSize', 'turnover', 'homeNotional', 'foreignNotional', 'pool'];
+const QUOTE_BIN = ['timestamp', 'symbol', 'bidSize', 'bidPrice', 'askPrice', 'askSize', 'pool'];
+
 export const TABLE_HEADERS: Record<string, string[]> = {
 
   // ── From BitMEX REST API ────────────────────────────────────────────────────
@@ -25,6 +29,19 @@ export const TABLE_HEADERS: Record<string, string[]> = {
   // S3 historical files predate the field and read back with no pool value.
   trade:               ['timestamp', 'symbol', 'side', 'size', 'price', 'tickDirection', 'trdMatchID', 'grossValue', 'homeNotional', 'foreignNotional', 'trdType', 'pool'],
   quote:               ['timestamp', 'symbol', 'bidSize', 'bidPrice', 'askPrice', 'askSize', 'pool'],
+
+  // Bins are REST-shaped rows (never WS messages), so no _date_/_action_ pair.
+  // /quote/bucketed returns the plain Quote schema — same columns as `quote`.
+  // Empty bins omit vwap/lastSize; the column list is fixed regardless.
+  tradeBin1m:          TRADE_BIN,
+  tradeBin5m:          TRADE_BIN,
+  tradeBin1h:          TRADE_BIN,
+  tradeBin1d:          TRADE_BIN,
+
+  quoteBin1m:          QUOTE_BIN,
+  quoteBin5m:          QUOTE_BIN,
+  quoteBin1h:          QUOTE_BIN,
+  quoteBin1d:          QUOTE_BIN,
 
   // ── Streamed from BitMEX WebSocket ─────────────────────────────────────────
   //

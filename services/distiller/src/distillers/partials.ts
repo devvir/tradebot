@@ -22,16 +22,6 @@ const CONFIGS: PartialConfig[] = [
   { table: BT.Funding,     collection: 'funding',     shape: 'item' },
   { table: BT.Settlement,  collection: 'settlement',  shape: 'item' },
   { table: BT.Insurance,   collection: 'insurance',   shape: 'item' },
-
-  { table: BT.TradeBin1m,  collection: 'tradeBin1m',  shape: 'item',  binFlavor: 'trade' },
-  { table: BT.TradeBin5m,  collection: 'tradeBin5m',  shape: 'item',  binFlavor: 'trade' },
-  { table: BT.TradeBin1h,  collection: 'tradeBin1h',  shape: 'item',  binFlavor: 'trade' },
-  { table: BT.TradeBin1d,  collection: 'tradeBin1d',  shape: 'item',  binFlavor: 'trade' },
-
-  { table: BT.QuoteBin1m,  collection: 'quoteBin1m',  shape: 'item',  binFlavor: 'quote' },
-  { table: BT.QuoteBin5m,  collection: 'quoteBin5m',  shape: 'item',  binFlavor: 'quote' },
-  { table: BT.QuoteBin1h,  collection: 'quoteBin1h',  shape: 'item',  binFlavor: 'quote' },
-  { table: BT.QuoteBin1d,  collection: 'quoteBin1d',  shape: 'item',  binFlavor: 'quote' },
 ];
 
 export const distillPartials = async (db: Db): Promise<void> => {
@@ -149,9 +139,6 @@ const emitPartial = async (
 
   let data = accum.snapshot() as Record<string, unknown>[];
 
-  if (cfg.binFlavor)
-    data = synthesizeBinMidnight(data, midnight, cfg.binFlavor);
-
   data = data.map(item =>
     'timestamp' in item ? { ...item, timestamp: midnight } : item,
   );
@@ -192,54 +179,8 @@ const nextDay = (day: string): string => {
   return d.toISOString().slice(0, 10);
 };
 
-/**
- * For bin tables, replace each item with a midnight entry if its timestamp
- * isn't already midnight:
- *   - trade bins: carry close (O=H=L=C = prev close, V=0, etc.)
- *   - quote bins: carry bid/ask forward
- */
-const synthesizeBinMidnight = (
-  data:     Record<string, unknown>[],
-  midnight: string,
-  flavor:   'trade' | 'quote',
-): Record<string, unknown>[] => {
-  return data.map(row => {
-    const symbol = row['symbol'] as string | undefined;
-
-    if (! symbol) return row;
-
-    const ts = row['timestamp'] as string | undefined;
-
-    if (ts === midnight) return row;
-
-    if (flavor === 'trade') {
-      const close = (row['close'] ?? row['vwap'] ?? 0) as number;
-
-      return {
-        ...row,
-        symbol,
-        timestamp:       midnight,
-        open:            close,
-        high:            close,
-        low:             close,
-        close,
-        volume:          0,
-        trades:          0,
-        turnover:        0,
-        homeNotional:    0,
-        foreignNotional: 0,
-        vwap:            close,
-        lastSize:        0,
-      };
-    }
-
-    return { ...row, symbol, timestamp: midnight };
-  });
-};
-
 /* ------------------------------------------------------------------ */
 /*  Test-only exports                                                 */
 /* ------------------------------------------------------------------ */
 
-export const _test_nextDay               = nextDay;
-export const _test_synthesizeBinMidnight  = synthesizeBinMidnight;
+export const _test_nextDay = nextDay;

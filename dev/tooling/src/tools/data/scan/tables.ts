@@ -31,6 +31,10 @@ export interface TableMeta {
  * `tick` is a pseudo-table (not a BitMEX endpoint): the referential index
  * prints, split out of `trade` by scribe.
  *
+ * The eight `*Bin*` tables are server-side OHLCV bars from
+ * `/trade|quote/bucketed`, paginated by scribe like any other REST table —
+ * buckets from birth, one table per resolution.
+ *
  * `orderBookL2.secondary` is the Secondary liquidity pool's book, collected on
  * its own pool-filtered WS client and stored as its own per-pool pseudo-table
  * since 2026-07-15 (`orderBookL2` itself is Primary-only from that day; earlier
@@ -53,6 +57,15 @@ export const ALL_TABLES: TableMeta[] = [
   { name: 'settlement',            origin: 'rest', sourced: false },
   { name: 'tick',                  origin: 'rest', sourced: false },
   { name: 'trade',                 origin: 'rest', sourced: true  },
+
+  { name: 'quoteBin1m',            origin: 'rest', sourced: false },
+  { name: 'quoteBin5m',            origin: 'rest', sourced: false },
+  { name: 'quoteBin1h',            origin: 'rest', sourced: false },
+  { name: 'quoteBin1d',            origin: 'rest', sourced: false },
+  { name: 'tradeBin1m',            origin: 'rest', sourced: false },
+  { name: 'tradeBin5m',            origin: 'rest', sourced: false },
+  { name: 'tradeBin1h',            origin: 'rest', sourced: false },
+  { name: 'tradeBin1d',            origin: 'rest', sourced: false },
 ];
 
 export const ALL_TABLE_NAMES: ReadonlySet<string> = new Set(ALL_TABLES.map(t => t.name));

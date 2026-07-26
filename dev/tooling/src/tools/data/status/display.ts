@@ -7,8 +7,7 @@ import type { VaultState } from '../scan/types';
 import type { CellState, Range } from './state';
 
 type LabelContext = {
-  yesterday:      string;
-  databaseColumn: number;  // index in `layout.locations`; -1 if absent
+  yesterday: string;
 };
 
 /**
@@ -32,10 +31,7 @@ export async function printTable(state: VaultState): Promise<void> {
     style: { head: [], border: [] },
   });
 
-  const ctx: LabelContext = {
-    yesterday:       layout.yesterday,
-    databaseColumn:  layout.locations.indexOf('Database'),
-  };
+  const ctx: LabelContext = { yesterday: layout.yesterday };
 
   for (const g of layout.groups) addGroup(cliTable, g, ctx);
 
@@ -72,7 +68,7 @@ function addGroup(cliTable: Table.Table, g: TableGroup, ctx: LabelContext): void
 
   ranges.forEach((r, i) => {
     const isSingleDay = r.startKey === r.endKey;
-    const cells = r.states.map((s, col) => renderCellState(s, isSingleDay, col === ctx.databaseColumn));
+    const cells = r.states.map(s => renderCellState(s, isSingleDay));
     const label = `${textColor}${renderRangeLabel(r, i === 0, ctx)}${C.reset}`;
 
     if (i === 0) cliTable.push([nameCell, label, ...cells]);
@@ -109,7 +105,7 @@ function deriveStatus(g: TableGroup): 'up to date' | 'partial' {
 }
 
 function isBadState(s: CellState): boolean {
-  if (s.kind === 'missing' || s.kind === 'incomplete' || s.kind === 'mixed' || s.kind === 'importing') return true;
+  if (s.kind === 'missing' || s.kind === 'incomplete' || s.kind === 'mixed') return true;
   if (s.kind === 'half' && (s.bucket === 'missing' || s.sources === 'missing')) return true;
 
   return false;
@@ -123,7 +119,7 @@ function isBadState(s: CellState): boolean {
  *   - today                      → "today"
  *   - single day = yesterday     → "yesterday"
  *   - single day                 → "2026-01-29"
- *   - first range start          → just the year ("2014")
+ *   - first range start          → "start"
  *   - endpoint = yesterday       → "yesterday"
  *   - full year(s)               → "2021" or "2019 → 2024"
  *   - mixed alignment            → year shorthand on year-aligned endpoints,
@@ -131,6 +127,11 @@ function isBadState(s: CellState): boolean {
  *
  * The startKey/endKey carry the actual range boundaries — this function
  * only chooses how to present them.
+ *
+ * The first range begins at the table's own first day by construction, so its
+ * start carries no information — every table starts where it starts. Rendering
+ * it as "start" rather than a year is what lets tables that began in different
+ * years collapse into one row (see `groupingRanges`).
  *
  * When start and end resolve to the same label (e.g. start = "2014",
  * end = "2014" because endKey was 20141231) the arrow form collapses to
@@ -154,7 +155,7 @@ function endpointLabel(key: string, role: 'start' | 'end', isFirstStart: boolean
 
   const year = key.slice(0, 4);
 
-  if (role === 'start' && isFirstStart)          return year;
+  if (role === 'start' && isFirstStart)          return 'start';
   if (role === 'start' && key === `${year}0101`) return year;
   if (role === 'end'   && key === `${year}1231`) return year;
 
@@ -163,7 +164,7 @@ function endpointLabel(key: string, role: 'start' | 'end', isFirstStart: boolean
 
 // ── Cell rendering ───────────────────────────────────────────────────────────
 
-function renderCellState(s: CellState, isSingleDay: boolean, isDatabaseColumn: boolean): string {
+function renderCellState(s: CellState, isSingleDay: boolean): string {
   switch (s.kind) {
     case 'absent':     return paint('—',             'neutral');
     case 'progress':   return paint('downloading',   'progress');
@@ -173,9 +174,7 @@ function renderCellState(s: CellState, isSingleDay: boolean, isDatabaseColumn: b
     case 'buckets':    return paint('buckets',       'good');
     case 'sources':    return paint('sources',       'good');
     case 'stored':     return paint('stored',        'good');
-    case 'missing':    return paint(isDatabaseColumn ? 'pending' : 'missing', 'bad');
-    case 'importing':  return paint('importing',     'progress');
-    case 'imported':   return paint('imported',      'good');
+    case 'missing':    return paint('missing',       'bad');
     case 'half':       return renderHalf(s, isSingleDay);
   }
 }

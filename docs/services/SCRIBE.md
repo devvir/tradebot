@@ -17,18 +17,23 @@ Fetches historical data from the BitMEX REST API and writes it to the vault serv
 | `tick`            | `/trade`                     | none               | `{size:0}`          | referential (index)     |
 | `trade`           | `/trade`                     | per trading symbol | —                   | `from: 20260416`        |
 | `quote`           | `/quote`                     | per trading symbol | —                   | `from: 20260414`        |
+| `tradeBin{1m,5m,1h,1d}` | `/trade/bucketed`      | none               | —                   | `params: {binSize, pool:Primary}` |
+| `quoteBin{1m,5m,1h,1d}` | `/quote/bucketed`      | none               | —                   | `params: {binSize, pool:Primary}` |
 
 \* `compositeIndex` carries the BMI filter only when `SCRIBE_INDEX_TICK_ONLY` is set.
 
-Each table is one entry in [settings.ts](../../services/scribe/src/utils/settings.ts). The runner is generic — it reads three optional fields and never names a table:
+Each table is one entry in [settings.ts](../../services/scribe/src/utils/settings.ts). The runner is generic — it reads four optional fields and never names a table:
 
 - **`symbols?`** — a resolver `(cache, baseUrl) => Promise<string[]>`. Present ⇒ the table fans out into one subtask per returned symbol (each carrying that `symbol` plus the table's static `filter`); absent ⇒ a single default task with no symbol. `compositeIndex` uses `getOrderedIndices` (the `.`-prefixed index symbols); `trade` and `quote` use `getTradingSymbols` (non-`.` symbols — referential symbols have no order book; their index prints are `tick`'s job, so the symbol filter is also what keeps referential prints out of `trade`). Both resolvers order their symbols by a **stable registration ID** held in a Redis hash (`scribe:indices` / `scribe:symbols`): a newly-listed symbol is appended with the next ID, so existing symbols never shift. That keeps a day's output reproducible — re-fetching it later yields a byte-identical file even if symbols listed in between, which is what makes regression diffs reliable. The list is computed at runtime, which is why this is a function rather than static data.
 - **`filter?`** — the server-side BitMEX filter. `trade`/`quote` carry none: the unfiltered fetch returns both liquidity pools, each row tagged by its own `pool` column.
+- **`params?`** — static query params appended to every request for the table. This is what lets several tables share one *parameterised* endpoint, as opposed to `filter` which narrows the rows a single endpoint returns: the eight bin tables all hit `/trade|quote/bucketed` and differ only by `binSize`. They are generated from a resolution list rather than spelled out, and named after BitMEX's own tables (`tradeBin1m`, `quoteBin5m`, …) so they line up with the WS tables the rest of the pipeline speaks. They take no `symbols` resolver: the endpoint returns every symbol's bars on one clock, so a single unfiltered stream is both cheaper and already timestamp-ordered — no `data resort` pass needed afterwards. `pool=Primary` is pinned because an unpinned bucketed backfill changes basis mid-history: BitMEX tags the bars `Primary` up to 2026-03-03 and `Aggregated` from 2026-03-04 on, and Aggregated is the one form that cannot be decomposed back into pools. The Secondary pool is deliberately not collected. Bins carry no `from`: unlike raw `trade`/`quote`, they exist only over REST, so scribe owns their history all the way back to 2014-11-22.
 - **`from?`** — a hard `yyyymmdd` floor on the first date, combined with `SCRIBE_START_DATE`. `trade`/`quote` start at `2026-04-01`; earlier history is bulk-collected from S3 by the courier service. The floor sets only the initial position — once progress passes it, the saved cursor resumes forward.
 
 `/instrument` is fetched to build the symbol lists; it is not written to vault.
 
 All tables use `reverse=false` (oldest-first). Page size defaults to `PAGE_SIZE`; the high-volume tables (`compositeIndex`, `tick`, `trade`, `quote`) override `count` upward. Each day is fetched with `startTime = midnight of that day` and `endTime = midnight of the following day`. The current day is never written to vault — processing pauses at today's date and resumes after midnight.
+
+A bin's `timestamp` marks the **end** of its period, so the bar covering 23:59–00:00 of day N carries `(N+1)T00:00:00.000Z` and the day cut files it under N+1. Every bin file therefore opens with a bar whose content belongs to the previous day. That is the timestamp-bucketing rule applied consistently — the row is filed by the clock it carries — not an off-by-one.
 
 ---
 

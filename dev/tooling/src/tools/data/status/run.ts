@@ -1,7 +1,6 @@
 import { info, warn } from '../log';
 import { loadConfig } from '../scan/config';
 import { scanAll } from '../scan';
-import { checkDatabaseAvailable } from '../scan/database';
 import { checkMegaAvailable } from '../scan/mega';
 import { printTable } from './display';
 
@@ -20,9 +19,9 @@ interface StatusOptions {
 /**
  * `data status` entry point.
  *
- * Loads the scan config, verifies `mega-cmd` and Redis are reachable, scans
- * every location (local, remotes, Mega, database), and renders the wide
- * per-table state grid. Read-only — never mutates the vault.
+ * Loads the scan config, verifies `mega-cmd` is reachable, scans every location
+ * (local, remotes, Mega), and renders the wide per-table state grid. Read-only
+ * — never mutates the vault.
  *
  * In watch mode it then stays alive, clearing the screen and re-scanning every
  * two minutes so an open terminal always shows fresh state. The refresh is
@@ -38,9 +37,8 @@ export async function runStatus({ watch = true }: StatusOptions = {}): Promise<v
   info(`Mega raw:   ${config.megaRaw}`);
 
   await checkMegaAvailable();
-  await checkDatabaseAvailable();
 
-  info('Scanning local, remotes, Mega, and database …');
+  info('Scanning local, remotes, and Mega …');
 
   const state = await scanAll(config);
 
@@ -51,7 +49,7 @@ export async function runStatus({ watch = true }: StatusOptions = {}): Promise<v
   if (! watch) return;
 
   // Stay alive: silently re-scan and re-print every two minutes. The last
-  // good scan is kept so a transient mega/redis failure shows a stale grid
+  // good scan is kept so a transient mega failure shows a stale grid
   // (with its scanned-at timestamp) instead of crashing the watch.
   let lastGood = state;
 

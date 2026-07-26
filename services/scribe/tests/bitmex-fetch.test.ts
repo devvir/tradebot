@@ -86,6 +86,19 @@ describe('FetchService — oldest', () => {
     const url = new URL(vi.mocked(global.fetch).mock.calls[0][0] as string);
     expect(url.searchParams.get('symbol')).toBe('.BXBT');
   });
+
+  it('applies the table\'s static params', async () => {
+    vi.mocked(global.fetch).mockResolvedValue(okJson([]));
+
+    await createFetchService(BASE_URL).oldest(
+      mkTable({ path: '/trade/bucketed', params: { binSize: '5m', partial: 'false' } }),
+    );
+
+    const url = new URL(vi.mocked(global.fetch).mock.calls[0][0] as string);
+    expect(url.pathname.endsWith('/trade/bucketed')).toBe(true);
+    expect(url.searchParams.get('binSize')).toBe('5m');
+    expect(url.searchParams.get('partial')).toBe('false');
+  });
 });
 
 // ── getRows ───────────────────────────────────────────────────────────────────

@@ -5,13 +5,13 @@ import type { TableConfig } from '../types';
 
 export const createFetchService = (baseUrl: string): FetchService => ({
   oldest: (table, filter = {}) =>
-    fetchOne(baseUrl, table.path, filter),
+    fetchOne(baseUrl, table, filter),
 
   newest: (table, filter = {}) =>
-    fetchOne(baseUrl, table.path, { ...filter, reverse: true }),
+    fetchOne(baseUrl, table, { ...filter, reverse: true }),
 
   getRows: (table, filter = {}) =>
-    rowIterator(baseUrl, table.path, table.maxStart, table.tsField, filter),
+    rowIterator(baseUrl, table, filter),
 
   getDay: (table, date, filter = {}) =>
     dayIterator(baseUrl, table, date, filter),
@@ -36,7 +36,7 @@ async function* dayIterator(
   const endIso   = dateToIso(nextDay(date));
   const fetchEnd = dateToIso(nextDay(nextDay(date)));
 
-  for await (const row of rowIterator(baseUrl, table.path, table.maxStart, table.tsField, {
+  for await (const row of rowIterator(baseUrl, table, {
     ...filter,
     startTime: startIso,
     endTime:   fetchEnd,

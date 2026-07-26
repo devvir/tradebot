@@ -7,7 +7,6 @@ import { startOfDayMongoId } from '@tradebot/utils';
 import {
   distillPartials,
   _test_nextDay,
-  _test_synthesizeBinMidnight,
 } from '../../src/distillers/partials';
 
 const { mongoPort } = JSON.parse(
@@ -22,8 +21,6 @@ const PARTIALS = '_partials_';
 const SOURCE_COLLS = [
   'orderBookL2', 'instrument',
   'trade', 'quote', 'funding', 'settlement', 'insurance',
-  'tradeBin1m', 'tradeBin5m', 'tradeBin1h', 'tradeBin1d',
-  'quoteBin1m', 'quoteBin5m', 'quoteBin1h', 'quoteBin1d',
 ];
 
 /** Small helper: an _id inside `day` (dayStart + offset). */
@@ -64,65 +61,6 @@ describe('distillPartials', () => {
 
     it('rolls over year boundary', () => {
       expect(_test_nextDay('2020-12-31')).toBe('2021-01-01');
-    });
-  });
-
-  describe('synthesizeBinMidnight', () => {
-    const midnight = '2020-01-02T00:00:00.000Z';
-
-    it('trade flavor: zeroes volume fields, carries close as OHLC', () => {
-      const out = _test_synthesizeBinMidnight(
-        [{ symbol: 'XBTUSD', timestamp: '2020-01-01T22:00:00.000Z', open: 10, high: 12, low: 9, close: 11, volume: 500, trades: 3, vwap: 10.5, lastSize: 7, turnover: 100, homeNotional: 1, foreignNotional: 2 }],
-        midnight,
-        'trade',
-      );
-
-      expect(out).toEqual([{
-        symbol:          'XBTUSD',
-        timestamp:       midnight,
-        open:            11,
-        high:            11,
-        low:             11,
-        close:           11,
-        volume:          0,
-        trades:          0,
-        vwap:            11,
-        lastSize:        0,
-        turnover:        0,
-        homeNotional:    0,
-        foreignNotional: 0,
-      }]);
-    });
-
-    it('quote flavor: carries bid/ask forward with midnight timestamp', () => {
-      const out = _test_synthesizeBinMidnight(
-        [{ symbol: 'XBTUSD', timestamp: '2020-01-01T22:00:00.000Z', bidPrice: 100, bidSize: 5, askPrice: 101, askSize: 4 }],
-        midnight,
-        'quote',
-      );
-
-      expect(out).toEqual([{
-        symbol:    'XBTUSD',
-        timestamp: midnight,
-        bidPrice:  100,
-        bidSize:   5,
-        askPrice:  101,
-        askSize:   4,
-      }]);
-    });
-
-    it('leaves rows already at midnight untouched', () => {
-      const row = { symbol: 'XBTUSD', timestamp: midnight, close: 7 };
-      const out = _test_synthesizeBinMidnight([row], midnight, 'trade');
-
-      expect(out[0]).toBe(row);
-    });
-
-    it('skips rows without a symbol', () => {
-      const row = { timestamp: '2020-01-01T22:00:00.000Z', close: 7 };
-      const out = _test_synthesizeBinMidnight([row] as any, midnight, 'trade');
-
-      expect(out[0]).toBe(row);
     });
   });
 
@@ -244,69 +182,6 @@ describe('distillPartials', () => {
       { symbol: 'ETHUSD', side: 'Buy', price:  50, size: 7, timestamp: midC },
       { symbol: 'XBTUSD', side: 'Buy', price: 210, size: 2, timestamp: midC },
     ]);
-  });
-
-  /* ────────────────────────────────────────────────────────────────────
-     Bin tables — trade flavor synthesis
-     ──────────────────────────────────────────────────────────────────── */
-
-  it('tradeBin1m: synthesizes midnight carry with zero volume', async () => {
-    const dayA = '2020-04-10';
-    const dayB = '2020-04-11';
-
-    await db.collection('tradeBin1m').insertMany([
-      { _id: idIn(dayA, 1) as any, timestamp: `${dayA}T23:00:00.000Z`, symbol: 'XBTUSD', open: 100, high: 110, low: 95, close: 105, volume: 500, trades: 3, vwap: 102, lastSize: 7, turnover: 100, homeNotional: 1, foreignNotional: 2 },
-      { _id: idIn(dayB, 1) as any, timestamp: `${dayB}T00:30:00.000Z`, symbol: 'XBTUSD', open: 105, high: 106, low: 104, close: 106, volume: 100, trades: 1, vwap: 105, lastSize: 1, turnover: 10, homeNotional: 1, foreignNotional: 1 },
-    ]);
-
-    await distillPartials(db);
-
-    const partial = await db.collection(PARTIALS).findOne({ _id: `tradeBin1m-${dayB}` } as any);
-
-    expect(partial).not.toBeNull();
-    expect(partial!.data).toEqual([{
-      symbol:          'XBTUSD',
-      timestamp:       `${dayB}T00:00:00.000Z`,
-      open:            105,
-      high:            105,
-      low:             105,
-      close:           105,
-      volume:          0,
-      trades:          0,
-      vwap:            105,
-      lastSize:        0,
-      turnover:        0,
-      homeNotional:    0,
-      foreignNotional: 0,
-    }]);
-  });
-
-  /* ────────────────────────────────────────────────────────────────────
-     Bin tables — quote flavor synthesis
-     ──────────────────────────────────────────────────────────────────── */
-
-  it('quoteBin1m: carries bid/ask forward at midnight', async () => {
-    const dayA = '2020-05-05';
-    const dayB = '2020-05-06';
-
-    await db.collection('quoteBin1m').insertMany([
-      { _id: idIn(dayA, 1) as any, timestamp: `${dayA}T22:00:00.000Z`, symbol: 'XBTUSD', bidPrice: 100, bidSize: 10, askPrice: 101, askSize: 8 },
-      { _id: idIn(dayB, 1) as any, timestamp: `${dayB}T01:00:00.000Z`, symbol: 'XBTUSD', bidPrice: 200, bidSize:  5, askPrice: 201, askSize: 3 },
-    ]);
-
-    await distillPartials(db);
-
-    const partial = await db.collection(PARTIALS).findOne({ _id: `quoteBin1m-${dayB}` } as any);
-
-    expect(partial).not.toBeNull();
-    expect(partial!.data).toEqual([{
-      symbol:    'XBTUSD',
-      timestamp: `${dayB}T00:00:00.000Z`,
-      bidPrice:  100,
-      bidSize:   10,
-      askPrice:  101,
-      askSize:   8,
-    }]);
   });
 
   /* ────────────────────────────────────────────────────────────────────

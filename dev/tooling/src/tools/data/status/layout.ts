@@ -6,7 +6,6 @@ import {
   CellState,
   DayKind,
   Range,
-  databaseState,
   localState,
   megaState,
   remoteState,
@@ -48,7 +47,7 @@ interface TableLayout {
 
 export async function buildLayout(state: VaultState): Promise<Layout> {
   const remoteNames     = state.config.remotes.map(r => r.name);
-  const locations       = ['Local', ...remoteNames, 'Mega', 'Database'];
+  const locations       = ['Local', ...remoteNames, 'Mega'];
   const now             = new Date();
   const today           = todayYmd(now);
   const yesterday       = previousDay(today);
@@ -164,7 +163,6 @@ function dayStates(
   for (const rn of remoteNames) cells.push(remoteState(ds, rn, dayKind, isWs));
 
   cells.push(megaState(hasBucket, hasSources, table.sourced, dayKind));
-  cells.push(databaseState(ds, dayKind));
 
   return cells;
 }
@@ -182,11 +180,12 @@ function allAbsent(states: CellState[]): boolean {
  * filled and the other never needed it. The merged group carries the union of
  * its members' notes; display dedupes them globally.
  *
- * The first non-today range's `startKey` is normalised to its 4-char year for
- * the grouping key only (the stored `Range` is untouched). Tables that started
- * in different months of the same year therefore merge when they would
- * otherwise be identical — matching how the display renders the first range's
- * start as just the year.
+ * The first non-today range's `startKey` is replaced by a constant for the
+ * grouping key only (the stored `Range` is untouched). That range always opens
+ * on the table's own first day, so its date says nothing about the table's
+ * state — two tables both complete from their start are in the same condition
+ * whether that start was 2014 or 2016, and merge. Mirrors the display, which
+ * renders the same endpoint as "start".
  */
 function groupTables(tables: TableLayout[]): TableGroup[] {
   const byKey = new Map<string, TableGroup>();
@@ -211,10 +210,13 @@ function groupTables(tables: TableLayout[]): TableGroup[] {
   return Array.from(byKey.values());
 }
 
+/** Stands in for the first range's start date in grouping keys — never a real day. */
+const START_KEY = 'start';
+
 function groupingRanges(ranges: Range[]): Range[] {
   return ranges.map((r, i) =>
     i === 0 && ! r.isToday
-      ? { ...r, startKey: r.startKey.slice(0, 4) }
+      ? { ...r, startKey: START_KEY }
       : r
   );
 }

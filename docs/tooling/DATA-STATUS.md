@@ -27,9 +27,9 @@ Two orthogonal axes classify every table: **origin** (how it's collected) and **
 | | Sourced | Unsourced |
 |---|---|---|
 | **WS** | `announcement`, `chat`, `connected`, `instrument`, `liquidation`, `orderBookL2`, `orderBookL2.secondary`, `publicNotifications` | — |
-| **REST** | `trade`, `quote` | `compositeIndex`, `funding`, `insurance`, `settlement`, `tick` |
+| **REST** | `trade`, `quote` | `compositeIndex`, `funding`, `insurance`, `settlement`, `tick`, `tradeBin{1m,5m,1h,1d}`, `quoteBin{1m,5m,1h,1d}` |
 
-`trade`/`quote` are downloaded from BitMEX S3 by `courier` as symbol-major sources (`.s3`/`.rest`) and pass through `data resort` to become ts-major buckets — so, like WS tables, Mega must hold both their raw sources (`SOURCES_MEGA_RAW`) and their bucket (`SOURCES_MEGA_VAULT`). The other REST tables are paginated by `scribe` and arrive as direct buckets, no preparation needed.
+`trade`/`quote` are downloaded from BitMEX S3 by `courier` as symbol-major sources (`.s3`/`.rest`) and pass through `data resort` to become ts-major buckets — so, like WS tables, Mega must hold both their raw sources (`SOURCES_MEGA_RAW`) and their bucket (`SOURCES_MEGA_VAULT`). The other REST tables are paginated by `scribe` and arrive as direct buckets, no preparation needed — including the eight `*Bin*` tables, BitMEX's server-side OHLCV bars from `/trade|quote/bucketed`, one table per resolution.
 
 ---
 
@@ -74,7 +74,7 @@ Sources and their resulting bucket live side by side; they're distinguished by s
 | `.s3` | courier (BitMEX S3 daily archives for `trade`/`quote`) |
 | `.rest` | scribe REST backfill for `trade`/`quote` |
 
-Unsourced REST tables (`compositeIndex`, `funding`, `insurance`, `settlement`, `tick`) have no suffix — they're buckets from birth.
+Unsourced REST tables (`compositeIndex`, `funding`, `insurance`, `settlement`, `tick`, and the eight `*Bin*` tables) have no suffix — they're buckets from birth.
 
 ---
 
@@ -212,6 +212,7 @@ WS table names are **bold white**; REST names are standard white (slightly dimme
 |---|---|
 | Today's range | `today` |
 | Single day | `YYYY-MM-DD` |
+| First range's start | `start` |
 | Multi-day; both endpoints year-aligned (Jan 1 / Dec 31) | `YYYY` or `YYYY → YYYY` |
 | Multi-day; mixed alignment | `YYYY-MM-DD → YYYY-MM-DD` (year shorthand on any endpoint that lands on Jan 1 / Dec 31) |
 
@@ -225,7 +226,9 @@ Every structural fill is paired with a **caption** printed under the grid. Silen
 
 ### Table grouping
 
-Tables with identical origin, range structure, and notes collapse into one display group. The grouping key is a structural JSON of `{origin, ranges, notes}` — no presentation strings are involved, so label tweaks can't silently affect grouping.
+Tables with identical origin and range structure collapse into one display group. The grouping key is a structural JSON of `{origin, ranges}` — no presentation strings are involved, so label tweaks can't silently affect grouping. Notes are deliberately outside the key: two tables that render identically merge even when one needed holes filled and the other didn't, and the group carries the union of its members' notes.
+
+The first range's `startKey` is replaced by a constant in the key (the stored range is untouched). That range always opens on the table's own first day — pre-history before a table's `TABLE_START` is filled by `holes.ts` and never opens a range — so its date describes when the table came into existence, not its state. Two tables complete from their start are in the same condition whether that start was 2014 or 2016, so they merge and both render `start` as the endpoint. Tables still separate on any later endpoint: a sparse table whose data ends before yesterday keeps its own row.
 
 ### Overall status
 

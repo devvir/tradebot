@@ -1,12 +1,5 @@
 import type { BitmexTable } from '@devvir/bitmex-database';
 
-export type BinSize = '1m' | '5m' | '1h' | '1d';
-
-export type Range = {
-  from: string;
-  to:   string;
-};
-
 /* ------------------------------------------------------------------ */
 /*  Partials distiller                                                */
 /* ------------------------------------------------------------------ */
@@ -14,18 +7,14 @@ export type Range = {
 /**
  * Shape of the mongo docs for a given table:
  *   - 'message': `{_id, action, data}` — raw WS envelope (e.g. orderBookL2)
- *   - 'item':    `{_id, ...itemFields}` — flat per-item storage (trade/quote/bins/…)
+ *   - 'item':    `{_id, ...itemFields}` — flat per-item storage (trade/quote/funding/…)
  */
 export type DocShape = 'message' | 'item';
-
-/** Flavor for bin-shaped tables — governs midnight synthesis on a missing day. */
-export type BinFlavor = 'trade' | 'quote' | null;
 
 export interface PartialConfig {
   table:      BitmexTable;
   collection: string;
   shape:      DocShape;
-  binFlavor?: BinFlavor;
 }
 
 export interface StoredPartial {

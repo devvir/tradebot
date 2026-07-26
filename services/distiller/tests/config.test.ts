@@ -22,32 +22,32 @@ describe('parseDistillers', () => {
   });
 
   it('parses a single distiller', () => {
-    expect(parseDistillers('quote')).toEqual(['quote']);
+    expect(parseDistillers('orderbook')).toEqual(['orderbook']);
   });
 
   it('parses multiple distillers', () => {
-    expect(parseDistillers('quote,trade,orderbook')).toEqual(['quote', 'trade', 'orderbook']);
+    expect(parseDistillers('orderbook,instrument')).toEqual(['orderbook', 'instrument']);
   });
 
-  it('parses all five distillers', () => {
-    expect(parseDistillers('quote,trade,orderbook,instrument,partials')).toEqual(
-      ['quote', 'trade', 'orderbook', 'instrument', 'partials'],
+  it('parses every distiller name', () => {
+    expect(parseDistillers('orderbook,instrument,partials')).toEqual(
+      ['orderbook', 'instrument', 'partials'],
     );
   });
 
   it('trims whitespace around names', () => {
-    expect(parseDistillers(' quote , trade ')).toEqual(['quote', 'trade']);
+    expect(parseDistillers(' orderbook , instrument ')).toEqual(['orderbook', 'instrument']);
   });
 
   it('throws for an unknown distiller name', () => {
-    expect(() => parseDistillers('quote,unknown')).toThrow(
+    expect(() => parseDistillers('orderbook,unknown')).toThrow(
       'DISTILLER_DISTILLERS: unknown distiller "unknown"',
     );
   });
 
   it('throws listing the valid distiller names in the error', () => {
     expect(() => parseDistillers('bogus')).toThrow(
-      'Valid: quote, trade, orderbook, instrument, partials',
+      'Valid: orderbook, instrument, partials',
     );
   });
 });

@@ -28,6 +28,12 @@ export interface TableConfig {
   count: number;
   filter?:  Record<string, unknown>;
   /**
+   * Static query params appended to every request for this table. Lets several
+   * tables share one endpoint that is parameterised rather than filtered — the
+   * bin tables all hit `/trade|quote/bucketed` and differ only by `binSize`.
+   */
+  params?:  Record<string, string>;
+  /**
    * Per-symbol subtask resolver (see {@link SymbolResolver}). Tables without it
    * run as a single task over all symbols.
    */

@@ -4,6 +4,7 @@ import { recordFetch, record429 } from './metrics';
 import { pickIdentity, reportRemaining, pace } from './identities';
 import { MAX_IN_FLIGHT, acquireSlot, releaseSlot } from './pool';
 import type { Row, FetchFilter } from './types';
+import type { TableConfig } from '../types';
 
 const ALLOWED_MAX_START = 10000;
 const DEFAULT_PAGE_SIZE = 500;
@@ -11,10 +12,10 @@ const DEFAULT_PAGE_SIZE = 500;
 // Returns the first matching row, or null.
 export const fetchOne = async (
   baseUrl: string,
-  path:    string,
+  table:   TableConfig,
   filter:  FetchFilter = {},
 ): Promise<Row | null> => {
-  const url  = buildUrl(baseUrl, path, 0, 1, filter);
+  const url  = buildUrl(baseUrl, table, 0, 1, filter);
   const rows = await fetchWithRetry(url);
 
   return rows[0] ?? null;
@@ -40,24 +41,23 @@ export const fetchOne = async (
 // twice. When the reanchor steps past the instant (the +1ms no-progress skip),
 // the next window will NOT re-deliver, so the run is flushed instead.
 export async function* rowIterator(
-  baseUrl:  string,
-  path:     string,
-  maxStart: number | null,
-  tsField:  string | undefined,
-  filter:   FetchFilter = {},
+  baseUrl: string,
+  table:   TableConfig,
+  filter:  FetchFilter = {},
 ): AsyncGenerator<Row> {
   const pageSize = filter.count ?? DEFAULT_PAGE_SIZE;
+  const tsField  = table.tsField;
 
   let blockStartTime = filter.startTime ?? null;
 
   // BitMEX support recommended using a lower maxStart despite what the API allows
-  maxStart = maxStart ? Math.min(maxStart, ALLOWED_MAX_START) : null;
+  const maxStart = table.maxStart ? Math.min(table.maxStart, ALLOWED_MAX_START) : null;
 
   let held:   Row[]         = [];
   let heldTs: string | null = null;
 
   while (true) {
-    const block = streamBlock(baseUrl, path, maxStart, tsField, pageSize, blockStartTime, filter);
+    const block = streamBlock(baseUrl, table, maxStart, pageSize, blockStartTime, filter);
 
     let next: string | null = null;
 
@@ -148,14 +148,15 @@ export async function* rowIterator(
  */
 async function* streamBlock(
   baseUrl:        string,
-  path:           string,
+  table:          TableConfig,
   maxStart:       number | null,
-  tsField:        string | undefined,
   pageSize:       number,
   blockStartTime: string | null,
   filter:         FetchFilter,
 ): AsyncGenerator<Row, string | null> {
   const ring: (Promise<Row[]> | null)[] = new Array(MAX_IN_FLIGHT).fill(null);
+
+  const tsField = table.tsField;
 
   let launchOffset = 0;
   let progressed   = false;
@@ -169,7 +170,7 @@ async function* streamBlock(
     }
 
     const url = buildUrl(
-      baseUrl, path, launchOffset, pageSize,
+      baseUrl, table, launchOffset, pageSize,
       { ...filter, startTime: blockStartTime ?? undefined },
     );
 
@@ -244,7 +245,7 @@ const addMs = (iso: string, ms: number): string =>
 
 const buildUrl = (
   baseUrl: string,
-  path:    string,
+  table:   TableConfig,
   start:   number,
   count:   number,
   filter:  FetchFilter,
@@ -255,12 +256,16 @@ const buildUrl = (
     reverse: String(filter.reverse ?? false),
   });
 
+  // The table's static params (e.g. binSize) go in first, so a filter key can
+  // never be silently shadowed by one of them.
+  for (const [key, value] of Object.entries(table.params ?? {})) params.set(key, value);
+
   if (filter.symbol)    params.set('symbol',    filter.symbol);
   if (filter.startTime) params.set('startTime', filter.startTime);
   if (filter.endTime)   params.set('endTime',   filter.endTime);
   if (filter.filter)    params.set('filter',    JSON.stringify(filter.filter));
 
-  return `${baseUrl}${path}?${params}`;
+  return `${baseUrl}${table.path}?${params}`;
 };
 
 const fetchWithRetry = async (url: string): Promise<Row[]> => {

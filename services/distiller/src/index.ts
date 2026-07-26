@@ -1,8 +1,6 @@
 import type { MongoClient, Db } from 'mongodb';
 import SK from './service';
 import { ensureSharedIndexes } from './utils/indexes';
-import { distillQuotes } from './distillers/quote';
-import { distillTrades } from './distillers/trade';
 import { distillOrderBook } from './distillers/orderbook';
 import { distillInstrument } from './distillers/instrument';
 import { distillPartials } from './distillers/partials';
@@ -28,8 +26,6 @@ SK.run(async (service) => {
   const d = config.distillers;
 
   await Promise.all([
-    (! d || d.includes('quote'))      ? distillQuotes(db, service)     : null,
-    (! d || d.includes('trade'))      ? distillTrades(db, service)     : null,
     (! d || d.includes('orderbook'))  ? distillOrderBook(db)           : null,
     (! d || d.includes('instrument')) ? distillInstrument(db, service) : null,
     (! d || d.includes('partials'))   ? distillPartials(db)            : null,
