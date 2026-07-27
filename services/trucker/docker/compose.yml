@@ -1,0 +1,56 @@
+# Trucker Service — downloads venue historical archives to the host, raw.
+#
+# Owns its storage: TRUCKER_DATA_DIR on the host is mounted at a fixed path in
+# the container. Pre-create it writable by uid 1000, as with vault:
+#   sudo mkdir -p /storage/tradebot/trucker && sudo chown 1000:1000 /storage/tradebot/trucker
+
+services:
+  trucker:
+    build:
+      context: ../../..
+      dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
+      args:
+        SERVICE_NAME: trucker
+
+    container_name: trucker
+
+    environment:
+      # Which venues to fetch (default: all known)
+      TRUCKER_VENUES:      ${TRUCKER_VENUES:-}
+      TRUCKER_START_MONTH:  ${TRUCKER_START_MONTH:-}
+      TRUCKER_END_MONTH:    ${TRUCKER_END_MONTH:-}
+      TRUCKER_CONCURRENCY:  ${TRUCKER_CONCURRENCY:-4}
+      TRUCKER_RESCAN_HOURS: ${TRUCKER_RESCAN_HOURS:-6}
+
+      # Symbol tokens (case-insensitive substrings). Empty means EVERY symbol
+      # each venue publishes, which is terabytes — set this deliberately.
+      TRUCKER_SYMBOLS:      ${TRUCKER_SYMBOLS:-}
+
+      # Stop fetching when the volume drops below this many GB free
+      TRUCKER_MIN_FREE_GB:  ${TRUCKER_MIN_FREE_GB:-50}
+
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV:  ${APP_ENV:-prod}
+      TZ:        ${TZ:-UTC}
+
+    user: "1000:1000"
+
+    volumes:
+      - ../../../:/live
+      - ${TRUCKER_DATA_DIR:?TRUCKER_DATA_DIR is not defined}:/data/trucker
+
+      # Published for other services: complete months, and warnings that a venue
+      # changed history it had already published. Writable — trucker produces it.
+      - ${DATA_DIR:?DATA_DIR is not defined}/@shared:/data/shared
+
+    ports:
+      - :3000
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    restart: unless-stopped

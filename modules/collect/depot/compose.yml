@@ -8,6 +8,7 @@
 #   courier → S3 gzip dumps (trade, quote)                   → vault
 #   scribe  → REST endpoints                                  → vault
 #   tardy   → Tardis first-of-month WS history (7 WS tables) → vault
+#   trucker → other venues' published archives                → host disk (not vault)
 
 # Docker Compose Project
 name: collect
@@ -15,6 +16,7 @@ name: collect
 include:
   - path: ../../../services/courier/docker/compose.yml
   - path: ../../../services/scribe/docker/compose.yml
+  - path: ../../../services/trucker/docker/compose.yml
 
   # Tardis data will not be collected unless needed, from Aug 1st 2026 onward.
   # - path: ../../../services/tardy/docker/compose.yml

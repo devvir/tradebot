@@ -459,6 +459,15 @@ importers:
         specifier: workspace:*
         version: link:../../shared/utils
 
+  services/trucker:
+    dependencies:
+      '@devvir/service-kit':
+        specifier: workspace:*
+        version: link:../../packages/service-kit
+      '@tradebot/utils':
+        specifier: workspace:*
+        version: link:../../shared/utils
+
   services/vault:
     dependencies:
       '@devvir/service-kit':

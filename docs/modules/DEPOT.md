@@ -16,7 +16,9 @@ Depot accumulates the complete BitMEX historical dataset in vault and keeps it c
 
 ### vault
 
-HTTP service that owns raw dump storage. Accepts JSON rows (serialised to CSV internally) and complete binary files (S3 gzips). Each (table, date) pair becomes one gzip file once closed. Clients call `close` when a day is complete; vault never decides this on its own.
+Downloads each venue's published historical archives, byte-for-byte, for **binance, bitget,
+bybit, gate, htx, kucoin and okx** — 107 datasets covering trades, klines, order books, funding,
+borrowing, mark and index series, open interest and liquidations.
 
 API: `POST /files/:table/:date/rows` · `PUT /files/:table/:date` · `POST /files/:table/:date/close` · `DELETE /files/:table/:date` · `GET /files/:table/:date` · `GET /files/:table`
 
