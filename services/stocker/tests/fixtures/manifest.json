@@ -1,0 +1,428 @@
+[
+  {
+    "venue": "binance",
+    "dataset": "spot-trades",
+    "rawPath": "spot/daily/trades/BTCUSDT/BTCUSDT-trades-2026-07-29.zip",
+    "fixture": "binance.spot-trades.csv"
+  },
+  {
+    "venue": "binance",
+    "dataset": "um-trades",
+    "rawPath": "futures/um/daily/trades/BTCUSDT/BTCUSDT-trades-2026-07-29.zip",
+    "fixture": "binance.um-trades.csv"
+  },
+  {
+    "venue": "binance",
+    "dataset": "cm-trades",
+    "rawPath": "futures/cm/daily/trades/BTCUSD_PERP/BTCUSD_PERP-trades-2026-07-29.zip",
+    "fixture": "binance.cm-trades.csv"
+  },
+  {
+    "venue": "binance",
+    "dataset": "spot-klines",
+    "rawPath": "spot/daily/klines/BTCUSDT/8h/BTCUSDT-8h-2026-07-29.zip",
+    "fixture": "binance.spot-klines.csv"
+  },
+  {
+    "venue": "binance",
+    "dataset": "um-klines",
+    "rawPath": "futures/um/daily/klines/BTCUSDT/8h/BTCUSDT-8h-2026-07-28.zip",
+    "fixture": "binance.um-klines.csv"
+  },
+  {
+    "venue": "binance",
+    "dataset": "cm-klines",
+    "rawPath": "futures/cm/daily/klines/BTCUSD_PERP/8h/BTCUSD_PERP-8h-2026-07-29.zip",
+    "fixture": "binance.cm-klines.csv"
+  },
+  {
+    "venue": "binance",
+    "dataset": "um-markPriceKlines",
+    "rawPath": "futures/um/daily/markPriceKlines/BTCUSDT/8h/BTCUSDT-8h-2026-07-28.zip",
+    "fixture": "binance.um-markPriceKlines.csv"
+  },
+  {
+    "venue": "binance",
+    "dataset": "um-indexPriceKlines",
+    "rawPath": "futures/um/daily/indexPriceKlines/BTCUSDT/8h/BTCUSDT-8h-2026-07-28.zip",
+    "fixture": "binance.um-indexPriceKlines.csv"
+  },
+  {
+    "venue": "binance",
+    "dataset": "um-premiumIndexKlines",
+    "rawPath": "futures/um/daily/premiumIndexKlines/BTCUSDT/8h/BTCUSDT-8h-2026-07-28.zip",
+    "fixture": "binance.um-premiumIndexKlines.csv"
+  },
+  {
+    "venue": "binance",
+    "dataset": "cm-markPriceKlines",
+    "rawPath": "futures/cm/daily/markPriceKlines/BTCUSD_PERP/8h/BTCUSD_PERP-8h-2026-07-29.zip",
+    "fixture": "binance.cm-markPriceKlines.csv"
+  },
+  {
+    "venue": "binance",
+    "dataset": "cm-indexPriceKlines",
+    "rawPath": "futures/cm/daily/indexPriceKlines/BTCUSD/8h/BTCUSD-8h-2026-07-29.zip",
+    "fixture": "binance.cm-indexPriceKlines.csv"
+  },
+  {
+    "venue": "binance",
+    "dataset": "cm-premiumIndexKlines",
+    "rawPath": "futures/cm/daily/premiumIndexKlines/BTCUSD_PERP/8h/BTCUSD_PERP-8h-2026-07-29.zip",
+    "fixture": "binance.cm-premiumIndexKlines.csv"
+  },
+  {
+    "venue": "binance",
+    "dataset": "um-bookTicker",
+    "rawPath": "futures/um/monthly/bookTicker/BTCUSDT/BTCUSDT-bookTicker-2024-04.zip",
+    "fixture": "binance.um-bookTicker.csv"
+  },
+  {
+    "venue": "binance",
+    "dataset": "cm-bookTicker",
+    "rawPath": "futures/cm/monthly/bookTicker/BTCUSD_PERP/BTCUSD_PERP-bookTicker-2024-10.zip",
+    "fixture": "binance.cm-bookTicker.csv"
+  },
+  {
+    "venue": "binance",
+    "dataset": "um-bookDepth",
+    "rawPath": "futures/um/daily/bookDepth/BTCUSDT/BTCUSDT-bookDepth-2026-07-29.zip",
+    "fixture": "binance.um-bookDepth.csv"
+  },
+  {
+    "venue": "binance",
+    "dataset": "cm-bookDepth",
+    "rawPath": "futures/cm/daily/bookDepth/BTCUSD_PERP/BTCUSD_PERP-bookDepth-2026-07-29.zip",
+    "fixture": "binance.cm-bookDepth.csv"
+  },
+  {
+    "venue": "binance",
+    "dataset": "um-fundingRate",
+    "rawPath": "futures/um/monthly/fundingRate/BTCUSDT/BTCUSDT-fundingRate-2026-06.zip",
+    "fixture": "binance.um-fundingRate.csv"
+  },
+  {
+    "venue": "binance",
+    "dataset": "cm-fundingRate",
+    "rawPath": "futures/cm/monthly/fundingRate/BTCUSD_PERP/BTCUSD_PERP-fundingRate-2026-06.zip",
+    "fixture": "binance.cm-fundingRate.csv"
+  },
+  {
+    "venue": "binance",
+    "dataset": "um-metrics",
+    "rawPath": "futures/um/daily/metrics/BTCUSDT/BTCUSDT-metrics-2026-07-29.zip",
+    "fixture": "binance.um-metrics.csv"
+  },
+  {
+    "venue": "binance",
+    "dataset": "cm-metrics",
+    "rawPath": "futures/cm/daily/metrics/BTCUSD_PERP/BTCUSD_PERP-metrics-2026-07-29.zip",
+    "fixture": "binance.cm-metrics.csv"
+  },
+  {
+    "venue": "binance",
+    "dataset": "cm-liquidationSnapshot",
+    "rawPath": "futures/cm/daily/liquidationSnapshot/BTCUSD_PERP/BTCUSD_PERP-liquidationSnapshot-2024-10-14.zip",
+    "fixture": "binance.cm-liquidationSnapshot.csv"
+  },
+  {
+    "venue": "bitget",
+    "dataset": "spot-trades",
+    "rawPath": "trades/SPBL/BTCUSDT/20260728_001.zip",
+    "fixture": "bitget.spot-trades.csv"
+  },
+  {
+    "venue": "bitget",
+    "dataset": "umcbl-trades",
+    "rawPath": "trades/UMCBL/BTCUSDT/20260728_001.zip",
+    "fixture": "bitget.umcbl-trades.csv"
+  },
+  {
+    "venue": "bitget",
+    "dataset": "dmcbl-trades",
+    "rawPath": "trades/DMCBL/BTCUSD/20260728_001.zip",
+    "fixture": "bitget.dmcbl-trades.csv"
+  },
+  {
+    "venue": "bybit",
+    "dataset": "perp-trades",
+    "rawPath": "trading/BTCUSDT/BTCUSDT2026-07-29.csv.gz",
+    "fixture": "bybit.perp-trades.csv"
+  },
+  {
+    "venue": "bybit",
+    "dataset": "spot-trades",
+    "rawPath": "spot/BTCUSDT/BTCUSDT_2026-07-29.csv.gz",
+    "fixture": "bybit.spot-trades.csv"
+  },
+  {
+    "venue": "bybit",
+    "dataset": "mt4-klines",
+    "rawPath": "kline_for_metatrader4/BTCUSDT/2024/BTCUSDT_60_2024-11-01_2024-11-30.csv.gz",
+    "fixture": "bybit.mt4-klines.csv"
+  },
+  {
+    "venue": "gate",
+    "dataset": "spot-deals",
+    "rawPath": "spot/deals/202606/BTC_USDT-202606.csv.gz",
+    "fixture": "gate.spot-deals.csv"
+  },
+  {
+    "venue": "gate",
+    "dataset": "futures_usdt-trades",
+    "rawPath": "futures_usdt/trades/202606/BTC_USDT-202606.csv.gz",
+    "fixture": "gate.futures_usdt-trades.csv"
+  },
+  {
+    "venue": "gate",
+    "dataset": "futures_btc-trades",
+    "rawPath": "futures_btc/trades/202606/BTC_USD-202606.csv.gz",
+    "fixture": "gate.futures_btc-trades.csv"
+  },
+  {
+    "venue": "gate",
+    "dataset": "futures_usdt-candlesticks_1m",
+    "rawPath": "futures_usdt/candlesticks_1m/202606/BTC_USDT-202606.csv.gz",
+    "fixture": "gate.futures_usdt-candlesticks_1m.csv"
+  },
+  {
+    "venue": "gate",
+    "dataset": "futures_usdt-candlesticks_5m",
+    "rawPath": "futures_usdt/candlesticks_5m/202606/BTC_USDT-202606.csv.gz",
+    "fixture": "gate.futures_usdt-candlesticks_5m.csv"
+  },
+  {
+    "venue": "gate",
+    "dataset": "futures_usdt-candlesticks_1h",
+    "rawPath": "futures_usdt/candlesticks_1h/202606/BTC_USDT-202606.csv.gz",
+    "fixture": "gate.futures_usdt-candlesticks_1h.csv"
+  },
+  {
+    "venue": "gate",
+    "dataset": "futures_usdt-candlesticks_4h",
+    "rawPath": "futures_usdt/candlesticks_4h/202606/BTC_USDT-202606.csv.gz",
+    "fixture": "gate.futures_usdt-candlesticks_4h.csv"
+  },
+  {
+    "venue": "gate",
+    "dataset": "futures_usdt-candlesticks_1d",
+    "rawPath": "futures_usdt/candlesticks_1d/202606/BTC_USDT-202606.csv.gz",
+    "fixture": "gate.futures_usdt-candlesticks_1d.csv"
+  },
+  {
+    "venue": "gate",
+    "dataset": "futures_btc-candlesticks_1m",
+    "rawPath": "futures_btc/candlesticks_1m/202606/BTC_USD-202606.csv.gz",
+    "fixture": "gate.futures_btc-candlesticks_1m.csv"
+  },
+  {
+    "venue": "gate",
+    "dataset": "futures_btc-candlesticks_5m",
+    "rawPath": "futures_btc/candlesticks_5m/202606/BTC_USD-202606.csv.gz",
+    "fixture": "gate.futures_btc-candlesticks_5m.csv"
+  },
+  {
+    "venue": "gate",
+    "dataset": "futures_btc-candlesticks_1h",
+    "rawPath": "futures_btc/candlesticks_1h/202606/BTC_USD-202606.csv.gz",
+    "fixture": "gate.futures_btc-candlesticks_1h.csv"
+  },
+  {
+    "venue": "gate",
+    "dataset": "futures_btc-candlesticks_4h",
+    "rawPath": "futures_btc/candlesticks_4h/202606/BTC_USD-202606.csv.gz",
+    "fixture": "gate.futures_btc-candlesticks_4h.csv"
+  },
+  {
+    "venue": "gate",
+    "dataset": "futures_btc-candlesticks_1d",
+    "rawPath": "futures_btc/candlesticks_1d/202606/BTC_USD-202606.csv.gz",
+    "fixture": "gate.futures_btc-candlesticks_1d.csv"
+  },
+  {
+    "venue": "gate",
+    "dataset": "futures_usdt-mark_prices",
+    "rawPath": "futures_usdt/mark_prices/202606/BTC_USDT-202606.csv.gz",
+    "fixture": "gate.futures_usdt-mark_prices.csv"
+  },
+  {
+    "venue": "gate",
+    "dataset": "futures_btc-mark_prices",
+    "rawPath": "futures_btc/mark_prices/202606/BTC_USD-202606.csv.gz",
+    "fixture": "gate.futures_btc-mark_prices.csv"
+  },
+  {
+    "venue": "gate",
+    "dataset": "futures_usdt-funding_applies",
+    "rawPath": "futures_usdt/funding_applies/202606/BTC_USDT-202606.csv.gz",
+    "fixture": "gate.futures_usdt-funding_applies.csv"
+  },
+  {
+    "venue": "gate",
+    "dataset": "futures_usdt-funding_updates",
+    "rawPath": "futures_usdt/funding_updates/202606/BTC_USDT-202606.csv.gz",
+    "fixture": "gate.futures_usdt-funding_updates.csv"
+  },
+  {
+    "venue": "gate",
+    "dataset": "futures_btc-funding_applies",
+    "rawPath": "futures_btc/funding_applies/202606/BTC_USD-202606.csv.gz",
+    "fixture": "gate.futures_btc-funding_applies.csv"
+  },
+  {
+    "venue": "gate",
+    "dataset": "futures_btc-funding_updates",
+    "rawPath": "futures_btc/funding_updates/202606/BTC_USD-202606.csv.gz",
+    "fixture": "gate.futures_btc-funding_updates.csv"
+  },
+  {
+    "venue": "gate",
+    "dataset": "spot-orderbooks",
+    "rawPath": "spot/orderbooks/202607/BTC_USDT-2026072923.csv.gz",
+    "fixture": "gate.spot-orderbooks.csv"
+  },
+  {
+    "venue": "gate",
+    "dataset": "futures_usdt-orderbooks",
+    "rawPath": "futures_usdt/orderbooks/202607/BTC_USDT-2026072923.csv.gz",
+    "fixture": "gate.futures_usdt-orderbooks.csv"
+  },
+  {
+    "venue": "gate",
+    "dataset": "futures_btc-orderbooks",
+    "rawPath": "futures_btc/orderbooks/202607/BTC_USD-2026072923.csv.gz",
+    "fixture": "gate.futures_btc-orderbooks.csv"
+  },
+  {
+    "venue": "htx",
+    "dataset": "spot-trades",
+    "rawPath": "spot/daily/trades/BTC-USDT/BTC-USDT-trades-2026-07-29.zip",
+    "fixture": "htx.spot-trades.csv"
+  },
+  {
+    "venue": "htx",
+    "dataset": "futures-trades",
+    "rawPath": "futures/daily/trades/BTC-USDT-PERP/BTC-USDT-PERP-trades-2026-07-29.zip",
+    "fixture": "htx.futures-trades.csv"
+  },
+  {
+    "venue": "htx",
+    "dataset": "spot-klines",
+    "rawPath": "spot/daily/klines/BTC-USDT/5m/BTC-USDT-klines-5m-2026-07-29.zip",
+    "fixture": "htx.spot-klines.csv"
+  },
+  {
+    "venue": "htx",
+    "dataset": "futures-klines",
+    "rawPath": "futures/daily/klines/BTC-USDT-PERP/5m/BTC-USDT-PERP-klines-5m-2026-07-29.zip",
+    "fixture": "htx.futures-klines.csv"
+  },
+  {
+    "venue": "htx",
+    "dataset": "futures-fundingRates",
+    "rawPath": "futures/daily/funding-rates/BTC-USDT-PERP/BTC-USDT-PERP-fundingRates-2026-07-29.zip",
+    "fixture": "htx.futures-fundingRates.csv"
+  },
+  {
+    "venue": "htx",
+    "dataset": "futures-indexKlines",
+    "rawPath": "futures/daily/index-klines/BTC-USDT-PERP/5m/BTC-USDT-PERP-index-klines-5m-2026-07-29.zip",
+    "fixture": "htx.futures-indexKlines.csv"
+  },
+  {
+    "venue": "htx",
+    "dataset": "futures-markKlines",
+    "rawPath": "futures/daily/mark-klines/BTC-USDT-PERP/5m/BTC-USDT-PERP-mark-price-klines-5m-2026-07-29.zip",
+    "fixture": "htx.futures-markKlines.csv"
+  },
+  {
+    "venue": "kucoin",
+    "dataset": "spot-trades",
+    "rawPath": "spot/daily/trades/BTCUSDT/BTCUSDT-trades-2026-07-29.zip",
+    "fixture": "kucoin.spot-trades.csv"
+  },
+  {
+    "venue": "kucoin",
+    "dataset": "futures-trades",
+    "rawPath": "futures/daily/trades/BTCUSDTM/BTCUSDTM-trades-2026-07-29.zip",
+    "fixture": "kucoin.futures-trades.csv"
+  },
+  {
+    "venue": "kucoin",
+    "dataset": "spot-klines",
+    "rawPath": "spot/daily/klines/BTCUSDT/8h/BTCUSDT-8h-2026-07-29.zip",
+    "fixture": "kucoin.spot-klines.csv"
+  },
+  {
+    "venue": "kucoin",
+    "dataset": "futures-klines",
+    "rawPath": "futures/daily/klines/BTCUSDTM/8h/BTCUSDTM-8h-2026-07-29.zip",
+    "fixture": "kucoin.futures-klines.csv"
+  },
+  {
+    "venue": "kucoin",
+    "dataset": "futures-fundingRates",
+    "rawPath": "futures/daily/fundingRates/BTCUSDTM/BTCUSDTM-fundingRates-2026-07-29.zip",
+    "fixture": "kucoin.futures-fundingRates.csv"
+  },
+  {
+    "venue": "kucoin",
+    "dataset": "futures-index",
+    "rawPath": "futures/daily/index/BTCUSDTM/8h/BTCUSDTM-8h-2026-07-29.zip",
+    "fixture": "kucoin.futures-index.csv"
+  },
+  {
+    "venue": "kucoin",
+    "dataset": "futures-mark",
+    "rawPath": "futures/daily/mark/BTCUSDTM/8h/BTCUSDTM-8h-2026-07-29.zip",
+    "fixture": "kucoin.futures-mark.csv"
+  },
+  {
+    "venue": "kucoin",
+    "dataset": "spot-orderbooklv50",
+    "rawPath": "spot/daily/depth/orderbooklv50/BTC-USDT/BTC-USDT-orderbooklv50-2026-07-29.zip",
+    "fixture": "kucoin.spot-orderbooklv50.csv"
+  },
+  {
+    "venue": "kucoin",
+    "dataset": "futures-orderbooklv50",
+    "rawPath": "futures/daily/depth/orderbooklv50/BTCUSDTM/BTCUSDTM-orderbooklv50-2026-07-29.zip",
+    "fixture": "kucoin.futures-orderbooklv50.csv"
+  },
+  {
+    "venue": "okx",
+    "dataset": "swap-trades",
+    "rawPath": "trades/daily/20260729/BTC-USDT-SWAP-trades-2026-07-29.zip",
+    "fixture": "okx.swap-trades.csv"
+  },
+  {
+    "venue": "okx",
+    "dataset": "spot-trades",
+    "rawPath": "trades/daily/20260729/BTC-USDT-trades-2026-07-29.zip",
+    "fixture": "okx.spot-trades.csv"
+  },
+  {
+    "venue": "okx",
+    "dataset": "swap-candlesticks",
+    "rawPath": "candlesticks/daily/20260729/BTC-USDT-SWAP-candlesticks-2026-07-29.zip",
+    "fixture": "okx.swap-candlesticks.csv"
+  },
+  {
+    "venue": "okx",
+    "dataset": "spot-candlesticks",
+    "rawPath": "candlesticks/daily/20260729/BTC-USDT-candlesticks-2026-07-29.zip",
+    "fixture": "okx.spot-candlesticks.csv"
+  },
+  {
+    "venue": "okx",
+    "dataset": "all-fundingrates",
+    "rawPath": "swaprates/daily/20260729/allswap-fundingrates-2026-07-29.zip",
+    "fixture": "okx.all-fundingrates.csv"
+  },
+  {
+    "venue": "okx",
+    "dataset": "all-borrowrates",
+    "rawPath": "borrowrates/daily/20260729/allmargin-borrowrates-2026-07-29.zip",
+    "fixture": "okx.all-borrowrates.csv"
+  }
+]

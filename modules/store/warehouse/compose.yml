@@ -1,0 +1,23 @@
+# Warehouse Module
+#
+# Infra: none — stocker keeps its own records as files and queries in process.
+#
+# Normalises the collectors' raw archives into one queryable Parquet vault:
+#
+#   trucker's raw tree (read-only) → stocker → Parquet vault, partitioned by
+#                                              table / venue / market / symbol
+#
+# The raw tree belongs to trucker and is mounted read-only here: this module is
+# purely a consumer of it, and the mount enforces that rather than trusting the
+# code.
+
+# Docker Compose Project
+name: store
+
+include:
+  - path: ../../../services/stocker/docker/compose.yml
+
+networks:
+  default:
+    name: ${PROJECT_NAME:-tradebot}-network
+    external: true

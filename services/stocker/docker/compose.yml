@@ -1,0 +1,75 @@
+# Stocker Service — normalises every collector's raw output into a Parquet vault.
+#
+# Three mounts. The collectors' raw tree comes in **read-only**: stocker must
+# never write to it, and the mount enforces that rather than trusting the code.
+# The vault is the volume it owns. `@shared` is writable because it is where any
+# service publishes facts for the others — stocker reads the collectors' tips
+# there and records a settled month that changed after it was built.
+#
+# Pre-create both writable volumes for uid 1000, as with the collectors:
+#   sudo mkdir -p /storage/tradebot/vault && sudo chown 1000:1000 /storage/tradebot/vault
+
+services:
+  stocker:
+    build:
+      context: ../../..
+      dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
+      args:
+        SERVICE_NAME: stocker
+
+    container_name: stocker
+
+    environment:
+      # Which venues and tables to normalise (default: everything mapped)
+      STOCKER_VENUES:  ${STOCKER_VENUES:-}
+      STOCKER_TABLES:  ${STOCKER_TABLES:-}
+
+      # Symbol tokens, case-insensitive substrings. Empty means every symbol.
+      STOCKER_SYMBOLS: ${STOCKER_SYMBOLS:-}
+
+      # Inclusive month bounds, YYYY-MM. Neither is a commitment: they filter
+      # what a run considers, nothing is written down about them, and widening
+      # them later simply makes more months eligible. Pinning the ceiling below
+      # the era still being collected is what keeps a run from touching raw that
+      # is still arriving — which is what makes reclaiming the era below it safe.
+      STOCKER_FROM: ${STOCKER_FROM:-}
+      STOCKER_TO:   ${STOCKER_TO:-}
+
+      # Partitions built at once. Each holds a month-sized sort and they share
+      # the memory limit below, so raising both together is the wrong move.
+      STOCKER_CONCURRENCY: ${STOCKER_CONCURRENCY:-2}
+
+      # Minutes between rescans of the raw tree
+      STOCKER_SCAN_MINUTES: ${STOCKER_SCAN_MINUTES:-30}
+
+      # Hard caps. DuckDB spills to disk inside the vault volume rather than
+      # being killed — this host runs the collectors at the same time.
+      STOCKER_MEMORY_LIMIT: ${STOCKER_MEMORY_LIMIT:-4GB}
+      STOCKER_THREADS:      ${STOCKER_THREADS:-4}
+
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV:  ${APP_ENV:-prod}
+      TZ:        ${TZ:-UTC}
+
+    user: "1000:1000"
+
+    volumes:
+      - ../../../:/live
+      - ${TRUCKER_DATA_DIR:?TRUCKER_DATA_DIR is not defined}:/data/trucker:ro
+      - ${STOCKER_VAULT_DIR:?STOCKER_VAULT_DIR is not defined}:/data/vault
+
+      # Writable: stocker reads the published tips here and publishes its own
+      # fact beside them — a settled month that changed after it was built.
+      - ${DATA_DIR:?DATA_DIR is not defined}/@shared:/data/shared
+
+    ports:
+      - :3000
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    restart: unless-stopped

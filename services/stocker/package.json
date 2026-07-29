@@ -1,0 +1,25 @@
+{
+  "name": "@tradebot/stocker",
+  "version": "1.0.0",
+  "description": "Stocker service — normalises collected raw data into a partitioned Parquet vault",
+  "main": "dist/index.js",
+  "private": true,
+  "scripts": {
+    "build": "tsc -b",
+    "start": "node dist/src/index.js",
+    "dev": "ts-node src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@devvir/service-kit": "workspace:*",
+    "@tradebot/utils": "workspace:*",
+    "@duckdb/node-api": "^1.5.5-r.2",
+    "yauzl": "^3.2.0",
+    "tar": "^7.4.3"
+  },
+  "devDependencies": {
+    "@types/yauzl": "^2.10.3"
+  }
+}
