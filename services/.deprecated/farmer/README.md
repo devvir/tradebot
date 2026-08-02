@@ -51,4 +51,4 @@ pnpm build
 pnpm test
 ```
 
-For technical details, see [docs/services/FARMER.md](../../docs/services/FARMER.md).
+For technical details, see [docs/services/FARMER.md](FARMER.md).

@@ -8,8 +8,8 @@ best-effort reconstruction of the silences from the other collected tables.
 
 This document is the *how*. For *what the feed is* — its message model, fields, cadences, and
 the proxy-derivability map this generator relies on — see the authoritative
-[`docs/BitMEX/INSTRUMENT.md`](../BitMEX/INSTRUMENT.md); it is not repeated here. The mark-price
-formulae are in [`docs/BitMEX/FAIR_PRICE_MARKING.md`](../BitMEX/FAIR_PRICE_MARKING.md).
+[`docs/venues/BitMEX/INSTRUMENT.md`](../../../docs/venues/BitMEX/INSTRUMENT.md); it is not repeated here. The mark-price
+formulae are in [`docs/venues/BitMEX/FAIR_PRICE_MARKING.md`](../../../docs/venues/BitMEX/FAIR_PRICE_MARKING.md).
 
 The instrument stream is the primary signal for liquidation detection during replay, so
 synthetic fill **preserves every price oscillation** — it is per-event, never lossily
@@ -263,7 +263,7 @@ targets** (an index doesn't mark against another index), so they are excluded fr
 
 The Synthesizer **branches on `markMethod`** (per symbol, carried in the accumulator's
 per-symbol cache). Definitions are BitMEX's, captured verbatim in
-[`FAIR_PRICE_MARKING.md`](../BitMEX/FAIR_PRICE_MARKING.md) — see [`INSTRUMENT.md`](../BitMEX/INSTRUMENT.md)
+[`FAIR_PRICE_MARKING.md`](../../../docs/venues/BitMEX/FAIR_PRICE_MARKING.md) — see [`INSTRUMENT.md`](../../../docs/venues/BitMEX/INSTRUMENT.md)
 §6.4 for the per-method summary. `markFamily()` classifies the method into two families that
 decide where `markPrice` comes from in a gap:
 
@@ -306,7 +306,7 @@ documents, synthetic documents, and the seal — to the Writer.
 ### The Conflator — order book and references on a 5 s grid
 
 Two field groups are emitted on a fixed ≈5 s grid because that is exactly what the real feed does
-(see [`INSTRUMENT.md`](../BitMEX/INSTRUMENT.md) §6.1 bid/ask, §6.6 references): order-book
+(see [`INSTRUMENT.md`](../../../docs/venues/BitMEX/INSTRUMENT.md) §6.1 bid/ask, §6.6 references): order-book
 `bidPrice`/`askPrice`/`midPrice`, and reference index values. Everything else passes through at
 its own cadence (`lastPrice` per-trade, the 24 h block per-minute, marking already index-paced at
 5 s, funding/settlement as they occur). A single **`Conflator`** handles both groups uniformly,
@@ -353,7 +353,7 @@ existing trading-index path is reused verbatim. The only unreconstructable refer
 **premium indices** (`…PI`/`…PI8H`/`30M`/`_NEXT`) — absent from `compositeIndex` and `tick`, with
 no historic REST endpoint — so they freeze in gaps and pass through only in real stretches. The
 measured referential facts this rests on (clock-locked 5 s/15 s grids, emit-on-change, the thin
-price object) are in [`INSTRUMENT.md`](../BitMEX/INSTRUMENT.md) §3, §6.6.
+price object) are in [`INSTRUMENT.md`](../../../docs/venues/BitMEX/INSTRUMENT.md) §3, §6.6.
 
 ## 9 — Writer and `_id` assignment
 
@@ -435,7 +435,7 @@ accumulator starts empty and is seeded by the first real partial in the source s
   (toward 2016-12-01, the proxy era) is a separate effort — feasible but needing instrument
   metadata sourced from REST (incl. expired contracts) and a seed script that manufactures a
   synthetic `reserved=0` start partial + per-`listing` inserts the generator consumes unchanged.
-  Design: [`docs/planning/INSTRUMENT_BACKFILL.md`](../planning/INSTRUMENT_BACKFILL.md).
+  Design: [`docs/planning/INSTRUMENT_BACKFILL.md`](INSTRUMENT_BACKFILL.md).
 - **Re-distill after a late import.** If real instrument data arrives for hours the generator
   already sealed, the anchor must be reset before those hours and the affected range cleaned. A
   `tb` command to do this ergonomically is future work.

@@ -66,7 +66,7 @@ Treat third-party feeds as clean unless shown otherwise.
 ## How duplicates are removed
 
 The `tools data dedup` command removes them; see
-[docs/tooling/DATA-DEDUP.md](../tooling/DATA-DEDUP.md) for the full algorithm. In
+[docs/tooling/DATA-DEDUP.md](../../tooling/DATA-DEDUP.md) for the full algorithm. In
 short: it keys each message on its full content with `_date_` stripped (so the same
 exchange event collides regardless of reception time), tracks a monotonic clock of
 the maximum exchange `timestamp` seen, and drops an already-seen message only when

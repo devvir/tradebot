@@ -472,6 +472,21 @@ sockets, two of them for the `orderBookL2` pools).
 
 In order, because each answer narrows the next:
 
+0. **Survey what the archive is missing, before deciding what REST is for.** REST's job is
+   not only "the tables no archive covers" — it is also the holes inside the tables the
+   archive does cover. One is already known and documented:
+   [venues/GATE.md](../venues/GATE.md) — Gate serves `404` for `SUN_USDT` 2021-08 and
+   2021-09 while the symbol traded either side, and served a *wrong file* for 2021-07.
+
+   That gap surfaced by accident, while chasing a corrupt partition. Nothing looks for
+   holes, and a month missing inside a symbol's trading life is invisible: no error, no
+   warning, just a partition that never exists — indistinguishable from a symbol that was
+   not trading.
+
+   So walk trucker's tree first and list, per venue and dataset, every month absent inside a
+   symbol's own first→last range. It needs no network, and it turns "REST fills the gaps"
+   into a sized list of what to fetch. Revisit `SUN_USDT` as part of it.
+
 1. **Finish the source survey.** REST for all four venues; OKX `aggtrades`/`swaprate`; the
    OKX L2 archive's real home; Bybit REST funding/OI history. Until these land, the channel
    lists cannot be written honestly.
@@ -511,3 +526,10 @@ In order, because each answer narrows the next:
    archive lacks. If sequence numbers are not needed, Bybit WS trade can be dropped.
 10. **`kline_for_metatrader4`** — not inspected; probably derived OHLCV, so likely redundant
    with bins built from trades, but cheap to confirm.
+11. **Archive gaps that only REST can fill.** The archive tier is not complete even where a
+   venue publishes it. Gate serves `404` for `futures_usdt` `SUN_USDT` 2021-08 and 2021-09
+   while the symbol traded either side of them, and served a *wrong file* for 2021-07 — see
+   [venues/GATE.md](../venues/GATE.md). That gap is known because chasing a corrupt file led
+   to it, not because anything looks for gaps. Before the REST collector is designed, sweep
+   each venue for months missing inside a symbol's own first→last range; the result is what
+   REST has to backfill, and it sizes the work.

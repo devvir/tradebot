@@ -51,4 +51,4 @@ pnpm build
 pnpm test
 ```
 
-For technical details, see [docs/services/LIBRARIAN.md](../../docs/services/LIBRARIAN.md).
+For technical details, see [docs/services/LIBRARIAN.md](LIBRARIAN.md).

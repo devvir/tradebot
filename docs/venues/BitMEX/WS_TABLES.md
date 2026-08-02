@@ -229,5 +229,5 @@ Secondary is currently negligible (~1–2% of book depth, near-0% of trades), so
 default data is very close to Primary — but collect Primary explicitly going forward,
 optionally Secondary for signals, and don't store Aggregated as canonical.
 
-Full review, codebase impact, and the broadcast change: [docs/planning/POOLS.md](../planning/POOLS.md).
+Full review, codebase impact, and the broadcast change: [docs/planning/POOLS.md](../../planning/POOLS.md).
 References: [WS API](https://www.bitmex.com/app/wsAPI), [Protected pools](https://www.bitmex.com/app/protectedLiquidityPools), `GET /api/v1/schema/websocketHelp`.

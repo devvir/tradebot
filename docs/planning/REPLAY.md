@@ -19,7 +19,7 @@ detail lives in the service docs.
 
 - **librarian** — generic dump reader/writer over MongoDB; owns the DB and
   swallows the BSON cost. Stateless, horizontally scalable.
-  [docs/services/LIBRARIAN.md](../services/LIBRARIAN.md). *Done* (added a
+  [docs/services/LIBRARIAN.md](../../services/.deprecated/librarian/LIBRARIAN.md). *Done* (added a
   `before`/`order` descending read for reverse paging + cursor probes).
 - **provider** — stateless shaping tier. Reads from librarian and serves data in
   the requested format, abstracting storage. *Done:* the **WS** surface

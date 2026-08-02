@@ -7,8 +7,8 @@ instrument partial (2019-04-01, our WS collection start). The proxy tables go ba
 be synthesized for that whole earlier window. This doc records what's feasible, what
 isn't, and the decisions made along the way.
 
-Related: [DISTILLER_INSTRUMENT.md](../services/DISTILLER_INSTRUMENT.md) (the distiller design,
-including reference re-emission), [INSTRUMENT.md](../BitMEX/INSTRUMENT.md) (the BitMEX feed).
+Related: [DISTILLER_INSTRUMENT.md](DISTILLER_INSTRUMENT.md) (the distiller design,
+including reference re-emission), [INSTRUMENT.md](../../../docs/venues/BitMEX/INSTRUMENT.md) (the BitMEX feed).
 
 ## What we have
 
@@ -124,8 +124,8 @@ give within the live range.)
   settled-contract structural fields ~100% populated; field-level sourcing decided
   above. (Pagination via `start`/`count≤500` to enumerate everything is mechanical.)
 - **`markMethod` — handled generally, not backfill-specific.** The Synthesizer branches on
-  `markMethod` (see [DISTILLER_INSTRUMENT.md](../services/DISTILLER_INSTRUMENT.md) §7 and
-  [INSTRUMENT.md](../BitMEX/INSTRUMENT.md) §6.4): `FairPrice` marks off the index, the
+  `markMethod` (see [DISTILLER_INSTRUMENT.md](DISTILLER_INSTRUMENT.md) §7 and
+  [INSTRUMENT.md](../../../docs/venues/BitMEX/INSTRUMENT.md) §6.4): `FairPrice` marks off the index, the
   `LastPrice` family off the symbol's own trades. This matters across **every era**, not just
   backfill — `FairPrice` is dominant from 2017 on, `LastPrice` a persistent minority across all
   years (even our 2019 real partial has `XBT7D_U105`/`XBT7D_D95`); the affected set is old
@@ -207,9 +207,9 @@ Tests: `services/distiller/tests/distillers/instrument/`.
 Build/test: `command pnpm --filter @tradebot/distiller build|test` (never raw `tsc -b`).
 Live logs: `tb logs farm distiller`.
 
-**Docs:** [DISTILLER_INSTRUMENT.md](../services/DISTILLER_INSTRUMENT.md) (the full distiller
-design), [INSTRUMENT.md](../BitMEX/INSTRUMENT.md) (the BitMEX feed — fields, cadences,
-referential measured facts), `docs/services/DISTILLER.md` (service-level). Memory:
+**Docs:** [DISTILLER_INSTRUMENT.md](DISTILLER_INSTRUMENT.md) (the full distiller
+design), [INSTRUMENT.md](../../../docs/venues/BitMEX/INSTRUMENT.md) (the BitMEX feed — fields, cadences,
+referential measured facts), `DISTILLER.md` (service-level). Memory:
 `reference_instrument_referential_symbols`, `project_instrument_reference_drop`,
 `project_distiller_reader_clustering_bug`, `project_instrument_boundary`.
 

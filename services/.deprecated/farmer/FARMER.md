@@ -6,7 +6,7 @@ Farmer takes the raw vault data (gzipped CSV per table+date) and turns it into
 the cleaned, reconstructed, deterministically-keyed Mongo collections the
 replay engine needs. A single in-process pipeline reads from vault, transforms
 each item, and hands the resulting documents to a dedicated write-only sidecar
-— a [Librarian](LIBRARIAN.md) instance configured as farmer's writer (referred
+— a [Librarian](../librarian/LIBRARIAN.md) instance configured as farmer's writer (referred
 to throughout this doc simply as "the writer"). Progress is checkpointed in
 Redis so work resumes cleanly across restarts.
 

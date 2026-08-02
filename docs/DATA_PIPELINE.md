@@ -1,234 +1,170 @@
-# Data Pipeline — Architecture
+# Data Pipeline
 
-## Overview
+How data gets from a venue to a queryable history a bot can be trained against.
 
-BitMEX market data is collected from three sources — S3 dumps, the REST API, and
-the live WebSocket — and stored as daily per-table gzip CSV files in vault.
-
-Two modules handle data acquisition:
-
-- **depot**: courier (S3) + scribe (REST) write to vault
-- **journal**: broadcast (WS) → journalist writes to vault
-
-Both modules write to the same vault storage layout. A separate **stage 2** pipeline reads those files and loads them into MongoDB.
-
----
-
-## Data Sources
-
-| Source | Tables | Service |
-|---|---|---|
-| BitMEX S3 dumps | trade, quote | courier |
-| BitMEX REST API | funding, compositeIndex, settlement, insurance | scribe |
-| BitMEX WebSocket | orderBookL2, instrument, and others | journalist (via broadcast) |
-
----
-
-## Stage 1 — Data Acquisition
-
-All sources produce the same output: **date-partitioned gzip CSV files in vault**.
-
-### Storage — vault
-
-Vault is the central file store. All files live under `/data/vault` in the container (and the configurable mount in the host, defined in env var `VAULT_DATA_DIR`):
+Two layers, and the split between them is the whole design:
 
 ```
-/data/vault/<table>/<yyyy>/<yyyymmdd>.csv      ← open (being written)
-/data/vault/<table>/<yyyy>/<yyyymmdd>.csv.gz   ← closed (sealed)
+venues ──▶ collectors ──▶ raw, exactly as published ──▶ stocker ──▶ canonical Parquet vault
+           (per source)   (venue-shaped)                            (venue-agnostic)
 ```
 
-A date file is either open or closed — never both. Upstream services write rows
-via HTTP POST; vault serialises them to CSV internally and manages the open → close transition. The on-disk extensions are a vault-internal concern — callers work in terms of `table` and `date` only.
+**Collection is byte-faithful.** A collector writes what the venue published and nothing else —
+no renaming, no unit conversion, no common schema. A raw file stays re-verifiable against its
+source, and can be re-read when understanding of it improves. Normalising on arrival makes every
+misreading permanent and undetectable.
 
-Vault HTTP API:
+**Normalisation is a separate, repeatable pass.** One service interprets every venue's shapes
+and writes one schema per table. Getting it wrong costs a rebuild, not a re-download.
 
-| Endpoint | Description |
-|---|---|
-| `POST /files/:table/:date/rows` | Append JSON row(s); returns 202 immediately |
-| `PUT /files/:table/:date` | Store a complete pre-built binary file (e.g. S3 gzip) |
-| `POST /files/:table/:date/close` | Gzip and seal an open file |
-| `DELETE /files/:table/:date` | Drop an open file |
-| `GET /files/:table/:date` | Stream a closed file |
-| `GET /files/:table` | List all files for a table with their state |
+## Source priority: bulk → REST → WebSocket
 
-### S3 dumps → courier
+Sources are not interchangeable, and the order they are tried in is deliberate.
 
-```
-BitMEX S3  →  courier  →  vault (PUT /files/:table/:date)
-```
+**Bulk archives first.** A venue's published files hand over years of history in one pass and
+keep being published going forward. Anything available in bulk is collected in bulk.
 
-courier downloads BitMEX public S3 gzip dumps for the `trade` and `quote` tables
-and streams the raw bytes directly to vault via `PUT` — no intermediate disk I/O.
-On startup, asks vault which dates it already has and skips them. Rechecks at UTC midnight for newly published dumps. Retries with exponential backoff.
+**REST for what bulk omits.** Paginated endpoints fill series a venue never dumped to files, at
+the cost of rate limits and a request per page.
 
-Available from 2014-11-22.
+**WebSocket last, and only for gaps.** Realtime data missed is gone forever, and a socket builds
+history one message at a time — a full day of drip-feed before a day is complete, unrecoverable
+after an outage. Its value is what cannot be backfilled at all: event-level sequencing,
+sub-second timing, fields no archive carries. Every WS channel has to be justified by a gap the
+other two sources genuinely cannot fill, established by comparing actual payloads rather than
+documentation.
 
-### REST API → scribe
+→ [planning/VENUE_SOURCES.md](planning/VENUE_SOURCES.md) for the per-venue, per-table findings.
 
-```
-BitMEX REST API  →  scribe  →  vault (POST /files/:table/:date/rows)
-```
+## Collectors
 
-scribe paginates the BitMEX REST API for `funding`, `settlement`, `insurance`, and
-`compositeIndex`. For `compositeIndex`, scribe loads the list of index symbols from
-the registry and processes them one at a time within each day to maintain consistent
-file ordering.
+| Service | Venues | Source | Writes to |
+|---|---|---|---|
+| [trucker](services/TRUCKER.md) | binance, bitget, bybit, gate, htx, kucoin, okx | published archives | host disk, mirroring each venue's own layout |
+| [courier](services/COURIER.md) | BitMEX | S3 daily dumps (`trade`, `quote`) | vault service |
+| [scribe](services/SCRIBE.md) | BitMEX | REST endpoints | vault service |
+| [tardy](services/TARDY.md) | BitMEX | Tardis monthly samples of the seven WS-only tables | vault service |
+| [broadcast](services/BROADCAST.md) → [journalist](services/JOURNALIST.md) | BitMEX | live WebSocket | vault service |
+| hoarder | every venue except BitMEX | live WebSocket | RabbitMQ |
 
-On startup, scribe drops any open vault files and resumes from the day after the
-latest closed file. Polls continuously once caught up.
+Each is a stage, not a pipeline; the modules that wire them into running deployments are
+[depot](modules/DEPOT.md) (bulk and REST collection) and [journal](modules/JOURNAL.md) (live
+WebSocket capture).
 
-### WebSocket → journalist
+Live capture is split by venue rather than unified. `hoarder` handles the venues that have a
+future: one instance collects one of them, several, or all, publishing every payload verbatim.
+BitMEX stays on `broadcast`/`journalist` for as long as its market runs, because rebuilding a
+working capture path for a venue that is closing buys nothing.
 
-```
-BitMEX WS  →  broadcast  →  [exchange:broadcast]
-                                      ↓  (pipe: broadcast > journalist)
-                             [exchange:journalist]  →  journalist  →  vault (POST /files/:table/:date/rows)
-```
+WebSocket collection is currently **parked**: hoarder's channel lists are provisional pending
+the payload comparisons that decide what a socket must carry, and the bulk and REST sources have
+years of backfill to work through first.
 
-broadcast connects to the BitMEX WebSocket and publishes every message to the
-`broadcast` topic exchange. The `pipe` service (journal module) creates the
-`broadcast → journalist` AMQP binding. journalist consumes the `journalist`
-exchange, augments each row, buffers them in memory, and flushes to vault on day
-transitions or when the buffer reaches 1,000 rows.
+### BitMEX is a data source with an end date
 
----
+BitMEX's market closes on 2026-09-23. Collection ends with it — nothing about it is worth
+extending — but the history already collected is real market data and stays in the pipeline:
+normalised by stocker like any other venue's, and used by the simulator. What stops is the
+forward-looking half: no new BitMEX collection, and no replay surface reproducing its API,
+because there will be no BitMEX to trade against and so no bot to train for it.
 
-## Dump Formats
+### What a collector owns
 
-### S3 tables (trade, quote)
+A collector is responsible for one source's quirks and nothing beyond them: how to enumerate
+what exists, how to resume without re-fetching, how to tell a missing file from a failed
+request, and how to back off politely. It publishes what it has finished so the next stage can
+act on it, and it never interprets the bytes.
 
-Written atomically to vault as-is via PUT. Column layout matches BitMEX S3 CSVs exactly.
+## Where raw lands
 
-### REST tables (funding, settlement, insurance, compositeIndex)
+Two stores, both historically called "vault", holding different things:
 
-Flat rows, one item per line. Column layout matches the BitMEX REST response fields. No additional metadata columns.
+**The vault service** — a date-partitioned HTTP file store for CSV, one sealed gzip per
+`(table, date)`. Upstream services POST rows and vault serialises, buffers and seals them;
+courier PUTs complete S3 gzips as-is. It is write-optimised and has no query capability. All
+BitMEX collection lands here. → [services/VAULT.md](services/VAULT.md)
 
-### WS dump format
+**Trucker's archive tree** — plain directories on the host, one root per venue, each venue's own
+path structure mirrored verbatim beneath it. No service in front of it: a URL maps to exactly
+one path mechanically, which makes "do I already have this?" a filesystem question rather than a
+bookkeeping one.
 
-journalist adds one field to every row:
+The Parquet vault that stocker writes is a third store, described below. When it matters, name
+them: *the vault service*, *the archive tree*, *the Parquet vault*.
 
-| Column | Description |
-|---|---|
-| `action` | BitMEX action: `partial`, `insert`, `update`, `delete` |
+## The completeness contract
 
-Message boundaries are preserved by vault internally. When journalist sends a batch
-of rows to vault, vault tags each group with a `_head_` marker in the CSV (a
-vault-internal detail). When farmer later reads the file, vault's NDJSON stream
-already reconstructs the groups — each line is a JSON array of rows belonging to
-one original WS message.
-
-Example — three consecutive WS messages as journal sees them:
-
-```
-// journalist sends to vault:
-[[{action:'insert',...}], [{action:'insert',...}], [{action:'update',...},{action:'update',...},{action:'update',...}]]
-```
-
----
-
-## Stage 2 — Load (farm module)
-
-The farm module reads closed vault files and loads them into MongoDB.
+A consumer can see which files exist but not whether more are coming, and that difference
+decides whether a period is safe to process. Only the collector knows, so trucker writes it
+down: `@meta/settled/{venue}.tsv`, one line per dataset and symbol holding the date collection
+is complete through.
 
 ```
-vault (closed .csv.gz)
-  └─ farmer ──→ MongoDB tradebot / <table>    (clean docs)
-           └─→ MongoDB farmer   / <table>    (forensics)
+spot-deals	BTC_USDT	20180531
 ```
 
-**farmer** discovers vault buckets it has not yet imported and streams each via
-vault's NDJSON endpoint. For REST tables, each NDJSON line is one flat record
-that becomes one MongoDB document. For WS tables, vault emits one reconstructed
-message per line (`{ action, date, data[] }`); farmer re-attaches `keys`, `types`,
-and `filter` metadata for `partial` actions (from a static per-table spec) and
-stores the full envelope as one document. Each document is assigned a deterministic
-`_id`. Corrupt rows go to `MongoDB farmer / <table>` for forensics. Progress is
-tracked in Redis under `farm:<table>:<date>`.
+"Is 2018-05 ready?" becomes a lookup rather than a guess from file counts. Milestones only ever
+move forward, since a consumer may already have acted on one. Stocker builds a month only once
+its milestone covers the last day of it — which is what keeps a partition write-once rather than
+rewritten on every later arrival.
 
-### ID scheme
+## Normalisation — stocker
 
-```
-_id = dateOffset × 2³⁹ + msgIndex × 2¹² + reserved
-```
+[stocker](services/STOCKER.md) reads every collector's output and writes one partitioned Parquet
+vault beside it. Raw is never modified, moved or deleted.
 
-| Field | Bits | Description |
-|---|---|---|
-| `dateOffset` | 14 | Days since 2000-01-01 UTC (valid to ~2044) |
-| `msgIndex` | 27 | Message position in the day's closed file |
-| `reserved` | 12 | Always 0; 1–4095 reserved for future gap-fill events |
+- **One canonical schema per table.** Every series projects into the table's full column list,
+  in order, with NULL where a venue publishes nothing — so `trades` is one dataset whether the
+  rows came from Binance or Gate, not a pile of venue-shaped files.
+- **One time unit.** `ts` is int64 microseconds UTC everywhere, and the sort key of every
+  partition. The unit is read from each value rather than declared, because venues change
+  precision mid-history inside a single series.
+- **Hive partitioning** by table, venue, market, symbol, interval where the table needs one, and
+  month. The month is the unit of work: built whole, never appended to, rebuilt only when its
+  raw inputs change.
+- **Venue vocabulary is preserved, not translated.** Symbols stay as the venue writes them, and
+  a size stays in the unit the venue publishes. Normalising structure is safe; normalising
+  semantics invents data.
 
----
+Adding a venue or a series is a declarative entry plus, at most, a file describing an unfamiliar
+container or tree layout. Nothing in the core learns a venue's name.
 
-## Stage 3 — Derive (distiller service)
+### Origins arrive one at a time
 
-Distiller reads raw collections written by farmer and produces derived collections.
+Stocker reads **bulk-origin** data today: trucker's archive tree, where a file is a published
+archive of a finished period. The other two origins land alongside it as their collectors mature
+— **WebSocket-origin** files, which are message streams with actions and partials rather than
+rows, and **REST-origin** files, which are paginated records.
 
-```
-MongoDB tradebot
-  ├─ trade        ──→ distiller ──→ tradeBin1m / tradeBin5m / tradeBin1h / tradeBin1d
-  ├─ quote        ──→ distiller ──→ quoteBin1m / quoteBin5m / quoteBin1h / quoteBin1d
-  └─ orderBookL2  ──→ distiller ──→ orderBook10 / orderBookL2_25
-```
+Each needs its own reader under `sources/`, because the shapes differ in kind rather than in
+detail, and the canonical tables they project into are the same. That work is also what brings
+BitMEX's collected history into the Parquet vault: it arrived over WebSocket and REST into the
+vault service, so it normalises through those readers, not the archive one.
 
-All three source tables are processed in parallel. Progress is
-tracked in Redis (`distiller_progress:<table>` → last completed offset). When
-caught up, distiller sleeps 1 hour and retries.
+## Replay
 
-See [docs/services/DISTILLER.md](services/DISTILLER.md) for full details.
+The consumer this exists for. A replay engine serves the normalised history over a **replica of
+each venue's own WebSocket and REST API**, driven by a clock internal to the data, so a bot
+written against Bitget trades against Bitget's interface whether it is pointed at the exchange
+or at ten years of history.
 
----
+A replay surface is built per venue, and only for venues worth trading on — a bot trained
+against an API it can never send an order to is wasted work. The simulator consumes the vault
+directly rather than through a venue API, so history from a closed venue keeps its value there
+without a surface being built for it.
 
+This is under construction. An earlier BitMEX-only implementation established the shape — a
+timeline service merging tables in time order, subscription handling, backpressure to the
+slowest client, and a control API for seeking and speed — and is being rewritten venue-agnostic.
+→ [planning/REPLAY.md](planning/REPLAY.md)
 
-```
-/data/vault/
-  trade/
-    2014/20141122.csv.gz   ← closed (complete)
-    ...
-  quote/
-    ...
-  funding/
-    2015/20150228.csv.gz
-    ...
-    2026/20260328.csv      ← open (today, in progress)
-  settlement/
-    ...
-  insurance/
-    ...
-  compositeIndex/
-    ...
-```
+## Retired
 
----
+`services/.deprecated/` holds the MongoDB-era stages: `farmer` (loading sealed vault files into
+MongoDB), `distiller` (deriving binned and depth-limited collections from them), `librarian`
+(dump I/O over MongoDB) and `mongodb` itself. Parquet replaced the pair of them — the vault is
+now directly queryable, so loading it into a database to query it, and materialising derived
+collections ahead of time, both stopped paying for themselves.
 
-## Ordering Guarantees
-
-- **S3 tables** (trade, quote): one file per day, written atomically as a single PUT. Order is whatever S3 provides.
-- **REST tables** (funding, settlement, insurance): rows appended in API order (ascending timestamp).
-- **compositeIndex**: symbols processed one at a time within each day. All rows for symbol A precede all rows for symbol B within the same file. Consistent across restarts.
-- **WS tables**: rows are in arrival order. Message groupings are preserved by vault internally and surfaced as pre-grouped arrays in the NDJSON stream.
-
----
-
-## Recovery
-
-All services are restart-safe:
-
-- **courier**: idempotent — vault returns 409 for already-stored dates, treated as a no-op.
-- **scribe**: drops any open vault files on startup and re-fetches from the start of that day. No partial rows, no duplicates.
-- **journalist**: on the first message for any table, queries vault for open files and continues appending if found. Retries vault writes indefinitely on errors.
-
----
-
-## Gap-filling (WS)
-
-The BitMEX WebSocket disconnects with code 1006 every 40–50 minutes on average. Stage
-1 captures gaps faithfully. Future pipeline work will correct for them at load time
-using `action` and gap detection via `partial` comparisons.
-
----
-
-## What the live trading module uses
-
-The live trading module (WS, REST, proxy, snapshots, broadcast) is entirely separate
-from this pipeline. It operates on live data in real time via RabbitMQ. The data
-pipeline is for accumulating and curating historical data for replay and bot training.
+Their docs are kept for the BitMEX-specific knowledge they carry, not as a description of
+anything currently running.

@@ -94,7 +94,7 @@ This generator is large enough to have its own reference:
 reading, gap detection, the rolling 24 h window, mark-method synthesis, the Conflator that
 throttles order-book and reference fields to 5 s, determinism and crash recovery). For the
 BitMEX feed itself — fields, cadences, proxy-derivability — see
-[docs/BitMEX/INSTRUMENT.md](../BitMEX/INSTRUMENT.md).
+[docs/venues/BitMEX/INSTRUMENT.md](../../../docs/venues/BitMEX/INSTRUMENT.md).
 
 ## Partials — Daily Snapshots
 

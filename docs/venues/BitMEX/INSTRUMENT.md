@@ -245,7 +245,7 @@ against another index).
 ### 5.4 Reference symbols — what's reconstructable
 
 (measured; how the distiller uses this is in
-[`DISTILLER_INSTRUMENT.md`](../services/DISTILLER_INSTRUMENT.md) §8)
+[`DISTILLER_INSTRUMENT.md`](../../../services/.deprecated/distiller/DISTILLER_INSTRUMENT.md) §8)
 
 - **BMI composites** (`.BXBT`, `.BLINKT`, …) — present in `compositeIndex` as the `BMI` value;
   `lastPrice` is the index. Reconstructable. For an index symbol, `markPrice == lastPrice ==
@@ -412,7 +412,7 @@ stream is — no denser (a false dependability signal) and no sparser (a real ga
 
 - [`FAIR_PRICE_MARKING.md`](FAIR_PRICE_MARKING.md) — verbatim BitMEX mark-price spec.
 - [`WS_TABLES.md`](WS_TABLES.md) — partial semantics across all WS tables.
-- [`docs/services/DISTILLER_INSTRUMENT.md`](../services/DISTILLER_INSTRUMENT.md) — how we
+- [`docs/services/DISTILLER_INSTRUMENT.md`](../../../services/.deprecated/distiller/DISTILLER_INSTRUMENT.md) — how we
   reconstruct instrument data in gaps (the "how" to this doc's "what/why").
-- [`docs/planning/INSTRUMENT_BACKFILL.md`](../planning/INSTRUMENT_BACKFILL.md) — sourcing
+- [`docs/planning/INSTRUMENT_BACKFILL.md`](../../../services/.deprecated/distiller/INSTRUMENT_BACKFILL.md) — sourcing
   static/structural fields from REST for pre-2019 backfill.

@@ -27,4 +27,4 @@ See each service's documentation for environment variables:
 - [Farmer](../../../services/.deprecated/farmer/README.md)
 - [Distiller](../../../services/.deprecated/distiller/README.md)
 
-For detailed technical documentation, see [docs/services/FARMER.md](../../../docs/services/FARMER.md).
+For detailed technical documentation, see [docs/services/FARMER.md](../../../services/.deprecated/farmer/FARMER.md).
