@@ -41,14 +41,12 @@ export interface TableMeta {
  * history is the fused Aggregated stream).
  */
 export const ALL_TABLES: TableMeta[] = [
-  { name: 'announcement',          origin: 'ws',   sourced: true  },
   { name: 'chat',                  origin: 'ws',   sourced: true  },
   { name: 'connected',             origin: 'ws',   sourced: true  },
   { name: 'instrument',            origin: 'ws',   sourced: true  },
   { name: 'liquidation',           origin: 'ws',   sourced: true  },
   { name: 'orderBookL2',           origin: 'ws',   sourced: true  },
   { name: 'orderBookL2.secondary', origin: 'ws',   sourced: true  },
-  { name: 'publicNotifications',   origin: 'ws',   sourced: true  },
 
   { name: 'compositeIndex',        origin: 'rest', sourced: false },
   { name: 'funding',               origin: 'rest', sourced: false },

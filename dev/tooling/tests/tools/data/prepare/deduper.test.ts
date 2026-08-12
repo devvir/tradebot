@@ -47,7 +47,7 @@ describe('content key', () => {
     const a  = msg({ date: '2026-01-01T12:00:00.000Z', action: 'insert', val: 'X' });
     const a2 = msg({ date: '2026-01-01T12:00:00.001Z', action: 'insert', val: 'X' });
 
-    const out = await collect(dedup(batches([a, a2]), 'announcement'));
+    const out = await collect(dedup(batches([a, a2]), 'liquidation'));
 
     expect(out).toHaveLength(1);
   });
@@ -56,7 +56,7 @@ describe('content key', () => {
     const a = msg({ date: '2026-01-01T12:00:00.000Z', action: 'insert', val: 'X' });
     const b = msg({ date: '2026-01-01T12:00:00.000Z', action: 'insert', val: 'Y' });
 
-    const out = await collect(dedup(batches([a, b]), 'announcement'));
+    const out = await collect(dedup(batches([a, b]), 'liquidation'));
 
     expect(out).toHaveLength(2);
   });
@@ -69,7 +69,7 @@ describe('partials', () => {
     const p1 = msg({ date: '2026-01-01T12:00:00.000Z', action: 'partial', val: 'X' });
     const p2 = msg({ date: '2026-01-01T12:00:01.000Z', action: 'partial', val: 'X' });
 
-    const out = await collect(dedup(batches([p1, p2]), 'announcement'));
+    const out = await collect(dedup(batches([p1, p2]), 'liquidation'));
 
     expect(out).toHaveLength(1);
   });
@@ -78,7 +78,7 @@ describe('partials', () => {
     const p1 = msg({ date: '2026-01-01T12:00:00.000Z', action: 'partial', val: 'X' });
     const p2 = msg({ date: '2026-01-01T12:00:01.000Z', action: 'partial', val: 'Y' });
 
-    const out = await collect(dedup(batches([p1, p2]), 'announcement'));
+    const out = await collect(dedup(batches([p1, p2]), 'liquidation'));
 
     expect(out).toHaveLength(2);
   });
@@ -124,17 +124,17 @@ describe('partials', () => {
   });
 });
 
-// ── announcement / publicNotifications / liquidation ─────────────────────────
+// ── liquidation ───────────────────────────────────────────────────────────────
 // Global hash, no time constraint — all actions (insert, update, delete).
 // Any repeat of the same content, anywhere in the stream, is dropped.
 
-describe('dedup — announcement / publicNotifications / liquidation', () => {
+describe('dedup — liquidation', () => {
   it('drops a non-adjacent insert dupe', async () => {
     const a  = msg({ date: '2026-01-01T12:00:00.000Z', action: 'insert', val: 'X' });
     const b  = msg({ date: '2026-01-01T12:00:01.000Z', action: 'insert', val: 'Y' });
     const a2 = msg({ date: '2026-01-01T12:00:02.000Z', action: 'insert', val: 'X' }); // non-adjacent dup → drop
 
-    const out = await collect(dedup(batches([a, b, a2]), 'announcement'));
+    const out = await collect(dedup(batches([a, b, a2]), 'liquidation'));
 
     expect(out).toHaveLength(2);
   });
@@ -144,11 +144,9 @@ describe('dedup — announcement / publicNotifications / liquidation', () => {
     const u2 = msg({ date: '2026-01-01T12:00:01.000Z', action: 'update', val: 'B' });
     const u3 = msg({ date: '2026-01-01T12:00:02.000Z', action: 'update', val: 'A' }); // non-adjacent dup → drop
 
-    for (const table of ['announcement', 'publicNotifications', 'liquidation']) {
-      const out = await collect(dedup(batches([u1, u2, u3]), table));
+    const out = await collect(dedup(batches([u1, u2, u3]), 'liquidation'));
 
-      expect(out).toHaveLength(2);
-    }
+    expect(out).toHaveLength(2);
   });
 
   it('drops same content regardless of how much time has elapsed', async () => {

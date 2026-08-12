@@ -15,9 +15,9 @@ import type { ReadIssue } from '../../../../src/tools/data/prepare/types';
 const COLUMNS = ['_date_', '_action_', 'timestamp', 'symbol', 'price'];
 
 // 'orderBookL2' → fixedPartials=false (timestamped, real-state table)
-// 'announcement' → fixedPartials=true
+// 'chat' → fixedPartials=true
 const TABLE        = 'orderBookL2';
-const FIXED_TABLE  = 'announcement';
+const FIXED_TABLE  = 'chat';
 
 beforeAll(() => {
   _test_setColumns(TABLE,       COLUMNS);

@@ -109,20 +109,3 @@ export const stopRabbitMQ = (envFile: string): void => {
     projectName: projectName(envFile),
   });
 };
-
-export const startMongoDB = (envFile: string): void => {
-  startTestServices({
-    envFile,
-    composeFiles: [resolve(DOCKER_DIR, 'mongodb.yml')],
-    projectName: projectName(envFile),
-    timeout: 60,
-  });
-};
-
-export const stopMongoDB = (envFile: string): void => {
-  stopTestServices({
-    envFile,
-    composeFiles: [resolve(DOCKER_DIR, 'mongodb.yml')],
-    projectName: projectName(envFile),
-  });
-};

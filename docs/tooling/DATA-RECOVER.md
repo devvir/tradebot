@@ -43,7 +43,7 @@ Any message containing a bad row is dropped whole — wherever it sits in the fi
 
 The result is a clean `.recovered.csv` with a small hole exactly where each corruption block sat (typically a fraction of a percent of messages). That data is unrecoverable — the gzip garbage destroyed it — so dropping it is the correct outcome, not avoidable loss. Those holes are filled later when `data prepare` merges the multiple sources for the day.
 
-**Free-text / unknown tables** (announcement, chat, …) can't be split on commas safely — their fields may contain commas, quotes, or newlines — so they fall back to **tail trimming**: scan for the byte offset of the last line beginning with a valid ISO `_date_` (`grep -aboE`, streamed) and `ftruncate` there, dropping that row and everything after it. If no timestamped line exists, the file is left untouched and a warning is printed.
+**Free-text / unknown tables** (chat, …) can't be split on commas safely — their fields may contain commas, quotes, or newlines — so they fall back to **tail trimming**: scan for the byte offset of the last line beginning with a valid ISO `_date_` (`grep -aboE`, streamed) and `ftruncate` there, dropping that row and everything after it. If no timestamped line exists, the file is left untouched and a warning is printed.
 
 Sanitizing is best-effort: a `gzrecover` success is always counted as recovered. A sanitize/trim failure is a warning only — it never downgrades the result to failed. The cleaned `.csv` may still need dedup, sort, and cross-source gap-fill before use — that is the job of `data prepare`, not this command.
 

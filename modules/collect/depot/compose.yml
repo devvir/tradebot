@@ -1,6 +1,6 @@
 # Depot Module
 #
-# Infra: db-store, registry
+# Infra: registry
 #
 # Continuously downloads the complete BitMEX historical dataset and keeps it
 # up to date as new data becomes available:

@@ -57,7 +57,7 @@ writeOutputHeader(writer: Writer, tableName: string, day: string): void
 
 Writes the CSV header row plus, for fixed-partial tables, a synthetic `partial` row at midnight of the group day.
 
-**Fixed-partial tables:** `announcement`, `chat`, `connected`, `liquidation`, `publicNotifications`. These send a `partial` on every WS (re)connection but the body carries no useful state. Source partials are dropped in READ; HEADER writes one synthetic marker per day:
+**Fixed-partial tables:** `chat`, `connected`, `liquidation`. These send a `partial` on every WS (re)connection but the body carries no useful state. Source partials are dropped in READ; HEADER writes one synthetic marker per day:
 
 - `connected` → `<day>T00:00:00.000Z,partial,0,0,0` (zero counters)
 - all others  → `<day>T00:00:00.000Z,partial,,,...` (empty values after `_action_`)
@@ -86,7 +86,7 @@ Streams and validates a single `.csv.gz` source file. Emits batches of 20 000 me
 
 Tables whose fields contain no free text (numbers, symbols, ISO timestamps) use `readline` for speed — raw lines, no field-count validation. Tables: `connected`, `instrument`, `liquidation`, `orderBookL2`.
 
-All other tables (including `chat`, `announcement`) use `csv-parse` with `relaxColumnCount` to handle malformed rows without aborting the stream, followed by `arrayToCsv` to produce a canonical string representation.
+All other tables (including `chat`) use `csv-parse` with `relaxColumnCount` to handle malformed rows without aborting the stream, followed by `arrayToCsv` to produce a canonical string representation.
 
 **Per-message steps:**
 
@@ -170,7 +170,7 @@ Per-table dedup driven by `TABLE_CONFIG` inside `deduper.ts`. **Partials (plain 
 
 | Table | insert / delete / partial | update |
 |-------|----------------|--------|
-| announcement, publicNotifications, liquidation | global hash, no window | global hash, no window |
+| liquidation | global hash, no window | global hash, no window |
 | chat | global hash, no window | global hash, drop if seen within 10 s |
 | instrument | global hash, no window | contiguous (last only), no window |
 | orderBookL2 | bounded key store (10 000), no window | bounded key store (10 000), no window |
@@ -312,7 +312,7 @@ Three tiers, mutually exclusive between tiers 2 and 3:
 
 | Function | Returns | Tables |
 |----------|---------|--------|
-| `hasFixedPartials` | `true` | announcement, chat, connected, liquidation, publicNotifications |
+| `hasFixedPartials` | `true` | chat, connected, liquidation |
 | `allowsSimplifiedParsing` | `true` | connected, instrument, liquidation, orderBookL2 |
 | `potentialGapThresholdMs` | `1` | instrument, orderBookL2 |
 | `potentialGapThresholdMs` | `60000` | all others |

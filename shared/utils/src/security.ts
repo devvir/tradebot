@@ -20,7 +20,7 @@ export const redactUrl = (url: string): string => {
 };
 
 /**
- * Properly encode special characters in MongoDB/AMQP connection URLs.
+ * Properly encode special characters in AMQP connection URLs.
  * Credentials must be URL-encoded to handle special characters like @, :, /, etc.
  */
 export const sanitizeUrl = (url: string): string => {

@@ -6,11 +6,9 @@ import { selectTool } from './shared/ui/prompts';
 import { heading, spacer } from './shared/ui/logger';
 
 import { register as registerWs } from './commands/ws';
-import { register as registerDb } from './commands/db';
 import { register as registerRabbit } from './commands/rabbit';
 import { register as registerBouncer } from './commands/bouncer';
 import { register as registerBroadcast } from './commands/broadcast';
-import { register as registerSignal } from './commands/signal';
 import { register as registerMonitor } from './commands/monitor';
 import { register as registerData } from './commands/data';
 import { register as registerRemote } from './commands/remote';
@@ -24,11 +22,9 @@ interface Tool {
 
 const tools: Tool[] = [
   { id: 'ws', name: 'WebSocket', description: 'Connect to BitMEX WebSocket with authentication' },
-  { id: 'db', name: 'MongoDB', description: 'Stats, dump, id translation, and REPL' },
   { id: 'rabbit', name: 'RabbitMQ', description: 'Monitor RabbitMQ queues and streams' },
   { id: 'bouncer', name: 'Bouncer', description: 'View accounts and auth tokens from Bouncer' },
   { id: 'broadcast', name: 'Broadcast', description: 'Monitor broadcast exchange messages' },
-  { id: 'signal', name: 'Signal', description: 'View signals and indicators from Signal service' },
   { id: 'monitor', name: 'Monitor', description: 'Live dashboard: Docker containers and RabbitMQ queues' },
   { id: 'data', name: 'Data', description: 'Prepare, sync, and recover vault data' },
   { id: 'remote', name: 'Remote', description: 'Remote server operations (sync-env, pull)' },
@@ -56,11 +52,9 @@ async function main(): Promise<void> {
     });
 
   registerWs(program);
-  registerDb(program);
   registerRabbit(program);
   registerBouncer(program);
   registerBroadcast(program);
-  registerSignal(program);
   registerMonitor(program);
   registerData(program);
   registerRemote(program);

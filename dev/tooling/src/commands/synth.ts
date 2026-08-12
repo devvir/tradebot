@@ -1,16 +1,17 @@
 import { Command } from 'commander';
-import { run, runLevels, runStage1, runCalibrate } from '../tools/synth/index';
+import { runCalibrate } from '../tools/synth/calibrate';
 import { error } from '../shared/ui/logger';
 
 /**
  * Register the `synth` command group.
  *
- * Sub-commands:
- *   synth levels    — stream vault orderBookL2 CSV files and write id/symbol/price to MongoDB
- *   synth stage1    — build trade-constrained OB fact log from trade collection
- *   synth calibrate — run calibration analysis Python app (all args passed through)
+ * Calibration is all that is left here. `levels` and `stage1` built their
+ * output into MongoDB — one an orderBookId index read from vault CSVs, the
+ * other a trade-constrained fact log — and went with it when the database did.
  *
- * Running `synth` with no sub-command drops into the interactive menu.
+ * What remains is a passthrough to the Python app under `scripts/calibrate/`,
+ * which reads and writes files and never needed a database. `synth` with no
+ * sub-command runs it, since there is no longer a choice to offer.
  */
 export function register(program: Command): void {
   const synth = program
@@ -18,31 +19,7 @@ export function register(program: Command): void {
     .description('Synthetic data tools')
     .action(async () => {
       try {
-        await run(null);
-      } catch (err) {
-        error((err as Error).message);
-        process.exit(1);
-      }
-    });
-
-  synth
-    .command('levels')
-    .description('Build orderBookId index from vault orderBookL2 CSV files (crash-safe)')
-    .action(async () => {
-      try {
-        await runLevels();
-      } catch (err) {
-        error((err as Error).message);
-        process.exit(1);
-      }
-    });
-
-  synth
-    .command('stage1')
-    .description('Build trade-constrained OB fact log from trade collection (idempotent)')
-    .action(async () => {
-      try {
-        await runStage1();
+        await runCalibrate([]);
       } catch (err) {
         error((err as Error).message);
         process.exit(1);

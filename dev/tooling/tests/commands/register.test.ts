@@ -1,12 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { Command } from 'commander';
 import { register as registerWs } from '../../src/commands/ws';
-import { register as registerDb } from '../../src/commands/db';
 import { register as registerRabbit } from '../../src/commands/rabbit';
 import { register as registerBouncer } from '../../src/commands/bouncer';
 import { register as registerBroadcast } from '../../src/commands/broadcast';
-import { register as registerSignal } from '../../src/commands/signal';
 import { register as registerRemote } from '../../src/commands/remote';
+import { register as registerSynth } from '../../src/commands/synth';
 
 function optionLongs(cmd: Command): string[] {
   return cmd.options.map(o => o.long ?? '');
@@ -27,44 +26,6 @@ describe('ws command', () => {
     const longs = optionLongs(program.commands.find(c => c.name() === 'ws')!);
     expect(longs).toContain('--testnet');
     expect(longs).toContain('--guest');
-  });
-});
-
-describe('db command', () => {
-  it('registers name=db alias=database', () => {
-    const program = new Command();
-    registerDb(program);
-    const cmd = program.commands.find(c => c.name() === 'db');
-    expect(cmd).toBeDefined();
-    expect(cmd!.aliases()).toContain('database');
-  });
-
-  it('exposes stats, dump, restore, purge, id, and repl subcommands', () => {
-    const program = new Command();
-    registerDb(program);
-    const db = program.commands.find(c => c.name() === 'db')!;
-    const subNames = db.commands.map(c => c.name());
-    expect(subNames).toContain('stats');
-    expect(subNames).toContain('dump');
-    expect(subNames).toContain('restore');
-    expect(subNames).toContain('purge');
-    expect(subNames).toContain('id');
-    expect(subNames).toContain('repl');
-  });
-
-  it('dump has --out option', () => {
-    const program = new Command();
-    registerDb(program);
-    const db   = program.commands.find(c => c.name() === 'db')!;
-    const dump = db.commands.find(c => c.name() === 'dump')!;
-    expect(optionLongs(dump)).toContain('--out');
-  });
-
-  it('has no options on the top-level db command', () => {
-    const program = new Command();
-    registerDb(program);
-    const db = program.commands.find(c => c.name() === 'db')!;
-    expect(optionLongs(db)).toHaveLength(0);
   });
 });
 
@@ -119,22 +80,6 @@ describe('broadcast command', () => {
   });
 });
 
-describe('signal command', () => {
-  it('registers name=signal', () => {
-    const program = new Command();
-    registerSignal(program);
-    expect(program.commands.find(c => c.name() === 'signal')).toBeDefined();
-  });
-
-  it('has --latest and --symbol options', () => {
-    const program = new Command();
-    registerSignal(program);
-    const longs = optionLongs(program.commands.find(c => c.name() === 'signal')!);
-    expect(longs).toContain('--latest');
-    expect(longs).toContain('--symbol');
-  });
-});
-
 describe('remote command', () => {
   it('registers name=remote', () => {
     const program = new Command();
@@ -156,5 +101,26 @@ describe('remote command', () => {
     registerRemote(program);
     const remote = program.commands.find(c => c.name() === 'remote')!;
     expect(optionLongs(remote)).toHaveLength(0);
+  });
+});
+
+/**
+ * `synth` lost `levels` and `stage1` with MongoDB. `calibrate` shells out to a
+ * Python app that only ever touched files, so it stays — and the bare command
+ * runs it, there being nothing left to choose between.
+ */
+describe('synth command', () => {
+  it('registers name=synth', () => {
+    const program = new Command();
+    registerSynth(program);
+    expect(program.commands.find(c => c.name() === 'synth')).toBeDefined();
+  });
+
+  it('exposes calibrate and nothing that needed a database', () => {
+    const program = new Command();
+    registerSynth(program);
+    const synth = program.commands.find(c => c.name() === 'synth')!;
+    const subNames = synth.commands.map(c => c.name());
+    expect(subNames).toEqual(['calibrate']);
   });
 });

@@ -3,14 +3,12 @@ import { FREE_TEXT_TABLES } from '@tradebot/utils';
 import { TableConfig } from './types';
 
 export const KNOWN_TABLES = new Set([
-  'announcement',
   'chat',
   'connected',
   'instrument',
   'liquidation',
   'orderBookL2',
   'orderBookL2.secondary',
-  'publicNotifications',
 ]);
 
 /**
@@ -122,11 +120,9 @@ export function getVaultColumns(tableName: string): string[] | null {
 // ── Prepare pipeline API ──────────────────────────────────────────────────────
 
 const FIXED_PARTIAL_TABLES: ReadonlySet<string> = new Set([
-  'announcement',
   'chat',
   'connected',
   'liquidation',
-  'publicNotifications',
 ]);
 
 /** True for tables whose source partials are noise — READ drops them, HEADER writes synthetic one. */

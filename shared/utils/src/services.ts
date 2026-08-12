@@ -7,20 +7,19 @@ const HEALTH_INACTIVITY_MS = 30_000;
 
 interface SKFactorySpec extends Spec {
   rabbitmq?:      boolean | { topology?: TopologySpec };
-  mongodb?:       boolean;
   redis?:         boolean;
   trackMessages?: boolean;
 }
 
 /**
  * Creates a pre-configured SK instance with tradebot conventions baked in:
- *   - Standard provider URLs from QUEUE_URL / DB_URL / CACHE_URL env vars
+ *   - Standard provider URLs from QUEUE_URL / CACHE_URL env vars
  *   - RabbitMQ always in Broker mode (useBroker: true)
  *   - Health check on port 3000
  *   - Optional message tracking with activity-based health (trackMessages: true)
  *
  * Accepts any valid SK spec field directly (name, state, config, etc.).
- * The shortcut keys (rabbitmq, mongodb, redis, trackMessages) are translated
+ * The shortcut keys (rabbitmq, redis, trackMessages) are translated
  * into their spec equivalents and merged with whatever the caller passed.
  *
  * Usage:
@@ -28,13 +27,12 @@ interface SKFactorySpec extends Spec {
  *     name: 'writer',
  *     config,
  *     rabbitmq: { topology },
- *     mongodb: true,
  *     redis: true,
  *     trackMessages: true,
  *   }).run(async (service) => { ... service.emit('message') ... });
  */
 export const SKFactory = (factorySpec: SKFactorySpec): ServiceKit => {
-  const { rabbitmq, mongodb, redis, trackMessages, ...passthroughSpec } = factorySpec;
+  const { rabbitmq, redis, trackMessages, ...passthroughSpec } = factorySpec;
 
   const providers: Record<string, ProviderSpec> = { ...passthroughSpec.providers };
 
@@ -46,13 +44,6 @@ export const SKFactory = (factorySpec: SKFactorySpec): ServiceKit => {
       ...(typeof rabbitmq === 'object' && rabbitmq.topology
         ? { topology: rabbitmq.topology }
         : {}),
-    };
-  }
-
-  if (mongodb) {
-    providers.mongodb = {
-      url:   process.env.DB_URL || '',
-      retry: { strategy: 'exponential', attempts: 10 },
     };
   }
 

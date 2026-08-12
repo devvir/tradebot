@@ -4,14 +4,10 @@
 # Covers all server roles simultaneously.
 #
 # Two RabbitMQ instances isolate RT feed traffic from batch processing traffic.
-# The general-purpose MongoDB instance is aliased to db-store, db-feed, db-replay, and db-audit.
 #
 # Abstract service names (used by all services as hostnames):
 #   queue      — general / batch message broker
 #   queue-rt   — real-time live data message broker
-#   db-store   — MongoDB for historical paginated data   ⎫
-#   db-feed    — for real-time streaming data            ⎬ all aliased to the same instance
-#   db-audit   — MongoDB for trading audit / state       ⎭
 #   bouncer    — API credential signing
 #   redis      — cache
 
@@ -45,27 +41,6 @@ services:
       - "${QUEUE_RT_MGMT_PORT:-}:15672"
     volumes:
       - queue-rt-data:/var/lib/rabbitmq
-
-  # Single MongoDB instance aliased to db-store, db-replay, and db-audit.
-  # Sufficient for local development; in production each gets its own instance.
-  # db:
-  #   extends:
-  #     file: ../../../services/.deprecated/mongodb/docker/base.yml
-  #     service: mongodb
-  #   container_name: db
-  #   command: mongod --quiet --setParameter logLevel=0 --wiredTigerCacheSizeGB=${DB_CACHE_SIZE_GB:-2}
-  #   ports:
-  #     - "${DB_PORT:-}:27017"
-  #   volumes:
-  #     - db-data:/data/db
-  #     - db-config:/data/configdb
-  #   networks:
-  #     default:
-  #       aliases:
-  #         - db-feed
-  #         - db-store
-  #         - db-replay
-  #         - db-audit
 
   cache:
     extends:

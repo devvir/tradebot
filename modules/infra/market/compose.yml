@@ -5,7 +5,6 @@
 # Abstract service names:
 #   queue      — trading signals / order message broker
 #   queue-rt   — real-time live BitMEX feed message broker
-#   db-audit   — MongoDB for live trading state and audit
 #   bouncer    — API credential signing
 #   redis      — fast cache for order/position data
 
@@ -38,23 +37,9 @@ services:
     volumes:
       - queue-rt-data:/var/lib/rabbitmq
 
-  db-audit:
-    extends:
-      file: ../../../services/.deprecated/mongodb/docker/base.yml
-      service: mongodb
-    container_name: db-audit
-    command: mongod --quiet --setParameter logLevel=0 --wiredTigerCacheSizeGB=${DB_AUDIT_CACHE_SIZE_GB:-2}
-    ports:
-      - "${DB_AUDIT_PORT:-}:27017"
-    volumes:
-      - db-audit-data:/data/db
-      - db-audit-config:/data/configdb
-
 volumes:
   queue-data:
   queue-rt-data:
-  db-audit-data:
-  db-audit-config:
 
 networks:
   default:

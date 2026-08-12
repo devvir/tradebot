@@ -58,13 +58,11 @@ const WS_BUCKETING_START = '20260308';
  */
 const TABLE_START: Record<string, string> = {
   // All WS tables — first Tardis date available
-  announcement:        '20190401',
   chat:                '20190401',
   connected:           '20190401',
   instrument:          '20190401',
   liquidation:         '20190401',
   orderBookL2:         '20190401',
-  publicNotifications: '20190401',
 
   // REST tables
   compositeIndex: '20161201',

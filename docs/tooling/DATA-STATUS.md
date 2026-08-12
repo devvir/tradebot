@@ -26,7 +26,7 @@ Two orthogonal axes classify every table: **origin** (how it's collected) and **
 
 | | Sourced | Unsourced |
 |---|---|---|
-| **WS** | `announcement`, `chat`, `connected`, `instrument`, `liquidation`, `orderBookL2`, `orderBookL2.secondary`, `publicNotifications` | — |
+| **WS** | `chat`, `connected`, `instrument`, `liquidation`, `orderBookL2`, `orderBookL2.secondary` | — |
 | **REST** | `trade`, `quote` | `compositeIndex`, `funding`, `insurance`, `settlement`, `tick`, `tradeBin{1m,5m,1h,1d}`, `quoteBin{1m,5m,1h,1d}` |
 
 `trade`/`quote` are downloaded from BitMEX S3 by `courier` as symbol-major sources (`.s3`/`.rest`) and pass through `data resort` to become ts-major buckets — so, like WS tables, Mega must hold both their raw sources (`SOURCES_MEGA_RAW`) and their bucket (`SOURCES_MEGA_VAULT`). The other REST tables are paginated by `scribe` and arrive as direct buckets, no preparation needed — including the eight `*Bin*` tables, BitMEX's server-side OHLCV bars from `/trade|quote/bucketed`, one table per resolution.

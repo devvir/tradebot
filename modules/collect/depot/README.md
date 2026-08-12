@@ -10,7 +10,6 @@ Downloads the complete BitMEX historical dataset and keeps it current as new dat
 | **courier** | Streams S3 gzip dumps (trade, quote) directly into vault |
 | **scribe** | Fetches REST endpoints (funding, settlement, insurance, compositeIndex) into vault |
 | **registry** | Persistent symbol/currency mappings; used by scribe to manage compositeIndex subtables |
-| **MongoDB** | Persistence layer for registry |
 
 ## Usage
 

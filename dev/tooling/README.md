@@ -10,11 +10,9 @@ Comprehensive CLI tooling for development, debugging, and monitoring of the Trad
 
 # Run a specific tool
 ./tools ws                    # WebSocket tool
-./tools db -l                 # MongoDB list mode
 ./tools rabbit --list         # RabbitMQ queue list
 ./tools bouncer               # View accounts
 ./tools broadcast             # Monitor broadcast
-./tools signal --latest       # View latest signals
 ./tools remote sync-env       # Push .env files to remote
 ./tools remote pull           # Pull vault files from remote
 ```
@@ -33,7 +31,7 @@ All tools support these global flags:
 Example:
 
 ```bash
-./tools -e .env.local db --list
+./tools -e .env.local bouncer
 ```
 
 ---
@@ -109,77 +107,6 @@ Once connected, you can use these commands in the shell:
 - WS auth is delegated to Bouncer: `POST /sign/ws` returns the HMAC-SHA256 signature
 - The raw API secret never leaves Bouncer
 - Guest mode connects without authentication (no access to private data)
-
----
-
-## MongoDB Tool (`db`, `database`)
-
-Query and explore MongoDB database with interactive REPL and management commands.
-
-### Usage
-
-```bash
-./tools db [query] [options]
-```
-
-### Options
-
-- `[query]` - Optional JSON query (in interactive mode)
-- `-c, --collection <name>` - Specify collection for queries
-- `-l, --list` - List all collections in the current database with document counts
-
-### Examples
-
-```bash
-# List all collections and stats
-./tools db --list
-
-# Interactive mode (default)
-./tools db
-
-# Query specific collection
-./tools db -c orders
-```
-
-### Interactive Commands
-
-In interactive mode, you can enter:
-
-| Command | Example | Description |
-|---------|---------|-------------|
-| `:collections` | `:collections` | List all available collections |
-| `:find <collection>` | `:find orders` | Find first 10 documents in collection |
-| `:count <collection>` | `:count users` | Count total documents in collection |
-| `:stats <collection>` | `:stats orders` | Show collection statistics (size, avg doc size, etc.) |
-| `:exit` or `:quit` | `:exit` | Exit tool |
-| JSON query | `{"status": "active"}` | Query the specified collection (requires `-c` flag) |
-
-### Examples
-
-```bash
-# List collections
-:collections
-
-# Find documents in 'orders' collection
-:find orders
-
-# Count documents
-:count positions
-
-# Get stats
-:stats signals
-
-# Query active orders (with -c flag)
-./tools db -c orders
-{"status": "active"}
-
-# Exit
-:exit
-```
-
-### Configuration
-
-Connects to MongoDB using `DB_URL` environment variable (default: `mongodb://localhost:27017/tradebot`)
 
 ---
 
@@ -359,78 +286,6 @@ Uses RabbitMQ with:
 
 ---
 
-## Signal Service Tool (`signal`)
-
-View trading signals and indicators from the Signal service. Useful for understanding signal generation and testing indicator logic.
-
-### Usage
-
-```bash
-./tools signal [options]
-```
-
-### Options
-
-- `-l, --latest` - Show latest 20 signals only (sorted newest first)
-- `--symbol <symbol>` - Filter signals by symbol (e.g., `XBTUSD`)
-
-### Examples
-
-```bash
-# View recent signals
-./tools signal
-
-# Get only latest signals
-./tools signal --latest
-
-# Filter by symbol
-./tools signal --symbol XBTUSD
-
-# Latest signals for specific symbol
-./tools signal --latest --symbol ETHUSD
-```
-
-### Signal Information
-
-Each signal displays:
-- **Number** - Sequential index
-- **Timestamp** - When signal was generated
-- **Symbol** - Trading symbol (e.g., XBTUSD)
-- **Type** - Signal type/classification
-- **Direction** - Buy/Sell/Hold (if applicable)
-- **Strength** - Signal strength percentage
-- **Price** - Price at signal generation
-- **Reason** - Signal reasoning/indicators
-
-### Summary Statistics
-
-After listing signals, you'll see:
-
-**By Symbol**:
-- Count of signals per symbol
-- Helps identify which symbols are generating most signals
-
-**By Type**:
-- Count of signals per type
-- Helps understand signal distribution
-
-### Output Limits
-
-- Default: Up to 50 most recent signals
-- With `--latest`: Up to 20 most recent signals
-- Filter by symbol if dataset is too large
-
-### Configuration
-
-Connects to MongoDB collection `signals`:
-- **URL**: `DB_URL` environment variable
-- **Collection**: `signals`
-- **Default DB**: `tradebot`
-
----
-
----
-
 ## Monitor Tool (`monitor`, `mon`)
 
 Live dashboard showing all running Docker containers and RabbitMQ queue health. Designed to run continuously in a dedicated terminal.
@@ -568,13 +423,13 @@ The tooling package loads environment variables in this order (later overrides e
 
 ```bash
 # Use development config
-./tools -e .env.dev db --list
+./tools -e .env.dev rabbit --list
 
 # Use staging config
 ./tools -e .env.staging bouncer
 
 # Multiple layers
-./tools -e .env.local signal --latest
+./tools -e .env.local data status
 ```
 
 ### Required Environment Variables
@@ -582,7 +437,6 @@ The tooling package loads environment variables in this order (later overrides e
 | Variable | Example | Tools | Default |
 |----------|---------|-------|---------|
 | `BOUNCER_URL` | `http://localhost:3010` | ws, bouncer | Required |
-| `DB_URL` | `mongodb://localhost:27017/tradebot` | db, signal | `mongodb://localhost:27017/tradebot` |
 | `QUEUE_URL` | `amqp://guest:guest@localhost:5672` | rabbit, broadcast | `amqp://guest:guest@localhost:5672` |
 | `RABBITMQ_MGMT_URL` | `http://localhost:15672/api` | rabbit | `http://localhost:15672/api` |
 | `VAULT_DATA_DIR` | `${BITMEX_DATA_DIR}/vault` | data | Required |
@@ -728,45 +582,6 @@ Sync    — audit + sync local, remotes, and Mega
 
 ---
 
-## Map ID Tool (`mapId`)
-
-Translate between vault record `_id` values and ISO dates. Useful when inspecting raw MongoDB documents or building queries with `_id` range bounds.
-
-The vault `_id` is a 53-bit safe integer with layout:
-
-```
-_id = dateOffset * 2^39 + position * 2^12 + reserved
-```
-
-- `dateOffset` — days since 2000-01-01 UTC
-- `position` — message index within the day's vault file
-- `reserved` — 0 for farmer-produced IDs; 1–4095 for gap-fill events
-
-### Usage
-
-```bash
-tools mapId <value>
-```
-
-- **Numeric value** — decoded to ISO date, position, and reserved field
-- **Non-numeric value** — treated as a (partial) ISO date and encoded to the minimum `_id` for that date
-
-### Examples
-
-```bash
-# Encode: ISO date → minimum _id for that date
-tools mapId 2029-01-01         # → id  3864783371632640
-tools mapId 2029               # → id for 2029-01-01 (defaults month/day to 01)
-tools mapId 2029-06            # → id for 2029-06-01
-tools mapId 20190901           # → YYYYMMDD without dashes, same as 2019-09-01
-
-# Decode: _id → date + position + reserved
-tools mapId 3864783371632640   # → date 2029-01-01, position 0, reserved 0
-tools mapId 3864783375826951   # → date 2029-01-01, position 1023, reserved 7
-```
-
----
-
 ## Interactive Menu
 
 Run without arguments to get an interactive menu:
@@ -793,22 +608,17 @@ dev/tooling/
 │   ├── index.ts              # Main CLI entry point
 │   ├── commands/             # Thin routing layer
 │   │   ├── ws.ts
-│   │   ├── db.ts
 │   │   ├── rabbit.ts
 │   │   ├── bouncer.ts
 │   │   ├── broadcast.ts
-│   │   ├── signal.ts
 │   │   ├── monitor.ts
 │   │   ├── remote.ts
 │   │   ├── data.ts
-│   │   └── mapId.ts
 │   ├── tools/                # Tool implementations (isolated)
 │   │   ├── websocket/
-│   │   ├── mongodb/
 │   │   ├── rabbitmq/
 │   │   ├── bouncer/
 │   │   ├── broadcast/
-│   │   ├── signal/
 │   │   ├── monitor/
 │   │   ├── remote/
 │   │   │   ├── index.ts      # Entry point, interactive submenu
@@ -834,8 +644,7 @@ dev/tooling/
 │           └── env.ts        # Environment loading
 ├── tests/
 │   ├── commands/
-│   │   ├── register.test.ts  # Command registration smoke tests
-│   │   └── mapId.test.ts     # encodeDate, decodeId, normaliseDate unit tests
+│   │   └── register.test.ts  # Command registration smoke tests
 │   ├── shared/
 │   │   └── utils/
 │   │       └── env.test.ts
@@ -926,18 +735,6 @@ Or use the `-e` flag:
 
 ```bash
 ./tools -e ./env.local ws
-```
-
-### MongoDB connection times out
-
-Check MongoDB is running and `DB_URL` is correct:
-
-```bash
-# Test connection
-./tools db -l
-
-# Check env var
-echo $DB_URL
 ```
 
 ### RabbitMQ queue not found

@@ -15,7 +15,7 @@ interface DiscoveryResult {
  * If multiple instances are found, prompts user to select one.
  */
 export async function discoverService(
-  serviceName: 'mongodb' | 'rabbitmq' | 'bouncer',
+  serviceName: 'rabbitmq' | 'bouncer',
   urlBuilder?: (host: string, port: number) => string,
   internalPort?: number,
 ): Promise<DiscoveryResult | null> {

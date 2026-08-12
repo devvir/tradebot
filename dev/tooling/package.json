@@ -20,7 +20,6 @@
     "commander": "^14.0.3",
     "dockerode": "^5.0.0",
     "inquirer": "^11.1.0",
-    "mongodb": "^6.21.0",
     "redis": "^4.7.1",
     "ws": "^8.20.0"
   },

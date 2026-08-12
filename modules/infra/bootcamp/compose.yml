@@ -4,8 +4,6 @@
 #
 # Abstract service names:
 #   queue-rt   — replay data pipeline message broker
-#   db-replay  — MongoDB for curated replay/training data (owned here)
-#   db-audit   — MongoDB for training run audit and state
 #   bouncer    — API credential signing
 
 name: infrastructure
@@ -26,37 +24,8 @@ services:
     volumes:
       - queue-rt-data:/var/lib/rabbitmq
 
-  db-replay:
-    extends:
-      file: ../../../services/.deprecated/mongodb/docker/base.yml
-      service: mongodb
-    container_name: db-replay
-    command: mongod --quiet --setParameter logLevel=0 --wiredTigerCacheSizeGB=${DB_REPLAY_CACHE_SIZE_GB:-2}
-    ports:
-      - "${DB_REPLAY_PORT:-}:27017"
-    volumes:
-      - db-replay-data:/data/db
-      - db-replay-config:/data/configdb
-
-  db-audit:
-    extends:
-      file: ../../../services/.deprecated/mongodb/docker/base.yml
-      service: mongodb
-    container_name: db-audit
-
-    command: mongod --quiet --setParameter logLevel=0 --wiredTigerCacheSizeGB=${DB_AUDIT_CACHE_SIZE_GB:-2}
-    ports:
-      - "${DB_AUDIT_PORT:-}:27017"
-    volumes:
-      - db-audit-data:/data/db
-      - db-audit-config:/data/configdb
-
 volumes:
   queue-rt-data:
-  db-replay-data:
-  db-replay-config:
-  db-audit-data:
-  db-audit-config:
 
 networks:
   default:

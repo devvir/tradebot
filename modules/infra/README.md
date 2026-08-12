@@ -21,10 +21,6 @@ Services never reference a concrete container name. They connect via these stabl
 |---|---|---|
 | `queue` | Message broker | General / batch RabbitMQ |
 | `queue-rt` | Message broker | Real-time live data RabbitMQ |
-| `db-feed` | Database | High-throughput streaming writes |
-| `db-store` | Database | Historical paginated reads |
-| `db-replay` | Database | Curated replay / training data |
-| `db-audit` | Database | Trading state and audit log |
 | `bouncer` | Auth | API credential signing |
 | `redis` | Cache | Fast in-memory cache |
 
@@ -44,15 +40,13 @@ The constructed `DB_*_URL` and `QUEUE_*_URL` values all live in the root `.env`.
 
 ## Packs
 
-| Pack | Server role | `queue` | `queue-rt` | `db-feed` | `db-store` | `db-replay` | `db-audit` | `bouncer` | `redis` |
-|---|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| [local](#local) | Local development | ✓ | ✓ | ✓ | ✓¹ | ✓¹ | ✓¹ | ✓ | ✓ |
-| [store](#store) | Data collection | ✓ | ✓ | ✓ | ✓ | — | — | ✓ | — |
-| [market](#market) | Live trading | ✓ | ✓ | — | — | — | ✓ | ✓ | ✓ |
-| [bootcamp](#bootcamp) | Replay / training | — | ✓ | — | — | ✓ | ✓ | ✓ | — |
-| [shuttle](#shuttle) | Data fetch/move | ✓ | — | — | — | — | — | — | — |
-
-¹ `db-store`, `db-replay`, and `db-audit` are network aliases of a single `db` container in local — no separate instances.
+| Pack | Server role | `queue` | `queue-rt` | `bouncer` | `redis` |
+|---|---|:---:|:---:|:---:|:---:|
+| [local](#local) | Local development | ✓ | ✓ | ✓ | ✓ |
+| [store](#store) | Data collection | ✓ | ✓ | ✓ | — |
+| [market](#market) | Live trading | ✓ | ✓ | ✓ | ✓ |
+| [bootcamp](#bootcamp) | Replay / training | — | ✓ | ✓ | — |
+| [shuttle](#shuttle) | Data fetch/move | ✓ | — | — | — |
 
 ---
 
@@ -60,7 +54,7 @@ The constructed `DB_*_URL` and `QUEUE_*_URL` values all live in the root `.env`.
 
 **Role:** Local development. Covers all server roles simultaneously.
 
-Two MongoDB instances isolate high-frequency RT writes (`db-feed`) from general-purpose reads/writes. The general instance is aliased to `db-store`, `db-replay`, and `db-audit` so all module patterns work without running separate containers.
+Two RabbitMQ instances isolate RT feed traffic from batch processing, so every module pattern works without running separate hosts.
 
 ---
 
@@ -68,23 +62,23 @@ Two MongoDB instances isolate high-frequency RT writes (`db-feed`) from general-
 
 **Role:** Data collection server. Runs history modules (archivist, collector, archeologist, packer).
 
-Two separate RabbitMQ instances prevent RT feed traffic (`queue-rt`) from competing with batch processing (`queue`). Two MongoDB instances prevent batch reads (archeologist) from competing with high-frequency writes (archivist/collector).
+Two separate RabbitMQ instances prevent RT feed traffic (`queue-rt`) from competing with batch processing (`queue`).
 
 ---
 
 ## Infra Pack: market
 
-**Role:** Live trading server. Runs exchange/live and trading modules.
+**Role:** Live trading server. Runs the gui and trading modules.
 
-Redis provides fast order/position caching. `queue` carries trading signals; `queue-rt` carries the live BitMEX feed.
+Redis provides fast order/position caching. `queue` carries trading signals; `queue-rt` carries the live venue feed.
 
 ---
 
 ## Infra Pack: bootcamp
 
-**Role:** Model training / replay server. Runs exchange/replay and trading modules against stored historical data.
+**Role:** Model training / replay server. Runs trading modules against stored historical data.
 
-No batch queue — replay is driven entirely through `queue-rt`. No live feed — data comes from stored MongoDB collections.
+No batch queue — replay is driven entirely through `queue-rt`. No live feed — data comes from the vault. The replay surface itself is unbuilt and waits on the per-venue APIs.
 
 ---
 

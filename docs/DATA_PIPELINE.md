@@ -1,5 +1,15 @@
 # Data Pipeline
 
+> **Outdated — do not use as a reference.**
+>
+> This describes a pipeline that has moved on, and it is not being kept current on purpose.
+> The shape of the thing it documents depends on work that has not happened yet: the per-venue
+> APIs are new services still to be written, and until they exist the end-to-end picture cannot
+> be drawn honestly. It gets rewritten once they do.
+>
+> Treat every specific here — service names, boundaries, what feeds what — as a lead to verify
+> against the code, not as fact.
+
 How data gets from a venue to a queryable history a bot can be trained against.
 
 Two layers, and the split between them is the whole design:
@@ -153,18 +163,23 @@ against an API it can never send an order to is wasted work. The simulator consu
 directly rather than through a venue API, so history from a closed venue keeps its value there
 without a surface being built for it.
 
-This is under construction. An earlier BitMEX-only implementation established the shape — a
-timeline service merging tables in time order, subscription handling, backpressure to the
-slowest client, and a control API for seeking and speed — and is being rewritten venue-agnostic.
-→ [planning/REPLAY.md](planning/REPLAY.md)
+This is unbuilt. An earlier BitMEX-only implementation established a shape — a timeline service
+merging tables in time order, subscription handling, backpressure to the slowest client, and a
+control API for seeking and speed — but it was built against the venue it mirrored, and it is
+gone. What replaces it waits on the per-venue APIs, which do not exist yet.
 
 ## Retired
 
-`services/.deprecated/` holds the MongoDB-era stages: `farmer` (loading sealed vault files into
-MongoDB), `distiller` (deriving binned and depth-limited collections from them), `librarian`
-(dump I/O over MongoDB) and `mongodb` itself. Parquet replaced the pair of them — the vault is
-now directly queryable, so loading it into a database to query it, and materialising derived
-collections ahead of time, both stopped paying for themselves.
+The pipeline once ended in MongoDB: `farmer` loaded sealed vault files into it, `distiller`
+derived binned and depth-limited collections from them, and `librarian` served dump I/O over it.
+Parquet replaced all of it — the vault is directly queryable, so loading it into a database to
+query it, and materialising derived collections ahead of time, both stopped paying for
+themselves.
 
-Their docs are kept for the BitMEX-specific knowledge they carry, not as a description of
-anything currently running.
+Those services and the database itself are gone, along with `teller`, the private-exchange mock
+that kept its state there, and the replay chain built on the same database — `librarian`,
+`provider` and `digger`.
+
+The BitMEX venue documentation went with them. BitMEX shuts down on 2026-09-23, taking its API,
+its references and everything written about them; what survives is the collected data, kept as
+real trading history from a real exchange rather than as a venue we integrate with.

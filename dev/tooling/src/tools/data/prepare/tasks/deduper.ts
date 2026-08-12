@@ -15,9 +15,7 @@ const plog = (msg: string): void => { debug(`[${new Date().toISOString()}] ${msg
  */
 const TABLE_CONFIG: Record<string, DedupConfig> = {
   // No-update tables: every distinct insert is real and unique forever.
-  announcement:        { updateWindow: null,  globalLimit: Infinity                 },
   liquidation:         { updateWindow: null,  globalLimit: Infinity                 },
-  publicNotifications: { updateWindow: null,  globalLimit: Infinity                 },
 
   // Chat: sources can lag by seconds (not just ms), so dedup identical updates within a reasonable window.
   chat:                { updateWindow: 60000, globalLimit: Infinity                 },

@@ -1,5 +1,4 @@
 // BitMEX WebSocket channel definitions and presets.
-// See docs/venues/BitMEX/WS_TABLES.md for full channel documentation.
 
 export const REALTIME_PRIMARY_CHANNELS = [
   'instrument',
