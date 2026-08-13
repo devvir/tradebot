@@ -277,8 +277,16 @@ export interface Config {
    * Inclusive month bounds, `YYYY-MM`. Null = unbounded on that side. The
    * running month is excluded regardless — see `wanted` in scan.ts.
    */
-  from:        string | null;
-  to:          string | null;
+  /**
+   * Inclusive month bounds, `YYYY-MM`, or null for none.
+   *
+   * Named and parsed as trucker's are, so the two ends of the pipeline are
+   * configured the same way — months rather than dates, because a partition
+   * covers a whole one and a mid-month bound could only be wrong in one
+   * direction or the other.
+   */
+  startMonth:  string | null;
+  endMonth:    string | null;
 
   /** Partitions built concurrently. */
   concurrency: number;
@@ -286,8 +294,7 @@ export interface Config {
   /** Minutes between rescans of the raw tree. */
   scanMinutes: number;
 
-  /** Hard caps, so a month-sized sort spills to disk rather than taking the box. */
-  memoryLimit: string;
+  /** Cores a build may use, so it cannot take every one on the box. */
   threads:     number;
 
   [key: string]: unknown;

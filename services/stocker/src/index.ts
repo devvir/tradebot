@@ -5,6 +5,7 @@ import SK from './service';
 import config from './config';
 import { sweepScratch } from './build';
 import { open } from './db';
+import * as ledger from './ledger';
 import { report, sweep } from './scan';
 
 /**
@@ -54,6 +55,11 @@ SK.run(async () => {
   await assertWritable(config.vaultDir);
 
   await sweepScratch();
+
+  // Stated before the first sweep, because a consumer reading the vault while
+  // stocker is still starting should already be able to tell a venue that is
+  // one month short by design from one that is one month behind.
+  ledger.publishTraits();
 
   const { conns } = await open();
 

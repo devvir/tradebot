@@ -373,6 +373,14 @@ Three things follow, and all three are mechanical:
 The trait assumes the offset is smaller than one bucket, so one neighbour in each direction is
 enough. A venue shifted further would be messy enough not to collect from archives at all.
 
+**A venue that spills backwards everywhere is permanently one month behind its collector**, and it
+says so. The newest closed month needs a day the collector has not reached, so it yields no
+partition at all and the vault's month count sits one below the archives' — for as long as that
+month is the tip. Counting alone cannot tell that from a backlog, so stocker records a `spills`
+fact against the venue and whoever is comparing reads it. It is stated only where **every** series
+of the venue spills that way: with a mix, the month still builds from the series that do not, and
+there is no shortfall to explain.
+
 Verified on real bitget data across the 2024-12/2025-01 boundary: the December partition ends at
 `23:59:59` UTC and January's starts at `00:00:00`, no `tradeId` appears in both, and the two
 together hold exactly the number of rows the raw files hold over the same span.
@@ -390,13 +398,26 @@ raw has gone missing.** Raw is expected to be backed up to cold storage and dele
 once processed, so absence must read as "already done, leave alone". Any other rule would turn
 reclaiming disk into a silent rebuild of everything.
 
-The record lives under `@meta/built/`, one append-only `.jsonl` per (table, venue), and
-deliberately **not** beside the data. The steady state is a vault whose partitions have been
-backed up and evicted while their raw may still be local; a record kept next to a partition
-would leave with it, and stocker could no longer tell "never built" from "built and evicted".
-Keeping it separate means reclaiming space is deleting `.parquet` files by any means — by file,
-by directory, or by whole subtree — with the knowledge of the work intact. Later lines supersede
-earlier ones, so a rebuild is an append and concurrent builds never contend on a shared file.
+The record lives in the shared facts store as `topic=vault, fact=built`, one fact per
+partition, and deliberately **not** beside the data. The steady state is a vault whose
+partitions have been backed up and evicted while their raw may still be local; a record kept
+next to a partition would leave with it, and stocker could no longer tell "never built" from
+"built and evicted". Keeping it separate means reclaiming space is deleting `.parquet` files by
+any means — by file, by directory, or by whole subtree — with the knowledge of the work intact.
+A rebuild re-states the same fact, so the key collapses what an append-only file needed a
+"later line wins" rule for.
+
+**The members are a topic of their own**, `vault:details`, one fact per input with the raw path
+as the fact and its size as the value. That list is twenty times the volume of the partitions
+themselves and is wanted only by the one thing that asks which raw file became which partition,
+so it is a separate topic and therefore a separate database — the common question never pays
+for the rare one's rows.
+
+**A rebuild replaces its members rather than adding to them.** The inputs a rebuild records are
+the whole truth about that partition, and accumulating instead would leave a raw file a rebuild
+dropped still vouching for a partition it no longer feeds. bitget's klines were rebuilt from one
+of two published layouts at a time, and thirty-five months read as fully normalised and were
+offered for eviction, taking with them the raw the repair needed.
 
 Whether the partition is still on local disk is not consulted, and a rebuild never reads the
 previous Parquet — only raw. Raw is reclaimed a **whole month at a time**, so finding any raw
@@ -405,7 +426,7 @@ superset of the ones the last build recorded. A rebuild can therefore only ever 
 than what it replaces, evicted or not. When a month's raw is gone the walk yields no candidates
 for it and nothing is considered at all.
 
-### When a settled month changes — `@shared/rebuilt/{venue}.tsv`
+### When a settled month changes — `logs:vault`, `fact=drifted`
 
 The record holds each input's **path and size**, so a month that gains a raw file after it was
 built comes back as changed and is rebuilt without anyone asking. That is the mechanism working,
@@ -413,16 +434,19 @@ but it is also an event worth knowing about: a partition is only built once its 
 publishes the month as finished, and finished is a promise the month will not change. By the
 time it does, the same month may already be tarred into cold storage or mirrored offsite.
 
-So the rebuild is announced twice — a `WARN` in the log for whoever is watching, and a line in
-the shared `@shared/rebuilt/` for whoever is not:
+So the rebuild is announced twice — a `WARN` in the log for whoever is watching, and a fact
+under `logs:vault` for whoever is not, carrying how many inputs appeared, the first of them and
+when the partition had been built.
 
-```
-trades  bitget  spot  BTCUSDT  2018-09  7  trades/SPBL/BTCUSDT/…_001.zip  <builtAt>  <at>
-```
+**It accumulates rather than replaces**, which is what the `logs:` layer is for. Every other
+fact stocker states describes how something *is*; drift is something that *happened*, can happen
+again, and a partition that has drifted three times is saying something one that drifted once is
+not. `seq` carries the moment, which both separates the occurrences and orders them.
 
-It sits beside trucker's `@shared/changes/`, which records the same class of surprise one stage
-earlier — a venue rewriting history it had already published. Neither service acts on either
-file; they exist so a person can decide whether a tarball needs rebuilding.
+Container logs do not survive the container, which is the whole reason this is a fact rather
+than only a log line: something that goes wrong months from now is diagnosed from what was
+recorded when it happened, and by then the log is long gone. Nothing acts on these; they exist
+so a person can decide whether a tarball needs rebuilding.
 
 Additions are what this catches. A file **removed** leaves the remaining inputs matching what was
 recorded and passes unnoticed — deliberately, since nothing deletes raw archives, and detecting
@@ -512,7 +536,7 @@ Sweeps cannot overlap; a tick landing mid-sweep is skipped and logged.
 
 A directory of files says which periods arrived; it never says whether more are coming. Only the
 collector knows, and trucker publishes it as **one fact per venue** — the month it is collected
-through, in `@shared`, at `<shared>/complete/{venue}.tsv`:
+through, in the shared facts store as `topic=archives, fact=complete`:
 
 ```
 201802	2026-08-03T14:22:10.004Z
@@ -522,6 +546,13 @@ Stocker reads it once per sweep and builds a partition only when its month is at
 tip. Trucker walks month-major, so the tip is a statement about every dataset and every symbol of
 the venue at once.
 
+**The tip is the unbroken run of closed months, not the highest one in the file.** A month left
+open by a failed collection pass is stepped over by the months that close after it, so reading
+the maximum vouches for a hole underneath it. bybit's file said 202501 while 202402 and 202405
+were never finished, and stocker built 2,091 partitions from the two of them. Stopping at the
+break means the closed months above a hole read as `pending` until it is filled — which is the
+right answer, and the one that resolves itself when the collector goes back.
+
 Four conditions, all of which must hold:
 
 1. every file of the month that has been collected is on disk;
@@ -529,7 +560,7 @@ Four conditions, all of which must hold:
    buckets spill backwards, whose tail lives in the next one, which in practice means waiting for
    the following month to close;
 3. the partition is not already built from exactly these inputs;
-4. the month is inside `STOCKER_FROM`/`STOCKER_TO`, and is not the running month.
+4. the month is inside `STOCKER_START_MONTH`/`STOCKER_END_MONTH`, and is not the running month.
 
 A partition that fails only the second is counted as **`pending`** in the sweep summary — sitting
 on disk, complete as far as it goes, waiting for the collector to finish the month.
@@ -548,7 +579,7 @@ whole module of per-venue path rules reconstructing a fact the collector can sim
 
 ### Working an era at a time
 
-`STOCKER_FROM` and `STOCKER_TO` bound a run to inclusive `YYYY-MM` months, applied at discovery
+`STOCKER_START_MONTH` and `STOCKER_END_MONTH` bound a run to inclusive `YYYY-MM` months, applied at discovery
 so anything outside is never even grouped into a partition. The running month is excluded
 regardless, since its raw is still arriving.
 
@@ -558,7 +589,7 @@ what is already done, and either end can be pinned independently to work the old
 newest.
 
 These bound *which* months a run considers; the tip above decides whether a month it considers is
-ready. They are independent, and the bounds are the coarser tool: pin `STOCKER_TO`
+ready. They are independent, and the bounds are the coarser tool: pin `STOCKER_END_MONTH`
 to work an era at a time in step with whatever is being moved to cold storage, without waiting
 for the walk to cross months you are not interested in yet.
 

@@ -117,7 +117,23 @@ export const evictVault = async (
     return;
   }
 
-  await reclaim(config.sourceRoot, groups, purge);
+  const gone = new Set((await reclaim(config.sourceRoot, groups, purge)).map(entry => entry.label));
+
+  /**
+   * **One row per partition, not per part.** A vault eviction is a filter — a
+   * symbol, a dataset, a year — so a month is rarely taken whole, and recording
+   * the part would claim partitions that are still here. There are tens of
+   * thousands of partitions at the outside, so a row each costs nothing.
+   *
+   * Only the groups that actually went are recorded; a group whose deletion
+   * failed still has its files.
+   */
+  const rows = db.evictPaths(handle, 'vault', going
+    .filter(file => gone.has(`${file.venue}/${file.dataset ?? '—'}`))
+    .map(file => file.path));
+
+  if (rows > 0)
+    info(`${C.dim}${rows.toLocaleString()} partition${rows === 1 ? '' : 's'} recorded as evicted${C.reset}`);
 };
 
 // ── Internals ─────────────────────────────────────────────────────────────────

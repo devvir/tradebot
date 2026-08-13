@@ -11,11 +11,21 @@ const COLUMNS = ['_date_', '_action_', 'timestamp', 'symbol', 'price'];
 
 describe('createSourceActor', () => {
   // 'orderBookL2' → fixedPartials=false, has timestamp column
+  /** Every fixture directory made here, so the suite leaves none behind. */
+  const made: string[] = [];
+
   beforeAll(() => { _test_setColumns('orderBookL2', COLUMNS); });
-  afterAll(()  => { _test_clearColumns('orderBookL2'); });
+
+  afterAll(() => {
+    _test_clearColumns('orderBookL2');
+
+    for (const dir of made) fs.rmSync(dir, { recursive: true, force: true });
+  });
 
   function writeGz(content: string): string {
     const dir  = fs.mkdtempSync(path.join(os.tmpdir(), 'source-actor-'));
+
+    made.push(dir);
     const file = path.join(dir, 'in.csv.gz');
 
     fs.writeFileSync(file, zlib.gzipSync(content));

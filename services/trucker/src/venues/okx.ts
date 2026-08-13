@@ -83,10 +83,11 @@ export const okx: VenueArchive = {
   floor: START.slice(0, 6),
 
   /**
-   * The one venue caught answering "absent" for a file that exists: the same URL
-   * has returned 404 and then 200 seconds later, with no 429 and no other
-   * signal. Cause unknown, so its absences are probed twice and kept in the
-   * ledger for spaced re-checks rather than believed on sight.
+   * **Unfounded, and to be removed with discovery rather than repaired.** The
+   * claim behind it — this URL answering 404 and then 200 seconds later — did
+   * not hold up: 219 of okx's 46,847 recorded absences were re-probed and every
+   * one was still absent, and none had ever been retried. `docs/venues/OKX.md`
+   * has the measurement.
    */
   unreliableAbsence: true,
 

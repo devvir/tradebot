@@ -23,6 +23,12 @@ const CONTAINER_VAULT_DIR   = '/data/vault';
 const CONTAINER_SHARED_DIR  = '/data/shared';
 
 const loadConfig = (): Config => {
+  const startMonth = parseMonth(process.env.STOCKER_START_MONTH, 'STOCKER_START_MONTH');
+  const endMonth   = parseMonth(process.env.STOCKER_END_MONTH,   'STOCKER_END_MONTH');
+
+  if (startMonth && endMonth && startMonth > endMonth)
+    throw new Error(`STOCKER_END_MONTH (${endMonth}) is before STOCKER_START_MONTH (${startMonth})`);
+
   const config: Config = {
     truckerDir:  process.env.TRUCKER_DATA_DIR   ?? CONTAINER_TRUCKER_DIR,
     vaultDir:    process.env.STOCKER_VAULT_DIR  ?? CONTAINER_VAULT_DIR,
@@ -30,11 +36,10 @@ const loadConfig = (): Config => {
     venues:      parseKnown(process.env.STOCKER_VENUES, 'STOCKER_VENUES', VENUES),
     tables:      parseKnown(process.env.STOCKER_TABLES, 'STOCKER_TABLES', TABLE_NAMES),
     symbols:     parseList(process.env.STOCKER_SYMBOLS),
-    from:        parseMonth(process.env.STOCKER_FROM),
-    to:          parseMonth(process.env.STOCKER_TO),
+    startMonth,
+    endMonth,
     concurrency: parsePositiveInt(process.env.STOCKER_CONCURRENCY, 2),
     scanMinutes: parsePositiveInt(process.env.STOCKER_SCAN_MINUTES, 30),
-    memoryLimit: process.env.STOCKER_MEMORY_LIMIT ?? '4GB',
     threads:     parsePositiveInt(process.env.STOCKER_THREADS, 4),
   };
 
@@ -78,19 +83,36 @@ const parseKnown = (raw: string | undefined, name: string, known: string[]): str
 };
 
 /**
- * A month bound, `YYYY-MM`. Bounds scope a run to a slice that can then be
- * confirmed, backed up and reclaimed — the running month is always excluded
- * separately, since its raw is still arriving.
+ * A month bound, as `yyyy-mm`, `yyyymm` or `yymm` — the forms trucker takes, so
+ * the two ends of the pipeline are configured the same way.
+ *
+ * **Months rather than dates, and both bounds inclusive.** A partition covers a
+ * whole month, so a bound landing mid-month either takes a month only partly
+ * wanted or drops days already past. `2026-03` says exactly what it does, in
+ * three months' time as much as today.
+ *
+ * Returned dashed, which is the form partitions are keyed by here — so what a
+ * person types and what the comparison uses need not be the same thing.
+ *
+ * Bounds scope a run to a slice that can then be confirmed, backed up and
+ * reclaimed. The running month is excluded separately regardless, since its raw
+ * is still arriving.
  */
-const parseMonth = (raw: string | undefined): string | null => {
+const parseMonth = (raw: string | undefined, name: string): string | null => {
   if (! raw?.trim()) return null;
 
-  const month = raw.trim();
+  const digits = raw.trim().replace(/[-/]/g, '');
 
-  if (! /^[0-9]{4}-[0-9]{2}$/.test(month))
-    throw new Error(`Expected a month as YYYY-MM, got: ${raw}`);
+  // Length alone separates the two year forms; nothing else is accepted.
+  if (! /^\d{6}$/.test(digits) && ! /^\d{4}$/.test(digits))
+    throw new Error(`${name} must be yyyy-mm, yyyymm or yymm, got: ${raw}`);
 
-  return month;
+  const month = digits.length === 4 ? `20${digits}` : digits;
+
+  if (month.slice(4) < '01' || month.slice(4) > '12')
+    throw new Error(`${name} names month ${month.slice(4)}, got: ${raw}`);
+
+  return `${month.slice(0, 4)}-${month.slice(4)}`;
 };
 
 const parsePositiveInt = (raw: string | undefined, fallback: number): number => {

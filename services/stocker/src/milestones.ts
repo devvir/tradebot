@@ -1,6 +1,6 @@
-import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { logger } from '@devvir/service-kit';
+import { FactManager } from '@tradebot/pipeline';
 import config from './config';
 import { endOfMonth } from './dates';
 
@@ -12,12 +12,11 @@ import { endOfMonth } from './dates';
  * Only the collector knows, and it publishes exactly one fact per venue: the
  * month it is collected **through**.
  *
- *     <shared>/complete/gate.tsv
- *     201802\t2026-08-03T14:22:10.004Z
+ *     topic=archives  venue=gate  period=201802  fact=complete
  *
- * It arrives through the `@shared` mount rather than from inside trucker's
- * own directory, so the boundary is a mount rather than a convention: stocker
- * never opens anything trucker keeps for itself.
+ * It arrives through the shared facts store under the `@shared` mount rather
+ * than from inside trucker's own directory, so the boundary is a mount rather
+ * than a convention: stocker never opens anything trucker keeps for itself.
  *
  * That is the whole contract, and stocker deliberately reads nothing else.
  * Trucker's other ledgers — per-symbol cursors, coverage, the inventory —
@@ -32,8 +31,6 @@ import { endOfMonth } from './dates';
  * is work done several times over, and it is the thing that makes reclaiming
  * raw safe to do without thinking.
  */
-
-const DIR = () => join(config.sharedDir, 'complete');
 
 export interface Milestones {
   /** Whether a venue has published a tip at all — an absent file blocks it. */
@@ -53,9 +50,10 @@ export interface Milestones {
   closedAt(venue: string, month: string): string | null;
 
   /**
-   * Whether the venue is collected through `through` (`yyyymmdd`). The caller
-   * owns what that date must be — a month's end for a UTC-aligned series, one
-   * bucket past it for a spilling one — so the ledger stays a fact lookup.
+   * Whether the collector's unbroken run of finished months reaches `through`
+   * (`yyyymmdd`). The caller owns what that date must be — a month's end for a
+   * UTC-aligned series, one bucket past it for a spilling one — so the ledger
+   * stays a fact lookup.
    */
   ready(venue: string, through: string): boolean;
 }
@@ -63,25 +61,32 @@ export interface Milestones {
 export const load = async (): Promise<Milestones> => {
   const tips   = new Map<string, string>();
   const closed = new Map<string, string>();
-  const files  = await readdir(DIR()).catch(() => null);
+  const months = new Map<string, string[]>();
 
-  if (files === null)
-    logger.warn({ dir: DIR() },
+  /**
+   * Read as `stocker`, which owns nothing here and needs to own nothing. The
+   * `archives` topic is trucker's to write and everyone's to read — a consumer
+   * needs no permission to find out where a producer has got to.
+   */
+  const facts = new FactManager({ owner: 'stocker', root: join(config.sharedDir, 'facts') });
+
+  try {
+    for (const month of facts.find({ topic: 'archives', fact: 'complete' })) {
+      if (! /^\d{6}$/.test(month.period)) continue;
+
+      months.set(month.venue, [...months.get(month.venue) ?? [], month.period]);
+
+      closed.set(`${month.venue}|${dashed(month.period)}`, month.value);
+    }
+  } finally {
+    facts.close();
+  }
+
+  if (months.size === 0)
+    logger.warn({ root: join(config.sharedDir, 'facts') },
       'No completion tips from the collectors — nothing will be built until they appear');
 
-  for (const file of files ?? []) {
-    if (! file.endsWith('.tsv')) continue;
-
-    const venue = file.replace(/\.tsv$/, '');
-    const raw   = await readFile(join(DIR(), file), 'utf8').catch(() => '');
-    const tip   = newest(raw);
-
-    if (tip) tips.set(venue, tip);
-
-    // Later lines supersede earlier ones, so the last time a month was closed
-    // is the one that counts.
-    for (const [month, at] of times(raw)) closed.set(`${venue}|${month}`, at);
-  }
+  for (const [venue, closedMonths] of months) tips.set(venue, covered(closedMonths));
 
   logger.info({ through: Object.fromEntries(tips) }, 'Collector tips loaded');
 
@@ -95,6 +100,11 @@ export const load = async (): Promise<Milestones> => {
      * through its last day, so the comparison is against the tip's end — which
      * is what lets a back-spilling series ask for one day past its own month
      * and correctly wait for the next month to close.
+     *
+     * **Raw below the earliest month a collector closed is not covered by this**
+     * — nothing has vouched for it — but it passes here all the same, because
+     * the comparison has only a ceiling. bybit's earliest closed month is
+     * 202001 and 36 partitions were built from files sitting in 2019.
      */
     ready: (venue, through) => {
       const tip = tips.get(venue);
@@ -106,45 +116,40 @@ export const load = async (): Promise<Milestones> => {
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
+/** A `yyyymm` as stocker writes it. */
+const dashed = (month: string): string => `${month.slice(0, 4)}-${month.slice(4, 6)}`;
+
 /**
- * The highest month in the file, as stocker's `yyyy-mm` rather than the `yyyymm`
- * trucker writes.
+ * The **unbroken run** of closed months, as stocker's `yyyy-mm`.
  *
- * Append-only with later lines superseding earlier ones, but taking the maximum
- * rather than the last line means a torn write cannot lower a tip a consumer has
- * already acted on.
- */
-/**
- * Every month in the file with the time it was closed, as stocker's `yyyy-mm`.
+ * A collector closes a month when it finishes it, and a month that failed
+ * mid-walk is left open while the ones after it go on closing. So the months a
+ * venue has closed are not necessarily a range, and the highest of them is not a
+ * claim about everything below it — which is exactly how it was read, and how
+ * bybit's open 202402 and 202405 came to be built from underneath a tip of
+ * 202501.
  *
- * Later lines supersede earlier ones — a month closed a second time is written
- * again rather than edited — so the last time wins. That differs from `newest`
- * on purpose: a tip must never be lowered by a torn write, while a closing time
- * is only ever compared for equality.
+ * Taking the run rather than the maximum makes everything up to the answer a
+ * month the collector has actually finished.
  */
-const times = (raw: string): [string, string][] => {
-  const out: [string, string][] = [];
+const covered = (closed: string[]): string => {
+  const sorted = [...new Set(closed)].sort();
 
-  for (const line of raw.split('\n')) {
-    const [month, at] = line.split('\t');
+  let through = sorted[0]!;
 
-    if (! month || ! at || ! /^\d{6}$/.test(month.trim())) continue;
+  for (const month of sorted.slice(1)) {
+    if (month !== monthAfter(through)) break;
 
-    out.push([`${month.slice(0, 4)}-${month.slice(4, 6)}`, at.trim()]);
+    through = month;
   }
 
-  return out;
+  return dashed(through);
 };
 
-const newest = (raw: string): string | null => {
-  let tip: string | null = null;
+/** The month after a `yyyymm`, in the same form. */
+const monthAfter = (month: string): string => {
+  const year  = Number(month.slice(0, 4));
+  const index = Number(month.slice(4, 6));
 
-  for (const line of raw.split('\n')) {
-    const month = line.split('\t')[0]?.trim();
-
-    if (! month || ! /^\d{6}$/.test(month)) continue;
-    if (! tip || month > tip) tip = month;
-  }
-
-  return tip && `${tip.slice(0, 4)}-${tip.slice(4, 6)}`;
+  return index === 12 ? `${year + 1}01` : `${month.slice(0, 4)}${String(index + 1).padStart(2, '0')}`;
 };

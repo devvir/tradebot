@@ -2,21 +2,27 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { idOf, idsByMonth, inputsByRaw, _test_filesFor as filesFor } from '../../../src/tools/cold/ledger';
+import { FactManager } from '@tradebot/pipeline';
+import { idOf, idsByMonth, inputsByRaw } from '../../../src/tools/cold/ledger';
+import type { FactInput } from '@tradebot/pipeline';
 
-let root = '';
+let root  = '';
+let facts: FactManager;
 
-const write = (name: string, lines: object[]): void => {
-  fs.writeFileSync(path.join(root, '@meta', 'built', name),
-    lines.map(line => JSON.stringify(line)).join('\n') + '\n');
+/** Stocker stating what it built, which is what these readers read. */
+const stocker = (rows: FactInput[]): void => {
+  new FactManager({ owner: 'stocker', root }).recordAll(rows);
 };
 
 beforeEach(() => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-'));
-  fs.mkdirSync(path.join(root, '@meta', 'built'), { recursive: true });
+  root  = fs.mkdtempSync(path.join(os.tmpdir(), 'facts-'));
+  facts = new FactManager({ owner: 'tooling', root });
 });
 
-afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
+afterEach(() => {
+  facts.close();
+  fs.rmSync(root, { recursive: true, force: true });
+});
 
 describe('rebuilding a partition id from what a tree or a record carries', () => {
   it('joins the attributes in stocker\'s order, with the month hyphenated', () => {
@@ -35,97 +41,79 @@ describe('rebuilding a partition id from what a tree or a record carries', () =>
   });
 });
 
-/**
- * A repair once left `klines.bitget.jsonl.bak` in this directory. It described
- * 4,480 partitions under a layout that no longer exists, and reading it as a
- * ledger would block twenty months against records nothing can satisfy.
- */
-describe('which files count as a venue\'s ledger', () => {
-  it('takes only <dataset>.<venue>.jsonl', () => {
-    for (const name of ['klines.bitget.jsonl', 'trades.bitget.jsonl',
-      'klines.bitget.jsonl.bak', 'klines.bybit.jsonl', 'notes.txt'])
-      fs.writeFileSync(path.join(root, '@meta', 'built', name), '');
-
-    expect(filesFor(root, 'bitget').map(file => path.basename(file)).sort())
-      .toEqual(['klines.bitget.jsonl', 'trades.bitget.jsonl']);
-  });
-
-  it('reads no ledger at all rather than failing when there is no directory', () => {
-    expect(filesFor(path.join(root, 'nowhere'), 'bitget')).toEqual([]);
-  });
-});
-
 describe('which partitions a month should hold', () => {
-  it('groups the ids by their month', async () => {
-    write('trades.bybit.jsonl', [
-      { id: 'trades|bybit|perp|BTCUSDT|2021-06', inputs: [] },
-      { id: 'trades|bybit|perp|ETHUSDT|2021-06', inputs: [] },
-      { id: 'trades|bybit|perp|BTCUSDT|2021-07', inputs: [] },
-    ]);
+  const built = (symbol: string, period: string): FactInput => ({
+    topic: 'vault', venue: 'bybit', period, market: 'perp', symbol,
+    dataset: 'trades', fact: 'built',
+  });
 
-    const found = await idsByMonth(root, 'bybit');
+  it('groups the ids by their month', () => {
+    stocker([built('BTCUSDT', '202106'), built('ETHUSDT', '202106'), built('BTCUSDT', '202107')]);
+
+    const found = idsByMonth(facts, 'bybit');
 
     expect([...found.keys()].sort()).toEqual(['202106', '202107']);
     expect(found.get('202106')!.size).toBe(2);
+    expect([...found.get('202107')!]).toEqual(['trades|bybit|perp|BTCUSDT|2021-07']);
   });
 
-  /** Append-only: a rebuild appends, and is still one partition. */
-  it('counts a partition once however often it was rebuilt', async () => {
-    write('trades.bybit.jsonl', [
-      { id: 'trades|bybit|perp|BTCUSDT|2021-06', inputs: [] },
-      { id: 'trades|bybit|perp|BTCUSDT|2021-06', inputs: [] },
-      { id: 'trades|bybit|perp|BTCUSDT|2021-06', inputs: [] },
-    ]);
+  /**
+   * A rebuild re-states the same fact rather than appending beside it, so the
+   * key it collides on is what keeps the count right — the flat file needed the
+   * reader to collapse duplicate lines to reach the same answer.
+   */
+  it('counts a partition once however often it was rebuilt', () => {
+    stocker([built('BTCUSDT', '202106')]);
+    stocker([built('BTCUSDT', '202106')]);
+    stocker([built('BTCUSDT', '202106')]);
 
-    expect((await idsByMonth(root, 'bybit')).get('202106')!.size).toBe(1);
+    expect(idsByMonth(facts, 'bybit').get('202106')!.size).toBe(1);
   });
 
-  it('reads the month off an id that carries extras', async () => {
-    write('klines.bitget.jsonl', [{ id: 'klines|bitget|spot|BTCUSDT|1m|2020-08', inputs: [] }]);
+  /**
+   * `subject` holds the extras bare — `1m`, not `interval=1m` — and the id is
+   * the same either way, since `idOf` takes whatever follows an absent `=`.
+   */
+  it('reads a partition that carries extras', () => {
+    stocker([{ topic: 'vault', venue: 'bitget', period: '202008', market: 'spot',
+      symbol: 'BTCUSDT', dataset: 'klines', subject: '1m', fact: 'built' }]);
 
-    expect([...(await idsByMonth(root, 'bitget')).keys()]).toEqual(['202008']);
+    const found = idsByMonth(facts, 'bitget');
+
+    expect([...found.keys()]).toEqual(['202008']);
+    expect([...found.get('202008')!]).toEqual(['klines|bitget|spot|BTCUSDT|1m|2020-08']);
   });
 
-  it('is empty for a venue with no ledger', async () => {
-    expect((await idsByMonth(root, 'nobody')).size).toBe(0);
+  it('is empty for a venue nothing has been said about', () => {
+    expect(idsByMonth(facts, 'nobody').size).toBe(0);
   });
 });
 
 describe('which partitions a raw file fed', () => {
-  it('keys by venue-prefixed raw path and collects every partition', async () => {
-    write('trades.gate.jsonl', [
-      { id: 'trades|gate|spot|A|2018-01', inputs: [{ path: 'spot/a.csv.gz' }] },
-      { id: 'trades|gate|spot|B|2018-01', inputs: [{ path: 'spot/a.csv.gz' }] },
-    ]);
+  const member = (symbol: string, input: string): FactInput => ({
+    topic: 'vault:details', venue: 'gate', period: '201801', market: 'spot', symbol,
+    dataset: 'trades', fact: input,
+  });
 
-    const found = await inputsByRaw(root, 'gate');
+  it('keys by venue-prefixed raw path and collects every partition', () => {
+    stocker([member('A', 'spot/a.csv.gz'), member('B', 'spot/a.csv.gz')]);
 
-    expect(found.get('gate/spot/a.csv.gz'))
+    expect(inputsByRaw(facts, 'gate').get('gate/spot/a.csv.gz'))
       .toEqual(['trades|gate|spot|A|2018-01', 'trades|gate|spot|B|2018-01']);
   });
 
-  /**
-   * The later line replaces the earlier one, exactly as stocker reads it back.
-   * Accumulating both would let a raw file dropped by a rebuild go on vouching
-   * for itself out of a superseded entry.
-   */
-  it('takes only a partition\'s latest build', async () => {
-    write('trades.gate.jsonl', [
-      { id: 'trades|gate|spot|A|2018-01', inputs: [{ path: 'spot/old.csv.gz' }] },
-      { id: 'trades|gate|spot|A|2018-01', inputs: [{ path: 'spot/new.csv.gz' }] },
-    ]);
+  it('names a partition once however many of its inputs a query returns', () => {
+    stocker([member('A', 'spot/a.csv.gz'), member('A', 'spot/b.csv.gz')]);
 
-    const found = await inputsByRaw(root, 'gate');
+    const found = inputsByRaw(facts, 'gate');
 
-    expect(found.has('gate/spot/old.csv.gz')).toBe(false);
-    expect(found.get('gate/spot/new.csv.gz')).toEqual(['trades|gate|spot|A|2018-01']);
+    expect(found.get('gate/spot/a.csv.gz')).toEqual(['trades|gate|spot|A|2018-01']);
+    expect(found.get('gate/spot/b.csv.gz')).toEqual(['trades|gate|spot|A|2018-01']);
   });
 
-  it('survives a torn final line', async () => {
-    fs.writeFileSync(path.join(root, '@meta', 'built', 'trades.gate.jsonl'),
-      `${JSON.stringify({ id: 'trades|gate|spot|A|2018-01', inputs: [{ path: 'spot/a.csv.gz' }] })}\n`
-      + '{"id":"trades|gate|spot|B|2018-01","inpu');
+  it('says nothing about a venue with no members recorded', () => {
+    stocker([member('A', 'spot/a.csv.gz')]);
 
-    expect((await inputsByRaw(root, 'gate')).size).toBe(1);
+    expect(inputsByRaw(facts, 'bybit').size).toBe(0);
   });
 });

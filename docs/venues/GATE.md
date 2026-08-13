@@ -2,10 +2,18 @@
 
 What gate's published archives actually contain, established from the files on disk.
 
-## Discovery: there is no usable index
+## Discovery: the bucket is fully listable, at its origin
 
-`download.gatedata.org` is an S3 bucket — `gateio-public-data` — and its root does answer a
-`ListBucketResult`. It is still not an index, because **every query parameter is ignored**:
+`gateio-public-data` is an ordinary S3 bucket that honours `prefix`, `delimiter`, `max-keys` and
+`continuation-token`, and carries `Size`, `ETag` and `LastModified` with every key.
+
+```
+https://s3-ap-northeast-1.amazonaws.com/gateio-public-data
+```
+
+**Ask it through `download.gatedata.org` and none of that is true**, which is why gate was collected
+for so long by constructing URLs and probing them. That host is CloudFront, and it serves a *cached*
+`ListBucketResult` for the bucket root while discarding the query string:
 
 | sent | echoed back |
 |---|---|
@@ -14,18 +22,64 @@ What gate's published archives actually contain, established from the files on d
 | `?delimiter=/`, `?list-type=2`, `?max-keys=8` | `<MaxKeys>1000</MaxKeys>`, no delimiter applied |
 
 Every request returns the identical first 1,000 keys — all of them
-`delivery_usdt/orderbooks/202305/…` — with `IsTruncated` true and **no `NextMarker`**, so there is
-no way to page past them. A directory URL such as `/spot/deals/201801/` answers `404 NoSuchKey`.
+`delivery_usdt/orderbooks/202305/…` — with `IsTruncated` true and no `NextMarker`. The response is
+byte-identical whatever is asked, cache-buster included, and `age` in the headers gives it away
+along with `x-cache: Hit from cloudfront`.
 
-So gate's URLs have to be constructed and probed, and that is a property of the venue rather than
-a shortcut. The listing does carry `Size` and an md5 `ETag` per key, which would be worth having
-if the bucket ever starts honouring `prefix` and `marker`.
+**This is the failure worth remembering, not the fix.** The edge answered every question
+plausibly and wrongly, so the evidence for "gate publishes no index" was a listing that looked
+real. A reply that is consistent with a broken venue is also consistent with a cache in front of a
+working one, and only the headers separate them.
 
-Symbols come from gate's public API, which gives each one its `launch_time` / `create_time` — that
-is what keeps probing affordable, since most symbols listed long after the archive floor. The
-portal's own symbol list is embedded in a Next.js chunk
-(`/cdn/fe/_next/static/chunks/pages/developer/historical_quotes-*.js`); it is recorded here only
-so nobody rediscovers it as an option, since the API answers the same question properly.
+Files are still best fetched from the CDN. So gate is listed at one host and downloaded from
+another — the same split binance already has, for the opposite reason.
+
+Symbols need not be enumerated at all now: they fall out of the walk. Gate's public API carries
+each one's `launch_time` / `create_time`, which is what kept *probing* affordable and is no longer
+on the critical path. The portal's own symbol list is embedded in a Next.js chunk
+(`/cdn/fe/_next/static/chunks/pages/developer/historical_quotes-*.js`); it is recorded here only so
+nobody rediscovers it as an option.
+
+## What is in the bucket, and what is dead
+
+Thirteen top-level trees. Seven are live and worth surveying; the rest are not
+market data, or are not gate's, or stopped years ago.
+
+| tree | span | |
+|---|---|---|
+| `spot/` `futures_usdt/` `futures_btc/` `tradfi/` | current | collected |
+| `delivery_usdt/orderbooks/` | 202305 → current | **dated-futures books, collected by nothing** |
+| `spot_index/` | 202312 → current | **venue-wide index snapshots, hourly** |
+| `options_ticker/` | 202509 → current | **venue-wide options ticker, per minute** |
+| `v2/` | 202211–202212 | two months, then abandoned. Carries `market_price/`, which exists nowhere else |
+| `hk/spot/` | 202305 → 202402 | Gate.HK — a separate entity, closed. Carries `orders/`, unique here |
+| `malta/spot/` | 202301 → 202402 | a separate regional book, retired the same month as `hk/` |
+| `future_usdt/trades/` | 202203 → 202211 | note the singular, beside the live `futures_usdt/` |
+| `futures_usd/orderbooks/` | 202208 → 202212 | |
+| `gatepay/` | — | two spreadsheet templates |
+
+`hk/` and `malta/` matter beyond being dead: they are **different order books**, so their
+`BTC_USDT` is not gate.com's. If either is ever wanted it is a venue of its own, never a prefix of
+this one. Gate OTC Malta launched 2024-11 and is *not* what `malta/` held — that tree had already
+stopped nine months earlier.
+
+### 571 keys are filed one level too high
+
+```
+spot/201905/            419 keys
+futures_usdt/202107/    130 keys
+futures_btc/202107/      22 keys
+```
+
+A bare month sits where a dataset name belongs. Each is the size of its canonical twin **to the
+byte**, with a different ETag and an earlier mtime — the same content under a layout gate
+abandoned, re-uploaded hours later in the right place. Identical length with a different hash is
+what recompressing the same data gives, since gzip stamps its own header.
+
+With no dataset segment nothing can say which series they are, so they are unplaceable rather than
+merely superseded. `futures_usdt/202107/` is the same month as the
+[spot-served-at-futures fault](#2021-07-spot-data-served-at-the-futures-url) below; whether the
+symbol sets overlap has not been checked.
 
 ## The portal understates the archive
 
@@ -163,28 +217,23 @@ for a market that had not launched with the wrong file instead of nothing.
 
 **`SUN_USDT` is the only real gap.** See *Known gaps* below.
 
-### What was done
+### How it is handled
 
-- The 85 files were deleted from `futures_usdt/trades/202107/`, leaving the 78 genuine
-  4-column futures files in that month.
-- 65 partitions built from them — spot trades filed as `market=perp`, all-`buy`, wrong `size`,
-  plus one junk trailing row each — were deleted with their ledger entries.
-- **The exclusion lives in code**, at `services/trucker/src/venues/gate.excluded.ts`: those 85
-  symbols are filtered out of `futures_usdt-trades` for 2021-07 and nothing else.
+`futures_usdt/trades/202107/` holds only the 78 genuine 4-column futures files. The 85 substituted
+ones are not collected, and no partition is built from them.
 
-  It was originally kept only by *not touching trucker's progress ledgers* — gate still serves
-  the same bytes, so any re-walk of that month restores the garbage. That held until the ledgers
-  were cleared for an unrelated reason, at which point the cleanup would have silently undone
-  itself. A ledger is disposable by design; a rule about what must never be fetched is not, so it
-  is versioned and tested (`never offers the 2021-07 futures files that are really spot data`).
-- Cold storage note: `@cold/trucker/gate/gate.202107.p01.tar` was built before the cleanup and
-  still contains all 85.
+**The exclusion lives in code**, at `services/trucker/src/venues/gate.excluded.ts`: those 85 symbols
+are filtered out of `futures_usdt-trades` for 2021-07 and nothing else. It has to be code rather
+than an absence, because **gate still serves the same bytes** — any walk of that month fetches the
+garbage again unless something refuses it. Collection bookkeeping is disposable by design, so a rule
+about what must never be fetched cannot live there; it is versioned and tested (`never offers the
+2021-07 futures files that are really spot data`).
 
-Stocker now **refuses any file wider than its series declares**, naming it, rather than
-truncating it to the declared width. That is a loud, repeating failure by design: a venue
-serving a wrong-shaped file is worth knowing about, and the alternative is what happened here —
-65 silently wrong partitions and 20 failures that only tripped by luck, on a truncated
-timestamp rather than on the column mismatch itself.
+Stocker **refuses any file wider than its series declares**, naming it, rather than truncating it to
+the declared width. That is a loud, repeating failure by design: a venue serving a wrong-shaped file
+is worth knowing about. The alternative is what this case produced before the rule existed — 65
+silently wrong partitions, and 20 failures that tripped only by luck, on a truncated timestamp
+rather than on the column mismatch itself.
 
 ## Known gaps — to fill from REST
 

@@ -4,14 +4,15 @@ import Table from 'cli-table3';
 import { loadConfig, localPath, remotePath } from './config';
 import { tarSize } from './tar';
 import { scanVault } from './scan';
-import { idOf, idsByMonth } from './ledger';
+import { idsFor, surveyVault } from './presence';
+import { openFacts } from './ledger';
 import { fmtBytes } from '../../shared/utils/format';
 import { C } from '../../shared/utils/colors';
 import * as db from './db';
 import * as mega from './mega';
-import { info, spacer, success, warn } from '../../shared/ui/logger';
+import { spacer, success, warn } from '../../shared/ui/logger';
 import type { DatabaseSync } from 'node:sqlite';
-import type { AuditFinding, ColdConfig, Holding, Origin } from './types';
+import type { AuditFinding, ColdConfig, Holding, Known, Lag, Origin } from './types';
 
 /**
  * Check that cold storage is what the record says it is.
@@ -38,7 +39,8 @@ export const runAudit = async (origins: Origin[]): Promise<void> => {
    * answering them in two tables a screen apart made the reader hold one set of
    * numbers in their head to compare it against the other.
    */
-  const gathered: { origin: Origin; parts: ReturnType<typeof db.allParts>; findings: AuditFinding[] }[] = [];
+  const gathered: { origin: Origin; parts: ReturnType<typeof db.allParts>;
+    findings: AuditFinding[]; known: Map<string, Known> }[] = [];
 
   for (const origin of origins) {
     const config = loadConfig(origin);
@@ -51,16 +53,37 @@ export const runAudit = async (origins: Origin[]): Promise<void> => {
     }
   }
 
-  coverage(gathered);
+  steps.done();
 
   /**
-   * Findings stay per origin. They name a part and not the tree it belongs to,
-   * so merging them into one table would drop the only thing that says which —
-   * and a heading per origin costs nothing next to that.
+   * **The whole report is one repaintable page.**
+   *
+   * Walking 3.7 million archive files takes 21 seconds, and every other number
+   * is already known — so the page is printed at once and the sizes fill in as
+   * each venue lands. Findings and the reclaim table are computed once and
+   * reprinted unchanged: they depend on nothing being measured, and holding them
+   * back until the walk finished was the odd part, since neither has anything to
+   * do with it.
    */
-  for (const { origin, findings } of gathered) report(origin, findings);
+  const rest = [
+    /**
+     * Findings stay per origin. They name a part and not the tree it belongs to,
+     * so merging them into one table would drop the only thing that says which —
+     * and a heading per origin costs nothing next to that.
+     */
+    ...gathered.map(({ origin, findings }) => report(origin, findings)),
+    reclaim(origins),
+  ].filter(Boolean).join('\n');
 
-  reclaim(origins);
+  const page = coverage(gathered, rest);
+
+  // Off a terminal there is no cursor to move, so everything is measured first
+  // and printed once — a piped table reading `Counting…` for ever is worse.
+  if (! process.stdout.isTTY) await fill(gathered, () => { /* nothing to redraw */ });
+
+  page.show();
+
+  if (process.stdout.isTTY) await fill(gathered, () => { page.show(); });
 
   spacer();
 
@@ -70,6 +93,42 @@ export const runAudit = async (origins: Origin[]): Promise<void> => {
 
   if (problems === 0) success('Cold storage matches the record — nothing to answer for');
   else warn(`${problems} thing${problems === 1 ? ' needs' : 's need'} attention — see above`);
+};
+
+/**
+ * What it is doing, while it is doing it.
+ *
+ * **Ten seconds of silence is indistinguishable from a hang.** The work is a
+ * Mega listing, a walk of 140,000 files and a read of 169,000 facts, and none
+ * of it prints anything until all of it is finished — so the only thing to look
+ * at is a cursor.
+ *
+ * The lines are erased before the report, because they are scaffolding and not
+ * findings: what is left on screen afterwards should be the answer, exactly as
+ * it was before. Watching which one sits there longest is also the cheapest
+ * profiler there is, which is the other reason to name the steps rather than
+ * spin a generic bar.
+ *
+ * **Only on a terminal.** Piped into a file or a `grep`, the escape codes would
+ * be the output, so there they are simply never written.
+ */
+const steps = {
+  shown: 0,
+
+  say(what: string): void {
+    if (! process.stdout.isTTY) return;
+
+    console.log(`${C.dim}⋯ ${what}…${C.reset}`);
+    this.shown++;
+  },
+
+  /** Up over what was written, then clear from the cursor to the end. */
+  done(): void {
+    if (! process.stdout.isTTY || this.shown === 0) return;
+
+    process.stdout.write(`\x1b[${this.shown}A\x1b[J`);
+    this.shown = 0;
+  },
 };
 
 // ── Internals ─────────────────────────────────────────────────────────────────
@@ -83,13 +142,14 @@ export const runAudit = async (origins: Origin[]): Promise<void> => {
  * a reader who has learned to skim one section should not have to learn the
  * next. Three sections formatted three ways is three things to read.
  */
-const block = (title: string, subtitle: string, table: ReturnType<typeof grid>): void => {
-  spacer();
-  info(`${C.bold}${title}${C.reset}  ${C.dim}${subtitle}${C.reset}`);
-  spacer();
-
-  console.log(table.toString());
-};
+const block = (
+  title:    string,
+  subtitle: string,
+  table:    ReturnType<typeof grid>,
+  note     = '',
+): string =>
+  ['', `${C.cyan}ℹ${C.reset} ${C.bold}${title}${C.reset}  ${C.dim}${subtitle}${C.reset}`, '',
+    table.toString(), ...(note ? [note] : [])].join('\n');
 
 /**
  * A table styled like the rest of the tooling, so `cold` and `data` look alike.
@@ -112,9 +172,14 @@ const examine = async (
   handle: DatabaseSync,
   config: ColdConfig,
   origin: Origin,
-): Promise<{ origin: Origin; parts: ReturnType<typeof db.allParts>; findings: AuditFinding[] }> => {
+): Promise<{ origin: Origin; parts: ReturnType<typeof db.allParts>;
+  findings: AuditFinding[]; known: Map<string, Known> }> => {
+  steps.say(`Listing Mega — ${origin}`);
+
   const remote   = await mega.listing(config.megaRoot);
   const parts    = db.allParts(handle, origin);
+
+  steps.say(`Checking ${parts.length} ${origin} parts against Mega`);
   const findings: AuditFinding[] = [];
 
   findings.push(...againstMega(handle, config, parts, remote));
@@ -127,7 +192,184 @@ const examine = async (
 
   if (origin === 'vault') findings.push(...await stranded(handle, config));
 
-  return { origin, parts, findings };
+  /**
+   * **The vault is measured now and the archives are not.** The vault tree is
+   * already being walked for the check above, so its sizes are a by-product; the
+   * archives are 3.7 million files and 21 seconds, which is the whole reason the
+   * table paints before they are counted.
+   */
+  const known = await producers(handle, config, origin, origin === 'vault');
+
+  return { origin, parts, findings, known };
+};
+
+/**
+ * What a venue actually has: the months its producer finished, and the files
+ * that make them up wherever those currently sit.
+ *
+ * Cold storage can only answer what it packed, which is a different question —
+ * a venue never pushed has no rows to fold and rendered as a dash over however
+ * much data it held.
+ *
+ * **On disk plus evicted, never one or the other.** Counting only what is on
+ * disk makes a venue shrink as it is backed up and cleaned, which is precisely
+ * backwards; counting cold storage instead misses everything not yet packed. The
+ * two sets are disjoint by construction — an evicted file is one that was
+ * deleted locally — so adding them is the venue's true size.
+ */
+const producers = async (
+  handle:  DatabaseSync,
+  config:  ColdConfig,
+  origin:  Origin,
+  measure: boolean,
+): Promise<Map<string, Known>> => {
+  const facts = openFacts(config);
+  const known = new Map<string, Known>();
+
+  const of = (venue: string): Known => {
+    const held = known.get(venue)
+      ?? { months: new Set<string>(), files: 0, bytes: 0, gone: 0, goneBytes: 0, measured: false };
+
+    known.set(venue, held);
+
+    return held;
+  };
+
+  steps.say(`Reading what the producers say they have — ${origin}`);
+
+  try {
+    const topic = origin === 'vault' ? 'vault' : 'archives';
+    const fact  = origin === 'vault' ? 'built' : 'complete';
+
+    for (const stated of facts.find({ topic, fact })) of(stated.venue).months.add(stated.period);
+
+    // Only the vault can be short by design, so only the vault is asked.
+    if (origin === 'vault')
+      for (const stated of facts.find({ topic, fact: 'spills' })) of(stated.venue).spills = true;
+  } finally {
+    facts.close();
+  }
+
+  /**
+   * **What is on disk, measured rather than inferred.** The producers record no
+   * size, and a count of what they built says nothing about what is still here
+   * — the point of the line is comparing what exists against what is safe.
+   */
+  /**
+   * **Every venue with a directory, whether or not anything else knows it.**
+   * The rows are fixed before the first paint, so a venue the walk discovers
+   * later could never appear — and a venue nothing has closed and nothing has
+   * packed is exactly the one worth seeing: binance holds 102,850 files and
+   * 295.8GB that no other source here mentions. One `readdir`, no walk.
+   *
+   * Only where the tree is venue-major, which is the archives. The vault names
+   * its top level `venue=…` and keeps scratch directories beside it, so reading
+   * it this way invents venues called `venue=bitget` and `.stocker-tmp` — and it
+   * needs none of this, since its own walk has already named every venue by the
+   * time this runs.
+   */
+  if (! measure)
+    for (const entry of fs.readdirSync(config.sourceRoot, { withFileTypes: true }))
+      if (entry.isDirectory() && ! entry.name.startsWith('@') && ! entry.name.startsWith('.'))
+        of(entry.name);
+
+  if (measure) {
+    steps.say(`Measuring ${config.sourceRoot}`);
+
+    for (const [venue, { files, bytes }] of await onDisk(config.sourceRoot, origin)) {
+      const held = of(venue);
+
+      held.files    = files;
+      held.bytes    = bytes;
+      held.measured = true;
+    }
+
+    for (const held of known.values()) held.measured = true;
+  }
+
+  /**
+   * **Plus what was reclaimed**, which is on nobody's disk and would otherwise
+   * make a venue appear to shrink as it is backed up and cleaned. The two sets
+   * cannot overlap: a file recorded here is one that was deleted locally.
+   */
+  for (const [venue, { files, bytes }] of db.evicted(handle, origin)) {
+    const held = of(venue);
+
+    held.gone      = files;
+    held.goneBytes = bytes;
+  }
+
+  return known;
+};
+
+/**
+ * Every venue's local footprint, counted with one walk.
+ *
+ * The vault is walked file by file because the audit needs its paths anyway for
+ * the `built but nowhere` check, so the count is a by-product. The archives are
+ * far larger and nothing else here needs their paths, so only the totals are
+ * kept.
+ */
+const onDisk = async (
+  root:   string,
+  origin: Origin,
+  only?:  string,
+): Promise<[string, { files: number; bytes: number }][]> => {
+  const found = new Map<string, { files: number; bytes: number }>();
+
+  if (origin === 'vault') {
+    for (const file of await scanVault(root)) {
+      if (only && file.venue !== only) continue;
+
+      const held = found.get(file.venue) ?? { files: 0, bytes: 0 };
+
+      held.files++;
+      held.bytes += file.bytes;
+      found.set(file.venue, held);
+    }
+
+    return [...found];
+  }
+
+  for (const venue of fs.readdirSync(root, { withFileTypes: true })) {
+    if (! venue.isDirectory() || venue.name.startsWith('@')) continue;
+    if (only && venue.name !== only) continue;
+
+    const held  = { files: 0, bytes: 0 };
+    const stack = [path.join(root, venue.name)];
+
+    while (stack.length > 0) {
+      const dir = stack.pop()!;
+
+      let entries: fs.Dirent[] = [];
+
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+
+      for (const entry of entries) {
+        if (entry.name === '@meta') continue;
+
+        const absolute = path.join(dir, entry.name);
+
+        if (entry.isDirectory()) { stack.push(absolute); continue; }
+        if (! entry.isFile()) continue;
+
+        try {
+          held.bytes += fs.statSync(absolute).size;
+          held.files++;
+        } catch {
+          // Gone between the listing and the stat; it is not here either way.
+        }
+      }
+    }
+
+    found.set(venue.name, held);
+  }
+
+  return [...found];
 };
 
 /**
@@ -150,10 +392,12 @@ const examine = async (
  * signal; sizes would invite comparing a 10GB bybit month against a 70MB gate
  * one as though the numbers meant the same thing.
  */
-const reclaim = (origins: Origin[]): void => {
+const reclaim = (origins: Origin[]): string => {
+  const out: string[] = [];
+
   const sources = origins.filter(origin => origin !== 'vault');
 
-  if (sources.length === 0 || ! origins.includes('vault')) return;
+  if (sources.length === 0 || ! origins.includes('vault')) return '';
 
   const handle = db.open(loadConfig('vault').dbPath);
 
@@ -213,11 +457,13 @@ const reclaim = (origins: Origin[]): void => {
         `${C.dim}${plain(sum(row => row.onRaw))}${C.reset}`,
       ]);
 
-      block('RECLAIM', `${source} — uploading a side frees the raw it holds back`, table);
+      out.push(block('RECLAIM', `${source} — uploading a side frees the raw it holds back`, table));
     }
   } finally {
     db.close(handle);
   }
+
+  return out.join('\n');
 };
 
 /**
@@ -295,41 +541,171 @@ const backedMonths = (handle: DatabaseSync, origin: Origin): Map<string, Set<str
   return sent;
 };
 
-/** The one-screen answer: what is in cold storage, by venue. */
+/**
+ * The one-screen answer: what each venue has, and how much of it is safe.
+ *
+ * **What exists comes from the producer; what is safe comes from cold storage.**
+ * Both lines used to be read off the `part` rows, which meant a venue with
+ * nothing backed up had no rows to fold and rendered as a dash — making "there
+ * is nothing here" and "none of this is backed up" identical on the one screen
+ * that exists to tell them apart. bybit showed a dash over 15,762 partitions
+ * across 49 months, none of them in Mega.
+ */
 const coverage = (
-  gathered: { origin: Origin; parts: ReturnType<typeof db.allParts> }[],
-): void => {
-  const cells  = new Map<string, Holding>();
-  const venues = new Set<string>();
-
-  for (const { origin, parts } of gathered)
-    for (const [venue, holding] of hold(parts)) {
-      venues.add(venue);
-      cells.set(`${venue}|${origin}`, holding);
-    }
-
+  gathered: { origin: Origin; parts: ReturnType<typeof db.allParts>; known: Map<string, Known> }[],
+  rest:     string,
+): { show: () => void } => {
   const origins = gathered.map(tree => tree.origin);
-  const table   = grid(['Venue', ...origins.map(title)],
-    ['left', ...origins.map(() => 'left' as const)]);
+  const venues  = new Set<string>();
 
-  for (const venue of [...venues].sort())
-    table.push([`${C.bold}${C.cyan}${venue}${C.reset}`,
-      ...origins.map(origin => render(cells.get(`${venue}|${origin}`)))]);
+  for (const { parts, known } of gathered)
+    for (const venue of new Set([...hold(parts).keys(), ...known.keys()])) venues.add(venue);
+
+  let lines = 0;
 
   /**
-   * An empty spanned row before the totals.
-   *
-   * The totals are a different kind of statement from the rows above them, and
-   * a border alone does not say so — every row already has one. A blank line is
-   * the cheapest thing that reads as "and now, everything".
+   * Built fresh each time, because the numbers it reads change underneath it —
+   * that is the point. The venue set does not, so the table is the same shape
+   * whichever paint this is.
    */
-  table.push([{ colSpan: origins.length + 1, content: '' }]);
+  const paint = (): string => {
+    const cells = new Map<string, Holding>();
 
-  table.push([`${C.bold}${C.gray}all${C.reset}`, ...origins.map(origin =>
-    render(merge([...cells].filter(([key]) => key.endsWith(`|${origin}`)).map(([, held]) => held)),
-      true))]);
+    for (const { origin, parts, known } of gathered) {
+      const held = hold(parts);
 
-  block('COLD STORAGE', gathered.length > 1 ? 'every tree, by venue' : title(origins[0]!), table);
+      for (const venue of venues)
+        cells.set(`${venue}|${origin}`, {
+          ...(held.get(venue) ?? {
+            months: new Set<string>(), monthCount: 0, parts: 0, bytes: 0, files: 0,
+            sent: 0, sentBytes: 0, sentMonths: 0,
+          }),
+          known: known.get(venue),
+          unit:  origin === 'vault' ? 'partitions' : 'files',
+        });
+    }
+
+    const table = grid(['Venue', ...origins.map(title)],
+      ['left', ...origins.map(() => 'left' as const)]);
+
+    /**
+     * The vault is built *from* the archives, so its months trailing theirs is a
+     * statement about normalisation falling behind collection — the one
+     * comparison between two cells of a row that means anything. The other
+     * direction cannot happen and is not looked for.
+     *
+     * **Which months, not how many.** A venue can be short by one and current,
+     * or short by one because a month in the middle never built, and only the
+     * identity of the missing month tells them apart. That matters for the
+     * excuse below: it applies to the newest closed month and to no other.
+     */
+    const standing = (venue: string): Lag => {
+      if (! origins.includes('archives')) return null;
+
+      const vault  = cells.get(`${venue}|vault`);
+      const built  = vault?.known?.months ?? new Set<string>();
+      const closed = [...(cells.get(`${venue}|archives`)?.known?.months ?? [])].sort();
+      const short  = closed.filter(month => ! built.has(month));
+
+      if (short.length === 0) return null;
+
+      /**
+       * A spilling venue's newest closed month holds its own tail in a month
+       * the collector has not closed, so it cannot be built and the vault is
+       * finished at one month short. Only that month is ever excused — anything
+       * older is genuinely outstanding, whatever the venue's buckets do.
+       */
+      return vault?.known?.spills && short.length === 1 && short[0] === closed[closed.length - 1]
+        ? 'excused'
+        : 'behind';
+    };
+
+    let excused = false;
+
+    for (const venue of [...venues].sort()) {
+      const lag = standing(venue);
+
+      if (lag === 'excused') excused = true;
+
+      table.push([`${C.bold}${C.cyan}${venue}${C.reset}`,
+        ...origins.map(origin =>
+          render(cells.get(`${venue}|${origin}`), false, origin === 'vault' ? lag : null))]);
+    }
+
+    /**
+     * An empty spanned row before the totals.
+     *
+     * The totals are a different kind of statement from the rows above them, and
+     * a border alone does not say so — every row already has one. A blank line is
+     * the cheapest thing that reads as "and now, everything".
+     */
+    table.push([{ colSpan: origins.length + 1, content: '' }]);
+
+    table.push([`${C.bold}${C.gray}all${C.reset}`, ...origins.map(origin =>
+      render(merge([...cells].filter(([key]) => key.endsWith(`|${origin}`)).map(([, held]) => held)),
+        true))]);
+
+    /**
+     * Printed only when a cell carries the mark, so the table does not explain
+     * a condition nobody is looking at.
+     */
+    const footnote = excused
+      ? `${C.green}*${C.reset} ${C.dim}complete. This venue's buckets do not cut at UTC midnight, so a `
+        + `month's tail arrives in the next month's first file — its newest closed month cannot be `
+        + `built until the collector closes the one after it.${C.reset}`
+      : '';
+
+    return block('COLD STORAGE',
+      gathered.length > 1 ? 'every tree, by venue' : title(origins[0]!), table, footnote);
+  };
+
+  return {
+    /**
+     * Up over exactly what was drawn, then draw it again.
+     *
+     * The page cannot change height between paints — the venues are known before
+     * the first one, and `Counting…` occupies a cell the way a size does — so
+     * the only thing that moves is the text inside. Off a terminal nothing is
+     * erased and this simply prints once.
+     */
+    show(): void {
+      if (lines > 0 && process.stdout.isTTY) process.stdout.write(`\x1b[${lines}A\x1b[J`);
+
+      const text = [paint(), rest].filter(Boolean).join('\n');
+
+      console.log(text);
+
+      lines = text.split('\n').length + 1;
+    },
+  };
+};
+
+/**
+ * Measure each tree that was left unmeasured, redrawing as each venue lands.
+ *
+ * Venue by venue rather than all at once, because the whole point is that the
+ * numbers appear as they are found — and the venues differ by an order of
+ * magnitude, from okx at 0.3 seconds to htx at 7.3.
+ */
+const fill = async (
+  gathered: { origin: Origin; known: Map<string, Known> }[],
+  repaint:  () => void,
+): Promise<void> => {
+  for (const { origin, known } of gathered) {
+    if ([...known.values()].every(held => held.measured)) continue;
+
+    const config = loadConfig(origin);
+
+    for (const [venue, held] of known) {
+      const [measured] = await onDisk(config.sourceRoot, origin, venue);
+
+      held.files    = measured?.[1].files ?? 0;
+      held.bytes    = measured?.[1].bytes ?? 0;
+      held.measured = true;
+
+      repaint();
+    }
+  }
 };
 
 /** Fold a tree's parts into one holding per venue. */
@@ -380,13 +756,14 @@ const hold = (parts: ReturnType<typeof db.allParts>): Map<string, Holding> => {
  */
 const merge = (holdings: Holding[]): Holding => holdings.reduce((total, held) => ({
   months:     new Set([...total.months, ...held.months]),
-  monthCount: total.monthCount + held.monthCount,
+  monthCount: total.monthCount + (held.known?.months.size ?? held.monthCount),
   parts:      total.parts      + held.parts,
   bytes:      total.bytes      + held.bytes,
-  files:      total.files      + held.files,
+  files:      total.files      + (held.known?.files ?? held.files),
   sent:       total.sent       + held.sent,
   sentBytes:  total.sentBytes  + held.sentBytes,
   sentMonths: total.sentMonths + held.sentMonths,
+  unit:       held.unit ?? total.unit,
 }), { months: new Set<string>(), monthCount: 0, parts: 0, bytes: 0, files: 0,
   sent: 0, sentBytes: 0, sentMonths: 0 });
 
@@ -403,36 +780,103 @@ const merge = (holdings: Holding[]): Holding => holdings.reduce((total, held) =>
  * `0 months` across `202109–202311` read as loss rather than backlog — and it is
  * only safe now because the third line says what is backed up in its own right.
  */
-const render = (held: Holding | undefined, totals = false): string => {
-  if (! held || held.parts === 0) return `${C.dim}—${C.reset}`;
+/**
+ * How many months a cell claims: the producer's count where it has stated one,
+ * cold's otherwise.
+ *
+ * Shared so the number printed and the number compared against cannot drift —
+ * a lag drawn from one definition and shown from another would colour a cell
+ * against the figure beside it.
+ */
+const monthsIn = (held: Holding | undefined): number =>
+  (! held ? 0 : held.known?.months.size ? held.known.months.size : held.monthCount);
 
-  const months = [...held.months].sort();
-  const span   = totals
+const render = (held: Holding | undefined, totals = false, lag: Lag = null): string => {
+  if (! held || (held.parts === 0 && ! held.known)) return `${C.dim}—${C.reset}`;
+
+  /**
+   * The producer's months where it has stated any, cold's otherwise. They agree
+   * for everything backed up, and where they differ the producer is the one
+   * answering "what is there" — which is what the first two lines are about.
+   */
+  const months = [...(held.known?.months.size ? held.known.months : held.months)].sort();
+  const span   = totals || months.length === 0
     ? ''
     : ` ${C.dim}(${dashed(months[0]!)} → ${dashed(months[months.length - 1]!)})${C.reset}`;
 
-  const dim = (text: string): string => (totals ? `${C.dim}${text}${C.reset}` : text);
+  const count = held.known ? held.known.files + held.known.gone : held.files;
+  const dim   = (text: string): string => (totals ? `${C.dim}${text}${C.reset}` : text);
 
   /**
    * A complete tree says so rather than repeating itself. `27 backed up (27.0
    * mo, 2.0GB)` under `27 parts (2.0GB)` is the same three numbers twice, and
    * four of seven venues are in exactly that state.
    */
-  const safe = held.sent === held.parts
-    ? `${totals ? C.dim : C.green}all backed up${C.reset} ${C.dim}(${fmtBytes(held.sentBytes)})${C.reset}`
-    : `${totals ? C.dim : C.yellow}${held.sent.toLocaleString()} backed up${C.reset} `
-      + `${C.dim}(${held.sentMonths.toFixed(1)} mo, ${fmtBytes(held.sentBytes)})${C.reset}`;
+  /**
+   * **One shape for every state, and the colour carries the verdict.**
+   * `all backed up` alongside `41 backed up` was two formats to learn, and its
+   * unit was redundant when the numbers matched and misleading when they did
+   * not — `all` meant every *part*, which a reader takes as every *month*.
+   *
+   * Months, because that is what the line above states: `41 mo backed up` under
+   * `42 mo` is a comparison anyone can make without doing arithmetic, and parts
+   * are a packing detail no one asks this table about. Where a part matters —
+   * a gap, a tar not in Mega — the findings say so in parts, which is where the
+   * unit belongs.
+   *
+   * Counted fractionally, so a month half of whose parts have landed shows as
+   * a fraction rather than rounding into a claim either way.
+   */
+  const whole = held.sent === held.parts
+    && Math.round(held.sentMonths) >= (held.known?.months.size ?? held.monthCount);
+
+  const safe = held.sent === 0
+    ? `${totals ? C.dim : C.red}nothing backed up${C.reset}`
+    : `${totals ? C.dim : whole ? C.green : C.yellow}`
+      + `${held.sentMonths.toFixed(held.sentMonths % 1 === 0 ? 0 : 1)} mo backed up${C.reset} `
+      + `${C.dim}(${fmtBytes(held.sentBytes)})${C.reset}`;
+
+  /**
+   * **The month count carries its own verdict.**
+   *
+   * A vault month exists because an archives month was complete, so the two
+   * should meet. Yellow where they do not: whole finished months have never
+   * been normalised, which is a backlog rather than a fault, and the number it
+   * is short of is already one column over.
+   *
+   * **Green and starred where the shortfall is the venue's own shape.** A
+   * spilling venue can never build its newest closed month, so it sits one month
+   * behind for as long as that month is the tip — permanently yellow, for a
+   * state nobody can act on and nobody should keep re-investigating. The star
+   * sends it to the footnote instead of leaving the reader to remember which
+   * venues cut their buckets where.
+   */
+  const covered = totals || ! lag
+    ? dim(`${monthsIn(held)} mo`)
+    : lag === 'behind'
+      ? `${C.yellow}${monthsIn(held)} mo${C.reset}`
+      : `${C.green}${monthsIn(held)} mo*${C.reset}`;
 
   return [
-    dim(`${held.monthCount} mo`) + span,
+    covered + span,
     /**
-     * **Size last on both lines that carry one**, so the two land in roughly
-     * the same place and a glance down the cell compares them without reading
-     * either. Putting bytes first put the number this is really about — how
-     * much is safe — beside a file count on the line below it.
+     * **What is here leads; the tars it is packed into follow.** A part is cold
+     * storage's own unit and says nothing about how much a venue holds, so
+     * leading with it left the real quantity in a parenthesis — and rendered
+     * nothing at all for a venue with no parts yet.
+     *
+     * **Size last on both lines that carry one**, so the two land in roughly the
+     * same place and a glance down the cell compares them without reading
+     * either.
      */
-    dim(`${held.parts.toLocaleString()} parts`)
-      + ` ${C.dim}(${held.files.toLocaleString()} files, ${fmtBytes(held.bytes)})${C.reset}`,
+    dim(held.known && ! held.known.measured
+      // Nothing is claimed until it has been counted: a zero here would read as
+      // an answer, and the count itself is not known until the walk finishes.
+      ? `${C.dim}Counting…${C.reset}`
+      : `${count.toLocaleString()} ${held.unit ?? 'files'}`
+        + (held.known
+          ? ` ${C.dim}(${fmtBytes(held.known.bytes + held.known.goneBytes)})${C.reset}`
+          : '')),
     safe,
   ].join('\n');
 };
@@ -672,46 +1116,41 @@ const stranded = async (
   handle: DatabaseSync,
   config: ColdConfig,
 ): Promise<AuditFinding[]> => {
-  const here = new Set<string>();
-
-  for (const file of await scanVault(config.sourceRoot)) here.add(idOf(file));
-  for (const row of db.uploaded(handle, 'vault')) here.add(idOf(row));
+  steps.say('Reading what the services say they built, then scanning the vault tree');
 
   const found: AuditFinding[] = [];
 
-  for (const venue of new Set(db.allParts(handle, 'vault').map(part => part.venue)
-    .concat(venuesInLedger(config.vaultRoot)))) {
-    const missing: string[] = [];
+  /**
+   * **Both halves from one call**, so the facts cannot be read after the walk —
+   * see `presence.ts` for why that ordering is this check's whole correctness.
+   */
+  const { claimed, present } = await surveyVault(handle, config);
 
-    for (const ids of (await idsByMonth(config.vaultRoot, venue)).values())
-      for (const id of ids) if (! here.has(id)) missing.push(id);
+  {
+    const short = new Map<string, string[]>();
 
-    if (missing.length === 0) continue;
+    for (const venue of claimed.keys()) {
+      const missing = idsFor(claimed, venue).filter(id => ! present.has(id));
 
-    const months = new Set(missing.map(id => id.slice(id.lastIndexOf('|') + 1)));
+      if (missing.length > 0) short.set(venue, missing);
+    }
 
-    found.push({
-      severity: 'problem',
-      kind:     'built but nowhere',
-      what:     `${venue} — ${missing.length.toLocaleString()} partitions`,
-      detail:   `across ${months.size} month${months.size === 1 ? '' : 's'}, `
-        + `stocker's ledger records them and neither the vault nor Mega has them `
-        + `(e.g. ${missing[0]})`,
-    });
+    for (const [venue, missing] of [...short].sort()) {
+
+      const months = new Set(missing.map(id => id.slice(id.lastIndexOf('|') + 1)));
+
+      found.push({
+        severity: 'problem',
+        kind:     'built but nowhere',
+        what:     `${venue} — ${missing.length.toLocaleString()} partitions`,
+        detail:   `across ${months.size} month${months.size === 1 ? '' : 's'}, `
+          + `stocker says it built them and neither the vault nor Mega has them `
+          + `(e.g. ${missing[0]})`,
+      });
+    }
   }
 
   return found;
-};
-
-/** Which venues the ledger directory names, however little cold storage knows. */
-const venuesInLedger = (vaultRoot: string): string[] => {
-  try {
-    return [...new Set(fs.readdirSync(path.join(vaultRoot, '@meta', 'built'))
-      .filter(name => name.endsWith('.jsonl'))
-      .map(name => name.split('.')[1]!))];
-  } catch {
-    return [];
-  }
 };
 
 /** Descriptions still waiting on a replacement, and plans not yet sent. */
@@ -771,7 +1210,9 @@ const pending = (
  * ordinary progress. Printing them in one flat list is how the first gets lost
  * among thirty of the last.
  */
-const report = (origin: Origin, findings: AuditFinding[]): void => {
+const report = (origin: Origin, findings: AuditFinding[]): string => {
+  const out: string[] = [];
+
   for (const [severity, colour, heading, subtitle, limit] of [
     ['problem', C.red,    'PROBLEMS',     'cold storage does not match the record', 40],
     ['check',   C.yellow, 'WORTH A LOOK', 'an innocent explanation and a guilty one', 12],
@@ -803,8 +1244,10 @@ const report = (origin: Origin, findings: AuditFinding[]): void => {
      * names a part and never says which tree that part belongs to — and
      * `202110.p01.tar` exists under both.
      */
-    block(`${heading} · ${origin}`, subtitle, table);
+    out.push(block(`${heading} · ${origin}`, subtitle, table));
   }
+
+  return out.join('\n');
 };
 
 /** A file's size, or null if it is not there — including if it left just now. */

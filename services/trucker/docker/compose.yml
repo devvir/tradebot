@@ -2,7 +2,7 @@
 #
 # Owns its storage: TRUCKER_DATA_DIR on the host is mounted at a fixed path in
 # the container. Pre-create it writable by uid 1000, as with vault:
-#   sudo mkdir -p /storage/tradebot/trucker && sudo chown 1000:1000 /storage/tradebot/trucker
+#   sudo mkdir -p "$TRUCKER_DATA_DIR" && sudo chown 1000:1000 "$TRUCKER_DATA_DIR"
 
 services:
   trucker:

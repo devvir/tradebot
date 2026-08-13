@@ -24,13 +24,21 @@ beforeAll(() => {
   _test_setColumns(FIXED_TABLE, COLUMNS);
 });
 
+/** Every fixture directory made here, so the suite leaves none behind. */
+const made: string[] = [];
+
 afterAll(() => {
   _test_clearColumns(TABLE);
   _test_clearColumns(FIXED_TABLE);
+
+  for (const dir of made) fs.rmSync(dir, { recursive: true, force: true });
 });
 
 function writeGz(content: string): string {
   const dir  = fs.mkdtempSync(path.join(os.tmpdir(), 'reader-test-'));
+
+  made.push(dir);
+
   const file = path.join(dir, 'in.csv.gz');
 
   fs.writeFileSync(file, zlib.gzipSync(content));

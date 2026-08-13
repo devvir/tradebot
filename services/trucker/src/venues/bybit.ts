@@ -16,11 +16,19 @@ export const bybit: VenueArchive = {
   name: 'bybit',
 
   /**
-   * The oldest key across 2,649 recorded symbol ranges is `20200101`, on the
-   * perp trades of `BTCUSD` and `EOSUSD` — the two series that reach furthest
-   * back. Read from the HTML index, not from bybit's founding date.
+   * The oldest key bybit publishes **anywhere** is `20191001`, on the premium
+   * index and spot index of `BTCUSD`, `EOSUSD`, `ETHUSD` and `XRPUSD` — 1,104
+   * files across three months. Read from the catalog, which lists every key of
+   * every tree, rather than from bybit's founding date.
+   *
+   * **A floor is the earliest key of any dataset, not of the deepest one.** This
+   * said `202001` for a long time, taken from the oldest of 2,649 *trade* ranges
+   * — true of trades, and three months short of the archive. Those months were
+   * therefore never walked and never closed, while raw fetched by an earlier
+   * symbol-first pass sat on disk unaccounted for, and stocker built partitions
+   * from four symbols of a period nothing had collected properly.
    */
-  floor: '202001',
+  floor: '201910',
 
   datasets: [
     // Perp publishes days and nothing else — 2,316 files on BTCUSDT, not one of

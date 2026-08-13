@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { monthOf } from '../planners/archives';
-import { idOf, inputsByRaw } from '../ledger';
+import { idOf, inputsByRaw, openFacts } from '../ledger';
 import { reclaim } from './reclaim';
 import { fmtBytes } from '../../../shared/utils/format';
 import { C } from '../../../shared/utils/colors';
@@ -9,6 +9,7 @@ import * as db from '../db';
 import { info, spacer, warn } from '../../../shared/ui/logger';
 import { confirm } from '../../../shared/ui/prompts';
 import type { DatabaseSync } from 'node:sqlite';
+import type { FactManager } from '@tradebot/pipeline';
 import { EVICT_CAUSES } from '../types';
 import type { ColdConfig, EvictCause, EvictGroup, EvictMonth } from '../types';
 
@@ -21,8 +22,8 @@ import type { ColdConfig, EvictCause, EvictGroup, EvictMonth } from '../types';
  *   what is on disk. Answered entirely from `cold.sqlite`, and it is what makes
  *   the deletion recoverable.
  * - **Is it finished with?** Every file reached a partition, and that partition
- *   is itself in Mega. Answered from stocker's ledger joined to the vault side of
- *   cold storage.
+ *   is itself in Mega. Answered from what stocker says it built, joined to the
+ *   vault side of cold storage.
  *
  * The second is not about safety — a file backed up as raw can be deleted with
  * nothing lost either way. It is about **alignment**: raw exists to become
@@ -50,10 +51,16 @@ export const evictArchives = async (
   }
 
   const months: EvictMonth[] = [];
+  const facts  = openFacts(config);
 
-  for (const venue of wanted.sort()) months.push(...await examine(handle, config, venue));
+  try {
+    for (const venue of wanted.sort())
+      months.push(...await examine(handle, config, facts, venue));
+  } finally {
+    facts.close();
+  }
 
-  await act(config, months, purge);
+  await act(handle, config, months, purge);
 };
 
 // ── Internals ─────────────────────────────────────────────────────────────────
@@ -62,12 +69,13 @@ export const evictArchives = async (
  * Judge every month of one venue.
  *
  * Per venue rather than all at once because the sets are large — 2.5 million
- * archive members and a ledger to match them against — and a venue is the unit
- * a person asks about anyway.
+ * archive members and stocker's members to match them against — and a venue is
+ * the unit a person asks about anyway.
  */
 const examine = async (
   handle: DatabaseSync,
   config: ColdConfig,
+  facts:  FactManager,
   venue:  string,
 ): Promise<EvictMonth[]> => {
   info(`Examining ${venue} …`);
@@ -85,7 +93,7 @@ const examine = async (
   }
 
   const local    = await onDisk(config.sourceRoot, venue);
-  const built    = await inputsByRaw(config.vaultRoot, venue);
+  const built    = inputsByRaw(facts, venue);
   const backedUp = vaultIds(handle, config, venue);
 
   const months: EvictMonth[] = [];
@@ -316,7 +324,12 @@ const statOf = (root: string, relative: string): { bytes: number; mtime: number 
  * Where a real discrepancy hides among them, [`cold audit`](COLD-AUDIT.md) is
  * where it surfaces, and the size of the tree is the other tell.
  */
-const act = async (config: ColdConfig, months: EvictMonth[], purge: boolean): Promise<void> => {
+const act = async (
+  handle: DatabaseSync,
+  config: ColdConfig,
+  months: EvictMonth[],
+  purge:  boolean,
+): Promise<void> => {
   const clear     = months.filter(month => month.verdict === 'clear');
   const risky     = months.filter(month => month.verdict === 'risky');
   const blocked   = months.filter(month => month.verdict === 'blocked');
@@ -399,9 +412,26 @@ const act = async (config: ColdConfig, months: EvictMonth[], purge: boolean): Pr
     label: `${month.venue}/${month.month}`,
     files: month.files,
     bytes: month.bytes,
+    venue: month.venue,
+    month: month.month,
   }));
 
-  await reclaim(config.sourceRoot, groups, purge);
+  const gone = await reclaim(config.sourceRoot, groups, purge);
+
+  /**
+   * **One row per part, each carrying its own totals.** Archives are evicted a
+   * whole month at a time, so every part of the month goes whole — and a part
+   * already knows the size and count of its members, so a month of hundreds of
+   * thousands of files reduces to a handful of rows that need no join to be
+   * summed.
+   *
+   * Recorded after the deletion and only for what actually went, so nothing is
+   * ever marked gone while it is still on disk.
+   */
+  const rows = db.evictParts(handle, 'archives',
+    gone.map(group => ({ venue: group.venue!, month: group.month! })));
+
+  if (rows > 0) info(`${C.dim}${rows} part${rows === 1 ? '' : 's'} recorded as evicted${C.reset}`);
 };
 
 /**

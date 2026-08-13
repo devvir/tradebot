@@ -4,7 +4,7 @@ import * as complete from './complete';
 import { download } from './download';
 import { record } from './absences';
 import * as coverage from './coverage';
-import { earliest, endOfMonth, latest, monthRange, nextMonth, thisMonthUTC } from './dates';
+import { earliest, endOfMonth, latest, monthRange, thisMonthUTC } from './dates';
 import * as inventory from './inventory';
 import * as milestones from './milestones';
 import { cachedSymbols } from './progress';
@@ -72,23 +72,32 @@ export const syncVenue = async (name: string): Promise<SyncStats> => {
 // ── Internals ─────────────────────────────────────────────────────────────────
 
 /**
- * The months still to walk: everything after the published tip, up to the
- * present or the configured ceiling.
+ * The months still to walk: **every month that is not closed**, from the floor
+ * up to the present or the configured ceiling.
  *
- * A venue with no tip starts at the configured floor, or at the venue's own —
- * the month its archive actually begins, declared by the adapter that knows
- * and evidenced there. Months below it hold nothing to find, and finding
- * nothing is not free: on a listing venue it costs a request per symbol to be
- * told so, on every pass.
+ * Membership, not "after the tip". A month that fails mid-walk is left open
+ * while the months after it go on to close, so starting at the tip abandons it
+ * the moment anything above it succeeds — permanently, since the tip only rises.
+ * bybit's 202402 and 202405 each faulted five hours into a pass in August and
+ * were never looked at again; the raw for both is on disk and looks complete, so
+ * one retry is all either needed.
+ *
+ * Closed months are skipped rather than not enumerated, which costs a set lookup
+ * per month and buys a walk that repairs its own history.
+ *
+ * The floor is the configured one, or the venue's own — the month its archive
+ * actually begins, declared by the adapter that knows and evidenced there.
+ * Months below it hold nothing to find, and finding nothing is not free: on a
+ * listing venue it costs a request per symbol to be told so, on every pass.
  */
 const pending = async (venue: VenueArchive): Promise<string[]> => {
-  const closed = await complete.tip(venue.name);
-  const from   = closed ? nextMonth(closed) : config.startMonth ?? venue.floor;
+  const closed = await complete.closings(venue.name);
+  const from   = config.startMonth ?? venue.floor;
   const to     = config.endMonth ?? thisMonthUTC();
 
   if (from > to) return [];
 
-  return monthRange(from, to);
+  return monthRange(from, to).filter(month => ! closed.has(month));
 };
 
 /**
@@ -265,9 +274,10 @@ const syncDataset = async (
     const settled = settledThrough(files, outcomes);
 
     // Absences the cursor is about to step past are written down first — but
-    // only for a venue whose absences have been caught lying. Everywhere else a
-    // 404 is simply true, and ledgering every unpublished date would record
-    // millions of periods that never existed.
+    // only where `unreliableAbsence` is set, which is okx alone and is
+    // documented as unfounded. Everywhere else a 404 is simply true, and
+    // ledgering every unpublished date would record millions of periods that
+    // never existed.
     if (settled && venue.unreliableAbsence) {
       const now = new Date().toISOString();
 

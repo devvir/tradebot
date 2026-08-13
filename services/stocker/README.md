@@ -65,20 +65,24 @@ order-book month is ~23 GB and in a container `/tmp` is the overlay filesystem.
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `DATA_DIR` | yes | — | **Host** root of the tradebot tree; `@shared` at `$DATA_DIR/@shared` mounts read-only at `/data/shared` |
-| `TRUCKER_DATA_DIR` | no | `$DATA_DIR/trucker` | **Host** directory trucker owns, mounted read-only at `/data/trucker`. Also overrides the container path when running outside Docker |
+| `TRUCKER_DATA_DIR` | no | `$DATA_DIR/archives` | **Host** directory trucker owns, mounted read-only at `/data/trucker`. Also overrides the container path when running outside Docker |
 | `STOCKER_VAULT_DIR` | yes | — | **Host** vault directory, mounted at `/data/vault` |
 | `STOCKER_VENUES` | no | _(all)_ | Comma-separated venue filter, case-insensitive; an unknown venue fails startup |
 | `STOCKER_TABLES` | no | _(all)_ | Comma-separated table filter, case-insensitive; an unknown table fails startup |
 | `STOCKER_SYMBOLS` | no | _(all)_ | Symbol tokens, matched as case-insensitive substrings |
-| `STOCKER_FROM` | no | _(none)_ | Oldest month to process, `YYYY-MM` inclusive |
-| `STOCKER_TO` | no | _(none)_ | Newest month to process, `YYYY-MM` inclusive. Hold it below the era still being collected so a run never touches raw that is still arriving |
-| `STOCKER_CONCURRENCY` | no | `2` | Partitions built at once, sharing one memory budget |
+| `STOCKER_START_MONTH` | no | _(none)_ | Oldest month to process, inclusive. `yyyy-mm`, `yyyymm` or `yymm` |
+| `STOCKER_END_MONTH` | no | _(none)_ | Newest month to process, inclusive. Hold it below the era still being collected so a run never touches raw that is still arriving |
+| `STOCKER_CONCURRENCY` | no | `2` | Partitions built at once, each holding a month-sized sort |
 | `STOCKER_SCAN_MINUTES` | no | `30` | Minutes between rescans of the raw tree |
-| `STOCKER_MEMORY_LIMIT` | no | `4GB` | Query engine cap; it spills to disk rather than being killed |
 | `STOCKER_THREADS` | no | `4` | Query engine threads |
 
 `TRUCKER_DATA_DIR`, `STOCKER_VAULT_DIR` and `STOCKER_SHARED_DIR` override the container paths when running outside
 Docker.
+
+`STOCKER_MEMORY_MB` (default `4096`) is a **build argument**, not one of these. Nothing in stocker reads it or
+behaves differently for it — the container's entrypoint turns it into the node heap and that is the end of it.
+Appetite is set by `STOCKER_CONCURRENCY`, since every concurrent build holds a sort; this is only the ceiling the
+host will tolerate while the collectors run alongside.
 
 ## Extending it
 

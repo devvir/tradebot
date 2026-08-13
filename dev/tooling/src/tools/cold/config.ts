@@ -60,8 +60,8 @@ const QUEUE_TARGET_GB = 10;
  *
  * Optional, each defaulting under `DATA_DIR`:
  *   - `SOURCES_COLD_DIR`        — cold's own directory (`@cold`)
- *   - `STOCKER_VAULT_DIR`       — the vault (`vault`)
- *   - `COLD_ARCHIVES_DIR`       — the raw venue archives (`trucker`)
+ *   - `VAULT_DIR`               — the vault (`vault`)
+ *   - `ARCHIVES_DIR`            — the raw venue archives (`archives`)
  *   - `COLD_QUEUE_TARGET_GB`
  */
 export const loadConfig = (origin: Origin): ColdConfig => {
@@ -111,15 +111,26 @@ export const localPath = (config: ColdConfig, origin: Origin, part: { local: str
 // ── Internals ─────────────────────────────────────────────────────────────────
 
 /**
- * Which tree each origin backs up: where it usually is, and what may move it.
+ * Which tree each origin backs up: the default location, and what may move it.
  *
- * The archives default to `trucker` because that is the directory that exists,
- * not because the origin is named for it — the tree is expected to be renamed,
- * and `COLD_ARCHIVES_DIR` is what will say so when it is.
+ * **A default is a fact; a deployment's actual path is not.** These names are
+ * what you get having set nothing, which is worth stating — where any given
+ * installation actually keeps its trees is what the variables are for, and is
+ * knowable only by reading them.
+ *
+ * **Named for the tree, and for nothing else.** Not for the service that fills
+ * it and not for the tool that reads it: the vault is the vault whether or not
+ * stocker is deployed here, and it is still the vault when something other than
+ * `cold` wants it. Borrowing a service's variable looks like it keeps the two in
+ * agreement and does the opposite — that name is set in the service's module
+ * `.env`, which tooling reads only when asked for it by name, so the agreement
+ * lasts exactly as long as nobody overrides the default. A host that backs up a
+ * vault built elsewhere may not have that module checked out at all, and nobody
+ * would think to edit an inactive module's configuration to make a backup run.
  */
 const SOURCES: Record<Origin, { env: string; under: string }> = {
-  vault:    { env: 'STOCKER_VAULT_DIR', under: 'vault' },
-  archives: { env: 'COLD_ARCHIVES_DIR', under: 'trucker' },
+  vault:    { env: 'VAULT_DIR',    under: 'vault' },
+  archives: { env: 'ARCHIVES_DIR', under: 'archives' },
 };
 
 /**

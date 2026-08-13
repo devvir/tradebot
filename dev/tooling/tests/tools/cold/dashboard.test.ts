@@ -129,19 +129,35 @@ describe('rendering one cell', () => {
    * `27 backed up (27.0 mo, 2.0GB)` under `27 parts (2.0GB)` is the same three
    * numbers twice, and most venues sit in exactly that state.
    */
-  it('says a complete tree is complete rather than repeating itself', () => {
+  /**
+   * One shape whatever the state, so a reader learns a single format — and in
+   * months, so it compares directly against the months on the first line
+   * without anyone converting parts to anything.
+   */
+  it('answers in months, like the line it is compared against', () => {
     const held = hold([part({ bytes: 1024 ** 3, uploadedAt: 'now' })]).get('bybit')!;
 
-    expect(plain(render(held)).split('\n')[2]).toBe('all backed up (1.0GB)');
+    expect(plain(render(held)).split('\n')[2]).toBe('1 mo backed up (1.0GB)');
   });
 
-  it('gives the backed-up count and its fractional months when short', () => {
+  /**
+   * A month half of whose parts have landed is neither in nor out, and rounding
+   * it either way is a lie in a table whose job is saying where things stand.
+   */
+  it('counts a part-landed month as a fraction', () => {
     const held = hold([
       part({ month: '202106', seq: 1, bytes: 1024 ** 3, uploadedAt: 'now' }),
       part({ month: '202106', seq: 2, bytes: 1024 ** 3 }),
     ]).get('bybit')!;
 
-    expect(plain(render(held)).split('\n')[2]).toBe('1 backed up (0.5 mo, 1.0GB)');
+    expect(plain(render(held)).split('\n')[2]).toBe('0.5 mo backed up (1.0GB)');
+  });
+
+  /** Zero is the state most worth noticing, so it says so in words. */
+  it('names an unbacked venue rather than showing it as zero months', () => {
+    const held = hold([part({ month: '202106', bytes: 1024 ** 3 })]).get('bybit')!;
+
+    expect(plain(render(held)).split('\n')[2]).toBe('nothing backed up');
   });
 
   /** The totals row has no range: it spans every venue, not one timeline. */

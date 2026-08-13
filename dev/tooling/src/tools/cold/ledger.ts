@@ -1,6 +1,6 @@
-import fs from 'node:fs';
 import path from 'node:path';
-import type { PartitionKey } from './types';
+import { FactManager } from '@tradebot/pipeline';
+import type { ColdConfig, PartitionKey } from './types';
 
 /**
  * Stocker's record of what it built, as cold storage reads it.
@@ -9,7 +9,7 @@ import type { PartitionKey } from './types';
  * it packed and which raw they came from; it does not know what stocker *set
  * out* to build, because that is a record of what stocker did rather than of
  * what was backed up. Two commands need it and need different readings of it,
- * so the parsing lives here rather than twice:
+ * so the reading lives here rather than twice:
  *
  * - `cold evict archives` asks which partitions a raw file fed, to know whether
  *   deleting that raw would strand something unmodelled.
@@ -17,16 +17,25 @@ import type { PartitionKey } from './types';
  *   whether packing it now would record a fragment as a finished month.
  *
  * It is the same kind of dependency `cold push archives` already has on the
- * collector's published tips — a documented output, not a reach into internals —
- * and it is confined to this file, since the ledger is expected to stop being
- * flat files.
+ * collector's published tips — a documented output, not a reach into internals.
  *
- * **Only `<dataset>.<venue>.jsonl` is read.** Anything else in the directory is
- * not a ledger, whatever it looks like: a `klines.bitget.jsonl.bak` left behind
- * by a repair described 4,480 partitions under a layout that no longer exists,
- * and reading it would have blocked twenty bitget months against records nothing
- * could ever satisfy.
+ * **Asked of the facts, not of stocker's files.** Both questions used to be
+ * answered by parsing `@meta/built/*.jsonl`, and both are now queries against
+ * the `vault` topic. The shapes returned are unchanged, so the commands that
+ * consume them did not have to move with the store.
+ *
+ * Read as whatever the caller is, since reads are unowned: a consumer needs no
+ * permission to find out where a producer has got to.
  */
+
+/**
+ * A handle on what the services have said, for the length of one command.
+ *
+ * `tooling` owns no topic and needs to own none — every question cold storage
+ * asks is a read, and reads are unowned by design. The caller closes it.
+ */
+export const openFacts = (config: ColdConfig): FactManager =>
+  new FactManager({ owner: 'tooling', root: path.join(config.sharedRoot, 'facts') });
 
 /** `klines|bitget|spot|BTCUSDT|1m|2020-08` — stocker's id for one partition. */
 export const idOf = (key: PartitionKey): string => {
@@ -42,42 +51,36 @@ export const idOf = (key: PartitionKey): string => {
  * Which partitions each raw file of a venue fed.
  *
  * Ledger paths are relative to the venue root and cold's are venue-prefixed, so
- * the venue — which the filename carries — is put back on.
+ * the venue — which the fact is filed under — is put back on.
+ *
+ * **The member list lives in `vault:details`, apart from the partitions
+ * themselves.** It is the bulk of what stocker records and nothing that asks
+ * "what has been built" wants to carry it, so it is its own topic and therefore
+ * its own database, out of the way of every other question.
+ *
+ * A partition rebuilt from more raw than before keeps both sets here, where the
+ * flat file kept only the newest. They are the same answer: a rebuild reads raw
+ * and nothing else, and raw is evicted a whole month at a time, so the files in
+ * hand are always a superset of the ones the last build recorded and an input
+ * set can only grow.
  */
-export const inputsByRaw = async (
-  vaultRoot: string,
-  venue:     string,
-): Promise<Map<string, string[]>> => {
-  const found   = new Map<string, string[]>();
-  const current = new Map<string, { path: string }[]>();
+export const inputsByRaw = (
+  facts: FactManager,
+  venue: string,
+): Map<string, string[]> => {
+  const found = new Map<string, string[]>();
 
-  let seen = 0;
+  for (const member of facts.find({ topic: 'vault:details', venue })) {
+    // The path is the `fact` — it is what makes one member distinct from
+    // another, so it is what identifies the row rather than what annotates it.
+    const key = `${venue}/${member.fact}`;
+    const ids = found.get(key) ?? [];
+    const id  = partitionId(member);
 
-  for (const file of filesFor(vaultRoot, venue))
-    for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
-      if (! line) continue;
+    if (! ids.includes(id)) ids.push(id);
 
-      try {
-        const entry = JSON.parse(line) as { id: string; inputs?: { path: string }[] };
-
-        current.set(entry.id, entry.inputs ?? []);
-      } catch {
-        // A torn final line is the ordinary shape of an append-only file being
-        // written to. The partitions it describes simply read as not yet built.
-      }
-
-      if (++seen % BREATH === 0) await breathe();
-    }
-
-  for (const [id, inputs] of current)
-    for (const input of inputs) {
-      const key = `${venue}/${input.path}`;
-      const ids = found.get(key) ?? [];
-
-      if (! ids.includes(id)) ids.push(id);
-
-      found.set(key, ids);
-    }
+    found.set(key, ids);
+  }
 
   return found;
 };
@@ -85,70 +88,36 @@ export const inputsByRaw = async (
 /**
  * Which partitions a venue's months should contain, keyed `YYYYMM`.
  *
- * **The id is taken with a regex rather than by parsing the line.** Only the id
- * is wanted here and `inputs` is the whole weight of the file — 336MB across the
- * ledger — so reading the rest costs seconds per run to produce nothing. The
- * month is the id's last segment, which is what makes that affordable.
- *
  * Duplicate ids collapse into the set on their own, which is the right reading:
- * the file is append-only and a rebuild appends, so a partition written five
- * times is still one partition the month should hold.
+ * a partition stocker has rebuilt is still one partition the month should hold.
  */
-export const idsByMonth = async (
-  vaultRoot: string,
-  venue:     string,
-): Promise<Map<string, Set<string>>> => {
+export const idsByMonth = (
+  facts: FactManager,
+  venue: string,
+): Map<string, Set<string>> => {
   const found = new Map<string, Set<string>>();
 
-  let seen = 0;
+  for (const built of facts.find({ topic: 'vault', venue, fact: 'built' })) {
+    const ids = found.get(built.period) ?? new Set<string>();
 
-  for (const file of filesFor(vaultRoot, venue))
-    for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
-      const matched = /^\{"id":"([^"]+)"/.exec(line);
-
-      if (matched) {
-        const id    = matched[1]!;
-        const month = id.slice(id.lastIndexOf('|') + 1).replace('-', '');
-        const ids   = found.get(month) ?? new Set<string>();
-
-        ids.add(id);
-        found.set(month, ids);
-      }
-
-      if (++seen % BREATH === 0) await breathe();
-    }
+    ids.add(partitionId(built));
+    found.set(built.period, ids);
+  }
 
   return found;
 };
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
-/** A venue's ledger files, and nothing else that happens to sit beside them. */
-const filesFor = (vaultRoot: string, venue: string): string[] => {
-  const dir = path.join(vaultRoot, '@meta', 'built');
-
-  try {
-    return fs.readdirSync(dir)
-      .filter(name => name.endsWith(`.${venue}.jsonl`))
-      .map(name => path.join(dir, name));
-  } catch {
-    return [];
-  }
-};
-
 /**
- * Hand the event loop back for one tick.
+ * Stocker's id, rebuilt from the columns a fact is filed under.
  *
- * **This is what makes Ctrl-C work.** Node delivers a signal through the event
- * loop, so a handler cannot run while a synchronous run holds the stack — and
- * the ledger is hundreds of megabytes with no natural await in reading it. The
- * signal is not lost, it is queued behind work that has to finish first, which
- * reads exactly like a command ignoring it.
+ * A fact says `period` where a partition id says `month`, and `subject` holds
+ * the extra levels bare — `1m` rather than `interval=1m`. [`idOf`](#idOf) reads
+ * both the same way, since it takes whatever follows an absent `=`.
  */
-const BREATH = 2_000;
-
-const breathe = (): Promise<void> => new Promise(resolve => { setImmediate(resolve); });
-
-// ── Test access ───────────────────────────────────────────────────────────────
-
-export const _test_filesFor = filesFor;
+const partitionId = (fact: {
+  venue: string; period: string; market: string; symbol: string;
+  dataset: string; subject: string;
+}): string =>
+  idOf({ ...fact, month: fact.period, variant: fact.subject });

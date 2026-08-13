@@ -6,10 +6,11 @@ import {
   _test_backedMonths as backedMonths,
   _test_monthBytes as monthBytes,
   _test_orphans as orphans,
+  _test_render as render,
 } from '../../../src/tools/cold/audit';
 import { tarSize } from '../../../src/tools/cold/tar';
 import type { DatabaseSync } from 'node:sqlite';
-import type { ColdConfig, PartRow } from '../../../src/tools/cold/types';
+import type { ColdConfig, Holding, PartRow } from '../../../src/tools/cold/types';
 
 /**
  * A checker that only ever reports "fine" is worthless, so these break things
@@ -215,5 +216,67 @@ describe('how much raw a venue-month is', () => {
     const size = monthBytes(rows([{ venue: 'gate', month: '201901', bytes: 100 }]), 'archives');
 
     expect(size.has('binance/201901')).toBe(false);
+  });
+});
+
+/**
+ * The one comparison between two cells of a row: a vault built from fewer
+ * months than the archives it is built from means finished months nobody has
+ * normalised yet.
+ */
+describe('a tree covering fewer months than its source', () => {
+  const holding = (months: string[]): Holding => ({
+    months:     new Set(months),
+    monthCount: months.length,
+    parts:      1,
+    bytes:      10,
+    files:      1,
+    sent:       1,
+    sentBytes:  10,
+    sentMonths: months.length,
+  });
+
+  const YELLOW = '\x1b[33m';
+  const GREEN  = '\x1b[32m';
+
+  it('paints the month count yellow when it is behind', () => {
+    expect(render(holding(['202401', '202402']), false, 'behind')).toContain(`${YELLOW}2 mo`);
+  });
+
+  it('leaves it alone when it is not', () => {
+    expect(render(holding(['202401', '202402']), false, null)).not.toContain(`${YELLOW}2 mo`);
+  });
+
+  /**
+   * A spilling venue is short at its tip for ever, so yellow would be a warning
+   * nobody can clear. Green says finished; the star sends the why to the
+   * footnote.
+   */
+  it('paints it green and stars it where the shortfall is the venue\'s own shape', () => {
+    const cell = render(holding(['202401', '202402']), false, 'excused');
+
+    expect(cell).toContain(`${GREEN}2 mo*`);
+    expect(cell).not.toContain(YELLOW);
+  });
+
+  /**
+   * Totals are a different kind of statement and carry no verdict — the same
+   * rule the backed-up line already follows.
+   */
+  it('never paints the totals row, however far behind it is', () => {
+    expect(render(holding(['202401', '202402']), true, 'behind')).not.toContain(`${YELLOW}2 mo`);
+  });
+
+  /**
+   * The producer's count is what the cell states, so it is what a lag is
+   * measured against — cold's own month set is what it managed to pack.
+   */
+  it('counts the producer\'s months where it has stated any', () => {
+    const held = { ...holding(['202401']), known: {
+      months: new Set(['202401', '202402', '202403']),
+      files: 3, bytes: 30, gone: 0, goneBytes: 0, measured: true,
+    } };
+
+    expect(render(held, false, 'behind')).toContain(`${YELLOW}3 mo`);
   });
 });

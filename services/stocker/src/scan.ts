@@ -11,7 +11,7 @@ import { labelOf } from './partition';
 import { donatedMonths, requiredThrough } from './spill';
 import { sources } from './sources';
 import type { Milestones } from './milestones';
-import type { Built, Candidate, Group, PartitionKey, RawFile, Summary } from './types';
+import type { Built, Candidate, Group, RawFile, Summary } from './types';
 
 /**
  * One pass over every origin: discover raw, group it into partitions, and build
@@ -43,6 +43,15 @@ export const sweep = async (conns: DuckDBConnection[]): Promise<Summary> => {
 
   const idle     = [...conns];
   const inFlight = new Set<Promise<void>>();
+
+  /**
+   * Venue-months held back because the collector has not finished them.
+   *
+   * Counted in months rather than files: "3 months waiting" is what somebody
+   * reading the log can act on, where "41,000 files" only says the venue is
+   * busy.
+   */
+  const waiting = new Set<string>();
 
   const dispatch = async (group: Group): Promise<void> => {
     /**
@@ -76,18 +85,40 @@ export const sweep = async (conns: DuckDBConnection[]): Promise<Summary> => {
     inFlight.add(task);
   };
 
+  /**
+   * **An open month is never processed, whether or not raw for it exists.**
+   *
+   * Raw on disk is not a claim that a month is finished — early symbol-major
+   * walks left files behind for months no collector has ever closed, and a
+   * venue's tree can hold anything anybody ever fetched. Only the collector
+   * knows, so its answer is asked here, at discovery, and such a file is never
+   * grouped, never built and never reported on.
+   *
+   * It used to be asked much later, inside `settle`, which let those files be
+   * walked and grouped first — so a grouping fault in a month nobody could build
+   * was reported as an error per file, and the one partition that reached the
+   * build was refused by a gate three steps further on. Asking first makes both
+   * disappear.
+   */
+  const buildable = (file: Candidate): boolean =>
+    wanted(file) && collected.covers(file.series.venue)
+    && collected.ready(file.series.venue, requiredThrough(file.series, file.month));
+
   for (const source of sources()) {
-    const groups = grouper(wanted);
+    const groups = grouper(buildable);
 
     for await (const candidate of source.walk()) {
       // Filters run before the `stat`, so a scoped run costs one syscall per
       // kept file rather than one per file in the tree. A file wanted by
       // nobody — not for its own month, not as a donor to a neighbour —
       // never costs one at all.
-      const kept = wanted(candidate);
+      const kept = buildable(candidate);
 
-      if (! kept && ! donatedMonths(candidate).some(month => wanted({ ...candidate, month })))
+      if (! kept && ! donatedMonths(candidate).some(month => buildable({ ...candidate, month }))) {
+        if (wanted(candidate)) waiting.add(`${candidate.series.venue}/${candidate.month}`);
+
         continue;
+      }
 
       const info = await stat(candidate.absolute).catch(() => null);
 
@@ -103,6 +134,8 @@ export const sweep = async (conns: DuckDBConnection[]): Promise<Summary> => {
   }
 
   await Promise.all(inFlight);
+
+  summary.pending = waiting.size;
 
   logger.info({ ...summary }, 'Sweep complete');
 
@@ -184,24 +217,6 @@ const settle = async (
   if (record) await flag(record, inputs);
 
   /**
-   * Built only once the collector says the month is finished.
-   *
-   * The files present say which periods arrived, never whether more are coming.
-   * Trucker knows, and publishes it; without the check a month still filling is
-   * built now and rebuilt on every later arrival, and — worse — looks finished
-   * to anyone deciding whether its raw can be reclaimed.
-   *
-   * A venue that has published no tip at all is therefore skipped wholesale,
-   * which is the wanted behaviour for one that is not being collected at the
-   * moment.
-   */
-  if (! ready(collected, inputs[0]!, key)) {
-    summary.pending++;
-
-    return;
-  }
-
-  /**
    * Whether the partition is still on local disk is deliberately not consulted.
    *
    * A rebuild reads raw and nothing else — the previous Parquet is never an
@@ -253,21 +268,6 @@ const settle = async (
   } catch {
     summary.failed++;   // already logged with its cause in buildPartition
   }
-};
-
-/**
- * Whether the collector has finished the month this partition covers.
- *
- * One question against one published fact. The venue's tip is a statement about
- * every dataset and every symbol it collects at once, so nothing here needs to
- * know which collection effort produced a path, what trucker calls it, or
- * whether the symbol is still listed.
- */
-const ready = (collected: Milestones, input: RawFile, key: PartitionKey): boolean => {
-  if (! collected.covers(key.venue)) return false;
-
-  // A spilling month waits one bucket longer: its tail is in the next one.
-  return collected.ready(key.venue, requiredThrough(input.series, key.month));
 };
 
 /**
@@ -347,11 +347,11 @@ const lastClosedMonth = (): string => {
  * Late raw for a closed month still triggers a rebuild through `changed`.
  */
 const wanted = (file: Candidate): boolean => {
-  const { tables, symbols, from, to } = config;
+  const { tables, symbols, startMonth, endMonth } = config;
 
-  if (file.month > lastClosedMonth()) return false;
-  if (from && file.month < from)      return false;
-  if (to   && file.month > to)        return false;
+  if (file.month > lastClosedMonth())        return false;
+  if (startMonth && file.month < startMonth) return false;
+  if (endMonth   && file.month > endMonth)   return false;
 
   if (tables.length  && ! tables.includes(file.series.table)) return false;
   if (symbols.length && ! symbols.some(t => file.rawSymbol.toUpperCase().includes(t.toUpperCase())))

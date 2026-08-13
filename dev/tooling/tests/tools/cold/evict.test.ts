@@ -1,10 +1,30 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { _test_judge as judge, _test_vaultIds as vaultIds } from '../../../src/tools/cold/evict/archives';
 import type { ColdConfig } from '../../../src/tools/cold/types';
 import type { DatabaseSync } from 'node:sqlite';
+
+/**
+ * A temp tree that goes away with the suite.
+ *
+ * Cases below build a vault on disk, and a `mkdtemp` nobody removes leaves a
+ * directory per run behind on a partition that is not this suite's to fill.
+ */
+const made: string[] = [];
+
+const temp = (prefix: string): string => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+
+  made.push(dir);
+
+  return dir;
+};
+
+afterAll(() => {
+  for (const dir of made) fs.rmSync(dir, { recursive: true, force: true });
+});
 
 /**
  * Eviction is the one irreversible step, so these are the tests that matter
@@ -167,7 +187,7 @@ describe('rebuilding a partition id from what cold storage recorded', () => {
  */
 describe('a partition Mega holds an older copy of', () => {
   const withVault = (bytes: number, mtime: number, recorded: { bytes: number; mtime: number }) => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evict-drift-'));
+    const root = temp('evict-drift-');
     const rel  = 'venue=binance/market=spot/B/symbol=BCCBTC/klines.parquet';
 
     fs.mkdirSync(path.join(root, path.dirname(rel)), { recursive: true });
@@ -195,7 +215,7 @@ describe('a partition Mega holds an older copy of', () => {
   });
 
   it('counts when the local file still matches', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'evict-match-'));
+    const root = temp('evict-match-');
     const rel  = 'p.parquet';
 
     fs.writeFileSync(path.join(root, rel), 'x'.repeat(10));

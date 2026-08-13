@@ -310,6 +310,16 @@ export interface EvictGroup {
   /** Paths relative to the tree's root, as the record names them. */
   files: string[];
   bytes: number;
+
+  /**
+   * Where this belongs, for the eviction record.
+   *
+   * Carried alongside `label` rather than parsed back out of it: the label is
+   * for a person to read and is free to change, and a record of what is no
+   * longer on disk should not depend on the formatting of a log line.
+   */
+  venue?: string;
+  month?: string;
 }
 
 /**
@@ -390,6 +400,93 @@ export interface Holding {
    * mid-flight, never a measurement to act on.
    */
   sentMonths: number;
+
+  /**
+   * What the producer says it has, where it says anything.
+   *
+   * **Cold storage cannot answer "what is there", only "what did I pack".** A
+   * venue with nothing backed up has no parts to fold, so a cell built from
+   * parts alone renders empty — and "there is nothing here" then looks exactly
+   * like "none of this is backed up", on the one screen that exists to tell
+   * those apart.
+   */
+  known?: Known;
+
+  /** What the origin counts in: partitions for the vault, files for the rest. */
+  unit?: string;
+}
+
+/**
+ * What a venue actually holds, wherever it currently sits.
+ *
+ * **On disk plus evicted, and the two never overlap.** Something reclaimed is
+ * gone from disk by definition, and the `evicted` table is what makes that
+ * knowable without a `stat` per file — so the sum is the venue's true size
+ * rather than either half of it.
+ *
+ * Months come from the producer, which is the only thing that knows what it
+ * finished as opposed to what happened to be packed.
+ */
+/**
+ * What stocker says it built, against what actually exists — the pair every
+ * check of one against the other needs, taken in the one order that is safe.
+ *
+ * `files` and `uploaded` are handed back rather than folded away because a
+ * caller comparing sizes and mtimes needs the rows themselves, and re-walking
+ * the tree to get them would undo the point.
+ */
+export interface Presence {
+  /** Built partitions, by venue then month. */
+  claimed:  Map<string, Map<string, Set<string>>>;
+
+  /** Every partition that exists somewhere: on disk now, or already in cold storage. */
+  present:  Set<string>;
+
+  files:    SourceFile[];
+  uploaded: PartitionKey[];
+}
+
+/**
+ * How a tree's month count stands against the tree it is built from.
+ *
+ * `null` is "they agree". The two ways of disagreeing are worth telling apart
+ * because only one of them is anybody's problem: `behind` is work outstanding,
+ * `excused` is the shortfall a spilling venue always shows at its tip.
+ */
+export type Lag = 'behind' | 'excused' | null;
+
+export interface Known {
+  months: Set<string>;
+
+  /**
+   * Whether this venue's newest closed month cannot be normalised yet.
+   *
+   * Stated by the producer rather than worked out here: it follows from every
+   * one of the venue's series keeping a month's tail in the next month's first
+   * bucket, and what a series is has no business being known at this end. Where
+   * it is true, a vault one month short of the archives is finished rather than
+   * behind.
+   */
+  spills?: boolean;
+
+  /** Files present locally right now. */
+  files:  number;
+  bytes:  number;
+
+  /** Files that are only in Mega, from the eviction record. */
+  gone:      number;
+  goneBytes: number;
+
+  /**
+   * Whether the local tree has actually been counted yet.
+   *
+   * The archives take 21 seconds to walk — 3.7 million files, seven venues —
+   * and holding the whole report back for a number that fills in venue by venue
+   * is the difference between a table you can start reading and a blank screen.
+   * Until this is true the cell shows the count it is sure of and `…` for the
+   * rest, rather than a zero that reads as an answer.
+   */
+  measured: boolean;
 }
 
 /**

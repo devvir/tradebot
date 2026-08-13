@@ -51,8 +51,8 @@ Trucker owns its storage. The host directory is mounted at a fixed container pat
 as vault does it, and must exist and be writable by uid 1000 before the service starts:
 
 ```bash
-sudo mkdir -p /storage/tradebot/trucker
-sudo chown 1000:1000 /storage/tradebot/trucker
+sudo mkdir -p "$TRUCKER_DATA_DIR"
+sudo chown 1000:1000 "$TRUCKER_DATA_DIR"
 ```
 
 The service checks writability at startup and fails immediately with the command to fix it,
@@ -63,7 +63,7 @@ rather than after a long listing pass.
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `DATA_DIR` | yes | — | **Host** root of the tradebot tree; `@shared` lives at `$DATA_DIR/@shared` and mounts at `/data/shared` |
-| `TRUCKER_DATA_DIR` | no | `$DATA_DIR/trucker` | **Host** archive directory, mounted at `/data/trucker` |
+| `TRUCKER_DATA_DIR` | no | `$DATA_DIR/archives` | **Host** archive directory, mounted at `/data/trucker` |
 | `TRUCKER_VENUES` | no | _(all)_ | Comma-separated: `binance`, `bitget`, `bybit`, `gate`, `htx`, `kucoin`, `okx` |
 | `TRUCKER_START_MONTH` | no | — | Oldest month fetched, **inclusive**. `yyyy-mm`, `yyyymm` or `yymm` |
 | `TRUCKER_END_MONTH` | no | _(none)_ | Newest month fetched, **inclusive** — `2019-12` fetches through 31 December 2019. Unset fetches everything published. Walk the backfill an era at a time |

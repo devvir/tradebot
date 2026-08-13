@@ -1,20 +1,21 @@
-import { appendFile, mkdir, readFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
+import { FactManager } from '@tradebot/pipeline';
 import config from './config';
-import { endOfMonth, prevMonth } from './dates';
+import { endOfMonth, nextMonth, prevMonth } from './dates';
 
 /**
  * The one thing trucker tells the outside world: the month a venue is collected
  * **through**, and when that was settled.
  *
- *     201802\t2026-08-03T14:22:10.004Z
+ *     topic=archives  venue=gate  period=201802  fact=complete
+ *     value=2026-08-03T14:22:10.004Z
  *
- * It lives in `@shared`, apart from trucker's own directory, so the split is a
- * mount rather than a convention: everything under `/data/trucker` is trucker
- * tracking its own progress and no consumer should read any of it. Those records
- * answer "where is this symbol up to", which is a question whose answer changes
- * for ever: an active symbol always has more coming. This one answers "which
- * months have stopped changing".
+ * It lives in the shared facts store under `@shared`, apart from trucker's own
+ * directory, so the split is a mount rather than a convention: everything under
+ * `/data/trucker` is trucker tracking its own progress and no consumer should
+ * read any of it. Those records answer "where is this symbol up to", which is a
+ * question whose answer changes for ever: an active symbol always has more
+ * coming. This one answers "which months have stopped changing".
  *
  * A month is published only when every dataset of the venue finished it with no
  * failures, and only once it is old enough that a late publication cannot still
@@ -43,14 +44,23 @@ import { endOfMonth, prevMonth } from './dates';
  * rebuilds — without a human reading a warning, remembering which partitions
  * came from it, or deleting anything downstream by hand.
  *
- * Same dull format as the ledgers beside it — tab-separated, append-only, later
- * lines superseding earlier ones, one file per venue. The **tip** is forward
- * only: a month, once closed, stays closed. Its timestamp is not.
+ * **One fact per venue-month**, so closing a month again replaces its time
+ * rather than appending beside it, and the key does the work an append-only file
+ * needed a "later line wins" rule for. A month, once closed, stays closed; its
+ * timestamp does not.
  */
 
-const DIR = () => join(config.sharedDir, 'complete');
+/**
+ * The store, opened once and kept.
+ *
+ * Trucker owns the `archives` topic, which is what lets it write at all — the
+ * ownership check is made against this name rather than against the call site,
+ * so a service cannot state facts about a tree it does not fill.
+ */
+let store: FactManager | null = null;
 
-const fileFor = (venue: string): string => join(DIR(), `${venue}.tsv`);
+const facts = (): FactManager =>
+  (store ??= new FactManager({ owner: 'trucker', root: join(config.sharedDir, 'facts') }));
 
 /** One in-memory copy per venue; trucker is the only writer. */
 const memo = new Map<string, Promise<Map<string, string>>>();
@@ -68,32 +78,53 @@ export const closings = (venue: string): Promise<Map<string, string>> => {
   return loading;
 };
 
-/** The month this venue is collected through, or null before any is closed. */
+/**
+ * The month this venue is collected **through**, or null before any is closed.
+ *
+ * **The frontier, not the maximum.** The contract is "everything up to here is
+ * complete", so it can only reach as far as the first month that is not — a run
+ * of closed months broken by an open one ends there, however many closed months
+ * sit above the break.
+ *
+ * The maximum is not that claim and cannot stand in for it. A month left open
+ * by a failed pass is stepped over by the months that close after it, and the
+ * maximum then names a month with a hole beneath it — which every consumer
+ * reads as `month <= tip → complete` and acts on. bybit's 202402 and 202405
+ * each failed mid-walk and were passed by; the tip read 202501, and stocker
+ * built 2,091 partitions from two months that were never finished.
+ *
+ * So the break holds the tip back until the hole is filled, which is what
+ * [`pending`](sync.ts) now goes back for. Closing the missing month releases
+ * every closed month above it at once.
+ */
 export const tip = async (venue: string): Promise<string | null> => {
-  let latest: string | null = null;
+  const months = [...(await closings(venue)).keys()].sort();
 
-  for (const month of (await closings(venue)).keys())
-    if (! latest || month > latest) latest = month;
+  if (months.length === 0) return null;
 
-  return latest;
+  let frontier = months[0]!;
+
+  for (const month of months.slice(1)) {
+    if (month !== nextMonth(frontier)) break;
+
+    frontier = month;
+  }
+
+  return frontier;
 };
 
-/** Later lines supersede earlier ones, so a re-closed month carries its newest time. */
+/**
+ * Every month closed for a venue, with the time each was last closed.
+ *
+ * One fact per venue-month, so re-closing replaces the time in place rather than
+ * appending beside it — the "later line wins" rule the flat file needed is the
+ * key doing its job.
+ */
 export const load = async (venue: string): Promise<Map<string, string>> => {
-  const raw    = await readFile(fileFor(venue), 'utf8').catch(() => '');
   const closed = new Map<string, string>();
 
-  for (const line of raw.split('\n')) {
-    const parts = line.split('\t');
-
-    if (parts.length !== 2) continue;
-
-    const month = parts[0]!.trim();
-
-    if (! /^\d{6}$/.test(month)) continue;
-
-    closed.set(month, parts[1]!.trim());
-  }
+  for (const month of facts().find({ topic: 'archives', venue, fact: 'complete' }))
+    if (/^\d{6}$/.test(month.period)) closed.set(month.period, month.value);
 
   return closed;
 };
@@ -109,21 +140,26 @@ export const load = async (venue: string): Promise<Map<string, string>> => {
  * Returns whether the tip advanced, which is what a log line wants to say.
  */
 export const publish = async (venue: string, month: string): Promise<boolean> => {
-  const closed  = await closings(venue);
-  const current = await tip(venue);
-  const path    = fileFor(venue);
+  const closed = await closings(venue);
+  const before = await tip(venue);
 
   // One timestamp, written and remembered. Two calls to `now` differ by a
   // millisecond, and a consumer comparing what it read against what this
   // process holds would see a month reopen that never did.
   const at = new Date().toISOString();
 
-  await mkdir(dirname(path), { recursive: true });
-  await appendFile(path, `${month}\t${at}\n`);
+  facts().record({ topic: 'archives', venue, period: month, fact: 'complete', value: at });
 
   closed.set(month, at);
 
-  return ! current || month > current;
+  /**
+   * Compared after the fact rather than against the month just closed, because
+   * the frontier can move further than the month that moved it: filling a hole
+   * releases every closed month stacked above it in one step.
+   */
+  const after = await tip(venue);
+
+  return !! after && (! before || after > before);
 };
 
 /**
@@ -163,4 +199,16 @@ const whole = (day: string): string | null => {
 // ── Test access ───────────────────────────────────────────────────────────────
 
 export const _test_whole = whole;
-export const _test_reset = (): void => memo.clear();
+
+/**
+ * Forget both the cached months and the store they came from.
+ *
+ * The store holds an open handle on a directory the config names, and a test
+ * that moves the config to a fresh temporary directory would otherwise go on
+ * reading and writing the previous one.
+ */
+export const _test_reset = (): void => {
+  memo.clear();
+  store?.close();
+  store = null;
+};

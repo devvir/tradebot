@@ -1,7 +1,7 @@
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ArchiveFile, Dataset, InventoryShape } from '../src/types';
 import type { VenueArchive } from '../src/venues';
 
@@ -31,6 +31,8 @@ beforeEach(async () => {
   // fresh temp dir alone would still be read through the previous test's copy.
   inventory._test_reset();
 });
+
+afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
 
 const dataset: Dataset = { id: 'spot-trades', kind: 'trades', market: 'spot', path: 'trades' };
 

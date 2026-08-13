@@ -1,7 +1,7 @@
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ArchiveFile, Period } from '../src/types';
 
 let dir: string;
@@ -17,6 +17,7 @@ const {
 } = await import('../src/inventory');
 
 beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'inventory-')); });
+afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
 
 const NOW = '2026-08-05T00:00:00.000Z';
 

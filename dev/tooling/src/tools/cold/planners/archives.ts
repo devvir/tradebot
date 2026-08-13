@@ -1,8 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { openFacts } from '../ledger';
 import { info } from '../../../shared/ui/logger';
 import * as db from '../db';
 import type { DatabaseSync } from 'node:sqlite';
+import type { FactManager } from '@tradebot/pipeline';
 import type { ColdConfig, PendingGroup, PendingPlan, Planner, SourceFile } from '../types';
 
 /**
@@ -33,12 +35,22 @@ export const archives: Planner = {
     config: ColdConfig,
     venues: string[],
   ): Promise<PendingPlan> {
-    const tips     = readTips(config.sharedRoot);
-    const closings = readClosings(config.sharedRoot);
-    const gates    = db.closings(handle, 'archives');
+    const facts = openFacts(config);
+
+    let tips:     Map<string, string>;
+    let closings: Map<string, string>;
+
+    try {
+      tips     = readTips(facts);
+      closings = readClosings(facts);
+    } finally {
+      facts.close();
+    }
+
+    const gates = db.closings(handle, 'archives');
 
     if (tips.size === 0) {
-      info(`No venue has published a collected-through month in ${config.sharedRoot}/complete`);
+      info('No venue has published a collected-through month');
 
       return { groups: [], withheld: 0 };
     }
@@ -279,24 +291,48 @@ const PLAIN = /(?<![0-9])(20\d{2})([-_.]?)(0[1-9]|1[0-2])(?:\2(0[1-9]|[12][0-9]|
  * The month each venue is collected through, from the collector's published
  * tip. A venue with no tip has closed nothing and is skipped entirely.
  */
-const readTips = (sharedRoot: string): Map<string, string> => {
+const readTips = (facts: FactManager): Map<string, string> => {
+  const closed = new Map<string, string[]>();
+
+  for (const month of facts.find({ topic: 'archives', fact: 'complete' })) {
+    if (! /^\d{6}$/.test(month.period)) continue;
+
+    closed.set(month.venue, [...closed.get(month.venue) ?? [], month.period]);
+  }
+
   const found = new Map<string, string>();
 
-  for (const [venue, file] of ledgers(sharedRoot)) {
-    let tip = '';
+  /**
+   * **The unbroken run, not the highest month.** A month that fails part-way is
+   * left open while the months after it close, so the closings are not
+   * necessarily a range and the highest of them vouches for nothing beneath it.
+   * Packing on that reading tars a month the collector never finished and
+   * records it as covered — the same misreading that had stocker build 2,091
+   * partitions from bybit's open 202402 and 202405.
+   */
+  for (const [venue, months] of closed) {
+    const sorted = [...months].sort();
 
-    // Append-only, later lines superseding earlier ones. The highest wins, so a
-    // torn write cannot lower a tip already acted on.
-    for (const line of file.split('\n')) {
-      const month = line.split('\t')[0]?.trim();
+    let tip = sorted[0]!;
 
-      if (month && /^\d{6}$/.test(month) && month > tip) tip = month;
+    for (const month of sorted.slice(1)) {
+      if (month !== monthAfter(tip)) break;
+
+      tip = month;
     }
 
-    if (tip) found.set(venue, tip);
+    found.set(venue, tip);
   }
 
   return found;
+};
+
+/** The month after a `yyyymm`, in the same form. */
+const monthAfter = (month: string): string => {
+  const year  = Number(month.slice(0, 4));
+  const index = Number(month.slice(4, 6));
+
+  return index === 12 ? `${year + 1}01` : `${month.slice(0, 4)}${String(index + 1).padStart(2, '0')}`;
 };
 
 /**
@@ -308,26 +344,22 @@ const readTips = (sharedRoot: string): Map<string, string> => {
  * that happens the month is walked again and closed again, with a new time —
  * and comparing that time is what brings the month back into view here.
  */
-const readClosings = (sharedRoot: string): Map<string, string> => {
+const readClosings = (facts: FactManager): Map<string, string> => {
   const found = new Map<string, string>();
 
-  for (const [venue, file] of ledgers(sharedRoot)) {
-    // Append-only, later lines superseding earlier ones, so the last time a
-    // month was closed is the one that counts.
-    for (const line of file.split('\n')) {
-      const [month, at] = line.split('\t');
+  // One fact per venue-month, carrying the last time it was closed — a re-closed
+  // month replaces its own value rather than being appended beside itself.
+  for (const month of facts.find({ topic: 'archives', fact: 'complete' })) {
+    if (! month.value || ! /^\d{6}$/.test(month.period)) continue;
 
-      if (! month || ! at || ! /^\d{6}$/.test(month.trim())) continue;
-
-      found.set(`${venue}/${month.trim()}`, at.trim());
-    }
+    found.set(`${month.venue}/${month.period}`, month.value);
   }
 
   return found;
 };
 
 /**
- * The closing to compare against, for a month the ledger gives no time for.
+ * The closing to compare against, for a month with no time recorded against it.
  *
  * A sentinel rather than null, so such a month is still gated. Left ungated it
  * would be walked and compared on every run to reach the same answer, and the
@@ -335,19 +367,6 @@ const readClosings = (sharedRoot: string): Map<string, string> => {
  */
 const closedAt = (closings: Map<string, string>, venue: string, month: string): string =>
   closings.get(`${venue}/${month}`) ?? '-';
-
-const ledgers = (sharedRoot: string): [string, string][] => {
-  const dir   = path.join(sharedRoot, 'complete');
-  const found: [string, string][] = [];
-
-  for (const file of readdir(dir)) {
-    if (! file.endsWith('.tsv')) continue;
-
-    found.push([file.replace(/\.tsv$/, ''), read(path.join(dir, file))]);
-  }
-
-  return found;
-};
 
 /**
  * Every file under a venue, depth-first, as paths relative to the source root.
@@ -438,22 +457,6 @@ const statOf = (absolute: string): fs.Stats | null => {
     return fs.statSync(absolute);
   } catch {
     return null;
-  }
-};
-
-const readdir = (dir: string): string[] => {
-  try {
-    return fs.readdirSync(dir);
-  } catch {
-    return [];
-  }
-};
-
-const read = (file: string): string => {
-  try {
-    return fs.readFileSync(file, 'utf8');
-  } catch {
-    return '';
   }
 };
 

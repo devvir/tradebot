@@ -50,10 +50,17 @@ export const reclaim = async (
   root:   string,
   groups: EvictGroup[],
   purge:  boolean,
-): Promise<void> => {
+): Promise<EvictGroup[]> => {
   let moved  = 0;
   let freed  = 0;
   let failed = 0;
+
+  /**
+   * Which groups actually went, so the caller can record exactly those as
+   * evicted. A group that failed still has its files, and marking it gone would
+   * make everything downstream believe a local copy no longer exists.
+   */
+  const gone: EvictGroup[] = [];
 
   const touched = new Set<string>();
 
@@ -80,6 +87,7 @@ export const reclaim = async (
       else await trash(absolute);
 
       moved += absolute.length;
+      gone.push(group);
 
       info(`${group.label} — ${absolute.length.toLocaleString()} files ${purge ? 'deleted' : 'moved to trash'}`);
     } catch (err) {
@@ -111,6 +119,8 @@ export const reclaim = async (
 
   if (! purge && moved > 0)
     info(`${fmtBytes(freed)} is reclaimed once the trash is emptied — nothing is freed until then`);
+
+  return gone;
 };
 
 // ── Internals ─────────────────────────────────────────────────────────────────

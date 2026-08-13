@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as db from '../../../src/tools/cold/db';
 import type { ColdConfig, SourceFile } from '../../../src/tools/cold/types';
 import type { DatabaseSync } from 'node:sqlite';
@@ -27,6 +27,9 @@ vi.mock('../../../src/tools/cold/mega', () => ({
 const { _test_reclaimStaged: reclaimStaged } = await import('../../../src/tools/cold/push');
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-reclaim-'));
+
+/** The suite owns this tree; nothing outside it should have to sweep up. */
+afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
 
 const config = {
   sourceRoot: root,

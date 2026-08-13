@@ -42,7 +42,7 @@ a fine *target*, but as an artifact derived from a preserved original, never as 
 | Variable | Default | Meaning |
 |---|---|---|
 | `DATA_DIR` | — | **Host** root of the tradebot tree. The `@shared` is always `$DATA_DIR/@shared`, mounted at `/data/shared` |
-| `TRUCKER_DATA_DIR` | `$DATA_DIR/trucker` | **Host** archive directory, mounted at the fixed container path `/data/trucker`. May point anywhere — another volume, another machine |
+| `TRUCKER_DATA_DIR` | `$DATA_DIR/archives` | **Host** archive directory, mounted at the fixed container path `/data/trucker`. May point anywhere — another volume, another machine |
 | `TRUCKER_DIR` | — | Overrides the container archive path when running outside Docker |
 | `TRUCKER_SHARED_DIR` | — | Overrides the container shared-`@meta` path when running outside Docker |
 | `TRUCKER_VENUES` | _all_ | Comma-separated venue tokens |
@@ -347,13 +347,17 @@ terminator — and can never miss a part however many there are.
 A period's status is the worst outcome in its chain, so a failed part keeps the cursor from
 stepping over the whole period.
 
-### Absences that cannot be trusted
+### Absences that cannot be trusted — an unfounded rule, kept until discovery goes
 
-OKX has been observed answering 404 for a URL that serves 200 seconds later. No 429 and no
-other signal came with it, so **the cause is unknown** — but the answer is demonstrably
-unreliable, and a believed absence lets the cursor step past that period for good.
+> **The claim behind this does not hold, and the machinery below is waiting to be deleted rather
+> than corrected.** OKX was said to answer 404 for a URL that serves 200 seconds later. Checked
+> against its own ledger: of **46,847 recorded absences, 219 were re-probed and every one was still
+> absent**, and `attempts` is `1` on all 46,847 — so the double-probe described here has never run
+> on any of them. `docs/venues/OKX.md` has the measurement. It is left in place because discovery
+> is being replaced by the catalog and this goes with it; changing collection behaviour now would
+> be churn on code about to be removed.
 
-OKX alone is therefore marked `unreliableAbsence`. Its `absent` verdicts are probed twice
+OKX alone is marked `unreliableAbsence`. Its `absent` verdicts are probed twice
 before being accepted, and one the cursor is about to pass is appended to
 `<dataDir>/absences.jsonl` rather than forgotten. Once a sweep has nothing left to
 fetch, due entries are retried on a widening schedule (1h, 6h, 24h, 72h) and dropped only
@@ -423,7 +427,7 @@ Two host directories, mounted separately: what trucker owns, and what it publish
 
 ```
 $DATA_DIR/@shared/                      → /data/shared   (trucker writes, consumers read)
-  complete/gate.tsv
+  facts/archives.sqlite                 the published tip, one fact per venue-month
   changes/htx.tsv
 
 $TRUCKER_DATA_DIR/                   → /data/trucker
@@ -461,13 +465,19 @@ The tree holds **both granularities**, split at the cutover: a venue directory c
 is correct and no de-duplication is needed — but a consumer must read **both**, or it silently
 loses either the history or the recent tail.
 
-### The published contract — `@meta/complete/{venue}.tsv`
+### The published contract — `topic=archives`, `fact=complete`
 
 **One fact, and it is the only one a consumer reads:** the month a venue is collected through.
 
 ```
-201802	2026-08-03T14:22:10.004Z
+topic=archives  venue=gate  period=201802  fact=complete
+value=2026-08-03T14:22:10.004Z
 ```
+
+One fact per venue-month, so closing a month again replaces its time in place rather than
+appending beside it — the key does the work an append-only file needed a "later line wins" rule
+for. It lives in the shared facts store, which is where every service states what it knows and
+reads what everyone else does.
 
 Everything else under `@meta/` is trucker tracking its own progress. Those records answer
 "where is this symbol up to" — a question whose answer changes for ever, because an active
@@ -485,9 +495,25 @@ them knowing how trucker works.
 
 A month is published only when **every dataset of the venue** finished it with no failed
 period, and only once it is past the 35-day monthly publication window, so a file landing late
-can never contradict a tip already given. A failure anywhere leaves the month open and the next
-pass walks it again — holding the tip back is always right, since the tip is a promise
-consumers have already acted on. Forward-only, for the same reason.
+can never contradict a tip already given. A failure anywhere leaves the month open and a later
+pass walks it again.
+
+**The tip is the unbroken run of closed months, not the highest one closed.** The two are the
+same only while nothing has failed, and the difference is what makes the contract true rather
+than usually true. A month left open does not stop the walk — the months after it are collected
+and closed on their own merits — so the closings are a set with a hole in it, and the highest of
+them would vouch for every month beneath including the hole. bybit's 202402 and 202405 each
+faulted five hours into a pass; the tip read 202501, and stocker built 2,091 partitions from two
+months that were never finished.
+
+So the tip stops at the break. The closed months above it are not thrown away and not re-walked
+— they simply stop being claimed until the hole is filled, and filling it releases all of them
+in one step. **Every unclosed month within range is walked again on the next pass**, which is
+how the hole gets filled: a month is only abandoned when the walk stops looking at it, and it
+never does.
+
+Forward-only in the sense that matters: a month once closed stays closed, and the tip only
+retracts when it turns out never to have been earned.
 
 An archive collected before the ledger existed is **seeded** on start, from the lowest coverage
 across the venue's whole symbol universe, rounded down to the last whole month. That is what
@@ -570,12 +596,12 @@ every start, so there is no migration to remember and no state recording whether
 
 ### The rest of `@meta/` — trucker's own bookkeeping
 
-`complete/` is the whole published contract; everything beside it is trucker's own, and deleting
+The `archives` facts are the whole published contract; everything beside them is trucker's own, and deleting
 any of it costs work rather than data.
 
 | File | Holds | Cost of losing it |
 |---|---|---|
-| `complete/{venue}.tsv` | **the published tip** — the month the venue is collected through | re-seeded from coverage at the next start |
+| `facts/archives.sqlite` | **the published tip** — the month the venue is collected through | re-seeded from coverage at the next start |
 | `settled/{venue}.tsv` | per-symbol cursor, where a walk resumes | one re-listing pass |
 | `covered/{venue}.tsv` | how far each dataset+symbol has been looked at | re-seeded from milestones at the next start, weaker until a sweep widens it |
 | `inventory/{venue}/{dataset}.tsv` | what the venue publishes: every date, per symbol | one full enumeration per symbol — hours on binance |
@@ -1018,7 +1044,8 @@ archive's start. That matters: without it every symbol is probed from 2021 regar
 it listed, and a recent listing like `0G-USDT-SWAP` (2025-09-22) burns ~1,480 round trips on
 dates that cannot exist.
 
-This is the one venue marked `unreliableAbsence` — see *Absences that cannot be trusted*.
+This is the one venue marked `unreliableAbsence`, on grounds that did not survive checking — see
+*Absences that cannot be trusted*.
 
 ```
 instrument_name,trade_id,side,price,size,created_time

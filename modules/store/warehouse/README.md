@@ -43,11 +43,11 @@ tb logs warehouse        # Follow logs
 
 ## Working an era at a time
 
-`STOCKER_FROM` and `STOCKER_TO` bound a run to inclusive `YYYY-MM` months. Neither is a
+`STOCKER_START_MONTH` and `STOCKER_END_MONTH` bound a run to inclusive `YYYY-MM` months. Neither is a
 commitment — nothing about them is recorded, so widening one later simply makes more months
 eligible.
 
-Holding `STOCKER_TO` below the era trucker is currently fetching means each month is built once,
+Holding `STOCKER_END_MONTH` below the era trucker is currently fetching means each month is built once,
 from a complete era, instead of being rebuilt every time more of its raw arrives. It is a saving
 in rework, not a correctness requirement: a partition built from a half-collected month is
 rebuilt whole once the rest lands.

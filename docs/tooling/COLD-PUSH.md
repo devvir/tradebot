@@ -23,11 +23,13 @@ Read from `dev/tooling/.env`.
 | `DATA_DIR` | — | the data root the rest hang off |
 | `MEGA_ROOT` | — | where this project's trees live in Mega |
 | `SOURCES_COLD_DIR` | `<DATA_DIR>/@cold` | staging tars, the locks, and `cold.sqlite` |
-| `STOCKER_VAULT_DIR` | `<DATA_DIR>/vault` | the tree the `vault` origin backs up |
-| `COLD_ARCHIVES_DIR` | `<DATA_DIR>/trucker` | the tree the `archives` origin backs up |
+| `VAULT_DIR` | `<DATA_DIR>/vault` | the tree the `vault` origin backs up |
+| `ARCHIVES_DIR` | `<DATA_DIR>/archives` | the tree the `archives` origin backs up |
 | `COLD_QUEUE_TARGET_GB` | `10` | GB still queued before packing pauses |
 
-`COLD_ARCHIVES_DIR` defaults to `trucker` because that is the directory that exists, not because the origin is named for it — the tree is expected to be renamed, and this variable is what will say so when it is.
+**The trees are named for themselves — not for the service that fills one, and not for `cold`.** The vault is the vault whether or not stocker is deployed on this host, and it is still the vault when something other than `cold` wants it. Reusing the service's own variable looks like it keeps the two in agreement and does the reverse: that name is set in the service's module `.env`, which tooling reads only when asked for it by name, so the two agree exactly until somebody overrides the default. A host that backs up a vault built elsewhere may not have that module checked out at all, and nobody would think to edit an inactive module's configuration to make a backup run.
+
+A default is still worth stating; where any given installation actually keeps its trees is what the variable is for, and only it knows.
 
 **Every local path defaults under `DATA_DIR`, and every one can still be overridden.** Those two are not in tension. The default is what keeps the data root from being the same decision taken again in every path — move the data to another partition and it is one variable, not a search — while the override is there for a host that genuinely needs one tree elsewhere. Writing the root into each path would not be a default; it would be a duplicated decision.
 
@@ -102,7 +104,9 @@ A row is written **last**, after every part of the month is recorded, so a crash
 
 ### What makes an archive month a candidate
 
-The producer's own signal, and nothing inferred: a venue-month is a candidate once trucker has published it as collected through, in `$DATA_DIR/@shared/complete/<venue>.tsv`. The file is append-only, so the highest month wins and a torn write cannot lower a tip already acted on.
+The producer's own signal, and nothing inferred: a venue-month is a candidate once trucker has published it as collected through, as `topic=archives, fact=complete` in the facts store.
+
+**The tip is the unbroken run of closed months, not the highest one.** A month that fails part-way through collection is left open while the months after it go on closing, so the closings are not necessarily a range. Reading the maximum as the tip vouches for every month beneath it including the hole — bybit's read 202501 over open 202402 and 202405, and stocker built 2,091 partitions from two months that were never finished. Stopping at the break costs the closed months above it until the hole is filled, and filling it releases all of them at once.
 
 **Not because a later file could not be handled.** The record is at file grain and a month can be appended to at any time, so correctness does not need the month closed. Packing an open month would simply produce a stream of tiny parts, one per collection pass, for ever.
 
@@ -110,7 +114,7 @@ Nothing here knows what a dataset is, which symbols exist, or how any venue orga
 
 ### What makes a vault month a candidate
 
-The same principle, from the producer that owns the vault: **a venue-month is packed only when every partition stocker's ledger records for it is either on disk or already in cold storage.** Otherwise the month is dropped from the plan and reported.
+The same principle, from the producer that owns the vault: **a venue-month is packed only when every partition stocker says it built for that month is either on disk or already in cold storage.** Otherwise the month is dropped from the plan and reported.
 
 **The files present say which partitions are here, never whether that is all of them.** Packing whatever is on disk records a fragment as a finished month, and the record then reads as coverage that does not exist. Most of bybit's vault was parked on another disk while the real one was full, and 45 months went into cold storage from the remains — one of them holding a single partition of the 133 stocker had built. Nothing in cold storage could have noticed: it packed exactly what it found, which is all it was ever asked to do.
 
@@ -118,7 +122,7 @@ The same principle, from the producer that owns the vault: **a venue-month is pa
 
 **There is no override.** An incomplete month is not a formality to wave through — it means partitions stocker built are missing and nothing anywhere has them. A flag to pack anyway would turn the one signal that surfaces that into a prompt people learn to answer.
 
-A venue the ledger says nothing about is left alone rather than refused. An absent ledger is not evidence of a missing partition, and blocking on it would stop a venue nobody has a record for from ever being backed up.
+A venue nothing has been said about is left alone rather than refused. An absent record is not evidence of a missing partition, and blocking on it would stop a venue nobody has a record for from ever being backed up.
 
 **A run that withheld months does not close by saying everything is backed up.** The count crosses back out of the planner for that one reason: `Everything from bybit is in cold storage` printed three lines under a refusal would undo the refusal, and it is the last line anybody reads.
 
@@ -131,7 +135,9 @@ A venue the ledger says nothing about is left alone rather than refused. An abse
 
 Grouped by venue with the worst month named, because one month short is a partition that has not landed yet and forty months short is a disk that went missing — and only the aggregate and the ratio tell those apart.
 
-The ledger is read from `<vault>/@meta/built/`, and **only `<dataset>.<venue>.jsonl` counts**. Anything else in that directory is not a ledger whatever it resembles: a `klines.bitget.jsonl.bak` left behind by a repair described 4,480 partitions under a layout that no longer exists, and reading it would have blocked twenty bitget months against records nothing could ever satisfy. Only the ids are parsed, not the whole records — `inputs` is the entire weight of those files, 336MB across the ledger, and the month is the id's last segment.
+The gate asks the facts store, not stocker's files — one query per venue for `topic=vault, fact=built`, with the partition id rebuilt from the columns it is filed under.
+
+**That closed a hole rather than moving one.** Parsing the flat file took the id with a regex assuming `"id":"` with no space after the colon, and 4,480 lines of `klines.bitget.jsonl` were written by a repair using `json.dumps` defaults, which puts one there. The gate saw 16,531 bitget partitions where the file holds 20,964, so a bitget month missing any of those 4,433 passed as whole. Verified across all six venues after the move: identical counts everywhere else, 4,433 recovered on bitget, and **nothing that was in the files is missing from the facts**.
 
 ---
 
@@ -139,7 +145,7 @@ The ledger is read from `<vault>/@meta/built/`, and **only `<dataset>.<venue>.js
 
 `push <origin> <venues…>` narrows the run, and the narrowing happens **inside the planner** rather than to whatever it returns. Filtering afterwards is too late twice over: the venue has already been walked — millions of directory entries for a result that is then discarded — and the planner has already reported on it. `push vault bitget okx` warned at length about bybit's incomplete months, which are neither news nor anything that run could act on.
 
-The vault still walks its whole tree, since `venue=` is the top level today and may not be tomorrow, and the walk is cheap next to the ledger read and the per-file comparison that the filter skips. The archives skip a venue before walking it at all, which is the slowest thing this command does.
+The vault still walks its whole tree, since `venue=` is the top level today and may not be tomorrow, and the walk is cheap next to the per-file comparison and the gate's queries that the filter skips. The archives skip a venue before walking it at all, which is the slowest thing this command does.
 
 ## It answers Ctrl-C
 

@@ -17,6 +17,12 @@ services:
       args:
         SERVICE_NAME: stocker
 
+        # A build input, not a setting: nothing in stocker reads it or adapts to
+        # it. Concurrency is what decides the appetite — each build holds a
+        # month-sized sort — and this is only the ceiling the box will tolerate
+        # alongside the collectors.
+        NODE_MEMORY_MB: ${STOCKER_MEMORY_MB:-4096}
+
     container_name: stocker
 
     environment:
@@ -32,20 +38,19 @@ services:
       # them later simply makes more months eligible. Pinning the ceiling below
       # the era still being collected is what keeps a run from touching raw that
       # is still arriving — which is what makes reclaiming the era below it safe.
-      STOCKER_FROM: ${STOCKER_FROM:-}
-      STOCKER_TO:   ${STOCKER_TO:-}
+      STOCKER_START_MONTH: ${STOCKER_START_MONTH:-}
+      STOCKER_END_MONTH:   ${STOCKER_END_MONTH:-}
 
-      # Partitions built at once. Each holds a month-sized sort and they share
-      # the memory limit below, so raising both together is the wrong move.
+      # Partitions built at once. Each holds a month-sized sort, so this is what
+      # decides how much memory and CPU a sweep actually wants.
       STOCKER_CONCURRENCY: ${STOCKER_CONCURRENCY:-2}
 
       # Minutes between rescans of the raw tree
       STOCKER_SCAN_MINUTES: ${STOCKER_SCAN_MINUTES:-30}
 
-      # Hard caps. DuckDB spills to disk inside the vault volume rather than
-      # being killed — this host runs the collectors at the same time.
-      STOCKER_MEMORY_LIMIT: ${STOCKER_MEMORY_LIMIT:-4GB}
-      STOCKER_THREADS:      ${STOCKER_THREADS:-4}
+      # Cores a build may take. DuckDB spills to disk inside the vault volume
+      # rather than being killed; this host runs the collectors at the same time.
+      STOCKER_THREADS: ${STOCKER_THREADS:-4}
 
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV:  ${APP_ENV:-prod}

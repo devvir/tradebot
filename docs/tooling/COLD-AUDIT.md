@@ -50,7 +50,30 @@ Ordinary backlog is not a finding at all: what is planned and what is in Mega ar
 
 ### The handle is what makes replacement visible
 
-A size can coincide; Mega's handle identifies the stored object independently of its path. It is recorded when an upload is confirmed, so a later run can tell "the same object is still there" from "something else now occupies that name". A part confirmed without one is reported, because that check can never be made for it.
+A size can coincide; Mega's handle identifies the stored object independently of its path. It is recorded when an upload is confirmed, so a later run can tell "the same object is still there" from "something else now occupies that name".
+
+**Writing to a path in Mega creates a new node with a new handle**, so a handle that has not moved is strong evidence the bytes have not either — stronger than the size comparison, which a coincidence can satisfy.
+
+A part confirmed without a handle is reported. That is a **bug to fix, not a state to design around**: the path is known, so the handle can be fetched from Mega and written back, once. As of 2026-08-13 no part is in that state — 343 archives and 223 vault parts, all with handles — so the finding is a guard rather than a live condition.
+
+### Verifying against the members is a once-per-object question
+
+The size comparison asks *is this the tar those members describe*. The handle asks *is this still the object we confirmed*. They are different questions, and only the first needs asking more than once — after an object has been proved to match its members, a stable handle carries that proof forward for ever.
+
+So this is a genuine candidate for caching in `cold.sqlite`: record that part *P* was verified while holding handle *H*, and skip recomputing the predicted size while the handle is unchanged. **Not done**, because recomputing it for every part costs 304ms measured, and that is not yet worth a cache and the ways a cache can be wrong.
+
+### `mega-find` cannot replace `mega-ls`, and the listing is not why the audit is slow
+
+`mega-find` looks better suited on paper — full paths instead of `dir:` headers to track, `--type=f` filtering folders server-side, 223 lines against 288, `--show-handles` all the same. It is unusable for one reason:
+
+```
+mega-ls    ----  1  337920  10Aug2026 09:01:11 H:dmM1kbZb 201807.p01.tar
+mega-find  /Tradebot/vault/bitget/2018/201807.p01.tar <H:dmM1kbZb> (330.00 KB)
+```
+
+**It rounds.** `330.00 KB` cannot be compared against a byte-exact prediction. A handle-only audit using it would work — see above — but would leave a handle-less part unverified and would trade an independent signal for a derived one.
+
+**And there is nothing to gain.** Both commands return in **0.02–0.03 seconds**: mega-cmd's server answers from memory and there is no network round trip. The listing has been assumed to be the slow part of a run and measured not to be — the local costs are the vault walk (3.2s over 140,000 files) and reading what the services built (1.2s). Anyone optimising this should re-profile rather than inherit that assumption.
 
 ---
 
@@ -61,30 +84,42 @@ Every section is the same shape — a title, a line saying what it is about, and
 ```
 COLD STORAGE  every tree, by venue
 
-┌─────────┬────────────────────────────────────┬─────────────────────────────────────┐
-│ Venue   │ Vault                              │ Archives                            │
-├─────────┼────────────────────────────────────┼─────────────────────────────────────┤
-│ binance │ 108 mo (2017-07 → 2026-06)         │ —                                   │
-│         │ 178 parts (81,962 files, 239.5GB)  │                                     │
-│         │ 104 backed up (58.5 mo, 139.1GB)   │                                     │
-├─────────┼────────────────────────────────────┼─────────────────────────────────────┤
-│ bitget  │ 67 mo (2018-07 → 2026-06)          │ 41 mo (2018-07 → 2021-11)           │
-│         │ 142 parts (20,964 files, 134.8GB)  │ 53 parts (64,321 files, 6.2GB)      │
-│         │ 62 backed up (40.0 mo, 3.8GB)      │ all backed up (6.2GB)               │
-├─────────┴────────────────────────────────────┴─────────────────────────────────────┤
-│                                                                                    │
-├─────────┬────────────────────────────────────┬─────────────────────────────────────┤
-│ all     │ 252 mo                             │ 160 mo                              │
-│         │ 465 parts (222,335 files, 505.9GB) │ 397 parts (2,582,705 files, 1.3TB)  │
-│         │ 311 backed up (175.5 mo, 274.5GB)  │ 343 backed up (157.1 mo, 1.0TB)     │
-└─────────┴────────────────────────────────────┴─────────────────────────────────────┘
+┌─────────┬─────────────────────────────┬─────────────────────────────┐
+│ Venue   │ Vault                       │ Archives                    │
+├─────────┼─────────────────────────────┼─────────────────────────────┤
+│ binance │ —                           │ 0 mo                        │
+│         │                             │ 102,850 files (295.8GB)     │
+│         │                             │ nothing backed up           │
+├─────────┼─────────────────────────────┼─────────────────────────────┤
+│ bitget  │ 40 mo (2018-07 → 2021-10)   │ 42 mo (2018-07 → 2021-12)   │
+│         │ 2,189 partitions (3.8GB)    │ 681,777 files (158.6GB)     │
+│         │ 40 mo backed up (3.8GB)     │ 41 mo backed up (6.2GB)     │
+├─────────┼─────────────────────────────┼─────────────────────────────┤
+│ bybit   │ 49 mo (2020-01 → 2024-01)   │ 61 mo (2020-01 → 2025-01)   │
+│         │ 15,762 partitions (216.3GB) │ 443,814 files (1.3TB)       │
+│         │ nothing backed up           │ 61.2 mo backed up (790.3GB) │
+├─────────┴─────────────────────────────┴─────────────────────────────┤
+│                                                                     │
+├─────────┬─────────────────────────────┬─────────────────────────────┤
+│ all     │ 144 mo                      │ 158 mo                      │
+│         │ 125,539 partitions          │ 3,696,839 files             │
+│         │ 95 mo backed up (109.3GB)   │ 157.2 mo backed up (1.0TB)  │
+└─────────┴─────────────────────────────┴─────────────────────────────┘
 ```
 
 **A venue's trees are two halves of one question — is this venue safe — so they belong side by side.** A column per data point spread one venue's answer across six columns and two tables a screen apart, and comparing its vault against its archives meant holding one set of numbers in your head while reading the other. REST and websocket arrive as two more columns rather than two more tables.
 
 **Three lines per cell, in the order the questions come in.** How far does this go, how big is it, and how much of it would survive this disk dying.
 
-**The first line spans everything known, not only what is in Mega.** That reverses an earlier choice — the range used to be of uploaded months, because `0 months` across `202109–202311` read as loss rather than backlog — and it is only safe because the third line now says what is backed up in its own right. The difference between lines two and three *is* the backlog, per venue and per tree, which is strictly more than the single footer it replaced.
+**The first two lines are about the data; the third is about cold storage.** That separation is the point. Reading all three off the `part` rows meant a venue with nothing backed up had no rows to fold and rendered as a single dash — so *there is nothing here* and *none of this is backed up* looked identical, on the one screen that exists to tell them apart. bybit showed a dash over 15,762 partitions across 49 months.
+
+So the months come from the **producer** — the collector's closed months, stocker's built partitions — and the count and size from **what is actually there**. Cold storage is only asked the last question, which is the only one it can answer.
+
+**What is there is on disk plus evicted, never one or the other.** Counting only local makes a venue shrink as it is backed up and cleaned, which is backwards; counting only cold storage misses everything not yet packed. The two sets are disjoint by construction — an evicted file is one that was deleted locally — so adding them is the venue's true size. That is what the [eviction record](COLD-EVICT.md#what-was-reclaimed-is-recorded) exists for, and until a tree has been evicted through it, that tree's total is short by whatever was reclaimed before.
+
+**The vault counts partitions and the archives count files, which is the same quantity.** A partition is exactly one Parquet file; an archive member is one `.zip` or `.csv.gz`. Only the noun changes, per origin.
+
+**A part is never in the cell.** It is cold storage's own packing unit and says nothing about how much a venue holds — leading with it put the real quantity in a parenthesis, and rendered nothing at all for a venue with no parts yet. Where a part is the subject — a gap, a tar missing from Mega — the findings say so in parts, which is where the unit belongs.
 
 **Size is last on both lines that carry one**, so the two land in roughly the same place and a glance down the cell compares them without reading either. Bytes first put the number this is really about — how much is safe — beside a file count on the line below it.
 
@@ -92,7 +127,17 @@ COLD STORAGE  every tree, by venue
 
 **Month counts add across venues; the months themselves do not.** Seven venues each holding `2020-03` are seven venue-months of data and one calendar month, and a totals row built by unioning them printed `108 mo` under a column adding to 252.
 
-**A complete tree says so instead of repeating itself.** `27 backed up (27.0 mo, 2.0GB)` under `27 parts (2.0GB)` is the same three numbers twice, and most venues sit in exactly that state.
+**One shape for every state, and the colour carries the verdict.** `all backed up` beside `41 backed up` was two formats to learn, and its unit was redundant when the numbers matched and misleading when they did not — `all` meant every *part*, which reads as every *month*. Now every cell says `N mo backed up (size)`, green when nothing is outstanding and yellow when something is, so the comparison against the first line needs no arithmetic.
+
+Zero keeps its words: **`nothing backed up`, in red**. `0 mo backed up (0B)` is easy to skim past, and that is the state that most deserves not to be.
+
+**The vault's month count turns yellow when it trails the archives'.** A vault month exists because an archives month was complete, so the two should meet; where the vault's is short, whole finished months have never been normalised. It is the only comparison between two cells of a row that means anything, and it only runs in that direction, since the vault cannot cover a month its source does not. Yellow rather than red because it is a backlog, not a fault, and the number it is short of is already on the same line one column over. The totals row stays dim: totals carry no verdict, the same rule the backed-up line follows.
+
+**Which months, not how many.** A venue short by one because its newest month cannot be built yet and a venue short by one because a month in the middle never built are the same number and different situations, so the sets are compared rather than the counts.
+
+**A spilling venue is green and starred at one month short.** Where every one of a venue's series keeps a month's tail in the next month's first bucket — bitget, whose buckets cut at 16:00 UTC — its newest closed month can never be normalised, because the day that completes it belongs to a month the collector has not closed. That venue sits exactly one month behind its archives for as long as that month is the tip, which under the rule above would be yellow for ever, warning about a state nobody can act on. So the count is green with a `*`, and a footnote under the table says why. Only the newest month is ever excused; anything older is outstanding whatever the venue's buckets do.
+
+**The trait is stated, not inferred.** Whether a venue spills is a property of its series, and what a series is has no business being known in `cold` — so stocker records it as a `spills` fact against the venue and the audit reads it like anything else. A venue where only *some* series spill is deliberately not stated: the month still builds, just from fewer series, so nothing here sees a shortfall to explain.
 
 **The heading row and the venue column are coloured, not just bold.** A cell holds three lines of its own, so a page of this is a lot of text at one weight; the two coloured edges frame the grid rather than decorating it. The totals get a blank spanned row above them, because every row already has a border and a border alone cannot say "and now, everything".
 
@@ -151,11 +196,21 @@ A month counts as backed up only when **every** part of it is in Mega. A restore
 
 ---
 
-## What it costs
+## The page fills in rather than making you wait
 
-One recursive listing per origin — a few hundred objects with sizes and handles in a single call — plus one indexed member lookup per part. No downloads, and no walk of the source tree.
+One recursive Mega listing per origin — a few hundred objects with sizes and handles in a single call — plus one indexed member lookup per part. No downloads.
 
-That is deliberate: an audit expensive enough to postpone is one nobody runs.
+The trees are a different matter. Answering *how much is there* means measuring what is on disk, and that is **21.5 seconds** for the archives: 3.7 million files across seven venues, from 0.3s for okx to 7.3s for htx. The vault is free by comparison, and free in the literal sense — it is already being walked for the `built but nowhere` check, so its sizes are a by-product.
+
+So the whole report is printed **before** the archives are counted, with `Counting…` where a size is still being measured, and redrawn in place as each venue lands. The height cannot change between paints — the venues are known before the first one, and the placeholder occupies a cell the way a size does — so nothing shifts and the only movement is text inside cells.
+
+**Findings and the reclaim table are computed once and reprinted unchanged.** They depend on nothing being measured, and holding them back until the walk finished was the odd part.
+
+Off a terminal there is no cursor to move, so everything is measured first and printed once: a piped table reading `Counting…` for ever would be worse than waiting for it.
+
+**Sequential, and measured to be the right choice.** Walking the venues in parallel through async `fs` is **2.6× slower** — 55.8s against 21.5s — because the cost is not the device but Node: 3.7 million `stat` calls through the libuv threadpool, each with its own promise, against synchronous calls that skip all of it. Real parallelism would mean leaving Node for `du` or similar, which has not been tried.
+
+An audit expensive enough to postpone is one nobody runs, which is why the wait is spent looking at the answer rather than at a cursor.
 
 ---
 

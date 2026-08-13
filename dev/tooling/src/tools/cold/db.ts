@@ -467,6 +467,123 @@ export const venues = (db: DatabaseSync, origin: Origin): string[] =>
   ).all(origin) as unknown as { venue: string }[]).map(row => row.venue);
 
 /**
+ * Note that something is no longer on local disk.
+ *
+ * Written **after** the deletion, never before: a row saying a file is gone
+ * while it is still there would have the total under-count what exists, and the
+ * whole point of the table is that nobody has to `stat` to find out.
+ *
+ * One statement per row and one transaction for the batch, because a partial
+ * record is worse than none — half a month marked evicted reads as a month half
+ * of which was never packed.
+ */
+export const evictParts = (
+  db:     DatabaseSync,
+  origin: Origin,
+  months: { venue: string; month: string }[],
+): number => {
+  if (months.length === 0) return 0;
+
+  const parts = db.prepare(
+    `SELECT id, bytes, files FROM part WHERE origin = ? AND venue = ? AND month = ?`);
+
+  const insert = db.prepare(
+    `INSERT INTO evicted (part_id, path, bytes, files, at) VALUES (?, '', ?, ?, ?)
+     ON CONFLICT (part_id, path) DO UPDATE SET at = excluded.at`);
+
+  const at = new Date().toISOString();
+
+  let written = 0;
+
+  db.exec('BEGIN');
+
+  try {
+    for (const { venue, month } of months)
+      for (const part of parts.all(origin, venue, month) as unknown as
+        { id: number; bytes: number; files: number }[]) {
+        insert.run(part.id, part.bytes, part.files, at);
+        written++;
+      }
+
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+
+    throw err;
+  }
+
+  return written;
+};
+
+/**
+ * Note that individual files are gone, each resolved to the part that holds it.
+ *
+ * The vault's grain, because a filtered eviction takes a symbol or a dataset out
+ * of a month and leaves the rest — recording the part whole would claim
+ * partitions that are still here.
+ *
+ * A path cold storage has never packed is skipped rather than recorded: it
+ * cannot have been evicted from cold storage's point of view, since cold storage
+ * never had it.
+ */
+export const evictPaths = (
+  db:     DatabaseSync,
+  origin: Origin,
+  paths:  string[],
+): number => {
+  if (paths.length === 0) return 0;
+
+  const member = db.prepare(
+    `SELECT m.part_id AS partId, m.bytes AS bytes FROM member m JOIN part p ON p.id = m.part_id
+      WHERE p.origin = ? AND m.path = ?`);
+
+  const insert = db.prepare(
+    `INSERT INTO evicted (part_id, path, bytes, files, at) VALUES (?, ?, ?, 1, ?)
+     ON CONFLICT (part_id, path) DO UPDATE SET at = excluded.at`);
+
+  const at = new Date().toISOString();
+
+  let written = 0;
+
+  db.exec('BEGIN');
+
+  try {
+    for (const path of paths) {
+      const row = member.get(origin, path) as unknown as { partId: number; bytes: number } | undefined;
+
+      if (! row) continue;
+
+      insert.run(row.partId, path, row.bytes, at);
+      written++;
+    }
+
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+
+    throw err;
+  }
+
+  return written;
+};
+
+/**
+ * What each venue holds only in Mega — gone from disk, safe in cold storage.
+ *
+ * Added to what is still on disk, this is how much a venue actually has. Without
+ * it the two would double-count everything present in both places, which is why
+ * nothing could state a venue's true size before.
+ */
+export const evicted = (db: DatabaseSync, origin: Origin): Map<string, { files: number; bytes: number }> =>
+  new Map((db.prepare(
+    `SELECT p.venue AS venue, SUM(e.files) AS files, SUM(e.bytes) AS bytes
+       FROM evicted e JOIN part p ON p.id = e.part_id
+      WHERE p.origin = ?
+      GROUP BY p.venue`,
+  ).all(origin) as unknown as { venue: string; files: number; bytes: number }[])
+    .map(row => [row.venue, { files: Number(row.files), bytes: Number(row.bytes) }]));
+
+/**
  * Venue-months that still have a part waiting to go.
  *
  * A month is only a candidate once **every** part of it is in Mega — one tar
@@ -662,6 +779,51 @@ CREATE TABLE IF NOT EXISTS month (
   month     TEXT NOT NULL,
   closed_at TEXT NOT NULL,
   PRIMARY KEY (origin, venue, month)
+);
+
+/**
+ * What has been reclaimed from local disk, and is therefore only in Mega.
+ *
+ * **Without this, "packed" and "packed then evicted" are indistinguishable**, and
+ * telling them apart otherwise costs a \`stat\` per file — 2.6 million for the
+ * archives. That makes the only question worth asking about a venue — *how much
+ * is there, and how much of it is safe* — uncomputable, because what is on disk
+ * plus what is in Mega double-counts everything still in both.
+ *
+ * **An eviction belongs to a part, which is what makes it free.** A part already
+ * records the size and count of its members, exactly and permanently: verified
+ * across all 580 of them, \`part.bytes\` is \`SUM(member.bytes)\` and \`part.files\`
+ * the member count, with no drift. And a part cannot change under it — rebuilding
+ * one produces a different part — so the summary can never go stale. Evicting a
+ * month is then a handful of rows carrying their own totals, however many
+ * millions of files they stand for.
+ *
+ * **Nothing can be evicted that was never backed up**, so every eviction has a
+ * part to belong to. There is no other case to design around.
+ *
+ * \`path\` empty means the whole part, which is what archives always evict and
+ * what the vault evicts by default. A vault eviction narrowed by symbol, dataset
+ * or period names each partition instead, since a month is then rarely taken
+ * whole. Either way the totals are the same column.
+ *
+ * **The sizes are stored rather than joined.** They are recoverable from
+ * \`member\` in both trees, so this is a denormalisation and not a necessity —
+ * bought because it turns the audit's question into one \`SUM\` over a handful of
+ * rows instead of a join into 2.6 million, and because what a reclaim freed is a
+ * fact about that moment. If it ever disagrees with the part it came from, that
+ * is a bug and not a discrepancy to reconcile.
+ *
+ * A restore deletes the row; the row's absence is what says the data is back. A
+ * part that is replaced takes its evictions with it through the cascade — a
+ * replacement can only be packed from files that were restored first.
+ */
+CREATE TABLE IF NOT EXISTS evicted (
+  part_id INTEGER NOT NULL REFERENCES part(id) ON DELETE CASCADE,
+  path    TEXT    NOT NULL DEFAULT '',
+  bytes   INTEGER NOT NULL,
+  files   INTEGER NOT NULL,
+  at      TEXT    NOT NULL,
+  PRIMARY KEY (part_id, path)
 );
 
 CREATE INDEX IF NOT EXISTS member_part   ON member (part_id);

@@ -28,10 +28,33 @@ describe('venue and table filters', () => {
   });
 });
 
+/**
+ * The same forms trucker takes, so the two ends of the pipeline are configured
+ * the same way — and always returned dashed, which is how partitions are keyed
+ * here. What a person types and what the comparison uses need not agree.
+ */
 describe('month bounds', () => {
-  it('takes YYYY-MM and nothing else', () => {
-    expect(parseMonth('2026-06')).toBe('2026-06');
-    expect(parseMonth(undefined)).toBeNull();
-    expect(() => parseMonth('202606')).toThrow(/YYYY-MM/);
+  it('takes the three forms and answers in one', () => {
+    expect(parseMonth('2026-06', 'X')).toBe('2026-06');
+    expect(parseMonth('202606',  'X')).toBe('2026-06');
+    expect(parseMonth('2606',    'X')).toBe('2026-06');
+    expect(parseMonth(undefined, 'X')).toBeNull();
+  });
+
+  it('refuses anything that is not a month', () => {
+    expect(() => parseMonth('2026-6',   'X')).toThrow(/yyyy-mm/);
+    expect(() => parseMonth('20260601', 'X')).toThrow(/yyyy-mm/);
+    expect(() => parseMonth('june',     'X')).toThrow(/yyyy-mm/);
+  });
+
+  /** A bound naming month 13 is a typo, and one that would silently match nothing. */
+  it('refuses a month outside 01–12', () => {
+    expect(() => parseMonth('2026-13', 'STOCKER_END_MONTH')).toThrow(/names month 13/);
+    expect(() => parseMonth('202600',  'STOCKER_END_MONTH')).toThrow(/names month 00/);
+  });
+
+  /** The variable is named in the error, because two of them exist. */
+  it('says which bound was wrong', () => {
+    expect(() => parseMonth('nope', 'STOCKER_START_MONTH')).toThrow(/STOCKER_START_MONTH/);
   });
 });

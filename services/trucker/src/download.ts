@@ -91,9 +91,9 @@ export const download = async (
 
       // "Absent" is how a venue says a period was never published, and for the
       // venues that construct URLs it is the expected answer for most requests.
-      // It is taken at face value — except on a venue whose absences have been
-      // caught lying, where it is probed again before being believed, since the
-      // cursor steps past a believed absence for good.
+      // It is taken at face value — except where `unreliableAbsence` is set,
+      // which is okx alone and which no longer has evidence behind it. That flag
+      // is documented as unfounded and goes when discovery does.
       if (verdict === 'absent') {
         if (archive.unreliableAbsence && attempt < ABSENT_CONFIRMATIONS) {
           await sleep(delayFor(attempt));

@@ -37,7 +37,7 @@ They share the deleting and nothing else. Both hold their own lock, so evicting 
 
 **Is it safe to delete?** The raw is in Mega, and what Mega holds is exactly what is on disk. Answered entirely from `cold.sqlite`, and it is what makes the deletion recoverable.
 
-**Is it finished with?** Every file reached a partition, and that partition is itself in Mega. Answered from stocker's ledger joined to the vault side of cold storage.
+**Is it finished with?** Every file reached a partition, and that partition is itself in Mega. Answered from what stocker says it built, joined to the vault side of cold storage.
 
 The second is **not** a safety property. A file backed up as raw can be deleted with nothing lost either way. It is about **alignment**: raw exists in order to become Parquet, so raw that became none is either something the collector should stop fetching or something stocker should be modelling. Evicting it would settle that question by forgetting it. Blocking says so out loud instead — which is how gate's unmodelled spot klines were found, and they are recorded in [BUGS.md](../planning/BUGS.md) rather than quietly reclaimed.
 
@@ -70,15 +70,17 @@ Size and mtime are the whole comparison — no hashes. mtime is when the collect
 
 **A partition Mega holds an older copy of does not count as backed up.** Stocker rewrites a partition in place when its inputs change, so what is in cold storage can be a thinner version of what is on disk — and the raw about to be deleted is what the *current* one was built from. The check is the same comparison `cold push vault` makes to decide what to repack: local size and mtime against the `member` row. A drifted partition blocks its month until that push has run, so eviction stops depending on the order somebody happened to run things in. A partition that is simply *gone* locally is not drift — that is the steady state this whole family aims at.
 
-**Only the current build of a partition vouches for its inputs.** Stocker's ledger is append-only and a rebuild appends, so a partition's later line replaces its earlier ones — exactly as stocker itself reads it back. Accumulating every line instead unions the inputs of builds that no longer exist, and a file dropped by a rebuild goes on vouching for itself out of a superseded entry. That is not hypothetical: bitget's klines were rebuilt from one of their two published layouts at a time, so every raw file appeared in *some* line while the partition on disk held half of them — thirty-five months read as fully normalised and were offered for eviction, taking with them the raw the repair needed.
+**Only the current build of a partition vouches for its inputs.** A raw file dropped by a rebuild must stop counting, or it goes on vouching for itself out of a record that no longer describes anything. That is not hypothetical: bitget's klines were rebuilt from one of their two published layouts at a time, so every raw file appeared in *some* record while the partition on disk held half of them — thirty-five months read as fully normalised and were offered for eviction, taking with them the raw the repair needed.
+
+**This command cannot enforce it, so the producer must.** A superseded member and a current one are indistinguishable once both are in `vault:details`; the reader has nothing to tell them apart by. Stocker replacing a partition's members on rebuild is what keeps the rule true, and the check against the flat files at migration confirmed the two agree today — identical for all six venues, no key and no id differing.
 
 ---
 
 ## It stays answerable
 
-Examining a venue is a quarter of a million `stat` calls and a megabyte of JSON, and none of it yields on its own. Node delivers a signal through the event loop, so a handler cannot run while a synchronous stretch holds the stack — the signal is not lost, it is queued behind work that has to finish first, which reads exactly like a command ignoring Ctrl-C.
+Examining a venue is a quarter of a million `stat` calls, and none of it yields on its own. Node delivers a signal through the event loop, so a handler cannot run while a synchronous stretch holds the stack — the signal is not lost, it is queued behind work that has to finish first, which reads exactly like a command ignoring Ctrl-C.
 
-So the walk and the ledger parse hand the loop back every few thousand items. A tick costs microseconds against thousands of `stat`s, far below measurable, and Ctrl-C lands in milliseconds rather than a minute.
+So the walk hands the loop back every few thousand items. A tick costs microseconds against thousands of `stat`s, far below measurable, and Ctrl-C lands in milliseconds rather than a minute.
 
 The venue list is asked of the parts, never of their members: the same answer can be had by reading every member row and collecting the distinct venues, which was 2.46 million rows and 67 seconds to produce six strings — before the command had printed anything or could answer a signal.
 
@@ -123,7 +125,7 @@ Directories are then removed with `rmdir`, which **fails on a directory that is 
 
 `cold.sqlite` answers everything except one question: **which raw file became which partition**. Cold storage knows raw paths and it knows Parquet paths, and nothing in it connects the two, because that connection is a record of what stocker did rather than of what was backed up.
 
-So the alignment check reads stocker's published ledger under `<vault>/@meta/built/`. That is the same kind of dependency `cold push archives` already has on the collector's published tips — a documented output, not a reach into internals — and it is confined to `ledger.ts`, since the ledger is expected to stop being flat files. [`cold push vault`](COLD-PUSH.md#what-makes-a-vault-month-a-candidate) reads the same files for a different question, which is why the parsing lives in one place rather than two.
+So the alignment check reads what stocker has published — `topic=vault:details` in the facts store, where each member's raw path is the fact and the partition it fed is the key it is filed under. That is the same kind of dependency `cold push archives` already has on the collector's published tips: a documented output, not a reach into internals. It is confined to `ledger.ts`, which [`cold push vault`](COLD-PUSH.md#what-makes-a-vault-month-a-candidate) also uses for a different question, so the reading lives in one place rather than two.
 
 A partition's id is rebuilt from cold storage's own `member` columns rather than by reconstructing a vault path, which would mean copying stocker's layout rules into this command:
 
@@ -230,6 +232,39 @@ It matters more for what is coming than for archives today: an archive file can 
 
 ---
 
+## What was reclaimed is recorded
+
+`evict` writes to `cold.sqlite` once, after the deletion: a row per thing that is now only in Mega.
+
+**Without it, "packed" and "packed then evicted" are indistinguishable**, and telling them apart costs a `stat` per file — 2.6 million for the archives. That makes the only question worth asking about a venue uncomputable: *how much is there, and how much of it is safe*. What is on disk plus what is in cold storage double-counts everything still in both, and either half alone is wrong — counting only local makes a venue **shrink** as it is backed up and cleaned, which is precisely backwards.
+
+**An eviction belongs to a part, which is what makes it free.** A part already records the size and count of its members, exactly and permanently — verified across all 580 of them, `part.bytes` is `SUM(member.bytes)` and `part.files` the member count, with no drift. A part cannot change under it either: rebuilding one produces a *different* part. So a month of hundreds of thousands of files reduces to a handful of rows carrying their own totals, and the audit's question is one `SUM` rather than a join into millions of rows.
+
+Nothing can be evicted that was never backed up, so every eviction has a part to belong to. There is no other case.
+
+```sql
+CREATE TABLE evicted (
+  part_id INTEGER NOT NULL REFERENCES part(id) ON DELETE CASCADE,
+  path    TEXT    NOT NULL DEFAULT '',   -- '' = the whole part
+  bytes   INTEGER NOT NULL,
+  files   INTEGER NOT NULL,
+  at      TEXT    NOT NULL,
+  PRIMARY KEY (part_id, path)
+);
+```
+
+**Two grains, because the two trees evict differently.** Archives go a whole month at a time, so every part of the month goes whole and `path` stays empty. A vault eviction is a filter — a symbol, a dataset, a year — so a month is rarely taken whole, and a row names one partition instead; recording the part would claim partitions that are still here. The vault uses the empty path too when a whole month goes, which is the default.
+
+**The sizes are stored rather than joined.** They are recoverable from `member` in both trees, so this is a denormalisation and not a necessity — bought because it makes the total one `SUM` over a handful of rows, and because what a reclaim freed is a fact about that moment. If it ever disagrees with the part it came from, that is a bug and not a discrepancy to reconcile.
+
+**Written after the deletion, and only for what actually went.** `reclaim` reports which groups it managed to delete, and only those are recorded — a group that failed still has its files, and a row saying otherwise would have every total under-count what exists.
+
+**A restore deletes the row**; its absence is what says the data is back. A part that is replaced takes its evictions with it through the cascade, which is correct on its own terms: a replacement can only be packed from files that were restored first.
+
+There is no `restored` flag and no history of evict-restore cycles. That is a deliberate omission rather than an oversight — there is not yet a way to restore, and a table recording the history of an operation that does not exist would be designed against guesses. When `cold pull` lands, whether the row is deleted or marked is a decision to take then.
+
+---
+
 ## Interruption and exclusion
 
 **Each tree holds its own lock, and eviction can run beside a push.** The two do not compete for files: evict deletes only what an *uploaded* part records, and push plans only what no part records at the same size and mtime — so the two sets are disjoint by construction rather than by scheduling. Push already treats the tree as something that moves underneath it, skipping a directory it cannot read and a file it cannot stat, and evict never writes to `cold.sqlite` at all.
@@ -242,4 +277,4 @@ Nothing is deleted before the confirmation is answered, so Ctrl-C at any point b
 
 ## Environment
 
-The same variables [`cold push`](COLD-PUSH.md#environment) uses. `evict archives` additionally reads `STOCKER_VAULT_DIR` for the ledger, even though it is deleting from `COLD_ARCHIVES_DIR` — the vault is where the record of what became what lives.
+The same variables [`cold push`](COLD-PUSH.md#environment) uses. `evict archives` additionally reads `VAULT_DIR`, even though it is deleting from `ARCHIVES_DIR` — a partition's local size and mtime are what say whether cold storage holds the current build of it.

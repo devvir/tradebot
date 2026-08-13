@@ -8,9 +8,11 @@ import {
   _test_readTips as readTips,
 } from '../../../src/tools/cold/planners/archives';
 import { close, open } from '../../../src/tools/cold/db';
+import { FactManager } from '@tradebot/pipeline';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import type { FactInput } from '@tradebot/pipeline';
 import type { SourceFile } from '../../../src/tools/cold/types';
 
 const CAP = CAPS.archives * GB;
@@ -123,9 +125,11 @@ describe('a path whose date cannot be read', () => {
   const withArchive = async (files: string[], run: (config: never) => Promise<unknown>) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-arch-'));
 
-    fs.mkdirSync(path.join(root, 'shared', 'complete'), { recursive: true });
-    fs.writeFileSync(path.join(root, 'shared', 'complete', 'acme.tsv'),
-      '202601\t2026-02-01T00:00:00Z\n');
+    const trucker = new FactManager({ owner: 'trucker', root: path.join(root, 'shared', 'facts') });
+
+    trucker.record({ topic: 'archives', venue: 'acme', period: '202601',
+      fact: 'complete', value: '2026-02-01T00:00:00Z' });
+    trucker.close();
 
     for (const relative of files) {
       fs.mkdirSync(path.join(root, 'raw', path.dirname(relative)), { recursive: true });
@@ -209,33 +213,52 @@ describe('a path whose date cannot be read', () => {
   });
 });
 
-describe('reading the collector ledger', () => {
-  const withLedger = <T>(files: Record<string, string>, run: (root: string) => T): T => {
+describe('reading what the collector has closed', () => {
+  const withClosings = <T>(closed: FactInput[], run: (facts: FactManager) => T): T => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-archives-'));
 
-    fs.mkdirSync(path.join(root, 'complete'), { recursive: true });
+    if (closed.length > 0) new FactManager({ owner: 'trucker', root }).recordAll(closed);
 
-    for (const [name, body] of Object.entries(files))
-      fs.writeFileSync(path.join(root, 'complete', name), body);
+    const facts = new FactManager({ owner: 'tooling', root });
 
     try {
-      return run(root);
+      return run(facts);
     } finally {
+      facts.close();
       fs.rmSync(root, { recursive: true, force: true });
     }
   };
 
-  /** Append-only, so the highest month wins and a torn write cannot lower a tip. */
-  it('takes the highest month as the tip, whatever order the lines are in', () => {
-    const tips = withLedger(
-      { 'bybit.tsv': '202401\t2026-01-02T00:00:00Z\n202406\t2026-02-02T00:00:00Z\n202403\tx\n' },
-      root => readTips(root));
+  const closed = (venue: string, period: string, at: string): FactInput =>
+    ({ topic: 'archives', venue, period, fact: 'complete', value: at });
 
-    expect(tips.get('bybit')).toBe('202406');
+  it('takes the unbroken run, whatever order the months were closed in', () => {
+    const tips = withClosings([
+      closed('bybit', '202402', '2026-02-02T00:00:00Z'),
+      closed('bybit', '202401', '2026-01-02T00:00:00Z'),
+      closed('bybit', '202403', '2026-03-02T00:00:00Z'),
+    ], facts => readTips(facts));
+
+    expect(tips.get('bybit')).toBe('202403');
+  });
+
+  /**
+   * A month left open by a failed pass is stepped over by the months that close
+   * after it, and the highest of them then vouches for a hole beneath it. bybit
+   * read 202501 over open 202402 and 202405.
+   */
+  it('stops at a hole rather than reporting the highest month closed', () => {
+    const tips = withClosings([
+      closed('bybit', '202401', '2026-01-02T00:00:00Z'),
+      closed('bybit', '202403', '2026-03-02T00:00:00Z'),
+      closed('bybit', '202404', '2026-04-02T00:00:00Z'),
+    ], facts => readTips(facts));
+
+    expect(tips.get('bybit')).toBe('202401');
   });
 
   it('skips a venue that has closed nothing', () => {
-    expect(withLedger({ 'binance.tsv': '\n' }, root => readTips(root)).size).toBe(0);
+    expect(withClosings([], facts => readTips(facts)).size).toBe(0);
   });
 
   /**
@@ -244,9 +267,10 @@ describe('reading the collector ledger', () => {
    * and comparing it is what brings the month back into view.
    */
   it('keeps the last time a month was closed', () => {
-    const closings = withLedger(
-      { 'okx.tsv': '202305\t2026-01-01T00:00:00Z\n202305\t2026-08-01T00:00:00Z\n' },
-      root => readClosings(root));
+    const closings = withClosings([
+      closed('okx', '202305', '2026-01-01T00:00:00Z'),
+      closed('okx', '202305', '2026-08-01T00:00:00Z'),
+    ], facts => readClosings(facts));
 
     expect(closings.get('okx/202305')).toBe('2026-08-01T00:00:00Z');
   });

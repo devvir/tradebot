@@ -30,6 +30,13 @@ export interface VenueArchive {
    * either read from the venue or bisected against it; a number no one can
    * account for is not acceptable here.
    *
+   * **It is the earliest key of *any* dataset, never of the deepest one.** A
+   * survey of trades is evidence about trades, and a venue whose index products
+   * start earlier has an archive older than its trades say. Bybit's floor read
+   * `202001` from the oldest of 2,649 trade ranges while its premium and spot
+   * indices began `20191001` — so three months were never walked, never closed,
+   * and the raw an earlier pass had already fetched sat unaccounted for.
+   *
    * Too early only costs requests, too late loses data, so where the evidence
    * is thin the earlier reading wins.
    */
@@ -76,18 +83,17 @@ export interface VenueArchive {
   checksums?: boolean;
 
   /**
-   * Set when this venue has been observed answering "absent" for a file that
-   * does exist, so its absences cannot be taken at face value.
+   * **Unfounded — to be deleted with the rest of discovery, not repaired.**
    *
-   * Only OKX qualifies: the same URL has returned 404 and then 200 seconds
-   * later, with no 429 and no other signal — cause unknown. For that venue an
-   * absence is probed twice before it is believed and recorded in the ledger for
-   * spaced re-checks, because a wrong "never published" loses the period for
-   * good once the cursor steps past it.
+   * It exists because OKX was said to answer 404 for a file that does exist, the
+   * same URL returning 200 seconds later. That claim did not survive checking:
+   * of 46,847 recorded okx absences, **219 were re-probed and every one was
+   * still absent**, and `attempts` is `1` on all of them — so the double-probe
+   * this flag turns on has never actually run. See `docs/venues/OKX.md`.
    *
-   * Everywhere else a 404 is simply true, and treating it otherwise would double
-   * the request count of the probing venues to guard against a fault they have
-   * never shown.
+   * Left in place deliberately. Discovery is being replaced by the catalog and
+   * this goes with it, so changing collection behaviour now would be churn on
+   * code that is about to be removed.
    */
   unreliableAbsence?: boolean;
 

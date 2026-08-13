@@ -1,7 +1,8 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { FactManager } from '@tradebot/pipeline';
 
 let dir: string;
 
@@ -9,14 +10,19 @@ vi.mock('../src/config', () => ({ default: { get sharedDir() { return dir; } } }
 
 const { load } = await import('../src/milestones');
 
-const complete = async (venue: string, lines: string[]): Promise<void> => {
-  const path = join(dir, 'complete');
+/** The collector stating which months it has finished. */
+const complete = async (venue: string, months: string[]): Promise<void> => {
+  const facts = new FactManager({ owner: 'trucker', root: join(dir, 'facts') });
 
-  await mkdir(path, { recursive: true });
-  await writeFile(join(path, `${venue}.tsv`), lines.join('\n') + '\n');
+  facts.recordAll(months.map(period => ({
+    topic: 'archives' as const, venue, period, fact: 'complete',
+    value: '2026-08-03T14:22:10.004Z',
+  })));
+
+  facts.close();
 };
 
-const tip = (month: string): string => `${month}\t2026-08-03T14:22:10.004Z`;
+const tip = (month: string): string => month;
 
 beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'complete-')); });
 afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
@@ -60,16 +66,42 @@ describe('the completeness gate', () => {
     expect(m.ready('okx', '20190630')).toBe(false);
   });
 
-  it('takes the highest month, so a torn write cannot lower a standing tip', async () => {
-    await complete('gate', [tip('201912'), tip('201805')]);
+  /**
+   * Whatever order the lines arrive in, the run is the same — a tip is not the
+   * last line, and re-closing a month cannot lower it.
+   */
+  it('does not depend on the order months were written in', async () => {
+    await complete('gate', [tip('201806'), tip('201805'), tip('201806')]);
 
     const m = await load();
 
-    expect(m.ready('gate', '20190630')).toBe(true);
+    expect(m.ready('gate', '20180630')).toBe(true);
+    expect(m.ready('gate', '20180701')).toBe(false);
   });
 
-  it('ignores a malformed line rather than failing the read', async () => {
-    await complete('gate', [tip('201912'), 'garbage', '\t\t']);
+  /**
+   * A month left open by a failed pass is stepped over by the months that close
+   * after it, and the highest closed month then vouches for a hole beneath it.
+   * bybit's tip read 202501 over open 202402 and 202405, and 2,091 partitions
+   * were built from two months that were never finished.
+   */
+  it('stops at a hole rather than vouching for everything below the highest month', async () => {
+    await complete('gate', [tip('201805'), tip('201806'), tip('201808')]);
+
+    const m = await load();
+
+    expect(m.ready('gate', '20180630')).toBe(true);
+    expect(m.ready('gate', '20180731')).toBe(false);
+    expect(m.ready('gate', '20180831')).toBe(false);
+  });
+
+  /**
+   * A torn write can no longer happen — a half-written row is never committed —
+   * but a period that is not a month could arrive from a finer grain, and the
+   * tip is a claim about months.
+   */
+  it('ignores a period that is not a month', async () => {
+    await complete('gate', [tip('201912'), '20191215', '2019']);
 
     const m = await load();
 

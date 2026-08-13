@@ -1,12 +1,11 @@
 import { binPack } from '../plan';
-import { scanVault } from '../scan';
-import { idOf, idsByMonth } from '../ledger';
+import { surveyVault } from '../presence';
 import { C } from '../../../shared/utils/colors';
 import { info, warn } from '../../../shared/ui/logger';
 import * as db from '../db';
 import type { DatabaseSync } from 'node:sqlite';
 import type {
-  ColdConfig, IncompleteMonth, PartitionKey, PendingGroup, PendingPlan, Planner, SourceFile,
+  ColdConfig, IncompleteMonth, PendingGroup, PendingPlan, Planner, Presence, SourceFile,
 } from '../types';
 
 /**
@@ -38,13 +37,19 @@ export const vault: Planner = {
      * anything that run could act on.
      *
      * The whole tree is still walked: `venue=` is the top level today and may
-     * not be tomorrow, and a walk is cheap next to the ledger read and the
-     * per-file comparison that this skips.
+     * not be tomorrow, and a walk is cheap next to the per-file comparison and
+     * the gate's queries that this skips.
      */
     const wanted = (venue: string): boolean =>
       venues.length === 0 || venues.includes(venue);
 
-    const files = (await scanVault(config.sourceRoot)).filter(file => wanted(file.venue));
+    /**
+     * **One survey, and the facts are read before the tree is walked** — see
+     * `presence.ts`. Reading them the other way round withheld from the plan
+     * every month stocker happened to be writing during the walk.
+     */
+    const { claimed, present, files, uploaded } = await surveyVault(handle, config, wanted);
+
     const known = db.packed(handle, 'vault');
 
     const pending: SourceFile[] = [];
@@ -61,19 +66,17 @@ export const vault: Planner = {
      * uploaded. Reporting the two together made a first run look as though the
      * whole vault was already in cold storage.
      *
-     * Counted from the same rows the gate needs anyway, rather than from a
-     * separate query, so every number on this line is about the same selection
-     * of venues.
+     * Counted from the rows the survey already gathered, so every number on this
+     * line is about the same selection of venues and the same instant.
      */
-    const uploaded = db.uploaded(handle, 'vault').filter(row => wanted(row.venue));
-    const inCold   = uploaded.length;
+    const inCold = uploaded.length;
 
     info(`${files.length.toLocaleString()} partitions · `
       + `${inCold.toLocaleString()} in cold storage · `
       + `${(files.length - inCold - pending.length).toLocaleString()} planned, not yet uploaded · `
       + `${pending.length.toLocaleString()} to plan`);
 
-    return await whole(config, files, uploaded, byMonth(pending));
+    return whole(claimed, present, byMonth(pending));
   },
 
   pack: binPack,
@@ -93,9 +96,9 @@ export const vault: Planner = {
  * from the remains, one of them holding 1 partition out of the 133 stocker had
  * built.
  *
- * Stocker's ledger is what knows the difference, and it is the same shape of
- * dependency `push archives` already has on the collector's published tips: the
- * producer says what a month is, and cold storage does not guess.
+ * What stocker says it built is what knows the difference, and it is the same
+ * shape of dependency `push archives` already has on the collector's published
+ * tips: the producer says what a month is, and cold storage does not guess.
  *
  * **A partition counts as present if it is on disk *or* already in cold
  * storage.** The second half is what keeps `cold evict vault` compatible with
@@ -106,48 +109,38 @@ export const vault: Planner = {
  * A flag to pack anyway would turn the one signal that surfaces that into a
  * prompt people learn to answer.
  *
- * A venue the ledger says nothing about is left alone rather than refused — an
- * absent ledger is not evidence of a missing partition, and blocking on it would
+ * A venue nothing has been said about is left alone rather than refused — an
+ * absent record is not evidence of a missing partition, and blocking on it would
  * stop a venue nobody has a record for from ever being backed up.
  */
-const whole = async (
-  config:   ColdConfig,
-  files:    SourceFile[],
-  uploaded: PartitionKey[],
-  groups:   PendingGroup[],
-): Promise<PendingPlan> => {
+const whole = (
+  claimed: Presence['claimed'],
+  present: Set<string>,
+  groups:  PendingGroup[],
+): PendingPlan => {
   if (groups.length === 0) return { groups, withheld: 0 };
 
-  /** Every partition that exists somewhere: on disk now, or backed up already. */
-  const present = new Set<string>();
-
-  for (const file of files) present.add(idOf(file));
-  for (const row of uploaded) present.add(idOf(row));
-
-  const ledgers    = new Map<string, Map<string, Set<string>>>();
   const complete: PendingGroup[] = [];
   const short:    IncompleteMonth[] = [];
 
   for (const group of groups) {
-    if (! ledgers.has(group.venue))
-      ledgers.set(group.venue, await idsByMonth(config.vaultRoot, group.venue));
+    const wanted = claimed.get(group.venue)?.get(group.month);
 
-    const built = ledgers.get(group.venue)!.get(group.month);
-
-    if (! built) { complete.push(group); continue; }
+    if (! wanted) { complete.push(group); continue; }
 
     let missing = 0;
 
-    for (const id of built) if (! present.has(id)) missing++;
+    for (const id of wanted) if (! present.has(id)) missing++;
 
     if (missing === 0) complete.push(group);
-    else short.push({ venue: group.venue, month: group.month, built: built.size, missing });
+    else short.push({ venue: group.venue, month: group.month, built: wanted.size, missing });
   }
 
   report(short);
 
   return { groups: complete, withheld: short.length };
 };
+
 
 /**
  * Say which months were refused and how badly, grouped by venue.
