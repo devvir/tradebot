@@ -391,6 +391,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.2
 
+  shared/pipeline: {}
+
   shared/types: {}
 
   shared/utils:

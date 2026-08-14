@@ -1,0 +1,14 @@
+{
+  "name": "@tradebot/pipeline",
+  "version": "1.0.0",
+  "description": "The data pipeline's shared language — facts services state about their own trees",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "private": true,
+  "dependencies": {}
+}
