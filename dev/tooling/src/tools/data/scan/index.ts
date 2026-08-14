@@ -63,7 +63,6 @@ function emptyDay(day: string): DayState {
     localTmpSuffixes:  [],
     remoteSuffixes:    {},
     remoteTmpSuffixes: {},
-    megaSources:       [],
     localBucket:       false,
     localBucketTmp:    false,
     megaBucket:        false,
@@ -89,7 +88,7 @@ export async function scanAll(config: ScanConfig): Promise<VaultState> {
   const local = scanLocal(config.localBase);
 
   const [mega, ...remoteResults] = await Promise.all([
-    scanMega(config.megaVault, config.megaRaw),
+    scanMega(config.megaVault),
     ...config.remotes.map(r => scanRemote(r)),
   ]);
 
@@ -105,7 +104,7 @@ export async function scanAll(config: ScanConfig): Promise<VaultState> {
 }
 
 /**
- * Merges all four entry streams (local, remote, mega-raw, mega-vault) into
+ * Merges all three entry streams (local, remote, mega) into
  * one `TableState` per known table. Applies the global `--from` filter at the
  * end so day filtering remains consistent across scanners.
  */
@@ -123,7 +122,6 @@ function buildTables(
       sourced:        t.sourced,
       days:           new Map(),
       megaBucketTars: [],
-      megaSourceTars: [],
     });
   }
 
@@ -148,12 +146,6 @@ function buildTables(
     list.push(e.suffix);
   }
 
-  for (const e of mega.raw) {
-    const day = ensureDay(states, e.table, e.day);
-
-    day.megaSources.push(e.suffix);
-  }
-
   for (const e of mega.vault) {
     const day = ensureDay(states, e.table, e.day);
 
@@ -166,20 +158,12 @@ function buildTables(
     if (state) state.megaBucketTars.push(t.year);
   }
 
-  for (const t of mega.sourceTars) {
-    const state = states.get(t.table);
-
-    if (state) state.megaSourceTars.push(t.year);
-  }
-
   for (const state of states.values()) {
     state.megaBucketTars.sort((a, b) => a - b);
-    state.megaSourceTars.sort((a, b) => a - b);
 
     for (const day of state.days.values()) {
       day.localSuffixes.sort();
       day.localTmpSuffixes.sort();
-      day.megaSources.sort();
 
       for (const k of Object.keys(day.remoteSuffixes))    day.remoteSuffixes[k]!.sort();
       for (const k of Object.keys(day.remoteTmpSuffixes)) day.remoteTmpSuffixes[k]!.sort();
@@ -207,7 +191,6 @@ function ensureDay(states: Map<string, TableState>, table: string, day: string):
       localTmpSuffixes:  [],
       remoteSuffixes:    {},
       remoteTmpSuffixes: {},
-      megaSources:       [],
       localBucket:       false,
       localBucketTmp:    false,
       megaBucket:        false,
@@ -231,6 +214,5 @@ function applyFromFilter(states: Map<string, TableState>): void {
     const cutYear = Number(cut.slice(0, 4));
 
     state.megaBucketTars = state.megaBucketTars.filter(y => y >= cutYear);
-    state.megaSourceTars = state.megaSourceTars.filter(y => y >= cutYear);
   }
 }

@@ -1,5 +1,30 @@
 #!/usr/bin/env node
 
+/**
+ * Node's warning that `node:sqlite` is experimental, and nothing else.
+ *
+ * It is true, unactionable, and printed on every `cold` command — which is the
+ * definition of a warning people learn to scroll past, taking the ones that
+ * matter with it. The module is a deliberate choice: the alternative is a
+ * native dependency to be rebuilt against every Node version, for a database
+ * this reads and writes from one process.
+ *
+ * **Filtered rather than silenced.** `--no-warnings` would hide deprecations
+ * and every future experimental feature too; this drops exactly one message and
+ * prints the rest as Node would. Removing the default listener first is what
+ * makes that possible — Node prints from its own handler, which stays in place
+ * if you merely add another.
+ *
+ * It runs before any import that could trigger it, which is why it is here
+ * rather than beside the database.
+ */
+process.removeAllListeners('warning');
+process.on('warning', (warning) => {
+  if (warning.name === 'ExperimentalWarning' && /SQLite/i.test(warning.message)) return;
+
+  console.warn(`${warning.name}: ${warning.message}`);
+});
+
 import { Command } from 'commander';
 import { loadEnv } from './shared/utils/env';
 import { selectTool } from './shared/ui/prompts';
@@ -11,6 +36,7 @@ import { register as registerBouncer } from './commands/bouncer';
 import { register as registerBroadcast } from './commands/broadcast';
 import { register as registerMonitor } from './commands/monitor';
 import { register as registerData } from './commands/data';
+import { register as registerCold } from './commands/cold';
 import { register as registerRemote } from './commands/remote';
 import { register as registerSynth } from './commands/synth';
 
@@ -27,6 +53,7 @@ const tools: Tool[] = [
   { id: 'broadcast', name: 'Broadcast', description: 'Monitor broadcast exchange messages' },
   { id: 'monitor', name: 'Monitor', description: 'Live dashboard: Docker containers and RabbitMQ queues' },
   { id: 'data', name: 'Data', description: 'Prepare, sync, and recover vault data' },
+  { id: 'cold', name: 'Cold', description: 'Cold storage: pack, upload, and account for backups' },
   { id: 'remote', name: 'Remote', description: 'Remote server operations (sync-env, pull)' },
   { id: 'synth', name: 'Synth', description: 'Synthetic data tools (index, generate)' },
 ];
@@ -57,6 +84,7 @@ async function main(): Promise<void> {
   registerBroadcast(program);
   registerMonitor(program);
   registerData(program);
+  registerCold(program);
   registerRemote(program);
   registerSynth(program);
 

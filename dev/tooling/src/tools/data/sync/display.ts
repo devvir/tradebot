@@ -2,7 +2,6 @@ import { C } from '../../../shared/utils/colors';
 import { spacer } from '../log';
 import {
   BackupBucketTask,
-  BackupSourceTask,
   CleanRsyncTempsTask,
   CleanupTask,
   DeleteLocalBucketsTask,
@@ -44,7 +43,6 @@ export function printSummary(tasks: Task[]): void {
 function summaryLine(task: Task): string {
   if (task.kind === 'clean-rsync-temps')    return cleanRsyncTempsSummary(task);
   if (task.kind === 'pull')                 return pullSummary(task);
-  if (task.kind === 'backup-source')        return backupSourceSummary(task);
   if (task.kind === 'prepare')              return prepareSummary(task);
   if (task.kind === 'resort')               return resortSummary(task);
   if (task.kind === 'backup-bucket')        return backupBucketSummary(task);
@@ -77,17 +75,6 @@ function pullSummary(task: PullTask): string {
   const n      = task.files.length;
 
   return `${C.bold}${n}${C.reset} source${n === 1 ? '' : 's'} for ${tables} table${tables === 1 ? '' : 's'} can be pulled from ${C.bold}${task.remote}${C.reset}`;
-}
-
-function backupSourceSummary(task: BackupSourceTask): string {
-  const tables  = countDistinctTables(task.files);
-  const n       = task.files.length;
-  const pulled  = task.files.filter(f => f.fromPull).length;
-  const present = n - pulled;
-
-  const count = `${C.bold}${n}${C.reset}${formatBreakdown(present, pulled, 'pulled')}`;
-
-  return `${count} source file${n === 1 ? '' : 's'} from ${tables} table${tables === 1 ? '' : 's'} can be backed up in Mega`;
 }
 
 function prepareSummary(task: PrepareTask): string {
@@ -124,6 +111,7 @@ function deleteLocalBucketsSummary(task: DeleteLocalBucketsTask): string {
 
   return `${C.bold}${n}${C.reset} local bucket file${n === 1 ? '' : 's'} from ${tables} table${tables === 1 ? '' : 's'} can be deleted (backed up in Mega)${rangeNote}`;
 }
+
 
 /**
  * Renders the `(X present, Y pulled/prepared)` annotation. Returns an empty
@@ -188,10 +176,6 @@ export function printPreview(task: Task): void {
       console.log(`  ${C.dim}${f.table}/${f.year}/${C.reset}${f.day}.${f.suffix}.csv.gz ${C.dim}→${C.reset} ${f.day}.csv.gz`);
     });
   } else if (task.kind === 'pull') {
-    task.files.slice(0, MAX_PREVIEW).forEach(f => {
-      console.log(`  ${C.dim}${f.table}/${f.year}/${C.reset}${f.day}.${f.suffix}.csv.gz`);
-    });
-  } else if (task.kind === 'backup-source') {
     task.files.slice(0, MAX_PREVIEW).forEach(f => {
       console.log(`  ${C.dim}${f.table}/${f.year}/${C.reset}${f.day}.${f.suffix}.csv.gz`);
     });

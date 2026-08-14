@@ -5,11 +5,11 @@ import type { TableState } from '../../../../src/tools/data/scan/types';
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function wsTable(name = 'orderBookL2'): TableState {
-  return { name, origin: 'ws', sourced: true, days: new Map(), megaBucketTars: [], megaSourceTars: [] };
+  return { name, origin: 'ws', sourced: true, days: new Map(), megaBucketTars: [] };
 }
 
 function restTable(name = 'settlement'): TableState {
-  return { name, origin: 'rest', sourced: false, days: new Map(), megaBucketTars: [], megaSourceTars: [] };
+  return { name, origin: 'rest', sourced: false, days: new Map(), megaBucketTars: [] };
 }
 
 afterEach(() => vi.restoreAllMocks());

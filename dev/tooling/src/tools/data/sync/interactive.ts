@@ -14,8 +14,6 @@ import { deriveTasks } from './tasks';
 import {
   BackupBucketFile,
   BackupBucketTask,
-  BackupSourceFile,
-  BackupSourceTask,
   CleanRsyncTempsTask,
   CleanupLocalFile,
   CleanupRemoteFile,
@@ -102,7 +100,7 @@ export async function runInteractive(tasks: Task[], state: VaultState): Promise<
 /**
  * Produces the *live* version of a predicted task right before it's about
  * to be shown / run. For tasks that consume the output of earlier tasks
- * (backup-source / prepare / backup-bucket), we re-scan local disk and
+ * (prepare / resort / backup-bucket), we re-scan local disk and
  * re-derive in `live` mode — so phantom files from skipped or stubbed prior
  * tasks naturally drop out. Cleanup needs remote+Mega truth too, so it does
  * a full re-scan. Pull and the rsync-temp sweep don't depend on other tasks
@@ -111,8 +109,7 @@ export async function runInteractive(tasks: Task[], state: VaultState): Promise<
  * Returns `null` when the freshened state leaves nothing to do for that task.
  */
 async function liveTaskFor(predicted: Task, state: VaultState): Promise<Task | null> {
-  if (predicted.kind === 'backup-source'
-      || predicted.kind === 'prepare'
+  if (predicted.kind === 'prepare'
       || predicted.kind === 'resort'
       || predicted.kind === 'backup-bucket') {
     refreshLocal(state);
@@ -148,12 +145,6 @@ async function execute(task: Task, localBase: string): Promise<void> {
 
   if (task.kind === 'pull') {
     await executePull(task);
-
-    return;
-  }
-
-  if (task.kind === 'backup-source') {
-    await executeBackupSource(task);
 
     return;
   }
@@ -279,46 +270,6 @@ async function executePull(task: PullTask): Promise<void> {
   }
 }
 
-async function executeBackupSource(task: BackupSourceTask): Promise<void> {
-  info(`Backing up ${task.files.length} source file${task.files.length === 1 ? '' : 's'} to Mega …`);
-
-  const uploaded: BackupSourceFile[] = [];
-  let uploadFail = 0;
-
-  for (const file of task.files) {
-    info(`  ${file.table}/${file.year}/${file.day}.${file.suffix}.csv.gz`);
-
-    // Trailing slash is required: mega-put uploads INTO a path ending in `/`,
-    // but treats a slash-less path whose last segment doesn't exist yet as the
-    // destination *filename* — so every file would upload as "<year>" and
-    // overwrite the previous. The `/` forces folder semantics (`-c` creates it).
-    const megaDir = path.dirname(file.megaPath) + '/';
-
-    try {
-      await execFileAsync('mega-put', ['-c', file.localPath, megaDir]);
-      uploaded.push(file);
-    } catch (err) {
-      const detail = (err as NodeJS.ErrnoException & { stderr?: string }).stderr?.toString().trim()
-        ?? (err as Error).message;
-
-      warn(`mega-put failed: ${file.localPath}\n  ${detail}`);
-      uploadFail++;
-    }
-  }
-
-  if (uploaded.length > 0) info('Verifying uploads …');
-
-  const verifyFail = await verifyMegaUploads(uploaded);
-  const ok         = uploaded.length - verifyFail;
-  const fail       = uploadFail + verifyFail;
-
-  if (fail === 0) {
-    success(`Backed up ${ok} source file${ok === 1 ? '' : 's'} to Mega`);
-  } else {
-    warn(`Backup sources: ${ok} ok, ${fail} failed — re-run to retry`);
-  }
-}
-
 async function executePrepare(_task: PrepareTask, localBase: string): Promise<void> {
   // Spawn `data prepare <localBase>` as a subprocess so its output streams
   // live to the terminal and a non-zero exit code doesn't kill data sync.
@@ -356,7 +307,7 @@ async function executePrepare(_task: PrepareTask, localBase: string): Promise<vo
  * Runs `data resort` on each suffixed source (spawned like prepare, so output
  * streams live and a failure doesn't kill sync), then promotes the verified
  * `<day>.<sfx>.resorted.csv.gz` to the bucket name `<day>.csv.gz`. The source
- * file is never touched — backup-source archives it, cleanup trashes it later.
+ * file is never touched — cleanup trashes it later.
  * A failed day is reported and skipped; re-running sync resumes it.
  */
 async function executeResort(task: ResortTask): Promise<void> {
@@ -728,7 +679,6 @@ async function listMegaDirSizes(dir: string): Promise<Map<string, number>> {
 function taskLabel(task: Task): string {
   if (task.kind === 'clean-rsync-temps')    return 'Remove rsync temp files';
   if (task.kind === 'pull')                 return `Pull from ${task.remote}`;
-  if (task.kind === 'backup-source')        return 'Back up sources to Mega';
   if (task.kind === 'prepare')              return 'Prepare source files';
   if (task.kind === 'resort')               return 'Resort sources into buckets';
   if (task.kind === 'backup-bucket')        return 'Back up buckets to Mega';

@@ -5,11 +5,14 @@ export interface TableMeta {
   origin: TableOrigin;
 
   /**
-   * Whether the table has a sources → bucket preparation stage. When `true`
-   * the raw collected files are *sources* (suffixed, stored in
-   * `SOURCES_MEGA_RAW`) that promote to *buckets* (suffix-less, stored in
-   * `SOURCES_MEGA_VAULT`) only after processing; Mega must hold both. When
-   * `false` the collected files are buckets from birth — the only Mega artifact.
+   * Whether the table has a sources → bucket preparation stage. When `true` the
+   * raw collected files are *sources* (suffixed) that promote to *buckets*
+   * (suffix-less) only after processing. When `false` the collected files are
+   * buckets from birth.
+   *
+   * It describes how a day is produced, not what is backed up: the bucket is
+   * the only artifact Mega holds either way, stored under
+   * `SOURCES_MEGA_VAULT`.
    *
    * Orthogonal to `origin`: it happens that every WS table needs preparation,
    * but being sourced is not exclusive to WS. `trade`/`quote` are REST-origin

@@ -1,6 +1,13 @@
+/**
+ * A size in the unit a person would have chosen.
+ *
+ * `TB` is included because cold storage is already measured in hundreds of
+ * gigabytes per venue and the trees it packs are heading well past a terabyte —
+ * a ceiling at `GB` turns the totals that matter most into four-digit numbers.
+ */
 export function fmtBytes(bytes: number): string {
   if (bytes <= 0) return '0B';
-  const units = ['B', 'KB', 'MB', 'GB'];
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
   return `${(bytes / Math.pow(1024, i)).toFixed(1)}${units[i]}`;
 }

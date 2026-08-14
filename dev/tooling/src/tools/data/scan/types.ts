@@ -13,7 +13,6 @@ export interface ScanConfig {
   localBase: string;
   remotes:   RemoteConfig[];
   megaVault: string;
-  megaRaw:   string;
 }
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -41,9 +40,6 @@ export interface DayState {
   /** Source files being downloaded on each remote (`.tmp`). */
   remoteTmpSuffixes: Record<string, string[]>;
 
-  /** Source files present in `SOURCES_MEGA_RAW`. */
-  megaSources: string[];
-
   /** True when a finalised local bucket exists for this day. */
   localBucket: boolean;
 
@@ -58,16 +54,13 @@ export interface TableState {
   name:     string;
   origin:   TableOrigin;
 
-  /** Has a sources → bucket preparation stage; Mega must hold both raw sources and the bucket. */
+  /** Has a sources → bucket preparation stage before the day can be stored. */
   sourced:  boolean;
 
   days:     Map<string, DayState>;             // YYYYMMDD → DayState
 
   /** Years whose buckets are archived as `<table>/YYYY.tar` in `SOURCES_MEGA_VAULT`. */
   megaBucketTars: number[];
-
-  /** Years whose sources are archived as `<table>/YYYY.tar` in `SOURCES_MEGA_RAW` (sourced tables only). */
-  megaSourceTars: number[];
 }
 
 export interface VaultState {

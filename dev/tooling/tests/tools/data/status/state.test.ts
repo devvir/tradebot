@@ -11,7 +11,6 @@ function ds(opts: Partial<DayState> = {}): DayState {
     localTmpSuffixes:  [],
     remoteSuffixes:    {},
     remoteTmpSuffixes: {},
-    megaSources:       [],
     localBucket:       false,
     localBucketTmp:    false,
     megaBucket:        false,
@@ -109,63 +108,39 @@ describe('remoteState', () => {
 
 // ── megaState ─────────────────────────────────────────────────────────────────
 
-const UNSOURCED = false;
-const SOURCED   = true;
-const BUCKET    = true;
-const SOURCES   = true;
-const NONE      = false;
+const BUCKET = true;
+const NONE   = false;
 
+/**
+ * The bucket is the only artifact a day is expected to have in Mega.
+ *
+ * A second root once held the raw sources a bucket was built from, and a table
+ * with a preparation stage needed both to read `stored` — either alone rendered
+ * as a split cell. Source backup was retired with BitMEX collection, so the
+ * question is no longer which half is present, and `sourced` no longer changes
+ * the answer.
+ */
 describe('megaState', () => {
-  // ── unsourced (bucket is the only artifact) ──────────────────────────────────
-
-  it('unsourced + bucket → stored', () => {
-    expect(megaState(BUCKET, NONE, UNSOURCED, 'past')).toEqual({ kind: 'stored' });
+  it('bucket present → stored', () => {
+    expect(megaState(BUCKET, 'past')).toEqual({ kind: 'stored' });
   });
 
-  it('unsourced + no bucket + past day → missing', () => {
-    expect(megaState(NONE, NONE, UNSOURCED, 'past')).toEqual({ kind: 'missing' });
+  it('no bucket + past day → missing', () => {
+    expect(megaState(NONE, 'past')).toEqual({ kind: 'missing' });
   });
 
-  it('unsourced + no bucket + today → absent', () => {
-    expect(megaState(NONE, NONE, UNSOURCED, 'today')).toEqual({ kind: 'absent' });
+  /** Still in flight: absence is expected, not a gap. */
+  it('no bucket + today → absent', () => {
+    expect(megaState(NONE, 'today')).toEqual({ kind: 'absent' });
   });
 
-  it('unsourced + no bucket + pending → absent (mega not expected yet)', () => {
-    expect(megaState(NONE, NONE, UNSOURCED, 'pending')).toEqual({ kind: 'absent' });
+  it('no bucket + pending → absent (mega not expected yet)', () => {
+    expect(megaState(NONE, 'pending')).toEqual({ kind: 'absent' });
   });
 
-  it('unsourced ignores sources (bucket is the only artifact)', () => {
-    expect(megaState(NONE, SOURCES, UNSOURCED, 'past')).toEqual({ kind: 'missing' });
-  });
-
-  // ── sourced (both bucket and sources expected) ───────────────────────────────
-
-  it('sourced + bucket + sources → stored', () => {
-    expect(megaState(BUCKET, SOURCES, SOURCED, 'past')).toEqual({ kind: 'stored' });
-  });
-
-  it('sourced + neither + past day → missing', () => {
-    expect(megaState(NONE, NONE, SOURCED, 'past')).toEqual({ kind: 'missing' });
-  });
-
-  it('sourced + neither + today → absent', () => {
-    expect(megaState(NONE, NONE, SOURCED, 'today')).toEqual({ kind: 'absent' });
-  });
-
-  it('sourced + neither + pending → absent (mega not expected yet)', () => {
-    expect(megaState(NONE, NONE, SOURCED, 'pending')).toEqual({ kind: 'absent' });
-  });
-
-  it('sourced + bucket only → half: bucket stored, sources missing', () => {
-    expect(megaState(BUCKET, NONE, SOURCED, 'past')).toEqual({
-      kind: 'half', bucket: 'stored', sources: 'missing',
-    });
-  });
-
-  it('sourced + sources only → half: bucket missing, sources stored (trade/quote 2014-2017)', () => {
-    expect(megaState(NONE, SOURCES, SOURCED, 'past')).toEqual({
-      kind: 'half', bucket: 'missing', sources: 'stored',
-    });
+  /** A prepared table is judged by the same rule as any other. */
+  it('answers the same for a table that has a preparation stage', () => {
+    expect(megaState(BUCKET, 'past')).toEqual({ kind: 'stored' });
+    expect(megaState(NONE,   'past')).toEqual({ kind: 'missing' });
   });
 });
-

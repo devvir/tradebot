@@ -5,8 +5,6 @@ import { DayState, VaultState } from '../scan/types';
 import {
   BackupBucketFile,
   BackupBucketTask,
-  BackupSourceFile,
-  BackupSourceTask,
   CleanRsyncTempsTask,
   CleanupFile,
   CleanupTask,
@@ -53,11 +51,10 @@ export type DerivationMode = 'planned' | 'live';
  *
  * Pipeline order:
  *   1. pull           — fetch missing source files from each remote
- *   2. backup-source  — push local sources (WS + stamped) not yet in SOURCES_MEGA_RAW
- *   3. prepare        — sort/dedup local WS sources that have no bucket anywhere
- *   4. resort         — turn symbol-major stamped sources into ts-major buckets
- *   5. backup-bucket  — push local buckets not yet in SOURCES_MEGA_VAULT
- *   6. cleanup        — move completed sources to .trash
+ *   2. prepare        — sort/dedup local WS sources that have no bucket anywhere
+ *   3. resort         — turn symbol-major stamped sources into ts-major buckets
+ *   4. backup-bucket  — push local buckets not yet in SOURCES_MEGA_VAULT
+ *   5. cleanup        — move completed sources to .trash
  *
  * Only days from 2026-01-01 onward are considered — earlier data is already
  * fully handled outside this script.
@@ -66,10 +63,6 @@ export function deriveTasks(state: VaultState, mode: DerivationMode = 'live'): T
   const tasks: Task[] = [];
 
   for (const t of pullTasks(state))  tasks.push(t);
-
-  const backupSource = backupSourceTask(state, mode);
-
-  if (backupSource) tasks.push(backupSource);
 
   // Derive prepare + resort first so backup-bucket can predict the buckets
   // it'll get from both.
@@ -187,70 +180,9 @@ function pullTasks(state: VaultState): PullTask[] {
   return tasks;
 }
 
-// ── Backup sources ────────────────────────────────────────────────────────────
-
-function backupSourceTask(state: VaultState, mode: DerivationMode): BackupSourceTask | null {
-  const files: BackupSourceFile[] = [];
-  const seen  = new Set<string>();
-
-  for (const table of state.tables) {
-    const isWsTable     = table.origin === 'ws';
-    const isResortTable = RESORT_TABLES.has(table.name);
-
-    if (! isWsTable && ! isResortTable) continue;
-
-    for (const day of table.days.values()) {
-      if (before(day)) continue;
-
-      const year     = day.day.slice(0, 4);
-      const localSet = new Set(day.localSuffixes);
-
-      // WS tables — planned: include both current local + suffixes that pull
-      // will fetch; live: only what's actually on disk now.
-      // Resort tables — the suffixed originals (`.s3`/`.rest`/…) are local-only
-      // sources; they archive to Mega raw exactly like WS sources.
-      const candidates = ! isWsTable
-        ? new Set(day.localSuffixes.filter(isResortSource))
-        : mode === 'planned'
-          ? new Set([...day.localSuffixes, ...Object.values(day.remoteSuffixes).flat()])
-          : localSet;
-
-      for (const suffix of candidates) {
-        if (day.megaSources.includes(suffix)) continue;
-
-        const key = `${table.name}/${day.day}/${suffix}`;
-
-        if (seen.has(key)) continue;
-
-        seen.add(key);
-
-        const filename = `${day.day}.${suffix}.csv.gz`;
-        const fromPull = mode === 'planned' && ! localSet.has(suffix);
-
-        files.push({
-          table:     table.name,
-          year,
-          day:       day.day,
-          suffix,
-          localPath: path.join(state.config.localBase, table.name, year, filename),
-          megaPath:  `${state.config.megaRaw}/${table.name}/${year}/${filename}`,
-          fromPull,
-        });
-      }
-    }
-  }
-
-  if (files.length === 0) return null;
-
-  files.sort(byTableThenDay);
-
-  return { kind: 'backup-source', files, isAbnormal: false, abnormalWarning: '' };
-}
-
 // ── Prepare ───────────────────────────────────────────────────────────────────
 
 function prepareTask(state: VaultState, mode: DerivationMode): PrepareTask | null {
-  const expectedSuffixes = ['local', ...state.config.remotes.map(r => r.name)];
   const byTableYear = new Map<string, PrepareGroup>();
 
   for (const table of state.tables) {
@@ -276,12 +208,8 @@ function prepareTask(state: VaultState, mode: DerivationMode): PrepareTask | nul
       let group = byTableYear.get(key);
 
       if (! group) {
-        group = { table: table.name, year, days: [], abnormalDays: [] };
+        group = { table: table.name, year, days: [] };
         byTableYear.set(key, group);
-      }
-
-      if (! isSourceComplete(day, expectedSuffixes)) {
-        group.abnormalDays.push(day.day);
       }
 
       group.days.push(day.day);
@@ -292,37 +220,24 @@ function prepareTask(state: VaultState, mode: DerivationMode): PrepareTask | nul
 
   const groups = [...byTableYear.values()];
 
-  for (const g of groups) {
-    g.days.sort();
-    g.abnormalDays.sort();
-  }
+  for (const g of groups) g.days.sort();
 
   groups.sort((a, b) => (
     a.table === b.table ? a.year.localeCompare(b.year) : a.table.localeCompare(b.table)
   ));
 
-  const abnormalCount = groups.reduce((n, g) => n + g.abnormalDays.length, 0);
-  const isAbnormal    = abnormalCount > 0;
-  const abnormalWarning = isAbnormal
-    ? `${abnormalCount} day${abnormalCount === 1 ? '' : 's'} are missing sources from one or more expected collectors — bucket may be incomplete`
-    : '';
-
-  return { kind: 'prepare', groups, isAbnormal, abnormalWarning };
-}
-
-/**
- * A day is source-complete when every expected suffix (local collector + each
- * configured remote) is present somewhere: already local, in a remote, or
- * already backed up in Mega raw.
- */
-function isSourceComplete(day: DayState, expectedSuffixes: string[]): boolean {
-  const available = new Set([
-    ...day.localSuffixes,
-    ...day.megaSources,
-    ...Object.values(day.remoteSuffixes).flat(),
-  ]);
-
-  return expectedSuffixes.every(s => available.has(s));
+  /**
+   * **A day with a source is a day that can be prepared.** This used to require
+   * every configured collector to have contributed — local plus each remote —
+   * and flagged the rest for review, on the assumption that several machines
+   * captured the same stream and a missing one meant a thinner bucket.
+   *
+   * That assumption is gone: local collection stopped and one remote captures
+   * BitMEX now, so a day has one source by design. Demanding more would flag
+   * every day of every table, and a warning that fires on everything says
+   * nothing about anything.
+   */
+  return { kind: 'prepare', groups, isAbnormal: false, abnormalWarning: '' };
 }
 
 // ── Resort ────────────────────────────────────────────────────────────────────
@@ -484,7 +399,8 @@ function cleanupTask(state: VaultState, preparedDays: Set<string>): CleanupTask 
       // Local sources eligible to trash. WS — planned: current local +
       // pulled-from-remote; live: only what's actually on disk now.
       // Resort tables — the suffixed originals; the resorted bucket
-      // supersedes them once it exists (they remain archived in Mega raw).
+      // supersedes them once it exists. The bucket is what survives: sources
+      // are no longer backed up anywhere, so trashing one ends it.
       const localSuffixes = ! isWsTable
         ? new Set(day.localSuffixes.filter(isResortSource))
         : isPlanned

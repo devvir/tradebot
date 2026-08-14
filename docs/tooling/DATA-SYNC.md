@@ -22,7 +22,6 @@ remote(s)  ──pull──▶  local sources  ──prepare / resort──▶  
 | Flow | What moves | Direction |
 |---|---|---|
 | **pull** | WS source files from remote → local | pull-only |
-| **back up sources** | Local sources (WS + suffixed trade/quote) → `SOURCES_MEGA_RAW` | push-only |
 | **prepare** | Local WS sources → local bucket | local |
 | **resort** | Local suffixed trade/quote sources → local bucket (ts-major) | local |
 | **back up buckets** | Local buckets → `SOURCES_MEGA_VAULT` | push-only |
@@ -34,7 +33,11 @@ Suffixed trade/quote files (`.s3` from courier, `.rest` from scribe) are **sourc
 
 ## Scope
 
-Only days from **2026-01-01 onward** are considered. Earlier data is already fully handled outside this script.
+Two families of steps, sharing the command and its conventions and nothing else.
+
+**The BitMEX vault** (steps 0-5): only days from **2026-01-01 onward**. Earlier data is already fully handled outside this script.
+
+**The venue archives are not here.** Taking trucker's tree to cold storage belongs to [`tools cold push archives`](COLD-PUSH.md), which owns the record of what is in cold storage and everything that follows from it. `data sync` will eventually call it the way it already calls `data prepare`, rather than owning the steps itself.
 
 ---
 
@@ -44,7 +47,7 @@ After scanning, `deriveTasks(state, mode)` walks the `VaultState` and produces a
 
 There are two derivation modes:
 
-- **`planned`** — used once at startup to print the summary. Tasks are forward-looking: `backup-source` includes suffixes that will arrive via pull (marked `fromPull`); `backup-bucket` includes buckets that will arrive via prepare or resort (marked `fromPrepare`); `cleanup` includes everything post-pipeline. The counts reflect "if everything you're about to run succeeds".
+- **`planned`** — used once at startup to print the summary. Tasks are forward-looking: `backup-bucket` includes buckets that will arrive via prepare or resort (marked `fromPrepare`); `cleanup` includes everything post-pipeline. The counts reflect "if everything you're about to run succeeds".
 - **`live`** — used right before showing each task in the interactive loop, after refreshing the local-disk state. Predictive flags are off; a file is in the task only if it actually exists on disk now. If a prior task was skipped, failed, or is stubbed, its phantom outputs naturally drop out of the next task's view.
 
 The summary shows the planned counts, the interactive prompt shows the live ones — so the prompt always reflects reality, but the summary still tells you what the full run would do.
@@ -56,7 +59,7 @@ Right before showing each task that consumes a prior task's output, the interact
 | Task | What's refreshed |
 |---|---|
 | `clean-rsync-temps`, `pull` | nothing — first in the pipeline, nothing earlier could have changed |
-| `backup-source`, `prepare`, `resort`, `backup-bucket` | local disk only — `scanLocal` is re-run and overlaid onto the existing state via `refreshLocal(state)` |
+| `prepare`, `resort`, `backup-bucket` | local disk only — `scanLocal` is re-run and overlaid onto the existing state via `refreshLocal(state)` |
 | `cleanup` | full re-scan (local + remotes + Mega via `scanAll`) — cleanup decisions depend on which sources still exist on remotes and which buckets actually made it to Mega |
 | `delete-local-buckets` | full re-scan — needs current Mega state to ensure it only proposes buckets that are actually there |
 
@@ -76,31 +79,21 @@ rsync -az --ignore-existing <user>@<host>:<path>/<table>/<year>/<file> <local-pa
 
 Progress is printed per file (`Pulling <table>/<year>/<day>.<suffix>.csv.gz`) so long-running rsyncs are visible.
 
-### 2. Back up sources (WS + suffixed trade/quote)
-
-Collect every source file that will be local after the pull but is not yet in `SOURCES_MEGA_RAW`. For WS tables this counts both currently-local suffixes and suffixes that will arrive via pull (each file carries a `fromPull` flag so the summary can show the breakdown). For the resort tables (trade/quote) the suffixed originals are local-only sources — every suffix except resort's own `.resorted` outputs is included.
-
-At execution time, files that aren't on disk (because the pull was skipped or failed) are silently skipped — the next run picks them up. After the upload batch, every file is verified against Mega (see Execution → Upload verification).
-
-### 3. Prepare (WS only)
+### 2. Prepare (WS only)
 
 Collect every WS day that will have local source files (after pull) but has no bucket anywhere — no finalised bucket in local or Mega, and no `.csv.gz.tmp` indicating a bucket is currently being written (e.g. by a concurrent `data prepare`). Groups by `(table, year)` for the summary display; execution is whole-vault (see Execution).
 
-**Abnormal days:** the update command expects every prepared day to have sources from every defined collector — the local machine (`.local` suffix) and every configured remote. A day that has at least one source but is missing at least one expected suffix is flagged as **abnormal**. Abnormal prepare tasks:
+**A day with a source is a day that can be prepared.** Preparing used to demand sources from every defined collector — the local machine plus each configured remote — and flagged the rest for review, on the assumption that several machines captured the same stream and a missing one meant a thinner bucket.
 
-- Show a `⚠` warning in the summary with the count of affected days.
-- Default the prompt to **N** (instead of Y).
-- Are **skipped silently** when `-y` / `--yes` is set.
+That assumption no longer holds: local collection stopped and one remote captures BitMEX now, so a day has one source by design. Demanding more would flag every day of every table, and a warning that fires on everything says nothing about anything. Prepare raises no abnormal days.
 
-This ensures incomplete days are never silently prepared in unattended runs, and are always visible when running manually.
-
-### 4. Resort (trade/quote)
+### 3. Resort (trade/quote)
 
 Collect every day in the resort tables (`trade`, `quote`) that has exactly one suffixed source (any suffix except `.resorted`; `.tmp` files are excluded by the scan) and no bucket anywhere. Execution runs `data resort` on each source file (spawned like prepare, output streaming live), then **promotes** the verified `<day>.<sfx>.resorted.csv.gz` to the bucket name `<day>.csv.gz` — from there the normal backup-bucket / cleanup flows apply. The source file is never touched.
 
 A day with **more than one** suffixed source is ambiguous (which output becomes the bucket?): it is left out of the task and flagged abnormal for manual resolution. Resume-friendly: a `.resorted` file left by an interrupted run is promoted without re-sorting, and failed days are simply retried on the next run.
 
-### 5. Back up buckets (WS and REST)
+### 4. Back up buckets (WS and REST)
 
 Collect every bucket that will exist locally after prepare and resort run but is not yet in `SOURCES_MEGA_VAULT`. A day whose only local bucket is a `.csv.gz.tmp` (still being written) is not collected — it's not a finalised bucket yet. This includes:
 
@@ -111,13 +104,15 @@ Each file carries a `fromPrepare` flag so the summary can show the breakdown.
 
 At execution time, predicted-prepare files that aren't on disk yet are silently skipped — the next run picks them up. After the upload batch, every file is verified against Mega (see Execution → Upload verification).
 
-### 6. Delete local buckets (optional)
+### 5. Delete local buckets (optional)
 
 Find local buckets that are already present in `SOURCES_MEGA_VAULT` — their local copy is now redundant. Groups them by `(table, year)` and prompts once per range.
 
 **This step is always manual.** It is never auto-run under `-y` / `--yes` and does not support the `a` (accept-all) option from other tasks. The prompt is `y/N/q` per range, with `N` as the default. `q` stops asking and skips remaining ranges.
 
 **Execution:** `fs.unlinkSync` each bucket file in the range. Failures are reported but do not abort the remaining ranges.
+
+---
 
 ---
 
@@ -151,7 +146,7 @@ Run this task? [Y/n/a]  (Y = yes, n = skip, a = accept all remaining)
 
 For tasks flagged abnormal (`isAbnormal: true`) the hint changes to `[y/N/a]` — N is the default — and a `⚠` warning explaining why precedes the prompt.
 
-With `-y` / `--yes` set, all tasks are auto-accepted without prompting, **except** abnormal ones, which are skipped with a warning. This is the same mechanism for every task type — prepare days missing collector sources, cleanup with the "bucket-built-without-this-source" pattern, etc.
+With `-y` / `--yes` set, all tasks are auto-accepted without prompting, **except** abnormal ones, which are skipped with a warning. This is the same mechanism for every task type — an ambiguous resort day, cleanup with the "bucket-built-without-this-source" pattern, etc.
 
 **Delete-local-buckets is always manual.** Even under `-y` or after accepting all, this task is skipped with a notice. It uses its own `y/N/q` prompt per range — there is no `a` option. `q` stops asking and skips the remaining ranges.
 
@@ -211,13 +206,22 @@ src/tools/data/
 
 - **Clean rsync temps:** `fs.unlinkSync` each temp file.
 - **Pull:** `rsync -az --ignore-existing <user>@<host>:<path>/<table>/<year>/<file> <local-path>` per file, sequential.
-- **Back up sources:** `mega-put -c <local-source-file> <SOURCES_MEGA_RAW>/<table>/<year>/` per file, sequential. `-c` creates the destination dir if it doesn't exist. The batch is verified afterwards (see Upload verification).
 - **Prepare:** spawn `data prepare <vault>` as a subprocess with inherited stdio, so its progress streams live. `-C` and `--from` are forwarded. `data prepare` discovers preparable days itself, so no path/group arguments are passed — it processes the whole vault. A non-zero exit is reported as a warning but does not abort the run; a re-run picks up anything missed.
 - **Back up buckets:** `mega-put -c <local-bucket-file> <SOURCES_MEGA_VAULT>/<table>/<year>/` per file. Buckets live alongside their sources in the year dir, so no promotion step is needed. The batch is verified afterwards (see Upload verification).
 - **Cleanup:** re-scan first; then for each file, `fs.renameSync` (local) or one SSH call running a shell snippet (remote). Single SSH per remote file. The remote snippet checks the source exists (exit 100 if not — distinguished from real failures), compares its byte size against the local counterpart when one is on disk (exit 101 on mismatch), then does mkdir + collision-safe `mv`.
 - **Delete local buckets:** re-scan first (needs fresh Mega state); then for each confirmed range, `fs.unlinkSync` each bucket file. Never auto-run.
 
 **Upload verification.** After each `mega-put` batch, one `mega-ls -l` is run per destination directory and the Mega-reported byte size of every uploaded file is compared against the local file. A file missing from Mega, or whose size differs, is counted as a failure — so a silent or partial upload is caught before the next run treats the file as done.
+
+---
+
+## Environment
+
+| Variable | Used by | Meaning |
+|---|---|---|
+| `VAULT_DATA_DIR` | vault steps | local BitMEX vault root |
+| `SOURCES_MEGA_VAULT` | vault steps | Mega path for ready buckets |
+| `SOURCES_REMOTE_VAULTS` | vault steps | comma-separated `<name>:<user>@<host>:<path>` |
 
 ---
 
@@ -228,7 +232,7 @@ src/tools/data/
 | `--from <date>` | Restrict days to ≥ this date (`YYYYMMDD` or `YYYY-MM-DD`). |
 | `--log [dir]` | Mirror output to `<dir>/update.log` (default `<cwd>`). |
 | `-C, --concurrency <n>` | Parallel workers for `prepare`. No effect on other tasks. |
-| `-y, --yes` | Auto-accept all tasks — except abnormal tasks (skipped with a warning) and `delete-local-buckets` (always skipped; must be confirmed manually). |
+| `-y, --yes` | Auto-accept all tasks — except abnormal tasks (skipped with a warning), and `delete-local-buckets` and `delete-local-tars` (always skipped; both must be confirmed manually). |
 
 ---
 

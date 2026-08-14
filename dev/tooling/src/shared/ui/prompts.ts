@@ -33,13 +33,13 @@ export async function selectTool(tools: ToolOption[]): Promise<string> {
   return answer.tool;
 }
 
-export async function confirm(message: string): Promise<boolean> {
+export async function confirm(message: string, defaultAnswer = false): Promise<boolean> {
   const answer = await inquirer.prompt([
     {
       type: 'confirm',
       name: 'confirmed',
       message,
-      default: false,
+      default: defaultAnswer,
     },
   ]);
 

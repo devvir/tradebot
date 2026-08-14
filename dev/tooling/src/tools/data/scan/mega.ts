@@ -5,24 +5,18 @@ import { parseMegaTar, parseVaultPath } from './parse';
 const execFileAsync = promisify(execFile);
 
 export interface MegaScan {
-  /** Loose source files present in `SOURCES_MEGA_RAW` (current year). */
-  raw: MegaEntry[];
-
   /** Loose buckets present in `SOURCES_MEGA_VAULT` (current year). */
   vault: MegaEntry[];
 
   /** Year tarballs found at `<SOURCES_MEGA_VAULT>/<table>/YYYY.tar` — bucket archives. */
   bucketTars: MegaTar[];
-
-  /** Year tarballs found at `<SOURCES_MEGA_RAW>/<table>/YYYY.tar` — source archives. */
-  sourceTars: MegaTar[];
 }
 
 export interface MegaEntry {
   table:  string;
   year:   string;
   day:    string;
-  suffix: string;            // '' for vault buckets; collector name for raw source files
+  suffix: string;            // always '' — a bucket carries no collector name
 }
 
 export interface MegaTar {
@@ -59,28 +53,21 @@ export async function checkMegaAvailable(): Promise<void> {
 }
 
 /**
- * Lists everything under `megaVault` and `megaRaw` in a single pass each,
- * then classifies the entries by parsing their relative paths.
+ * Lists everything under `megaVault` in a single pass, then classifies the
+ * entries by parsing their relative paths.
  *
- * Both roots follow the same layout: loose daily files for the current year,
- * and one `<table>/YYYY.tar` per prior year. The only difference is what the
- * files are — sources (suffixed) under raw, buckets (suffix-less) under vault.
+ * The root holds loose daily buckets for the current year and one
+ * `<table>/YYYY.tar` per prior year.
+ *
+ * **Buckets are all that is backed up.** A second root once held the raw WS
+ * sources a bucket was built from, and both had to be present for a day to
+ * count as stored. Source backup was retired with BitMEX collection itself, so
+ * the bucket is the artifact and there is nothing to pair it with.
  */
-export async function scanMega(megaVault: string, megaRaw: string): Promise<MegaScan> {
-  const [rawLines, vaultLines] = await Promise.all([
-    runFind(megaRaw),
-    runFind(megaVault),
-  ]);
+export async function scanMega(megaVault: string): Promise<MegaScan> {
+  const vault = classify(await runFind(megaVault), megaVault);
 
-  const raw   = classify(rawLines, megaRaw, 'sources');
-  const vault = classify(vaultLines, megaVault, 'buckets');
-
-  return {
-    raw:        raw.files,
-    vault:      vault.files,
-    bucketTars: vault.tars,
-    sourceTars: raw.tars,
-  };
+  return { vault: vault.files, bucketTars: vault.tars };
 }
 
 async function runFind(megaBase: string): Promise<string[]> {
@@ -99,15 +86,13 @@ async function runFind(megaBase: string): Promise<string[]> {
 }
 
 /**
- * Splits one root's `mega-find` output into loose daily files and year
- * tarballs. `kind` says which loose files belong here: `sources` (suffixed,
- * raw root) or `buckets` (suffix-less, vault root). Files of the wrong shape
- * for the root are skipped — they shouldn't be there.
+ * Splits the root's `mega-find` output into loose daily buckets and year
+ * tarballs. A suffixed file is a raw source, which nothing puts here — it is
+ * skipped rather than counted as a bucket it is not.
  */
 function classify(
   lines: string[],
   base:  string,
-  kind:  'sources' | 'buckets',
 ): { files: MegaEntry[]; tars: MegaTar[] } {
   const files: MegaEntry[] = [];
   const tars:  MegaTar[]   = [];
@@ -128,10 +113,7 @@ function classify(
 
     if (! parsed) continue;
 
-    const isSource = parsed.suffix !== '';
-
-    if (kind === 'sources' && ! isSource) continue;   // buckets shouldn't be in raw
-    if (kind === 'buckets' && isSource)   continue;    // sources shouldn't be in vault
+    if (parsed.suffix !== '') continue;   // a source; nothing writes those here
 
     files.push({
       table:  parsed.table,

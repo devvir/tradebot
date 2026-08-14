@@ -47,10 +47,9 @@ export interface PullTask extends AbnormalFlag {
 // ── Prepare ───────────────────────────────────────────────────────────────────
 
 export interface PrepareGroup {
-  table:        string;
-  year:         string;
-  days:         string[];          // YYYYMMDD, sorted
-  abnormalDays: string[];          // days missing at least one expected source suffix
+  table: string;
+  year:  string;
+  days:  string[];                 // YYYYMMDD, sorted
 }
 
 export interface PrepareTask extends AbnormalFlag {
@@ -82,17 +81,6 @@ export interface ResortTask extends AbnormalFlag {
 
 // ── Backup ────────────────────────────────────────────────────────────────────
 
-export interface BackupSourceFile {
-  table:     string;
-  year:      string;
-  day:       string;
-  suffix:    string;
-  localPath: string;
-  megaPath:  string;
-  /** True when the file isn't local yet — it'll arrive via the pull task. */
-  fromPull:  boolean;
-}
-
 export interface BackupBucketFile {
   table:     string;
   year:      string;
@@ -101,11 +89,6 @@ export interface BackupBucketFile {
   megaPath:  string;
   /** True when the bucket doesn't exist yet — it'll be created by the prepare task. */
   fromPrepare: boolean;
-}
-
-export interface BackupSourceTask extends AbnormalFlag {
-  kind:  'backup-source';
-  files: BackupSourceFile[];
 }
 
 export interface BackupBucketTask extends AbnormalFlag {
@@ -170,7 +153,6 @@ export type Task =
   | PullTask
   | PrepareTask
   | ResortTask
-  | BackupSourceTask
   | BackupBucketTask
   | CleanupTask
   | DeleteLocalBucketsTask;

@@ -577,7 +577,6 @@ Sync    — audit + sync local, remotes, and Mega
 
 - `VAULT_DATA_DIR` — Root directory of vault files (required; defined in `.env`)
 - `VAULT_REMOTES` — Comma-separated `name=user@host:/path` pairs for rsync remotes
-- `SOURCES_MEGA_RAW` — Mega path for raw WS source backups
 - `SOURCES_MEGA_VAULT` — Mega path for prepared bucket backups
 
 ---

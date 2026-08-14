@@ -16,10 +16,6 @@ export type DayKind = 'today' | 'pending' | 'past';
 /**
  * Structured per-cell state. Pure data — no presentation strings or colors.
  * The display layer is the only place that decides labels and colors.
- *
- * The `half` kind captures Mega's split bucket/sources state for sourced
- * tables (one half stored, the other missing); both stored is `stored`, both
- * missing is `missing`.
  */
 export type CellState =
   | { kind: 'absent' }
@@ -30,8 +26,7 @@ export type CellState =
   | { kind: 'buckets' }
   | { kind: 'sources' }
   | { kind: 'stored' }
-  | { kind: 'missing' }
-  | { kind: 'half'; bucket: 'stored' | 'missing'; sources: 'stored' | 'missing' };
+  | { kind: 'missing' };
 
 /**
  * A maximal contiguous date range where every location's state is identical
@@ -48,22 +43,17 @@ export interface Range {
 
 // ── Equality ─────────────────────────────────────────────────────────────────
 
-/** Structural comparison for two state tuples. Used to detect range breaks. */
+/**
+ * Structural comparison for two state tuples. Used to detect range breaks.
+ *
+ * Every kind is now distinguished by its `kind` alone — none carries fields —
+ * so identity of kind is identity of state.
+ */
 export function statesEqual(a: CellState[], b: CellState[]): boolean {
   if (a.length !== b.length) return false;
 
   for (let i = 0; i < a.length; i++) {
-    if (! oneStateEqual(a[i]!, b[i]!)) return false;
-  }
-
-  return true;
-}
-
-function oneStateEqual(a: CellState, b: CellState): boolean {
-  if (a.kind !== b.kind) return false;
-
-  if (a.kind === 'half' && b.kind === 'half') {
-    return a.bucket === b.bucket && a.sources === b.sources;
+    if (a[i]!.kind !== b[i]!.kind) return false;
   }
 
   return true;
@@ -115,43 +105,20 @@ function tmpState(dayKind: DayKind, isWs: boolean): CellState {
  * last fully-closed day. `today` and `pending` are both still in flight —
  * absence in Mega is *expected* (`absent`), not a gap (`missing`).
  *
- * Takes the two presence booleans directly: whether the bucket is in Mega and
- * whether the sources are. The caller decides presence uniformly (daily file
- * this year, year-tar before) — this function doesn't care how storage works.
+ * Takes the presence boolean directly: whether the bucket is in Mega. The
+ * caller decides presence uniformly (daily file this year, year-tar before) —
+ * this function doesn't care how storage works.
  *
- * The expected artifacts depend on whether the table is `sourced`, not on its
- * WS/REST origin. A sourced table (all WS, plus `trade`/`quote`) must hold
- * both the raw sources (`SOURCES_MEGA_RAW`) and the promoted bucket
- * (`SOURCES_MEGA_VAULT`); either one alone is a `half` cell. An unsourced
- * table's bucket is its only artifact.
+ * **The bucket is the whole expectation**, for every table and whether or not
+ * it went through a preparation stage. A second root once held the raw sources
+ * a bucket was built from, and a sourced table needed both to read `stored`,
+ * with either alone rendering as a split cell. Source backup was retired along
+ * with BitMEX collection, so there is one artifact per day and the answer is
+ * stored or it is not.
  */
-export function megaState(
-  hasBucket:  boolean,
-  hasSources: boolean,
-  sourced:    boolean,
-  dayKind:    DayKind,
-): CellState {
-  const isPastDay = dayKind === 'past';
+export function megaState(hasBucket: boolean, dayKind: DayKind): CellState {
+  if (hasBucket)          return { kind: 'stored' };
+  if (dayKind === 'past') return { kind: 'missing' };
 
-  if (! sourced) {
-    if (hasBucket) return { kind: 'stored' };
-    if (isPastDay) return { kind: 'missing' };
-
-    return { kind: 'absent' };
-  }
-
-  // Sourced: both raw sources and the promoted bucket are expected.
-  if (hasBucket && hasSources) return { kind: 'stored' };
-
-  if (! hasBucket && ! hasSources) {
-    if (isPastDay) return { kind: 'missing' };
-
-    return { kind: 'absent' };
-  }
-
-  return {
-    kind:    'half',
-    bucket:  hasBucket  ? 'stored' : 'missing',
-    sources: hasSources ? 'stored' : 'missing',
-  };
+  return { kind: 'absent' };
 }

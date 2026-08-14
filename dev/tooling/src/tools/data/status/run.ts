@@ -34,7 +34,6 @@ export async function runStatus({ watch = true }: StatusOptions = {}): Promise<v
   info(`Local vault: ${config.localBase}`);
   info(`Remotes: ${config.remotes.length === 0 ? '(none)' : config.remotes.map(r => r.name).join(', ')}`);
   info(`Mega vault: ${config.megaVault}`);
-  info(`Mega raw:   ${config.megaRaw}`);
 
   await checkMegaAvailable();
 

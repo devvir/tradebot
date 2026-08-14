@@ -13,7 +13,6 @@ function fullDay(day: string): DayState {
     localTmpSuffixes:  [],
     remoteSuffixes:    {},
     remoteTmpSuffixes: {},
-    megaSources:       [],
     localBucket:       true,
     localBucketTmp:    false,
     megaBucket:        true,
@@ -36,12 +35,12 @@ function completeTable(name: string, start: string, to = yesterdayYmd()): TableS
 
   for (let d = start; d <= to; d = nextDay(d)) days.set(d, fullDay(d));
 
-  return { name, origin: 'rest', sourced: false, days, megaBucketTars: [], megaSourceTars: [] };
+  return { name, origin: 'rest', sourced: false, days, megaBucketTars: [] };
 }
 
 function vaultState(tables: TableState[]): VaultState {
   return {
-    config:    { localBase: '/tmp', remotes: [], megaVault: 'vault', megaRaw: 'raw' },
+    config:    { localBase: '/tmp', remotes: [], megaVault: 'vault' },
     tables,
     scannedAt: new Date(),
   };

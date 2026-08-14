@@ -7,18 +7,16 @@ import { RemoteConfig, ScanConfig } from './types';
  * Required:
  *   - `VAULT_DATA_DIR`     — local vault root
  *   - `SOURCES_MEGA_VAULT` — Mega path for ready buckets
- *   - `SOURCES_MEGA_RAW`   — Mega path for raw WS source files
  *
  * Optional:
  *   - `SOURCES_REMOTE_VAULTS`  — comma-separated `<name>:<user>@<host>:<path>`
  */
 export function loadConfig(): ScanConfig {
   const megaVault = requiredEnv('SOURCES_MEGA_VAULT');
-  const megaRaw   = requiredEnv('SOURCES_MEGA_RAW');
   const localBase = requiredEnv('VAULT_DATA_DIR');
   const remotes   = parseRemotes(getEnv('SOURCES_REMOTE_VAULTS', '') ?? '');
 
-  return { localBase, remotes, megaVault, megaRaw };
+  return { localBase, remotes, megaVault };
 }
 
 /**
