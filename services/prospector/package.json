@@ -1,0 +1,24 @@
+{
+  "name": "@tradebot/prospector",
+  "version": "1.0.0",
+  "description": "Prospector service — surveys venue archives and records every file they publish",
+  "main": "dist/index.js",
+  "private": true,
+  "scripts": {
+    "build": "tsc -b && mkdir -p dist/src/database/migrations/seeds && cp -r src/database/migrations/seeds/*/ dist/src/database/migrations/seeds/",
+    "start": "node dist/src/index.js",
+    "dev": "ts-node src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@devvir/netgate": "workspace:*",
+    "@devvir/service-kit": "workspace:*",
+    "@tradebot/utils": "workspace:*",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0"
+  }
+}

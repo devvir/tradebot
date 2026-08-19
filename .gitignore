@@ -38,3 +38,4 @@ __pycache__/
 .nx/workspace-data
 vitest.config.*.timestamp*
 .nx/polygraph
+.claude/settings.json

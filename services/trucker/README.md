@@ -42,8 +42,6 @@ that honestly if what lands here is the venue's own bytes.
 
 Full technical detail — architecture, the granularity cutover, the progress model, per-venue
 layouts and quirks — is in [docs/services/TRUCKER.md](../../docs/services/TRUCKER.md).
-What is not collected yet and what is still open is in
-[docs/planning/TRUCKER.md](../../docs/planning/TRUCKER.md).
 
 ## Storage
 

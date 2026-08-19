@@ -44,13 +44,78 @@ platform, not a property of one venue.
 
 - `backup/` is a copy: one symbol's `trading/` files, served correctly under `trading/` as well.
 - Keys with no `/` in them sit at the bucket root and serve the browsing UI. `index.html` also
-  appears *inside* directories — `kline_for_metatrader4/BTCUSDT/2020/index.html` — where no rule is
-  needed, since a name carrying no date is declined by `dateOf` anyway.
+  appears *inside* directories — `kline_for_metatrader4/BTCUSDT/2020/index.html` — one per
+  instrument per dataset. It is excluded at every venue, so none of them is catalogued or counted
+  as a shape still to be read.
 
-No checksum sidecars anywhere: every tree holds `.csv.gz` or `.csv.zip` and nothing else. That
-matters because bybit's `dateOf` takes the first date wherever it falls in a filename — it has to,
-since `premium_index` puts a suffix after the date — so unlike the other S3 venues it would not
-decline a name that continued past one.
+No checksums anywhere: every tree holds `.csv.gz` or `.csv.zip` and nothing else. That matters
+because bybit's `dateOf` takes the first date wherever it falls in a filename — it has to, since
+`premium_index` puts a suffix after the date — so unlike the other S3 venues it would not decline a
+name that continued past one.
+
+## Four shapes, and none of them is the obvious one
+
+Every tree names its instrument and its date differently, which is why bybit needs four expressions
+where other venues need one:
+
+| tree | shape |
+|---|---|
+| `trading/`, `premium_index/`, `spot_index/` | the instrument runs **straight into** the date — `BTCUSD2019-10-01_premium_index.csv.gz` |
+| `spot/` | both grains in one directory, told apart by the separator — `-2026-08` monthly, `_2026-08-03` daily |
+| `trade/option/`, `mark_kline/option/` | dated **first**, keyed by the underlying coin — `2026-08-03_BTC_USDT.trades.csv.zip` |
+| `kline_for_metatrader4/` | a whole month named by **both its ends** — `ADAUSDT_15_2021-01-01_2021-01-31.csv.gz` |
+| `quote-saver.bycsi.com` (second host) | market, instrument, then date first and the depth last — `linear/BTCUSDT/2025-08-21_BTCUSDT_ob200.data.zip` |
+
+Two of these are worth keeping in mind.
+
+**The metatrader tree is monthly, not a range.** All 4,423 files in the archive cover exactly a
+whole calendar month, across five intervals, with no exceptions — so it is an ordinary monthly
+series that happens to spell out its own last day. The pattern says so with `{MONTH_LAST_DAY}`, which bybit's
+adapter fills in; February is why it cannot be a literal.
+
+**The order-book host changed depth.** Bybit moved from 500 levels to 200, so a symbol has files of
+both and the depth stays literal in the pattern — different depth, different series, exactly as an
+interval is treated elsewhere. The host carries `linear/` and `inverse/` and no third market.
+
+## The 2021 expiries are abandoned, and are refused
+
+`trading/` holds 44 dated futures directories. Forty of them — every expiry from 2022 on — carry
+197 to 205 daily files each, a contiguous history. **The four 2021 ones do not**, and bybit's own
+download form offers nothing older than 2022:
+
+| directory | files | what is in them |
+|---|---|---|
+| `BTCUSDU21`, `ETHUSDU21` | 2 | one day, 2021-07-26, and nothing else |
+| `BTCUSDZ21`, `ETHUSDZ21` | 29 | that same day, 27 days from 2021-12-06, one empty file |
+
+A December-2021 contract traded for months before December, so 27 days is a fragment of it, and a
+September-2021 contract with one July day is not a series at all.
+
+**The single day is served twice and the two copies disagree.** `…2021-07-26_v2.csv` is the whole
+day, 28,828 rows; `…2021-07-26_v2.csv.gz` beside it holds 307 rows, of which 137 carry a different
+`tickDirection` for the same `trdMatchID`. Whatever `_v2` meant, one of the two is wrong and nothing
+says which.
+
+All four directories are refused in the adapter's `accepts`, so descent never enters them.
+
+### Eight empty files, all written on one day
+
+Across all 7,424 files in those 44 directories, exactly eight are under 100 bytes. Every one is 44
+bytes, is a gzip of **nothing**, and is stamped **2022-12-12** — one per contract live or recent
+that day, in `BTCUSDZ21`, `ETHUSDZ21` and the six 2022 expiries. A job that ran once and was never
+cleaned up.
+
+Two of them fall inside the refused 2021 directories. Note the size: 44 bytes rather than zero, so
+no size rule finds them — only the file itself says it is empty.
+
+## A directory can be renamed out from under its files
+
+`trading/DATAOLD01USDT/` holds files named `DATAUSDT2024-08-23.csv.gz` — 527 of them, from
+2023-12-20 to 2025-05-29 — and there is no `trading/DATAUSDT/` at all. Bybit renamed the instrument,
+moved the directory and left every filename as it was.
+
+So **the directory is not evidence of the instrument's name**, and a reader that anchored on the two
+agreeing read none of these. The date is the anchor instead.
 
 ## It bans an address that asks too fast
 

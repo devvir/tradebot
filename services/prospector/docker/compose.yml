@@ -1,0 +1,72 @@
+# Prospector Service — surveys venue archives and records what they publish.
+#
+# Owns its storage: CATALOG_DIR on the host is mounted at a fixed path in the
+# container. Pre-create it writable by uid 1000, as with vault:
+#   sudo mkdir -p /storage/tradebot/catalog && sudo chown 1000:1000 /storage/tradebot/catalog
+#
+# It downloads nothing — a survey moves kilobytes of XML while the archives it
+# describes are terabytes.
+#
+# It surveys nothing unasked. A venue is enrolled by a request over the catalog
+# API it serves, and from then on it is kept current across restarts: coming back
+# up resumes an interrupted job from its partitions' cursors, waits out the rest
+# of a venue's interval, and leaves paused and never-asked-for venues alone.
+#
+# So a deployment where nobody has ever started a survey is read-only, and stays
+# that way however often it is restarted.
+
+services:
+  prospector:
+    build:
+      context: ../../..
+      dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
+      args:
+        SERVICE_NAME: prospector
+
+    container_name: prospector
+
+    environment:
+      # The shared secret every request must carry in `x-catalog-token`.
+      #
+      # Empty is allowed and means the check is off — every request is let
+      # through, which is what makes the read endpoints answerable from a browser
+      # with no header to set. The service warns loudly on startup, so an open
+      # catalog is a decision somebody took rather than one nobody noticed.
+      CATALOG_TOKEN: ${CATALOG_TOKEN:-}
+
+      # Which venues to survey (default: all known)
+      PROSPECTOR_VENUES: ${PROSPECTOR_VENUES:-}
+
+      # The ceiling on requests in flight at once, across every venue. What a
+      # single venue tolerates is a fact about that venue and lives in its
+      # adapter; this is the one number no adapter can see, since every one of
+      # them can be reasonable while their sum is not. Venues draw from it first
+      # come, first served — nothing is reserved, and a venue surveying alone is
+      # limited only by its own figure.
+      PROSPECTOR_CONCURRENCY: ${PROSPECTOR_CONCURRENCY:-200}
+
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV:  ${APP_ENV:-prod}
+      TZ:        ${TZ:-UTC}
+
+    user: "1000:1000"
+
+    volumes:
+      - ../../../:/live
+      - ${CATALOG_DIR:?CATALOG_DIR is not defined}:/data/catalog
+
+    ports:
+      # Health, and the catalog API. Both publish to whatever host port is given
+      # — left empty, docker picks a free one, which is what you want when the
+      # only thing that reaches this is on the same network.
+      - :3000
+      - ${CATALOG_PORT:-}:8080
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    restart: unless-stopped

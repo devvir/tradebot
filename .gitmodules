@@ -11,3 +11,7 @@
 	path = packages/service-kit
 	url = https://github.com/devvir/service-kit.git
 	branch = main
+[submodule "packages/netgate"]
+	path = packages/netgate
+	url = https://github.com/devvir/netgate.git
+	branch = main

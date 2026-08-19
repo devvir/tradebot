@@ -38,8 +38,8 @@ Every `.zip` has a `.zip.CHECKSUM` beside it, SHA-256. Consequences:
 
 - A listing page of 1000 keys is only ~500 files. Anything reasoning about page counts against file
   counts must halve one of them.
-- The sidecars are never catalogued — they carry no date the adapter recognises, so they fall out
-  without a rule naming them.
+- The sidecars are never catalogued: `.CHECKSUM` is excluded at every venue, before any venue's
+  `inspectUrl` sees the path.
 
 ## Binance announces its own corrections
 
@@ -66,6 +66,43 @@ data/futures/{um,cm}/{daily,monthly}/<dataset>/<SYMBOL>/[<INTERVAL>/]…
 data/option/daily/{BVOLIndex,EOHSummary}/<SYMBOL>/…
 ```
 
+### `um` and `cm` are one market and two archives
+
+**UM is USDⓈ-margined futures, CM is coin-margined** — binance's own words — and they are two
+products, not two folders for one. UM answers at `fapi`, CM at `dapi`, and **every contract is
+domiciled in exactly one of them**. The archive mirrors that split: `data/futures/um/` and
+`data/futures/cm/`.
+
+The catalog collapses both into the canonical market `perp`, which is right for answering questions:
+both are perpetual swaps, and a consumer asking for `perp` wants both. It is wrong for *creating*
+series, because the two are separate keyspaces — a contract listed by `fapi` can never have a key
+under `cm/`.
+
+So the instruments hook records **which endpoint listed a contract** as its `category`, the adapter's
+`categoryOf` reads the margin segment back out of a pattern, and the preamble refuses the pairs that
+disagree. Nothing is inferred from the symbol, and the reason is measured rather than stylistic:
+
+- **`marginAsset` does not separate them.** `ETHBTC` is a UM contract margined in BTC, a coin — so
+  "margined in a coin ⇒ CM" misclassifies it.
+- **Nor does the ticker.** CM symbols are USD-quoted (`BTCUSD_PERP`, `LTCUSD`), but 43 UM symbols end
+  in `USD` too, because BUSD does — `BTCBUSD`, `FTMBUSD`, `MATICBUSD`.
+- **The endpoint is exact and free.** It is binance's own assignment, known at the moment the
+  contract is read.
+
+Binance is [integrating CM into UM's architecture](https://developers.binance.com/en/docs/products/derivatives-trading-coin-futures/Important-CM-UM-Integration-Notice)
+— progressive from 2026-06-24, fully effective 2026-06-30 — sharing rate limits, merging market-data
+streams, and letting some endpoints accept both symbol types. The `exchangeInfo` endpoints stay
+separate and each contract keeps one domicile, but it is another reason not to pin this to a naming
+convention: conventions under active unification are exactly what breaks quietly.
+
+Left unfiltered this cost real work. The one perp listed on 2026-08-31 got **260 series — 130 of them
+under `cm/`**, describing keys that market has never held; each is a `404` a day for ever, since a
+series that has never published has no end to reach and nothing retires it.
+
+CM is also small and closed: 30 contracts over 20 base assets, all `underlyingType: COIN`. UM is 883
+and growing, spanning `COIN, EQUITY, CN_EQUITY, HK_EQUITY, KR_EQUITY, COMMODITY, INDEX, PREMARKET`
+with a `TRADIFI_PERPETUAL` contract type — equity and commodity perps live there.
+
 **Surveyed from the bucket root, and nothing is stripped.** Starting at `data/` would make
 `data3/liquidationSnapshot/` permanently invisible, and descent recovers nothing above where it is
 told to begin. Paths therefore keep their leading segment and stay self-describing, reconstructing
@@ -84,7 +121,7 @@ data3/<file>            a stray key directly under data3; only its subdirectorie
 ```
 
 The browsing UI's own assets need no rule — `index.html` and friends carry no date, so they are
-declined for the same reason checksum sidecars are.
+declined for the same reason checksums are.
 
 Dates trail the filename — `…-2025-03-31.zip` for a day, `…-2025-03.zip` for a month — so keys sort
 by symbol first and date last, and a month's files are scattered across a walk rather than
@@ -129,7 +166,7 @@ prevent. Binance now surveys from the bucket root and filters, which is why `dat
 all. HTX was checked the same way and was hiding a second archive six years deep, so it surveys from
 its root too. KuCoin was checked and is clean — its bucket root holds `data/` and nothing else.
 
-### The `/`-prefixed tree — real spot files, contents never compared
+### The `/`-prefixed tree — a frozen snapshot, refused
 
 **There are no directories in S3.** Keys are flat strings and `/` is a convention that
 `delimiter=/` renders as folders, so a key whose first character is a slash is perfectly legal. All
@@ -147,7 +184,7 @@ What is under it, measured:
 Both trees fetch with `200`. The reconstructed URL keeps the double slash —
 `data.binance.vision//data/spot/…` — and resolves, because the key genuinely starts with one.
 
-#### Every filename is duplicated; not one file is
+#### Every filename is duplicated, and so is every value inside
 
 Compared across the whole tree, mapping `/data/spot/X` to `data/spot/monthly/X`:
 
@@ -156,32 +193,38 @@ Compared across the whole tree, mapping `/data/spot/X` to `data/spot/monthly/X`:
 | files under `/data/spot/` | 137,212 |
 | with a same-named counterpart under `data/spot/monthly/` | **137,212 — all of them** |
 | with the same `etag` | **0** |
-| differing in `size` as well | 27,064 (19.7%) |
 
-So it contributes no filename the official tree lacks, and **no file that is the same bytes**. One
-pair in detail:
+Different bytes throughout, which for a long time was where the question stopped: a different
+`etag` at the same `size` is consistent with recompression, a different size is not, and nobody had
+opened a file from either tree.
 
-| | `/data/spot/aggTrades/BNBBTC/…-2017-07.zip` | `data/spot/monthly/aggTrades/BNBBTC/…-2017-07.zip` |
-|---|---|---|
-| size | 468,229 | 458,109 |
-| etag | `352356d72f067624b46272cd1a2fb16a` | `520a8264343f84fa323fd76751e17523` |
-| last modified | 2021-02-26 | 2021-06-10 |
+**Opened, they turn out to hold the same data.** The bytes differ for two reasons, neither of them
+new information.
 
-**Nobody has opened a file from either tree**, so what they *contain* is unknown. A different `etag`
-at the same `size` is consistent with mere recompression; a different size is not. That makes the
-**27,064 size-differing pairs** the subset worth unzipping, and until someone does, the tree is a
-complete parallel rendering of the same symbol-months rather than a copy or a subset.
+**Decimal padding.** Every value matches; only the rendering moved. Binance re-issued the archive in
+2021-05 — visible in the zips' own internal timestamps, 2021-01-16/17 against 2021-05-05 — and
+trimmed the trailing zeros:
 
-**It stays catalogued.** It is not eligible for exclusion on two counts. It is real monthly data in
-binance's normal packaging, and exclusion is for things that are not historical data at all —
-deciding that data is redundant or unreliable is the consumer's call. And it is not redundant in the
-sense that would settle it anyway: byte-identical duplication would be a reason to drop it, and the
-`etag` comparison rules that out for every single file. That is the difference between this and
-`data2/`, where loose `.csv` beside its own `.zip` and a `.DS_Store` are not historical data in any
-generation.
+```
+/data/spot/…   0,0.14000000,74.30000000,0,0,1553659205228,False,True
+data/spot/…    0,0.14,74.3,0,0,1553659205228,False,True
+```
 
-One loose end: `tagOf` reads the `monthly`/`daily` path segment, and this tree has none, so all
-137,212 monthly files come back untagged beside their tagged counterparts.
+Three `aggTrades` pairs compared in full: same row counts, and **byte-identical once the padding is
+normalised**.
+
+**Truncation, where the freeze caught a month in flight.** `1INCHBTC-1d-2021-01` holds 12 rows here
+against the official 31, ending 2021-01-12 rather than 2021-01-31 — and its last row is a *partial*
+candle, same open, lower high, a third of the volume, 4,383 trades against 11,192.
+
+So the tree is a **snapshot of the spot archive frozen around 2021-01-12**. It carries no file the
+official tree lacks and no value it lacks either; where the two disagree it holds strictly less.
+
+**It is refused, in `accepts`.** A key beginning with `/` is not surveyed, so nothing re-adds it, and
+the 137,212 rows an earlier walk recorded were deleted along with their 16 patterns and 11,239
+series. This is the rare exclusion of something that *is* historical data — earned not by the
+`etag` comparison, which says only that the bytes differ, but by reading both renderings and finding
+one to be the other with less of it.
 
 ## Discovery
 

@@ -11,7 +11,7 @@ import type { VenueArchive } from './types';
  * Every venue whose archive trucker can fetch unattended. Venues whose data is
  * behind a JS portal (OKX's non-trades categories, Bitget) or a manual
  * distribution (Kraken's Drive links) are absent until their access is solved —
- * see docs/planning/TRUCKER.md.
+ * see docs/services/TRUCKER.md.
  */
 const VENUES: readonly VenueArchive[] = [binance, bitget, bybit, gate, htx, kucoin, okx];
 
