@@ -15,8 +15,18 @@ import type { BaseTopic, Owner, Topic } from './types';
  * Reads are open to everyone. A consumer needs no permission to find out where
  * a producer has got to; that is the entire purpose.
  */
-export const OWNERS: Record<BaseTopic, Owner> = {
-  archives:  'trucker',
+export const OWNERS: Record<BaseTopic, Owner | readonly Owner[]> = {
+  /**
+   * **Two writers, for as long as the archives have two collectors.** Trucker
+   * discovers and downloads in one service; hauler works from the catalog and
+   * writes at a finer grain. They fill the same tree and say the same kind of
+   * thing about it, so the tree keeps one meaning and the handover needs no
+   * migration — trucker's entry goes when trucker does.
+   *
+   * A list is still an enumeration, so this is not a hole: a service not named
+   * here cannot write here, which is the whole job.
+   */
+  archives:  ['trucker', 'hauler'],
   vault:     'stocker',
   rest:      'tooling',
   websocket: 'tooling',
@@ -37,8 +47,11 @@ export const assertOwns = (owner: Owner, topic: Topic): void => {
   if (! holder)
     throw new Error(`Unknown topic '${topic}'. Known: ${Object.keys(OWNERS).join(', ')}`);
 
-  if (holder !== owner)
-    throw new Error(`'${owner}' cannot write '${topic}' facts — that topic belongs to '${holder}'`);
+  const holders = typeof holder === 'string' ? [holder] : holder;
+
+  if (! holders.includes(owner))
+    throw new Error(
+      `'${owner}' cannot write '${topic}' facts — that topic belongs to '${holders.join("', '")}'`);
 };
 
 /**

@@ -8,7 +8,12 @@
 #   courier → S3 gzip dumps (trade, quote)                   → vault
 #   scribe  → REST endpoints                                  → vault
 #   tardy   → Tardis first-of-month WS history (7 WS tables) → vault
-#   trucker → other venues' published archives                → host disk (not vault)
+#   hauler  → other venues' published archives                → host disk (not vault)
+#
+# Hauler downloads from the catalog the `catalog` module builds, so that module
+# has to have surveyed a venue before there is anything here to fetch — and it
+# fetches only what is on its shopping list, which is empty until somebody adds
+# to it over its API.
 
 # Docker Compose Project
 name: collect
@@ -16,7 +21,7 @@ name: collect
 include:
   - path: ../../../services/courier/docker/compose.yml
   - path: ../../../services/scribe/docker/compose.yml
-  - path: ../../../services/trucker/docker/compose.yml
+  - path: ../../../services/hauler/docker/compose.yml
 
   # Tardis data will not be collected unless needed, from Aug 1st 2026 onward.
   # - path: ../../../services/tardy/docker/compose.yml

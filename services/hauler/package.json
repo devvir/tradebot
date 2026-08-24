@@ -1,0 +1,24 @@
+{
+  "name": "@tradebot/hauler",
+  "version": "1.0.0",
+  "description": "Hauler service \u2014 fetches catalogued venue files onto disk under canonical names",
+  "main": "dist/index.js",
+  "private": true,
+  "scripts": {
+    "build": "tsc -b",
+    "start": "node dist/src/index.js",
+    "dev": "ts-node src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@devvir/service-kit": "workspace:*",
+    "@tradebot/pipeline": "workspace:*",
+    "@tradebot/utils": "workspace:*",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0"
+  }
+}

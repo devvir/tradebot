@@ -290,6 +290,25 @@ importers:
         specifier: workspace:*
         version: link:../../shared/utils
 
+  services/hauler:
+    dependencies:
+      '@devvir/service-kit':
+        specifier: workspace:*
+        version: link:../../packages/service-kit
+      '@tradebot/pipeline':
+        specifier: workspace:*
+        version: link:../../shared/pipeline
+      '@tradebot/utils':
+        specifier: workspace:*
+        version: link:../../shared/utils
+      express:
+        specifier: ^5.2.1
+        version: 5.2.1
+    devDependencies:
+      '@types/express':
+        specifier: ^5.0.0
+        version: 5.0.6
+
   services/hoarder:
     dependencies:
       '@devvir/service-kit':

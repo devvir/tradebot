@@ -1,0 +1,79 @@
+# Hauler Service — brings catalogued venue files to disk under canonical names.
+#
+# Reads the catalog over HTTP and writes to HAULER_ARCHIVES_DIR on the host,
+# mounted at a fixed path in the container. Pre-create it writable by uid 1000,
+# as with vault:
+#   sudo mkdir -p "$HAULER_ARCHIVES_DIR" && sudo chown 1000:1000 "$HAULER_ARCHIVES_DIR"
+#
+# It discovers nothing. Prospector establishes what every venue publishes and
+# this fetches from that list, so the two can run on different machines — the
+# surveying where the link is good, the hauling where the disk is.
+#
+# It fetches nothing until something is on the shopping list, which is served
+# from this container and survives restarts in the facts database.
+
+services:
+  hauler:
+    build:
+      context: ../../..
+      dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
+      args:
+        SERVICE_NAME: hauler
+
+    container_name: hauler
+
+    environment:
+      # Where the catalog answers. Inside the shared network that is the
+      # prospector container by name; set it to a host or an address when the
+      # survey runs somewhere else.
+      CATALOG_URL:   ${CATALOG_URL:-http://prospector:8080}
+
+      # The same secret prospector checks, used for both directions: it opens
+      # the catalog, and it opens this service's own shopping-list API.
+      #
+      # Empty is allowed and means both doors are off — this sends no header and
+      # checks none. The service warns loudly on startup, so an open deployment
+      # is a decision somebody took rather than one nobody noticed.
+      CATALOG_TOKEN: ${CATALOG_TOKEN:-}
+
+      # This deployment's slice of the shopping list — never adds to it, only
+      # narrows it (default: no narrowing on any of the four)
+      HAULER_VENUES:      ${HAULER_VENUES:-}
+      HAULER_MARKETS:     ${HAULER_MARKETS:-}
+      HAULER_DATASETS:    ${HAULER_DATASETS:-}
+      HAULER_FROM:        ${HAULER_FROM:-}
+      HAULER_TO:          ${HAULER_TO:-}
+
+      # Concurrent fetches within one venue. Venues never wait on each other, so
+      # this is per venue rather than a total.
+      HAULER_CONCURRENCY: ${HAULER_CONCURRENCY:-8}
+
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV:  ${APP_ENV:-prod}
+      TZ:        ${TZ:-UTC}
+
+    user: "1000:1000"
+
+    volumes:
+      - ../../../:/live
+      - ${HAULER_ARCHIVES_DIR:?HAULER_ARCHIVES_DIR is not defined}:/data/archives
+
+      # The shopping list, and one fact per finished partition. Writable —
+      # hauler produces both.
+      - ${DATA_DIR:?DATA_DIR is not defined}/@shared:/data/shared
+
+    ports:
+      # Health, and the shopping-list API. Both publish to whatever host port is
+      # given — left empty, docker picks a free one, which is what you want when
+      # the only thing that reaches this is on the same network.
+      - :3000
+      - ${HAULER_PORT:-}:8080
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    restart: unless-stopped

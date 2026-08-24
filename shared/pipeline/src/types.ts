@@ -38,7 +38,7 @@ export type Topic =
   | `logs:${BaseTopic}`;
 
 /** Services that may write. Named for themselves, since a service is itself. */
-export type Owner = 'trucker' | 'stocker' | 'tooling';
+export type Owner = 'trucker' | 'stocker' | 'tooling' | 'hauler';
 
 /**
  * What identifies one fact.

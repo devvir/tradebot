@@ -35,6 +35,23 @@ describe('who may write what', () => {
   });
 
   /**
+   * The archives have two collectors while one replaces the other, and they
+   * fill the same tree. A list of owners is still an enumeration: everyone not
+   * on it is refused exactly as before.
+   */
+  it('lets either collector write the archives, and nobody else', () => {
+    const hauler = new FactManager({ owner: 'hauler', root });
+
+    expect(() => hauler.record({
+      topic: 'archives', venue: 'gate', period: '202003', fact: 'complete',
+    })).not.toThrow();
+
+    expect(() => hauler.record({
+      topic: 'vault', venue: 'gate', period: '202003', fact: 'built',
+    })).toThrow(/belongs to 'stocker'/);
+  });
+
+  /**
    * A topic absent from the map is not an experiment, it is a typo — and
    * something written under a misspelling is invisible to every consumer while
    * looking perfectly fine to whoever wrote it.
