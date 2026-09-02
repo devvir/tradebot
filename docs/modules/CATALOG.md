@@ -7,8 +7,10 @@ decided from.
 prospector → venue archives → catalog.db → the API everyone else asks
 ```
 
-One service, [prospector](../services/PROSPECTOR.md), which is where the detail lives. This page is
-only what you need to run the module.
+Two services. [prospector](../services/PROSPECTOR.md) does all of it — the survey, the database and
+the API — and is where the detail lives. [catalog-ui](../services/CATALOG-UI.md) is a page for
+reading that API and driving the surveys from a browser; it holds nothing and can be left out
+entirely. This page is only what you need to run the module.
 
 ## Why it is its own module
 
@@ -26,15 +28,18 @@ answer to "what exists, and what do we hold of it" rather than one per service.
 modules/collect/catalog/
 ```
 
-`CATALOG_TOKEN` is **required** and the service will not start without it — a blank default would
-turn "nobody set it" into "everybody is welcome" on a port meant to be reachable from wherever the
-downloading happens.
-
 | variable | |
 |---|---|
 | `CATALOG_DIR` | host directory holding `catalog.db`, mounted at `/data/catalog` |
-| `CATALOG_TOKEN` | **required**; sent as `x-catalog-token` on every request |
+| `CATALOG_TOKEN` | sent as `x-catalog-token` on every request. **Empty turns the check off** |
 | `CATALOG_PORT` | host port for the API. Empty lets docker pick a free one |
+| `CATALOG_UI_PORT` | host port for the page. `9020` |
+
+**An empty `CATALOG_TOKEN` means an open catalog**, and both services treat it the same way:
+prospector checks no header and warns loudly on startup, catalog-ui forwards without one. That is
+what makes the read endpoints answerable from a browser with nothing to configure — and it is a
+decision somebody takes rather than one nobody notices, which is why the warning is there. Set it on
+anything reachable beyond the machine.
 
 Pre-create the directory for uid 1000, as with the other volumes:
 
@@ -50,11 +55,17 @@ that jumped straight to the head shape would be missing everything the chain car
 
 ## Starting a survey
 
-Nothing starts on its own. Once a venue has been asked for, though, it **keeps itself current** —
-walking once and then updating daily — until it is paused or refreshed. Whether a venue should be
-surveyed at all depends on what somebody is waiting for and what the disk can take, which is not
-visible from inside; how often one already being surveyed needs re-reading is simply how often the
-archives move, which is once a day.
+Nothing starts unasked. Once a venue has been asked for, though, it **keeps itself current** —
+walking once and then updating daily, **across restarts** — until it is paused or refreshed. Whether
+a venue should be surveyed at all depends on what somebody is waiting for and what the disk can take,
+which is not visible from inside; how often one already being surveyed needs re-reading is simply how
+often the archives move, which is once a day.
+
+Asking for a venue **enrols** it, and that is what a restart goes back to: an interrupted job resumes
+from its cursors, a venue between passes waits out the rest of its interval, a paused one stays
+paused, and a venue nobody ever asked about is left alone for ever. So a deployment where no survey
+was ever started is read-only, permanently and by construction — and one where a single venue was
+started keeps that venue current without being asked again.
 
 **One verb, and where a venue has got to decides what it means**: a venue with nothing starts, one
 with work outstanding continues from its cursors, one that has caught up looks for what has appeared
@@ -70,8 +81,8 @@ curl -X POST -H "x-catalog-token: $CATALOG_TOKEN" \
      http://localhost:$CATALOG_PORT/venues/binance/surveys
 ```
 
-**Every endpoint and every parameter — narrowing to several venues, `refresh`, pausing — is in
-[CATALOG-API.md](CATALOG-API.md).**
+**Every endpoint and every parameter — narrowing to several venues, the `refresh` and `update`
+modifiers, pausing — is in [CATALOG-API.md](CATALOG-API.md).**
 
 The answer says what happened to each, rather than failing the whole call because one venue was
 busy:
@@ -83,9 +94,10 @@ busy:
 ```
 
 It answers as soon as the work is under way; a survey runs for hours. `GET /status` is where its
-progress lives, and it separates two things that look alike from the outside: `job` is work the
-catalog still has outstanding, `surveying` is whether anything is currently doing it. **Open and not
-surveying** is what a killed container leaves behind.
+progress lives, and it separates two things that look alike from the outside: `state` is where the
+venue stands — `not started`, `walking`, `updating`, `waiting` or `paused` — and `surveying` is
+whether anything is currently doing it. **Walking with nothing surveying** is what a killed container
+leaves behind. Reading either in a browser is what catalog-ui is for.
 
 ## What it is for
 

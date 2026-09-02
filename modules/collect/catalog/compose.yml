@@ -12,12 +12,16 @@
 # Nothing here fetches data. This module is safe to run anywhere with a network
 # connection and almost no disk — which is the point: a machine with bandwidth
 # and no storage can survey, and its whole product is a file.
+#
+# Two services: prospector, which does the work, and catalog-ui, which is how a
+# person reads the result and starts or stops a survey without composing a curl.
 
 # Docker Compose Project
 name: collect
 
 include:
   - path: ../../../services/prospector/docker/compose.yml
+  - path: ../../../services/catalog-ui/docker/compose.yml
 
   # Not started — will serve the catalog and own the facts database.
   # - path: ../../../services/archivist/docker/compose.yml

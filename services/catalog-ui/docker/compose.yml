@@ -1,0 +1,65 @@
+# Catalog UI Service — a browser for what the catalog holds.
+#
+# It stores nothing, decides nothing and surveys nothing. Every answer it shows
+# comes from prospector's own API and is rendered unchanged, which makes it the
+# cheapest way to find out that an endpoint cannot answer a question somebody
+# actually has.
+#
+# It owns no storage. The page is served from the image, and everything else is
+# a request forwarded to a service that does own something.
+#
+# The browser never reaches prospector directly, because prospector is meant to
+# run wherever the link to the venues is good — another machine, another network
+# — and because the token would otherwise have to travel with the page.
+
+services:
+  catalog-ui:
+    build:
+      context: ../../..
+      dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
+      args:
+        SERVICE_NAME: catalog-ui
+
+    container_name: catalog-ui
+
+    environment:
+      # Where the catalog answers. Inside the shared network that is the
+      # prospector container by name; set it to a host or an address when the
+      # survey runs somewhere else.
+      CATALOG_URL:   ${CATALOG_URL:-http://prospector:8080}
+
+      # The same secret prospector checks, forwarded on its behalf so the page
+      # never holds it.
+      #
+      # Empty is allowed and means prospector is open — this then forwards
+      # without a header, and nothing else changes.
+      CATALOG_TOKEN: ${CATALOG_TOKEN:-}
+
+      # Where hauler answers, for the shopping list. Empty means there is none to
+      # reach: the page says so rather than hanging on a proxy to nowhere.
+      HAULER_URL:    ${HAULER_URL:-}
+
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV:  ${APP_ENV:-prod}
+      TZ:        ${TZ:-UTC}
+
+    user: "1000:1000"
+
+    volumes:
+      - ../../../:/live
+
+    ports:
+      # Health on whatever port docker picks, and the page on a known one — this
+      # is the only service in the module meant to be opened by a person, so
+      # unlike the catalog's own port it does not default to empty.
+      - :3000
+      - ${CATALOG_UI_PORT:-9020}:8080
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    restart: unless-stopped

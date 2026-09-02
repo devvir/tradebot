@@ -1,0 +1,85 @@
+/**
+ * Almost nothing: Mantine's theme carries the look, and this is only what a
+ * theme cannot say.
+ *
+ * Loaded after `@mantine/core/styles.css`, so anything here wins at equal
+ * specificity.
+ */
+
+/**
+ * **How big the whole page is.**
+ *
+ * Mantine sizes everything in `rem`, so this one number scales the lot — text,
+ * padding, table rows, controls — and keeps their proportions. Nudge it rather
+ * than overriding sizes component by component.
+ *
+ * `:root`, not `root`: the latter selects an element called `<root>`, which does
+ * not exist. And `font-size`, not the `font` shorthand, which needs a family
+ * beside the size or the whole declaration is thrown away.
+ *
+ * Mantine's `theme.scale` is the opposite lever — it exists to *undo* a changed
+ * root size where the components should stay put. Left at its default here,
+ * because the point is that they move.
+ */
+:root { font-size: 1.3em; }
+
+body { margin: 0; }
+
+/** Figures are read down a column, so they line up rather than wander. */
+td[style*="tabular-nums"] { font-variant-numeric: tabular-nums; }
+
+/**
+ * **A disabled button keeps its outline**, so it reads as a control that cannot
+ * be used rather than as empty space.
+ *
+ * Mantine fills a disabled button with `--mantine-color-disabled` and gives it a
+ * transparent border. In dark mode that fill is `dark-6` — which is exactly
+ * `--table-striped-color`, the shade behind every other row of a striped table.
+ * Same colour, no border: on those rows the button vanished, and a column of
+ * three buttons read as two with a hole in it.
+ *
+ * Mantine defines `--mantine-color-disabled-border` for this and does not apply
+ * it to buttons, so this does. Only the colour is set — the width stays
+ * Mantine's, and the flat, dimmed disabled look is untouched.
+ *
+ * `:where()` in Mantine's own selector carries no specificity, so
+ * `button:disabled` outweighs it without `!important`.
+ */
+button:disabled,
+button[data-disabled] { border-color: var(--mantine-color-disabled-border); }
+
+/**
+ * **Centre labels on the letters, not on the font's metrics.**
+ *
+ * `text-box-trim` cuts a box down to cap-height and baseline, so what gets
+ * centred is the ink rather than the em box — which includes descender space
+ * that a capital never uses and leaves text sitting high.
+ *
+ * Mantine positions a Badge with `line-height` and never trims it. It does trim
+ * a Button's label, but the label is `display: flex` with `height: 100%`, and
+ * trimming applies to a **block** box's line boxes — inside a flex container the
+ * text is an anonymous item and nothing is trimmed, so the declaration is inert
+ * and the label centres the em box after all.
+ *
+ * So the button's root does the centring and its label becomes a block box that
+ * can be trimmed. The root is `inline-block` with `text-align: center` in
+ * Mantine, which already centres horizontally; making it a flex container adds
+ * the vertical half and leaves a left or right section working as before.
+ */
+.mantine-Badge-root,
+.mantine-Badge-label,
+.mantine-Button-label {
+  text-box-trim: trim-both;
+  text-box-edge: cap alphabetic;
+}
+
+.mantine-Button-root {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mantine-Button-label {
+  display: block;
+  height: auto;
+}

@@ -1,0 +1,32 @@
+{
+  "name": "@tradebot/catalog-ui",
+  "version": "1.0.0",
+  "description": "Catalog UI service — a browser for what the catalog holds",
+  "main": "dist/index.js",
+  "private": true,
+  "scripts": {
+    "build": "vite build && tsc -b",
+    "start": "node dist/src/index.js",
+    "dev": "vite",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@devvir/service-kit": "workspace:*",
+    "@mantine/core": "^9.5.2",
+    "@mantine/hooks": "^9.5.2",
+    "@tradebot/utils": "workspace:*",
+    "express": "^5.2.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "postcss": "^8.5.26",
+    "postcss-preset-mantine": "^1.18.0",
+    "postcss-simple-vars": "^7.0.1",
+    "vite": "^7.1.0"
+  }
+}
