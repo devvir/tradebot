@@ -18,7 +18,7 @@ import type { ExpressServerHandle, Service } from '@devvir/service-kit';
 const main = async (service: Service): Promise<void> => {
   /**
    * **Routes first, then bind**, because `start()` appends the error handler
-   * that must stay last — see hauler, which does the same for the same reason.
+   * that must stay last — see prospector, which does the same for the same reason.
    */
   const api = service.servers.get() as ExpressServerHandle;
 

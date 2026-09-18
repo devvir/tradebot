@@ -6,10 +6,17 @@ packages:
   - dx
   - dev/tooling
 
-onlyBuiltDependencies:
-  - cpu-features
-  - es5-ext
-  - esbuild
-  - nx
-  - protobufjs
-  - ssh2
+injectWorkspacePackages: true
+
+supportedArchitectures:
+  libc:
+    - current
+    - musl
+
+allowBuilds:
+  cpu-features: true
+  es5-ext: true
+  esbuild: true
+  nx: true
+  protobufjs: true
+  ssh2: true

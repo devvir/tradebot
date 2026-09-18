@@ -1,6 +1,7 @@
 import { logger } from '@devvir/service-kit';
 import { fetchJson, metadataGap } from '../../metadata';
-import { etagOf, fetchHead } from '../../http';
+import { etagOf } from '../../etag';
+import { fetchHead } from '../../http';
 import {
   keyFor, venueIdOf, seriesFor,
 } from '../../catalog';
@@ -98,7 +99,7 @@ const laneGuard = (venue: string) => {
           fatal ??= err;
 
           logger.error({ venue, err: describe(err) },
-            'Stopping every lane — the venue is refusing us');
+            'Stopped: okx is refusing us');
 
           throw err;
         }
@@ -106,7 +107,7 @@ const laneGuard = (venue: string) => {
         lost++;
 
         logger.warn({ venue, err: describe(err) },
-          'Could not establish one bound — it stays outstanding for the next pass');
+          'Could not find where one instrument starts; will try next pass');
       }
     },
   };
@@ -166,7 +167,7 @@ const step = (span: Publishing, at: string, by: number): string => {
 const exists = async (adapter: Adapter, span: Publishing, at: string): Promise<boolean> => {
   const path = keyFor(span, at);
 
-  return await head(adapter, `${adapter.base}/${adapter.root}${path}`) !== null;
+  return await head(adapter, `${adapter.base}/${adapter.keyRoot}${path}`) !== null;
 };
 
 /**

@@ -43,9 +43,8 @@ let lists: Instrument[];
 const venue = (): Adapter => ({
   name:        'demo',
   scanner:     s3,
-  list:        'https://demo.example',
   base:        'https://demo.example',
-  root:        '',
+  keyRoot:     '',
   dateOf:      (path) => /(\d{8})/.exec(path)?.[1] ?? null,
   instruments: async () => lists,
 });

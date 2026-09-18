@@ -9,21 +9,22 @@ import {
   markWithdrawn,
   openJob,
   openPartitions,
+  parkSoon,
   refinePartition,
   putFiles,
   putUnreadable,
   seriesById,
   seriesOf,
-  settleWalk,
   venueIdOf,
   walkSeries,
 } from './catalog';
 import { surveying } from './context';
 import { loadExclusions, isExcluded } from './exclusions';
 import { Refused, blocked } from './http';
-import { describeWait, labelOf, lanesFor, paceFor } from './pace';
+import { describeWait, labelOf, lanesFor, paceFor, ticketing } from './pace';
 import { ceiling, excludedAnywhere, relative } from './paths';
 import { seriesSeededAt } from './database/migrations/seeds/seed';
+import { flushCounts } from './counts';
 import { updatePage, updateScopes } from './update';
 import type { Rules } from './update';
 import type { Occasion, CatalogFile, Run, RunKind } from './types';
@@ -46,6 +47,26 @@ import type { Adapter, Config, Listed, Survey } from './types';
  * **Nothing here fetches archive data** — only listings and the metadata they
  * carry. Establishing what exists is the entire job.
  */
+/**
+ * Whether this pass has a probing half.
+ *
+ * **An update always probes, whatever the venue is.** It generates keys rather
+ * than reading them, so nothing it emits carries metadata and nothing is
+ * established until it is asked about — which is exactly the condition `probes`
+ * describes. A listing venue that never probes while walking therefore starts
+ * probing the moment it stops walking.
+ *
+ * **Stated once because three places read it and each was wrong in its turn.**
+ * The pass consulted this expression while the log beside it consulted
+ * `adapter.probes` alone — so every update on a listing venue announced "Survey
+ * complete" the moment generation ended, with its whole backlog still unprobed.
+ * Binance said it with 8,312 rows in `wip` and went on probing for twenty-seven
+ * minutes. The third reader is the walk's own job: it closed on the kind alone,
+ * which is the same mistake one table over.
+ */
+export const probing = (adapter: Adapter, doing: Occasion): boolean =>
+  adapter.probes === true || doing === 'partial';
+
 export const surveyVenue = async (
   db:      DatabaseSync,
   adapter:  Adapter,
@@ -121,9 +142,8 @@ export const surveyVenue = async (
     if (! (err instanceof Refused) || ! blocked(adapter, err.status, err.headers)) throw err;
 
     logger.error({
-      err, venue: labelOf(adapter), status: err.status, ...err.detail, ...paceFor(adapter, adapter.list).rates(),
-    }, `Venue refused the archive mapping — nothing is established yet, ` +
-       `retrying ${describeWait(paceFor(adapter, adapter.list).blockedFor())}`);
+      err, venue: labelOf(adapter), status: err.status, ...err.detail, ...paceFor(adapter, adapter.base).rates(),
+    }, `Venue refused the listing; retrying ${describeWait(paceFor(adapter, adapter.base).blockedFor())}`);
 
     return {
       venue: labelOf(adapter), partitions: 0, requests: 0, found: 0, failed: 1,
@@ -191,7 +211,7 @@ export const surveyVenue = async (
        * — nineteen more requests against a ban that lapses only while nothing is
        * asking. They keep their cursors, so this costs nothing but the wait.
        */
-      const done = await sweep(db, adapter, partition, context, kind,
+      const done = await sweep(db, adapter, partition, context, kind, live,
         () => (summary.blocked ? 'blocked'
           : paused() ? 'paused'
             : runner.stopping ? 'splitting' : null));
@@ -219,10 +239,10 @@ export const surveyVenue = async (
       logger.error({
         ...fault(err), venue: labelOf(adapter), scope: partition.scope,
         ...(err instanceof Refused ? { status: err.status, ...err.detail } : {}),
-        ...(summary.blocked ? { blocked: true, ...paceFor(adapter, adapter.list).rates() } : {}),
+        ...(summary.blocked ? { blocked: true, ...paceFor(adapter, adapter.base).rates() } : {}),
       }, summary.blocked
-        ? 'Partition refused — the venue is blocking us, so the rest of this pass stops'
-        : 'Partition failed — the job stays open and it will be retried');
+        ? 'Venue blocked us; stopping this pass'
+        : 'Partition failed; will retry');
     }
 
     settled++;
@@ -307,7 +327,29 @@ export const surveyVenue = async (
     let files:    boolean;
 
     try {
-      ({ children, files } = await adapter.scanner.level(context, adapter.root + at.scope));
+      const read = await withinSplit(adapter.scanner.level(context, adapter.keyRoot + at.scope));
+
+      /**
+       * **A split that takes too long is abandoned, not waited on.** Every idle
+       * lane is parked on this answer and the partition itself was stopped for
+       * it, so an answer that does not come is the whole survey standing still
+       * — for 46 minutes once, when reading a level meant listing a flat month
+       * to its end. That is fixed where it happened; this is what bounds the
+       * next thing nobody has thought of. The partition is resumed whole and
+       * not offered for splitting again this pass, which costs exactly what a
+       * prefix that could not be split costs.
+       */
+      if (read === null) {
+        terminal.add(at.scope);
+        giveBack();
+
+        logger.warn({ venue: labelOf(adapter), scope: at.scope, minutes: SPLIT_MS / 60_000 },
+          'Partition split timed out; continuing without splitting');
+
+        return;
+      }
+
+      ({ children, files } = read);
     } catch (err) {
       giveBack();
 
@@ -326,7 +368,7 @@ export const surveyVenue = async (
       giveBack();
 
       logger.info({ venue: labelOf(adapter), scope: at.scope, reason: files ? 'holds files' : 'no children' },
-        'Partition cannot be split further — resuming it whole');
+        'Partition cannot be split; continuing');
 
       return;
     }
@@ -346,7 +388,7 @@ export const surveyVenue = async (
       giveBack();
 
       logger.info({ venue: labelOf(adapter), scope: at.scope, children: scopes.length },
-        'Partition cannot be split further — every child is behind its cursor, resuming it whole');
+        'Partition cannot be split; continuing');
 
       return;
     }
@@ -356,7 +398,7 @@ export const surveyVenue = async (
     queue.push(...made);
 
     logger.info({ venue: labelOf(adapter), scope: at.scope, into: made.length, pages: at.requests },
-      'Partition split — its children are queued');
+      'Partition split');
   };
 
   /**
@@ -429,16 +471,45 @@ export const surveyVenue = async (
    * `refining` is included because it is the one thing every idle lane waits on
    * at once, which makes a single stuck split look exactly like this.
    */
+  /** Pages and files as they are read, across every lane — see the heartbeat. */
+  const live = { pages: 0, found: 0 };
+
   const alive = setInterval(() => {
+    const flow = paceFor(adapter, adapter.base).rates();
+
     logger.info({
       venue:    labelOf(adapter),
+
+      /**
+       * **What the pass has read so far, as it reads it.** The per-partition
+       * totals reach the job only when a partition finishes, which on a large
+       * one is hours — so these are counted page by page instead.
+       */
+      pages:    live.pages,
+      found:    live.found,
+
+      /** The same speed a probing pass reports, from the same limiter — see `probe.ts`. */
+      'lastMinute (req/s)': flow.lastMinute,
+      'lastHour (req/s)':   flow.lastHour,
+      inFlight:             flow.inFlight,
+      'retries (%)':        flow.sentTotal === 0 ? 0 : Math.round(1000 * flow.retries / flow.sentTotal) / 10,
+
       settled,
       queued:   queue.length,
       running:  running.size,
       refining: refining !== null,
       scopes:   [...running.keys()].length,
-    }, 'Survey still working');
-  }, QUIET_MS).unref();
+
+      /**
+       * **Which wait it is, when nothing is moving.** A request that is not
+       * going out is held by this host's limiter or by the machine's pool, and
+       * from outside the two are indistinguishable — the one time it mattered,
+       * finding out took an inspector attached to the running process.
+       */
+      pace:     paceFor(adapter, adapter.base).state(),
+      tickets:  ticketing(),
+    }, kind === 'walk' ? 'Walking' : 'Generating');
+  }, HEARTBEAT_MS).unref();
 
   try {
     await Promise.all(Array.from({ length: lanes }, () => lane()));
@@ -447,6 +518,7 @@ export const surveyVenue = async (
   }
 
   advanceRun(db, job.id, null, summary.requests, summary.found);
+  flushCounts(db, adapter);
 
   /**
    * **A job closes only when every partition did**, and counting failures is not
@@ -462,7 +534,7 @@ export const surveyVenue = async (
 
   if (summary.paused) {
     logger.info({ ...summary, job: job.started },
-      'Venue paused — every cursor is kept and starting it again continues from here');
+      'Survey paused');
 
     return summary;
   }
@@ -471,43 +543,43 @@ export const surveyVenue = async (
     summary.generated = true;
 
     /**
-     * **A walk's job closes here; an update's does not.**
+     * **A job closes when its pass is over, and generation is not the end of a
+     * pass that probes.**
      *
-     * For a walk this is the end of the pass: the keyspace has been read, the
-     * bounds are on disk, and the closed job is what `phaseOf` and
-     * `establishedAt` read to say the venue has been established.
+     * A walk over a venue that states everything in its listing ends here: the
+     * keyspace has been read, the bounds are on disk, and the closed job is what
+     * `phaseOf` and `establishedAt` read to say the venue is established.
      *
-     * For an update it is only the end of *generation*. The keys are in `wip`
-     * and mostly unasked — probing them is where the hours go — and the pass
-     * ends when they have been drained and the tips settled. Closing the job at
-     * this moment is what made a restart during the drain find nothing open and
-     * plan the whole pass again, throwing away a per-series completion record
-     * for every series it had already finished.
+     * **Every other pass leaves it open**, because the keys are in `wip` and
+     * mostly unasked, and probing them is where the hours go. The job is the
+     * only durable record that they are owed: closed at this moment, a restart
+     * during the drain finds nothing open, plans the whole pass again, and
+     * throws away a per-series completion record for every series it had
+     * finished — and the venue reads as *waiting* meanwhile, with its whole
+     * backlog outstanding.
      *
-     * What ends an update instead is reconciliation deleting its rows — see
-     * `clearUpdate`.
+     * That was true of an update and equally true of a walk on a venue whose
+     * listing cannot state a size or an etag, which is why the condition is
+     * `probing` rather than the kind. What closes those instead is the drain
+     * returning — `closeWalk` for a walk, `clearUpdate` for an update, both in
+     * `survey`.
      */
-    if (kind === 'walk') closeRun(db, job.id);
+    if (kind === 'walk' && ! probing(adapter, occasion)) {
+      flushCounts(db, adapter);
+      closeRun(db, job.id);
+    }
 
     /**
-     * **The tips are earned here, and nowhere earlier.** A walk states each
-     * series' start and newest file as it meets them, but a tip is a claim about
-     * a *range* having been asked about, and no single file is evidence of that
-     * — reading the index to the end is. So it is stated once, over every series
-     * of the venue, at the one moment that is true.
-     *
-     * Which is why it is inside this branch: a walk that left a partition unread
-     * offered part of a keyspace and proved nothing about the rest, and a tip
-     * does not come back.
+     * **Tips are not stated here.** A walk proves what it proves by reading the
+     * index to the end, and that is a claim about the whole venue rather than
+     * about any partition — so it is made once the pass is over, by the same
+     * `reconcile` an update earns. See `onePass`.
      */
-    const settled = kind === 'walk' ? settleWalk(db, venueId, new Date(job.started)) : 0;
-
-    logger.info({ ...summary, established: job.started, ...(settled > 0 ? { settled } : {}) },
-      'Venue surveyed');
+    logger.info({ ...summary, established: job.started }, 'Venue surveyed');
   } else {
     logger.warn({ ...summary, job: job.started,
       ...(abandoned.length > 0 ? { abandoned: abandoned.map(one => one.scope) } : {}) },
-    'Venue incomplete — the job stays open and its partitions will be retried');
+    'Survey incomplete; will retry');
   }
 
   return summary;
@@ -576,12 +648,45 @@ const divisible = (cursor: string | null, children: readonly string[]): boolean 
 const PROGRESS_EVERY = 25;
 
 /**
+ * How long a split may take before it is given up on.
+ *
+ * A level read is one listing page wherever the prefix holds files, and a
+ * handful where it holds only directories — seconds, at the slowest pace this
+ * service has measured. Five minutes is two orders past that, and still short
+ * of what a stall costs: thirty lanes and the busiest partition, all waiting.
+ */
+const SPLIT_MS = 5 * 60_000;
+
+/**
+ * The level read, or `null` once `SPLIT_MS` has passed without it.
+ *
+ * **The read is not cancelled, only no longer waited for.** It holds a slot like
+ * any other request and releases it when it ends, so walking away from it costs
+ * that slot for as long as it takes and nothing after.
+ */
+const withinSplit = async <T>(reading: Promise<T>): Promise<T | null> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    return await Promise.race([
+      reading,
+      new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), SPLIT_MS); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+/**
  * How long a partition may say nothing before it says something anyway.
  *
  * The point is not the progress, it is the proof of life: a walk that is waiting
  * out a venue's `Retry-After` looks exactly like a walk that has stopped.
  */
 const QUIET_MS = 120_000;
+
+/** How often a pass reports its speed — the same clock the probe's heartbeat keeps. */
+const HEARTBEAT_MS = 30_000;
 
 /**
  * Map the archive and commit the partitions it yields, as one job.
@@ -608,17 +713,17 @@ const partition = async (
     const job    = beginJob(db, venueId, kind, series);
 
     logger.info({ venue: labelOf(adapter), series: series.length, job: job.started },
-      'Update opened — generating what each series is missing');
+      'Update started');
 
     return job;
   }
 
-  logger.info({ venue: labelOf(adapter), root: adapter.root }, 'Mapping the archive');
+  logger.info({ venue: labelOf(adapter), keyRoot: adapter.keyRoot }, 'Mapping the archive');
 
   // Split for the workers this venue will actually have — see `lanesFor`.
   const mapped = await adapter.scanner.scopes(context, { concurrency: lanes });
 
-  // Partitions are stored **relative** to the venue root, so they can be matched
+  // Partitions are stored **relative** to the venue's key root, so they can be matched
   // against the paths in `file` and against an ancestor without anyone knowing
   // how a bucket is addressed.
   const job = beginJob(db, venueId, kind, mapped.map(scope => relative(adapter, scope)));
@@ -643,15 +748,16 @@ const sweep = async (
   run:     Run,
   context: unknown,
   kind:    RunKind,
+  live:    { pages: number; found: number },
   stopped: () => StopReason,
 ): Promise<{ requests: number; found: number }> => {
   const short   = run.scope;
   const venueId = run.venueId;
 
-  // The scanner works in the venue's own keyspace, so the root goes back on;
+  // The scanner works in the venue's own keyspace, so the key root goes back on;
   // the cursor needs no such treatment, being a marker the venue gave us and
   // which is handed back verbatim.
-  const scope = adapter.root + short;
+  const scope = adapter.keyRoot + short;
 
   const said = words(kind);
 
@@ -691,10 +797,45 @@ const sweep = async (
     const files = catalogued(db, adapter, venueId, page.listed,
       kind === 'walk' ? new Date(run.started) : null);
 
-    // Committed in short slices with the loop handed back between them, so a page
-    // of writes cannot hold the thread — see `putFiles`. Each slice is still
-    // atomic, and still cannot interleave with another partition's.
-    await putFiles(db, files);
+    /**
+     * **A generated key is a backlog row and nothing else.** It carries no size
+     * and no etag, so `putFiles` could only ever park it — the `file` table and
+     * the month rollup have no part in an update. Going straight to `wip` lets
+     * the pages of every lane and every venue share one transaction instead of
+     * spending a slice, and a turn of the event loop, on sixteen rows.
+     *
+     * A walk keeps `putFiles`: its findings are a mix of rows that are complete
+     * and rows that are not, and which table each lands in is that function's
+     * whole job.
+     *
+     * Both await the write, so a cursor still only moves over work on disk.
+     */
+    if (kind === 'update') {
+      /**
+       * **What to ask next travels with the key, and only generation knows it.**
+       * A `CatalogFile` is what a file *is*; what the venue said follows it is
+       * how the period is finished, so it is carried across here rather than
+       * written into the row's shape.
+       */
+      const parts = new Map(page.listed
+        .filter(one => one.nextPart)
+        .map(one => [relative(adapter, one.key), one.nextPart!]));
+
+      await parkSoon(db, files.map(one => ({
+        venueId:   one.venueId,
+        path:      one.path,
+        date:      one.date,
+        seriesId:  one.seriesId,
+        existence: one.existence,
+        tries:     0,
+        ...(parts.has(one.path) ? { nextPart: parts.get(one.path)! } : {}),
+      })));
+    }
+    else
+      // Committed in short slices with the loop handed back between them, so a
+      // page of writes cannot hold the thread — see `putFiles`. Each slice is
+      // still atomic, and still cannot interleave with another partition's.
+      await putFiles(db, files);
 
     /**
      * **Before the cursor, always.** The bounds this page derived are held in
@@ -708,8 +849,17 @@ const sweep = async (
     cursor = page.cursor;
     requests++;
     found += files.length;
+    live.pages++;
+    live.found += files.length;
 
     advanceRun(db, run.id, cursor, 1, files.length);
+
+    /**
+     * **On the cadence the cursor already sets.** A page is one listing request
+     * or a thousand generated keys, so riding it writes the counts often enough
+     * to watch and rarely enough to cost nothing next to the write above.
+     */
+    flushCounts(db, adapter);
 
     /**
      * A prefix the size of binance's spot klines is thousands of pages and runs
@@ -747,13 +897,11 @@ const sweep = async (
     const why = stopped();
 
     if (why) {
-      logger.info({ venue: labelOf(adapter), [said.unit]: named(db, kind, short),
-        pages: requests, found, at: cursor },
-      why === 'blocked'
-        ? `Pausing ${said.unit} — the venue is blocking us, and its cursor is kept`
-        : why === 'paused'
-          ? `Pausing ${said.unit} — a stop was asked for, and its cursor is kept`
-          : `Pausing ${said.unit} — it is being split, and its children resume from its cursor`);
+      // A requested pause is said once, for the venue — not once per partition.
+      if (why !== 'paused')
+        logger.info({ venue: labelOf(adapter), [said.unit]: named(db, kind, short),
+          pages: requests, found, at: cursor },
+        why === 'blocked' ? 'Partition paused: venue blocking us' : 'Partition paused for splitting');
 
       return { requests, found };
     }
@@ -805,7 +953,11 @@ const sweep = async (
  * there is no declaration to lean on and nothing to leave out.
  */
 const rulesFor = (db: DatabaseSync, venueId: number, adapter: Adapter): Rules => {
-  const rules: Rules = { slots: adapter.slotsFor };
+  const rules: Rules = {
+    slots: adapter.slotsFor,
+    ...(adapter.probingLag !== undefined ? { lag: adapter.probingLag } : {}),
+    ...(adapter.expandParts ? { parts: adapter.expandParts.bind(adapter) } : {}),
+  };
 
   if (adapter.listable === false && ! everCompleted(db, venueId)) {
     const seeded = seriesSeededAt(adapter.name);
@@ -969,7 +1121,7 @@ const catalogued = (
        * `unreadable`, which is where they are read from afterwards.
        */
       example: unread[0]!.path,
-    }, 'Paths this venue cannot yet be read into a series — recorded for review');
+    }, 'Unrecognised files; recorded for review');
   }
 
   return files;

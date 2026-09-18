@@ -1,6 +1,6 @@
 import { logger } from '@devvir/service-kit';
 import { faultLine } from './faults';
-import type { Adapter, Pacing, Rates } from './types';
+import type { Adapter, PaceState, Pacing, Rates, Ticketing } from './types';
 
 /**
  * How a server is named in a log line and keyed in the registry below.
@@ -46,7 +46,7 @@ export const STEADY: Pacing = {
   ceilingMs:   30 * 60_000,
   standDownMs: 2 * 60_000,
   giveUpAfter: 50,
-  batch:       10000,
+  batch:       2000,
 };
 
 /**
@@ -82,32 +82,27 @@ export const describeWait = (ms: number): string => {
 };
 
 /**
- * The one budget a **host** gets, for the life of the process.
+ * The budget one venue has at one host, for the life of the process.
  *
- * **A venue counts requests from an address, not from a code path.** The walk,
- * the archive mapping and the probe are three callers of one host, so a limiter
- * belonging to any one of them is not a limit — it is a limit on a third of the
- * traffic. All three draw on the same counter, and a stand-down declared by any
- * of them stops all of them.
+ * **Per host**, because a venue's traffic to one address is what that address
+ * counts: the walk, the archive mapping and the probe are three callers of one
+ * host, so all three draw on the same counter, and a stand-down declared by any
+ * of them stops all of them. A venue that also calls its own API elsewhere — an
+ * instrument listing — keeps that on a limiter of its own, so a block there does
+ * not stop the archive.
  *
- * **Keyed by hostname, not by venue.** Our names for venues are not what the
- * other end counts. Binance and gate publish to the same bucket service —
- * `s3-ap-northeast-1.amazonaws.com` — so keying on the venue gave each a full
- * budget against one machine, and the machine saw the sum of two limiters that
- * each believed they were alone. It answered with `Refused` and connect
- * timeouts, on those two venues and no others.
- *
- * The reverse case is served correctly by the same rule: one venue across two
- * hosts gets two budgets, because they are two machines. And a venue that lists
- * from one address while serving files from another — binance lists at the
- * bucket and downloads from CloudFront — is paced separately on each, which is
- * what those two hosts would each want.
+ * **And per venue**, because two venues behind one endpoint are not one budget.
+ * binance and gate both sit on `s3-ap-northeast-1.amazonaws.com`, one bucket
+ * each; measured 2026-09-29, each bucket took LIST and HEAD at up to ~1,700/s
+ * without a single throttling answer, where the ceiling was this machine. Keyed
+ * by host alone they shared one limiter, paced by whichever venue reached it
+ * first.
  *
  * Lasts the whole process rather than a pass, so a brake that escalated does not
  * reset every fifteen minutes.
  */
 export const paceFor = (adapter: Adapter, url: string): Pace => {
-  const key  = hostOf(url);
+  const key  = `${labelOf(adapter)} ${hostOf(url)}`;
   const held = paces.get(key);
 
   if (held) return held;
@@ -220,12 +215,63 @@ class Tickets {
  */
 let tickets = new Tickets(1_000);
 
-/** Set the machine-wide ceiling. Called once, from the configuration. */
-export const capacity = (limit: number): void => tickets.resize(limit);
+/**
+ * Set the machine-wide ceiling, and open towards it gradually.
+ *
+ * **By work done, not by the clock.** The pool starts at `RAMP_FROM` and grows
+ * by `RAMP_BY` for every `RAMP_EVERY` requests answered, until it reaches
+ * `limit`. A start releases every venue at once, and every request in flight
+ * over HTTP/1.1 is a connection opened and a TLS handshake on a transport
+ * worker's one thread: measured 2026-10-01, a worker opening hundreds at once
+ * falls far enough behind that bodies already arriving read as silent and are
+ * abandoned. Growing only as earlier requests are answered opens connections as
+ * fast as the venues can be served, and no faster.
+ */
+export const capacity = (limit: number): void => {
+  ramp.ceiling  = limit;
+  ramp.answered = 0;
+  ramp.open     = Math.min(RAMP_FROM, limit);
+
+  tickets.resize(ramp.open);
+};
+
+/**
+ * Open the pool gradually again, from `RAMP_FROM`.
+ *
+ * For when the network gate lets go of everything it held: the same moment as a
+ * start, with every lane released at once and the connections they held gone.
+ * Tickets already out stay out; the pool shrinks by attrition.
+ */
+export const reopenGradually = (): void => {
+  if (ramp.ceiling > 0) capacity(ramp.ceiling);
+};
 
 /** What the pool is doing, for a log line or a status route. */
-export const ticketing = (): { limit: number; outstanding: number; queued: number } =>
-  ({ limit: tickets.limit, outstanding: tickets.outstanding, queued: tickets.queued });
+export const ticketing = (): Ticketing => ({
+  limit:       tickets.limit,
+  ceiling:     ramp.ceiling || tickets.limit,
+  outstanding: tickets.outstanding,
+  queued:      tickets.queued,
+});
+
+/** The pool's way up to the configured ceiling; a ceiling of 0 is not ramping. */
+const ramp = { ceiling: 0, open: 0, answered: 0 };
+
+const RAMP_FROM  = 100;
+const RAMP_BY    = 100;
+const RAMP_EVERY = 1_000;
+
+/** One more request answered, and the pool a step wider for every `RAMP_EVERY` of them. */
+const answered = (): void => {
+  if (ramp.open >= ramp.ceiling) return;
+
+  if (++ramp.answered < RAMP_EVERY) return;
+
+  ramp.answered = 0;
+  ramp.open     = Math.min(ramp.ceiling, ramp.open + RAMP_BY);
+
+  tickets.resize(ramp.open);
+};
 
 /**
  * The rate every request passes through, and the latch behind it.
@@ -477,6 +523,7 @@ export class Pace {
     this.waiting.shift()?.();
 
     tickets.give();
+    answered();
   }
 
   /**
@@ -506,7 +553,7 @@ export class Pace {
 
     logger.warn({
       venue: this.venue, url, err: faultLine(err), inARow: this.faults, ...this.rates(),
-    }, 'Requests are not reaching the venue — retrying, not standing down');
+    }, 'Requests not reaching the venue; retrying');
   }
 
   /**
@@ -540,7 +587,7 @@ export class Pace {
       logger.warn({
         venue: this.venue, status, url, inARow: this.refusals,
         server: headers.get('server'), cache: headers.get('x-cache'),
-      }, 'Venue refused a request — retrying rather than standing down');
+      }, 'Venue refused a request; retrying');
 
       return;
     }
@@ -570,7 +617,7 @@ export class Pace {
       ...this.rates(),
       capPerSecond: this.pacing.perSecond,
       minutes:      Math.round(this.paused / 60_000),
-    }, 'Blocked by venue — every request to it is paused');
+    }, 'Blocked by venue; all requests to it paused');
   }
 
   /** How long the pause still has to run, so a caller can say why nothing moves. */
@@ -585,6 +632,16 @@ export class Pace {
    * a second and a steady climb over ten look identical at either extreme, and
    * which of the two triggered a block is the question being asked.
    */
+  /** What this limiter is holding — see `PaceState`. */
+  state(): PaceState {
+    return {
+      inFlight:     this.inFlight,
+      allowed:      this.allowed,
+      waiting:      this.waiting.length,
+      blockedForMs: Math.max(0, this.until - Date.now()),
+    };
+  }
+
   rates(): Rates {
     const now = Date.now();
 
@@ -772,4 +829,7 @@ export const _test_paces   = paces;
 export const _test_tickets = (): Tickets => tickets;
 
 /** A fresh pool, because tickets outlive the request that took one. */
-export const _test_pool = (limit: number): void => { tickets = new Tickets(limit); };
+export const _test_pool = (limit: number): void => {
+  tickets = new Tickets(limit);
+  ramp.ceiling = 0;
+};

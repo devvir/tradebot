@@ -222,9 +222,13 @@ checksum — so every row it yields arrives unsettled. This is the case the `htm
 probe were both kept for when the primary host moved to bucket listings. The indexes are generated
 rather than stale; `orderbook/linear/` was rewritten the morning it was checked.
 
-The pace is set conservatively and deliberately not measured. The tree is a few thousand directories
-against the primary's millions of keys, so there is nothing to gain by finding this host's limit and
-a static address to lose by finding it the hard way.
+**No limit found.** Measured 2026-09-30: 5,496 `HEAD`s a second from the remote on keys the edge had
+cached, and 3,870 a second from here on missing ones, which the edge passes to the origin (~220 ms),
+without a single throttling answer.
+
+**A missing key's `404` carries neither a length nor chunking**, which Node's HTTP/1.1 client answers
+by closing the connection. The host speaks HTTP/2, where a probe is a stream and the question does
+not arise — prospector probes it that way.
 
 ### Its origin bucket is not findable
 

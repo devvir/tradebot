@@ -57,7 +57,7 @@ export const preamble = async (
 
   if (listed.length === 0) {
     logger.warn({ venue: labelOf(adapter) },
-      'Venue listed no instruments at all — nothing is created and nothing is retired');
+      'Venue listed no instruments; nothing changed');
 
     return { ...idle, refused: true };
   }
@@ -259,8 +259,7 @@ export const preamble = async (
   if (met > 0 || out.revived > 0)
     logger.info({ venue: labelOf(adapter), instruments: met, series: out.created,
       revived: out.revived, walking: walking.length },
-      'New instruments listed — their series are written, and each is now walked '
-      + 'down from its floor to find where it begins');
+      'New instruments found');
 
   await pool(walking, lanesFor(adapter), async (row) => {
     out.found += (await backfill(db, adapter, row, covered, oldest ?? '19700101')).found;
@@ -299,15 +298,14 @@ const floorTips = (db: DatabaseSync, adapter: Adapter, venueId: number): void =>
 
   if (missing.length > stranded.length)
     logger.info({ venue: labelOf(adapter), series: missing.length - stranded.length },
-      'Series arrived with a start and no tip — floored one period below it');
+      'New series without a starting point; starting just before its first file');
 
   if (stranded.length > 0)
     logger.error({
       venue:   labelOf(adapter),
       series:  stranded.length,
       example: `${stranded[0]!.market} ${stranded[0]!.symbol}`,
-    }, 'Series have neither a tip nor a start, so nothing says where to begin asking — '
-     + 'they are not generated for and nothing here can repair them');
+    }, 'Series with no known start; they will not be checked');
 };
 
 /**
@@ -438,8 +436,7 @@ const agrees = (adapter: Adapter, listed: readonly Instrument[], held: readonly 
     matched: met.length,
     known:   known.size,
     example: spoke.find(one => ! known.has(key(one.market, one.symbol)))?.symbol,
-  }, 'Most of what this venue lists is a symbol the archive has never held — the adapter is '
-   + 'spelling them differently from the files, so nothing is created and nothing is retired');
+  }, 'Venue\'s instrument names do not match its files; nothing changed');
 
   return false;
 };

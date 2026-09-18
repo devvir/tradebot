@@ -30,10 +30,10 @@ available on a `HEAD`, and prospector's `refusesUs` and `ruleOnFailure` hooks re
 
 No other venue here behaves this way — okx and bybit's book server both answer a missing key 404.
 
-### It answers fast and has never refused
+### Its edge limits the rate, near 2,900 a second
 
-Sustained closed-loop `HEAD` load against keys known to exist: **597,000 requests in one afternoon,
-not a single non-200**.
+Keys known to exist answer from CloudFront's cache: **597,000 `HEAD`s in one afternoon, not a single
+non-200**, at up to ~3,500/s.
 
 ```
  workers       rate        n     p50      p95   our CPU
@@ -42,13 +42,20 @@ not a single non-200**.
      400    3506.5/s   140325     55ms     313ms    27.8%
 ```
 
-Throughput collapses past a few hundred workers — 3,200 gave 320/s at a p95 of 22 seconds — but that
-is **this machine's CPU**, not the venue: at 400 lanes it sat at 28% of eight cores while going six
-times faster. Reading that plateau as venue pushback is how a client-side limit becomes a venue
-"fact". Every 403 bitget has ever sent came from S3 saying a key is absent.
+**A missing key is a different request.** The edge has nothing cached for it and asks the origin, so
+it takes ~235 ms rather than ~15 — and an update asks mostly for keys that do not exist yet. Measured
+2026-09-30 from here, over HTTP/2: 539/s at 250 in flight, 732/s at 500.
 
-So the adapter declares `perSecond: 10_000` — not a measured limit but the absence of one — and
-`concurrency` is what actually decides throughput. If a run struggles, that is the number to lower.
+**The limit is CloudFront's own.** Measured 2026-09-30 by prospector itself: at 500 in flight it
+reached ~2,900/s over ten seconds, with one second at 3,940, and the edge answered
+`503 — x-cache: LimitExceeded from cloudfront` until the venue was stood down. Capped at 2,500/s with
+600 in flight it held ~2,300/s without a single refusal for as long as it was watched. That is what
+the adapter declares.
+
+**A missing key's `403` carries neither a length nor chunking**, which Node's HTTP/1.1 client answers
+by closing the connection: 1,000 such probes opened 1,000 connections, and each paid a TLS handshake.
+The host speaks HTTP/2, where a probe is a stream and the question does not arise — prospector
+probes it that way.
 
 **The web endpoints are the opposite.** Everything on `www.bitget.com` is rate limited and sits
 behind Cloudflare: roughly one request a second sustained, 429 above that, and a challenge page
@@ -157,19 +164,37 @@ At the 2024 boundary, **trades overlap on exactly one day**: 2024-04-18 is serve
 with identical row counts, first and last timestamps, and md5 of the uncompressed payload. Only the
 zip containers differ. The download index consistently attributes that day to the old name.
 
-**Klines do not cut cleanly at all.** Around 440 era-2 candlestick keys carry dates before that era
-began — 14 instruments, sparsely, from 2019-08-01 to 2023-02-21, `BTCUSDT` and `XRPUSDT` spot among
-them. Probed and present.
+**Klines do not cut cleanly at all**: era-2 candlestick keys exist for scattered days years before
+that era began. It is the same arrangement as the trades overlap — a day served under both eras'
+names, holding one export twice — and the boundary is a change of shape, not of content. See *The
+index under-reports, measured*.
 
-This is the same arrangement as the trades overlap above, not an exception to it: a day served under
-both era's names, holding one export twice. Unzipping era-1 and era-2 pairs gives the same candles —
-same count, same timestamps, same values — differing only in float serialisation
-(`759.7551999999999` against `759.7552`), exactly as the trades day differs only in its container.
+**Era 2 is read from its first day, 2024-04-19, and never before.** Every era-2 series has that
+floor in the seed, so no earlier era-2 key is ever generated. What era 2 published before its own
+start, measured on 2026-10-02 against the catalog and the sweep's index (klines `1m`, both lines):
 
-The difference is what the index says about it. For those days it lists the era-2 key and not the
-era-1 one, though five of six checked exist; for the trades day it does the reverse and attributes it
-to the old name. So the boundary is a change of shape, not of content, and which shape the index
-volunteers is not a statement about which files are there. See *The index under-reports, measured*.
+| | perp | spot |
+|---|---|---|
+| era-2 kline keys dated before 2024-04-19 | 237 | 203 |
+| … with an era-1 key for the same day, same candles | 229 | 188 |
+| … the only copy of that day | 8 | 15 |
+
+The days are scattered — 2019-08-01 to 2023-02-21, mostly `BTCUSDT` and `XRPUSDT` — and the index
+lists the era-2 key for every one of them. Where both are served the content is the same: the era-2
+export writes lowercase headers (`basevolume`) and the shortest float, the era-1 one camelCase and the
+full binary expansion. The trades day is the other way round: for 2024-04-18 the index lists the
+era-1 key of every instrument, and era 2's copy is the duplicate the floor drops.
+
+**Twenty of the only-copy days are holes in a continuous era-1 series**, with the days either side
+held in era 1 — 2020-02-29 (`BTCUSDT`, `XRPUSDT` perp, `XRPUSDT` spot), 2023-01-05 and 2023-02-21.
+The era-1 kline patterns name their file through an `eraName` transform whose default is era 1's own
+spelling, and those twenty days carry a row that spells era 2's instead — `UMCBL/{YYYY}{MM}{DD}` on
+the futures line, `SP/{YYYY}{MM}{DD}` on spot — so the series reads that one day from where bitget
+put it and stays one series.
+
+The other three are isolated files with no series around them, and are not catalogued: neither is
+any era-2 series that only ever held pre-era files (one kline series, nine trades series that exist
+only for 2024-04-18).
 
 ### Every shape, and the token rules
 
@@ -678,6 +703,23 @@ naming eras*. On those six keys it under-reported by five files.
 Nothing in the file list has been fetched, so it bounds nothing in either direction. A seed built
 from it would inherit that silence permanently, because nothing walks this venue: a key the seed does
 not name is never probed, and never found.
+
+## It publishes a day two days later
+
+**Bitget is the slowest of the eight venues by a factor of two**, and it is a
+wall rather than a tendency. Measured from its own `Last-Modified` over 28,992
+files of 2026-09-15 to 21, a day's file appears **52.9 hours (p99) after that day
+begins** — p50 51.0, worst 53.0, so the whole distribution sits inside two hours.
+
+Confirmed independently against the catalog: on 2026-09-25, of 4,393 active daily
+series across all four of its daily datasets, **not one** held a file for
+yesterday or the day before, and 4,392 held exactly the day before that.
+
+So the adapter declares `probingLag: 4` — a day further back again than the
+measurement requires, since nothing fixes a venue's publishing hour. Asking any
+closer spends one probe per series per night on a file that cannot exist, and the
+patience window then spends it again the following night: two thirds of what its
+update asked, before this was measured.
 
 ## Discovering instruments added later
 

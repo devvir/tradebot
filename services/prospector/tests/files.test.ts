@@ -62,6 +62,7 @@ beforeEach(async () => {
     venues:  () => ['binance'],
     start:   () => undefined,
     running: () => false,
+    passing: () => false,
     paused:  () => false,
     pause:   () => false,
   };

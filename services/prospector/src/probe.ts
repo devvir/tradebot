@@ -1,9 +1,10 @@
 import { logger } from '@devvir/service-kit';
 import { fault } from './faults';
-import { dropWip, missedFiles, parkKeys, settleFiles } from './catalog';
-import { blocked, etagOf, fetchHead } from './http';
+import { dropWip, keyFor, missedFiles, parkKeys, seriesById, settleFiles } from './catalog';
+import { etagOf } from './etag';
+import { blocked, fetchHead } from './http';
+import { flushCounts } from './counts';
 import { REFUSALS_BEFORE_BLOCK, describeWait, labelOf, paceFor } from './pace';
-import { pool } from './pool';
 import type { Parking, Settlement, Unsettled } from './types';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Adapter, Pacing, Probe, Verdict, Work } from './types';
@@ -151,282 +152,415 @@ export const probeFiles = async (
 
   heartbeat.unref();
 
-  for (;;) {
+  /**
+   * What the pass has learned and has not yet written, shared by every lane.
+   *
+   * **Held across pages rather than per page.** A page used to be the unit of
+   * asking as well as of writing, and `pool` does not return until its slowest
+   * item does — so one row that retried held the other ninety-nine lanes idle
+   * until it gave up, and nothing new was asked meanwhile. Measured on bitget:
+   * `inFlight` collapsing from 100 to a handful for most of every cycle, and
+   * the request count pinned at two pages per thirty seconds however fast the
+   * other 998 rows answered.
+   *
+   * Writing is still done in page-sized pieces. What stopped being page-shaped
+   * is the asking.
+   */
+  const settled: Settlement[] = [];
+
+  /** Asked and not settled — their attempt is counted whatever the reason. */
+  const missed:  Unsettled[]  = [];
+
+  /** Spent: nobody is going to settle these, so they stop being offered. */
+  const spent:   Unsettled[]  = [];
+
+  /**
+   * Keys the venue's answers implied, which nothing generated: the next part
+   * of a split file, the members a manifest names. Parked before the row that
+   * revealed them settles, so a crash between the two costs a repeated probe
+   * rather than the keys.
+   */
+  const implied: Parking[]    = [];
+
+  /**
+   * What becomes of a row the venue did not settle.
+   *
+   * **Absence is the only answer that takes a row off the list**, and only
+   * once it has been given more than once. A single 404 is not enough: the key
+   * may be published moments later, and a pass that took the first miss as
+   * final would leave the period to be retired wholesale by reconciliation
+   * without ever being asked again. `CONFIRMATIONS` attempts across the pass'
+   * sweeps is what makes it an answer rather than a moment.
+   *
+   * How a venue *spells* absence is the adapter's to say — bitget's bucket
+   * grants `GetObject` without `ListBucket`, so a key it does not have comes
+   * back `403 AccessDenied`, separable only by its headers. A `drop` verdict
+   * means absence however it arrived; `keep` overrules in the other direction.
+   *
+   * **Everything else keeps its row, for as long as the service runs.** A 429,
+   * a 5xx, a reaped connection say nothing whatever about the file, so there
+   * is nothing to conclude and no count to run down. The row stays in `wip`
+   * and the pass does not finish — which is exactly what should happen, and
+   * what makes a venue answering nonsense visible rather than quietly worked
+   * around. Every venue here is S3, OSS, or a known CDN in front of one; if
+   * that stops being true it will be a venue with a name, and it can have a
+   * rule of its own then.
+   *
+   * **Nothing here settles a period by the clock.** `OVERDUE_DAYS` acts once,
+   * in reconciliation, over a pass that finished.
+   */
+  const judge = (
+    row:     Unsettled,
+    status:  number,
+    verdict: Verdict | null,
+  ): void => {
+    missed.push(row);
+
+    if (verdict === 'keep') return;
+
+    const absent = verdict === 'drop' || status === 404;
+
+    if (! absent) return;
+
     /**
-     * **Read every time a batch is loaded, because that is the only boundary
-     * this loop has.** A pass ends when the backlog empties, and on a venue
-     * whose keys are constructed that is a week away — so a stop read once per
-     * pass is a stop that never lands. Somebody who asks for a pause watches
-     * the heartbeat go on printing and concludes the service ignored them.
-     *
-     * Here rather than inside the pool: the batch in flight settles, records
-     * its attempts and moves the cursor exactly as it would have, so nothing is
-     * cancelled and nothing is asked twice. The cost of that is the seconds one
-     * batch takes, which is what "stops after the page it is on" means
-     * everywhere else in this service.
+     * **A confirmation is progress even though nothing moved.** The caller
+     * paces its rounds on this: a venue repeating that a key is not there is
+     * working towards an answer, while one repeating a 5xx is not, and the two
+     * are indistinguishable from the settled and retired counts alone.
      */
-    if (paused()) {
-      summary.stopped = true;
-
-      break;
-    }
-
-    const batch = work.next(after, pacing.batch);
-
-    if (batch.length === 0) break;
-
-    /** There is work, so the backlog is worth what it costs to state. */
-    if (! working) {
-      working = true;
-
-      logger.info({
-        venue:       labelOf(adapter),
-        outstanding: work.remaining?.() ?? null,
-        perSecond:   pacing.perSecond,
-        lanes:       pacing.concurrency,
-      }, 'Probing files for existence and metadata');
-    }
-
-    const settled: Settlement[] = [];
-
-    /** Asked and not settled — their attempt is counted whatever the reason. */
-    const missed:  Unsettled[]  = [];
-
-    /** Spent: nobody is going to settle these, so they stop being offered. */
-    const spent:   Unsettled[]  = [];
+    summary.absent++;
 
     /**
-     * Keys the venue's answers implied, which nothing generated: the next part
-     * of a split file, the members a manifest names. Parked before the row that
-     * revealed them settles, so a crash between the two costs a repeated probe
-     * rather than the keys.
+     * **`'drop'` means now, and that is what the verdict is for.** The core's
+     * own rule asks again because a `404` a moment before publication is
+     * truthful and wrong; an adapter that answers `'drop'` is saying it knows
+     * better for its venue — bitget's bucket spells absence as a `403` and has
+     * no other meaning for it — and asking twice more only spends requests
+     * confirming what one already said.
      */
-    const implied: Parking[]    = [];
+    if (verdict !== 'drop' && row.tries + 1 < confirmations(row)) return;
+
+    spent.push(row);
 
     /**
-     * What becomes of a row the venue did not settle.
-     *
-     * **Absence is the only answer that takes a row off the list**, and only
-     * once it has been given more than once. A single 404 is not enough: the key
-     * may be published moments later, and a pass that took the first miss as
-     * final would leave the period to be retired wholesale by reconciliation
-     * without ever being asked again. `CONFIRMATIONS` attempts across the pass'
-     * sweeps is what makes it an answer rather than a moment.
-     *
-     * How a venue *spells* absence is the adapter's to say — bitget's bucket
-     * grants `GetObject` without `ListBucket`, so a key it does not have comes
-     * back `403 AccessDenied`, separable only by its headers. A `drop` verdict
-     * means absence however it arrived; `keep` overrules in the other direction.
-     *
-     * **Everything else keeps its row, for as long as the service runs.** A 429,
-     * a 5xx, a reaped connection say nothing whatever about the file, so there
-     * is nothing to conclude and no count to run down. The row stays in `wip`
-     * and the pass does not finish — which is exactly what should happen, and
-     * what makes a venue answering nonsense visible rather than quietly worked
-     * around. Every venue here is S3, OSS, or a known CDN in front of one; if
-     * that stops being true it will be a venue with a name, and it can have a
-     * rule of its own then.
-     *
-     * **Nothing here settles a period by the clock.** `OVERDUE_DAYS` acts once,
-     * in reconciliation, over a pass that finished.
+     * **The moment absence becomes final**, and so the moment a part of a period
+     * can report it. Asked on the first `404` instead, a key the core re-confirms
+     * would expand its own period once per confirmation.
      */
-    const judge = (
-      row:     Unsettled,
-      status:  number,
-      verdict: Verdict | null,
-    ): void => {
-      missed.push(row);
+    follow(row, false);
+  };
 
-      if (verdict === 'keep') return;
 
-      const absent = verdict === 'drop' || status === 404;
+  /**
+   * Rows in hand, refilled the moment the lanes run them down.
+   *
+   * A lane that finishes takes the next row rather than waiting for its
+   * neighbours, so a slow request occupies its own lane and nothing else.
+   */
+  const held: Unsettled[] = [];
 
-      if (! absent) return;
+  let drained = false;
+
+  const refill = (): void => {
+    if (drained) return;
+
+    const more = work.next(after, pacing.batch);
+
+    if (more.length === 0) { drained = true; return; }
+
+    held.push(...more);
+
+    /**
+     * **Moved as rows are handed out, not as they are answered.** It is a
+     * paging position and nothing else — a row that did not settle stays in the
+     * backlog and is offered again by the next pass, exactly as before.
+     */
+    after = more[more.length - 1]!.seq;
+  };
+
+  /**
+   * Write what the lanes have learned.
+   *
+   * Called between rows rather than at the end of a page, so the accumulators
+   * stay page-sized whatever the lanes are doing. Every statement inside is
+   * synchronous and a lane reaches this only between its own awaits, so no
+   * other lane can be part-way through adding to these while it runs.
+   */
+  const commit = (): void => {
+    // Before the settlement that implied them, so nothing can arrive without
+    // its successor being on the list.
+    if (implied.length > 0) {
+      summary.implied += parkKeys(db, implied.splice(0));
 
       /**
-       * **A confirmation is progress even though nothing moved.** The caller
-       * paces its rounds on this: a venue repeating that a key is not there is
-       * working towards an answer, while one repeating a 5xx is not, and the two
-       * are indistinguishable from the settled and retired counts alone.
+       * **A parked key is work this pass still owes.** The chain of parts is
+       * followed by finding the next one in the backlog, so a refill that came
+       * back empty before these were written has to be allowed to look again —
+       * otherwise a split file ends at whichever part the page boundary fell on.
        */
-      summary.absent++;
+      drained = false;
+    }
 
+    summary.settled += settleFiles(db, settled.splice(0));
+
+    /**
+     * **Counted before dropped.** A row whose attempt is recorded but which is
+     * then left in place is merely asked again; one dropped without its
+     * siblings counted would give them a free retry. The order matters only if
+     * the process dies between the two, and this way that costs a repeated
+     * attempt rather than a lost one.
+     */
+    missedFiles(db, missed.splice(0));
+    summary.dropped += dropWip(db, spent.splice(0));
+
+    /**
+     * **On the batch, because a drain writes nothing else.** Generation moves a
+     * cursor per page and the counts ride that; a probe that has outlived its
+     * generator would otherwise hold hours of them in memory, visible nowhere
+     * and lost to a restart.
+     */
+    flushCounts(db, adapter);
+
+    batches++;
+  };
+
+  const lane = async (): Promise<void> => {
+    for (;;) {
       /**
-       * **`'drop'` means now, and that is what the verdict is for.** The core's
-       * own rule asks again because a `404` a moment before publication is
-       * truthful and wrong; an adapter that answers `'drop'` is saying it knows
-       * better for its venue — bitget's bucket spells absence as a `403` and has
-       * no other meaning for it — and asking twice more only spends requests
-       * confirming what one already said.
+       * **Read between rows, which is the only boundary a lane has.** A pass
+       * ends when the backlog empties, and on a venue whose keys are
+       * constructed that is a week away — so a stop read once per pass is a
+       * stop that never lands. The row in flight finishes and records its
+       * attempt exactly as it would have: nothing is cancelled, nothing asked
+       * twice.
        */
-      if (verdict === 'drop' || row.tries + 1 >= confirmations(row)) spent.push(row);
-    };
-
-    await pool(batch, pacing.concurrency, async (row) => {
-      // A pass that has given up drains its lanes rather than serving out a
-      // pause one row at a time.
+      if (paused()) { summary.stopped = true; return; }
       if (summary.abandoned) return;
 
-      try {
-        const seen = await fetchHead(adapter, url(adapter, row));
+      /**
+       * **Written before read.** `commit` is what parks the keys an answer
+       * implied, and the refill below is what finds them — the other way round
+       * and a chain of parts ends at the first one.
+       */
+      if (held.length === 0) { commit(); refill(); }
 
-        summary.requests++;
+      const row = held.shift();
 
-        if (seen.status === 200) {
-          const found  = settlement(row, seen.headers);
-          const ruling = adapter.ruleOnSuccess?.(row, found.size) ?? null;
+      if (row === undefined) return;
 
-          /**
-           * **Implied, so assumed.** Nothing listed these: a part arriving is
-           * what suggests the next one, and the chain ends at the first miss.
-           * Absence is the ordinary way to learn where a split file stops.
-           */
-          if (ruling?.next)
-            for (const path of [ruling.next].flat())
-              implied.push({ venueId: row.venueId, path, date: row.date, tries: 0,
-                seriesId: row.seriesId, existence: 'assumed' });
+      await probeOne(row);
 
-          /**
-           * **A replaced key is discarded, not settled.** The venue published it
-           * and it is still not a file this catalog holds — a manifest is the
-           * case — so it leaves `wip` with nothing written, and what it named
-           * takes its place.
-           */
-          if (ruling?.action === 'replace') spent.push(row);
-          else settled.push(found);
+      if (settled.length + missed.length + spent.length >= pacing.batch) commit();
+    }
+  };
 
-          return;
-        }
+  /**
+   * Ask about one row.
+   *
+   * **Its own function, because every answer here ends the row and not the
+   * lane.** Written into the loop above, each `return` would retire a worker
+   * on its first settled key.
+   */
+  /**
+   * What the venue says the rest of a period is, now that one part of it is
+   * settled.
+   *
+   * **Only on settlement**, which is what makes the answer a boolean. A part is
+   * either catalogued or given up on; a 404 that another pass will confirm again
+   * and a 503 that means nothing at all are both still open questions, and asking
+   * the venue what follows a question is how the same part gets expanded twice.
+   *
+   * **Absence is an answer too.** The first hour of a day saying nothing is what
+   * tells gate the day is not there, and the hook is what decides whether that
+   * ends the period or opens it — see `expandParts`.
+   */
+  const follow = (row: Unsettled, lastPartFound: boolean): void => {
+    if (! adapter.expandParts || ! row.nextPart) return;
 
-        const verdict = adapter.ruleOnFailure?.(seen.status, seen.headers, row.tries + 1) ?? null;
+    const series = seriesById(db, row.seriesId);
+
+    if (! series) return;
+
+    const asked = adapter.expandParts(
+      { series, date: row.date, lastPartFound, nextPart: row.nextPart });
+
+    if (! asked) return;
+
+    /**
+     * **A token travels with a key only while the period is unfinished.** Given
+     * no `next`, the parts just named are the venue's last word and the rows
+     * carry nothing — which is what stops a batch of twenty-four hours implying
+     * the same twenty-four over and over.
+     */
+    const nextPart = asked.next ?? '';
+
+    for (const part of [asked.parts].flat())
+      implied.push({ venueId: row.venueId, path: keyFor(series, row.date, adapter.slotsFor, part),
+        date: row.date, tries: 0, seriesId: row.seriesId, existence: 'assumed',
+        ...(nextPart ? { nextPart } : {}) });
+  };
+
+  const probeOne = async (row: Unsettled): Promise<void> => {
+    // A pass that has given up drains its lanes rather than serving out a
+    // pause one row at a time.
+    if (summary.abandoned) return;
+
+    try {
+      const seen = await fetchHead(adapter, url(adapter, row));
+
+      summary.requests++;
+
+      if (seen.status === 200) {
+        const found  = settlement(row, seen.headers);
+        const ruling = adapter.ruleOnSuccess?.(row, found.size) ?? null;
 
         /**
-         * **Absence, however the venue spells it.**
-         *
-         * Most buckets admit a key is missing with a `404`. Bitget's does not:
-         * it grants `GetObject` and not `ListBucket`, so every key it does not
-         * have comes back `403 AccessDenied` — the same status as being turned
-         * away, separable only by the headers, which is exactly what its
-         * `ruleOnFailure` reads.
-         *
-         * **So the ruling decides the count, not the status.** Counting a ruled
-         * absence as a refusal is what stood the venue down after fifty
-         * perfectly ordinary gaps and logged it as the venue refusing us — on a
-         * probe whose whole job is asking about keys that may not be there, and
-         * which meets runs of them at every series' trailing edge.
+         * **Implied, so assumed.** Nothing listed these and nothing generated
+         * them: the venue's own answer is what named them, and only a probe can
+         * say whether they are there.
          */
-        if (absent(adapter, seen.status) || verdict === 'drop') {
-          /**
-           * **Counted, and eventually acted on.** A file an index named an hour
-           * ago may have been withdrawn, or a CDN may be having a bad minute, and
-           * those look identical from here — so one miss rules nothing out. What
-           * separates them over time is persistence, which is what `tries`
-           * records and what lets a key that was never going to exist stop being
-           * asked about. The adapter decides whether that applies to it.
-           */
-          summary.missing++;
-          refusals = 0;
+        if (ruling?.next)
+          for (const path of [ruling.next].flat())
+            implied.push({ venueId: row.venueId, path, date: row.date, tries: 0,
+              seriesId: row.seriesId, existence: 'assumed' });
 
-          judge(row, seen.status, verdict);
+        /**
+         * **A replaced key is discarded, not settled.** The venue published it
+         * and it is still not a file this catalog holds — a manifest is the
+         * case — so it leaves `wip` with nothing written, and what it named
+         * takes its place.
+         */
+        /**
+         * **A replaced key was never a part of anything**, so nothing follows
+         * from it: what it named takes its place and that key is what will be
+         * asked about.
+         */
+        if (ruling?.action === 'replace') spent.push(row);
+        else { settled.push(found); follow(row, true); }
 
-          /**
-           * **`debug`, not `warn`.** A probe exists to ask whether a key is
-           * there; absence is one of the two ordinary answers, not a fault —
-           * see the note above. Warning on it would flag every trailing edge
-           * every series has.
-           */
-          if (summary.missing <= REPORTED)
-            logger.debug({ venue: labelOf(adapter), path: row.path, tries: row.tries + 1 },
-              'Probed file is missing');
+        return;
+      }
 
-          return;
-        }
+      const verdict = adapter.ruleOnFailure?.(row, seen.status, seen.headers, row.tries + 1) ?? null;
 
-        summary.refused++;
+      /**
+       * **Absence, however the venue spells it.**
+       *
+       * Most buckets admit a key is missing with a `404`. Bitget's does not:
+       * it grants `GetObject` and not `ListBucket`, so every key it does not
+       * have comes back `403 AccessDenied` — the same status as being turned
+       * away, separable only by the headers, which is exactly what its
+       * `ruleOnFailure` reads.
+       *
+       * **So the ruling decides the count, not the status.** Counting a ruled
+       * absence as a refusal is what stood the venue down after fifty
+       * perfectly ordinary gaps and logged it as the venue refusing us — on a
+       * probe whose whole job is asking about keys that may not be there, and
+       * which meets runs of them at every series' trailing edge.
+       */
+      if (absent(adapter, seen.status) || verdict === 'drop') {
+        /**
+         * **Counted, and eventually acted on.** A file an index named an hour
+         * ago may have been withdrawn, or a CDN may be having a bad minute, and
+         * those look identical from here — so one miss rules nothing out. What
+         * separates them over time is persistence, which is what `tries`
+         * records and what lets a key that was never going to exist stop being
+         * asked about. The adapter decides whether that applies to it.
+         */
+        summary.missing++;
+        refusals = 0;
 
         judge(row, seen.status, verdict);
 
         /**
-         * Reported in full the first few times, because a 403 has two very
-         * different meanings and the headers are what separate them. Without
-         * this in the log the only way to tell them apart is to go and ask by
-         * hand.
+         * **`debug`, not `warn`.** A probe exists to ask whether a key is
+         * there; absence is one of the two ordinary answers, not a fault —
+         * see the note above. Warning on it would flag every trailing edge
+         * every series has.
          */
-        if (summary.refused <= REPORTED)
-          logger.warn({
-            venue:    labelOf(adapter),
-            status:   seen.status,
-            path:     row.path,
-            server:   seen.headers.get('server'),
-            cache:    seen.headers.get('x-cache'),
-            amzError: seen.headers.get('x-amz-error-code'),
-          }, 'Venue refused a probe');
+        if (summary.missing <= REPORTED)
+          logger.debug({ venue: labelOf(adapter), path: row.path, tries: row.tries + 1 },
+            'Probed file is missing');
 
-        /**
-         * **A run of refusals aimed at us ends the pass.** The venue is already
-         * paused — `send` latched it, along with the rate it was seeing when it
-         * happened — so what is left here is to stop queueing work behind that
-         * pause and let the loop above decide when to come back. A refusal aimed
-         * at a single key is an answer about that key, and the pass carries on.
-         *
-         * **A run of them, not one**, because ending on the first costs minutes
-         * of surveying every time an edge has a bad second. The limiter applies
-         * the same rule to the host at the same time, so a venue that really is
-         * turning us away is both stood down and out of this pass; one that
-         * hiccuped is neither.
-         */
-        if (blocked(adapter, seen.status, seen.headers)
-          && ++refusals >= REFUSALS_BEFORE_BLOCK) summary.abandoned = true;
-        else if (summary.settled === 0 && summary.refused >= pacing.giveUpAfter)
-          summary.abandoned = true;
-      } catch (err) {
-        // Retries are spent. The row stays unsettled, so the next pass has it.
-        summary.failed++;
-
-        logger.error({ ...fault(err), venue: labelOf(adapter), path: row.path }, 'Probe failed');
+        return;
       }
-    });
 
-    // Before the settlement that implied them, so nothing can arrive without
-    // its successor being on the list.
-    if (implied.length > 0) summary.implied += parkKeys(db, implied);
+      summary.refused++;
 
-    summary.settled += settleFiles(db, settled);
+      judge(row, seen.status, verdict);
 
-    /**
-     * **Counted before dropped, and both before the cursor moves.** A row whose
-     * attempt is recorded but which is then left in place is merely asked again;
-     * one dropped without its siblings counted would give them a free retry. The
-     * order matters only if the process dies between the two, and this way that
-     * costs a repeated attempt rather than a lost one.
-     */
-    missedFiles(db, missed);
-    summary.dropped += dropWip(db, spent);
-
-    after = batch[batch.length - 1]!.seq;
-
-    if (summary.abandoned) {
       /**
-       * **Says how long, because "later" reads as "next time round".** The pass
-       * ends here and the drain picks it straight back up once the venue's own
-       * pause lapses — minutes, not the interval between updates — and a line
-       * that does not say so describes a service that has given up for the day.
+       * Reported in full the first few times, because a 403 has two very
+       * different meanings and the headers are what separate them. Without
+       * this in the log the only way to tell them apart is to go and ask by
+       * hand.
        */
-      const paused = pace.blockedFor() || pacing.standDownMs;
+      if (summary.refused <= REPORTED)
+        logger.warn({
+          venue:    labelOf(adapter),
+          status:   seen.status,
+          path:     row.path,
+          server:   seen.headers.get('server'),
+          cache:    seen.headers.get('x-cache'),
+          amzError: seen.headers.get('x-amz-error-code'),
+        }, 'Venue refused a probe');
 
-      logger.error({ ...summary, venue: labelOf(adapter), ...pace.rates(),
-        pausedMinutes: Math.round(paused / 60_000) },
-      `Venue is blocking us, or every request this pass has been refused — pausing ${describeWait(paused)}, then carrying on from where this stopped`);
+      /**
+       * **A run of refusals aimed at us ends the pass.** The venue is already
+       * paused — `send` latched it, along with the rate it was seeing when it
+       * happened — so what is left here is to stop queueing work behind that
+       * pause and let the loop above decide when to come back. A refusal aimed
+       * at a single key is an answer about that key, and the pass carries on.
+       *
+       * **A run of them, not one**, because ending on the first costs minutes
+       * of surveying every time an edge has a bad second. The limiter applies
+       * the same rule to the host at the same time, so a venue that really is
+       * turning us away is both stood down and out of this pass; one that
+       * hiccuped is neither.
+       */
+      if (blocked(adapter, seen.status, seen.headers)
+        && ++refusals >= REFUSALS_BEFORE_BLOCK) summary.abandoned = true;
+      else if (summary.settled === 0 && summary.refused >= pacing.giveUpAfter)
+        summary.abandoned = true;
+    } catch (err) {
+      // Retries are spent. The row stays unsettled, so the next pass has it.
+      summary.failed++;
 
-      break;
+      logger.error({ ...fault(err), venue: labelOf(adapter), path: row.path }, 'Probe failed');
     }
+  };
 
+  refill();
+
+  /** There is work, so the backlog is worth what it costs to state. */
+  if (held.length > 0) {
+    working = true;
+
+    logger.info({
+      venue:       labelOf(adapter),
+      outstanding: work.remaining?.() ?? null,
+      perSecond:   pacing.perSecond,
+      lanes:       pacing.concurrency,
+    }, 'Probing files for existence and metadata');
+  }
+
+  await Promise.all(Array.from(
+    { length: Math.max(1, Math.min(pacing.concurrency, held.length)) }, lane));
+
+  commit();
+
+  if (summary.abandoned) {
     /**
-     * The cursor moves past rows that did **not** settle as well as rows that
-     * did, so one stubborn file cannot hold an archive behind it. They are not
-     * lost: the next pass starts from the beginning and offers them again.
+     * **Says how long, because "later" reads as "next time round".** The pass
+     * ends here and the drain picks it straight back up once the venue's own
+     * pause lapses — minutes, not the interval between updates — and a line
+     * that does not say so describes a service that has given up for the day.
      */
-    batches++;
+    const waiting = pace.blockedFor() || pacing.standDownMs;
+
+    logger.error({ ...summary, venue: labelOf(adapter), ...pace.rates(),
+      pausedMinutes: Math.round(waiting / 60_000) },
+    `Probing paused, resumes ${describeWait(waiting)}`);
   }
 
   clearInterval(heartbeat);
@@ -440,9 +574,9 @@ export const probeFiles = async (
     minutes:  Math.round(elapsed(started) / 60),
     ...pace.rates(),
     ...(left === null ? {} : { left }),
-  }, summary.abandoned ? 'Probe pass abandoned'
-    : summary.stopped ? 'Probe pass stopped — the backlog is kept and the next start carries on from here'
-      : 'Probe pass complete');
+  }, summary.abandoned ? 'Probing round paused'
+    : summary.stopped ? 'Probing round stopped'
+      : 'Probing round finished');
 
   return summary;
 };
@@ -510,7 +644,7 @@ const NOT_FOUND: readonly number[] = [404];
 
 /** A URL is rebuilt from what the catalog stores, exactly as a consumer would. */
 const url = (adapter: Adapter, row: Unsettled): string =>
-  `${adapter.base}/${adapter.root}${row.path}`;
+  `${adapter.base}/${adapter.keyRoot}${row.path}`;
 
 /**
  * What a HEAD says about a file.

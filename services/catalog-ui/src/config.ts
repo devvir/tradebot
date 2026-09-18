@@ -13,7 +13,6 @@ const loadConfig = (): Config => {
   const config: Config = {
     catalogUrl:   (process.env['CATALOG_URL'] ?? 'http://prospector:8080').replace(/\/$/, ''),
     catalogToken: (process.env['CATALOG_TOKEN'] ?? '').trim(),
-    haulerUrl:    (process.env['HAULER_URL'] ?? '').replace(/\/$/, ''),
     port:         CONTAINER_PORT,
   };
 

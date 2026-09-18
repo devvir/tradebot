@@ -35,10 +35,6 @@ services:
       # without a header, and nothing else changes.
       CATALOG_TOKEN: ${CATALOG_TOKEN:-}
 
-      # Where hauler answers, for the shopping list. Empty means there is none to
-      # reach: the page says so rather than hanging on a proxy to nowhere.
-      HAULER_URL:    ${HAULER_URL:-}
-
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV:  ${APP_ENV:-prod}
       TZ:        ${TZ:-UTC}

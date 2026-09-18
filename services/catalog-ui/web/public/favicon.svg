@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Tradebot "rising signal" mark, transparent, with the Catalog (archives) badge -->
+  <rect x="4" y="40" width="16" height="22" rx="2.5" fill="#F5B83D" fill-opacity="0.5"/>
+  <rect x="24" y="27" width="16" height="35" rx="2.5" fill="#F5B83D" fill-opacity="0.75"/>
+  <rect x="44" y="14" width="16" height="48" rx="2.5" fill="#F5B83D"/>
+  <circle cx="52" cy="6" r="5.5" fill="#2EBD85"/>
+  <circle cx="12.5" cy="12.5" r="12" fill="#38BDF8"/>
+  <g fill="none" stroke="#0B0F14" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="12.5" y1="5.5" x2="12.5" y2="14.5"/>
+    <polyline points="8.5,11 12.5,15 16.5,11"/>
+    <polyline points="6.5,15.5 6.5,19 18.5,19 18.5,15.5"/>
+  </g>
+</svg>

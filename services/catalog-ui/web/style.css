@@ -83,3 +83,30 @@ button[data-disabled] { border-color: var(--mantine-color-disabled-border); }
   display: block;
   height: auto;
 }
+
+/*
+ * The tick on a chosen option sits to the right, in its own space.
+ *
+ * Mantine renders it inline before the label, so selecting an item shifts that
+ * label sideways and the list stops lining up down its left edge — which is where
+ * the eye reads it. Pushing the mark to the far end leaves every label at the same
+ * x, selected or not.
+ *
+ * A grid was the wrong tool: an unselected option has no icon child at all, so
+ * its label landed in the icon's column and wrapped a letter per line.
+ */
+.mantine-Select-option,
+.mantine-MultiSelect-option,
+.mantine-Autocomplete-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.mantine-Select-option > svg,
+.mantine-MultiSelect-option > svg,
+.mantine-Autocomplete-option > svg {
+  order: 2;
+  margin-left: auto;
+  flex: none;
+}

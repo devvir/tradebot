@@ -8,7 +8,7 @@ import { declare } from './declare';
 
 /**
  * KuCoin publishes a standard S3 listing on the same host that serves the
- * files, so `list` and `base` are one address.
+ * files.
  *
  * One granularity only — every file is a day — so there is nothing to tag.
  */
@@ -18,27 +18,40 @@ export const kucoin: Adapter = declare({
 
   name:    'kucoin',
   scanner: s3,
-  list:    'https://historical-data.kucoin.com',
 
   /**
-   * **Lowered on timeouts, and only the in-flight half of it.**
-   *
-   * This venue had declared nothing and so inherited the default hundred, which
-   * is a hundred sockets asked of one origin. Requests that never reached it at
-   * all were the symptom — a socket that is never answered on, rather than a
-   * venue objecting to a rate — and `concurrency` is what decides how many of
-   * those are open at once, which is why it is the figure that moves first.
-   *
-   * The rate is left where it was on purpose. Nothing observed says 100/s is
-   * too much for this host, and with five in flight it is not reached at all
-   * unless this host answers inside fifty milliseconds: the pace settles below
-   * the cap on its own, which is the correct answer to a host that is slow
-   * rather than a smaller number written down.
-   *
-   * Not measured. If the timeouts survive five, this is still the number to
-   * move before the rate is touched.
+   * **No limit found.** Measured 2026-09-29/30 with HEAD probes: 3,951/s from
+   * one machine and 3,602/s from the remote, without a single throttling
+   * answer. Those were keys the edge had cached. A missing one goes to the
+   * origin and takes ~270–700 ms, so an update is held by what is in flight:
+   * ~1,500/s at ~525 at once (2026-09-30), and more than 600 would mostly wait
+   * on the machine-wide ceiling.
    */
-  pacing:  { concurrency: 5 },
+  pacing:  { perSecond: 5000, concurrency: 600 },
+
+  /**
+   * Walking, every update — see `docs/services/PROSPECTOR.md`, *How each venue updates*.
+   */
+  recurs:  'walk',
+
+  /**
+   * How far behind today this venue is worth asking about.
+   *
+   * **Measured from the venue's own `Last-Modified`**, 2026-09-25 over the files
+   * of 2026-09-15 to 21: p99 29.0 hours after the dated day begins, over 173,150 files.
+   *
+   * **Every venue publishes more than a day after its period begins**, so a pass
+   * running in the small hours finds nothing for yesterday whatever the catalog's
+   * newest file suggests — a snapshot taken in the afternoon says only that the
+   * file had arrived by the afternoon.
+   *
+   * **A day further back again**, because a publishing hour that drifts later
+   * would put the frontier in front of the archive. Asking early costs a probe
+   * per series per night, every night, for a period that cannot exist yet; asking
+   * late costs the catalog's edge a day, and loses nothing — the frontier
+   * advances daily and the patience window covers what it has not reached.
+   */
+  probingLag: 3,
 
   /** What this venue lists today — its only discovery. */
   instruments: kucoinInstruments,

@@ -1,7 +1,9 @@
 import { keyFor, grainOf, open, seriesById, seriesFor } from './catalog';
 import { logger } from '@devvir/service-kit';
 import { atGrain, instant, lastClosed, lastSettled, nextPeriod } from './dates';
-import type { Grain, Listed, Page, Publishing, Slots } from './types';
+import type {
+  Grain, Listed, Page, Parts as PartsReply, PartsAsked, Publishing, Slots,
+} from './types';
 import type { DatabaseSync } from 'node:sqlite';
 
 /**
@@ -99,7 +101,7 @@ export const updatePage = (
     return { listed: [], cursor: null };
 
   const from = above(series, cursor, series.grain);
-  const upto = under(series.grain, now, series.retiredAt);
+  const upto = under(series.grain, now, series.retiredAt, rules?.lag);
 
   /**
    * **The span a seed already proved empty**, or nothing where no seed says so.
@@ -130,16 +132,24 @@ export const updatePage = (
      */
     if (skip && at >= skip.from && at <= skip.to) { at = skip.to; continue; }
 
-    listed.push({
-      key:      keyFor(series, at, rules?.slots),
-      size:     null,
-      etag:     null,
-      modified: null,
+    for (const { key, nextPart } of keysAt(db, series, at, rules))
+      listed.push({
+        key,
+        size:     null,
+        etag:     null,
+        modified: null,
 
-      /** Built from this series, so nothing downstream needs to work it out. */
-      seriesId: series.id!,
-    });
+        /** Built from this series, so nothing downstream needs to work it out. */
+        seriesId: series.id!,
+        ...(nextPart ? { nextPart } : {}),
+      });
 
+    /**
+     * **Checked per period rather than per key**, because a period published in
+     * parts is one decision: stopping halfway through a day would leave a cursor
+     * that says the day is done. A page may therefore overshoot by one period's
+     * worth of parts, which is a batching hint rather than a limit.
+     */
     if (listed.length >= PAGE) return { listed, cursor: at };
   }
 
@@ -165,6 +175,18 @@ export interface Rules {
    * any other pass it is absent and generation is a plain range.
    */
   seededAt?: string;
+
+  /**
+   * How this venue splits a period, where it splits one — the adapter's
+   * `expandParts`, absent for every venue whose patterns carry no `{PART}`.
+   */
+  parts?: (asked: PartsAsked) => PartsReply | null;
+
+  /**
+   * How far behind today this venue stops asking, in days — the adapter's
+   * `probingLag`, or absent for the default of one.
+   */
+  lag?: number;
 }
 
 
@@ -212,7 +234,7 @@ const live = (db: DatabaseSync, venueId: number): Publishing[] => {
 
   if (held.length !== rows.length)
     logger.warn({ venue: venueId, series: rows.length - held.length },
-      'Series with no tip are not generated for — nothing states a bound for them any more');
+      'Series with no known start skipped');
 
   return held;
 };
@@ -287,8 +309,17 @@ const above = (series: Publishing, cursor: string | null, grain: Grain): string 
  * are the same answer from the archive. So it arrives with the shape, from the
  * seed that carries it.
  */
-const under = (grain: Grain, now: Date, retiredAt: string | null): string => {
-  const frontier = lastClosed(grain, now);
+const under = (grain: Grain, now: Date, retiredAt: string | null, lag = 1): string => {
+  /**
+   * **A lag of one is yesterday**, which is where the frontier has always been:
+   * the newest period that can be complete. Anything larger waits that many days
+   * before asking about a period at all, and is counted in days at every grain —
+   * a lag of thirty on a monthly shape is the last month that ended more than
+   * thirty days ago.
+   */
+  const frontier = lastClosed(grain, lag > 1
+    ? new Date(now.getTime() - (lag - 1) * 86_400_000)
+    : now);
 
   if (retiredAt === null) return frontier;
 
@@ -296,6 +327,88 @@ const under = (grain: Grain, now: Date, retiredAt: string | null): string => {
 
   return ended < frontier ? ended : frontier;
 };
+
+/**
+ * Every key one period is asked about — one, unless the venue splits the period.
+ *
+ * **A pattern with no `{PART}` is the whole of the ordinary case**, and pays
+ * nothing for this: one key, built as it always was.
+ *
+ * **Where there is a `{PART}`, the adapter says what goes in it** and this
+ * follows the chain as far as it can without asking the venue anything. A part
+ * the catalog already holds is reported back to the hook as present — because a
+ * chain that stopped at a file it already had would never reach the rest of its
+ * period, which is exactly what happens when a walk catalogued the first part
+ * and an update is asked to complete the day.
+ *
+ * Everything not held is emitted, and the probe carries the chain on from there.
+ *
+ * **A key carries a token only while the period is unfinished.** `next` is what
+ * says so: given one, the key is parked with it and comes back to the hook when
+ * it settles; left out, the parts the venue just named are the last word and a
+ * row with no token is never taken back there.
+ *
+ * **A token that repeats ends the period.** The core cannot read a token, so it
+ * cannot tell a cycle from progress by looking; it can only refuse to go round
+ * twice.
+ */
+const keysAt = (
+  db:     DatabaseSync,
+  series: Publishing,
+  at:     string,
+  rules?: Rules,
+): { key: string; nextPart: string }[] => {
+  if (! series.pattern.includes('{PART}'))
+    return [{ key: keyFor(series, at, rules?.slots), nextPart: '' }];
+
+  if (! rules?.parts) {
+    logger.error({ venue: series.venueId, series: series.id, pattern: series.pattern },
+      'Pattern the venue cannot split; skipped');
+
+    return [];
+  }
+
+  const out:  { key: string; nextPart: string }[] = [];
+  const seen = new Set<string>();
+
+  let asked = rules.parts({ series, date: at, lastPartFound: null, nextPart: '' });
+
+  while (asked) {
+    const tokens = (Array.isArray(asked.parts) ? asked.parts : [asked.parts])
+      .filter(one => ! seen.has(one));
+
+    const nextPart = asked.next ?? '';
+
+    let following: PartsReply | null = null;
+
+    for (const part of tokens) {
+      seen.add(part);
+
+      const key = keyFor(series, at, rules.slots, part);
+
+      if (! held(db, series.venueId, key)) { out.push({ key, nextPart }); continue; }
+
+      /**
+       * **Held, so answered.** The part is reported present without a request,
+       * and what the adapter says follows it is walked here rather than waited
+       * for — which is what lets a pass finish a period an earlier one left
+       * half-catalogued.
+       */
+      if (nextPart)
+        following = rules.parts({ series, date: at, lastPartFound: true, nextPart });
+    }
+
+    asked = following;
+  }
+
+  return out;
+};
+
+/** Whether this key is already a file the catalog holds, and not a withdrawn one. */
+const held = (db: DatabaseSync, venueId: number, path: string): boolean =>
+  db.prepare(
+    `SELECT 1 FROM file WHERE venue_id = ? AND path = ? AND existence <> 'absent'`,
+  ).get(venueId, path) !== undefined;
 
 // ── Test access ───────────────────────────────────────────────────────────────
 

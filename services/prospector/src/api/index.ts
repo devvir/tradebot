@@ -1,6 +1,8 @@
 import { logger } from '@devvir/service-kit';
 import { fault } from '../faults';
 import { setupRoutes } from './routes';
+import { mountLens } from './lens';
+import { mountBucket } from './bucket';
 import type { Application, Request, Response, NextFunction } from 'express';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Surveys } from '../types';
@@ -48,8 +50,22 @@ export const requireToken = (token: string) =>
  * A handler throwing is a fault in this service, not something the caller can
  * act on, so it answers `500` and says nothing about paths or queries — while
  * the log keeps the whole of it.
+ *
+ * **Except a request refused before any route ran**: the body parser marks what
+ * it refuses — too large, not JSON — with a `4xx` status and a message meant for
+ * the caller, and that is answered as it is.
  */
 export const onError = (err: unknown, _req: Request, res: Response, _next: NextFunction): void => {
+  const refused = err as { status?: unknown; expose?: unknown; message?: unknown };
+
+  if (typeof refused.status === 'number' && refused.status >= 400 && refused.status < 500 && refused.expose === true) {
+    logger.warn({ status: refused.status, error: String(refused.message) }, 'Request refused');
+
+    res.status(refused.status).json({ error: String(refused.message) });
+
+    return;
+  }
+
   logger.error({ ...fault(err) }, 'Unhandled error in the catalog API');
 
   res.status(500).json({ error: 'Internal error' });
@@ -64,6 +80,8 @@ export const mount = (
   app.use(requireToken(token));
 
   setupRoutes(app, db, surveys);
+  mountLens(app, db);
+  mountBucket(app, db);
 
   app.use(onError);
 };

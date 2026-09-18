@@ -30,19 +30,9 @@ const PAGE = join(__dirname, '..', '..', 'web');
 export const setupRoutes = (app: Application): void => {
   app.use('/api/catalog', forward(() => config.catalogUrl, config.catalogToken));
 
-  /**
-   * **Absent rather than broken where there is no hauler.** A deployment
-   * surveying on one machine and hauling on another may not be able to reach
-   * one, and a proxy to nowhere answers with a timeout that reads as a bug.
-   */
-  app.use('/api/hauler', config.haulerUrl
-    ? forward(() => config.haulerUrl, config.catalogToken)
-    : (_req: Request, res: Response) =>
-      res.status(503).json({ error: 'No hauler is configured — set HAULER_URL' }));
-
   /** What this page needs to know about itself, so nothing is baked into it. */
   app.get('/api/where', (_req, res) => {
-    res.json({ catalog: config.catalogUrl, hauler: config.haulerUrl || null });
+    res.json({ catalog: config.catalogUrl });
   });
 
   app.use(express.static(PAGE));

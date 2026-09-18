@@ -1,5 +1,5 @@
 import { logger } from '@devvir/service-kit';
-import { atGrain, dueAt, lastSettled } from '../dates';
+import { atGrain, dueAt, lastClosed, lastSettled } from '../dates';
 import { transformFor, transformsOf } from './transform';
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import type { Found, Grain, Publishing, Reconciled, SeriesCount, SeriesFilter, Slots } from '../types';
@@ -359,8 +359,9 @@ export const retirePattern = (db: DatabaseSync, patternId: number, at: string): 
  * **The tip is not among them, because it is not a per-file claim.** What a walk
  * proves about a tip it proves by reading the index to the end, not by meeting
  * any particular file: every period at or below `since - OVERDUE_DAYS` was
- * offered and answered. That is one value for the whole walk, and `settleWalk`
- * states it once when the last partition closes.
+ * offered and answered. That is one statement over the whole venue, and
+ * `reconcile` makes it once the pass is over — the same statement an update
+ * earns by draining its queue, which is why there is only one of it.
  *
  * A series this walk *creates* is the exception, and it is an initialisation
  * rather than an update: generation refuses a series with no tip at all, so a
@@ -446,46 +447,6 @@ const walkEdge = (grain: Grain, since: Date): string => {
 const EDGES = new Map<string, string>();
 
 /**
- * What reading an index to the end is worth to the tips of the venue it indexes.
- *
- * **One statement over every series, not a claim per file.** A walk that closed
- * every partition offered the whole keyspace as it stood at `since`; a period it
- * never named was not published, whatever series it would have belonged to. So
- * the tip every series earns is the same date — the settled edge of the walk's
- * own start — and a series the walk never mentioned earns it exactly as much as
- * one it mentioned a thousand times.
- *
- * **This is the walk's reconciliation, and it is the only one it gets.** An
- * update earns its tips by draining a queue and hands them to `reconcile`; a
- * walk earns them by finishing the index, and nothing about the clock can add to
- * that. Both lift, neither lowers.
- *
- * **Only on a walk that finished**, which the caller decides — the same rule as
- * `reconcile`, for the same reason. A walk that stopped with a partition unread
- * has offered part of a keyspace and proved nothing about the rest, and a tip
- * does not come back.
- */
-export const settleWalk = (db: DatabaseSync, venueId: number, since: Date): number => {
-  const held = registry(db);
-
-  let lifted = 0;
-
-  for (const row of seriesFor(db, venueId)) {
-    const edge = walkEdge(row.grain, since);
-
-    if (row.tip !== null && row.tip >= edge) continue;
-
-    row.tip = edge;
-    touch(held, row);
-    lifted++;
-  }
-
-  flushTips(db);
-
-  return lifted;
-};
-
-/**
  * Record that a file of this series exists, and how old and how new it is.
  *
  * **Both edges, because both are the same claim.** A file at a date proves the
@@ -565,6 +526,17 @@ export const sawFile = (db: DatabaseSync, seriesId: number, date: string): void 
  * its tips would assert that the last `OVERDUE_DAYS` were asked about when they
  * were not — permanently, since a tip never goes back, and unrecoverably on a
  * venue with no walk to refresh it.
+ *
+ * **Every pass, whichever kind.** How the files arrived — read from an index or
+ * asked for one key at a time — changes nothing about what is owed afterwards:
+ * how long to wait for what is missing, which rows the files disagree with, and
+ * which series turned out to hold nothing. A walk used to state its own tips
+ * separately, which was the same rule written twice.
+ *
+ * **As of when the pass began, not the clock.** A pass that ran for two days
+ * asked about the archive as it stood when it started, and reconciling against
+ * `now` would claim the days it spent running. The caller passes the job's own
+ * start.
  */
 export const reconcile = (
   db:      DatabaseSync,
@@ -604,13 +576,33 @@ export const reconcile = (
     const floor = lastSettled(row.grain, now);
 
     /**
-     * **1. Every tip to the floor.** This is what retires an absence for good,
-     * and it does so without anyone having tracked which series had a gap: a
-     * real hole, a transient miss that settled later, and the dead range below a
-     * newly listed instrument's true start all go the same way.
+     * **1. Every tip to the newest file, or to the floor where that is newer.**
+     *
+     * The floor is patience: everything at or below `now - OVERDUE_DAYS` has
+     * been asked and waited for, so an absence there is retired for good —
+     * without anyone having tracked which series had a gap, since a real hole, a
+     * transient miss that settled later and the dead range below a newly listed
+     * instrument's true start all go the same way.
+     *
+     * **A file is proof, and proof outranks patience.** Where a series' newest
+     * file is above the floor there is nothing left to wait for below it: the
+     * archive answered. Holding the tip down to the floor there is what made an
+     * update re-ask the whole window every night for periods it already held.
+     *
+     * **But never past a period that has not closed.** A walk catalogues what the
+     * index offers, and an index offers today: a file dated today is proof of
+     * that file and of nothing else, since the day it belongs to is still being
+     * written. A tip there would claim a period nobody could have finished
+     * publishing — and a tip does not come back.
+     *
+     * Both lift and neither lowers, so a tip still only ever moves forward.
      */
-    if (row.tip === null || row.tip < floor) {
-      row.tip = floor;
+    const closed = lastClosed(row.grain, now);
+    const proof  = row.last === null ? null : (row.last < closed ? row.last : closed);
+    const upto   = proof !== null && proof > floor ? proof : floor;
+
+    if (row.tip === null || row.tip < upto) {
+      row.tip = upto;
       touch(held, row);
       summary.lifted++;
     }
@@ -834,10 +826,14 @@ export const grainOf = (pattern: string): Grain => {
  * How a slot name declares its grain: by ending in it, finest first.
  *
  * Matching the **ending** rather than the whole name is what lets an adapter
- * invent a slot without the catalog learning its cadence separately — gate's
- * `{EPOCH_HH}` is hourly for the same reason `{HH}` is. A pattern naming both an
- * hour and a day is hourly, as it must be: the day alone would not identify the
- * file.
+ * invent a slot without the catalog learning its cadence separately. A pattern
+ * naming both an hour and a day is hourly, as it must be: the day alone would not
+ * identify the file.
+ *
+ * **`{PART}` names no period and so declares no grain.** A pattern carrying it is
+ * as coarse as its calendar slots say — a day of hourly parts is daily — which is
+ * the whole point: how a venue splits a period is its business, and the grain is
+ * what a consumer asks for.
  */
 const SLOT_GRAIN: [string, Grain][] = [
   ['MI}', 'minutely'],
@@ -857,13 +853,18 @@ const SLOT_GRAIN: [string, Grain][] = [
  * expression serves all three.
  *
  * **The calendar is all this knows.** A venue whose paths want something else —
- * bybit naming a month by both its ends, gate naming a file by the instant it
- * covers — hands those slots over through its own `slotsFor`, so an oddity costs
- * that adapter a function rather than costing every venue a vocabulary.
+ * bybit naming a month by both its ends — hands those slots over through its own
+ * `slotsFor`, so an oddity costs that adapter a function rather than costing
+ * every venue a vocabulary.
+ *
+ * **`{PART}` is the one slot no calendar can fill.** Where a venue splits a
+ * period into files, which parts exist is the adapter's answer — see
+ * `expandParts` — and this only puts the token it gave into the slot it goes in.
  */
-export const keyOf = (series: Publishing, at: string, slots?: Slots): string => {
+export const keyOf = (series: Publishing, at: string, slots?: Slots, part = ''): string => {
   let key = (series.pattern.includes('{TRANSFORM:') ? substituted(series, at) : series.pattern)
     .replaceAll('{SYMBOL}', series.urlSymbol ?? series.symbol)
+    .replaceAll('{PART}', part)
     .replaceAll('{YYYY}', at.slice(0, 4))
     .replaceAll('{MM}', at.slice(4, 6))
     .replaceAll('{DD}', at.slice(6, 8))
@@ -1000,13 +1001,13 @@ const registry = (db: DatabaseSync): Registry => {
 
   if (held) return held;
 
-  logger.info('Loading the series registry — nothing else runs until it is built');
+  logger.info('Loading series');
 
   const started = Date.now();
   const series  = loadSeries(db);
 
   logger.info({ series, seconds: Math.round((Date.now() - started) / 100) / 10 },
-    'Series registry loaded');
+    'Series loaded');
 
   return REGISTRIES.get(db)!;
 };

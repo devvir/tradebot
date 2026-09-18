@@ -1,7 +1,8 @@
 import { logger } from '@devvir/service-kit';
 import { keyFor, putFiles } from './catalog';
 import { WIDTH, lastSettled, prevPeriod } from './dates';
-import { etagOf, fetchHead } from './http';
+import { etagOf } from './etag';
+import { fetchHead } from './http';
 import { labelOf } from './pace';
 import type { Adapter, CatalogFile, Publishing } from './types';
 import type { DatabaseSync } from 'node:sqlite';
@@ -95,8 +96,7 @@ export const backfill = async (
         logger.warn({
           venue: labelOf(adapter), market: series.market, symbol: series.symbol,
           dataset: series.dataset, reached: at, floor, monthsBack: months.size,
-        }, 'A newly listed instrument has data below where probing starts — '
-         + 'walking back to find where it begins');
+        }, 'New instrument has older data; searching back for its first file');
       }
     }
 
@@ -104,8 +104,7 @@ export const backfill = async (
 
     if (at.slice(0, WIDTH[series.grain]) <= oldest.slice(0, WIDTH[series.grain])) {
       logger.error({ venue: labelOf(adapter), market: series.market, symbol: series.symbol, oldest },
-        'Walked back to the oldest date this venue publishes and the venue is still answering — '
-        + 'treating that as an answer that cannot be believed, and stopping');
+        'Searched back to the venue\'s oldest date and still found files; giving up on this instrument');
 
       break;
     }
@@ -120,7 +119,7 @@ export const backfill = async (
 
 /** A URL is built from what the catalog stores, exactly as generation builds it. */
 const url = (adapter: Adapter, series: Publishing, at: string): string =>
-  `${adapter.base}/${adapter.root}${keyFor(series, at)}`;
+  `${adapter.base}/${adapter.keyRoot}${keyFor(series, at)}`;
 
 /**
  * One period the venue answered for, as a complete file row.

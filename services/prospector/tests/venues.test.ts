@@ -10,8 +10,8 @@ import { okx } from '../src/adapters/okx';
 import { pathSymbolOf } from '../src/adapters/bitget/symbols';
 import { tokenOf, unknownMargin } from '../src/adapters/bitget/shapes';
 import { _test_marginOf } from '../src/adapters/bitget/instruments';
-import { VENUE_NAMES, adaptersForVenue, adaptersFor } from '../src/venues';
-import type { Adapter, Unsettled } from '../src/types';
+import { VENUE_NAMES, _test_refuseContradictions, adaptersForVenue, adaptersFor } from '../src/venues';
+import type { Adapter, Publishing, Unsettled } from '../src/types';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,6 +23,13 @@ const S3  = [binance, htx, kucoin, bybit];
 const ALL = [...S3];
 
 describe('every adapter', () => {
+  /** A venue with no listing has no walk to repeat, and saying so is refused at load. */
+  it('cannot recur by walking a venue it cannot list', () => {
+    expect(() => _test_refuseContradictions([{ ...okx, recurs: 'walk' }])).toThrow(/cannot be listed/);
+    expect(() => _test_refuseContradictions([{ ...okx, recurs: 'update' }])).not.toThrow();
+    expect(() => _test_refuseContradictions([{ ...binance, recurs: 'walk' }])).not.toThrow();
+  });
+
   /**
    * The reason the scanner is a separate concept. Four venues, one paging
    * implementation — if this ever stops holding, someone has copied a walk.
@@ -30,17 +37,6 @@ describe('every adapter', () => {
   it('shares one scanner across every S3 venue', () => {
     expect(new Set(S3.map(a => a.scanner))).toHaveLength(1);
     expect(S3.every(a => a.scanner.name === 's3')).toBe(true);
-  });
-
-  /**
-   * A venue is surveyed wherever it answers a listing, which is not always the
-   * host it serves files from. Bybit's CDN answers none, so both addresses point
-   * at the bucket behind it; binance's CDN serves files while the bucket is
-   * listed.
-   */
-  it('lists from a host that answers a listing API', () => {
-    expect(bybit.list).toContain('amazonaws.com');
-    expect(bybit.list.startsWith('https://')).toBe(true);
   });
 
   /**
@@ -53,13 +49,13 @@ describe('every adapter', () => {
   });
 
   /**
-   * A root is either empty — survey the whole bucket and strip nothing — or a
-   * directory prefix. Anything else leaves a path that neither reconstructs as
-   * `base + '/' + root + path` nor stands on its own.
+   * A key root is either empty — survey the whole bucket and strip nothing — or
+   * a directory prefix. Anything else leaves a path that neither reconstructs as
+   * `base + '/' + keyRoot + path` nor stands on its own.
    */
-  it('declares a root that is empty or a directory prefix', () => {
+  it('declares a key root that is empty or a directory prefix', () => {
     for (const adapter of ALL)
-      expect(adapter.root === '' || adapter.root.endsWith('/')).toBe(true);
+      expect(adapter.keyRoot === '' || adapter.keyRoot.endsWith('/')).toBe(true);
   });
 
   it('serves files from a base with no trailing slash', () => {
@@ -87,6 +83,7 @@ describe('every adapter', () => {
   it('refuses to catalogue a path carrying no date', () => {
     for (const adapter of ALL) expect(adapter.dateOf('spot/trades/BTCUSDT/')).toBeNull();
   });
+
 });
 
 describe('binance', () => {
@@ -160,13 +157,14 @@ describe('gate', () => {
   });
 
   /**
-   * Books are 24 files a day, and the hour is what tells them apart — so it is
-   * kept. Dropping it gave all 24 one date and left nothing able to name them
-   * individually.
+   * **Books are 24 files a day, and the day is what a consumer asks for.** The
+   * hour is which part of it the file is, and the path says so — `{PART}` is
+   * where it goes — so the date is the period and nothing is lost by it being
+   * the period: the path still names the file uniquely.
    */
-  it('reads an hourly file, at both extensions, keeping the hour', () => {
-    expect(gate.dateOf('spot/orderbooks/202606/0G_USDT-2026060107.csv.gz')).toBe('2026060107');
-    expect(gate.dateOf('spot/orderbooks_slice/202606/BTC_USDT-2026060100.gz')).toBe('2026060100');
+  it('dates an hourly file by its day, at both extensions', () => {
+    expect(gate.dateOf('spot/orderbooks/202606/0G_USDT-2026060107.csv.gz')).toBe('20260601');
+    expect(gate.dateOf('spot/orderbooks_slice/202606/BTC_USDT-2026060100.gz')).toBe('20260601');
   });
 
   /**
@@ -175,18 +173,84 @@ describe('gate', () => {
    */
   it('takes the trailing stamp, not the expiry in the symbol', () => {
     expect(gate.dateOf('delivery_usdt/orderbooks/202305/BTC_USDT_20230512-2023050508.csv.gz'))
-      .toBe('2023050508');
+      .toBe('20230505');
   });
 
   /**
-   * The venue-wide snapshots have no symbol and no extension — just an epoch.
-   * The same number is a different period in each tree, so the tree decides how
-   * far the stamp is rendered: `spot_index` is hourly, `options_ticker` is not.
+   * **The venue-wide snapshots have no symbol and no extension — just an epoch**,
+   * and the only period in the path is the month above it. So the month is what
+   * they are dated by, whichever tree they came from, and how often each tree
+   * publishes is the parts hook's business rather than the date's.
    */
-  it('reads a snapshot from the epoch it is named for, at the tree\'s own grain', () => {
-    expect(gate.dateOf('spot_index/202606/slice_index_1780272000')).toBe('2026060100');
-    expect(gate.dateOf('options_ticker/202509/slice_options_ticker_1756691460'))
-      .toBe('202509010151');
+  it('dates a snapshot by the month it is filed under', () => {
+    expect(gate.dateOf('spot_index/202606/slice_index_1780272000')).toBe('202606');
+    expect(gate.dateOf('options_ticker/202509/slice_options_ticker_1756691460')).toBe('202509');
+  });
+
+  /**
+   * **A day of books is 24 files and gate can say so**, which is what makes it
+   * the opposite case to bitget: the parts are known, so one probe decides the
+   * day and the other 23 follow in a single answer.
+   */
+  describe('the parts of a period', () => {
+    const BOOKS  = 'spot/orderbooks/{YYYY}{MM}/{SYMBOL}-{YYYY}{MM}{DD}{PART}.csv.gz';
+    const INDEX  = 'spot_index/{YYYY}{MM}/slice_index_{PART}';
+    const TICKER = 'options_ticker/{YYYY}{MM}/slice_options_ticker_{PART}';
+
+    const asking = (pattern: string, date: string, first: string | null,
+                    nextPart = '', lastPartFound: boolean | null = null) =>
+      gate.expandParts!({ series: { pattern, first } as Publishing, date, lastPartFound, nextPart });
+
+    /**
+     * **Hour 00 decides the day.** Measured over 40 hourly series: 753 of 769
+     * middle days carry all 24 hours and 767 carry hour 00, so a day whose first
+     * hour is missing is a day the instrument was not trading.
+     */
+    it('probes the first hour and asks for the rest only once it answers', () => {
+      expect(asking(BOOKS, '20260601', '20240101'))
+        .toEqual({ parts: '00', next: '*' });
+
+      const rest = asking(BOOKS, '20260601', '20240101', '*', true);
+
+      expect(rest!.next).toBeUndefined();
+      expect(rest!.parts).toHaveLength(23);
+      expect(rest!.parts[0]).toBe('01');
+      expect(rest!.parts.at(-1)).toBe('23');
+    });
+
+    /** A day with no first hour is a day with nothing in it, and implies nothing. */
+    it('ends the day where its first hour is not there', () => {
+      expect(asking(BOOKS, '20260601', '20240101', '*', false)).toBeNull();
+    });
+
+    /**
+     * **Except on a series that has never held a file.** A series starts when the
+     * instrument was listed, which is mid-day — none of forty first days carried
+     * hour 00 — so hour 00 would write off a day that exists.
+     */
+    it('asks about every hour where the series has nothing to go on', () => {
+      const every = asking(BOOKS, '20260601', null);
+
+      expect(every!.next).toBeUndefined();
+      expect(every!.parts).toHaveLength(24);
+      expect(every!.parts[0]).toBe('00');
+    });
+
+    /**
+     * A snapshot tree is named by the epoch itself, so its parts are computed
+     * from the month at the cadence that tree was measured publishing at.
+     */
+    it('names a month of snapshots at the cadence its tree publishes', () => {
+      const hourly = asking(INDEX, '202606', null);
+
+      /** June is 30 days, an hour apart. */
+      expect(hourly!.parts).toHaveLength(720);
+      expect(hourly!.parts[0]).toBe(String(Date.UTC(2026, 5, 1) / 1000));
+      expect(hourly!.parts[1]).toBe(String(Date.UTC(2026, 5, 1) / 1000 + 3_600));
+
+      /** And the ticker a minute apart, which is 43,200 of them. */
+      expect(asking(TICKER, '202606', null)!.parts).toHaveLength(43_200);
+    });
   });
 
   it('says nothing for a stamp of a length gate does not publish', () => {
@@ -338,7 +402,6 @@ describe('bybit secondary', () => {
 });
 
 
-
 /**
  * A venue is useful before it is reachable: an exclusion keys on a venue row and
  * configuration validates against the registry, and neither needs a scanner.
@@ -373,12 +436,14 @@ describe('bitget', () => {
     expect(bitget.refusesUs!(403, missing)).toBe(false);
     expect(bitget.refusesUs!(403, turned)).toBe(true);
 
-    expect(bitget.ruleOnFailure!(403, missing, 1)).toBe('drop');
-    expect(bitget.ruleOnFailure!(403, turned, 1)).toBe(null);
+    const key = probed('trades/SPBL/BTCUSDT/20260813_001.zip');
+
+    expect(bitget.ruleOnFailure!(key, 403, missing, 1)).toBe('drop');
+    expect(bitget.ruleOnFailure!(key, 403, turned, 1)).toBe(null);
 
     // A refusal that is about us is never counted against a key, however often
     // it arrives.
-    expect(bitget.ruleOnFailure!(429, new Headers(), 9)).toBe(null);
+    expect(bitget.ruleOnFailure!(key, 429, new Headers(), 9)).toBe(null);
   });
 
   /**
@@ -406,31 +471,26 @@ describe('bitget', () => {
     for (const [path, , , date] of shapes) expect(bitget.dateOf(path)).toBe(date);
   });
 
-  /**
-   * A day of trades is cut every 100,000 rows and nothing in the path says how
-   * many parts there are, so each one asks for the next and the archive ends the
-   * chain by not answering.
-   */
-  /** The hook takes a whole row; these rules read only its path. */
+  /** The hook takes a whole row, so a rule that reads none of it still needs one. */
   const probed = (path: string): Unsettled =>
     ({ venueId: 1, path, date: '20260813', tries: 0, existence: 'assumed', seriesId: null });
 
   /**
-   * **Skipped while the experimental seed runs.** `ruleOnSuccess` is temporarily
-   * something else: it jumps a series to the newest date the download index
-   * claimed, so a run establishes the real bounds without probing the years
-   * between. The part-following rule is commented out in the adapter beside it
-   * and returns here when that comes back.
+   * Only the trades patterns carry `{PART}`, so only they ever reach the hook —
+   * which is why it reads the answer and never the path.
    */
-  it.skip('asks for the part after the one that arrived, and only for trades', () => {
-    expect(bitget.ruleOnSuccess!(probed('trades/SPBL/BTCUSDT/20260813_001.zip'), 1_093_006))
-      .toEqual({ action: 'accept', next: 'trades/SPBL/BTCUSDT/20260813_002.zip' });
+  it('names the part after the one that arrived, and ends the day on a miss', () => {
+    const asking = (nextPart: string, lastPartFound: boolean | null) => bitget.expandParts!({
+      series: { pattern: 'trades/{SYMBOL}/{SYMBOL}_{YYYY}{MM}{DD}_{PART}.zip' } as Publishing,
+      date:   '20260813',
+      lastPartFound,
+      nextPart,
+    });
 
-    expect(bitget.ruleOnSuccess!(probed('trades/SPBL/BTCUSDT/20260813_099.zip'), 1))
-      .toEqual({ action: 'accept', next: 'trades/SPBL/BTCUSDT/20260813_100.zip' });
-
-    expect(bitget.ruleOnSuccess!(probed('kline/BTCUSDT/SP/20260813.zip'), 1)).toBe(null);
-    expect(bitget.ruleOnSuccess!(probed('depth/BTCUSDT/1/20240709.zip'), 1)).toBe(null);
+    expect(asking('', null)).toEqual({ parts: '001', next: '002' });
+    expect(asking('002', true)).toEqual({ parts: '002', next: '003' });
+    expect(asking('100', true)).toEqual({ parts: '100', next: '101' });
+    expect(asking('003', false)).toBe(null);
   });
 });
 
@@ -440,22 +500,6 @@ describe('bitget', () => {
  * verified against the archive.
  */
 describe('okx', () => {
-  /**
-   * The bucket behind the CDN is faster and refuses nothing, but it holds only
-   * one of the two book prefixes — and answers the other with a 404 that reads
-   * exactly like "never published". One address that serves everything is worth
-   * more than a faster one that is silently incomplete.
-   */
-  it('surveys from the CDN, which is the only address serving both book prefixes', () => {
-    expect(okx.base).toBe('https://static.okx.com');
-    expect(okx.root).toBe('cdn/');
-  });
-
-  /** Measured: clean at 100 a second, refused at 200, and the refusal sticks. */
-  it('declares the cadence it was measured at', () => {
-    expect(okx.pacing?.perSecond).toBe(100);
-  });
-
   /**
    * **The one venue where a probe decides whether the file exists at all.**
    * Every key here is constructed, so a walk establishes nothing and the row it
@@ -469,8 +513,11 @@ describe('okx', () => {
    */
   it('probes, because nothing it emits has been seen', () => {
     expect(okx.probes).toBe(true);
-    expect(okx.ruleOnFailure!(404, new Headers(), 1)).toBe('drop');
-    expect(okx.ruleOnFailure!(403, new Headers(), 1)).toBe(null);
+    const key: Unsettled = { venueId: 8, path: 'x/1.zip', date: '20260813',
+      tries: 0, existence: 'assumed', seriesId: null };
+
+    expect(okx.ruleOnFailure!(key, 404, new Headers(), 1)).toBe('drop');
+    expect(okx.ruleOnFailure!(key, 403, new Headers(), 1)).toBe(null);
   });
 
   it('reads both grains it publishes', () => {

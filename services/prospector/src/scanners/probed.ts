@@ -22,7 +22,7 @@ export const probed: Scanner<ProbedContext> = {
   page: async () => ({ listed: [], cursor: null }),
 
   confirm: async (context, path) => {
-    const seen = await context.head(`${context.base}/${context.root}${path}`);
+    const seen = await context.head(`${context.base}/${context.keyRoot}${path}`);
 
     if (seen.status !== 200) return null;
 

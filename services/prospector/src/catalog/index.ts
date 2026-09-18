@@ -1,3 +1,19 @@
+export { dropAbove, flushParked, parkSoon } from './wip';
+
+export {
+  dropLens,
+  editLens,
+  lensNameIsSound,
+  lensInstruments,
+  lensNamed,
+  lensOptions,
+  lensSize,
+  lenses,
+  problemsWith,
+  putLens,
+  resolve,
+} from './lens';
+
 export {
   putVenue,
   venues,
@@ -8,6 +24,7 @@ export {
   unsettled,
   missedFiles,
   dropWip,
+  anyUnsettled,
   countUnsettled,
   settleFiles,
   markWithdrawn,
@@ -27,12 +44,15 @@ export {
   openPartitions,
   parkKeys,
   advanceRun,
+  addCounts,
   closeRun,
+  closeWalk,
   establishedAt,
   phaseOf,
   everCompleted,
   enrolment,
   lastRun,
+  walkedAt,
   standingOf,
   enrolled,
   enrol,
@@ -62,7 +82,6 @@ export {
   patternsOf,
   open,
   sawFile,
-  settleWalk,
   flushTips,
   walkSeries,
   grainOf,

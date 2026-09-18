@@ -34,8 +34,14 @@ const of = (seen: Inspection) => {
  * fail in production — and it is `keyOf` that builds every URL an update asks
  * for, so `keyOf` is what has to agree with the venue.
  */
-const rebuild = (pattern: string, symbol: string, date: string, slots?: Slots): string =>
-  keyFor({ pattern, urlSymbol: symbol } as Publishing, date, slots);
+const rebuild = (
+  pattern: string,
+  symbol:  string,
+  date:    string,
+  slots?:  Slots,
+  part?:   string,
+): string =>
+  keyFor({ pattern, urlSymbol: symbol } as Publishing, date, slots, part);
 
 /**
  * The property that matters, checked the same way for every venue: read a real
@@ -52,7 +58,7 @@ const roundTrips = (read: (path: string) => Inspection, path: string, slots?: Sl
    */
   const spelling = seen.found.urlSymbol ?? seen.found.symbol;
 
-  expect(rebuild(seen.found.pattern, spelling, seen.date, slots), path).toBe(path);
+  expect(rebuild(seen.found.pattern, spelling, seen.date, slots, seen.part), path).toBe(path);
 
   return seen;
 };
@@ -510,13 +516,15 @@ describe('gate', () => {
    * not name an hour left every one of them untracked — found once by a walk and
    * never extended again.
    */
-  it('reads an hourly book', () => {
+  it('reads an hourly book as a part of its day', () => {
     const seen = roundTrips(gate.inspectUrl!,
       'futures_usdt/orderbooks/202107/1INCH_USDT-2021071200.csv.gz');
 
-    expect(seen.date).toBe('2021071200');
+    /** The day is the period a consumer asks for; the hour is which part of it. */
+    expect(seen.date).toBe('20210712');
+    expect(seen.part).toBe('00');
     expect(seen.found.pattern)
-      .toBe('futures_usdt/orderbooks/{YYYY}{MM}/{SYMBOL}-{YYYY}{MM}{DD}{HH}.csv.gz');
+      .toBe('futures_usdt/orderbooks/{YYYY}{MM}/{SYMBOL}-{YYYY}{MM}{DD}{PART}.csv.gz');
   });
 
   /** The depth snapshot is a plain `.gz` where everything else is `.csv.gz`. */
@@ -535,7 +543,8 @@ describe('gate', () => {
       'delivery_usdt/orderbooks/202305/BTC_USDT_20230512-2023050508.csv.gz');
 
     expect(seen.found.symbol).toBe('BTC_USDT_20230512');
-    expect(seen.date).toBe('2023050508');
+    expect(seen.date).toBe('20230505');
+    expect(seen.part).toBe('08');
   });
 
   /**
@@ -543,9 +552,8 @@ describe('gate', () => {
    * carries no date at all — only the slot that renders one back. Venue-wide
    * files, so no symbol either: the dataset is the whole identity.
    */
-  it('reads an hourly snapshot named by its epoch', () => {
-    const seen = roundTrips(gate.inspectUrl!, 'spot_index/202312/slice_index_1702857600',
-      gate.slotsFor);
+  it('reads an hourly snapshot as a part of its month', () => {
+    const seen = roundTrips(gate.inspectUrl!, 'spot_index/202312/slice_index_1702857600');
 
     /**
      * **A slice carries every instrument, so its symbol is the bucket.** Gate's
@@ -554,17 +562,25 @@ describe('gate', () => {
      * case every reader had to remember.
      */
     expect(seen.found).toMatchObject({ dataset: 'indexPrice', variant: 'ticks', symbol: '@' });
-    expect(seen.found.pattern).toBe('spot_index/{YYYY}{MM}/slice_index_{EPOCH_HH}');
-    expect(seen.date).toBe('2023121800');
+    expect(seen.found.pattern).toBe('spot_index/{YYYY}{MM}/slice_index_{PART}');
+
+    /**
+     * **The month is in the path and everything below it is the epoch**, so the
+     * period is the month and the instant is the part. Which is what makes the
+     * two snapshot trees the same shape as an hourly book: a period, split.
+     */
+    expect(seen.date).toBe('202312');
+    expect(seen.part).toBe('1702857600');
   });
 
   /** The same shape a minute at a time, which is why the two slots differ. */
-  it('reads a per-minute snapshot at its own grain', () => {
-    const seen = roundTrips(gate.inspectUrl!, 'options_ticker/202509/slice_options_ticker_1756691460',
-      gate.slotsFor);
+  /** The same shape a minute at a time, which only the parts hook has to know. */
+  it('reads a per-minute snapshot the same way', () => {
+    const seen = roundTrips(gate.inspectUrl!,
+      'options_ticker/202509/slice_options_ticker_1756691460');
 
-    expect(seen.found.pattern).toBe('options_ticker/{YYYY}{MM}/slice_options_ticker_{EPOCH_MI}');
-    expect(seen.date).toHaveLength(12);
+    expect(seen.found.pattern).toBe('options_ticker/{YYYY}{MM}/slice_options_ticker_{PART}');
+    expect(seen.date).toBe('202509');
   });
 });
 

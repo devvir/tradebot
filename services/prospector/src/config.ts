@@ -33,6 +33,7 @@ const loadConfig = (): Config => {
     port:        CONTAINER_PORT,
     venues:      parseVenues(process.env.PROSPECTOR_VENUES),
     concurrency: parsePositiveInt(process.env.PROSPECTOR_CONCURRENCY, 200),
+    connections: parsePositiveInt(process.env.PROSPECTOR_CONNECTIONS, 600),
   };
 
   /**

@@ -1,19 +1,38 @@
+import { setDefaultAutoSelectFamily } from 'node:net';
 import { join } from 'node:path';
 import { logger, type Service, type ExpressServerHandle } from '@devvir/service-kit';
 import {
-  enrol, enrolled, enrolment, flushTips, pauseSurvey, resetRuns, resumeSurvey, venueIdOf, venues,
+  enrol, enrolled, enrolment, flushParked, flushTips, pauseSurvey, resetRuns, resumeSurvey,
+  venueIdOf, venues,
 } from './catalog';
 import { configure } from '@devvir/netgate';
 import { assertWritable, openCatalog } from './database';
 import { fault } from './faults';
 import SK from './service';
 import { mount } from './api';
+import { flushCounts } from './counts';
 import config from './config';
-import { capacity } from './pace';
-import { dueAfter, everyMs, syncVenue } from './sync';
+import { cacheLookups } from './lookup';
+import { capacity, reopenGradually } from './pace';
+import { openTransport } from './transport';
+import { dueAfter, everyMs, inPass, syncVenue } from './sync';
 import { adaptersFor, adaptersForVenue, addressVenues } from './venues';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Adapter, Occasion } from './types';
+
+/**
+ * **Connect to one address at a time, and wait for it.** Node's default tries
+ * each resolved address in turn and gives each 250 ms before moving to the next.
+ * S3 in Tokyo is ~260 ms from here and hands back eight addresses, so every new
+ * connection abandoned seven attempts just short of their reply and spent ~2 s
+ * before the eighth — measured 2026-09-29, against ~260 ms with this off. None of
+ * the venues here is reachable over IPv6, which is the case the default exists
+ * for.
+ */
+setDefaultAutoSelectFamily(false);
+
+/** Names are looked up once per host, not once per connection — see `lookup.ts`. */
+cacheLookups();
 
 /**
  * The prospector establishes what each venue publishes, and stops there.
@@ -40,6 +59,9 @@ const main = async (service: Service): Promise<void> => {
    * things settled once at the start rather than passed down to each survey.
    */
   capacity(config.concurrency);
+
+  /** Requests are carried off this thread from the first one on — see `transport.ts`. */
+  openTransport(config.concurrency, config.connections);
 
   const path = join(config.catalogDir, 'catalog.db');
   const db   = openCatalog(path);
@@ -94,9 +116,13 @@ const main = async (service: Service): Promise<void> => {
     degradeAt: 3,
     closeAt:   6,
 
-    onChange: ({ from, to, failed, window, heldMs, because }) =>
+    onChange: ({ from, to, failed, window, heldMs, because }) => {
       logger.warn({ from, to, failed, probes: window.length, heldSeconds: Math.round(heldMs / 1000), because },
-        to === 'open' ? 'The network is back' : 'The network is failing — requests are being held'),
+        to === 'open' ? 'Network back' : 'Network down; requests on hold');
+
+      /** Everything held is released together, so the pool opens gradually again — see `capacity`. */
+      if (to === 'open') reopenGradually();
+    },
   });
 
   /**
@@ -130,6 +156,7 @@ const main = async (service: Service): Promise<void> => {
     pause:    venue => pause(db, venue),
     running,
     stopping,
+    passing: inPass,
     everyMs,
   });
 
@@ -158,7 +185,22 @@ const main = async (service: Service): Promise<void> => {
     process.once(signal, () => {
       const written = flushTips(db);
 
-      if (written) logger.info({ tips: written }, 'Series tips flushed on shutdown');
+      if (written) logger.info({ tips: written }, 'Progress saved on shutdown');
+
+      /**
+       * **The other buffer nothing inside can see the end coming for.** Keys
+       * waiting for company go down now rather than being generated again by
+       * the next pass — see `parkSoon`. Like the tips, losing them costs work
+       * rather than data, so it is worth doing and not worth blocking on.
+       */
+      const parked = flushParked(db);
+
+      if (parked) logger.info({ keys: parked }, 'Backlog keys flushed on shutdown');
+
+      /** What each host was sent since its pass last wrote it, onto the job it was for. */
+      const sent = flushCounts(db);
+
+      if (sent) logger.info({ requests: sent }, 'Requests sent flushed on shutdown');
 
       /**
        * **Closing is what checkpoints the write-ahead log.** SQLite folds it
@@ -176,7 +218,7 @@ const main = async (service: Service): Promise<void> => {
       try {
         db.close();
       } catch (err) {
-        logger.warn({ ...fault(err) }, 'The catalog did not close cleanly — its log will be replayed');
+        logger.warn({ ...fault(err) }, 'Catalog did not shut down cleanly; recovering');
       }
     });
 };
@@ -196,19 +238,8 @@ export const survey = (
   venue:    string,
   occasion: Occasion = 'full',
   refresh   = false,
-
-  /**
-   * Whether each host waits for its own due time before its first pass.
-   *
-   * **Only a resumption schedules.** An explicit request means now — somebody
-   * asked — and a restart means carry on, which is not the same thing: a venue
-   * updated an hour before the container was replaced is not owed another
-   * update, and starting one would make a deployment's cadence a function of how
-   * often it is restarted.
-   */
-  schedule  = false,
 ): void => {
-  void begin(db, venue, occasion, refresh, schedule);
+  void begin(db, venue, occasion, refresh);
 };
 
 /**
@@ -246,13 +277,13 @@ const resume = (db: DatabaseSync): void => {
 
     carried.push(venue);
 
-    survey(db, venue, 'full', false, true);
+    survey(db, venue, 'full', false);
   }
 
   logger.info({ resumed: carried, paused: stopped },
     carried.length > 0
-      ? 'Enrolled venues resumed — each host from where it stopped'
-      : 'No enrolled venue to resume — surveys start on request');
+      ? 'Surveys resumed'
+      : 'No surveys to resume');
 };
 
 /**
@@ -291,7 +322,6 @@ const begin = async (
   venue:    string,
   occasion: Occasion,
   refresh:  boolean,
-  schedule  = false,
 ): Promise<void> => {
   /**
    * **A forced update is an interruption, because a wait is what it interrupts.**
@@ -305,7 +335,7 @@ const begin = async (
     if (! interrupt) return;
 
     logger.info({ venue, for: refresh ? 'refresh' : 'update' },
-      'Interrupting — stopping the current pass first');
+      'Stopping the current pass first');
 
     /**
      * **`halt`, not `pause`.** This is not somebody stopping the venue; it is
@@ -339,7 +369,7 @@ const begin = async (
       .reduce((gone, adapter) =>
         gone + resetRuns(db, venueIdOf(db, adapter.name, adapter.host ?? '')), 0);
 
-    logger.info({ venue, dropped }, 'Progress discarded — surveying from nothing');
+    logger.info({ venue, dropped }, 'Progress discarded; surveying from scratch');
   }
 
   walking.add(venue);
@@ -360,9 +390,19 @@ const begin = async (
    */
   await new Promise(resolve => setImmediate(resolve));
 
+  /**
+   * **Each host starts when it is due, unless an update was forced.** A pass left
+   * unfinished — or never begun — is due now; a host that finished its last one
+   * waits for its next, whoever asked. So lifting a pause puts a venue back where
+   * it was: walking on if it was stopped mid-pass, waiting if it was waiting. A
+   * restart is the same carrying on, which keeps a deployment's cadence from
+   * depending on how often it is restarted. Skipping the wait is what
+   * `update: true` is for; a refresh has just discarded every run, so nothing it
+   * starts has anything to wait for.
+   */
   const done = adaptersForVenue(venue)
     .map(adapter => syncVenue(db, adapter, config, occasion, () => halting.has(venue),
-      schedule ? dueFor(db, adapter) : 0));
+      occasion === 'partial' ? 0 : dueFor(db, adapter)));
 
   void Promise.allSettled(done).finally(() => {
     walking.delete(venue);
@@ -402,12 +442,12 @@ export const pause = (db: DatabaseSync, venue: string): boolean => {
   const recorded = pauseSurvey(db, venue, new Date().toISOString());
 
   if (! halt(venue)) {
-    if (recorded) logger.info({ venue }, 'Pause recorded — the venue was not running');
+    if (recorded) logger.info({ venue }, 'Survey paused');
 
     return recorded;
   }
 
-  logger.info({ venue }, 'Pause asked for — the survey will stop after its current page');
+  logger.info({ venue }, 'Pause requested; stopping after the current page');
 
   return true;
 };

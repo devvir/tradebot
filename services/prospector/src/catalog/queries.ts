@@ -1,5 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import * as cache from './cache/months';
+import * as wip from './wip';
+import { BREATH_MS, slice } from './serial';
 import { ceiling } from '../paths';
 import { sawFile } from './series';
 import type { CatalogFile, Exclusion, Existence, FileEffect, FileQuery, FileState, MonthState, MonthTotals, Parking, Pending, Phase, Run, RunKind, Settlement, Standing, Unreadable, Unsettled, VenueTotals } from '../types';
@@ -20,13 +22,13 @@ export const putVenue = (
   db:   DatabaseSync,
   name: string,
   base: string,
-  root: string,
+  keyRoot: string,
   host: string = '',
 ): number => {
   db.prepare(
-    `INSERT INTO venue (name, host, base, root) VALUES (?, ?, ?, ?)
-       ON CONFLICT (name, host) DO UPDATE SET base = excluded.base, root = excluded.root`,
-  ).run(name, host, base, root);
+    `INSERT INTO venue (name, host, base, key_root) VALUES (?, ?, ?, ?)
+       ON CONFLICT (name, host) DO UPDATE SET base = excluded.base, key_root = excluded.key_root`,
+  ).run(name, host, base, keyRoot);
 
   const row = db.prepare('SELECT id FROM venue WHERE name = ? AND host = ?')
     .get(name, host) as { id: number };
@@ -120,41 +122,19 @@ export const putFiles = async (
           downloaded_at = excluded.downloaded_at`,
   );
 
-  /**
-   * A finding a walk could say nothing about, parked until a probe can.
-   *
-   * `last_seen` moves on every sighting, as it does in `file`, so a withdrawal
-   * is noticed here the same way — an index venue re-offers the same bare names
-   * on every walk, and one that stops being offered has gone.
-   */
-  const park = db.prepare(
-    `INSERT INTO wip (venue_id, path, date, size, etag, modified, series_id,
-                      existence, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-       -- existence is left out of the update: a ruling somebody made survives
-       -- the venue going on offering the key, which it will on every walk.
-       --
-       -- And so is the id: re-offering a key must not move it to the back of the
-       -- queue, or a venue that re-lists the same names every walk would keep
-       -- pushing its own backlog out of reach of the sweep reading it.
-       ON CONFLICT (venue_id, path) DO UPDATE SET
-          date      = excluded.date,
-          series_id = COALESCE(excluded.series_id, wip.series_id),
-          size      = COALESCE(excluded.size, wip.size),
-          etag      = COALESCE(excluded.etag, wip.etag),
-          modified  = COALESCE(excluded.modified, wip.modified),
-          -- Refreshed, unlike file's: on a pending row this reads as when the
-          -- work was last enqueued, and markWithdrawn() tells a key the venue
-          -- still lists from one it has dropped by exactly that.
-          created_at = excluded.created_at`,
-  );
-
   const seen = db.prepare(
     `UPDATE file SET last_seen = ? WHERE venue_id = ? AND path = ?`,
   );
 
-  /** A finding that arrived complete has no business still being parked. */
-  const unpark = db.prepare('DELETE FROM wip WHERE venue_id = ? AND path = ?');
+  /**
+   * **The backlog is not this function's table.** A finding a walk could say
+   * nothing about is parked until a probe can, and one that arrived complete has
+   * no business still being parked — both through `wip`, which owns those
+   * statements and keeps the count they move. What stays here is the
+   * transaction: a file must not arrive without leaving the backlog, so the two
+   * tables are written together and the deltas are reported once it commits.
+   */
+  const backlog = wip.writer(db);
 
   /**
    * **Written in short transactions with the thread handed back between them.**
@@ -189,6 +169,13 @@ export const putFiles = async (
        */
       const sighted: { seriesId: number; date: string }[] = [];
 
+      /** What this slice moved in the backlog, reported once it has committed. */
+      const parked = new Map<number, number>();
+
+      const moved = (venueId: number, delta: number): void => {
+        if (delta !== 0) parked.set(venueId, (parked.get(venueId) ?? 0) + delta);
+      };
+
       db.exec('BEGIN');
 
       try {
@@ -210,17 +197,23 @@ export const putFiles = async (
            */
           if (! ready(file)) {
             if (was) seen.run(file.seenAt, file.venueId, file.path);
-            else park.run(
-              file.venueId, file.path, file.date,
-              file.size, file.etag, file.modified, file.seriesId,
-              file.existence, file.seenAt,
-            );
+            else moved(file.venueId, backlog.park({
+              venueId:   file.venueId,
+              path:      file.path,
+              date:      file.date,
+              size:      file.size,
+              etag:      file.etag,
+              modified:  file.modified,
+              seriesId:  file.seriesId,
+              existence: file.existence,
+              seenAt:    file.seenAt,
+            }));
 
             continue;
           }
 
           // Complete this time. If it had been parked, it is parked no longer.
-          if (! was) unpark.run(file.venueId, file.path);
+          if (! was) moved(file.venueId, backlog.unpark(file.venueId, file.path));
 
           const changed = !! was && restated(file, was);
 
@@ -261,6 +254,8 @@ export const putFiles = async (
         throw err;
       }
 
+      for (const [venueId, delta] of parked) wip.counted(db, venueId, delta);
+
       return { sighted };
     });
 
@@ -275,50 +270,9 @@ export const putFiles = async (
   return files.length;
 };
 
-/**
- * How long one writer may hold the thread before handing it back.
- *
- * Short enough that a socket waiting on the next turn is not kept waiting long
- * enough to matter, long enough that the per-transaction overhead stays noise.
- */
-const BREATH_MS = 20;
 
-/**
- * The queue every synchronous write waits in.
- *
- * **A budget per caller is not a budget.** Slicing one `putFiles` to 20ms bounds
- * that call and nothing else: node runs the whole immediate queue in one turn, so
- * every partition that happens to be mid-write takes its 20ms in the *same* turn.
- * With the partitions this service runs in parallel that is seconds of
- * uninterrupted synchronous SQLite before a timer or a socket is looked at again.
- *
- * Measured on the running service before this existed: event-loop delay of 477ms
- * at the median and **3.5 seconds** at the peak, with 61% of all CPU inside
- * `node:sqlite` and 92% of that inside `putFiles`. The visible symptom was logs
- * arriving in bursts with long silences between them — nothing could flush.
- *
- * So the slices are serialised and separated: one runs, the loop is handed back,
- * the next runs. Delay becomes one slice rather than however many writers exist,
- * and **nothing is lost by it** — SQLite serialises writes on one connection
- * regardless, so the interleaving was never buying concurrency. What it was
- * buying was the fetches, the timers and the logging that run in between.
- */
-const slice = <T>(work: () => T): Promise<T> => {
-  const mine = queue.then(async () => {
-    const out = work();
 
-    // Between slices, always — this is the yield the whole arrangement is for.
-    await new Promise(resolve => setImmediate(resolve));
 
-    return out;
-  });
-
-  queue = mine.then(() => undefined, () => undefined);
-
-  return mine;
-};
-
-let queue: Promise<void> = Promise.resolve();
 
 /**
  * Park keys nobody generated, because an answer implied them.
@@ -331,32 +285,8 @@ let queue: Promise<void> = Promise.resolve();
  * A key already parked is left exactly as it is: it may have attempts against it
  * already, and this is not new information about it.
  */
-export const parkKeys = (db: DatabaseSync, rows: readonly Parking[]): number => {
-  if (rows.length === 0) return 0;
-
-  const at = new Date().toISOString();
-
-  const park = db.prepare(
-    `INSERT INTO wip (venue_id, path, date, series_id, existence, created_at)
-          VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT (venue_id, path) DO NOTHING`,
-  );
-
-  db.exec('BEGIN');
-
-  try {
-    for (const row of rows)
-      park.run(row.venueId, row.path, row.date, row.seriesId, row.existence, at);
-
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-
-    throw err;
-  }
-
-  return rows.length;
-};
+export const parkKeys = (db: DatabaseSync, rows: readonly Parking[]): number =>
+  wip.park(db, rows);
 
 /**
  * Mark everything in a range the walk did not offer this time as gone.
@@ -404,11 +334,7 @@ export const markWithdrawn = (
      * record of and nothing counted to correct — but leaving it would park it in
      * the probe's queue for ever, asking a venue about a key it no longer serves.
      */
-    db.prepare(
-      `DELETE FROM wip
-        WHERE venue_id = ? AND path >= ? AND path < ?
-          AND created_at < ?`,
-    ).run(venueId, from, to, since);
+    const unparked = wip.dropRange(db, venueId, from, to, since);
 
     cache.apply(db, cache.deltasOf(going.map(row => ({
       venueId,
@@ -417,6 +343,8 @@ export const markWithdrawn = (
     }))));
 
     db.exec('COMMIT');
+
+    wip.counted(db, venueId, -unparked);
 
     return Number(result.changes);
   } catch (err) {
@@ -910,20 +838,7 @@ export const unsettled = (
   venueId: number,
   after:   number,
   limit:   number,
-): Unsettled[] =>
-  (db.prepare(
-    `SELECT seq, venue_id, path, date, tries, series_id, existence FROM wip
-      WHERE venue_id = ? AND seq > ?
-      ORDER BY seq
-      LIMIT ?`,
-  ).all(venueId, after ?? 0, limit) as unknown as {
-    seq: number; venue_id: number; path: string; date: string; tries: number;
-    series_id: number; existence: Existence;
-  }[]).map(row => ({
-    seq:      row.seq,
-    venueId:  row.venue_id, path: row.path, date: row.date, tries: row.tries,
-    seriesId: row.series_id, existence: row.existence,
-  }));
+): Unsettled[] => wip.next(db, venueId, after, limit);
 
 /**
  * Record that these rows were asked about and did not settle.
@@ -933,25 +848,8 @@ export const unsettled = (
  * the only thing standing between a constructed key that cannot exist and being
  * asked about it for ever.
  */
-export const missedFiles = (db: DatabaseSync, rows: readonly Unsettled[]): number => {
-  if (rows.length === 0) return 0;
-
-  const bump = db.prepare('UPDATE wip SET tries = tries + 1 WHERE venue_id = ? AND path = ?');
-
-  db.exec('BEGIN');
-
-  try {
-    for (const row of rows) bump.run(row.venueId, row.path);
-
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-
-    throw err;
-  }
-
-  return rows.length;
-};
+export const missedFiles = (db: DatabaseSync, rows: readonly Unsettled[]): number =>
+  wip.missed(db, rows);
 
 /**
  * Forget candidates nobody is going to settle.
@@ -962,25 +860,8 @@ export const missedFiles = (db: DatabaseSync, rows: readonly Unsettled[]): numbe
  * never had would put a fiction where a measurement belongs, and `span` already
  * holds the honest version: the bounds these were generated inside.
  */
-export const dropWip = (db: DatabaseSync, rows: readonly Unsettled[]): number => {
-  if (rows.length === 0) return 0;
-
-  const drop = db.prepare('DELETE FROM wip WHERE venue_id = ? AND path = ?');
-
-  db.exec('BEGIN');
-
-  try {
-    for (const row of rows) drop.run(row.venueId, row.path);
-
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-
-    throw err;
-  }
-
-  return rows.length;
-};
+export const dropWip = (db: DatabaseSync, rows: readonly Unsettled[]): number =>
+  wip.drop(db, rows);
 
 /**
  * How much of this venue's backlog is still outstanding.
@@ -992,8 +873,11 @@ export const dropWip = (db: DatabaseSync, rows: readonly Unsettled[]): number =>
  * that reaches tens of millions per venue.
  */
 export const countUnsettled = (db: DatabaseSync, venueId: number): number =>
-  (db.prepare('SELECT count(*) AS n FROM wip WHERE venue_id = ?')
-    .get(venueId) as { n: number }).n;
+  wip.parked(db, venueId);
+
+/** Whether anything is outstanding, which is the question a drain actually asks. */
+export const anyUnsettled = (db: DatabaseSync, venueId: number): boolean =>
+  wip.anyParked(db, venueId);
 
 /**
  * Promote what a probe established, as one transaction.
@@ -1019,10 +903,7 @@ export const countUnsettled = (db: DatabaseSync, venueId: number): number =>
 export const settleFiles = (db: DatabaseSync, settled: readonly Settlement[]): number => {
   if (settled.length === 0) return 0;
 
-  const parked = db.prepare(
-    `SELECT date, size, etag, modified, series_id AS seriesId, created_at AS seenAt
-       FROM wip WHERE venue_id = ? AND path = ?`,
-  );
+  const backlog = wip.writer(db);
 
   const arrive = db.prepare(
     `INSERT INTO file (venue_id, path, date, size, etag, modified, existence,
@@ -1031,19 +912,12 @@ export const settleFiles = (db: DatabaseSync, settled: readonly Settlement[]): n
        ON CONFLICT (venue_id, path) DO NOTHING`,
   );
 
-  const learned = db.prepare(
-    `UPDATE wip
-        SET size      = COALESCE(?, size),
-            etag      = COALESCE(?, etag),
-            modified  = COALESCE(?, modified),
-            existence = COALESCE(?, existence)
-      WHERE venue_id = ? AND path = ?`,
-  );
-
-  const unpark = db.prepare('DELETE FROM wip WHERE venue_id = ? AND path = ?');
 
   /** As in `putFiles`: applied after the commit, never on a row that stayed. */
   const answered: { seriesId: number; date: string }[] = [];
+
+  /** What left the backlog, reported to `wip` once this has committed. */
+  const unparked = new Map<number, number>();
 
   db.exec('BEGIN');
 
@@ -1052,7 +926,7 @@ export const settleFiles = (db: DatabaseSync, settled: readonly Settlement[]): n
     let   moved  = 0;
 
     for (const file of settled) {
-      const was = parked.get(file.venueId, file.path) as Parked | undefined;
+      const was = backlog.held(file.venueId, file.path);
 
       // Not parked: either already catalogued, or never discovered. Neither is
       // this function's business -- a correction goes through `correctFile`.
@@ -1064,36 +938,52 @@ export const settleFiles = (db: DatabaseSync, settled: readonly Settlement[]): n
         modified: file.modified ?? was.modified,
       };
 
-      learned.run(file.size, file.etag, file.modified,
+      backlog.learn(file.size, file.etag, file.modified,
         file.existence ?? null, file.venueId, file.path);
 
       if (! ready(merged)) continue;
 
       const existence = file.existence ?? 'confirmed';
 
-      arrive.run(
+      const arrived = Number(arrive.run(
         file.venueId, file.path, was.date,
         merged.size, merged.etag, merged.modified, existence, was.seriesId,
         was.seenAt, file.seenAt,
-      );
+      ).changes) > 0;
 
-      unpark.run(file.venueId, file.path);
+      unparked.set(file.venueId,
+        (unparked.get(file.venueId) ?? 0) + backlog.unpark(file.venueId, file.path));
       moved++;
 
       answered.push({ seriesId: was.seriesId, date: was.date });
 
-      // Nothing was counted while it was parked, so arriving is purely an
-      // addition -- there is no prior state to subtract.
-      effects.push({
-        venueId: file.venueId,
-        was:     null,
-        now:     stateOf(was.date, existence, merged.size, null),
-      });
+      /**
+       * **Counted only where a row actually arrived.**
+       *
+       * Nothing was counted while it was parked, so a file reaching the catalog
+       * here is purely an addition with no prior state to subtract — but the
+       * insert leaves an existing row alone, and a key can be parked for a path
+       * the catalog already holds: generation reads the tip and nothing else, and
+       * a walk can catalogue a path while a row for it sits in the backlog.
+       *
+       * Counting those was the rollup drifting above the table it describes, by
+       * one file per key that settled onto a row already there — 1,937,264 of
+       * them, 0.59%, before this was measured. `cache.drift` is what says so and
+       * `cache.rebuild` is what repairs it.
+       */
+      if (arrived)
+        effects.push({
+          venueId: file.venueId,
+          was:     null,
+          now:     stateOf(was.date, existence, merged.size, null),
+        });
     }
 
     cache.apply(db, cache.deltasOf(effects));
 
     db.exec('COMMIT');
+
+    for (const [venueId, delta] of unparked) wip.counted(db, venueId, delta);
 
     /**
      * **A file that arrived is a sighting however it was found.** A probe found
@@ -1169,6 +1059,27 @@ export const clearUpdate = (db: DatabaseSync, venueId: number): number => {
   ).run(new Date().toISOString(), venueId);
 
   return Number(done.changes);
+};
+
+/**
+ * Close a walk whose drain has finished.
+ *
+ * **The counterpart of `clearUpdate`, and for the same reason.** A pass that
+ * parked keys for probing is not over when the listing ends: the job is the only
+ * durable record that the backlog is owed, so it stays open until the drain
+ * returns and is closed here. A walk over a venue that states everything in its
+ * listing never reaches this — `surveyVenue` closes that one itself, where it
+ * genuinely does end.
+ *
+ * **Only the root scope**, because the partitions closed as they finished. It is
+ * the `scope = ''` row that `enrolment` reads to say a job is open, and the one
+ * a resume would carry on from.
+ */
+export const closeWalk = (db: DatabaseSync, venueId: number): void => {
+  db.prepare(
+    `UPDATE run SET completed = ?, cursor = NULL
+      WHERE venue_id = ? AND kind = 'walk' AND scope = '' AND completed IS NULL`,
+  ).run(new Date().toISOString(), venueId);
 };
 
 /**
@@ -1301,6 +1212,30 @@ export const advanceRun = (
 };
 
 /**
+ * Add what a venue was asked and what that sent to the job it has open. Says
+ * whether one was open.
+ *
+ * **The newest open job, whichever kind.** Only one is open in ordinary life;
+ * an update forced over an unfinished walk leaves both, and what goes out from
+ * then on is the update's.
+ */
+export const addCounts = (
+  db:      DatabaseSync,
+  venueId: number,
+  asked:   number,
+  sent:    number,
+): boolean => {
+  const done = db.prepare(
+    `UPDATE run SET asked = asked + ?, sent = sent + ?
+      WHERE id = (SELECT id FROM run
+                   WHERE venue_id = ? AND scope = '' AND completed IS NULL
+                   ORDER BY started DESC, id DESC LIMIT 1)`,
+  ).run(asked, sent, venueId);
+
+  return Number(done.changes) > 0;
+};
+
+/**
  * Close a run, clearing its cursor — the scope was walked to exhaustion, so
  * there is no position left to resume from.
  */
@@ -1346,10 +1281,10 @@ const ranAny = (db: DatabaseSync, venueId: number, kind: RunKind): boolean =>
  * given their addresses.
  */
 export const venues = (db: DatabaseSync): {
-  name: string; host: string; base: string; root: string;
+  name: string; host: string; base: string; keyRoot: string;
 }[] =>
-  db.prepare('SELECT name, host, base, root FROM venue ORDER BY id').all() as unknown as {
-    name: string; host: string; base: string; root: string;
+  db.prepare('SELECT name, host, base, key_root AS keyRoot FROM venue ORDER BY id').all() as unknown as {
+    name: string; host: string; base: string; keyRoot: string;
   }[];
 
 /**
@@ -1472,7 +1407,26 @@ export interface LastRun {
 
   /** Whether it is still going, on any of the venue's hosts. */
   ongoing: boolean;
-}
+
+  /**
+   * Whether this is the venue's **first** pass — the backfill rather than a
+   * later top-up.
+   *
+   * **The distinction a reader actually wants, and the one `kind` cannot make.**
+   * A first pass is hours or days and reads everything; every pass after it is
+   * the recent edge, whichever mechanism does it. Which mechanism that is says
+   * nothing about the two: a venue that cannot be listed backfills by generating
+   * keys, and one that re-reads itself by walking updates by walking.
+   *
+   * **A venue, not a host.** Bybit publishes from two servers, and until both
+   * have read themselves through once the venue is still being backfilled —
+   * whatever the faster of the two has finished. Reading this off the run's own
+   * start instead made the later-starting host's first walk report as a top-up,
+   * because it began after its sibling: a venue's own backfill, labelled an
+   * update, on every venue with more than one server.
+   */
+  first:   boolean;
+};
 
 export const lastRun = (db: DatabaseSync, venueIds: readonly number[]): LastRun => {
   const rows = venueIds
@@ -1480,16 +1434,43 @@ export const lastRun = (db: DatabaseSync, venueIds: readonly number[]): LastRun 
     .filter((one): one is NonNullable<typeof one> => one !== undefined)
     .sort((a, b) => b.started.localeCompare(a.started));
 
+  /**
+   * **Backfilling until every host has read itself through once**, which is the
+   * same test `completedEver` answers with — one fact, asked from two places,
+   * rather than two rules that can disagree about the same venue.
+   */
+  const first = ! venueIds.every(id => everCompleted(db, id));
+
   const open = rows.find(one => one.completed === null);
 
-  if (open) return { kind: open.kind, at: null, startedAt: open.started, ongoing: true };
+  if (open)
+    return { kind: open.kind, at: null, startedAt: open.started, ongoing: true, first };
 
   const done = rows[0];
 
   return done
-    ? { kind: done.kind, at: done.completed, startedAt: done.started, ongoing: false }
-    : { kind: null, at: null, startedAt: null, ongoing: false };
+    ? { kind: done.kind, at: done.completed, startedAt: done.started, ongoing: false, first }
+    : { kind: null, at: null, startedAt: null, ongoing: false, first: false };
 };
+
+/**
+ * When this venue's newest walk began, or undefined where it has never walked.
+ *
+ * **Its start, because that is what a cadence counts from**: a walk that ran for
+ * thirty hours was still this venue's reading of the archive as it stood when it
+ * opened.
+ *
+ * **Whether it completed is not asked, because it cannot differ.** The only
+ * caller is the recurrence decision, and that is reached solely from the
+ * `updating` phase — a venue whose walk has not finished keeps walking by the
+ * phase rule in `passFor` and never gets there. So the newest walk row here is
+ * always a finished one.
+ */
+export const walkedAt = (db: DatabaseSync, venueId: number): string | undefined =>
+  (db.prepare(
+    `SELECT MAX(started) AS started FROM run
+      WHERE venue_id = ? AND scope = '' AND kind = 'walk'`,
+  ).get(venueId) as { started: string | null }).started ?? undefined;
 
 /** One host's newest whole pass of either kind, however it ended. */
 const newestRun = (db: DatabaseSync, venueId: number) =>
@@ -1810,14 +1791,6 @@ interface Row extends Metadata {
   downloadedAt: string | null;
 }
 
-/** A parked row: discovered, and waiting on the metadata that would place it. */
-interface Parked extends Metadata {
-  date:     string;
-
-  seriesId: number;
-  seenAt:   string;
-}
-
 /**
  * Whether a finding is complete enough to be catalogued.
  *
@@ -1896,6 +1869,8 @@ interface RunRow {
   cursor:    string | null;
   requests:  number;
   found:     number;
+  asked:     number;
+  sent:      number;
   started:   string;
   completed: string | null;
 }
@@ -1908,6 +1883,8 @@ const rowToRun = (row: RunRow): Run => ({
   cursor:    row.cursor,
   requests:  row.requests,
   found:     row.found,
+  asked:     row.asked,
+  sent:      row.sent,
   started:   row.started,
   completed: row.completed,
 });

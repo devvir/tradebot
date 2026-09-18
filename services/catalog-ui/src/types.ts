@@ -16,8 +16,6 @@ export interface Config {
    */
   catalogToken: string;
 
-  /** Where hauler answers, for the shopping list. Blank where there is none to reach. */
-  haulerUrl:    string;
 
   /** Where this service listens inside the container. */
   port:         number;

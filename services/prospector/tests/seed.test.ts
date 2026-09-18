@@ -197,7 +197,7 @@ describe('a seeded venue', () => {
      */
     expect(shapes.get('kline/{SYMBOL}/SP/{SYMBOL}_SP_1min_{YYYY}{MM}{DD}.zip')).toBe(null);
     expect(shapes.get('kline/{SYMBOL}/SP/{YYYY}{MM}{DD}.zip')).toBe('20260817');
-    expect(shapes.get('kline/{SYMBOL}/{SYMBOL}_SP_1min_{YYYY}{MM}{DD}.zip')).toBe('20240418');
+    expect(shapes.get('kline/{SYMBOL}/{TRANSFORM:eraName:{SYMBOL}_SP_1min_{YYYY}{MM}{DD}}.zip')).toBe('20240418');
   });
 
   /**
@@ -211,7 +211,7 @@ describe('a seeded venue', () => {
     const venueId = venueIdOf(db, 'bitget');
 
     const dead = seriesFor(db, venueId)
-      .find(one => one.pattern === 'kline/{SYMBOL}/{SYMBOL}_SP_1min_{YYYY}{MM}{DD}.zip')!;
+      .find(one => one.pattern === 'kline/{SYMBOL}/{TRANSFORM:eraName:{SYMBOL}_SP_1min_{YYYY}{MM}{DD}}.zip')!;
 
     const keys = [];
 
@@ -251,7 +251,7 @@ describe('when a seed was built', () => {
       .reduce((high, one) => (one > high ? one : high), '');
   };
 
-  for (const venue of ['okx'])
+  for (const venue of ['okx', 'bitget'])
     it(`is stated for ${venue}, and not behind what that seed records`, () => {
       const at = seriesSeededAt(venue);
 
@@ -260,16 +260,6 @@ describe('when a seed was built', () => {
       /** The pass that saw the newest file cannot have looked less far than that. */
       expect(at! >= newest(venue)).toBe(true);
     });
-
-  /**
-   * **bitget's horizon is deliberately withheld while its seed is experimental.**
-   * A seed whose bounds came from the download index may not also be trusted to
-   * say what the index was silent about — see `SEEDED_AT`. This asserts the
-   * withholding so that restoring it is a deliberate edit rather than a drift.
-   */
-  it('answers nothing for a venue whose seed is still being measured', () => {
-    expect(seriesSeededAt('bitget')).toBeNull();
-  });
 
   /** htx seeds shapes and no series, so there is no span to leave out. */
   it('answers nothing for a venue that seeds no series', () => {

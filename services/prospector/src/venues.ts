@@ -55,7 +55,7 @@ export const addressVenues = (rows: readonly VenueRow[]): void => {
         + ' — every adapter needs one, and they come from the venues migration');
 
     adapter.base = row.base;
-    adapter.root = row.root;
+    adapter.keyRoot = row.keyRoot;
   }
 };
 
@@ -64,7 +64,7 @@ export interface VenueRow {
   name: string;
   host: string;
   base: string;
-  root: string;
+  keyRoot: string;
 }
 
 /** What a person may name in configuration: venues, not servers. */
@@ -88,3 +88,27 @@ export const adaptersForVenue = (name: string): Adapter[] => {
 export const adaptersFor = (names: readonly string[]): Adapter[] =>
   (names.length === 0 ? [...ADAPTERS] : names.flatMap(adaptersForVenue));
 
+
+// ── Internals ─────────────────────────────────────────────────────────────────
+
+/**
+ * Refuse an adapter whose declarations contradict each other.
+ *
+ * **At load, not when the pass comes round.** A venue that cannot be listed and
+ * says it recurs by walking would otherwise be read as updating for ever — the
+ * listing rule wins in `passFor` — and the declaration would sit there meaning
+ * nothing, which is worse than failing to start.
+ */
+const refuseContradictions = (adapters: readonly Adapter[]): void => {
+  for (const adapter of adapters)
+    if (adapter.listable === false && adapter.recurs === 'walk')
+      throw new Error(
+        `'${adapter.name}'${adapter.host ? ` (${adapter.host})` : ''} recurs by walking`
+        + ' but cannot be listed — a venue with no listing has no walk to repeat');
+};
+
+refuseContradictions(ADAPTERS);
+
+// ── Test access ───────────────────────────────────────────────────────────────
+
+export const _test_refuseContradictions = refuseContradictions;

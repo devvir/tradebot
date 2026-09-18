@@ -605,7 +605,7 @@ instrument-day gzipped it is by far the largest thing okx publishes.
 the public archive is `okg-pub-hk` — and the URL is *presigned* with an `Expires`, an
 `OSSAccessKeyId` and a `Signature`. The path is stable and storable
 (`qp-storage/public_tbt/<yyyymmdd>/<market>/<INSTID>.OK.csv.gz`) but the URL is minted per request
-and dies, so `base + root + path` cannot rebuild it. Anything fetching this has to ask the portal
+and dies, so `base + keyRoot + path` cannot rebuild it. Anything fetching this has to ask the portal
 for a fresh link at download time — a second shape of "where is this file", and the first thing here
 that needs one.
 

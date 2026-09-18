@@ -49,7 +49,6 @@ export const htx: Adapter = declare({
 
   name:    'htx',
   scanner: s3,
-  list:    'https://huobi-service-data.s3.amazonaws.com',
 
   /**
    * The bucket also serves the browsing UI, a scratch directory, and a page of
@@ -69,6 +68,39 @@ export const htx: Adapter = declare({
 
   /** What htx lists today — see `htx/instruments.ts`. */
   instruments: htxInstruments,
+
+  /**
+   * **No limit found.** Measured 2026-09-29/30 with HEAD probes: ~1,800/s from
+   * one machine and ~1,180/s from the remote, without a single throttling
+   * answer. A probe takes ~300 ms from here, found or missing, so what is in
+   * flight sets the rate: 600 at once held ~1,750/s on missing keys
+   * (2026-09-30).
+   */
+  pacing:  { perSecond: 2000, concurrency: 600 },
+
+  /**
+   * Walking, every update — see `docs/services/PROSPECTOR.md`, *How each venue updates*.
+   */
+  recurs:  'walk',
+
+  /**
+   * How far behind today this venue is worth asking about.
+   *
+   * **Measured from the venue's own `Last-Modified`**, 2026-09-25 over the files
+   * of 2026-09-15 to 21: p99 30.9 hours after the dated day begins, over 99,429 files.
+   *
+   * **Every venue publishes more than a day after its period begins**, so a pass
+   * running in the small hours finds nothing for yesterday whatever the catalog's
+   * newest file suggests — a snapshot taken in the afternoon says only that the
+   * file had arrived by the afternoon.
+   *
+   * **A day further back again**, because a publishing hour that drifts later
+   * would put the frontier in front of the archive. Asking early costs a probe
+   * per series per night, every night, for a period that cannot exist yet; asking
+   * late costs the catalog's edge a day, and loses nothing — the frontier
+   * advances daily and the patience window covers what it has not reached.
+   */
+  probingLag: 3,
 
   /** Reading this venue's paths back into series — see `paths.ts`. */
   inspectUrl: (path) => inspect(path),

@@ -84,9 +84,25 @@ describe('every seeded pattern round-trips through its adapter', () => {
             pattern:   row.pattern!,
             symbol:    'BTCUSDT',
             urlSymbol: null,
+            first:     null,
           } as unknown as Publishing;
 
-          const key = keyOf(series, at, adapter.slotsFor);
+          /**
+           * A pattern published in parts is never keyed without one, so the
+           * round-trip asks the adapter for the period's opening part exactly as
+           * generation does.
+           */
+          const opening = row.pattern!.includes('{PART}')
+            ? adapter.expandParts?.({ series, date: at, lastPartFound: null, nextPart: '' })
+            : null;
+
+          const first = opening === null || opening === undefined ? ''
+                      : (Array.isArray(opening.parts) ? opening.parts[0]! : opening.parts);
+
+          expect(! row.pattern!.includes('{PART}') || first !== '',
+                 'a parted pattern whose adapter offers no part').toBe(true);
+
+          const key = keyOf(series, at, adapter.slotsFor, first);
 
           /** A slot left unfilled means the pattern wants something no seed states. */
           expect(key, 'a slot nothing filled').not.toMatch(/\{[A-Z]/);

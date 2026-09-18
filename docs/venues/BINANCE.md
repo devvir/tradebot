@@ -109,9 +109,9 @@ told to begin. Paths therefore keep their leading segment and stay self-describi
 as `base` + `/` + `path` — which a stripped multi-root scheme could not do, since it would not know
 which root to put back.
 
-The archive is addressed two ways: listings from the S3 endpoint
-(`s3-ap-northeast-1.amazonaws.com/data.binance.vision`), files from CloudFront
-(`data.binance.vision`).
+The archive is addressed at its bucket, `s3-ap-northeast-1.amazonaws.com/data.binance.vision`, for
+listing, probing and downloading alike. `data.binance.vision` is CloudFront in front of the same
+bucket — the same files, byte for byte (MD5 = ETag on both) — and nothing here goes through it.
 
 What the adapter refuses, since surveying the root also reaches things that are not archive:
 
@@ -150,6 +150,39 @@ measurement that settles it:
 
 So the USDT-margined liquidation snapshots live *only* in `data3/`. This also corrects an earlier
 note that "liquidationSnapshot exists only under `cm`" — true of `data/`, false of the bucket.
+
+## Shapes that stopped, and shapes that never started
+
+**`bookTicker` and `liquidationSnapshot` ended, cleanly and per service.** Every USDⓈ-margined
+symbol's last file is 2024-03-30 for quotes and 2024-03-31 for liquidations; every coin-margined
+one's is 2024-10-02 and 2024-10-14. A cliff shared by every symbol of a service is a product
+decision, not an outage, and nothing has been written to either tree since.
+
+**`data/option/daily/EOHSummary/` ran five months** — an end-of-hour summary of the options market,
+one file a day for each of BTCUSDT, ETHUSDT, BNBUSDT, XRPUSDT and DOGEUSDT, from 2023-05-18 to
+2023-10-23. Five series in total; no sixth underlying ever appeared.
+
+None of these is derivable from anything else binance publishes, so the files are catalogued and
+kept. What ends is the asking: their eight shapes are **seeded retired** at the dates above, because
+an instrument binance still lists otherwise keeps its dead shapes open for ever.
+
+**The `1w`, `3d` and `1mo` intervals are an abandoned experiment, and are refused outright.** They
+exist on every interval dataset — `klines`, `markPriceKlines`, `indexPriceKlines`,
+`premiumIndexKlines` — and publish nowhere reliably:
+
+- the futures daily trees stop on 2023-06-12 and then emit a single 334-byte file on 2026-06-29,
+  uploaded in July 2026;
+- spot carries them only in the monthly tree, months behind, ending on a different date for each
+  symbol and each interval — `BTCUSDT/3d` at 2026-07 while `BTCUSD/3d` stops at 2026-04;
+- spot's *daily* tree never had them at all.
+
+Every one of them is an aggregate of the `1m` variant of the same dataset, which binance publishes
+complete and this catalog holds — spot even has `1s`. `3d` is not a calendar period either: it is a
+stride from an arbitrary epoch, so it cannot be re-cut to anything else. `accepts` drops the
+interval as a path segment, which covers both trees and all four datasets in one rule.
+
+Left live they were the venue's largest single waste: 3,761 series whose tips sat frozen fifteen
+days behind the frontier, re-asking every open day, for **some 55% of the whole nightly update**.
 
 **`data2/` is a staging area** and can be ignored: uncompressed `.csv` files sitting beside their
 own `.zip` for the same period, a `.DS_Store`, everything dated 2020-10 to 2020-12.
@@ -251,13 +284,24 @@ has a user hitting `SSLEOFError` on bulk downloads which support attributed to r
 Binance staff ever stated a threshold — and that was the CloudFront download host, not the S3
 listing endpoint.
 
-For reference, S3's own published ceiling is 5,500 GET/HEAD per second per partitioned prefix, which
-nothing here approaches. Measured: a single listing takes ~1.0 s, and eight concurrent listings
-complete in 2.1 s against 14.4 s sequential — 6.8× with no degradation and no throttling signal.
+**Measured 2026-09-29, from one machine, ramping until something gave:**
 
-The absence of a documented limit is not proof of no limit. The mitigation is that transport errors
-and 5xx/429 are retried with jittered exponential backoff, so throttling degrades into slowness
-rather than lost data.
+| request at the bucket | reached | throttling answers | p50 |
+|---|---|---|---|
+| LIST (`max-keys=1`) | 1,562/s sustained | none in ~1.4 M requests | 272 ms, flat |
+| HEAD on a file | 1,788/s | none in ~290 k requests | 267 ms, flat |
+
+Every run ended at the client's own ceiling — 500 requests in flight at ~270 ms each — not at the
+bucket's. S3's published ceiling is 5,500 GET/HEAD a second per partitioned prefix.
+
+**The connect timeouts that once looked like a limit were the client.** The bucket is ~260 ms away,
+and Node's default connection behaviour gives each resolved address 250 ms before trying the next: a
+new connection abandoned seven of the bucket's eight addresses just short of their reply and took
+~2 s. With that off, a new connection takes one round trip.
+
+A limit that exists and was never reached is still possible. Transport errors and 5xx/429 are
+retried with jittered exponential backoff, so throttling would degrade into slowness rather than
+lost data.
 
 ## Scale
 

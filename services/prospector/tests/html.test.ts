@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchText } from '../src/http';
+import { fetchPage } from '../src/http';
 import { listing } from '../src/context';
-import { html, _test_isDirectory, _test_known, _test_next, _test_parse } from '../src/scanners/html';
-import type { Adapter } from '../src/types';
+import { html, _test_known, _test_next } from '../src/scanners/html';
+import { readPage, _test_isDirectory } from '../src/scanners/pages';
+import type { Adapter, Entries } from '../src/types';
 
 /** The scanner is the only thing here that talks to a venue, so the wire is stubbed. */
-vi.mock('../src/http', () => ({ fetchText: vi.fn(), fetchHead: vi.fn() }));
+vi.mock('../src/http', () => ({ fetchPage: vi.fn(), fetchHead: vi.fn() }));
+
+const parse = (page: string, prefix: string): Entries => readPage({ format: 'index', prefix }, page) as Entries;
 
 /**
  * A venue of this shape, declared here rather than borrowed from a real one.
@@ -20,9 +23,8 @@ const indexed: Adapter = {
   getContext: async () => listing(indexed),
   name:    'indexed',
   scanner: html,
-  list:    'https://indexes.example',
   base:    'https://indexes.example',
-  root:    '',
+  keyRoot: '',
   probes:  true,
   dateOf:  (path) => /(\d{4})-(\d{2})-(\d{2})/.exec(path)?.slice(1).join('') ?? null,
 };
@@ -42,38 +44,38 @@ ${names.map(n => `\n    <li><a href="${n}">${n}</a></li>\n`).join('')}
 
 /** Serve a tree of directories, and an empty page for anything not in it. */
 const serving = (tree: Record<string, string[]>) =>
-  vi.mocked(fetchText).mockImplementation(async (_adapter: Adapter, url: string) => {
+  vi.mocked(fetchPage).mockImplementation((async (_adapter: Adapter, url: string, _format: string, prefix = '') => {
     const at = url.replace('https://indexes.example/', '');
 
-    return slashed(tree[at] ?? []);
-  });
+    return parse(slashed(tree[at] ?? []), prefix);
+  }) as typeof fetchPage);
 
 beforeEach(() => _test_known.clear());
-afterEach(() => vi.mocked(fetchText).mockReset());
+afterEach(() => vi.mocked(fetchPage).mockReset());
 
 describe('reading an index page', () => {
   it('takes the entries from the links, whatever the page around them', () => {
-    const entries = _test_parse(slashed(['BTCUSDT/', 'ETHUSDT/']), 'trading/');
+    const entries = parse(slashed(['BTCUSDT/', 'ETHUSDT/']), 'trading/');
 
     expect(entries.children).toEqual(['trading/BTCUSDT/', 'trading/ETHUSDT/']);
     expect(entries.keys).toEqual([]);
   });
 
   it('reads the flavour that omits the trailing slash', () => {
-    const entries = _test_parse(bare(['BTCUSDT', 'ETHUSDT']), 'spot/');
+    const entries = parse(bare(['BTCUSDT', 'ETHUSDT']), 'spot/');
 
     expect(entries.children).toEqual(['spot/BTCUSDT/', 'spot/ETHUSDT/']);
   });
 
   it('resolves a name against the directory it was found in', () => {
-    const entries = _test_parse(slashed(['BTCUSDT2020-03-25.csv.gz']), 'trading/BTCUSDT/');
+    const entries = parse(slashed(['BTCUSDT2020-03-25.csv.gz']), 'trading/BTCUSDT/');
 
     expect(entries.keys).toEqual(['trading/BTCUSDT/BTCUSDT2020-03-25.csv.gz']);
   });
 
   /** A parent link would walk the tree upwards for ever. */
   it('ignores links that leave the directory', () => {
-    const entries = _test_parse(
+    const entries = parse(
       `<a href="../">up</a><a href="/">root</a><a href="https://x/y">off</a><a href="A/">A/</a>`,
       'trading/',
     );
@@ -82,7 +84,7 @@ describe('reading an index page', () => {
   });
 
   it('decodes what a server escaped', () => {
-    const entries = _test_parse('<a href="BTC%20USDT/">x</a><a href="A&amp;B/">y</a>', 'spot/');
+    const entries = parse('<a href="BTC%20USDT/">x</a><a href="A&amp;B/">y</a>', 'spot/');
 
     expect(entries.children).toEqual(['spot/BTC USDT/', 'spot/A&B/']);
   });
@@ -154,7 +156,7 @@ describe('walking a tree by cursor', () => {
 
     await _test_next(context, 'trading/', 'trading/BBB/');
 
-    expect(vi.mocked(fetchText).mock.calls.map(call => call[1]))
+    expect(vi.mocked(fetchPage).mock.calls.map(call => call[1]))
       .not.toContain('https://indexes.example/trading/AAA/');
   });
 });
@@ -222,7 +224,7 @@ describe('paging a partition', () => {
       cursor = page.cursor;
     } while (cursor);
 
-    expect(vi.mocked(fetchText).mock.calls.map(call => call[1])).toEqual([
+    expect(vi.mocked(fetchPage).mock.calls.map(call => call[1])).toEqual([
       'https://indexes.example/spot/',
       'https://indexes.example/spot/AAAUSDT/',
       'https://indexes.example/spot/BBBUSDT/',
@@ -302,7 +304,7 @@ describe('a server that sorts differently than we compare', () => {
 
     // What was actually read, rather than what the walk reported: the last
     // directory of a scope ends the walk and so hands back no cursor.
-    const visited = vi.mocked(fetchText).mock.calls
+    const visited = vi.mocked(fetchPage).mock.calls
       .map(call => call[1].replace('https://indexes.example/', ''));
 
     expect(visited).toEqual([

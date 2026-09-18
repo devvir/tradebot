@@ -20,17 +20,19 @@ import type { Limits, ListingContext, ReadLevel } from '../types';
  * frontier that was being built for the wrong reason. Binance's spot klines is
  * both wide *and* branching, so the guess put 29,150 pages behind one worker.
  *
- * Overshooting is bounded by expanding the front of the list one prefix at a
- * time: the count grows a level at a time and stops as soon as it is enough, so
- * a directory holding thousands of children is only ever reached if the venue
- * really is that shallow.
+ * **Every prefix not yet read is read at once**, up to the room left before
+ * there is enough work, rather than one after another. A wide archive reaches
+ * its partitions one symbol directory at a time — each read once, to learn it
+ * holds files and stays whole — and asked in turn that was 600 round trips
+ * end to end: measured 2026-10-01, gate took 9.5 minutes to map and binance
+ * more than 17, while every request still passes the venue's own gate.
  */
 export const descend = async (
   context: ListingContext,
   limits:  Limits,
   read:    ReadLevel,
 ): Promise<string[]> => {
-  const scopes = [context.root];
+  const scopes = [context.keyRoot];
 
   /**
    * Every prefix is expanded at most once, which is what makes this terminate
@@ -43,29 +45,40 @@ export const descend = async (
   const seen = new Set<string>();
 
   while (scopes.length < limits.concurrency) {
-    const at = scopes.findIndex(scope => ! seen.has(scope));
+    const unread = scopes.filter(scope => ! seen.has(scope)).slice(0, limits.concurrency - scopes.length);
 
     // Nothing left that can be split. Fewer partitions than lanes is the honest
     // outcome for a shallow archive, not a reason to keep asking.
-    if (at < 0) break;
+    if (unread.length === 0) break;
 
-    const prefix = scopes[at]!;
+    for (const prefix of unread) seen.add(prefix);
 
-    seen.add(prefix);
+    const levels = await Promise.all(unread.map(prefix => read(context, prefix)));
 
-    const { children, files } = await read(context, prefix);
+    unread.forEach((prefix, i) => {
+      const { children, files } = levels[i]!;
 
-    /**
-     * **A prefix holding a file of its own is never split.** A partition walks
-     * with no delimiter and so covers every key beneath it; its children cover
-     * only their own subtrees, and a key sitting directly here would belong to
-     * none of them. "Catalogable" is load-bearing: a bucket root serves
-     * `index.html` and `favicon.ico`, and counting those would make the entire
-     * bucket one serial partition.
-     */
-    if (files || children.length === 0) continue;
+      /**
+       * **A prefix holding a file of its own is never split.** A partition walks
+       * with no delimiter and so covers every key beneath it; its children cover
+       * only their own subtrees, and a key sitting directly here would belong to
+       * none of them. "Catalogable" is load-bearing: a bucket root serves
+       * `index.html` and `favicon.ico`, and counting those would make the entire
+       * bucket one serial partition.
+       */
+      if (files || children.length === 0) return;
 
-    scopes.splice(at, 1, ...children.filter(child => child !== prefix));
+      /**
+       * **Split in order, and only while there is room.** Read together, the
+       * whole batch would otherwise be split together, each adding every child
+       * it has — kucoin came out at 9,217 partitions where one at a time it made
+       * 852. Stopping at the target keeps the overshoot to one directory's width;
+       * a prefix read but left whole is a partition like any other.
+       */
+      if (scopes.length >= limits.concurrency) return;
+
+      scopes.splice(scopes.indexOf(prefix), 1, ...children.filter(child => child !== prefix));
+    });
   }
 
   logger.info({ venue: context.name, scopes: scopes.length }, 'Mapped the archive');

@@ -30,8 +30,10 @@ and wrongly, so "gate publishes no index" rested on a listing that looked real. 
 with a broken venue is equally consistent with a cache in front of a working one, and only the
 headers separate them.
 
-Files are still best fetched from the CDN, so gate is listed at one host and downloaded from
-another.
+So gate is addressed at its bucket for everything — listing, probing and downloading. The CDN serves
+the same files byte for byte (MD5 = ETag on both), and measured 2026-09-29 the bucket answered HEAD at
+up to 1,781/s and LIST at up to 1,710/s, flat at ~270 ms, without a single throttling answer — the
+ceiling was the client's.
 
 Symbols need not be enumerated: they fall out of the walk. Gate's public API carries each one's
 `launch_time` / `create_time`. The portal's own symbol list sits in a Next.js chunk
@@ -186,23 +188,31 @@ Files are headerless, so every series is read positionally.
 
 ### What the catalog places
 
-Prospector reads a series pattern out of the path. The slots are a calendar — `{YYYY}` `{MM}`
-`{DD}` `{HH}` `{MI}` — and the finest one a pattern carries is the series' grain, so gate's four
-cadences fall out of the paths with nothing declared:
+Prospector reads a series pattern out of the path. The calendar slots — `{YYYY}` `{MM}` `{DD}` — give
+the grain, and `{PART}` is where a period's own files are told apart. **Gate publishes two grains and
+splits both of them**, so a day of books is a day, in twenty-four parts, rather than an hourly series:
 
-| shape | grain |
-|---|---|
-| `spot/candlesticks_1h/202607/BTC_USDT-202607.csv.gz` | monthly |
-| `spot/candlesticks_1m/202608/BTC_USDT-20260801.csv.gz` | daily |
-| `spot/orderbooks/202108/BTC_USDT-2021082503.csv.gz` | hourly |
-| `spot_index/202312/slice_index_1702857600` | hourly, named by the instant |
-| `options_ticker/202509/slice_options_ticker_1756691460` | per minute, likewise |
+| shape | grain | parts |
+|---|---|---|
+| `spot/candlesticks_1h/202607/BTC_USDT-202607.csv.gz` | monthly | one file |
+| `spot/candlesticks_1m/202608/BTC_USDT-20260801.csv.gz` | daily | one file |
+| `spot/orderbooks/202108/BTC_USDT-2021082503.csv.gz` | daily | `00`–`23`, the hour |
+| `spot_index/202312/slice_index_1702857600` | monthly | the instant, in Unix seconds |
+| `options_ticker/202509/slice_options_ticker_1756691460` | monthly | likewise, a minute apart |
 
-The two snapshot trees name a file by the moment it covers in Unix seconds and nothing else, so
-their patterns carry no date — only `{EPOCH_HH}` or `{EPOCH_MI}`, filled by gate's `slotsFor` hook.
-Two names are needed because the number cannot say whether the next file is an hour or a minute
-away; over a month, `spot_index` gave 450 consecutive gaps of 3,600 seconds and `options_ticker` 999
-of 60. Both are venue-wide files covering every instrument, so neither carries a symbol.
+The two snapshot trees name a file by the moment it covers and nothing else, so the only period in
+the path is the month above it and that is what they are dated by. How far apart the instants sit is
+gate's `expandParts` hook rather than anything in the name — measured over a month, `spot_index` gave
+450 consecutive gaps of 3,600 seconds and `options_ticker` 999 of 60. Both are venue-wide files
+covering every instrument, so neither carries a symbol.
+
+**Hour 00 decides a day of books.** Gate publishes continuously rather than by activity: over 40
+hourly series, 753 of 769 middle days carried all 24 hours and 767 carried hour 00, so a day whose
+first hour is absent is a day the instrument was not listed yet or had stopped. The hook probes hour
+00 and names the other 23 only once it answers — which turns a quiet day from 24 requests into one.
+**Except on a series with no `first` yet**: a series begins when the instrument was listed, which is
+mid-day, and none of forty first days carried hour 00. With nothing yet known, every hour is asked
+and probing decides.
 
 Files are `.csv.gz`, or plain `.gz` for depth snapshots. Uncompressed `.csv` appears in a few early
 months — 99 beside 482 compressed in `spot/candlesticks_1m/201802` — and is a stray copy of the file
@@ -227,6 +237,70 @@ The `exclusion` table — two specific files, with no shape to describe:
 - `futures_btc/mark_prices/202107/hello/123`
 
 Both zero bytes, uploaded four minutes apart on 2021-08-11.
+
+## 2022-11-30 23:00: one hour filed under the wrong month
+
+**Gate wrote the last hour of November 2022 into December's directory.** In all three book trees,
+`<tree>/orderbooks/202212/` holds keys stamped `20221130` — and nothing else out of place:
+
+| tree | keys | hour |
+|---|---|---|
+| `spot/orderbooks/202212/` | 2,897 | 23, and only 23 |
+| `futures_usdt/orderbooks/202212/` | 249 | 23 |
+| `futures_btc/orderbooks/202212/` | 6 | 23 |
+
+**They are the only copy of that hour.** The properly filed `<tree>/orderbooks/202211/` stops at hour
+22 for that day in every one of the three trees, so refusing these keys would lose an hour of books
+for every instrument gate listed. They are catalogued.
+
+The cost is that the directory month and the file's month disagree, which a pattern cannot say: the
+shape is `{YYYY}{MM}` in the directory and `{YYYY}{MM}{DD}` in the name, and here they are different
+months. So three patterns carry the month as a **literal**:
+
+```
+spot/orderbooks/202212/{SYMBOL}-{YYYY}{MM}{DD}{PART}.csv.gz
+futures_usdt/orderbooks/202212/{SYMBOL}-{YYYY}{MM}{DD}{PART}.csv.gz
+futures_btc/orderbooks/202212/{SYMBOL}-{YYYY}{MM}{DD}{PART}.csv.gz
+```
+
+**Seeded as retired at 20221130**, because a literal month is a shape that can only ever hold one
+day: left live, every series on it would generate keys for a directory that will never gain another
+file. Retiring them keeps the files and stops the keyspace. December's own books are ordinary and sit
+on the generic pattern, alongside every other month.
+
+A one-off. No other month in any tree has it.
+
+## Misfiled months, beyond the 2022 books hour
+
+**Gate files a period into the wrong month's directory more than once, and everywhere it does the
+directory and the filename disagree.** `{YYYY}{MM}` cannot be one month in the path and another in
+the name, so path derivation keeps the month literal and every such file grows a shape of its own.
+
+**The shapes cost far more than the files.** A pattern with a literal month can never gain a file
+generation could reach — generation fills the filename and leaves the directory fixed — but nothing
+marks it finished, so its series stay open and re-ask every day of the patience window for ever.
+Measured 2026-09-27: 21 such shapes held 63,506 series, 20,948 still counted active, and produced
+**312,336 of gate's 323,229 nightly probes** — 97% of the venue's whole backlog.
+
+**Almost all of the misfiled data is worthless, checked against the archive rather than assumed:**
+
+| where | what it holds | verdict |
+|---|---|---|
+| `spot/candlesticks_{30s,1m,5m}/2024{07..12}/` | the last day of the previous month | 61,884 of 62,208 have a correctly filed twin of identical size **and** ETag |
+| `spot/deals/202108/` | July 2021, truncated | `ADA_USDT` is 1,591 lines against the proper file's 931,801, sharing its opening rows |
+| `spot/deals/202106/` | March 2020 of the `_USD` pairs | those are coin-margined **futures** under a spot path; `futures_btc/trades/202003/` holds every one at the same byte count |
+| `futures_btc/trades/202106/` | March 2020 again | same size as the proper file, different ETag — recompressed, which the gzip header explains |
+
+All of it is refused by `accepts`, so no shape is created for it.
+
+**324 klines have no correctly filed copy and are kept.** 108 instrument-days at three bar lengths,
+822 KB in total, for instruments that barely traded on the day they stopped. What separates them
+from the 61,884 duplicates is whether the same file exists in the right directory — a fact about the
+archive, not about the path — so no rule recovers it and `adapters/gate/misfiled.ts` enumerates
+them. It is a closed list: the misfiling stopped in December 2024 and has not recurred.
+
+Their 18 shapes are **seeded retired**, each at the single day it holds (`20240630` … `20241130`),
+for the same reason the 2022 book shapes are: a literal month can hold nothing else.
 
 ## Two trade shapes, not interchangeable
 

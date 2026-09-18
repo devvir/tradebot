@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import express from 'express';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { beginJob, closeRun, putFiles, putVenue, recordSeries } from '../src/catalog';
+import { beginJob, closeRun, enrol, putFiles, putVenue, recordSeries } from '../src/catalog';
 import { openCatalog } from '../src/database';
 import { setupRoutes } from '../src/api/routes';
 import type { Application } from 'express';
@@ -36,6 +36,9 @@ let updated: string[];
 let stopped: string[];
 let live:    Set<string>;
 
+/** Venues inside a pass, as opposed to asleep between passes. */
+let underway: Set<string>;
+
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'surveys-'));
   db  = openCatalog(join(dir, 'catalog.db'), { seedData: false });
@@ -45,6 +48,7 @@ beforeEach(() => {
   updated   = [];
   stopped = [];
   live    = new Set();
+  underway = new Set();
 
   const surveys: Surveys = {
     venues:  () => ['binance', 'bybit', 'gate'],
@@ -58,6 +62,7 @@ beforeEach(() => {
 
     running:  (venue) => live.has(venue),
     stopping: ()      => false,
+    passing:  (venue) => underway.has(venue),
     everyMs:  ()      => 86_400_000,
 
     pause: (venue) => {
@@ -472,5 +477,51 @@ describe('starting one venue by name', () => {
     await ask('POST', undefined, '/venues/binance/surveys', { refresh: true });
 
     expect(refreshed).toEqual(['binance']);
+  });
+});
+
+/**
+ * **Between the order and the job, a venue is starting — not waiting.** A pass
+ * spends its preamble listing instruments and writing series before any job row
+ * opens, and the rows alone read that as the same `waiting` a sleeping venue
+ * shows: an update somebody had just ordered looked ignored for four minutes.
+ */
+describe('a pass that has not opened its job yet', () => {
+  const standing = async (venue: string) => {
+    const server = app.listen(0);
+    const port   = (server.address() as { port: number }).port;
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/status`,
+        { headers: { 'x-catalog-token': 'change-me' } });
+
+      const { items } = await res.json() as { items: { venue: string; state: string; nextRun: string | null }[] };
+
+      return items.find(one => one.venue === venue)!;
+    } finally {
+      server.close();
+    }
+  };
+
+  it('reads as starting while the pass is under way', async () => {
+    finished('binance');
+    enrol(db, 'binance', 'T0');
+
+    live.add('binance');
+    underway.add('binance');
+
+    const now = await standing('binance');
+
+    expect(now.state).toBe('starting');
+    expect(now.nextRun).toBeNull();
+  });
+
+  it('still reads as waiting while the loop sleeps between passes', async () => {
+    finished('binance');
+    enrol(db, 'binance', 'T0');
+
+    live.add('binance');
+
+    expect((await standing('binance')).state).toBe('waiting');
   });
 });

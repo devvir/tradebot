@@ -1,3 +1,97 @@
+
+/**
+ * The lens table, apart because it arrived after the baseline.
+ *
+ * **One statement of it, applied from two places.** A catalog built from nothing
+ * gets it inside `CATALOG_SCHEMA` below; one already in service gets it from the
+ * migration that adds lenses. Written twice they would drift.
+ */
+export const LENS_SCHEMA = `
+-- A named way of looking at the catalog: where one is in force, what it lets
+-- through IS the catalog as far as that consumer is concerned. The database
+-- underneath stays complete and unfiltered.
+CREATE TABLE IF NOT EXISTS lens (
+  id         INTEGER PRIMARY KEY,
+
+  -- Lower-case, hyphenated, unique: what a consumer is configured with, and what
+  -- every path addresses. Stable, because changing it reconfigures whoever reads
+  -- through this lens.
+  slug       TEXT NOT NULL,
+
+  -- What a person calls it. Free text, and free to change.
+  name       TEXT NOT NULL DEFAULT '',
+
+  -- What it is for, in a person's words. Empty where the name says it.
+  note       TEXT NOT NULL DEFAULT '',
+
+  -- The whole definition, as JSON. Nothing queries across its parts: a lens is
+  -- read whole and written whole, so normalising it would buy filtering,
+  -- searching and indexing, and none of those are wanted.
+  definition TEXT NOT NULL,
+
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS lens_slug ON lens (slug);
+`;
+
+/**
+ * The cart tables, apart because they arrived after the baseline.
+ *
+ * **One statement of them, applied from two places.** A catalog built from
+ * nothing gets them inside `CATALOG_SCHEMA` below; one already in service gets
+ * them from the migration that adds carts. Written twice they would drift, and
+ * the drift would show up as a column one deployment has and another does not.
+ */
+export const CART_SCHEMA = `
+-- What somebody wants on disk: a named selection of the catalog, which a
+-- downloader reads and fetches. The name is the handle -- hauler asks for
+-- "bitmex-backfill", not for a row id.
+CREATE TABLE IF NOT EXISTS cart (
+  id         INTEGER PRIMARY KEY,
+
+  -- Lower-case, hyphenated, unique: the legible identifier a consumer names.
+  name       TEXT NOT NULL,
+
+  -- What it is for, in a person's words. Empty where the name says it.
+  note       TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS cart_name ON cart (name);
+
+-- One line of a cart: a venue, and how much of it.
+--
+-- Every column but the venue may be empty, and empty means all of it -- so a
+-- venue and nothing else is that venue's whole archive. What a line may not do
+-- is admit a combination the venue does not publish: see "carts.ts", which is
+-- where that is decided, because a row cannot decide it alone.
+CREATE TABLE IF NOT EXISTS cart_item (
+  id         INTEGER PRIMARY KEY,
+  cart_id    INTEGER NOT NULL REFERENCES cart (id),
+  venue_id   INTEGER NOT NULL REFERENCES venue (id),
+  market     TEXT NOT NULL DEFAULT '',
+  dataset    TEXT NOT NULL DEFAULT '',
+  variant    TEXT NOT NULL DEFAULT '',
+  grain      TEXT NOT NULL DEFAULT '',
+
+  -- The venue's own spellings, comma separated; empty is every instrument. A
+  -- symbol never contains a comma, which is what lets one row hold a list.
+  symbols    TEXT NOT NULL DEFAULT '',
+
+  -- Inclusive bounds on the period a file covers, as yyyymmdd. Empty is open:
+  -- no start, no end. A monthly file is in range where its month overlaps.
+  date_from  TEXT NOT NULL DEFAULT '',
+  date_to    TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS cart_item_cart ON cart_item (cart_id);
+`;
+
 /**
  * The catalog's schema, in one place, because everything that touches it has to
  * agree about the same shape.
@@ -17,14 +111,14 @@ CREATE TABLE IF NOT EXISTS venue (
   -- distinct in a unique index, which would let one venue insert twice.
   host TEXT NOT NULL DEFAULT '',
   base TEXT NOT NULL,
-  root TEXT NOT NULL,
+  key_root TEXT NOT NULL,
   UNIQUE (name, host)
 ) STRICT;
 
 -- A file the venue serves, and what is known about it.
 CREATE TABLE IF NOT EXISTS file (
   venue_id      INTEGER NOT NULL,
-  path          TEXT NOT NULL,  -- the key, below the venue's root
+  path          TEXT NOT NULL,  -- the key, below the venue's key root
   date          TEXT NOT NULL,  -- the period it holds: yyyymm to yyyymmddhhmi
   size          INTEGER,
   etag          TEXT,
@@ -62,6 +156,16 @@ CREATE TABLE IF NOT EXISTS wip (
 
   created_at TEXT NOT NULL,              -- enqueued, refreshed if offered again
   tries      INTEGER NOT NULL DEFAULT 0, -- asked and not settled, so far
+
+  -- What to ask the venue for once this row settles, where a period is published
+  -- in parts -- the adapter's own token, opaque here, and NULL wherever there is
+  -- nothing to ask, which is every key of every venue that publishes a period
+  -- whole. A row with none is never taken back to the adapter, which is how a
+  -- venue that named every part at once is not asked about that period again.
+  --
+  -- Stored rather than read back out of the path, which would mean inverting a
+  -- pattern's substitution and guessing where the slot ended.
+  next_part  TEXT,
   UNIQUE (venue_id, path)
 ) STRICT;
 
@@ -144,13 +248,23 @@ CREATE TABLE IF NOT EXISTS run (
 
   scope     TEXT NOT NULL,          -- relative prefix; '' is the whole venue
   cursor    TEXT,                   -- where to resume; NULL at the empty scope
+
+  -- Pages: a listing page on a walk, a page of generated keys on an update.
   requests  INTEGER NOT NULL DEFAULT 0,
   found     INTEGER NOT NULL DEFAULT 0,
 
   -- The moment the archive is read as of. Resuming continues toward it rather
   -- than moving it.
   started   TEXT NOT NULL,
-  completed TEXT
+  completed TEXT,
+
+  -- Requests this job needed: one per key probed, one per listing page read.
+  -- What compares a walk against an update. Kept on the job row only;
+  -- partitions stay at zero.
+  asked     INTEGER NOT NULL DEFAULT 0,
+
+  -- The same requests as they actually went out, every retry included.
+  sent      INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 
 -- One open run per scope, so two collectors cannot both claim a partition and
@@ -159,6 +273,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS run_open ON run (venue_id, kind, scope) WHERE 
 
 -- "Is this prefix established, and as of when", without a scan.
 CREATE INDEX IF NOT EXISTS run_scope ON run (venue_id, scope, completed);
+
+${CART_SCHEMA}
+${LENS_SCHEMA}
 
 -- Per venue-month totals, so quantities are read rather than aggregated.
 CREATE TABLE IF NOT EXISTS month (
@@ -314,3 +431,13 @@ export const ON_OPEN = [
   'PRAGMA foreign_keys = ON',
   'PRAGMA synchronous = NORMAL',
 ] as const;
+
+/**
+ * The files not yet downloaded, by series and date — what a "pending only"
+ * bucket listing reads, so walking what is owed costs what is owed rather than
+ * every file of every series the walk passes through.
+ */
+export const PENDING_INDEX = `
+CREATE INDEX IF NOT EXISTS file_pending ON file (series_id, date)
+  WHERE downloaded_at IS NULL AND existence = 'confirmed';
+`;

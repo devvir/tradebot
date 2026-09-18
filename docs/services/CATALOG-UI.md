@@ -44,7 +44,6 @@ origins anyway — but that could be changed, and it is not what decides this.
 
 ```
 browser ── /api/catalog/* ──▶ catalog-ui ── x-catalog-token ──▶ prospector
-        ── /api/hauler/*  ──▶            ──────────────────────▶ hauler
         ── /api/where     ──▶            (answers from its own config)
 ```
 
@@ -53,12 +52,7 @@ answer a refusal with a sentence saying what was wrong with the request, and tha
 sentence is the most useful thing on the page when something is wrong, so it is
 shown whole rather than replaced with "could not load".
 
-**A missing hauler is absent, not broken.** A deployment surveying on one machine
-and hauling on another may not be able to reach one, so `HAULER_URL` unset makes
-`/api/hauler` answer `503` with a sentence, rather than a proxy to nowhere that
-times out and reads as a bug.
-
-**An unreachable service is a `502` naming the URL it tried.** Which of the two
+**An unreachable catalog is a `502` naming the URL it tried.** Whether it
 is unreachable, and at what address, is the first thing anybody wants and the
 thing a bare failure hides.
 
@@ -66,11 +60,12 @@ thing a bare failure hides.
 page asks where it is pointed and puts it in the header, so the same image serves
 any arrangement of these services.
 
-## The two sections
+## The three sections
 
 **Contents** is what the catalog holds; **surveys** is what is being done about
-it. They answer different questions and change on different clocks — one is a
-fact to read, the other a thing to act on.
+it; **lenses** is how a consumer sees a slice of it. They answer different
+questions and change on different clocks — one is a fact to read, one a thing to
+act on, one a decision that stays until it is changed.
 
 Surveys is the default, because it is the one that changes. What the catalog
 holds is still there tomorrow; whether anything is collecting it is the question
@@ -108,6 +103,45 @@ One row per venue, polled every ten seconds: a survey runs for hours and reports
 nothing when it starts, so a view that loaded once would show a stale word for as
 long as somebody left it open.
 
+**The state says what is happening, not how.** `walking` and `updating` are the
+two mechanisms the catalog has, and naming a venue's state after one of them
+answered a question nobody asked while hiding the one they did: whether this is
+the first long read of a venue or the daily top-up. So the word is the occasion —
+**backfilling** the first time, **updating** every time after, from
+`lastRun.first` — and the mechanism stays as a small icon and a tooltip, for
+whoever wants it. A walker reads an index page by page; a magnifier asks about
+one constructed key at a time.
+
+That distinction is not the same as the mechanism and cannot be derived from it.
+A venue that cannot be listed backfills by generating keys, and one that re-reads
+itself by walking updates by walking — so both readings would be wrong on some
+row, and the catalog answers it directly instead.
+
+**An order is shown as heard the moment it is given.** Clicking Update, Start,
+Resume, Refresh or Pause marks the row `starting` or `pausing` at once, disables
+everything in it, and polls every two seconds instead of ten. The row is handed
+back when the status shows the order done — the venue `starting`, going, or
+paused, a pass that began after the click, or a resumed venue no longer paused
+(one paused while waiting goes back to waiting) — and not before, so a second click
+cannot land on an order still in flight. A request that fails frees the row and
+says why; an order with no sign of being acted on after two minutes is let go of
+and said to have lapsed, rather than holding the row for ever.
+
+The page's own mark covers only the seconds before the catalog reports anything.
+After that the catalog's `starting` state carries it, which is also what a
+scheduled pass shows during its preamble — nobody clicked, and the venue is just
+as much on its way.
+
+The same word runs through the badge under a venue's name (*Backfill in
+progress*, *Updated 2026-09-23*) and through the `Runs` column, with the
+mechanism in each one's tooltip.
+
+**`WIP` distinguishes zero from inapplicable.** A venue whose listing states
+every file parks no candidates ever, and `0` there reads as *nothing outstanding*
+— as though something had just finished. A dash says the column is not about that
+venue; the figure appears when anything is parked, or when the pass works by
+probing, which `/status` answers as `probing`.
+
 **One state is this process's to report, not the catalog's: `stalled`.** A job
 open with nothing working it is not a survey in progress, and every field the
 catalog returns says it is — `state` reads `walking`, the run reads *started at*,
@@ -131,7 +165,7 @@ not "never" been surveyed, which is what reading it off this process would say.
 
 **The `Runs` column reports one kind of event, and the same one on every row:**
 the pass that is happening, or the newest one that finished — *Update started
-at*, *Walk completed at*, or *Not started yet* where no pass has ever run. It
+at*, *Backfill completed at*, or *Not started yet* where no pass has ever run. It
 took whatever the *state* happened to make available before: a pause time on one
 row, a next-update time on another, a job start on a third. No two rows answered
 the same question, and most answered none — `was waiting` named the phase a pause
@@ -146,44 +180,74 @@ update *completed*, which is what it says.
 
 #### The controls
 
-**One button decides whether a venue is meant to be running**, and its word says
-which of three things clicking it will mean:
+**A word asks a venue to go; everything else is a shape.** Asking is the
+decision this page exists for, so it keeps a word:
 
 | state | word | call |
 |---|---|---|
 | **not started** | Start | `POST /venues/:venue/surveys` |
-| **paused** | Resume | the same call |
-| walking, updating, waiting | Pause | `POST /surveys/pause` |
+| **waiting** | Update | the same call with `update: true`, which skips the wait |
+| walking, updating, paused | none — the slot is held empty | — |
 
-Pausing and starting are genuinely opposite and cannot be one request. *Starting*
-and *resuming* are the same request — a pause keeps every cursor, so the catalog
-has no separate resume verb to offer — so the word changes and the endpoint does
-not. Two buttons would ask somebody to know that; one that says `Start` on a
-venue surveyed for a month would be lying about what happens next.
+**The word comes from `completedEver`, and from nothing else.** `Start` is a
+venue no pass has ever finished for; `Update` is one a pass has. How the venue is
+read does not enter into it: taken from `listable`, okx and bitget would read
+`Update` on their first ever pass, because theirs generates keys rather than
+walking; taken from the newest run's `kind`, a venue that re-reads itself by
+walking would read as starting again every day. Both are true statements about
+this service's internals and neither is what somebody clicking is deciding, so
+`GET /status` answers the question directly.
 
-**Resume carries less weight than Start**, though they are one call. A table of
-paused venues is the ordinary sight here, and at Start's weight every row of it
-reads as something demanding to be clicked. The venue nobody has ever asked for
-is the one that wants noticing, so it keeps the filled tint and resuming gives up
-the fill for an outline — same word, same colour, one step behind.
+**And it is asked of every one of a venue's servers.** Bybit publishes from two,
+and a venue whose second host has never read itself through has not been surveyed
+before — it is half read, and the word for that is `Start`. The same rule decides
+the badge's `backfilling` against `updating`, so the two cannot disagree about
+the same venue.
 
-It gives up the fill and nothing else. Resume is the button most often *wanted*
-on this page, and dropping it to no background at all buried the common action to
-make room for the rare one.
+The slot keeps its width on every row, empty or not, so the icons beside it line
+up down the column whatever each venue is doing.
 
-**Update** brings the next update forward, and is disabled where it cannot act:
-enabled for a venue waiting out its interval, and for one paused partway through
-an update, which it resumes.
+The icons are **hold or go**, and **start over**:
 
-**Refresh** asks first — it drops a venue's run rows and walks the whole archive
+| icon | means | enabled for | call |
+|---|---|---|---|
+| ⏸ | pause | walking, updating or waiting | `POST /surveys/pause` |
+| ▶ | resume | a paused venue | `POST /venues/:venue/surveys` |
+| ⟳ | refresh | a venue that is `listable` | `POST /venues/:venue/surveys` with `refresh: true` |
+
+**Pause and resume share one slot**, because they are opposite and no venue is
+ever both: a venue going is stopped there, a stopped one carries on from there.
+Two slots would grey one of them out on every row. The shape says which is
+offered and the colour follows it — grey for stopping a venue, teal for setting
+one going, the colour the `Start` word carries. Resuming is the same request as
+starting, since a pause keeps every cursor and the catalog has no separate resume
+verb to offer.
+
+**Pausing a venue that is only waiting is the case this page used to have no way
+to ask for.** The two readings of pause are the same request: mid-pass it stops
+after the current page and keeps every cursor, and waiting it means *do not start
+the next update when it falls due*. Without it, a venue whose interval was about
+to come round could only be stopped by catching it once it had started.
+
+**`update: true` is only sent by a venue that is waiting.** A forced update is
+refused where nothing has ever completed, and a venue mid-pass is already doing
+it — so everywhere else the word sends the plain request and lets the catalog
+work out what it means.
+
+**Refresh asks first** — it drops a venue's run rows and walks the whole archive
 again, the one control here that throws work away. It is **disabled entirely for
 a venue that is not `listable`**: okx and bitget serve no listing, so their series
 are declared rather than discovered and a re-walk has nothing to re-read. The
 button would drop their run rows and walk nothing.
 
-Both are disabled in place rather than removed, so that three buttons occupy the
-same three positions on every row. Dropping one shifts the others and the column
-stops reading as a column.
+All three are disabled in place rather than removed, so they occupy the same
+three positions on every row, and a disabled one says in its tooltip why it
+cannot be clicked. Dropping one shifts the others and the column stops reading as
+a column.
+
+The shapes are drawn in the page rather than installed: three glyphs at one size
+do not carry an icon package, and a `currentColor` path inherits each button's
+colour and its disabled state.
 
 **A row is held while it is mid-change**, and that means two waits rather than
 one. The request in flight is over in milliseconds; `stopping` — the loop told to
@@ -194,6 +258,65 @@ acting there asks a venue to stop for something that has already stopped it.
 **A resumed update is reported as one.** Where the catalog answers `resumed`
 rather than `started`, the page repeats that word: carrying on from cursors that
 already exist is not the same as planning fresh scopes, however alike they look.
+
+### Lenses
+
+A lens is a named way of looking at the catalog: where one is in force, what it
+lets through *is* the catalog as far as whoever looks through it is concerned. So
+this section is not a shopping list — it is the definition of a view, and what it
+has to make obvious is what that view leaves out.
+
+**Rules are ordered and they compose.** Each one either adds or takes away, and a
+later rule sees what the earlier ones left. That is what lets *everything up to a
+date, except books, except recent trades* be three lines read top to bottom rather
+than an enumeration of the complement. The list is per venue, keyed by name, and a
+venue with no rules is not in the lens at all.
+
+**The page shows a block for every venue regardless**, because a lens is written
+by reading down the venues and saying what each contributes, and "nothing" is an
+answer an empty block gives and a missing one does not. The definition is
+unaffected: a block with no rules is not written, so the stored document still
+names only the venues the lens actually speaks about. The per-venue button clears
+that venue's rules and leaves the block where it was.
+
+**A rule states only what it constrains**, and every dimension left alone is shown
+as `every` rather than as a blank — because the difference between "all datasets"
+and "no datasets chosen yet" is the whole meaning of the rule. Each list offers
+what the venue actually publishes, from `GET /lenses/options/:venue`, so a dataset
+that venue has never had cannot be picked.
+
+**What the lists cannot prevent, the catalog is asked about.** Every change is put
+to `POST /lenses/check`, debounced, and each problem is shown against the rule it
+belongs to, with saving refused while any stands. The answer comes from the same
+function that refuses the write, so the page cannot hold a second opinion.
+
+Two of those problems are about meaning rather than spelling, and both are silent
+faults: a rule list that **opens with an exclude** lets nothing through, because
+evaluation starts from nothing and subtracting from nothing is a no-op; and an
+**empty list** in a dimension matches nothing, where leaving it out matches all of
+it.
+
+**The lens carries what it would cost**, because that is the decision it exists to
+support. An estimate is marked `≈` and its tooltip says how it was reached — see
+`POST /lenses/size`, which takes the document rather than a saved name so the
+figure arrives while somebody is still choosing.
+
+**`@` is offered as an instrument like any other.** It is the venue-wide file
+covering every instrument of a market, so cold-storing buckets and keeping a few
+instruments on their own for simulation is one rule with both in it. It is offered
+as its own chip rather than found by typing, because a venue's instrument list
+deliberately leaves the bucket out.
+
+**Instruments are searched, not browsed.** A venue lists more of them than anyone
+scrolls, so the field stays quiet until three characters make it worth answering,
+and what has been chosen sits beside it as badges — five, then a count carrying
+the rest in its tooltip.
+
+**A half-written lens survives a reload.** A rule list is minutes of work and the
+section is a route, so a glance at the Contents tab would otherwise take all of
+it. The draft is kept in `localStorage` per lens, tagged with the version it was
+written from, and cleared on save — so a lens saved somewhere else replaces the
+draft rather than silently reviving edits to a document that has moved on.
 
 ## How it is built
 

@@ -35,7 +35,7 @@ let id:  number;
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), 'spans-'));
   db  = openCatalog(join(dir, 'catalog.db'));
-  id  = putVenue(db, 'okx', okx.base, okx.root);
+  id  = putVenue(db, 'okx', okx.base, okx.keyRoot);
 
   /** Built here, where the budget is — see the note on the timeout above. */
   loadSeries(db);
@@ -153,7 +153,7 @@ describe('the shipped seed', () => {
 
     try {
       let one    = openCatalog(path);
-      const mine = putVenue(one, 'okx', okx.base, okx.root);
+      const mine = putVenue(one, 'okx', okx.base, okx.keyRoot);
       const before = seriesFor(one, mine).length;
 
       one.close();

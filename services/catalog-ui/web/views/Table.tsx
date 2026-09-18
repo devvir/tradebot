@@ -165,15 +165,24 @@ export const Span = ({ first, last, open }: {
  * anything; "Never surveyed" does not.
  */
 export const LastSurvey = ({ of }: { of: LastRun }) => {
-  const kind = of.kind === 'walk' ? 'Walk' : 'Update';
+  /**
+   * **What the pass was for, not how it was done.** A first pass reads
+   * everything and takes hours or days; every pass after it reads the recent
+   * edge. Which mechanism each used is a different question — a venue that
+   * cannot be listed backfills by generating keys, and one that re-reads itself
+   * by walking updates by walking — and it belongs in the tooltip, where
+   * somebody who wants it can find it and nobody else has to read it.
+   */
+  const what = of.first ? 'Backfill' : 'Update';
 
-  const said = of.ongoing ? `${kind} in progress`
+  const said = of.ongoing ? `${what} in progress`
     : of.at === null || of.kind === null ? 'Never surveyed'
-      : `${of.kind === 'walk' ? 'Walked' : 'Updated'} ${of.at.slice(0, 10)}`;
+      : `${of.first ? 'Backfilled' : 'Updated'} ${of.at.slice(0, 10)}`;
 
   return (
     <Badge
       size="xs"
+      title={of.kind === null ? undefined : howOf(of.kind)}
 
       /**
        * **Quiet, because it is not the answer — it is what the answer rests on.**
@@ -205,6 +214,12 @@ export const LastSurvey = ({ of }: { of: LastRun }) => {
     >{said}</Badge>
   );
 };
+
+/** How a pass reads a venue, for the tooltip under a word that does not say. */
+export const howOf = (kind: 'walk' | 'update'): string =>
+  (kind === 'walk'
+    ? 'Walking the listing'
+    : 'Probing files');
 
 export const Dim = ({ children }: { children: ReactNode }) =>
   <Text component="span" c="dimmed" fs="italic" size="sm">{children}</Text>;

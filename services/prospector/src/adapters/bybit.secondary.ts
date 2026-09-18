@@ -41,7 +41,6 @@ export const bybitSecondary: Adapter = declare({
   name:    'bybit',
   host:    'secondary',
   scanner: html,
-  list:    'https://quote-saver.bycsi.com',
 
   /**
    * This host's index names files and states nothing else — no size, no
@@ -62,23 +61,42 @@ export const bybitSecondary: Adapter = declare({
    * a date, and absence is the ordinary answer to a guess. So the rule asks
    * which pass it is in rather than treating the two alike.
    */
-  ruleOnFailure: (status, _headers, tries) =>
+  ruleOnFailure: (_row, status, _headers, tries) =>
     (status === 404 && surveying(bybitSecondary) === 'walk' && tries < INDEXED_TRIES
       ? 'keep'
       : null),
 
   /**
-   * **Conservative, and nothing is measured behind it.**
-   *
-   * The tree is a few thousand directories against the primary's millions of
-   * keys, so there is nothing to gain by finding this host's limit and a banned
-   * address to lose by finding it the hard way. The primary's number was
-   * arrived at by being refused; this one is chosen to avoid the question.
-   *
-   * The stand-down is the primary's: bybit's ban lifts after "at least 10
-   * minutes", which is its own figure for both hosts.
+   * **No limit found.** Measured 2026-09-30 with HEAD probes: 5,496/s from the
+   * remote on keys the edge had cached, and 3,870/s from here on missing ones,
+   * which go to the origin (~220 ms), without a single throttling answer. More
+   * than 600 at once would mostly wait on the machine-wide ceiling.
    */
-  pacing:  { perSecond: 30, concurrency: 10, standDownMs: 10 * 60_000 },
+  pacing:  { perSecond: 5000, concurrency: 600 },
+
+  /**
+   * Walking, every update — see `docs/services/PROSPECTOR.md`, *How each venue updates*.
+   */
+  recurs:  'walk',
+
+  /**
+   * How far behind today this venue is worth asking about.
+   *
+   * **Measured from the venue's own `Last-Modified`**, 2026-09-25 over the files
+   * of 2026-09-15 to 21: the same schedule its sibling publishes on, measured together — a frontier that differed between the two would ask one instrument about different days.
+   *
+   * **Every venue publishes more than a day after its period begins**, so a pass
+   * running in the small hours finds nothing for yesterday whatever the catalog's
+   * newest file suggests — a snapshot taken in the afternoon says only that the
+   * file had arrived by the afternoon.
+   *
+   * **A day further back again**, because a publishing hour that drifts later
+   * would put the frontier in front of the archive. Asking early costs a probe
+   * per series per night, every night, for a period that cannot exist yet; asking
+   * late costs the catalog's edge a day, and loses nothing — the frontier
+   * advances daily and the patience window covers what it has not reached.
+   */
+  probingLag: 3,
 
   /** What bybit lists today — see `bybit/instruments.ts`. */
   instruments: async (db) => bybitInstruments(db, 'secondary'),
@@ -102,7 +120,7 @@ export const bybitSecondary: Adapter = declare({
 /**
  * The order-book host, which shares nothing with the primary's four shapes:
  * `linear/BTCUSDT/2025-08-21_BTCUSDT_ob200.data.zip`, with `inverse/` beside it
- * and no third market. The root is `orderbook/`, so the catalog sees it
+ * and no third market. The key root is `orderbook/`, so the catalog sees it
  * stripped, and this is the only bybit tree that leads with the date.
  *
  * **An instrument name is letters, digits, dashes and underscores**, so its own

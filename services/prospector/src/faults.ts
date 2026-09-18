@@ -6,7 +6,7 @@ import type { Fault } from './types';
  * **A stack trace of our own call path is not information.** Nearly everything
  * that fails here fails the same way — a socket that would not open, a host that
  * would not resolve, a connection the far end dropped — and the frames leading
- * to it are always `send → fetchText → page → sweep → walkOne`, whatever went
+ * to it are always `send → fetchPage → page → sweep → walkOne`, whatever went
  * wrong. Twenty lines of that per failure buries the line that says *which venue
  * and which scope*, which is the only part anybody acts on.
  *

@@ -4,6 +4,7 @@ import { Venues } from './views/Venues';
 import { VenueView } from './views/Venue';
 import { MarketView } from './views/Market';
 import { Surveys } from './views/Surveys';
+import { Lenses } from './views/Lenses';
 import { useAsk } from './api';
 import type { Where } from './types';
 
@@ -16,17 +17,19 @@ import type { Where } from './types';
  */
 
 /**
- * Two sections, and where you are inside one of them.
+ * Three sections, and where you are inside one of them.
  *
  * `contents` is what the catalog holds; `surveys` is what is being done about
- * it. They are separate because they answer different questions and change on
- * different clocks — one is a fact to read, the other a thing to act on.
+ * it; `lenses` is how a consumer sees a slice of it. They are separate
+ * because they answer different questions and change on different clocks — one
+ * is a fact to read, one a thing to act on, and one a decision that stays until
+ * it is changed.
  *
  * **`surveys` is the default**, because it is the one that changes: what the
  * catalog holds is still there tomorrow, while whether anything is collecting it
  * is the question somebody opens this page to answer.
  */
-export type Section = 'contents' | 'surveys';
+export type Section = 'contents' | 'surveys' | 'lenses';
 
 export interface Route {
   section:  Section;
@@ -48,7 +51,6 @@ export const App = () => {
           </Title>
           <Text size="xs" c="dimmed">
             {where.data?.catalog}
-            {where.data?.hauler ? ` · hauler ${where.data.hauler}` : ''}
           </Text>
         </Group>
 
@@ -60,6 +62,7 @@ export const App = () => {
           <Tabs.List>
             <Tabs.Tab value="surveys">Surveys</Tabs.Tab>
             <Tabs.Tab value="contents">Contents</Tabs.Tab>
+            <Tabs.Tab value="lenses">Lenses</Tabs.Tab>
           </Tabs.List>
         </Tabs>
       </AppShell.Header>
@@ -69,10 +72,11 @@ export const App = () => {
           {route.section === 'contents' && <Crumbs route={route} />}
 
           {route.section === 'surveys' ? <Surveys />
-            : route.venue === undefined ? <Venues />
-              : route.market !== undefined
-                ? <MarketView venue={route.venue} market={route.market} />
-                : <VenueView venue={route.venue} />}
+            : route.section === 'lenses' ? <Lenses />
+              : route.venue === undefined ? <Venues />
+                : route.market !== undefined
+                  ? <MarketView venue={route.venue} market={route.market} />
+                  : <VenueView venue={route.venue} />}
         </Container>
       </AppShell.Main>
     </AppShell>
@@ -118,7 +122,8 @@ const readRoute = (): Route => {
   const parts = new URLSearchParams(location.hash.slice(1));
 
   return {
-    section: parts.get('section') === 'contents' ? 'contents' : 'surveys',
+    section: parts.get('section') === 'contents' ? 'contents'
+      : parts.get('section') === 'lenses' ? 'lenses' : 'surveys',
     ...(parts.get('venue') ? { venue: parts.get('venue')! } : {}),
     ...(parts.get('market') ? { market: parts.get('market')! } : {}),
   };

@@ -1,7 +1,7 @@
 /**
  * What the services answer with, as the page receives it.
  *
- * **Mirrors of prospector's and hauler's own types, not a second opinion.** The
+ * **Mirrors of prospector's own types, not a second opinion.** The
  * page renders what it is given and reshapes nothing, so a field added upstream
  * shows up here by being added to one of these — never by this service learning
  * to compute it.
@@ -49,6 +49,16 @@ export interface LastRun {
 
   /** Whether it is still going, on any of the venue's hosts. */
   ongoing: boolean;
+
+  /**
+   * Whether this is the venue's **first** pass: the backfill rather than a later
+   * top-up. Not the same question as `kind`, which says by what means.
+   *
+   * Optional only because a page is served before the catalog behind it is
+   * restarted; a reader falls back to `completedEver`, which answers the same
+   * thing for a venue that has never finished one.
+   */
+  first?:  boolean;
 }
 
 export interface MarketContents {
@@ -105,7 +115,26 @@ export interface Shape {
  * is what a reader needs to act on it — when a pause started, what it
  * interrupted, when the next update is due.
  */
-export type SurveyState = 'not started' | 'walking' | 'updating' | 'waiting' | 'paused';
+export type SurveyState = 'not started' | 'starting' | 'walking' | 'updating' | 'waiting' | 'paused';
+
+/**
+ * An order given from this page that the catalog has not yet been seen to act on.
+ *
+ * **Held here, not on the server**, because the server has nothing to report
+ * until it acts: between the click and the next poll the row would otherwise
+ * read exactly as it did before, and a venue that had been told to go looked
+ * like one that had been ignored.
+ */
+export interface Order {
+  /** `go` for Start, Update, Resume and Refresh; `pause` for Pause. */
+  kind: 'go' | 'pause';
+
+  /** When it was given — so one that never takes effect is let go of, and said so. */
+  at:   number;
+
+  /** The venue's state when it was given, since what counts as done depends on it. */
+  from: string | null;
+}
 
 export interface Status extends Venue {
   state:      SurveyState;
@@ -129,6 +158,20 @@ export interface Status extends Venue {
   stopping:   boolean;
 
   /**
+   * Whether a pass has ever finished here — the whole of what separates starting
+   * a venue from updating one. Whether either happens by walking or by
+   * generating keys is the catalog's business and never shown.
+   */
+  completedEver: boolean;
+
+  /**
+   * Whether this venue parks candidate keys at all, which is what makes an empty
+   * backlog mean something: zero is *nothing outstanding* where a venue probes,
+   * and *not applicable* where its listing states everything.
+   */
+  probing?:      boolean;
+
+  /**
    * Whether the venue has a keyspace to walk. False where its bucket refuses a
    * listing and its series are declared instead — nothing to re-read, so nothing
    * for a refresh to do.
@@ -138,19 +181,86 @@ export interface Status extends Venue {
   wip:        number;
 }
 
-/** One line of hauler's shopping list. Not rendered yet; the client already reads it. */
-export interface Want {
-  venue:   string;
-  market:  string;
-  dataset: string;
-  from?:   string;
-  to?:     string;
-  fixed?:  Record<string, string>;
-  prefer?: Record<string, string>;
-}
-
 /** Where this deployment's page is pointed, so nothing is baked into the bundle. */
 export interface Where {
   catalog: string;
-  hauler:  string | null;
 }
+
+/**
+ * A named way of looking at the catalog — where one is in force, what it lets
+ * through *is* the catalog as far as that consumer is concerned.
+ */
+export interface Lens {
+  id?:        number;
+
+  /** What a consumer is configured with, and what every path addresses. */
+  slug:       string;
+
+  /** What a person calls it. Free text, and free to change. */
+  name:       string;
+
+  note:       string;
+  createdAt:  string;
+  updatedAt:  string;
+  definition: LensDefinition;
+}
+
+/** What a lens lets through, keyed by venue name. */
+export interface LensDefinition {
+  format: number;
+  venues: Record<string, LensRule[]>;
+}
+
+/**
+ * One rule, applied in order to what the rules before it left. An absent
+ * dimension means all of it.
+ */
+export interface LensRule {
+  effect:       'include' | 'exclude';
+  markets?:     string[];
+
+  /** Each kind of data, optionally narrowed to one of its own variants. */
+  datasets?:    LensDataset[];
+
+  grains?:      string[];
+  instruments?: string[];
+  from?:        string;
+  to?:          string;
+}
+
+/**
+ * One kind of data, whole or at one variant.
+ *
+ * **A variant belongs to its dataset and to nothing else** — `1m` is a kline
+ * length, `full,incremental` a book shape — so the two travel together.
+ */
+export interface LensDataset {
+  dataset:  string;
+  variant?: string;
+}
+
+/** One combination a venue publishes, as a rule is written against. */
+export interface LensOption {
+  market:  string;
+  dataset: string;
+  variant: string;
+  grain:   string;
+  series:  number;
+}
+
+/** Why a lens cannot be stored, located at the rule it belongs to. */
+export interface LensProblem {
+  venue:   string;
+  rule:    number;
+  field?:  keyof LensRule;
+  message: string;
+}
+
+/** How much a lens would put on a disk. */
+export interface LensSize {
+  series: number;
+  files:  number;
+  bytes:  number;
+  exact:  boolean;
+}
+

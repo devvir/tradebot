@@ -46,7 +46,9 @@ those are properties of particular datasets, not of the catalog. A dataset with
 no level below it has no variant at all.
 
 **Collections answer `{ "items": [...] }`.** Single resources answer the object
-itself. Errors answer `{ "error": "..." }` with a fitting status.
+itself. Errors answer `{ "error": "..." }` with a fitting status. The bucket
+listing is the exception: it answers in S3's shape, errors included — see
+[Buckets](#buckets).
 
 ## Endpoints
 
@@ -82,7 +84,7 @@ neither closes a run nor undoes one, so it changes nothing here.
 
 | | |
 |---|---|
-| `state` | `not started`, `walking`, `updating`, `waiting` or `paused` |
+| `state` | `not started`, `starting`, `walking`, `updating`, `waiting` or `paused` |
 | `enrolledAt` | when somebody first asked for this venue. `null` where nobody has |
 | `since` | when the open job began — or, where paused, when it was stopped |
 | `during` | what a pause interrupted, so a reader knows what resuming returns to |
@@ -107,6 +109,13 @@ container leaves behind, and the one worth acting on.
 survives restarts; the other is a schedule. Both have no open job, which is
 exactly why the state is read from `survey` and `run` together rather than from
 either alone.
+
+**`starting` is the one state the rows cannot say.** A pass lists instruments and
+writes new series before it opens a job, and until then its rows read exactly as
+a venue asleep between passes — four minutes, on binance, for an update somebody
+had just ordered. So it comes from the process instead: a pass under way with no
+job open yet. It lasts until the job opens, and `nextRun` is `null` for it,
+because the next pass is not the one that matters any more.
 
 ### Deciding what to ask for
 
@@ -344,6 +353,90 @@ is confirmed the same way, and what the venue says is what gets recorded. That
 division is what lets a disagreement stay visible instead of being settled by
 whoever wrote last.
 
+### Buckets
+
+Each venue as a storage bucket. The listing has S3's shape, and every object is
+keyed by what the file *is*. This is what a downloader walks: it writes each
+object at its key, so it needs no vocabulary of its own.
+
+| | |
+|---|---|
+| `GET /buckets/:venue` | One page of the bucket, in key order. |
+| `POST /buckets/:venue/report` | What became of a page, by `FileId`. |
+
+```
+GET /buckets/binance?pending=true&max-keys=1000&marker=<last key>
+x-catalog-lens: backfill-20
+```
+
+**The key is the canonical archive path**, the same one on every venue:
+
+```
+market/dataset[,variant]/YYYYMM/F/symbol/venue|market|dataset[,variant]|symbol|period[|part].ext
+
+perp/klines,1m/202001/B/BTCUSDT/binance|perp|klines,1m|BTCUSDT|20200101.zip
+perp/quotes/202001/B/BTCUSDT/binance|perp|quotes|BTCUSDT|20200101.zip
+```
+
+A dataset with no variant has no comma. `F` is the symbol's first letter in
+upper case, or `_` where it is not a letter. The variant's values are joined in
+the order their levels belong in. Keys sort as bytes, as S3's do, so
+`trades,default/` comes before `trades/`.
+
+**`ListObjects` V1 by default, V2's shape with `list-type=2`.** Both resume
+after an exact key, so they are one listing with two spellings:
+
+| | V1 | V2 (`list-type=2`) |
+|---|---|---|
+| resume after | `marker` | `continuation-token`, or `start-after` on the first page |
+| more to come | `IsTruncated`, `NextMarker` | `IsTruncated`, `NextContinuationToken` |
+| also answered | `Marker` | `KeyCount`, `ContinuationToken`, `StartAfter` |
+
+`max-keys` is 500 unless asked for, and 1,000 at most. Asking past the cap gets
+the cap, and anything that is not a whole number from 1 is a `400`. `prefix`,
+`delimiter`, `encoding-type` and `fetch-owner` are not implemented yet.
+
+**XML unless JSON is asked for.** With no `Accept` header, or one that prefers
+XML, the answer is S3's `ListBucketResult`. With `Accept: application/json`, it
+is the same fields under the same names, as one object. An error takes S3's
+`Error` shape with a `Code` and a `Message` in either format: `NoSuchBucket`
+(404), `NoSuchLens` (404) or `InvalidArgument` (400). An ETag keeps S3's quotes
+as part of its value, so in XML it reads `&quot;…&quot;` and in JSON `"\"…\""`.
+
+**Each object carries `Key`, `FileId`, `Url`, and, where the catalog knows
+them, `ETag`, `Size` and `LastModified`.** `FileId` is not S3's: it is the
+catalog's own number for the file, and what everything outside the S3 listing
+names a file by — a report above all. The key is the listing's identity and its
+cursor; it runs to hundreds of bytes, so it is not asked to be anything else. A
+`FileId` stays the file's for as long as the file exists, which holds because
+the catalog never runs a full `VACUUM`. `BaseUrl` joined to `Url` is the address of the
+file. When every object on a page lives under one base, `BaseUrl` is that base
+and each `Url` is the rest. When a page mixes a venue's hosts, `BaseUrl` is
+empty and each `Url` is complete.
+
+**Two filters S3 does not have.** Each one leaves files out, as though the bucket
+did not hold them:
+
+| | |
+|---|---|
+| `pending=true` | only files not yet downloaded |
+| `x-catalog-lens: <slug>` | only what that [lens](#lenses) lets through. Absent means every file; an unknown slug is a `404`, never the whole bucket |
+
+A walk is a cursor over keys, so a file catalogued behind the cursor is listed
+by the next walk, as on any bucket.
+
+**A report is the same as `POST /venues/:venue/report`, by `FileId`**, and the
+catalog settles it the same way:
+
+```json
+{ "downloaded": [4815162, "…"],
+  "failed":     [4815163],
+  "mismatched": [{ "FileId": 4815164, "Size": 506, "ETag": "…" }] }
+```
+
+The answer counts what was recorded, plus `unknown`: ids that name no file of
+this venue. They are otherwise ignored. A report holds at most 10,000 files.
+
 ### Exclusions
 
 | | |
@@ -432,10 +525,104 @@ runs for hours, and `GET /status` is where its progress lives. The reply carries
 `started`, `resumed`, `skipped` (with a reason each) and `phases`.
 
 A pause keeps every cursor, which is why there is no matching resume verb:
-starting a paused venue *is* resuming it. It is also **permanent until then**,
+starting a paused venue *is* resuming it — to what the pause interrupted, so a
+venue paused while waiting goes back to waiting. It is also **permanent until then**,
 and survives a restart — the pause is a row, not a flag in memory, so a
 deployment that comes back up does not restart a venue somebody deliberately
 halted.
+
+### Lenses
+
+A **lens** is a named way of looking at the catalog. Where one is in force, what
+it lets through *is* the catalog as far as that consumer is concerned; the rows
+underneath stay complete and unfiltered.
+
+| | |
+|---|---|
+| `GET /lenses` | Every lens, newest first. |
+| `GET /lenses/:slug` | One, by the address a consumer is configured with. |
+| `POST /lenses` | Create one. `slug` required; `name`, `note` and `definition` optional. |
+| `PUT /lenses/:slug` | Replace it whole — `slug`, `name`, `note`, `definition`, or any of them. |
+| `DELETE /lenses/:slug` | Delete it. |
+| `GET /lenses/options/:venue` | The combinations that venue publishes — `market`, `dataset`, `variant`, `grain`, and how many series each holds. What a rule is written against. |
+| `POST /lenses/check` | What is wrong with a definition, without storing it. |
+| `POST /lenses/size` | What a definition would put on a disk: `series`, `files`, `bytes`, `exact`. |
+| `GET /lenses/:lens/size` | The same, for one that exists. |
+| `POST /lenses/resolve` | What it actually selects, per venue: how many series, and the date spans. |
+
+**Addressed by `slug`, never by number**, in every path. A lens carries three
+names and they do different jobs: `slug` is what a consumer is configured with and
+what every path addresses, so it is stable; `name` is what a person calls it, free
+text and free to change; `note` is what it is for. Addressing by `name` would mean
+renaming a lens reconfigures whoever reads through it.
+
+**A consumer reads through a lens by naming it** in an `x-catalog-lens` header.
+The [bucket listing](#buckets) honours it. An unknown slug is a `404` rather
+than the unfiltered catalog.
+
+**Read whole, written whole.** There is no `PATCH` of a single rule, which is why
+rules carry no ids and their position in the array identifies them. Last write
+wins.
+
+### The definition
+
+```jsonc
+{
+  "format": 1,
+  "venues": {
+    "bitget": [
+      { "effect": "include", "to": "202012" },
+      { "effect": "exclude", "datasets": [{ "dataset": "books" }] },
+      { "effect": "exclude", "datasets": [{ "dataset": "trades" }], "from": "201901" }
+    ]
+  }
+}
+```
+
+**Keyed by venue name**, never by id: an id names a *host*, and bybit publishes
+its books from a second one.
+
+**`*` holds rules about every venue, and they apply before that venue's own.** A
+lens whose only rule is global reaches venues it never names — including ones
+added later.
+
+**Rules apply in order, starting from nothing.** `include` adds what it matches,
+`exclude` takes it away — so a list that opens with `exclude` lets nothing
+through.
+
+**A rule states only what it constrains.** An absent dimension means all of it, so
+`{ "effect": "include", "datasets": [{ "dataset": "trades" }] }` is every market,
+grain and instrument of every variant of trades, for all time.
+
+| field | matched against |
+|---|---|
+| `markets`, `grains` | the pattern's own |
+| `datasets` | a list of `{ dataset, variant? }`. An absent `variant` is every variant of that dataset |
+| `instruments` | the series' symbol. `@` is the venue-wide file, and an ordinary value here |
+| `from`, `to` | months, `yyyymm`, inclusive; absent is open |
+
+**A variant belongs to its dataset**, which is why the two travel as a pair. `1m`
+is a kline length, `full,incremental` a book shape, and trades have variants of
+their own — so two flat lists could not say *one length of kline, and every
+trade*, which is an ordinary thing to want:
+
+```jsonc
+"datasets": [{ "dataset": "klines", "variant": "1m" }, { "dataset": "trades" }]
+```
+
+Because rules compose, a later one can carve a hole in an earlier one's range, so
+a lens resolves to a **list of spans per series** rather than one range.
+
+**Sizing is why a lens is decidable**, so it is answered while somebody is still
+choosing. A selection of at most a few hundred series is counted from the files
+themselves; beyond that it is estimated from a sample of series and marked
+`exact: false`.
+
+**A definition that claims more than a venue publishes is refused**, with `400`
+and a `problems` list. Each problem names the venue, the rule's position and, where
+one part is at fault, the field — so an editor can put it where the choice was
+made. `POST /lenses/check` answers the same thing without storing, which is what a
+form asks on every change.
 
 ## Errors
 
@@ -443,6 +630,7 @@ halted.
 |---|---|
 | `400` | a malformed body — `keys` not an array, a required field missing, a batch over 10,000 — or an unknown `grain` |
 | `401` | the token is wrong or absent |
-| `404` | no such venue, month, file, or exclusion; also a key that decodes to nothing |
-| `409` | a correction the venue would not confirm; a forced update with nothing to update |
+| `404` | no such venue, month, file, exclusion or lens; also a key that decodes to nothing |
+| `409` | a correction the venue would not confirm; a forced update with nothing to update; a lens address already taken |
+| `413` | a body over 5 MB — room for a 10,000-key report |
 | `500` | a fault in this service — the log keeps the whole of it, the response says nothing |

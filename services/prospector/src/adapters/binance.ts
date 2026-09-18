@@ -1,4 +1,5 @@
 import { asSeries } from '../paths';
+import { walkOn } from './recurrence';
 import { canonicalInterval } from '../canonical';
 import { s3 } from '../scanners/s3';
 import { listing } from '../context';
@@ -21,36 +22,39 @@ export const binance: Adapter = declare({
 
   name:    'binance',
   scanner: s3,
-  list:    'https://s3-ap-northeast-1.amazonaws.com/data.binance.vision',
 
   /**
-   * **Half of the default, because the default was not working.**
-   *
-   * The listing host answers with connect timeouts under sustained walking — no
-   * 429, no 503, no `Retry-After`, just nothing back until the request aborts.
-   * S3 itself sustains thousands a second, so what is being hit is either a
-   * limit the bucket's owner configured or the connection ceiling of one origin,
-   * and from out here those are indistinguishable. Neither is a reason to keep
-   * sending at a rate that is demonstrably not being served.
-   *
-   * **The same figures are declared on gate, and they have to be.** Both list
-   * from `s3-ap-northeast-1.amazonaws.com`, and one limiter is built per host
-   * from whichever adapter reaches it first — so two different declarations
-   * would mean the venue that happened to start first decided the pace for both.
-   *
-   * **Lowered on evidence, twice.** At 50/s with 25 in flight the timeouts came
-   * back as soon as the catalog had the downlink to itself — and they had gone
-   * while a downloader was competing for it, which is to say while something
-   * else was slowing these requests down. That is the shape of a pace slightly
-   * too high rather than badly wrong, so `concurrency` came down first, being
-   * the one that decides how many sockets a single origin is asked to hold open.
-   * At 40/s they returned, so the rate came down too.
-   *
-   * Still not measured. If they survive 30/s, `concurrency` is the number to
-   * move again, and after that a bounded `undici` dispatcher with a keep-alive
-   * shorter than the server's idle reap.
+   * **No limit found.** Measured 2026-09-29/30 with HEAD and LIST probes: up
+   * to 1,788/s from one machine and ~1,200/s from the remote, without a single
+   * throttling answer. A probe takes ~300 ms from here, found or missing, so
+   * what is in flight sets the rate: 600 at once held ~1,750/s on missing keys
+   * (2026-09-30).
    */
-  pacing:  { perSecond: 30, concurrency: 15 },
+  pacing:  { perSecond: 2000, concurrency: 600 },
+
+  /**
+   * Probing, with a walking update on Thursdays — see `docs/services/PROSPECTOR.md`, *How each venue updates*.
+   */
+  recurs:  walkOn('thursday'),
+
+  /**
+   * How far behind today this venue is worth asking about.
+   *
+   * **Measured from the venue's own `Last-Modified`**, 2026-09-25 over the files
+   * of 2026-09-15 to 21: p99 33.6 hours after the dated day begins, over 457,671 files.
+   *
+   * **Every venue publishes more than a day after its period begins**, so a pass
+   * running in the small hours finds nothing for yesterday whatever the catalog's
+   * newest file suggests — a snapshot taken in the afternoon says only that the
+   * file had arrived by the afternoon.
+   *
+   * **A day further back again**, because a publishing hour that drifts later
+   * would put the frontier in front of the archive. Asking early costs a probe
+   * per series per night, every night, for a period that cannot exist yet; asking
+   * late costs the catalog's edge a day, and loses nothing — the frontier
+   * advances daily and the patience window covers what it has not reached.
+   */
+  probingLag: 3,
 
   /**
    * What is in the bucket but is not archive.
@@ -68,9 +72,24 @@ export const binance: Adapter = declare({
    *
    * The browsing UI's own assets need no rule — `index.html` and friends carry
    * no date, so `dateOf` already declines them.
+   *
+   * **And the `1w`, `3d` and `1mo` intervals, which are an abandoned
+   * experiment.** Binance offers them on every interval dataset — klines,
+   * markPrice, indexPrice, premiumIndex — and publishes them nowhere reliably:
+   * the futures daily trees stop in June 2023 and then emit a single 334-byte
+   * file in July 2026, and spot's monthly tree runs months behind and ends on a
+   * different date for each symbol and each interval.
+   *
+   * **Nothing is lost, because every one of them is an aggregate of the `1m`
+   * variant of the same dataset**, which binance does publish completely and
+   * this catalog holds — spot even has `1s`. `3d` is not even a calendar
+   * period: it is a stride from an arbitrary epoch, so it cannot be re-cut to
+   * anything else either. Refusing them costs 51 patterns and 22,155 series
+   * whose only effect was to be probed nightly and answer nothing.
    */
   accepts: (path) =>
-    ! /^\//.test(path) && ! /^data2\//.test(path) && ! /^data3\/[^/]+$/.test(path),
+    ! /^\//.test(path) && ! /^data2\//.test(path) && ! /^data3\/[^/]+$/.test(path)
+    && ! /\/(?:1w|3d|1mo)\//.test(path),
 
   /** What this venue lists today — its only discovery. */
   instruments: binanceInstruments,

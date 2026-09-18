@@ -1,9 +1,11 @@
 import { asSeries } from '../paths';
+import { walkOn } from './recurrence';
 import { BUCKET, canonicalInterval } from '../canonical';
 import { s3 } from '../scanners/s3';
 import { listing } from '../context';
 import type { Adapter, Inspection } from '../types';
 import { gateInstruments } from './gate/instruments';
+import { gateMisfiled, gateWrongTree } from './gate/misfiled';
 import { declare } from './declare';
 
 /**
@@ -50,23 +52,23 @@ export const gate: Adapter = declare({
 
   name:    'gate',
   scanner: s3,
-  list:    'https://s3-ap-northeast-1.amazonaws.com/gateio-public-data',
   probes:  false,
 
+
   /**
-   * **The same figures binance declares, on purpose.**
-   *
-   * Both venues list from `s3-ap-northeast-1.amazonaws.com` and a limiter is
-   * built once per host, from whichever adapter reaches it first — so declaring
-   * anything different here would mean the pace depends on which venue's survey
-   * started first. Changing one of these without the other is the bug this note
-   * exists to prevent.
-   *
-   * Lowered a second time, after connect timeouts came back on both venues with
-   * no refusal of any kind from the host. See the note on binance for what is
-   * and is not known about why.
+   * Probing, with a walking update on Mondays.
+   * @see docs/services/PROSPECTOR.md > *How each venue updates*.
    */
-  pacing:  { perSecond: 30, concurrency: 100 },
+  recurs:  walkOn('monday'),
+
+  /**
+   * **No limit found.** Measured 2026-09-29/30 with HEAD and LIST probes: up
+   * to 1,781/s from one machine and ~1,190/s from the remote, without a single
+   * throttling answer. A probe takes ~300 ms from here, found or missing, so
+   * what is in flight sets the rate: 600 at once held ~1,770/s on missing keys
+   * (2026-09-30).
+   */
+  pacing:  { perSecond: 2000, concurrency: 600 },
 
   /**
    * The seven trees gate still publishes. Everything else in the bucket is dead
@@ -119,6 +121,8 @@ export const gate: Adapter = declare({
      */
     if (next !== '' && /^\d{6}$/.test(next) !== SNAPSHOTS.has(tree ?? '')) return false;
 
+    if (gateMisfiled(path) || gateWrongTree(path)) return false;
+
     return stray !== STRAY;
   },
 
@@ -127,23 +131,6 @@ export const gate: Adapter = declare({
 
   /** Reading this venue's paths back into series — see `paths.ts`. */
   inspectUrl: (path) => inspect(path),
-
-  /**
-   * `{EPOCH_HH}`, `{EPOCH_MI}` — the instant being generated, in Unix seconds.
-   *
-   * The two snapshot trees name a file by the moment it covers and nothing else:
-   * `spot_index/202312/slice_index_1702857600`. Two slot names rather than one
-   * because the number cannot say whether the next file is an hour or a minute
-   * later — `spot_index` is hourly, `options_ticker` per minute — and a slot
-   * ends in the grain it steps at, which is how the catalog reads the cadence
-   * back off the pattern.
-   */
-  slotsFor: (at) => {
-    const seconds = String(Date.UTC(+at.slice(0, 4), +at.slice(4, 6) - 1, +at.slice(6, 8),
-      +(at.slice(8, 10) || 0), +(at.slice(10, 12) || 0)) / 1000);
-
-    return { '{EPOCH_HH}': seconds, '{EPOCH_MI}': seconds };
-  },
 
   /**
    * The stamp after the last `-`, or the epoch a snapshot is named for.
@@ -163,38 +150,65 @@ export const gate: Adapter = declare({
    * is not a shape gate publishes, and reading one as a date would place a file
    * in a month that does not exist.
    */
+  /**
+   * **The period a file belongs to, not the instant it covers.**
+   *
+   * Gate publishes below a day — twenty-four books an hour apart, a snapshot a
+   * minute apart — and those are parts of a period rather than periods of their
+   * own: a consumer asks for a day or a month and gets everything under it. So
+   * an hourly book is dated by its day and a snapshot by its month, and which
+   * part of it the file is lives in the path, where `{PART}` stands.
+   */
   dateOf: (path) => {
-    /**
-     * **The tree names the cadence, because the epoch cannot.** Both snapshots
-     * are an instant in Unix seconds and nothing else, and the same number is a
-     * different period depending on which of them it came from — the same
-     * reason `slotsFor` renders two slots rather than one.
-     */
-    const slice = /\/slice_(index|options_ticker)_(\d{10})$/.exec(path);
+    const slice = /\/(\d{6})\/slice_(?:index|options_ticker)_\d{10}$/.exec(path);
 
-    if (slice) return instantAt(Number(slice[2]) * 1000, slice[1] === 'index' ? 10 : 12);
+    if (slice) return slice[1]!;
 
     const stamped = /-(\d{6}|\d{8}|\d{10})\.(?:csv\.)?gz$/.exec(path);
 
     if (! stamped) return null;
 
-    const stamp = stamped[1]!;
+    /** Ten digits is an hour, and the hour is the part — the day is the period. */
+    return stamped[1]!.slice(0, stamped[1]!.length === 10 ? 8 : stamped[1]!.length);
+  },
 
-    return stamp;
+  /**
+   * How gate splits a period, which is the only thing about its sub-day files
+   * the catalog cannot work out for itself.
+   *
+   * **Every period is published whole or not at all.** Measured over forty
+   * hourly series: 753 of 769 days in the middle of a series carry all
+   * twenty-four hours, and the snapshot trees carry all 1,440 minutes of every
+   * day. A missing hour means the instrument was not listed yet or had stopped —
+   * not that nothing traded — so one part answers for its period.
+   *
+   * **Which is why the first part is asked alone.** If it is there the rest
+   * follow without being guessed at; if it is not, the period is not there and
+   * nothing else needs asking. That turns a quiet day from twenty-four requests
+   * into one, and a quiet month of the ticker from 43,200 into one.
+   *
+   * **Except where the series has never held a file.** A series' first day
+   * starts when the instrument was listed, which is mid-day — measured, none of
+   * forty first days carried hour 00 — so asking hour 00 there would write off a
+   * day that exists. With nothing yet known, every part is asked and probing
+   * decides.
+   */
+  expandParts: ({ series, date, lastPartFound, nextPart }) => {
+    const every = partsOf(series.pattern, date);
+
+    if (every.length === 0) return null;
+
+    /** Nothing known of this series yet, so the period is asked about whole. */
+    if (series.first === null) return { parts: every };
+
+    if (lastPartFound === null) return { parts: every[0]!, next: THE_REST };
+
+    return lastPartFound && nextPart === THE_REST ? { parts: every.slice(1) } : null;
   },
 });
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
-/**
- * A UTC instant as a stamp of `width` digits — `2026060107` for an hour,
- * `202606010730` for a minute.
- *
- * The separators come out rather than the string being sliced into pieces and
- * joined, so widening a grain is one number here and nothing else.
- */
-const instantAt = (ms: number, width: number): string =>
-  new Date(ms).toISOString().replace(/[-:T]/g, '').slice(0, width);
 
 /**
  * Gate: `<market>/<dataset>/<YYYYMM>/<SYMBOL>-<stamp>.csv.gz`, and one snapshot
@@ -233,19 +247,16 @@ const inspect = (path: string): Inspection => {
   const snapshot = GATE_SLICE.exec(path);
 
   if (snapshot) {
-    const { tree, name, epoch } = snapshot.groups!;
-    const grain = SLICES[tree!];
+    const { tree, month, name, epoch } = snapshot.groups!;
 
-    if (! grain) return { of: 'unknown', date: null };
-
-    const at = stampOf(Number(epoch), grain === '{EPOCH_MI}' ? 12 : 10);
+    if (! STEPS[tree!]) return { of: 'unknown', date: null };
 
     const meaning = MEANINGS[name!];
 
     if (! meaning) return { of: 'unknown', date: null };
 
     return {
-      of: 'series', date: at,
+      of: 'series', date: month!, part: epoch!,
       found: {
         market:  MARKET_OF[tree!] ?? tree!,
         dataset: meaning.dataset,
@@ -257,7 +268,13 @@ const inspect = (path: string): Inspection => {
          * exactly why the catalog gives it one.
          */
         symbol:  BUCKET,
-        pattern: `${tree}/{YYYY}{MM}/slice_${name}_${grain}`,
+
+        /**
+         * The instant names which part of the month this file is, and the month
+         * is the period — so the epoch lives in the path under `{PART}` and
+         * nothing here has to render it.
+         */
+        pattern: `${tree}/{YYYY}{MM}/slice_${name}_{PART}`,
       },
     };
   }
@@ -273,10 +290,18 @@ const inspect = (path: string): Inspection => {
   if (! canonical) return { of: 'unknown', date: null };
 
   /**
+   * **Ten digits is an hour, and an hour is part of a day.** Gate's books are
+   * published every hour; the day is the period a consumer asks for and the two
+   * hour digits are which part of it this file is.
+   */
+  const part = date!.length === 10 ? date!.slice(8, 10) : '';
+
+  /**
    * **Gate spells an instrument the same way everywhere**, in its keys and in
    * its own listing alike, so there is no second name to carry.
    */
-  return asSeries(path, { ...canonical, symbol: symbol!, date: date! });
+  return asSeries(path, { ...canonical, symbol: symbol!,
+    date: part ? date!.slice(0, 8) : date!, ...(part ? { part } : {}) });
 };
 
 /**
@@ -369,31 +394,61 @@ const GATE = new RegExp(
 
 /** `spot_index/202312/slice_index_1702857600` — an instant, with no extension. */
 const GATE_SLICE = new RegExp(
-  '^(?<tree>[a-z_]+)/\\d{6}/slice_(?<name>[a-z_]+)_(?<epoch>\\d{10})$');
+  '^(?<tree>[a-z_]+)/(?<month>\\d{6})/slice_(?<name>[a-z_]+)_(?<epoch>\\d{10})$');
 
 /**
- * How often each snapshot tree publishes, since the filename cannot say.
+ * Every part one period is published in, in the order they are written.
+ *
+ * **Two shapes, and the pattern says which.** A day of books is twenty-four
+ * hours named by their own two digits. A month of snapshots is an instant every
+ * hour or every minute, named by the epoch itself — so the tokens are computed
+ * from the month rather than listed.
+ *
+ * **Bounded by the period, not by the clock.** Nothing generates for a period
+ * that has not closed, so every part of the period asked about could exist by
+ * now and none of these is a guess about the future.
+ */
+const partsOf = (pattern: string, date: string): string[] => {
+  const slice = /\/slice_([a-z_]+)_\{PART\}$/.exec(pattern);
+
+  if (! slice) return HOURS;
+
+  const step = STEPS[slice[1] === 'index' ? 'spot_index' : 'options_ticker'];
+
+  if (! step) return [];
+
+  const from = Date.UTC(+date.slice(0, 4), +date.slice(4, 6) - 1, 1) / 1000;
+  const upto = Date.UTC(+date.slice(0, 4), +date.slice(4, 6), 1) / 1000;
+  const out: string[] = [];
+
+  for (let at = from; at < upto; at += step) out.push(String(at));
+
+  return out;
+};
+
+/**
+ * What gate asks itself for after the opening part: everything else there is.
+ *
+ * **Not a part.** Gate knows every part of a period from the period alone, so it
+ * needs no token to work out what follows — only to be asked once more. The core
+ * carries this unread, and this file is the only place it means anything.
+ */
+const THE_REST = '*';
+
+/** A day's parts, which are the same twenty-four for every day there has ever been. */
+const HOURS = Array.from({ length: 24 }, (_, at) => String(at).padStart(2, '0'));
+
+/**
+ * How often each snapshot tree publishes, in seconds — the filename cannot say.
  *
  * Established by measuring a month of each: `spot_index` gave 450 consecutive
  * gaps of 3,600 seconds and `options_ticker` 999 of 60, with no exceptions
  * either way.
  */
-const SLICES: Record<string, string> = {
-  spot_index:     '{EPOCH_HH}',
-  options_ticker: '{EPOCH_MI}',
+const STEPS: Record<string, number> = {
+  spot_index:     3_600,
+  options_ticker:    60,
 };
-
-/**
- * An instant as a stamp of the given width — `2026080100` for an hour,
- * `202608010000` for a minute.
- *
- * The catalog states every bound as a stamp, so gate naming a file by its epoch
- * is read into the same vocabulary as a venue naming a date. Rendering it back
- * is `slotsFor`'s business, which is why nothing here keeps the number.
- */
-const stampOf = (epoch: number, width: number): string =>
-  new Date(epoch * 1000).toISOString()
-    .replaceAll('-', '').replace('T', '').replaceAll(':', '').slice(0, width);
 
 
 /** The trees worth surveying. Anything not named here is refused at descent. */

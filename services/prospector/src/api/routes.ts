@@ -1,6 +1,8 @@
 import { logger } from '@devvir/service-kit';
 import {
-  addExclusion, correctFile, enrolment, establishedAt, everCompleted, exclusions, fileOf, keyOf,
+  addExclusion, cache, correctFile, countUnsettled, enrolment, establishedAt, everCompleted,
+  exclusions,
+  fileOf, keyOf,
   lastRun,
   catalogFiles, markDownloaded, markPending, monthTotals, phaseOf, removeExclusion, standingOf,
   seriesById, seriesCounts, seriesFor, venueIds, venueTotals, withdrawFile,
@@ -13,7 +15,7 @@ import type { Application, Request, Response } from 'express';
 import type { DatabaseSync } from 'node:sqlite';
 import type {
   Adapter, Cursor, Listed, MonthState, Offered, Grain, Pending, Reported, SeriesFilter,
-  Surveys,
+  Settled, Settling, SurveyState, Surveys,
 } from '../types';
 
 /**
@@ -50,7 +52,7 @@ const STATE: Record<string, string> = {
 
 /** How many rows a list returns when nobody says, and the most it ever will. */
 const LIMIT     = 1000;
-const MAX_LIMIT = 10_000;
+export const MAX_LIMIT = 10_000;
 
 export const setupRoutes = (app: Application, db: DatabaseSync, surveys: Surveys): void => {
   /**
@@ -94,6 +96,51 @@ export const setupRoutes = (app: Application, db: DatabaseSync, surveys: Surveys
         lastRun:     lastRun(db, venueIds(db, row.venue)),
       })),
     });
+  });
+
+  /**
+   * **Whether the rollup still says what the rows say**, and the repair for when
+   * it does not.
+   *
+   * The `month` table is a maintained counter, not a query: every write moves it
+   * in the same transaction as the row it describes, which is what makes an
+   * aggregate over hundreds of millions of files affordable. The standing risk of
+   * any such counter is a write nobody wired, and the only honest answer is to be
+   * able to check — so `drift` recomputes the truth and reports the disagreement
+   * without touching either side.
+   *
+   * **Both read the whole of `file`, so neither is wired to anything.** They are
+   * for the occasion when a bug has been found and its damage has to be undone,
+   * not for a page that polls. Nothing in the UI calls them.
+   */
+  app.get('/months/drift', (_req, res) => {
+    res.json({ items: cache.drift(db) });
+  });
+
+  /**
+   * **Refused while anything is surveying.** A recount reads every file row and
+   * writes the totals it derives; a pass running beside it is incrementing those
+   * same counters from work the recount has already walked past, so the repair
+   * would commit a figure that was true somewhere in the middle and is true of
+   * nothing by the end.
+   */
+  app.post('/months/rebuild', (_req, res) => {
+    const busy = surveys.venues().filter(one => surveys.running(one));
+
+    if (busy.length > 0) {
+      res.status(409).json({
+        error: `Pause every survey first — ${busy.join(', ')} still running. `
+             + 'A recount cannot settle while passes are counting against it.',
+      });
+
+      return;
+    }
+
+    const repairing = cache.drift(db);
+
+    cache.rebuild(db);
+
+    res.json({ repaired: repairing.length, months: repairing });
   });
 
   app.get('/venues/:venue/months', (req, res) => months(db, req, res));
@@ -263,47 +310,15 @@ export const setupRoutes = (app: Application, db: DatabaseSync, surveys: Surveys
       return;
     }
 
-    const files = downloaded.map(fileOf).filter((one): one is NonNullable<typeof one> => one !== null);
+    const known = <T>(one: T | null): one is T => one !== null;
 
-    const recorded = markDownloaded(db, files, new Date().toISOString());
-
-    /**
-     * **A file that would not come is asked about, not believed.** The venue
-     * either still serves it — so it stays owed and comes round again — or it
-     * has gone, and is ruled absent so nothing is left outstanding.
-     */
-    let withdrawn = 0;
-
-    for (const key of failed) {
-      const file = fileOf(key);
-
-      if (! file) continue;
-
-      const adapter = adapterFor(db, file.venueId);
-      const seen    = adapter ? await confirm(db, adapter, file.path) : null;
-
-      if (seen) {
-        logger.warn({ path: file.path },
-          'Reported as undownloadable, but the venue still serves it — leaving it owed');
-
-        continue;
-      }
-
-      withdrawn += withdrawFile(db, file.venueId, file.path) ? 1 : 0;
-    }
-
-    /** A disagreement about the bytes is settled the same way: by asking. */
-    let corrected = 0;
-
-    for (const one of mismatched) {
-      const file = fileOf(one.key);
-
-      if (! file) continue;
-
-      corrected += await reconcile(db, file, one, false) ? 1 : 0;
-    }
-
-    res.json({ recorded, withdrawn, corrected });
+    res.json(await settleReport(db, {
+      downloaded: downloaded.map(fileOf).filter(known),
+      failed:     failed.map(fileOf).filter(known),
+      mismatched: mismatched
+        .map(one => { const file = fileOf(one.key); return file ? { file, claimed: one } : null; })
+        .filter(known),
+    }));
   });
 
   /**
@@ -539,7 +554,7 @@ export const setupRoutes = (app: Application, db: DatabaseSync, surveys: Surveys
            * states a person most needs to tell apart: a venue between passes and
            * a venue nobody has ever asked about both showed as not surveying.
            */
-          ...standingOf(db, row.venue, ids, surveys.everyMs()),
+          ...starting(standingOf(db, row.venue, ids, surveys.everyMs()), surveys.passing(row.venue)),
 
           /**
            * **Whether this process has a loop alive**, which is not the same as
@@ -551,6 +566,26 @@ export const setupRoutes = (app: Application, db: DatabaseSync, surveys: Surveys
 
           /** Asked to stop, and still finishing the page it was on. */
           stopping:    surveys.stopping(row.venue),
+
+          /**
+           * **Whether a pass has ever finished here**, which is the whole of
+           * what separates starting a venue from updating one.
+           *
+           * **Said instead of leaving it to be inferred.** A reader working it
+           * out from `listable` gets it wrong on the two venues that cannot be
+           * listed — their first pass is an update and reads as one — and a
+           * reader working it out from the newest run's `kind` gets it wrong on
+           * any venue that re-reads itself by walking. Neither of those is a
+           * caller's business: which way a venue is read is this service's, and
+           * this is the part outside it.
+           *
+           * **Every one of the venue's servers, not any.** Bybit publishes from
+           * two, and a venue whose second host has never finished a pass has not
+           * been surveyed before — it is half read. Asking `some` made it report
+           * as surveyed the moment the smaller host finished, while the other was
+           * still hours into its first walk.
+           */
+          completedEver: ids.every(id => everCompleted(db, id)),
 
           /**
            * **Whether there is a keyspace to walk at all.**
@@ -565,6 +600,19 @@ export const setupRoutes = (app: Application, db: DatabaseSync, surveys: Surveys
            * nothing can walk it, whatever the reason.
            */
           listable:    adaptersForVenue(row.venue).some(one => one.listable !== false),
+
+          /**
+           * **Whether this venue parks candidates at all**, which is what makes
+           * an empty backlog mean something.
+           *
+           * Zero reads as *nothing outstanding* — fine for a venue that probes,
+           * and misleading for one whose listing states everything, where the
+           * column is not empty but inapplicable. A venue probes when its
+           * listing cannot speak for a file, and any venue does while it is
+           * generating keys, so the pass counts as well as the adapter.
+           */
+          probing:     adaptersForVenue(row.venue).some(one => one.probes === true)
+            || lastRun(db, ids).kind === 'update',
           wip:         ids.reduce((total, id) => total + parked(db, id), 0),
         };
       });
@@ -678,7 +726,7 @@ const surveying = (
 
     /**
      * **A venue already surveying is already doing what was asked**, since the
-     * loop that walks it then updates it daily does not end on its own. So an
+     * loop that keeps it current day after day does not end on its own. So an
      * ordinary request adds nothing and says so, rather than starting a second
      * loop against the same host.
      *
@@ -1016,7 +1064,7 @@ const reconcile = async (
 
   if (! agrees)
     logger.error({ path: file.path, claimed, seen },
-      'A reported change does not match the venue — recording what the venue says');
+      'Reported file differs from the venue; keeping what the venue has');
 
   return correctFile(
     db, file.venueId, file.path,
@@ -1051,7 +1099,44 @@ const confirm = async (
   }
 };
 
-const idsFor = (db: DatabaseSync, req: Request, res: Response): number[] | null => {
+/**
+ * What became of a page, settled: on disk where the downloader says so, and
+ * asked of the venue wherever the downloader reports a problem.
+ *
+ * **The caller reports problems; this service rules on them.** A file that would
+ * not come is asked about, not believed: the venue either still serves it — so
+ * it stays owed and comes round again — or it has gone, and is ruled absent so
+ * nothing is left outstanding. A disagreement about the bytes is settled the
+ * same way, by asking. Shared by every report, whatever key it names files by.
+ */
+export const settleReport = async (db: DatabaseSync, report: Settling): Promise<Settled> => {
+  const recorded = markDownloaded(db, report.downloaded, new Date().toISOString());
+
+  let withdrawn = 0;
+
+  for (const file of report.failed) {
+    const adapter = adapterFor(db, file.venueId);
+    const seen    = adapter ? await confirm(db, adapter, file.path) : null;
+
+    if (seen) {
+      logger.warn({ path: file.path }, 'Reported as undownloadable, but the venue still serves it');
+
+      continue;
+    }
+
+    withdrawn += withdrawFile(db, file.venueId, file.path) ? 1 : 0;
+  }
+
+  let corrected = 0;
+
+  for (const { file, claimed } of report.mismatched)
+    corrected += await reconcile(db, file, claimed, false) ? 1 : 0;
+
+  return { recorded, withdrawn, corrected };
+};
+
+/** The venue's ids, or a `404` sent and null where it names no venue. */
+export const idsFor = (db: DatabaseSync, req: Request, res: Response): number[] | null => {
   const venue = String(req.params['venue']);
   const ids   = venueIds(db, venue);
 
@@ -1126,10 +1211,10 @@ const optionally = (name: string, value: string | undefined): Record<string, str
  * join, and one that moves its archive is a restart.
  */
 const urlFor = (db: DatabaseSync, venueId: number, path: string): string => {
-  const row = db.prepare('SELECT base, root FROM venue WHERE id = ?')
-    .get(venueId) as { base: string; root: string } | undefined;
+  const row = db.prepare('SELECT base, key_root AS keyRoot FROM venue WHERE id = ?')
+    .get(venueId) as { base: string; keyRoot: string } | undefined;
 
-  return row ? `${row.base.replace(/\/$/, '')}/${row.root}${path}` : path;
+  return row ? `${row.base.replace(/\/$/, '')}/${row.keyRoot}${path}` : path;
 };
 
 const adapterFor = (db: DatabaseSync, venueId: number): Adapter | null => {
@@ -1147,9 +1232,14 @@ const establishedFor = (db: DatabaseSync, venue: string): string | null =>
     .filter((at): at is string => at !== null)
     .sort()[0] ?? null;
 
-const parked = (db: DatabaseSync, venueId: number): number =>
-  (db.prepare('SELECT count(*) n FROM wip WHERE venue_id = ?')
-    .get(venueId) as { n: number }).n;
+/**
+ * How much of this venue's backlog is outstanding.
+ *
+ * **The maintained count, not a fresh one.** This runs for every venue on every
+ * poll, and `count(*)` over a backlog of tens of millions froze the whole
+ * process for nearly two seconds each time — see `catalog/wip.ts`.
+ */
+const parked = (db: DatabaseSync, venueId: number): number => countUnsettled(db, venueId);
 
 /** The month after this one, as the exclusive ceiling of a whole month. */
 const nextMonth = (month: string): string => {
@@ -1195,3 +1285,15 @@ const decodeCursor = (value: unknown): Cursor | null => {
     return null;
   }
 };
+
+/**
+ * A venue whose pass has begun but has not opened its job yet.
+ *
+ * **Only where the rows would say `waiting`**, which is the one word that is
+ * wrong while a pass is preparing: it is what a venue asleep between passes
+ * says, and an update somebody had just ordered read as ignored for the whole
+ * of the preamble — four minutes, on binance. A paused venue stays paused, and
+ * one whose job is open already says what it is doing.
+ */
+const starting = <T extends { state: SurveyState; nextRun: string | null }>(standing: T, passing: boolean): T =>
+  (passing && standing.state === 'waiting' ? { ...standing, state: 'starting', nextRun: null } : standing);

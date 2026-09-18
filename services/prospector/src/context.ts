@@ -1,4 +1,4 @@
-import { fetchHead, fetchText } from './http';
+import { fetchHead, fetchPage } from './http';
 import { labelOf } from './pace';
 import type { Adapter, ListingContext, RunKind, Scanner } from './types';
 
@@ -11,19 +11,18 @@ import type { Adapter, ListingContext, RunKind, Scanner } from './types';
  * needs.
  *
  * The two fetchers are bound to the adapter on the way through. That is the
- * point of them: `paceFor` keys a limiter on the host, and `labelOf` names the
- * venue in the log, so a scanner handed these cannot outrun a cadence, cannot
- * pick the wrong budget, and cannot log as the wrong venue — none of which it
- * has any business deciding.
+ * point of them: `paceFor` keys a limiter on the venue and the host, and
+ * `labelOf` names the venue in the log, so a scanner handed these cannot outrun
+ * a cadence, cannot pick the wrong budget, and cannot log as the wrong venue —
+ * none of which it has any business deciding.
  */
 export const listing = (adapter: Adapter<Scanner<ListingContext>>): ListingContext => ({
   name:    adapter.name,
-  list:    adapter.list,
   base:    adapter.base,
-  root:    adapter.root,
+  keyRoot: adapter.keyRoot,
   accepts: adapter.accepts,
   dateOf:  adapter.dateOf,
-  text:    (url) => fetchText(adapter, url),
+  page:    (url, format, prefix) => fetchPage(adapter, url, format, prefix),
   head:    (url) => fetchHead(adapter, url),
 });
 

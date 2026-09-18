@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   flushTips, loadSeries, open, parkKeys, putFiles, putVenue, recordSeries, reconcile,
-  retirePattern, retireSeries, seriesFor, settleWalk, updateSeries, walkSeries,
+  retirePattern, retireSeries, seriesFor, updateSeries, walkSeries,
 } from '../src/catalog';
 import { openCatalog } from '../src/database';
 import { okx } from '../src/adapters/okx';
@@ -53,7 +53,7 @@ const sighted = (date: string, since = new Date('2026-08-01T00:00:00Z'),
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'series-'));
   db  = openCatalog(join(dir, 'catalog.db'), { seedData: false });
-  id  = putVenue(db, 'demo', okx.base, okx.root);
+  id  = putVenue(db, 'demo', okx.base, okx.keyRoot);
 });
 
 afterEach(() => {
@@ -115,10 +115,9 @@ describe('recording', () => {
 
 /**
  * **A tip is a claim that a range was asked about, so no single file can move
- * one.** Two things earn that claim and both state it over a set of series at
- * once: a walk that read its index to the end, and an update that drained its
- * queue. Neither is a per-file writer, which is why cataloguing a file leaves
- * every tip exactly where it was.
+ * one.** One thing earns that claim and states it over every series at once: a
+ * pass that finished — an index read to the end, or a queue drained — handing it
+ * to `reconcile`. Cataloguing a file leaves every tip exactly where it was.
  */
 describe('tips', () => {
   /** OVERDUE_DAYS short of the walk, then the last day that had closed by then. */
@@ -140,32 +139,80 @@ describe('tips', () => {
    * arrived was a gap in the index too, and the walk that read it says so for
    * every series at once.
    */
-  it('are settled by a walk that finished, gap or no gap', async () => {
+  it('are settled by a pass that finished, gap or no gap', async () => {
     const row = record();
 
     await catalogued(row, '20240101');
     await catalogued(row, '20240104');
 
-    expect(settleWalk(db, id, WALKED)).toBe(1);
+    expect(reconcile(db, id, WALKED).lifted).toBe(1);
     expect(seriesFor(db, id)[0]!.tip).toBe(EDGE);
   });
 
+  /**
+   * **A file above the floor is proof, and proof outranks patience.** Waiting
+   * `OVERDUE_DAYS` is for periods nothing has answered for; below a file that
+   * arrived there is nothing left to wait for, and holding the tip down there is
+   * what had an update re-ask the whole window every night.
+   */
+  it('settle at the newest file where that is above the floor', async () => {
+    const row = record();
+
+    await catalogued(row, '20240101');
+    await catalogued(row, '20240126');
+
+    reconcile(db, id, WALKED);
+
+    expect(seriesFor(db, id)[0]!.tip).toBe('20240126');
+  });
+
   /** Forward only: a walk that proves less than the tip already claims adds nothing. */
-  it('are left alone by a walk whose edge is lower than the tip', async () => {
+  /**
+   * **A file dated inside a period still being written proves that file and
+   * nothing else.** An index offers today; the day it belongs to is not over, so
+   * a tip there would claim a period nobody could have finished publishing.
+   */
+  it('never settle past a period that has not closed', async () => {
+    const row = record();
+
+    await catalogued(row, '20240131');
+
+    reconcile(db, id, new Date('2024-01-31T09:00:00Z'));
+
+    // The walk ran on the 31st, so the newest period that can be complete is
+    // the 30th — and the floor, fifteen days back, is lower still.
+    expect(seriesFor(db, id)[0]!.tip).toBe('20240130');
+  });
+
+  /** Nothing seen is no proof at all, whatever the clock says. */
+  it('settle a series with no files at the floor and no further', async () => {
+    const row = record();
+
+    await catalogued(row, '20240101');
+    record({ symbol: 'EMPTY' });
+
+    reconcile(db, id, WALKED);
+
+    const tips = Object.fromEntries(seriesFor(db, id).map(one => [one.symbol, one.tip]));
+
+    expect(tips['EMPTY']).toBe(undefined);
+  });
+
+  it('are left alone by a pass whose edge is lower than the tip', async () => {
     const row = record({}, { tip: '20240220' });
 
     await catalogued(row, '20240101');
 
-    expect(settleWalk(db, id, WALKED)).toBe(0);
+    expect(reconcile(db, id, WALKED).lifted).toBe(0);
     expect(seriesFor(db, id)[0]!.tip).toBe('20240220');
   });
 
   /** Each series at its own grain, since a month and a day close differently. */
   it('settle a monthly shape at a month and a daily one at a day', async () => {
-    record({ pattern: 'p/{YYYY}{MM}.zip', symbol: 'M' });
-    record({ symbol: 'D' });
+    await catalogued(record({ pattern: 'p/{YYYY}{MM}.zip', symbol: 'M' }), '202311', 'm/202311');
+    await catalogued(record({ symbol: 'D' }), '20231101', 'd/20231101');
 
-    settleWalk(db, id, WALKED);
+    reconcile(db, id, WALKED);
 
     const tips = Object.fromEntries(
       seriesFor(db, id).map(one => [one.grain, one.tip]));
@@ -178,8 +225,8 @@ describe('tips', () => {
    * was, so the next update asks about days already catalogued — wasteful, and
    * the only direction that is recoverable.
    */
-  it('are written out when they are flushed', () => {
-    record();
+  it('are written out when they are flushed', async () => {
+    await catalogued(record(), '20240101');
 
     // Scoped to this venue on purpose, so the row read back is this test's and
     // not whatever else a catalog happens to carry.
@@ -189,9 +236,9 @@ describe('tips', () => {
 
     expect(stored()).toMatchObject({ tip: null });
 
-    // settleWalk flushes what it moved, since a tip nobody wrote out is a tip
+    // Reconciling flushes what it moved, since a tip nobody wrote out is a tip
     // the next pass does not have.
-    settleWalk(db, id, WALKED);
+    reconcile(db, id, WALKED);
 
     expect(stored()).toMatchObject({ tip: EDGE });
 
@@ -199,10 +246,10 @@ describe('tips', () => {
     expect(flushTips(db)).toBe(0);
   });
 
-  it('read back when the table is loaded again', () => {
-    record();
+  it('read back when the table is loaded again', async () => {
+    await catalogued(record(), '20240101');
 
-    settleWalk(db, id, WALKED);
+    reconcile(db, id, WALKED);
     loadSeries(db);
 
     expect(seriesFor(db, id)[0]!.tip).toBe(EDGE);

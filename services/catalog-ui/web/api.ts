@@ -9,7 +9,6 @@ import { useEffect, useState } from 'react';
  */
 
 export const catalog = <T>(path: string): Promise<T> => ask<T>(`/api/catalog${path}`);
-export const hauler  = <T>(path: string): Promise<T> => ask<T>(`/api/hauler${path}`);
 
 /** Anything that changes something. The body is JSON or nothing. */
 export const post = <T>(url: string, body?: unknown): Promise<T> =>
@@ -18,6 +17,25 @@ export const post = <T>(url: string, body?: unknown): Promise<T> =>
     headers: { 'content-type': 'application/json' },
     body:    JSON.stringify(body ?? {}),
   });
+
+/** A change to something that already exists. */
+export const patch = <T>(url: string, body: unknown): Promise<T> =>
+  ask<T>(url, {
+    method:  'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body:    JSON.stringify(body),
+  });
+
+/** A replacement of something whole, which is how a lens is written. */
+export const put = <T>(url: string, body: unknown): Promise<T> =>
+  ask<T>(url, {
+    method:  'PUT',
+    headers: { 'content-type': 'application/json' },
+    body:    JSON.stringify(body),
+  });
+
+/** Taking something away. Answers whatever the service says it removed. */
+export const remove = <T>(url: string): Promise<T> => ask<T>(url, { method: 'DELETE' });
 
 /** What a view holds while it waits, and what it shows if the answer never comes. */
 export interface Asked<T> {

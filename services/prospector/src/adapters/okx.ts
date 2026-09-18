@@ -13,7 +13,8 @@ import { declare } from './declare';
  * Nothing is fetched to produce them, so a survey here costs no requests at all
  * and every key it yields is a candidate rather than a sighting.
  *
- * **One host, two prefixes**, which is why `root` stops at the host:
+ * **One host, two prefixes**, both under `cdn/` — so the address ends at `cdn/`
+ * and each key starts with its prefix:
  *
  * ```
  * static.okx.com/cdn/okex/traderecords/…   trades, candlesticks, swaprates, borrowrates
@@ -29,11 +30,6 @@ export const okx: Adapter = declare({
   name:    'okx',
   scanner: probed,
 
-  /**
-   * The portal index, which is the only thing here that answers a question about
-   * more than one key — and even then only for windows it is asked about.
-   */
-  list:    'https://www.okx.com/priapi/v5/broker/public/trade-data/download-link',
 
   /**
    * **Nothing here is established until it has been asked.**
@@ -56,22 +52,36 @@ export const okx: Adapter = declare({
     return {
       ranges: await symbolRanges(db, okx),
       base:   okx.base,
-      root:   okx.root,
+      keyRoot: okx.keyRoot,
       head:   (url: string) => fetchHead(okx, url),
     };
   },
 
   /**
-   * **100 a second, measured.** Sustained `HEAD` load against this host is clean
-   * there; 200 was tried and refused, 35 `403`s inside one pass. The refusals
-   * came from CloudFront (`cache: "Error from cloudfront"`), not the origin.
-   *
-   * What makes exceeding the cadence worse here than elsewhere is that the
-   * refusal is **sticky** — once tripped, unrelated paths keep being refused for
-   * minutes, answering in ~40ms, so a burst poisons the requests after it rather
-   * than only itself.
+   * **Limited between 100 and 200 a second.** At 200/s okx's CloudFront edge
+   * blocked us 7 times in ~80 minutes (2026-09-29) with `403`s that stay
+   * sticky for minutes, refusing unrelated paths too. 100/s has been clean.
    */
-  pacing:  { perSecond: 100, concurrency: 200 },
+  pacing:  { perSecond: 100, concurrency: 100 },
+
+  /**
+   * How far behind today this venue is worth asking about.
+   *
+   * **Measured from the venue's own `Last-Modified`**, 2026-09-25 over the files
+   * of 2026-09-15 to 21: p99 24.4 hours after the dated day begins, over 61,018 files — the promptest of the eight, and still past midnight.
+   *
+   * **Every venue publishes more than a day after its period begins**, so a pass
+   * running in the small hours finds nothing for yesterday whatever the catalog's
+   * newest file suggests — a snapshot taken in the afternoon says only that the
+   * file had arrived by the afternoon.
+   *
+   * **A day further back again**, because a publishing hour that drifts later
+   * would put the frontier in front of the archive. Asking early costs a probe
+   * per series per night, every night, for a period that cannot exist yet; asking
+   * late costs the catalog's edge a day, and loses nothing — the frontier
+   * advances daily and the patience window covers what it has not reached.
+   */
+  probingLag: 3,
 
   /**
    * **A missing key is a `404`; a `403` is the venue refusing us.**
@@ -87,7 +97,7 @@ export const okx: Adapter = declare({
    * keyspace this empty is the difference between ~69M requests and ~23M. Remove
    * the hook when the experiment is done; the fact above it stays true.
    */
-  ruleOnFailure: (status: number) => (status === 404 ? 'drop' : null),
+  ruleOnFailure: (_row, status) => (status === 404 ? 'drop' : null),
 
   /** What this venue lists today — its only discovery. */
   instruments: okxInstruments,

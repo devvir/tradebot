@@ -82,7 +82,7 @@ const venue = (opts: {
   };
 
   return {
-    name: 'fake', scanner, list: 'https://x', base: 'https://x', root: '',
+    name: 'fake', scanner, base: 'https://x', keyRoot: '',
     getContext: async () => null,
     dateOf: (path) => /(\d{4})-(\d{2})-(\d{2})\.zip$/.exec(path)?.slice(1, 4).join('') ?? null,
 

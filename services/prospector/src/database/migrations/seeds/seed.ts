@@ -147,22 +147,18 @@ const SEEDED_AT: Record<string, string> = {
   okx:    '20260912',
 
   /**
-   * **Withheld while bitget's seed is experimental**, and restored the moment the
-   * permanent seed ships.
+   * **Measured, not taken from the download index.** The pass behind it ran on
+   * this day: for every series it asked each period from that series' newest
+   * known file up to the frontier, and each `last` in the seed is the newest one
+   * that answered. So the claim this horizon makes — the seeding pass looked
+   * above every `last` and saw nothing — is the pass's own result.
    *
-   * The horizon is a claim that the seeding sweep looked from each series' `last`
-   * up to this day and saw nothing, so the run may jump that span. It is sound
-   * for a seed built from measurements and exactly wrong for one built to *make*
-   * them: this seed's bounds are the download index's word, and the index is
-   * known to under-report. Honouring the horizon would have the run skip every
-   * span the index was silent about — which is precisely the span the run exists
-   * to check — and then report the index back to itself as confirmed.
-   *
-   * The under-reporting is not only about old files: the index withholds recent
-   * days as well, and a sweep reading its silence as a frontier dates the seed
-   * to a day the archive had already published past.
+   * The index was never a candidate for it. It under-reports in both directions
+   * — files it never listed, and recent days it withholds long after the archive
+   * has published them — so a horizon taken from it would have the run skip what
+   * the index was silent about and report the index back to itself as confirmed.
    */
-  // bitget: withheld — see above.
+  bitget: '20260922',
 };
 
 /**

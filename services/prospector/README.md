@@ -54,8 +54,12 @@ is that file *of*.
 - **Serves the catalog over HTTP**, which is how everything else reaches it — what exists, what is
   owed, what is held, which months are finished, and how much is left. Nothing else opens the
   database. Every endpoint is in [CATALOG-API.md](../../docs/modules/CATALOG-API.md)
+- **Keeps the carts** — named profiles saying what a downloader should fetch: a venue per line and,
+  optionally, how much of it. Chosen from what the catalog holds, and refused where a line claims
+  more than a venue publishes
 - **Surveys when told to, then keeps itself current — across restarts.** `POST /surveys` starts a
-  venue and it walks once, then updates daily, until `POST /surveys/pause` stops it or a `refresh`
+  venue and it walks once, then re-reads it daily — by update, or by walking again where its adapter
+  says so — until `POST /surveys/pause` stops it or a `refresh`
   throws its progress away and starts over. Starting a venue **enrols** it, so a restart resumes an
   interrupted job, waits out the rest of a venue's interval, and leaves paused and never-asked-for
   venues alone. *Whether* to survey a venue is a decision this service cannot see; *how often* to
@@ -87,7 +91,8 @@ does: one adapter per server, since each has its own shape and its own limiter.
 | variable | default | |
 |---|---|---|
 | `PROSPECTOR_VENUES` | all | comma-separated subset to survey |
-| `PROSPECTOR_CONCURRENCY` | `200` | requests in flight at once, across every venue |
+| `PROSPECTOR_CONCURRENCY` | `200` | requests in flight at once, across every venue; one transport worker per 1,000 |
+| `PROSPECTOR_CONNECTIONS` | `600` | HTTP/1.1 connections open at once, across every venue; requests past it wait for one |
 | `CATALOG_TOKEN` | — | **required.** The shared secret every API request carries in `x-catalog-token` |
 | `CATALOG_PORT` | _(any free)_ | host port the API is published on |
 

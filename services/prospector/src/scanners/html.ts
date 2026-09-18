@@ -1,6 +1,6 @@
 import { accepted, catalogable, descend } from './descend';
-import { etagOf } from '../http';
-import { ceiling, flat } from '../paths';
+import { etagOf } from '../etag';
+import { ceiling } from '../paths';
 import type { Entries, ListingContext, Listed, ReadLevel, Scanner } from '../types';
 
 /**
@@ -24,7 +24,7 @@ import type { Entries, ListingContext, Listed, ReadLevel, Scanner } from '../typ
  *   keyspace, and a walk is a tree traversal instead of a straight line.
  * - **A directory is not always marked as one.** bybit's `trading/` links its
  *   children with a trailing slash and `spot/` links them without one, in the
- *   same bucket, so a link's shape is what has to be read — see `isDirectory`.
+ *   same bucket, so a link's shape is what has to be read — see `isDirectory` in `pages.ts`.
  */
 export const html: Scanner<ListingContext> = {
   name: 'html',
@@ -66,7 +66,7 @@ export const html: Scanner<ListingContext> = {
    * than filling a blank.
    */
   confirm: async (context, path) => {
-    const { status, headers } = await context.head(`${context.base.replace(/\/$/, '')}/${context.root}${path}`);
+    const { status, headers } = await context.head(`${context.base.replace(/\/$/, '')}/${context.keyRoot}${path}`);
 
     if (status === 404) return null;
 
@@ -152,7 +152,7 @@ const read = async (
   context: ListingContext,
   prefix:  string,
 ): Promise<Entries> => {
-  const entries = parse(await context.text(directoryUrl(context.list, prefix)), prefix);
+  const entries = await context.page(directoryUrl(context.base, prefix), 'index', prefix);
 
   const found: Entries = {
     /**
@@ -185,71 +185,8 @@ const level: ReadLevel = async (context, prefix) => {
   return { children, files: keys.some(key => catalogable(context, key)) };
 };
 
-const directoryUrl = (list: string, prefix: string): string =>
-  `${list.replace(/\/$/, '')}/${prefix}`;
-
-/**
- * Pull the entries out of an index page.
- *
- * Only `href` is read. The visible text beside it is the same name on every
- * server that renders these pages, and where it is not — a truncated long name —
- * it is the link that is right.
- *
- * Anything pointing outside the directory is dropped: the parent link, absolute
- * paths, and full URLs. What is left is a name, resolved against the directory
- * it was found in.
- */
-const parse = (page: string, prefix: string): Entries => {
-  const children: string[] = [];
-  const keys:     string[] = [];
-
-  /**
-   * **Copied, not sliced.** A capture points into the page it was matched
-   * against, and these outlive it — see `flat`. An index page is smaller than an
-   * S3 listing, but the arithmetic is the same and so is the fix.
-   */
-  for (const [, sliced] of page.matchAll(/<a\s[^>]*href="([^"]+)"/gi)) {
-    const href = flat(sliced!);
-
-    const name = decode(href!);
-
-    if (! name || name.startsWith('/') || name.startsWith('?') || name.startsWith('#')
-        || name.includes('://') || name.startsWith('..')) continue;
-
-    const path = prefix + name;
-
-    if (isDirectory(name)) children.push(path.endsWith('/') ? path : `${path}/`);
-    else keys.push(path);
-  }
-
-  return { children, keys };
-};
-
-/**
- * Whether a link names a directory rather than a file.
- *
- * A trailing slash settles it, and where a server omits one — bybit's `spot/`
- * tree links `BTCUSDT` where `trading/` links `BTCUSDT/` — the extension does:
- * every published file carries one, and no directory in an archive of symbols,
- * years and datasets does. A directory misread as a file costs a subtree; a file
- * misread as a directory costs one wasted request against a 404.
- */
-const isDirectory = (name: string): boolean =>
-  name.endsWith('/') || ! name.slice(name.lastIndexOf('/') + 1).includes('.');
-
-/** Percent-encoding and the handful of entities a server puts in an href. */
-const decode = (href: string): string => {
-  const entities = href
-    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"').replace(/&#39;/g, "'");
-
-  try {
-    return decodeURIComponent(entities);
-  } catch {
-    // A stray `%` is a name, not an escape. Better the raw link than nothing.
-    return entities;
-  }
-};
+const directoryUrl = (base: string, prefix: string): string =>
+  `${base.replace(/\/$/, '')}/${prefix}`;
 
 /**
  * An index names a file and says nothing else about it, so everything but the
@@ -260,7 +197,5 @@ const listed = (key: string): Listed => ({ key, size: null, etag: null, modified
 
 // ── Test access ───────────────────────────────────────────────────────────────
 
-export const _test_parse       = parse;
-export const _test_isDirectory = isDirectory;
 export const _test_next        = next;
 export const _test_known       = known;

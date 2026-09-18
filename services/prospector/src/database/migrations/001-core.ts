@@ -19,7 +19,7 @@ import type { DatabaseSync } from 'node:sqlite';
  * than splitting the identity from the addresses keeps one unit of information
  * in one place, and fixes the ids for ever: they are assigned in this frozen
  * order, so no seed and no new adapter can renumber the ones already assigned,
- * and adapters read `base` and `root` off these rows instead of restating them.
+ * and adapters read `base` and `key_root` off these rows instead of restating them.
  *
  * **The exclusions ship for the same reason.** They name specific files a venue
  * still serves and always will, so a catalog rebuilt without them catalogues the
@@ -47,15 +47,15 @@ export const core: Migration = {
 // ── The shipped rows ──────────────────────────────────────────────────────────
 
 const VENUES = `
-    INSERT OR IGNORE INTO venue (name, host, base, root) VALUES
-      ('binance', '',          'https://data.binance.vision',                              ''),
-      ('bitget',  '',          'https://img.bitgetimg.com/online',                         ''),
-      ('bybit',   'primary',   'https://s3.ap-southeast-1.amazonaws.com/public.bybit.com', ''),
-      ('bybit',   'secondary', 'https://quote-saver.bycsi.com',                            'orderbook/'),
-      ('gate',    '',          'https://download.gatedata.org',                            ''),
-      ('htx',     '',          'https://huobi-service-data.s3.amazonaws.com',              ''),
-      ('kucoin',  '',          'https://historical-data.kucoin.com',                       'data/'),
-      ('okx',     '',          'https://static.okx.com',                                   'cdn/');`;
+    INSERT OR IGNORE INTO venue (name, host, base, key_root) VALUES
+      ('binance', '',          'https://s3-ap-northeast-1.amazonaws.com/data.binance.vision', ''),
+      ('bitget',  '',          'https://img.bitgetimg.com/online',                            ''),
+      ('bybit',   'primary',   'https://s3.ap-southeast-1.amazonaws.com/public.bybit.com',    ''),
+      ('bybit',   'secondary', 'https://quote-saver.bycsi.com',                               'orderbook/'),
+      ('gate',    '',          'https://s3-ap-northeast-1.amazonaws.com/gateio-public-data',  ''),
+      ('htx',     '',          'https://huobi-service-data.s3.amazonaws.com',                 ''),
+      ('kucoin',  '',          'https://historical-data.kucoin.com',                          'data/'),
+      ('okx',     '',          'https://static.okx.com/cdn',                                  '');`;
 
 /**
  * Two files gate left in its bucket that are not data.

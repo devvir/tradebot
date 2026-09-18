@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { correctFile, fileOf, keyOf, markDownloaded, markPending, monthTotals, catalogFiles, putFiles, putVenue, recordSeries, venueIds, venueTotals } from '../src/catalog';
+import { correctFile, fileOf, keyOf, lastRun, markDownloaded, markPending, monthTotals, catalogFiles, putFiles, putVenue, recordSeries, venueIds, venueTotals } from '../src/catalog';
 import { openCatalog } from '../src/database';
 import type { CatalogFile } from '../src/types';
 import type { DatabaseSync } from 'node:sqlite';
@@ -380,5 +380,86 @@ describe('listing one dataset out of a venue', () => {
       expect(catalogFiles(db, [1], { downloaded: true, series: [klines], limit: 100 })
         .map(row => row.path)).toEqual(['a/1']);
     });
+  });
+});
+
+/**
+ * Whether a venue is still being backfilled, which is the one thing a reader
+ * wants that `kind` cannot say: a first pass reads everything and takes hours,
+ * every pass after it reads the recent edge, and either can be a walk.
+ *
+ * **A venue, not a host.** Bybit publishes from two servers, and the distinction
+ * only ever goes wrong there — which is why these are the tests that exist.
+ */
+describe('whether a pass is the venue\'s first', () => {
+  /** Bybit's shape: one name, two servers, each with its own runs. */
+  const twoHosts = () => [
+    putVenue(db, 'bybit', 'https://a', '', 'primary'),
+    putVenue(db, 'bybit', 'https://b', '', 'secondary'),
+  ];
+
+  const ran = (venueId: number, started: string, completed: string | null) =>
+    db.prepare(
+      `INSERT INTO run (venue_id, kind, scope, cursor, requests, found, started, completed)
+            VALUES (?, 'walk', '', NULL, 0, 0, ?, ?)`,
+    ).run(venueId, started, completed);
+
+  it('calls a venue that has never finished anything a first pass', () => {
+    const [a, b] = twoHosts();
+
+    ran(a!, 'T1', null);
+    ran(b!, 'T2', null);
+
+    expect(lastRun(db, venueIds(db, 'bybit')).first).toBe(true);
+  });
+
+  /**
+   * **The bug this replaced.** `first` used to mean "no pass started before this
+   * one", so the host that started second reported its own backfill as a top-up
+   * — on a fresh catalog, where both were minutes into their first walk.
+   */
+  it('does not call the later-starting host a top-up', () => {
+    const [a, b] = twoHosts();
+
+    ran(a!, '2026-09-25T14:49:40Z', null);
+    ran(b!, '2026-09-25T14:50:39Z', null);
+
+    const seen = lastRun(db, venueIds(db, 'bybit'));
+
+    expect(seen.ongoing).toBe(true);
+    expect(seen.first).toBe(true);
+  });
+
+  /** One host finishing says nothing while the other has never read itself through. */
+  it('keeps backfilling while either host has never completed', () => {
+    const [a, b] = twoHosts();
+
+    ran(a!, 'T1', 'T3');
+    ran(b!, 'T2', null);
+
+    expect(lastRun(db, venueIds(db, 'bybit')).first).toBe(true);
+  });
+
+  it('is a top-up once every host has completed one', () => {
+    const [a, b] = twoHosts();
+
+    ran(a!, 'T1', 'T3');
+    ran(b!, 'T2', 'T4');
+    ran(b!, 'T5', null);
+
+    expect(lastRun(db, venueIds(db, 'bybit')).first).toBe(false);
+  });
+
+  /** A venue with one server is the ordinary case and behaves as it always did. */
+  it('reads a single-host venue the same way', () => {
+    const one = putVenue(db, 'solo', 'https://x', '');
+
+    ran(one, 'T1', null);
+    expect(lastRun(db, venueIds(db, 'solo')).first).toBe(true);
+
+    db.exec(`UPDATE run SET completed = 'T2' WHERE venue_id = ${one}`);
+    ran(one, 'T3', null);
+
+    expect(lastRun(db, venueIds(db, 'solo')).first).toBe(false);
   });
 });

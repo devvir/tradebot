@@ -29,9 +29,5 @@
     "vite": "^8.0.13",
     "vitest": "^4.1.6"
   },
-  "pnpm": {
-    "supportedArchitectures": {
-      "libc": ["current", "musl"]
-    }
-  }
+  "packageManager": "pnpm@12.8.1"
 }

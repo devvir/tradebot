@@ -1,7 +1,9 @@
-import { guardBody, logger } from '@devvir/service-kit';
+import { logger } from '@devvir/service-kit';
 import { pass } from '@devvir/netgate';
 import { labelOf, paceFor } from './pace';
-import type { Adapter, Probed } from './types';
+import { countAsked, countSent } from './counts';
+import { carry } from './transport';
+import type { Adapter, Carried, PageFormat, Pages, PageRead, Probed, Reply } from './types';
 
 /**
  * A venue declined to answer, with what it said while declining.
@@ -56,27 +58,7 @@ const standard = (status: number, headers: Headers): boolean =>
   (status === 403 || status === 429) && headers.get('x-amz-error-code') === null;
 
 /**
- * An ETag reduced to what actually identifies the object.
- *
- * **Lower-cased, because the case belongs to the server rather than to the
- * file.** OKX serves the same order-book file from two clouds under two
- * prefixes — byte-identical, same length, and the same md5 in opposite cases,
- * uppercase from Alibaba OSS and lowercase from S3. A comparison that keeps the
- * case reads that as a new version: it appends a revision and clears
- * `downloaded_at`, marking a file already on disk as owed again. Nothing about
- * a hex digest is case-bearing, so normalising cannot lose a distinction.
- *
- * Quotes go because every venue sends them and none means them, and Apache's
- * `-gzip` suffix goes because it describes the transfer rather than the entity.
- */
-export const etagOf = (raw: string | null | undefined): string | null =>
-  raw?.replace(/^&quot;|&quot;$/g, '')
-    .replace(/^"|"$/g, '')
-    .replace(/-gzip$/, '')
-    .toLowerCase() ?? null;
-
-/**
- * Fetch a listing, retrying only what is worth retrying.
+ * Fetch a listing page, read, retrying only what is worth retrying.
  *
  * Transport errors and 5xx/429 are retried; a 403 or 404 is an answer, and
  * repeating it just delays the inevitable. The jitter is full rather than
@@ -88,16 +70,23 @@ export const etagOf = (raw: string | null | undefined): string | null =>
  * on whichever scope lists slowly enough for its sockets to go idle. That is
  * ordinary internet, not a fault worth losing a scope over.
  *
- * **A request that hangs is a failure, not a wait.** A listing takes about a
- * second, so a venue that has not replied by `ANSWER_MS`, or has stopped
- * replying for `STALL_MS`, is not going to — and without either bound it would
- * park a partition for as long as the socket stays open, which no retry policy
- * can rescue because nothing ever throws. Both are retried like any transport
- * error, and a partition that exhausts its attempts keeps its cursor and its
- * open run, so it is picked up again on the next turn of the venue's loop.
- * Nothing is ever skipped.
+ * **A request that hangs is a failure, not a wait.** A venue that has not
+ * replied in time, or has stopped replying part-way, is not going to — see
+ * `deliver` for both bounds — and without them it would park a partition for as
+ * long as the socket stays open. Both are retried like any transport error, and
+ * a partition that exhausts its attempts keeps its cursor and its open run, so
+ * it is picked up again on the next turn of the venue's loop. Nothing is ever
+ * skipped.
  */
-export const fetchText = async (adapter: Adapter, url: string): Promise<string> => {
+export const fetchPage = async <F extends PageFormat>(
+  adapter: Adapter,
+  url:     string,
+  format:  F,
+  prefix = '',
+): Promise<Pages[F]> => {
+  /** One request needed, whatever the attempts below cost to get an answer. */
+  countAsked(adapter);
+
   let last: unknown;
 
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
@@ -105,13 +94,9 @@ export const fetchText = async (adapter: Adapter, url: string): Promise<string> 
     if (attempt > 1) paceFor(adapter, url).retry();
 
     try {
-      const res = await send(adapter, url, 'GET');
+      const res = await send(adapter, url, { format, prefix });
 
-      if (res.ok) return await res.text();
-
-      // Nothing below reads a refusal's body, and the gate is not freed until
-      // something finishes with it — see `send`.
-      await discard(res);
+      if (res.ok) return res.page as Pages[F];
 
       if (answered(adapter, res.status, res.headers)) throw new Refused(res.status, res.headers, url);
 
@@ -154,6 +139,9 @@ export const fetchText = async (adapter: Adapter, url: string): Promise<string> 
  * only figure there is — see `pace.ts`.
  */
 export const fetchHead = async (adapter: Adapter, url: string): Promise<Probed> => {
+  /** One request needed, whatever the attempts below cost to get an answer. */
+  countAsked(adapter);
+
   let last: unknown;
 
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
@@ -161,11 +149,7 @@ export const fetchHead = async (adapter: Adapter, url: string): Promise<Probed> 
     if (attempt > 1) paceFor(adapter, url).retry();
 
     try {
-      const res = await send(adapter, url, 'HEAD');
-
-      // A `HEAD` has no body to read, and a venue answering with one anyway would
-      // otherwise hold the gate for a transfer nobody is making.
-      await discard(res);
+      const res = await send(adapter, url, null);
 
       if (answered(adapter, res.status, res.headers)) return { status: res.status, headers: res.headers };
 
@@ -194,31 +178,6 @@ const ATTEMPTS = 5;
 const BASE_MS  = 500;
 const MAX_MS   = 30_000;
 
-/** A listing answers in about a second; anything not replying by now is wedged. */
-const ANSWER_MS = 15_000;
-
-/**
- * How long a reply already in flight may go quiet.
- *
- * Separate from `ANSWER_MS` because it measures a different thing: not how long
- * the whole transfer takes, which is a fact about its size, but how long it goes
- * without progressing, which is the only evidence that it never will.
- *
- * **Deliberately close to the floor.** A body under load arrives a chunk per turn
- * of the event loop, so this has to clear the loop's own lag or it fires on a
- * healthy transfer — and a false stall costs a whole re-request, which against a
- * megabyte of listing is how a timeout turns into a rate limit. The lag it has
- * to clear is a second or so, and the worst gap ever measured here was three, so
- * ten is several times the headroom needed and still fails loudly enough to be
- * the first sign that this machine is oversubscribed.
- */
-const STALL_MS = 10_000;
-
-/** Finish with a body nobody is going to read, so its gate is freed. */
-const discard = async (res: Response): Promise<void> => {
-  if (res.body) await res.body.cancel().catch(() => {});
-};
-
 /**
  * Whether a status settles the question, leaving nothing for another attempt.
  *
@@ -243,7 +202,7 @@ const answered = (adapter: Adapter, status: number, headers: Headers): boolean =
  * so every other caller — including ones already waiting for a slot — stops
  * without having to be told.
  */
-const send = async (adapter: Adapter, url: string, method: 'GET' | 'HEAD'): Promise<Response> => {
+const send = async (adapter: Adapter, url: string, read: PageRead | null): Promise<Reply> => {
   const pace = paceFor(adapter, url);
 
   /**
@@ -257,73 +216,41 @@ const send = async (adapter: Adapter, url: string, method: 'GET' | 'HEAD'): Prom
 
   await pace.slot();
 
-  /**
-   * **Held until the transfer ends, not until the reply starts.**
-   *
-   * `fetch` resolves at the headers, and freeing the gate there counts a request
-   * as finished while its body is still on the wire — which for a listing is
-   * nearly all of it. The figure then means "requests waiting for a reply"
-   * while claiming to mean "requests in flight", and the two diverge by however
-   * many megabytes are being read: a hundred permitted requests can be a
-   * thousand open sockets.
-   *
-   * So the slot is surrendered by whatever ends the body — read to the end,
-   * failed, or cancelled unread — which is what `onSettled` reports. A caller
-   * that walks away from a body it does not want must cancel it, or the venue
-   * is left holding a slot for a transfer nobody is making.
-   */
-  let holding = true;
-
-  const release = (): void => {
-    if (! holding) return;
-
-    holding = false;
-
-    pace.done();
-  };
+  /** Counted once it has a slot, so every attempt is one request sent. */
+  countSent(adapter);
 
   /**
-   * **The deadline is on the answer, and silence is on the body.**
-   *
-   * `fetch` resolves at the headers, so a deadline around it asks the only
-   * question a deadline can answer: did the venue reply. Left running over the
-   * body it asks something else entirely — did the reply finish in time — and
-   * that is a question about size, which is never a fault. A listing page runs
-   * to megabytes and is entitled to take as long as it takes.
-   *
-   * `guardBody` holds the body to silence instead, restarting its clock on every
-   * chunk. A page still arriving is never cut off; one that stopped fails within
-   * `STALL_MS`, on the body itself rather than through the abort — an aborted
-   * fetch does not reliably settle, and a listing nobody is ever answered about
-   * parks a partition for the life of the process.
+   * **Held until the transfer ends, not until the reply starts.** `carry`
+   * settles once the body is read or dropped, so a slot counts a request for as
+   * long as the venue is sending it — a hundred permitted requests stay a
+   * hundred open transfers, however many megabytes each one is.
    */
-  const control = new AbortController();
-  const answer  = setTimeout(() => control.abort(), ANSWER_MS);
-
-  let res: Response;
+  let carried: Carried;
 
   try {
-    res = await fetch(url, { method, signal: control.signal });
+    carried = await carry(url, read);
   } catch (err) {
-    release();
-
-    // Never reached the venue. Counted, because retrying an unreachable host is
-    // what turns an outage into an outage plus a leak — see `Pace.faulted`.
+    // Never reached the venue, or never finished. Counted, because retrying an
+    // unreachable host is what turns an outage into an outage plus a leak — see
+    // `Pace.faulted`.
     pace.faulted(url, err);
 
     throw err;
   } finally {
-    clearTimeout(answer);
+    pace.done();
   }
 
-  if (blocked(adapter, res.status, res.headers)) pace.block(res.status, url, res.headers);
+  const headers = new Headers(carried.headers);
+
+  if (blocked(adapter, carried.status, headers)) pace.block(carried.status, url, headers);
   else pace.eased();
 
-  return guardBody(res, {
-    stallMs:   STALL_MS,
-    onStall:   () => control.abort(),
-    onSettled: release,
-  });
+  return {
+    status: carried.status,
+    ok:     carried.status >= 200 && carried.status < 300,
+    headers,
+    page:   carried.page,
+  };
 };
 
 /**

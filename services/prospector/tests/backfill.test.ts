@@ -26,9 +26,8 @@ vi.mock('../src/http', async (importOriginal) => ({
 const venue: Adapter = {
   name:    'demo',
   scanner: s3,
-  list:    'https://demo.example',
   base:    'https://demo.example',
-  root:    '',
+  keyRoot: '',
   dateOf:  (path) => /(\d{4})(\d{2})(\d{2})/.exec(path)?.slice(1).join('') ?? null,
 };
 
@@ -56,7 +55,7 @@ const answers = (status: number) => ({
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'backfill-'));
   db  = openCatalog(join(dir, 'catalog.db'), { seedData: false });
-  id  = putVenue(db, venue.name, venue.base, venue.root);
+  id  = putVenue(db, venue.name, venue.base, venue.keyRoot);
 });
 
 afterEach(() => {

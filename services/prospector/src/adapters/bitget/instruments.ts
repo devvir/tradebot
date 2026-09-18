@@ -99,7 +99,7 @@ export const bitgetInstruments = async (db: DatabaseSync): Promise<Instrument[]>
      */
     if (fresh.length > 0)
       logger.info({ venue: 'bitget', instruments: fresh.length },
-        'Asking bitget how it files the instruments the catalog has not met — one request each');
+        'Looking up how bitget files its new instruments');
 
     for (const [symbol, found] of await archiveNamesOf(fresh)) asked.set(symbol, found);
   }

@@ -20,8 +20,11 @@ Architecture, the proxy and what every column means are in
   `(dataset, variant, grain)` that market publishes. Symbol lists at venue and
   market level, asked for rather than loaded.
 - **surveys** — what every venue is doing, polled every ten seconds, with
-  Start/Pause/Resume, Update and Refresh per venue, and the same across all of
-  them.
+  Start per venue and pause/resume, update-now and refresh beside it, and
+  start/pause across all of them.
+- **lenses** — named slices of the catalog that a consumer reads through, such
+  as the one hauler downloads. Each lens is edited as rules per venue, sized
+  before it is saved, and refused where it claims more than a venue publishes.
 
 ## Environment
 
@@ -29,7 +32,6 @@ Architecture, the proxy and what every column means are in
 |---|---|---|
 | `CATALOG_URL` | `http://prospector:8080` | where the catalog answers |
 | `CATALOG_TOKEN` | — | its secret. Empty means the catalog is open; this forwards without a header |
-| `HAULER_URL` | — | where hauler answers, for the shopping list. Empty means there is none, and the page says so |
 | `CATALOG_UI_PORT` | `9020` | host port, set in the catalog module's `.env` |
 
 ## Development

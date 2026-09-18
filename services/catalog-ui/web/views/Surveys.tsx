@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Anchor, Badge, Button, Group, Modal, Stack, Text } from '@mantine/core';
+import { ActionIcon, Anchor, Badge, Box, Button, Group, Loader, Modal, Stack, Text } from '@mantine/core';
 import { catalog, post } from '../api';
-import { Dim, LastSurvey, Table, Waiting, bytes, count } from './Table';
+import { Dim, LastSurvey, Table, Waiting, bytes, count, howOf } from './Table';
 import { linkTo } from '../App';
+import type { ReactNode } from 'react';
 import type { Asked } from '../api';
-import type { Status } from '../types';
+import type { Order, Status } from '../types';
 
 /**
  * What every venue is doing, and the buttons that change it.
@@ -16,18 +17,55 @@ import type { Status } from '../types';
  * into a single status would hide exactly that.
  */
 export const Surveys = () => {
-  const { asked, again } = usePolled<{ items: Status[] }>('/status', catalog);
+  /**
+   * **Orders given here and not yet seen to take effect**, by venue.
+   *
+   * A click is answered in milliseconds and acted on in minutes — a pass lists
+   * instruments and writes series before it opens a job — and the row used to
+   * read exactly as it had before for the whole of that. Held until the status
+   * shows the change, so the row says it heard, and nothing in it can be
+   * clicked again until the first order is answered.
+   */
+  const [orders, setOrders] = useState<Record<string, Order>>({});
+
+  /** Quicker while something is owed an answer, so the answer shows when it lands. */
+  const { asked, again } = usePolled<{ items: Status[] }>('/status', catalog,
+    Object.keys(orders).length > 0 ? ORDER_POLL_MS : POLL_MS);
+
   const [busy, setBusy]  = useState<string | null>(null);
   const said             = useFading();
 
   /** A refresh throws a venue's progress away, so it is confirmed rather than done. */
   const [confirming, setConfirming] = useState<string | null>(null);
 
-  const act = async (what: string, body: unknown, label: string) => {
+  const act = async (
+    what:   string,
+    body:   unknown,
+    label:  string,
+    venues: readonly string[],
+    kind:   Order['kind'],
+  ) => {
     setBusy(label);
 
+    const at = Date.now();
+
+    const stateOf = (venue: string): string | null =>
+      asked.data?.items.find(row => row.venue === venue)?.state ?? null;
+
+    setOrders(had => ({
+      ...had,
+      ...Object.fromEntries(venues.map(venue => [venue, { kind, at, from: stateOf(venue) }])),
+    }));
+
     try {
-      const done = await post<{ resumed?: string[] }>(`/api/catalog${what}`, body);
+      const done = await post<{ resumed?: string[]; skipped?: { venue: string }[] }>(
+        `/api/catalog${what}`, body);
+
+      // Declined by the catalog — already going, nothing to update from — so
+      // there is nothing coming to wait for.
+      const declined = (done.skipped ?? []).map(one => one.venue);
+
+      if (declined.length > 0) setOrders(had => without(had, declined));
 
       /**
        * **A resumed update is said to be one.** The two are indistinguishable
@@ -38,11 +76,43 @@ export const Surveys = () => {
       said.say(done.resumed?.length ? `${label} — resumed where it stopped` : `${label} — asked`);
       again();
     } catch (err) {
+      setOrders(had => without(had, venues));
       said.say((err as Error).message);
     } finally {
       setBusy(null);
     }
   };
+
+  /**
+   * **An order leaves when the status shows it done, or when it has plainly
+   * not been.** Either way the row is handed back — the first because there is
+   * nothing left to wait for, the second because a row held for ever over an
+   * order the catalog never acted on is a worse lie than the one this fixes,
+   * and it is said out loud rather than dropped.
+   */
+  useEffect(() => {
+    const items = asked.data?.items;
+
+    if (! items || Object.keys(orders).length === 0) return;
+
+    const done:   string[] = [];
+    const lapsed: string[] = [];
+
+    for (const [venue, order] of Object.entries(orders)) {
+      const now = items.find(one => one.venue === venue);
+
+      if (! now || tookEffect(order, now)) done.push(venue);
+      else if (Date.now() - order.at > ORDER_MS) lapsed.push(venue);
+    }
+
+    if (done.length + lapsed.length === 0) return;
+
+    setOrders(had => without(had, [...done, ...lapsed]));
+
+    if (lapsed.length > 0)
+      said.say(`No sign of ${lapsed.join(', ')} acting on it after ${ORDER_MS / 60_000} minutes — `
+        + 'the catalog log will say why');
+  }, [asked.data, orders]);
 
   return (
     <Stack gap="md">
@@ -75,11 +145,29 @@ export const Surveys = () => {
                 cell: v => (
                   <Stack gap={4} align="flex-start">
                     <Anchor size="sm" href={linkTo({ venue: v.venue })}>{v.venue}</Anchor>
-                    <LastSurvey of={v.lastRun} />
+
+                    {/*
+                      **Resolved here, so the two columns cannot disagree.** The
+                      badge takes a run and the state badge takes a venue, and
+                      only the second can fall back to `completedEver` where a
+                      page is served against a catalog that does not answer
+                      `first` yet — so the fallback is applied once, on the way
+                      in, rather than in one of the two places.
+                    */}
+                    <LastSurvey of={{ ...v.lastRun, first: v.lastRun.first ?? ! v.completedEver }} />
                   </Stack>
                 ),
               },
-              { head: 'State', width: '9%', cell: v => <State of={v} /> },
+              {
+                /**
+                 * **Wider than it was, out of the column that stopped needing
+                 * it.** The badge carries a word and a mark now — `backfilling`
+                 * with a walker beside it — and the actions beside the row are
+                 * three icons and at most one word, where they used to be three
+                 * words.
+                 */
+                head: 'State', width: '11%', cell: v => <State of={v} order={orders[v.venue]} />,
+              },
               {
                 /**
                  * **Where the venue is in its passes**, which is the one thing
@@ -87,10 +175,24 @@ export const Surveys = () => {
                  * was walked end to end or merely topped up, and how long ago.
                  */
                 head: 'Runs',
-                width: '32%',
-                cell: v => <Detail of={v} />,
+                width: '31%',
+                cell: v => <Detail of={v} order={orders[v.venue]} />,
               },
-              { head: 'WIP', width: '10%', num: true, cell: v => count(v.wip) },
+              {
+                /**
+                 * **Zero and inapplicable are not the same thing.** A venue
+                 * whose listing states every file parks nothing ever, and a `0`
+                 * there reads as *nothing outstanding* — as though something had
+                 * just finished. A dash says the column is not about this venue,
+                 * and the figure appears the moment it is: anything parked, or a
+                 * pass that works by probing.
+                 */
+                head:  'WIP',
+                width: '10%',
+                num:   true,
+                cell:  v => (v.wip > 0 || (v.probing ?? v.lastRun.kind === 'update')
+                  ? count(v.wip) : <Dim>—</Dim>),
+              },
               {
                 /**
                  * **The count, and beneath it how many series it is spread
@@ -103,7 +205,7 @@ export const Surveys = () => {
                  * not a second figure competing with it.
                  */
                 head: 'Files',
-                width: '11%',
+                width: '12%',
                 num:  true,
                 cell: v => (
                   <Stack gap={0} align="flex-end">
@@ -125,7 +227,7 @@ export const Surveys = () => {
               { head: 'Bytes', width: '8%', num: true, cell: v => bytes(v.bytes) },
               {
                 head: '',
-                width: '15%',
+                width: '13%',
                 cell: (v) => {
                   /**
                    * **Nothing in the row is offered while it is mid-change.**
@@ -142,32 +244,50 @@ export const Surveys = () => {
                    * arriving before the first is answered asks the venue to stop
                    * for something that has already stopped it.
                    */
-                  const held = busy !== null || v.stopping;
+                  const held    = busy !== null || v.stopping || v.venue in orders
+                    || v.state === 'starting';
+                  const working = v.state === 'walking' || v.state === 'updating';
+                  const waiting = v.state === 'waiting';
+                  const paused  = v.state === 'paused';
 
                   return (
-                  <Group gap="xs" wrap="nowrap" justify="flex-end">
+                  <Group gap={6} wrap="nowrap" justify="flex-end">
                     {/*
-                      **One button, because there is only ever one thing to do
-                      to a venue.** A venue is running or it is not: the verb is
-                      start it, stop it, or ask the one that is idle to go now.
-                      Those are never available together, so three buttons meant
-                      two disabled ones in every row and a reader working out
-                      which of them was live.
+                      **A word for asking a venue to go, icons for what is done
+                      to one already going.** Asking is the decision on this page
+                      and reads as a sentence — *Start* a venue nothing has ever
+                      finished for, *Update* one something has — while stopping,
+                      resuming and refreshing are single familiar shapes.
 
-                      The word is the whole of it. Starting and resuming are one
-                      request — a pause keeps every cursor — and a venue with no
-                      keyspace to walk has no *Start* to offer at all, so the
-                      label says what clicking will mean *here* rather than
-                      naming an endpoint.
-
-                      **A fixed width and a colour per action**, because the
-                      button occupies the same place in every row: left to size
-                      themselves the words differ by a few pixels and the column
-                      wanders down the table. Teal sets a venue going, blue asks
-                      for a pass it would otherwise wait for, grey stops it, and
-                      orange stays reserved for the one that throws work away.
+                      **They keep their places whether or not they apply**, so
+                      the column reads as a column and a row does not rearrange
+                      itself as a venue changes state. A shape that cannot be
+                      clicked here says why in its tooltip.
                     */}
                     <Running of={v} busy={held} act={act} />
+
+                    {/*
+                      **One slot for the two opposite things**, because they are
+                      opposite: a venue going is stopped here and a stopped one
+                      is started again here, and no venue is ever both. Two slots
+                      meant one of them greyed out on every row and a reader
+                      working out which.
+
+                      Resuming is the same request as starting, so the colour
+                      follows the word it replaces: teal for setting a venue
+                      going, grey for stopping one.
+                    */}
+                    <Act
+                      colour={paused ? 'teal' : 'gray'}
+                      disabled={held || ! (working || waiting || paused)}
+                      title={v.stopping ? 'Pausing…'
+                        : working || waiting ? 'Pause survey'
+                          : paused ? 'Resume survey'
+                            : 'Not started yet'}
+                      onClick={() => (paused
+                        ? act(`/venues/${encodeURIComponent(v.venue)}/surveys`, {}, v.venue, [v.venue], 'go')
+                        : act('/surveys/pause', { venue: v.venue }, v.venue, [v.venue], 'pause'))}
+                    >{paused ? <Play /> : <Bars />}</Act>
 
                     {/*
                       **Nothing to re-read, so nothing to offer.** A refresh
@@ -175,17 +295,15 @@ export const Surveys = () => {
                       refuses a listing has no keyspace to walk: its series are
                       declared and every pass is an update over them. Clicking
                       would drop its run rows and walk nothing.
-
-                      Disabled rather than dropped, so both buttons keep their
-                      places in every row and the column reads as a column.
                     */}
-                    <Button
-                      size="compact-xs" variant="light" color="orange" w={BUTTON}
+                    <Act
+                      colour="orange"
                       disabled={held || ! v.listable}
-                      title={v.listable ? undefined
-                        : 'Nothing to re-walk — this venue publishes no listing'}
+                      title={v.listable
+                        ? 'Start over'
+                        : 'Nothing to start over: this venue has no listing'}
                       onClick={() => setConfirming(v.venue)}
-                    >Refresh</Button>
+                    ><Cycle /></Act>
                   </Group>
                   );
                 },
@@ -212,12 +330,15 @@ export const Surveys = () => {
 
         <Button
           size="xs" variant="default" disabled={busy !== null}
-          onClick={() => act('/surveys', {}, 'Every venue')}
+          onClick={() => act('/surveys', {}, 'Every venue',
+            (asked.data?.items ?? []).filter(v => ! GOING.has(v.state)).map(v => v.venue), 'go')}
         >Start/Resume All</Button>
 
         <Button
           size="xs" variant="default" disabled={busy !== null}
-          onClick={() => act('/surveys/pause', {}, 'Pause')}
+          onClick={() => act('/surveys/pause', {}, 'Pause',
+            (asked.data?.items ?? []).filter(v => v.state !== 'paused' && v.state !== 'not started')
+              .map(v => v.venue), 'pause')}
         >Pause All</Button>
       </Group>
 
@@ -242,7 +363,7 @@ export const Surveys = () => {
 
                 setConfirming(null);
                 void act(`/venues/${encodeURIComponent(venue)}/surveys`,
-                  { refresh: true }, `${venue} refresh`);
+                  { refresh: true }, `${venue} refresh`, [venue], 'go');
               }}
             >Refresh</Button>
           </Group>
@@ -254,81 +375,180 @@ export const Surveys = () => {
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
+/** How often the table is read, and how often while an order is owed an answer. */
+const POLL_MS       = 10_000;
+const ORDER_POLL_MS = 2_000;
+
+/**
+ * How long an order is held before it is let go of and said to have lapsed.
+ *
+ * A pass's preamble is minutes at the longest measured — four, on binance, with
+ * new instruments to write — and the catalog reports `starting` from its first
+ * second, so an order reaching this unconfirmed is one the catalog never began.
+ */
+const ORDER_MS = 2 * 60_000;
+
+/** States in which a venue is already going, so asking it to go means nothing. */
+const GOING = new Set(['starting', 'walking', 'updating']);
+
+/**
+ * Whether the status shows an order done.
+ *
+ * **A pass that began after the order counts**, not only one still running: a
+ * small venue can open and close a whole update between two polls, and waiting
+ * for a state it has already left would hold the row until the order lapsed.
+ */
+const tookEffect = (order: Order, now: Status): boolean => {
+  if (order.kind === 'pause') return now.state === 'paused' || now.state === 'not started';
+
+  if (GOING.has(now.state)) return true;
+
+  /**
+   * **A pause lifted is done once the venue is no longer paused.** One paused
+   * while waiting goes back to waiting — nothing starts, so waiting for a pass
+   * would hold the row until the order lapsed and then report it as ignored.
+   */
+  if (order.from === 'paused' && now.state !== 'paused' && now.state !== 'pausing') return true;
+
+  const began = now.lastRun.startedAt === null ? NaN : Date.parse(now.lastRun.startedAt);
+
+  return began >= order.at - 5_000;
+};
+
+const without = (had: Record<string, Order>, venues: readonly string[]): Record<string, Order> =>
+  Object.fromEntries(Object.entries(had).filter(([venue]) => ! venues.includes(venue)));
+
 const when = (at: string): string => at.slice(0, 16).replace('T', ' ');
 
 /**
- * The one button that decides whether a venue is meant to be running.
+ * How long a pass took, in one unit.
  *
- * **Three words, two endpoints, one question.** Pausing and starting are
- * genuinely opposite, so they cannot be the same request — but *starting* and
- * *resuming* are the same request, because a pause keeps every cursor and the
- * service has no separate resume verb to offer. So the word changes and the call
- * does not, which is the honest way round: it tells somebody what clicking will
- * mean here without inventing a distinction the catalog does not make.
+ * **The largest unit the duration fills at least once**, rounded to a whole
+ * number of it: a run is compared against other runs of the same venue, where
+ * the question is whether it took minutes or hours, and a second figure never
+ * changes that answer. `4h` is the whole fact about a walk; `4h 03m` is the same
+ * fact costing twice the width.
+ */
+const took = (from: string, to: string): string => {
+  const ms = Date.parse(to) - Date.parse(from);
+
+  const units: [number, string][] = [
+    [86400000, 'd'],
+    [3600000,  'h'],
+    [60000,    'm'],
+    [1000,     's'],
+  ];
+
+  for (const [size, unit] of units)
+    if (ms >= size) return `${Math.round(ms / size)}${unit}`;
+
+  return `${Math.max(ms, 0)}ms`;
+};
+
+/**
+ * The word that asks a venue to go, where there is something to ask for.
  *
- * A venue whose pause has been asked for and not yet taken shows `Pausing…` and
- * is disabled, because the answer to clicking again is "already asked".
+ * **One thing separates the two words, and it is not how the venue is read.**
+ * `Start` is a venue no pass has ever finished for; `Update` is one a pass has.
+ * Whether that first pass reads a listing or generates keys, and whether the
+ * update after it does the same or walks the archive again, is the catalog's
+ * business — a word taken from either would call okx and bitget "Update" on
+ * their first ever pass, and call gate's next update a walk, which is true and
+ * is not what somebody clicking is deciding.
+ *
+ * **Only where there is something to ask for.** A venue mid-pass is already
+ * doing it and a paused one resumes from the play beside this, so both hold the
+ * slot open and leave it empty — which is what keeps the icons lined up down the
+ * column.
  */
 const Running = ({ of, busy, act }: {
   of:   Status;
   busy: boolean;
-  act:  (path: string, body: unknown, label: string) => void;
+  act:  (path: string, body: unknown, label: string, venues: readonly string[], kind: Order['kind']) => void;
 }) => {
-  const working = of.state === 'walking' || of.state === 'updating';
-  const paused  = of.state === 'paused';
+  const waiting = of.state === 'waiting';
+
+  if (of.state !== 'not started' && ! waiting) return <Box w={BUTTON} />;
 
   /**
-   * **What clicking does here, which the venue's phase alone does not settle.**
-   *
-   * A venue with no keyspace to walk has no *Start* to offer: its series are
-   * declared rather than discovered, so the first thing it can do is the same
-   * thing every later pass does. Saying `Start` there would promise a walk that
-   * cannot happen.
+   * **A forced update is refused where nothing has ever completed**, so it is
+   * sent only by the venue it means something for: one waiting out its interval
+   * that is being asked not to wait. Everywhere else the plain request says
+   * everything — start it, and it works out what that means.
    */
-  const label = of.stopping ? 'Pausing…'
-    : working ? 'Pause'
-      : paused ? 'Resume'
-        : of.state === 'not started' && of.listable ? 'Start' : 'Update';
-
-  /**
-   * **A forced update is refused where nothing has completed**, so a venue
-   * running for the first time sends the plain request whatever the word on the
-   * button says — `update: true` would come back "walk it first", and for an
-   * unlisted venue there is no walk to do. `update: true` is therefore only for
-   * the one case it means something: a venue **waiting** out its interval that
-   * is being asked not to wait.
-   */
-  const forcing = of.state === 'waiting';
-
   return (
     <Button
       size="compact-xs" w={BUTTON}
-
-      /**
-       * **Resuming is routine; starting is not.** They are the same request and
-       * the same colour, so at the same weight a table of paused venues reads as
-       * a row of things demanding to be clicked — and a venue nobody has ever
-       * asked for is the one that wants noticing.
-       *
-       * **An outline rather than nothing.** Resume is the button most often
-       * wanted on this page, so dropping it to no background at all buried the
-       * common action to make room for the rare one. It keeps its edge and its
-       * colour and gives up only the fill: still plainly a button, still teal,
-       * one step behind the venue that has never run.
-       */
-      variant={paused ? 'outline' : 'light'}
-      color={working || of.stopping ? 'gray' : label === 'Update' ? 'blue' : 'teal'}
-      disabled={busy || of.stopping}
-      onClick={() => (working
-        ? act('/surveys/pause', { venue: of.venue }, of.venue)
-        : act(`/venues/${encodeURIComponent(of.venue)}/surveys`,
-          forcing ? { update: true } : {},
-          forcing ? `${of.venue} update` : of.venue))}
+      variant="light"
+      color={waiting ? 'blue' : 'teal'}
+      disabled={busy}
+      title={waiting
+        ? 'Update now'
+        : 'Start survey'}
+      onClick={() => act(`/venues/${encodeURIComponent(of.venue)}/surveys`,
+        waiting ? { update: true } : {},
+        waiting ? `${of.venue} update` : of.venue, [of.venue], 'go')}
     >
-      {label}
+      {of.completedEver ? 'Update' : 'Start'}
     </Button>
   );
 };
+
+/**
+ * One of the three things done to a venue that is already going.
+ *
+ * **A shape and a sentence.** The shape is what the row shows — three of them
+ * fit where one word did — and the sentence is in the tooltip, which is where a
+ * verb belongs once it has to explain itself: *stops after the current page* is
+ * the part of pausing somebody actually wants to know.
+ *
+ * **Never dropped, only disabled**, so the row keeps its shape as a venue
+ * changes state, and the tooltip says why it cannot be clicked.
+ */
+const Act = ({ colour, title, disabled, onClick, children }: {
+  colour:   string;
+  title:    string;
+  disabled: boolean;
+  onClick:  () => void;
+  children: ReactNode;
+}) => (
+  <ActionIcon
+    size="sm" variant="light" color={colour}
+    title={title} aria-label={title} disabled={disabled} onClick={onClick}
+  >
+    {children}
+  </ActionIcon>
+);
+
+/**
+ * The three shapes, drawn here rather than installed.
+ *
+ * Three glyphs at one size do not carry an icon package, and a `currentColor`
+ * path inherits the button's colour and its disabled state without any of them
+ * having to know what a Mantine variant is.
+ *
+ * **Hold, go, start over** — a pass being stopped, a paused venue carrying on,
+ * an archive being read again from the top.
+ */
+const Bars = () => (
+  <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
+    <path d="M4 2.5h2.6v11H4v-11Zm5.4 0H12v11H9.4v-11Z" />
+  </svg>
+);
+
+const Play = () => (
+  <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
+    <path d="M3.8 2.4 13 8l-9.2 5.6V2.4Z" />
+  </svg>
+);
+
+const Cycle = () => (
+  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+    strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+    <path d="M13.5 8a5.5 5.5 0 1 1-1.9-4.2" />
+    <path d="M13.6 1.6v2.8h-2.8" />
+  </svg>
+);
 
 /**
  * Where the venue stands, in one badge.
@@ -348,22 +568,98 @@ const Running = ({ of, busy, act }: {
  * Two things leave it: a loop that threw its way out while its run row stayed
  * open, and a venue whose job no deployment in scope will pick up.
  */
-const State = ({ of }: { of: Status }) => {
+const State = ({ of, order }: { of: Status; order?: Order }) => {
   const working = of.state === 'walking' || of.state === 'updating';
 
   if (working && ! of.surveying)
     return <Badge color="red" variant="light" size="sm">stalled</Badge>;
 
+  /**
+   * **Heard, and on its way.** An order this page gave and the catalog has not
+   * yet shown — or a pass the catalog says has begun and has not opened its job
+   * yet. Both are a venue about to change, and the one thing they must not read
+   * as is the state it is leaving.
+   */
+  const pausing  = order?.kind === 'pause';
+  const starting = of.state === 'starting' || order?.kind === 'go';
+
+  if (pausing || starting)
+    return (
+      <Badge
+        color={pausing ? 'orange' : 'teal'} variant="light" size="sm"
+        leftSection={<Loader size={9} color="currentColor" />}
+        title={pausing ? 'Pausing' : 'Starting'}
+      >{pausing ? 'pausing' : 'starting'}</Badge>
+    );
+
   const colour = working ? 'teal'
     : of.state === 'waiting' ? 'blue'
       : of.state === 'paused' ? 'orange' : 'gray';
 
-  return <Badge color={colour} variant="light" size="sm">{of.state}</Badge>;
+  /**
+   * **What is happening, not how.** `walking` and `updating` are the two
+   * mechanisms this service has, and naming the state after one of them made the
+   * badge answer a question nobody asked while hiding the one they did: whether
+   * this is the first long read of a venue or the daily top-up. So the word is
+   * the occasion — **backfilling** the first time, **updating** every time after
+   * — and the mechanism stays, as an icon and a tooltip, for whoever wants it.
+   */
+  /**
+   * **`first` where the catalog says so, and the next best thing where it does
+   * not.** The page is static files and the API is a process, so a deployment
+   * serves a new page against an older catalog for as long as it takes to
+   * restart — and a venue that has never completed a pass is backfilling by any
+   * reading, which is what makes the fallback safe rather than merely quiet.
+   */
+  const first = of.lastRun.first ?? ! of.completedEver;
+  const said  = ! working ? of.state : first ? 'backfilling' : 'updating';
+
+  return (
+    <Badge
+      color={colour} variant="light" size="sm"
+      title={working && of.lastRun.kind !== null ? howOf(of.lastRun.kind) : undefined}
+      leftSection={working && of.lastRun.kind !== null
+        ? (of.lastRun.kind === 'walk' ? <Walking /> : <Probing />) : undefined}
+    >{said}</Badge>
+  );
 };
+
+/**
+ * The two mechanisms, as shapes.
+ *
+ * **A walker for reading an index** — it goes through the archive in order,
+ * page after page — and **a magnifier for probing**, which asks about one key at
+ * a time and mostly hears no. Drawn here for the same reason the survey buttons
+ * are: three paths do not carry an icon package, and `currentColor` keeps them
+ * inside whatever the badge is coloured.
+ */
+const Walking = () => (
+  <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+    strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <circle cx="9.2" cy="2.6" r="1.4" fill="currentColor" stroke="none" />
+    <path d="M9.4 5.2 7 7.6l2 2 .6 4.2" />
+    <path d="M7 7.6 4.4 9.2 3.4 13" />
+    <path d="M9.4 5.2l2.4 1.6 1.4-.4" />
+  </svg>
+);
+
+const Probing = () => (
+  <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+    strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+    <circle cx="7" cy="7" r="4.2" />
+    <path d="M10.2 10.2 14 14" />
+  </svg>
+);
 
 /**
  * The venue's last meaningful passage of work: a run that is happening, or the
  * newest one that finished.
+ *
+ * **What a finished pass cost, not when it landed.** How long a venue takes is
+ * the figure a cadence is decided on and the one that moves when something
+ * changes; the clock time it happened to finish at is the same fact for every
+ * venue on the same schedule and answers nothing. The moment is kept, in the
+ * tooltip, for the days it matters.
  *
  * **One event, and it is always the same kind of event.** This column used to
  * report whatever the *state* happened to make available — a pause time here, a
@@ -380,22 +676,43 @@ const State = ({ of }: { of: Status }) => {
  * Waiting is not a case either: a venue waiting for its next update is one whose
  * update *completed*, which is exactly what it reports.
  */
-const Detail = ({ of }: { of: Status }) => {
+const Detail = ({ of, order }: { of: Status; order?: Order }) => {
   const run  = of.lastRun;
-  const kind = run.kind === 'walk' ? 'Walk' : 'Update';
+
+  /** The occasion, as the badge beside it names it; the mechanism is the title. */
+  const what = (run.first ?? ! of.completedEver) ? 'Backfill' : 'Update';
+
+  /**
+   * The mechanism, and the moment — both context for the duration, which is the
+   * fact the column states.
+   */
+  const how = run.kind === null
+    ? undefined
+    : [run.startedAt && `Started at ${when(run.startedAt)}`, howOf(run.kind)]
+        .filter(Boolean).join('\n');
+
+  /**
+   * **What was asked, not what last happened.** The finished pass below is
+   * still true, but it is no longer the news — and shown alone while an order
+   * is on its way, it is exactly the row that looked as though nothing was.
+   */
+  if ((of.state === 'starting' || order?.kind === 'go') && ! run.ongoing)
+    return <Text size="sm">{run.kind === null || ! of.completedEver ? 'Backfill' : 'Update'} starting…</Text>;
 
   if (run.kind === null) return <Dim>Not started yet</Dim>;
 
   if (run.ongoing)
     return run.startedAt
-      ? <Text size="sm">{kind} started at {when(run.startedAt)}</Text>
-      : <Text size="sm">{kind} in progress</Text>;
+      ? <Text size="sm" title={how}>{what} started at {when(run.startedAt)}</Text>
+      : <Text size="sm" title={how}>{what} in progress</Text>;
 
   if (run.at === null) return <Dim>—</Dim>;
 
   return (
     <Stack gap={0} align="flex-start">
-      <Text size="sm">{kind} completed at {when(run.at)}</Text>
+      <Text size="sm" title={how}>
+        {what} completed {run.startedAt ? `in ${took(run.startedAt, run.at)}` : `at ${when(run.at)}`}
+      </Text>
 
       {/*
         Only where the venue is waiting for the next one. A finished walk sits in
@@ -436,12 +753,13 @@ const Due = ({ at }: { at: string | null }) => {
 };
 
 /**
- * How wide every per-venue button is.
+ * How wide the starting button is.
  *
- * **The same for all of them**, so the column reads as a column. `Pausing…` is
- * the longest word any of them shows, and it sets the figure.
+ * **Fixed, and held even where there is no button**, so every row's icons line
+ * up down the column whatever state its venue is in. `Update` is the longest
+ * word it shows, and it sets the figure.
  */
-const BUTTON = 78;
+const BUTTON = 62;
 
 /** How long an acknowledgement stays on screen before it stops being news. */
 const SAID_MS = 6_000;
@@ -476,7 +794,7 @@ const useFading = () => {
  * open. Ten seconds is often enough to watch a venue change state and rare
  * enough to be free.
  */
-const usePolled = <T,>(path: string, ask: (path: string) => Promise<T>) => {
+const usePolled = <T,>(path: string, ask: (path: string) => Promise<T>, everyMs = POLL_MS) => {
   const [state, setState] = useState<Asked<T>>({ loading: true });
 
   const again = useCallback(() => {
@@ -495,10 +813,10 @@ const usePolled = <T,>(path: string, ask: (path: string) => Promise<T>) => {
   useEffect(() => {
     again();
 
-    const timer = setInterval(again, 10_000);
+    const timer = setInterval(again, everyMs);
 
     return () => clearInterval(timer);
-  }, [again]);
+  }, [again, everyMs]);
 
   return { asked: state, again };
 };

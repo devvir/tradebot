@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  flushTips, loadSeries, putVenue, putFiles, recordSeries, retirePattern, settleWalk,
+  flushTips, loadSeries, putVenue, putFiles, reconcile, recordSeries, retirePattern,
   updateSeries,
 } from '../src/catalog';
 import { openCatalog } from '../src/database';
@@ -155,6 +155,40 @@ describe('what an update generates', () => {
   });
 
   /**
+   * **A venue that publishes late is cheaper to wait for than to ask twice.** The
+   * frontier is where generation stops, so moving it back asks about a period
+   * once it has had time to appear rather than every night until it does.
+   */
+  describe('how far behind today it stops', () => {
+    const row = () => recordSeries(db, id, found(), { tip: '20260304', first: '20240101' });
+
+    it('stops at yesterday by default', () => {
+      expect(keys(String(row().id)).at(-1))
+        .toBe('x/20260309/BTC-USDT-trades-2026-03-09.zip');
+    });
+
+    it('stops a lag short of it where the venue asks for one', () => {
+      expect(keys(String(row().id), { lag: 4 }).at(-1))
+        .toBe('x/20260306/BTC-USDT-trades-2026-03-06.zip');
+    });
+
+    /**
+     * **Counted in days at every grain**, which is what makes it one number: at
+     * a monthly grain a lag of forty asks for the last month that *ended* more
+     * than forty days ago. Standing on 10 March, January ended 38 days back and
+     * is not eligible yet, so December is the answer.
+     */
+    it('counts the days at a monthly grain too', () => {
+      const monthly = recordSeries(db, id,
+        found({ dataset: 'klines', pattern: 'm/{YYYY}{MM}/{SYMBOL}.zip' }),
+        { tip: '202511', first: '202401' });
+
+      expect(keys(String(monthly.id), { lag: 40 }).at(-1))
+        .toBe('m/202512/BTC-USDT.zip');
+    });
+  });
+
+  /**
    * **The archive's spelling is recorded on the series, not reapplied per pass.**
    *
    * It used to be a rule handed to generation, which meant the rule that writes a
@@ -278,12 +312,22 @@ describe('resuming an update', () => {
   const WALKED = new Date('2026-03-23T00:00:00Z');
 
   /** A flushed tip is where the next update starts, which is the whole point of it. */
-  it('starts from a tip that was written out', () => {
+  it('starts from a tip that was written out', async () => {
     const row = recordSeries(db, id, found(), { tip: '20260306', first: '20240101' });
 
+    /**
+     * One file, because reconciling drops a series that holds none — and one
+     * far below the floor, so what moves the tip here is patience rather than
+     * proof.
+     */
+    await putFiles(db, [{
+      venueId: id, path: 'p/20240101', date: '20240101', size: 1, etag: 'e',
+      modified: null, existence: 'confirmed', seriesId: row.id!, seenAt: 'T1',
+    }]);
+
     // Moved in memory, then written out and read back, which is the whole path a
-    // tip takes between one update and the next.
-    settleWalk(db, id, WALKED);
+    // tip takes between one pass and the next.
+    reconcile(db, id, WALKED);
     flushTips(db);
     loadSeries(db);
 
@@ -419,5 +463,133 @@ describe('the span a seed already proved empty', () => {
 
     expect(page.listed[0]!.key).toContain('2026-02-14');
     expect(page.listed.some(one => one.key.includes('2026-02-10'))).toBe(false);
+  });
+});
+
+/**
+ * **A period a venue publishes in several files.** The pattern says so with a
+ * `{PART}`, and only the venue knows what goes in it — a count nobody states
+ * (bitget cuts a day every 100,000 rows) or a partitioning it can name outright
+ * (gate's 24 hours). Both arrive here as tokens, and the chain is followed as
+ * far as the catalog can answer for itself before a request is spent.
+ */
+describe('a period published in parts', () => {
+  const PARTED = 'x/{YYYY}{MM}{DD}/{SYMBOL}-{YYYY}-{MM}-{DD}_{PART}.zip';
+
+  /** One day to generate for: the tip is the day before the frontier. */
+  const oneDay = () =>
+    recordSeries(db, id, found({ pattern: PARTED }), { tip: '20260308', first: '20240101' });
+
+  const key = (part: string) => `x/20260309/BTC-USDT-2026-03-09_${part}.zip`;
+
+  /** Files the catalog already holds, which no pass asks about again. */
+  const filed = async (row: { id?: number }, ...parts: string[]) =>
+    putFiles(db, parts.map(part => ({
+      venueId: id, path: key(part), date: '20260309', size: 1, etag: 'e', modified: null,
+      existence: 'confirmed' as const, seriesId: row.id!, seenAt: 'T1',
+    })), true);
+
+  /** Names one part at a time and waits to hear how it went — bitget's shape. */
+  const chained: Rules = {
+    parts: ({ lastPartFound, nextPart }) => {
+      if (lastPartFound === null) return { parts: '001', next: '002' };
+
+      return lastPartFound
+        ? { parts: nextPart, next: String(Number(nextPart) + 1).padStart(3, '0') }
+        : null;
+    },
+  };
+
+  /**
+   * **Where a venue cannot say how it partitions, nothing is generated.** Keying
+   * a `{PART}` pattern without a part builds a path the venue does not serve, so
+   * emitting one would spend the whole period's requests on a shape that cannot
+   * exist.
+   */
+  it('generates nothing for a partitioned pattern its venue cannot explain', () => {
+    const row = oneDay();
+
+    expect(keys(String(row.id))).toEqual([]);
+  });
+
+  /**
+   * The chain stops at the first part, because whether there is a second is the
+   * venue's answer to give and the probe is what collects it.
+   */
+  it('asks about the opening part and leaves the rest to the probe', () => {
+    const row = oneDay();
+
+    expect(keys(String(row.id), chained)).toEqual([key('001')]);
+  });
+
+  /**
+   * **The case the whole in-memory walk exists for.** A walk catalogued the day's
+   * first parts and stopped; an update that asked about `001` again would be told
+   * what it already knows, and a chain that stopped there would never reach the
+   * rest of the day.
+   */
+  it('walks through the parts it already holds and asks about the first it does not', async () => {
+    const row = oneDay();
+
+    await filed(row, '001', '002');
+
+    expect(keys(String(row.id), chained)).toEqual([key('003')]);
+  });
+
+  /** A venue that knows its own partitioning names every part in one answer. */
+  it('takes every part at once where the venue names them all', async () => {
+    const row = oneDay();
+
+    const every: Rules = {
+      parts: ({ lastPartFound }) =>
+        (lastPartFound === null ? { parts: ['00', '01', '02'] } : null),
+    };
+
+    await filed(row, '01');
+
+    expect(keys(String(row.id), every)).toEqual([key('00'), key('02')]);
+
+    /**
+     * **And none of them carries a token**, which is how a reply with no `next`
+     * survives the trip through the backlog: a row with none is never taken back
+     * to the venue that named it.
+     */
+    expect(updatePage(db, id, String(row.id), null, every, NOW).listed.map(one => one.nextPart))
+      .toEqual([undefined, undefined]);
+  });
+
+  /**
+   * **The core cannot read a token**, so it cannot tell a cycle from progress by
+   * looking at one — it can only refuse to go round twice.
+   */
+  it('ends the period on a token it has already asked about', async () => {
+    const row = oneDay();
+
+    await filed(row, '001');
+
+    const stuck: Rules = { parts: () => ({ parts: '001', next: '001' }) };
+
+    expect(keys(String(row.id), stuck)).toEqual([]);
+  });
+
+  /**
+   * The token travels with the key, because the probe hands it back to the hook
+   * to ask what follows and reading it off the path would be the adapter's job
+   * done twice.
+   */
+  it('carries what to ask next on the row it generates', () => {
+    const row  = oneDay();
+    const page = updatePage(db, id, String(row.id), null, chained, NOW);
+
+    expect(page.listed[0]!.nextPart).toBe('002');
+  });
+
+  /** An ordinary pattern pays nothing for any of this. */
+  it('leaves a pattern with no part alone', () => {
+    const row = recordSeries(db, id, found(), { tip: '20260308', first: '20240101' });
+
+    expect(keys(String(row.id), chained)).toEqual(['x/20260309/BTC-USDT-trades-2026-03-09.zip']);
+    expect(updatePage(db, id, String(row.id), null, chained, NOW).listed[0]!.nextPart)
+      .toBeUndefined();
   });
 });

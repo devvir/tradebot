@@ -3,7 +3,7 @@ import type { Adapter, Scanner } from '../types';
 /**
  * Declare a venue's adapter: everything about it **except where it is**.
  *
- * `base` and `root` are constants of the application kept in the `venue` table
+ * `base` and `keyRoot` are constants of the application kept in the `venue` table
  * so everything else can join against them — see the `venues` migration. They
  * are read from there at startup by `addressVenues`, which is why no adapter
  * names an address: one unit of information, one place.
@@ -14,5 +14,5 @@ import type { Adapter, Scanner } from '../types';
  * its list out of exports that do not exist yet.
  */
 export const declare = <S extends Scanner<any>>(
-  spec: Omit<Adapter<S>, 'base' | 'root'>,
-): Adapter<S> => ({ ...spec, base: '', root: '' } as Adapter<S>);
+  spec: Omit<Adapter<S>, 'base' | 'keyRoot'>,
+): Adapter<S> => ({ ...spec, base: '', keyRoot: '' } as Adapter<S>);

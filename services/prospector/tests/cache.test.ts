@@ -2,7 +2,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { markDownloaded, markWithdrawn, putFiles, putVenue, recordSeries } from '../src/catalog';
+import {
+  markDownloaded, markWithdrawn, putFiles, putVenue, recordSeries, settleFiles,
+} from '../src/catalog';
 import { openCatalog } from '../src/database';
 import { deltasOf, drift, rebuild, months } from '../src/catalog/cache/months';
 import type { CatalogFile, FileState } from '../src/types';
@@ -169,6 +171,41 @@ describe('proving the cache still matches the rows', () => {
     db.prepare('UPDATE month SET files = 99').run();
 
     expect(drift(db)).toMatchObject([{ month: '202503', files: 1, cachedFiles: 99 }]);
+  });
+
+  /**
+   * **A probe can settle onto a row the catalog already holds**, and counting
+   * that as an arrival is how the rollup drifts above the table it describes.
+   * Measured on the real catalog before this was fixed: 1,937,264 files
+   * over-counted, 0.59%.
+   *
+   * **The backlog row is written directly here, because parking now refuses
+   * it.** `park` will not queue a key whose file the catalog already holds, so
+   * the state this guards against is one the current writers no longer produce —
+   * it is what every update produced before that check existed, and what any
+   * relaxation of it would produce again. The accounting has to be right on its
+   * own, not because one caller happens to be careful.
+   */
+  it('does not count a settlement onto a file it already had', async () => {
+    putVenue(db, 'binance', 'https://x', '');
+
+    const series = seriesOn(1);
+
+    await putFiles(db, [file('spot/a-2025-03.zip')]);
+    expect(months(db, 1)[0]).toMatchObject({ files: 1 });
+
+    db.prepare(
+      `INSERT INTO wip (venue_id, path, date, series_id, existence, created_at)
+            VALUES (1, 'spot/a-2025-03.zip', '20250301', ?, 'assumed', 'T1')`,
+    ).run(series);
+
+    settleFiles(db, [{
+      venueId: 1, path: 'spot/a-2025-03.zip',
+      size: 10, etag: 'e', modified: null, seenAt: 'T2',
+    }]);
+
+    expect(months(db, 1)[0]).toMatchObject({ files: 1 });
+    expect(drift(db)).toEqual([]);
   });
 
   it('rebuilds what was never maintained', async () => {

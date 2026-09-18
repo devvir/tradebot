@@ -1,18 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { _test_reset, _test_seed } from '../src/exclusions';
-import { fetchText } from '../src/http';
+import { fetchPage } from '../src/http';
+import { readPage } from '../src/scanners/pages';
 import {
   _test_accepted,
   _test_catalogable,
   _test_descend,
   _test_listingUrl,
-  _test_parse,
 } from '../src/scanners/s3';
 import { binance } from '../src/adapters/binance';
 import { htx } from '../src/adapters/htx';
 import { kucoin } from '../src/adapters/kucoin';
 import { listing } from '../src/context';
-import type { Adapter } from '../src/types';
+import type { Adapter, S3Page } from '../src/types';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -25,13 +25,15 @@ const context = listing(binance);
 
 /**
  * Descent is the only thing here that talks to a venue, so the wire is stubbed —
- * and only the wire. `etagOf` is parsing rather than fetching, and stubbing it
- * would hide what these tests are checking.
+ * and only the wire. The stub serves a page's text and reads it with
+ * `readPage`, exactly as the transport does, so parsing is what is tested.
  */
 vi.mock('../src/http', async (importOriginal) => ({
   ...await importOriginal<typeof import('../src/http')>(),
-  fetchText: vi.fn(),
+  fetchPage: vi.fn(),
 }));
+
+const parse = (xml: string): S3Page => readPage({ format: 's3', prefix: '' }, xml) as S3Page;
 
 const page = (contents: string, extra = '') => `<?xml version="1.0" encoding="UTF-8"?>
 <ListBucketResult><Name>b</Name><Prefix>data/</Prefix><MaxKeys>1000</MaxKeys>
@@ -43,7 +45,7 @@ const object = (key: string, size = '1045') => `
 
 describe('parsing an S3 page', () => {
   it('reads the metadata every key carries', () => {
-    const { listed } = _test_parse(page(object('data/spot/monthly/trades/BTCUSDT/x-2025-01.zip')));
+    const { listed } = parse(page(object('data/spot/monthly/trades/BTCUSDT/x-2025-01.zip')));
 
     expect(listed).toEqual([{
       key:      'data/spot/monthly/trades/BTCUSDT/x-2025-01.zip',
@@ -64,7 +66,7 @@ describe('parsing an S3 page', () => {
 <ListBucketResult><Contents><Key>a.zip</Key>
 <ETag>&quot;CDC23CB7F799B55087E0AF9F98419660&quot;</ETag><Size>1</Size></Contents></ListBucketResult>`;
 
-    expect(_test_parse(upper).listed[0]!.etag).toBe('cdc23cb7f799b55087e0af9f98419660');
+    expect(parse(upper).listed[0]!.etag).toBe('cdc23cb7f799b55087e0af9f98419660');
   });
 
   /**
@@ -73,7 +75,7 @@ describe('parsing an S3 page', () => {
    * every S3 venue at once.
    */
   it('does not mistake the echoed request prefix for a child', () => {
-    const { prefixes } = _test_parse(page('', `
+    const { prefixes } = parse(page('', `
       <CommonPrefixes><Prefix>data/spot/</Prefix></CommonPrefixes>
       <CommonPrefixes><Prefix>data/futures/</Prefix></CommonPrefixes>`));
 
@@ -87,7 +89,7 @@ describe('parsing an S3 page', () => {
    * archive below that point silently missing.
    */
   it('falls back to the last key when NextMarker is absent', () => {
-    const { next } = _test_parse(page(
+    const { next } = parse(page(
       object('a/1.zip') + object('a/2.zip'),
       '<IsTruncated>true</IsTruncated>',
     ));
@@ -96,7 +98,7 @@ describe('parsing an S3 page', () => {
   });
 
   it('prefers NextMarker when the venue does send one', () => {
-    const { next } = _test_parse(page(
+    const { next } = parse(page(
       object('a/1.zip'),
       '<IsTruncated>true</IsTruncated><NextMarker>a/9.zip</NextMarker>',
     ));
@@ -105,7 +107,7 @@ describe('parsing an S3 page', () => {
   });
 
   it('stops when the listing is not truncated', () => {
-    expect(_test_parse(page(object('a/1.zip'))).next).toBeNull();
+    expect(parse(page(object('a/1.zip'))).next).toBeNull();
   });
 
   /**
@@ -114,7 +116,7 @@ describe('parsing an S3 page', () => {
    * regardless would re-read the same page for ever.
    */
   it('resumes from the last entry, key or directory', () => {
-    const { next } = _test_parse(page(
+    const { next } = parse(page(
       object('a/1.zip'),
       '<IsTruncated>true</IsTruncated><CommonPrefixes><Prefix>a/z/</Prefix></CommonPrefixes>',
     ));
@@ -123,7 +125,7 @@ describe('parsing an S3 page', () => {
   });
 
   it('reports a missing size as unknown rather than zero', () => {
-    const { listed } = _test_parse(page('<Contents><Key>a/1.zip</Key></Contents>'));
+    const { listed } = parse(page('<Contents><Key>a/1.zip</Key></Contents>'));
 
     expect(listed[0]!.size).toBeNull();
     expect(listed[0]!.etag).toBeNull();
@@ -386,7 +388,7 @@ describe('mapping a level wider than one page', () => {
   const limits = { concurrency: 64 };
 
   // These pages are served under `data/`, so descent has to start there.
-  const context = { ...listing(binance), root: 'data/' };
+  const context = { ...listing(binance), keyRoot: 'data/' };
 
   const dir = (prefix: string) => `<CommonPrefixes><Prefix>${prefix}</Prefix></CommonPrefixes>`;
 
@@ -400,15 +402,15 @@ describe('mapping a level wider than one page', () => {
    * moment levels were read to exhaustion.
    */
   const serving = (pages: Record<string, string>) =>
-    vi.mocked(fetchText).mockImplementation(async (_adapter: Adapter, url: string) => {
+    vi.mocked(fetchPage).mockImplementation((async (_adapter: Adapter, url: string) => {
       const hit = Object.keys(pages)
         .filter(fragment => url.includes(fragment))
         .sort((a, b) => b.length - a.length)[0];
 
-      return hit ? pages[hit]! : page('');
-    });
+      return parse(hit ? pages[hit]! : page(''));
+    }) as typeof fetchPage);
 
-  afterEach(() => vi.mocked(fetchText).mockReset());
+  afterEach(() => vi.mocked(fetchPage).mockReset());
 
   /** The one that loses data: the only file at this level is on page two. */
   it('sees a file that only the second page carries', async () => {
@@ -452,7 +454,25 @@ describe('mapping a level wider than one page', () => {
     serving({ 'prefix=data/&': page(dir('data/a/')) });
 
     expect(await _test_descend(context, limits)).toEqual(['data/a/']);
-    expect(fetchText).toHaveBeenCalledTimes(2);
+    expect(fetchPage).toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * **A file ends the reading, because it ends the question.** A prefix holding
+   * one is never split, so nothing past that page can change the answer — and a
+   * flat directory read to its end is every gate month: 1,965 requests and 46
+   * minutes to learn what page one said. Children are not what is cut short
+   * here; the test above that reads a wide level to the end is.
+   */
+  it('stops at the first page that holds a file', async () => {
+    serving({
+      'marker=data/a-2025-01-01.zip': page(object('data/b-2025-01-01.zip')),
+      'prefix=data/&':                page(object('data/a-2025-01-01.zip'),
+        '<IsTruncated>true</IsTruncated>'),
+    });
+
+    expect(await _test_descend(context, limits)).toEqual(['data/']);
+    expect(fetchPage).toHaveBeenCalledTimes(1);
   });
 });
 

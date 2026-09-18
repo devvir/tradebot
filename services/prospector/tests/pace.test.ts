@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  Pace, REFUSALS_BEFORE_BLOCK, STEADY, capacity, paceFor, ticketing, _test_paces, _test_pool,
+  Pace, REFUSALS_BEFORE_BLOCK, STEADY, capacity, paceFor, reopenGradually, ticketing, _test_paces, _test_pool,
 } from '../src/pace';
 import { bybitPrimary as bybit } from '../src/adapters/bybit.primary';
 import { htx } from '../src/adapters/htx';
@@ -38,53 +38,51 @@ const refuses = (pace: Pace, url = 'https://venue/a'): void => {
 beforeEach(() => _test_paces.clear());
 
 /**
- * The whole point of moving this out of the probe: a host counts requests from
- * an address, so every caller has to be counted together or the cap is a cap on
- * a fraction of the traffic.
+ * A venue's traffic to one address is counted together, so every caller that
+ * reaches that address has to draw on the same budget — and nothing beyond it.
  */
-describe('one budget per host', () => {
-  it('hands the same gate to everyone asking about a host', () => {
-    expect(paceFor(bybit, bybit.list)).toBe(paceFor(bybit, bybit.list));
+describe('one budget per venue per host', () => {
+  it('hands the same gate to everyone asking about a venue at a host', () => {
+    expect(paceFor(bybit, bybit.base)).toBe(paceFor(bybit, bybit.base));
   });
 
   it('keeps unrelated hosts apart', () => {
-    expect(paceFor(bybit, bybit.list)).not.toBe(paceFor(htx, htx.list));
+    expect(paceFor(bybit, bybit.base)).not.toBe(paceFor(htx, htx.base));
   });
 
   /**
-   * **The case this is keyed on hostname for.** Binance and gate are two venues
-   * publishing to one bucket service, so a limiter per venue gave each a full
-   * budget against a machine that counts the sum — which is what it then refused.
+   * **Two venues behind one endpoint are two budgets.** binance and gate sit on
+   * the same S3 host, one bucket each, and each bucket took ~1,700 requests a
+   * second without a throttle — so sharing one limiter only let whichever venue
+   * started first set the other's pace.
    */
-  it('shares one budget between two venues on the same host', () => {
-    expect(new URL(binance.list).host).toBe(new URL(gate.list).host);
-    expect(paceFor(binance, binance.list)).toBe(paceFor(gate, gate.list));
+  it('keeps two venues on the same host apart', () => {
+    expect(new URL(binance.base).host).toBe(new URL(gate.base).host);
+    expect(paceFor(binance, binance.base)).not.toBe(paceFor(gate, gate.base));
   });
 
-  /**
-   * And the reverse: a venue that lists from one address and serves files from
-   * another is two machines, paced apart.
-   */
-  it('keeps a venue\'s listing and download hosts apart', () => {
-    expect(paceFor(binance, binance.list)).not.toBe(paceFor(binance, binance.base));
+  /** And one venue at two hosts — its archive and its own API — is paced apart. */
+  it('keeps one venue\'s hosts apart', () => {
+    expect(paceFor(binance, binance.base)).not.toBe(paceFor(binance, 'https://api.binance.com/api/v3/exchangeInfo'));
   });
 
   /** A brake that reset every pass is a brake that never applies twice. */
   it('outlives the pass that first asked for it', () => {
-    refuses(paceFor(bybit, bybit.list), 'https://public.bybit.com/spot/');
+    refuses(paceFor(bybit, bybit.base), 'https://public.bybit.com/spot/');
 
-    expect(paceFor(bybit, bybit.list).blockedFor()).toBeGreaterThan(0);
+    expect(paceFor(bybit, bybit.base).blockedFor()).toBeGreaterThan(0);
   });
 
   /**
-   * Bybit states a rate **and** a stand-down, having earned both; what it says
-   * nothing about falls back. So the pair worth asserting is one field it
-   * declares against one it does not.
+   * Bybit states a rate and a width, having measured them; what it says nothing
+   * about falls back. So the pair worth asserting is a field it declares against
+   * the two it leaves alone — a stand-down is deliberately not among them, since
+   * the figure it once carried described a different host's ban policy.
    */
   it('takes the venue figure where there is one, and the default elsewhere', () => {
-    expect(paceFor(bybit, bybit.list).pacing.perSecond).toBe(bybit.pacing!.perSecond);
-    expect(paceFor(bybit, bybit.list).pacing.standDownMs).toBe(bybit.pacing!.standDownMs);
-    expect(paceFor(bybit, bybit.list).pacing.ceilingMs).toBe(STEADY.ceilingMs);
+    expect(paceFor(bybit, bybit.base).pacing.perSecond).toBe(bybit.pacing!.perSecond);
+    expect(paceFor(bybit, bybit.base).pacing.standDownMs).toBe(STEADY.standDownMs);
+    expect(paceFor(bybit, bybit.base).pacing.ceilingMs).toBe(STEADY.ceilingMs);
   });
 });
 
@@ -369,7 +367,7 @@ describe('a venue that states nothing', () => {
   it('is paced by STEADY', () => {
     const quiet = { ...htx, name: 'quiet', pacing: undefined } as Adapter;
 
-    expect(paceFor(quiet, quiet.list).pacing).toEqual(STEADY);
+    expect(paceFor(quiet, quiet.base).pacing).toEqual(STEADY);
   });
 });
 
@@ -522,6 +520,73 @@ describe('the ticket pool every host draws from', () => {
   });
 });
 
+
+// ── the pool opens gradually ──────────────────────────────────────────────────
+
+/**
+ * A start releases every venue at once, and every request over HTTP/1.1 is a
+ * TLS handshake on a transport worker's one thread. So the machine's ceiling is
+ * reached a hundred at a time, a step for every thousand requests answered.
+ */
+describe('the machine-wide ceiling', () => {
+  const roomy = (): Pace => new Pace('ramp', { ...STEADY, perSecond: 1_000_000, concurrency: 1_000_000 });
+
+  const answer = async (host: Pace, count: number): Promise<void> => {
+    for (let i = 0; i < count; i++) {
+      await host.slot();
+      host.done();
+    }
+  };
+
+  afterEach(() => _test_pool(1_000));
+
+  it('starts at a hundred, whatever the configured ceiling', () => {
+    capacity(3_000);
+
+    expect(ticketing()).toMatchObject({ limit: 100, ceiling: 3_000 });
+  });
+
+  it('widens by a hundred for every thousand requests answered', async () => {
+    capacity(3_000);
+
+    const host = roomy();
+
+    await answer(host, 999);
+
+    expect(ticketing().limit).toBe(100);
+
+    await answer(host, 1);
+
+    expect(ticketing().limit).toBe(200);
+  });
+
+  it('never passes the configured ceiling', async () => {
+    capacity(150);
+
+    await answer(roomy(), 1_000);
+
+    expect(ticketing().limit).toBe(150);
+  });
+
+  /** The network gate releasing everything it held is a start all over again. */
+  it('starts over from a hundred when asked to reopen', async () => {
+    capacity(3_000);
+
+    await answer(roomy(), 2_000);
+
+    expect(ticketing().limit).toBe(300);
+
+    reopenGradually();
+
+    expect(ticketing().limit).toBe(100);
+  });
+
+  it('is a plain ceiling below a hundred', () => {
+    capacity(40);
+
+    expect(ticketing().limit).toBe(40);
+  });
+});
 
 // ── a venue that cannot be reached at all ─────────────────────────────────────
 

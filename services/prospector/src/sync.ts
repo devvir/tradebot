@@ -3,14 +3,15 @@ import { fault } from './faults';
 import { surveyingAs } from './context';
 import { preamble } from './preamble';
 import {
-  clearUpdate, countUnsettled, enrolment, establishedAt, openJob, phaseOf, producedSoFar,
-  reconcile, unsettled, updateStarted, venueIdOf,
+  anyUnsettled, clearUpdate, closeWalk, countUnsettled, enrolment, establishedAt, openJob,
+  phaseOf, producedSoFar, reconcile, unsettled, updateStarted, venueIdOf, walkedAt,
 } from './catalog';
 import { STEADY, describeWait, labelOf, paceFor } from './pace';
 import { probeFiles } from './probe';
-import { surveyVenue } from './survey';
+import { flushCounts } from './counts';
+import { probing, surveyVenue } from './survey';
 import type { DatabaseSync } from 'node:sqlite';
-import type { Adapter, Config, Occasion, RunKind } from './types';
+import type { Adapter, Config, Occasion, Phase, RunKind } from './types';
 
 /**
  * One server's whole life: walk it, settle what walking could not state, and
@@ -27,14 +28,17 @@ import type { Adapter, Config, Occasion, RunKind } from './types';
  * Keep one server up to date, for as long as this process runs.
  *
  * ```
- * [ walk ] → sleep → update → sleep → update → …
+ * [ walk ] → sleep → update → sleep → update → …     recurs 'update'
+ * [ walk ] → sleep → walk   → sleep → walk   → …     recurs 'walk'
  * ```
  *
  * **A venue is never finished, only current.** The archives grow every day, so
  * reaching the end of one is not a state to stop in — it is the point at which
  * the cheap half becomes possible. The first pass is a walk where there is a
- * keyspace to read and an update where there is not; every pass after it is an
- * update, because by then the walk is by definition complete.
+ * keyspace to read and an update where there is not; every pass after it is
+ * whichever the adapter recurs by. An update by default, since by then the walk
+ * is complete and only what has appeared since is owed; a walk again where
+ * reading the listing costs fewer requests than asking series by series.
  *
  * **Nothing here decides which.** `onePass` reads where the venue has got to and
  * works it out, so this loop states the cadence and nothing else.
@@ -64,7 +68,7 @@ export const syncVenue = async (
     logger.info({
       venue:   labelOf(adapter),
       nextRun: new Date(due).toISOString(),
-    }, `Venue is current — updating again ${describeWait(due - Date.now())}`);
+    }, `Up to date; next update ${describeWait(due - Date.now())}`);
 
     await waiting(due - Date.now(), paused);
 
@@ -74,7 +78,16 @@ export const syncVenue = async (
   for (;;) {
     const fallback = Date.now();
 
-    await onePass(db, adapter, config, occasion, paused);
+    underway.set(adapter.name, (underway.get(adapter.name) ?? 0) + 1);
+
+    try {
+      await onePass(db, adapter, config, occasion, paused);
+    } finally {
+      const left = (underway.get(adapter.name) ?? 1) - 1;
+
+      if (left > 0) underway.set(adapter.name, left);
+      else underway.delete(adapter.name);
+    }
 
     if (paused()) return;
 
@@ -108,8 +121,8 @@ export const syncVenue = async (
       venue:  labelOf(adapter),
       hours:  Math.round(wait / 3_600_000),
       nextRun: new Date(Date.now() + wait).toISOString(),
-    }, wait > 0 ? `Venue synced — updating again ${describeWait(wait)}`
-      : 'Venue synced — the last pass outran the interval, so updating again now');
+    }, wait > 0 ? `Survey finished; next update ${describeWait(wait)}`
+      : 'Survey finished; updating again now');
 
     await waiting(wait, paused);
 
@@ -130,6 +143,22 @@ export const syncVenue = async (
  * So the wait is broken into beats. It costs one comparison a second and makes
  * a pause take effect in about that long, whatever the venue was waiting for.
  */
+/**
+ * Whether a pass is under way for this venue in this process — on any host.
+ *
+ * **What the rows cannot say.** A venue's state is read off its job rows, and a
+ * job opens only once the preamble is done — listing instruments, writing new
+ * series — which on binance took four minutes. Through all of it the venue read
+ * as waiting, exactly like one asleep between passes, and an update somebody had
+ * just asked for looked ignored. This is the one fact that tells them apart.
+ *
+ * Counted rather than flagged, because bybit runs a pass per host under one
+ * venue name and either may be the one still going.
+ */
+export const inPass = (venue: string): boolean => underway.has(venue);
+
+const underway = new Map<string, number>();
+
 const waiting = async (ms: number, paused: () => boolean): Promise<void> => {
   const until = Date.now() + ms;
 
@@ -174,9 +203,9 @@ export const everyMs = (): number => EVERY_HOURS * 3_600_000;
  * One pass: walk it or update it, settle what that could not state, and stop.
  *
  * **Which of the two happens is never asked for.** Where the venue has got to
- * decides it — a venue that has been complete updates for ever after — so the
- * loop above passes the same occasion every time and this works out what it
- * means today.
+ * decides it — a venue that has been complete recurs the way its adapter says,
+ * for ever after — so the loop above passes the same occasion every time and
+ * this works out what it means today.
  *
  * **The probe follows the walk rather than running beside it for ever.** While
  * indexing is under way the two are genuinely concurrent — a file found in the
@@ -192,31 +221,49 @@ const onePass = async (
   occasion: Occasion,
   paused:   () => boolean,
 ): Promise<void> => {
-  /** Whether more unsettled rows are still arriving. The probe's only question. */
-  let indexing = true;
-
   /**
    * **What will actually run, decided here rather than inside the loop.**
    *
    * Where the venue is decides it, and the request only decides whether to start
-   * over: a venue that has been complete updates for ever after, whatever is
-   * asked for. It matters at this level because probing has to be started before
-   * the walk that feeds it, and an update always needs a probe.
+   * over: a venue that has been complete recurs the way its adapter says, whatever
+   * is asked for — see `passFor`. It matters at this level because probing has to
+   * be started before the walk that feeds it, and an update always needs a probe.
    */
   const venueId = venueIdOf(db, adapter.name, adapter.host ?? '');
   const phase   = phaseOf(db, venueId);
 
-  /**
-   * **A venue with no listing has nothing to walk**, so it never has a full pass
-   * to be in: its series are declared and every one of its passes is an update.
-   * For everything else the phase decides — a venue that has been complete stays
-   * updating, whatever was asked for.
-   */
-  const doing: Occasion = adapter.listable === false ? 'partial'
-    : occasion === 'full' && phase !== 'updating' ? 'full'
-      : 'partial';
+  const now   = new Date();
+  const doing = passFor(adapter, occasion, phase, openJob(db, venueId, 'update') !== null,
+    sinceWalked(db, venueId, now), now);
 
   const probes = probing(adapter, doing);
+
+  /**
+   * **What the pass was asked and what that sent are written as it goes** — by
+   * whatever is already writing a run, a page or a batch at a time. This is the
+   * end of it: a pass that stopped for any reason at all writes what is left
+   * onto the job it leaves open, since a count written after a job closes would
+   * land on nothing.
+   */
+  try {
+    return await passing(db, adapter, config, doing, probes, venueId, paused);
+  } finally {
+    flushCounts(db, adapter);
+  }
+};
+
+/** `onePass` once it knows what it is doing. */
+const passing = async (
+  db:       DatabaseSync,
+  adapter:  Adapter,
+  config:   Config,
+  doing:    Occasion,
+  probes:   boolean,
+  venueId:  number,
+  paused:   () => boolean,
+): Promise<void> => {
+  /** Whether more unsettled rows are still arriving. The probe's only question. */
+  let indexing = true;
 
   /**
    * **One scope around both halves**, because they run concurrently and share a
@@ -267,8 +314,8 @@ const onePass = async (
       if (found.listed > 0)
         logger.info({ venue: labelOf(adapter), ...found },
           found.refused
-            ? 'Preamble refused — the venue names and the archive names disagree'
-            : 'Preamble complete — the venue instrument listing is reconciled');
+            ? 'Instrument listing skipped: names do not match the files'
+            : 'Instruments checked');
     }
 
     /**
@@ -281,10 +328,10 @@ const onePass = async (
      * last committed page. `settle` already catches around its pass; this is
      * the outer guarantee that the promise itself cannot fail the service.
      */
-    const probing = probes
+    const draining = probes
       ? settle(db, adapter, () => indexing && ! paused(), paused).catch((err: unknown) => {
         logger.error({ ...fault(err), venue: labelOf(adapter) },
-          'Probing stopped on an error — the walk carries on and the backlog waits for the next survey');
+          'Probing failed; the walk continues');
 
         return false;
       })
@@ -299,7 +346,7 @@ const onePass = async (
       indexing = false;
     }
 
-    const drained = await probing;
+    const drained = await draining;
 
     /**
      * **A pass is complete when it generated everything it owed and drained what
@@ -314,48 +361,143 @@ const onePass = async (
      * A walk never reconciles. It states its own bounds as it reads, and the
      * clock has nothing to add to an index that was read to the end.
      */
-    if (doing === 'partial' && generated && drained === true && ! paused()) {
-      const moved = reconcile(db, venueId);
+    /**
+     * **A walk that left a backlog is not over until the backlog is.**
+     *
+     * Its keyspace has been read, but the rows the listing could not speak for
+     * are in `wip` and unasked, and the job is the only durable record that they
+     * are owed. Closed at the end of listing, the venue reads `waiting` with a
+     * full backlog, the next pass is scheduled from a pass that has not
+     * finished, and a restart in the gap finds nothing open and drains nothing —
+     * the whole backlog waits for the next update to happen upon it. bybit left
+     * 137,066 rows that way.
+     *
+     * So the walk closes here, where the drain has actually returned, and the
+     * listing half leaves it open — see `surveyVenue`, which closes it itself
+     * only where nothing will probe.
+     */
+    /**
+     * **A pass is over when it generated everything it owed and drained what
+     * that produced** — and where nothing probes, draining is not a thing that
+     * has to happen, so a listing read to the end is the whole of it.
+     */
+    const finished = generated && ! paused() && (probes ? drained === true : true);
 
-      /**
-       * **The last act, and the only thing that ends a pass.** Everything before
-       * it is resumable; once the tips are settled there is nothing about the
-       * pass left worth keeping, and leaving the rows would have the next one
-       * resume a pass that is already over.
-       */
-      const cleared = clearUpdate(db, venueId);
+    if (! finished) {
+      // A pause is asked for and already said so; only a pass that stopped on
+      // its own is worth a warning.
+      if (! paused())
+        logger.warn({ venue: labelOf(adapter), doing, generated, drained: drained === true },
+          'Pass unfinished');
 
-      logger.info({ venue: labelOf(adapter), ...moved, cleared },
-        'Update reconciled — tips at the settled edge, empty series dropped, bounds checked against the files');
-    } else if (doing === 'partial' && ! paused()) {
-      logger.warn({ venue: labelOf(adapter), generated, drained: drained === true },
-        'Update did not finish — nothing is reconciled, and the next pass generates a wider range');
+      return;
     }
+
+    /**
+     * **Reconciliation is the same for either kind, so there is one of it.**
+     * How the files arrived says nothing about what is owed afterwards: how long
+     * to wait for what is still missing, which bounds the files disagree with,
+     * and which series turned out to hold nothing. A walk stating its own tips
+     * was that rule written a second time, in a second place, with a second
+     * clock.
+     *
+     * **As of when this pass began**, which is what the pass measured the
+     * archive against — reconciling to `now` would claim the hours or days it
+     * spent running.
+     */
+    flushCounts(db, adapter);
+
+    const moved = reconcile(db, venueId, began(db, venueId));
+
+    /**
+     * **The last act, and the only thing that ends a pass.** Everything before
+     * it is resumable; once the tips are settled there is nothing about the pass
+     * left worth keeping, and leaving an update's rows would have the next one
+     * resume a pass that is already over.
+     */
+    const cleared = doing === 'partial' ? clearUpdate(db, venueId) : 0;
+
+    if (doing !== 'partial') closeWalk(db, venueId);
+
+    logger.info({ venue: labelOf(adapter), ...moved, ...(cleared ? { cleared } : {}) },
+      doing === 'partial'
+        ? 'Update finished'
+        : 'Walk finished');
   });
+};
+
+/**
+ * When the pass that has just finished began.
+ *
+ * **Read off the run rows rather than timed here**, because a resumed pass began
+ * before this process did, and what it measured the archive against is its own
+ * start. The same field the cadence reads, so the two cannot disagree.
+ */
+const began = (db: DatabaseSync, venueId: number): Date =>
+  new Date(Date.parse(enrolment(db, venueId).started ?? '') || Date.now());
+
+/**
+ * Which kind of pass runs, from the venue, what was asked, and where it stands.
+ *
+ * In order, and the order is the rule:
+ *
+ * - **A venue with no listing has nothing to walk**, so every one of its passes
+ *   is an update — its series are declared rather than discovered.
+ * - **An update asked for by name is an update.** That is the one request that
+ *   says what kind of pass it wants.
+ * - **A venue whose first walk is not behind it goes on walking.**
+ * - **An update already open is finished**, whatever the venue recurs by. Its
+ *   per-series rows are its progress and only reconciliation ends it; starting a
+ *   walk over it would leave that job open for ever, and a venue's standing is
+ *   read off which job is open. The phase cannot see it, since it is read off
+ *   the walk rows of a venue that has any.
+ * - **A venue that recurs by walking walks again** — a fresh job, since the last
+ *   one is closed. Everything else updates.
+ *
+ * **The listing rule comes first on purpose.** A venue that cannot be listed
+ * updates whatever it says, so an adapter deciding its own recurrence cannot
+ * strand itself by answering `'walk'` where there is nothing to walk.
+ */
+const passFor = (
+  adapter:    Adapter,
+  occasion:   Occasion,
+  phase:      Phase,
+  updateOpen: boolean,
+  sinceWalk:  number,
+  now:        Date,
+): Occasion => {
+  if (adapter.listable === false) return 'partial';
+  if (occasion === 'partial')     return 'partial';
+  if (phase !== 'updating')       return 'full';
+  if (updateOpen)                 return 'partial';
+
+  return recursBy(adapter, sinceWalk, now) === 'walk' ? 'full' : 'partial';
+};
+
+/**
+ * What this venue says its pass is, whether it says it once or per pass.
+ *
+ * A venue that says nothing updates, which is what every venue did before any of
+ * them had an opinion.
+ */
+const recursBy = (adapter: Adapter, sinceWalk: number, now: Date): 'update' | 'walk' =>
+  (typeof adapter.recurs === 'function'
+    ? adapter.recurs(sinceWalk, now)
+    : adapter.recurs ?? 'update');
+
+/**
+ * How long ago this venue's last walk began, in seconds — `Infinity` where it
+ * has never walked, which reads as overdue by any cadence.
+ */
+const sinceWalked = (db: DatabaseSync, venueId: number, now: Date): number => {
+  const at = walkedAt(db, venueId);
+
+  return at === undefined ? Infinity : (now.getTime() - Date.parse(at)) / 1000;
 };
 
 /** Which rows a survey of this kind keeps its progress in. */
 const kindOf = (occasion: Occasion): RunKind =>
   (occasion === 'partial' ? 'update' : 'walk');
-
-/**
- * Whether this pass has a probing half.
- *
- * **An update always probes, whatever the venue is.** It generates keys rather
- * than reading them, so nothing it emits carries metadata and nothing is
- * established until it is asked about — which is exactly the condition `probes`
- * describes. A listing venue that never probes while walking therefore starts
- * probing the moment it stops walking.
- *
- * **Stated once because two places read it and one of them was wrong.** The pass
- * consulted this expression while the log beside it consulted `adapter.probes`
- * alone — so every update on a listing venue announced "Survey complete" the
- * moment generation ended, with its whole backlog still unprobed. Binance said
- * it with 8,312 rows in `wip` and went on probing for twenty-seven minutes. The
- * job itself was never wrong; only the sentence about it was.
- */
-const probing = (adapter: Adapter, doing: Occasion): boolean =>
-  adapter.probes === true || doing === 'partial';
 
 /**
  * Never retry faster than this, so a venue that cannot be reached cannot spin.
@@ -439,10 +581,10 @@ const tend = async (
        * twice would double it.
        */
       if (pass.blocked) {
-        const held = paceFor(adapter, adapter.list).blockedFor();
+        const held = paceFor(adapter, adapter.base).blockedFor();
 
         logger.warn({ venue: labelOf(adapter), minutes: Math.round(held / 60_000) },
-          `Venue is blocking us — waiting out the block, walking again ${describeWait(held)}`);
+          `Blocked by venue; walking again ${describeWait(held)}`);
 
         await waiting(held, paused);
 
@@ -476,7 +618,7 @@ const tend = async (
          */
         logger.info({ venue: labelOf(adapter), ...counts },
           probing(adapter, occasion)
-            ? 'URL generation complete — probing candidates'
+            ? 'Candidates generated; probing them'
             : 'Survey complete');
 
         return true;
@@ -581,6 +723,9 @@ const settle = async (
     let moved = 0;
     let left  = 0;
 
+    /** Whether the backlog itself still holds anything — the table's own answer. */
+    let owed  = false;
+
     /** Whether the venue is answering about keys, as opposed to merely answering. */
     let working = false;
 
@@ -648,6 +793,15 @@ const settle = async (
        * dead candidates as having done nothing.
        */
       moved = pass.settled + pass.dropped;
+
+      /**
+       * **What is left is asked of the table, not of the counter.** `left` is
+       * reported; `owed` decides. They are the same number whenever the counter
+       * is right, and when it is not, a pass that ends on the counter waits on a
+       * backlog nobody has — which is what okx and bitget did for a day, eight
+       * thousand and sixty rows past an empty table.
+       */
+      owed  = anyUnsettled(db, venueId);
       left  = countUnsettled(db, venueId);
 
       /**
@@ -660,7 +814,7 @@ const settle = async (
 
       // Held by the gate already when a block is what stopped it; the venue's
       // own figure when the pass gave up for its own reasons instead.
-      const held = paceFor(adapter, adapter.list).blockedFor();
+      const held = paceFor(adapter, adapter.base).blockedFor();
 
       standDown = held > 0 ? held : pacing.standDownMs;
     } catch (err) {
@@ -676,8 +830,9 @@ const settle = async (
      * for as long as the service runs.
      */
     if (! indexing() && ! refused && ! faulted) {
-      if (left === 0) {
-        logger.info({ venue: labelOf(adapter) }, 'Survey complete');
+      if (! owed) {
+        logger.info({ venue: labelOf(adapter), ...(left > 0 ? { miscounted: left } : {}) },
+          'Survey complete');
 
         return true;
       }
@@ -697,7 +852,7 @@ const settle = async (
        */
       if (stalled > 0)
         logger.error({ venue: labelOf(adapter), unsettled: left, rounds: stalled },
-          'Probing is not settling anything — the pass cannot finish until it does');
+          'Probing is getting no answers; still trying');
     }
 
     /**
@@ -729,10 +884,10 @@ const settle = async (
      */
     if (refused)
       logger.warn({ venue: labelOf(adapter), minutes: Math.round(wait / 60_000) },
-        `Venue is refusing probes — waiting it out, trying again ${describeWait(wait)}`);
+        `Probing paused, resumes ${describeWait(wait)}`);
     else if (wait === 0)
       logger.info({ venue: labelOf(adapter), unsettled: left, settled: moved },
-        'More in the backlog — probing straight on');
+        'More to probe; continuing');
     else
       logger.info({
         venue:   labelOf(adapter),
@@ -740,8 +895,8 @@ const settle = async (
         seconds: Math.round(wait / 1000),
         ...(faulted ? {} : { unsettled: left }),
       }, indexing()
-        ? 'Waiting on the walk for more to probe — looking again later'
-        : 'Settling the backlog — the next round runs after the usual interval');
+        ? 'Waiting for the walk to find more to probe'
+        : 'Probing again shortly');
 
     await waiting(wait, paused);
   }
@@ -772,6 +927,7 @@ const sleep = async (ms: number): Promise<void> => {
 
 export const _test_settle   = settle;
 export const _test_probing  = probing;
+export const _test_passFor  = passFor;
 export const _test_EVERY_HOURS = EVERY_HOURS;
 export const _test_onePass  = onePass;
 export const _test_PROBE_EMPTY_MS = PROBE_EMPTY_MS;

@@ -2,12 +2,8 @@ import { probed } from '../scanners/probed';
 import { fetchHead } from '../http';
 import { dateOf } from './bitget/shapes';
 import { bitgetInstruments, bitgetUrlSymbol } from './bitget/instruments';
-import type { Adapter, ProbedContext, Unsettled } from '../types';
+import type { Adapter, ProbedContext } from '../types';
 import { declare } from './declare';
-import { DatabaseSync } from 'node:sqlite';
-
-// See OKX adapter for an explanation of this
-let held: DatabaseSync | null = null;
 
 /**
  * Bitget: an archive whose bucket will not admit what it does not have.
@@ -30,8 +26,6 @@ export const bitget: Adapter = declare({
   name:    'bitget',
   scanner: probed,
 
-  /** The portal's own backend — a curated index, and the only thing that answers about more than one key. */
-  list:    'https://www.bitget.com/v1/statistics/public/download/getPublicDataV2',
 
   /**
    * **Nothing here can be listed.** The bucket refuses `ListObjects` and hides
@@ -57,44 +51,41 @@ export const bitget: Adapter = declare({
    * The context itself is an address and one request; the listing leaves its
    * results in the catalog rather than in what this returns.
    */
-  getContext: async (db): Promise<ProbedContext> => {
-    /** **TEMPORARY.** See `ruleOnSuccess` — it needs a handle and gets none. */
-    held = db;
-
-    return {
-      base: bitget.base,
-      root: bitget.root,
-      head: (url: string) => fetchHead(bitget, url),
-    };
-  },
+  getContext: async (): Promise<ProbedContext> => ({
+    base: bitget.base,
+    keyRoot: bitget.keyRoot,
+    head: (url: string) => fetchHead(bitget, url),
+  }),
 
   /**
-   * **Measured hard, and it has never refused anything.**
-   *
-   * 597,000 `HEAD`s in one afternoon against keys the catalog says exist, in
-   * closed-loop ramps up to 3,506 a second at 400 workers — **zero** non-200
-   * answers, zero refusals, no rise in latency, no `Slow Down`. Throughput fell
-   * above 400 workers, and that was this machine's own CPU rather than the
-   * venue: at 400 lanes it sat at 28% of eight cores with a p50 of 55ms.
-   *
-   * **What that rules out matters more than the number.** A stand-down seen in
-   * production was read as this venue rate-limiting us; it was not. Every one of
-   * its `403`s came from S3 saying a key is absent — see `refusesUs` below.
-   * The rate was never the problem.
-   *
-   * **So the rate is deliberately not a limit here.** Ten thousand a second is
-   * far above anything this machine or its link can produce, and the figure
-   * exists only so that nothing here is the thing holding it back. Every other
-   * venue's number bounds where *it* starts refusing; bitget has never refused
-   * anything, so there is no such number to write down.
-   *
-   * `concurrency` is the one that actually decides throughput, since a request
-   * spends nearly all its life waiting: 500 lanes against a p50 of 55ms is more
-   * than the rate above could ever need. It is set where it is because the pool
-   * gets socket-hungry rather than because the venue objects — if this machine
-   * struggles, that is the number to lower, not `perSecond`.
+   * **CloudFront's own limit sits near 2,900/s.** Measured 2026-09-30: at 500
+   * in flight the service averaged ~2,900/s over ten seconds and the edge
+   * answered `503 LimitExceeded from cloudfront`, standing the venue down.
+   * Capped at 2,500 it held ~2,300/s for as long as it was watched. A missing
+   * key takes ~235 ms, the edge asking the origin, so 600 at once reaches the
+   * cap. A missing key here is a `403` — see `refusesUs` — which is not a
+   * refusal of us.
    */
-  pacing:  { perSecond: 10_000, concurrency: 300 },
+  pacing:  { perSecond: 2500, concurrency: 600 },
+
+  /**
+   * How far behind today this venue is worth asking about.
+   *
+   * **Measured from the venue's own `Last-Modified`**, 2026-09-25 over the files
+   * of 2026-09-15 to 21: p99 52.9 hours after the dated day begins, over 28,992 files — more than twice any other venue, and the reason this one is a day further back again.
+   *
+   * **Every venue publishes more than a day after its period begins**, so a pass
+   * running in the small hours finds nothing for yesterday whatever the catalog's
+   * newest file suggests — a snapshot taken in the afternoon says only that the
+   * file had arrived by the afternoon.
+   *
+   * **A day further back again**, because a publishing hour that drifts later
+   * would put the frontier in front of the archive. Asking early costs a probe
+   * per series per night, every night, for a period that cannot exist yet; asking
+   * late costs the catalog's edge a day, and loses nothing — the frontier
+   * advances daily and the patience window covers what it has not reached.
+   */
+  probingLag: 4,
 
   /** What this venue lists today — its only discovery. */
   instruments: bitgetInstruments,
@@ -126,7 +117,7 @@ export const bitget: Adapter = declare({
    * So it is treated exactly as a 404 is: out of the work list at once, and
    * asked again by tomorrow's update, because "not there now" is not "never".
    */
-  ruleOnFailure: (status, headers) =>
+  ruleOnFailure: (_row, status, headers) =>
     (status === 403 && headers.get('server') === 'AmazonS3' ? 'drop' : null),
 
   /**
@@ -134,9 +125,14 @@ export const bitget: Adapter = declare({
    *
    * Bitget splits every 100,000 rows — verified by opening the files, in both
    * eras and under every token — into `_001`, `_002`, on to `_101` at the worst.
-   * A pattern and a date cannot express that, so each part that arrives asks for
-   * the next, and the chain ends where the archive does: the first miss leaves
-   * `wip` under the rule above and implies nothing further.
+   * Nothing in a path, a listing or a date says where a day stops, so each part
+   * that arrives asks for the next and the chain ends where the archive does:
+   * the first miss ends the day and implies nothing further.
+   *
+   * **Which is why the answer matters and the count does not.** A venue that
+   * knows its own partitioning can name every part at once — gate does — and
+   * this one cannot, so it names them one at a time. The core treats both the
+   * same way.
    *
    * **A size threshold was considered and rejected.** A full part is 100,000
    * rows, but its *compressed* size varies with symbol, price precision and era
@@ -144,45 +140,15 @@ export const bitget: Adapter = declare({
    * median of 135,981, and the distributions overlap. Guessing costs one `HEAD`
    * saved; guessing wrong costs a silently truncated day.
    */
-  // ruleOnSuccess: (row) => {
-  //   const next = NEXT_PART.exec(row.path);
+  expandParts: ({ lastPartFound, nextPart }) => {
+    if (lastPartFound === null) return { parts: FIRST_PART, next: after(FIRST_PART) };
 
-  //   if (! next) return null;
-
-  //   return {
-  //     action: 'accept',
-  //     next:   `${next[1]}${String(Number(next[2]) + 1).padStart(3, '0')}.zip`,
-  //   };
-  // },
-
-  /**
-   * **TEMPORARY — this pass is measuring where each series *starts*, and nothing
-   * else.** It replaces the real hook above and goes with it.
-   *
-   * Generation emits a series' whole range in ascending order, so the first key
-   * that answers is that series' first file. Once it has, every later key of that
-   * series is a request whose answer this pass has no use for — so they are
-   * dropped and the series is finished in one hit.
-   *
-   * **The cut is now everything above the first, not the span up to `last`.** The
-   * older form stopped at the seeded `last` so that one probe confirmed the end
-   * as well, which was only worth having while `last` was believed. It is the
-   * download index's word, the index under-reports, and a `last` that is wrong
-   * low ends the series early — so this pass declines to use it at all and the
-   * ends are measured by a later pass, from floors these firsts will have proved.
-   *
-   * What it costs is that `file` holds one row per series. That is the intended
-   * output: the first date, and which series answer nothing at all.
-   */
-  ruleOnSuccess: (row: Unsettled) => {
-    if (held === null || row.seriesId === null) return null;
-
-    held.prepare('DELETE FROM wip WHERE series_id = ? AND date > ?')
-      .run(row.seriesId, row.date);
-
-    return null;
+    return lastPartFound ? { parts: nextPart, next: after(nextPart) } : null;
   },
 });
 
-/** Everything up to the part number, and the part number. Trades only carry one. */
-// const NEXT_PART = /^(.*_)(\d{3})\.zip$/;
+/** Where every day starts. A day with no first part is a day with nothing in it. */
+const FIRST_PART = '001';
+
+/** The part bitget numbers after this one, in the width it numbers them in. */
+const after = (part: string): string => String(Number(part) + 1).padStart(3, '0');

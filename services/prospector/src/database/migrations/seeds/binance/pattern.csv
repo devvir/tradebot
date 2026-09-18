@@ -1,0 +1,9 @@
+virtual_id,market,dataset,variant,pattern,grain,retired_at
+1,perp,quotes,,data/futures/um/daily/bookTicker/{SYMBOL}/{SYMBOL}-bookTicker-{YYYY}-{MM}-{DD}.zip,daily,20240330
+2,perp,quotes,,data/futures/um/monthly/bookTicker/{SYMBOL}/{SYMBOL}-bookTicker-{YYYY}-{MM}.zip,monthly,202404
+3,perp,quotes,,data/futures/cm/daily/bookTicker/{SYMBOL}/{SYMBOL}-bookTicker-{YYYY}-{MM}-{DD}.zip,daily,20241014
+4,perp,quotes,,data/futures/cm/monthly/bookTicker/{SYMBOL}/{SYMBOL}-bookTicker-{YYYY}-{MM}.zip,monthly,202410
+5,perp,liquidations,,data3/liquidationSnapshot/{SYMBOL}/{SYMBOL}-liquidationSnapshot-{YYYY}-{MM}-{DD}.zip,daily,20240331
+6,perp,liquidations,,data/futures/cm/daily/liquidationSnapshot/{SYMBOL}/{SYMBOL}-liquidationSnapshot-{YYYY}-{MM}-{DD}.zip,daily,20241014
+7,future,liquidations,,data3/liquidationSnapshot/{SYMBOL}/{SYMBOL}-liquidationSnapshot-{YYYY}-{MM}-{DD}.zip,daily,20240331
+8,option,optionSummary,1h,data/option/daily/EOHSummary/{SYMBOL}/{SYMBOL}-EOHSummary-{YYYY}-{MM}-{DD}.zip,daily,20231023

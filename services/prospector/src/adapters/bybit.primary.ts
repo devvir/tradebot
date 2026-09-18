@@ -63,7 +63,6 @@ export const bybitPrimary: Adapter = declare({
   name:    'bybit',
   host:    'primary',
   scanner: s3,
-  list:    'https://s3.ap-southeast-1.amazonaws.com/public.bybit.com',
 
   /**
    * What is in the bucket but is not archive.
@@ -87,29 +86,37 @@ export const bybitPrimary: Adapter = declare({
   probes:  false,
 
   /**
-   * **This venue bans an address that asks too fast**, and the address does not
-   * change. Its API documents 600 requests per 5 seconds per IP and answers
-   * "403, access too frequent" past that, lifting on its own after about ten
-   * minutes.
-   *
-   * That was measured here against the CDN: with the gate applied to every
-   * caller and the cap at 50, CloudFront refused after 3,855 requests in about
-   * 103 seconds, the block reporting 39 in the last second, 39 over five and 40
-   * over ten. So the edge tolerates neither 50 nor a sustained 40.
-   *
-   * **Kept at 30 because none of that measures the origin**, which is a
-   * different host with a different limiter — S3 asks for a slower pace with a
-   * retryable 503 rather than turning an address away. If it refuses, the block
-   * log states the rate at that moment; move this from that and from nothing
-   * else.
-   *
-   * **The stand-down is bybit's own figure, not the default.** Its ban lifts on
-   * its own after "at least 10 minutes" — its words — so coming back at the
-   * shorter default would spend the whole wait re-earning it. Every other venue
-   * here starts short because a refusal is usually an edge having a bad minute;
-   * this one has told us how long its is.
+   * **No limit found.** Measured 2026-09-30 with HEAD probes: ~1,190/s from
+   * the remote and ~1,800/s from here, without a single throttling answer. The
+   * ban bybit is known for (~40/s) is its CDN and its trading API, not this
+   * bucket. A probe takes ~300 ms from here, so what is in flight sets the
+   * rate: 600 at once held ~1,800/s on missing keys.
    */
-  pacing:  { perSecond: 30, concurrency: 20, standDownMs: 10 * 60_000 },
+  pacing:  { perSecond: 2000, concurrency: 600 },
+
+  /**
+   * Walking, every update — see `docs/services/PROSPECTOR.md`, *How each venue updates*.
+   */
+  recurs:  'walk',
+
+  /**
+   * How far behind today this venue is worth asking about.
+   *
+   * **Measured from the venue's own `Last-Modified`**, 2026-09-25 over the files
+   * of 2026-09-15 to 21: p99 26.0 hours after the dated day begins, over 16,571 files across both of this venue's servers.
+   *
+   * **Every venue publishes more than a day after its period begins**, so a pass
+   * running in the small hours finds nothing for yesterday whatever the catalog's
+   * newest file suggests — a snapshot taken in the afternoon says only that the
+   * file had arrived by the afternoon.
+   *
+   * **A day further back again**, because a publishing hour that drifts later
+   * would put the frontier in front of the archive. Asking early costs a probe
+   * per series per night, every night, for a period that cannot exist yet; asking
+   * late costs the catalog's edge a day, and loses nothing — the frontier
+   * advances daily and the patience window covers what it has not reached.
+   */
+  probingLag: 3,
 
   /** What bybit lists today — see `bybit/instruments.ts`. */
   instruments: async (db) => bybitInstruments(db, 'primary'),

@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { countUnsettled, putFiles, putVenue, recordSeries, unsettled } from '../src/catalog';
+import { countUnsettled, parkSoon, putFiles, putVenue, recordSeries, unsettled } from '../src/catalog';
 import { openCatalog } from '../src/database';
 import { surveying, surveyingAs } from '../src/context';
 import { blocked, fetchHead } from '../src/http';
@@ -28,9 +28,8 @@ vi.mock('../src/http', async (importOriginal) => ({
 const indexed: Adapter = {
   name:    'indexed',
   scanner: html,
-  list:    'https://indexes.example',
   base:    'https://indexes.example',
-  root:    '',
+  keyRoot: '',
   probes:  true,
   dateOf:  (path) => /(\d{4})-(\d{2})-(\d{2})/.exec(path)?.slice(1).join('') ?? null,
 };
@@ -47,7 +46,7 @@ let venueId: number;
 beforeEach(async () => {
   dir     = mkdtempSync(join(tmpdir(), 'probe-'));
   db      = openCatalog(join(dir, 'catalog.db'), { seedData: false });
-  venueId = putVenue(db, indexed.name, indexed.base, indexed.root);
+  venueId = putVenue(db, indexed.name, indexed.base, indexed.keyRoot);
 });
 
 afterEach(async () => {
@@ -320,7 +319,7 @@ describe('reading a HEAD', () => {
   });
 
   it('rebuilds a URL from base, root and path', () => {
-    expect(_test_url({ ...indexed, root: 'data/' }, row)).toBe('https://indexes.example/data/a/b.csv.gz');
+    expect(_test_url({ ...indexed, keyRoot: 'data/' }, row)).toBe('https://indexes.example/data/a/b.csv.gz');
   });
 });
 
@@ -491,7 +490,7 @@ describe('a venue that spells absence as 403', () => {
   const absent403: Adapter = {
     ...indexed,
     refusesUs:     (_status, headers) => headers.get('server') !== 'AmazonS3',
-    ruleOnFailure: (status, headers) =>
+    ruleOnFailure: (_row, status, headers) =>
       (status === 403 && headers.get('server') === 'AmazonS3' ? 'drop' : null),
   };
 
@@ -734,7 +733,7 @@ describe('when a probe keeps missing', () => {
   it('lets an adapter spare a row that was refused rather than missing', async () => {
     const careful: Adapter = {
       ...indexed,
-      ruleOnFailure: (status, _headers, tries) =>
+      ruleOnFailure: (_row, status, _headers, tries) =>
         (status === 404 ? (tries >= 3 ? 'drop' : null) : 'keep'),
     };
 
@@ -760,7 +759,7 @@ describe('when a probe keeps missing', () => {
 describe('which pass a rule is being asked in', () => {
   const walked404: Adapter = {
     ...indexed,
-    ruleOnFailure: (status, _headers, tries) =>
+    ruleOnFailure: (_row, status, _headers, tries) =>
       (status === 404 && surveying(walked404) === 'walk' && tries < 50 ? 'keep' : null),
   };
 
@@ -791,5 +790,82 @@ describe('which pass a rule is being asked in', () => {
   /** Outside a pass there is no answer, and the core's own rule decides. */
   it('answers nothing when no pass is running', () => {
     expect(surveying(walked404)).toBeNull();
+  });
+});
+
+/**
+ * **The same problem where the venue can say what its parts are called.**
+ * `expandParts` is asked as each part is answered, rather than rules reading a
+ * path, and what it names is put into the pattern's `{PART}` — so a venue that
+ * knows its own partitioning names a day's twenty-four hours in one answer, and
+ * one that does not names them one at a time.
+ */
+describe('a period the venue publishes in parts', () => {
+  const PATTERN = 'trading/{SYMBOL}/{SYMBOL}{YYYY}-{MM}-{DD}_{PART}.csv.gz';
+
+  const key   = (part: string) => `trading/BTCUSDT/BTCUSDT2020-03-25_${part}.csv.gz`;
+  const after = (part: string) => String(Number(part) + 1).padStart(3, '0');
+
+  /**
+   * A part as generation leaves it: a key, and what the venue said to ask for
+   * once it settles. Only a generated key carries one — a walk is handed every
+   * part there is.
+   */
+  const parked = async (part: string, nextPart = after(part)) =>
+    parkSoon(db, [{
+      venueId, path: key(part), date: '20200325', tries: 0, existence: 'assumed', nextPart,
+      seriesId: recordSeries(db, venueId, {
+        market: 'perp', dataset: 'trades', symbol: 'BTCUSDT', pattern: PATTERN,
+      }).id!,
+    }]);
+
+  /** A venue that cannot say how many parts there are, so it names the next one. */
+  const chained: Adapter = {
+    ...indexed,
+    expandParts: ({ lastPartFound, nextPart }) => {
+      if (lastPartFound === null) return { parts: '001', next: '002' };
+
+      return lastPartFound
+        ? { parts: nextPart, next: String(Number(nextPart) + 1).padStart(3, '0') }
+        : null;
+    },
+  };
+
+  it('asks for the part after each one that arrives, and stops where the archive does', async () => {
+    await parked('001');
+
+    vi.mocked(fetchHead).mockImplementation(async (_adapter, url) =>
+      (url.includes('_003') ? answers(404) : found()));
+
+    const summary = await probeFiles(db, chained, source(), pacing);
+
+    expect(summary).toMatchObject({ settled: 2, implied: 2, missing: 1 });
+    expect(db.prepare('SELECT path FROM file ORDER BY path').all())
+      .toEqual([{ path: key('001') }, { path: key('002') }]);
+  });
+
+  /**
+   * **A batch is the venue's last word.** Where it names every part at once and
+   * supplies no `next`, none of them comes back to the hook — which is what stops
+   * a day of hours implying the same day for ever.
+   */
+  it('does not take a batch back to the venue that named it', async () => {
+    const batched: Adapter = {
+      ...indexed,
+      expandParts: ({ nextPart }) => (nextPart === '002'
+        ? { parts: ['002', '003'] }
+        : { parts: ['999'], next: '999' }),
+    };
+
+    await parked('001');
+    vi.mocked(fetchHead).mockResolvedValue(found());
+
+    await probeFiles(db, batched, source(), pacing);
+
+    expect(db.prepare('SELECT path FROM file ORDER BY path').all())
+      .toEqual([{ path: key('001') }, { path: key('002') }, { path: key('003') }]);
+
+    /** The part that would only exist if the batch had been asked about. */
+    expect(db.prepare(`SELECT path FROM wip WHERE path LIKE '%_999%'`).all()).toEqual([]);
   });
 });

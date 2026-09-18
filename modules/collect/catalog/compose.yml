@@ -1,20 +1,23 @@
 # Catalog Module
 #
-# Establishes what each venue publishes, without downloading any of it:
+# Establishes what each venue publishes, and brings it to disk:
 #
 #   prospector → venue archives → catalog.db
+#   hauler     → catalog.db's buckets → archives on the host disk
 #
 # The catalog is what everything downstream is decided from. A downloader asks
 # it for work instead of asking a venue; "does this dataset exist, how big is
 # it, which periods does it cover" becomes a query rather than a week of
 # probing.
 #
-# Nothing here fetches data. This module is safe to run anywhere with a network
-# connection and almost no disk — which is the point: a machine with bandwidth
-# and no storage can survey, and its whole product is a file.
+# Prospector fetches no data, so surveying runs anywhere with a network and
+# almost no disk; hauler is the one that needs the disk, and reads the catalog
+# over HTTP, so the two can run on different machines.
 #
-# Two services: prospector, which does the work, and catalog-ui, which is how a
-# person reads the result and starts or stops a survey without composing a curl.
+# Three services: prospector, which surveys; hauler, which walks each venue's
+# bucket — only what is still owed, through HAULER_LENS — and writes the files;
+# and catalog-ui, which is how a person reads the catalog and starts or stops a
+# survey without composing a curl.
 
 # Docker Compose Project
 name: collect
@@ -22,6 +25,7 @@ name: collect
 include:
   - path: ../../../services/prospector/docker/compose.yml
   - path: ../../../services/catalog-ui/docker/compose.yml
+  - path: ../../../services/hauler/docker/compose.yml
 
   # Not started — will serve the catalog and own the facts database.
   # - path: ../../../services/archivist/docker/compose.yml

@@ -34,13 +34,13 @@ import type { Inspection, Reading } from './types';
 export const flat = (value: string): string => Buffer.from(value).toString();
 
 /**
- * A key or prefix with the venue's root removed, as the catalog stores it.
+ * A key or prefix with the venue's key root removed, as the catalog stores it.
  *
- * Takes the root rather than whoever holds it, so both an adapter and a
+ * Takes the key root rather than whoever holds it, so both an adapter and a
  * scanner's context can ask without either depending on the other's shape.
  */
-export const relative = (from: { root: string }, key: string): string =>
-  key.startsWith(from.root) ? key.slice(from.root.length) : key;
+export const relative = (from: { keyRoot: string }, key: string): string =>
+  key.startsWith(from.keyRoot) ? key.slice(from.keyRoot.length) : key;
 
 /**
  * The exclusive upper bound of a prefix: the prefix with its last byte
@@ -93,10 +93,24 @@ const ANYWHERE = [
  * that `2026080312` is never read as `20260803` with a stray `12` after it, nor
  * `2026-08-03` as `2026-08` with a stray `-03`.
  */
-export const patternise = (path: string, urlSymbol: string, date: string): string => {
+export const patternise = (
+  path:      string,
+  urlSymbol: string,
+  date:      string,
+  part      = '',
+): string => {
   const slotted = urlSymbol ? path.replaceAll(urlSymbol, '{SYMBOL}') : path;
 
   let out = slotted;
+
+  /**
+   * **A part is replaced with the period it hangs off, never on its own.** The
+   * token is whatever the venue writes — two digits of an hour, an epoch — and
+   * on its own it would match anywhere in a path. Joined to its period it is the
+   * one stamp that says which file this is, which is exactly what the slot pair
+   * has to stand for.
+   */
+  if (part) out = out.replaceAll(`${date}${part}`, `${slotsFor(date)}{PART}`);
 
   for (const [was, slot] of forms(date)) out = out.replaceAll(was, slot);
 
@@ -110,6 +124,10 @@ export const patternise = (path: string, urlSymbol: string, date: string): strin
  * gate files an hourly book under its month — so all of them are offered, finest
  * first, and each is simply absent from paths that do not use it.
  */
+/** The slots one stamp is written from, widest first and only as deep as it goes. */
+const slotsFor = (date: string): string =>
+  ['{YYYY}', '{MM}', '{DD}', '{HH}', '{MI}'].slice(0, Math.ceil(date.length / 2) - 1).join('');
+
 const forms = (date: string): [string, string][] => {
   const year   = date.slice(0, 4);
   const month  = date.slice(4, 6);
@@ -167,13 +185,14 @@ export const asSeries = (path: string, of: Reading): Inspection => {
   return {
     of:    'series',
     date:  at,
+    ...(of.part ? { part: of.part } : {}),
     found: {
       market:  of.market,
       dataset: of.dataset,
       ...(of.variant === undefined ? {} : { variant: of.variant }),
       symbol:  of.symbol,
       ...(urlSymbol === of.symbol ? {} : { urlSymbol }),
-      pattern: patternise(path, urlSymbol, at),
+      pattern: patternise(path, urlSymbol, at, of.part),
     },
   };
 };

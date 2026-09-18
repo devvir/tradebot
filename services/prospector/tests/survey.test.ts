@@ -22,9 +22,9 @@ import { addressVenues } from '../src/venues';
 const quick: Adapter = { ...htx, name: 'quick', pacing: { perSecond: 1000, standDownMs: 5_000 } };
 
 /**
- * The address these tests actually request. The gate is keyed on the host, so an
- * assertion has to name the same one the fetch used — `quick.list` is a
- * different machine and would answer about a budget nothing here spent.
+ * The address these tests actually request. A gate is keyed on the venue and the
+ * host, so an assertion has to name the same host the fetch used — any other
+ * would answer about a budget nothing here spent.
  */
 const VENUE = 'https://venue/';
 
@@ -239,16 +239,16 @@ describe('http retry policy', async () => {
 });
 
 describe('a listing that hangs', async () => {
-  const { fetchText } = await import('../src/http');
+  const { fetchPage } = await import('../src/http');
 
   const timeout = (): Error =>
     Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
 
   it('gives every request a deadline', async () => {
-    const fetched = vi.fn().mockResolvedValue({ ok: true, text: async () => '<ok/>' });
+    const fetched = vi.fn(async () => new Response('<ok/>'));
 
     vi.stubGlobal('fetch', fetched);
-    await fetchText(quick, 'https://venue/?prefix=spot/');
+    await fetchPage(quick, 'https://venue/?prefix=spot/', 's3');
 
     expect(fetched.mock.calls[0]![1].signal).toBeInstanceOf(AbortSignal);
 
@@ -259,12 +259,12 @@ describe('a listing that hangs', async () => {
   it('retries rather than skipping the page', async () => {
     const fetched = vi.fn()
       .mockRejectedValueOnce(timeout())
-      .mockResolvedValueOnce({ ok: true, text: async () => '<ListBucketResult/>' });
+      .mockResolvedValueOnce(new Response('<ListBucketResult/>'));
 
     vi.stubGlobal('fetch', fetched);
 
-    await expect(fetchText(quick, 'https://venue/?prefix=spot/'))
-      .resolves.toContain('ListBucketResult');
+    await expect(fetchPage(quick, 'https://venue/?prefix=spot/', 's3'))
+      .resolves.toEqual({ listed: [], prefixes: [], next: null });
     expect(fetched).toHaveBeenCalledTimes(2);
 
     vi.unstubAllGlobals();
@@ -279,7 +279,7 @@ describe('a listing that hangs', async () => {
   it('fails loudly once its attempts are spent', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(timeout()));
 
-    await expect(fetchText(quick, 'https://venue/?prefix=spot/'))
+    await expect(fetchPage(quick, 'https://venue/?prefix=spot/', 's3'))
       .rejects.toThrow(/aborted due to timeout/);
 
     vi.unstubAllGlobals();
@@ -292,7 +292,7 @@ describe('a listing that hangs', async () => {
  * every caller and every retry goes.
  */
 describe('the gate every request passes', async () => {
-  const { fetchText }  = await import('../src/http');
+  const { fetchPage }  = await import('../src/http');
   const { _test_paces, paceFor, REFUSALS_BEFORE_BLOCK } = await import('../src/pace');
 
   const refusal = (headers: Record<string, string>) =>
@@ -304,9 +304,9 @@ describe('the gate every request passes', async () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('counts a walk request against the venue, not just a probe', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: async () => '<ok/>' }));
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('<ok/>')));
 
-    await fetchText(quick, 'https://venue/?prefix=spot/');
+    await fetchPage(quick, 'https://venue/?prefix=spot/', 's3');
 
     expect(paceFor(quick, VENUE).rates().lastSecond).toBe(1);
   });
@@ -320,9 +320,9 @@ describe('the gate every request passes', async () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockRejectedValueOnce(new Error('other side closed'))
       .mockRejectedValueOnce(new Error('other side closed'))
-      .mockResolvedValue({ ok: true, text: async () => '<ok/>' }));
+      .mockImplementation(async () => new Response('<ok/>')));
 
-    await fetchText(quick, 'https://venue/?prefix=spot/');
+    await fetchPage(quick, 'https://venue/?prefix=spot/', 's3');
 
     expect(paceFor(quick, VENUE).rates().sentTotal).toBe(3);
   });
@@ -336,11 +336,11 @@ describe('the gate every request passes', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(cloudfront()));
 
     for (let i = 0; i < REFUSALS_BEFORE_BLOCK - 1; i++)
-      await expect(fetchText(quick, 'https://venue/?prefix=spot/')).rejects.toThrow(/Refused 403/);
+      await expect(fetchPage(quick, 'https://venue/?prefix=spot/', 's3')).rejects.toThrow(/Refused 403/);
 
     expect(paceFor(quick, VENUE).blockedFor()).toBe(0);
 
-    await expect(fetchText(quick, 'https://venue/?prefix=spot/')).rejects.toThrow(/Refused 403/);
+    await expect(fetchPage(quick, 'https://venue/?prefix=spot/', 's3')).rejects.toThrow(/Refused 403/);
 
     expect(paceFor(quick, VENUE).blockedFor()).toBeGreaterThan(0);
   });
@@ -354,7 +354,7 @@ describe('the gate every request passes', async () => {
 
     vi.stubGlobal('fetch', fetched);
 
-    await expect(fetchText(quick, 'https://venue/?prefix=spot/')).rejects.toThrow(/Refused 403/);
+    await expect(fetchPage(quick, 'https://venue/?prefix=spot/', 's3')).rejects.toThrow(/Refused 403/);
     expect(fetched).toHaveBeenCalledTimes(1);
   });
 
@@ -363,7 +363,7 @@ describe('the gate every request passes', async () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValue(refusal({ server: 'AmazonS3', 'x-amz-error-code': 'AccessDenied' })));
 
-    await expect(fetchText(quick, 'https://venue/?prefix=spot/')).rejects.toThrow(/Refused 403/);
+    await expect(fetchPage(quick, 'https://venue/?prefix=spot/', 's3')).rejects.toThrow(/Refused 403/);
 
     expect(paceFor(quick, VENUE).blockedFor()).toBe(0);
   });
@@ -376,7 +376,7 @@ describe('the gate every request passes', async () => {
   it('carries the headers somewhere a log can reach them', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(cloudfront()));
 
-    await expect(fetchText(quick, 'https://venue/?prefix=spot/')).rejects.toMatchObject({
+    await expect(fetchPage(quick, 'https://venue/?prefix=spot/', 's3')).rejects.toMatchObject({
       detail: { server: 'CloudFront', cache: 'Error from cloudfront', amzError: null },
     });
   });

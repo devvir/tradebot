@@ -27,9 +27,8 @@ const config: Config = { catalogDir: '', venues: [], concurrency: 4 };
 const venue: Adapter = {
   name:       'fake',
   scanner:    s3,
-  list:       'https://x',
   base:       'https://x',
-  root:       '',
+  keyRoot:    '',
   getContext: async () => ({}),
   dateOf:     (path) => /(\d{8})/.exec(path)?.[1] ?? null,
 };

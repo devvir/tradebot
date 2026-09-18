@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { establishedAt, openJob, openPartitions, putVenue } from '../src/catalog';
+import { closeWalk, establishedAt, openJob, openPartitions, putVenue } from '../src/catalog';
 import { openCatalog } from '../src/database';
 import { Refused } from '../src/http';
 import { surveyVenue } from '../src/survey';
@@ -72,7 +72,7 @@ const venue = (archive: Archive, breaks: string[] = []): Adapter => {
   };
 
   return {
-    name: 'fake', scanner, list: 'https://x', base: 'https://x', root: '',
+    name: 'fake', scanner, base: 'https://x', keyRoot: '',
     getContext: async () => null,
     dateOf: (path) => /(\d{4})-(\d{2})-(\d{2})\.zip$/.exec(path)?.slice(1, 4).join('') ?? null,
 
@@ -104,6 +104,50 @@ describe('one clean pass', () => {
     await surveyVenue(db, venue({ 'spot/': 3 }), config);
 
     expect(db.prepare('SELECT count(*) n FROM file').get()).toMatchObject({ n: 3 });
+  });
+});
+
+/**
+ * **A walk that parks keys for a probe is not over when the listing is.**
+ *
+ * Its job is the only durable record that the backlog is owed. Closed at the end
+ * of listing, the venue reports itself *waiting* with a full `wip`, schedules its
+ * next pass from a pass that has not finished, and on a restart nothing resumes
+ * the drain at all — `dueFor` reads open jobs, never the backlog. bybit's
+ * secondary host sat with 137,066 unasked rows in exactly that state.
+ */
+describe('a walk whose venue probes', () => {
+  const probed = (): Adapter => ({ ...venue({ 'spot/': 2 }), probes: true });
+
+  it('leaves its job open when the listing ends', async () => {
+    const summary = await surveyVenue(db, probed(), config);
+    const id      = putVenue(db, 'fake', 'https://x', '');
+
+    expect(summary).toMatchObject({ failed: 0, generated: true });
+    expect(openJob(db, id, 'walk')).not.toBeNull();
+  });
+
+  it('closes it once the drain has returned', async () => {
+    await surveyVenue(db, probed(), config);
+
+    const id = putVenue(db, 'fake', 'https://x', '');
+
+    closeWalk(db, id);
+
+    expect(openJob(db, id, 'walk')).toBeNull();
+    expect(establishedAt(db, id, '')).not.toBeNull();
+  });
+
+  /**
+   * The one pass that genuinely ends with its listing: everything it found was
+   * stated by the listing itself, so there is no backlog to hold the job open.
+   */
+  it('still closes at once where nothing will probe', async () => {
+    const summary = await surveyVenue(db, venue({ 'spot/': 2 }), config);
+    const id      = putVenue(db, 'fake', 'https://x', '');
+
+    expect(summary).toMatchObject({ generated: true });
+    expect(openJob(db, id, 'walk')).toBeNull();
   });
 });
 

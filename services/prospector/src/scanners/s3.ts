@@ -1,7 +1,5 @@
 import { accepted, catalogable, descend } from './descend';
-import { etagOf } from '../http';
-import { flat } from '../paths';
-import type { Limits, ListingContext, Listed, ReadLevel, Scanner } from '../types';
+import type { Limits, ListingContext, ReadLevel, S3Page, Scanner } from '../types';
 
 /**
  * A standard S3 bucket listing: `prefix` and `marker` honoured, `delimiter` used
@@ -29,8 +27,8 @@ export const s3: Scanner<ListingContext> = {
   level: (context, prefix) => level(context, prefix),
 
   page: async (context, scope, cursor) => {
-    const url  = listingUrl(context.list, scope, cursor, false);
-    const page = parse(await context.text(url));
+    const url  = listingUrl(context.base, scope, cursor, false);
+    const page = await context.page(url, 's3');
 
     return { listed: page.listed, cursor: page.next };
   },
@@ -45,8 +43,8 @@ export const s3: Scanner<ListingContext> = {
    * rather than the first row taken.
    */
   confirm: async (context, path) => {
-    const xml   = await context.text(listingUrl(context.list, context.root + path, null, false));
-    const found = parse(xml).listed.find(row => row.key === context.root + path);
+    const page  = await context.page(listingUrl(context.base, context.keyRoot + path, null, false), 's3');
+    const found = page.listed.find(row => row.key === context.keyRoot + path);
 
     return found ?? null;
   },
@@ -70,6 +68,13 @@ const MAX_KEYS = 1000;
  * and with nothing said about it. S3 states plainly whether it held anything
  * back, so it is asked rather than assumed.
  *
+ * **Until the first file, and no further.** A prefix holding a file is never
+ * split, so from that page on nothing read here changes any decision — and on a
+ * flat directory, which is what every gate month is, "to the end" meant listing
+ * the whole month to learn what its first page said. Measured 2026-09-28: 1,965
+ * requests and 46 minutes to split `spot/orderbooks/202602/`, with every idle
+ * lane waiting on the answer and the partition itself stopped for it.
+ *
  * Refused directories are dropped **here**, before the caller counts them, so a
  * prefix is judged on the children that count.
  */
@@ -80,19 +85,19 @@ const level: ReadLevel = async (context, prefix) => {
   let cursor: string | null = null;
 
   do {
-    const page = parse(await context.text(listingUrl(context.list, prefix, cursor, true)));
+    const page: S3Page = await context.page(listingUrl(context.base, prefix, cursor, true), 's3');
 
     children.push(...page.prefixes.filter(child => accepted(context, child)));
     files ||= page.listed.some(entry => catalogable(context, entry.key));
     cursor = page.next;
 
-  } while (cursor);
+  } while (cursor && ! files);
 
   return { children, files };
 };
 
 const listingUrl = (
-  list:      string,
+  base:      string,
   prefix:    string,
   marker:    string | null,
   delimiter: boolean,
@@ -100,83 +105,12 @@ const listingUrl = (
   // Prefix and marker go in **unencoded**: KuCoin serves its HTML page instead
   // of the XML listing when the slashes are percent-encoded, and S3 accepts the
   // raw form everywhere. Keys are alphanumerics, `/`, `-`, `_` and `.` only.
-  `${list.replace(/\/$/, '')}/?prefix=${prefix}&max-keys=${MAX_KEYS}`
+  `${base.replace(/\/$/, '')}/?prefix=${prefix}&max-keys=${MAX_KEYS}`
   + (delimiter ? '&delimiter=/' : '')
   + (marker ? `&marker=${marker}` : '');
 
-interface Parsed {
-  listed:   Listed[];
-  prefixes: string[];
-  next:     string | null;
-}
-
-const parse = (xml: string): Parsed => {
-  const listed: Listed[] = [];
-
-  for (const [, body] of xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)) {
-    const key = tag(body, 'Key');
-
-    if (! key) continue;
-
-    listed.push({
-      key,
-      size:     number(tag(body, 'Size')),
-      etag:     etagOf(tag(body, 'ETag')),
-      modified: tag(body, 'LastModified') ?? null,
-    });
-  }
-
-  // Child directories arrive as `<CommonPrefixes><Prefix>`. The reply also
-  // carries a bare top-level `<Prefix>` echoing the request, which ends in `/`
-  // like the rest — matching `<Prefix>` alone turns it into a phantom child
-  // named after the last path segment, on every S3 venue.
-  const prefixes = [...xml.matchAll(/<CommonPrefixes>\s*<Prefix>([^<]+)<\/Prefix>/g)]
-    .map(m => flat(m[1]!));
-
-  const truncated = /<IsTruncated>true<\/IsTruncated>/.test(xml);
-  const found     = /<NextMarker>([^<]+)<\/NextMarker>/.exec(xml)?.[1];
-  const declared  = found === undefined ? null : flat(found);
-
-  // S3 omits NextMarker when no delimiter was sent, and then the marker is the
-  // last entry of the page — the greater of its last key and its last child
-  // directory, since a truncated level can end on either. Without this a walk
-  // stops after its first page and reports success.
-  const last = [listed[listed.length - 1]?.key, prefixes[prefixes.length - 1]]
-    .filter((entry): entry is string => entry !== undefined)
-    .sort()
-    .pop() ?? null;
-
-  const next = truncated ? (declared ?? last) : null;
-
-  return { listed, prefixes, next };
-};
-
-/**
- * One tag's contents, **copied rather than sliced**.
- *
- * Every string this scanner hands out passes through here or through the two
- * below, which is why the copy lives here: a regex capture in V8 points into the
- * page it was matched against, and these outlive the page by a long way — a key
- * becomes a series' symbol and is held for the life of the process. One kept
- * capture pins the whole half-megabyte listing. See `flat`.
- */
-const tag = (xml: string, name: string): string | null => {
-  const found = new RegExp(`<${name}>([^<]*)</${name}>`).exec(xml)?.[1];
-
-  return found === undefined ? null : flat(found);
-};
-
-const number = (raw: string | null): number | null => {
-  if (raw === null) return null;
-
-  const parsed = Number(raw);
-
-  return Number.isFinite(parsed) ? parsed : null;
-};
-
 // ── Test access ───────────────────────────────────────────────────────────────
 
-export const _test_parse       = parse;
 export const _test_listingUrl  = listingUrl;
 export const _test_descend     = (context: ListingContext, limits: Limits) =>
   descend(context, limits, level);
