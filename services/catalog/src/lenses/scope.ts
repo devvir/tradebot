@@ -1,34 +1,50 @@
-import { lensNamed, resolve } from './lens';
+import { lensNamed } from './lens';
+import { syncMembers } from './members';
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import type { HeldScope, LensScope, LensSpan, LensWindow, Series } from '../types';
 
 /**
- * A lens as every query applies it: for each venue, the series it lets through
+ * A lens as the contents read it: for each venue, the series it lets through
  * and the date spans of each. Null where no lens has that slug.
  *
- * **The one place a lens turns into something a query can use**, so a listing,
- * a count or a size all read the same answer — resolved by the same three steps
- * the editor shows (patterns, then series, then dates; see `resolve`) and
- * applied per file with `holds`. Nothing downstream re-reads rules.
+ * **Read off `lens_series`**, brought up to date first, so it is the same answer
+ * the listing and the sizes read — and nothing here evaluates a rule.
  *
- * **Held for `KEEP_MS`, and dropped the moment the lens is edited.** Resolving
- * folds the whole series registry, which a listing would otherwise do for every
- * page; the registry grows as surveys find instruments, so the hold is short
- * enough that a new series is in the lens within a minute.
+ * **Held until the lens changes**: until it is saved again, or rows are added
+ * for series that appeared. Either moves what is compared below, so a held scope
+ * is never stale and never thrown away while it is still true.
  */
 export const lensScope = (db: DatabaseSync, slug: string): LensScope | null => {
   const lens = lensNamed(db, slug);
 
   if (! lens) return null;
 
-  const held = SCOPES.get(slug);
+  syncMembers(db, lens);
 
-  if (held && held.updatedAt === lens.updatedAt && Date.now() - held.at < KEEP_MS) return held.scope;
+  const through = (db.prepare('SELECT series_through AS at FROM lens WHERE id = ?').get(lens.id!) as { at: number }).at;
+  const held    = SCOPES.get(slug);
 
-  const scope: LensScope = new Map([...resolve(db, lens.definition)].map(([venue, slices]) =>
-    [venue, new Map(slices.map(slice => [slice.seriesId, slice.spans]))]));
+  if (held && held.updatedAt === lens.updatedAt && held.through === through) return held.scope;
 
-  SCOPES.set(slug, { at: Date.now(), updatedAt: lens.updatedAt, scope });
+  const scope = new Map<string, Map<number, LensSpan[]>>();
+
+  for (const row of db.prepare(
+    `SELECT v.name AS venue, l.series_id AS seriesId, l.lo, l.hi
+       FROM lens_series l
+       JOIN series s ON s.id = l.series_id
+       JOIN pattern p ON p.id = s.pattern_id
+       JOIN venue v ON v.id = p.venue_id
+      WHERE l.lens_id = ?`,
+  ).all(lens.id!) as { venue: string; seriesId: number; lo: string; hi: string }[]) {
+    const venue = scope.get(row.venue) ?? new Map<number, LensSpan[]>();
+    const spans = venue.get(row.seriesId) ?? [];
+
+    spans.push({ from: row.lo === '' ? null : row.lo, to: row.hi === '~' ? null : row.hi.slice(0, 6) });
+    venue.set(row.seriesId, spans);
+    scope.set(row.venue, venue);
+  }
+
+  SCOPES.set(slug, { updatedAt: lens.updatedAt, through, scope });
 
   return scope;
 };
@@ -133,7 +149,6 @@ const endAt = (month: string, width: number): string => {
 };
 
 
-const KEEP_MS = 60_000;
 
 const SCOPES = new Map<string, HeldScope>();
 

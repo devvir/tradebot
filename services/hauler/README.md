@@ -2,16 +2,16 @@
 
 Brings catalogued venue files to disk, under canonical names.
 
-Prospector establishes what every venue publishes, and the catalog serves each
-venue as an S3-style listing over the [catalog API](../../docs/modules/CATALOG-API.md).
-Hauler walks those listings, fetches what is still owed, and writes each object at its key. It
-never discovers, never learns how a venue structures its archive, and never
-names a file. The key is where its file goes.
+Prospector establishes what every venue publishes, and the catalog serves every
+venue as one S3-style bucket over the [catalog API](../../docs/modules/CATALOG-API.md),
+each under its own prefix. Hauler walks each venue's prefix, fetches what is still
+owed, and writes each object at its key. It never discovers, never learns how a
+venue structures its archive, and never names a file. The key is where its file goes.
 
 ```
-<archives>/<venue>/<key>
+<archives>/<key>
 
-/data/archives/bitget/perp/klines,1m/202506/B/BTCUSDT/
+/data/archives/bitget/perp/klines,1m/B/BTCUSDT/202506/
     bitget|perp|klines,1m|BTCUSDT|20250601.zip
 ```
 
@@ -30,7 +30,7 @@ without learning where they live.
   older date is one the catalog did not list.
 - Renames a file on disk that differs to `<name>.bak` (or `.bak.2`, `.bak.3`, …)
   and then fetches it again. It never deletes anything.
-- Reports each page by `FileId`: downloaded, failed, or mismatched. The catalog
+- Reports each page by Key: downloaded, failed, or mismatched. The catalog
   checks the venue again and decides what is true. Only the venue saying a file
   is not there (`403`, `404`, `410`) makes it failed; a timeout or a busy venue
   leaves it unreported, to come round on the next walk.

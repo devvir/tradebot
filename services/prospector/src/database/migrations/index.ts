@@ -2,11 +2,9 @@ import { core } from './001-core';
 import { htxRetirements } from './002-htx';
 import { okxSeries } from './003-okx';
 import { bitgetSeries } from './004-bitget';
-import { carts } from './005-carts';
-import { gateMisfiled } from './006-gate';
-import { lenses } from './007-lens';
-import { binanceRetirements } from './008-binance';
-import { pendingIndex } from './009-pending';
+import { gateMisfiled } from './005-gate';
+import { binanceRetirements } from './006-binance';
+import { pendingIndex } from './007-pending';
 import type { Migration } from '../../types';
 
 /**
@@ -21,20 +19,22 @@ import type { Migration } from '../../types';
  * databases and not others, which is not a migration system, and it left nowhere
  * to put anything a new deployment needs.
  *
- * So `MIGRATIONS[i]` takes the schema **from version i to version i+1**, the
- * array index is the version it upgrades from, and the list is append-only.
- * Editing one that has shipped changes nothing on a database that already ran it
- * and silently diverges the two.
+ * So `MIGRATIONS[i]` takes the schema **from version i to version i+1**, and the
+ * array index is the version it upgrades from.
+ *
+ * **The chain is the catalog as it is, not a history of how it got there.** No
+ * catalog is shared or deployed yet, so a change edits the migration it belongs
+ * to rather than adding one on top — and the one live catalog is brought to
+ * match by running the same statements by hand, `user_version` included.
  *
  * Each runs in its own transaction together with its version bump, so a failure
  * leaves the database at the version it was, never half-migrated.
  *
  * **Each is a thing rather than a step.** The catalog's shape with the rows that
  * are constants of it, then the venues whose contents cannot be discovered and
- * therefore ship measured, then the tables carts live in — which arrived after
- * the baseline and are in it too, so a fresh catalog gets them from the shape
- * and a catalog in service gets them from the migration — and last the shapes a
- * venue used once and abandoned, which no amount of reading can date.
+ * therefore ship measured, then the shapes a venue used once or stopped
+ * writing, which no amount of reading can date, and last the index for what is
+ * still owed.
  *
  * There is otherwise no history here, because there is nothing to replay: a
  * chain of deltas is worth keeping only while databases exist at the versions
@@ -45,9 +45,7 @@ export const MIGRATIONS: readonly Migration[] = [
   htxRetirements,
   okxSeries,
   bitgetSeries,
-  carts,
   gateMisfiled,
-  lenses,
   binanceRetirements,
   pendingIndex,
 ];

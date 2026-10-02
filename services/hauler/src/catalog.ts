@@ -1,6 +1,6 @@
 import { logger } from '@devvir/service-kit';
 import config from './config';
-import type { BucketPage, Report } from './types';
+import type { BucketPage, Report, ReportAnswer } from './types';
 
 /**
  * Hauler's whole conversation with the catalog: which venues there are, one
@@ -25,24 +25,32 @@ export const venues = async (): Promise<string[]> => {
   return body.items.map(one => one.venue);
 };
 
-/** One page of a venue's bucket, after `marker`, of files not yet downloaded. */
+/** One page of a venue's part of the bucket, after `marker`, of files not yet downloaded. */
 export const page = async (venue: string, marker: string | null): Promise<BucketPage> => {
-  const query = new URLSearchParams({ pending: 'true', 'max-keys': String(PAGE_KEYS) });
+  const query = new URLSearchParams({ prefix: `${venue}/`, pending: 'true', 'max-keys': String(PAGE_KEYS) });
 
   if (marker !== null) query.set('marker', marker);
 
-  return ask<BucketPage>(`/listings/${encodeURIComponent(venue)}?${query.toString()}`);
+  return ask<BucketPage>(`/listings?${query.toString()}`);
 };
 
 /**
- * What became of a page. A report that fails is only logged: the files it
- * named are listed again on the next walk, found on disk, and reported then.
+ * What became of a page.
+ *
+ * **A report that fails is only logged**: the files it named are listed again on
+ * the next walk, found on disk, and reported then. **Keys the catalog would not
+ * settle** — a `207` naming them — are logged as errors: each is a key the
+ * catalog listed and then did not know, or a lens that does not let it through,
+ * and neither mends itself by asking again.
  */
 export const report = async (venue: string, done: Report): Promise<void> => {
   if (done.downloaded.length + done.failed.length + done.mismatched.length === 0) return;
 
   try {
-    await ask(`/listings/${encodeURIComponent(venue)}/report`, { method: 'POST', body: JSON.stringify(done) });
+    const answer = await ask<ReportAnswer>('/listings/report', { method: 'POST', body: JSON.stringify(done) });
+
+    for (const one of answer.Error ?? [])
+      logger.error({ venue, key: one.Key, code: one.Code }, `The catalog would not settle a report: ${one.Message}`);
   } catch (err) {
     logger.warn({ err, venue, downloaded: done.downloaded.length, failed: done.failed.length,
       mismatched: done.mismatched.length }, 'Could not report a page — it will come round again');

@@ -1851,7 +1851,7 @@ logging, `/ping` and rate limiting come with it.
 | `POST /venues/:venue/surveys` | The same, for one venue named in the path. |
 | `POST /surveys/pause` | Stop where it is, keeping every cursor. Same `venue` argument. |
 | `GET /status` | Where every venue stands, with its totals. `venue` narrows it. |
-| `POST /reports/:venue` | What became of the files a downloader was listed, by `FileId`. |
+| `POST /reports` | What became of the files a downloader was listed, by file id. |
 
 Routes are thin: `api/collector.ts` and `api/reports.ts` validate and answer, and the work is in
 `collector.ts` and `reports.ts`.
@@ -1956,10 +1956,11 @@ series declared, and every pass is an update over them, so dropping its run rows
   "mismatched": [{ "FileId": 4815164, "Size": 506, "ETag": "…" }] }
 ```
 
-The catalog forwards a downloader's report here as sent, and answers with what this returns:
-`recorded`, `withdrawn`, `corrected`, and `unknown` for ids that name no confirmed file of this venue.
-**A `FileId` is the file's rowid**, which is global, so the venue in the path is what keeps a report to
-its own files. A report holds at most 10,000 files; more is a `400`.
+A downloader reports to the catalog by Key; the catalog resolves each key to its file, checks it against
+the downloader's lens, and forwards the ids here. **A file id is the file's rowid**, which is how this
+service names a file: the Key and the lens are the catalog's business. The answer counts what was
+`recorded`, `withdrawn` and `corrected`, and `unknown` for ids that name no confirmed file. A report
+holds at most 10,000 files; more is a `400`.
 
 **The caller reports problems; this service rules on them.** Nothing a caller sends is taken as fact
 about a venue: a file reported as undownloadable is checked against the venue, and either stays owed
@@ -2004,17 +2005,23 @@ nothing.
 
 The schema lives in `src/catalog/`, alongside the queries. **Prospector creates and migrates the
 file, and writes every row but one table's.** The [catalog](../../services/catalog/README.md) opens
-the same file to serve it, and writes only `lens`: a lens is a consumer's choice, which collection
-neither knows nor acts on. Nothing is shared in code: the catalog carries its own queries, and its tests
+the same file to serve it, and writes only `lens` and `lens_series`: a lens is a consumer's choice,
+which collection neither knows nor acts on. Nothing is shared in code: the catalog carries its own queries, and its tests
 build their own tables.
 
-Fifteen tables. `venue`, `file`, `wip` and `revision` are what a venue serves and what became of
+Sixteen tables. `venue`, `file`, `wip` and `revision` are what a venue serves and what became of
 it; `pattern`, `series` and `transform` are what it publishes, where, and how it spells an instrument
 the pattern cannot; `run` is how far each pass has read and `survey` whether this deployment reads it
 at all; `rollup_venue` and `rollup_series` are the rollups that keep a total from costing a scan,
-per venue and per series; `exclusion` and `unreadable`
-are the two lists of things ruled out and not yet read; and `lens` is the one thing here nobody
-measured, and the one table the catalog writes.
+per venue and per series; `exclusion` and `unreadable` are the two lists of things ruled out and not
+yet read; and `lens` and `lens_series` are the one thing here nobody measured, and the two tables the
+catalog writes.
+
+**A series carries its place in the catalog's listing**, `series.prefix`
+(`venue/market/dataset[,variant]/F/symbol/`, or `…/@/` for the venue-wide file), indexed, which is what lets a page of the listing be one
+query in key order. It is written by a trigger as the series is created, so no writer — a survey or a
+seed — has to know the listing's layout, and the expression is the one `PREFIX_OF` in `schema.ts`. A
+symbol that cannot be a folder name, empty or holding a `/`, has none.
 
 **Migrations run automatically, once, on open — on every database, including a fresh one.**
 Versioning uses SQLite's own `user_version`, so a database that has never heard of migrations reports
@@ -2022,21 +2029,20 @@ Versioning uses SQLite's own `user_version`, so a database that has never heard 
 so a failure leaves the file where it was rather than half-migrated, and a catalog from a *newer*
 build is refused rather than written to by an older one.
 
-The chain is five steps: the schema together with the venue rows and two lists of gate files that
+The chain is seven steps: the schema together with the venue rows and two lists of gate files that
 are not what their URLs say, then htx's retirement dates, then okx's series, then bitget's, then the
-lens table — which arrived after the baseline and is in it as well, so a catalog built from
-nothing gets them with the shape and one already in service gets them from the migration. Both
-statements are the same `CART_SCHEMA`, and both are `IF NOT EXISTS`, so whichever runs second does
-nothing. **A seed is a migration and not a startup hook**, because a fresh catalog is
+shapes gate used for one hour, then the shapes binance stopped writing, then the index over what is
+still owed. **A seed is a migration and not a startup hook**, because a fresh catalog is
 exactly the database that would otherwise pay for rediscovering it — which is what an earlier
 arrangement got backwards, jumping new files straight to the head version and running the chain only
 on old ones. A caller that wants the shape without the findings — a test fixture, mostly — declines
 them with `seedData: false`, which still advances the version so nothing is retried behind its back.
 
 **One file per migration**, in `database/migrations/`, named for the version it produces and listed in
-order by that directory's `index.ts`. A migration is written once and then frozen, so the chain only
-grows — and what grows with it is the prose, since the reason a step exists is the part worth
-keeping. Adding one is a new file and a line in the list.
+order by that directory's `index.ts`. **The chain describes the catalog as it is, not how it got
+there.** No catalog is shared or deployed yet, so a change edits the migration it belongs to rather
+than adding one on top, and the one live catalog is brought to match by running the same statements by
+hand, `user_version` included.
 
 That is the only thing startup does to an existing file: no repair, no rebuild, no inference about
 what it ought to contain.

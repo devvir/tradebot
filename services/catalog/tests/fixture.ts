@@ -129,11 +129,25 @@ const SCHEMA = `
     dataset TEXT NOT NULL, variant TEXT NOT NULL DEFAULT '', pattern TEXT NOT NULL,
     grain TEXT NOT NULL DEFAULT 'monthly', retired_at TEXT, UNIQUE (venue_id, market, dataset, pattern));
   CREATE TABLE series (id INTEGER PRIMARY KEY, pattern_id INTEGER NOT NULL, symbol TEXT NOT NULL DEFAULT '',
-    url_symbol TEXT, first TEXT, last TEXT);
+    url_symbol TEXT, first TEXT, last TEXT, prefix TEXT);
+  CREATE INDEX series_prefix ON series (prefix);
+  CREATE TRIGGER series_prefix AFTER INSERT ON series BEGIN
+    UPDATE series SET prefix = (
+      SELECT CASE WHEN NEW.symbol = '' OR instr(NEW.symbol, '/') > 0 THEN NULL ELSE
+               v.name || '/' || p.market || '/' || p.dataset
+               || CASE WHEN p.variant <> '' THEN ',' || p.variant ELSE '' END
+               || '/' || CASE WHEN NEW.symbol = '@' THEN '@/' ELSE
+                    CASE WHEN upper(substr(NEW.symbol, 1, 1)) GLOB '[A-Z]'
+                         THEN upper(substr(NEW.symbol, 1, 1)) ELSE '_' END
+                    || '/' || NEW.symbol || '/' END END
+        FROM pattern p JOIN venue v ON v.id = p.venue_id WHERE p.id = NEW.pattern_id)
+    WHERE id = NEW.id;
+  END;
   CREATE TABLE file (venue_id INTEGER NOT NULL, path TEXT NOT NULL, date TEXT NOT NULL, size INTEGER,
     etag TEXT, modified TEXT, series_id INTEGER NOT NULL, existence TEXT NOT NULL, seen_at TEXT NOT NULL,
     downloaded_at TEXT, PRIMARY KEY (venue_id, path));
   CREATE INDEX file_series ON file (series_id, date, existence);
+  CREATE INDEX file_pending ON file (series_id, date) WHERE downloaded_at IS NULL AND existence = 'confirmed';
   CREATE TABLE rollup_venue (venue_id INTEGER NOT NULL, month TEXT NOT NULL, files INTEGER NOT NULL DEFAULT 0,
     bytes INTEGER NOT NULL DEFAULT 0, pending INTEGER NOT NULL DEFAULT 0, pending_bytes INTEGER NOT NULL DEFAULT 0,
     withdrawn INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (venue_id, month));
@@ -141,6 +155,9 @@ const SCHEMA = `
     bytes INTEGER NOT NULL DEFAULT 0, pending INTEGER NOT NULL DEFAULT 0, pending_bytes INTEGER NOT NULL DEFAULT 0,
     withdrawn INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (series_id, month));
   CREATE TABLE lens (id INTEGER PRIMARY KEY, slug TEXT NOT NULL, name TEXT NOT NULL DEFAULT '',
-    note TEXT NOT NULL DEFAULT '', definition TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    note TEXT NOT NULL DEFAULT '', definition TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    series_through INTEGER NOT NULL DEFAULT 0);
   CREATE UNIQUE INDEX lens_slug ON lens (slug);
+  CREATE TABLE lens_series (lens_id INTEGER NOT NULL, series_id INTEGER NOT NULL, lo TEXT NOT NULL, hi TEXT NOT NULL);
+  CREATE INDEX lens_series_key ON lens_series (lens_id, series_id, lo);
 `;

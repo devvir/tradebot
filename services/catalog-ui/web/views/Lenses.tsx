@@ -3,7 +3,7 @@ import {
   Alert, Autocomplete, Badge, Button, Card, Group, Loader, Modal, MultiSelect, Progress,
   Select, Stack, Text, TextInput, Title,
 } from '@mantine/core';
-import { catalog, post, put, remove } from '../api';
+import { catalog, poll, post, put, remove } from '../api';
 import { linkTo, rememberLens } from '../App';
 
 /** The key a lens keeps its all-venue rules under — see the catalog's `GLOBAL`. */
@@ -104,6 +104,27 @@ export const Lenses = ({ slug }: { slug?: string | undefined }) => {
 /** How often an open lens asks its size again, so progress moves while hauling. */
 const SIZE_REFRESH_MS = 30_000;
 
+/** Where a lens's last known size is kept, one entry per lens. */
+const sizeKey = (slug: string): string => `catalog-ui:lens-size:${slug}`;
+
+/** The size last seen for exactly this definition, or undefined where it was never sized here. */
+const seenSize = (slug: string, definition: LensDefinition): LensSize | undefined => {
+  try {
+    const held = JSON.parse(localStorage.getItem(sizeKey(slug)) ?? 'null') as
+      { definition: string; size: LensSize } | null;
+
+    return held && held.definition === JSON.stringify(definition) ? held.size : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const keepSize = (slug: string, definition: LensDefinition, size: LensSize): void => {
+  try {
+    localStorage.setItem(sizeKey(slug), JSON.stringify({ definition: JSON.stringify(definition), size }));
+  } catch { /* storage refused: the next visit waits for the answer instead */ }
+};
+
 /**
  * How much of what the lens lets through is already on disk, by weight — files
  * vary from kilobytes to gigabytes, so a count would say little about the wait.
@@ -162,30 +183,41 @@ const Editing = ({ lens, onChanged, onFailed }: {
   /**
    * **Asked of the catalog on every change**, by the same function that refuses
    * the write — so this page never has a second opinion about what is valid.
+   * An answer for a draft already replaced is dropped.
    */
   useEffect(() => {
+    let current = true;
+
     const at = setTimeout(() => {
       post<{ problems: LensProblem[] }>('/api/catalog/lenses/check', draft)
-        .then(({ problems: found }) => setProblems(found)).catch(() => setProblems([]));
-
-      setSize(undefined);
-      post<LensSize>('/api/catalog/lenses/size', draft).then(setSize).catch(() => setSize(undefined));
+        .then(({ problems: found }) => { if (current) setProblems(found); })
+        .catch(() => { if (current) setProblems([]); });
     }, 250);
 
-    return () => clearTimeout(at);
+    return () => { current = false; clearTimeout(at); };
   }, [draft]);
 
   /**
-   * **Progress moves while a downloader works**, so the size is asked again every
-   * so often — quietly, keeping the last answer on screen until the next arrives.
+   * **The size: what was last seen at once, then kept current.** Sizing a lens
+   * can take the catalog seconds, so the figure last seen for this exact
+   * definition is shown immediately from this browser's storage, and the page
+   * asks right away — the answer replaces it without the line ever going blank.
+   * Then again `SIZE_REFRESH_MS` after each answer, because progress moves
+   * while a downloader works. A definition never sized here shows the dots.
    */
   useEffect(() => {
-    const every = setInterval(() => {
-      post<LensSize>('/api/catalog/lenses/size', draft).then(setSize).catch(() => undefined);
-    }, SIZE_REFRESH_MS);
+    setSize(seenSize(lens.slug, draft));
 
-    return () => clearInterval(every);
-  }, [draft]);
+    let polling: { stop: () => void } | undefined;
+
+    const at = setTimeout(() => {
+      polling = poll(() => post<LensSize>('/api/catalog/lenses/size', draft), SIZE_REFRESH_MS, {
+        data: found => { setSize(found); keepSize(lens.slug, draft, found); },
+      });
+    }, 250);
+
+    return () => { clearTimeout(at); polling?.stop(); };
+  }, [lens.slug, draft]);
 
   const dirty = name !== lens.name || note !== lens.note
     || JSON.stringify(draft) !== JSON.stringify(lens.definition);

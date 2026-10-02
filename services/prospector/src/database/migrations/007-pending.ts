@@ -3,8 +3,8 @@ import type { Migration } from '../../types';
 import type { DatabaseSync } from 'node:sqlite';
 
 /**
- * 8 → 9. An index over the files not yet downloaded, for bucket listings asked
- * for what is still owed — see `bucket.ts`.
+ * 6 → 7. An index over the files not yet downloaded, for listings asked for
+ * what is still owed.
  */
 export const pendingIndex: Migration = {
   name: 'pending',

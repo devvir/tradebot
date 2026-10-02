@@ -49,7 +49,8 @@ tells the two renderings apart.
 
 **Reading through a lens.** A consumer names a [lens](#lenses) in an `x-catalog-lens` header, and the
 listings and `/contents/*` answer only what it lets through. No header is the whole catalog; an unknown
-slug is a `404`, never the whole catalog in its place.
+slug is a `422`, never the whole catalog in its place: the URL names something that exists, and the
+header names something that does not.
 
 **Collections answer `{ "items": [...] }`.** Single resources answer the object itself. Errors answer
 `{ "error": "..." }` with a fitting status. The listing is the exception: it answers in S3's shape,
@@ -138,34 +139,49 @@ where files are hundreds of millions), so it costs nothing to ask. What a lens c
 
 ## Listings
 
-Each venue as a storage bucket. The listing has S3's shape, and every object is keyed by what the file
-*is*. This is what a downloader walks: it writes each object at its key, so it needs no vocabulary of
-its own.
+The catalog as one storage bucket: every venue's files, in S3's shape, each keyed by what the file *is*.
+This is what a downloader walks. It writes each object at its key, so it needs no vocabulary of its own,
+and it reports by the same key.
 
 | | |
 |---|---|
-| `GET /listings/:venue` | One page of the venue's listing, in key order. |
-| `POST /listings/:venue/report` | What became of a page, by `FileId`. |
+| `GET /listings` | One page of the bucket, in key order. |
+| `POST /listings/report` | What became of a page, by Key. |
 
 ```
-GET /listings/binance?pending=true&max-keys=1000&marker=<last key>
+GET /listings?prefix=binance/&pending=true&max-keys=1000&marker=<last key>
 x-catalog-lens: backfill-20
 ```
 
-**The key is the canonical archive path**, the same on every venue:
+**The key is the canonical archive path**, venue first:
 
 ```
-market/dataset[,variant]/YYYYMM/F/symbol/venue|market|dataset[,variant]|symbol|period[|part].ext
+venue/market/dataset[,variant]/F/symbol/YYYYMM/venue|market|dataset[,variant]|symbol|date[.partNN].ext
+venue/market/dataset[,variant]/@/YYYYMM/venue|market|dataset[,variant]|@|date[.partNN].ext
 
-perp/klines,1m/202001/B/BTCUSDT/binance|perp|klines,1m|BTCUSDT|20200101.zip
-perp/quotes/202001/B/BTCUSDT/binance|perp|quotes|BTCUSDT|20200101.zip
+binance/perp/klines,1m/B/BTCUSDT/202001/binance|perp|klines,1m|BTCUSDT|20200101.zip
+gate/spot/books/B/BTC_USDT/202107/gate|spot|books|BTC_USDT|20210726.part03.csv.gz
+gate/spot/trades/@/202107/gate|spot|trades|@|202107.csv.gz
 ```
 
-A dataset with no variant has no comma. `F` is the symbol's first letter in upper case, or `_` where it
-is not a letter. The variant's values are joined in the order their levels belong in. `part` is where a
-venue splits a period into pieces, as bitget's trades are. `@` as the symbol means one file carrying
-every instrument of a market. Keys sort as bytes, as S3's do, so `trades,default/` comes before
-`trades/`.
+- A dataset with no variant has no comma. The variant's values are joined in the order their levels
+  belong in.
+- `F` is the symbol's first letter in upper case, or `_` where it is not a Latin letter: a digit, or
+  gate's symbols written in Chinese.
+- `@` is the venue-wide file, one file carrying every instrument of a market. It has no letter folder,
+  so its keys are one segment shorter, and `@` is never anything else, so a key says which depth it
+  has. It sorts below every letter, so a dataset's bucket lists before its instruments.
+- `date` is the file's period, a month (`202001`) or a day (`20200101`).
+- `.partNN` is a piece of a period a venue splits, as bitget's trades and gate's hourly books are. It
+  sits before the extension, where a downloaded file's name carries it.
+- The name repeats the whole prefix but the letter, so a name read alone says everything.
+
+**Keys sort as bytes, as S3's do**, and that order is instrument, then date, then part. So
+`trades,default/` comes before `trades/`, a month's file before its days (`.` sorts below every digit),
+and a monthly and a daily rendering of one instrument interleave by date under the same prefix.
+
+**`prefix` narrows the listing**, as on S3: a venue (`gate/`), a dataset (`gate/spot/books/`), an
+instrument, a month. A downloader walks one venue at a time with `prefix=<venue>/`.
 
 **`ListObjects` V1 by default, V2's shape with `list-type=2`.** Both resume after an exact key, so they
 are one listing with two spellings:
@@ -177,31 +193,25 @@ are one listing with two spellings:
 | also answered | `Marker` | `KeyCount`, `ContinuationToken`, `StartAfter` |
 
 `max-keys` is 500 unless asked for, and 1,000 at most. Asking past the cap gets the cap, and anything
-that is not a whole number from 1 is a `400`. `prefix`, `delimiter`, `encoding-type` and `fetch-owner`
-are not implemented.
+that is not a whole number from 1 is a `400`. `delimiter`, `encoding-type` and `fetch-owner` are not
+implemented.
 
 **XML unless JSON is asked for.** With no `Accept` header, or one that prefers XML, the answer is S3's
 `ListBucketResult`. With `Accept: application/json`, it is the same fields under the same names, as one
-object. An error takes S3's `Error` shape with a `Code` and a `Message` in either format: `NoSuchBucket`
-(404), `NoSuchLens` (404) or `InvalidArgument` (400). An ETag keeps S3's quotes as part of its value, so
+object; an element S3 repeats (`Contents`) is an array under its own name. An error takes S3's `Error`
+shape with a `Code` and a `Message` in either format. An ETag keeps S3's quotes as part of its value, so
 in XML it reads `&quot;…&quot;` and in JSON `"\"…\""`.
 
-**Each object carries `Key`, `FileId`, `Url`, and, where the catalog knows them, `ETag`, `Size` and
-`LastModified`.** `FileId` is not S3's: it is the catalog's own number for the file, and what a report
-names a file by. The key is the listing's identity and its cursor; it runs to hundreds of bytes, so it is
-not asked to be anything else. A `FileId` stays the file's for as long as the file exists, which holds
-because the catalog never runs a full `VACUUM`.
+**Each object carries `Key`, `Url`, and, where the catalog knows them, `ETag`, `Size` and
+`LastModified`.** `Url` is the whole address of the file at its venue. A page can span venues, and one
+venue can be served from two hosts, so there is no base to share.
 
-`BaseUrl` joined to `Url` is the address of the file. When every object on a page lives under one base,
-`BaseUrl` is that base and each `Url` is the rest. When a page mixes a venue's hosts, `BaseUrl` is empty
-and each `Url` is complete.
-
-**Two filters S3 does not have.** Each one leaves files out, as though the listing did not hold them:
+**Two filters S3 does not have.** Each one leaves files out, as though the bucket did not hold them:
 
 | | |
 |---|---|
 | `pending=true` | only files not yet downloaded |
-| `x-catalog-lens: <slug>` | only what that lens lets through |
+| `x-catalog-lens: <slug>` | only what that lens lets through. An unknown lens is a `422 NoSuchLens` |
 
 A walk is a cursor over keys, so a file catalogued behind the cursor is listed by the next walk, as on
 any bucket.
@@ -209,18 +219,33 @@ any bucket.
 ### Reporting
 
 ```json
-{ "downloaded": [4815162, "…"],
-  "failed":     [4815163],
-  "mismatched": [{ "FileId": 4815164, "Size": 506, "ETag": "…" }] }
+{ "downloaded": ["binance/perp/klines,1m/B/BTCUSDT/202001/binance|perp|klines,1m|BTCUSDT|20200101.zip"],
+  "failed":     ["…"],
+  "mismatched": [{ "Key": "…", "Size": 506, "ETag": "…" }] }
 ```
 
-The answer counts what was `recorded`, `withdrawn` and `corrected`, plus `unknown`: ids that name no
-file of this venue, otherwise ignored. A report holds at most 10,000 files.
+Files are named by Key, and through the lens they were listed through, sent as `x-catalog-lens`. A report
+holds at most 10,000 keys.
 
-**A report is prospector's to settle**, so the catalog forwards it as sent and answers with what
-prospector said. Where prospector does not answer, the report is a `502` and is sent again later: a
-downloader that loses a report loses nothing, since the files are listed again, found on disk, and
-reported then.
+**`200` where every key was settled, `207 Multi-Status` where some were not**, with only those in the
+body, as S3's quiet `DeleteObjects` answers:
+
+```xml
+<ReportResult>
+  <Error><Key>…</Key><Code>NoSuchKey</Code><Message>No catalogued file has this key</Message></Error>
+  <Error><Key>…</Key><Code>AccessDenied</Code><Message>The lens … does not let this file through</Message></Error>
+</ReportResult>
+```
+
+`NoSuchKey` is a key naming no file; `AccessDenied` is a file the report's lens does not let through.
+Neither is settled, and neither mends itself by being sent again. A whole request refused has a status
+of its own: `400` for a body that is not a report or names more than 10,000 keys, `422 NoSuchLens`, and
+`502` where prospector does not answer.
+
+**A report is prospector's to settle.** The catalog resolves each key to its file and forwards it to
+prospector's private reports API. Where prospector does not answer, the report is a `502` and is sent
+again later: a downloader that loses a report loses nothing, since the files are listed again, found on
+disk, and reported then.
 
 **Reporting is not transactional with the download, on purpose.** That same path is what lets a machine
 whose archive is already there be adopted with no seeding step.
@@ -253,9 +278,11 @@ A **lens** is a named way of looking at the catalog. See [CATALOG-LENSES.md](CAT
 
 | | |
 |---|---|
-| `400` | a malformed body, a report over 10,000 files, an unknown `grain`, or a lens definition that does not hold |
+| `200` / `207` | a report settled in full, or in part — see [Reporting](#reporting) |
+| `400` | a malformed body, a report over 10,000 keys, an unknown `grain`, or a lens definition that does not hold |
 | `401` | the token is wrong or absent |
-| `404` | no such venue or lens |
+| `404` | no such venue, or no such lens addressed in the path |
+| `422` | a lens named in `x-catalog-lens` that does not exist |
 | `409` | a lens address already taken |
 | `413` | a body over 5 MB |
 | `502` | a report prospector did not answer |

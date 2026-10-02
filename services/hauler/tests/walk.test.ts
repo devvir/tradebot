@@ -22,8 +22,9 @@ let asked:   { url: string; lens: string | undefined; token: string | undefined 
 let reports: unknown[];
 let served:  number;
 let drops:   number;
+let refused: boolean;
 
-const KEYS = ['a/1.zip', 'a/2.zip', 'b/3.zip'];
+const KEYS = ['binance/a/1.zip', 'binance/a/2.zip', 'binance/b/3.zip'];
 
 beforeEach(async () => {
   cfg.archivesDir = mkdtempSync(join(tmpdir(), 'walk-'));
@@ -31,16 +32,21 @@ beforeEach(async () => {
   reports = [];
   served  = 0;
   drops   = 0;
+  refused = false;
 
   server = createServer((req, res) => {
     const url = new URL(req.url!, 'http://x');
 
     if (url.pathname.startsWith('/files/')) { served++; res.writeHead(200); res.end(url.pathname); return; }
 
-    if (url.pathname === '/listings/binance/report') {
+    if (url.pathname === '/listings/report') {
       let body = '';
       req.on('data', chunk => { body += chunk; });
-      req.on('end', () => { reports.push(JSON.parse(body)); res.writeHead(200); res.end('{}'); });
+      req.on('end', () => {
+        reports.push(JSON.parse(body));
+        res.writeHead(refused ? 207 : 200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(refused ? { Error: [{ Key: KEYS[0], Code: 'NoSuchKey', Message: 'No file' }] } : {}));
+      });
       return;
     }
 
@@ -59,10 +65,9 @@ beforeEach(async () => {
 
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({
-      Name: 'binance', Marker: marker ?? '', MaxKeys: 2, IsTruncated: marker === null,
+      Name: 'catalog', Prefix: url.searchParams.get('prefix'), Marker: marker ?? '', MaxKeys: 2, IsTruncated: marker === null,
       ...(marker === null ? { NextMarker: keys.at(-1) } : {}),
-      BaseUrl: `${cfg.catalogApi}/files/`,
-      Contents: keys.map(Key => ({ Key, FileId: KEYS.indexOf(Key) + 1, Url: Key })),
+      Contents: keys.map(Key => ({ Key, Url: `${cfg.catalogApi}/files/${Key}` })),
     }));
   });
 
@@ -82,12 +87,12 @@ describe('a walk', () => {
 
     expect(walked).toEqual({ listed: 3, progressed: 3, failed: 0, mismatched: 0, unreached: 0 });
 
-    for (const key of KEYS) expect(readFileSync(join(cfg.archivesDir, 'binance', key), 'utf8')).toBe(`/files/${key}`);
+    for (const key of KEYS) expect(readFileSync(join(cfg.archivesDir, key), 'utf8')).toBe(`/files/${key}`);
 
     // Fetched two at a time, so a page's files are reported in whichever order they finished.
-    expect(reports.map(one => ({ ...(one as { downloaded: number[] }), downloaded: [...(one as { downloaded: number[] }).downloaded].sort() }))).toEqual([
-      { downloaded: [1, 2], failed: [], mismatched: [] },
-      { downloaded: [3], failed: [], mismatched: [] },
+    expect(reports.map(one => ({ ...(one as { downloaded: string[] }), downloaded: [...(one as { downloaded: string[] }).downloaded].sort() }))).toEqual([
+      { downloaded: [KEYS[0], KEYS[1]], failed: [], mismatched: [] },
+      { downloaded: [KEYS[2]], failed: [], mismatched: [] },
     ]);
   });
 
@@ -107,7 +112,7 @@ describe('a walk', () => {
       const walked = await walkVenue('binance', () => served > 0);
 
       expect(walked).toEqual({ listed: 2, progressed: 1, failed: 0, mismatched: 0, unreached: 0 });
-      expect(reports).toEqual([{ downloaded: [1], failed: [], mismatched: [] }]);
+      expect(reports).toEqual([{ downloaded: [KEYS[0]], failed: [], mismatched: [] }]);
     } finally {
       cfg.concurrency = 2;
     }
@@ -117,10 +122,20 @@ describe('a walk', () => {
     await walkVenue('binance', () => false);
 
     expect(asked.map(one => one.url)).toEqual([
-      '/listings/binance?pending=true&max-keys=1000',
-      `/listings/binance?pending=true&max-keys=1000&marker=${encodeURIComponent('a/2.zip')}`,
+      `/listings?prefix=${encodeURIComponent('binance/')}&pending=true&max-keys=1000`,
+      `/listings?prefix=${encodeURIComponent('binance/')}&pending=true&max-keys=1000&marker=${encodeURIComponent(KEYS[1]!)}`,
     ]);
     expect(asked.every(one => one.lens === 'backfill-20' && one.token === 'secret')).toBe(true);
+  });
+});
+
+describe('a report the catalog could not settle in full', () => {
+  /** A 207 is a report delivered; the keys it names are logged, and the walk goes on. */
+  it('is not a failed walk', async () => {
+    refused = true;
+
+    expect(await walkVenue('binance', () => false)).toMatchObject({ listed: 3, progressed: 3 });
+    expect(reports).toHaveLength(2);
   });
 });
 
@@ -133,10 +148,11 @@ describe('the venues', () => {
 });
 
 describe('a key', () => {
-  it('may not leave the venue folder', () => {
-    expect(_test_safe('perp/trades/202001/B/X/x.zip')).toBe(true);
-    expect(_test_safe('../escape.zip')).toBe(false);
-    expect(_test_safe('a/../../b')).toBe(false);
-    expect(_test_safe('/etc/passwd')).toBe(false);
+  it('may not leave its venue\'s folder', () => {
+    expect(_test_safe('binance', 'binance/perp/trades/B/X/202001/x.zip')).toBe(true);
+    expect(_test_safe('binance', 'gate/perp/trades/B/X/202001/x.zip')).toBe(false);
+    expect(_test_safe('binance', 'binance/../escape.zip')).toBe(false);
+    expect(_test_safe('binance', 'binance//etc/passwd')).toBe(false);
+    expect(_test_safe('binance', '/etc/passwd')).toBe(false);
   });
 });

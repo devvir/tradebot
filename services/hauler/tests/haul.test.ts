@@ -56,11 +56,11 @@ afterEach(async () => {
 });
 
 const file = (over: Partial<Haulable> = {}): Haulable => ({
-  venue: 'binance', key: 'perp/trades/202001/B/BTCUSDT/x.zip', url: `${base}/file.zip`,
+  venue: 'binance', key: 'binance/perp/trades/B/BTCUSDT/202001/x.zip', url: `${base}/file.zip`,
   size: BODY.length, etag: `"${md5(BODY)}"`, ...over,
 });
 
-const at = (one: Haulable) => join(cfg.archivesDir, one.venue, one.key);
+const at = (one: Haulable) => join(cfg.archivesDir, one.key);
 
 const place = (one: Haulable, text: string, when = new Date('2020-01-01')) => {
   mkdirSync(dirname(at(one)), { recursive: true });

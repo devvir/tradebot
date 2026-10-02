@@ -18,15 +18,11 @@ import type { Adapter, Listed, ReportFile, Reported, ReportedById, Settled, Sett
 export const MAX_REPORT = 10_000;
 
 /**
- * A report by `FileId`, settled. An id that names no file of this venue is
- * counted in `unknown` and otherwise ignored: ids arrive from outside and are
- * input, not facts.
+ * A report by file id, settled. An id that names no confirmed file is counted in
+ * `unknown` and otherwise ignored: ids arrive from outside and are input, not
+ * facts.
  */
-export const settleById = async (
-  db:       DatabaseSync,
-  venueIds: readonly number[],
-  body:     Partial<ReportedById>,
-): Promise<Reported> => {
+export const settleById = async (db: DatabaseSync, body: Partial<ReportedById>): Promise<Reported> => {
   const downloaded = Array.isArray(body.downloaded) ? body.downloaded : [];
   const failed     = Array.isArray(body.failed) ? body.failed : [];
   const mismatched = Array.isArray(body.mismatched) ? body.mismatched : [];
@@ -34,7 +30,7 @@ export const settleById = async (
   let unknown = 0;
 
   const find = (id: unknown): ReportFile | null => {
-    const file = typeof id === 'number' ? fileById(db, venueIds, id) : null;
+    const file = typeof id === 'number' ? fileById(db, id) : null;
 
     if (! file) unknown++;
 
@@ -102,15 +98,15 @@ const settleReport = async (db: DatabaseSync, report: Settling): Promise<Settled
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
-/** The file a `FileId` names, within one venue's hosts; null where it names none. */
-const fileById = (db: DatabaseSync, venueIds: readonly number[], id: number): ReportFile | null => {
+/** The confirmed file an id names; null where it names none. */
+const fileById = (db: DatabaseSync, id: number): ReportFile | null => {
   if (! Number.isSafeInteger(id) || id < 1) return null;
 
   const file = db.prepare(
     `SELECT venue_id AS venueId, path FROM file WHERE rowid = ? AND existence = 'confirmed'`,
   ).get(id) as ReportFile | undefined;
 
-  return file && venueIds.includes(file.venueId) ? file : null;
+  return file ?? null;
 };
 
 /**

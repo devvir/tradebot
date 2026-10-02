@@ -15,7 +15,7 @@ export const mount = (app: Application, db: DatabaseSync, token: string): void =
   app.use(requireToken(token));
 
   mountListings(app, db);
-  mountReports(app);
+  mountReports(app, db);
   mountContents(app, db);
   mountLenses(app, db);
 

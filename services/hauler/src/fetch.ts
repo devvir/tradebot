@@ -6,7 +6,8 @@ import config from './config';
 import type { Haulable, Hauled } from './types';
 
 /**
- * Bring one file to `<archives>/<venue>/<key>`, and say what happened to it.
+ * Bring one file to `<archives>/<key>` — the key starts with the venue — and say
+ * what happened to it.
  *
  * **The size and the ETag come with the listing**, so every file hauler holds
  * is checked against what the catalog says it should be:
@@ -33,12 +34,14 @@ import type { Haulable, Hauled } from './types';
  * files a minute it was serving perfectly well.
  */
 export const haul = async (file: Haulable): Promise<Hauled> => {
-  const path = join(config.archivesDir, file.venue, file.key);
+  const path = join(config.archivesDir, file.key);
   const held = await measure(path);
 
   if (held !== null) {
     if (await agrees(file, path, held)) {
       await touch(path);
+
+      logger.info({ venue: file.venue, size: sizeOf(held) }, `Already on disk and correct: ${basename(path)}`);
 
       return { outcome: 'present' };
     }
@@ -100,7 +103,7 @@ const retrieve = async (file: Haulable, path: string): Promise<Hauled> => {
 
       await commit(path);
 
-      logger.info({ venue: file.venue, size: sizeOf(bytes) }, `Hauled ${basename(path)}`);
+      logger.info({ venue: file.venue, size: sizeOf(bytes) }, `Downloaded ${basename(path)}`);
 
       return { outcome: 'downloaded' };
     } catch (err) {

@@ -3,7 +3,7 @@ import type { Migration } from '../../types';
 import type { DatabaseSync } from 'node:sqlite';
 
 /**
- * 5 → 6. The three shapes gate used for exactly one hour, carrying the date they
+ * 4 → 5. The three shapes gate used for exactly one hour, carrying the date they
  * stopped — which is the one thing a walk cannot work out for itself.
  *
  * **Gate filed the last hour of November 2022 into December's directory.** Every

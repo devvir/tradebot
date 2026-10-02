@@ -51,21 +51,6 @@ export const extensionOf = (path: string): string => {
   return dot === -1 ? '' : name.slice(dot);
 };
 
-/**
- * Which of a period's files this one is, where a venue splits a period at all.
- *
- * **Only where the pattern says the venue does.** Bitget cuts a day of trades
- * every hundred thousand rows and numbers the pieces, reaching `_101`; nothing
- * else in the catalog does. Requiring the *pattern* to carry the same shape is
- * what stops this firing on a venue whose filenames merely end in digits — a
- * date, a strike, an expiry.
- */
-export const partOf = (path: string, pattern: string): string | undefined => {
-  if (! PARTED.test(stem(pattern))) return undefined;
-
-  return stem(path).match(PARTED)?.[1];
-};
-
 // ── Internals ─────────────────────────────────────────────────────────────────
 
 /**
@@ -83,10 +68,3 @@ const DURATION = /^\d+(?:s|m|min|h|hour|d|day|w|week|mo|mon|month)$/i;
  * by the same rule as everything else.
  */
 const BYBIT_MINUTES = /\{SYMBOL\}_(\d+)_\{/;
-
-/** A trailing `_NNN` on the name, before any extension. */
-const PARTED = /_(\d{3})$/;
-
-/** The last segment with its extension taken off, which is where a part sits. */
-const stem = (of: string): string =>
-  of.slice(of.lastIndexOf('/') + 1).replace(/\..*$/, '');

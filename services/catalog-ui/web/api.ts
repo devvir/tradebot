@@ -88,6 +88,64 @@ export const useAsk = <T>(path: string | null, ask: (path: string) => Promise<T>
   return state;
 };
 
+/**
+ * Ask now, and again `everyMs` after each answer — never on a fixed clock.
+ *
+ * **One request at a time, always.** A timer that fires whether or not the last
+ * request came back stacks requests on a service that is already slow, which
+ * makes it slower: a 30-second answer under a 5-second timer was six requests
+ * queued on a single-threaded catalog. Here the next one is scheduled only once
+ * the last has settled, answer or failure.
+ *
+ * `now()` asks at once instead of waiting out the interval, and while a request
+ * is in flight it asks once more as soon as that one settles — never two at a
+ * time. `stop()` ends it, and an answer arriving after that is dropped.
+ */
+export const poll = <T>(
+  ask:     () => Promise<T>,
+  everyMs: number,
+  on:      { data: (data: T) => void; error?: (err: Error) => void },
+): { now: () => void; stop: () => void } => {
+  let stopped = false;
+  let busy    = false;
+  let again   = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const run = (): void => {
+    clearTimeout(timer);
+
+    if (stopped) return;
+
+    if (busy) {
+      again = true;
+
+      return;
+    }
+
+    busy = true;
+
+    ask()
+      .then(data => { if (! stopped) on.data(data); },
+        (err: Error) => { if (! stopped) on.error?.(err); })
+      .finally(() => {
+        busy = false;
+
+        if (stopped) return;
+
+        if (again) {
+          again = false;
+          run();
+        } else {
+          timer = setTimeout(run, everyMs);
+        }
+      });
+  };
+
+  run();
+
+  return { now: run, stop: () => { stopped = true; clearTimeout(timer); } };
+};
+
 // ── Internals ─────────────────────────────────────────────────────────────────
 
 /** What separates a path from its lens inside one key; never part of a real path. */

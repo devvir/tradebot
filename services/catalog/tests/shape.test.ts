@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extensionOf, intervalOf, partOf } from '../src/listings/shape';
+import { extensionOf, intervalOf } from '../src/listings/shape';
 
 /**
  * Every pattern here is a real one from the catalog, because these rules exist
@@ -62,26 +62,5 @@ describe('a file\'s extension', () => {
 
   it('is not confused by dots in a directory above the file', () => {
     expect(extensionOf('a.b/c/plain')).toBe('');
-  });
-});
-
-describe('which of a period\'s files this is', () => {
-  const BITGET = 'trades/UMCBL/{SYMBOL}/{YYYY}{MM}{DD}_001.zip';
-
-  it('reads the part where the pattern says the venue splits a period', () => {
-    expect(partOf('trades/UMCBL/BTCUSDT/20250219_001.zip', BITGET)).toBe('001');
-    expect(partOf('trades/UMCBL/BTCUSDT/20250219_101.zip', BITGET)).toBe('101');
-  });
-
-  /**
-   * The pattern has to agree, or every venue whose filenames happen to end in
-   * three digits would sprout a part it does not have.
-   */
-  it('says nothing where the pattern carries no part', () => {
-    expect(partOf('a/b/BTCUSDT-2025-02-19_100.zip', 'a/b/{SYMBOL}-{YYYY}-{MM}-{DD}_100.zip'))
-      .toBe('100');
-    expect(partOf('a/b/something_123.zip', 'a/b/{SYMBOL}-{YYYY}{MM}{DD}.zip')).toBeUndefined();
-    expect(partOf('spot/candlesticks_1m/202407/BTC_USDT-20240701.csv.gz',
-      'spot/candlesticks_1m/{YYYY}{MM}/{SYMBOL}-{YYYY}{MM}{DD}.csv.gz')).toBeUndefined();
   });
 });

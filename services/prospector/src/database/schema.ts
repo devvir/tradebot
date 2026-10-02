@@ -1,96 +1,27 @@
-
 /**
- * The lens table, apart because it arrived after the baseline.
+ * A series' listing prefix, as SQL over `series` columns spelled `<row>.symbol`
+ * and the series' pattern and venue — what the `series_prefix` trigger writes,
+ * and what filled the column for series created before it.
  *
- * **One statement of it, applied from two places.** A catalog built from nothing
- * gets it inside `CATALOG_SCHEMA` below; one already in service gets it from the
- * migration that adds lenses. Written twice they would drift.
- */
-export const LENS_SCHEMA = `
--- A named way of looking at the catalog: where one is in force, what it lets
--- through IS the catalog as far as that consumer is concerned. The database
--- underneath stays complete and unfiltered.
-CREATE TABLE IF NOT EXISTS lens (
-  id         INTEGER PRIMARY KEY,
-
-  -- Lower-case, hyphenated, unique: what a consumer is configured with, and what
-  -- every path addresses. Stable, because changing it reconfigures whoever reads
-  -- through this lens.
-  slug       TEXT NOT NULL,
-
-  -- What a person calls it. Free text, and free to change.
-  name       TEXT NOT NULL DEFAULT '',
-
-  -- What it is for, in a person's words. Empty where the name says it.
-  note       TEXT NOT NULL DEFAULT '',
-
-  -- The whole definition, as JSON. Nothing queries across its parts: a lens is
-  -- read whole and written whole, so normalising it would buy filtering,
-  -- searching and indexing, and none of those are wanted.
-  definition TEXT NOT NULL,
-
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-) STRICT;
-
-CREATE UNIQUE INDEX IF NOT EXISTS lens_slug ON lens (slug);
-`;
-
-/**
- * The cart tables, apart because they arrived after the baseline.
+ * **The venue-wide file has no letter folder**: its prefix is
+ * `venue/market/dataset[,variant]/@/`, one level shorter than an instrument's.
+ * `@` is only ever the bucket, so a key holding it says which depth it has; and
+ * `@` sorts below every letter, so the bucket lists first in its dataset.
  *
- * **One statement of them, applied from two places.** A catalog built from
- * nothing gets them inside `CATALOG_SCHEMA` below; one already in service gets
- * them from the migration that adds carts. Written twice they would drift, and
- * the drift would show up as a column one deployment has and another does not.
+ * Any other symbol not starting with a Latin letter files under `_`: one
+ * starting with a digit, and gate's Chinese symbols, since `upper` and `GLOB`
+ * are ASCII-only in SQLite.
  */
-export const CART_SCHEMA = `
--- What somebody wants on disk: a named selection of the catalog, which a
--- downloader reads and fetches. The name is the handle -- hauler asks for
--- "bitmex-backfill", not for a row id.
-CREATE TABLE IF NOT EXISTS cart (
-  id         INTEGER PRIMARY KEY,
-
-  -- Lower-case, hyphenated, unique: the legible identifier a consumer names.
-  name       TEXT NOT NULL,
-
-  -- What it is for, in a person's words. Empty where the name says it.
-  note       TEXT NOT NULL DEFAULT '',
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-) STRICT;
-
-CREATE UNIQUE INDEX IF NOT EXISTS cart_name ON cart (name);
-
--- One line of a cart: a venue, and how much of it.
---
--- Every column but the venue may be empty, and empty means all of it -- so a
--- venue and nothing else is that venue's whole archive. What a line may not do
--- is admit a combination the venue does not publish: see "carts.ts", which is
--- where that is decided, because a row cannot decide it alone.
-CREATE TABLE IF NOT EXISTS cart_item (
-  id         INTEGER PRIMARY KEY,
-  cart_id    INTEGER NOT NULL REFERENCES cart (id),
-  venue_id   INTEGER NOT NULL REFERENCES venue (id),
-  market     TEXT NOT NULL DEFAULT '',
-  dataset    TEXT NOT NULL DEFAULT '',
-  variant    TEXT NOT NULL DEFAULT '',
-  grain      TEXT NOT NULL DEFAULT '',
-
-  -- The venue's own spellings, comma separated; empty is every instrument. A
-  -- symbol never contains a comma, which is what lets one row hold a list.
-  symbols    TEXT NOT NULL DEFAULT '',
-
-  -- Inclusive bounds on the period a file covers, as yyyymmdd. Empty is open:
-  -- no start, no end. A monthly file is in range where its month overlaps.
-  date_from  TEXT NOT NULL DEFAULT '',
-  date_to    TEXT NOT NULL DEFAULT '',
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-) STRICT;
-
-CREATE INDEX IF NOT EXISTS cart_item_cart ON cart_item (cart_id);
-`;
+export const PREFIX_OF = (row: string): string => `
+  SELECT CASE WHEN ${row}.symbol = '' OR instr(${row}.symbol, '/') > 0 THEN NULL ELSE
+           v.name || '/' || p.market || '/' || p.dataset
+           || CASE WHEN p.variant <> '' THEN ',' || p.variant ELSE '' END
+           || '/' || CASE WHEN ${row}.symbol = '@' THEN '@/' ELSE
+                CASE WHEN upper(substr(${row}.symbol, 1, 1)) GLOB '[A-Z]'
+                     THEN upper(substr(${row}.symbol, 1, 1)) ELSE '_' END
+                || '/' || ${row}.symbol || '/' END END
+    FROM pattern p JOIN venue v ON v.id = p.venue_id
+   WHERE p.id = ${row}.pattern_id`;
 
 /**
  * The catalog's schema, in one place, because everything that touches it has to
@@ -274,8 +205,54 @@ CREATE UNIQUE INDEX IF NOT EXISTS run_open ON run (venue_id, kind, scope) WHERE 
 -- "Is this prefix established, and as of when", without a scan.
 CREATE INDEX IF NOT EXISTS run_scope ON run (venue_id, scope, completed);
 
-${CART_SCHEMA}
-${LENS_SCHEMA}
+-- A named way of looking at the catalog: where one is in force, what it lets
+-- through IS the catalog as far as that consumer is concerned. The database
+-- underneath stays complete and unfiltered.
+CREATE TABLE IF NOT EXISTS lens (
+  id         INTEGER PRIMARY KEY,
+
+  -- Lower-case, hyphenated, unique: what a consumer is configured with, and what
+  -- every path addresses. Stable, because changing it reconfigures whoever reads
+  -- through this lens.
+  slug       TEXT NOT NULL,
+
+  -- What a person calls it. Free text, and free to change.
+  name       TEXT NOT NULL DEFAULT '',
+
+  -- What it is for, in a person's words. Empty where the name says it.
+  note       TEXT NOT NULL DEFAULT '',
+
+  -- The whole definition, as JSON. Nothing queries across its parts: a lens is
+  -- read whole and written whole, so normalising it would buy filtering,
+  -- searching and indexing, and none of those are wanted.
+  definition TEXT NOT NULL,
+
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+
+  -- The newest series the lens has been resolved against. A series past it is
+  -- one the lens has not looked at yet; the catalog adds what it lets through
+  -- to lens_series and moves this forward.
+  series_through INTEGER NOT NULL DEFAULT 0
+) STRICT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS lens_slug ON lens (slug);
+
+-- What a lens lets through: a series, and a span of its dates. A series the lens
+-- cuts a hole in has two rows. Written by the catalog -- rebuilt whole when the
+-- lens is saved, extended as new series appear -- and read by every view through
+-- the lens.
+CREATE TABLE IF NOT EXISTS lens_series (
+  lens_id   INTEGER NOT NULL REFERENCES lens (id),
+  series_id INTEGER NOT NULL,
+
+  -- File dates from and to, inclusive: '' where open below, '~' where open
+  -- above, a month followed by 99 for the last day of a month.
+  lo        TEXT    NOT NULL,
+  hi        TEXT    NOT NULL
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS lens_series_key ON lens_series (lens_id, series_id, lo);
 
 -- Rollups: totals over \`file\`, kept in step with it so quantities are read
 -- rather than aggregated. Per venue and month, for the constant questions.
@@ -411,7 +388,15 @@ CREATE TABLE IF NOT EXISTS series (
 
   -- What the venue's listing says today: 'active' or 'delisted'. It says
   -- nothing about where the files stop -- an archive outlives a listing.
-  state      TEXT    NOT NULL DEFAULT 'active'
+  state      TEXT    NOT NULL DEFAULT 'active',
+
+  -- Where the series' files sit in the catalog's listing:
+  -- venue/market/dataset[,variant]/F/symbol/ -- F the symbol's first letter,
+  -- upper case, or _ for any other -- and venue/market/dataset[,variant]/@/ for
+  -- the venue-wide file. Every key of the series starts with it. Written by
+  -- series_prefix below, never by hand. NULL where the symbol cannot be a folder
+  -- name: empty, or holding a /.
+  prefix     TEXT
 ) STRICT;
 
 -- What makes two series the same series: the shape, and the name its keys
@@ -425,6 +410,17 @@ CREATE INDEX IF NOT EXISTS file_series ON file (series_id, date, existence);
 
 -- "Which series belong to this symbol".
 CREATE INDEX IF NOT EXISTS series_symbol ON series (symbol);
+
+-- The listing's order: a venue's series are one range of it, already sorted as
+-- their keys sort.
+CREATE INDEX IF NOT EXISTS series_prefix ON series (prefix);
+
+-- Every series gets its prefix as it is created, whichever path creates it --
+-- a survey, or a seed -- so no writer has to know the listing's layout.
+CREATE TRIGGER IF NOT EXISTS series_prefix AFTER INSERT ON series
+BEGIN
+  UPDATE series SET prefix = (${PREFIX_OF('NEW')}) WHERE id = NEW.id;
+END;
 `;
 
 /**

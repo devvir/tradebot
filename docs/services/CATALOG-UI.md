@@ -110,7 +110,10 @@ catalog. What changes under a lens is in [CATALOG-LENSES.md](../modules/CATALOG-
 
 One row per venue, polled every ten seconds: a survey runs for hours and reports
 nothing when it starts, so a view that loaded once would show a stale word for as
-long as somebody left it open.
+long as somebody left it open. **Every poll on the page is one request at a
+time**: the next is asked ten seconds after the last answer, never on a clock
+that fires whether or not it came back, which would stack requests on a slow
+service and make it slower.
 
 **The state says what is happening, not how.** `walking` and `updating` are the
 two mechanisms the catalog has, and naming a venue's state after one of them

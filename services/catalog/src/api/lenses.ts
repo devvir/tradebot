@@ -2,6 +2,7 @@ import {
   dropLens, editLens, lensInstruments, lensNameIsSound, lensNamed, lensOptions, lensSize, lenses,
   problemsWith, putLens, resolvedSummary,
 } from '../lenses/lens';
+import { savedLensSize } from '../lenses/figures';
 import type { Application, Request } from 'express';
 import type { DatabaseSync } from 'node:sqlite';
 import type { LensDefinition, LensWrite } from '../types';
@@ -136,7 +137,7 @@ export const mountLenses = (app: Application, db: DatabaseSync): void => {
     res.json(lensSize(db, definitionOf(req)));
   });
 
-  /** The same, for a lens that exists. */
+  /** The same, for a lens that exists — summed off its rows, so nothing is evaluated. */
   app.get('/lenses/:slug/size', (req, res) => {
     const found = lensNamed(db, String(req.params['slug']));
 
@@ -146,7 +147,7 @@ export const mountLenses = (app: Application, db: DatabaseSync): void => {
       return;
     }
 
-    res.json(lensSize(db, found.definition));
+    res.json(savedLensSize(db, found));
   });
 
   /** Whether a definition can be stored, and what is wrong where it cannot. */

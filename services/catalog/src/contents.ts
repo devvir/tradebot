@@ -1,4 +1,4 @@
-import { lensVenueFigures } from './lenses/lens';
+import { lensFigures } from './lenses/figures';
 import { throughLens } from './lenses/scope';
 import { seriesFor, venueIds, venueTotals } from './queries';
 import { BUCKET, levelsOf } from './vocabulary';
@@ -25,11 +25,13 @@ import type { ContentsAsked, MarketContents, RequestedLens, Series, SeriesCount,
  * **Under a lens a venue is what the lens lets through**: its files, bytes and
  * pending from the lens's size, its months off the rollups, its series those
  * with a file inside it — and a venue it lets nothing through from is not
- * listed. All of it is read off the rollups and the lens's held scope: no file,
- * and no series row, which is what lets every venue be answered at once.
+ * listed. All of it is one query over the lens's rows and the series rollup —
+ * no file, and no rule evaluated — which is what lets every venue be answered at
+ * once.
  */
 export const venueContents = (db: DatabaseSync, held: RequestedLens | null): VenueContents[] => {
-  const counts = seriesCounts(db);
+  const counts  = seriesCounts(db);
+  const through = held ? lensFigures(db, held.lens) : null;
 
   return venueTotals(db).flatMap(row => {
     const ids = venueIds(db, row.venue);
@@ -43,13 +45,9 @@ export const venueContents = (db: DatabaseSync, held: RequestedLens | null): Ven
       return [{ ...row, series }];
     }
 
-    const spans = held.scope.get(row.venue);
+    const figures = through!.get(row.venue);
 
-    if (! spans) return [];
-
-    const figures = lensVenueFigures(db, held.lens.definition, row.venue, spans);
-
-    if (figures.withFiles === 0) return [];
+    if (! figures || figures.withFiles === 0) return [];
 
     return [{
       ...row,

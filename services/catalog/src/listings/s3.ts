@@ -3,21 +3,21 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { ListingFile, ListingPage, ListingRequest, S3Body, VenueRow } from '../types';
 
 /**
- * A venue's listing in S3's own shape.
+ * The catalog's listing in S3's own shape: one bucket, every venue's files.
  *
  * **`ListObjects` V1 by default** — resume after `marker` — and V2's shape when
  * asked with `list-type=2`: `continuation-token` or `start-after` in, `KeyCount`
  * and `NextContinuationToken` out. Both resume after an exact key, so they are
- * one listing with two spellings. Not implemented, until something needs them:
- * `prefix`, `delimiter`, `encoding-type`, `fetch-owner`.
+ * one listing with two spellings. **`prefix` narrows it**, a venue (`gate/`) or
+ * anything finer. Not implemented, until something needs them: `delimiter`,
+ * `encoding-type`, `fetch-owner`.
  *
- * **Each object also carries a `FileId`**, which S3 does not: the catalog's own
- * number for the file, and what a report names it by.
- *
- * **`BaseUrl` and `Url` join into the address**: where every object of a page
- * lives under one base, `BaseUrl` is it and each `Url` the rest; where a page
- * mixes a venue's hosts, `BaseUrl` is empty and each `Url` is whole.
+ * **Each object's `Url` is the whole address** of the file at its venue — a
+ * page spans venues, and one venue can be served from two hosts.
  */
+
+/** The bucket's name, as S3 answers it. */
+export const BUCKET = 'catalog';
 
 /** `max-keys` is 500 unless asked, 1,000 at most. */
 export const MAX_KEYS = 1_000;
@@ -37,45 +37,41 @@ export const requestOf = (query: Record<string, unknown>): ListingRequest | stri
     ...(token === undefined ? {} : { token }),
     ...(start === undefined ? {} : { start }),
     after:   (v2 ? token ?? start : text(query['marker'])) ?? null,
+    prefix:  text(query['prefix']) ?? '',
     pending: ['true', '1'].includes(text(query['pending']) ?? ''),
   };
 };
 
 /** One page as S3's `ListBucketResult`, V1 or V2 as asked. */
-export const resultOf = (db: DatabaseSync, venue: string, ids: readonly number[], asked: ListingRequest, page: ListingPage): S3Body => {
-  const bases = basesOf(db, ids);
-  const held  = [...new Set(page.objects.map(one => one.file.venueId))];
-  const base  = held.length === 1 ? bases.get(held[0]!)! : '';
+export const resultOf = (db: DatabaseSync, asked: ListingRequest, page: ListingPage): S3Body => {
+  const bases = basesOf(db);
   const last  = page.objects[page.objects.length - 1]?.key;
 
   const contents = page.objects.map(({ key, file }) => ({
-    Key:    key,
-    FileId: file.id,
-    Url:    base ? file.path : `${bases.get(file.venueId) ?? ''}${file.path}`,
+    Key: key,
+    Url: `${bases.get(file.venueId) ?? ''}${file.path}`,
     ...described(file),
   }));
 
   return asked.v2
     ? {
-      Name:        venue,
-      Prefix:      '',
+      Name:        BUCKET,
+      Prefix:      asked.prefix,
       MaxKeys:     asked.maxKeys,
       KeyCount:    contents.length,
       IsTruncated: page.truncated,
       ...(asked.token === undefined ? {} : { ContinuationToken: asked.token }),
       ...(asked.start === undefined ? {} : { StartAfter: asked.start }),
       ...(page.truncated && last ? { NextContinuationToken: last } : {}),
-      BaseUrl:     base,
       Contents:    contents,
     }
     : {
-      Name:        venue,
-      Prefix:      '',
+      Name:        BUCKET,
+      Prefix:      asked.prefix,
       Marker:      asked.after ?? '',
       MaxKeys:     asked.maxKeys,
       IsTruncated: page.truncated,
       ...(page.truncated && last ? { NextMarker: last } : {}),
-      BaseUrl:     base,
       Contents:    contents,
     };
 };
@@ -112,15 +108,10 @@ const keysAsked = (raw: unknown): number | null => {
 };
 
 /** Each host's address up to the key, so a path below the key root completes it. */
-const basesOf = (db: DatabaseSync, ids: readonly number[]): Map<number, string> => {
-  const read = db.prepare('SELECT base, key_root AS keyRoot FROM venue WHERE id = ?');
-
-  return new Map(ids.map(id => {
-    const row = read.get(id) as Pick<VenueRow, 'base' | 'keyRoot'> | undefined;
-
-    return [id, row ? `${row.base.replace(/\/$/, '')}/${row.keyRoot}` : ''];
-  }));
-};
+const basesOf = (db: DatabaseSync): Map<number, string> =>
+  new Map((db.prepare('SELECT id, base, key_root AS keyRoot FROM venue').all() as unknown as
+    (Pick<VenueRow, 'base' | 'keyRoot'> & { id: number })[])
+    .map(row => [row.id, `${row.base.replace(/\/$/, '')}/${row.keyRoot}`]));
 
 /** What S3 says about an object beyond its key, where the catalog knows it. */
 const described = (file: ListingFile): Record<string, string | number> => ({

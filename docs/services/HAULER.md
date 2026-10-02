@@ -25,14 +25,15 @@ whichever wrote last.
 ## The layout on disk
 
 ```
-<archives>/venue/<key>
-<key> = market/dataset[,variant]/YYYYMM/FL/symbol/venue|market|dataset[,variant]|symbol|period[|part].ext
+<archives>/<key>
+<key> = venue/market/dataset[,variant]/FL/symbol/YYYYMM/venue|market|dataset[,variant]|symbol|date[.partNN].ext
+      | venue/market/dataset[,variant]/@/YYYYMM/venue|market|dataset[,variant]|@|date[.partNN].ext
 ```
 
-**The key is the catalog's, not hauler's.** The catalog serves each venue as a
-bucket keyed by this canonical path, so hauler writes each object at
-`<archives>/<venue>/<key>` and names nothing itself. What follows describes the
-layout those keys make on disk.
+**The key is the catalog's, not hauler's.** The catalog serves every venue as
+one bucket keyed by this canonical path, so hauler writes each object at
+`<archives>/<key>` and names nothing itself. What follows describes the layout
+those keys make on disk.
 
 **The full identity is in the filename.** That is what lets a reader ignore the
 directory structure entirely — list files, parse names, never learn where they
@@ -52,16 +53,18 @@ varies.
 | `venue` | `bitget` | |
 | `market` | `perp` | canonical; a venue with one market still names it |
 | `dataset` | `klines,1m` | canonical, **with its variants** — `books,500,incremental`; no comma where a dataset has none |
-| `YYYYMM` | `202506` | the month, which makes a partition one directory |
-| `FL` | `B` | the symbol's first letter, `_` for anything that is not one |
-| `symbol` | `BTCUSDT` | `@` where one file carries every instrument |
-| `period` | `20250601` | the date covered, **at the grain it covers** |
-| `part` | `101` | **only** where a period is split across files |
+| `FL` | `B` | the symbol's first letter, `_` for anything that is not a Latin letter |
+| `symbol` | `BTCUSDT` | the venue's own name for the instrument |
+| `@` | `@` | in place of `FL/symbol`, where one file carries every instrument |
+| `YYYYMM` | `202506` | the month |
+| `date` | `20250601` | the date covered, **at the grain it covers** |
+| `.partNN` | `.part101` | **only** where a period is split across files |
 
-**The period's own length carries its grain** — `202506` monthly, `20250601`
-daily, `2025060113` hourly — so nothing else has to say it. `part` is rare: one
-venue uses it for one dataset, since bitget cuts a day of trades every 100,000
-rows and reaches `_101`.
+**The date's own length carries its grain** — `202506` monthly, `20250601`
+daily — so nothing else has to say it. A part is where a venue splits a period:
+bitget cuts a day of trades every 100,000 rows and numbers the pieces, and gate
+files its books by the hour. It sits before the extension, as a downloaded
+piece's name would carry it.
 
 **`FL` is a filesystem device, not a fact about the data**, which is why it is a
 bare segment rather than a labelled one: a few dozen directories per letter
@@ -83,29 +86,40 @@ identifies the series, and the series and the date identify the pattern, which
 rebuilds the URL. So provenance is preserved where provenance belongs, and the
 filesystem is free to be canonical.
 
-### The month is a level, so a partition is a directory
+### The instrument comes before the month
 
-The unit downstream is `venue + market + dataset + month`: stocker imports one,
-cold storage evicts and restores one. With the month as a
-level **that partition is exactly one directory** — matched without a walk, moved
-with one rename, restored the same way.
+**The order on disk is the order of the catalog's listing**: series prefix, then
+date. That is what lets a page of the listing be one indexed query, so the layout
+follows it.
 
-The alternative, `year`, spreads a partition across every symbol directory of
-that year, so locating one becomes a filtered walk and evicting one becomes a
-`find` and many renames.
+**An instrument's history is one directory** (`…/FL/symbol/`), with its months
+beneath it. **A month of a dataset is not**: it is the `YYYYMM` directory under
+every symbol, and under the bucket, found with two globs and moved one directory
+at a time:
 
-The cost is directories, and it is smaller than it looks: a month of one symbol's
-daily files is about thirty, so roughly 2.3M leaf directories across a catalog of
-~70M files — about 1% of the volume's inodes.
+```
+venue/market/dataset/*/*/YYYYMM/     every instrument
+venue/market/dataset/@/YYYYMM/       the venue-wide file
+```
+
+**The bucket is a level shallower, on purpose.** `@` is only ever the venue-wide
+file, so it needs no letter folder, and it sorts below every letter, so it sits
+first in its dataset rather than lost among thousands of instruments. The cost is
+the second glob, which anything gathering a month must not forget.
+
+The cost is directories: a month of one symbol's daily files is about thirty, so
+roughly 2.3M leaf directories across a catalog of ~70M files — about 1% of the
+volume's inodes.
 
 ## Walking a listing
 
 For each venue — every one the catalog holds files for, or `HAULER_VENUES` — hauler pages
-through `GET /listings/:venue?pending=true`, 1,000 keys at a time, resuming after
+through `GET /listings?prefix=<venue>/&pending=true`, 1,000 keys at a time, resuming after
 the last key of each page. `pending=true` asks only for files not yet
 downloaded, and `HAULER_LENS` travels as `x-catalog-lens`, so the catalog leaves
 everything else out of the listing and nothing here filters. Each object's
-address is the page's `BaseUrl` joined to its `Url`.
+`Url` is the whole address of the file, and a key outside the venue asked for
+is refused rather than written.
 
 **The venue list is asked for without the lens.** Only the names are wanted, a
 venue the lens lets nothing through from simply lists nothing, and the lensed
@@ -159,10 +173,15 @@ there to read.
 
 ## Reporting
 
-After each page, hauler posts what became of it to
-`POST /listings/:venue/report`, by each object's `FileId`: `downloaded` (fetched, or present and
+After each page, hauler posts what became of it to `POST /listings/report`, by
+each object's Key and through its lens: `downloaded` (fetched, or present and
 correct), `failed` (the venue answered `403`, `404` or `410`), and `mismatched`
 (with the size actually received).
+
+**A `207` names keys the catalog would not settle** — one naming no file, or one
+the lens does not let through. Each is logged as an error and not sent again:
+neither mends itself by asking twice, and both mean the catalog and hauler
+disagree about what was listed.
 
 **Only the venue's own answer makes a file `failed`.** A connection that never
 opens, a DNS lookup that fails, a `5xx` or a `429` say nothing about the file,

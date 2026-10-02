@@ -121,8 +121,8 @@ describe('the contents through a lens', () => {
     expect(venue).toMatchObject({ files: 5, firstMonth: '202001', lastMonth: '202101', series: { withFiles: 2 } });
   });
 
-  it('is a 404 for a lens that does not exist, never the whole catalog', async () => {
+  it('is a 422 for a lens that does not exist, never the whole catalog', async () => {
     expect((await call('/contents/venues/binance/symbols', { headers: { 'x-catalog-lens': 'nope' } })).status)
-      .toBe(404);
+      .toBe(422);
   });
 });

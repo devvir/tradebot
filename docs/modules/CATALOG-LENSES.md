@@ -98,21 +98,31 @@ the first two are folds over rows already in memory, and only the last touches t
 earlier one's: including 2019 to 2021 and then excluding 2020 leaves two spans, and collapsing them to
 one range would hand back a year nobody asked for. The arithmetic is in the catalog's `lenses/spans.ts`.
 
-**Resolved once and held for a minute**, dropped the moment the lens is edited — every page of a
-listing would otherwise fold the whole series registry again (`lenses/scope.ts`).
+**Resolved when it is saved, and stored.** What a lens lets through is kept as rows of `lens_series`:
+a series, and a span of its dates, with two rows for a series the lens cuts a hole in. Every view through
+a lens (the listing, the contents, the size, a report's check) reads those rows, and none of them
+evaluates a rule. So a lens costs the same after a restart as an hour into a run.
+
+- **Saving rebuilds them whole**, since any rule can move any series in or out.
+- **New series are added, never rebuilt.** Prospector numbers series in order, so a lens records the
+  newest it has looked at (`series_through`). Before a lens is read, the series past that are evaluated
+  against it: nearly always none, and one primary-key seek to find out.
+- **A series prospector deletes** leaves its rows behind with no files, which lets nothing through.
+
+The catalog writes `lens_series`, as it writes `lens`. Both tables are lenses, the one thing in the
+database collection never decides.
 
 ## What a lens costs, and how far along it is
 
 Nobody fetches everything, so the figure that decides a lens is its size, and it answers while
-somebody is still choosing. **It is always exact, and never reads a file**: it is summed off the two
-rollups, which hold files, bytes and what is still pending per month and are kept in step with every
+somebody is still choosing. **It is always exact, and never reads a file**: it is summed off the series
+rollup, which holds files, bytes and what is still pending per series and month, kept in step with every
 write.
 
-- **A venue nothing narrows** is summed off `rollup_venue` — a few hundred rows, and the same figures
-  the surveys page reads, so the two can never disagree.
-- **Anything narrower** — a market, a dataset, a grain, an instrument — is summed off
-  `rollup_series` over the series the lens selects, one indexed range per series and span. A lens's
-  bounds are months, which is the rollup's own grain.
+- **A saved lens** is one query: its `lens_series` rows joined to `rollup_series` over the months each
+  row's dates fall in. A lens's bounds are months, the rollup's own grain, so that is exact.
+- **A definition being edited** has no rows yet, so it is resolved as it stands: a venue it takes whole
+  is summed off `rollup_venue`, and anything narrower off `rollup_series` over the series it selects.
 
 Sampling is what this replaced, and it is worth saying why it had to go: trade volume is so uneven
 between instruments that six series out of two thousand, scaled up, put bybit's 2021–2025 perpetual
@@ -127,9 +137,14 @@ yet downloaded — beside the totals, so a lens's progress never disagrees with 
 ## Reading through a lens
 
 A consumer names its lens in an `x-catalog-lens` header. **No header is the whole catalog; an unknown
-slug is a `404`, never the whole catalog in its place.**
+slug is a `422`, never the whole catalog in its place.**
 
-**The listing** lists only what the lens lets through — see [Listings](CATALOG-API.md#listings).
+**The listing** lists only what the lens lets through — see [Listings](CATALOG-API.md#listings). Its
+walk takes each series in key order and reads only the ones the lens holds, and of those only the
+files inside its spans.
+
+**A report** through a lens settles only what the lens lets through; a key outside it is answered
+`AccessDenied`. See [Reporting](CATALOG-API.md#reporting).
 
 **The contents** — `/contents/venues` and everything under it — narrow to the lens too:
 
@@ -139,9 +154,8 @@ slug is a `404`, never the whole catalog in its place.**
   newest file it actually holds inside it — one indexed read per such series — so a shape under a
   lens ending `202012` says where its data stops rather than claiming the lens's last day.
 - **The venue list is the lens's figures, for every venue at once**: files, bytes and pending are its
-  size, its months the first and last with a file, and its series those holding a file inside it — all
-  off the rollups, without reading a series row or a file. Where the lens takes whole venues, size and
-  months come off `rollup_venue`, so they agree with every other figure for the venue.
+  size, its months the first and last with a file, and its series those holding a file inside it. All
+  of it is the same one query as the size, grouped by venue.
 
 ## Who reads through one
 

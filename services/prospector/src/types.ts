@@ -2264,7 +2264,7 @@ export interface Settled {
   corrected: number;
 }
 
-/** A report by `FileId`, as `POST /reports/:venue` receives it. */
+/** A report by file id, as `POST /reports` receives it. */
 export interface ReportedById {
   downloaded: number[];
   failed:     number[];

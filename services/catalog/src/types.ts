@@ -38,6 +38,11 @@ export interface Series {
   retiredAt: string | null;
 }
 
+/** A series as a lens is evaluated against it: with the name of its venue. */
+export interface LensMember extends Series {
+  venue: string;
+}
+
 /** One host of a venue, as the `venue` table holds it. */
 export interface VenueRow {
   name:    string;
@@ -223,6 +228,12 @@ export interface LensFigures {
   withFiles:    number;
 }
 
+/** What a saved lens holds of one venue — see `lensFigures`. */
+export interface LensVenueFigures extends LensFigures {
+  /** Series the lens lets through, whether or not any holds a file inside it. */
+  series: number;
+}
+
 export interface LensSize {
   /** Series the lens selects. */
   series:       number;
@@ -277,8 +288,9 @@ export type LensScope = ReadonlyMap<string, ReadonlyMap<number, readonly LensSpa
 
 /** A resolved lens, and what it was resolved from. */
 export interface HeldScope {
-  at:        number;
+  /** The lens's `updatedAt` and `series_through` when it was read: a change to either replaces it. */
   updatedAt: string;
+  through:   number;
   scope:     LensScope;
 }
 
@@ -300,6 +312,43 @@ export interface ListingFile {
   seriesId: number;
 }
 
+/** A file as the listing query returns it, with the key prefix it files under. */
+export interface ListingRow extends ListingFile {
+  prefix:  string;
+
+  /** The series' pattern, which says where a part sits in the name. */
+  pattern: string;
+}
+
+/** The file a key names: enough to settle it, and to check it against a lens. */
+export interface KeyedFile {
+  id:       number;
+  seriesId: number;
+  date:     string;
+  path:     string;
+}
+
+/** A report as a downloader sends it, by Key. */
+export interface ReportedByKey {
+  downloaded: string[];
+  failed:     string[];
+  mismatched: { Key: string; Size?: number; ETag?: string }[];
+}
+
+/** The same report as prospector settles it, by file id. */
+export interface ReportedById {
+  downloaded: number[];
+  failed:     number[];
+  mismatched: { FileId: number; Size?: number; ETag?: string }[];
+}
+
+/** A key a report named that could not be settled, in S3's words. */
+export interface ReportError {
+  Key:     string;
+  Code:    'NoSuchKey' | 'AccessDenied';
+  Message: string;
+}
+
 /** One object of a bucket listing: its canonical key, and the file it names. */
 export interface ListingObject {
   key:  string;
@@ -316,46 +365,16 @@ export interface ListingPage {
 export interface ListingQuery {
   /** List only keys after this one; null from the start. */
   after:   string | null;
+
+  /** List only keys starting with this; empty for every key. */
+  prefix:  string;
   maxKeys: number;
 
   /** Only files not yet downloaded. */
   pending: boolean;
 
-  /** The venue's part of a lens, or null for every file. */
-  scope:   ReadonlyMap<number, readonly LensSpan[]> | null;
-}
-
-/** One `market/dataset[,variant]/` folder of a bucket, and the symbols inside it, in key order. */
-export interface ListingShelf {
-  prefix:  string;
-  symbols: ListingSymbol[];
-}
-
-/** One `F/symbol/` folder, and the series that file into it. */
-export interface ListingSymbol {
-  prefix: string;
-  series: Series[];
-}
-
-/** The months a series has files in, first and last — read off `file`, not trusted from the row. */
-export interface ListingBounds {
-  first: string;
-  last:  string;
-}
-
-/** A venue's shelves and the series bounds read so far, held briefly between pages. */
-export interface ListingShape {
-  at:      number;
-  shelves: ListingShelf[];
-  bounds:  Map<number, ListingBounds | null>;
-}
-
-/** The statements a bucket listing runs, prepared once per database. */
-export interface ListingStatements {
-  all:     StatementSync;
-  pending: StatementSync;
-  first:   StatementSync;
-  last:    StatementSync;
+  /** The lens it is read through, or null for every file. */
+  lens:    Lens | null;
 }
 
 
@@ -529,6 +548,9 @@ export interface ListingRequest {
 
   /** The key to resume after; null from the start. */
   after:   string | null;
+
+  /** Only keys starting with this; empty for every key. */
+  prefix:  string;
 
   /** Only files not yet downloaded. */
   pending: boolean;

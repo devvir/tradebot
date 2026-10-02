@@ -1,10 +1,10 @@
 /**
  * Everything hauler names, fetches and reports, in one place.
  *
- * **Hauler reads a bucket.** The catalog serves each venue as a storage bucket
- * keyed by what a file *is* — the canonical archive path — so hauler writes
- * each object at its key and needs no vocabulary of its own. See the catalog
- * API's bucket listing.
+ * **Hauler reads a bucket.** The catalog serves every venue as one storage
+ * bucket keyed by what a file *is* — the canonical archive path, venue first —
+ * so hauler writes each object at its key and needs no vocabulary of its own.
+ * See the catalog API's listing.
  */
 
 /** What this deployment fetches, and from where. */
@@ -32,29 +32,24 @@ export type Config = {
 
 /** One object of a bucket listing, in S3's own field names. */
 export interface BucketObject {
-  /** The canonical archive path, below the venue's folder — where the file is written. */
+  /** The canonical archive path, venue first — where the file is written, and how a report names it. */
   Key:           string;
 
-  /** The catalog's own number for the file, which is what a report names it by. */
-  FileId:        number;
-
-  /** Joined to the page's `BaseUrl`, the address the file is fetched from. */
+  /** The whole address the file is fetched from. */
   Url:           string;
   ETag?:         string;
   Size?:         number;
   LastModified?: string;
 }
 
-/** One page of a venue's bucket, as `GET /listings/:venue` answers it. */
+/** One page of the bucket, as `GET /listings?prefix=<venue>/` answers it. */
 export interface BucketPage {
   Name:        string;
+  Prefix:      string;
   Marker:      string;
   MaxKeys:     number;
   IsTruncated: boolean;
   NextMarker?: string;
-
-  /** What every object's `Url` is joined to; empty where each `Url` is whole. */
-  BaseUrl:     string;
   Contents:    BucketObject[];
 }
 
@@ -79,13 +74,18 @@ export interface Hauled {
 }
 
 /**
- * What became of a page, by `FileId`, for `POST /listings/:venue/report`.
- * A file already on disk and correct is reported as downloaded.
+ * What became of a page, by Key, for `POST /listings/report`. A file already on
+ * disk and correct is reported as downloaded.
  */
 export interface Report {
-  downloaded: number[];
-  failed:     number[];
-  mismatched: { FileId: number; Size?: number }[];
+  downloaded: string[];
+  failed:     string[];
+  mismatched: { Key: string; Size?: number }[];
+}
+
+/** The keys a report could not settle, as the catalog answers a `207`. */
+export interface ReportAnswer {
+  Error?: { Key: string; Code: string; Message: string }[];
 }
 
 /** What one walk of a venue's bucket came to. */

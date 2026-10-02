@@ -3,7 +3,7 @@ import type { Migration } from '../../types';
 import type { DatabaseSync } from 'node:sqlite';
 
 /**
- * 7 → 8. The eight shapes binance stopped writing, carrying the date each
+ * 5 → 6. The eight shapes binance stopped writing, carrying the date each
  * stopped — which a walk finds the last file of but cannot tell from a gap.
  *
  * **`bookTicker` and `liquidationSnapshot` ended, cleanly and per service.**

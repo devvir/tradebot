@@ -1,35 +1,51 @@
 import { logger } from '@devvir/service-kit';
 import config from '../config';
+import { lensRequested } from '../lenses/requested';
+import { MAX_REPORT, keysIn, resolveReport } from '../reports';
+import { answer, failed } from './listings';
 import type { Application } from 'express';
+import type { DatabaseSync } from 'node:sqlite';
 
 /**
- * What became of a page of a listing, forwarded to prospector as it is.
+ * What became of the files a downloader was listed, by Key, through the lens it
+ * listed them through — see `reports.ts`.
  *
- * **Public here, settled there.** Reporting is part of what a downloader does
- * against the catalog, so it is reached where the listing is; but recording it
- * is a write, and prospector is the one service that writes the files it
- * describes. Nothing here reads the body: the answer, status and all, is
- * prospector's.
+ * **`200` where every key was settled, `207` where some were not**, with only
+ * those in the body, as S3's quiet `DeleteObjects` answers: the request
+ * succeeded, its parts may not have, and the status says whether to look. A
+ * whole request refused is a status of its own — malformed (`400`), too long
+ * (`400`), an unknown lens (`422`), prospector not answering (`502`).
  */
-export const mountReports = (app: Application): void => {
-  app.post('/listings/:venue/report', async (req, res) => {
-    const url = `${config.prospectorApi}/reports/${encodeURIComponent(String(req.params['venue']))}`;
+export const mountReports = (app: Application, db: DatabaseSync): void => {
+  app.post('/listings/report', async (req, res) => {
+    const lens = lensRequested(db, req);
+
+    if (lens === undefined) return failed(req, res, 422, 'NoSuchLens', `No such lens: ${String(req.headers['x-catalog-lens']).trim()}`);
+
+    if (keysIn(req.body) > MAX_REPORT) return failed(req, res, 400, 'InvalidArgument', `At most ${MAX_REPORT} keys per report`);
+
+    const resolved = resolveReport(db, req.body, lens?.lens ?? null);
+
+    if (! resolved) return failed(req, res, 400, 'MalformedReport', 'A report is downloaded and failed, each a list of keys, and mismatched, a list of { Key, Size, ETag }');
 
     try {
-      const answer = await fetch(url, {
+      const settled = await fetch(`${config.prospectorApi}/reports`, {
         method:  'POST',
         headers: {
           'content-type': 'application/json',
           ...(config.token ? { 'x-catalog-token': config.token } : {}),
         },
-        body: JSON.stringify(req.body ?? {}),
+        body: JSON.stringify(resolved.settle),
       });
 
-      res.status(answer.status).type('application/json').send(await answer.text());
+      if (! settled.ok) throw new Error(`Prospector answered ${settled.status}: ${(await settled.text()).slice(0, 200)}`);
     } catch (err) {
-      logger.warn({ err, url }, 'Prospector did not answer a report');
+      logger.warn({ err }, 'Prospector did not settle a report');
 
-      res.status(502).json({ error: 'The collector is not answering; report again later' });
+      return failed(req, res, 502, 'ServiceUnavailable', 'The collector is not answering; report again later');
     }
+
+    answer(req, res, resolved.errors.length === 0 ? 200 : 207, 'ReportResult',
+      resolved.errors.length === 0 ? {} : { Error: resolved.errors });
   });
 };

@@ -67,7 +67,7 @@ const venue = (db: DatabaseSync, req: Request, res: Response, give: ContentsAske
 const lensed = (db: DatabaseSync, req: Request, res: Response): RequestedLens | null | undefined => {
   const held = lensRequested(db, req);
 
-  if (held === undefined) res.status(404).json({ error: `No such lens: ${String(req.headers['x-catalog-lens']).trim()}` });
+  if (held === undefined) res.status(422).json({ error: `No such lens: ${String(req.headers['x-catalog-lens']).trim()}` });
 
   return held;
 };

@@ -723,3 +723,49 @@ describe('whether a series is still open', () => {
     expect(open(series({ state: 'delisted', tip: null, last: '20240102' }))).toBe(false);
   });
 });
+
+/**
+ * Where a series sits in the catalog's listing, written as it is created so no
+ * writer has to know the layout: `venue/market/dataset[,variant]/F/symbol/`.
+ */
+describe('a series\' listing prefix', () => {
+  const prefixOf = (id: number): string | null =>
+    (db.prepare('SELECT prefix FROM series WHERE id = ?').get(id) as { prefix: string | null }).prefix;
+
+  const record = (venueId: number, over: Partial<Found>): number =>
+    recordSeries(db, venueId, {
+      market: 'perp', dataset: 'klines', symbol: 'BTCUSDT', pattern: `p/${JSON.stringify(over)}/{SYMBOL}.zip`,
+      ...over,
+    }).id!;
+
+  it('names the venue, the shape and the symbol under its first letter', () => {
+    const venue = putVenue(db, 'binance', 'https://x', '');
+
+    expect(prefixOf(record(venue, { variant: '1m' }))).toBe('binance/perp/klines,1m/B/BTCUSDT/');
+    expect(prefixOf(record(venue, { dataset: 'quotes', symbol: 'ethusdt' }))).toBe('binance/perp/quotes/E/ethusdt/');
+  });
+
+  it('files a symbol not starting with a Latin letter under _', () => {
+    const venue = putVenue(db, 'gate', 'https://g', '');
+
+    expect(prefixOf(record(venue, { market: 'spot', dataset: 'trades', symbol: '1INCH_USDT' })))
+      .toBe('gate/spot/trades/_/1INCH_USDT/');
+    expect(prefixOf(record(venue, { market: 'spot', dataset: 'trades', symbol: '小股东_USDT' })))
+      .toBe('gate/spot/trades/_/小股东_USDT/');
+  });
+
+  /** The bucket is the one symbol with no letter folder: a level shorter, and first in its dataset. */
+  it('gives the venue-wide file no letter folder', () => {
+    const venue = putVenue(db, 'gate', 'https://g', '');
+
+    expect(prefixOf(record(venue, { market: 'spot', dataset: 'trades', symbol: '@' }))).toBe('gate/spot/trades/@/');
+  });
+
+  /** A name that cannot be a folder would corrupt every key after it, so it has none. */
+  it('has none where the symbol cannot be a folder name', () => {
+    const venue = putVenue(db, 'binance', 'https://x', '');
+
+    expect(prefixOf(record(venue, { symbol: '' }))).toBeNull();
+    expect(prefixOf(record(venue, { symbol: 'A/B' }))).toBeNull();
+  });
+});

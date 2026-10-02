@@ -31,14 +31,16 @@ import { declare } from './declare';
  * ```
  * <market>/<dataset>/<yyyymm>/<SYMBOL>-<yyyymm>.csv.gz        a month
  * <market>/<dataset>/<yyyymm>/<SYMBOL>-<yyyymmdd>.csv.gz      a day
- * <market>/<dataset>/<yyyymm>/<SYMBOL>-<yyyymmddHH>.csv.gz    an hour
- * <tree>/<yyyymm>/slice_<name>_<epoch>                        a snapshot
+ * <market>/<dataset>/<yyyymm>/<SYMBOL>-<yyyymmddHH>.csv.gz    a day, one hour of it
+ * <tree>/<yyyymm>/slice_<name>_<epoch>                        a month, one snapshot of it
  * ```
  *
  * Which shape a dataset uses is the dataset's own business and is not declared
  * here — spot candlesticks are daily below 30 minutes and monthly above, books
- * are hourly, everything else is monthly. The stamp's length says which, so no
- * dataset needs naming.
+ * are filed by the hour, everything else is monthly. The stamp's length says
+ * which, so no dataset needs naming. **The finest grain is the day**: an hour of
+ * books is a part of its day (`{PART}`), and a snapshot a part of its month, so
+ * a day of books is one day in twenty-four parts rather than an hourly series.
  *
  * Two of them are worth pointing at. `orderbooks_slice` is a plain `.gz` where
  * everything else is `.csv.gz`. And `delivery_usdt` carries a second date inside

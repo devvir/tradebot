@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActionIcon, Anchor, Badge, Box, Button, Group, Loader, Modal, Stack, Text } from '@mantine/core';
-import { post, prospector } from '../api';
+import { poll, post, prospector } from '../api';
 import { Dim, LastSurvey, Table, Waiting, bytes, count, howOf } from './Table';
 import { linkTo } from '../App';
 import type { ReactNode } from 'react';
@@ -796,27 +796,25 @@ const useFading = () => {
  */
 const usePolled = <T,>(path: string, ask: (path: string) => Promise<T>, everyMs = POLL_MS) => {
   const [state, setState] = useState<Asked<T>>({ loading: true });
+  const polling = useRef<{ now: () => void; stop: () => void }>(undefined);
 
-  const again = useCallback(() => {
-    ask(path)
-      .then(data => setState({ data, loading: false }))
+  useEffect(() => {
+    polling.current = poll(() => ask(path), everyMs, {
+      data: data => setState({ data, loading: false }),
 
       /**
-       * **Keep what was last true.** This runs every ten seconds, so a catalog
-       * that is restarting empties the table for as long as it takes to come
+       * **Keep what was last true.** This runs every ten seconds, so a service
+       * that is restarting would empty the table for as long as it takes to come
        * back — and the figures it replaces were right a moment ago. The error
        * goes beside them instead of over them; the next success clears it.
        */
-      .catch((err: Error) => setState(held => ({ ...held, error: err.message, loading: false })));
-  }, [path]);
+      error: err => setState(held => ({ ...held, error: err.message, loading: false })),
+    });
 
-  useEffect(() => {
-    again();
+    return () => polling.current?.stop();
+  }, [path, everyMs]);
 
-    const timer = setInterval(again, everyMs);
-
-    return () => clearInterval(timer);
-  }, [again, everyMs]);
+  const again = useCallback(() => polling.current?.now(), []);
 
   return { asked: state, again };
 };

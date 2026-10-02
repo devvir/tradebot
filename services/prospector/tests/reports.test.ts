@@ -11,9 +11,9 @@ import type { CatalogFile, Surveys } from '../src/types';
 import type { DatabaseSync } from 'node:sqlite';
 
 /**
- * A report names files by `FileId`, the file's rowid, and is settled against the
- * venue in the path: an id from another venue, or one that names nothing, is
- * counted as unknown rather than written.
+ * A report names files by id, the file's rowid — the catalog resolves the keys a
+ * downloader reports by and forwards these. An id that names no confirmed file
+ * is counted as unknown rather than written.
  */
 
 let dir: string;
@@ -52,12 +52,12 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-const report = async (venue: string, body: unknown) => {
+const report = async (body: unknown) => {
   const server = app.listen(0);
   const port   = (server.address() as { port: number }).port;
 
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/reports/${venue}`, {
+    const res = await fetch(`http://127.0.0.1:${port}/reports`, {
       method:  'POST',
       headers: { 'content-type': 'application/json' },
       body:    JSON.stringify(body),
@@ -74,7 +74,7 @@ const downloadedAt = (path: string): string | null =>
 
 describe('a report by FileId', () => {
   it('records what was downloaded', async () => {
-    const { status, body } = await report('binance', { downloaded: [idOf('a.zip')] });
+    const { status, body } = await report({ downloaded: [idOf('a.zip')] });
 
     expect(status).toBe(200);
     expect(body).toEqual({ recorded: 1, withdrawn: 0, corrected: 0, unknown: 0 });
@@ -83,32 +83,28 @@ describe('a report by FileId', () => {
   });
 
   it('counts an id that names nothing as unknown', async () => {
-    const { body } = await report('binance', { downloaded: [999_999, -1, 'a.zip'] });
+    const { body } = await report({ downloaded: [999_999, -1, 'a.zip'] });
 
     expect(body).toMatchObject({ recorded: 0, unknown: 3 });
   });
 
-  /** An id is a rowid across every venue, so the venue in the path is what keeps a report to its own files. */
-  it('leaves another venue\'s file alone', async () => {
-    const { body } = await report('binance', { downloaded: [idOf('g.zip')] });
+  /** An id is a rowid across every venue, so one report can settle files of several. */
+  it('settles files of any venue in one report', async () => {
+    const { body } = await report({ downloaded: [idOf('a.zip'), idOf('g.zip')] });
 
-    expect(body).toMatchObject({ recorded: 0, unknown: 1 });
-    expect(downloadedAt('g.zip')).toBeNull();
-  });
-
-  it('answers 404 for a venue it does not have', async () => {
-    expect((await report('nowhere', { downloaded: [1] })).status).toBe(404);
+    expect(body).toMatchObject({ recorded: 2, unknown: 0 });
+    expect(downloadedAt('g.zip')).not.toBeNull();
   });
 
   it('refuses more files than one report may name', async () => {
-    const { status } = await report('binance', { downloaded: Array.from({ length: 10_001 }, (_, n) => n + 1) });
+    const { status } = await report({ downloaded: Array.from({ length: 10_001 }, (_, n) => n + 1) });
 
     expect(status).toBe(400);
   });
 
   /** The parser's own refusal reaches the caller as it is, never as a fault of this service. */
   it('answers a body over the parser\'s limit with 413, not 500', async () => {
-    const { status } = await report('binance', { downloaded: Array.from({ length: 30_000 }, (_, n) => 1_000_000 + n) });
+    const { status } = await report({ downloaded: Array.from({ length: 30_000 }, (_, n) => 1_000_000 + n) });
 
     expect(status).toBe(413);
   });

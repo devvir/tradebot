@@ -66,7 +66,7 @@ const workPage = async (
 
   const worker = async (): Promise<void> => {
     for (let object = queue.shift(); object && ! stopped(); object = queue.shift()) {
-      if (! safe(object.Key)) {
+      if (! safe(venue, object.Key)) {
         logger.error({ venue, key: object.Key }, 'A key that would leave the archive — skipped');
 
         continue;
@@ -75,17 +75,17 @@ const workPage = async (
       const file: Haulable = {
         venue,
         key: object.Key,
-        url: `${current.BaseUrl}${object.Url}`,
+        url: object.Url,
         ...(object.Size === undefined ? {} : { size: object.Size }),
         ...(object.ETag === undefined ? {} : { etag: object.ETag }),
       };
 
       const hauled = await haul(file);
 
-      if (hauled.outcome === 'downloaded' || hauled.outcome === 'present') done.downloaded.push(object.FileId);
-      else if (hauled.outcome === 'failed') done.failed.push(object.FileId);
+      if (hauled.outcome === 'downloaded' || hauled.outcome === 'present') done.downloaded.push(object.Key);
+      else if (hauled.outcome === 'failed') done.failed.push(object.Key);
       else if (hauled.outcome === 'unreached') unreached++;
-      else done.mismatched.push({ FileId: object.FileId, ...(hauled.size === undefined ? {} : { Size: hauled.size }) });
+      else done.mismatched.push({ Key: object.Key, ...(hauled.size === undefined ? {} : { Size: hauled.size }) });
     }
   };
 
@@ -94,9 +94,9 @@ const workPage = async (
   return { done, unreached };
 };
 
-/** A key stays inside the venue's folder: relative, and no step upward. */
-const safe = (key: string): boolean =>
-  key !== '' && ! key.startsWith('/') && ! key.split('/').some(part => part === '..' || part === '.');
+/** A key stays inside its venue's folder: under the venue asked for, and no step upward. */
+const safe = (venue: string, key: string): boolean =>
+  key.startsWith(`${venue}/`) && ! key.split('/').some(part => part === '' || part === '..' || part === '.');
 
 // ── Test access ───────────────────────────────────────────────────────────────
 

@@ -1,23 +1,15 @@
-import { venueIds } from '../catalog';
 import { MAX_REPORT, settleById } from '../reports';
 import type { Application } from 'express';
 import type { DatabaseSync } from 'node:sqlite';
 import type { ReportedById } from '../types';
 
 /**
- * The reports API: what became of the files a downloader was listed, by
- * `FileId`. Private — catalog forwards each report here as it was sent.
+ * The reports API: what became of the files a downloader was listed, by file
+ * id — the row's own number, which is how this service names a file. Private:
+ * the catalog resolves the keys a downloader reports by, and forwards the ids.
  */
 export const mountReports = (app: Application, db: DatabaseSync): void => {
-  app.post('/reports/:venue', async (req, res) => {
-    const ids = venueIds(db, String(req.params['venue']));
-
-    if (ids.length === 0) {
-      res.status(404).json({ error: 'No such venue' });
-
-      return;
-    }
-
+  app.post('/reports', async (req, res) => {
     const body  = (req.body ?? {}) as Partial<ReportedById>;
     const count = [body.downloaded, body.failed, body.mismatched]
       .reduce((sum, one) => sum + (Array.isArray(one) ? one.length : 0), 0);
@@ -28,6 +20,6 @@ export const mountReports = (app: Application, db: DatabaseSync): void => {
       return;
     }
 
-    res.json(await settleById(db, ids, body));
+    res.json(await settleById(db, body));
   });
 };

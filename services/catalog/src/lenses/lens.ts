@@ -1,4 +1,6 @@
-import { lastDay, union, without } from './spans';
+import { lastDay } from './spans';
+import { dropMembers, rebuildMembers } from './members';
+import { GLOBAL, rulesFor, spansFor, venuesIn } from './rules';
 import { monthTotals, seriesFor, venueIds, venues } from '../queries';
 import type { DatabaseSync } from 'node:sqlite';
 import type {
@@ -62,7 +64,11 @@ export const putLens = (
     return null;
   }
 
-  return lensNamed(db, slug);
+  const made = lensNamed(db, slug);
+
+  if (made) rebuildMembers(db, made);
+
+  return made;
 };
 
 /**
@@ -99,12 +105,24 @@ export const editLens = (
     return null;
   }
 
-  return lensNamed(db, next.slug);
+  const saved = lensNamed(db, next.slug);
+
+  if (saved) rebuildMembers(db, saved);
+
+  return saved;
 };
 
-/** Take one away. Says whether there was one. */
-export const dropLens = (db: DatabaseSync, slug: string): boolean =>
-  Number(db.prepare('DELETE FROM lens WHERE slug = ?').run(slug).changes) > 0;
+/** Take one away, and what it let through. Says whether there was one. */
+export const dropLens = (db: DatabaseSync, slug: string): boolean => {
+  const had = lensNamed(db, slug);
+
+  if (! had) return false;
+
+  dropMembers(db, had.id!);
+  db.prepare('DELETE FROM lens WHERE id = ?').run(had.id!);
+
+  return true;
+};
 
 /**
  * What a lens lets through: the series, and when.
@@ -137,35 +155,6 @@ export const resolvedSummary = (db: DatabaseSync, definition: LensDefinition): R
     series: slices.length,
     spans:  [...new Set(slices.flatMap(one => one.spans.map(span => `${span.from ?? ''}..${span.to ?? ''}`)))].sort(),
   }]));
-
-/**
- * The venues a lens speaks about.
- *
- * **Every venue there is, where the lens has global rules**, because a rule under
- * `*` is about all of them — and a lens whose only rule is *everything up to
- * 2020* should not have to name seven venues to say so.
- */
-export const venuesIn = (db: DatabaseSync, definition: LensDefinition): string[] => {
-  const named = Object.keys(definition.venues ?? {}).filter(one => one !== GLOBAL);
-
-  if ((definition.venues?.[GLOBAL] ?? []).length === 0) return named;
-
-  return [...new Set([...venues(db).map(one => one.name), ...named])];
-};
-
-/**
- * What a venue is actually read through: the global rules, then its own.
- *
- * **Global first, and that ordering is the whole of what `*` means.** Rules
- * compose in order, so a venue's own rules see what the global ones left — which
- * is what lets a lens say *everything up to 2020, except bitget's books* in two
- * rules instead of seven.
- */
-export const rulesFor = (definition: LensDefinition, venue: string): LensRule[] =>
-  [...(definition.venues?.[GLOBAL] ?? []), ...(definition.venues?.[venue] ?? [])];
-
-/** The key a lens keeps its all-venue rules under. */
-export const GLOBAL = '*';
 
 /**
  * What a venue publishes, as a rule is written against.
@@ -418,10 +407,13 @@ const unevenIn = (
 };
 
 /**
- * How much a lens would put on a disk.
+ * How much a definition would put on a disk, before it is saved — the editor
+ * asks on every change. A saved lens is sized off its rows instead; see
+ * `savedLensSize`.
  *
- * Exact, always: a lens taking whole venues is summed off `rollup_venue`, and
- * anything narrower off `rollup_series` — see `figuresOf`. Neither reads a file.
+ * Exact, always: a definition taking whole venues is summed off `rollup_venue`,
+ * and anything narrower off `rollup_series` — see `figuresOf`. Neither reads a
+ * file.
  */
 export const lensSize = (db: DatabaseSync, definition: LensDefinition): LensSize => {
   const total: LensSize = { series: 0, files: 0, bytes: 0, pending: 0, pendingBytes: 0 };
@@ -494,56 +486,6 @@ export const lensSizeOf = (
   return { series: held.size, files, bytes, pending, pendingBytes };
 };
 
-/**
- * The first and last month a lens holds files for at one venue, exactly — off
- * `rollup_venue` where the lens takes the whole venue, and off `rollup_series`
- * for the series it selects otherwise. Neither reads a file. `spans` as in
- * `lensSizeOf`.
- */
-export const lensMonthsOf = (
-  db:         DatabaseSync,
-  definition: LensDefinition,
-  venue:      string,
-  spans?:     ReadonlyMap<number, readonly LensSpan[]>,
-): { first: string | null; last: string | null } => {
-  const ids   = venueIds(db, venue);
-  const rules = rulesFor(definition, venue);
-  const whole = wholeVenue(rules);
-
-  if (whole) {
-    const held = monthTotals(db, ids, whole).filter(row => row.files > 0);
-
-    return { first: held[0]?.month ?? null, last: held.at(-1)?.month ?? null };
-  }
-
-  const { first, last } = figuresOf(db, spans ?? spansOf(slicesFor(db, ids, rules)));
-
-  return { first, last };
-};
-
-/**
- * What a venue's row says under a lens: its size, its months, and how many
- * series hold a file inside it — off `rollup_series` in one pass, and off
- * `rollup_venue` for size and months where the lens takes the whole venue, so
- * those agree with every other figure the catalog gives for it. `spans` is the
- * venue's held scope.
- */
-export const lensVenueFigures = (
-  db:         DatabaseSync,
-  definition: LensDefinition,
-  venue:      string,
-  spans:      ReadonlyMap<number, readonly LensSpan[]>,
-): LensFigures => {
-  const figures = figuresOf(db, spans);
-
-  if (! wholeVenue(rulesFor(definition, venue))) return figures;
-
-  const { files, bytes, pending, pendingBytes } = lensSizeOf(db, definition, venue, spans);
-  const { first, last } = lensMonthsOf(db, definition, venue, spans);
-
-  return { ...figures, files, bytes, pending, pendingBytes, first, last };
-};
-
 /** Whether a slug is one a consumer can pass anywhere without quoting it. */
 export const lensNameIsSound = (slug: string): boolean => /^[a-z0-9][a-z0-9-]{1,63}$/.test(slug);
 
@@ -597,48 +539,6 @@ const months = (venues: LensDefinition['venues']): LensDefinition['venues'] =>
     ...(rule.from ? { from: rule.from.slice(0, 6) } : {}),
     ...(rule.to   ? { to:   rule.to.slice(0, 6)   } : {}),
   }))]));
-
-/** What one series is let through for, after every rule has had its say. */
-const spansFor = (series: Series, rules: readonly LensRule[]): LensSpan[] => {
-  let spans: LensSpan[] = [];
-
-  for (const rule of rules) {
-    if (! matches(series, rule)) continue;
-
-    const span = { from: rule.from ?? null, to: rule.to ?? null };
-
-    spans = rule.effect === 'include' ? union(spans, span) : without(spans, span);
-  }
-
-  return spans;
-};
-
-/**
- * Whether a rule speaks about this series at all.
- *
- * **An absent dimension means all of it**, so a rule naming only a dataset
- * matches every market, variant, grain and instrument of it.
- */
-const matches = (series: Series, rule: LensRule): boolean =>
-  named(rule.markets, series.market)
-  && dataset(rule.datasets, series)
-  && named(rule.grains as readonly string[] | undefined, series.grain)
-  && named(rule.instruments, series.symbol);
-
-/**
- * Whether any of the kinds a rule names is this series'.
- *
- * **A pair with no variant is every variant of that dataset**, so `{ dataset:
- * 'trades' }` beside `{ dataset: 'klines', variant: '1m' }` is every trade and
- * one length of kline — which two flat lists could not say.
- */
-const dataset = (kinds: LensRule['datasets'], series: Series): boolean =>
-  kinds === undefined
-  || kinds.some(one => one.dataset === series.dataset
-    && (one.variant === undefined || one.variant === series.variant));
-
-const named = (values: readonly string[] | undefined, one: string): boolean =>
-  values === undefined || values.includes(one);
 
 /**
  * The months a venue's rules bound it to, where they narrow nothing else.
