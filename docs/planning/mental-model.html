@@ -421,7 +421,7 @@
     <div class="prose">
       <p>Signal can be configured for many symbols and many indicators, but it should not compute what nobody is reading. When training dozens of bots simultaneously, a fixed "compute everything and publish it all" approach wastes CPU and generates significant queue traffic for combinations no bot cares about.</p>
       <p>The solution: <strong>lazy computation driven by RabbitMQ binding events</strong>. Signal subscribes to RabbitMQ's internal event exchange (<code>amq.rabbitmq.event.exchange</code>) at startup. Whenever a consumer creates a queue and binds it to a signal routing key, RabbitMQ fires a <code>queue.bound</code> event. Signal receives this event, parses the routing key to extract the symbol + indicator, and adds that pair to its active set. When the consumer disconnects, its non-durable auto-delete queue is automatically deleted by RabbitMQ, which fires a <code>queue.unbound</code> event — Signal removes the pair from the active set.</p>
-      <p>The routing key encodes both dimensions: <code>signal.{SYMBOL}.{INDICATOR_KEY}</code> — for example <code>signal.XBTUSD.ema.20</code> or <code>signal.ETHUSD.rsi.14</code>. Base market data (bid/ask/book/lastPrice) uses <code>signal.{SYMBOL}.market</code>. This gives consumers fine-grained control: a bot wanting only EMA(100) for XBTUSD binds to exactly <code>signal.XBTUSD.ema.100</code> and nothing else.</p>
+      <p>The routing key encodes both dimensions: <code>signal.{SYMBOL}.{INDICATOR_KEY}</code> — for example <code>signal.BTCUSDT.ema.20</code> or <code>signal.ETHUSDT.rsi.14</code>. Base market data (bid/ask/book/lastPrice) uses <code>signal.{SYMBOL}.market</code>. This gives consumers fine-grained control: a bot wanting only EMA(100) for BTCUSDT binds to exactly <code>signal.BTCUSDT.ema.100</code> and nothing else.</p>
       <p><strong>What is always on:</strong></p>
       <ul>
         <li>WS subscription to the exchange feed — all configured symbols, always connected</li>
@@ -447,7 +447,7 @@
         <li><strong>Band detection</strong> — is price inside a recognised range? If so: the low, high, and duration</li>
         <li><strong>Risk score</strong> — an aggregate risk metric, 0–100, combining multiple factors</li>
         <li><strong>Pattern match</strong> — current conditions resemble N past setups; what followed in those cases</li>
-        <li><strong>Temporal context</strong> — BitMEX funding in 20 minutes; estimated directional pressure</li>
+        <li><strong>Temporal context</strong> — funding in 20 minutes; estimated directional pressure</li>
       </ul>
       <p>These assessments are what the Accountant reads to form its strategy recommendation. But strategies can also subscribe to the Barometer directly — a market maker might widen its spread when the risk score exceeds a threshold, without needing to switch strategies entirely.</p>
     </div>
@@ -531,18 +531,18 @@
     <h3 class="sec">Planner</h3>
     <div class="prose">
       <p>The Planner is the translator between what strategies express and what the exchange accepts. It takes an OrderPlan and produces fully-specified, exchange-native order objects. It knows the full vocabulary of the exchange's order system.</p>
-      <p>BitMEX is not just "limit orders at a price." It offers a rich order type system:</p>
+      <p>A derivatives venue is not just "limit orders at a price." Most offer a rich order type system:</p>
       <ul>
         <li><strong>Market</strong> — fills immediately at best available price; no price field</li>
-        <li><strong>Limit</strong> — standard limit order; optional post-only (<code>execInst: ParticipateDoNotInitiate</code>)</li>
+        <li><strong>Limit</strong> — standard limit order; optional post-only</li>
         <li><strong>Stop / StopLimit</strong> — triggered at a stop price; becomes market or limit</li>
-        <li><strong>Trailing stop</strong> — exchange-managed trailing: set <code>pegOffsetValue</code> and the exchange moves the stop as price moves</li>
-        <li><strong>Pegged</strong> — price anchored to mid, primary bid/ask, or last price with an offset (<code>pegPriceType + pegOffsetValue</code>)</li>
-        <li><strong>Close</strong> — closes the full position; no quantity needed (<code>execInst: Close</code>)</li>
+        <li><strong>Trailing stop</strong> — exchange-managed trailing: set an offset and the exchange moves the stop as price moves</li>
+        <li><strong>Pegged</strong> — price anchored to mid, primary bid/ask, or last price with an offset</li>
+        <li><strong>Close</strong> — closes the full position; no quantity needed</li>
         <li><strong>ReduceOnly</strong> — only reduces an existing position, never opens new</li>
         <li><strong>MarketIfTouched / LimitIfTouched</strong> — triggered orders that become market/limit when price reaches a level</li>
       </ul>
-      <p>The Planner knows when to resolve and when to pass through natively. A strategy saying "trailing stop $200 below current price" maps directly to a BitMEX native trailing stop — no resolution required, the exchange manages the trailing itself. A strategy saying "limit buy at 1% below entry price" requires the Planner to compute the actual price from the current entry price, then emit a standard limit order.</p>
+      <p>The Planner knows when to resolve and when to pass through natively. A strategy saying "trailing stop $200 below current price" maps directly to the venue's native trailing stop — no resolution required, the exchange manages the trailing itself. A strategy saying "limit buy at 1% below entry price" requires the Planner to compute the actual price from the current entry price, then emit a standard limit order.</p>
       <p>The Planner does not need to be built all at once. Start with the minimal vocabulary for the market maker (limit orders, post-only). Add order types as strategies require them.</p>
     </div>
 
@@ -563,7 +563,7 @@
       <p><strong>ORDERID_PREFIX scoping:</strong> every order placed by this Executor instance carries a prefix on its client order ID. Multiple Executor instances (for different strategies or accounts) can share an exchange account without interfering — each only manages the orders it created.</p>
       <p><strong>Error handling:</strong> transient errors are retried. A "stale amend" (order already filled by the time the amend arrives) is handled by creating a new order instead of re-attempting the amend.</p>
     </div>
-    <div class="callout-g">The Executor is the best first service to build. It has the clearest contract, can be fully tested with a static DesiredState message (no live bot needed), and has a well-understood reference implementation in the BitMEX sample-market-maker Python repo (<code>converge_orders</code>).</div>
+    <div class="callout-g">The Executor is the best first service to build. It has the clearest contract, can be fully tested with a static DesiredState message (no live bot needed), and converging live orders onto a desired set is a well-understood problem.</div>
   </div><!-- /chapter 2 -->
 
   <hr class="divider">
@@ -582,7 +582,7 @@
     </div>
     <span class="code-label">Illustrative shape — routing key: signal.{SYMBOL}.market</span>
     <pre class="code">MarketSnapshot {
-  symbol:     string        // e.g. "XBTUSD"
+  symbol:     string        // e.g. "BTCUSDT"
   timestamp:  string        // ISO timestamp of this snapshot
 
   // Best quotes
@@ -600,7 +600,7 @@
   // Last trade
   lastPrice:  number
 
-  // Instrument metadata (from BitMEX instrument table)
+  // Instrument metadata (from the venue's instrument listing)
   instrument: {
     tickSize:    number     // minimum price increment
     lotSize:     number     // minimum order quantity increment
@@ -613,12 +613,12 @@
 
     <h3 class="sec">IndicatorUpdate — from Signal (per indicator)</h3>
     <div class="prose">
-      <p>Published by Signal lazily — only when a consumer has bound a queue to that routing key. Each indicator is a separate message with its own routing key: <code>signal.{SYMBOL}.{INDICATOR_KEY}</code>. Examples: <code>signal.XBTUSD.ema.20</code>, <code>signal.ETHUSD.rsi.14</code>.</p>
+      <p>Published by Signal lazily — only when a consumer has bound a queue to that routing key. Each indicator is a separate message with its own routing key: <code>signal.{SYMBOL}.{INDICATOR_KEY}</code>. Examples: <code>signal.BTCUSDT.ema.20</code>, <code>signal.ETHUSDT.rsi.14</code>.</p>
       <p>Consumers subscribe to exactly the indicators they need — nothing more is computed or published.</p>
     </div>
     <span class="code-label">Illustrative shape — routing key: signal.{SYMBOL}.{INDICATOR_KEY}</span>
     <pre class="code">IndicatorUpdate {
-  symbol:     string        // e.g. "XBTUSD"
+  symbol:     string        // e.g. "BTCUSDT"
   indicator:  string        // e.g. "ema", "rsi", "bollinger"
   params:     Record&lt;string, number&gt;  // e.g. { window: 20 }
   value:      number | Record&lt;string, number&gt;  // scalar or named band values
@@ -676,7 +676,7 @@
   positions: Record&lt;symbol, {
     currentQty:       number   // positive = long, negative = short
     avgEntryPrice:    number
-    unrealisedPnl:    number   // in XBT (sats)
+    unrealisedPnl:    number   // in the settlement currency
     liquidationPrice: number
     leverage:         number
   }&gt;
@@ -738,7 +738,7 @@ OrderIntent {
 }
 
 ExchangeOrderSpec {
-  // Direct BitMEX API fields — fully specified, ready to submit
+  // The venue's own order fields — fully specified, ready to submit
   symbol:       string
   side:         'Buy' | 'Sell'
   orderQty?:    number          // absent for Close orders
@@ -768,7 +768,7 @@ ExchangeOrderSpec {
       <p><strong>Algorithm:</strong></p>
       <ol>
         <li>Compute mid price from MarketState: <code>mid = (bid + ask) / 2</code></li>
-        <li>Round mid to nearest tick (BitMEX requires prices to be multiples of tickSize)</li>
+        <li>Round mid to nearest tick (venues require prices to be multiples of tickSize)</li>
         <li>Place N bid orders: <code>mid - spacing×1, mid - spacing×2, ..., mid - spacing×N</code></li>
         <li>Place N ask orders: <code>mid + spacing×1, mid + spacing×2, ..., mid + spacing×N</code></li>
         <li>Apply position limits: if <code>currentQty &gt;= MAX_POSITION</code>, suppress all bids. If <code>currentQty &lt;= -MAX_POSITION</code>, suppress all asks.</li>
@@ -777,7 +777,7 @@ ExchangeOrderSpec {
       <p><strong>Config parameters:</strong></p>
       <ul>
         <li><code>N</code> — number of levels per side (e.g. 5)</li>
-        <li><code>SPACING</code> — distance between levels in ticks (e.g. 2 ticks = $2 on XBTUSD)</li>
+        <li><code>SPACING</code> — distance between levels in ticks (e.g. 2 ticks = $0.20 at a $0.10 tick)</li>
         <li><code>ORDER_SIZE</code> — quantity per order in contracts</li>
         <li><code>MAX_POSITION</code> — absolute position limit (e.g. 5000 contracts)</li>
       </ul>
@@ -910,7 +910,7 @@ ExchangeOrderSpec {
 { type: 'walletPct', pct: 0.10 }        // 10% of wallet
 
 // Position-relative
-{ type: 'closeAll' }                     // close entire position (maps to BitMEX Close execInst)
+{ type: 'closeAll' }                     // close entire position (the venue's native close where it has one)
 { type: 'closePct', pct: 0.5 }          // close 50% of current position</pre>
 
     <h3 class="sec">Native Order Types — No Resolution Needed</h3>
@@ -1081,7 +1081,7 @@ modules/
           <div class="sc-lbl">Publishes</div>
           <div class="sc-val">
             <code>signal.{SYMBOL}.market</code> — MarketSnapshot (base data)<br>
-            <code>signal.{SYMBOL}.{INDICATOR_KEY}</code> — IndicatorUpdate (e.g. <code>signal.XBTUSD.ema.20</code>)<br>
+            <code>signal.{SYMBOL}.{INDICATOR_KEY}</code> — IndicatorUpdate (e.g. <code>signal.BTCUSDT.ema.20</code>)<br>
             Only when a binding for that key exists.
           </div>
         </div>
@@ -1099,7 +1099,7 @@ modules/
         </div>
       </div>
     </div>
-    <div class="callout-b">Signal uses the same delta accumulation pattern already implemented in the snapshots service. The existing <code>deltaParser.js</code> from the BitMEX official WS client (cloned at <code>/data/Development/Repos/NM/BitMEX/api-connectors/official-ws/nodejs</code>) is the reference.</div>
+    <div class="callout-b">Signal accumulates the venue's stream as deltas: a snapshot initialises state and later messages insert, update and delete by key.</div>
     <div class="callout-g">Consumers should use <strong>non-durable auto-delete queues</strong>. When a consumer process exits, its queue is automatically deleted, the binding disappears, and Signal stops computing that <code>(symbol, indicator)</code> pair. No manual cleanup, no queue buildup. This is especially important when training dozens of bots concurrently.</div>
 
     <h3 class="sec">Bot Service</h3>
@@ -1167,7 +1167,7 @@ modules/
     <h4 class="sub">Signal → Bot: RabbitMQ topic exchange</h4>
     <div class="prose">
       <p>Signal publishes to a topic exchange with routing keys <code>signal.{SYMBOL}.market</code> (base market data) and <code>signal.{SYMBOL}.{INDICATOR_KEY}</code> (per computed indicator). The Bot creates non-durable auto-delete queues and binds them to exactly the keys it needs — the market snapshot for each symbol, plus the specific indicator keys the active strategy uses. When the Bot exits, queues auto-delete and Signal stops computing those combinations.</p>
-      <p>Multiple Bot instances can consume the same Signal output independently. Each binds its own queues; Signal emits to whoever is listening. Adding a new Bot training instance that needs <code>signal.XBTUSD.rsi.14</code> automatically activates that computation — no Signal reconfiguration needed.</p>
+      <p>Multiple Bot instances can consume the same Signal output independently. Each binds its own queues; Signal emits to whoever is listening. Adding a new Bot training instance that needs <code>signal.BTCUSDT.rsi.14</code> automatically activates that computation — no Signal reconfiguration needed.</p>
     </div>
 
     <h4 class="sub">Trader → Executor: HTTP POST</h4>
@@ -1190,8 +1190,8 @@ modules/
 
     <h3 class="sec">The Exchange Abstraction Layer</h3>
     <div class="prose">
-      <p>All three services connect to our own <code>ws</code> and <code>rest</code> services, not directly to BitMEX. What those services are backed by — testnet, mainnet, or historical replay — is a module-level configuration decision. The bot services don't know or care.</p>
-      <p>The key advantage: our exchange services impose no rate limits. Multiple services can consume freely without coordinating. Signal, Bot, and Executor can all maintain their own WS connections simultaneously without the connection or message rate limits that direct BitMEX connections carry.</p>
+      <p>All three services connect to our own <code>ws</code> and <code>rest</code> services, not directly to a venue. What those services are backed by — testnet, mainnet, or historical replay — is a module-level configuration decision. The bot services don't know or care.</p>
+      <p>The key advantage: our exchange services impose no rate limits. Multiple services can consume freely without coordinating. Signal, Bot, and Executor can all maintain their own WS connections simultaneously without the connection or message rate limits that direct venue connections carry.</p>
     </div>
     <div class="callout-y">When building bot services, gaps in the exchange app will surface — private WS streams, order management endpoints, authentication. That's expected and fine. The bot app is what drives the exchange app to completion.</div>
   </div><!-- /chapter 7 -->

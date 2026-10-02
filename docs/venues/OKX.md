@@ -859,3 +859,28 @@ the `traderecords` layout, the `pro/` segment does not follow from the books' ow
 the tick-by-tick tree is on a different bucket entirely. Every one of them was found by asking the
 index what it would serve — which is the argument for the index over constructed URLs, stated as a
 layout fact rather than as a preference.
+
+## WebSocket
+
+Verified live on 2026-07-26 on `BTC-USDT-SWAP`: `trades`, `tickers`, `mark-price`,
+`open-interest`, `funding-rate`, `bbo-tbt` and `instruments` all accept a subscription and stream.
+
+```json
+trades         {"instId":"BTC-USDT-SWAP","tradeId":"2805987683","px":"64472.1","sz":"0.02",
+                "side":"buy","ts":"1785060302444","count":"1","source":"0","seqId":331550485845}
+mark-price     {"instId":…,"instType":"SWAP","markPx":"64472.0","ts":"1785060301846"}
+open-interest  {"instId":…,"oi":"3185878.69","oiCcy":"31858.79","oiUsd":"2054002894.90","ts":…}
+funding-rate   {"fundingRate":"0.0000385651416411","fundingTime":…,"nextFundingTime":…,
+                "premium":"-0.0005751117670039","interestRate":"0.0001","impactValue":"20000",
+                "maxFundingRate":"0.00375","minFundingRate":"-0.00375","method":"current_period",…}
+bbo-tbt        {"asks":[["64472.1","820.89","0","36"]],"bids":[["64472","262.68","0","30"]],"ts":…,"seqId":…}
+```
+
+**Every subscription names one instrument.** `instId: "ANY"`, `instType` without `instId`, and a
+`trades-all` channel are all rejected with `60018`. Instrument-class data is split across four
+channels, and `funding-rate` is unusually detailed — premium, interest rate, impact value, the
+formula in use and the bounds.
+
+**Limits, from OKX's documentation and not measured:** 3 connection requests per second per IP;
+480 subscribe, unsubscribe or login requests per connection per hour; and, for book channels,
+under 30 per connection.

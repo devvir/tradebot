@@ -318,3 +318,46 @@ storage works in, so none of it is packable and none of it is evictable.
 The files are the right files in the right paths — nothing about them is wrong and nothing about
 them should be deleted. It becomes evictable as the month-first flow closes those months one at a
 time.
+
+## WebSocket
+
+Verified live on 2026-07-26, while surveying what a WebSocket collector would add to the archive.
+
+**The futures endpoint is `wss://fstream.binance.com/public/ws`, and a wrong path fails silently.**
+`/public/ws` with a `SUBSCRIBE` frame streams. `/ws` with the same frame connects, acknowledges the
+subscription with `{"result":null,"id":1}`, and never sends a frame; `/stream?streams=…`,
+`/ws/btcusdt@aggTrade` and `/public/stream?streams=…` connect and send nothing either.
+
+**Binance acknowledges subscriptions it will never honour.** `btcusdt@nonsense` is answered exactly
+as a real stream is, so neither a successful connection nor an acknowledgement is evidence that
+data will flow — only counting frames is. Every other venue surveyed rejects an unknown channel.
+
+**Only summary streams cover every symbol.** `!miniTicker@arr` streams arrays across the whole
+market; `!ticker@arr` and `!bookTicker` are acknowledged and send nothing. There is no all-symbol
+`aggTrade` or `depth`, so trades and books are one subscription per instrument.
+
+**Mark price is futures-only.** `btcusdt@markPrice` on spot sent nothing in 25 s while `trade` and
+`bookTicker` streamed on the same socket.
+
+```json
+trade       {"e":"trade","E":…,"s":"BTCUSDT","t":6534153222,"p":"64511.89","q":"0.00288","T":…,"m":false,"M":true}
+aggTrade    {"e":"aggTrade","E":…,"s":"BTCUSDT","a":4022483483,"p":"64511.89","q":"0.00288","f":…,"l":…,"T":…,"m":false,"M":true}
+bookTicker  {"u":97856816298,"s":"BTCUSDT","b":"64511.88","B":"0.47198","a":"64511.89","A":"8.11666"}
+```
+
+`m` — buyer is maker — gives the side.
+
+### A book from `@depth` needs a REST snapshot
+
+`@depth` streams **diffs**, and quantities in each event are absolute for that level — zero removes
+it, and being told to remove a level you do not hold is normal. A book is only reconstructible
+with the documented snapshot-plus-diff procedure:
+
+1. Subscribe to `<symbol>@depth` and buffer the events.
+2. Fetch `https://fapi.binance.com/fapi/v1/depth?symbol=<SYMBOL>&limit=1000` for `lastUpdateId`.
+3. Discard buffered events with `u < lastUpdateId`.
+4. The first event applied must satisfy `U <= lastUpdateId AND u >= lastUpdateId`.
+5. Every later event's `pu` must equal the previous event's `u`; if not, start again from a snapshot.
+
+So an archive of `@depth` frames alone cannot be replayed: it needs periodic REST snapshots
+interleaved with the diffs, and `U`/`u`/`pu` kept so a reader can check continuity.

@@ -111,8 +111,8 @@ still discovering for itself rather than asking the catalog.
 ### REST — what an API will hand back after the fact
 
 A new service. Fills what the archives never published and what a WebSocket was not connected for.
-Not started; [planning/VENUE_SOURCES.md](planning/VENUE_SOURCES.md) decides what is worth taking from
-where.
+Not started. What each venue's archive lacks — and so what REST is for — is in its doc under
+[venues/](venues/).
 
 ### WebSocket — what only exists if you were listening
 

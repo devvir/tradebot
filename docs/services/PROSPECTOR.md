@@ -1995,10 +1995,11 @@ The schema lives in `src/catalog/`, alongside the queries. It was a shared packa
 service was expected to open the file; prospector is the only thing that does, and everyone else
 reaches it over the API, so a boundary with one thing on each side was costing without buying.
 
-Fourteen tables. `venue`, `file`, `wip` and `revision` are what a venue serves and what became of
+Fifteen tables. `venue`, `file`, `wip` and `revision` are what a venue serves and what became of
 it; `pattern`, `series` and `transform` are what it publishes, where, and how it spells an instrument
 the pattern cannot; `run` is how far each pass has read and `survey` whether this deployment reads it
-at all; `month` is the rollup that keeps a total from costing a scan; `exclusion` and `unreadable`
+at all; `rollup_venue` and `rollup_series` are the rollups that keep a total from costing a scan,
+per venue and per series; `exclusion` and `unreadable`
 are the two lists of things ruled out and not yet read; and `lens` is the one thing here nobody
 measured — see [lenses](#lenses).
 
@@ -2042,86 +2043,11 @@ it — and finding out hours into a walk instead is the alternative.
 
 ## Lenses
 
-A **lens** is a named way of looking at the catalog. Where one is in force, what
-it lets through *is* the catalog as far as that consumer is concerned; the rows
-underneath stay complete and unfiltered. Everything else here is a measurement; a
-lens is a decision, and it lives here because it is a decision *about* the catalog
-and is chosen entirely from it.
-
-**One row, one JSON document, read whole and written whole.** Nothing queries
-across rules, so normalising them would buy filtering, searching and indexing that
-nobody wants — and it would mean stable ids for rules whose only identity is their
-position.
-
-### What a definition says
-
-Keyed by venue **name**, each venue holding an ordered list of rules, with `*`
-holding the rules that are about every venue and which run before any venue's
-own. Evaluation
-starts from nothing: `include` adds what it matches, `exclude` takes it away, and
-each rule sees what the ones before it left. That is what lets *everything up to a
-date, except books, except recent trades* be three rules read top to bottom rather
-than an enumeration of the complement.
-
-**A rule states only what it constrains.** An absent dimension means all of it.
-The one dimension that is not a flat list is `datasets`, which holds
-`{ dataset, variant? }` pairs: a variant belongs to its dataset and to nothing
-else, so flat lists could not say *one length of kline, and every trade*.
-Writing `markets: 'all'` everywhere was considered and rejected: it is not more
-explicit, only longer, and it ages in the wrong direction — datasets, variants and
-grains are *added* over time, and a rule that names what it constrains absorbs an
-addition, where one enumerating every value silently stops covering the archive.
-
-**`@` is an ordinary instrument.** It is the venue-wide file covering every
-instrument of a market, and naming it selects those series with no special case —
-so cold-storing buckets and keeping a few instruments on their own is one rule.
-
-### Resolving one
-
-**Three steps, in this order, because of where each dimension lives.** Market,
-dataset, variant and grain are properties of the *pattern*; the instrument is a
-property of the *series*; the date is a property of the *file*. So a lens picks
-patterns, then the series on them, then scans that list with the date bounds
-applied — the first two are folds over rows already in memory, and only the last
-touches the large table.
-
-**A lens resolves to spans, not to a range.** Because rules compose, a later one
-can carve a hole in an earlier one's: including 2019 to 2021 and then excluding
-2020 leaves two spans, and collapsing that to one range would hand back a year
-nobody asked for. The arithmetic is in `catalog/spans.ts`, which is small and
-entirely about that.
-
-**Two faults are silent and so are refused rather than warned about.** A rule list
-that opens with `exclude` lets nothing through, because subtracting from the empty
-set is a no-op; and an empty list in a dimension matches nothing, where leaving it
-out matches all of it. Both read later as a decision rather than a mistake, and
-what arrives is an empty download noticed weeks afterwards.
-
-### What a lens would cost
-
-Nobody fetches everything, because everything is tens of terabytes — so the figure
-that decides what a lens lets through is its size, and it has to answer while
-somebody is still choosing.
-
-**Three ways, cheapest first, and the answer says which was used.**
-
-**A venue nothing narrows is already added up.** `month` holds its files and bytes
-per month — the same rollup the surveys page reads — so a whole venue between two
-dates is a sum over a few hundred rows. It is also the only way this figure and
-that one can agree, and they must: they are the same question.
-
-**A narrow selection is counted** from `file`, because the rollup cannot break a
-venue down by market, dataset or instrument. The line is drawn at 400 series.
-
-**A wide one is sampled per shape.** Never across shapes: a venue's series sit in
-discovery order, so neighbours are the same shape, and a sample taken positionally
-over the whole set is two or three shapes pretending to speak for twenty. On a
-catalog still filling it is worse — most series hold no files yet, so where the
-sample lands decides the answer, and the same lens read twice differed by three
-hundred fold.
-
-The date bounds are part of the price rather than applied afterwards: a lens that
-lets one year of a ten-year series through is sized at one year.
+A lens is a named, stored decision about which part of the catalog a consumer sees. Everything about
+them — the definition, how one resolves to series and date spans, how it is sized, and how the API
+reads through one — is [CATALOG-LENSES.md](../modules/CATALOG-LENSES.md). The code is
+`catalog/lens.ts` (definitions, checking, resolving, sizing), `catalog/spans.ts` (the date
+arithmetic) and `catalog/scope.ts` (a resolved lens held for queries, and series seen through it).
 
 
 ## Venues

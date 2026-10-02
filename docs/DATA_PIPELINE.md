@@ -44,7 +44,7 @@ sub-second timing, fields no archive carries. Every WS channel has to be justifi
 other two sources genuinely cannot fill, established by comparing actual payloads rather than
 documentation.
 
-→ [planning/VENUE_SOURCES.md](planning/VENUE_SOURCES.md) for the per-venue, per-table findings.
+→ each venue doc's *WebSocket* section in [venues/](venues/) for what was verified live.
 
 ## Collectors
 

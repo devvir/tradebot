@@ -11,7 +11,6 @@ Services connect exclusively to our own `ws` and `rest` services — never direc
 ### `signal` — Market data processor
 Subscribes to public WS streams, accumulates order book and trade state, and publishes `MarketState` messages to RabbitMQ at a configurable minimum interval.
 
-→ [SIGNALS.md](SIGNALS.md)
 
 ### `executor` — Order abstraction layer
 The bot's interface to order management. The bot publishes a list of desired orders; the executor computes the diff against live state and performs the minimum set of REST calls (amend, create, cancel) to make reality match intent. All WS private streams, REST API details, and order CRUD complexity live here — the bot knows none of it.

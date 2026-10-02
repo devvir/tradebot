@@ -276,3 +276,28 @@ query for a month catches it alongside that month's days.
 `trading/DOTUSD/DOTUSDT2021-12-06.csv.gz` is genuinely served, holds DOTUSDT rows, and is a truncated
 duplicate of a file that exists correctly under `trading/DOTUSDT/`. One misfiled artifact rather than
 a pattern, so it belongs in the catalog's `exclusion` table rather than in an adapter's rules.
+
+## WebSocket
+
+Verified live on 2026-07-26.
+
+```json
+publicTrade.BTCUSDT  {"T":1785060230817,"s":"BTCUSDT","S":"Buy","v":"0.001","p":"64474.20",
+                      "L":"PlusTick","i":"f520fc20-…","BT":false,"RPI":false,"seq":715964329311}
+orderbook.1.BTCUSDT  {"s":"BTCUSDT","b":[["64474.1","1.4"]],"a":[["64474.2","7.108"]],"u":4030692,"seq":715964319629}
+tickers.BTCUSDT      {"symbol":"BTCUSDT","markPrice":"64475.28","indexPrice":"64510.19",
+                      "openInterest":"57733.175","openInterestValue":"3722362623.41",
+                      "fundingRate":"0.00001534","nextFundingTime":"1785081600000","fundingIntervalHour":"8",
+                      "fundingCap":"0.005","turnover24h":…,"volume24h":…,"bid1Price":…,"ask1Price":…}
+```
+
+**The archive's trades are at least as good as the feed.** The perpetual trade files carry every
+field `publicTrade` does — `tickDirection` is `L`, `trdMatchID` is `i`, and `RPI` — with a
+sub-millisecond timestamp (`1784851200.0547`) where the feed's `T` is whole milliseconds. The feed
+adds only `seq` and the block-trade flag `BT`.
+
+**`tickers` is the only source of open interest and funding.** Mark and index price, open
+interest and its value, the funding rate, its cap, interval and next time all arrive in one
+payload, and none of them is in the archive — only premium-index and spot-index klines are.
+Whether the REST API serves their history (`/v5/market/funding/history`, the open-interest
+endpoints) is not established.

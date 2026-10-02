@@ -43,7 +43,8 @@ generated key under a retired shape answers 403, which at this venue is indistin
 
 ## Its floors are measured
 
-**Every series' floor is its own first file**, as a full pass found it by asking. Nothing here is the
+**Every series' floor is its own first file**, as a full pass found it by asking — except that no
+era-2 series starts before its era does, on 2024-04-19 (see *What the archive does* below). Nothing here is the
 download index's word: that pass began each dataset from a floor deliberately below anything the index
 had shown, asked every combination of instrument and shape the venue could publish under, and kept
 only what answered.
@@ -148,6 +149,7 @@ generation cannot tell the two paths apart.
 |---|---|---|
 | `marginToken` | `UMCBL` | which margin line a futures **trades** key is filed under: `CMCBL` for USDC-margined, `DMCBL` for coin-margined. Nothing in the path or the symbol reveals it |
 | `archiveDir` | `{SYMBOL}` | the directory, where it is not the name the filename uses |
+| `eraName` | era 1's own filename | an era-1 kline day bitget only ever published under era 2's name: `UMCBL/{YYYY}{MM}{DD}` on the futures line, `SP/{YYYY}{MM}{DD}` on spot, one row per day |
 
 `archiveDir` is the answer to bitget filing one instrument's day inside another's directory. It has
 two populations: one row bounded to a single day - `kline/TRXUSDT/RUNEUSDT_UMCBL_1min_20221117.zip`,
@@ -191,10 +193,14 @@ search for the rest, per instrument, at the moment the catalog first meets it.
 
 ### What the archive does, that the seed is shaped around
 
-**The eras cut on 2024-04-19 and 2026-08-18, but not for every dataset.** Trades and depth change
-cleanly. Klines do not: a few hundred era-2 candlestick keys carry dates from 2019 to 2023 — targeted
-backfills written under the newer naming — so those instruments have overlapping series rather than
-adjacent ones.
+**The eras cut on 2024-04-19 and 2026-08-18, and the seed cuts with them.** Bitget did not: 440
+era-2 kline keys carry dates from 2019 to 2023, and every instrument's trades of 2024-04-18 are
+served under both names. **No era-2 series is seeded below 2024-04-19**, so none of that is ever
+generated. Where era 1 also holds the day — 417 of the kline days and every trades file — the
+content is the same and era 1's copy is the one catalogued. Twenty kline days exist only under era
+2's name inside otherwise continuous era-1 series, and those are `eraName` transforms of the era-1
+series; the three left over are isolated files with no series around them, and are not catalogued.
+The measurements are in [BITGET.md](BITGET.md#the-three-naming-eras).
 
 **Depth is two datasets.** `deptType: 1` is the quote stream under `depth/`; `2` is a 500-level book
 under `depth_500/`. Books begin 2025-08-01, on the naming convention the other datasets only adopted
@@ -252,184 +258,3 @@ venue and a key absent from the seed is never probed.
 
 **The index is evidence, not truth.** It omits files that are served and lists files that are not.
 Nothing in it is a measurement until something has fetched the key.
-
-
-<!-- ─────────────────────────────────────────────────────────────────────────
-     TRANSIENT — everything below this line describes the run that is building
-     the permanent seed, and is deleted once that seed ships. Nothing above it
-     depends on any of it.
-     ───────────────────────────────────────────────────────────────────────── -->
-
-# Building the permanent seed — transient
-
-The floors and the series set are measured; `last` and the adapter's measuring configuration are not
-settled yet. What follows is what is still owed before the seed is permanent, and the facts a check
-needs in order to be written.
-
-**Delete this whole section when the permanent seed ships.**
-
-## Where the evidence is
-
-Stated so a check can be written without re-deriving any of it. All of it is on disk today.
-
-| | |
-|---|---|
-| the research folder | `/data/tradebot/@claude.tmp/bitget-index/` — its `README.md` describes each stage, `REBUILD.md` is the scratch |
-| **the universe** | `symbol-list/instruments.csv` — a `market,symbol` list from an exhaustive substring crawl of `getSymbolList`, tradfi and the Reality tokens already struck out. Nothing downstream may ask about a name absent from it, and a name is asked only of the line that offers it |
-| **the URL sweep** | `sweeps/records.<tag>.jsonl`, asked with exactly those names — see the grid below |
-| the per-series reduction | `series/series-from-sweep.csv` — one row per (shape, spelling), carrying the sweep's `first`, `last` and its file count |
-| the shipped seed | `seeds/bitget/{pattern,series,transform}.csv` — the series file written by `checks/firsts/from-run.cjs` from the catalog after the measuring pass, the rows it removed kept beside it in `removed.csv` |
-| the seed's own audit | `checks/audit.cjs` — rules over the shipped CSVs and the venue's listings |
-| the coverage check | `checks/coverage.cjs` — every swept URL against every key the seed can generate |
-| the newest-file probe | `checks/lasts/` — `plan.jsonl` (each series' candidates), `results.jsonl` (every `HEAD`), `decided.jsonl` (the tip and `last` written), `undo.sql` (the values they replaced) |
-| the catalog under test | `/storage/tradebot/catalog/catalog.db` |
-
-### The sweep is one grid, in six files
-
-**The file names are nicknames and two of them are actively misleading.** What the sweep actually
-covers is the download index's own request parameters:
-
-| parameter | values |
-|---|---|
-| `businessLine` | 1 spot, 2 futures — the archive's two halves, and all it has |
-| `businessType` | 1 klines, 2 trades, 3 depth |
-| `dateType` | absent daily, 2 monthly |
-| `deptType` | absent or 1 the quote stream under `depth/`, 2 the 500-level book under `depth_500/` |
-
-That is 2 × 4 × 2 = **16 cells**, and the record files cover all of them between them. Each is named
-for the cells it swept — `daily-main` is all three business types at the default `deptType`,
-`daily-books` is depth at `deptType 2`, and the `monthly-` pair are the same two with `dateType 2`.
-
-**The non-ASCII names need their own pass.** `哈基米USDT` and `龙虾USDT` exist in the REST listing, but
-a substring crawl over `a-z0-9$/_` cannot construct a query that reaches them, so they are swept from
-names found the other way.
-
-**A sweep record joins the catalog exactly.** `record.fileUrl` is
-`https://img.bitgetimg.com/online/` + the path, and bitget's `venue.base` is that string with an
-empty key root, so `file.path` is the URL with the base and one slash removed. No parsing, no
-normalisation.
-
-**The older sweeps are a different universe, and they are still evidence.**
-`records.v2.jsonl`, `records.slashless.jsonl`, `records.books.jsonl`, `records.newnames.jsonl` and
-`records.newbooks.jsonl` were asked with names from the research `instrument` table rather than from
-`getSymbolList`, so the seed does not rest on them. But **a URL is a URL**: the venue said it holds
-that file, so the catalog is expected to hold it too, and one that is missing has to be explained
-rather than excused — either the venue's listing is wrong, or the seed was short. They are the second
-reference set for check 1, reported separately from the first.
-
-The `url` table inside `bitget.db` was loaded from `records.v2.jsonl` alone by
-`sweeps/import-urls.cjs`. It is that one old sweep and not the sum of anything, so it is not a
-shortcut to either reference set, whatever its 5.6M rows suggest.
-
-## The checks still open
-
-Each says what must hold, what makes it fail, and what a failure means. None of them is written yet.
-They belong in `checks/`, read-only, one question each, as the house rules there require.
-
-### 1 — every swept URL was generated, and the catalog should hold more
-
-**Must hold:** every `fileUrl` in the six current-universe sweeps has a row in `file` for the bitget
-venue.
-
-**Expected in the other direction:** `file` holding URLs the sweep never mentioned. That is the
-intended outcome, not a discrepancy — measured against 1.46M files held locally, the download index
-is complete for candlesticks and misses 0.27% of trades and 1.30% of depth, every one of which the
-CDN serves.
-
-**Every miss is probed directly.** `HEAD` the URL the sweep gave, unchanged. That is the only thing
-that settles it, and it costs one request:
-
-| the probe says | what it means |
-|---|---|
-| `200` | **a real failure.** The venue serves the file and the run never asked for it — either no series of the right (pattern, spelling) exists, or its floor sits above the date, or the date is above a retired shape's ceiling |
-| `403` | the index advertised a key the CDN does not serve. Nothing is owed |
-
-**Whether the index lists keys that have no file is an open question**, not an established fact. It
-has been asserted and never demonstrated, so nothing here should assume either answer — the probe is
-what decides, per key.
-
-### 2 — the preamble reused seeded series rather than duplicating them
-
-**Must hold:** no instrument has both a seeded series and a preamble-created one for the same shape.
-
-The preamble matches an instrument to what the catalog holds on **canonical symbol and canonical
-market** together, so this is a check on whether the seed's canonical agrees with what
-`v3/market/instruments` returns today. Where it does not, the symptom is exact and silent: a new
-series created beside the seeded one, and the seeded one marked `delisted` on the same pass.
-
-**How to tell a created series from a seeded one:** by `series.id`. The seed is inserted by its
-migration in one go, so bitget's seeded rows are the first contiguous block of ids the venue has and
-anything above it was added during the run. Read the boundary off the database rather than carrying
-it here — it moves with every re-seed.
-
-**A failure names the mismatch directly** — the seeded canonical beside the API's, for that market.
-
-### 3 — no newly found instrument has a deep backfill
-
-**Must hold:** every preamble-created series has `first` within **10 days** of the tip it was created
-with. An instrument listed since the seed was swept has published nothing before it was listed, so
-its backfill is one request that finds nothing below the floor.
-
-**A deeper walk means one of three things**, and which it is has to be established rather than
-assumed:
-
-- the download form never exposed that instrument, so the sweep could not have seen it — the
-  interesting case, and the one that says the form's enumeration is short;
-- the matching in check 2 failed, so an instrument the seed *does* hold was created again under a
-  different canonical, and its "backfill" is really its seeded history being rediscovered;
-- the seed was missing it for some other reason.
-
-### 4 — a shape change keeps one history under one canonical symbol
-
-**Must hold:** an instrument whose spelling or pattern changed mid-life has its whole history
-reachable under one canonical `symbol`, spread over the several series that generate each half.
-
-Bitget does this constantly — two venue-wide naming eras, plus per-instrument directory renames — and
-each change is a separate series by construction, since `series_key` is
-`(pattern_id, COALESCE(url_symbol, symbol))` and one row cannot generate both halves.
-
-**The failure to look for is a hole at a boundary**: a symbol with files under one era's shape and
-nothing under the adjacent era's, where the sweep said both exist. That is a `url_symbol` that is
-right on one side of a rename and wrong on the other.
-
-Comparing against `series-from-sweep.csv` is what makes this answerable — it holds the sweep's own
-`first` and `last` per shape and spelling, so "the era the archive has and the catalog does not" is a
-join rather than a judgement.
-
-## What the permanent seed still takes from a run
-
-The floors, the ends and the series set are taken — see "Its floors are measured". What is left:
-
-| column | becomes | from |
-|---|---|---|
-| `symbol` | unchanged — the canonical, which check 2 validates | — |
-
-**That pass starts at each series' newest known file, not at its floor.** On 2026-09-22 every
-series in the live catalog was probed at the newest date either source claimed — the sweep's
-`archivesLast`, or the newest confirmed file in `catalog..experimental.1.db` where that was later or
-the sweep's answer was refused — and `tip` set one period below the first date served, with `last` at
-it so that `open` still asks about a series whose end is long past. Of 22,544 series with a candidate
-above what the catalog held, 22,540 were served; the four that were not are all series the archive
-spells differently from the symbol — `FLYOLDUSDT` as `FLYUSDT` (perp books and quotes) and
-`RONINUSDT` as `RONUSDT` (spot books and quotes) — whose swept `20260905` answers `403`, and they sit
-at their floor. The other 445 had nothing above the catalog's own `last` and start there.
-
-**The pass then measured the ends, and the seed states them.** Every series' `last` is the newest
-file that answered on the pass of 2026-09-22, and `SEEDED_AT` carries that day: the claim is that
-nothing above any `last` was there when it was looked at, which is what the pass established by
-asking every period from each series' newest known file up to the frontier.
-
-**Which is why the sixteen series the pass discovered are in the seed too.** Four instruments were
-listed while the measurement ran — `CNPYUSDT`, `MCATUSDT` and `MHAUSDT` on spot, `STONKUSDT` on
-perp — and the preamble created a series per dataset for each. A horizon is a claim about an archive
-as of a day; stating one while leaving out series that existed on that day and were measured on it
-would make the claim true of a seed and false of the venue. They carry the same measured floors and
-ends as everything else, `listed=no` because the download form predates them, and no `archives*`
-because the sweep could not have seen them.
-
-**Check 1 cannot be run against the pass that measured the floors.** It asks whether every swept URL
-has a row in `file`, and that pass kept one file per series by construction — the first — so every
-later file the sweep named is absent on purpose. It needs a pass that follows series to their ends.
-
-The temporary code is gone: the drop-above rule, the multi-part trades chain uncommented with its
-test, and `SEEDED_AT` back — a horizon the seed earned rather than one it borrowed.

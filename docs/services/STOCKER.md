@@ -330,6 +330,12 @@ a dataset across a format change: nine Binance futures datasets grew a header be
 and 2022-07, and read positionally the header line is simply a row whose timestamp is the text
 `open_time`. No boundary date is written down anywhere.
 
+**Every partition is written `ORDER BY ts`, and the sort stays.** Many arrive sorted already, so
+skipping it where inputs are provably ordered looked like the big win; measured on 2026-08-02,
+removing it entirely was worth ~9% of build time. What the sort does set is the memory ceiling — it
+is why a big month needs the spill directory — and that is not worth extra machinery while spilling
+works.
+
 **A partition whose timestamps fall outside 2015–2035 is rejected rather than published.**
 Inference removes the wrong-unit mistake the guard was written for, but not the one it still
 catches: a `ts` naming the wrong column, where values parse cleanly and mean nothing. It reads

@@ -11,12 +11,10 @@
  * without tracing preset expansion through another package.
  *
  * ⚠ **The four non-BitMEX lists below are provisional.** They were written before the
- * source survey in `docs/planning/VENUE_SOURCES.md`, which concludes that trade feeds are
- * largely redundant with each venue's bulk/REST history, and that book feeds — the thing
- * actually worth streaming — are diff streams needing interleaved REST snapshots that this
- * service cannot yet take. Symbol coverage is a two-symbol placeholder. Read that document
- * before trusting or extending these lists. BitMEX is not provisional: it mirrors what
- * production collects today.
+ * venues were surveyed — see the *WebSocket* section of each venue doc under `docs/venues/`.
+ * Trade feeds turned out largely redundant with each venue's archive, and book feeds — the
+ * thing actually worth streaming — are diff streams needing interleaved REST snapshots that
+ * this service cannot yet take. Symbol coverage is a two-symbol placeholder.
  */
 export const VENUE_CHANNELS: Readonly<Record<string, readonly string[]>> = {
   /**

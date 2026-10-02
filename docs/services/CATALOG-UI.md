@@ -97,6 +97,12 @@ is exactly what somebody reads this table to find — bybit's perpetual books ar
 `500,incremental` reaching 2025-08-20 and closed, `200,incremental` open, which
 is what tells a reader to fetch both.
 
+**The contents can be seen through a lens.** A picker beside the breadcrumbs narrows every list and
+count below it to what the lens lets through, by sending its slug as `x-catalog-lens` — so the page
+shows exactly what a downloader through that lens would be offered. The lens is part of the address,
+so it follows a click from a venue into a market and survives a reload; cleared, it is the whole
+catalog. What changes under a lens is in [CATALOG-LENSES.md](../modules/CATALOG-LENSES.md).
+
 ### Surveys
 
 One row per venue, polled every ten seconds: a survey runs for hours and reports
@@ -297,9 +303,13 @@ evaluation starts from nothing and subtracting from nothing is a no-op; and an
 it.
 
 **The lens carries what it would cost**, because that is the decision it exists to
-support. An estimate is marked `≈` and its tooltip says how it was reached — see
-`POST /lenses/size`, which takes the document rather than a saved name so the
-figure arrives while somebody is still choosing.
+support — exact, off the catalog's rollups — see `POST /lenses/size`, which
+takes the document rather than a saved name so the figure arrives while
+somebody is still choosing.
+
+**A draft can be thrown away.** Edits are kept in the browser until saved, so a
+reload does not lose them — and by the same token cannot undo them. *Reload as
+saved*, beside *Save*, puts back what is stored and drops the draft.
 
 **And how much of it is already on disk.** A bar under the total shows the share
 downloaded by weight, not by count — files run from kilobytes to gigabytes, so a
@@ -310,7 +320,9 @@ so the bar moves while a downloader works through the lens.
 covering every instrument of a market, so cold-storing buckets and keeping a few
 instruments on their own for simulation is one rule with both in it. It is offered
 as its own chip rather than found by typing, because a venue's instrument list
-deliberately leaves the bucket out.
+deliberately leaves the bucket out. **The chip appears only where the venue publishes a venue-wide file
+at all** — `GET /lenses/options/:venue` says how many each combination holds — so it is never offered
+where it could only select nothing.
 
 **Instruments are searched, not browsed.** A venue lists more of them than anyone
 scrolls, so the field stays quiet until three characters make it worth answering,

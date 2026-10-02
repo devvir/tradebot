@@ -557,6 +557,33 @@ Getting it wrong is not cosmetic: recording the second case as two series produc
 is full of data". The trading platform search settles it — if `symbolCode(A) = B` then `B` is a
 spelling; if `A` and `B` each appear as their own record, they are two instruments.
 
+### Depth can be spelled differently from the rest of an instrument
+
+Asking the download index for every spot instrument under its *slashless* canonical — rather than
+the dropdown spelling the form accepts — turned up ten instruments whose depth is filed under the
+bare canonical while their candlesticks, trades and quotes use another spelling:
+
+| canonical | spelling of its other datasets | depth under that spelling | depth under the canonical |
+|---|---|---|---|
+| LIQUIDIUMUSDT | LIQUIDIUMTOKENUSDT | 2024-07-22..2025-01-27 | 2024-07-27..2026-08-17 |
+| MRSOONUSDT | SOONUSDT | 2024-07-27..2026-08-31 | 2025-04-25..2026-08-14 |
+| VELOUSDC | VELO1USDC | 2024-07-09..2024-09-06 | 2024-08-23..2026-08-17 |
+| KAONUSDT | AKROUSDT | 2024-07-09..2025-02-13 | 2025-02-12..2026-06-24 |
+| TXUSDT | COREUMUSDT | 2024-07-09..2026-03-05 | 2026-03-06..2026-08-21 |
+| CATEUSDT | CATENEWUSDT | none | 2024-07-27..2026-08-17 |
+| RBTCUSDT | RBTCNEWUSDT | none | 2024-09-23..2025-10-20 |
+| RUNESXUSDT | RUNESXBITCOINUSDT | none | 2024-10-12..2025-07-08 |
+| SOPHUSDC | SOPHNEWUSDC | none | 2025-05-28..2026-08-17 |
+| SPACEUSD1 | SPACENEWUSD1 | none | 2026-01-23..2026-08-17 |
+
+**The seed carries the canonical depth of all ten**, and the instrument's other datasets under their
+own spelling as a `url_symbol`. The depth filed under the *other* spelling is not seeded for the
+first four.
+
+For seven of them that is the ordinary case — one stream, handed over at a rename or spelled one way
+for its whole life. **The first three overlap for months**, so for that period bitget wrote two depth
+streams for one listed instrument, and only the canonical one is catalogued.
+
 ### An instrument is a market plus a symbol, and a path belongs to nobody
 
 **This is the question that keeps being re-asked, so it is settled here.**
@@ -786,6 +813,9 @@ market spans both.
   every filename digit on later dates answers `403` for all of them.
 
 - What the two rows per timestamp in a depth file are.
+- Which depth stream is the instrument's while two are written: LIQUIDIUMUSDT, MRSOONUSDT and
+  VELOUSDC each have depth under two spellings for an overlapping period, and only the canonical one
+  is catalogued.
 - Whether the era-3 `fileName` variant (`<displayName>-<real basename>`) means anything.
 - Whether the bucket cut holds for futures products and for klines and depth.
 - Whether `pre`-prefixed equities are pre-IPO instruments.

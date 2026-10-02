@@ -533,9 +533,8 @@ halted.
 
 ### Lenses
 
-A **lens** is a named way of looking at the catalog. Where one is in force, what
-it lets through *is* the catalog as far as that consumer is concerned; the rows
-underneath stay complete and unfiltered.
+A **lens** is a named way of looking at the catalog — see
+[CATALOG-LENSES.md](CATALOG-LENSES.md).
 
 | | |
 |---|---|
@@ -544,85 +543,20 @@ underneath stay complete and unfiltered.
 | `POST /lenses` | Create one. `slug` required; `name`, `note` and `definition` optional. |
 | `PUT /lenses/:slug` | Replace it whole — `slug`, `name`, `note`, `definition`, or any of them. |
 | `DELETE /lenses/:slug` | Delete it. |
-| `GET /lenses/options/:venue` | The combinations that venue publishes — `market`, `dataset`, `variant`, `grain`, and how many series each holds. What a rule is written against. |
+| `GET /lenses/options/:venue` | The combinations that venue publishes — `market`, `dataset`, `variant`, `grain`, how many series each holds, and how many of those are venue-wide files (`buckets`). What a rule is written against. |
 | `POST /lenses/check` | What is wrong with a definition, without storing it. |
-| `POST /lenses/size` | What a definition would put on a disk: `series`, `files`, `bytes`, and of those `pending` and `pendingBytes`, not yet downloaded. `exact` says whether it was counted or estimated. |
+| `POST /lenses/size` | What a definition would put on a disk: `series`, `files`, `bytes`, and of those `pending` and `pendingBytes`, not yet downloaded. Exact, summed off the rollups. |
 | `GET /lenses/:lens/size` | The same, for one that exists. |
 | `POST /lenses/resolve` | What it actually selects, per venue: how many series, and the date spans. |
 
-**Addressed by `slug`, never by number**, in every path. A lens carries three
-names and they do different jobs: `slug` is what a consumer is configured with and
-what every path addresses, so it is stable; `name` is what a person calls it, free
-text and free to change; `note` is what it is for. Addressing by `name` would mean
-renaming a lens reconfigures whoever reads through it.
+**Addressed by `slug`, never by number**, in every path.
 
-**A consumer reads through a lens by naming it** in an `x-catalog-lens` header.
-The [bucket listing](#buckets) honours it. An unknown slug is a `404` rather
-than the unfiltered catalog.
+**A consumer reads through a lens by naming it** in an `x-catalog-lens` header. The
+[bucket listing](#buckets) and `/contents/*` honour it; no header is the whole catalog, and an unknown
+slug is a `404` rather than the unfiltered catalog.
 
-**Read whole, written whole.** There is no `PATCH` of a single rule, which is why
-rules carry no ids and their position in the array identifies them. Last write
-wins.
-
-### The definition
-
-```jsonc
-{
-  "format": 1,
-  "venues": {
-    "bitget": [
-      { "effect": "include", "to": "202012" },
-      { "effect": "exclude", "datasets": [{ "dataset": "books" }] },
-      { "effect": "exclude", "datasets": [{ "dataset": "trades" }], "from": "201901" }
-    ]
-  }
-}
-```
-
-**Keyed by venue name**, never by id: an id names a *host*, and bybit publishes
-its books from a second one.
-
-**`*` holds rules about every venue, and they apply before that venue's own.** A
-lens whose only rule is global reaches venues it never names — including ones
-added later.
-
-**Rules apply in order, starting from nothing.** `include` adds what it matches,
-`exclude` takes it away — so a list that opens with `exclude` lets nothing
-through.
-
-**A rule states only what it constrains.** An absent dimension means all of it, so
-`{ "effect": "include", "datasets": [{ "dataset": "trades" }] }` is every market,
-grain and instrument of every variant of trades, for all time.
-
-| field | matched against |
-|---|---|
-| `markets`, `grains` | the pattern's own |
-| `datasets` | a list of `{ dataset, variant? }`. An absent `variant` is every variant of that dataset |
-| `instruments` | the series' symbol. `@` is the venue-wide file, and an ordinary value here |
-| `from`, `to` | months, `yyyymm`, inclusive; absent is open |
-
-**A variant belongs to its dataset**, which is why the two travel as a pair. `1m`
-is a kline length, `full,incremental` a book shape, and trades have variants of
-their own — so two flat lists could not say *one length of kline, and every
-trade*, which is an ordinary thing to want:
-
-```jsonc
-"datasets": [{ "dataset": "klines", "variant": "1m" }, { "dataset": "trades" }]
-```
-
-Because rules compose, a later one can carve a hole in an earlier one's range, so
-a lens resolves to a **list of spans per series** rather than one range.
-
-**Sizing is why a lens is decidable**, so it is answered while somebody is still
-choosing. A selection of at most a few hundred series is counted from the files
-themselves; beyond that it is estimated from a sample of series and marked
-`exact: false`.
-
-**A definition that claims more than a venue publishes is refused**, with `400`
-and a `problems` list. Each problem names the venue, the rule's position and, where
-one part is at fault, the field — so an editor can put it where the choice was
-made. `POST /lenses/check` answers the same thing without storing, which is what a
-form asks on every change.
+What a definition says, how a lens resolves and is sized, what the contents look like through one,
+and how downloaders share lenses: [CATALOG-LENSES.md](CATALOG-LENSES.md).
 
 ## Errors
 

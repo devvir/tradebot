@@ -5,18 +5,24 @@ decided from.
 
 ```
 prospector → venue archives → catalog.db → the API everyone else asks
+hauler     ← the API (a bucket per venue, through a lens) → archives on disk
 ```
 
-Two services. [prospector](../services/PROSPECTOR.md) does all of it — the survey, the database and
-the API — and is where the detail lives. [catalog-ui](../services/CATALOG-UI.md) is a page for
-reading that API and driving the surveys from a browser; it holds nothing and can be left out
-entirely. This page is only what you need to run the module.
+Three services. [prospector](../services/PROSPECTOR.md) surveys the venues and owns the database and
+the API, and is where the detail lives. [hauler](../services/HAULER.md) downloads what the catalog
+lists, through a lens, and reports back. [catalog-ui](../services/CATALOG-UI.md) is a page for reading
+the API and driving the surveys from a browser; it holds nothing and can be left out entirely. This
+page is only what you need to run the module.
+
+Going deeper: every endpoint is [CATALOG-API.md](CATALOG-API.md), and lenses — the named slices a
+consumer reads through — are [CATALOG-LENSES.md](CATALOG-LENSES.md).
 
 ## Why it is its own module
 
-**It downloads nothing.** A survey moves kilobytes of XML while the archives it describes are
-terabytes, so this needs bandwidth and almost no disk — which means it can run somewhere the
-downloading cannot, and usually should. Everything else reaches it over HTTP.
+**Surveying downloads nothing.** A survey moves kilobytes of XML while the archives it describes are
+terabytes, so prospector needs bandwidth and almost no disk. Hauler is the opposite, and the two meet
+only over HTTP — so a hauler can run on another machine, beside the disk it fills, and several can
+split the venues between them, each through its own lens.
 
 **One process owns the database.** Prospector is the only thing that opens `catalog.db`; every
 question and every change any other service has arrives through its API. That is what keeps a single
@@ -34,6 +40,10 @@ modules/collect/catalog/
 | `CATALOG_TOKEN` | sent as `x-catalog-token` on every request. **Empty turns the check off** |
 | `CATALOG_PORT` | host port for the API. Empty lets docker pick a free one |
 | `CATALOG_UI_PORT` | host port for the page. `9020` |
+| `PROSPECTOR_VENUES` | the venues prospector surveys; empty for every venue |
+| `PROSPECTOR_CONCURRENCY`, `PROSPECTOR_CONNECTIONS` | how many requests prospector keeps in flight, and on how many connections — see the [prospector README](../../services/prospector/README.md) |
+| `HAULER_ARCHIVES_DIR` | host directory hauler writes the archives into |
+| `HAULER_LENS`, `HAULER_VENUES`, `HAULER_CONCURRENCY` | what hauler fetches and how many at once — see the [hauler README](../../services/hauler/README.md) |
 
 **An empty `CATALOG_TOKEN` means an open catalog**, and both services treat it the same way:
 prospector checks no header and warns loudly on startup, catalog-ui forwards without one. That is
