@@ -7,8 +7,8 @@
 # It downloads nothing — a survey moves kilobytes of XML while the archives it
 # describes are terabytes.
 #
-# It surveys nothing unasked. A venue is enrolled by a request over the catalog
-# API it serves, and from then on it is kept current across restarts: coming back
+# It surveys nothing unasked. A venue is enrolled by a request over its collector
+# API, and from then on it is kept current across restarts: coming back
 # up resumes an interrupted job from its partitions' cursors, waits out the rest
 # of a venue's interval, and leaves paused and never-asked-for venues alone.
 #
@@ -26,12 +26,12 @@ services:
     container_name: prospector
 
     environment:
-      # The shared secret every request must carry in `x-catalog-token`.
+      # The shared secret every request must carry in `x-catalog-token`; the
+      # same one the catalog checks.
       #
-      # Empty is allowed and means the check is off — every request is let
-      # through, which is what makes the read endpoints answerable from a browser
-      # with no header to set. The service warns loudly on startup, so an open
-      # catalog is a decision somebody took rather than one nobody noticed.
+      # Empty is allowed and means the check is off. The service warns loudly on
+      # startup, so an open collector is a decision somebody took rather than one
+      # nobody noticed.
       CATALOG_TOKEN: ${CATALOG_TOKEN:-}
 
       # Which venues to survey (default: all known)
@@ -61,12 +61,10 @@ services:
       - ../../../:/live
       - ${CATALOG_DIR:?CATALOG_DIR is not defined}:/data/catalog
 
+    # The collector and reports APIs on 8080 are private: only the catalog and
+    # catalog-ui reach them, over the module network. Only health is published.
     ports:
-      # Health, and the catalog API. Both publish to whatever host port is given
-      # — left empty, docker picks a free one, which is what you want when the
-      # only thing that reaches this is on the same network.
       - :3000
-      - ${CATALOG_PORT:-}:8080
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]

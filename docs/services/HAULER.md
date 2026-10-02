@@ -1,9 +1,9 @@
 # Hauler
 
 Hauler brings catalogued venue files to disk under canonical names. Prospector
-establishes what every venue publishes; hauler walks each venue as a bucket the
-catalog serves, fetches what it lists, verifies it, and reports what became of
-it.
+establishes what every venue publishes; hauler walks each venue's listing over
+the [catalog API](../modules/CATALOG-API.md), fetches what it lists, verifies it,
+and reports what became of it.
 
 Everything it does follows from one division: **prospector owns what exists, and
 hauler owns what is on disk.** Neither writes the other's conclusions, and where
@@ -98,14 +98,18 @@ The cost is directories, and it is smaller than it looks: a month of one symbol'
 daily files is about thirty, so roughly 2.3M leaf directories across a catalog of
 ~70M files — about 1% of the volume's inodes.
 
-## Walking a bucket
+## Walking a listing
 
-For each venue — every one the catalog knows, or `HAULER_VENUES` — hauler pages
-through `GET /buckets/:venue?pending=true`, 1,000 keys at a time, resuming after
+For each venue — every one the catalog holds files for, or `HAULER_VENUES` — hauler pages
+through `GET /listings/:venue?pending=true`, 1,000 keys at a time, resuming after
 the last key of each page. `pending=true` asks only for files not yet
 downloaded, and `HAULER_LENS` travels as `x-catalog-lens`, so the catalog leaves
 everything else out of the listing and nothing here filters. Each object's
 address is the page's `BaseUrl` joined to its `Url`.
+
+**The venue list is asked for without the lens.** Only the names are wanted, a
+venue the lens lets nothing through from simply lists nothing, and the lensed
+venue list sizes the lens for every venue, which costs the catalog seconds.
 
 **The next page is asked for while this one is fetched**, so listing is never
 what anything waits on. Within a page, `HAULER_CONCURRENCY` files are fetched at
@@ -156,12 +160,22 @@ there to read.
 ## Reporting
 
 After each page, hauler posts what became of it to
-`POST /buckets/:venue/report`, by each object's `FileId`: `downloaded` (fetched, or present and
-correct), `failed` (would not download after three attempts), and `mismatched`
+`POST /listings/:venue/report`, by each object's `FileId`: `downloaded` (fetched, or present and
+correct), `failed` (the venue answered `403`, `404` or `410`), and `mismatched`
 (with the size actually received).
 
-**The caller reports problems; the catalog rules on them.** A failed file is
-checked against the venue and either stays owed or is ruled absent; a mismatch
+**Only the venue's own answer makes a file `failed`.** A connection that never
+opens, a DNS lookup that fails, a `5xx` or a `429` say nothing about the file,
+only about the way to it. Those are tried three times, with waits drawn up to 5
+and then 10 seconds, and if they persist the file is left out of the report
+entirely: it stays owed and is listed again on the next walk. A walk's log line
+counts them as `unreached`. Reporting them as failures had prospector asking the
+venue about hundreds of files it was serving perfectly well, during a burst of
+connect timeouts on this machine's side.
+
+**The caller reports problems; prospector rules on them.** The catalog forwards
+each report to prospector, which owns a file's state. A failed file is checked
+against the venue and either stays owed or is ruled absent; a mismatch
 is confirmed the same way, and what the venue says is what gets recorded.
 
 **Reporting is not transactional with the download, on purpose.** A file

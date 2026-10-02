@@ -12,7 +12,7 @@ export type Config = {
   /** Where the archives are written, inside the container. */
   archivesDir:  string;
 
-  catalogUrl:   string;
+  catalogApi:   string;
 
   /** Sent to the catalog on every request. Empty sends none. */
   catalogToken: string;
@@ -45,7 +45,7 @@ export interface BucketObject {
   LastModified?: string;
 }
 
-/** One page of a venue's bucket, as `GET /buckets/:venue` answers it. */
+/** One page of a venue's bucket, as `GET /listings/:venue` answers it. */
 export interface BucketPage {
   Name:        string;
   Marker:      string;
@@ -68,7 +68,7 @@ export interface Haulable {
 }
 
 /** What happened to one file. */
-export type Outcome = 'downloaded' | 'present' | 'failed' | 'mismatched';
+export type Outcome = 'downloaded' | 'present' | 'failed' | 'mismatched' | 'unreached';
 
 /** What one fetch came to, with what was seen where it disagreed. */
 export interface Hauled {
@@ -79,7 +79,7 @@ export interface Hauled {
 }
 
 /**
- * What became of a page, by `FileId`, for `POST /buckets/:venue/report`.
+ * What became of a page, by `FileId`, for `POST /listings/:venue/report`.
  * A file already on disk and correct is reported as downloaded.
  */
 export interface Report {
@@ -97,4 +97,7 @@ export interface Walked {
   progressed: number;
   failed:     number;
   mismatched: number;
+
+  /** Files the network would not bring, left unreported to come round again. */
+  unreached:  number;
 }

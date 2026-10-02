@@ -5,7 +5,7 @@ import express from 'express';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { beginJob, closeRun, enrol, putFiles, putVenue, recordSeries } from '../src/catalog';
 import { openCatalog } from '../src/database';
-import { setupRoutes } from '../src/api/routes';
+import { mount } from '../src/api';
 import type { Application } from 'express';
 import type { CatalogFile, Surveys } from '../src/types';
 import type { DatabaseSync } from 'node:sqlite';
@@ -76,7 +76,7 @@ beforeEach(() => {
 
   app = express();
   app.use(express.json());
-  setupRoutes(app, db, surveys);
+  mount(app, db, '', surveys);
 });
 
 afterEach(() => {

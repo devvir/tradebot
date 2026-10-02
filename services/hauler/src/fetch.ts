@@ -23,6 +23,14 @@ import type { Haulable, Hauled } from './types';
  * its new date says this pass accounted for it — see `touch`. The second keeps
  * whatever disagreed for somebody to read; see `backup`. The last never settles
  * itself: the catalog asks the venue and rules.
+ *
+ * **Only the venue's own answer makes a file `failed`** — `403`, `404` or `410`,
+ * which say it is not there to have. A connection that never opened, a lookup
+ * that failed, a `5xx` or a `429` say nothing about the file, only about the
+ * way to it: those are tried again, and if they persist the file is
+ * `unreached`, left out of the report, and listed again on the next walk.
+ * Reporting them as failures had prospector asking the venue about hundreds of
+ * files a minute it was serving perfectly well.
  */
 export const haul = async (file: Haulable): Promise<Hauled> => {
   const path = join(config.archivesDir, file.venue, file.key);
@@ -47,8 +55,11 @@ export const haul = async (file: Haulable): Promise<Hauled> => {
 // ── Internals ─────────────────────────────────────────────────────────────────
 
 const ATTEMPTS = 3;
-const BASE_MS  = 1_000;
+const BASE_MS  = 5_000;
 const MAX_MS   = 30_000;
+
+/** The statuses that say the file is not there to have; every other failure is the road to it. */
+const GONE = new Set([403, 404, 410]);
 
 const retrieve = async (file: Haulable, path: string): Promise<Hauled> => {
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
@@ -58,10 +69,17 @@ const retrieve = async (file: Haulable, path: string): Promise<Hauled> => {
       if (! res.ok || ! res.body) {
         await res.body?.cancel().catch(() => undefined);
 
-        if (attempt === ATTEMPTS) {
+        if (GONE.has(res.status)) {
           logger.warn({ venue: file.venue, status: res.status, url: file.url }, 'Would not download');
 
           return { outcome: 'failed' };
+        }
+
+        if (attempt === ATTEMPTS) {
+          logger.warn({ venue: file.venue, status: res.status, url: file.url },
+            'Could not reach — it stays owed and comes round on the next walk');
+
+          return { outcome: 'unreached' };
         }
 
         await sleep(delayFor(attempt));
@@ -89,16 +107,17 @@ const retrieve = async (file: Haulable, path: string): Promise<Hauled> => {
       await discard(path);
 
       if (attempt === ATTEMPTS) {
-        logger.warn({ err, venue: file.venue, url: file.url }, 'Download failed');
+        logger.warn({ err: reason(err), venue: file.venue, url: file.url },
+          'Could not reach — it stays owed and comes round on the next walk');
 
-        return { outcome: 'failed' };
+        return { outcome: 'unreached' };
       }
 
       await sleep(delayFor(attempt));
     }
   }
 
-  return { outcome: 'failed' };
+  return { outcome: 'unreached' };
 };
 
 /** Whether the bytes at a path are the file the catalog described. */
@@ -115,6 +134,13 @@ const delayFor = (attempt: number): number =>
   Math.floor(Math.random() * Math.min(BASE_MS * 2 ** (attempt - 1), MAX_MS));
 
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
+
+/** What undici says went wrong, without its stack: `fetch failed` alone names nothing. */
+const reason = (err: unknown): string => {
+  const cause = (err as { cause?: { message?: string; code?: string } })?.cause;
+
+  return cause?.message ?? cause?.code ?? (err instanceof Error ? err.message : String(err));
+};
 
 // ── Test access ───────────────────────────────────────────────────────────────
 

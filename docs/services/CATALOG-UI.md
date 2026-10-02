@@ -1,8 +1,9 @@
 # Catalog UI
 
 Catalog UI is a browser for what the catalog holds and a set of controls for
-surveying it. Prospector establishes what every venue publishes and serves that
-over HTTP; this renders it, and sends back the requests that change anything.
+surveying it. Prospector establishes what every venue publishes, and the catalog
+serves that over HTTP; this renders it, and sends back the requests that change
+anything.
 
 Everything it does follows from one rule: **it renders what the API said, and
 adds nothing.** No reshaping, no defaults, no computed fields, no second opinion.
@@ -28,10 +29,10 @@ that out costs a page load rather than an afternoon.
 The page is static and could have been served from anywhere. It is served from a
 small express process that also proxies, for two reasons that outlive the page.
 
-**Prospector is meant to run wherever the link to the venues is good** — another
-machine, another network. That is the whole point of it being an HTTP service
-rather than a library. A page calling it directly works only while it happens to
-be reachable from whichever browser is open, and stops the day the survey moves.
+**Neither service is the browser's to reach.** Prospector's collector API is
+private to the module network and publishes no port, and the catalog may run on
+another machine. A page calling either directly works only while it happens to
+be reachable from whichever browser is open.
 
 **And the token would otherwise travel with the browser.** Where `CATALOG_TOKEN`
 is set, a page calling the catalog itself has to carry it — which means shipping
@@ -43,16 +44,21 @@ catalog sends no such headers today, so a browser could not call it across
 origins anyway — but that could be changed, and it is not what decides this.
 
 ```
-browser ── /api/catalog/* ──▶ catalog-ui ── x-catalog-token ──▶ prospector
-        ── /api/where     ──▶            (answers from its own config)
+browser ── /api/catalog/*    ──▶ catalog-ui ── x-catalog-token ──▶ catalog     (CATALOG_API)
+        ── /api/prospector/* ──▶            ── x-catalog-token ──▶ prospector  (http://prospector:8080)
+        ── /api/where        ──▶            (answers from its own config)
 ```
+
+Contents and lenses go to the catalog; the Surveys section goes to prospector,
+the only service that starts, pauses or reports on a survey. Both check the same
+token.
 
 **The answer is handed back unchanged** — status, body and all. These services
 answer a refusal with a sentence saying what was wrong with the request, and that
 sentence is the most useful thing on the page when something is wrong, so it is
 shown whole rather than replaced with "could not load".
 
-**An unreachable catalog is a `502` naming the URL it tried.** Whether it
+**An unreachable service is a `502` naming the URL it tried.** Whether it
 is unreachable, and at what address, is the first thing anybody wants and the
 thing a bare failure hides.
 
@@ -71,9 +77,11 @@ Surveys is the default, because it is the one that changes. What the catalog
 holds is still there tomorrow; whether anything is collecting it is the question
 somebody opens this page to answer.
 
-Routing is `location.hash`, parsed into `{ section, venue?, market? }`. Every
-view is therefore a link somebody can send, which is all the routing this needs —
-a router here would be a dependency that reimplements `location.hash`.
+Routing is `location.hash`, read as a path: `#surveys`,
+`#contents[/:venue[/:market]][?lens=:slug]`, `#lenses[/:slug]`. Every view is
+therefore a link somebody can send, back and forward move between them, and the
+lenses tab returns to the lens last opened there — a router here would be a
+dependency that reimplements `location.hash`.
 
 ### Contents
 
@@ -86,16 +94,11 @@ question. Symbol lists are the exception in the other direction: they are asked
 for behind a click rather than fetched with the page, because a venue can publish
 thousands of instruments and almost every visit is about something else.
 
-**Where a shape reaches and whether it is finished are two facts, and both are
-shown.** `last` is the newest file the catalog has seen; `open` is whether it
-still expects more — the same question prospector asks before generating a key.
-
-They were one field once, with `last: null` meaning "still publishing", which
-threw the measurement away to make the claim: every shape reported no end at all,
-and a variant that stopped beside the one that replaced it was unreadable. That
-is exactly what somebody reads this table to find — bybit's perpetual books are
-`500,incremental` reaching 2025-08-20 and closed, `200,incremental` open, which
-is what tells a reader to fetch both.
+**A shape's span is two measurements**: the oldest period anything covers, and
+the newest file the catalog has seen. So a variant that stopped beside the one
+that replaced it reads as two adjacent spans — bybit's perpetual books are
+`500,incremental` reaching 2025-08-20 and `200,incremental` from the 21st —
+which is what tells a reader to fetch both.
 
 **The contents can be seen through a lens.** A picker beside the breadcrumbs narrows every list and
 count below it to what the lens lets through, by sending its slug as `x-catalog-lens` — so the page
@@ -341,8 +344,8 @@ draft rather than silently reviving edits to a document that has moved on.
 express serves as static files. `src/` is the server: config, the proxy, and
 nothing else.
 
-The types in `web/types.ts` are **mirrors of prospector's own**, not a model of
-its own. A field added upstream appears here by being added to one of them, never
+The types in `web/types.ts` are **mirrors of the catalog's and prospector's
+own**, not a model of its own. A field added upstream appears here by being added to one of them, never
 by this service learning to compute it.
 
 `pnpm --filter @tradebot/catalog-ui dev` runs Vite against the built server on

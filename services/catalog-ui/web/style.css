@@ -110,3 +110,14 @@ button[data-disabled] { border-color: var(--mantine-color-disabled-border); }
   margin-left: auto;
   flex: none;
 }
+
+/**
+ * **A dropdown is not a text field.** Mantine renders a non-searchable `Select`
+ * as a read-only input, which the browser still gives a caret and lets you
+ * drag-select. A native `<select>` has neither, so neither does this.
+ */
+.mantine-Select-input[readonly] {
+  caret-color: transparent;
+  cursor: pointer;
+  user-select: none;
+}

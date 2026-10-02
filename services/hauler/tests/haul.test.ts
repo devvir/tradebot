@@ -12,7 +12,7 @@ import type { Haulable } from '../src/types';
  * different and moved aside first. See `fetch.ts`.
  */
 
-const cfg = vi.hoisted(() => ({ archivesDir: '', catalogUrl: '', catalogToken: '', venues: [], lens: '', concurrency: 2 }));
+const cfg = vi.hoisted(() => ({ archivesDir: '', catalogApi: '', catalogToken: '', venues: [], lens: '', concurrency: 2 }));
 
 vi.mock('../src/config', () => ({ default: cfg }));
 
@@ -24,13 +24,21 @@ const md5  = (text: string) => createHash('md5').update(text).digest('hex');
 
 let server: Server;
 let base:   string;
+let asked:  number;
 
 beforeEach(async () => {
   cfg.archivesDir = mkdtempSync(join(tmpdir(), 'haul-'));
+  asked = 0;
+
+  // No waiting between attempts: the jitter draws from zero.
+  vi.spyOn(Math, 'random').mockReturnValue(0);
 
   server = createServer((req, res) => {
     if (req.url === '/file.zip') { res.writeHead(200); res.end(BODY); return; }
     if (req.url === '/short.zip') { res.writeHead(200); res.end('short'); return; }
+    if (req.url === '/busy.zip') { asked++; res.writeHead(503); res.end(); return; }
+    if (req.url === '/forbidden.zip') { asked++; res.writeHead(403); res.end(); return; }
+    if (req.url === '/gone.zip') asked++;
 
     res.writeHead(404);
     res.end();
@@ -42,6 +50,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await new Promise(done => server.close(done));
   rmSync(cfg.archivesDir, { recursive: true, force: true });
 });
@@ -75,9 +84,22 @@ describe('a file not yet on disk', () => {
     expect(existsSync(`${at(one)}.part`)).toBe(false);
   });
 
-  it('fails where the venue will not serve it', async () => {
+  /** The venue's own answer that the file is not there is the only thing that makes it `failed`. */
+  it('fails, at once, where the venue says it is not there', async () => {
     expect((await haul(file({ url: `${base}/gone.zip` }))).outcome).toBe('failed');
-  }, 20_000);
+    expect((await haul(file({ url: `${base}/forbidden.zip` }))).outcome).toBe('failed');
+    expect(asked).toBe(2);
+  });
+
+  /** A busy venue says nothing about the file: it is tried again, then left owed, unreported. */
+  it('is unreached, after every attempt, where the venue is only busy', async () => {
+    expect((await haul(file({ url: `${base}/busy.zip` }))).outcome).toBe('unreached');
+    expect(asked).toBe(3);
+  });
+
+  it('is unreached where no connection opens', async () => {
+    expect((await haul(file({ url: 'http://127.0.0.1:1/file.zip' }))).outcome).toBe('unreached');
+  });
 });
 
 describe('a file already on disk', () => {

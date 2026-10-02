@@ -4,6 +4,7 @@ import {
   Select, Stack, Text, TextInput, Title,
 } from '@mantine/core';
 import { catalog, post, put, remove } from '../api';
+import { linkTo, rememberLens } from '../App';
 
 /** The key a lens keeps its all-venue rules under — see the catalog's `GLOBAL`. */
 const GLOBAL = '*';
@@ -30,11 +31,17 @@ import type {
  * difference between "all datasets" and "no datasets chosen yet" is the whole
  * meaning of the rule.
  */
-export const Lenses = () => {
+export const Lenses = ({ slug }: { slug?: string | undefined }) => {
   const [lenses, setLenses] = useState<Lens[] | null>(null);
   const [error,  setError]  = useState<string | null>(null);
-  const [chosen, setChosen] = useState<string | null>(null);
   const [naming, setNaming] = useState(false);
+
+  /**
+   * **The lens being edited is the address**, `#lenses/:slug`, so a link opens
+   * it, back and forward move between lenses, and the lenses tab returns to
+   * the one last opened.
+   */
+  const open = (to: string) => { location.hash = linkTo({ section: 'lenses', lens: to }).slice(1); };
 
   const load = useCallback(async (keep?: string) => {
     try {
@@ -42,8 +49,8 @@ export const Lenses = () => {
 
       setLenses(items);
       setError(null);
-      setChosen(had => keep ?? (had && items.some(one => one.slug === had)
-        ? had : items[0]?.slug ?? null));
+
+      if (keep) open(keep);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -51,7 +58,22 @@ export const Lenses = () => {
 
   useEffect(() => { load(); }, [load]);
 
-  const lens = lenses?.find(one => one.slug === chosen) ?? null;
+  const lens = lenses?.find(one => one.slug === slug) ?? null;
+
+  /**
+   * **An address naming no lens that exists opens the first one instead**, in
+   * place rather than as a step in the history — a deleted lens, an old link, or
+   * the bare section.
+   */
+  useEffect(() => {
+    if (lenses === null || lens) return;
+
+    const first = lenses[0]?.slug;
+
+    if (first) location.replace(linkTo({ section: 'lenses', lens: first }));
+  }, [lenses, lens]);
+
+  useEffect(() => { if (lens) rememberLens(lens.slug); }, [lens]);
 
   return (
     <Stack gap="md">
@@ -62,7 +84,8 @@ export const Lenses = () => {
           label="Lens"
           placeholder={lenses?.length ? 'Choose a lens' : 'No lenses yet'}
           data={(lenses ?? []).map(one => ({ value: one.slug, label: one.name || one.slug }))}
-          value={chosen} onChange={setChosen} w={260} searchable
+          value={lens?.slug ?? null} onChange={to => { if (to) open(to); }} w={260}
+          allowDeselect={false}
         />
         <Button size="sm" variant="light" onClick={() => setNaming(true)}>New Lens</Button>
         {lenses === null && <Loader size="sm" type="dots" />}

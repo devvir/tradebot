@@ -21,7 +21,7 @@ services:
     container_name: hauler
 
     environment:
-      CATALOG_URL:   ${CATALOG_URL:-http://prospector:8080}
+      CATALOG_API:   ${CATALOG_API:-http://catalog:8080}
       CATALOG_TOKEN: ${CATALOG_TOKEN:-}
 
       # Which venues to haul (default: every venue the catalog knows)

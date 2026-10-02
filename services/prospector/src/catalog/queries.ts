@@ -4,7 +4,7 @@ import * as wip from './wip';
 import { BREATH_MS, slice } from './serial';
 import { ceiling } from '../paths';
 import { sawFile } from './series';
-import type { CatalogFile, Exclusion, Existence, FileEffect, FileQuery, FileState, MonthState, MonthTotals, Parking, Pending, Phase, Run, RunKind, Settlement, Standing, Unreadable, Unsettled, VenueTotals } from '../types';
+import type { CatalogFile, LastRun, Existence, FileEffect, FileState, Parking, Phase, Run, RunKind, Settlement, Standing, Unreadable, Unsettled, VenueTotals } from '../types';
 
 /**
  * Every write and read the catalog supports, as prepared statements over one
@@ -417,55 +417,6 @@ export const markDownloaded = (
 };
 
 /**
- * Put a file back among what is owed.
- *
- * The inverse of recording a download, and the same operation seen from the
- * other collection: `DELETE /downloaded/:key` and `POST /pending/:key` both land
- * here. Its use is somebody discovering that what is on disk is not what the
- * catalog describes — the file is fetched again, and the next report settles
- * which reality is true.
- */
-export const markPending = (
-  db:      DatabaseSync,
-  venueId: number,
-  path:    string,
-): boolean => {
-  const held = db.prepare(
-    `SELECT series_id AS seriesId, date, size, etag, modified, existence, downloaded_at AS downloadedAt
-       FROM file WHERE venue_id = ? AND path = ? AND downloaded_at IS NOT NULL`,
-  );
-
-  db.exec('BEGIN');
-
-  try {
-    const row = held.get(venueId, path) as Row | undefined;
-
-    if (! row) {
-      db.exec('COMMIT');
-
-      return false;
-    }
-
-    db.prepare('UPDATE file SET downloaded_at = NULL WHERE venue_id = ? AND path = ?')
-      .run(venueId, path);
-
-    cache.record(db, ([{
-      venueId,
-      was: stateOf(row.seriesId, row.date, row.existence, row.size, row.downloadedAt),
-      now: stateOf(row.seriesId, row.date, row.existence, row.size, null),
-    }]));
-
-    db.exec('COMMIT');
-
-    return true;
-  } catch (err) {
-    db.exec('ROLLBACK');
-
-    throw err;
-  }
-};
-
-/**
  * Rule one key absent, because the venue no longer serves it.
  *
  * **The per-key half of a withdrawal.** A re-walk withdraws a whole prefix at
@@ -591,160 +542,6 @@ export const correctFile = (
 };
 
 /**
- * Files still to download, **oldest first**, within one month.
- *
- * **Bounded by a month on purpose.** `month.pending` says which months hold work
- * without reading a row of `file`, so a caller narrows to a month that is known
- * to have some and then seeks inside it — `file_when` makes that a range seek.
- * Asking a whole venue instead would scan every month already finished to find
- * the one that is not, and would do it most expensively when almost everything
- * is downloaded.
- *
- * `(date, path)` is the keyset, passed back as `after`. A cursor by value rather
- * than an open statement, for the same reason the probe uses one: SQLite will
- * let a query step while the same connection rewrites the rows it is walking.
- */
-export const catalogFiles = (
-  db:       DatabaseSync,
-  venueIds: readonly number[],
-  opts:     FileQuery,
-): Pending[] => {
-  if (venueIds.length === 0) return [];
-
-  const ids   = venueIds.map(() => '?').join(',');
-  const after = opts.after ?? null;
-
-  /**
-   * **A narrowed listing is a different query, not the same one with a filter.**
-   *
-   * Which series are a venue's `perp` `klines` is answered from the registry in
-   * memory, so what is left is "the files of these series in this range" — which
-   * `file_series (series_id, date)` indexes directly, one seek per series.
-   *
-   * Handing the same set to SQLite as a join instead lets it drive from
-   * `file_when` and test membership per row, which scans every file the venue
-   * published that month whatever the narrowing asked for. Measured on the real
-   * catalog, 200 series of one htx dataset over one month: 0.06 seconds as seeks
-   * against 530 as a join.
-   *
-   * An empty set is not "no filter" — it is a filter that matched nothing, and
-   * answering the whole venue there would hand back every dataset it has.
-   */
-  if (opts.series) return opts.series.length === 0 ? [] : bySeries(db, opts);
-
-  /**
-   * **Every parameter is optional, and no bounds means the whole venue.**
-   *
-   * The keyset carries the venue too, because two hosts of one venue are two id
-   * ranges and a cursor of `(date, path)` alone would jump between them. Ordered
-   * by date first, so a caller pages through time rather than through hosts.
-   */
-  return db.prepare(
-    `SELECT venue_id AS venueId, path, date, size, etag,
-            series_id AS seriesId, downloaded_at AS downloadedAt
-       FROM file
-      WHERE venue_id IN (${ids})
-        AND existence = 'confirmed'
-        AND (? IS NULL OR (downloaded_at IS NULL) = ?)
-        AND (? IS NULL OR date >= ?)
-        AND (? IS NULL OR date <= ?)
-        AND (? IS NULL OR date < ?)
-        AND (? IS NULL OR (date, path, venue_id) > (?, ?, ?))
-      ORDER BY date, path, venue_id
-      LIMIT ?`,
-  ).all(
-    ...venueIds,
-    ...held(opts.downloaded),
-    opts.from  ?? null, opts.from  ?? '',
-    opts.to    ?? null, opts.to    ?? '',
-    opts.until ?? null, opts.until ?? '',
-    after ? after.date : null, after?.date ?? '', after?.path ?? '', after?.venueId ?? 0,
-    opts.limit,
-  ) as unknown as Pending[];
-};
-
-/**
- * The two bindings that turn "is it on disk" into a filter with three answers.
- *
- * `null` first disables the condition entirely, which is what makes leaving the
- * question out mean *either* rather than a third state nothing can express.
- * `(downloaded_at IS NULL)` is 1 or 0 in SQLite, so the second binding is simply
- * which of those is being asked for.
- */
-const held = (downloaded: boolean | undefined): [number | null, number] =>
-  (downloaded === undefined ? [null, 0] : [1, downloaded ? 0 : 1]);
-
-/**
- * The files of a known set of series, series by series.
- *
- * **One indexed seek each, and the loop is here rather than in SQLite.** A
- * prepared statement with a literal `series_id = ?` can only be an index seek;
- * the same set expressed as a join or an `IN` over a table is a plan the
- * optimiser is free to get wrong, and on this catalog it does.
- *
- * **Ordered by series, then by date within one.** A page is not sorted globally
- * by date, and does not need to be: the caller narrowed to one dataset and one
- * month because a `dataset + month` partition is the unit it works in, and it
- * finishes the whole of one before starting another. Sorting across the
- * partition would buy an ordering nobody reads and cost a temporary b-tree over
- * every row of it.
- *
- * The cursor is `(seriesId, date, path)` — which series a page stopped in, and
- * where inside it — so resuming is a seek rather than a skip.
- */
-const bySeries = (db: DatabaseSync, opts: FileQuery): Pending[] => {
-  const seek = db.prepare(
-    `SELECT venue_id AS venueId, path, date, size, etag,
-            series_id AS seriesId, downloaded_at AS downloadedAt
-       FROM file
-      WHERE series_id = ?
-        AND existence = 'confirmed'
-        AND (? IS NULL OR (downloaded_at IS NULL) = ?)
-        AND (? IS NULL OR date >= ?)
-        AND (? IS NULL OR date <= ?)
-        AND (? IS NULL OR date < ?)
-        AND (? IS NULL OR (date, path) > (?, ?))
-      ORDER BY date, path
-      LIMIT ?`,
-  );
-
-  const after = opts.after ?? null;
-  const found: Pending[] = [];
-
-  for (const id of [...(opts.series ?? [])].sort((a, b) => a - b)) {
-    if (found.length >= opts.limit) break;
-
-    // Everything before the cursor's series was handed out on an earlier page.
-    if (after?.seriesId !== undefined && id < after.seriesId) continue;
-
-    /**
-     * The `(date, path)` half of the cursor applies only inside the series the
-     * last page stopped in. Carrying it into the next series would skip that
-     * series' early files for no reason.
-     */
-    const within = after && after.seriesId === id ? after : null;
-
-    found.push(...seek.all(
-      id,
-      ...held(opts.downloaded),
-      opts.from  ?? null, opts.from  ?? '',
-      opts.to    ?? null, opts.to    ?? '',
-      opts.until ?? null, opts.until ?? '',
-      within ? within.date : null, within?.date ?? '', within?.path ?? '',
-
-      /**
-       * Exactly what is left of the page and no more. The caller asking for one
-       * extra row — to learn whether another page exists — is the caller's
-       * convention, and adding a second one here would overshoot it.
-       */
-      opts.limit - found.length,
-    ) as unknown as Pending[]);
-  }
-
-  return found;
-};
-
-/**
  * Every venue there is anything to say about, with its totals.
  *
  * Summed from the rollup rather than cached again: a venue is a few hundred
@@ -768,51 +565,6 @@ export const venueTotals = (db: DatabaseSync): VenueTotals[] =>
       GROUP BY v.name
       ORDER BY v.name`,
   ).all() as unknown as VenueTotals[];
-
-/**
- * A venue's months, already counted, with the state each is in.
- *
- * **Not paged.** A venue holds a few hundred months and will for many years, so
- * a caller that wants them all should get them all rather than learn a cursor
- * for a list that fits on a screen.
- *
- * Two hosts of one venue are summed into a single row per month, for the same
- * reason as everywhere else: the caller asked about a venue.
- */
-export const monthTotals = (
-  db:       DatabaseSync,
-  venueIds: readonly number[],
-  opts:     { state?: MonthState; from?: string; to?: string; in?: readonly string[] } = {},
-): MonthTotals[] => {
-  if (venueIds.length === 0) return [];
-
-  const ids  = venueIds.map(() => '?').join(',');
-  const rows = db.prepare(
-    `SELECT month,
-            SUM(files)         AS files,
-            SUM(bytes)         AS bytes,
-            SUM(pending)       AS pending,
-            SUM(pending_bytes) AS pendingBytes,
-            SUM(withdrawn)     AS withdrawn
-       FROM rollup_venue
-      WHERE venue_id IN (${ids})
-        AND (? IS NULL OR month >= ?)
-        AND (? IS NULL OR month <= ?)
-      GROUP BY month
-      ORDER BY month`,
-  ).all(
-    ...venueIds,
-    opts.from ?? null, opts.from ?? '',
-    opts.to   ?? null, opts.to   ?? '',
-  ) as unknown as Omit<MonthTotals, 'state'>[];
-
-  const wanted = periods(opts.in);
-
-  return rows
-    .map(row => ({ ...row, state: (row.pending > 0 ? 'open' : 'closed') as MonthState }))
-    .filter(row => ! opts.state || row.state === opts.state)
-    .filter(row => ! wanted || wanted.some(period => row.month.startsWith(period)));
-};
 
 
 /**
@@ -968,8 +720,7 @@ export const settleFiles = (db: DatabaseSync, settled: readonly Settlement[]): n
        *
        * Counting those was the rollup drifting above the table it describes, by
        * one file per key that settled onto a row already there — 1,937,264 of
-       * them, 0.59%, before this was measured. `cache.drift` is what says so and
-       * `cache.rebuild` is what repairs it.
+       * them, 0.59%, before this was measured.
        */
       if (arrived)
         effects.push({
@@ -1371,63 +1122,6 @@ export const enrolment = (db: DatabaseSync, venueId: number): Enrolment => {
   return { open: row.completed === null ? row.kind : null, started: row.started };
 };
 
-/**
- * The venue's most recent pass: which kind, and whether it finished.
- *
- * **"Surveyed: never" is the wrong answer for a venue being walked right now.**
- * Completion times alone cannot say that — a walk that has never finished has
- * none, whether it is three hours in or was never started — so this reports the
- * newest pass rather than the newest ending, and `ongoing` separates the two
- * cases that used to collapse.
- *
- * **And *which* kind, because they cost differently.** A venue whose last pass
- * was a walk has been read end to end; one whose last pass was an update has
- * been asked what appeared since. Both are "surveyed", and somebody deciding
- * whether to trust a span wants to know which they are looking at.
- *
- * Across every host of the venue, newest first — an open pass on any of them is
- * the venue being surveyed, which is the same rule `standingOf` reads by.
- */
-export interface LastRun {
-  /** What the newest pass is, or was. Null where the venue has never had one. */
-  kind:    RunKind | null;
-
-  /** When it finished. Null while it is still running, and where none has run. */
-  at:      string | null;
-
-  /**
-   * When it began, running or not.
-   *
-   * **The only start a reader can trust for a pass in progress.** A survey's
-   * `since` answers a different question — where the venue is paused it holds
-   * when it was *stopped* — so a caller wanting "this update began at" gets the
-   * pause time from it, labelled as a beginning. This is the run's own.
-   */
-  startedAt: string | null;
-
-  /** Whether it is still going, on any of the venue's hosts. */
-  ongoing: boolean;
-
-  /**
-   * Whether this is the venue's **first** pass — the backfill rather than a
-   * later top-up.
-   *
-   * **The distinction a reader actually wants, and the one `kind` cannot make.**
-   * A first pass is hours or days and reads everything; every pass after it is
-   * the recent edge, whichever mechanism does it. Which mechanism that is says
-   * nothing about the two: a venue that cannot be listed backfills by generating
-   * keys, and one that re-reads itself by walking updates by walking.
-   *
-   * **A venue, not a host.** Bybit publishes from two servers, and until both
-   * have read themselves through once the venue is still being backfilled —
-   * whatever the faster of the two has finished. Reading this off the run's own
-   * start instead made the later-starting host's first walk report as a top-up,
-   * because it began after its sibling: a venue's own backfill, labelled an
-   * update, on every venue with more than one server.
-   */
-  first:   boolean;
-};
-
 export const lastRun = (db: DatabaseSync, venueIds: readonly number[]): LastRun => {
   const rows = venueIds
     .map(id => newestRun(db, id))
@@ -1714,48 +1408,6 @@ export const exclusionsFor = (db: DatabaseSync, venueId: number): string[] =>
     .all(venueId) as unknown as { path: string }[]).map(row => row.path);
 
 /**
- * The same rows with their reasons, for anybody maintaining the list.
- *
- * **This half of exclusion can only be *listed*, never described** — a truncated
- * copy of the wrong file at a real URL is not a pattern, and the next one will
- * not resemble it. So it is rows rather than code, and finding a bad file costs
- * a request instead of a rebuild and a redeploy. The describable half stays in
- * an adapter's `accepts`, where it also covers keys nobody has published yet.
- */
-export const exclusions = (db: DatabaseSync, venueId: number): Exclusion[] =>
-  db.prepare('SELECT venue_id AS venueId, path, reason FROM exclusion WHERE venue_id = ? ORDER BY path')
-    .all(venueId) as unknown as Exclusion[];
-
-/**
- * Refuse a file from here on.
- *
- * **Nothing already recorded is removed.** An exclusion says what must not be
- * *fetched* again, and a row already in the catalog is a record of what the
- * venue published — which stays true, and which somebody may need in order to
- * understand what was collected before the file was ruled against. Deciding
- * what to do about what is already downloaded is a separate act.
- *
- * Re-excluding the same path replaces the reason rather than adding a row: the
- * second attempt is somebody explaining it better, not a different rule.
- */
-export const addExclusion = (
-  db:      DatabaseSync,
-  venueId: number,
-  path:    string,
-  reason:  string,
-): void => {
-  db.prepare(
-    `INSERT INTO exclusion (venue_id, path, reason) VALUES (?, ?, ?)
-       ON CONFLICT (venue_id, path) DO UPDATE SET reason = excluded.reason`,
-  ).run(venueId, path, reason);
-};
-
-/** Allow it again. Says whether there was anything to lift. */
-export const removeExclusion = (db: DatabaseSync, venueId: number, path: string): boolean =>
-  Number(db.prepare('DELETE FROM exclusion WHERE venue_id = ? AND path = ?')
-    .run(venueId, path).changes) > 0;
-
-/**
  * Every prefix that contains this one, longest last, including it and the empty
  * prefix that means the whole venue.
  *
@@ -1827,19 +1479,6 @@ const stateOf = (
   downloaded: downloadedAt !== null,
   bytes:      size ?? 0,
 });
-
-/**
- * The periods an `in` filter names, as month prefixes.
- *
- * Accepts a year, a month, or a month with a dash — all three are things a
- * person types, and normalising here means no caller has to care which it sent.
- * A prefix match then covers both grains: `2024` catches every month of it.
- */
-const periods = (given?: readonly string[]): string[] | null => {
-  if (! given || given.length === 0) return null;
-
-  return given.map(one => one.replace('-', '').trim()).filter(Boolean);
-};
 
 /**
  * Whether a sighting **states** something that differs from what is known.

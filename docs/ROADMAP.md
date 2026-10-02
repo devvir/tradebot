@@ -102,8 +102,11 @@ Three origins, in the order they are worth having:
 **Discover** — [prospector](services/PROSPECTOR.md) surveys what each venue publishes into the
 catalog. Built.
 
-**Download** — [trucker](services/TRUCKER.md) fetches what the catalog says is missing. Built, but
-still discovering for itself rather than asking the catalog.
+**Serve** — the [catalog](services/CATALOG.md) answers what exists and lists each venue's files, through
+a lens. Built.
+
+**Download** — [hauler](services/HAULER.md) fetches what the catalog lists as still owed, through a
+lens. Built.
 
 **This is the phase in progress.** [planning/CATALOG.md](planning/CATALOG.md) is the plan, and
 [Current work](#current-work--the-catalog-migration) below is where it stands.
@@ -178,11 +181,12 @@ every origin to align on a month before packing it would mean packing almost not
 ## Current work — the catalog migration
 
 Every stage has until now kept its own answer to *what exists and how far have we got*. The catalog
-replaces that with one queryable thing prospector owns and everyone else asks over HTTP.
+replaces that with one queryable thing prospector writes and everyone else asks over HTTP, through
+the catalog service.
 
 **[planning/CATALOG.md](planning/CATALOG.md) is the plan.** Iteration 1 — the catalog, its schema and
-its API — is built, and documented in [modules/CATALOG.md](modules/CATALOG.md) and
-[services/PROSPECTOR.md](services/PROSPECTOR.md).
+its API — is built, and documented in [modules/ARCHIVES.md](modules/ARCHIVES.md),
+[services/PROSPECTOR.md](services/PROSPECTOR.md) and [services/CATALOG.md](services/CATALOG.md).
 
 **Catalog → archives → vault**, each layer made trustworthy before the one above depends on it.
 Building upward out of order produced most of [BUGS.md](planning/BUGS.md): a tip read as a claim about

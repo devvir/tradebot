@@ -1,22 +1,6 @@
 export { dropAbove, flushParked, parkSoon } from './wip';
 
 export {
-  dropLens,
-  editLens,
-  lensNameIsSound,
-  lensInstruments,
-  lensNamed,
-  lensOptions,
-  lensSize,
-  lensSizeOf,
-  lensMonthsOf,
-  lenses,
-  problemsWith,
-  putLens,
-  resolve,
-} from './lens';
-
-export {
   putVenue,
   venues,
   venueIdOf,
@@ -31,12 +15,9 @@ export {
   settleFiles,
   markWithdrawn,
   markDownloaded,
-  markPending,
   correctFile,
   withdrawFile,
-  catalogFiles,
   venueTotals,
-  monthTotals,
   venueIds,
   openJob,
   updateStarted,
@@ -63,9 +44,6 @@ export {
   unenrol,
   resetRuns,
   exclusionsFor,
-  exclusions,
-  addExclusion,
-  removeExclusion,
   ancestorsOf,
   refinePartition,
 } from './queries';
@@ -93,4 +71,3 @@ export {
 export { addTransform, loadTransforms, transformsOf } from './transform';
 
 export * as cache from './cache/months';
-export { keyOf, fileOf } from './keys';

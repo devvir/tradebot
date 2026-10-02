@@ -3,12 +3,15 @@ import { useEffect, useState } from 'react';
 /**
  * Reaching the services, and waiting for them.
  *
- * **Everything goes to this page's own origin**, never to the catalog directly:
- * the server behind it adds the token and forwards. So there is no base URL to
+ * **Everything goes to this page's own origin**, never to the catalog or to
+ * prospector directly: the server behind it adds the token and forwards. So there is no base URL to
  * configure here, no CORS to arrange, and no secret in the bundle.
  */
 
 export const catalog = <T>(path: string): Promise<T> => ask<T>(`/api/catalog${path}`);
+
+/** Prospector's collector: surveys, and how every venue stands. */
+export const prospector = <T>(path: string): Promise<T> => ask<T>(`/api/prospector${path}`);
 
 /**
  * A catalog path as seen through a lens, as one key: changing the lens changes

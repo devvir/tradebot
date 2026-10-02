@@ -16,8 +16,7 @@
     "@devvir/netgate": "workspace:*",
     "@devvir/service-kit": "workspace:*",
     "@tradebot/utils": "workspace:*",
-    "express": "^5.2.1",
-    "fast-xml-parser": "^5.11.2"
+    "express": "^5.2.1"
   },
   "devDependencies": {
     "@types/express": "^5.0.0"

@@ -1,0 +1,33 @@
+# Archives Module
+#
+# Establishes what each venue publishes, and brings it to disk:
+#
+#   prospector → venue archives → catalog.db
+#   catalog    → catalog.db → listings, contents and lenses over HTTP
+#   hauler     → the catalog's listings → archives on the host disk
+#
+# A downloader asks the catalog for work instead of asking a venue; "does this
+# dataset exist, how big is it, which periods does it cover" becomes a query
+# rather than a week of probing.
+#
+# Prospector and catalog share catalog.db, so they run on the same host.
+# Prospector's own API is private to this network: catalog forwards download
+# reports to it, and catalog-ui starts and pauses surveys through it. Everything
+# outside the module talks to the catalog.
+
+# Docker Compose Project
+name: collect
+
+include:
+  - path: ../../../services/prospector/docker/compose.yml
+  - path: ../../../services/catalog/docker/compose.yml
+  - path: ../../../services/catalog-ui/docker/compose.yml
+  - path: ../../../services/hauler/docker/compose.yml
+
+  # Not started — will own the facts database.
+  # - path: ../../../services/archivist/docker/compose.yml
+
+networks:
+  default:
+    name: ${PROJECT_NAME:-tradebot}-network
+    external: true

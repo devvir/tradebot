@@ -13,7 +13,13 @@ import type { Lens, Where } from './types';
  *
  * **The hash rather than a router.** Every view is a link somebody can send, and
  * that is all the routing this needs — a router would be a dependency to
- * reimplement `location.hash`.
+ * reimplement `location.hash`. It reads as a path:
+ *
+ * ```
+ * #surveys                                    (or nothing at all)
+ * #contents[/:venue[/:market]][?lens=:slug]
+ * #lenses[/:slug]
+ * ```
  */
 
 /**
@@ -36,7 +42,10 @@ export interface Route {
   venue?:   string;
   market?:  string;
 
-  /** The lens the contents are seen through; absent for the whole catalog. */
+  /**
+   * The lens in question: in contents, the one they are seen through (absent for
+   * the whole catalog); in lenses, the one being edited.
+   */
   lens?:    string;
 }
 
@@ -59,7 +68,7 @@ export const App = () => {
 
         <Tabs
           value={route.section}
-          onChange={value => { location.hash = linkTo({ section: value as Section }).slice(1); }}
+          onChange={value => { location.hash = linkTo(tabTo(value as Section)).slice(1); }}
           px="md"
         >
           <Tabs.List>
@@ -75,7 +84,7 @@ export const App = () => {
           {route.section === 'contents' && <Crumbs route={route} />}
 
           {route.section === 'surveys' ? <Surveys />
-            : route.section === 'lenses' ? <Lenses />
+            : route.section === 'lenses' ? <Lenses slug={route.lens} />
               : route.venue === undefined ? <Venues lens={route.lens} />
                 : route.market !== undefined
                   ? <MarketView venue={route.venue} market={route.market} lens={route.lens} />
@@ -88,32 +97,54 @@ export const App = () => {
 
 /** A view's address, so no caller assembles a hash by hand. */
 export const linkTo = (route: Partial<Route>): string => {
-  const parts = new URLSearchParams();
-
   /**
    * **A link with no section named means contents**, because every one of them
-   * is a venue or a market — the surveys view has no depth to link into. So the
-   * section is spelled out for contents and left off for the default, which
-   * keeps the bare `#` meaning what the tabs mean by it.
+   * is a venue or a market — the surveys view has no depth to link into.
    */
   const section = route.section ?? 'contents';
 
-  if (section !== 'surveys') parts.set('section', section);
-  if (route.venue) parts.set('venue', route.venue);
-  if (route.market) parts.set('market', route.market);
+  if (section === 'surveys') return '#surveys';
+
+  if (section === 'lenses') return route.lens ? `#lenses/${encodeURIComponent(route.lens)}` : '#lenses';
+
+  const path = ['contents', route.venue, route.venue ? route.market : undefined]
+    .filter((one): one is string => Boolean(one))
+    .map(encodeURIComponent)
+    .join('/');
 
   /**
    * **A lens follows you through the contents** unless a link says otherwise, so
    * clicking from a venue into a market keeps looking through the same one.
    */
-  const lens = 'lens' in route ? route.lens : section === 'contents' ? readRoute().lens : undefined;
+  const here = readRoute();
+  const lens = 'lens' in route ? route.lens : here.section === 'contents' ? here.lens : undefined;
 
-  if (section === 'contents' && lens) parts.set('lens', lens);
+  return lens ? `#${path}?lens=${encodeURIComponent(lens)}` : `#${path}`;
+};
 
-  return `#${parts.toString()}`;
+/**
+ * Remember the lens last opened in the lenses section, so leaving it and coming
+ * back by its tab lands on the same one. Per browser, and never essential: where
+ * storage is refused, the tab opens the first lens.
+ */
+export const rememberLens = (slug: string): void => {
+  try { localStorage.setItem(LAST_LENS, slug); } catch { /* storage refused */ }
 };
 
 // ── Internals ─────────────────────────────────────────────────────────────────
+
+const LAST_LENS = 'catalog-ui:last-lens';
+
+/** Where a tab goes: the lenses tab goes back to the lens last opened there. */
+const tabTo = (section: Section): Partial<Route> => {
+  if (section !== 'lenses') return { section };
+
+  let lens: string | null = null;
+
+  try { lens = localStorage.getItem(LAST_LENS); } catch { /* storage refused */ }
+
+  return lens ? { section, lens } : { section };
+};
 
 const useRoute = (): Route => {
   const [route, setRoute] = useState<Route>(readRoute);
@@ -130,15 +161,26 @@ const useRoute = (): Route => {
 };
 
 const readRoute = (): Route => {
-  const parts = new URLSearchParams(location.hash.slice(1));
+  const [path = '', query = ''] = location.hash.slice(1).split('?');
+  const [head, ...rest] = path.split('/').filter(Boolean).map(decode);
+
+  if (head === 'lenses') return { section: 'lenses', ...(rest[0] ? { lens: rest[0] } : {}) };
+
+  if (head !== 'contents') return { section: 'surveys' };
+
+  const lens = new URLSearchParams(query).get('lens');
 
   return {
-    section: parts.get('section') === 'contents' ? 'contents'
-      : parts.get('section') === 'lenses' ? 'lenses' : 'surveys',
-    ...(parts.get('venue') ? { venue: parts.get('venue')! } : {}),
-    ...(parts.get('market') ? { market: parts.get('market')! } : {}),
-    ...(parts.get('lens') ? { lens: parts.get('lens')! } : {}),
+    section: 'contents',
+    ...(rest[0] ? { venue: rest[0] } : {}),
+    ...(rest[1] ? { market: rest[1] } : {}),
+    ...(lens ? { lens } : {}),
   };
+};
+
+/** A path segment as written, or as it came where it was not encoded. */
+const decode = (segment: string): string => {
+  try { return decodeURIComponent(segment); } catch { return segment; }
 };
 
 /**
@@ -179,7 +221,7 @@ const LensPicker = ({ route }: { route: Route }) => {
 
   return (
     <Select
-      size="xs" w={220} placeholder="Whole catalog" clearable searchable
+      size="xs" w={220} placeholder="Whole catalog" clearable
       data={(lenses.data?.items ?? []).map(one => ({ value: one.slug, label: one.name || one.slug }))}
       value={route.lens ?? null}
       onChange={lens => {

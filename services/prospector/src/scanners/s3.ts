@@ -68,12 +68,24 @@ const MAX_KEYS = 1000;
  * and with nothing said about it. S3 states plainly whether it held anything
  * back, so it is asked rather than assumed.
  *
- * **Until the first file, and no further.** A prefix holding a file is never
- * split, so from that page on nothing read here changes any decision — and on a
- * flat directory, which is what every gate month is, "to the end" meant listing
- * the whole month to learn what its first page said. Measured 2026-09-28: 1,965
- * requests and 46 minutes to split `spot/orderbooks/202602/`, with every idle
- * lane waiting on the answer and the partition itself stopped for it.
+ * **Until the first file, and no further.** From that page on nothing read
+ * here changes the answer — and on a flat directory, which is what every gate
+ * month is, "to the end" meant listing the whole month to learn what its first
+ * page said. Measured 2026-09-28: 1,965 requests and 46 minutes to split
+ * `spot/orderbooks/202602/`, with every idle lane waiting on the answer and the
+ * partition itself stopped for it.
+ *
+ * **A prefix holding files is split by character, not by directory.** A folder
+ * split would leave the files sitting directly here in no partition, but S3
+ * takes any string as a prefix, so `…/202505/` divides into `…/202505/A`,
+ * `…/202505/B` and so on — which together cover every key beneath it, files and
+ * directories alike. Without this a flat month was one serial walk however
+ * many lanes stood idle: gate's books walked at one or two requests a second
+ * for hours. The characters are read off the listing (`initials`) rather than
+ * assumed, because gate publishes symbols written in Chinese.
+ *
+ * The one key a character split cannot hold is the prefix itself, so a prefix
+ * that is a catalogable key of its own stays whole.
  *
  * Refused directories are dropped **here**, before the caller counts them, so a
  * prefix is judged on the children that count.
@@ -82,30 +94,76 @@ const level: ReadLevel = async (context, prefix) => {
   const children: string[] = [];
 
   let files  = false;
+  let itself = false;
   let cursor: string | null = null;
 
   do {
     const page: S3Page = await context.page(listingUrl(context.base, prefix, cursor, true), 's3');
 
     children.push(...page.prefixes.filter(child => accepted(context, child)));
-    files ||= page.listed.some(entry => catalogable(context, entry.key));
+    files  ||= page.listed.some(entry => catalogable(context, entry.key));
+    itself ||= page.listed.some(entry => entry.key === prefix && catalogable(context, entry.key));
     cursor = page.next;
 
   } while (cursor && ! files);
 
-  return { children, files };
+  if (! files || itself) return { children, files };
+
+  const split = await initials(context, prefix);
+
+  return split ? { children: split, files: false } : { children, files };
 };
+
+/**
+ * Every character a key under this prefix continues with, as prefixes one
+ * character longer — between them, every key there is.
+ *
+ * **One request per character, by skipping.** Ask for the first key after a
+ * marker, take the character it continues with, then move the marker past every
+ * key sharing it and ask again. A flat month of tens of thousands of files is
+ * answered in a few dozen requests, however large it is.
+ *
+ * The marker past a character is that character followed by the last code point
+ * there is, which no published key carries.
+ *
+ * **Null where the venue does not honour the marker**, which a key at or before
+ * it says: the prefix then stays whole rather than being split on a list that
+ * could be short — or asked about for ever.
+ */
+const initials = async (context: ListingContext, prefix: string): Promise<string[] | null> => {
+  const found: string[] = [];
+
+  let marker: string | null = null;
+
+  for (;;) {
+    const page: S3Page = await context.page(listingUrl(context.base, prefix, marker, false, 1), 's3');
+    const key  = page.listed[0]?.key;
+
+    if (key === undefined || ! key.startsWith(prefix) || key.length === prefix.length) return found;
+
+    if (marker !== null && key <= marker) return null;
+
+    const next = String.fromCodePoint(key.codePointAt(prefix.length)!);
+
+    found.push(prefix + next);
+    marker = prefix + next + LAST;
+  }
+};
+
+/** The last code point Unicode has; nothing sorts after it within a character. */
+const LAST = '\u{10FFFF}';
 
 const listingUrl = (
   base:      string,
   prefix:    string,
   marker:    string | null,
   delimiter: boolean,
+  maxKeys = MAX_KEYS,
 ): string =>
   // Prefix and marker go in **unencoded**: KuCoin serves its HTML page instead
   // of the XML listing when the slashes are percent-encoded, and S3 accepts the
-  // raw form everywhere. Keys are alphanumerics, `/`, `-`, `_` and `.` only.
-  `${base.replace(/\/$/, '')}/?prefix=${prefix}&max-keys=${MAX_KEYS}`
+  // raw form everywhere. Anything outside ASCII is encoded by `fetch` itself.
+  `${base.replace(/\/$/, '')}/?prefix=${prefix}&max-keys=${maxKeys}`
   + (delimiter ? '&delimiter=/' : '')
   + (marker ? `&marker=${marker}` : '');
 
@@ -116,3 +174,4 @@ export const _test_descend     = (context: ListingContext, limits: Limits) =>
   descend(context, limits, level);
 export const _test_catalogable = catalogable;
 export const _test_accepted    = accepted;
+export const _test_level       = (context: ListingContext, prefix: string) => level(context, prefix);

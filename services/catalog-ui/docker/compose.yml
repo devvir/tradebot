@@ -1,16 +1,16 @@
 # Catalog UI Service — a browser for what the catalog holds.
 #
 # It stores nothing, decides nothing and surveys nothing. Every answer it shows
-# comes from prospector's own API and is rendered unchanged, which makes it the
+# comes from the catalog's API or prospector's collector and is rendered unchanged, which makes it the
 # cheapest way to find out that an endpoint cannot answer a question somebody
 # actually has.
 #
 # It owns no storage. The page is served from the image, and everything else is
 # a request forwarded to a service that does own something.
 #
-# The browser never reaches prospector directly, because prospector is meant to
-# run wherever the link to the venues is good — another machine, another network
-# — and because the token would otherwise have to travel with the page.
+# The browser never reaches either service directly: prospector's collector is
+# private to the module network, the catalog may run elsewhere, and the token
+# would otherwise have to travel with the page.
 
 services:
   catalog-ui:
@@ -24,15 +24,15 @@ services:
 
     environment:
       # Where the catalog answers. Inside the shared network that is the
-      # prospector container by name; set it to a host or an address when the
-      # survey runs somewhere else.
-      CATALOG_URL:   ${CATALOG_URL:-http://prospector:8080}
+      # catalog container by name. Prospector's collector is always reached at
+      # http://prospector:8080, inside the module.
+      CATALOG_API:   ${CATALOG_API:-http://catalog:8080}
 
-      # The same secret prospector checks, forwarded on its behalf so the page
-      # never holds it.
+      # The secret the catalog and prospector both check, forwarded on their
+      # behalf so the page never holds it.
       #
-      # Empty is allowed and means prospector is open — this then forwards
-      # without a header, and nothing else changes.
+      # Empty is allowed and means both are open — this then forwards without a
+      # header, and nothing else changes.
       CATALOG_TOKEN: ${CATALOG_TOKEN:-}
 
       LOG_LEVEL: ${LOG_LEVEL:-info}

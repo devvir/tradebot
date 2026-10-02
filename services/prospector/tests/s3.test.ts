@@ -6,6 +6,7 @@ import {
   _test_accepted,
   _test_catalogable,
   _test_descend,
+  _test_level,
   _test_listingUrl,
 } from '../src/scanners/s3';
 import { binance } from '../src/adapters/binance';
@@ -458,21 +459,91 @@ describe('mapping a level wider than one page', () => {
   });
 
   /**
-   * **A file ends the reading, because it ends the question.** A prefix holding
-   * one is never split, so nothing past that page can change the answer — and a
-   * flat directory read to its end is every gate month: 1,965 requests and 46
-   * minutes to learn what page one said. Children are not what is cut short
-   * here; the test above that reads a wide level to the end is.
+   * **A file ends the reading of the level.** Nothing past that page changes the
+   * answer, and a flat directory read to its end is every gate month: 1,965
+   * requests and 46 minutes to learn what page one said.
    */
-  it('stops at the first page that holds a file', async () => {
+  it('stops reading the level at the first page that holds a file', async () => {
     serving({
       'marker=data/a-2025-01-01.zip': page(object('data/b-2025-01-01.zip')),
-      'prefix=data/&':                page(object('data/a-2025-01-01.zip'),
+      'max-keys=1000':                page(object('data/a-2025-01-01.zip'),
         '<IsTruncated>true</IsTruncated>'),
     });
 
-    expect(await _test_descend(context, limits)).toEqual(['data/']);
-    expect(fetchPage).toHaveBeenCalledTimes(1);
+    await _test_level(context, 'data/');
+
+    expect(vi.mocked(fetchPage).mock.calls.filter(([, url]) => String(url).includes('max-keys=1000')))
+      .toHaveLength(1);
+  });
+});
+
+/**
+ * A prefix holding files is split by the characters its keys continue with.
+ * Served by a small bucket that answers as S3 does — prefix, marker, max-keys
+ * and delimiter honoured — so what is tested is the skipping, not a script.
+ */
+describe('splitting a flat prefix by character', () => {
+  const context = { ...listing(binance), keyRoot: 'data/' };
+
+  const bucket = (keys: string[], { honoursMarker = true } = {}) =>
+    vi.mocked(fetchPage).mockImplementation((async (_adapter: Adapter, url: string) => {
+      const query  = new URL(url.replace(/^[^?]*/, 'http://b/')).searchParams;
+      const prefix = query.get('prefix') ?? '';
+      const marker = honoursMarker ? query.get('marker') : null;
+      const max    = Number(query.get('max-keys'));
+      const under  = keys.filter(key => key.startsWith(prefix) && (marker === null || key > marker)).sort();
+      const listed = query.has('delimiter') ? under.filter(key => ! key.slice(prefix.length).includes('/')) : under;
+      const dirs   = query.has('delimiter')
+        ? [...new Set(under.filter(key => key.slice(prefix.length).includes('/'))
+          .map(key => prefix + key.slice(prefix.length).split('/')[0] + '/'))]
+        : [];
+
+      return parse(page(listed.slice(0, max).map(key => object(key)).join('')
+        + dirs.map(dir => `<CommonPrefixes><Prefix>${dir}</Prefix></CommonPrefixes>`).join('')));
+    }) as typeof fetchPage);
+
+  afterEach(() => vi.mocked(fetchPage).mockReset());
+
+  it('splits by the characters the keys actually continue with', async () => {
+    bucket(['data/AB-2025-01-01.zip', 'data/AC-2025-01-01.zip', 'data/B-2025-01-01.zip', 'data/z-2025-01-01.zip']);
+
+    expect(await _test_level(context, 'data/'))
+      .toEqual({ children: ['data/A', 'data/B', 'data/z'], files: false });
+  });
+
+  /** Gate publishes symbols written in Chinese, so no fixed alphabet could be trusted. */
+  it('finds a character no alphabet would have listed', async () => {
+    bucket(['data/A-2025-01-01.zip', 'data/小股东_USDT-2025-01-01.zip']);
+
+    expect((await _test_level(context, 'data/')).children).toEqual(['data/A', 'data/小']);
+  });
+
+  it('covers a directory beside the files too', async () => {
+    bucket(['data/A-2025-01-01.zip', 'data/sub/B-2025-01-01.zip']);
+
+    expect((await _test_level(context, 'data/')).children).toEqual(['data/A', 'data/s']);
+  });
+
+  /** The one key a character split cannot hold is the prefix itself. */
+  it('keeps whole a prefix that is a key of its own', async () => {
+    bucket(['data/A-2025-01-01.zip', 'data/A-2025-01-01.zip.extra']);
+
+    expect(await _test_level(context, 'data/A-2025-01-01.zip'))
+      .toMatchObject({ files: true });
+  });
+
+  /** A venue ignoring the marker would hand back the same key for ever. */
+  it('keeps the prefix whole where the venue ignores the marker', async () => {
+    bucket(['data/A-2025-01-01.zip', 'data/B-2025-01-01.zip'], { honoursMarker: false });
+
+    expect(await _test_level(context, 'data/')).toMatchObject({ files: true });
+  });
+
+  it('still splits by directory where nothing sits directly here', async () => {
+    bucket(['data/a/x-2025-01-01.zip', 'data/b/y-2025-01-01.zip']);
+
+    expect(await _test_level(context, 'data/'))
+      .toEqual({ children: ['data/a/', 'data/b/'], files: false });
   });
 });
 

@@ -8,7 +8,6 @@ import {
 } from '../src/catalog';
 import * as wip from '../src/catalog/wip';
 import { openCatalog } from '../src/database';
-import { months } from '../src/catalog/cache/months';
 import type { CatalogFile, Parking } from '../src/types';
 import type { DatabaseSync } from 'node:sqlite';
 
@@ -31,6 +30,13 @@ afterEach(() => {
   db.close();
   rmSync(dir, { recursive: true, force: true });
 });
+
+/** What the venue rollup holds for venue 1, month by month. */
+const rollup = () =>
+  db.prepare(
+    `SELECT month, files, bytes, pending, pending_bytes AS pendingBytes, withdrawn
+       FROM rollup_venue WHERE venue_id = 1 ORDER BY month`,
+  ).all();
 
 /**
  * A series for the venue to hang files on. These tests are about `file` and
@@ -86,7 +92,7 @@ describe('where a finding lands', () => {
   it('counts nothing while it is parked', async () => {
     await putFiles(db, [bare('orderbook/a.zip')]);
 
-    expect(months(db, 1)).toEqual([]);
+    expect(rollup()).toEqual([]);
   });
 });
 
@@ -129,7 +135,7 @@ describe('ready stays ready', () => {
 
     expect(count('wip')).toBe(0);
     expect(count('file')).toBe(1);
-    expect(months(db, 1)[0]).toMatchObject({ files: 1, pending: 1 });
+    expect(rollup()[0]).toMatchObject({ files: 1, pending: 1 });
   });
 });
 
@@ -152,7 +158,7 @@ describe('arriving', () => {
 
     expect(db.prepare('SELECT downloaded_at FROM file').get())
       .toMatchObject({ downloaded_at: null });
-    expect(months(db, 1)[0]).toMatchObject({ files: 1, bytes: 64, pending: 1, pendingBytes: 64 });
+    expect(rollup()[0]).toMatchObject({ files: 1, bytes: 64, pending: 1, pendingBytes: 64 });
   });
 
   /** A HEAD that answered without a checksum is progress, not an arrival. */

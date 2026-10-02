@@ -301,9 +301,9 @@ returns the same bytes — are the case in hand.
 
 **A walk only reads the table.** Its rows are loaded into memory when a job starts and checked before
 the adapter is asked; nothing in the survey path writes them or reasons about where they came from.
-They are maintained over the API instead — `POST /venues/:venue/exclusions` with a path and a reason,
-`DELETE` by the key the listing hands back — so ruling against a file costs a request rather than a
-rebuild and a redeploy, which is the whole reason this is a table and not a list in code.
+They are maintained by hand: a row added to the migration that ships the list, so a catalog rebuilt
+from scratch has it, and the same `INSERT` run on the live catalog. Ruling against a file costs a row
+rather than a change to an adapter, which is the whole reason this is a table and not a list in code.
 
 An exclusion applies to **every server of the venue**, so a caller never learns that one of them is
 served from two machines: a path that exists on only one is harmless on the other, since these match
@@ -777,9 +777,17 @@ the partitions, so nothing would ever notice.
 
 Two guards keep a split from destroying what it was meant to divide:
 
-- **A prefix holding a catalogable file of its own is never split.** A parent covers every key
-  beneath it; its children cover only their subtrees, so a key sitting directly there would belong
-  to none of them.
+- **A prefix holding a catalogable file of its own is never split by directory.** A parent covers
+  every key beneath it; its children cover only their subtrees, so a key sitting directly there
+  would belong to none of them. **On S3 it is split by character instead**: any string is a prefix,
+  so `…/202505/` divides into `…/202505/A`, `…/202505/B` and so on, which between them hold every
+  key beneath it. The characters are found by skipping (ask for the first key after a marker, note
+  the character it continues with, move the marker past that character), one request each, so a
+  flat month of tens of thousands of files splits in a few dozen requests. They are read rather than
+  assumed because gate publishes symbols written in Chinese. Without this every gate month was one
+  serial walk while every other lane stood idle: one to three requests a second, for hours. A prefix
+  that is itself a key stays whole, and so does one whose venue ignores the marker. An HTML index
+  cannot be listed by an arbitrary prefix, so there a prefix holding files stays whole.
 - **A split that would produce no children leaves the run open.** Every child sorting behind the
   cursor means the prefix is genuinely finished — but so does a child list that came back short, and
   the two are indistinguishable from here. Leaving it open costs one more pass; closing it wrongly
@@ -1150,7 +1158,7 @@ from in here — so it is asked for over the API. *How often a venue already bei
 re-reading* is not that question: the archives move once a day, so the answer is a day, and it is not
 worth asking anybody.
 
-The endpoints are in [CATALOG-API.md](../modules/CATALOG-API.md).
+The endpoints are in [the API](#surveying).
 
 #### Enrolment, and what a restart means
 
@@ -1826,145 +1834,148 @@ one round trip however long the list is.
 
 ## The API
 
-Prospector is the only process that opens the catalog, so everything anyone else needs from it
-arrives over HTTP — including from another machine, which is the point: surveying belongs where the
-link is good, and that need not be where the downloading happens.
+**Private to the archives module.** Prospector publishes no API port; on the module's network the
+[catalog](../../services/catalog/README.md) reaches it to settle download reports, and catalog-ui
+reaches it to start and pause surveys and to show where each venue stands. Everything a consumer asks
+about what exists goes to the catalog instead — see [CATALOG-API.md](../modules/CATALOG-API.md). So
+how collection works can change without any consumer noticing.
 
-**Authenticated with a shared secret** in `x-catalog-token`. Not users or sessions — one string,
-checked on the way in, because a port meant to be reachable from elsewhere should not answer a
-stranger. **An empty `CATALOG_TOKEN` takes the door off entirely** and every request is let through:
-there is no header to set, so a browser can read the catalog directly. That is a deployment's
-decision and a loud one — config warns at startup, because "nobody set it" and "anyone is welcome"
-must not look alike from outside. The server itself is service-kit's, so body parsing, request logging,
-`/ping` and rate limiting come with it.
+**Authenticated with the same shared secret** the catalog checks, in `x-catalog-token`, and an empty
+`CATALOG_TOKEN` takes the door off in the same way: config warns at startup, because "nobody set it"
+and "anyone is welcome" must not look alike. The server is service-kit's, so body parsing, request
+logging, `/ping` and rate limiting come with it.
 
-**Every endpoint, with its parameters and responses, is in
-[CATALOG-API.md](../modules/CATALOG-API.md).** It is not repeated here: two descriptions of one
-endpoint are two things to update, and the second one is always the one that gets forgotten. What
-follows is why the API has the shape it has, which is this document's business rather than that
-one's.
+| | |
+|---|---|
+| `POST /surveys` | Start or continue. `venue` optional: a name, several, or absent for all. |
+| `POST /venues/:venue/surveys` | The same, for one venue named in the path. |
+| `POST /surveys/pause` | Stop where it is, keeping every cursor. Same `venue` argument. |
+| `GET /status` | Where every venue stands, with its totals. `venue` narrows it. |
+| `POST /reports/:venue` | What became of the files a downloader was listed, by `FileId`. |
 
-**A venue is a venue.** Bybit's second host appears in no path, parameter or response field — the
-split into servers is this service's business. What identifies a file to a caller is an opaque
-`key`, echoed back to say which file is meant; a path alone could not say which server it came from,
-and making callers model that would put storage arrangements into everyone else's head.
+Routes are thin: `api/collector.ts` and `api/reports.ts` validate and answer, and the work is in
+`collector.ts` and `reports.ts`.
 
-**`pending` and `downloaded` are two collections**, disjoint and together covering every file, which
-is why recording a download is a `POST` to one and a `DELETE` from the other. They are not a boolean
-wearing a costume: across its history a file is genuinely in both.
+### Surveying
 
-**Urls are composed here**, from the venue's `base` and `key_root`. A downloader that built them would
-have to be taught the rule and taught again whenever a venue moved.
+**One verb, because where a venue has got to is not a caller's decision.** A venue with nothing
+starts; one with work outstanding continues from its cursors; one already complete finds what has
+appeared since. And it does not stop: a surveyed venue keeps itself current, walking once and then
+updating daily, **across restarts**, until it is paused or refreshed — see
+[enrolment](#enrolment-and-what-a-restart-means).
 
-### Naming what you want
+**A named venue is checked against the registry**, never against the `venue` table: that table is
+written by a survey, so on a fresh database no first survey could otherwise start. An unknown name is a
+`404` naming it and listing the venues there are.
 
-**This is the listing the service exists for**, and every axis of it is a property of the *series*
-rather than of the path:
+| modifier | |
+|---|---|
+| `refresh: true` | Throw the progress away and walk it all again. |
+| `update: true` | Skip the wait and update now. |
 
-**`variant` is the level below the dataset, whatever that level is for that
-dataset.** Klines have a bar length, books have a depth and a mode, trades have an aggregation, and
-the next dataset will have something else again — so it is one generic field holding a canonical
-string, comma-separated where a dataset needs more than one level (`500,incremental`), rather than an
-`interval` column beside a `depth` column beside whatever comes next. A dataset with no level below
-it has no variant.
+`refresh` is opt-in precisely so an ordinary request can never silently discard a backfill in flight.
 
-**A venue's word for a rendering is not a dataset.** Binance publishes trades twice and calls the
-second `aggTrades`, but aggregation is a property of *those trades* exactly as depth is a property of
-a book — so it is `trades` with `aggregation: aggregated`, and a consumer asking for trades finds
-both renderings without learning one venue's word for one of them.
+`update` acts in one state and a half. It is **refused where no pass has ever completed** (a venue
+mid-walk or one never run is owed the walk it is already doing) and does **nothing where an update is
+already running**. What is left is a venue waiting out its interval, and one **paused partway through
+an update**, which it resumes: that case comes back in `resumed` rather than `started`, because carrying
+on from cursors that already exist is not the same thing as planning fresh scopes.
 
-**The levels are named on the way out.** Stored, a variant is one string because a path is one
-string; served, it is `{ depth: '400', mode: 'incremental' }`, so nothing downstream splits commas or
-counts positions to find a depth. Where a level has a meaningful default the catalog reports it even
-with nothing stored — trades at a venue that says nothing about aggregation answer
-`{ aggregation: 'default' }`, which claims only *this is the one it publishes*, never that it is
-raw.
+The two are mutually exclusive, since one discards the progress the other builds on: asking for both is
+a `400`. A forced update that started and resumed nothing is a `409` carrying the reason.
 
-| a caller names | answered from | note |
-|---|---|---|
-| `market` `dataset` `variant` | the `pattern` row | canonical, matched case-blind |
-| `symbol` | the `series` row | the venue's own name, repeatable or comma-separated, case-blind |
-| `grain` | read off the pattern's finest slot | which rendering — see below |
-| `month`, or `from`/`to` | the `file` row's date | |
-| `downloaded` | `file.downloaded_at` | `true`, `false`, or absent for either |
+**They are also the only requests that interrupt a venue already surveying**, which they have to be: the
+loop does not end on its own, so refusing on that ground would make a refresh impossible for ever after
+the first survey. An *ordinary* request on a running venue is answered `already running`, which says the
+work is happening rather than refusing it.
 
-**Absent means *any*, and an explicit empty set means none.** No parameters at all is the whole
-venue. Naming instruments that publish nothing is a filter that matched nothing, and is answered
-with nothing — answering the whole venue there would hand back every dataset it has to a request
-that asked for one nobody publishes.
+The answer says what happened to each venue rather than failing the whole call because one was busy:
 
-**`grain` is the one that is easy to leave out and shouldn't be.** Many venues file the same data
-both monthly and daily, and those are two renderings of one month: a caller asking for June trades
-without saying which gets the monthly file *and* every day of June, holding the same trades twice.
-Asking for both is legitimate — it is how a consumer discovers what a venue offers and decides which
-to keep — so the filter is optional rather than defaulted, and a consumer that already knows says so.
+```json
+{ "at": "…", "started": ["binance", "htx", "kucoin"], "resumed": [],
+  "skipped": [{ "venue": "bybit", "reason": "already running" }],
+  "phases": { "binance": "updating", "htx": "complete", "kucoin": "not run" } }
+```
 
-**`GET /venues/:venue/shapes` is how a consumer decides what to want**, before asking for a file at
-all: one row per `(market, dataset, variant, grain)` with how many instruments and venue-wide files
-carry it and over what span. *Which bar lengths does this venue publish? Are its trades filed monthly
-or daily? Does it have books, at what depths?* — all one request against patterns and series, which
-are thousands of rows where files are millions.
+`phases` is read off whichever kind of run a venue actually does: okx and bitget never walk, so theirs
+is read off their `update` rows, and `not run` means a venue that has genuinely never been surveyed. It
+answers as soon as the work is under way; a survey runs for hours.
 
-**A shape says nothing about how a venue arranges its URLs**, and that is the point of the catalog
-rather than an omission from it. Whether a dataset changed its path once or a thousand times is
-prospector's business: where two shapes would be the same data twice, the catalog offers one of them
-and consumers never learn there was a choice. What a shape may report is **different variants of a
-dataset** — never the same data under two names.
+`POST /venues/:venue/surveys` is a **shortcut, not a second endpoint**: the venue moves from the path
+into the same argument the body form fills, so phases, modifiers and refusals are identical by
+construction. Where both name a venue, the path wins.
 
-**Its `last` is a maximum and its `open` is the claim.** `last` is the newest file anybody has seen of
-the shape, accumulated as a plain maximum; `open` is true while any one of its series is still open,
-which is the same question generation asks. One series still publishing leaves the whole shape open,
-because the shape has not stopped while any of it is still being written.
+A pause keeps every cursor, which is why there is no matching resume verb: starting a paused venue *is*
+resuming it, to what the pause interrupted. It is **permanent until then** and survives a restart,
+because the pause is a row rather than a flag in memory.
 
-They were one field, with `null` standing for "still publishing" — which threw the measurement away to
-make the claim, so every shape reported no end at all. Split, they read: bybit's linear perp books are
-`500,incremental` reaching `20250820` and **closed**, and `200,incremental` reaching yesterday and
-**open** — one venue-wide changeover, and exactly what a consumer needs to fetch both sides of it.
+### Status
 
-**`GET /venues/:venue/files` is the general form**, over everything the catalog holds;
-`GET /venues/:venue/pending` is the same handler with `downloaded=false` fixed, which is what a
-downloader asks for every time and should not have to say. A listing that is not scoped to one state
-carries `downloadedAt` per row, since otherwise the answer could not be read.
+A venue's row carries its totals (`firstMonth`, `lastMonth`, `files`, `bytes`, `pending`,
+`pendingBytes`, `withdrawn`, and `series`: `withFiles` out of `total`), `established`, `lastRun`, and
+where it stands:
 
-**A narrowed listing is a different query, not the same one with a filter.** Which series are a
-venue's `perp` `klines` at `1h` is answered from the series registry in memory — series are counted
-in thousands where files are counted in millions — so what is left is "the files of these series in
-this range", which `file_series (series_id, date)` indexes directly, one seek per series.
+| | |
+|---|---|
+| `state` | `not started`, `starting`, `walking`, `updating`, `waiting` or `paused` |
+| `enrolledAt` | when somebody first asked for this venue. `null` where nobody has |
+| `since` | when the open job began, or, where paused, when it was stopped |
+| `during` | what a pause interrupted, so a reader knows what resuming returns to |
+| `nextRun` | when the next update falls due, where the venue is waiting for one |
+| `surveying` | whether **this process** has a loop alive |
+| `stopping` | asked to stop, still finishing the page it was on |
+| `completedEver` | whether a pass has ever finished here |
+| `listable` | whether there is a keyspace to walk. `false` where the bucket refuses a listing |
+| `probing` | whether the venue parks candidate keys at all |
+| `wip` | rows discovered but not yet established |
 
-Handing the same set to SQLite as a join instead lets it drive from `file_when` and test membership
-per row, which scans every file the venue published that month whatever the narrowing asked for.
-Measured on the real catalog, 200 series of one htx dataset over one month: **0.06 seconds as seeks
-against 530 as a join.**
+`lastRun` is the venue's **most recent pass**, whether or not it ended: `{ kind, at, startedAt,
+ongoing, first }`. It answers what `established` cannot: that is a completion time, so a venue three
+hours into its first walk has none and reads like one nobody has ever surveyed. **`startedAt` is the
+run's own start, and `since` is not**: where a venue is paused, `since` holds when it was stopped.
 
-A narrowed page is therefore ordered by series, then by date within one — not globally by date. It
-does not need to be: a caller narrows to one dataset and one month because that partition is the unit
-it works in, and it finishes the whole of one before starting another. The cursor is
-`(seriesId, date, path)`, so resuming is a seek rather than a skip.
+**`state` and `surveying` are deliberately side by side**, because they are different facts: the first
+is work the catalog has outstanding, the second is whether anything is doing it. Walking with
+`surveying: false` is what a killed container leaves behind, and the one worth acting on.
 
-**An empty series set is not "no filter"** — it is a filter that matched nothing, and answering the
-whole venue there would hand back every dataset it has.
+**`paused` and `waiting` are not the same idle.** One is a person's decision that survives restarts; the
+other is a schedule.
 
-**`month` is the parameter that means what a caller wants**, and the only one that gets a whole month
-right. `date` holds each series' own grain — `202506` monthly, `20250601` daily — and both sort under
-the `202506` prefix, because a coarser date is a prefix of the finer ones inside it. So a month is
-matched the way any prefix on a sorted key
-is: `>= '202506'` and `< '202507'`, which is what `month` becomes. An inclusive `to` is simply the
-wrong operator for a prefix, and would drop that month's finer files.
+**`starting` is the one state the rows cannot say.** A pass lists instruments and writes new series
+before it opens a job, and until then its rows read exactly as a venue asleep between passes. So it
+comes from the process instead, and lasts until the job opens.
 
-**Each item states what the file is**, so its reader never parses a path: canonical `market`,
-`dataset` and `variant`, the venue's own `symbol`, the date, the extension, and which part where a
-venue splits a period into several. `market`, `dataset`, `variant` and `symbol` are read off the
-series — the same values a caller filters by, so what comes back is spelled the way it was asked
-for — while `ext` and `part` are read from the path and the pattern by `catalog/shape.ts`. A row
-whose series was never resolved answers blanks rather than being withheld, since the file is real
-and still owed.
+**`listable` is what makes `refresh` offerable or not.** A venue whose bucket serves no listing has its
+series declared, and every pass is an update over them, so dropping its run rows leaves nothing to walk.
+
+### Reports
+
+```json
+{ "downloaded": [4815162],
+  "failed":     [4815163],
+  "mismatched": [{ "FileId": 4815164, "Size": 506, "ETag": "…" }] }
+```
+
+The catalog forwards a downloader's report here as sent, and answers with what this returns:
+`recorded`, `withdrawn`, `corrected`, and `unknown` for ids that name no confirmed file of this venue.
+**A `FileId` is the file's rowid**, which is global, so the venue in the path is what keeps a report to
+its own files. A report holds at most 10,000 files; more is a `400`.
+
+**The caller reports problems; this service rules on them.** Nothing a caller sends is taken as fact
+about a venue: a file reported as undownloadable is checked against the venue, and either stays owed
+(it is still served, and comes round again) or is ruled absent so nothing is left outstanding. A
+reported mismatch is confirmed the same way, below.
+
+**Reporting is not transactional with the download, on purpose.** A file fetched but never reported is
+listed again, found on disk by the downloader, and reported then, which is also what lets a machine
+whose archive is already there be adopted with no seeding step.
 
 ### When a download does not match
 
 A downloader that fetches a file and finds different bytes has not hit an error — it has found that
 the archive changed, and it is holding the new version. Discarding it would be absurd, and reporting
 plain success would leave the catalog stating something untrue. So the report carries what was seen,
-in `observed`.
+as `mismatched`.
 
 **Prospector confirms before recording**, through the adapter — a listing venue asks for the one key
 and reads the row back, an index venue sends a `HEAD`. It costs one request and fires almost never,
@@ -1991,9 +2002,11 @@ SQLite, in WAL mode, with `STRICT` tables — SQLite is otherwise dynamically ty
 `INTEGER` column will happily hold a string, which surfaces later as a query that silently matches
 nothing.
 
-The schema lives in `src/catalog/`, alongside the queries. It was a shared package while a second
-service was expected to open the file; prospector is the only thing that does, and everyone else
-reaches it over the API, so a boundary with one thing on each side was costing without buying.
+The schema lives in `src/catalog/`, alongside the queries. **Prospector creates and migrates the
+file, and writes every row but one table's.** The [catalog](../../services/catalog/README.md) opens
+the same file to serve it, and writes only `lens`: a lens is a consumer's choice, which collection
+neither knows nor acts on. Nothing is shared in code: the catalog carries its own queries, and its tests
+build their own tables.
 
 Fifteen tables. `venue`, `file`, `wip` and `revision` are what a venue serves and what became of
 it; `pattern`, `series` and `transform` are what it publishes, where, and how it spells an instrument
@@ -2001,7 +2014,7 @@ the pattern cannot; `run` is how far each pass has read and `survey` whether thi
 at all; `rollup_venue` and `rollup_series` are the rollups that keep a total from costing a scan,
 per venue and per series; `exclusion` and `unreadable`
 are the two lists of things ruled out and not yet read; and `lens` is the one thing here nobody
-measured — see [lenses](#lenses).
+measured, and the one table the catalog writes.
 
 **Migrations run automatically, once, on open — on every database, including a fresh one.**
 Versioning uses SQLite's own `user_version`, so a database that has never heard of migrations reports
@@ -2040,15 +2053,6 @@ Startup therefore **proves it can write** before a survey begins, by setting `us
 value it already holds: a write transaction that changes nothing. Nothing cheaper answers the
 question — opening a read-only file succeeds, and so does asking for WAL on a database already in
 it — and finding out hours into a walk instead is the alternative.
-
-## Lenses
-
-A lens is a named, stored decision about which part of the catalog a consumer sees. Everything about
-them — the definition, how one resolves to series and date spans, how it is sized, and how the API
-reads through one — is [CATALOG-LENSES.md](../modules/CATALOG-LENSES.md). The code is
-`catalog/lens.ts` (definitions, checking, resolving, sizing), `catalog/spans.ts` (the date
-arithmetic) and `catalog/scope.ts` (a resolved lens held for queries, and series seen through it).
-
 
 ## Venues
 
@@ -2344,13 +2348,11 @@ downstream trusts, with nothing in the system able to notice. A floor costs the 
 requests and arrives at whatever is true today, in every case where the stated one would have been
 right and in the one where it would not.
 
-### `open`: one definition, for generating and for reporting
+### `open`: when keys are still generated
 
 **A series is open when this catalog still expects files for it, and keys are generated for exactly
-the series it still expects files for.** Those are one concept, so they are one function — `open` in
-`catalog/series.ts` — read by generation and by the API alike. Stated twice they would drift, and
-silently in both directions: a shape reported open that nothing asks about, or one reported closed
-while requests go out for it every day.
+the series it still expects files for.** One function, `open` in `catalog/series.ts`, read wherever
+generation decides what to ask about.
 
 | | |
 |---|---|

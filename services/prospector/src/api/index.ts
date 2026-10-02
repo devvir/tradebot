@@ -1,14 +1,15 @@
 import { logger } from '@devvir/service-kit';
 import { fault } from '../faults';
-import { setupRoutes } from './routes';
-import { mountLens } from './lens';
-import { mountBucket } from './bucket';
+import { mountCollector } from './collector';
+import { mountReports } from './reports';
 import type { Application, Request, Response, NextFunction } from 'express';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Surveys } from '../types';
 
 /**
- * The catalog API, mounted on the server service-kit already runs.
+ * Prospector's private API — the collector and the reports — mounted on the
+ * server service-kit already runs. Nothing outside the module reaches it: the
+ * catalog service is the public face, and forwards reports here.
  *
  * Body parsing, request logging, `/ping` and rate limiting come with that
  * server, so what is added here is the two things it cannot know about: who is
@@ -66,7 +67,7 @@ export const onError = (err: unknown, _req: Request, res: Response, _next: NextF
     return;
   }
 
-  logger.error({ ...fault(err) }, 'Unhandled error in the catalog API');
+  logger.error({ ...fault(err) }, 'Unhandled error in the prospector API');
 
   res.status(500).json({ error: 'Internal error' });
 };
@@ -79,9 +80,8 @@ export const mount = (
 ): void => {
   app.use(requireToken(token));
 
-  setupRoutes(app, db, surveys);
-  mountLens(app, db);
-  mountBucket(app, db);
+  mountCollector(app, db, surveys);
+  mountReports(app, db);
 
   app.use(onError);
 };
