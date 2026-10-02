@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Badge, Button, Collapse, Group, Stack, Text, TextInput } from '@mantine/core';
-import { catalog, useAsk } from '../api';
+import { catalogLensed, lensed, useAsk } from '../api';
 import { Waiting, count } from './Table';
 
 /**
@@ -21,7 +21,7 @@ import { Waiting, count } from './Table';
  * `SymbolList` mounts only while open, so the request happens on the first
  * opening and not before.
  */
-export const SymbolsPanel = ({ venue, market }: { venue: string; market?: string }) => {
+export const SymbolsPanel = ({ venue, market, lens }: { venue: string; market?: string; lens?: string }) => {
   const [showing, setShowing] = useState(false);
 
   const what = market === undefined ? 'at this venue' : `in ${market}`;
@@ -34,19 +34,19 @@ export const SymbolsPanel = ({ venue, market }: { venue: string; market?: string
         </Button>
       </Group>
 
-      <Collapse in={showing}>
-        {showing && <SymbolList venue={venue} market={market} />}
+      <Collapse expanded={showing}>
+        {showing && <SymbolList venue={venue} market={market} lens={lens} />}
       </Collapse>
     </Stack>
   );
 };
 
-const SymbolList = ({ venue, market }: { venue: string; market?: string }) => {
+const SymbolList = ({ venue, market, lens }: { venue: string; market?: string; lens?: string }) => {
   const at = market === undefined
     ? `/contents/venues/${encodeURIComponent(venue)}/symbols`
     : `/contents/venues/${encodeURIComponent(venue)}/markets/${encodeURIComponent(market)}/symbols`;
 
-  const asked = useAsk<{ items: string[] }>(at, catalog);
+  const asked = useAsk<{ items: string[] }>(lensed(at, lens), catalogLensed);
 
   return (
     <Waiting asked={asked}>

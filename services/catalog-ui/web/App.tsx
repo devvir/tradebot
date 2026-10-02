@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Anchor, AppShell, Breadcrumbs, Container, Group, Tabs, Text, Title } from '@mantine/core';
+import { Anchor, AppShell, Breadcrumbs, Container, Group, Select, Tabs, Text, Title } from '@mantine/core';
 import { Venues } from './views/Venues';
 import { VenueView } from './views/Venue';
 import { MarketView } from './views/Market';
 import { Surveys } from './views/Surveys';
 import { Lenses } from './views/Lenses';
-import { useAsk } from './api';
-import type { Where } from './types';
+import { catalog, useAsk } from './api';
+import type { Lens, Where } from './types';
 
 /**
  * The whole page: a route read out of the hash, and the view that answers it.
@@ -35,6 +35,9 @@ export interface Route {
   section:  Section;
   venue?:   string;
   market?:  string;
+
+  /** The lens the contents are seen through; absent for the whole catalog. */
+  lens?:    string;
 }
 
 export const App = () => {
@@ -73,10 +76,10 @@ export const App = () => {
 
           {route.section === 'surveys' ? <Surveys />
             : route.section === 'lenses' ? <Lenses />
-              : route.venue === undefined ? <Venues />
+              : route.venue === undefined ? <Venues lens={route.lens} />
                 : route.market !== undefined
-                  ? <MarketView venue={route.venue} market={route.market} />
-                  : <VenueView venue={route.venue} />}
+                  ? <MarketView venue={route.venue} market={route.market} lens={route.lens} />
+                  : <VenueView venue={route.venue} lens={route.lens} />}
         </Container>
       </AppShell.Main>
     </AppShell>
@@ -98,6 +101,14 @@ export const linkTo = (route: Partial<Route>): string => {
   if (section !== 'surveys') parts.set('section', section);
   if (route.venue) parts.set('venue', route.venue);
   if (route.market) parts.set('market', route.market);
+
+  /**
+   * **A lens follows you through the contents** unless a link says otherwise, so
+   * clicking from a venue into a market keeps looking through the same one.
+   */
+  const lens = 'lens' in route ? route.lens : section === 'contents' ? readRoute().lens : undefined;
+
+  if (section === 'contents' && lens) parts.set('lens', lens);
 
   return `#${parts.toString()}`;
 };
@@ -126,6 +137,7 @@ const readRoute = (): Route => {
       : parts.get('section') === 'lenses' ? 'lenses' : 'surveys',
     ...(parts.get('venue') ? { venue: parts.get('venue')! } : {}),
     ...(parts.get('market') ? { market: parts.get('market')! } : {}),
+    ...(parts.get('lens') ? { lens: parts.get('lens')! } : {}),
   };
 };
 
@@ -150,5 +162,29 @@ const Crumbs = ({ route }: { route: Route }) => {
 
   if (route.market !== undefined) here.push(<Text key="m" size="sm">{route.market}</Text>);
 
-  return <Breadcrumbs separator="/" mb="lg">{here}</Breadcrumbs>;
+  return (
+    <Group justify="space-between" align="center" mb="lg">
+      <Breadcrumbs separator="/">{here}</Breadcrumbs>
+      <LensPicker route={route} />
+    </Group>
+  );
+};
+
+/**
+ * Which lens the contents are seen through — every list and count below it
+ * narrows to what the lens lets through. Cleared, it is the whole catalog.
+ */
+const LensPicker = ({ route }: { route: Route }) => {
+  const lenses = useAsk<{ items: Lens[] }>('/lenses', catalog);
+
+  return (
+    <Select
+      size="xs" w={220} placeholder="Whole catalog" clearable searchable
+      data={(lenses.data?.items ?? []).map(one => ({ value: one.slug, label: one.name || one.slug }))}
+      value={route.lens ?? null}
+      onChange={lens => {
+        location.hash = linkTo({ section: 'contents', venue: route.venue, market: route.market, lens: lens ?? undefined }).slice(1);
+      }}
+    />
+  );
 };

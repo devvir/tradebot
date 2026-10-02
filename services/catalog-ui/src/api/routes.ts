@@ -58,6 +58,8 @@ const forward = (upstream: () => string, token: string) =>
         method:  req.method,
         headers: {
           ...(token ? { 'x-catalog-token': token } : {}),
+          ...(typeof req.headers['x-catalog-lens'] === 'string' ? { 'x-catalog-lens': req.headers['x-catalog-lens'] } : {}),
+          accept:         'application/json',
           'content-type': 'application/json',
         },
         ...(req.method === 'GET' || req.method === 'HEAD'

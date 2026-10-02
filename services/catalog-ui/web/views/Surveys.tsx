@@ -408,7 +408,7 @@ const tookEffect = (order: Order, now: Status): boolean => {
    * while waiting goes back to waiting — nothing starts, so waiting for a pass
    * would hold the row until the order lapsed and then report it as ignored.
    */
-  if (order.from === 'paused' && now.state !== 'paused' && now.state !== 'pausing') return true;
+  if (order.from === 'paused' && now.state !== 'paused' && ! now.stopping) return true;
 
   const began = now.lastRun.startedAt === null ? NaN : Date.parse(now.lastRun.startedAt);
 

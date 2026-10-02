@@ -73,7 +73,7 @@ export const putFiles = async (
   if (files.length === 0) return 0;
 
   const current = db.prepare(
-    `SELECT date, size, etag, modified, existence, downloaded_at AS downloadedAt
+    `SELECT series_id AS seriesId, date, size, etag, modified, existence, downloaded_at AS downloadedAt
        FROM file WHERE venue_id = ? AND path = ?`,
   );
 
@@ -236,8 +236,8 @@ export const putFiles = async (
 
           effects.push({
             venueId: file.venueId,
-            was:     was ? stateOf(was.date, was.existence, was.size, was.downloadedAt) : null,
-            now:     stateOf(file.date, file.existence, file.size ?? was?.size ?? null, downloadedAt),
+            was:     was ? stateOf(was.seriesId, was.date, was.existence, was.size, was.downloadedAt) : null,
+            now:     stateOf(file.seriesId, file.date, file.existence, file.size ?? was?.size ?? null, downloadedAt),
           });
 
           sighted.push({ seriesId: file.seriesId, date: file.date });
@@ -245,7 +245,7 @@ export const putFiles = async (
 
         // In the same transaction as the rows, so the counters cannot survive a
         // rollback of what they describe.
-        cache.apply(db, cache.deltasOf(effects));
+        cache.record(db, (effects));
 
         db.exec('COMMIT');
       } catch (err) {
@@ -321,7 +321,7 @@ export const markWithdrawn = (
      * withdrawal rather than to the venue — and a withdrawal is rare.
      */
     const going = db.prepare(
-      `SELECT date, size, existence, downloaded_at AS downloadedAt
+      `SELECT series_id AS seriesId, date, size, existence, downloaded_at AS downloadedAt
          FROM file WHERE ${WHERE}`,
     ).all(venueId, from, to, since) as unknown as Row[];
 
@@ -336,10 +336,10 @@ export const markWithdrawn = (
      */
     const unparked = wip.dropRange(db, venueId, from, to, since);
 
-    cache.apply(db, cache.deltasOf(going.map(row => ({
+    cache.record(db, (going.map(row => ({
       venueId,
-      was: stateOf(row.date, row.existence, row.size, row.downloadedAt),
-      now: stateOf(row.date, 'absent',      row.size, row.downloadedAt),
+      was: stateOf(row.seriesId, row.date, row.existence, row.size, row.downloadedAt),
+      now: stateOf(row.seriesId, row.date, 'absent',      row.size, row.downloadedAt),
     }))));
 
     db.exec('COMMIT');
@@ -374,7 +374,7 @@ export const markDownloaded = (
   if (files.length === 0) return 0;
 
   const pending = db.prepare(
-    `SELECT date, size, existence, downloaded_at AS downloadedAt
+    `SELECT series_id AS seriesId, date, size, existence, downloaded_at AS downloadedAt
        FROM file WHERE venue_id = ? AND path = ? AND downloaded_at IS NULL`,
   );
 
@@ -399,12 +399,12 @@ export const markDownloaded = (
 
       effects.push({
         venueId,
-        was: stateOf(row.date, row.existence, row.size, null),
-        now: stateOf(row.date, row.existence, row.size, at),
+        was: stateOf(row.seriesId, row.date, row.existence, row.size, null),
+        now: stateOf(row.seriesId, row.date, row.existence, row.size, at),
       });
     }
 
-    cache.apply(db, cache.deltasOf(effects));
+    cache.record(db, (effects));
 
     db.exec('COMMIT');
 
@@ -431,7 +431,7 @@ export const markPending = (
   path:    string,
 ): boolean => {
   const held = db.prepare(
-    `SELECT date, size, etag, modified, existence, downloaded_at AS downloadedAt
+    `SELECT series_id AS seriesId, date, size, etag, modified, existence, downloaded_at AS downloadedAt
        FROM file WHERE venue_id = ? AND path = ? AND downloaded_at IS NOT NULL`,
   );
 
@@ -449,10 +449,10 @@ export const markPending = (
     db.prepare('UPDATE file SET downloaded_at = NULL WHERE venue_id = ? AND path = ?')
       .run(venueId, path);
 
-    cache.apply(db, cache.deltasOf([{
+    cache.record(db, ([{
       venueId,
-      was: stateOf(row.date, row.existence, row.size, row.downloadedAt),
-      now: stateOf(row.date, row.existence, row.size, null),
+      was: stateOf(row.seriesId, row.date, row.existence, row.size, row.downloadedAt),
+      now: stateOf(row.seriesId, row.date, row.existence, row.size, null),
     }]));
 
     db.exec('COMMIT');
@@ -481,7 +481,7 @@ export const markPending = (
  */
 export const withdrawFile = (db: DatabaseSync, venueId: number, path: string): boolean => {
   const current = db.prepare(
-    `SELECT date, size, existence, downloaded_at AS downloadedAt
+    `SELECT series_id AS seriesId, date, size, existence, downloaded_at AS downloadedAt
        FROM file WHERE venue_id = ? AND path = ?`,
   );
 
@@ -499,10 +499,10 @@ export const withdrawFile = (db: DatabaseSync, venueId: number, path: string): b
     db.prepare(`UPDATE file SET existence = 'absent' WHERE venue_id = ? AND path = ?`)
       .run(venueId, path);
 
-    cache.apply(db, cache.deltasOf([{
+    cache.record(db, ([{
       venueId,
-      was: stateOf(was.date, was.existence, was.size, was.downloadedAt),
-      now: stateOf(was.date, 'absent',      was.size, was.downloadedAt),
+      was: stateOf(was.seriesId, was.date, was.existence, was.size, was.downloadedAt),
+      now: stateOf(was.seriesId, was.date, 'absent',      was.size, was.downloadedAt),
     }]));
 
     db.exec('COMMIT');
@@ -542,7 +542,7 @@ export const correctFile = (
   downloaded: boolean,
 ): boolean => {
   const current = db.prepare(
-    `SELECT date, size, etag, modified, existence, downloaded_at AS downloadedAt
+    `SELECT series_id AS seriesId, date, size, etag, modified, existence, downloaded_at AS downloadedAt
        FROM file WHERE venue_id = ? AND path = ?`,
   );
 
@@ -574,10 +574,10 @@ export const correctFile = (
         WHERE venue_id = ? AND path = ?`,
     ).run(observed.size, observed.etag, observed.modified, seenAt, downloadedAt, venueId, path);
 
-    cache.apply(db, cache.deltasOf([{
+    cache.record(db, ([{
       venueId,
-      was: stateOf(was.date, was.existence, was.size, was.downloadedAt),
-      now: stateOf(was.date, was.existence, size, downloadedAt),
+      was: stateOf(was.seriesId, was.date, was.existence, was.size, was.downloadedAt),
+      now: stateOf(was.seriesId, was.date, was.existence, size, downloadedAt),
     }]));
 
     db.exec('COMMIT');
@@ -764,7 +764,7 @@ export const venueTotals = (db: DatabaseSync): VenueTotals[] =>
             COALESCE(SUM(m.pending), 0)               AS pending,
             COALESCE(SUM(m.pending_bytes), 0)         AS pendingBytes,
             COALESCE(SUM(m.withdrawn), 0)             AS withdrawn
-       FROM venue v LEFT JOIN month m ON m.venue_id = v.id
+       FROM venue v LEFT JOIN rollup_venue m ON m.venue_id = v.id
       GROUP BY v.name
       ORDER BY v.name`,
   ).all() as unknown as VenueTotals[];
@@ -794,7 +794,7 @@ export const monthTotals = (
             SUM(pending)       AS pending,
             SUM(pending_bytes) AS pendingBytes,
             SUM(withdrawn)     AS withdrawn
-       FROM month
+       FROM rollup_venue
       WHERE venue_id IN (${ids})
         AND (? IS NULL OR month >= ?)
         AND (? IS NULL OR month <= ?)
@@ -975,11 +975,11 @@ export const settleFiles = (db: DatabaseSync, settled: readonly Settlement[]): n
         effects.push({
           venueId: file.venueId,
           was:     null,
-          now:     stateOf(was.date, existence, merged.size, null),
+          now:     stateOf(was.seriesId, was.date, existence, merged.size, null),
         });
     }
 
-    cache.apply(db, cache.deltasOf(effects));
+    cache.record(db, (effects));
 
     db.exec('COMMIT');
 
@@ -1786,6 +1786,7 @@ interface Metadata {
 
 /** A stored row, as the statements above read it back. */
 interface Row extends Metadata {
+  seriesId:     number;
   date:         string;
   existence:    Existence;
   downloadedAt: string | null;
@@ -1814,11 +1815,13 @@ const ready = (seen: Metadata): boolean => seen.size !== null && seen.etag !== n
  * catalog makes of a stored value, and one it already makes elsewhere.
  */
 const stateOf = (
+  seriesId:     number,
   date:         string,
   existence:    Existence,
   size:         number | null,
   downloadedAt: string | null,
 ): FileState => ({
+  seriesId,
   month:      date.slice(0, 6),
   confirmed:  existence === 'confirmed',
   downloaded: downloadedAt !== null,

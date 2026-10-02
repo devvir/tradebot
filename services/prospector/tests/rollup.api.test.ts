@@ -88,7 +88,7 @@ describe('proving and repairing the rollup', () => {
 
   it('reports both figures where they disagree', async () => {
     await putFiles(db, [file('spot/a-2025-03.zip')]);
-    db.prepare('UPDATE month SET files = 99').run();
+    db.prepare('UPDATE rollup_venue SET files = 99').run();
 
     const { body } = await ask<{ items: { files: number; cachedFiles: number }[] }>(
       'GET', '/months/drift');
@@ -98,13 +98,13 @@ describe('proving and repairing the rollup', () => {
 
   it('repairs the counter and says what it repaired', async () => {
     await putFiles(db, [file('spot/a-2025-03.zip')]);
-    db.prepare('UPDATE month SET files = 99').run();
+    db.prepare('UPDATE rollup_venue SET files = 99').run();
 
     const { status, body } = await ask<{ repaired: number }>('POST', '/months/rebuild');
 
     expect(status).toBe(200);
     expect(body.repaired).toBe(1);
-    expect(db.prepare('SELECT files FROM month').get()).toEqual({ files: 1 });
+    expect(db.prepare('SELECT files FROM rollup_venue').get()).toEqual({ files: 1 });
   });
 
   /**
@@ -114,7 +114,7 @@ describe('proving and repairing the rollup', () => {
    */
   it('refuses to recount while a venue is still surveying', async () => {
     await putFiles(db, [file('spot/a-2025-03.zip')]);
-    db.prepare('UPDATE month SET files = 99').run();
+    db.prepare('UPDATE rollup_venue SET files = 99').run();
 
     running = ['gate'];
 
@@ -124,7 +124,7 @@ describe('proving and repairing the rollup', () => {
     expect(body.error).toContain('gate');
 
     // And it changed nothing.
-    expect(db.prepare('SELECT files FROM month').get()).toEqual({ files: 99 });
+    expect(db.prepare('SELECT files FROM rollup_venue').get()).toEqual({ files: 99 });
   });
 
   it('names every venue that is holding it up', async () => {

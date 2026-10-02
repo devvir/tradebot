@@ -1,9 +1,10 @@
 import type { DatabaseSync } from 'node:sqlite';
-import type { FileEffect, MonthDelta, MonthRow, MonthDrift } from '../../types';
+import type { FileEffect, MonthDelta, MonthRow, MonthDrift, SeriesMonthDelta } from '../../types';
 
 /**
- * The venue-month rollup: how many files, how large, how many still to
- * download, how many the venue has withdrawn.
+ * The rollups: per venue and month in `rollup_venue`, per series and month in
+ * `rollup_series` — how many files, how large, how many still to download, how
+ * many the venue has withdrawn.
  *
  * **Why a cache at all.** Every one of those is an aggregate over `file`, which
  * is tens of gigabytes, so asking directly is not a slow query but an outage —
@@ -11,7 +12,15 @@ import type { FileEffect, MonthDelta, MonthRow, MonthDrift } from '../../types';
  * them either: "is there anything left for this venue" still reads a million
  * rows to answer *no*.
  *
- * **Why only this one.** A cache is not free — it is one more thing to keep
+ * **Two grains, kept by one path.** `rollup_venue` answers the constant
+ * questions — every venue's totals, which months hold work — from a few hundred
+ * rows, which is what a page polling every few seconds can afford.
+ * `rollup_series` answers anything narrower than a venue, a lens above all,
+ * from a few million: exact at any selection, without reading a file. Both move
+ * from the same effects in the same transaction, so they cannot disagree with
+ * each other any more than with the rows.
+ *
+ * **Why only these.** A cache is not free — it is one more thing to keep
  * true, one more place to be wrong in silence, and one more thing to read before
  * you can follow the code. This one earns it because the questions are constant,
  * the answers are expensive, and the grain is the one everything downstream
@@ -80,7 +89,45 @@ export const deltasOf = (effects: readonly FileEffect[]): MonthDelta[] => {
 };
 
 /**
- * Apply deltas to the rollup.
+ * What a batch of writes does to the series rollup — `deltasOf` at the grain of
+ * one series. A file that moved between series is subtracted from one and added
+ * to the other, as a month move is.
+ */
+export const seriesDeltasOf = (effects: readonly FileEffect[]): SeriesMonthDelta[] => {
+  const byKey = new Map<string, SeriesMonthDelta>();
+
+  const at = (seriesId: number, month: string): SeriesMonthDelta => {
+    const key   = `${seriesId}|${month}`;
+    const found = byKey.get(key)
+      ?? { seriesId, month, files: 0, bytes: 0, pending: 0, pendingBytes: 0, withdrawn: 0 };
+
+    byKey.set(key, found);
+
+    return found;
+  };
+
+  for (const { was, now } of effects) {
+    if (was) count(at(was.seriesId, was.month), was, -1);
+
+    count(at(now.seriesId, now.month), now, 1);
+  }
+
+  return [...byKey.values()].filter(moves);
+};
+
+/**
+ * Record a batch of writes in both rollups.
+ *
+ * **The caller's transaction is the point.** This never opens one of its own, so
+ * the counters move with the rows they describe or not at all.
+ */
+export const record = (db: DatabaseSync, effects: readonly FileEffect[]): void => {
+  apply(db, deltasOf(effects));
+  applySeries(db, seriesDeltasOf(effects));
+};
+
+/**
+ * Apply deltas to the venue rollup.
  *
  * **The caller's transaction is the point.** This never opens one of its own, so
  * the counters move with the rows they describe or not at all — a cache updated
@@ -91,22 +138,41 @@ export const apply = (db: DatabaseSync, deltas: readonly MonthDelta[]): void => 
   if (deltas.length === 0) return;
 
   const upsert = db.prepare(
-    `INSERT INTO month (venue_id, month, files, bytes, pending, pending_bytes, withdrawn)
+    `INSERT INTO rollup_venue (venue_id, month, files, bytes, pending, pending_bytes, withdrawn)
           VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (venue_id, month) DO UPDATE SET
-          files         = month.files         + excluded.files,
-          bytes         = month.bytes         + excluded.bytes,
-          pending       = month.pending       + excluded.pending,
-          pending_bytes = month.pending_bytes + excluded.pending_bytes,
-          withdrawn     = month.withdrawn     + excluded.withdrawn`,
+          files         = rollup_venue.files         + excluded.files,
+          bytes         = rollup_venue.bytes         + excluded.bytes,
+          pending       = rollup_venue.pending       + excluded.pending,
+          pending_bytes = rollup_venue.pending_bytes + excluded.pending_bytes,
+          withdrawn     = rollup_venue.withdrawn     + excluded.withdrawn`,
   );
 
   for (const d of deltas)
     upsert.run(d.venueId, d.month, d.files, d.bytes, d.pending, d.pendingBytes, d.withdrawn);
 };
 
+/** Apply deltas to the series rollup, as `apply` does to the venue one. */
+export const applySeries = (db: DatabaseSync, deltas: readonly SeriesMonthDelta[]): void => {
+  if (deltas.length === 0) return;
+
+  const upsert = db.prepare(
+    `INSERT INTO rollup_series (series_id, month, files, bytes, pending, pending_bytes, withdrawn)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (series_id, month) DO UPDATE SET
+          files         = rollup_series.files         + excluded.files,
+          bytes         = rollup_series.bytes         + excluded.bytes,
+          pending       = rollup_series.pending       + excluded.pending,
+          pending_bytes = rollup_series.pending_bytes + excluded.pending_bytes,
+          withdrawn     = rollup_series.withdrawn     + excluded.withdrawn`,
+  );
+
+  for (const d of deltas)
+    upsert.run(d.seriesId, d.month, d.files, d.bytes, d.pending, d.pendingBytes, d.withdrawn);
+};
+
 /**
- * Recompute the whole rollup from `file`.
+ * Recompute both rollups from `file`.
  *
  * **A full read of the largest table, so it is never run on startup.** It exists
  * for the one case incremental maintenance cannot cover — switching the cache on
@@ -117,8 +183,10 @@ export const rebuild = (db: DatabaseSync): void => {
   db.exec('BEGIN');
 
   try {
-    db.exec('DELETE FROM month');
+    db.exec('DELETE FROM rollup_venue');
+    db.exec('DELETE FROM rollup_series');
     db.exec(REBUILD);
+    db.exec(REBUILD_SERIES);
     db.exec('COMMIT');
   } catch (err) {
     db.exec('ROLLBACK');
@@ -148,7 +216,7 @@ export const drift = (db: DatabaseSync): MonthDrift[] => {
             COALESCE(m.pending_bytes, 0) AS cachedPendingBytes,
             COALESCE(t.withdrawn, 0) AS withdrawn, COALESCE(m.withdrawn, 0) AS cachedWithdrawn
        FROM truth t
-       FULL OUTER JOIN month m ON m.venue_id = t.venue_id AND m.month = t.month
+       FULL OUTER JOIN rollup_venue m ON m.venue_id = t.venue_id AND m.month = t.month
       WHERE COALESCE(t.files, 0)     <> COALESCE(m.files, 0)
          OR COALESCE(t.bytes, 0)     <> COALESCE(m.bytes, 0)
          OR COALESCE(t.pending, 0)   <> COALESCE(m.pending, 0)
@@ -167,13 +235,30 @@ export const months = (
   db.prepare(
     `SELECT venue_id AS venueId, month, files, bytes, pending,
             pending_bytes AS pendingBytes, withdrawn
-       FROM month WHERE venue_id = ? ORDER BY month`,
+       FROM rollup_venue WHERE venue_id = ? ORDER BY month`,
   ).all(venueId) as unknown as MonthRow[];
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
+/** Add one file state into a series cell, or take it out (`sign` -1). */
+const count = (cell: SeriesMonthDelta, state: FileEffect['now'], sign: 1 | -1): void => {
+  if (! state.confirmed) {
+    cell.withdrawn += sign;
+
+    return;
+  }
+
+  cell.files += sign;
+  cell.bytes += sign * state.bytes;
+
+  if (! state.downloaded) {
+    cell.pending      += sign;
+    cell.pendingBytes += sign * state.bytes;
+  }
+};
+
 /** Whether a delta says anything. */
-const moves = (d: MonthDelta): boolean =>
+const moves = (d: MonthDelta | SeriesMonthDelta): boolean =>
   d.files !== 0 || d.bytes !== 0 || d.pending !== 0 || d.pendingBytes !== 0 || d.withdrawn !== 0;
 
 /**
@@ -198,5 +283,18 @@ const TRUTH = `
    GROUP BY venue_id, substr(date, 1, 6)`;
 
 const REBUILD = `
-  INSERT INTO month (venue_id, month, files, bytes, pending, pending_bytes, withdrawn)
+  INSERT INTO rollup_venue (venue_id, month, files, bytes, pending, pending_bytes, withdrawn)
   ${TRUTH}`;
+
+/** The series rollup as the rows say it is — `TRUTH` grouped by series instead of venue. */
+const REBUILD_SERIES = `
+  INSERT INTO rollup_series (series_id, month, files, bytes, pending, pending_bytes, withdrawn)
+  SELECT series_id,
+         substr(date, 1, 6),
+         SUM(existence = 'confirmed'),
+         SUM(CASE WHEN existence = 'confirmed' THEN COALESCE(size, 0) ELSE 0 END),
+         SUM(existence = 'confirmed' AND downloaded_at IS NULL),
+         SUM(CASE WHEN existence = 'confirmed' AND downloaded_at IS NULL THEN COALESCE(size, 0) ELSE 0 END),
+         SUM(existence <> 'confirmed')
+    FROM file
+   GROUP BY series_id, substr(date, 1, 6)`;

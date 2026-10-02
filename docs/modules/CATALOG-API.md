@@ -546,7 +546,7 @@ underneath stay complete and unfiltered.
 | `DELETE /lenses/:slug` | Delete it. |
 | `GET /lenses/options/:venue` | The combinations that venue publishes — `market`, `dataset`, `variant`, `grain`, and how many series each holds. What a rule is written against. |
 | `POST /lenses/check` | What is wrong with a definition, without storing it. |
-| `POST /lenses/size` | What a definition would put on a disk: `series`, `files`, `bytes`, `exact`. |
+| `POST /lenses/size` | What a definition would put on a disk: `series`, `files`, `bytes`, and of those `pending` and `pendingBytes`, not yet downloaded. `exact` says whether it was counted or estimated. |
 | `GET /lenses/:lens/size` | The same, for one that exists. |
 | `POST /lenses/resolve` | What it actually selects, per venue: how many series, and the date spans. |
 

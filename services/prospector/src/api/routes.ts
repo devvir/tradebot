@@ -3,19 +3,21 @@ import {
   addExclusion, cache, correctFile, countUnsettled, enrolment, establishedAt, everCompleted,
   exclusions,
   fileOf, keyOf,
-  lastRun,
+  lastRun, lensMonthsOf, lensNamed, lensSizeOf,
   catalogFiles, markDownloaded, markPending, monthTotals, phaseOf, removeExclusion, standingOf,
   seriesById, seriesCounts, seriesFor, venueIds, venueTotals, withdrawFile,
 } from '../catalog';
 import { extensionOf, partOf } from '../catalog/shape';
 import { intoMarkets, intoShapes, intoSymbols } from '../catalog/contents';
+import { lensScope, reachesNow, throughLens } from '../catalog/scope';
+import { open } from '../catalog/series';
 import { GRAINS, levelsOf } from '../canonical';
 import { adaptersForVenue } from '../venues';
 import type { Application, Request, Response } from 'express';
 import type { DatabaseSync } from 'node:sqlite';
 import type {
-  Adapter, Cursor, Listed, MonthState, Offered, Grain, Pending, Reported, SeriesFilter,
-  Settled, Settling, SurveyState, Surveys,
+  Adapter, Cursor, Lens, LensScope, Listed, MonthState, Offered, Grain, Pending, Publishing, Reported,
+  SeriesFilter, Settled, Settling, SurveyState, Surveys,
 } from '../types';
 
 /**
@@ -197,8 +199,17 @@ export const setupRoutes = (app: Application, db: DatabaseSync, surveys: Surveys
    * same rows filtered — a query parameter wearing a path segment. The largest
    * market answers 130 rows, so there is nothing to page and nothing to split.
    */
-  app.get('/contents/venues', (_req, res) => {
-    const rows   = venueTotals(db).filter(row => surveyable(row.venue));
+  app.get('/contents/venues', (req, res) => {
+    const lens = lensFrom(db, req, res);
+
+    if (lens === false) return;
+
+    const rows   = venueTotals(db)
+      .filter(row => surveyable(row.venue) && (! lens || lens.scope.has(row.venue)))
+      .map(row => (lens ? { ...row, ...throughLensTotals(db, lens, row.venue) } : row))
+
+      // A venue the lens lets nothing through from is not in it.
+      .filter(row => ! lens || ('series' in row && (row.series as { total: number }).total > 0));
 
     /** One pass for every venue, rather than one filtered scan per venue. */
     const counts = seriesCounts(db);
@@ -212,7 +223,7 @@ export const setupRoutes = (app: Application, db: DatabaseSync, surveys: Surveys
          * several ids — bybit publishes its books from a second host — and the
          * progress a reader wants is the venue's, not one server's.
          */
-        series:      venueIds(db, row.venue).reduce((sum, id) => {
+        series:      'series' in row ? row.series : venueIds(db, row.venue).reduce((sum, id) => {
           const held = counts.get(id);
 
           return {
@@ -989,11 +1000,70 @@ const contents = (
     ...(grain ? { grain: grain as Grain } : {}),
   };
 
-  const rows = ids.flatMap(id => seriesFor(db, id, filter));
+  const lens = lensFrom(db, req, res);
+
+  if (lens === false) return;
+
+  const all   = ids.flatMap(id => seriesFor(db, id, filter));
+  const spans = lens ? lens.scope.get(String(req.params['venue'])) ?? new Map() : null;
+  const rows  = spans ? throughLens(db, all, spans) : all;
+
+  /** Under a lens that has ended, nothing in it is still being written. */
+  const isOpen = spans
+    ? (row: Publishing) => open(row) && reachesNow(spans.get(row.id!) ?? [])
+    : open;
 
   res.json({ items: give === 'markets' ? intoMarkets(rows)
     : give === 'symbols' ? intoSymbols(rows)
-      : intoShapes(rows) });
+      : intoShapes(rows, isOpen) });
+};
+
+/**
+ * The lens a request names in `x-catalog-lens`, resolved; null where it names
+ * none, false where it named one that does not exist and was answered `404` —
+ * never the unfiltered catalog in its place.
+ */
+const lensFrom = (
+  db:  DatabaseSync,
+  req: Request,
+  res: Response,
+): { lens: Lens; scope: LensScope } | null | false => {
+  const slug = req.headers['x-catalog-lens'];
+
+  if (typeof slug !== 'string' || slug.trim() === '') return null;
+
+  const lens  = lensNamed(db, slug.trim());
+  const scope = lens ? lensScope(db, lens.slug) : null;
+
+  if (! lens || ! scope) {
+    res.status(404).json({ error: `No such lens: ${slug.trim()}` });
+
+    return false;
+  }
+
+  return { lens, scope };
+};
+
+/**
+ * A venue's row as a lens sees it — its files, bytes and pending from the lens's
+ * size, its months from the rollups, and its series from one clamped pass. None
+ * of it reads a file, which is what lets every venue be answered at once.
+ */
+const throughLensTotals = (db: DatabaseSync, held: { lens: Lens; scope: LensScope }, venue: string) => {
+  const size   = lensSizeOf(db, held.lens.definition, venue);
+  const months = lensMonthsOf(db, held.lens.definition, venue);
+  const rows   = throughLens(db, venueIds(db, venue).flatMap(id => seriesFor(db, id, {})),
+    held.scope.get(venue) ?? new Map(), false);
+
+  return {
+    firstMonth:   months.first,
+    lastMonth:    months.last,
+    files:        size.files,
+    bytes:        size.bytes,
+    pending:      size.pending,
+    pendingBytes: size.pendingBytes,
+    series:       { withFiles: rows.length, total: rows.length },
+  };
 };
 
 const months = (db: DatabaseSync, req: Request, res: Response, state?: MonthState): void => {

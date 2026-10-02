@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActionIcon, Alert, Autocomplete, Badge, Button, Card, Group, Loader, Modal, MultiSelect, Select,
-  Stack, Text, TextInput, Title,
+  Alert, Autocomplete, Badge, Button, Card, Group, Loader, Modal, MultiSelect, Progress,
+  Select, Stack, Text, TextInput, Title,
 } from '@mantine/core';
 import { catalog, post, put, remove } from '../api';
 
@@ -78,6 +78,28 @@ export const Lenses = () => {
   );
 };
 
+/** How often an open lens asks its size again, so progress moves while hauling. */
+const SIZE_REFRESH_MS = 30_000;
+
+/**
+ * How much of what the lens lets through is already on disk, by weight — files
+ * vary from kilobytes to gigabytes, so a count would say little about the wait.
+ */
+const Downloaded = ({ size }: { size: LensSize }) => {
+  const done  = size.bytes - size.pendingBytes;
+  const share = size.bytes > 0 ? (done / size.bytes) * 100 : 0;
+
+  return (
+    <Group gap="xs" wrap="nowrap">
+      <Progress value={share} w={180} size="sm" color={size.pending === 0 ? 'green' : 'cyan'} />
+      <Text size="xs" c="dimmed"
+        title={`${count(size.files - size.pending)} of ${count(size.files)} files downloaded`}>
+        {bytes(done)} of {bytes(size.bytes)} downloaded · {share.toFixed(1)}%
+      </Text>
+    </Group>
+  );
+};
+
 /** One lens, whole: what it is called, what it is for, and what it lets through. */
 const Editing = ({ lens, onChanged, onFailed }: {
   lens:      Lens;
@@ -128,6 +150,18 @@ const Editing = ({ lens, onChanged, onFailed }: {
     }, 250);
 
     return () => clearTimeout(at);
+  }, [draft]);
+
+  /**
+   * **Progress moves while a downloader works**, so the size is asked again every
+   * so often — quietly, keeping the last answer on screen until the next arrives.
+   */
+  useEffect(() => {
+    const every = setInterval(() => {
+      post<LensSize>('/api/catalog/lenses/size', draft).then(setSize).catch(() => undefined);
+    }, SIZE_REFRESH_MS);
+
+    return () => clearInterval(every);
   }, [draft]);
 
   const dirty = name !== lens.name || note !== lens.note
@@ -204,6 +238,16 @@ const Editing = ({ lens, onChanged, onFailed }: {
           size="sm" color="green" disabled={! dirty || going} onClick={save}
           title={`Last saved: ${lens.updatedAt.slice(0, 16).replace('T', ' ')}`}
         >Save</Button>
+
+        {/*
+          Back to what is stored, discarding the draft. The draft outlives a
+          reload by design, so without this an unwanted edit could only be saved.
+        */}
+        <Button
+          size="compact-xs" variant="subtle" color="gray" disabled={! dirty || going} mb={6}
+          title="Discard every change since the last save"
+          onClick={() => { setName(lens.name); setNote(lens.note); setDraft(lens.definition); keep(lens, null); }}
+        >Reload as saved</Button>
         <Removing lens={lens} onGone={() => onChanged()} onFailed={onFailed} />
       </Group>
 
@@ -220,15 +264,18 @@ const Editing = ({ lens, onChanged, onFailed }: {
       )}
 
       <Group justify="flex-end" align="flex-end">
-        <Group gap="xs">
-          <Text size="sm" c="dimmed">Everything this lens lets through:</Text>
-          {size === undefined ? <Loader size="xs" type="dots" /> : (
-            <Text size="sm" fw={600}
-              title={`${count(size.files)} files over ${count(size.series)} series`}>
-              {size.exact ? '' : '≈ '}{bytes(size.bytes)}
-            </Text>
-          )}
-        </Group>
+        <Stack gap={4} align="flex-end">
+          <Group gap="xs">
+            <Text size="sm" c="dimmed">Everything this lens lets through:</Text>
+            {size === undefined ? <Loader size="xs" type="dots" /> : (
+              <Text size="sm" fw={600}
+                title={`${count(size.files)} files over ${count(size.series)} series`}>
+                {bytes(size.bytes)}
+              </Text>
+            )}
+          </Group>
+          {size !== undefined && size.files > 0 && typeof size.pendingBytes === 'number' && <Downloaded size={size} />}
+        </Stack>
       </Group>
 
       <ForVenue
@@ -452,12 +499,6 @@ const Rule = ({ rule, offered, symbols, problems, onChanged, onRemoved }: {
               label="To" value={rule.to} error={wrong('to')}
               onChanged={to => onChanged({ ...rule, to })}
             />
-            <ActionIcon
-              size="lg" variant="subtle" color="gray" title="Take this rule out"
-              aria-label="Take this rule out" onClick={onRemoved}
-            >
-              <Cross />
-            </ActionIcon>
           </Group>
         </Group>
 
@@ -481,10 +522,17 @@ const Rule = ({ rule, offered, symbols, problems, onChanged, onRemoved }: {
 
         <Instruments
           chosen={rule.instruments ?? []} symbols={symbols} error={wrong('instruments')}
+          buckets={offered.some(one => one.buckets > 0)}
           onChanged={values => onChanged({
             ...rule, instruments: values.length === 0 ? undefined : values,
           })}
         />
+
+        <Group justify="flex-end">
+          <Button size="compact-xs" variant="subtle" color="gray" title="Take this rule out" onClick={onRemoved}>
+            Drop Rule
+          </Button>
+        </Group>
       </Stack>
     </Card>
   );
@@ -538,10 +586,13 @@ const SPANS = {
  * and an unreadable row, so the rest go behind a number that carries them in its
  * tooltip.
  */
-const Instruments = ({ chosen, symbols, error, onChanged }: {
+const Instruments = ({ chosen, symbols, error, buckets, onChanged }: {
   chosen:    string[];
   symbols:   string[];
   error?:    string;
+
+  /** Whether the venue publishes any venue-wide file — Buckets is only offered where it does. */
+  buckets:   boolean;
   onChanged: (chosen: string[]) => void;
 }) => {
   const [query, setQuery] = useState('');
@@ -585,7 +636,7 @@ const Instruments = ({ chosen, symbols, error, onChanged }: {
       />
 
       <Group gap={6} wrap="wrap" pb={6}>
-        {! chosen.includes(BUCKET) && (
+        {buckets && ! chosen.includes(BUCKET) && (
           <Button
             size="compact-xs" variant="subtle" color="teal"
             title={'The venue-wide file: one file holding every instrument of a market, '

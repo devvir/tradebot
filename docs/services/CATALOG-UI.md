@@ -301,6 +301,11 @@ support. An estimate is marked `≈` and its tooltip says how it was reached —
 `POST /lenses/size`, which takes the document rather than a saved name so the
 figure arrives while somebody is still choosing.
 
+**And how much of it is already on disk.** A bar under the total shows the share
+downloaded by weight, not by count — files run from kilobytes to gigabytes, so a
+count says little about the wait. The size is asked again every thirty seconds,
+so the bar moves while a downloader works through the lens.
+
 **`@` is offered as an instrument like any other.** It is the venue-wide file
 covering every instrument of a market, so cold-storing buckets and keeping a few
 instruments on their own for simulation is one rule with both in it. It is offered

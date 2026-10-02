@@ -26,7 +26,7 @@ import type { MarketContents, Publishing, Shape } from '../types';
  * the other never surfaces. What a shape does distinguish is **variants of a
  * dataset**, never the same data under two names.
  */
-export const intoShapes = (rows: readonly Publishing[]): Shape[] => {
+export const intoShapes = (rows: readonly Publishing[], isOpen: (row: Publishing) => boolean = open): Shape[] => {
   const shapes = new Map<string, Shape>();
 
   for (const one of rows) {
@@ -61,7 +61,7 @@ export const intoShapes = (rows: readonly Publishing[]): Shape[] => {
      * It is the same `open` generation asks, so a shape reported open is exactly
      * one this catalog is still requesting keys for, and the two cannot disagree.
      */
-    if (open(one)) found.open = true;
+    if (isOpen(one)) found.open = true;
 
     shapes.set(key, found);
   }

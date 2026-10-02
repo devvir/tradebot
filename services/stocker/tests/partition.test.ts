@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { monthOf } from '../src/dates';
-import { _test_changed as changed, _test_sizeOf as sizeOf } from '../src/scan';
+import { _test_changed as changed } from '../src/scan';
 import { dirOf, fileNameOf, idOf, keyOf, labelOf } from '../src/partition';
 import type { Built, PartitionKey, RawFile, Series } from '../src/types';
 
@@ -190,24 +190,5 @@ describe('staleness', () => {
 
     expect(changed(built, [file()])).toBe(false);
     expect(changed(built, [])).toBe(false);
-  });
-});
-
-describe('readable sizes', () => {
-  it('scales to the unit that keeps the number meaningful', () => {
-    expect(sizeOf(0)).toBe('0 B');
-    expect(sizeOf(912)).toBe('912 B');
-    expect(sizeOf(1024)).toBe('1 KB');
-    expect(sizeOf(18.1 * 1024 * 1024)).toBe('18.1 MB');
-    expect(sizeOf(2.4 * 1024 ** 3)).toBe('2.4 GB');
-    expect(sizeOf(3 * 1024 ** 4)).toBe('3 TB');
-  });
-
-  /**
-   * The case that prompted this: a thin symbol's month rounded to `0 mb` and
-   * said nothing at all about what was being read.
-   */
-  it('never flattens a small input to zero', () => {
-    expect(sizeOf(4096)).not.toMatch(/^0 /);
   });
 });

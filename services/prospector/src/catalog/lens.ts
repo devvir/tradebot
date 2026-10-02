@@ -1,9 +1,9 @@
-import { holds, lastDay, union, without } from './spans';
+import { lastDay, union, without } from './spans';
 import { seriesFor } from './series';
 import { monthTotals, venueIds, venues } from './queries';
 import type { DatabaseSync } from 'node:sqlite';
 import type {
-  Lens, LensDefinition, LensOption, LensProblem, LensRow, LensRule, LensSlice, LensSpan,
+  Lens, LensDefinition, LensOption, LensProblem, LensRow, LensRule, LensSize, LensSlice, LensSpan,
   Publishing,
 } from '../types';
 
@@ -185,10 +185,12 @@ export const lensOptions = (db: DatabaseSync, venue: string): LensOption[] => {
       const key = [series.market, series.dataset, series.variant, series.grain].join('\u0000');
       const had = counts.get(key);
 
-      if (had) had.series++;
+      const bucket = series.symbol === BUCKET ? 1 : 0;
+
+      if (had) { had.series++; had.buckets += bucket; }
       else counts.set(key, {
         market: series.market, dataset: series.dataset,
-        variant: series.variant, grain: series.grain, series: 1,
+        variant: series.variant, grain: series.grain, series: 1, buckets: bucket,
       });
     }
 
@@ -335,7 +337,76 @@ const faultsIn = (
       if (rule.from && rule.to && rule.from > rule.to)
         out.push({ venue, rule: at, field: 'to',
           message: 'The end is before the start.' });
+
+      out.push(...unevenIn(rule, at, offered, venue));
   });
+
+  return out;
+};
+
+/**
+ * Where a rule's finer filters do not hold for everything its markets and
+ * datasets select.
+ *
+ * **A rule groups what it can, and a filter that fits only part of the group
+ * drops the rest without a word.** `monthly` over two datasets of which one is
+ * daily-only matches nothing of that one; `@` over datasets of which one has no
+ * venue-wide file adds nothing there. Each is an empty selection that reads
+ * later as a decision, so it is refused naming what it misses — which is what
+ * says where to split the rule.
+ *
+ * Checked per `(market, dataset, variant)` — the unit a person groups by — so a
+ * kline length without a monthly rendering is named on its own. **Only where a
+ * rule names markets or datasets**: one naming neither means "everywhere this
+ * applies", and asking it to list every dataset would refuse the plain reading.
+ */
+const unevenIn = (
+  rule:    LensRule,
+  at:      number,
+  offered: readonly LensOption[],
+  venue:   string,
+): LensProblem[] => {
+  const grains = rule.grains && rule.grains.length > 0 ? new Set<string>(rule.grains) : null;
+  const wantsBuckets = (rule.instruments ?? []).includes(BUCKET);
+
+  if (! grains && ! wantsBuckets) return [];
+
+  if (! (rule.markets && rule.markets.length > 0) && ! (rule.datasets && rule.datasets.length > 0)) return [];
+
+  const groups = new Map<string, LensOption[]>();
+
+  for (const one of offered) {
+    if (rule.markets && rule.markets.length > 0 && ! rule.markets.includes(one.market)) continue;
+
+    if (rule.datasets && rule.datasets.length > 0 && ! rule.datasets.some(each =>
+      each.dataset === one.dataset && (each.variant === undefined || each.variant === one.variant))) continue;
+
+    const key = [one.market, one.dataset, one.variant].join(' ');
+
+    groups.set(key, [...groups.get(key) ?? [], one]);
+  }
+
+  const out: LensProblem[] = [];
+  const named = (keys: string[]): string => keys.map(one => one.trim()).sort().join(', ');
+
+  if (grains) {
+    const without = [...groups].filter(([, all]) => ! all.some(one => grains.has(one.grain))).map(([key]) => key);
+
+    if (without.length > 0)
+      out.push({ venue, rule: at, field: 'grains',
+        message: `${[...grains].join(', ')} matches nothing of ${named(without)} — split those into a rule of their own.` });
+  }
+
+  if (wantsBuckets) {
+    // Only in the grains the rule takes: a daily venue-wide file is nothing to a monthly rule.
+    const without = [...groups]
+      .filter(([, all]) => ! all.some(one => one.buckets > 0 && (! grains || grains.has(one.grain))))
+      .map(([key]) => key);
+
+    if (without.length > 0)
+      out.push({ venue, rule: at, field: 'instruments',
+        message: `${named(without)} ${without.length === 1 ? 'has' : 'have'} no venue-wide file, so @ selects nothing there — split those into a rule of their own.` });
+  }
 
   return out;
 };
@@ -343,14 +414,11 @@ const faultsIn = (
 /**
  * How much a lens would put on a disk.
  *
- * Counted where the selection is small enough to add up, estimated beyond that
- * from each series' span and what its shape's files weigh — see `COUNTABLE`.
+ * Exact, always: a lens taking whole venues is summed off `rollup_venue`, and
+ * anything narrower off `rollup_series` — see `tally`. Neither reads a file.
  */
-export const lensSize = (
-  db:         DatabaseSync,
-  definition: LensDefinition,
-): { series: number; files: number; bytes: number; exact: boolean } => {
-  let series = 0, files = 0, bytes = 0, exact = true;
+export const lensSize = (db: DatabaseSync, definition: LensDefinition): LensSize => {
+  const total: LensSize = { series: 0, files: 0, bytes: 0, pending: 0, pendingBytes: 0 };
 
   /**
    * **Venue by venue, because the cheapest answer is per venue.** A lens taking a
@@ -359,39 +427,90 @@ export const lensSize = (
    * lets each take the cheapest road.
    */
   for (const venue of venuesIn(db, definition)) {
-    const ids   = venueIds(db, venue);
-    const rules = rulesFor(definition, venue);
+    const one = lensSizeOf(db, definition, venue);
 
-    if (ids.length === 0) continue;
-
-    const slices = slicesFor(db, ids, rules);
-
-    series += slices.length;
-
-    if (slices.length === 0) continue;
-
-    /**
-     * **A venue nothing narrows is already added up.** `month` holds its files
-     * and bytes per month — the same rollup the surveys page reads — so this is
-     * the one path whose figure cannot disagree with what the rest of the catalog
-     * reports about the same venue, and they are the same question.
-     */
-    const whole = wholeVenue(rules);
-
-    if (whole) {
-      for (const row of monthTotals(db, ids, whole)) { files += row.files; bytes += row.bytes; }
-
-      continue;
-    }
-
-    const counted = weigh(db, slices);
-
-    files += counted.files;
-    bytes += counted.bytes;
-    exact  = exact && counted.exact;
+    total.series       += one.series;
+    total.files        += one.files;
+    total.bytes        += one.bytes;
+    total.pending      += one.pending;
+    total.pendingBytes += one.pendingBytes;
   }
 
-  return { series, files, bytes, exact };
+  return total;
+};
+
+/** What a lens puts on a disk from one venue — see `lensSize`. */
+export const lensSizeOf = (db: DatabaseSync, definition: LensDefinition, venue: string): LensSize => {
+  const size: LensSize = { series: 0, files: 0, bytes: 0, pending: 0, pendingBytes: 0 };
+  const ids   = venueIds(db, venue);
+  const rules = rulesFor(definition, venue);
+
+  if (ids.length === 0) return size;
+
+  const slices = slicesFor(db, ids, rules);
+
+  size.series = slices.length;
+
+  if (slices.length === 0) return size;
+
+  /**
+   * **A venue nothing narrows is already added up.** `rollup_venue` holds its files
+   * and bytes per month — the same rollup the surveys page reads — so this is
+   * the one path whose figure cannot disagree with what the rest of the catalog
+   * reports about the same venue, and they are the same question.
+   */
+  const whole = wholeVenue(rules);
+
+  if (whole) {
+    for (const row of monthTotals(db, ids, whole)) {
+      size.files        += row.files;
+      size.bytes        += row.bytes;
+      size.pending      += row.pending;
+      size.pendingBytes += row.pendingBytes;
+    }
+
+    return size;
+  }
+
+  return { ...tally(db, slices), series: slices.length };
+};
+
+/**
+ * The first and last month a lens holds files for at one venue, exactly — off
+ * `rollup_venue` where the lens takes the whole venue, and off `rollup_series`
+ * for the series it selects otherwise. Neither reads a file.
+ */
+export const lensMonthsOf = (
+  db:         DatabaseSync,
+  definition: LensDefinition,
+  venue:      string,
+): { first: string | null; last: string | null } => {
+  const ids   = venueIds(db, venue);
+  const rules = rulesFor(definition, venue);
+  const whole = wholeVenue(rules);
+
+  if (whole) {
+    const held = monthTotals(db, ids, whole).filter(row => row.files > 0);
+
+    return { first: held[0]?.month ?? null, last: held.at(-1)?.month ?? null };
+  }
+
+  const read = db.prepare(
+    `SELECT MIN(month) AS first, MAX(month) AS last FROM rollup_series
+      WHERE series_id = ? AND month >= ? AND month <= ? AND files > 0`);
+
+  let first: string | null = null, last: string | null = null;
+
+  for (const slice of slicesFor(db, ids, rules))
+    for (const span of slice.spans) {
+      const one = read.get(slice.seriesId, span.from ?? '000000', span.to ?? '999999') as
+        { first: string | null; last: string | null };
+
+      if (one.first !== null && (first === null || one.first < first)) first = one.first;
+      if (one.last !== null && (last === null || one.last > last)) last = one.last;
+    }
+
+  return { first, last };
 };
 
 /** Whether a slug is one a consumer can pass anywhere without quoting it. */
@@ -401,12 +520,6 @@ export const lensNameIsSound = (slug: string): boolean => /^[a-z0-9][a-z0-9-]{1,
 
 /** A lens that lets nothing through, which is what a new one starts as. */
 const EMPTY: LensDefinition = { format: 1, venues: {} };
-
-/** Series below which a venue's files are counted rather than estimated. */
-const COUNTABLE = 400;
-
-/** Series read in full, per shape, to weigh the rest of that shape against. */
-const PER_SHAPE = 6;
 
 const SINGULAR = { markets: 'market', grains: 'grain' } as const;
 
@@ -499,8 +612,8 @@ const named = (values: readonly string[] | undefined, one: string): boolean =>
 /**
  * The months a venue's rules bound it to, where they narrow nothing else.
  *
- * **Null unless the venue is taken whole**, because the rollup holds one row per
- * month and nothing finer — it cannot be asked about a market or a dataset. Where
+ * **Null unless the venue is taken whole**, because `rollup_venue` holds one row
+ * per month and nothing finer — it cannot be asked about a market or a dataset. Where
  * a lens takes everything between two dates, that row *is* the answer.
  */
 const wholeVenue = (rules: readonly LensRule[]): { from?: string; to?: string } | null => {
@@ -538,70 +651,27 @@ const shapeOf = (series: Publishing): string =>
   [series.market, series.dataset, series.variant, series.grain].join('\u0000');
 
 /**
- * What these slices hold: counted where that is affordable, weighed otherwise.
- *
- * **Weighed per shape, never across them.** A venue's series sit in discovery
- * order, so neighbours are the same shape — and a sample taken positionally over
- * the whole set is two or three shapes pretending to speak for twenty. It is
- * worse on a catalog still filling, where most series hold no files yet: where
- * the sample lands decides the answer, and the same lens read twice differed by
- * three hundred fold.
- *
- * So each shape is sampled against its own series, and a shape small enough is
- * not sampled at all.
+ * What these slices hold, summed off `rollup_series` — exact at any selection,
+ * without reading a file. A slice's spans are months, which is the rollup's own
+ * grain, so each span is one indexed range of one series.
  */
-const weigh = (db: DatabaseSync, slices: readonly LensSlice[]): {
-  files: number; bytes: number; exact: boolean;
-} => {
-  const rows = db.prepare(
-    `SELECT date, size FROM file WHERE series_id = ? AND existence <> 'absent'`);
+const tally = (db: DatabaseSync, slices: readonly LensSlice[]): Omit<LensSize, 'series'> => {
+  const read = db.prepare(
+    `SELECT COALESCE(SUM(files), 0) AS files, COALESCE(SUM(bytes), 0) AS bytes,
+            COALESCE(SUM(pending), 0) AS pending, COALESCE(SUM(pending_bytes), 0) AS pendingBytes
+       FROM rollup_series WHERE series_id = ? AND month >= ? AND month <= ?`);
 
-  const one = (slice: LensSlice) => {
-    let files = 0, bytes = 0;
+  const total = { files: 0, bytes: 0, pending: 0, pendingBytes: 0 };
 
-    for (const row of rows.all(slice.seriesId) as { date: string; size: number | null }[])
-      if (holds(slice.spans, row.date)) { files++; bytes += row.size ?? 0; }
+  for (const slice of slices)
+    for (const span of slice.spans) {
+      const one = read.get(slice.seriesId, span.from ?? '000000', span.to ?? '999999') as typeof total;
 
-    return { files, bytes };
-  };
+      total.files        += one.files;
+      total.bytes        += one.bytes;
+      total.pending      += one.pending;
+      total.pendingBytes += one.pendingBytes;
+    }
 
-  if (slices.length <= COUNTABLE) {
-    let files = 0, bytes = 0;
-
-    for (const slice of slices) { const had = one(slice); files += had.files; bytes += had.bytes; }
-
-    return { files, bytes, exact: true };
-  }
-
-  const shapes = new Map<string, LensSlice[]>();
-
-  for (const slice of slices) {
-    const had = shapes.get(slice.shape) ?? [];
-
-    had.push(slice);
-    shapes.set(slice.shape, had);
-  }
-
-  let files = 0, bytes = 0;
-
-  for (const mine of shapes.values()) {
-    /**
-     * **Spread across the shape rather than taken off its front**, since the
-     * first series of a shape are the instruments it was discovered for — the
-     * oldest and the busiest.
-     */
-    const step   = Math.max(1, Math.floor(mine.length / PER_SHAPE));
-    const sample = mine.filter((_, at) => at % step === 0).slice(0, PER_SHAPE);
-
-    let some = 0, weight = 0;
-
-    for (const slice of sample) { const had = one(slice); some += had.files; weight += had.bytes; }
-
-    const scale = mine.length / sample.length;
-
-    files += Math.round(some * scale);
-    bytes += Math.round(weight * scale);
-  }
-
-  return { files, bytes, exact: false };
+  return total;
 };

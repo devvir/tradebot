@@ -246,6 +246,9 @@ export interface LensOption {
   variant: string;
   grain:   string;
   series:  number;
+
+  /** Of those, the venue-wide files — what Buckets selects. */
+  buckets: number;
 }
 
 /** Why a lens cannot be stored, located at the rule it belongs to. */
@@ -256,11 +259,12 @@ export interface LensProblem {
   message: string;
 }
 
-/** How much a lens would put on a disk. */
+/** How much a lens would put on a disk, and how much of it is still to download. */
 export interface LensSize {
-  series: number;
-  files:  number;
-  bytes:  number;
-  exact:  boolean;
+  series:       number;
+  files:        number;
+  bytes:        number;
+  pending:      number;
+  pendingBytes: number;
 }
 

@@ -3,8 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  dropLens, editLens, lensNamed, lensOptions, lensSize, lenses, problemsWith, putFiles, putLens,
-  putVenue, recordSeries, resolve,
+  dropLens, editLens, lensNamed, lensOptions, lensSize, lenses, markDownloaded, problemsWith, putFiles, putLens,
+  putVenue, recordSeries, resolve, venueIdOf,
 } from '../src/catalog';
 import { openCatalog } from '../src/database';
 import type { LensDefinition } from '../src/types';
@@ -328,6 +328,48 @@ describe('why a lens is refused', () => {
     ] }))).toEqual([]);
   });
 
+  /**
+   * A finer filter that fits only part of what a rule groups drops the rest in
+   * silence; refusing it, naming what it misses, is what says where to split.
+   */
+  it('names the datasets a grain matches nothing of', () => {
+    expect(problemsWith(db, lens({ binance: [
+      { effect: 'include', markets: ['spot'], datasets: [{ dataset: 'trades' }, { dataset: 'klines' }], grains: ['monthly'] },
+    ] }))).toMatchObject([{ field: 'grains', message: expect.stringContaining('spot klines 1h, spot klines 1m') }]);
+
+    expect(problemsWith(db, lens({ binance: [
+      { effect: 'include', datasets: [{ dataset: 'trades' }], markets: ['spot'], grains: ['monthly'] },
+    ] }))).toEqual([]);
+  });
+
+  it('names the datasets with no venue-wide file to give @', () => {
+    expect(problemsWith(db, lens({ binance: [
+      { effect: 'include', datasets: [{ dataset: 'trades' }], instruments: ['@'] },
+    ] }))).toMatchObject([{ field: 'instruments', message: expect.stringContaining('spot trades') }]);
+
+    expect(problemsWith(db, lens({ binance: [
+      { effect: 'include', markets: ['perp'], datasets: [{ dataset: 'trades' }], instruments: ['@'] },
+    ] }))).toEqual([]);
+  });
+
+  /** perp trades' venue-wide file is daily, so a monthly rule's @ selects nothing of it. */
+  it('weighs @ only in the grains the rule takes', () => {
+    recordSeries(db, venueIdOf(db, 'binance'), { market: 'perp', dataset: 'trades', variant: '', symbol: 'ETHUSDT',
+      pattern: 'perp/trades/monthly/{SYMBOL}/{YYYY}{MM}.zip' });
+
+    const rule = (grain: 'daily' | 'monthly') => lens({ binance: [
+      { effect: 'include', markets: ['perp'], datasets: [{ dataset: 'trades' }], grains: [grain], instruments: ['@'] },
+    ] });
+
+    expect(problemsWith(db, rule('daily'))).toEqual([]);
+    expect(problemsWith(db, rule('monthly'))).toMatchObject([{ field: 'instruments' }]);
+  });
+
+  /** Naming no markets or datasets means "wherever this applies", which is not a fault. */
+  it('leaves a rule alone that groups nothing', () => {
+    expect(problemsWith(db, lens({ binance: [{ effect: 'include', grains: ['monthly'] }] }))).toEqual([]);
+  });
+
   it('refuses a range that ends before it starts', () => {
     expect(problemsWith(db, lens({ binance: [
       { effect: 'include', from: '202101', to: '202012' },
@@ -341,6 +383,8 @@ describe('what a venue offers a rule', () => {
 
     expect(offered).toHaveLength(6);
     expect(offered.find(one => one.dataset === 'trades' && one.market === 'perp')?.series).toBe(2);
+    expect(offered.find(one => one.dataset === 'trades' && one.market === 'perp')?.buckets).toBe(1);
+    expect(offered.find(one => one.dataset === 'trades' && one.market === 'spot')?.buckets).toBe(0);
   });
 });
 
@@ -357,7 +401,26 @@ describe('what it would cost', () => {
     ]);
 
     expect(lensSize(db, lens({ binance: [{ effect: 'include', datasets: [{ dataset: 'books' }] }] })))
-      .toEqual({ series: 1, files: 2, bytes: 30, exact: true });
+      .toEqual({ series: 1, files: 2, bytes: 30, pending: 2, pendingBytes: 30 });
+  });
+
+  /** Progress comes from the same files as the total, on either road. */
+  it('says how much of it is still to download', async () => {
+    const books = lens({ binance: [{ effect: 'include', datasets: [{ dataset: 'books' }] }] });
+    const id    = [...resolve(db, books).values()].flat()[0]!.seriesId;
+
+    await putFiles(db, [
+      { venueId: 1, path: 'a', date: '20240101', size: 10, etag: 'e', modified: null,
+        existence: 'confirmed', seenAt: 'T1', seriesId: id },
+      { venueId: 1, path: 'b', date: '20240102', size: 20, etag: 'e', modified: null,
+        existence: 'confirmed', seenAt: 'T1', seriesId: id },
+    ]);
+
+    markDownloaded(db, [{ venueId: 1, path: 'a' }], 'T2');
+
+    expect(lensSize(db, books)).toMatchObject({ files: 2, bytes: 30, pending: 1, pendingBytes: 20 });
+    expect(lensSize(db, lens({ binance: [{ effect: 'include' }] })))
+      .toMatchObject({ files: 2, bytes: 30, pending: 1, pendingBytes: 20 });
   });
 
   /** The date bound is part of the price, not applied afterwards. */
@@ -414,6 +477,6 @@ describe('what it would cost', () => {
   });
 
   it('is nothing where the lens selects nothing', () => {
-    expect(lensSize(db, lens({}))).toEqual({ series: 0, files: 0, bytes: 0, exact: true });
+    expect(lensSize(db, lens({}))).toEqual({ series: 0, files: 0, bytes: 0, pending: 0, pendingBytes: 0 });
   });
 });

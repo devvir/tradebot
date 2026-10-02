@@ -1,5 +1,6 @@
 import { stat } from 'node:fs/promises';
 import { logger } from '@devvir/service-kit';
+import { sizeOf } from '@tradebot/utils';
 import type { DuckDBConnection } from '@duckdb/node-api';
 import { buildPartition } from './build';
 import config from './config';
@@ -308,27 +309,6 @@ const changed = (record: Built, inputs: RawFile[]): boolean => {
 /** One decimal place — these are for reading, not for arithmetic. */
 const round = (n: number): number => Math.round(n * 10) / 10;
 
-const UNITS = ['B', 'KB', 'MB', 'GB', 'TB'] as const;
-
-/**
- * A byte count at a scale a person can read: `912 B`, `18.1 MB`, `2.4 GB`.
- *
- * Fixing on one unit makes most lines useless — a month of a thin symbol
- * rounds to `0 MB` while a busy one runs to four figures. Binary steps rather
- * than decimal, so the number matches what `ls -lah` says about the same file.
- */
-const sizeOf = (bytes: number): string => {
-  let scaled = bytes;
-  let unit   = 0;
-
-  while (scaled >= 1024 && unit < UNITS.length - 1) {
-    scaled /= 1024;
-    unit++;
-  }
-
-  return `${unit === 0 ? scaled : round(scaled)} ${UNITS[unit]}`;
-};
-
 /** `YYYY-MM` of the month before this one, in UTC. */
 const lastClosedMonth = (): string => {
   const now = new Date();
@@ -366,4 +346,3 @@ export const _test_wanted           = wanted;
 export const _test_changed          = changed;
 export const _test_reopened         = reopened;
 export const _test_lastClosedMonth  = lastClosedMonth;
-export const _test_sizeOf           = sizeOf;

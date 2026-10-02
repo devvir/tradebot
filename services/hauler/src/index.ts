@@ -1,132 +1,107 @@
 import { logger } from '@devvir/service-kit';
-import { haulVenue } from './venue';
-import { constrain } from './constrain';
-import { planFor } from './plan';
-import { mount } from './api';
-import { wants } from './wanted';
+import type { Service } from '@devvir/service-kit';
+import { venues } from './catalog';
+import { sweepPartials } from './store';
+import { walkVenue } from './venue';
 import SK from './service';
 import config from './config';
-import type { ExpressServerHandle, Service } from '@devvir/service-kit';
-import type { Plan, Want } from './types';
 
 /**
- * Hauler brings the catalog to disk, and does nothing else.
+ * Brings catalogued venue files to disk, under canonical names.
  *
- * **It does not discover.** Prospector knows what every venue publishes; hauler
- * asks for a list of URLs and fetches them. Whether those URLs follow an obvious
- * pattern or look random from here is not its business, and it never learns how
- * a venue structures its archive — no prefixes, no naming rules, no tree
- * walking.
+ * Prospector establishes what every venue publishes; hauler walks each venue as
+ * a bucket the catalog serves — only what is still owed, through a lens where
+ * one is configured — fetches what it lists, and reports. It never discovers,
+ * never learns how a venue structures its archive, and never names a file:
+ * each key is where its file goes.
  *
- * **It speaks one vocabulary and holds no translation.** Markets, datasets,
- * variants and instruments arrive from the catalog already canonical, because
- * turning a venue's own words into them is prospector's job and stops inside
- * prospector's adapters. Hauler asks in that vocabulary and files what comes
- * back under it.
- *
- * **It does not mirror the venue's hierarchy**, which is the largest break with
- * the collector it replaces. What a file *is* decides where it lands: venue,
- * market, dataset with its variants, month, symbol. A canonical archive is one a
- * reader can walk without knowing which venue served it.
- *
- * **Every venue runs on its own.** They are unrelated hosts with unrelated
- * limits, and sequencing them would make every venue wait behind the largest.
+ * **Every venue walks on its own loop**, and how soon it walks again depends on
+ * the last walk: soon after one that found work, since a backfill in progress
+ * keeps cataloguing more; later after one that found nothing, since new files
+ * may be landing outside the lens and asking often would only list nothing.
  */
 const main = async (service: Service): Promise<void> => {
-  /**
-   * **Routes first, then bind.** The server is built by the plugin but not
-   * started, because `start()` appends the one complete error handler — so
-   * anything mounted after it would sit behind the handler meant to be last.
-   */
-  const api = service.servers.get() as ExpressServerHandle;
+  service.on('shutdown', stopAfterFlight);
 
-  mount(api.app, config.catalogToken);
+  const swept = await sweepPartials(config.archivesDir);
 
-  await api.start();
+  if (swept > 0) logger.info({ swept, archives: config.archivesDir }, 'Removed unfinished downloads');
 
-  logger.info({ port: config.port }, 'Shopping list API listening');
+  const names = config.venues.length > 0 ? config.venues : await untilAnswered(venues);
 
-  /**
-   * **`wants()` reads the standing intention; `constrain()` takes this
-   * deployment's slice of it.** The two stay separate because `GET /wanted`
-   * reads the same list and must go on showing the whole of it — narrowing it
-   * here would make the shopping list say something different depending on
-   * which deployment answered.
-   */
-  const list = constrain(wants(config.venues), config);
+  logger.info({ venues: names, lens: config.lens || '(none — every file)', archives: config.archivesDir },
+    'Hauling');
 
-  /**
-   * **An empty list is a state, not a failure.** The API is up, so the answer
-   * to "why is nothing downloading" is one request away — and adding a want
-   * needs no restart, since the next sweep reads the list again.
-   */
-  if (list.length === 0) {
-    logger.warn({ venues: config.venues, markets: config.markets, datasets: config.datasets,
-      from: config.from, to: config.to },
-      'Nothing is wanted yet, or this deployment\'s env narrows it to nothing — add a want with PUT /wanted');
+  hauling = Promise.allSettled(names.map(loop));
 
-    return;
-  }
+  await hauling;
 
-  /**
-   * **Resolved once, before any venue starts.** A want says what it needs; what
-   * that means at this venue today is worked out against the catalog — see
-   * `plan.ts` — so a want naming nothing anybody publishes is reported at the
-   * top rather than discovered a month at a time.
-   */
-  const plans  = await resolve(list);
-  const venues = [...new Set(plans.map(plan => plan.venue))].sort();
-
-  if (plans.length === 0) {
-    logger.warn({ wants: list.length },
-      'Nothing wanted resolves to anything these venues publish '
-      + '— check the names against GET /venues/:venue/shapes');
-
-    return;
-  }
-
-  logger.info({ venues, wants: list.length, plans: plans.length,
-    archives: config.archivesDir }, 'Hauling');
-
-  /**
-   * **One worker per venue, and nothing joins them.** A venue that finishes has
-   * finished; a venue that is stuck on a partition the catalog and the disk
-   * disagree about goes on asking about it every few minutes, which is the
-   * correct behaviour and a visible one.
-   */
-  await Promise.allSettled(venues.map(venue => haulVenue(venue, plans, () => stopping)));
-
-  logger.info({ venues }, 'Every venue has run out of work');
+  logger.info('Every venue has stopped');
 };
 
-/**
- * Every want, turned into the listings it actually means.
- *
- * **One want can be several plans or none**, because it states a requirement
- * rather than an answer: asking for klines without naming an interval asks for
- * every interval the venue has, and asking for a book depth nobody publishes
- * asks for nothing at all. Both are reported rather than assumed — see
- * `plan.ts`.
- *
- * Resolved venue by venue rather than in parallel: it is a handful of requests
- * against rows the catalog holds in memory, and doing it before any fetching
- * starts is what puts a mistake in the first screen of the log.
- */
-const resolve = async (list: readonly Want[]): Promise<Plan[]> => {
-  const plans: Plan[] = [];
+/** Walk a venue, wait, and walk it again, until the service stops. */
+const loop = async (venue: string): Promise<void> => {
+  while (! stopping) {
+    let found = false;
 
-  for (const want of list) plans.push(...await planFor(want));
+    try {
+      const walked = await walkVenue(venue, () => stopping);
 
-  return plans;
+      found = walked.progressed > 0;
+
+      logger.info({ venue, ...walked, nextInMinutes: (found ? FOUND_MS : QUIET_MS) / 60_000 }, 'Walk finished');
+    } catch (err) {
+      logger.error({ err, venue }, 'Walk failed — trying again later');
+    }
+
+    await rest(found ? FOUND_MS : QUIET_MS);
+  }
+};
+
+/** After a walk that brought files to disk: the catalog is likely still adding more. */
+const FOUND_MS = 5 * 60_000;
+
+/** After a walk that found nothing to do. */
+const QUIET_MS = 30 * 60_000;
+
+/** Ask until the catalog answers, a minute apart — hauler has nothing to do without it. */
+const untilAnswered = async <T>(ask: () => Promise<T>): Promise<T> => {
+  for (;;) {
+    try {
+      return await ask();
+    } catch (err) {
+      logger.warn({ err }, 'The catalog is not answering yet — asking again in a minute');
+
+      await rest(60_000);
+    }
+  }
+};
+
+/** Wait, waking at once when the service is asked to stop. */
+const rest = async (ms: number): Promise<void> => {
+  const until = Date.now() + ms;
+
+  while (! stopping && Date.now() < until) await new Promise(done => setTimeout(done, Math.min(1_000, until - Date.now())));
 };
 
 let stopping = false;
 
-for (const signal of ['SIGINT', 'SIGTERM'] as const)
-  process.once(signal, () => {
-    stopping = true;
+/** Every venue's loop, once started — what a shutdown waits on. */
+let hauling: Promise<unknown> = Promise.resolve();
 
-    logger.info('Stopping after the file in flight — nothing partial is ever left named');
-  });
+/**
+ * **A shutdown waits for the files in flight.** No new file is taken, the ones
+ * already downloading finish and are reported, and only then does the process
+ * exit — so a stop leaves no `.part` behind and nothing done goes unreported.
+ * How long that may take is the compose file's `stop_grace_period`.
+ */
+const stopAfterFlight = async (): Promise<void> => {
+  stopping = true;
+
+  logger.info('Stopping after the files in flight');
+
+  await hauling;
+};
+
 
 SK.run(main);

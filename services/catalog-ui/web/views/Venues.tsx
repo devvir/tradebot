@@ -1,12 +1,12 @@
 import { Anchor } from '@mantine/core';
-import { catalog, useAsk } from '../api';
+import { catalogLensed, lensed, useAsk } from '../api';
 import { Dim, LastSurvey, Table, Waiting, bytes, count } from './Table';
 import { linkTo } from '../App';
 import type { Venue } from '../types';
 
 /** Every venue the catalog can be asked about, and how far each has got. */
-export const Venues = () => {
-  const asked = useAsk<{ items: Venue[] }>('/contents/venues', catalog);
+export const Venues = ({ lens }: { lens?: string }) => {
+  const asked = useAsk<{ items: Venue[] }>(lensed('/contents/venues', lens), catalogLensed);
 
   return (
     <Waiting asked={asked}>

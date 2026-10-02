@@ -1,5 +1,5 @@
 import { Anchor, Code, Group, Stack } from '@mantine/core';
-import { catalog, useAsk } from '../api';
+import { catalogLensed, lensed, useAsk } from '../api';
 import { Dim, Table, Waiting, count } from './Table';
 import { SymbolsPanel } from './Symbols';
 import { linkTo } from '../App';
@@ -12,9 +12,9 @@ import type { DatasetContents, MarketContents } from '../types';
  * a venue lists is a question somebody has *while* reading the markets table,
  * so answering it by navigating away takes the context with it.
  */
-export const VenueView = ({ venue }: { venue: string }) => {
+export const VenueView = ({ venue, lens }: { venue: string; lens?: string }) => {
   const asked = useAsk<{ items: MarketContents[] }>(
-    `/contents/venues/${encodeURIComponent(venue)}`, catalog);
+    lensed(`/contents/venues/${encodeURIComponent(venue)}`, lens), catalogLensed);
 
   return (
     <Waiting asked={asked}>
@@ -31,7 +31,7 @@ export const VenueView = ({ venue }: { venue: string }) => {
             ]}
           />
 
-          <SymbolsPanel venue={venue} />
+          <SymbolsPanel venue={venue} lens={lens} />
         </Stack>
       )}
     </Waiting>

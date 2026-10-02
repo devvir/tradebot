@@ -1,6 +1,6 @@
 import { lensNamed, resolve } from './lens';
-import type { DatabaseSync } from 'node:sqlite';
-import type { HeldScope, LensScope } from '../types';
+import type { DatabaseSync, StatementSync } from 'node:sqlite';
+import type { HeldScope, LensScope, LensSpan, LensWindow, Publishing } from '../types';
 
 /**
  * A lens as every query applies it: for each venue, the series it lets through
@@ -33,7 +33,116 @@ export const lensScope = (db: DatabaseSync, slug: string): LensScope | null => {
   return scope;
 };
 
+/**
+ * Series as a lens sees them: only those it lets through, each with its first
+ * and last file **inside the lens's dates**, and none with no file inside them.
+ *
+ * **Exact where it is asked to be.** A series the lens cuts then reports the
+ * oldest and newest file it actually holds within the lens — one indexed read
+ * per such series — rather than the lens's own edge, which would claim data up
+ * to a date nothing was published for. Without `exact` the dates are clamped to
+ * the lens instead, which costs nothing and is what a whole venue's summary
+ * can afford: tens of thousands of series, where the edges only move a month.
+ *
+ * **A series with no file at all is not in the lens**, whatever its pattern
+ * says: a lens is what is on offer, and a seeded series nothing has been found
+ * for offers nothing. The rows are copies; the registry's own are never touched.
+ */
+export const throughLens = (
+  db:    DatabaseSync,
+  rows:  readonly Publishing[],
+  spans: ReadonlyMap<number, readonly LensSpan[]>,
+  exact = true,
+): Publishing[] => {
+  const out: Publishing[] = [];
+  const read = bounds(db);
+
+  for (const row of rows) {
+    const held = spans.get(row.id!);
+
+    if (! held || row.first === null) continue;
+
+    const { from, to } = windowOf(held);
+    const first = row.first, last = row.last;
+
+    const cut = first !== null && last !== null && (
+      (from !== null && first < startAt(from, first.length))
+      || (to !== null && last > endAt(to, last.length)));
+
+    if (! cut) {
+      out.push(row);
+
+      continue;
+    }
+
+    if (! exact) {
+      const lo = from === null || first! >= startAt(from, first!.length) ? first! : startAt(from, first!.length);
+      const hi = to === null || last! <= endAt(to, last!.length) ? last! : endAt(to, last!.length);
+
+      if (lo <= hi) out.push({ ...row, first: lo, last: hi });
+
+      continue;
+    }
+
+    const found = read.get(row.id!,
+      from === null ? '' : startAt(from, first!.length),
+      to === null ? '99999999999999' : endAt(to, last!.length)) as { first: string | null; last: string | null };
+
+    if (found.first === null) continue;
+
+    out.push({ ...row, first: found.first, last: found.last });
+  }
+
+  return out;
+};
+
+/**
+ * Whether a lens still reaches the current month for a series, which is what
+ * keeps a shape open under it: one ending in the past has stopped, as far as
+ * whoever looks through it is concerned, however much the venue still writes.
+ */
+export const reachesNow = (spans: readonly LensSpan[]): boolean => {
+  const { to } = windowOf(spans);
+
+  return to === null || to >= new Date().toISOString().slice(0, 7).replace('-', '');
+};
+
 // ── Internals ─────────────────────────────────────────────────────────────────
+
+/** The oldest and newest file of a series between two stamps, read off its index. */
+const bounds = (db: DatabaseSync): StatementSync => {
+  let held = BOUNDS.get(db);
+
+  if (! held) {
+    held = db.prepare(`SELECT MIN(date) AS first, MAX(date) AS last FROM file
+                        WHERE series_id = ? AND date >= ? AND date <= ? AND existence = 'confirmed'`);
+    BOUNDS.set(db, held);
+  }
+
+  return held;
+};
+
+const BOUNDS = new WeakMap<DatabaseSync, StatementSync>();
+
+/** The outermost dates of a series' spans; null where any of them is open that way. */
+const windowOf = (spans: readonly LensSpan[]): LensWindow => ({
+  from: spans.some(one => one.from === null) ? null : spans.reduce((min, one) => (one.from! < min ? one.from! : min), spans[0]!.from!),
+  to:   spans.some(one => one.to === null) ? null : spans.reduce((max, one) => (one.to! > max ? one.to! : max), spans[0]!.to!),
+});
+
+/** The first period of a month, at a stamp's width: `202001`, `20200101`, `2020010100`… */
+const startAt = (month: string, width: number): string =>
+  width <= 6 ? month : `${month}01`.padEnd(width, '0');
+
+/** The last period of a month, at a stamp's width: `202001`, `20200131`, `2020013123`… */
+const endAt = (month: string, width: number): string => {
+  if (width <= 6) return month;
+
+  const days = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(4, 6)), 0)).getUTCDate();
+
+  return `${month}${String(days).padStart(2, '0')}${'2359'.slice(0, width - 8)}`;
+};
+
 
 const KEEP_MS = 60_000;
 

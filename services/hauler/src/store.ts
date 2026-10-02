@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, rename, stat, unlink } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { mkdir, opendir, rename, stat, unlink, utimes } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
@@ -46,9 +46,79 @@ export const discard = async (path: string): Promise<void> => {
   await unlink(`${path}.part`).catch(() => undefined);
 };
 
-/** Remove a committed file that turned out not to be what it claimed to be. */
-export const remove = async (path: string): Promise<void> => {
-  await unlink(path).catch(() => undefined);
+/**
+ * Delete every `.part` under the archive, and answer how many there were.
+ *
+ * **Run once, before anything is fetched.** A partial is never a file — it only
+ * becomes one by being verified and renamed — so whatever is left of one is a
+ * download that did not finish: a stop that outlived its grace period, a crash,
+ * a pulled plug. Nothing reads it and the next walk fetches the file again.
+ * `.bak` files are not touched: they are whole files that disagreed, kept for a
+ * person to read.
+ *
+ * Walked a directory at a time, never listed whole: the archive runs to
+ * millions of files.
+ */
+export const sweepPartials = async (root: string): Promise<number> => {
+  let swept = 0;
+
+  const walk = async (dir: string): Promise<void> => {
+    let entries;
+
+    try {
+      entries = await opendir(dir);
+    } catch {
+      return;
+    }
+
+    for await (const entry of entries) {
+      const path = join(dir, entry.name);
+
+      if (entry.isDirectory()) await walk(path);
+      else if (entry.isFile() && entry.name.endsWith('.part')) {
+        await unlink(path).catch(() => undefined);
+        swept++;
+      }
+    }
+  };
+
+  await walk(root);
+
+  return swept;
+};
+
+/**
+ * Mark a file as seen by this pass: its modification time becomes now.
+ *
+ * **Deliberately overwriting what was there.** After a pass, every file the
+ * catalog accounts for carries that pass's date, so a file still showing an
+ * older one is a file nothing listed — misfiled, withdrawn, or junk — and finds
+ * itself by its date alone.
+ */
+export const touch = async (path: string): Promise<void> => {
+  const now = new Date();
+
+  await utimes(path, now, now);
+};
+
+/**
+ * Move a file that disagrees with the catalog out of the way, to
+ * `<name>.bak` — or `.bak.2`, `.bak.3` where that is taken — beside it.
+ *
+ * **Kept, never deleted**: a file that differs is either a real update at the
+ * venue, which is rare, or a mistake of ours, and either is worth reading before
+ * anything is thrown away.
+ */
+export const backup = async (path: string): Promise<string> => {
+  for (let n = 1; ; n++) {
+    const aside = n === 1 ? `${path}.bak` : `${path}.bak.${n}`;
+
+    if (await measure(aside) === null) {
+      await rename(path, aside);
+
+      return aside;
+    }
+  }
 };
 
 /**

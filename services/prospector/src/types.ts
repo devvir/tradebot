@@ -1653,6 +1653,12 @@ export interface LensSpan {
   to:   string | null;
 }
 
+/** The outermost dates of a series' spans under a lens — null where open that way. */
+export interface LensWindow {
+  from: string | null;
+  to:   string | null;
+}
+
 /** What a lens resolves to: the series it lets through, and when. */
 export interface LensSlice {
   seriesId: number;
@@ -1679,6 +1685,9 @@ export interface LensOption {
   variant: string;
   grain:   Grain;
   series:  number;
+
+  /** Of those, the venue-wide files — the series an `@` instrument selects. */
+  buckets: number;
 }
 
 /** A `lens` row as the table holds it. */
@@ -1700,17 +1709,20 @@ export interface LensRow {
  * lens should let through is this one — and it has to answer while somebody is
  * still choosing.
  *
- * `exact` says which of the two ways it was answered: counted from the files the
- * catalog holds, or estimated from each series' span and what its shape's files
- * weigh on average. A venue-wide lens is millions of rows to add up and is always
- * estimated; a handful of instruments is counted.
+ * Always exact: summed off the rollups, never off the files themselves.
  */
 export interface LensSize {
-  /** Series the lens selects — the one figure that is always exact. */
-  series: number;
-  files:  number;
-  bytes:  number;
-  exact:  boolean;
+  /** Series the lens selects. */
+  series:       number;
+  files:        number;
+  bytes:        number;
+
+  /**
+   * Of those, the files not yet downloaded, and what they weigh — the lens's
+   * progress, and from the same road as the totals, so the two never disagree.
+   */
+  pending:      number;
+  pendingBytes: number;
 }
 
 /**
@@ -2246,6 +2258,7 @@ export interface MonthTotals {
  * which are simply two keys.
  */
 export interface FileState {
+  seriesId:   number;
   month:      string;
   confirmed:  boolean;
   downloaded: boolean;
@@ -2268,6 +2281,17 @@ export interface FileEffect {
 /** How much a batch moves one venue-month's counters. Signed. */
 export interface MonthDelta {
   venueId:      number;
+  month:        string;
+  files:        number;
+  bytes:        number;
+  pending:      number;
+  pendingBytes: number;
+  withdrawn:    number;
+}
+
+/** How much a batch moves one series-month's counters. Signed. */
+export interface SeriesMonthDelta {
+  seriesId:     number;
   month:        string;
   files:        number;
   bytes:        number;

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Code, Group, Select, Stack, Text } from '@mantine/core';
-import { catalog, useAsk } from '../api';
+import { catalogLensed, lensed, useAsk } from '../api';
 import { Dim, Span, Table, Waiting, count } from './Table';
 import { SymbolsPanel } from './Symbols';
 import type { Shape } from '../types';
@@ -13,9 +13,9 @@ import type { Shape } from '../types';
  * `500,incremental` to 2025-08-20 and `200,incremental` from the 21st — and
  * seeing that is how somebody decides to fetch both rather than half.
  */
-export const MarketView = ({ venue, market }: { venue: string; market: string }) => {
+export const MarketView = ({ venue, market, lens }: { venue: string; market: string; lens?: string }) => {
   const at    = `/contents/venues/${encodeURIComponent(venue)}/markets/${encodeURIComponent(market)}`;
-  const asked = useAsk<{ items: Shape[] }>(at, catalog);
+  const asked = useAsk<{ items: Shape[] }>(lensed(at, lens), catalogLensed);
 
   return (
     <Stack gap="xl">
@@ -23,7 +23,7 @@ export const MarketView = ({ venue, market }: { venue: string; market: string })
         {({ items }) => <Shapes venue={venue} market={market} shapes={items} />}
       </Waiting>
 
-      <SymbolsPanel venue={venue} market={market} />
+      <SymbolsPanel venue={venue} market={market} lens={lens} />
     </Stack>
   );
 };

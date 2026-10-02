@@ -8,6 +8,8 @@ export {
   lensNamed,
   lensOptions,
   lensSize,
+  lensSizeOf,
+  lensMonthsOf,
   lenses,
   problemsWith,
   putLens,

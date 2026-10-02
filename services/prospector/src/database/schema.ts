@@ -277,8 +277,9 @@ CREATE INDEX IF NOT EXISTS run_scope ON run (venue_id, scope, completed);
 ${CART_SCHEMA}
 ${LENS_SCHEMA}
 
--- Per venue-month totals, so quantities are read rather than aggregated.
-CREATE TABLE IF NOT EXISTS month (
+-- Rollups: totals over \`file\`, kept in step with it so quantities are read
+-- rather than aggregated. Per venue and month, for the constant questions.
+CREATE TABLE IF NOT EXISTS rollup_venue (
   venue_id      INTEGER NOT NULL,
   month         TEXT    NOT NULL,           -- yyyymm
   files         INTEGER NOT NULL DEFAULT 0, -- confirmed
@@ -290,7 +291,19 @@ CREATE TABLE IF NOT EXISTS month (
 ) STRICT;
 
 -- "Which months have work left", across every venue at once.
-CREATE INDEX IF NOT EXISTS month_pending ON month (pending) WHERE pending > 0;
+CREATE INDEX IF NOT EXISTS rollup_venue_pending ON rollup_venue (pending) WHERE pending > 0;
+
+-- Per series and month, for anything narrower than a venue — a lens above all.
+CREATE TABLE IF NOT EXISTS rollup_series (
+  series_id     INTEGER NOT NULL,
+  month         TEXT    NOT NULL,           -- yyyymm
+  files         INTEGER NOT NULL DEFAULT 0, -- confirmed
+  bytes         INTEGER NOT NULL DEFAULT 0,
+  pending       INTEGER NOT NULL DEFAULT 0, -- confirmed and not downloaded
+  pending_bytes INTEGER NOT NULL DEFAULT 0,
+  withdrawn     INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (series_id, month)
+) STRICT;
 
 -- What a venue's URLs look like: one row per shape, with slots where the parts
 -- that vary go.

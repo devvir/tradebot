@@ -6,7 +6,7 @@ import {
   markDownloaded, markWithdrawn, putFiles, putVenue, recordSeries, settleFiles,
 } from '../src/catalog';
 import { openCatalog } from '../src/database';
-import { deltasOf, drift, rebuild, months } from '../src/catalog/cache/months';
+import { deltasOf, drift, rebuild, months, seriesDeltasOf } from '../src/catalog/cache/months';
 import type { CatalogFile, FileState } from '../src/types';
 import type { DatabaseSync } from 'node:sqlite';
 
@@ -31,7 +31,7 @@ afterEach(() => {
 });
 
 const state = (over: Partial<FileState> = {}): FileState =>
-  ({ month: '202503', confirmed: true, downloaded: false, bytes: 10, ...over });
+  ({ seriesId: 1, month: '202503', confirmed: true, downloaded: false, bytes: 10, ...over });
 
 /**
  * A series for the venue to hang files on. These tests are about `file` and
@@ -88,6 +88,21 @@ describe('the arithmetic', () => {
 
     expect(deltasOf(many)).toHaveLength(1);
     expect(deltasOf(many)[0]).toMatchObject({ files: 500, bytes: 5_000, pending: 500 });
+  });
+});
+
+describe('the series arithmetic', () => {
+  /** A file that changed series leaves one and joins the other, like a month move. */
+  it('moves a file between series', () => {
+    expect(seriesDeltasOf([{ venueId: 1, was: state({ seriesId: 1 }), now: state({ seriesId: 2 }) }]))
+      .toEqual([
+        { seriesId: 1, month: '202503', files: -1, bytes: -10, pending: -1, pendingBytes: -10, withdrawn: 0 },
+        { seriesId: 2, month: '202503', files: 1, bytes: 10, pending: 1, pendingBytes: 10, withdrawn: 0 },
+      ]);
+  });
+
+  it('nets a restatement to nothing', () => {
+    expect(seriesDeltasOf([{ venueId: 1, was: state(), now: state() }])).toEqual([]);
   });
 });
 
@@ -168,7 +183,7 @@ describe('proving the cache still matches the rows', () => {
     putVenue(db, 'binance', 'https://x', '');
     await putFiles(db, [file('spot/a-2025-03.zip')]);
 
-    db.prepare('UPDATE month SET files = 99').run();
+    db.prepare('UPDATE rollup_venue SET files = 99').run();
 
     expect(drift(db)).toMatchObject([{ month: '202503', files: 1, cachedFiles: 99 }]);
   });
@@ -213,12 +228,29 @@ describe('proving the cache still matches the rows', () => {
     await putFiles(db, [file('spot/a-2025-03.zip'), file('spot/b-2025-03.zip')]);
 
     // A catalog written before the rollup existed looks exactly like this.
-    db.prepare('DELETE FROM month').run();
+    db.prepare('DELETE FROM rollup_venue').run();
     expect(drift(db)).toHaveLength(1);
 
     rebuild(db);
 
     expect(drift(db)).toEqual([]);
     expect(months(db, 1)[0]).toMatchObject({ files: 2, bytes: 20, pending: 2 });
+  });
+
+  /** The series rollup is kept by the same writes, and refilled by the same rebuild. */
+  it('keeps the series rollup in step with the venue one', async () => {
+    putVenue(db, 'binance', 'https://x', '');
+    await putFiles(db, [file('spot/a-2025-03.zip'), file('spot/b-2025-03.zip')]);
+    markDownloaded(db, [{ venueId: 1, path: 'spot/a-2025-03.zip' }], 'D1');
+
+    const series = () => db.prepare(
+      'SELECT SUM(files) AS files, SUM(bytes) AS bytes, SUM(pending) AS pending FROM rollup_series').get();
+
+    expect(series()).toEqual({ files: 2, bytes: 20, pending: 1 });
+
+    db.prepare('DELETE FROM rollup_series').run();
+    rebuild(db);
+
+    expect(series()).toEqual({ files: 2, bytes: 20, pending: 1 });
   });
 });

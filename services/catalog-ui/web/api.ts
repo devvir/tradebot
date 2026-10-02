@@ -10,6 +10,20 @@ import { useEffect, useState } from 'react';
 
 export const catalog = <T>(path: string): Promise<T> => ask<T>(`/api/catalog${path}`);
 
+/**
+ * A catalog path as seen through a lens, as one key: changing the lens changes
+ * the key, so `useAsk` asks again rather than showing the last lens's answer.
+ */
+export const lensed = (path: string, lens: string | null | undefined): string =>
+  (lens ? `${path}${LENS_MARK}${lens}` : path);
+
+/** Ask for a `lensed` key, sending its lens as `x-catalog-lens`. */
+export const catalogLensed = <T>(key: string): Promise<T> => {
+  const [path, lens] = key.split(LENS_MARK);
+
+  return ask<T>(`/api/catalog${path}`, lens ? { headers: { 'x-catalog-lens': lens } } : undefined);
+};
+
 /** Anything that changes something. The body is JSON or nothing. */
 export const post = <T>(url: string, body?: unknown): Promise<T> =>
   ask<T>(url, {
@@ -72,6 +86,9 @@ export const useAsk = <T>(path: string | null, ask: (path: string) => Promise<T>
 };
 
 // ── Internals ─────────────────────────────────────────────────────────────────
+
+/** What separates a path from its lens inside one key; never part of a real path. */
+const LENS_MARK = '\u0000lens=';
 
 /**
  * **The body of a failure is kept, not summarised.** These services answer a
