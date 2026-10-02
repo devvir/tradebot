@@ -179,7 +179,7 @@ const LensPicker = ({ route }: { route: Route }) => {
 
   return (
     <Select
-      size="xs" w={220} placeholder="Whole catalog" clearable searchable
+      size="xs" w={220} placeholder="Whole catalog" clearable
       data={(lenses.data?.items ?? []).map(one => ({ value: one.slug, label: one.name || one.slug }))}
       value={route.lens ?? null}
       onChange={lens => {

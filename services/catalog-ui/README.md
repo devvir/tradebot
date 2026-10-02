@@ -3,7 +3,7 @@
 A browser for what the catalog holds, and the controls to survey it.
 
 It stores nothing, decides nothing and surveys nothing. Every answer comes from
-prospector's own API and is rendered unchanged — which is the point of it: a
+the catalog's API or prospector's collector and is rendered unchanged — which is the point of it: a
 question this cannot answer is a question the API cannot answer, and that is the
 cheapest way to find out.
 
@@ -30,9 +30,9 @@ Architecture, the proxy and what every column means are in
 
 | variable | | |
 |---|---|---|
-| `CATALOG_URL` | `http://prospector:8080` | where the catalog answers |
-| `CATALOG_TOKEN` | — | its secret. Empty means the catalog is open; this forwards without a header |
-| `CATALOG_UI_PORT` | `9020` | host port, set in the catalog module's `.env` |
+| `CATALOG_API` | `http://catalog:8080` | where the catalog answers. Prospector is always `http://prospector:8080`, inside the module |
+| `CATALOG_TOKEN` | — | the secret both check. Empty means both are open; this forwards without a header |
+| `CATALOG_UI_PORT` | `9020` | host port, set in the archives module's `.env` |
 
 ## Development
 

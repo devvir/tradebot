@@ -118,34 +118,17 @@ export const Table = <T,>({ caption, columns, rows, empty }: {
   );
 
 /**
- * A span, said the way the catalog means it.
+ * A span, from the oldest period to the newest file anybody has seen.
  *
- * **Where it reaches and whether it is finished are two facts, so both are
- * shown.** `last` is the newest file anybody has seen; `open` is whether the
- * catalog still expects more — the same question it asks before generating a
- * key, so an open shape is one requests are still going out for.
- *
- * They used to be one field, with `last: null` standing for "still publishing".
- * That threw the measurement away to make the claim: every shape reported no end
- * at all, and a variant that stopped beside the one that replaced it — bybit's
- * books at `500,incremental` to 2025-08-20 and `200,incremental` from the 21st —
- * was unreadable, which is exactly what somebody comes to this table for.
+ * **Both ends are measurements**, so a variant that stopped beside the one that
+ * replaced it reads as two adjacent spans — bybit's books at `500,incremental`
+ * to 2025-08-20 and `200,incremental` from the 21st — which is exactly what
+ * somebody comes to this table for.
  */
-export const Span = ({ first, last, open }: {
-  first: string | null;
-  last:  string | null;
-  open:  boolean;
-}) =>
+export const Span = ({ first, last }: { first: string | null; last: string | null }) =>
   first === null && last === null
     ? <Text component="span" c="dimmed" fs="italic" size="sm">Nothing yet</Text>
-    : (
-      <>
-        {first ?? '?'} … {last ?? '?'}{' '}
-        {open
-          ? <Badge color="teal" variant="light" size="sm">Open</Badge>
-          : <Badge color="orange" variant="light" size="sm">Closed</Badge>}
-      </>
-    );
+    : <>{first ?? '?'} … {last ?? '?'}</>;
 
 /**
  * The venue's most recent pass, named and dated.

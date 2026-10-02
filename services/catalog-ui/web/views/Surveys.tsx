@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActionIcon, Anchor, Badge, Box, Button, Group, Loader, Modal, Stack, Text } from '@mantine/core';
-import { catalog, post } from '../api';
+import { post, prospector } from '../api';
 import { Dim, LastSurvey, Table, Waiting, bytes, count, howOf } from './Table';
 import { linkTo } from '../App';
 import type { ReactNode } from 'react';
@@ -29,7 +29,7 @@ export const Surveys = () => {
   const [orders, setOrders] = useState<Record<string, Order>>({});
 
   /** Quicker while something is owed an answer, so the answer shows when it lands. */
-  const { asked, again } = usePolled<{ items: Status[] }>('/status', catalog,
+  const { asked, again } = usePolled<{ items: Status[] }>('/status', prospector,
     Object.keys(orders).length > 0 ? ORDER_POLL_MS : POLL_MS);
 
   const [busy, setBusy]  = useState<string | null>(null);
@@ -59,7 +59,7 @@ export const Surveys = () => {
 
     try {
       const done = await post<{ resumed?: string[]; skipped?: { venue: string }[] }>(
-        `/api/catalog${what}`, body);
+        `/api/prospector${what}`, body);
 
       // Declined by the catalog — already going, nothing to update from — so
       // there is nothing coming to wait for.

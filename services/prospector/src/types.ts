@@ -1,4 +1,4 @@
-import type { DatabaseSync, StatementSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
 import type { LookupAddress } from 'node:dns';
 import type { ClientHttp2Session } from 'node:http2';
 import type { Worker } from 'node:worker_threads';
@@ -1536,210 +1536,6 @@ export interface Settlement {
 }
 
 /**
- * A named way of looking at the catalog.
- *
- * **Where a lens is in force, its slice *is* the catalog.** A consumer asks what
- * exists and gets the lens's answer; the database stays complete and unfiltered
- * underneath. That is the whole idea, and the reason it is not called a
- * selection: nothing is being gathered, something is being looked through.
- *
- * **Three names, and they do different jobs.** `slug` is what a consumer is
- * configured with and what every path addresses, so it is stable and spelled
- * plainly; `name` is what a person calls it; `note` is what it is for. Collapsing
- * the first two costs either a handle nobody can read or a title nobody can
- * change.
- */
-export interface Lens {
-  id?:        number;
-  slug:       string;
-  name:       string;
-  note:       string;
-  createdAt:  string;
-  updatedAt:  string;
-  definition: LensDefinition;
-}
-
-/**
- * What a lens lets through, as one document.
- *
- * **Keyed by venue name, never by id.** An id names a *host* — bybit publishes
- * its books from a second server and has two rows in `venue` — and a lens has no
- * opinion about which server a file came from. The name is also what the API
- * speaks in everywhere else, and what the seeds are keyed by.
- *
- * `format` is what lets a document written under one set of rules be read under
- * another. Nothing migrates it today; it exists so that something can.
- */
-export interface LensDefinition {
-  format: number;
-  venues: Record<string, LensRule[]>;
-}
-
-/**
- * One rule, applied in order to what the rules before it left.
- *
- * **Evaluation starts from nothing.** `include` adds what it matches and
- * `exclude` takes it away, so a venue's rules read top to bottom like a sentence:
- * everything up to a date, except books, except recent trades. A list that opens
- * with `exclude` therefore sees nothing — subtracting from the empty set — which
- * is legal, almost never meant, and worth saying out loud in an editor.
- *
- * **A rule states only what it constrains.** An absent dimension means all of it,
- * so `{ effect: 'include', datasets: ['trades'] }` is every market, variant,
- * grain and instrument, for all time.
- *
- * Writing `markets: 'all'` everywhere was considered and rejected: it is not more
- * explicit, only longer, and it ages in the wrong direction. Datasets, variants
- * and grains are *added* over time, and a rule that names what it constrains
- * absorbs an addition, where one enumerating every value silently stops covering
- * the archive.
- */
-export interface LensRule {
-  effect:       'include' | 'exclude';
-
-  /** Matched against `pattern.market`. */
-  markets?:     string[];
-
-  /**
-   * Which kinds of data, each optionally narrowed to one of its variants.
-   *
-   * **A variant belongs to its dataset and to nothing else.** `1m` is a kline
-   * length, `full,incremental` is a book shape, and trades have variants of their
-   * own — so a flat list of variants beside a flat list of datasets cannot say
-   * which belongs to which, and `klines` at `1m` together with every `trades`
-   * becomes unsayable. A pair says it exactly.
-   */
-  datasets?:    LensDataset[];
-
-  grains?:      Grain[];
-
-  /**
-   * Matched against `series.symbol`, in the venue's own spelling.
-   *
-   * **`@` is an ordinary value here.** It is the venue-wide file covering every
-   * instrument of a market, and naming it selects those series with no special
-   * case anywhere — so buckets for cold storage and a few instruments on their
-   * own for simulation is one rule with both in it.
-   */
-  instruments?: string[];
-
-  /** Inclusive `yyyymmdd` bounds on the period a file covers; absent is open. */
-  from?:        string;
-  to?:          string;
-}
-
-/**
- * One kind of data a lens lets through, whole or at one variant.
- *
- * **An absent `variant` is every variant of that dataset**, which is the ordinary
- * case: most datasets have only one, and a rule about `trades` rarely means a
- * particular shape of them.
- */
-export interface LensDataset {
-  dataset:  string;
-  variant?: string;
-}
-
-/**
- * A stretch of time a lens lets through for one series.
- *
- * **A list of them, because a rule can carve a hole.** Including 2019 to 2021 and
- * then excluding 2020 leaves two spans, and collapsing that to one range would
- * quietly hand back a year nobody asked for. Both bounds are inclusive, and null
- * is open at that end.
- */
-export interface LensSpan {
-  from: string | null;
-  to:   string | null;
-}
-
-/** The outermost dates of a series' spans under a lens — null where open that way. */
-export interface LensWindow {
-  from: string | null;
-  to:   string | null;
-}
-
-/** What a lens resolves to: the series it lets through, and when. */
-export interface LensSlice {
-  seriesId: number;
-  spans:    LensSpan[];
-
-  /**
-   * Market, dataset, variant and grain, joined — what this series is a rendering
-   * of. Carried so that sizing can weigh a shape against its own series rather
-   * than against whatever the sample happened to land on.
-   */
-  shape:    string;
-}
-
-/**
- * One combination a venue publishes, as a rule is written against.
- *
- * **The strings a filter matches**, not the shape a reader is shown: `Shape`
- * reports a variant taken apart into its levels, and a rule stores the variant
- * whole. Two projections of the same rows, for two different jobs.
- */
-export interface LensOption {
-  market:  string;
-  dataset: string;
-  variant: string;
-  grain:   Grain;
-  series:  number;
-
-  /** Of those, the venue-wide files — the series an `@` instrument selects. */
-  buckets: number;
-}
-
-/** A `lens` row as the table holds it. */
-export interface LensRow {
-  id:         number;
-  slug:       string;
-  name:       string;
-  note:       string;
-  definition: string;
-  created_at: string;
-  updated_at: string;
-}
-
-/**
- * How much a lens would put on a disk.
- *
- * **Sizing is what makes a lens decidable.** Nobody fetches everything, because
- * everything is measured in tens of terabytes, so the number that settles what a
- * lens should let through is this one — and it has to answer while somebody is
- * still choosing.
- *
- * Always exact: summed off the rollups, never off the files themselves.
- */
-export interface LensSize {
-  /** Series the lens selects. */
-  series:       number;
-  files:        number;
-  bytes:        number;
-
-  /**
-   * Of those, the files not yet downloaded, and what they weigh — the lens's
-   * progress, and from the same road as the totals, so the two never disagree.
-   */
-  pending:      number;
-  pendingBytes: number;
-}
-
-/**
- * Why a lens was refused, in a person's words.
- *
- * **Named by where the fault is**, so an editor can put it against the rule it
- * belongs to rather than at the bottom of the page. `venue` and `rule` locate it;
- * `field` says which part of that rule, where one part is at fault.
- */
-export interface LensProblem {
-  venue:    string;
-  rule:     number;
-  field?:   keyof LensRule;
-  message:  string;
-}
-
-/**
  * What one host has been asked for, and what that cost on the wire.
  *
  * `asked` is one per request a pass needs — a key, a page — and `sent` is every
@@ -1785,136 +1581,9 @@ export interface Run {
   completed: string | null;
 }
 
-/**
- * One specific file that is not historical data, and why.
- *
- * An enumeration rather than a rule: `path` is matched exactly. Anything that
- * can be *described* belongs in the adapter's own policy instead, where it also
- * covers keys nobody has published yet.
- */
-export interface Exclusion {
-  venueId: number;
-  path:    string;
-  reason:  string;
-}
-
-/**
- * A file still to download, as a downloader needs it.
- *
- * Deliberately thin. A downloader needs to know what to fetch and where to put
- * it; `size` and `etag` come along because they are free here and let it check
- * what it got, but nothing in this shape describes what the file *contains*.
- * The URL is not stored — it is the venue's `base` plus `keyRoot` plus this path,
- * and duplicating it per row would be a second thing to keep true.
- */
-export interface Pending {
-  venueId:  number;
-  path:     string;
-  date:     string;
-  size:     number | null;
-  etag:     string | null;
-
-  /**
-   * When this file was recorded as being on disk, or null while it is still
-   * owed.
-   *
-   * **Carried because a listing is no longer only of owed files.** Asking for
-   * every file of a series and being unable to tell which are held would make
-   * the answer useless for the thing it is for — building a picture of what
-   * exists against what we have.
-   */
-  downloadedAt: string | null;
-
-  /**
-   * Which series the file belongs to, so a listing can say what the file *is*
-   * without its reader parsing the path.
-   *
-   * A file this catalog cannot place is not catalogued — its path goes to
-   * `unreadable` instead, where it waits for a reader that can.
-   */
-  seriesId: number;
-
-}
-
-/**
- * A pending file with everything a downloader needs to place it.
- *
- * **Facts about the data, never about the URL.** A downloader that read paths
- * would have to learn every venue's tree and be taught again whenever one moved,
- * so the parts of a file's identity that only the shape knows are resolved here
- * and handed over as fields.
- */
-export interface Offered extends Pending {
-  key:      string;
-  url:      string;
-  market:   string;
-  dataset:  string;
-  symbol:   string;
-
-  /**
-   * How much time this file covers — a day, a month, an hour.
-   *
-   * **The one thing about a rendering a consumer genuinely needs.** A venue
-   * publishing the same period twice offers a choice, and the difference that
-   * matters is the span each file holds, not which prefix or host it came from.
-   * Where a file sits in a venue's tree is exactly what this catalog exists to
-   * absorb.
-   *
-   * Read off the pattern, where it is derived from the finest slot the shape
-   * carries, so it cannot disagree with the URL it describes.
-   */
-  grain:    Grain | '';
-
-  /**
-   * The levels below the dataset, named, where the series has any.
-   *
-   * **An object rather than the stored string**, because `400,incremental` is
-   * two facts about a book and a consumer choosing between depths should not
-   * have to split commas and count positions. Written in the order the levels
-   * belong in, so anything rebuilding a path can join the values as they come.
-   */
-  variant?: Record<string, string>;
-
-  /** Which piece of a period, where a venue splits one. bitget's trades. */
-  part?:    string;
-
-  ext:      string;
-}
-
-/**
- * What a downloader saw when it worked a page.
- *
- * Three lists, because "did not arrive" and "arrived wrong" are different claims
- * that this service acts on differently: the first asks whether the key is
- * really there, the second says the metadata beside it disagrees with the bytes
- * the venue served.
- */
-export interface Reported {
-  downloaded: string[];
-  failed:     string[];
-  mismatched: { key: string; size?: number; etag?: string }[];
-}
-
-/**
- * Where a page of pending files left off.
- *
- * The venue is part of it because two hosts of one venue are two id ranges under
- * one name: without it a cursor would jump between them and drop rows that sort
- * identically on `(date, path)`.
- */
-export interface Cursor {
-  date:     string;
-  path:     string;
-  venueId:  number;
-
-  /**
-   * Which series the page stopped in, for a listing narrowed to a set of them.
-   *
-   * A narrowed listing walks its series in turn and seeks inside each, so where
-   * it left off is a series and a position within it — not a point on a single
-   * ordering across the whole venue.
-   */
-  seriesId?: number;
+/** What a report settled, and how many of its ids named no file of the venue. */
+export interface Reported extends Settled {
+  unknown: number;
 }
 
 /**
@@ -2069,147 +1738,6 @@ export interface SeriesFilter {
   grain?:   Grain;
 }
 
-/**
- * Which files a listing is asking for, beyond the series they belong to.
- *
- * The bounds are dates in each series' own grain, which is why `until` exists
- * alongside `to` — see its own note.
- */
-export interface FileQuery {
-  from?:   string;
-  to?:     string;
-
-  /**
-   * An **exclusive** upper bound, which is the only way to name a whole month.
-   *
-   * `date` holds whatever grain a series publishes at — `202506` for a monthly
-   * file, `20250601` for a daily one — so an inclusive `to` of `202506` sorts
-   * below every daily file of that month. The next month, exclusive, catches
-   * both.
-   */
-  until?:  string;
-
-  /**
-   * Whether the file is already on disk.
-   *
-   * **Three states, not two.** `false` is what a downloader asks for, `true` is
-   * what an audit asks for, and leaving it out asks for the catalog's whole
-   * answer regardless — which is the question nothing could ask before.
-   */
-  downloaded?: boolean;
-
-  after?:  Cursor | null;
-  limit:   number;
-
-  /** Narrow to these series. Absent means every series of the venue. */
-  series?: readonly number[];
-}
-
-/**
- * What one market of a venue holds, for a caller deciding where to look.
- *
- * **The datasets are named rather than counted.** "This market has four
- * datasets" answers nothing anyone can act on; the names are what they came for.
- * The two counts beside them are for sizing the next request, not for reading as
- * facts about the venue.
- */
-export interface MarketContents {
-  market:   string;
-
-  /** What it publishes, each with its own size. Sorted by name. */
-  datasets: DatasetContents[];
-
-  /** Named instruments, not counting the venue-wide file. */
-  symbols:  number;
-}
-
-/**
- * One dataset of one market, counted.
- *
- * **`shapes` is not a number anyone can read on its own**, which is why the
- * levels behind it are named beside it: binance's perpetual candlesticks are 30
- * shapes, and that is fifteen bar lengths filed two ways rather than thirty of
- * anything. A caller wanting the rows themselves asks for the market.
- */
-export interface DatasetContents {
-  dataset:  string;
-
-  /** Distinct `(variant, grain)` pairs — the rows `/markets/:market` returns. */
-  shapes:   number;
-
-  /** The variants it publishes, named. Empty where the dataset has no levels. */
-  variants: string[];
-
-  /** How it is filed: `daily`, `monthly`, or both. */
-  grains:   string[];
-
-  /** Named instruments carrying it, not counting the venue-wide file. */
-  symbols:  number;
-}
-
-/**
- * One shape a venue publishes, in canonical terms — what the catalog holds, said
- * the way a consumer asks for it.
- *
- * **The answer to "what is in here?", which nothing else could ask.** Every other
- * listing is about files; this is about what kinds of thing exist at all, so a
- * consumer can decide what to want before fetching anything. What bar lengths
- * does this venue publish? Does it file trades monthly or daily, or both? Does it
- * have books, at what depths, snapshot or incremental? Is there a venue-wide file
- * or only per-instrument ones?
- *
- * Read from the patterns and their series, which are thousands of rows where
- * files are millions.
- */
-export interface Shape {
-  market:   string;
-  dataset:  string;
-
-  /**
-   * The levels below the dataset, named — `{ interval: '1m' }`,
-   * `{ depth: '400', mode: 'incremental' }`. Empty where the dataset has none.
-   */
-  variant:  Record<string, string>;
-
-  /** How often it publishes — which rendering of the data this is. */
-  grain:    Grain;
-
-  /** Named instruments carrying it. */
-  symbols:  number;
-
-  /**
-   * Venue-wide files carrying every instrument at once, if any.
-   *
-   * **The question a consumer asks first**, because one bucket file is cheaper
-   * than a file per instrument for the same data — see the `@` symbol.
-   */
-  buckets:  number;
-
-  /** The earliest date anything here starts. */
-  first:    string | null;
-
-  /**
-   * The newest file anybody has seen of this shape.
-   *
-   * **A measurement, not a verdict.** It says where the shape has got to, and it
-   * says so whether or not more is coming — `null` means nothing has ever been
-   * seen of it, and nothing else. Whether the shape is finished is `open`.
-   */
-  last:     string | null;
-
-  /**
-   * Whether this catalog still expects files for the shape.
-   *
-   * **True while any one of its series is still open**, which is the same
-   * question generation asks before building a key — so a shape reported open is
-   * one requests are still going out for, and a closed one is not.
-   */
-  open:     boolean;
-}
-
-/** A month either has something left to download or it does not. */
-export type MonthState = 'open' | 'closed';
-
 /** What a venue holds, summed from its months. */
 /**
  * How much of a venue's catalogue has anything in it, by series.
@@ -2230,17 +1758,6 @@ export interface VenueTotals {
   venue:        string;
   firstMonth:   string | null;
   lastMonth:    string | null;
-  files:        number;
-  bytes:        number;
-  pending:      number;
-  pendingBytes: number;
-  withdrawn:    number;
-}
-
-/** One month of one venue, with the state it is in. */
-export interface MonthTotals {
-  month:        string;
-  state:        MonthState;
   files:        number;
   bytes:        number;
   pending:      number;
@@ -2298,38 +1815,6 @@ export interface SeriesMonthDelta {
   pending:      number;
   pendingBytes: number;
   withdrawn:    number;
-}
-
-/** One venue-month as the rollup holds it. */
-export interface MonthRow {
-  venueId:      number;
-  month:        string;
-  files:        number;
-  bytes:        number;
-  pending:      number;
-  pendingBytes: number;
-  withdrawn:    number;
-}
-
-/**
- * A venue-month where the rollup and the rows disagree, with both figures.
- *
- * Both sides are reported rather than only the difference: which one is wrong is
- * the question, and a delta alone cannot say.
- */
-export interface MonthDrift {
-  venueId:         number;
-  month:           string;
-  files:           number;
-  cachedFiles:     number;
-  bytes:           number;
-  cachedBytes:     number;
-  pending:            number;
-  cachedPending:      number;
-  pendingBytes:       number;
-  cachedPendingBytes: number;
-  withdrawn:          number;
-  cachedWithdrawn:    number;
 }
 
 /**
@@ -2759,97 +2244,13 @@ export interface Resolved {
   until:     number;
 }
 
-/**
- * A lens as every query applies it: for each venue, the series it lets through
- * and the spans of each. A series absent from a venue's map is not in the lens.
- */
-export type LensScope = ReadonlyMap<string, ReadonlyMap<number, readonly LensSpan[]>>;
-
-/** One file of a venue's bucket, as a listing reads it. */
-export interface BucketFile {
-  /**
-   * The row's `rowid`, handed out as `FileId`. Stable because nothing renumbers
-   * it: rows are never moved between tables, and the catalog never runs a full
-   * `VACUUM` — `auto_vacuum = INCREMENTAL` moves pages, never rowids. Running one
-   * would invalidate every id a client holds.
-   */
-  id:       number;
-  venueId:  number;
-  path:     string;
-  date:     string;
-  size:     number | null;
-  etag:     string | null;
-  modified: string | null;
-  seriesId: number;
+/** One file a report names, as the catalog addresses it. */
+export interface ReportFile {
+  venueId: number;
+  path:    string;
 }
 
-/** One object of a bucket listing: its canonical key, and the file it names. */
-export interface BucketObject {
-  key:  string;
-  file: BucketFile;
-}
-
-/** One page of a bucket, and whether there is more after it. */
-export interface BucketPage {
-  objects:   BucketObject[];
-  truncated: boolean;
-}
-
-/** What a bucket listing is asked for. */
-export interface BucketQuery {
-  /** List only keys after this one; null from the start. */
-  after:   string | null;
-  maxKeys: number;
-
-  /** Only files not yet downloaded. */
-  pending: boolean;
-
-  /** The venue's part of a lens, or null for every file. */
-  scope:   ReadonlyMap<number, readonly LensSpan[]> | null;
-}
-
-/** One `market/dataset[,variant]/` folder of a bucket, and the symbols inside it, in key order. */
-export interface BucketShelf {
-  prefix:  string;
-  symbols: BucketSymbol[];
-}
-
-/** One `F/symbol/` folder, and the series that file into it. */
-export interface BucketSymbol {
-  prefix: string;
-  series: Publishing[];
-}
-
-/** The months a series has files in, first and last — read off `file`, not trusted from the row. */
-export interface BucketBounds {
-  first: string;
-  last:  string;
-}
-
-/** A venue's shelves and the series bounds read so far, held briefly between pages. */
-export interface BucketShape {
-  at:      number;
-  shelves: BucketShelf[];
-  bounds:  Map<number, BucketBounds | null>;
-}
-
-/** The statements a bucket listing runs, prepared once per database. */
-export interface BucketStatements {
-  all:     StatementSync;
-  pending: StatementSync;
-  byId:    StatementSync;
-  first:   StatementSync;
-  last:    StatementSync;
-}
-
-/** A resolved lens, and what it was resolved from. */
-export interface HeldScope {
-  at:        number;
-  updatedAt: string;
-  scope:     LensScope;
-}
-
-/** A report, its keys already turned into the files they name. */
+/** A report, its ids already turned into the files they name. */
 export interface Settling {
   downloaded: { venueId: number; path: string }[];
   failed:     { venueId: number; path: string }[];
@@ -2863,9 +2264,103 @@ export interface Settled {
   corrected: number;
 }
 
-/** A report by `FileId`, as `POST /buckets/:venue/report` receives it. */
-export interface BucketReported {
+/** A report by `FileId`, as `POST /reports/:venue` receives it. */
+export interface ReportedById {
   downloaded: number[];
   failed:     number[];
   mismatched: { FileId: number; Size?: number; ETag?: string }[];
+}
+
+/** What a request to start surveys came to: per venue, what happened and what each was doing. */
+export interface SurveyStarted {
+  at:      string;
+  started: string[];
+  resumed: string[];
+  skipped: { venue: string; reason: string }[];
+  phases:  Record<string, string>;
+}
+
+/** A forced update that moved nothing is refused, with why. */
+export interface SurveyRefused {
+  refused: string;
+  skipped: { venue: string; reason: string }[];
+}
+
+export type SurveyAnswer = SurveyStarted | SurveyRefused;
+
+/** What a pause came to. */
+export interface PauseAnswer {
+  at:      string;
+  paused:  string[];
+  skipped: { venue: string; reason: string }[];
+}
+
+/** One venue's row in `/status`: its totals, where it stands, and what is running it. */
+export interface VenueStatus extends VenueTotals, Standing {
+  established:   string | null;
+  lastRun:       LastRun;
+  series:        { withFiles: number; total: number };
+  surveying:     boolean;
+  stopping:      boolean;
+  completedEver: boolean;
+  listable:      boolean;
+  probing:       boolean;
+  wip:           number;
+}
+
+/**
+ * The venue's most recent pass: which kind, and whether it finished.
+ *
+ * **"Surveyed: never" is the wrong answer for a venue being walked right now.**
+ * Completion times alone cannot say that — a walk that has never finished has
+ * none, whether it is three hours in or was never started — so this reports the
+ * newest pass rather than the newest ending, and `ongoing` separates the two
+ * cases that used to collapse.
+ *
+ * **And *which* kind, because they cost differently.** A venue whose last pass
+ * was a walk has been read end to end; one whose last pass was an update has
+ * been asked what appeared since. Both are "surveyed", and somebody deciding
+ * whether to trust a span wants to know which they are looking at.
+ *
+ * Across every host of the venue, newest first — an open pass on any of them is
+ * the venue being surveyed, which is the same rule `standingOf` reads by.
+ */
+export interface LastRun {
+  /** What the newest pass is, or was. Null where the venue has never had one. */
+  kind:    RunKind | null;
+
+  /** When it finished. Null while it is still running, and where none has run. */
+  at:      string | null;
+
+  /**
+   * When it began, running or not.
+   *
+   * **The only start a reader can trust for a pass in progress.** A survey's
+   * `since` answers a different question — where the venue is paused it holds
+   * when it was *stopped* — so a caller wanting "this update began at" gets the
+   * pause time from it, labelled as a beginning. This is the run's own.
+   */
+  startedAt: string | null;
+
+  /** Whether it is still going, on any of the venue's hosts. */
+  ongoing: boolean;
+
+  /**
+   * Whether this is the venue's **first** pass — the backfill rather than a
+   * later top-up.
+   *
+   * **The distinction a reader actually wants, and the one `kind` cannot make.**
+   * A first pass is hours or days and reads everything; every pass after it is
+   * the recent edge, whichever mechanism does it. Which mechanism that is says
+   * nothing about the two: a venue that cannot be listed backfills by generating
+   * keys, and one that re-reads itself by walking updates by walking.
+   *
+   * **A venue, not a host.** Bybit publishes from two servers, and until both
+   * have read themselves through once the venue is still being backfilled —
+   * whatever the faster of the two has finished. Reading this off the run's own
+   * start instead made the later-starting host's first walk report as a top-up,
+   * because it began after its sibling: a venue's own backfill, labelled an
+   * update, on every venue with more than one server.
+   */
+  first:   boolean;
 }

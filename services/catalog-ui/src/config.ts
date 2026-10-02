@@ -9,10 +9,20 @@ import type { Config } from './types';
  */
 const CONTAINER_PORT = 8080;
 
+/** Where the catalog answers inside the module's network, unless told otherwise. */
+const CATALOG_API = 'http://catalog:8080';
+
+/**
+ * Where prospector's collector API answers. Private to the module network, so
+ * it is a constant: nothing outside the module reaches it.
+ */
+const PROSPECTOR_API = 'http://prospector:8080';
+
 const loadConfig = (): Config => {
   const config: Config = {
-    catalogUrl:   (process.env['CATALOG_URL'] ?? 'http://prospector:8080').replace(/\/$/, ''),
-    catalogToken: (process.env['CATALOG_TOKEN'] ?? '').trim(),
+    catalogApi:    (process.env['CATALOG_API']?.trim() || CATALOG_API).replace(/\/$/, ''),
+    prospectorApi: PROSPECTOR_API,
+    catalogToken:  (process.env['CATALOG_TOKEN'] ?? '').trim(),
     port:         CONTAINER_PORT,
   };
 

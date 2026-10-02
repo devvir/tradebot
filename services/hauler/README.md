@@ -2,9 +2,9 @@
 
 Brings catalogued venue files to disk, under canonical names.
 
-Prospector establishes what every venue publishes and serves each venue as a
-bucket over the [catalog API](../../docs/modules/CATALOG-API.md). Hauler walks
-those buckets, fetches what is still owed, and writes each object at its key. It
+Prospector establishes what every venue publishes, and the catalog serves each
+venue as an S3-style listing over the [catalog API](../../docs/modules/CATALOG-API.md).
+Hauler walks those listings, fetches what is still owed, and writes each object at its key. It
 never discovers, never learns how a venue structures its archive, and never
 names a file. The key is where its file goes.
 
@@ -31,7 +31,9 @@ without learning where they live.
 - Renames a file on disk that differs to `<name>.bak` (or `.bak.2`, `.bak.3`, …)
   and then fetches it again. It never deletes anything.
 - Reports each page by `FileId`: downloaded, failed, or mismatched. The catalog
-  checks the venue again and decides what is true.
+  checks the venue again and decides what is true. Only the venue saying a file
+  is not there (`403`, `404`, `410`) makes it failed; a timeout or a busy venue
+  leaves it unreported, to come round on the next walk.
 - Removes every leftover `.part` file when it starts. `.bak` files stay for a
   person to review.
 
@@ -41,7 +43,7 @@ See [HAULER.md](../../docs/services/HAULER.md) for the design.
 
 | variable | | |
 |---|---|---|
-| `CATALOG_URL` | required | where prospector's API is |
+| `CATALOG_API` | `http://catalog:8080` | where the catalog API is |
 | `CATALOG_TOKEN` | — | sent to the catalog on every request; empty sends none |
 | `HAULER_LENS` | everything | the slug of the catalog lens to haul through |
 | `HAULER_VENUES` | all | comma-separated venues to haul |
@@ -52,9 +54,9 @@ Hauler serves no API, and it keeps no state other than the files on disk.
 
 ## Commands
 
-It runs in the catalog module:
+It runs in the archives module:
 
 ```sh
-tb up catalog hauler -d
-tb logs catalog hauler
+tb up archives hauler -d
+tb logs archives hauler
 ```

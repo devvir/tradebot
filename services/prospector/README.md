@@ -47,16 +47,13 @@ is that file *of*.
   cursor. One killed halfway picks up the partitions still open and continues from their cursors,
   and one that cannot finish a partition keeps the job open and retries rather than claiming the
   venue is done
-- **Answers in one vocabulary, whatever the venue calls things.** A consumer asks for `1h` `klines`,
-  monthly files, in a date range, for these instruments — and gets back URLs that work. Which tree
-  the venue files those under, how it spells the interval, and where the date sits in the name are
-  all resolved here, because that is the knowledge this service exists to hold
-- **Serves the catalog over HTTP**, which is how everything else reaches it — what exists, what is
-  owed, what is held, which months are finished, and how much is left. Nothing else opens the
-  database. Every endpoint is in [CATALOG-API.md](../../docs/modules/CATALOG-API.md)
-- **Keeps the carts** — named profiles saying what a downloader should fetch: a venue per line and,
-  optionally, how much of it. Chosen from what the catalog holds, and refused where a line claims
-  more than a venue publishes
+- **Records it in one vocabulary, whatever the venue calls things.** `1h` `klines`, monthly, for
+  this instrument — which tree the venue files those under, how it spells the interval, and where
+  the date sits in the name are all resolved here, because that is the knowledge this service exists
+  to hold. Consumers read the result through the [catalog](../catalog/README.md), never from here
+- **Settles download reports.** The catalog forwards what a downloader says it fetched, failed to
+  fetch, or found different, and this service records it, asking the venue wherever the downloader
+  reports a problem
 - **Surveys when told to, then keeps itself current — across restarts.** `POST /surveys` starts a
   venue and it walks once, then re-reads it daily — by update, or by walking again where its adapter
   says so — until `POST /surveys/pause` stops it or a `refresh`
@@ -93,8 +90,7 @@ does: one adapter per server, since each has its own shape and its own limiter.
 | `PROSPECTOR_VENUES` | all | comma-separated subset to survey |
 | `PROSPECTOR_CONCURRENCY` | `200` | requests in flight at once, across every venue; one transport worker per 1,000 |
 | `PROSPECTOR_CONNECTIONS` | `600` | HTTP/1.1 connections open at once, across every venue; requests past it wait for one |
-| `CATALOG_TOKEN` | — | **required.** The shared secret every API request carries in `x-catalog-token` |
-| `CATALOG_PORT` | _(any free)_ | host port the API is published on |
+| `CATALOG_TOKEN` | — | the shared secret every API request carries in `x-catalog-token`, the same one the catalog checks. Empty turns the check off, with a warning |
 
 **Concurrency is not a rate.** How fast a venue may be asked — its cadence — is a fact about that
 venue, so it lives in its adapter and cannot be set from here: one gate per host, inside the fetch
@@ -106,7 +102,9 @@ be right while their sum is not. It is a pool of tickets each request takes and 
 mapping and probing all draw from it, whichever venue they belong to.
 
 The catalog lives at a fixed `/data/catalog` in the container; `CATALOG_DIR` on the host is
-mounted onto it by the compose file. See [docs/services/PROSPECTOR.md](../../docs/services/PROSPECTOR.md)
+mounted onto it by the compose file. **The API is private**: it publishes no host port, and only the
+catalog and catalog-ui reach it, over the module network — see
+[PROSPECTOR.md](../../docs/services/PROSPECTOR.md#the-api). See [docs/services/PROSPECTOR.md](../../docs/services/PROSPECTOR.md)
 for how surveying works.
 
 ## What it does not do

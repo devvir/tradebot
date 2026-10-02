@@ -5,8 +5,9 @@
 
 # Catalog — what is left
 
-Prospector establishes what every venue publishes; hauler brings it to disk. How each works is
-[PROSPECTOR.md](../services/PROSPECTOR.md) and [HAULER.md](../services/HAULER.md), and the API is
+Prospector establishes what every venue publishes, the catalog serves it, and hauler brings it to
+disk. How each works is [PROSPECTOR.md](../services/PROSPECTOR.md),
+[CATALOG.md](../services/CATALOG.md) and [HAULER.md](../services/HAULER.md), and the API is
 [CATALOG-API.md](../modules/CATALOG-API.md). Moving stocker onto the catalog is
 [STOCKER.md](STOCKER.md). This is only the rest of the outstanding work.
 

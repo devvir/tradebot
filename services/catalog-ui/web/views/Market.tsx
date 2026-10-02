@@ -125,7 +125,7 @@ const Shapes = ({ venue, market, shapes }: {
           { head: 'Grain', width: '10%', cell: s => s.grain },
           { head: 'Symbols', width: '10%', num: true, cell: s => count(s.symbols) },
           { head: 'Buckets', width: '10%', num: true, cell: s => s.buckets || '' },
-          { head: 'Span', width: '26%', cell: s => <Span first={s.first} last={s.last} open={s.open} /> },
+          { head: 'Span', width: '26%', cell: s => <Span first={s.first} last={s.last} /> },
         ]}
       />
     </Stack>

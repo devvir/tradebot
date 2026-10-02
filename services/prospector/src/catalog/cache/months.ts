@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
-import type { FileEffect, MonthDelta, MonthRow, MonthDrift, SeriesMonthDelta } from '../../types';
+import type { FileEffect, MonthDelta, SeriesMonthDelta } from '../../types';
 
 /**
  * The rollups: per venue and month in `rollup_venue`, per series and month in
@@ -171,73 +171,6 @@ export const applySeries = (db: DatabaseSync, deltas: readonly SeriesMonthDelta[
     upsert.run(d.seriesId, d.month, d.files, d.bytes, d.pending, d.pendingBytes, d.withdrawn);
 };
 
-/**
- * Recompute both rollups from `file`.
- *
- * **A full read of the largest table, so it is never run on startup.** It exists
- * for the one case incremental maintenance cannot cover — switching the cache on
- * over a catalog written before it existed — and as the honest answer to "is the
- * cache still true", via `drift` below.
- */
-export const rebuild = (db: DatabaseSync): void => {
-  db.exec('BEGIN');
-
-  try {
-    db.exec('DELETE FROM rollup_venue');
-    db.exec('DELETE FROM rollup_series');
-    db.exec(REBUILD);
-    db.exec(REBUILD_SERIES);
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-
-    throw err;
-  }
-};
-
-/**
- * Where the cache and the rows disagree, without changing either.
- *
- * **Every counter moves in the same transaction as its row, but a call site
- * nobody wired is silent** — that is the standing risk of any cache, and the
- * only honest answer to it is to be able to check. Same read as `rebuild`, so it
- * is the same cost and the same statement; what differs is that this reports
- * rather than overwrites.
- */
-export const drift = (db: DatabaseSync): MonthDrift[] => {
-  const rows = db.prepare(
-    `WITH truth AS (${TRUTH})
-     SELECT COALESCE(t.venue_id, m.venue_id) AS venueId,
-            COALESCE(t.month,    m.month)    AS month,
-            COALESCE(t.files, 0)     AS files,     COALESCE(m.files, 0)     AS cachedFiles,
-            COALESCE(t.bytes, 0)     AS bytes,     COALESCE(m.bytes, 0)     AS cachedBytes,
-            COALESCE(t.pending, 0)   AS pending,   COALESCE(m.pending, 0)   AS cachedPending,
-            COALESCE(t.pending_bytes, 0) AS pendingBytes,
-            COALESCE(m.pending_bytes, 0) AS cachedPendingBytes,
-            COALESCE(t.withdrawn, 0) AS withdrawn, COALESCE(m.withdrawn, 0) AS cachedWithdrawn
-       FROM truth t
-       FULL OUTER JOIN rollup_venue m ON m.venue_id = t.venue_id AND m.month = t.month
-      WHERE COALESCE(t.files, 0)     <> COALESCE(m.files, 0)
-         OR COALESCE(t.bytes, 0)     <> COALESCE(m.bytes, 0)
-         OR COALESCE(t.pending, 0)   <> COALESCE(m.pending, 0)
-         OR COALESCE(t.pending_bytes, 0) <> COALESCE(m.pending_bytes, 0)
-         OR COALESCE(t.withdrawn, 0) <> COALESCE(m.withdrawn, 0)`,
-  ).all() as unknown as MonthDrift[];
-
-  return rows;
-};
-
-/** Every venue-month the rollup holds anything for, and what it holds. */
-export const months = (
-  db:      DatabaseSync,
-  venueId: number,
-): MonthRow[] =>
-  db.prepare(
-    `SELECT venue_id AS venueId, month, files, bytes, pending,
-            pending_bytes AS pendingBytes, withdrawn
-       FROM rollup_venue WHERE venue_id = ? ORDER BY month`,
-  ).all(venueId) as unknown as MonthRow[];
-
 // ── Internals ─────────────────────────────────────────────────────────────────
 
 /** Add one file state into a series cell, or take it out (`sign` -1). */
@@ -260,41 +193,3 @@ const count = (cell: SeriesMonthDelta, state: FileEffect['now'], sign: 1 | -1): 
 /** Whether a delta says anything. */
 const moves = (d: MonthDelta | SeriesMonthDelta): boolean =>
   d.files !== 0 || d.bytes !== 0 || d.pending !== 0 || d.pendingBytes !== 0 || d.withdrawn !== 0;
-
-/**
- * The rollup as the rows themselves say it is.
- *
- * `date` is `yyyymmdd` and the grain is the month, so the key is its first six
- * characters — the one place this cache interprets a stored value, and it is
- * interpreting a field the catalog already owns rather than learning something
- * new about the data.
- */
-const TRUTH = `
-  SELECT venue_id,
-         substr(date, 1, 6)                                      AS month,
-         SUM(existence = 'confirmed')                            AS files,
-         SUM(CASE WHEN existence = 'confirmed'
-                  THEN COALESCE(size, 0) ELSE 0 END)             AS bytes,
-         SUM(existence = 'confirmed' AND downloaded_at IS NULL)  AS pending,
-         SUM(CASE WHEN existence = 'confirmed' AND downloaded_at IS NULL
-                  THEN COALESCE(size, 0) ELSE 0 END)             AS pending_bytes,
-         SUM(existence <> 'confirmed')                           AS withdrawn
-    FROM file
-   GROUP BY venue_id, substr(date, 1, 6)`;
-
-const REBUILD = `
-  INSERT INTO rollup_venue (venue_id, month, files, bytes, pending, pending_bytes, withdrawn)
-  ${TRUTH}`;
-
-/** The series rollup as the rows say it is — `TRUTH` grouped by series instead of venue. */
-const REBUILD_SERIES = `
-  INSERT INTO rollup_series (series_id, month, files, bytes, pending, pending_bytes, withdrawn)
-  SELECT series_id,
-         substr(date, 1, 6),
-         SUM(existence = 'confirmed'),
-         SUM(CASE WHEN existence = 'confirmed' THEN COALESCE(size, 0) ELSE 0 END),
-         SUM(existence = 'confirmed' AND downloaded_at IS NULL),
-         SUM(CASE WHEN existence = 'confirmed' AND downloaded_at IS NULL THEN COALESCE(size, 0) ELSE 0 END),
-         SUM(existence <> 'confirmed')
-    FROM file
-   GROUP BY series_id, substr(date, 1, 6)`;

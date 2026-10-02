@@ -10,11 +10,12 @@ import type { Server } from 'node:http';
  * and a report per page. See `venue.ts`.
  */
 
-const cfg = vi.hoisted(() => ({ archivesDir: '', catalogUrl: '', catalogToken: 'secret', venues: [], lens: 'backfill-20', concurrency: 2 }));
+const cfg = vi.hoisted(() => ({ archivesDir: '', catalogApi: '', catalogToken: 'secret', venues: [], lens: 'backfill-20', concurrency: 2 }));
 
 vi.mock('../src/config', () => ({ default: cfg }));
 
 const { walkVenue, _test_safe } = await import('../src/venue');
+const { venues } = await import('../src/catalog');
 
 let server:  Server;
 let asked:   { url: string; lens: string | undefined; token: string | undefined }[];
@@ -36,7 +37,7 @@ beforeEach(async () => {
 
     if (url.pathname.startsWith('/files/')) { served++; res.writeHead(200); res.end(url.pathname); return; }
 
-    if (url.pathname === '/buckets/binance/report') {
+    if (url.pathname === '/listings/binance/report') {
       let body = '';
       req.on('data', chunk => { body += chunk; });
       req.on('end', () => { reports.push(JSON.parse(body)); res.writeHead(200); res.end('{}'); });
@@ -47,6 +48,12 @@ beforeEach(async () => {
 
     asked.push({ url: req.url!, lens: req.headers['x-catalog-lens'] as string, token: req.headers['x-catalog-token'] as string });
 
+    if (url.pathname === '/contents/venues') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ items: [{ venue: 'binance' }, { venue: 'gate' }] }));
+      return;
+    }
+
     const marker = url.searchParams.get('marker');
     const keys   = marker === null ? KEYS.slice(0, 2) : KEYS.slice(2);
 
@@ -54,14 +61,14 @@ beforeEach(async () => {
     res.end(JSON.stringify({
       Name: 'binance', Marker: marker ?? '', MaxKeys: 2, IsTruncated: marker === null,
       ...(marker === null ? { NextMarker: keys.at(-1) } : {}),
-      BaseUrl: `${cfg.catalogUrl}/files/`,
+      BaseUrl: `${cfg.catalogApi}/files/`,
       Contents: keys.map(Key => ({ Key, FileId: KEYS.indexOf(Key) + 1, Url: Key })),
     }));
   });
 
   await new Promise<void>(ready => server.listen(0, '127.0.0.1', ready));
 
-  cfg.catalogUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  cfg.catalogApi = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 });
 
 afterEach(async () => {
@@ -73,7 +80,7 @@ describe('a walk', () => {
   it('fetches every object of every page to its key, and reports each page', async () => {
     const walked = await walkVenue('binance', () => false);
 
-    expect(walked).toEqual({ listed: 3, progressed: 3, failed: 0, mismatched: 0 });
+    expect(walked).toEqual({ listed: 3, progressed: 3, failed: 0, mismatched: 0, unreached: 0 });
 
     for (const key of KEYS) expect(readFileSync(join(cfg.archivesDir, 'binance', key), 'utf8')).toBe(`/files/${key}`);
 
@@ -88,7 +95,7 @@ describe('a walk', () => {
   it('asks again when the catalog drops the connection', async () => {
     drops = 1;
 
-    expect(await walkVenue('binance', () => false)).toEqual({ listed: 3, progressed: 3, failed: 0, mismatched: 0 });
+    expect(await walkVenue('binance', () => false)).toEqual({ listed: 3, progressed: 3, failed: 0, mismatched: 0, unreached: 0 });
   });
 
   /** A stop finishes what is in flight and reports it, and takes nothing new. */
@@ -99,7 +106,7 @@ describe('a walk', () => {
       // Asked to stop the moment the first file has been served.
       const walked = await walkVenue('binance', () => served > 0);
 
-      expect(walked).toEqual({ listed: 2, progressed: 1, failed: 0, mismatched: 0 });
+      expect(walked).toEqual({ listed: 2, progressed: 1, failed: 0, mismatched: 0, unreached: 0 });
       expect(reports).toEqual([{ downloaded: [1], failed: [], mismatched: [] }]);
     } finally {
       cfg.concurrency = 2;
@@ -110,10 +117,18 @@ describe('a walk', () => {
     await walkVenue('binance', () => false);
 
     expect(asked.map(one => one.url)).toEqual([
-      '/buckets/binance?pending=true&max-keys=1000',
-      `/buckets/binance?pending=true&max-keys=1000&marker=${encodeURIComponent('a/2.zip')}`,
+      '/listings/binance?pending=true&max-keys=1000',
+      `/listings/binance?pending=true&max-keys=1000&marker=${encodeURIComponent('a/2.zip')}`,
     ]);
     expect(asked.every(one => one.lens === 'backfill-20' && one.token === 'secret')).toBe(true);
+  });
+});
+
+describe('the venues', () => {
+  /** Only names are wanted; the lensed answer sizes the lens for every venue. */
+  it('are asked for without the lens, but with the token', async () => {
+    expect(await venues()).toEqual(['binance', 'gate']);
+    expect(asked).toEqual([{ url: '/contents/venues', lens: undefined, token: 'secret' }]);
   });
 });
 

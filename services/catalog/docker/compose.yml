@@ -1,0 +1,55 @@
+# Catalog Service — the public API over what prospector has catalogued.
+#
+# Reads the same catalog.db prospector writes: CATALOG_DIR on the host is
+# mounted at the same fixed path. It writes only lenses; every other row is
+# prospector's. Reports of what was downloaded are forwarded to prospector,
+# which owns a file's state.
+#
+# It creates nothing: on a fresh deployment it waits for prospector to build the
+# database.
+
+services:
+  catalog:
+    build:
+      context: ../../..
+      dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
+      args:
+        SERVICE_NAME: catalog
+
+    container_name: catalog
+
+    environment:
+      # The shared secret every request must carry in `x-catalog-token`; the same
+      # one prospector checks, and sent on to it with every forwarded report.
+      #
+      # Empty is allowed and means the check is off — every request is let
+      # through, which is what makes the read endpoints answerable from a browser
+      # with no header to set. The service warns loudly on startup, so an open
+      # catalog is a decision somebody took rather than one nobody noticed.
+      CATALOG_TOKEN: ${CATALOG_TOKEN:-}
+
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV:  ${APP_ENV:-prod}
+      TZ:        ${TZ:-UTC}
+
+    user: "1000:1000"
+
+    volumes:
+      - ../../../:/live
+      - ${CATALOG_DIR:?CATALOG_DIR is not defined}:/data/catalog
+
+    ports:
+      # Health, and the catalog API. Both publish to whatever host port is given
+      # — left empty, docker picks a free one, which is what you want when the
+      # only thing that reaches this is on the same network.
+      - :3000
+      - ${CATALOG_PORT:-}:8080
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    restart: unless-stopped

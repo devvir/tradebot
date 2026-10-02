@@ -4,7 +4,7 @@ import type { BucketPage, Report } from './types';
 
 /**
  * Hauler's whole conversation with the catalog: which venues there are, one
- * page of a venue's bucket at a time, and what became of each page.
+ * page of a venue's listing at a time, and what became of each page.
  *
  * **Only what is still owed is asked for** (`pending=true`), and through the
  * configured lens where there is one — the catalog leaves everything else out
@@ -12,9 +12,15 @@ import type { BucketPage, Report } from './types';
  * catalog answers XML otherwise, as S3 does.
  */
 
-/** Every venue the catalog surveys. */
+/**
+ * Every venue the catalog holds files for.
+ *
+ * **Asked without the lens.** Only the names are wanted, and a venue the lens
+ * lets nothing through from simply lists nothing; the lensed answer sizes the
+ * lens for every venue, which costs the catalog seconds.
+ */
 export const venues = async (): Promise<string[]> => {
-  const body = await ask<{ items: { venue: string }[] }>('/venues');
+  const body = await ask<{ items: { venue: string }[] }>('/contents/venues', {}, false);
 
   return body.items.map(one => one.venue);
 };
@@ -25,7 +31,7 @@ export const page = async (venue: string, marker: string | null): Promise<Bucket
 
   if (marker !== null) query.set('marker', marker);
 
-  return ask<BucketPage>(`/buckets/${encodeURIComponent(venue)}?${query.toString()}`);
+  return ask<BucketPage>(`/listings/${encodeURIComponent(venue)}?${query.toString()}`);
 };
 
 /**
@@ -36,7 +42,7 @@ export const report = async (venue: string, done: Report): Promise<void> => {
   if (done.downloaded.length + done.failed.length + done.mismatched.length === 0) return;
 
   try {
-    await ask(`/buckets/${encodeURIComponent(venue)}/report`, { method: 'POST', body: JSON.stringify(done) });
+    await ask(`/listings/${encodeURIComponent(venue)}/report`, { method: 'POST', body: JSON.stringify(done) });
   } catch (err) {
     logger.warn({ err, venue, downloaded: done.downloaded.length, failed: done.failed.length,
       mismatched: done.mismatched.length }, 'Could not report a page — it will come round again');
@@ -64,10 +70,10 @@ const RETRY_MS = 1_000;
  * Both kinds of request are safe to repeat — a listing is a read, and reporting
  * a file twice records it once.
  */
-const ask = async <T>(path: string, init: RequestInit = {}): Promise<T> => {
+const ask = async <T>(path: string, init: RequestInit = {}, lensed = true): Promise<T> => {
   for (let attempt = 1; ; attempt++) {
     try {
-      return await once<T>(path, init);
+      return await once<T>(path, init, lensed);
     } catch (err) {
       if (! (err instanceof TypeError) || attempt >= ATTEMPTS) throw err;
 
@@ -76,14 +82,14 @@ const ask = async <T>(path: string, init: RequestInit = {}): Promise<T> => {
   }
 };
 
-const once = async <T>(path: string, init: RequestInit): Promise<T> => {
-  const res = await fetch(`${config.catalogUrl}${path}`, {
+const once = async <T>(path: string, init: RequestInit, lensed: boolean): Promise<T> => {
+  const res = await fetch(`${config.catalogApi}${path}`, {
     ...init,
     headers: {
       accept:         'application/json',
       'content-type': 'application/json',
       ...(config.catalogToken ? { 'x-catalog-token': config.catalogToken } : {}),
-      ...(config.lens ? { 'x-catalog-lens': config.lens } : {}),
+      ...(config.lens && lensed ? { 'x-catalog-lens': config.lens } : {}),
       ...init.headers,
     },
   });

@@ -7,10 +7,13 @@ import type { Config } from './types';
  */
 const ARCHIVES_DIR = '/data/archives';
 
+/** Where the catalog answers inside the module's network. */
+const CATALOG_API = 'http://catalog:8080';
+
 const loadConfig = (): Config => {
   const config: Config = {
     archivesDir:  ARCHIVES_DIR,
-    catalogUrl:   requiredEnv('CATALOG_URL').replace(/\/$/, ''),
+    catalogApi:   (process.env['CATALOG_API']?.trim() || CATALOG_API).replace(/\/$/, ''),
     catalogToken: (process.env['CATALOG_TOKEN'] ?? '').trim(),
     venues:       parseList(process.env['HAULER_VENUES']),
     lens:         (process.env['HAULER_LENS'] ?? '').trim(),
@@ -21,14 +24,6 @@ const loadConfig = (): Config => {
     'Configuration loaded and validated!');
 
   return config;
-};
-
-const requiredEnv = (name: string): string => {
-  const value = process.env[name]?.trim();
-
-  if (! value) throw new Error(`${name} is required — hauler cannot reach the catalog without it`);
-
-  return value;
 };
 
 const parseList = (raw: string | undefined): string[] =>

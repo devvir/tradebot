@@ -62,7 +62,7 @@ export const Lenses = () => {
           label="Lens"
           placeholder={lenses?.length ? 'Choose a lens' : 'No lenses yet'}
           data={(lenses ?? []).map(one => ({ value: one.slug, label: one.name || one.slug }))}
-          value={chosen} onChange={setChosen} w={260} searchable
+          value={chosen} onChange={setChosen} w={260}
         />
         <Button size="sm" variant="light" onClick={() => setNaming(true)}>New Lens</Button>
         {lenses === null && <Loader size="sm" type="dots" />}

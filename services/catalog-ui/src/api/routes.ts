@@ -7,12 +7,11 @@ import type { Application, Request, Response } from 'express';
 /**
  * Two things: the page, and a way for it to reach the services behind it.
  *
- * **The browser never talks to the catalog directly**, and the reason is where
- * the catalog is allowed to be. Prospector is meant to run wherever the link to
- * the venues is good — another machine, another network — which is the whole
- * point of it being an HTTP service rather than a library. A page calling it
- * directly works only while it happens to be reachable from whichever browser is
- * open, and stops the day it moves.
+ * **The browser never talks to the services directly**, and the reason is where
+ * they are allowed to be. The catalog may run on another machine, and prospector
+ * is not reachable from outside the module at all — its collector API is
+ * private. A page calling either directly works only while it happens to be
+ * reachable from whichever browser is open.
  *
  * **And the token would have to travel with the browser.** Where one is set, a
  * page calling the catalog itself has to carry it, which means shipping the
@@ -28,11 +27,12 @@ import type { Application, Request, Response } from 'express';
 const PAGE = join(__dirname, '..', '..', 'web');
 
 export const setupRoutes = (app: Application): void => {
-  app.use('/api/catalog', forward(() => config.catalogUrl, config.catalogToken));
+  app.use('/api/catalog', forward(() => config.catalogApi, config.catalogToken));
+  app.use('/api/prospector', forward(() => config.prospectorApi, config.catalogToken));
 
   /** What this page needs to know about itself, so nothing is baked into it. */
   app.get('/api/where', (_req, res) => {
-    res.json({ catalog: config.catalogUrl });
+    res.json({ catalog: config.catalogApi });
   });
 
   app.use(express.static(PAGE));

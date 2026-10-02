@@ -10,6 +10,11 @@ stocker builds through one, cold storage decides through one, and a person brows
 endpoints are in [CATALOG-API.md](CATALOG-API.md#lenses); the editor is in
 [CATALOG-UI.md](../services/CATALOG-UI.md).
 
+**Lenses belong to the catalog service, not to prospector.** Prospector collects everything a venue
+publishes whatever anyone wants of it; a lens is a consumer's choice of what to read, which collection
+neither knows nor acts on. So the catalog writes the `lens` table (the one table it writes) and
+prospector never reads it.
+
 ## The definition
 
 ```jsonc
@@ -91,10 +96,10 @@ the first two are folds over rows already in memory, and only the last touches t
 
 **A lens resolves to spans, not to a range.** Rules compose, so a later one can carve a hole in an
 earlier one's: including 2019 to 2021 and then excluding 2020 leaves two spans, and collapsing them to
-one range would hand back a year nobody asked for. The arithmetic is in `catalog/spans.ts`.
+one range would hand back a year nobody asked for. The arithmetic is in the catalog's `lenses/spans.ts`.
 
 **Resolved once and held for a minute**, dropped the moment the lens is edited — every page of a
-listing would otherwise fold the whole series registry again (`catalog/scope.ts`).
+listing would otherwise fold the whole series registry again (`lenses/scope.ts`).
 
 ## What a lens costs, and how far along it is
 
@@ -124,8 +129,7 @@ yet downloaded — beside the totals, so a lens's progress never disagrees with 
 A consumer names its lens in an `x-catalog-lens` header. **No header is the whole catalog; an unknown
 slug is a `404`, never the whole catalog in its place.**
 
-**The bucket listing** lists only what the lens lets through — see
-[Buckets](CATALOG-API.md#buckets).
+**The listing** lists only what the lens lets through — see [Listings](CATALOG-API.md#listings).
 
 **The contents** — `/contents/venues` and everything under it — narrow to the lens too:
 
@@ -134,11 +138,10 @@ slug is a `404`, never the whole catalog in its place.**
 - **A shape's dates are its files', not the lens's.** A series the lens cuts reports the oldest and
   newest file it actually holds inside it — one indexed read per such series — so a shape under a
   lens ending `202012` says where its data stops rather than claiming the lens's last day.
-- **Nothing is open under a lens that has ended**, however much the venue still writes: as far as
-  whoever looks through it is concerned, the shape has stopped.
-- **The venue list stays cheap.** Its files, bytes and pending are the lens's size; its months are
-  exact off the rollup where the lens takes whole venues, and otherwise clamped to the lens, which can
-  read a month wide at either edge.
+- **The venue list is the lens's figures, for every venue at once**: files, bytes and pending are its
+  size, its months the first and last with a file, and its series those holding a file inside it — all
+  off the rollups, without reading a series row or a file. Where the lens takes whole venues, size and
+  months come off `rollup_venue`, so they agree with every other figure for the venue.
 
 ## Who reads through one
 

@@ -54,7 +54,7 @@ lens that takes every grain hauls both, and both canonical keys sit in the same 
 4. **Staleness by catalog identity.** A partition's record lists its inputs by `FileId`, ETag and
    size, and it rebuilds when that set changes. A missing input still never counts as stale.
 5. **Spill stays**, with the neighbouring month's edge files taken from the listing by prefix.
-6. **Config, compose, docs.** `TRUCKER_DATA_DIR` becomes the archives root; `CATALOG_URL`,
+6. **Config, compose, docs.** `TRUCKER_DATA_DIR` becomes the archives root; `CATALOG_API`,
    `CATALOG_TOKEN` and `STOCKER_LENS` are added; `sources/trucker.ts`, `milestones.ts`,
    `scattered` and its tests go; STOCKER.md and the README are rewritten to the new flow.
 

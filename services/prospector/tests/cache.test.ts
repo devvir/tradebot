@@ -6,15 +6,15 @@ import {
   markDownloaded, markWithdrawn, putFiles, putVenue, recordSeries, settleFiles,
 } from '../src/catalog';
 import { openCatalog } from '../src/database';
-import { deltasOf, drift, rebuild, months, seriesDeltasOf } from '../src/catalog/cache/months';
+import { deltasOf, seriesDeltasOf } from '../src/catalog/cache/months';
 import type { CatalogFile, FileState } from '../src/types';
 import type { DatabaseSync } from 'node:sqlite';
 
 /**
  * The rollup is what makes an aggregate affordable, so the thing that matters is
  * that it says what the rows say. Two halves: the arithmetic, which needs no
- * database, and the wiring, which is checked against `drift` — the same
- * recomputation that would catch a call site nobody wired.
+ * database, and the wiring, which is checked against a recount of `file` — the
+ * only thing that catches a call site nobody wired.
  */
 
 let dir: string;
@@ -48,6 +48,33 @@ const file = (path: string, over: Partial<CatalogFile> = {}): CatalogFile => ({
   modified: null, existence: 'confirmed', seenAt: 'T1',
   seriesId: seriesOn(over.venueId ?? 1), ...over,
 });
+
+/** What the venue rollup holds for one venue, month by month. */
+const months = (venueId: number) =>
+  db.prepare(
+    `SELECT venue_id AS venueId, month, files, bytes, pending,
+            pending_bytes AS pendingBytes, withdrawn
+       FROM rollup_venue WHERE venue_id = ? ORDER BY month`,
+  ).all(venueId);
+
+/** The same figures counted from `file`, per `key` (`venue_id` or `series_id`). */
+const recount = (key: 'venue_id' | 'series_id') =>
+  db.prepare(
+    `SELECT ${key} AS id, substr(date, 1, 6) AS month,
+            SUM(existence = 'confirmed') AS files,
+            SUM(CASE WHEN existence = 'confirmed' THEN COALESCE(size, 0) ELSE 0 END) AS bytes,
+            SUM(existence = 'confirmed' AND downloaded_at IS NULL) AS pending,
+            SUM(CASE WHEN existence = 'confirmed' AND downloaded_at IS NULL THEN COALESCE(size, 0) ELSE 0 END) AS pendingBytes,
+            SUM(existence <> 'confirmed') AS withdrawn
+       FROM file GROUP BY ${key}, substr(date, 1, 6) ORDER BY 1, 2`,
+  ).all();
+
+/** What a rollup holds, in the shape `recount` answers in. */
+const rolled = (table: 'rollup_venue' | 'rollup_series', key: 'venue_id' | 'series_id') =>
+  db.prepare(
+    `SELECT ${key} AS id, month, files, bytes, pending, pending_bytes AS pendingBytes, withdrawn
+       FROM ${table} ORDER BY 1, 2`,
+  ).all();
 
 describe('the arithmetic', () => {
   it('counts a file nobody had seen', () => {
@@ -115,7 +142,7 @@ describe('what the write paths maintain', () => {
   it('counts files as a survey records them', async () => {
     await seed();
 
-    expect(months(db, 1)).toEqual([
+    expect(months(1)).toEqual([
       { venueId: 1, month: '202503', files: 2, bytes: 20, pending: 2, pendingBytes: 20, withdrawn: 0 },
     ]);
   });
@@ -124,14 +151,14 @@ describe('what the write paths maintain', () => {
     await seed();
     await seed();
 
-    expect(months(db, 1)[0]).toMatchObject({ files: 2, pending: 2 });
+    expect(months(1)[0]).toMatchObject({ files: 2, pending: 2 });
   });
 
   it('follows a download', async () => {
     await seed();
     markDownloaded(db, [{ venueId: 1, path: 'spot/a-2025-03.zip' }], 'D1');
 
-    expect(months(db, 1)[0]).toMatchObject({ files: 2, pending: 1 });
+    expect(months(1)[0]).toMatchObject({ files: 2, pending: 1 });
   });
 
   /** Reporting the same file twice must not take it out of pending twice. */
@@ -140,7 +167,7 @@ describe('what the write paths maintain', () => {
     markDownloaded(db, [{ venueId: 1, path: 'spot/a-2025-03.zip' }], 'D1');
     markDownloaded(db, [{ venueId: 1, path: 'spot/a-2025-03.zip' }], 'D2');
 
-    expect(months(db, 1)[0]).toMatchObject({ pending: 1 });
+    expect(months(1)[0]).toMatchObject({ pending: 1 });
     expect(db.prepare(`SELECT downloaded_at FROM file WHERE path = 'spot/a-2025-03.zip'`).get())
       .toMatchObject({ downloaded_at: 'D1' });
   });
@@ -150,7 +177,7 @@ describe('what the write paths maintain', () => {
     await putFiles(db, [file('spot/a-2025-03.zip', { seenAt: 'T2' })]);
     markWithdrawn(db, 1, 'spot/', 'spot0', 'T2');
 
-    expect(months(db, 1)[0]).toMatchObject({ files: 1, pending: 1, withdrawn: 1 });
+    expect(months(1)[0]).toMatchObject({ files: 1, pending: 1, withdrawn: 1 });
   });
 
   /** A changed file is owed again, and the rollup has to say so. */
@@ -158,11 +185,11 @@ describe('what the write paths maintain', () => {
     await seed();
     markDownloaded(db, [{ venueId: 1, path: 'spot/a-2025-03.zip' }, { venueId: 1, path: 'spot/b-2025-03.zip' }], 'D1');
 
-    expect(months(db, 1)[0]).toMatchObject({ pending: 0 });
+    expect(months(1)[0]).toMatchObject({ pending: 0 });
 
     await putFiles(db, [file('spot/a-2025-03.zip', { seenAt: 'T2', size: 99, etag: 'v2' })]);
 
-    expect(months(db, 1)[0]).toMatchObject({ files: 2, bytes: 109, pending: 1 });
+    expect(months(1)[0]).toMatchObject({ files: 2, bytes: 109, pending: 1 });
   });
 });
 
@@ -170,22 +197,13 @@ describe('what the write paths maintain', () => {
  * Every counter moves in the same transaction as its row, but a call site nobody
  * wired is silent — so the only honest answer is to be able to check.
  */
-describe('proving the cache still matches the rows', () => {
-  it('finds nothing to report when the writes were wired', async () => {
+describe('the rollups match the rows', () => {
+  it('agrees with a recount after every kind of write', async () => {
     putVenue(db, 'binance', 'https://x', '');
     await putFiles(db, [file('spot/a-2025-03.zip'), file('spot/b-2025-04.zip', { date: '20250401' })]);
     markDownloaded(db, [{ venueId: 1, path: 'spot/a-2025-03.zip' }], 'D1');
 
-    expect(drift(db)).toEqual([]);
-  });
-
-  it('reports both figures when they disagree', async () => {
-    putVenue(db, 'binance', 'https://x', '');
-    await putFiles(db, [file('spot/a-2025-03.zip')]);
-
-    db.prepare('UPDATE rollup_venue SET files = 99').run();
-
-    expect(drift(db)).toMatchObject([{ month: '202503', files: 1, cachedFiles: 99 }]);
+    expect(rolled('rollup_venue', 'venue_id')).toEqual(recount('venue_id'));
   });
 
   /**
@@ -207,7 +225,7 @@ describe('proving the cache still matches the rows', () => {
     const series = seriesOn(1);
 
     await putFiles(db, [file('spot/a-2025-03.zip')]);
-    expect(months(db, 1)[0]).toMatchObject({ files: 1 });
+    expect(months(1)[0]).toMatchObject({ files: 1 });
 
     db.prepare(
       `INSERT INTO wip (venue_id, path, date, series_id, existence, created_at)
@@ -219,38 +237,16 @@ describe('proving the cache still matches the rows', () => {
       size: 10, etag: 'e', modified: null, seenAt: 'T2',
     }]);
 
-    expect(months(db, 1)[0]).toMatchObject({ files: 1 });
-    expect(drift(db)).toEqual([]);
+    expect(months(1)[0]).toMatchObject({ files: 1 });
+    expect(rolled('rollup_venue', 'venue_id')).toEqual(recount('venue_id'));
   });
 
-  it('rebuilds what was never maintained', async () => {
-    putVenue(db, 'binance', 'https://x', '');
-    await putFiles(db, [file('spot/a-2025-03.zip'), file('spot/b-2025-03.zip')]);
-
-    // A catalog written before the rollup existed looks exactly like this.
-    db.prepare('DELETE FROM rollup_venue').run();
-    expect(drift(db)).toHaveLength(1);
-
-    rebuild(db);
-
-    expect(drift(db)).toEqual([]);
-    expect(months(db, 1)[0]).toMatchObject({ files: 2, bytes: 20, pending: 2 });
-  });
-
-  /** The series rollup is kept by the same writes, and refilled by the same rebuild. */
+  /** The series rollup is kept by the same writes. */
   it('keeps the series rollup in step with the venue one', async () => {
     putVenue(db, 'binance', 'https://x', '');
     await putFiles(db, [file('spot/a-2025-03.zip'), file('spot/b-2025-03.zip')]);
     markDownloaded(db, [{ venueId: 1, path: 'spot/a-2025-03.zip' }], 'D1');
 
-    const series = () => db.prepare(
-      'SELECT SUM(files) AS files, SUM(bytes) AS bytes, SUM(pending) AS pending FROM rollup_series').get();
-
-    expect(series()).toEqual({ files: 2, bytes: 20, pending: 1 });
-
-    db.prepare('DELETE FROM rollup_series').run();
-    rebuild(db);
-
-    expect(series()).toEqual({ files: 2, bytes: 20, pending: 1 });
+    expect(rolled('rollup_series', 'series_id')).toEqual(recount('series_id'));
   });
 });

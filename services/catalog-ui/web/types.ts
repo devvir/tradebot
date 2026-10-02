@@ -1,7 +1,7 @@
 /**
  * What the services answer with, as the page receives it.
  *
- * **Mirrors of prospector's own types, not a second opinion.** The
+ * **Mirrors of the catalog's and prospector's own types, not a second opinion.** The
  * page renders what it is given and reshapes nothing, so a field added upstream
  * shows up here by being added to one of these — never by this service learning
  * to compute it.
@@ -22,8 +22,6 @@ export interface Venue {
   pending:     number;
   pendingBytes: number;
   withdrawn:   number;
-  established: string | null;
-  lastRun:     LastRun;
 }
 
 /**
@@ -95,17 +93,9 @@ export interface Shape {
    * The newest file anybody has seen of this shape.
    *
    * **A measurement, not a verdict** — `null` means nothing has ever been seen,
-   * and nothing else. Whether more is expected is `open`.
+   * and nothing else.
    */
   last:    string | null;
-
-  /**
-   * Whether the catalog still expects files for this shape.
-   *
-   * The same question it asks before generating a key, so an open shape is one
-   * requests are still going out for.
-   */
-  open:    boolean;
 }
 
 /**
@@ -138,6 +128,12 @@ export interface Order {
 
 export interface Status extends Venue {
   state:      SurveyState;
+
+  /** When the venue was last established end to end. Null where it never was. */
+  established: string | null;
+
+  /** The venue's most recent pass, whether or not it ended. */
+  lastRun:     LastRun;
 
   /** When somebody first asked for this venue. Null where nobody has. */
   enrolledAt: string | null;
