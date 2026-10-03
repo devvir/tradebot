@@ -185,6 +185,38 @@ describe('whether a pass is the venue\'s first', () => {
     expect(lastRun(db, venueIds(db, 'bybit')).first).toBe(false);
   });
 
+  /** While a pass runs, the newest one that finished is what the venue last achieved. */
+  it('names the newest finished pass while another runs', () => {
+    const one = putVenue(db, 'solo', 'https://x', '');
+
+    ran(one, 'T1', null);
+    expect(lastRun(db, venueIds(db, 'solo')).previous).toBeNull();
+
+    db.exec(`UPDATE run SET completed = 'T2' WHERE venue_id = ${one}`);
+    expect(lastRun(db, venueIds(db, 'solo')).previous).toBeNull();
+
+    ran(one, 'T3', null);
+    expect(lastRun(db, venueIds(db, 'solo')).previous).toEqual({ at: 'T2', startedAt: 'T1', first: true });
+
+    db.exec(`UPDATE run SET completed = 'T4' WHERE started = 'T3'`);
+    ran(one, 'T5', null);
+    expect(lastRun(db, venueIds(db, 'solo')).previous).toEqual({ at: 'T4', startedAt: 'T3', first: false });
+  });
+
+  /** The backfill ends when the last host first finishes, so what finished by then was part of it. */
+  it('counts a pass as the backfill until every host has finished one', () => {
+    const [a, b] = twoHosts();
+
+    ran(a!, 'T1', 'T3');
+    ran(b!, 'T2', null);
+    expect(lastRun(db, venueIds(db, 'bybit')).previous).toEqual({ at: 'T3', startedAt: 'T1', first: true });
+
+    db.exec(`UPDATE run SET completed = 'T4' WHERE started = 'T2'`);
+    ran(a!, 'T5', 'T6');
+    ran(b!, 'T7', null);
+    expect(lastRun(db, venueIds(db, 'bybit')).previous).toEqual({ at: 'T6', startedAt: 'T5', first: false });
+  });
+
   /** A venue with one server is the ordinary case and behaves as it always did. */
   it('reads a single-host venue the same way', () => {
     const one = putVenue(db, 'solo', 'https://x', '');

@@ -23,7 +23,9 @@ lens; Keys and lenses are the catalog's, and prospector names a file by its id. 
 each key to its file — building the keys of the series' files of that date and keeping the one that
 matches, never parsing a name — checks it against the lens, and forwards the ids to prospector's private
 reports API. Keys it cannot resolve, or the lens refuses, are answered in a `207` and never reach
-prospector. Where prospector does not answer, the report is a `502`; the downloader loses nothing, since
+prospector. A connection prospector drops is tried again, three times: it closes idle keep-alive
+connections, so a request now and then lands on one as it goes, and settling twice is harmless. Where
+prospector still does not answer, the report is a `502`; the downloader loses nothing, since
 the files are listed again and reported on the next walk.
 
 **SQLite in WAL mode lets the two processes share the file**, through shared memory, which is why they
@@ -86,7 +88,8 @@ listed once, so paging still ends.
 ## Lenses
 
 **A lens is stored as what it lets through**: rows of `lens_series`, a series and a span of its dates,
-rebuilt whole when the lens is saved and extended as series appear (see
+rebuilt for the venues a save changed, and extended as series appear — in the background every
+fifteen minutes, a slice at a time, and by any request that finds the lens behind (see
 [CATALOG-LENSES.md](../modules/CATALOG-LENSES.md#resolving-one)). The listing, the contents, the size and
 a report's check all read those rows, so they agree and none of them evaluates a rule. Only a
 definition being edited, which has no rows yet, is resolved as it stands.
@@ -94,6 +97,13 @@ definition being edited, which has no rows yet, is resolved as it stands.
 The code is `lenses/lens.ts` (definitions, checking, sizing a draft), `lenses/rules.ts` (what the rules
 say of one series), `lenses/members.ts` (the rows), `lenses/figures.ts` (a saved lens's figures),
 `lenses/spans.ts` (the date arithmetic) and `lenses/scope.ts` (the rows as the contents read them).
+
+## Requests nobody waits for
+
+**One request runs at a time**, so a slow one queues the rest — and an editor that has moved on
+cancels what it no longer wants. Before any request's work starts, the catalog yields once and drops
+it if its connection has closed meanwhile. A request already running cannot be stopped: its work is
+synchronous.
 
 ## Configuration
 

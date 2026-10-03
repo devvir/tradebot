@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { _test_readAll, _test_wires, connectionsAtMost, deliver } from '../src/deliver';
+import { _test_readAll, deliver } from '../src/deliver';
 import { fault, faultLine } from '../src/faults';
 import { _test_rebuilt, _test_workersFor } from '../src/transport';
 import type { Server } from 'node:http';
@@ -99,44 +99,5 @@ describe('how many workers carry the requests', () => {
 
   it('is one more for every thousand beyond', () => {
     expect([1001, 2000, 2500].map(_test_workersFor)).toEqual([2, 2, 3]);
-  });
-});
-
-/**
- * A network that caps the connections one device holds tears down the open ones
- * when crossed, so HTTP/1.1 requests past the limit wait instead of connecting.
- */
-describe('a cap on connections', () => {
-  afterEach(() => connectionsAtMost(Infinity));
-
-  it('never has more requests open than it allows, and loses none', async () => {
-    let open = 0;
-    let most = 0;
-
-    const slow = createServer((_req, res) => {
-      most = Math.max(most, ++open);
-
-      setTimeout(() => {
-        open--;
-        res.writeHead(200, { 'content-length': '0' });
-        res.end();
-      }, 50);
-    });
-
-    await new Promise<void>(ready => slow.listen(0, '127.0.0.1', ready));
-
-    const at = `http://127.0.0.1:${(slow.address() as { port: number }).port}`;
-
-    connectionsAtMost(2);
-
-    const answers = await Promise.all(Array.from({ length: 6 }, (_, i) => deliver(`${at}/${i}.zip`, null)));
-
-    expect(answers.map(one => one.status)).toEqual([200, 200, 200, 200, 200, 200]);
-    expect(most).toBe(2);
-    expect(_test_wires.taken).toBe(0);
-
-    slow.closeAllConnections();
-
-    await new Promise(done => slow.close(done));
   });
 });

@@ -67,7 +67,7 @@ const workPage = async (
   const worker = async (): Promise<void> => {
     for (let object = queue.shift(); object && ! stopped(); object = queue.shift()) {
       if (! safe(venue, object.Key)) {
-        logger.error({ venue, key: object.Key }, 'A key that would leave the archive — skipped');
+        logger.error({ venue, key: object.Key }, 'Key outside the venue — skipped');
 
         continue;
       }

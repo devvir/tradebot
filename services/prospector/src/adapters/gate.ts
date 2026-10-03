@@ -70,7 +70,7 @@ export const gate: Adapter = declare({
    * what is in flight sets the rate: 600 at once held ~1,770/s on missing keys
    * (2026-09-30).
    */
-  pacing:  { perSecond: 2000, concurrency: 600 },
+  pacing:  { perSecond: 2000, concurrency: 500 },
 
   /**
    * The seven trees gate still publishes. Everything else in the bucket is dead

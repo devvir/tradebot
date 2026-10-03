@@ -13,7 +13,6 @@ export {
   anyUnsettled,
   countUnsettled,
   settleFiles,
-  markWithdrawn,
   markDownloaded,
   correctFile,
   withdrawFile,

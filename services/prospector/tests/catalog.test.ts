@@ -2,10 +2,11 @@ import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { advanceRun, ancestorsOf, beginJob, closeRun, establishedAt, exclusionsFor, markDownloaded, markWithdrawn, openJob, openPartitions, putFiles, putVenue, recordSeries, venueIds, settleFiles, unsettled } from '../src/catalog';
+import { advanceRun, ancestorsOf, beginJob, closeRun, establishedAt, exclusionsFor, markDownloaded, openJob, openPartitions, putFiles, putVenue, recordSeries, venueIds, settleFiles, unsettled } from '../src/catalog';
 import { assertWritable, migrate, openCatalog, SCHEMA_VERSION, version } from '../src/database';
 import { _test_BREATH_MS as BREATH_MS } from '../src/catalog/queries';
 import type { CatalogFile, Run } from '../src/catalog';
+import type { Span } from '../src/types';
 import { DatabaseSync } from 'node:sqlite';
 
 let dir: string;
@@ -166,8 +167,18 @@ describe('re-walking', () => {
     await seed();
     await putFiles(db, [file('spot/a-2025-03.zip', { seenAt: 'T2', size: 10, etag: 'v1' })]);
 
-    expect(db.prepare('SELECT seen_at, last_seen FROM file').get())
-      .toMatchObject({ seen_at: 'T1', last_seen: 'T2' });
+    expect(db.prepare('SELECT seen_at FROM file').get()).toMatchObject({ seen_at: 'T1' });
+  });
+
+  /** A re-walk sees nearly every key unchanged, and rewriting each one was most of what it cost. */
+  it('writes nothing for a file that says nothing new', async () => {
+    await seed();
+
+    const before = changes();
+
+    await putFiles(db, [file('spot/a-2025-03.zip', { seenAt: 'T2', size: 10, etag: 'v1' })], SPOT);
+
+    expect(changes()).toBe(before);
   });
 
   it('records nothing in the trail when a file is unchanged', async () => {
@@ -232,9 +243,8 @@ describe('re-walking', () => {
    */
   it('marks a file the venue stopped offering, without deleting it', async () => {
     await seed();
-    await putFiles(db, [file('spot/b-2025-03.zip', { seenAt: 'T2' })]);
 
-    const gone = markWithdrawn(db, 1, 'spot/', 'spot0', 'T2');
+    const gone = await putFiles(db, [file('spot/b-2025-03.zip', { seenAt: 'T2' })], SPOT);
 
     expect(gone).toBe(1);
     expect(db.prepare(`SELECT existence, seen_at FROM file WHERE path LIKE 'spot/a%'`).get())
@@ -243,23 +253,75 @@ describe('re-walking', () => {
       .toMatchObject({ existence: 'confirmed' });
   });
 
-  /** A first pass has nothing older than its own start, so it withdraws nothing. */
-  it('withdraws nothing on a first pass', async () => {
+  /** A page that lists everything it covers withdraws nothing. */
+  it('withdraws nothing the page listed', async () => {
     await seed();
 
-    expect(markWithdrawn(db, 1, 'spot/', 'spot0', 'T1')).toBe(0);
+    expect(await putFiles(db, [file('spot/a-2025-03.zip', { seenAt: 'T2', size: 10, etag: 'v1' })], SPOT)).toBe(0);
   });
 
   it('leaves other prefixes alone', async () => {
     await seed();
     await putFiles(db, [file('futures/a-2025-03.zip', { seenAt: 'T1' })]);
-
-    markWithdrawn(db, 1, 'spot/', 'spot0', 'T2');
+    await putFiles(db, [], SPOT);
 
     expect(db.prepare(`SELECT existence FROM file WHERE path LIKE 'futures/%'`).get())
       .toMatchObject({ existence: 'confirmed' });
   });
+
+  /**
+   * **A page judges only its own stretch**: after the marker it was asked with,
+   * through the one it handed back. A key on either side belongs to another
+   * page, which judges it.
+   */
+  it('judges only what lies between its edges', async () => {
+    await seed();
+    await putFiles(db, ['b', 'c', 'd'].map(one => file(`spot/${one}-2025-03.zip`, { seenAt: 'T1' })));
+
+    const page = (low: string, high: string): Span => ({ venueId: 1, low, lowOpen: true, high, highOpen: false });
+
+    expect(await putFiles(db, [file('spot/c-2025-03.zip', { seenAt: 'T2' })],
+      page('spot/a-2025-03.zip', 'spot/c-2025-03.zip'))).toBe(1);
+
+    expect(existence()).toEqual({ a: 'confirmed', b: 'absent', c: 'confirmed', d: 'confirmed' });
+  });
+
+  /**
+   * **A directory index states its files and its children.** A file it no longer
+   * lists has gone, and so has a subdirectory it no longer links — with
+   * everything below it — while a linked one is left to its own page.
+   */
+  it('withdraws what a directory no longer offers, files and subdirectories', async () => {
+    await seed();
+    await putFiles(db, ['spot/A/x-2025-03.zip', 'spot/B/y-2025-03.zip', 'spot/B/C/z-2025-03.zip', 'spot/w-2025-03.zip']
+      .map(path => file(path, { seenAt: 'T1' })));
+
+    const gone = await putFiles(db, [file('spot/w-2025-03.zip', { seenAt: 'T2' })],
+      { venueId: 1, directory: 'spot/', children: ['spot/A/'] });
+
+    expect(gone).toBe(3);
+    expect(db.prepare(`SELECT path FROM file WHERE existence = 'absent' ORDER BY path`).all().map(row => row['path']))
+      .toEqual(['spot/B/C/z-2025-03.zip', 'spot/B/y-2025-03.zip', 'spot/a-2025-03.zip']);
+  });
+
+  /** A page that came back empty still covered its stretch. */
+  it('withdraws everything an empty page covered', async () => {
+    await seed();
+
+    expect(await putFiles(db, [], SPOT)).toBe(1);
+  });
 });
+
+/** The whole of `spot/`, as a walk's only page over it would cover it. */
+const SPOT: Span = { venueId: 1, low: 'spot/', lowOpen: false, high: 'spot0', highOpen: true };
+
+/** Rows written by the connection so far — what a write that did nothing leaves unchanged. */
+const changes = (): number => (db.prepare('SELECT total_changes() AS n').get() as { n: number }).n;
+
+/** Each `spot/` file's existence, by its leading letter. */
+const existence = (): Record<string, string> => Object.fromEntries(
+  (db.prepare(`SELECT path, existence FROM file WHERE path LIKE 'spot/%' ORDER BY path`).all() as { path: string; existence: string }[])
+    .map(row => [row.path.slice(5, 6), row.existence]));
 
 /**
  * A walk on an index venue establishes that a file exists and nothing more, so
@@ -316,8 +378,8 @@ describe('settling metadata a listing could not carry', () => {
     }]);
 
     expect(unsettled(db, 1, 0, 10).map(row => row.path)).toEqual(['trading/B/B2023-01-01.csv.gz']);
-    expect(db.prepare(`SELECT size, etag, last_seen FROM file WHERE path LIKE 'trading/A%'`).get())
-      .toMatchObject({ size: 10, etag: 'e', last_seen: 'T2' });
+    expect(db.prepare(`SELECT size, etag FROM file WHERE path LIKE 'trading/A%'`).get())
+      .toMatchObject({ size: 10, etag: 'e' });
   });
 
   /** Somebody ruled on it; asking the venue again is what they ruled against. */
@@ -840,6 +902,33 @@ describe('holding the thread', () => {
     Array.from({ length: count }, (_v, at) => ({
       ...file(`p/${String(at).padStart(6, '0')}.zip`), venueId,
     }));
+
+  /**
+   * **A page larger than one slice is judged once, across all of them.** Each
+   * slice withdraws only the stretch it reached, so a key is never judged twice
+   * nor skipped between two slices — whatever the page's size, and however many
+   * slices the clock cuts it into.
+   */
+  it('withdraws exactly what a many-slice page left out, and writes nothing that did not change', async () => {
+    putVenue(db, 'binance', 'https://x', 'data/');
+
+    const all  = many(1, 6_000);
+    const span: Span = { venueId: 1, low: 'p/', lowOpen: false, high: 'p0', highOpen: true };
+
+    await putFiles(db, all);
+
+    const before = changes();
+
+    expect(await putFiles(db, all, span)).toBe(0);
+    expect(changes()).toBe(before);
+
+    // Every kept key restated, so the page is written in full and the clock cuts it into many slices.
+    const kept = all.filter((_one, at) => at % 1_000 !== 0).map(one => ({ ...one, etag: 'restated' }));
+
+    expect(await putFiles(db, kept, span)).toBe(6);
+    expect(db.prepare(`SELECT count(*) n FROM file WHERE etag = 'restated'`).get()).toMatchObject({ n: 5_994 });
+    expect(db.prepare(`SELECT count(*) n FROM file WHERE existence = 'absent'`).get()).toMatchObject({ n: 6 });
+  });
 
   /**
    * **The bug this replaced.** Slicing one write bounds one write: node runs the

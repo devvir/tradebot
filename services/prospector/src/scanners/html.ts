@@ -52,10 +52,15 @@ export const html: Scanner<ListingContext> = {
 
     if (! at) return { listed: [], cursor: null };
 
-    const { keys } = await read(context, at);
-    const after    = await next(context, scope, at);
+    const { keys, children } = await read(context, at);
+    const after              = await next(context, scope, at);
 
-    return { listed: keys.map(listed), cursor: after ? at : null };
+    /**
+     * **A directory states its own files and its children in full**, and every
+     * directory of the scope gets a page, files or not — so what this one no
+     * longer offers, file or subdirectory, has been withdrawn. See `Coverage`.
+     */
+    return { listed: keys.map(listed), cursor: after ? at : null, covers: { directory: at, children } };
   },
 
   /**

@@ -32,8 +32,10 @@ without learning where they live.
   and then fetches it again. It never deletes anything.
 - Reports each page by Key: downloaded, failed, or mismatched. The catalog
   checks the venue again and decides what is true. Only the venue saying a file
-  is not there (`403`, `404`, `410`) makes it failed; a timeout or a busy venue
-  leaves it unreported, to come round on the next walk.
+  is not there (`404`, `410`, or `403` on every attempt) makes it failed; a
+  timeout, a busy venue or a `429` leaves it unreported, to come round on the
+  next walk.
+  A refusal also pauses every fetch from that venue for a while.
 - Removes every leftover `.part` file when it starts. `.bak` files stay for a
   person to review.
 

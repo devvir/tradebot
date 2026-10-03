@@ -3,6 +3,7 @@ import { pass } from '@devvir/netgate';
 import { labelOf, paceFor } from './pace';
 import { countAsked, countSent } from './counts';
 import { carry } from './transport';
+import { timed } from './timings';
 import type { Adapter, Carried, PageFormat, Pages, PageRead, Probed, Reply } from './types';
 
 /**
@@ -212,9 +213,15 @@ const send = async (adapter: Adapter, url: string, read: PageRead | null): Promi
    * time — no attempt is spent and no retry consumed — so an outage is a pause
    * rather than every worker discovering it separately.
    */
+  const asked = performance.now();
+
   await pass();
 
   await pace.slot();
+
+  const slotted = performance.now();
+
+  timed(labelOf(adapter), 'slot', slotted - asked);
 
   /** Counted once it has a slot, so every attempt is one request sent. */
   countSent(adapter);
@@ -226,9 +233,11 @@ const send = async (adapter: Adapter, url: string, read: PageRead | null): Promi
    * hundred open transfers, however many megabytes each one is.
    */
   let carried: Carried;
+  let back = 0;
 
   try {
     carried = await carry(url, read);
+    back    = performance.now();
   } catch (err) {
     // Never reached the venue, or never finished. Counted, because retrying an
     // unreachable host is what turns an outage into an outage plus a leak — see
@@ -238,6 +247,21 @@ const send = async (adapter: Adapter, url: string, read: PageRead | null): Promi
     throw err;
   } finally {
     pace.done();
+  }
+
+  /**
+   * **Where the slot's time went.** What the worker measured is the request
+   * itself; whatever else passed between handing it over and hearing back is
+   * the trip to the worker and its queue there.
+   */
+  if (carried.timing) {
+    const venue = labelOf(adapter);
+    const { firstByte, body, parse } = carried.timing;
+
+    timed(venue, 'firstByte', firstByte);
+    timed(venue, 'body',      body);
+    timed(venue, 'parse',     parse);
+    timed(venue, 'handoff',   Math.max(0, back - slotted - firstByte - body - parse));
   }
 
   const headers = new Headers(carried.headers);

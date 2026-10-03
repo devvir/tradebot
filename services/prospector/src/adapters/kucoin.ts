@@ -27,7 +27,7 @@ export const kucoin: Adapter = declare({
    * ~1,500/s at ~525 at once (2026-09-30), and more than 600 would mostly wait
    * on the machine-wide ceiling.
    */
-  pacing:  { perSecond: 5000, concurrency: 600 },
+  pacing:  { perSecond: 5000, concurrency: 500 },
 
   /**
    * Walking, every update — see `docs/services/PROSPECTOR.md`, *How each venue updates*.

@@ -1,4 +1,4 @@
-import { lensRequested } from '../lenses/requested';
+import { lensRequested, lensSlug } from '../lenses/requested';
 import { listingPage } from '../listings/listing';
 import { asXml, requestOf, resultOf } from '../listings/s3';
 import type { Application, Request, Response } from 'express';
@@ -9,7 +9,7 @@ import type { S3Body } from '../types';
  * The catalog as one S3 bucket — see `listings/s3.ts` for the shape, and
  * `listings/listing.ts` for how a page is read.
  *
- * **Two filters S3 does not have.** A lens named in `x-catalog-lens`, and
+ * **Two filters S3 does not have.** A lens — see `lensSlug` — and
  * `pending=true` for files not yet downloaded; either one simply leaves files
  * out, as though the bucket did not hold them.
  */
@@ -17,7 +17,7 @@ export const mountListings = (app: Application, db: DatabaseSync): void => {
   app.get('/listings', (req, res) => {
     const lens = lensRequested(db, req);
 
-    if (lens === undefined) return failed(req, res, 422, 'NoSuchLens', `No such lens: ${String(req.headers['x-catalog-lens']).trim()}`);
+    if (lens === undefined) return failed(req, res, 422, 'NoSuchLens', `No such lens: ${lensSlug(req)}`);
 
     const asked = requestOf(req.query);
 

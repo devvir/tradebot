@@ -1,17 +1,17 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert, Autocomplete, Badge, Button, Card, Group, Loader, Modal, MultiSelect, Progress,
   Select, Stack, Text, TextInput, Title,
 } from '@mantine/core';
-import { catalog, poll, post, put, remove } from '../api';
+import { catalog, poll, remove, send } from '../api';
 import { linkTo, rememberLens } from '../App';
+import { bytes, count } from './Table';
+import type {
+  Lens, LensDefinition, LensDraft, LensOption, LensProblem, LensRule, LensSize, RuleEntry,
+} from '../types';
 
 /** The key a lens keeps its all-venue rules under — see the catalog's `GLOBAL`. */
 const GLOBAL = '*';
-import { bytes, count } from './Table';
-import type {
-  Lens, LensDefinition, LensOption, LensProblem, LensRule, LensSize,
-} from '../types';
 
 /**
  * Lenses: named ways of looking at the catalog.
@@ -21,10 +21,13 @@ import type {
  * is the definition of a view, and the thing it has to make obvious is what that
  * view leaves out.
  *
- * **Rules are ordered and they compose.** Each one either adds or takes away, and
- * later rules see what earlier ones left. That is what lets "everything up to a
- * date, except books, except recent trades" be three lines that read top to
- * bottom, rather than an enumeration of the complement.
+ * **Includes minus excludes, in no order.** A lens lets through what any include
+ * matches, less what any exclude matches; where a rule sits never changes that.
+ *
+ * **A rule is confirmed on its own.** Writing one sends nothing; Confirm stores
+ * the lens with that rule, Drop stores it without, and Save is for the name and
+ * the note alone — so a half-written rule never costs the catalog a request, and
+ * each change that reaches it is one somebody meant.
  *
  * **A rule states only what it constrains.** Every dimension left empty means all
  * of it, which is shown as `every` rather than as a blank — because the
@@ -35,6 +38,12 @@ export const Lenses = ({ slug }: { slug?: string | undefined }) => {
   const [lenses, setLenses] = useState<Lens[] | null>(null);
   const [error,  setError]  = useState<string | null>(null);
   const [naming, setNaming] = useState(false);
+
+  /**
+   * **A new lens is the page's until it is first saved** — by Save, or by its
+   * first confirmed rule. Kept in this browser, so a reload does not lose it.
+   */
+  const [fresh, setFresh] = useState<Lens | null>(unsavedLens);
 
   /**
    * **The lens being edited is the address**, `#lenses/:slug`, so a link opens
@@ -58,7 +67,14 @@ export const Lenses = ({ slug }: { slug?: string | undefined }) => {
 
   useEffect(() => { load(); }, [load]);
 
-  const lens = lenses?.find(one => one.slug === slug) ?? null;
+  const lens = lenses?.find(one => one.slug === slug) ?? (fresh?.slug === slug ? fresh : null);
+
+  /** Once stored, a new lens is the catalog's: the page forgets its own copy. */
+  const stored = (made: string) => {
+    if (fresh?.slug === made) { setFresh(null); keepUnsaved(null); }
+
+    load(made);
+  };
 
   /**
    * **An address naming no lens that exists opens the first one instead**, in
@@ -68,12 +84,17 @@ export const Lenses = ({ slug }: { slug?: string | undefined }) => {
   useEffect(() => {
     if (lenses === null || lens) return;
 
-    const first = lenses[0]?.slug;
+    const first = fresh?.slug ?? lenses[0]?.slug;
 
     if (first) location.replace(linkTo({ section: 'lenses', lens: first }));
   }, [lenses, lens]);
 
-  useEffect(() => { if (lens) rememberLens(lens.slug); }, [lens]);
+  useEffect(() => { if (lens && lens.id !== undefined) rememberLens(lens.slug); }, [lens]);
+
+  const choices = [
+    ...(fresh && ! lenses?.some(one => one.slug === fresh.slug) ? [fresh] : []),
+    ...(lenses ?? []),
+  ];
 
   return (
     <Stack gap="md">
@@ -82,8 +103,11 @@ export const Lenses = ({ slug }: { slug?: string | undefined }) => {
       <Group align="flex-end" gap="sm">
         <Select
           label="Lens"
-          placeholder={lenses?.length ? 'Choose a lens' : 'No lenses yet'}
-          data={(lenses ?? []).map(one => ({ value: one.slug, label: one.name || one.slug }))}
+          placeholder={choices.length ? 'Choose a lens' : 'No lenses yet'}
+          data={choices.map(one => ({
+            value: one.slug,
+            label: `${one.name || one.slug}${one.id === undefined ? ' (not saved)' : ''}`,
+          }))}
           value={lens?.slug ?? null} onChange={to => { if (to) open(to); }} w={260}
           allowDeselect={false}
         />
@@ -91,11 +115,16 @@ export const Lenses = ({ slug }: { slug?: string | undefined }) => {
         {lenses === null && <Loader size="sm" type="dots" />}
       </Group>
 
-      {lens && <Editing lens={lens} onChanged={load} onFailed={setError} />}
+      {lens && (
+        <Editing
+          key={lens.slug} lens={lens} onStored={stored} onFailed={setError}
+          onGone={() => { if (lens.id === undefined) { setFresh(null); keepUnsaved(null); } load(); }}
+        />
+      )}
 
       <Naming
-        opened={naming} onClose={() => setNaming(false)}
-        onMade={name => { setNaming(false); load(name); }} onFailed={setError}
+        opened={naming} taken={choices.map(one => one.slug)} onClose={() => setNaming(false)}
+        onNamed={made => { setNaming(false); setFresh(made); keepUnsaved(made); open(made.slug); }}
       />
     </Stack>
   );
@@ -107,21 +136,21 @@ const SIZE_REFRESH_MS = 30_000;
 /** Where a lens's last known size is kept, one entry per lens. */
 const sizeKey = (slug: string): string => `catalog-ui:lens-size:${slug}`;
 
-/** The size last seen for exactly this definition, or undefined where it was never sized here. */
-const seenSize = (slug: string, definition: LensDefinition): LensSize | undefined => {
+/** The size last seen for exactly this saved lens, or undefined where it was never sized here. */
+const seenSize = (lens: Lens): LensSize | undefined => {
   try {
-    const held = JSON.parse(localStorage.getItem(sizeKey(slug)) ?? 'null') as
-      { definition: string; size: LensSize } | null;
+    const held = JSON.parse(localStorage.getItem(sizeKey(lens.slug)) ?? 'null') as
+      { updatedAt: string; size: LensSize } | null;
 
-    return held && held.definition === JSON.stringify(definition) ? held.size : undefined;
+    return held && held.updatedAt === lens.updatedAt ? held.size : undefined;
   } catch {
     return undefined;
   }
 };
 
-const keepSize = (slug: string, definition: LensDefinition, size: LensSize): void => {
+const keepSize = (lens: Lens, size: LensSize): void => {
   try {
-    localStorage.setItem(sizeKey(slug), JSON.stringify({ definition: JSON.stringify(definition), size }));
+    localStorage.setItem(sizeKey(lens.slug), JSON.stringify({ updatedAt: lens.updatedAt, size }));
   } catch { /* storage refused: the next visit waits for the answer instead */ }
 };
 
@@ -145,111 +174,167 @@ const Downloaded = ({ size }: { size: LensSize }) => {
 };
 
 /** One lens, whole: what it is called, what it is for, and what it lets through. */
-const Editing = ({ lens, onChanged, onFailed }: {
-  lens:      Lens;
-  onChanged: (keep?: string) => void;
-  onFailed:  (message: string) => void;
+const Editing = ({ lens, onStored, onFailed, onGone }: {
+  lens:     Lens;
+  onStored: (slug: string) => void;
+  onFailed: (message: string) => void;
+  onGone:   () => void;
 }) => {
-  const kept = keptFor(lens);
+  const unsaved = lens.id === undefined;
+  const kept    = keptFor(lens);
 
   const [name,  setName]  = useState(kept?.name ?? lens.name);
   const [note,  setNote]  = useState(kept?.note ?? lens.note);
-  const [draft, setDraft] = useState<LensDefinition>(kept?.definition ?? lens.definition);
-  const [going, setGoing] = useState(false);
+  const [rules, setRules] = useState<Record<string, RuleEntry[]>>(kept?.rules ?? entriesOf(lens.definition));
 
-  const [problems, setProblems] = useState<LensProblem[]>([]);
-  const [size,     setSize]     = useState<LensSize | undefined>(undefined);
-  const [venues,   setVenues]   = useState<string[]>([]);
+  /** The rule being stored, by its key — its buttons wait, and only one store runs at a time. */
+  const [storing,  setStoring]  = useState<string | null>(null);
+  const [problems, setProblems] = useState<Record<string, LensProblem[]>>({});
+  const [general,  setGeneral]  = useState<LensProblem[]>([]);
 
-  /**
-   * **A lens changing under the editor replaces the draft.** Switching to another
-   * lens, or saving this one, is a different document — and whatever was half
-   * written belonged to the one before it.
-   */
-  useEffect(() => {
-    const had = keptFor(lens);
-
-    setName(had?.name ?? lens.name);
-    setNote(had?.note ?? lens.note);
-    setDraft(had?.definition ?? lens.definition);
-  }, [lens.slug, lens.updatedAt]);
+  const [size,   setSize]   = useState<LensSize | undefined>(unsaved ? undefined : seenSize(lens));
+  const [venues, setVenues] = useState<string[]>([]);
 
   useEffect(() => {
-    catalog<{ items: { venue: string }[] }>('/contents/venues')
+    const asked = new AbortController();
+
+    catalog<{ items: { venue: string }[] }>('/contents/venues', asked.signal)
       .then(({ items }) => setVenues(items.map(one => one.venue)))
-      .catch(() => setVenues([]));
+      .catch(() => undefined);
+
+    return () => asked.abort();
   }, []);
 
   /**
-   * **Asked of the catalog on every change**, by the same function that refuses
-   * the write — so this page never has a second opinion about what is valid.
-   * An answer for a draft already replaced is dropped.
+   * **The size is the saved lens's**, never a draft's: shown at once from what
+   * this browser last saw for this version, asked right away, and again
+   * `SIZE_REFRESH_MS` after each answer, since progress moves while a downloader
+   * works. A confirm or a drop asks again at once. A lens not yet saved has none.
    */
+  const sizing = useRef<{ now: () => void; stop: () => void }>(undefined);
+
   useEffect(() => {
-    let current = true;
+    if (unsaved) return;
 
-    const at = setTimeout(() => {
-      post<{ problems: LensProblem[] }>('/api/catalog/lenses/check', draft)
-        .then(({ problems: found }) => { if (current) setProblems(found); })
-        .catch(() => { if (current) setProblems([]); });
-    }, 250);
+    setSize(seenSize(lens));
 
-    return () => { current = false; clearTimeout(at); };
-  }, [draft]);
+    sizing.current = poll(
+      signal => catalog<LensSize>(`/lenses/${encodeURIComponent(lens.slug)}/size`, signal),
+      SIZE_REFRESH_MS,
+      { data: found => { setSize(found); keepSize(lens, found); } },
+    );
+
+    return () => sizing.current?.stop();
+  }, [lens.slug, lens.updatedAt, unsaved]);
+
+  const general_dirty = name !== lens.name || note !== lens.note;
+
+  /** Any rule not as stored: a draft never confirmed, or a confirmed one edited since. */
+  const drafting = Object.values(rules).some(list => list.some(one => stateOf(one) !== 'saved'));
 
   /**
-   * **The size: what was last seen at once, then kept current.** Sizing a lens
-   * can take the catalog seconds, so the figure last seen for this exact
-   * definition is shown immediately from this browser's storage, and the page
-   * asks right away — the answer replaces it without the line ever going blank.
-   * Then again `SIZE_REFRESH_MS` after each answer, because progress moves
-   * while a downloader works. A definition never sized here shows the dots.
+   * **What is unsaved survives a reload** — drafts of rules and edits to the name
+   * and note — kept against the version of the lens it was written from, so a
+   * lens saved somewhere else replaces it rather than having edits revived on a
+   * document that has moved on.
    */
   useEffect(() => {
-    setSize(seenSize(lens.slug, draft));
-
-    let polling: { stop: () => void } | undefined;
-
-    const at = setTimeout(() => {
-      polling = poll(() => post<LensSize>('/api/catalog/lenses/size', draft), SIZE_REFRESH_MS, {
-        data: found => { setSize(found); keepSize(lens.slug, draft, found); },
-      });
-    }, 250);
-
-    return () => { clearTimeout(at); polling?.stop(); };
-  }, [lens.slug, draft]);
-
-  const dirty = name !== lens.name || note !== lens.note
-    || JSON.stringify(draft) !== JSON.stringify(lens.definition);
+    keep(lens, general_dirty || drafting ? { name, note, rules, from: lens.updatedAt } : null);
+  }, [lens.slug, lens.updatedAt, name, note, rules, general_dirty, drafting]);
 
   /**
-   * **A half-written lens survives a reload.** A rule list is minutes of work and
-   * the page is a route, so a glance at the Contents tab, a refresh or a closed
-   * laptop would otherwise take all of it. Kept against the version it was
-   * written from, so a lens saved somewhere else replaces the draft rather than
-   * silently reviving edits to a document that has moved on.
+   * Store the lens with these rules — creating it first where it is not saved
+   * yet, with the name and the note it was given. On a saved lens only the rules
+   * are sent: an unsaved name or note stays unsaved, for Save.
+   *
+   * The catalog checks what it stores, so a rule it refuses comes back with its
+   * problems and stays as it is on the page.
    */
-  useEffect(() => {
-    keep(lens, dirty ? { name, note, definition: draft, from: lens.updatedAt } : null);
-  }, [lens.slug, lens.updatedAt, name, note, draft, dirty]);
+  const store = async (key: string, definition: LensDefinition, after: (stored: Lens) => void) => {
+    setStoring(key);
 
-  const save = () => {
-    setGoing(true);
-    put(`/api/catalog/lenses/${encodeURIComponent(lens.slug)}`, { name, note, definition: draft })
-      .then(() => { keep(lens, null); onChanged(lens.slug); })
-      .catch(err => onFailed((err as Error).message))
-      .finally(() => setGoing(false));
+    try {
+      const { status, body } = unsaved
+        ? await send<Lens & { problems?: LensProblem[]; error?: string }>('/api/catalog/lenses', 'POST',
+          { slug: lens.slug, name: name.trim(), note, definition })
+        : await send<Lens & { problems?: LensProblem[]; error?: string }>(
+          `/api/catalog/lenses/${encodeURIComponent(lens.slug)}`, 'PUT', { definition });
+
+      if (status >= 400) {
+        const found = body.problems ?? [];
+
+        setProblems(had => ({ ...had, [key]: found.filter(one => one.rule >= 0) }));
+        setGeneral(found.filter(one => one.rule < 0));
+
+        if (found.length === 0) onFailed(body.error ?? `The catalog answered ${status}`);
+
+        return;
+      }
+
+      setProblems(had => { const next = { ...had }; delete next[key]; return next; });
+      setGeneral([]);
+      after(body);
+
+      if (unsaved) onStored(lens.slug);
+      else { sizing.current?.now(); onStored(lens.slug); }
+    } catch (err) {
+      onFailed((err as Error).message);
+    } finally {
+      setStoring(null);
+    }
   };
 
-  const forVenue = (venue: string, rules: LensRule[]) =>
-    setDraft(had => {
-      const next = { ...had.venues };
+  /** The lens as stored, with one entry's draft in place of — or beside — what it was. */
+  const withOne = (venue: string, entry: RuleEntry, drop = false): LensDefinition => {
+    const out: LensDefinition['venues'] = {};
 
-      if (rules.length === 0) delete next[venue];
-      else next[venue] = rules;
+    for (const [each, list] of Object.entries({ ...rules, [venue]: rules[venue] ?? [] })) {
+      const kept = list.flatMap(one => {
+        if (one.key === entry.key) return drop ? [] : [one.now];
 
-      return { ...had, venues: next };
-    });
+        return one.saved ? [one.saved] : [];
+      });
+
+      if (kept.length > 0) out[each] = kept;
+    }
+
+    return { format: 1, venues: out };
+  };
+
+  const confirm = (venue: string, entry: RuleEntry) =>
+    store(entry.key, withOne(venue, entry), () => edit(venue, entry.key, one => ({ ...one, saved: one.now })));
+
+  const drop = (venue: string, entry: RuleEntry) =>
+    store(entry.key, withOne(venue, entry, true), () => remove_(venue, entry.key));
+
+  const edit = (venue: string, key: string, change: (one: RuleEntry) => RuleEntry) =>
+    setRules(had => ({ ...had, [venue]: (had[venue] ?? []).map(one => (one.key === key ? change(one) : one)) }));
+
+  const remove_ = (venue: string, key: string) =>
+    setRules(had => ({ ...had, [venue]: (had[venue] ?? []).filter(one => one.key !== key) }));
+
+  /** Store the lens without any of this venue's rules, and forget its drafts. */
+  const clear = (venue: string) => {
+    const out = withOne(venue, { key: '', now: { effect: 'include' } }, true);
+
+    delete out.venues[venue];
+
+    return store(`clear:${venue}`, out, () => setRules(had => { const next = { ...had }; delete next[venue]; return next; }));
+  };
+
+  const add = (venue: string) =>
+    setRules(had => ({ ...had, [venue]: [...(had[venue] ?? []), { key: freshKey(), now: { effect: 'include' } }] }));
+
+  /** Save: the name and the note. On a lens not saved yet, the lens itself, with the rules confirmed so far — none. */
+  const save = () =>
+    unsaved
+      ? store('', { format: 1, venues: {} }, () => undefined)
+      : send(`/api/catalog/lenses/${encodeURIComponent(lens.slug)}`, 'PUT', { name, note })
+        .then(({ status, body }) => {
+          if (status >= 400) onFailed((body as { error?: string }).error ?? `The catalog answered ${status}`);
+          else onStored(lens.slug);
+        })
+        .catch(err => onFailed((err as Error).message));
 
   /**
    * **Every venue has a block, whether or not it has rules.** A lens is written
@@ -258,20 +343,11 @@ const Editing = ({ lens, onChanged, onFailed }: {
    * rather than by finding a venue in a dropdown first — and "nothing" is an
    * answer the empty block gives and a missing block does not.
    *
-   * **The draft's own keys are in it too.** A lens may name a venue this catalog
-   * has no contents for yet; dropping its block would quietly discard rules that
+   * **The lens's own keys are in it too.** A lens may name a venue this catalog
+   * has no contents for yet; dropping its block would quietly hide rules that
    * are still stored.
    */
-  const blocks = [...new Set([...venues, ...Object.keys(draft.venues)])]
-    .filter(one => one !== GLOBAL).sort();
-
-  /**
-   * **The global block is always there.** A lens that says *everything up to
-   * 2020* means it of every venue, and making that seven identical blocks is a
-   * worse lie than an empty one — so the block exists whether or not it holds
-   * rules, and cannot be taken away.
-   */
-  const global = draft.venues[GLOBAL] ?? [];
+  const blocks = [...new Set([...venues, ...Object.keys(rules)])].filter(one => one !== GLOBAL).sort();
 
   return (
     <Stack gap="md">
@@ -286,102 +362,104 @@ const Editing = ({ lens, onChanged, onFailed }: {
         />
         {/*
           When it was last saved belongs to the button that saves it: it is the
-          answer to "have I saved this?", which is asked of the control, and a
-          line of its own gave a date equal weight with the lens' own name.
+          answer to "have I saved this?", which is asked of the control.
         */}
         <Button
-          size="sm" color="green" disabled={! dirty || going} onClick={save}
-          title={`Last saved: ${lens.updatedAt.slice(0, 16).replace('T', ' ')}`}
+          size="sm" color="green" disabled={(! general_dirty && ! unsaved) || storing !== null} onClick={save}
+          title={unsaved ? 'Not saved yet' : `Last saved: ${lens.updatedAt.slice(0, 16).replace('T', ' ')}`}
         >Save</Button>
 
         {/*
-          Back to what is stored, discarding the draft. The draft outlives a
-          reload by design, so without this an unwanted edit could only be saved.
+          Back to what is stored, discarding every draft — of the name, the note
+          and the rules. Shown only where there is something to discard, and never
+          on a lens not stored yet: there is nothing to reload it from.
         */}
-        <Button
-          size="compact-xs" variant="subtle" color="gray" disabled={! dirty || going} mb={6}
-          title="Discard every change since the last save"
-          onClick={() => { setName(lens.name); setNote(lens.note); setDraft(lens.definition); keep(lens, null); }}
-        >Reload as saved</Button>
-        <Removing lens={lens} onGone={() => onChanged()} onFailed={onFailed} />
+        {! unsaved && (general_dirty || drafting) && (
+          <Button
+            size="compact-xs" variant="subtle" color="gray" mb={6} disabled={storing !== null}
+            title="Discard every unsaved change: name, note and rules"
+            onClick={() => { setName(lens.name); setNote(lens.note); setRules(entriesOf(lens.definition)); keep(lens, null); }}
+          >Reload as saved</Button>
+        )}
+        <Removing lens={lens} onGone={onGone} onFailed={onFailed} />
       </Group>
 
-      {problems.length > 0 && (
-        <Alert color="orange" variant="light" title="This lens cannot be stored as it is">
+      {general.length > 0 && (
+        <Alert color="orange" variant="light" title="The catalog would not store that">
           <Stack gap={4}>
-            {problems.map((one, at) => (
-              <Text size="sm" key={at}>
-                {one.venue}{one.rule >= 0 ? ` · rule ${one.rule + 1}` : ''} — {one.message}
-              </Text>
-            ))}
+            {general.map((one, at) => <Text size="sm" key={at}>{one.venue} — {one.message}</Text>)}
           </Stack>
         </Alert>
       )}
 
-      <Group justify="flex-end" align="flex-end">
-        <Stack gap={4} align="flex-end">
-          <Group gap="xs">
-            <Text size="sm" c="dimmed">Everything this lens lets through:</Text>
-            {size === undefined ? <Loader size="xs" type="dots" /> : (
-              <Text size="sm" fw={600}
-                title={`${count(size.files)} files over ${count(size.series)} series`}>
-                {bytes(size.bytes)}
-              </Text>
-            )}
-          </Group>
-          {size !== undefined && size.files > 0 && typeof size.pendingBytes === 'number' && <Downloaded size={size} />}
-        </Stack>
-      </Group>
+      {! unsaved && (
+        <Group justify="flex-end" align="flex-end">
+          <Stack gap={4} align="flex-end">
+            <Group gap="xs">
+              <Text size="sm" c="dimmed">Everything this lens lets through:</Text>
+              {size === undefined ? <Loader size="xs" type="dots" /> : (
+                <Text size="sm" fw={600}
+                  title={`${count(size.files)} files over ${count(size.series)} series`}>
+                  {bytes(size.bytes)}
+                </Text>
+              )}
+            </Group>
+            {size !== undefined && size.files > 0 && typeof size.pendingBytes === 'number' && <Downloaded size={size} />}
+          </Stack>
+        </Group>
+      )}
 
-      <ForVenue
-        venue={GLOBAL} rules={global}
-        problems={problems.filter(one => one.venue === GLOBAL)}
-        onChanged={next => forVenue(GLOBAL, next)}
-      />
-
-      {blocks.map(venue => (
+      {[GLOBAL, ...blocks].map(venue => (
         <ForVenue
-          key={venue} venue={venue} rules={draft.venues[venue] ?? []}
-          problems={problems.filter(one => one.venue === venue)}
-          onChanged={next => forVenue(venue, next)}
+          key={venue} venue={venue} entries={rules[venue] ?? []}
+          problems={problems} storing={storing}
+          onAdd={() => add(venue)}
+          onClear={() => {
+            if (window.confirm(`Store this lens without any of ${venue === GLOBAL ? 'the all-venue' : `${venue}'s`} rules?`))
+              void clear(venue);
+          }}
+          onEdit={(key, rule) => edit(venue, key, one => ({ ...one, now: rule }))}
+          onConfirm={entry => void confirm(venue, entry)}
+          onDrop={entry => void drop(venue, entry)}
+          onDiscard={entry => (entry.saved
+            ? edit(venue, entry.key, one => ({ ...one, now: one.saved! }))
+            : remove_(venue, entry.key))}
         />
       ))}
-
     </Stack>
   );
 };
 
-/**
- * What is half written, against the version of the lens it was written from.
- *
- * **Per lens and per version.** A draft against a document somebody else has
- * since saved is edits to a thing that no longer exists, and reviving it would
- * quietly undo their change.
- */
-interface Draft {
-  name:       string;
-  note:       string;
-  definition: LensDefinition;
-  from:       string;
-}
+/** Where a rule stands: never confirmed, confirmed and edited since, or as stored. */
+const stateOf = (entry: RuleEntry): 'new' | 'changed' | 'saved' =>
+  (! entry.saved ? 'new' : JSON.stringify(entry.saved) === JSON.stringify(entry.now) ? 'saved' : 'changed');
+
+/** A stored definition as the editor holds it: every rule saved, none drafted. */
+const entriesOf = (definition: LensDefinition): Record<string, RuleEntry[]> =>
+  Object.fromEntries(Object.entries(definition.venues ?? {})
+    .map(([venue, list]) => [venue, list.map(rule => ({ key: freshKey(), saved: rule, now: rule }))]));
+
+let keys = 0;
+
+const freshKey = (): string => `r${Date.now().toString(36)}${(keys++).toString(36)}`;
 
 const drafted = (slug: string) => `catalog-ui.lens-draft.${slug}`;
 
-const keptFor = (lens: Lens): Draft | null => {
+const keptFor = (lens: Lens): LensDraft | null => {
   try {
     const had = localStorage.getItem(drafted(lens.slug));
 
     if (had === null) return null;
 
-    const draft = JSON.parse(had) as Draft;
+    const draft = JSON.parse(had) as LensDraft;
 
-    return draft.from === lens.updatedAt ? draft : null;
+    return draft.from === lens.updatedAt && draft.rules ? draft : null;
   } catch {
     return null;
   }
 };
 
-const keep = (lens: Lens, draft: Draft | null): void => {
+const keep = (lens: Lens, draft: LensDraft | null): void => {
   try {
     if (draft === null) localStorage.removeItem(drafted(lens.slug));
     else localStorage.setItem(drafted(lens.slug), JSON.stringify(draft));
@@ -390,19 +468,45 @@ const keep = (lens: Lens, draft: Draft | null): void => {
   }
 };
 
-/** One venue's rules, in the order they are applied. */
-const ForVenue = ({ venue, rules, problems, onChanged }: {
+const UNSAVED = 'catalog-ui.lens-unsaved';
+
+/** The new lens not saved yet, if any, as this browser kept it. */
+const unsavedLens = (): Lens | null => {
+  try {
+    return JSON.parse(localStorage.getItem(UNSAVED) ?? 'null') as Lens | null;
+  } catch {
+    return null;
+  }
+};
+
+const keepUnsaved = (lens: Lens | null): void => {
+  try {
+    if (lens === null) localStorage.removeItem(UNSAVED);
+    else localStorage.setItem(UNSAVED, JSON.stringify(lens));
+  } catch { /* storage refused: the new lens lasts as long as the page */ }
+};
+
+/** One venue's rules — or every venue's, under `*`. */
+const ForVenue = ({ venue, entries, problems, storing, onAdd, onClear, onEdit, onConfirm, onDrop, onDiscard }: {
   venue:     string;
-  rules:     LensRule[];
-  problems:  LensProblem[];
-  onChanged: (rules: LensRule[]) => void;
+  entries:   RuleEntry[];
+  problems:  Record<string, LensProblem[]>;
+  storing:   string | null;
+  onAdd:     () => void;
+  onClear:   () => void;
+  onEdit:    (key: string, rule: LensRule) => void;
+  onConfirm: (entry: RuleEntry) => void;
+  onDrop:    (entry: RuleEntry) => void;
+  onDiscard: (entry: RuleEntry) => void;
 }) => {
   const [offered, setOffered] = useState<LensOption[]>([]);
   const [symbols, setSymbols] = useState<string[]>([]);
 
   useEffect(() => {
-    catalog<{ items: LensOption[] }>(`/lenses/options/${encodeURIComponent(venue)}`)
-      .then(({ items }) => setOffered(items)).catch(() => setOffered([]));
+    const asked = new AbortController();
+
+    catalog<{ items: LensOption[] }>(`/lenses/options/${encodeURIComponent(venue)}`, asked.signal)
+      .then(({ items }) => setOffered(items)).catch(() => undefined);
 
     /**
      * **The whole list, once.** A venue has thousands of instruments and the
@@ -413,12 +517,11 @@ const ForVenue = ({ venue, rules, problems, onChanged }: {
      * written about every venue at once and `*` is not a venue anything else
      * knows about.
      */
-    catalog<{ items: string[] }>(`/lenses/instruments/${encodeURIComponent(venue)}`)
-      .then(({ items }) => setSymbols(items)).catch(() => setSymbols([]));
-  }, [venue]);
+    catalog<{ items: string[] }>(`/lenses/instruments/${encodeURIComponent(venue)}`, asked.signal)
+      .then(({ items }) => setSymbols(items)).catch(() => undefined);
 
-  const at = (index: number, to: LensRule) =>
-    onChanged(rules.map((one, each) => (each === index ? to : one)));
+    return () => asked.abort();
+  }, [venue]);
 
   return (
     <Card withBorder padding="md" radius="sm">
@@ -428,31 +531,30 @@ const ForVenue = ({ venue, rules, problems, onChanged }: {
             <Title order={2} size="h6" tt={venue === GLOBAL ? undefined : 'uppercase'}>
               {venue === GLOBAL ? 'All venues' : venue}
             </Title>
-            {venue === GLOBAL
-              ? (
-                <Text size="xs" c="dimmed" fs="italic">
-                  applied to every venue, before that venue&rsquo;s own rules
-                </Text>
-              )
-              : (
-                <Button
-                  size="compact-xs" variant="subtle" color="red" opacity={0.55}
-                  disabled={rules.length === 0}
-                  title={`Clear every rule ${venue} has in this lens`}
-                  onClick={() => onChanged([])}
-                >Clear</Button>
-              )}
+            {venue === GLOBAL && (
+              <Text size="xs" c="dimmed" fs="italic">
+                applied to every venue, together with that venue&rsquo;s own rules
+              </Text>
+            )}
+            <Button
+              size="compact-xs" variant="subtle" color="red" opacity={0.55}
+              disabled={entries.length === 0 || storing !== null} loading={storing === `clear:${venue}`}
+              title={`Store the lens without any of ${venue === GLOBAL ? 'the all-venue' : `${venue}'s`} rules`}
+              onClick={onClear}
+            >Clear</Button>
           </Group>
-          <Button size="compact-xs" variant="subtle"
-            onClick={() => onChanged([...rules, { effect: 'include' }])}>Add rule</Button>
+          <Button size="compact-xs" variant="subtle" onClick={onAdd}>Add rule</Button>
         </Group>
 
-        {rules.map((rule, index) => (
+        {entries.map(entry => (
           <Rule
-            key={index} rule={rule} offered={offered} symbols={symbols}
-            problems={problems.filter(one => one.rule === index)}
-            onChanged={to => at(index, to)}
-            onRemoved={() => onChanged(rules.filter((_, each) => each !== index))}
+            key={entry.key} rule={entry.now} offered={offered} symbols={symbols}
+            state={stateOf(entry)} busy={storing === entry.key} locked={storing !== null}
+            problems={problems[entry.key] ?? []}
+            onChanged={to => onEdit(entry.key, to)}
+            onConfirm={() => onConfirm(entry)}
+            onDrop={() => onDrop(entry)}
+            onDiscard={() => onDiscard(entry)}
           />
         ))}
       </Stack>
@@ -471,13 +573,22 @@ const ForVenue = ({ venue, rules, problems, onChanged }: {
  * **Every list left empty is shown as `every`**, because a rule that constrains
  * nothing is the common case and an empty box reads as unfinished.
  */
-const Rule = ({ rule, offered, symbols, problems, onChanged, onRemoved }: {
+const Rule = ({ rule, offered, symbols, problems, state, busy, locked, onChanged, onConfirm, onDrop, onDiscard }: {
   rule:      LensRule;
   offered:   LensOption[];
   symbols:   string[];
   problems:  LensProblem[];
+
+  /** Never confirmed, edited since it was, or as stored — which decides the buttons it has. */
+  state:     'new' | 'changed' | 'saved';
+
+  /** This rule is being stored; `locked`, any rule is. */
+  busy:      boolean;
+  locked:    boolean;
   onChanged: (rule: LensRule) => void;
-  onRemoved: () => void;
+  onConfirm: () => void;
+  onDrop:    () => void;
+  onDiscard: () => void;
 }) => {
   const markets = useMemo(() => [...new Set(offered.map(one => one.market))].sort(), [offered]);
   const grains  = useMemo(() => [...new Set(offered.map(one => one.grain))].sort(), [offered]);
@@ -536,7 +647,8 @@ const Rule = ({ rule, offered, symbols, problems, onChanged, onRemoved }: {
     onChanged({ ...rule, [field]: values.length === 0 ? undefined : values });
 
   return (
-    <Card withBorder padding="sm" radius="sm" bg="var(--mantine-color-default)">
+    <Card withBorder padding="sm" radius="sm" bg="var(--mantine-color-default)"
+      style={state === 'saved' ? undefined : { borderColor: 'var(--mantine-color-yellow-6)' }}>
       <Stack gap="xs">
         <Group justify="space-between" align="flex-end" wrap="nowrap">
           <Select
@@ -583,10 +695,27 @@ const Rule = ({ rule, offered, symbols, problems, onChanged, onRemoved }: {
           })}
         />
 
-        <Group justify="flex-end">
-          <Button size="compact-xs" variant="subtle" color="gray" title="Take this rule out" onClick={onRemoved}>
-            Drop Rule
-          </Button>
+        {/*
+          A rule is stored on its own: Confirm stores the lens with it, Drop
+          without it. A draft can be discarded, or an edit reverted, at no cost.
+          The yellow border is what marks a draft; Confirm's title says which kind.
+        */}
+        <Group justify="flex-end" gap="xs">
+          {state === 'saved' && (
+            <Button size="compact-xs" variant="subtle" color="red" loading={busy} disabled={locked && ! busy}
+              title="Store the lens without this rule" onClick={onDrop}>Drop Rule</Button>
+          )}
+          {state !== 'saved' && (
+            <>
+              <Button size="compact-xs" variant="subtle" color="gray" disabled={locked}
+                title={state === 'new' ? 'Throw this draft away' : 'Back to the rule as it is stored'}
+                onClick={onDiscard}>{state === 'new' ? 'Discard' : 'Revert'}</Button>
+              <Button size="compact-xs" color="green" loading={busy} disabled={locked && ! busy}
+                title={state === 'new' ? 'Not confirmed yet — store the lens with this rule'
+                  : 'Changed since it was confirmed — store the lens with this edit'}
+                onClick={onConfirm}>Confirm</Button>
+            </>
+          )}
         </Group>
       </Stack>
     </Card>
@@ -822,6 +951,10 @@ const Removing = ({ lens, onGone, onFailed }: {
             <Button size="xs" variant="default" onClick={() => setAsking(false)}>Cancel</Button>
             <Button size="xs" color="red" onClick={() => {
               setAsking(false);
+
+              // A lens never saved is only the page's: there is nothing to ask the catalog.
+              if (lens.id === undefined) { onGone(); return; }
+
               remove(`/api/catalog/lenses/${encodeURIComponent(lens.slug)}`)
                 .then(onGone).catch(err => onFailed((err as Error).message));
             }}>Delete</Button>
@@ -832,17 +965,17 @@ const Removing = ({ lens, onGone, onFailed }: {
   );
 };
 
-const Naming = ({ opened, onClose, onMade, onFailed }: {
-  opened:   boolean;
-  onClose:  () => void;
-  onMade:   (slug: string) => void;
-  onFailed: (message: string) => void;
+const Naming = ({ opened, taken, onClose, onNamed }: {
+  opened:  boolean;
+  taken:   string[];
+  onClose: () => void;
+  onNamed: (lens: Lens) => void;
 }) => {
   const [slug, setSlug] = useState('');
   const [name, setName] = useState('');
   const [note, setNote] = useState('');
 
-  useEffect(() => { if (opened) { setSlug(''); setName(''); setNote(''); } }, [opened]);
+  useEffect(() => { if (opened) { setSlug(''); setName(''); setNote(''); setOwn(false); } }, [opened]);
 
   /**
    * **The address follows the name until it is touched.** Most lenses want the
@@ -855,6 +988,7 @@ const Naming = ({ opened, onClose, onMade, onFailed }: {
     .replace(/^-+|-+$/g, '').slice(0, 64);
 
   const addressed = own ? slug : suggested;
+  const clash     = taken.includes(addressed);
 
   return (
     <Modal opened={opened} onClose={onClose} title="New lens" centered>
@@ -868,6 +1002,7 @@ const Naming = ({ opened, onClose, onMade, onFailed }: {
         <TextInput
           label="Address" placeholder="cold-store" value={addressed}
           description="What a consumer asks for: lower case, digits and hyphens"
+          error={clash ? 'A lens already has this address' : undefined}
           inputWrapperOrder={['label', 'input', 'description', 'error']}
           onChange={event => {
             setOwn(true);
@@ -876,13 +1011,15 @@ const Naming = ({ opened, onClose, onMade, onFailed }: {
         />
         <TextInput label="What it is for" value={note}
           onChange={event => setNote(event.currentTarget.value)} />
+        <Text size="xs" c="dimmed">
+          Nothing is stored yet: the lens is saved by Save, or by confirming its first rule.
+        </Text>
         <Group justify="flex-end">
           <Button size="xs" variant="default" onClick={onClose}>Cancel</Button>
-          <Button size="xs" disabled={addressed.length < 2} onClick={() => {
-            post<Lens>('/api/catalog/lenses', { slug: addressed, name: name.trim(), note })
-              .then(made => onMade(made.slug))
-              .catch(err => onFailed((err as Error).message));
-          }}>Create</Button>
+          <Button size="xs" disabled={addressed.length < 2 || clash} onClick={() => onNamed({
+            slug: addressed, name: name.trim(), note,
+            createdAt: '', updatedAt: '', definition: { format: 1, venues: {} },
+          })}>Create</Button>
         </Group>
       </Stack>
     </Modal>

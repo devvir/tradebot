@@ -50,10 +50,10 @@ export const report = async (venue: string, done: Report): Promise<void> => {
     const answer = await ask<ReportAnswer>('/listings/report', { method: 'POST', body: JSON.stringify(done) });
 
     for (const one of answer.Error ?? [])
-      logger.error({ venue, key: one.Key, code: one.Code }, `The catalog would not settle a report: ${one.Message}`);
+      logger.error({ key: one.Key, code: one.Code, reason: one.Message }, 'Report refused');
   } catch (err) {
-    logger.warn({ err, venue, downloaded: done.downloaded.length, failed: done.failed.length,
-      mismatched: done.mismatched.length }, 'Could not report a page — it will come round again');
+    logger.warn({ venue, err, downloaded: done.downloaded.length, failed: done.failed.length,
+      mismatched: done.mismatched.length }, 'Report failed — comes round again');
   }
 };
 

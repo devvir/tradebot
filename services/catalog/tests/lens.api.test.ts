@@ -127,7 +127,7 @@ describe('refusing a definition', () => {
     const { body } = await ask<{ problems: LensProblem[] }>('POST', '/lenses/check',
       lens({ binance: [{ effect: 'exclude', datasets: [{ dataset: 'books' }] }] }));
 
-    expect(body.problems[0]).toMatchObject({ rule: 0 });
+    expect(body.problems[0]).toMatchObject({ rule: -1 });
     expect((await ask<{ items: Lens[] }>('GET', '/lenses')).body.items).toHaveLength(0);
   });
 });

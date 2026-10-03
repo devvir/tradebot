@@ -190,6 +190,12 @@ the state badge one column to the left already says a person stopped this venue.
 Waiting is not a case either: a venue waiting for its next update is one whose
 update *completed*, which is what it says.
 
+**Under it, smaller, the context.** A waiting venue says when its next update is
+due. A venue with a pass running says what it last finished — *Backfill completed
+in 26m* or *Last update completed in 1h*, from `lastRun.previous`. There is only
+ever one backfill, the first pass, so it is never "last"; every pass after it is
+an update, whether it walks or probes.
+
 #### The controls
 
 **A word asks a venue to go; everything else is a shape.** Asking is the
@@ -278,18 +284,18 @@ lets through *is* the catalog as far as whoever looks through it is concerned. S
 this section is not a shopping list — it is the definition of a view, and what it
 has to make obvious is what that view leaves out.
 
-**Rules are ordered and they compose.** Each one either adds or takes away, and a
-later rule sees what the earlier ones left. That is what lets *everything up to a
-date, except books, except recent trades* be three lines read top to bottom rather
-than an enumeration of the complement. The list is per venue, keyed by name, and a
-venue with no rules is not in the lens at all.
+**Includes minus excludes, in no order.** A lens lets through what its includes
+match, less what its excludes match, so *everything up to a date, except books,
+except recent trades* is three rules — and rules have no order to arrange. The list
+is per venue, keyed by name, and a venue with no rules is not in the lens at all.
 
 **The page shows a block for every venue regardless**, because a lens is written
 by reading down the venues and saying what each contributes, and "nothing" is an
 answer an empty block gives and a missing one does not. The definition is
 unaffected: a block with no rules is not written, so the stored document still
-names only the venues the lens actually speaks about. The per-venue button clears
-that venue's rules and leaves the block where it was.
+names only the venues the lens actually speaks about. The per-venue Clear stores the
+lens without any of that venue's rules, after asking, and leaves the block where it
+was.
 
 **A rule states only what it constrains**, and every dimension left alone is shown
 as `every` rather than as a blank — because the difference between "all datasets"
@@ -297,25 +303,32 @@ and "no datasets chosen yet" is the whole meaning of the rule. Each list offers
 what the venue actually publishes, from `GET /lenses/options/:venue`, so a dataset
 that venue has never had cannot be picked.
 
-**What the lists cannot prevent, the catalog is asked about.** Every change is put
-to `POST /lenses/check`, debounced, and each problem is shown against the rule it
-belongs to, with saving refused while any stands. The answer comes from the same
-function that refuses the write, so the page cannot hold a second opinion.
+**A rule is stored on its own.** Writing one sends nothing: *Add rule* puts a draft
+on the page, outlined in yellow until it is confirmed, and editing it costs the catalog nothing.
+**Confirm** stores the lens with that rule; **Drop Rule** stores it without one
+already stored; **Discard** throws a draft away and **Revert** takes an edited rule
+back to what is stored. Only the rule confirmed is sent — other drafts stay drafts,
+and an unsaved name or note stays unsaved. **Save** is for the name and the note.
 
-Two of those problems are about meaning rather than spelling, and both are silent
-faults: a rule list that **opens with an exclude** lets nothing through, because
-evaluation starts from nothing and subtracting from nothing is a no-op; and an
+**A new lens is the page's until it is first stored.** *New Lens* names it and
+opens it, and nothing reaches the catalog until Save or the first Confirm, which
+creates the lens with its name, its note and that rule.
+
+**The catalog decides what can be stored.** A confirm the catalog refuses comes
+back with its problems, shown on the rule, which stays a draft. Two of them are
+about meaning rather than spelling, and both are silent faults: a venue whose rules
+**include nothing** lets nothing through, since an exclude only takes away; and an
 **empty list** in a dimension matches nothing, where leaving it out matches all of
 it.
 
-**The lens carries what it would cost**, because that is the decision it exists to
-support — exact, off the catalog's rollups — see `POST /lenses/size`, which
-takes the document rather than a saved name so the figure arrives while
-somebody is still choosing.
+**The lens carries what it costs** — the saved lens's size, exact, off the catalog's
+rollups — refreshed after every confirm and drop. A draft is never sized: what a
+rule would cost is answered by confirming it.
 
-**A draft can be thrown away.** Edits are kept in the browser until saved, so a
+**Drafts can be thrown away.** Drafts and unsaved names are kept in the browser, so a
 reload does not lose them — and by the same token cannot undo them. *Reload as
-saved*, beside *Save*, puts back what is stored and drops the draft.
+saved*, beside *Save*, puts back what is stored and drops every draft; it appears
+only while there is something to drop.
 
 **And how much of it is already on disk.** A bar under the total shows the share
 downloaded by weight, not by count — files run from kilobytes to gigabytes, so a
@@ -337,9 +350,14 @@ the rest in its tooltip.
 
 **A half-written lens survives a reload.** A rule list is minutes of work and the
 section is a route, so a glance at the Contents tab would otherwise take all of
-it. The draft is kept in `localStorage` per lens, tagged with the version it was
-written from, and cleared on save — so a lens saved somewhere else replaces the
-draft rather than silently reviving edits to a document that has moved on.
+it. Drafts are kept in `localStorage` per lens, tagged with the version they were
+written from — so a lens saved somewhere else replaces them rather than silently
+reviving edits to a document that has moved on. A new lens not stored yet is kept
+the same way.
+
+**A request the page no longer wants is cancelled.** Leaving a view, or a newer
+request for the same thing, aborts the one in flight, and the catalog does not
+start work for a client that has gone.
 
 ## How it is built
 

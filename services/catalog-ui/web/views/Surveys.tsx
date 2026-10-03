@@ -5,7 +5,7 @@ import { Dim, LastSurvey, Table, Waiting, bytes, count, howOf } from './Table';
 import { linkTo } from '../App';
 import type { ReactNode } from 'react';
 import type { Asked } from '../api';
-import type { Order, Status } from '../types';
+import type { FinishedRun, Order, Status } from '../types';
 
 /**
  * What every venue is doing, and the buttons that change it.
@@ -702,9 +702,15 @@ const Detail = ({ of, order }: { of: Status; order?: Order }) => {
   if (run.kind === null) return <Dim>Not started yet</Dim>;
 
   if (run.ongoing)
-    return run.startedAt
-      ? <Text size="sm" title={how}>{what} started at {when(run.startedAt)}</Text>
-      : <Text size="sm" title={how}>{what} in progress</Text>;
+    return (
+      <Stack gap={0} align="flex-start">
+        {run.startedAt
+          ? <Text size="sm" title={how}>{what} started at {when(run.startedAt)}</Text>
+          : <Text size="sm" title={how}>{what} in progress</Text>}
+
+        <Before run={run.previous ?? null} />
+      </Stack>
+    );
 
   if (run.at === null) return <Dim>—</Dim>;
 
@@ -721,6 +727,22 @@ const Detail = ({ of, order }: { of: Status; order?: Order }) => {
       */}
       <Due at={of.state === 'waiting' ? of.nextRun : null} />
     </Stack>
+  );
+};
+
+/**
+ * What the venue last finished, under the pass that is running — subordinate,
+ * like `Due`, because the running pass is the news. Only one backfill ever
+ * runs, so it is named as itself; every pass after it is an update.
+ */
+const Before = ({ run }: { run: FinishedRun | null }) => {
+  if (run === null) return null;
+
+  return (
+    <Text component="span" c="dimmed" fs="italic" size="xs"
+      title={`Started at ${when(run.startedAt)}\nFinished at ${when(run.at)}`}>
+      {run.first ? 'Backfill' : 'Last update'} completed in {took(run.startedAt, run.at)}
+    </Text>
   );
 };
 
@@ -794,12 +816,12 @@ const useFading = () => {
  * open. Ten seconds is often enough to watch a venue change state and rare
  * enough to be free.
  */
-const usePolled = <T,>(path: string, ask: (path: string) => Promise<T>, everyMs = POLL_MS) => {
+const usePolled = <T,>(path: string, ask: (path: string, signal: AbortSignal) => Promise<T>, everyMs = POLL_MS) => {
   const [state, setState] = useState<Asked<T>>({ loading: true });
   const polling = useRef<{ now: () => void; stop: () => void }>(undefined);
 
   useEffect(() => {
-    polling.current = poll(() => ask(path), everyMs, {
+    polling.current = poll(signal => ask(path, signal), everyMs, {
       data: data => setState({ data, loading: false }),
 
       /**

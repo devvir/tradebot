@@ -185,6 +185,20 @@ describe('paging a partition', () => {
     expect(second.cursor).toBe('spot/AAAUSDT/');
   });
 
+  /**
+   * **A directory states its files and its children in full**, so a page covers
+   * exactly that: what it no longer offers, file or subdirectory, has gone.
+   */
+  it('covers its own directory and the children it links', async () => {
+    serving(tree);
+
+    const first  = await html.page(context, 'spot/', null);
+    const second = await html.page(context, 'spot/', first.cursor);
+
+    expect(first.covers).toEqual({ directory: 'spot/', children: ['spot/AAAUSDT/', 'spot/BBBUSDT/'] });
+    expect(second.covers).toEqual({ directory: 'spot/AAAUSDT/', children: [] });
+  });
+
   /** The walk ends on the last directory rather than on an empty page after it. */
   it('ends without a page nobody needed', async () => {
     serving(tree);

@@ -107,7 +107,8 @@ export const editLens = (
 
   const saved = lensNamed(db, next.slug);
 
-  if (saved) rebuildMembers(db, saved);
+  // Only the venues whose rules this save changed; a rename or a new note changes none.
+  if (saved) rebuildMembers(db, saved, had.definition);
 
   return saved;
 };
@@ -133,9 +134,9 @@ export const dropLens = (db: DatabaseSync, slug: string): boolean => {
  * the first two — a fold over rows already in memory — and hands back the date
  * bounds for whoever scans the large table.
  *
- * **Evaluation starts from nothing**, and each rule is applied in order to what
- * the rules before it left: `include` adds its span, `exclude` takes it away. A
- * series nothing included is absent rather than empty.
+ * **Includes minus excludes**, in no order: what any include matches, less what
+ * any exclude matches (see `spansFor`). A series nothing included is absent
+ * rather than empty.
  */
 export const resolve = (db: DatabaseSync, definition: LensDefinition): Map<string, LensSlice[]> => {
   const out = new Map<string, LensSlice[]>();
@@ -248,19 +249,19 @@ export const problemsWith = (db: DatabaseSync, definition: LensDefinition): Lens
 
     /**
      * **Asked of what this venue is actually read through**, which is the global
-     * rules and then its own. A venue whose first rule excludes is fine where a
-     * global rule included something first, and a venue with no rules of its own
-     * is simply read through the globals.
+     * rules together with its own. A venue that only excludes is fine where a
+     * global rule includes something, and a venue with no rules of its own is
+     * simply read through the globals.
      */
     const effective = rulesFor(definition, venue);
 
     if (effective.length === 0)
       out.push({ venue, rule: -1,
         message: 'No rules, so this venue lets nothing through. Remove it, or add a rule.' });
-    else if (effective[0]!.effect === 'exclude')
-      out.push({ venue, rule: 0,
-        message: 'The first rule excludes, so this venue lets nothing through — '
-               + 'a lens starts from nothing and needs something included first.' });
+    else if (! effective.some(rule => rule.effect === 'include'))
+      out.push({ venue, rule: -1,
+        message: 'Nothing is included, so this venue lets nothing through — '
+               + 'an exclude only takes away from what an include lets in.' });
 
     out.push(...faultsIn(rules, lensOptions(db, venue), venue));
   }

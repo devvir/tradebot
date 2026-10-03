@@ -145,7 +145,7 @@ describe('tips', () => {
     await catalogued(row, '20240101');
     await catalogued(row, '20240104');
 
-    expect(reconcile(db, id, WALKED).lifted).toBe(1);
+    expect((await reconcile(db, id, WALKED)).lifted).toBe(1);
     expect(seriesFor(db, id)[0]!.tip).toBe(EDGE);
   });
 
@@ -161,7 +161,7 @@ describe('tips', () => {
     await catalogued(row, '20240101');
     await catalogued(row, '20240126');
 
-    reconcile(db, id, WALKED);
+    await reconcile(db, id, WALKED);
 
     expect(seriesFor(db, id)[0]!.tip).toBe('20240126');
   });
@@ -177,7 +177,7 @@ describe('tips', () => {
 
     await catalogued(row, '20240131');
 
-    reconcile(db, id, new Date('2024-01-31T09:00:00Z'));
+    await reconcile(db, id, new Date('2024-01-31T09:00:00Z'));
 
     // The walk ran on the 31st, so the newest period that can be complete is
     // the 30th — and the floor, fifteen days back, is lower still.
@@ -191,7 +191,7 @@ describe('tips', () => {
     await catalogued(row, '20240101');
     record({ symbol: 'EMPTY' });
 
-    reconcile(db, id, WALKED);
+    await reconcile(db, id, WALKED);
 
     const tips = Object.fromEntries(seriesFor(db, id).map(one => [one.symbol, one.tip]));
 
@@ -203,7 +203,7 @@ describe('tips', () => {
 
     await catalogued(row, '20240101');
 
-    expect(reconcile(db, id, WALKED).lifted).toBe(0);
+    expect((await reconcile(db, id, WALKED)).lifted).toBe(0);
     expect(seriesFor(db, id)[0]!.tip).toBe('20240220');
   });
 
@@ -212,7 +212,7 @@ describe('tips', () => {
     await catalogued(record({ pattern: 'p/{YYYY}{MM}.zip', symbol: 'M' }), '202311', 'm/202311');
     await catalogued(record({ symbol: 'D' }), '20231101', 'd/20231101');
 
-    reconcile(db, id, WALKED);
+    await reconcile(db, id, WALKED);
 
     const tips = Object.fromEntries(
       seriesFor(db, id).map(one => [one.grain, one.tip]));
@@ -238,7 +238,7 @@ describe('tips', () => {
 
     // Reconciling flushes what it moved, since a tip nobody wrote out is a tip
     // the next pass does not have.
-    reconcile(db, id, WALKED);
+    await reconcile(db, id, WALKED);
 
     expect(stored()).toMatchObject({ tip: EDGE });
 
@@ -249,7 +249,7 @@ describe('tips', () => {
   it('read back when the table is loaded again', async () => {
     await catalogued(record(), '20240101');
 
-    reconcile(db, id, WALKED);
+    await reconcile(db, id, WALKED);
     loadSeries(db);
 
     expect(seriesFor(db, id)[0]!.tip).toBe(EDGE);
@@ -550,7 +550,7 @@ describe('reconciling a completed update', () => {
 
     await filed(row, OLD);
 
-    expect(reconcile(db, id, NOW)).toMatchObject({ lifted: 1 });
+    expect(await reconcile(db, id, NOW)).toMatchObject({ lifted: 1 });
     expect(seriesFor(db, id)[0]!.tip).toBe(EDGE);
   });
 
@@ -560,7 +560,7 @@ describe('reconciling a completed update', () => {
 
     await filed(row, OLD);
 
-    expect(reconcile(db, id, NOW)).toMatchObject({ lifted: 0 });
+    expect(await reconcile(db, id, NOW)).toMatchObject({ lifted: 0 });
     expect(seriesFor(db, id)[0]!.tip).toBe('20260725');
   });
 
@@ -580,7 +580,7 @@ describe('reconciling a completed update', () => {
     await filed(bare, '20260320');
     await filed(knew, '20260320');
 
-    expect(reconcile(db, id, NOW)).toMatchObject({ corrected: 1 });
+    expect(await reconcile(db, id, NOW)).toMatchObject({ corrected: 1 });
 
     const starts = Object.fromEntries(
       seriesFor(db, id).map(one => [one.symbol, one.first]));
@@ -595,7 +595,7 @@ describe('reconciling a completed update', () => {
 
     await filed(row, '20260320');
 
-    expect(reconcile(db, id, NOW)).toMatchObject({ corrected: 0 });
+    expect(await reconcile(db, id, NOW)).toMatchObject({ corrected: 0 });
   });
 
   /** Each series at its own grain, since a month and a day close differently. */
@@ -603,7 +603,7 @@ describe('reconciling a completed update', () => {
     await filed(record({ pattern: MONTHLY }, { tip: '202501' }), '202001');
     await filed(record({ pattern: DAILY },   { tip: '20250101' }), OLD);
 
-    reconcile(db, id, NOW);
+    await reconcile(db, id, NOW);
 
     const tips = Object.fromEntries(
       seriesFor(db, id).map(one => [one.grain, one.tip]));
@@ -614,7 +614,7 @@ describe('reconciling a completed update', () => {
   it('writes what it moved, so a restart reads it back', async () => {
     await filed(record({}, { tip: '20260401' }), OLD);
 
-    reconcile(db, id, NOW);
+    await reconcile(db, id, NOW);
     loadSeries(db);
 
     expect(seriesFor(db, id)[0]!.tip).toBe(EDGE);

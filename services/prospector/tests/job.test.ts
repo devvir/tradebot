@@ -64,9 +64,13 @@ const venue = (archive: Archive, breaks: string[] = []): Adapter => {
       const at    = cursor ? Number(cursor.split('#')[1]) : 0;
       const next  = at + 1;
 
+      const keyAt = (page: number) => `${scope}A/A-2025-01-0${page}.zip`;
+
+      // Covered the way an S3 page is: after the last key before it, through its own.
       return {
-        listed: [{ key: `${scope}A/A-2025-01-0${next}.zip`, size: 1, etag: 'e', modified: null }],
+        listed: [{ key: keyAt(next), size: 1, etag: 'e', modified: null }],
         cursor: next < pages ? `${scope}#${next}` : null,
+        covers: { after: at > 0 ? keyAt(at) : null, through: next < pages ? keyAt(next) : null },
       };
     },
   };

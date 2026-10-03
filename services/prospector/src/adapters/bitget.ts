@@ -66,7 +66,7 @@ export const bitget: Adapter = declare({
    * cap. A missing key here is a `403` — see `refusesUs` — which is not a
    * refusal of us.
    */
-  pacing:  { perSecond: 2500, concurrency: 600 },
+  pacing:  { perSecond: 2500, concurrency: 500 },
 
   /**
    * How far behind today this venue is worth asking about.

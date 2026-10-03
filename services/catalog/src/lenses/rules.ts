@@ -25,12 +25,9 @@ export const venuesIn = (db: DatabaseSync, definition: LensDefinition): string[]
 };
 
 /**
- * What a venue is actually read through: the global rules, then its own.
- *
- * **Global first, and that ordering is the whole of what `*` means.** Rules
- * compose in order, so a venue's own rules see what the global ones left — which
- * is what lets a lens say *everything up to 2020, except bitget's books* in two
- * rules instead of seven.
+ * What a venue is actually read through: the global rules together with its
+ * own, one pool of includes and excludes — which is what lets a lens say
+ * *everything up to 2020, except bitget's books* in two rules instead of seven.
  */
 export const rulesFor = (definition: LensDefinition, venue: string): LensRule[] =>
   [...(definition.venues?.[GLOBAL] ?? []), ...(definition.venues?.[venue] ?? [])];
@@ -38,19 +35,31 @@ export const rulesFor = (definition: LensDefinition, venue: string): LensRule[] 
 /** The key a lens keeps its all-venue rules under. */
 export const GLOBAL = '*';
 
-/** What one series is let through for, after every rule has had its say. */
+/**
+ * What one series is let through for: everything the lens's includes match,
+ * minus everything its excludes match.
+ *
+ * **Order-free.** The includes are one set and the excludes another, so where a
+ * rule sits never changes what the lens lets through — an exclude always wins
+ * over an include it overlaps, and a carve-back is written as a narrower
+ * exclude. Two rows come out where an exclude cuts a hole in an include.
+ */
 export const spansFor = (series: Series, rules: readonly LensRule[]): LensSpan[] => {
-  let spans: LensSpan[] = [];
+  let included: LensSpan[] = [];
+  let excluded: LensSpan[] = [];
 
   for (const rule of rules) {
     if (! matches(series, rule)) continue;
 
     const span = { from: rule.from ?? null, to: rule.to ?? null };
 
-    spans = rule.effect === 'include' ? union(spans, span) : without(spans, span);
+    if (rule.effect === 'include') included = union(included, span);
+    else excluded = union(excluded, span);
   }
 
-  return spans;
+  for (const span of excluded) included = without(included, span);
+
+  return included;
 };
 
 // ── Internals ─────────────────────────────────────────────────────────────────

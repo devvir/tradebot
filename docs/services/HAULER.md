@@ -175,7 +175,7 @@ there to read.
 
 After each page, hauler posts what became of it to `POST /listings/report`, by
 each object's Key and through its lens: `downloaded` (fetched, or present and
-correct), `failed` (the venue answered `403`, `404` or `410`), and `mismatched`
+correct), `failed` (the venue answered `404` or `410`, or `403` on every attempt), and `mismatched`
 (with the size actually received).
 
 **A `207` names keys the catalog would not settle** — one naming no file, or one
@@ -183,14 +183,27 @@ the lens does not let through. Each is logged as an error and not sent again:
 neither mends itself by asking twice, and both mean the catalog and hauler
 disagree about what was listed.
 
-**Only the venue's own answer makes a file `failed`.** A connection that never
-opens, a DNS lookup that fails, a `5xx` or a `429` say nothing about the file,
-only about the way to it. Those are tried three times, with waits drawn up to 5
-and then 10 seconds, and if they persist the file is left out of the report
-entirely: it stays owed and is listed again on the next walk. A walk's log line
-counts them as `unreached`. Reporting them as failures had prospector asking the
-venue about hundreds of files it was serving perfectly well, during a burst of
-connect timeouts on this machine's side.
+**Only the venue's own answer makes a file `failed`.** A `404` or a `410` does
+at once. A `403` is how a venue turns *us* away as often as how a bucket hides a
+file it lacks, so it is tried again like any other failure, and reported as
+failed only where it answers every attempt — the catalog knows which a venue
+means, and rules. A connection that never opens, a DNS lookup that fails, a
+`5xx` or a `429` say nothing about the file, only about the way to it. Those are
+tried three times, with waits drawn up to 5 and then 10 seconds, and if they
+persist the file is left out of the report entirely: it stays owed and is listed again on the next walk. A
+walk's log line counts them as `unreached`. Reporting them as failures had
+prospector asking the venue about hundreds of files it was serving perfectly
+well, during a burst of connect timeouts on this machine's side.
+
+**A refusal stands the whole venue down.** A `403` or a `429` is aimed at the
+address as often as at the file, and every request sent through a refusing
+address is refused too — some venues keep refusing for minutes after the burst
+that tripped them. So the venue's fetches all wait: for as long as its
+`Retry-After` says, on any answer that carries one, and two minutes otherwise.
+Other venues carry on. The rule is the same for every venue, and is logged once
+per stand-down as `Turned away — standing the venue down`. Hauler sets no rate
+of its own; a venue that keeps refusing is a sign to lower
+`HAULER_CONCURRENCY`.
 
 **The caller reports problems; prospector rules on them.** The catalog forwards
 each report to prospector, which owns a file's state. A failed file is checked

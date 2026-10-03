@@ -26,11 +26,17 @@ export const s3: Scanner<ListingContext> = {
 
   level: (context, prefix) => level(context, prefix),
 
+  /**
+   * **A page covers everything from the marker it was asked with through the
+   * marker it hands back** — keys sort, and S3 answers in that order — or to
+   * the scope's end on the last page. So whatever is catalogued there and was
+   * not listed has been withdrawn; see `Coverage`.
+   */
   page: async (context, scope, cursor) => {
     const url  = listingUrl(context.base, scope, cursor, false);
     const page = await context.page(url, 's3');
 
-    return { listed: page.listed, cursor: page.next };
+    return { listed: page.listed, cursor: page.next, covers: { after: cursor, through: page.next } };
   },
 
   /**

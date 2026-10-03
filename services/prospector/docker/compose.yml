@@ -49,7 +49,6 @@ services:
       # Opening them in bulk is what fails — past ~1,250 at once connects time
       # out — so requests past this wait for one instead. HTTP/2 venues put
       # hundreds of requests on one connection and barely use any.
-      PROSPECTOR_CONNECTIONS: ${PROSPECTOR_CONNECTIONS:-600}
 
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV:  ${APP_ENV:-prod}

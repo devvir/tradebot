@@ -47,10 +47,11 @@ raw feed is `default` and its `aggTrades` is `aggregated`.
 and a period of `202506`. Many venues publish the same data both monthly and daily, so `grain` is what
 tells the two renderings apart.
 
-**Reading through a lens.** A consumer names a [lens](#lenses) in an `x-catalog-lens` header, and the
-listings and `/contents/*` answer only what it lets through. No header is the whole catalog; an unknown
-slug is a `422`, never the whole catalog in its place: the URL names something that exists, and the
-header names something that does not.
+**Reading through a lens.** A consumer names a [lens](#lenses) in an `x-catalog-lens` header, or in
+a `lens` query parameter where it sends no header — so a browser can look through one too — and the
+listings and `/contents/*` answer only what it lets through. Naming none is the whole catalog; an
+unknown slug is a `422`, never the whole catalog in its place: the URL names something that exists, and
+the lens names something that does not.
 
 **Collections answer `{ "items": [...] }`.** Single resources answer the object itself. Errors answer
 `{ "error": "..." }` with a fitting status. The listing is the exception: it answers in S3's shape,
@@ -211,7 +212,7 @@ venue can be served from two hosts, so there is no base to share.
 | | |
 |---|---|
 | `pending=true` | only files not yet downloaded |
-| `x-catalog-lens: <slug>` | only what that lens lets through. An unknown lens is a `422 NoSuchLens` |
+| `x-catalog-lens: <slug>`, or `lens=<slug>` | only what that lens lets through; the header wins where both are sent. An unknown lens is a `422 NoSuchLens` |
 
 A walk is a cursor over keys, so a file catalogued behind the cursor is listed by the next walk, as on
 any bucket.
@@ -282,7 +283,7 @@ A **lens** is a named way of looking at the catalog. See [CATALOG-LENSES.md](CAT
 | `400` | a malformed body, a report over 10,000 keys, an unknown `grain`, or a lens definition that does not hold |
 | `401` | the token is wrong or absent |
 | `404` | no such venue, or no such lens addressed in the path |
-| `422` | a lens named in `x-catalog-lens` that does not exist |
+| `422` | a lens named in `x-catalog-lens` or `lens=` that does not exist |
 | `409` | a lens address already taken |
 | `413` | a body over 5 MB |
 | `502` | a report prospector did not answer |

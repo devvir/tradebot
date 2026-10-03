@@ -407,7 +407,7 @@ const passing = async (
      */
     flushCounts(db, adapter);
 
-    const moved = reconcile(db, venueId, began(db, venueId));
+    const moved = await reconcile(db, venueId, began(db, venueId));
 
     /**
      * **The last act, and the only thing that ends a pass.** Everything before

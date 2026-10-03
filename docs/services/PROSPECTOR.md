@@ -739,6 +739,40 @@ Directories already read are remembered for the length of the process so each co
 nothing is ever answered from a memory this job did not fill — a parent is always read before its
 children, so a symbol added since last month cannot hide behind a stale answer.
 
+#### What a page writes, and what it withdraws
+
+**A page states its stretch of the keyspace in full**, and says which stretch that is (`covers`):
+
+| scanner | a page covers |
+|---|---|
+| S3 listing | every key after the marker it was asked with, through the marker it hands back — or from the partition's start on its first page, to its end on its last |
+| index | its directory's own files, and below it only the subdirectories it links |
+
+Both are checked, not assumed: every S3-protocol venue answered strictly in byte order on
+2026-10-03, which is the order `path` sorts in; and an index walk gives every directory of a
+partition its own page, files or not.
+
+So **a page is compared with what the catalog holds in that stretch, and only the differences are
+written**:
+
+- a key the catalog does not hold is added;
+- a key whose size, ETag or `modified` differ is updated, its previous version appended to
+  `revision`, and `downloaded_at` cleared — so does one that moved series or date, or came back
+  after being withdrawn;
+- **a key that says nothing new is not written at all.** On a re-walk that is nearly every key;
+- a catalogued file inside the stretch that the page did not list has been withdrawn: its
+  `existence` becomes `absent` and its row stays. A parked key the page did not list leaves `wip`.
+  On an index venue, a subdirectory the page no longer links is withdrawn with everything below it.
+
+On a listing venue the comparison is **one ordered read of the stretch**, not one lookup per key — a
+page's thousand keys answer from a few milliseconds of index rather than five hundred seeks. It is read once
+per page, before the page is cut into write slices; a key that is about to be written, parked or
+withdrawn is looked up again inside the slice that writes it, since another writer may have touched
+it in between, and a key that said nothing new is skipped on the read's word.
+
+Only a walk withdraws. Keys that reach the catalog any other way — a backfill, a probe's answer —
+cover no stretch, and say nothing about what is no longer there.
+
 ### Partitions split themselves
 
 The mapping only has to be roughly right, because a partition that turns out to hold too much is
@@ -807,6 +841,11 @@ is not offered for splitting again that pass — the cost of a prefix that could
 more. The walk's 30-second heartbeat (`Walking`) carries its request rates, the host's limiter state and the
 machine's ticket pool, so a request that is not going out says which of the two is holding it.
 
+**It also says where requests spend their time** (`timings`): average and 90th percentile, in
+milliseconds, of each part of a request's way since the previous line — waiting for a slot, the trip
+to the transport worker, the venue's first byte, the body, reading the page, and the page's processing
+after its slot is given back. Only the last runs without a slot. See `timings.ts`.
+
 ### 3. Record
 
 On a listing venue every key carries what the catalog needs, so a survey establishes existence, size
@@ -827,8 +866,7 @@ That is what keeps `file` holding exactly one kind of row. No query works around
 `bytes` is a real total rather than a lower bound, and the probe reads a small table of its own
 rather than a partial index over the largest one. Three rules make it safe, and all three are the
 same rule in different places: **ready stays ready** (an index venue re-offers the same bare names on
-every walk, and a silent sighting of a catalogued file moves `last_seen` and nothing else), a
-withdrawal reaches `wip` too, and arriving is first discovery rather than a revision.
+every walk, and a bare sighting of a catalogued file writes nothing), a withdrawal reaches `wip` too, and arriving is first discovery rather than a revision.
 
 **Rows carry who named them.** A listing cannot name a key that is not there, so a walk's findings
 land as `existence = 'confirmed'`; keys an update built from a pattern and a date land as
@@ -885,6 +923,7 @@ Three suffixes, in `excludedAnywhere`. None of them is one venue's quirk:
 | gate | any tree but `spot`, `futures_usdt`, `futures_btc`, `tradfi`, `delivery_usdt`, `spot_index`, `options_ticker` | dead, or not gate's — see below |
 | gate | a bare month where a dataset name belongs, in the three trees that have a dataset level | 571 keys, each the size of its canonical twin **to the byte** with a different ETag and an earlier mtime: the same content under an abandoned layout, re-uploaded correctly hours later — [GATE.md](../venues/GATE.md#571-keys-are-filed-one-level-too-high) |
 | gate | an `s3deals/` directory inside a dataset month | spot deals misfiled inside another dataset's tree |
+| gate | any file under `futures_btc/` whose instrument is not a `*_USD` | not the BTC-settled tree's own: copies, fragments and a placeholder — [GATE.md](../venues/GATE.md#files-under-the-btc-tree-that-are-not-its-own) |
 
 Gate's refused trees, each of which is a decision rather than an oversight —
 [GATE.md](../venues/GATE.md#what-is-in-the-bucket-and-what-is-dead) has the spans and the evidence:
@@ -1484,12 +1523,10 @@ container's hard one at start — 524,288 here. What fails is opening HTTP/1.1 c
 measured 2026-10-01, past ~1,250 opened at once from this machine connects timed out and the open
 ones were lost with them, and on loopback, with no network involved, 3,000 lanes opening at once
 missed their deadlines by the hundred and reopened by the thousand — every one a TLS handshake on
-one thread. Over HTTP/2 hundreds of requests share a connection; over HTTP/1.1 each needs its own. So
-`PROSPECTOR_CONNECTIONS` caps HTTP/1.1 requests in progress, split evenly between the workers, and a
-request past it waits for one to finish instead of connecting. Idle connections are kept rather than
-destroyed — Node's default keeps 256 per host — so a connection is opened once and reused. At 3,000
-in flight with 600 connections the failures stopped, and the main thread was saturated writing the
-catalog.
+one thread. Over HTTP/1.1 every request in flight is a connection, so two things keep that from
+happening: `PROSPECTOR_CONCURRENCY` stays below that figure, and the pool opens gradually — see the
+ramp below — so nothing ever asks for its whole width at once. Idle connections are kept rather than
+destroyed — Node's default keeps 256 per host — so a connection is opened once and reused.
 
 **Names are looked up once per host, not once per connection.** Node keeps no answers of its own, and
 inside the container every lookup goes to Docker's resolver on a pool of four threads: measured
@@ -1930,9 +1967,12 @@ where it stands:
 | `wip` | rows discovered but not yet established |
 
 `lastRun` is the venue's **most recent pass**, whether or not it ended: `{ kind, at, startedAt,
-ongoing, first }`. It answers what `established` cannot: that is a completion time, so a venue three
+ongoing, first, previous }`. It answers what `established` cannot: that is a completion time, so a venue three
 hours into its first walk has none and reads like one nobody has ever surveyed. **`startedAt` is the
 run's own start, and `since` is not**: where a venue is paused, `since` holds when it was stopped.
+`previous` is set only while a pass runs: the newest pass that finished on any host, `{ at,
+startedAt, first }`, where `first` says it finished by the time the last host first completed —
+the backfill.
 
 **`state` and `surveying` are deliberately side by side**, because they are different facts: the first
 is work the catalog has outstanding, the second is whether anything is doing it. Walking with
@@ -2029,10 +2069,9 @@ Versioning uses SQLite's own `user_version`, so a database that has never heard 
 so a failure leaves the file where it was rather than half-migrated, and a catalog from a *newer*
 build is refused rather than written to by an older one.
 
-The chain is seven steps: the schema together with the venue rows and two lists of gate files that
+The chain is six steps: the schema together with the venue rows and two lists of gate files that
 are not what their URLs say, then htx's retirement dates, then okx's series, then bitget's, then the
-shapes gate used for one hour, then the shapes binance stopped writing, then the index over what is
-still owed. **A seed is a migration and not a startup hook**, because a fresh catalog is
+shapes gate used for one hour, then the shapes binance stopped writing. **A seed is a migration and not a startup hook**, because a fresh catalog is
 exactly the database that would otherwise pay for rediscovering it — which is what an earlier
 arrangement got backwards, jumping new files straight to the head version and running the chain only
 on old ones. A caller that wants the shape without the findings — a test fixture, mostly — declines
@@ -2042,7 +2081,8 @@ them with `seedData: false`, which still advances the version so nothing is retr
 order by that directory's `index.ts`. **The chain describes the catalog as it is, not how it got
 there.** No catalog is shared or deployed yet, so a change edits the migration it belongs to rather
 than adding one on top, and the one live catalog is brought to match by running the same statements by
-hand, `user_version` included.
+hand, `user_version` included. That holds until the project has a second developer or a production
+deployment; from then on a migration that has shipped is frozen and the chain only grows.
 
 That is the only thing startup does to an existing file: no repair, no rebuild, no inference about
 what it ought to contain.
@@ -2189,7 +2229,7 @@ forget:
   nothing. A refresh is cheap by construction.
 - **A constructed-key venue's walk carries nothing.** Every key it emits is a candidate, and every
   candidate that is not already settled lands in `wip` for the probe to ask about. A file already
-  catalogued is not disturbed — a bare sighting only moves `last_seen` — but everything else means a
+  catalogued is not disturbed — a bare sighting writes nothing — but everything else means a
   `HEAD`, and there are millions of them.
 
 **A scanner that does no I/O must hand the event loop back.** A listing scanner yields as a side

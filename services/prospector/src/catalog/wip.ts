@@ -1,6 +1,6 @@
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import { BREATH_MS, slice } from './serial';
-import type { Held, Parked, Parking, Unsettled } from '../types';
+import type { Edge, Held, Parked, Parking, Unsettled } from '../types';
 
 /**
  * The backlog table, and the only code that touches it.
@@ -368,8 +368,8 @@ export const writer = (db: DatabaseSync): {
    * on offering the key, which it will on every walk. So is `seq` — re-offering
    * a key must not move it to the back of the queue, or a venue that re-lists
    * the same names every walk would keep pushing its own backlog out of reach of
-   * the sweep reading it. `created_at` *is* refreshed, which is how
-   * `dropRange` tells a key the venue still lists from one it has dropped.
+   * the sweep reading it. `created_at` *is* refreshed: the key was offered again
+   * just now.
    */
   const refresh: StatementSync = db.prepare(
     `UPDATE wip
@@ -426,23 +426,15 @@ export const writer = (db: DatabaseSync): {
 };
 
 /**
- * Drop a withdrawn range, inside the caller's transaction.
- *
- * A file the venue dropped before anyone probed it was never catalogued, so
- * there is nothing to keep a record of — but leaving it would park it in the
- * probe's queue for ever, asking a venue about a key it no longer serves.
+ * The parked paths between two edges — what a walked page checks against what it
+ * offered, so a key the venue dropped before anyone probed it leaves the queue
+ * rather than being asked about for ever. See `putFiles`.
  */
-export const dropRange = (
-  db:      DatabaseSync,
-  venueId: number,
-  from:    string,
-  to:      string,
-  since:   string,
-): number => Number(db.prepare(
-  `DELETE FROM wip
-    WHERE venue_id = ? AND path >= ? AND path < ?
-      AND created_at < ?`,
-).run(venueId, from, to, since).changes);
+export const pathsIn = (db: DatabaseSync, venueId: number, from: Edge, to: Edge): string[] =>
+  (db.prepare(
+    `SELECT path FROM wip
+      WHERE venue_id = ? AND path ${from.open ? '>' : '>='} ? AND path ${to.open ? '<' : '<='} ?`,
+  ).all(venueId, from.path, to.path) as { path: string }[]).map(row => row.path);
 
 
 // ── Parking in batches ────────────────────────────────────────────────────────

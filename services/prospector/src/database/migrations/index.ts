@@ -4,7 +4,6 @@ import { okxSeries } from './003-okx';
 import { bitgetSeries } from './004-bitget';
 import { gateMisfiled } from './005-gate';
 import { binanceRetirements } from './006-binance';
-import { pendingIndex } from './007-pending';
 import type { Migration } from '../../types';
 
 /**
@@ -25,16 +24,17 @@ import type { Migration } from '../../types';
  * **The chain is the catalog as it is, not a history of how it got there.** No
  * catalog is shared or deployed yet, so a change edits the migration it belongs
  * to rather than adding one on top — and the one live catalog is brought to
- * match by running the same statements by hand, `user_version` included.
+ * match by running the same statements by hand, `user_version` included. That
+ * holds until the project has a second developer or a production deployment;
+ * from then on a migration that has shipped is frozen and the list only grows.
  *
  * Each runs in its own transaction together with its version bump, so a failure
  * leaves the database at the version it was, never half-migrated.
  *
  * **Each is a thing rather than a step.** The catalog's shape with the rows that
  * are constants of it, then the venues whose contents cannot be discovered and
- * therefore ship measured, then the shapes a venue used once or stopped
- * writing, which no amount of reading can date, and last the index for what is
- * still owed.
+ * therefore ship measured, and last the shapes a venue used once or stopped
+ * writing, which no amount of reading can date.
  *
  * There is otherwise no history here, because there is nothing to replay: a
  * chain of deltas is worth keeping only while databases exist at the versions
@@ -47,7 +47,6 @@ export const MIGRATIONS: readonly Migration[] = [
   bitgetSeries,
   gateMisfiled,
   binanceRetirements,
-  pendingIndex,
 ];
 
 /** The version a database that has run every migration reports. */

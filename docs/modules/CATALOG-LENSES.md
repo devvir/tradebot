@@ -41,12 +41,14 @@ for. Addressing by `name` would mean renaming a lens reconfigures whoever reads 
 **Keyed by venue name**, never by id: an id names a *host*, and bybit publishes its books from a
 second one.
 
-**`*` holds rules about every venue, and they apply before a venue's own.** A lens whose only rule is
+**`*` holds rules about every venue, read together with each venue's own.** A lens whose only rule is
 global reaches venues it never names — including ones added later.
 
-**Rules apply in order, starting from nothing.** `include` adds what it matches, `exclude` takes it
-away, and each rule sees what the ones before it left — which is what lets *everything up to a date,
-except books, except recent trades* be three rules read top to bottom.
+**Includes minus excludes, in no order.** A lens lets through everything its includes match, less
+everything its excludes match — `*` and the venue's own rules in one pool. Where a rule sits never
+changes the result, so *everything up to a date, except books, except recent trades* is three rules in
+any order. **An exclude always wins** over an include it overlaps: a carve-back ("except books — but
+BTC's books") is written as a narrower exclude, not as a later include.
 
 **A rule states only what it constrains.** An absent dimension means all of it:
 
@@ -78,8 +80,8 @@ naming the venue, the rule's position and, where one part is at fault, the field
 put it where the choice was made. Two faults are refused rather than warned about, because both read
 later as a decision rather than a mistake and arrive as an empty download noticed weeks afterwards:
 
-- **a venue's rules opening with `exclude`**, which lets nothing through — subtracting from nothing is
-  a no-op;
+- **a venue whose rules include nothing**, which lets nothing through — an exclude only takes away
+  from what an include lets in;
 - **an empty list in a dimension**, which matches nothing, where leaving it out matches all of it;
 - **a finer filter that does not fit everything a rule groups.** A rule naming markets or datasets
   is checked per `(market, dataset, variant)` it selects: `grains` that match nothing of one of them,
@@ -94,8 +96,8 @@ grain are properties of the *pattern*; the instrument is a property of the *seri
 property of the *file*. So a lens picks patterns, then the series on them, then applies the dates —
 the first two are folds over rows already in memory, and only the last touches the file table.
 
-**A lens resolves to spans, not to a range.** Rules compose, so a later one can carve a hole in an
-earlier one's: including 2019 to 2021 and then excluding 2020 leaves two spans, and collapsing them to
+**A lens resolves to spans, not to a range.** An exclude can carve a hole in an include: including
+2019 to 2021 and excluding 2020 leaves two spans, and collapsing them to
 one range would hand back a year nobody asked for. The arithmetic is in the catalog's `lenses/spans.ts`.
 
 **Resolved when it is saved, and stored.** What a lens lets through is kept as rows of `lens_series`:
@@ -103,10 +105,15 @@ a series, and a span of its dates, with two rows for a series the lens cuts a ho
 a lens (the listing, the contents, the size, a report's check) reads those rows, and none of them
 evaluates a rule. So a lens costs the same after a restart as an hour into a run.
 
-- **Saving rebuilds them whole**, since any rule can move any series in or out.
+- **Saving rebuilds the venues it changed.** A change to one venue's rules can only move that venue's
+  series; a change to the `*` rules can move any, and rebuilds every venue. A save that changes only
+  the name or the note rebuilds nothing.
 - **New series are added, never rebuilt.** Prospector numbers series in order, so a lens records the
-  newest it has looked at (`series_through`). Before a lens is read, the series past that are evaluated
-  against it: nearly always none, and one primary-key seek to find out.
+  newest it has looked at (`series_through`). **Every fifteen minutes, in the background**, each lens
+  folds in the series past that, a few thousand at a time with requests answered in between — a
+  venue's first walk creates them by the hundred thousand. **A request through a lens still catches up
+  first**, so a lens is never behind the catalog; the background makes that a primary-key seek that
+  finds nothing, nearly always.
 - **A series prospector deletes** leaves its rows behind with no files, which lets nothing through.
 
 The catalog writes `lens_series`, as it writes `lens`. Both tables are lenses, the one thing in the
@@ -136,8 +143,8 @@ yet downloaded — beside the totals, so a lens's progress never disagrees with 
 
 ## Reading through a lens
 
-A consumer names its lens in an `x-catalog-lens` header. **No header is the whole catalog; an unknown
-slug is a `422`, never the whole catalog in its place.**
+A consumer names its lens in an `x-catalog-lens` header, or a `lens` query parameter. **Naming none is
+the whole catalog; an unknown slug is a `422`, never the whole catalog in its place.**
 
 **The listing** lists only what the lens lets through — see [Listings](CATALOG-API.md#listings). Its
 walk takes each series in key order and reads only the ones the lens holds, and of those only the

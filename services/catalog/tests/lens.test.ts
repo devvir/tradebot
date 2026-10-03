@@ -106,12 +106,21 @@ describe('what a lens lets through', () => {
     ] }))).toBe(6);
   });
 
-  it('lets a later include put back what an earlier exclude took', () => {
-    expect(selects(lens({ binance: [
-      { effect: 'include' },
-      { effect: 'exclude', datasets: [{ dataset: 'klines' }] },
-      { effect: 'include', datasets: [{ dataset: 'klines', variant: '1m' }] },
-    ] }))).toBe(6);
+  /**
+   * **Includes minus excludes, in no order.** Where a rule sits never changes
+   * what the lens lets through, and an exclude wins over any include it
+   * overlaps — a carve-back is a narrower exclude, not a later include.
+   */
+  it('lets an exclude win over every include it overlaps, wherever either sits', () => {
+    const everything = { effect: 'include' } as const;
+    const noKlines   = { effect: 'exclude', datasets: [{ dataset: 'klines' }] } as const;
+    const oneKline   = { effect: 'include', datasets: [{ dataset: 'klines', variant: '1m' }] } as const;
+
+    const without = selects(lens({ binance: [everything, noKlines] }));
+
+    expect(selects(lens({ binance: [everything, noKlines, oneKline] }))).toBe(without);
+    expect(selects(lens({ binance: [oneKline, noKlines, everything] }))).toBe(without);
+    expect(selects(lens({ binance: [noKlines, everything] }))).toBe(without);
   });
 
   /**
@@ -299,9 +308,17 @@ describe('why a lens is refused', () => {
     ] }))).toEqual([]);
   });
 
-  it('warns that a list opening with exclude sees nothing', () => {
+  /** An exclude only takes from what an include lets in, so a venue that only excludes sees nothing. */
+  it('warns that a venue whose rules include nothing sees nothing', () => {
     expect(problemsWith(db, lens({ binance: [{ effect: 'exclude', datasets: [{ dataset: 'books' }] }] })))
-      .toMatchObject([{ rule: 0 }]);
+      .toMatchObject([{ rule: -1 }]);
+  });
+
+  it('takes an exclude written first as it takes one written last', () => {
+    expect(problemsWith(db, lens({ binance: [
+      { effect: 'exclude', datasets: [{ dataset: 'books' }] },
+      { effect: 'include' },
+    ] }))).toEqual([]);
   });
 
   it('separates an empty list from an absent one', () => {

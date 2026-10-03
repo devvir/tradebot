@@ -537,12 +537,18 @@ export const sawFile = (db: DatabaseSync, seriesId: number, date: string): void 
  * asked about the archive as it stood when it started, and reconciling against
  * `now` would claim the days it spent running. The caller passes the job's own
  * start.
+ *
+ * **It yields every `YIELD_EVERY` series.** `node:sqlite` is synchronous, and a
+ * venue is up to a few hundred thousand series: run as one loop it holds the
+ * process for as long as that takes, and every request in flight goes unread
+ * until its stall timer fires — a whole service unanswering, `/status`
+ * included, for one venue's bookkeeping.
  */
-export const reconcile = (
+export const reconcile = async (
   db:      DatabaseSync,
   venueId: number,
   now:     Date = new Date(),
-): Reconciled => {
+): Promise<Reconciled> => {
   const held    = registry(db);
 
   /**
@@ -560,19 +566,28 @@ export const reconcile = (
    *
    * **Asked per series rather than per venue**, because a venue is not a
    * question `file` can answer cheaply and does not need to be: which series
-   * belong to this venue is already in hand, one line below. Each call is a seek
-   * into `file_series` and a walk of that series' own entries, and `existence`
+   * belong to this venue is already in hand, one line below. Each call is two
+   * seeks into `file_series`, one at each end of the series, and `existence`
    * is in the index so none of it reaches a row.
+   *
+   * **Two ordered lookups, not `min` and `max`.** With the `existence` filter
+   * beside them SQLite answers `min(date)`/`max(date)` by reading every entry
+   * of the series; ordered with a limit, it stops at the first that qualifies.
+   * Measured 2026-10-03 on gate: 3 ms against 0.1 ms a series, the difference
+   * between holding the process for five minutes and for ten seconds.
    */
   const bounds = db.prepare(
-    `SELECT min(date) AS first, max(date) AS last
-        FROM file
-       WHERE series_id = ? AND existence <> 'absent'`,
+    `SELECT (SELECT date FROM file WHERE series_id = ?1 AND existence <> 'absent' ORDER BY date LIMIT 1) AS first,
+            (SELECT date FROM file WHERE series_id = ?1 AND existence <> 'absent' ORDER BY date DESC LIMIT 1) AS last`,
   );
 
   const summary: Reconciled = { lifted: 0, removed: 0, corrected: 0 };
 
+  let seen = 0;
+
   for (const row of seriesFor(db, venueId)) {
+    if (++seen % YIELD_EVERY === 0) await new Promise(done => setImmediate(done));
+
     const floor = lastSettled(row.grain, now);
 
     /**
@@ -1125,6 +1140,9 @@ const touch = (held: Registry, row: Publishing): void => {
  */
 const FLUSH_AT    = 1_000;
 const FLUSH_AFTER = 10_000;
+
+/** Series reconciled between yields to the event loop — see `reconcile`. */
+const YIELD_EVERY = 1_000;
 
 /** The pattern's id and whether it has ended, creating the shape if it is new. */
 const patternIdOf = (

@@ -1,6 +1,6 @@
 import { setDefaultAutoSelectFamily } from 'node:net';
-import { parentPort, workerData } from 'node:worker_threads';
-import { connectionsAtMost, deliver } from './deliver';
+import { parentPort } from 'node:worker_threads';
+import { deliver } from './deliver';
 import { fault } from './faults';
 import { cacheLookups } from './lookup';
 import type { Parcel, Receipt } from './types';
@@ -17,7 +17,6 @@ setDefaultAutoSelectFamily(false);
 /** Names are looked up once per host, not once per connection — see `lookup.ts`. */
 cacheLookups();
 
-connectionsAtMost((workerData as { connections: number }).connections);
 
 let outbox: Receipt[] = [];
 let scheduled = false;

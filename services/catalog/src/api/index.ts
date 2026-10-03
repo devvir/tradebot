@@ -13,6 +13,7 @@ import type { DatabaseSync } from 'node:sqlite';
  */
 export const mount = (app: Application, db: DatabaseSync, token: string): void => {
   app.use(requireToken(token));
+  app.use(stillWanted);
 
   mountListings(app, db);
   mountReports(app, db);
@@ -38,6 +39,25 @@ const requireToken = (token: string) =>
 
     next();
   };
+
+/**
+ * Drop a request whose client has gone before doing any of its work.
+ *
+ * **One request runs at a time**, so a slow one queues the rest — and an editor
+ * that has since moved on cancels the ones it no longer wants. A yield first
+ * lets any disconnect already received be noticed; a request whose connection
+ * is closed by then is answered by nobody and costs nothing. A request already
+ * running cannot be stopped: its work is synchronous.
+ */
+const stillWanted = (req: Request, _res: Response, next: NextFunction): void => {
+  setImmediate(() => {
+    // The connection, not the request: a request whose body has been read is
+    // "destroyed" as a stream while its client still waits for the answer.
+    if (req.socket.destroyed) return;
+
+    next();
+  });
+};
 
 /**
  * Anything that escapes a route is a fault in this service: `500`, with the

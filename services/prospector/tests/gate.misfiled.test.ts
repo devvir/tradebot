@@ -81,20 +81,25 @@ describe('what the rule must not touch', () => {
 });
 
 /**
- * USDT-settled files gate filed under its BTC-settled tree: weekly spot candles
- * named as trades, futures-trade fragments, a few minutes of funding — every
- * path here taken from the archive.
+ * Files under gate's BTC-settled tree that are not its instruments: weekly spot
+ * candles named as trades, spot trades, futures-trade fragments, a few minutes of
+ * funding, a placeholder — every path here taken from the archive.
  */
-describe('USDT files under the BTC tree', () => {
+describe('foreign files under the BTC tree', () => {
   it('refuses them, whatever dataset they are filed as', () => {
     expect(accepts('futures_btc/trades/202203/TVK_USDT-202203.csv.gz')).toBe(false);
+    expect(accepts('futures_btc/trades/202203/AAVE_ETH-202203.csv.gz')).toBe(false);
+    expect(accepts('futures_btc/trades/202203/DAGX_BTC-202203.csv.gz')).toBe(false);
     expect(accepts('futures_btc/trades/202208/BTC_USDT-202208.csv.gz')).toBe(false);
     expect(accepts('futures_btc/funding_updates/201911/EOS_USDT-201911.csv.gz')).toBe(false);
     expect(accepts('futures_btc/mark_prices/201911/ETH_USDT-201911.csv.gz')).toBe(false);
+    expect(accepts('futures_btc/funding_applies/202410/dummy-202410.csv.gz')).toBe(false);
   });
 
   it('keeps the BTC tree\'s own instruments, and USDT files where they belong', () => {
     expect(accepts('futures_btc/trades/202203/BTC_USD-202203.csv.gz')).toBe(true);
+    expect(accepts('futures_btc/funding_applies/202410/BTC_USD-202410.csv.gz')).toBe(true);
+    expect(accepts('spot/candlesticks_7d/202203/AAVE_ETH-202203.csv.gz')).toBe(true);
     expect(accepts('futures_usdt/trades/202208/BTC_USDT-202208.csv.gz')).toBe(true);
     expect(accepts('spot/candlesticks_7d/202203/TVK_USDT-202203.csv.gz')).toBe(true);
   });

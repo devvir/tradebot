@@ -8,6 +8,7 @@ import {
   _test_descend,
   _test_level,
   _test_listingUrl,
+  s3,
 } from '../src/scanners/s3';
 import { binance } from '../src/adapters/binance';
 import { htx } from '../src/adapters/htx';
@@ -565,3 +566,29 @@ const address = () => {
 };
 
 address();
+
+/**
+ * **What a page covers is what withdrawal is judged on**, so it has to be exactly
+ * the keys the venue could have listed there: after the marker asked with,
+ * through the one handed back — or to the scope's end on the last page.
+ */
+describe('what a page covers', () => {
+  const context = { ...listing(binance), keyRoot: 'data/' };
+
+  afterEach(() => vi.mocked(fetchPage).mockReset());
+
+  it('covers from the marker it was asked with through the one it hands back', async () => {
+    vi.mocked(fetchPage).mockResolvedValue(parse(page(
+      object('data/x/b-2025-01-01.zip') + object('data/x/c-2025-01-01.zip'), '<IsTruncated>true</IsTruncated>')));
+
+    const one = await s3.page(context, 'data/x/', 'data/x/a-2025-01-01.zip');
+
+    expect(one.covers).toEqual({ after: 'data/x/a-2025-01-01.zip', through: 'data/x/c-2025-01-01.zip' });
+  });
+
+  it('covers to the end of the scope on its last page, and from its start on its first', async () => {
+    vi.mocked(fetchPage).mockResolvedValue(parse(page(object('data/x/b-2025-01-01.zip'))));
+
+    expect((await s3.page(context, 'data/x/', null)).covers).toEqual({ after: null, through: null });
+  });
+});

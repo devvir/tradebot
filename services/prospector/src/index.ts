@@ -61,7 +61,7 @@ const main = async (service: Service): Promise<void> => {
   capacity(config.concurrency);
 
   /** Requests are carried off this thread from the first one on — see `transport.ts`. */
-  openTransport(config.concurrency, config.connections);
+  openTransport(config.concurrency);
 
   const path = join(config.catalogDir, 'catalog.db');
   const db   = openCatalog(path);

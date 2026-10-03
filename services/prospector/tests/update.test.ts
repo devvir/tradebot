@@ -378,7 +378,7 @@ describe('what a file does not do', () => {
     putFiles(db, [{
       venueId: id, path: `p/${date}`, date, size: 1, etag: 'e', modified: null,
       existence: 'confirmed', seriesId: series.id!, seenAt: 'T1',
-    }], true);
+    }]);
 
   it('keeps generating for a listed series that already has one', async () => {
     const row = recordSeries(db, id, found(), { tip: '20260301', first: null });
@@ -487,7 +487,7 @@ describe('a period published in parts', () => {
     putFiles(db, parts.map(part => ({
       venueId: id, path: key(part), date: '20260309', size: 1, etag: 'e', modified: null,
       existence: 'confirmed' as const, seriesId: row.id!, seenAt: 'T1',
-    })), true);
+    })));
 
   /** Names one part at a time and waits to hear how it went — bitget's shape. */
   const chained: Rules = {

@@ -265,6 +265,17 @@ describe('a lens', () => {
     expect(await walk('', { 'x-catalog-lens': 'to-2020' })).toEqual(EXPECTED.filter(one => one.split('/')[5]! <= '202012'));
   });
 
+  /** Named in the query too, so a browser can look through one; a header, where sent, wins. */
+  it('takes the lens from the query where no header names it', async () => {
+    await lens('to-2020', { format: 1, venues: { '*': [{ effect: 'include', to: '202012' }] } });
+
+    const through = EXPECTED.filter(one => one.split('/')[5]! <= '202012');
+
+    expect(await walk('&lens=to-2020')).toEqual(through);
+    expect(await walk('&lens=nope', { 'x-catalog-lens': 'to-2020' })).toEqual(through);
+    expect((await call('/listings?lens=nope')).status).toBe(422);
+  });
+
   /** An include and an exclude can leave a series two spans; both are listed, the hole is not. */
   it('lists both sides of a hole it cuts', async () => {
     await lens('holed', { format: 1, venues: { binance: [
@@ -297,10 +308,12 @@ describe('a lens', () => {
 });
 
 describe('a report', () => {
-  /** A stand-in prospector, recording what it was asked to settle. */
-  const prospector = async (status = 200) => {
+  /** A stand-in prospector, recording what it was asked to settle; it can drop the first connections it gets. */
+  const prospector = async (status = 200, drops = 0) => {
     const got: unknown[] = [];
     const server = createServer((req, res) => {
+      if (drops > 0) { drops--; req.socket.destroy(); return; }
+
       let body = '';
 
       req.on('data', chunk => { body += chunk; });
@@ -393,6 +406,18 @@ describe('a report', () => {
 
   it('is a 422 through a lens that does not exist', async () => {
     expect((await report({ downloaded: [] }, { 'x-catalog-lens': 'nope' })).status).toBe(422);
+  });
+
+  /** A connection prospector drops is tried again, not a report lost. */
+  it('settles the report when prospector drops the connection once', async () => {
+    const stand = await prospector(200, 1);
+
+    try {
+      expect((await report({ downloaded: [EXPECTED[0]] })).status).toBe(200);
+      expect(stand.got).toHaveLength(1);
+    } finally {
+      await stand.close();
+    }
   });
 
   it('says the collector is not answering rather than failing', async () => {

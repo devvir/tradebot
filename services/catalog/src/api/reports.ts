@@ -1,7 +1,6 @@
 import { logger } from '@devvir/service-kit';
-import config from '../config';
-import { lensRequested } from '../lenses/requested';
-import { MAX_REPORT, keysIn, resolveReport } from '../reports';
+import { lensRequested, lensSlug } from '../lenses/requested';
+import { MAX_REPORT, keysIn, resolveReport, settle } from '../reports';
 import { answer, failed } from './listings';
 import type { Application } from 'express';
 import type { DatabaseSync } from 'node:sqlite';
@@ -20,7 +19,7 @@ export const mountReports = (app: Application, db: DatabaseSync): void => {
   app.post('/listings/report', async (req, res) => {
     const lens = lensRequested(db, req);
 
-    if (lens === undefined) return failed(req, res, 422, 'NoSuchLens', `No such lens: ${String(req.headers['x-catalog-lens']).trim()}`);
+    if (lens === undefined) return failed(req, res, 422, 'NoSuchLens', `No such lens: ${lensSlug(req)}`);
 
     if (keysIn(req.body) > MAX_REPORT) return failed(req, res, 400, 'InvalidArgument', `At most ${MAX_REPORT} keys per report`);
 
@@ -29,16 +28,7 @@ export const mountReports = (app: Application, db: DatabaseSync): void => {
     if (! resolved) return failed(req, res, 400, 'MalformedReport', 'A report is downloaded and failed, each a list of keys, and mismatched, a list of { Key, Size, ETag }');
 
     try {
-      const settled = await fetch(`${config.prospectorApi}/reports`, {
-        method:  'POST',
-        headers: {
-          'content-type': 'application/json',
-          ...(config.token ? { 'x-catalog-token': config.token } : {}),
-        },
-        body: JSON.stringify(resolved.settle),
-      });
-
-      if (! settled.ok) throw new Error(`Prospector answered ${settled.status}: ${(await settled.text()).slice(0, 200)}`);
+      await settle(resolved.settle);
     } catch (err) {
       logger.warn({ err }, 'Prospector did not settle a report');
 

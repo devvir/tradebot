@@ -71,27 +71,31 @@ export const gateMisfiled = (path: string): boolean => {
 };
 
 /**
- * Whether gate filed this USDT-settled file under its BTC-settled tree.
+ * Whether this file sits under gate's BTC-settled tree without being one of its
+ * instruments.
  *
- * **The BTC tree's own instruments are `*_USD`**; a `*_USDT` under
- * `futures_btc/` belongs elsewhere, and every one of them is a copy of something
- * filed properly or a fragment of it. Checked file by file against the archive
- * and the old complete catalog, 2026-10-01 — 1,754 files in four months:
+ * **The BTC tree's own instruments are `*_USD`**; anything else under
+ * `futures_btc/` belongs elsewhere or nowhere, and every one is a copy of
+ * something filed properly, a fragment of it, or a placeholder. Checked file by
+ * file against the archive, 2026-10-01 and 2026-10-03:
  *
- * - `trades/202203`, 1,606: **spot weekly candles**, not trades, as first written
- *   on 2022-04-03 — a partial last week and a week from February. Every one has
- *   its original at `spot/candlesticks_7d/202203/`, republished complete in 2024.
- * - `trades/202203/TONC_USDT`: spot trades, byte for byte the size of
- *   `spot/deals/202203/TONC_USDT-202203.csv.gz`.
+ * - `trades/202203`, 2,509 (`*_USDT`, `*_ETH`, `*_BTC`): **spot weekly
+ *   candles**, not trades, as first written on 2022-04-03 — a partial last week
+ *   and a week from February. Every week of every one is at
+ *   `spot/candlesticks_7d/`, republished complete in 2024.
+ * - `trades/202203`, 4 (`TONC_USDT`, `DAGX_BTC`, `SD_ETH`, `VAI_ETH`): spot
+ *   trades, row for row and byte for byte the `spot/deals/202203/` file.
  * - `trades/202208`, 144: about five minutes of futures trades from 2022-08-05,
  *   every row inside the month's file in `futures_usdt/trades/`.
  * - `funding_updates` and `mark_prices` of `201911`, 4: the first minutes of
  *   2019-11-20 for EOS and ETH, missing from the properly filed month. Refused all
  *   the same: a month split across two files is a month this catalog treats as
  *   unpublished for those minutes, not one a consumer is asked to stitch together.
+ * - `funding_applies/{YYYY}{MM}/dummy-…`, from 202410: an instrument named
+ *   `dummy`, applying a funding rate of exactly zero about hourly.
  *
- * Catalogued, they took the same canonical names as the files they copy — a
- * bucket key listed twice.
+ * Catalogued, the copies took the same canonical names as the files they copy —
+ * a bucket key listed twice.
  */
 export const gateWrongTree = (path: string): boolean => WRONG_TREE.test(path);
 
@@ -114,8 +118,8 @@ const kept = (path: string, month: string): boolean => {
  */
 const MISFILED = /\/(\d{6})\/[^/]*?-(\d{6})(?:\d{2})?\.[a-z.]+$/;
 
-/** A `*_USDT` file anywhere under the BTC-settled tree. */
-const WRONG_TREE = /^futures_btc\/[^/]+\/\d{6}\/[^/]+_USDT-[^/]+$/;
+/** A file under the BTC-settled tree whose instrument is not a `*_USD`. */
+const WRONG_TREE = /^futures_btc\/[^/]+\/\d{6}\/(?![^/]*_USD-)[^/]+$/;
 
 /** The instrument and the day a daily filename carries. */
 const DAY = /\/([^/]+)-(\d{8})\.[a-z.]+$/;

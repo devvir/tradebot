@@ -16,7 +16,7 @@ const cfg = vi.hoisted(() => ({ archivesDir: '', catalogApi: '', catalogToken: '
 
 vi.mock('../src/config', () => ({ default: cfg }));
 
-const { haul } = await import('../src/fetch');
+const { haul, _test_retryAfter } = await import('../src/fetch');
 const { sweepPartials } = await import('../src/store');
 
 const BODY = 'the file';
@@ -37,7 +37,9 @@ beforeEach(async () => {
     if (req.url === '/file.zip') { res.writeHead(200); res.end(BODY); return; }
     if (req.url === '/short.zip') { res.writeHead(200); res.end('short'); return; }
     if (req.url === '/busy.zip') { asked++; res.writeHead(503); res.end(); return; }
-    if (req.url === '/forbidden.zip') { asked++; res.writeHead(403); res.end(); return; }
+    // Refusals say how long to wait, so a test is never held for the default.
+    if (req.url === '/forbidden.zip') { asked++; res.writeHead(403, { 'retry-after': '0' }); res.end(); return; }
+    if (req.url === '/refused.zip') { asked++; res.writeHead(429, { 'retry-after': '1' }); res.end(); return; }
     if (req.url === '/gone.zip') asked++;
 
     res.writeHead(404);
@@ -84,17 +86,48 @@ describe('a file not yet on disk', () => {
     expect(existsSync(`${at(one)}.part`)).toBe(false);
   });
 
-  /** The venue's own answer that the file is not there is the only thing that makes it `failed`. */
+  /** The venue's own answer that the file is not there makes it `failed`. */
   it('fails, at once, where the venue says it is not there', async () => {
     expect((await haul(file({ url: `${base}/gone.zip` }))).outcome).toBe('failed');
-    expect((await haul(file({ url: `${base}/forbidden.zip` }))).outcome).toBe('failed');
-    expect(asked).toBe(2);
+    expect(asked).toBe(1);
   });
 
   /** A busy venue says nothing about the file: it is tried again, then left owed, unreported. */
   it('is unreached, after every attempt, where the venue is only busy', async () => {
     expect((await haul(file({ url: `${base}/busy.zip` }))).outcome).toBe('unreached');
     expect(asked).toBe(3);
+  });
+
+  /** A `403` may be aimed at us, so it is tried again — and reported only where it holds. */
+  it('fails, after every attempt, where the venue keeps answering 403', async () => {
+    expect((await haul(file({ url: `${base}/forbidden.zip` }))).outcome).toBe('failed');
+    expect(asked).toBe(3);
+  });
+
+  /** A refusal is aimed at the address: every file of that venue waits it out, other venues do not. */
+  it('stands the whole venue down when it refuses', async () => {
+    const refused = haul(file({ url: `${base}/refused.zip` }));
+
+    while (asked === 0) await new Promise(done => setTimeout(done, 10));
+
+    const since = Date.now();
+
+    expect((await haul(file({ venue: 'gate', key: 'gate/spot/trades/B/BTC_USDT/202001/x.zip' }))).outcome).toBe('downloaded');
+    expect(Date.now() - since).toBeLessThan(500);
+
+    expect((await haul(file())).outcome).toBe('downloaded');
+    expect(Date.now() - since).toBeGreaterThanOrEqual(900);
+
+    expect((await refused).outcome).toBe('unreached');
+  });
+
+  it('reads Retry-After as seconds or as a date', () => {
+    const after = (said: string) => _test_retryAfter(new Headers({ 'retry-after': said }));
+
+    expect(after('120')).toBe(120_000);
+    expect(after(new Date(Date.now() + 60_000).toUTCString())).toBeGreaterThan(55_000);
+    expect(after('soon')).toBeNull();
+    expect(_test_retryAfter(new Headers())).toBeNull();
   });
 
   it('is unreached where no connection opens', async () => {

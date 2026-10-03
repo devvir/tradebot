@@ -61,7 +61,6 @@ CREATE TABLE IF NOT EXISTS file (
   existence     TEXT NOT NULL,
 
   seen_at       TEXT NOT NULL,  -- first discovery; never moves
-  last_seen     TEXT,           -- most recent sighting
   downloaded_at TEXT,           -- of the version this row describes
   PRIMARY KEY (venue_id, path)
 ) STRICT;
@@ -408,6 +407,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS series_key
 -- "Which files belong to this series, in order", and what state each is in.
 CREATE INDEX IF NOT EXISTS file_series ON file (series_id, date, existence);
 
+-- The files not yet downloaded, by series and date: what a listing of what is
+-- owed reads, so walking what is owed costs what is owed rather than every file
+-- of every series the walk passes through.
+CREATE INDEX IF NOT EXISTS file_pending ON file (series_id, date)
+  WHERE downloaded_at IS NULL AND existence = 'confirmed';
+
 -- "Which series belong to this symbol".
 CREATE INDEX IF NOT EXISTS series_symbol ON series (symbol);
 
@@ -440,13 +445,3 @@ export const ON_OPEN = [
   'PRAGMA foreign_keys = ON',
   'PRAGMA synchronous = NORMAL',
 ] as const;
-
-/**
- * The files not yet downloaded, by series and date — what a "pending only"
- * bucket listing reads, so walking what is owed costs what is owed rather than
- * every file of every series the walk passes through.
- */
-export const PENDING_INDEX = `
-CREATE INDEX IF NOT EXISTS file_pending ON file (series_id, date)
-  WHERE downloaded_at IS NULL AND existence = 'confirmed';
-`;

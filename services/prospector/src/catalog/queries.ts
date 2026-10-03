@@ -1,10 +1,11 @@
-import type { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import * as cache from './cache/months';
 import * as wip from './wip';
 import { BREATH_MS, slice } from './serial';
 import { ceiling } from '../paths';
 import { sawFile } from './series';
-import type { CatalogFile, LastRun, Existence, FileEffect, FileState, Parking, Phase, Run, RunKind, Settlement, Standing, Unreadable, Unsettled, VenueTotals } from '../types';
+import type { FileMetadata as Metadata, FileRow as Row, PathRow } from '../types';
+import type { CatalogFile, DirectorySpan, Edge, FinishedRun, RangeSpan, Span, LastRun, Existence, FileEffect, FileState, Parking, Phase, Run, RunKind, Settlement, Standing, Unreadable, Unsettled, VenueTotals } from '../types';
 
 /**
  * Every write and read the catalog supports, as prepared statements over one
@@ -49,7 +50,8 @@ export const venueIds = (db: DatabaseSync, name: string): number[] =>
     .map(row => row.id);
 
 /**
- * Record a page of files, as one transaction.
+ * Record a page of files, and — where the page says what it covered — what the
+ * venue no longer offers inside it.
  *
  * Batched deliberately rather than written row by row: the transaction is what
  * makes a hundred thousand inserts take under a second, and keeping each batch
@@ -57,58 +59,46 @@ export const venueIds = (db: DatabaseSync, name: string): number[] =>
  *
  * Three things happen to a key seen again:
  *
+ * - **Nothing, where it says nothing new.** Same size, ETag, `modified`, date,
+ *   series and existence: the row already states it, so it is not written. On a
+ *   re-walk that is nearly every key, and rewriting each one to say so was most
+ *   of what a walk cost.
  * - `seen_at` is left alone. It is first discovery, and answers "when did we
  *   first learn this existed" — a question whose answer must not drift.
- * - `last_seen` moves, which is what later lets a re-walk notice a withdrawal.
  * - If size, etag or the venue's `modified` differ, the new version becomes
  *   current **and the observation is appended to `revision`**, so a consumer can
  *   ask what changed since it last looked rather than being told only that
  *   something did.
+ *
+ * **A walked page states a span exhaustively** — see `Span` — so a file
+ * catalogued inside it that the page did not list has been withdrawn, and is
+ * marked so here, in the same slices. Nothing is deleted: a withdrawn file keeps
+ * its row, its history and its `seen_at`, and only its `existence` changes.
+ * Without a span — keys that did not come from a listing — nothing is withdrawn.
+ *
+ * Returns how many files were withdrawn.
  */
 export const putFiles = async (
   db:     DatabaseSync,
   files:  readonly CatalogFile[],
-
+  span?:  Span,
 ): Promise<number> => {
-  if (files.length === 0) return 0;
+  if (files.length === 0 && ! span) return 0;
 
   const current = db.prepare(
-    `SELECT series_id AS seriesId, date, size, etag, modified, existence, downloaded_at AS downloadedAt
-       FROM file WHERE venue_id = ? AND path = ?`,
+    `SELECT ${ROW} FROM file WHERE venue_id = ? AND path = ?`,
   );
 
-  /**
-   * **The trail holds the version being replaced, with the download state it
-   * had at that moment.**
-   *
-   * That is what makes the history answer a question worth asking: not merely
-   * "this file changed once", but "the version I built from is no longer the one
-   * published, and I did hold it". `seen_at` is when the change was observed,
-   * which is the same instant either way — what it carries is the *outgoing*
-   * version, not the incoming one, since the incoming one is in `file`.
-   */
   const revise = db.prepare(
     `INSERT INTO revision (venue_id, path, seen_at, size, etag, modified, downloaded_at)
           VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (venue_id, path, seen_at) DO NOTHING`,
   );
 
-  /**
-   * **A sighting that does not state a field leaves what is known.** An HTML
-   * index names files and says nothing about them, so a walk of one carries
-   * three nulls — and writing those over what a probe established would undo
-   * hours of work on every refresh and send it round again from nothing. A
-   * listing venue states all three every time, so `COALESCE` never fires there.
-   *
-   * `downloaded_at` is bound rather than coalesced, because it is the one field
-   * a change must *clear*: a new version has not been downloaded, whatever was
-   * true of the last one. Clearing it here is the whole of "pending again" —
-   * there is no second write to forget.
-   */
   const insert = db.prepare(
     `INSERT INTO file (venue_id, path, date, size, etag, modified, existence,
-                       series_id, seen_at, last_seen, downloaded_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                       series_id, seen_at, downloaded_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (venue_id, path) DO UPDATE SET
           date          = excluded.date,
           -- Learned once and kept: a sighting that cannot name a series is not
@@ -118,12 +108,7 @@ export const putFiles = async (
           etag          = COALESCE(excluded.etag, file.etag),
           modified      = COALESCE(excluded.modified, file.modified),
           existence     = excluded.existence,
-          last_seen     = excluded.last_seen,
           downloaded_at = excluded.downloaded_at`,
-  );
-
-  const seen = db.prepare(
-    `UPDATE file SET last_seen = ? WHERE venue_id = ? AND path = ?`,
   );
 
   /**
@@ -135,6 +120,43 @@ export const putFiles = async (
    * tables are written together and the deltas are reported once it commits.
    */
   const backlog = wip.writer(db);
+
+  /** Every path the page offered, so what it did not offer can be told apart. */
+  const offered = new Set(files.map(file => file.path));
+
+  /**
+   * **In the order the span is read**, which is the bytes' order rather than
+   * JavaScript's, so a slice can say where in the span it stopped.
+   */
+  const ordered = span ? [...files].sort((a, b) => byteOrder(a.path, b.path)) : files;
+
+  /**
+   * **A key range is read once, before any slice**, not once per slice. One
+   * ordered read of the span answers every lookup in the page and says what was
+   * catalogued there besides — the whole of what withdrawal needs. Read inside a
+   * slice it counted against that slice's own budget, so a slice got through a
+   * few keys and the next read the rest of the span again: a page cost the
+   * square of its size.
+   *
+   * **Only what is written is read again.** Between slices another writer may
+   * touch a row — a probe settling it, a report marking it downloaded — so a key
+   * about to be written, parked or withdrawn is looked up afresh inside the
+   * transaction that writes it. A key that said nothing new is skipped on the
+   * span's word: if the row moved meanwhile, what moved it stands.
+   */
+  const spanned = span && isRange(span)
+    ? rowsIn(db, span.venueId, { path: span.low, open: span.lowOpen }, { path: span.high, open: span.highOpen })
+    : null;
+
+  const known = spanned ? new Map(spanned.map(row => [row.path, row])) : null;
+
+  /** The span's rows not yet judged for withdrawal, by position in `spanned`. */
+  let judged = 0;
+
+  /** Where the next slice's stretch of the span begins. */
+  let from = span && isRange(span) ? { path: span.low, open: span.lowOpen } : null;
+
+  let withdrawn = 0;
 
   /**
    * **Written in short transactions with the thread handed back between them.**
@@ -154,10 +176,10 @@ export const putFiles = async (
    *
    * **A page is no longer atomic, and does not need to be.** Its cursor advances
    * only after the last slice, so an interruption re-lists the page and rewrites
-   * it — and every write here is an upsert keyed by path, so writing it twice
-   * says exactly what writing it once said.
+   * it — and every write here is keyed by path, so writing it twice says exactly
+   * what writing it once said.
    */
-  for (let at = 0; at < files.length;) {
+  for (let at = 0, last = false; ! last;) {
     const { sighted } = await slice(() => {
       const until = Date.now() + BREATH_MS;
 
@@ -181,23 +203,34 @@ export const putFiles = async (
       try {
         const effects: FileEffect[] = [];
 
-        for (; at < files.length && Date.now() < until; at++) {
-          const file = files[at]!;
-          const was = current.get(file.venueId, file.path) as Row | undefined;
+        const fresh = (file: CatalogFile): Row | undefined =>
+          current.get(file.venueId, file.path) as Row | undefined;
+
+        /** What the span says of a key, or the row itself where the span cannot answer for it. */
+        const said = (file: CatalogFile): Row | undefined =>
+          known && inSpan(file.path, span as RangeSpan) ? known.get(file.path) : fresh(file);
+
+        for (; at < ordered.length && Date.now() < until; at++) {
+          const file = ordered[at]!;
+          const hint = said(file);
+
+          // Nothing new: skipped on the span's word, with no write and no second read.
+          if (hint && ready(file) && unchanged(file, hint)) {
+            sighted.push({ seriesId: file.seriesId, date: file.date });
+
+            continue;
+          }
+
+          const was = known ? fresh(file) : hint;
 
           /**
-           * **Ready stays ready, and this is the line that guarantees it.**
-           *
-           * An index venue re-offers the same bare names on every walk. Routing on
-           * the sighting alone would drag every settled file back into `wip` and
-           * send the probe round again from nothing, once per refresh, for ever. So
-           * a sighting that states nothing about a file already catalogued moves
-           * `last_seen` and stops there — the same rule `restated` applies
-           * everywhere else, decided one step earlier.
+           * A file sighted without size or checksum can't be catalogued yet:
+           * catalogued means measured. Parked in `wip` for a probe to settle —
+           * and if it is already catalogued, the row says more than this
+           * sighting does, so nothing is written.
            */
           if (! ready(file)) {
-            if (was) seen.run(file.seenAt, file.venueId, file.path);
-            else moved(file.venueId, backlog.park({
+            if (! was) moved(file.venueId, backlog.park({
               venueId:   file.venueId,
               path:      file.path,
               date:      file.date,
@@ -212,6 +245,10 @@ export const putFiles = async (
             continue;
           }
 
+          sighted.push({ seriesId: file.seriesId, date: file.date });
+
+          if (was && unchanged(file, was)) continue;
+
           // Complete this time. If it had been parked, it is parked no longer.
           if (! was) moved(file.venueId, backlog.unpark(file.venueId, file.path));
 
@@ -225,13 +262,13 @@ export const putFiles = async (
               was.size, was.etag, was.modified, was.downloadedAt,
             );
 
-          // Unchanged keeps whatever it had; changed and new both start pending.
+          // A changed file is a different file: whatever was downloaded is not it.
           const downloadedAt = changed ? null : was?.downloadedAt ?? null;
 
           insert.run(
             file.venueId, file.path, file.date,
             file.size, file.etag, file.modified, file.existence, file.seriesId,
-            file.seenAt, file.seenAt, downloadedAt,
+            file.seenAt, downloadedAt,
           );
 
           effects.push({
@@ -239,13 +276,57 @@ export const putFiles = async (
             was:     was ? stateOf(was.seriesId, was.date, was.existence, was.size, was.downloadedAt) : null,
             now:     stateOf(file.seriesId, file.date, file.existence, file.size ?? was?.size ?? null, downloadedAt),
           });
-
-          sighted.push({ seriesId: file.seriesId, date: file.date });
         }
 
-        // In the same transaction as the rows, so the counters cannot survive a
-        // rollback of what they describe.
-        cache.record(db, (effects));
+        last = at >= ordered.length;
+
+        /**
+         * **What the span held and the page did not offer.** For a key range,
+         * the stretch this slice covered — up to the next unwritten key, or the
+         * span's end on the last slice — so every catalogued path in the span
+         * is judged exactly once. For a directory, all of it, on the last slice.
+         */
+        if (span && isRange(span) && spanned) {
+          const upto = last ? { path: span.high, open: span.highOpen } : { path: ordered[at]!.path, open: true };
+
+          // The span's rows up to where this slice stopped, each judged once, and re-read before it is marked.
+          const gone: { path: string; row: Row }[] = [];
+
+          for (; judged < spanned.length && below(spanned[judged]!.path, upto); judged++) {
+            const { path } = spanned[judged]!;
+
+            if (offered.has(path)) continue;
+
+            const row = current.get(span.venueId, path) as Row | undefined;
+
+            if (row && row.existence !== 'absent') gone.push({ path, row });
+          }
+
+          withdrawn += withdraw(db, span.venueId, gone, effects);
+          moved(span.venueId, dropParked(db, backlog, span.venueId, from!, upto, offered));
+
+          if (! last) from = { path: ordered[at]!.path, open: false };
+        }
+
+        if (span && ! isRange(span) && last) {
+          const { gone, subtrees } = vacated(db, span, offered);
+
+          withdrawn += withdraw(db, span.venueId, gone, effects);
+
+          for (const tree of subtrees) {
+            const rows = rowsIn(db, span.venueId, { path: tree, open: false }, { path: ceiling(tree), open: true });
+
+            withdrawn += withdraw(db, span.venueId,
+              rows.filter(row => row.existence !== 'absent').map(row => ({ path: row.path, row })), effects);
+            moved(span.venueId, dropParked(db, backlog, span.venueId,
+              { path: tree, open: false }, { path: ceiling(tree), open: true }, offered));
+          }
+
+          moved(span.venueId, dropParked(db, backlog, span.venueId,
+            { path: span.directory, open: false }, { path: ceiling(span.directory), open: true }, offered, true));
+        }
+
+        cache.record(db, effects);
 
         db.exec('COMMIT');
       } catch (err) {
@@ -267,11 +348,8 @@ export const putFiles = async (
     for (const one of sighted) sawFile(db, one.seriesId, one.date);
   }
 
-  return files.length;
+  return withdrawn;
 };
-
-
-
 
 
 /**
@@ -287,72 +365,6 @@ export const putFiles = async (
  */
 export const parkKeys = (db: DatabaseSync, rows: readonly Parking[]): number =>
   wip.park(db, rows);
-
-/**
- * Mark everything in a range the walk did not offer this time as gone.
- *
- * Nothing is deleted. A file a venue has withdrawn keeps its row, its history
- * and its `seen_at`, and only its `existence` changes — so the catalog stays a
- * record of everything ever published, and a consumer that wants only live files
- * says so.
- *
- * `last_seen` older than the run that just covered this range means the walk
- * passed the key's position and the venue did not offer it. `COALESCE` covers
- * rows written before `last_seen` existed.
- */
-export const markWithdrawn = (
-  db:      DatabaseSync,
-  venueId: number,
-  from:    string,
-  to:      string,
-  since:   string,
-): number => {
-  const WHERE = `venue_id = ? AND path >= ? AND path < ?
-                   AND existence != 'absent'
-                   AND COALESCE(last_seen, seen_at) < ?`;
-
-  db.exec('BEGIN');
-
-  try {
-    /**
-     * **Read before writing, so the counters know what moved.** The update is a
-     * range, not a row, and an aggregate cannot be derived from `changes`. This
-     * costs one read of exactly the rows about to change — proportional to the
-     * withdrawal rather than to the venue — and a withdrawal is rare.
-     */
-    const going = db.prepare(
-      `SELECT series_id AS seriesId, date, size, existence, downloaded_at AS downloadedAt
-         FROM file WHERE ${WHERE}`,
-    ).all(venueId, from, to, since) as unknown as Row[];
-
-    const result = db.prepare(`UPDATE file SET existence = 'absent' WHERE ${WHERE}`)
-      .run(venueId, from, to, since);
-
-    /**
-     * **A withdrawal reaches the backlog too.** A file the venue dropped before
-     * anyone probed it was never catalogued, so there is nothing to keep a
-     * record of and nothing counted to correct — but leaving it would park it in
-     * the probe's queue for ever, asking a venue about a key it no longer serves.
-     */
-    const unparked = wip.dropRange(db, venueId, from, to, since);
-
-    cache.record(db, (going.map(row => ({
-      venueId,
-      was: stateOf(row.seriesId, row.date, row.existence, row.size, row.downloadedAt),
-      now: stateOf(row.seriesId, row.date, 'absent',      row.size, row.downloadedAt),
-    }))));
-
-    db.exec('COMMIT');
-
-    wip.counted(db, venueId, -unparked);
-
-    return Number(result.changes);
-  } catch (err) {
-    db.exec('ROLLBACK');
-
-    throw err;
-  }
-};
 
 /**
  * Record that files are now on disk.
@@ -521,9 +533,9 @@ export const correctFile = (
     db.prepare(
       `UPDATE file
           SET size = COALESCE(?, size), etag = COALESCE(?, etag),
-              modified = COALESCE(?, modified), last_seen = ?, downloaded_at = ?
+              modified = COALESCE(?, modified), downloaded_at = ?
         WHERE venue_id = ? AND path = ?`,
-    ).run(observed.size, observed.etag, observed.modified, seenAt, downloadedAt, venueId, path);
+    ).run(observed.size, observed.etag, observed.modified, downloadedAt, venueId, path);
 
     cache.record(db, ([{
       venueId,
@@ -659,8 +671,8 @@ export const settleFiles = (db: DatabaseSync, settled: readonly Settlement[]): n
 
   const arrive = db.prepare(
     `INSERT INTO file (venue_id, path, date, size, etag, modified, existence,
-                       series_id, seen_at, last_seen, downloaded_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                       series_id, seen_at, downloaded_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
        ON CONFLICT (venue_id, path) DO NOTHING`,
   );
 
@@ -700,7 +712,7 @@ export const settleFiles = (db: DatabaseSync, settled: readonly Settlement[]): n
       const arrived = Number(arrive.run(
         file.venueId, file.path, was.date,
         merged.size, merged.etag, merged.modified, existence, was.seriesId,
-        was.seenAt, file.seenAt,
+        was.seenAt,
       ).changes) > 0;
 
       unparked.set(file.venueId,
@@ -1138,13 +1150,51 @@ export const lastRun = (db: DatabaseSync, venueIds: readonly number[]): LastRun 
   const open = rows.find(one => one.completed === null);
 
   if (open)
-    return { kind: open.kind, at: null, startedAt: open.started, ongoing: true, first };
+    return { kind: open.kind, at: null, startedAt: open.started, ongoing: true, first, previous: previousRun(db, venueIds) };
 
   const done = rows[0];
 
   return done
-    ? { kind: done.kind, at: done.completed, startedAt: done.started, ongoing: false, first }
-    : { kind: null, at: null, startedAt: null, ongoing: false, first: false };
+    ? { kind: done.kind, at: done.completed, startedAt: done.started, ongoing: false, first, previous: null }
+    : { kind: null, at: null, startedAt: null, ongoing: false, first: false, previous: null };
+};
+
+/**
+ * The newest pass that finished, across every host, and whether it was the
+ * backfill — what a venue last *achieved*, for while another pass runs.
+ *
+ * **The backfill ends when the last host first finishes**, the moment
+ * `completedEver` turns true, so a pass that finished by then was part of it.
+ * Where some host has never finished one, the venue is still backfilling and
+ * every finished pass belongs to that.
+ */
+const previousRun = (db: DatabaseSync, venueIds: readonly number[]): FinishedRun | null => {
+  const done = db.prepare(
+    `SELECT started, completed FROM run
+      WHERE venue_id = ? AND scope = '' AND kind IN ('walk', 'update') AND completed IS NOT NULL
+      ORDER BY completed DESC
+      LIMIT 1`,
+  );
+  const firstDone = db.prepare(
+    `SELECT MIN(completed) AS at FROM run
+      WHERE venue_id = ? AND scope = '' AND kind IN ('walk', 'update') AND completed IS NOT NULL`,
+  );
+
+  const newest = venueIds
+    .map(id => done.get(id) as { started: string; completed: string } | undefined)
+    .filter((one): one is { started: string; completed: string } => one !== undefined)
+    .sort((a, b) => b.completed.localeCompare(a.completed))[0];
+
+  if (! newest) return null;
+
+  const firsts = venueIds.map(id => (firstDone.get(id) as { at: string | null }).at);
+  const backfilled = firsts.includes(null) ? null : firsts.sort().at(-1)!;
+
+  return {
+    at:        newest.completed,
+    startedAt: newest.started,
+    first:     backfilled === null || newest.completed <= backfilled,
+  };
 };
 
 /**
@@ -1429,20 +1479,178 @@ export const ancestorsOf = (prefix: string): string[] => {
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
-/** The three fields a sighting may or may not state about a file. */
-interface Metadata {
-  size:     number | null;
-  etag:     string | null;
-  modified: string | null;
-}
+/** The columns a catalogued file is compared on — see `Row`. */
+const ROW = `series_id AS seriesId, date, size, etag, modified, existence, downloaded_at AS downloadedAt`;
 
-/** A stored row, as the statements above read it back. */
-interface Row extends Metadata {
-  seriesId:     number;
-  date:         string;
-  existence:    Existence;
-  downloadedAt: string | null;
-}
+const isRange = (span: Span): span is RangeSpan => 'low' in span;
+
+/**
+ * **The bytes' order, which is SQLite's.** `path` compares as `BINARY`, so a
+ * stretch is judged here the same way the database reads it — not by UTF-16
+ * code units, which disagree past the Basic Multilingual Plane, and gate
+ * publishes symbols written in Chinese.
+ */
+const byteOrder = (a: string, b: string): number => Buffer.compare(Buffer.from(a), Buffer.from(b));
+
+/** Whether a path sorts before an upper edge. */
+const below = (path: string, upto: Edge): boolean => {
+  const order = byteOrder(path, upto.path);
+
+  return order < 0 || (order === 0 && ! upto.open);
+};
+
+/** Whether a path falls inside the span, so the span's read answers for it. */
+const inSpan = (path: string, span: RangeSpan): boolean => {
+  const order = byteOrder(path, span.low);
+
+  return (order > 0 || (order === 0 && ! span.lowOpen)) && below(path, { path: span.high, open: span.highOpen });
+};
+
+/** The catalogued files between two edges, in order, each with its path. */
+const rowsIn = (db: DatabaseSync, venueId: number, from: Edge, to: Edge): PathRow[] =>
+  statement(db,
+    `SELECT path, ${ROW} FROM file
+      WHERE venue_id = ? AND path ${from.open ? '>' : '>='} ? AND path ${to.open ? '<' : '<='} ?
+      ORDER BY path`,
+  ).all(venueId, from.path, to.path) as unknown as PathRow[];
+
+/**
+ * Whether a sighting says nothing the row does not already say.
+ *
+ * The same silence rule as `restated`: a field the listing left unsaid is not a
+ * field that changed. A sighting that names no series leaves the row's alone,
+ * as the upsert would.
+ */
+const unchanged = (file: CatalogFile, was: Row): boolean =>
+  ! restated(file, was)
+  && file.date === was.date
+  && file.existence === was.existence
+  && (file.seriesId === null || file.seriesId === was.seriesId);
+
+/**
+ * Mark these files withdrawn, and say what that did to the rollups. Returns how
+ * many were.
+ *
+ * **Only `existence` changes.** A withdrawn file keeps its row, its history and
+ * its `seen_at`, so the catalog stays a record of everything ever published,
+ * and a consumer that wants only live files says so.
+ */
+const withdraw = (
+  db:      DatabaseSync,
+  venueId: number,
+  gone:    readonly { path: string; row: Row }[],
+  effects: FileEffect[],
+): number => {
+  const mark = statement(db, `UPDATE file SET existence = 'absent' WHERE venue_id = ? AND path = ?`);
+
+  for (const { path, row } of gone) {
+    mark.run(venueId, path);
+
+    effects.push({
+      venueId,
+      was: stateOf(row.seriesId, row.date, row.existence, row.size, row.downloadedAt),
+      now: stateOf(row.seriesId, row.date, 'absent',      row.size, row.downloadedAt),
+    });
+  }
+
+  return gone.length;
+};
+
+/**
+ * **A withdrawal reaches the backlog too.** A file the venue dropped before
+ * anyone probed it was never catalogued, so there is nothing to keep a record of
+ * and nothing counted to correct — but left parked, the probe would ask a venue
+ * about a key it no longer serves, for ever. Returns the change to the backlog's
+ * count, which is never positive.
+ *
+ * `direct` keeps to the paths directly inside the lower edge, a directory —
+ * what a directory index states, and nothing below it.
+ */
+const dropParked = (
+  db:      DatabaseSync,
+  backlog: ReturnType<typeof wip.writer>,
+  venueId: number,
+  from:    Edge,
+  to:      Edge,
+  offered: ReadonlySet<string>,
+  direct = false,
+): number => {
+  let delta = 0;
+
+  for (const path of wip.pathsIn(db, venueId, from, to)) {
+    if (offered.has(path)) continue;
+
+    if (direct && path.slice(from.path.length).includes('/')) continue;
+
+    delta += backlog.unpark(venueId, path);
+  }
+
+  return delta;
+};
+
+/**
+ * What a directory index no longer offers: its own files the page did not list,
+ * and the subdirectories it no longer links — each of which takes everything
+ * catalogued below it.
+ *
+ * **Walked by seeking, not by reading the subtree.** A directory near the root
+ * holds every file below it, and only its own files and its children's names
+ * are wanted — so each step reads one row and jumps past a whole child at once.
+ */
+const vacated = (
+  db:      DatabaseSync,
+  span:    DirectorySpan,
+  offered: ReadonlySet<string>,
+): { gone: { path: string; row: Row }[]; subtrees: string[] } => {
+  const after = statement(db,
+    `SELECT path, ${ROW} FROM file WHERE venue_id = ? AND path > ? AND path < ? ORDER BY path LIMIT 1`);
+  const from  = statement(db,
+    `SELECT path, ${ROW} FROM file WHERE venue_id = ? AND path >= ? AND path < ? ORDER BY path LIMIT 1`);
+
+  const linked   = new Set(span.children);
+  const end      = ceiling(span.directory);
+  const gone:     { path: string; row: Row }[] = [];
+  const subtrees: string[] = [];
+
+  let next = after.get(span.venueId, span.directory, end) as (Row & { path: string }) | undefined;
+
+  while (next) {
+    const { path, ...row } = next;
+    const rest  = path.slice(span.directory.length);
+    const slash = rest.indexOf('/');
+
+    if (slash < 0) {
+      if (row.existence !== 'absent' && ! offered.has(path)) gone.push({ path, row });
+
+      next = after.get(span.venueId, path, end) as unknown as typeof next;
+
+      continue;
+    }
+
+    const child = span.directory + rest.slice(0, slash + 1);
+
+    if (! linked.has(child)) subtrees.push(child);
+
+    next = from.get(span.venueId, ceiling(child), end) as unknown as typeof next;
+  }
+
+  return { gone, subtrees };
+};
+
+/** Statements prepared once per database and reused, keyed by their SQL. */
+const statement = (db: DatabaseSync, sql: string): StatementSync => {
+  let held = PREPARED.get(db);
+
+  if (! held) PREPARED.set(db, held = new Map());
+
+  let one = held.get(sql);
+
+  if (! one) held.set(sql, one = db.prepare(sql));
+
+  return one;
+};
+
+const PREPARED = new WeakMap<DatabaseSync, Map<string, StatementSync>>();
 
 /**
  * Whether a finding is complete enough to be catalogued.

@@ -44,23 +44,6 @@ export type Config = {
    * for its first, and a venue surveying alone is bounded only by its own figure.
    */
   concurrency: number;
-
-  /**
-   * How many HTTP/1.1 connections this machine will hold open at once, across
-   * every venue and every transport worker.
-   *
-   * **Separate from `concurrency` because a request is not always a
-   * connection.** Over HTTP/2 hundreds of requests share one; over HTTP/1.1
-   * each needs its own, and opening them in bulk is what fails. Measured
-   * 2026-10-01 from this machine: past ~1,250 connections opened at once,
-   * connects timed out and the open ones were lost with them; on loopback, with
-   * no network involved, 3,000 at once missed their deadlines by the hundred.
-   * At 3,000 in flight and 600 here the failures stopped. So requests in flight
-   * can be many more than this, and the ones that would need a connection
-   * beyond it wait for one.
-   */
-  connections: number;
-
 };
 
 /**
@@ -108,6 +91,70 @@ export interface Listed {
 export interface Page {
   listed: readonly Listed[];
   cursor: string | null;
+
+  /**
+   * What the page states exhaustively, where it does: every key the venue holds
+   * there is in `listed`, so one catalogued there and not listed has been
+   * withdrawn. Absent where a page can promise no such thing.
+   */
+  covers?: Coverage;
+}
+
+/**
+ * What a listing page covered, in the venue's own keys.
+ *
+ * **A key range**, for a listing that pages through sorted keys: everything
+ * after `after` — or from the scope's start, where null — through `through`, or
+ * to the scope's end where null, the last page. **A directory**, for an index
+ * read one directory at a time: its own files, and below it only the
+ * subdirectories it links — one it no longer links has gone, with everything
+ * under it.
+ */
+export type Coverage =
+  | { after: string | null; through: string | null }
+  | { directory: string; children: readonly string[] };
+
+/** The three fields a sighting may or may not state about a file. */
+export interface FileMetadata {
+  size:     number | null;
+  etag:     string | null;
+  modified: string | null;
+}
+
+/** A catalogued file as `queries.ts` reads it back. */
+export interface FileRow extends FileMetadata {
+  seriesId:     number;
+  date:         string;
+  existence:    Existence;
+  downloadedAt: string | null;
+}
+
+/** A `FileRow` with its path — what a range read returns. */
+export interface PathRow extends FileRow {
+  path: string;
+}
+
+/** One end of a stretch of catalog paths: the path, and whether the stretch stops short of it. */
+export interface Edge {
+  path: string;
+  open: boolean;
+}
+
+/** A page's `Coverage` as catalog paths — what `putFiles` withdraws within. See `Coverage`. */
+export type Span = RangeSpan | DirectorySpan;
+
+export interface RangeSpan {
+  venueId:  number;
+  low:      string;
+  lowOpen:  boolean;
+  high:     string;
+  highOpen: boolean;
+}
+
+export interface DirectorySpan {
+  venueId:   number;
+  directory: string;
+  children:  readonly string[];
 }
 
 /**
@@ -2190,6 +2237,26 @@ export interface Carried {
 
   /** The page, read, for a listing that succeeded; `null` for a probe or a refusal. */
   page:    ListingPage | null;
+
+  /** How long a listing took on the carrying side, phase by phase — see `timings.ts`. */
+  timing?: RequestTiming;
+}
+
+/** A listing's time on the carrying side, in milliseconds. */
+export interface RequestTiming {
+  firstByte: number;
+  body:      number;
+  parse:     number;
+}
+
+/** One stretch of a request's way — see `timings.ts`. */
+export type Stretch = 'slot' | 'handoff' | 'firstByte' | 'body' | 'parse' | 'process';
+
+/** One stretch over a heartbeat, in milliseconds. */
+export interface StretchTiming {
+  avg: number;
+  p90: number;
+  n:   number;
 }
 
 /** One request on its way to a transport worker. */
@@ -2363,4 +2430,20 @@ export interface LastRun {
    * update, on every venue with more than one server.
    */
   first:   boolean;
+
+  /**
+   * The newest pass that **finished**, while this one is still going — so a
+   * venue in the middle of an update still says what it last achieved. Null
+   * where nothing is running, or nothing has ever finished.
+   */
+  previous: FinishedRun | null;
+}
+
+/** A pass that finished: when, and whether it was the venue's backfill. */
+export interface FinishedRun {
+  at:        string;
+  startedAt: string;
+
+  /** Whether it was the backfill — see `LastRun.first`. */
+  first:     boolean;
 }

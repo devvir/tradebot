@@ -8,10 +8,12 @@ import { useEffect, useState } from 'react';
  * configure here, no CORS to arrange, and no secret in the bundle.
  */
 
-export const catalog = <T>(path: string): Promise<T> => ask<T>(`/api/catalog${path}`);
+export const catalog = <T>(path: string, signal?: AbortSignal): Promise<T> =>
+  ask<T>(`/api/catalog${path}`, signal ? { signal } : undefined);
 
 /** Prospector's collector: surveys, and how every venue stands. */
-export const prospector = <T>(path: string): Promise<T> => ask<T>(`/api/prospector${path}`);
+export const prospector = <T>(path: string, signal?: AbortSignal): Promise<T> =>
+  ask<T>(`/api/prospector${path}`, signal ? { signal } : undefined);
 
 /**
  * A catalog path as seen through a lens, as one key: changing the lens changes
@@ -21,10 +23,29 @@ export const lensed = (path: string, lens: string | null | undefined): string =>
   (lens ? `${path}${LENS_MARK}${lens}` : path);
 
 /** Ask for a `lensed` key, sending its lens as `x-catalog-lens`. */
-export const catalogLensed = <T>(key: string): Promise<T> => {
+export const catalogLensed = <T>(key: string, signal?: AbortSignal): Promise<T> => {
   const [path, lens] = key.split(LENS_MARK);
 
-  return ask<T>(`/api/catalog${path}`, lens ? { headers: { 'x-catalog-lens': lens } } : undefined);
+  return ask<T>(`/api/catalog${path}`, {
+    ...(lens ? { headers: { 'x-catalog-lens': lens } } : {}),
+    ...(signal ? { signal } : {}),
+  });
+};
+
+/**
+ * A write whose refusal is an answer, not an error: the status and the body
+ * whatever they are, so a `400` carrying `problems` can be shown where they
+ * belong. Only a failure to reach the service throws.
+ */
+export const send = async <T>(url: string, method: string, body?: unknown): Promise<{ status: number; body: T }> => {
+  const res  = await fetch(url, {
+    method,
+    headers: { 'content-type': 'application/json' },
+    body:    JSON.stringify(body ?? {}),
+  });
+  const text = await res.text();
+
+  return { status: res.status, body: (text ? JSON.parse(text) : {}) as T };
 };
 
 /** Anything that changes something. The body is JSON or nothing. */
@@ -68,21 +89,22 @@ export interface Asked<T> {
  * through three venues quickly fires three requests, and without it whichever
  * lands last wins — which is not necessarily the one being looked at.
  */
-export const useAsk = <T>(path: string | null, ask: (path: string) => Promise<T>): Asked<T> => {
+export const useAsk = <T>(path: string | null, ask: (path: string, signal: AbortSignal) => Promise<T>): Asked<T> => {
   const [state, setState] = useState<Asked<T>>({ loading: path !== null });
 
   useEffect(() => {
     if (path === null) return;
 
-    let current = true;
+    /** A view that moves on cancels what it asked, so the service is not left answering nobody. */
+    const asked = new AbortController();
 
     setState({ loading: true });
 
-    ask(path)
-      .then(data => { if (current) setState({ data, loading: false }); })
-      .catch((err: Error) => { if (current) setState({ error: err.message, loading: false }); });
+    ask(path, asked.signal)
+      .then(data => { if (! asked.signal.aborted) setState({ data, loading: false }); })
+      .catch((err: Error) => { if (! asked.signal.aborted) setState({ error: err.message, loading: false }); });
 
-    return () => { current = false; };
+    return () => asked.abort();
   }, [path]);
 
   return state;
@@ -102,7 +124,7 @@ export const useAsk = <T>(path: string | null, ask: (path: string) => Promise<T>
  * time. `stop()` ends it, and an answer arriving after that is dropped.
  */
 export const poll = <T>(
-  ask:     () => Promise<T>,
+  ask:     (signal: AbortSignal) => Promise<T>,
   everyMs: number,
   on:      { data: (data: T) => void; error?: (err: Error) => void },
 ): { now: () => void; stop: () => void } => {
@@ -110,6 +132,9 @@ export const poll = <T>(
   let busy    = false;
   let again   = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+
+  /** The request in flight, cancelled when polling stops — an answer nobody will read is not asked for. */
+  let asking = new AbortController();
 
   const run = (): void => {
     clearTimeout(timer);
@@ -122,9 +147,10 @@ export const poll = <T>(
       return;
     }
 
-    busy = true;
+    busy   = true;
+    asking = new AbortController();
 
-    ask()
+    ask(asking.signal)
       .then(data => { if (! stopped) on.data(data); },
         (err: Error) => { if (! stopped) on.error?.(err); })
       .finally(() => {
@@ -143,7 +169,7 @@ export const poll = <T>(
 
   run();
 
-  return { now: run, stop: () => { stopped = true; clearTimeout(timer); } };
+  return { now: run, stop: () => { stopped = true; clearTimeout(timer); asking.abort(); } };
 };
 
 // ── Internals ─────────────────────────────────────────────────────────────────

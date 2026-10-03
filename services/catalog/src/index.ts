@@ -1,5 +1,7 @@
 import { logger, type Service, type ExpressServerHandle } from '@devvir/service-kit';
 import { mount } from './api';
+import { lenses } from './lenses/lens';
+import { keepCurrent } from './lenses/members';
 import { openCatalog } from './database';
 import SK from './service';
 import config from './config';
@@ -25,6 +27,9 @@ const main = async (service: Service): Promise<void> => {
   mount(api.app, db, config.token);
 
   await api.start();
+
+  // Every lens folds in new series in the background, a slice at a time.
+  service.on('shutdown', keepCurrent(db, () => lenses(db)));
 
   logger.info({ port: config.port, db: config.dbPath }, 'Catalog API listening');
 };

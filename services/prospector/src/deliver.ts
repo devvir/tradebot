@@ -23,40 +23,9 @@ import type { Carried, Carrier, PageRead } from './types';
  * exactly as long as the venue is sending.
  */
 export const deliver = (url: string, read: PageRead | null): Promise<Carried> =>
-  read ? wired(() => get(url, read)) : head(url);
-
-/**
- * Hold at most `limit` HTTP/1.1 requests in progress on this thread at once.
- *
- * **Because each one holds a connection, and opening them is what fails in
- * bulk.** Over HTTP/2 a request is a stream and costs nothing here; over
- * HTTP/1.1 it is a connection for as long as it runs, and a request that would
- * take one past the limit waits for one to finish rather than opening it. See
- * `Config.connections`.
- */
-export const connectionsAtMost = (limit: number): void => {
-  wires.limit = limit;
-};
+  read ? get(url, read) : head(url);
 
 // ── Internals ─────────────────────────────────────────────────────────────────
-
-/** HTTP/1.1 requests in progress, and those waiting for one to finish. */
-const wires = { limit: Infinity, taken: 0, waiting: [] as (() => void)[] };
-
-const wired = async <T>(carry: () => Promise<T>): Promise<T> => {
-  if (wires.taken < wires.limit) wires.taken++;
-  else await new Promise<void>(next => wires.waiting.push(next));
-
-  try {
-    return await carry();
-  } finally {
-    // The next in line is handed this one rather than the count giving it back.
-    const next = wires.waiting.shift();
-
-    if (next) next();
-    else wires.taken--;
-  }
-};
 
 /** A listing answers in about a second; anything not replying by now is wedged. */
 const ANSWER_MS = 15_000;
@@ -94,6 +63,8 @@ const get = async (url: string, read: PageRead): Promise<Carried> => {
   const control = new AbortController();
   const answer  = setTimeout(() => control.abort(unanswered()), ANSWER_MS);
 
+  const sent = performance.now();
+
   let res: Response;
 
   try {
@@ -102,7 +73,8 @@ const get = async (url: string, read: PageRead): Promise<Carried> => {
     clearTimeout(answer);
   }
 
-  const headers = Object.fromEntries(res.headers);
+  const answered = performance.now();
+  const headers  = Object.fromEntries(res.headers);
 
   if (! res.ok) {
     // Nobody reads a refusal's body, and it is not over until it is dropped.
@@ -111,7 +83,14 @@ const get = async (url: string, read: PageRead): Promise<Carried> => {
     return { status: res.status, headers, page: null };
   }
 
-  return { status: res.status, headers, page: readPage(read, await readAll(res, control)) };
+  const text    = await readAll(res, control);
+  const arrived = performance.now();
+  const page    = readPage(read, text);
+
+  return {
+    status: res.status, headers, page,
+    timing: { firstByte: answered - sent, body: arrived - answered, parse: performance.now() - arrived },
+  };
 };
 
 /**
@@ -180,7 +159,7 @@ const stalled = (): Error =>
  * round trip's ~270).
  */
 const head = async (url: string): Promise<Carried> => {
-  if (! url.startsWith('https:') || ! await speaksH2(new URL(url).origin)) return wired(() => headOverH1(url));
+  if (! url.startsWith('https:') || ! await speaksH2(new URL(url).origin)) return headOverH1(url);
 
   /**
    * **A refused stream is asked again at once**, on another connection. HTTP/2
@@ -387,4 +366,3 @@ const plain = (raw: Record<string, string | string[] | number | undefined>): Rec
 // ── Test access ───────────────────────────────────────────────────────────────
 
 export const _test_readAll = readAll;
-export const _test_wires   = wires;

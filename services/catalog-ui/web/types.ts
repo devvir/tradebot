@@ -57,6 +57,20 @@ export interface LastRun {
    * thing for a venue that has never finished one.
    */
   first?:  boolean;
+
+  /**
+   * The newest pass that finished, while this one is still going. Null where
+   * nothing is running or nothing has finished; optional for the same reason
+   * as `first`.
+   */
+  previous?: FinishedRun | null;
+}
+
+/** A pass that finished: when, and whether it was the venue's backfill. */
+export interface FinishedRun {
+  at:        string;
+  startedAt: string;
+  first:     boolean;
 }
 
 export interface MarketContents {
@@ -186,6 +200,34 @@ export interface Where {
  * A named way of looking at the catalog — where one is in force, what it lets
  * through *is* the catalog as far as that consumer is concerned.
  */
+/**
+ * One rule as the editor holds it: what is saved of it, if anything, and what
+ * is on the page. Saved and unchanged, it can be dropped; new or changed, it is
+ * a draft until it is confirmed.
+ */
+export interface RuleEntry {
+  /** Who this rule is while it is edited — never sent anywhere. */
+  key:    string;
+
+  /** The rule as the catalog stores it; absent for a rule never confirmed. */
+  saved?: LensRule;
+
+  /** The rule as it stands on the page. */
+  now:    LensRule;
+}
+
+/** What is unsaved of one lens, kept in this browser so a reload loses nothing. */
+export interface LensDraft {
+  name:  string;
+  note:  string;
+
+  /** Each venue's rules, drafts among the saved ones. */
+  rules: Record<string, RuleEntry[]>;
+
+  /** The lens's `updatedAt` it was written against; empty for a lens not yet saved. */
+  from:  string;
+}
+
 export interface Lens {
   id?:        number;
 

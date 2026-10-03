@@ -89,7 +89,6 @@ does: one adapter per server, since each has its own shape and its own limiter.
 |---|---|---|
 | `PROSPECTOR_VENUES` | all | comma-separated subset to survey |
 | `PROSPECTOR_CONCURRENCY` | `200` | requests in flight at once, across every venue; one transport worker per 1,000 |
-| `PROSPECTOR_CONNECTIONS` | `600` | HTTP/1.1 connections open at once, across every venue; requests past it wait for one |
 | `CATALOG_TOKEN` | — | the shared secret every API request carries in `x-catalog-token`, the same one the catalog checks. Empty turns the check off, with a warning |
 
 **Concurrency is not a rate.** How fast a venue may be asked — its cadence — is a fact about that

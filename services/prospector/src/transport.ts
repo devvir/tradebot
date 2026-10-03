@@ -40,17 +40,14 @@ export const carry = (url: string, read: PageRead | null): Promise<Carried> => {
 
 /**
  * Start carrying requests, on as many workers as `concurrency` — the
- * machine-wide ceiling on requests in flight — calls for, sharing `connections`
- * between them.
+ * machine-wide ceiling on requests in flight — calls for.
  */
-export const openTransport = (concurrency: number, connections: number): void => {
+export const openTransport = (concurrency: number): void => {
   const workers = workersFor(concurrency);
-
-  share = Math.max(1, Math.floor(connections / workers));
 
   for (let i = 0; i < workers; i++) lanes.push(lane());
 
-  logger.info({ workers, concurrency, connections, connectionsEach: share }, 'Transport open');
+  logger.info({ workers, concurrency }, 'Transport open');
 };
 
 // ── Internals ─────────────────────────────────────────────────────────────────
@@ -72,14 +69,11 @@ const IN_FLIGHT_PER_WORKER = 1_000;
 
 const lanes: Lane[] = [];
 
-/** Each worker's part of the machine's connections — see `Config.connections`. */
-let share = Infinity;
-
 let lastId = 0;
 
 const lane = (): Lane => {
   const it: Lane = {
-    worker:    new Worker(join(__dirname, 'transport.worker.js'), { workerData: { connections: share } }),
+    worker:    new Worker(join(__dirname, 'transport.worker.js')),
     waiting:   new Map(),
     outbox:    [],
     scheduled: false,

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  markDownloaded, markWithdrawn, putFiles, putVenue, recordSeries, settleFiles,
+  markDownloaded, putFiles, putVenue, recordSeries, settleFiles,
 } from '../src/catalog';
 import { openCatalog } from '../src/database';
 import { deltasOf, seriesDeltasOf } from '../src/catalog/cache/months';
@@ -174,8 +174,7 @@ describe('what the write paths maintain', () => {
 
   it('follows a withdrawal', async () => {
     await seed();
-    await putFiles(db, [file('spot/a-2025-03.zip', { seenAt: 'T2' })]);
-    markWithdrawn(db, 1, 'spot/', 'spot0', 'T2');
+    await putFiles(db, [file('spot/a-2025-03.zip', { seenAt: 'T2' })], { venueId: 1, low: 'spot/', lowOpen: false, high: 'spot0', highOpen: true });
 
     expect(months(1)[0]).toMatchObject({ files: 1, pending: 1, withdrawn: 1 });
   });

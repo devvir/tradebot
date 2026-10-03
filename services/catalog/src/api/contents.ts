@@ -1,5 +1,5 @@
 import { contentsOf, venueContents } from '../contents';
-import { lensRequested } from '../lenses/requested';
+import { lensRequested, lensSlug } from '../lenses/requested';
 import { venueIds } from '../queries';
 import { GRAINS } from '../vocabulary';
 import type { Application, Request, Response } from 'express';
@@ -11,8 +11,8 @@ import type { ContentsAsked, Grain, RequestedLens } from '../types';
  * markets, then one row per `(dataset, variant, grain)` a market publishes, with
  * the instruments asked for beside them.
  *
- * **Every view can be seen through a lens** named in `x-catalog-lens`; an
- * unknown one is a `404`, never the whole catalog in its place.
+ * **Every view can be seen through a lens** — see `lensSlug`; an unknown one is
+ * a `422`, never the whole catalog in its place.
  */
 export const mountContents = (app: Application, db: DatabaseSync): void => {
   app.get('/contents/venues', (req, res) => {
@@ -63,11 +63,11 @@ const venue = (db: DatabaseSync, req: Request, res: Response, give: ContentsAske
   } }, lens) });
 };
 
-/** The request's lens, or `undefined` once an unknown one has been answered `404`. */
+/** The request's lens, or `undefined` once an unknown one has been answered `422`. */
 const lensed = (db: DatabaseSync, req: Request, res: Response): RequestedLens | null | undefined => {
   const held = lensRequested(db, req);
 
-  if (held === undefined) res.status(422).json({ error: `No such lens: ${String(req.headers['x-catalog-lens']).trim()}` });
+  if (held === undefined) res.status(422).json({ error: `No such lens: ${lensSlug(req)}` });
 
   return held;
 };

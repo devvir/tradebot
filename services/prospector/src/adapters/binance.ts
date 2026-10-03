@@ -30,7 +30,7 @@ export const binance: Adapter = declare({
    * what is in flight sets the rate: 600 at once held ~1,750/s on missing keys
    * (2026-09-30).
    */
-  pacing:  { perSecond: 2000, concurrency: 600 },
+  pacing:  { perSecond: 2000, concurrency: 500 },
 
   /**
    * Probing, with a walking update on Thursdays — see `docs/services/PROSPECTOR.md`, *How each venue updates*.

@@ -92,7 +92,7 @@ export const bybitPrimary: Adapter = declare({
    * bucket. A probe takes ~300 ms from here, so what is in flight sets the
    * rate: 600 at once held ~1,800/s on missing keys.
    */
-  pacing:  { perSecond: 2000, concurrency: 600 },
+  pacing:  { perSecond: 2000, concurrency: 500 },
 
   /**
    * Walking, every update — see `docs/services/PROSPECTOR.md`, *How each venue updates*.

@@ -52,7 +52,7 @@ modules/collect/archives/
 | `CATALOG_PORT` | host port for the catalog API. Empty lets docker pick a free one |
 | `CATALOG_UI_PORT` | host port for the page. `9020` |
 | `PROSPECTOR_VENUES` | the venues prospector surveys; empty for every venue |
-| `PROSPECTOR_CONCURRENCY`, `PROSPECTOR_CONNECTIONS` | how many requests prospector keeps in flight, and on how many connections — see the [prospector README](../../services/prospector/README.md) |
+| `PROSPECTOR_CONCURRENCY` | how many requests prospector keeps in flight — see the [prospector README](../../services/prospector/README.md) |
 | `HAULER_ARCHIVES_DIR` | host directory hauler writes the archives into |
 | `HAULER_LENS`, `HAULER_VENUES`, `HAULER_CONCURRENCY` | what hauler fetches and how many at once — see the [hauler README](../../services/hauler/README.md) |
 

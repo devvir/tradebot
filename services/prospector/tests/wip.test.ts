@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  anyUnsettled, countUnsettled, dropWip, markWithdrawn, parkKeys, putFiles, putVenue,
+  anyUnsettled, countUnsettled, dropWip, parkKeys, putFiles, putVenue,
   recordSeries, settleFiles, unsettled,
 } from '../src/catalog';
 import * as wip from '../src/catalog/wip';
@@ -121,11 +121,15 @@ describe('ready stays ready', () => {
     expect(unsettled(db, 1, 0, 10)).toHaveLength(0);
   });
 
-  it('still notes that the venue offered it', async () => {
+  /** The row already says more than a bare name does, so nothing is written. */
+  it('writes nothing when the venue offers it again', async () => {
     await settled();
+
+    const before = (db.prepare('SELECT total_changes() AS n').get() as { n: number }).n;
+
     await putFiles(db, [bare('orderbook/a.zip', { seenAt: 'T3' })]);
 
-    expect(db.prepare('SELECT last_seen FROM file').get()).toMatchObject({ last_seen: 'T3' });
+    expect((db.prepare('SELECT total_changes() AS n').get() as { n: number }).n).toBe(before);
   });
 
   /** A venue that starts stating metadata promotes the file without a probe. */
@@ -146,8 +150,7 @@ describe('arriving', () => {
       venueId: 1, path: 'orderbook/a.zip', size: 10, etag: 'e', modified: null, seenAt: 'T9',
     }]);
 
-    expect(db.prepare('SELECT seen_at, last_seen FROM file').get())
-      .toMatchObject({ seen_at: 'T1', last_seen: 'T9' });
+    expect(db.prepare('SELECT seen_at FROM file').get()).toMatchObject({ seen_at: 'T1' });
   });
 
   it('starts owed, and counted', async () => {
@@ -182,9 +185,7 @@ describe('arriving', () => {
 describe('withdrawal', () => {
   it('reaches what was never catalogued', async () => {
     await putFiles(db, [bare('orderbook/a.zip', { seenAt: 'T1' })]);
-    await putFiles(db, [bare('orderbook/b.zip', { seenAt: 'T2' })]);
-
-    markWithdrawn(db, 1, 'orderbook/', 'orderbook0', 'T2');
+    await putFiles(db, [bare('orderbook/b.zip', { seenAt: 'T2' })], { venueId: 1, low: 'orderbook/', lowOpen: false, high: 'orderbook0', highOpen: true });
 
     expect(count('wip')).toBe(1);
     expect(unsettled(db, 1, 0, 10).map(row => row.path)).toEqual(['orderbook/b.zip']);
@@ -239,8 +240,7 @@ describe('the backlog count', () => {
 
   it('follows a withdrawal that empties a range', async () => {
     await putFiles(db, [bare('p/a.zip'), bare('p/b.zip')]);
-
-    markWithdrawn(db, 1, 'p/', 'p0', 'T9');
+    await putFiles(db, [], { venueId: 1, low: 'p/', lowOpen: false, high: 'p0', highOpen: true });
 
     expect(countUnsettled(db, 1)).toBe(count('wip'));
   });
@@ -358,8 +358,8 @@ describe('a key the catalog already holds', () => {
     const seriesId = seriesOn(1);
 
     await putFiles(db, [stated('x/1.zip', { seriesId })]);
-    // Everything under `x/` that nothing has seen since, which is this one file.
-    markWithdrawn(db, 1, 'x/', 'x0', 'T9');
+    // A page over `x/` that no longer lists it.
+    await putFiles(db, [], { venueId: 1, low: 'x/', lowOpen: false, high: 'x0', highOpen: true });
 
     parkKeys(db, [
       { venueId: 1, path: 'x/1.zip', date: '20250301', seriesId, existence: 'assumed', tries: 0 },

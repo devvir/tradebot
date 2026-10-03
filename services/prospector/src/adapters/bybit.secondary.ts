@@ -72,7 +72,7 @@ export const bybitSecondary: Adapter = declare({
    * which go to the origin (~220 ms), without a single throttling answer. More
    * than 600 at once would mostly wait on the machine-wide ceiling.
    */
-  pacing:  { perSecond: 5000, concurrency: 600 },
+  pacing:  { perSecond: 5000, concurrency: 500 },
 
   /**
    * Walking, every update — see `docs/services/PROSPECTOR.md`, *How each venue updates*.

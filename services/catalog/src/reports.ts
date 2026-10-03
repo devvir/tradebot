@@ -1,3 +1,4 @@
+import config from './config';
 import { fileOfKey } from './listings/keys';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Lens, ReportError, ReportedById, ReportedByKey } from './types';
@@ -65,6 +66,39 @@ export const resolveReport = (
   return { settle, errors };
 };
 
+/**
+ * Hand prospector the ids to settle. Throws where prospector does not settle
+ * them, which the caller answers `502`.
+ *
+ * **A connection that fails is tried again**, three times with a short wait
+ * between: prospector closes idle keep-alive connections, so a request now and
+ * then lands on one just as it goes (`ECONNRESET`). An answer is never retried —
+ * a status is prospector's verdict. Settling twice is harmless: a download is
+ * recorded once, and a failure or a mismatch is asked of the venue again.
+ */
+export const settle = async (ids: ReportedById): Promise<void> => {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const answer = await fetch(`${config.prospectorApi}/reports`, {
+        method:  'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(config.token ? { 'x-catalog-token': config.token } : {}),
+        },
+        body: JSON.stringify(ids),
+      });
+
+      if (! answer.ok) throw new Refused(`Prospector answered ${answer.status}: ${(await answer.text()).slice(0, 200)}`);
+
+      return;
+    } catch (err) {
+      if (err instanceof Refused || attempt >= ATTEMPTS) throw err;
+
+      await new Promise(done => setTimeout(done, RETRY_MS * attempt));
+    }
+  }
+};
+
 /** How many keys a report names — what `MAX_REPORT` bounds. */
 export const keysIn = (body: unknown): number => {
   const asked = shapeOf(body);
@@ -73,6 +107,12 @@ export const keysIn = (body: unknown): number => {
 };
 
 // ── Internals ─────────────────────────────────────────────────────────────────
+
+const ATTEMPTS = 3;
+const RETRY_MS = 500;
+
+/** Prospector's own answer, refusing a report — never retried. */
+class Refused extends Error {}
 
 const MESSAGES: Record<'NoSuchKey' | 'AccessDenied', string> = {
   NoSuchKey:    'No catalogued file has this key',

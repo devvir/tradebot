@@ -302,6 +302,20 @@ them. It is a closed list: the misfiling stopped in December 2024 and has not re
 Their 18 shapes are **seeded retired**, each at the single day it holds (`20240630` … `20241130`),
 for the same reason the 2022 book shapes are: a literal month can hold nothing else.
 
+## Files under the BTC tree that are not its own
+
+**`futures_btc/` is BTC-settled, and its instruments are all `*_USD`.** Every other file under it is
+refused by `accepts`, whatever dataset it is filed as. Checked file by file against the archive on
+2026-10-01 and 2026-10-03, each one is a copy, a fragment or nothing:
+
+| where | what it holds | verdict |
+|---|---|---|
+| `trades/202203/`, 2,509 `*_USDT`, `*_ETH`, `*_BTC` | **spot weekly candles**, written 2022-04-03: a week from February and a partial last week | every week is at `spot/candlesticks_7d/`, republished complete in 2024 |
+| `trades/202203/`, 4 | spot trades | row for row and byte for byte the `spot/deals/202203/` file |
+| `trades/202208/`, 144 | about five minutes of futures trades from 2022-08-05 | every row is inside the month's `futures_usdt/trades/` file |
+| `funding_updates/`, `mark_prices/` of `201911`, 4 | the first minutes of 2019-11-20 for EOS and ETH | missing from the properly filed month; refused all the same, since a month split across two files is not one a consumer is asked to stitch |
+| `funding_applies/` from `202410`, `dummy` | an instrument named `dummy`, applying a funding rate of exactly zero about hourly | a placeholder |
+
 ## Two trade shapes, not interchangeable
 
 ```

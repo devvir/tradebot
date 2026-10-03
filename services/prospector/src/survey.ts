@@ -6,7 +6,6 @@ import {
   everCompleted,
   closeRun,
   flushTips,
-  markWithdrawn,
   openJob,
   openPartitions,
   parkSoon,
@@ -25,11 +24,12 @@ import { describeWait, labelOf, lanesFor, paceFor, ticketing } from './pace';
 import { ceiling, excludedAnywhere, relative } from './paths';
 import { seriesSeededAt } from './database/migrations/seeds/seed';
 import { flushCounts } from './counts';
+import { timed, timingsOf } from './timings';
 import { updatePage, updateScopes } from './update';
 import type { Rules } from './update';
 import type { Occasion, CatalogFile, Run, RunKind } from './types';
 import type { DatabaseSync } from 'node:sqlite';
-import type { Adapter, Config, Listed, Survey } from './types';
+import type { Adapter, Config, Coverage, Listed, Span, Survey } from './types';
 
 /**
  * Survey one venue: get its partitions, then walk them to the end.
@@ -508,6 +508,9 @@ export const surveyVenue = async (
        */
       pace:     paceFor(adapter, adapter.base).state(),
       tickets:  ticketing(),
+
+      /** Where requests spent their time since the last line — see `timings.ts`. */
+      timings:  timingsOf(labelOf(adapter)),
     }, kind === 'walk' ? 'Walking' : 'Generating');
   }, HEARTBEAT_MS).unref();
 
@@ -644,6 +647,33 @@ type StopReason = 'blocked' | 'splitting' | 'paused' | null;
 const divisible = (cursor: string | null, children: readonly string[]): boolean =>
   cursor === null || children.some(child => cursor < ceiling(child));
 
+/**
+ * A page's coverage as catalog paths, inside the partition being walked.
+ *
+ * **The partition bounds an open end.** A first page covers from the scope's
+ * start and a last page to its end, which is the ceiling of the prefix — or, for
+ * a venue walked from its root, everything there is.
+ */
+const spanOf = (adapter: Adapter, venueId: number, short: string, covers: Coverage): Span => {
+  if ('directory' in covers)
+    return {
+      venueId,
+      directory: relative(adapter, covers.directory),
+      children:  covers.children.map(child => relative(adapter, child)),
+    };
+
+  return {
+    venueId,
+    low:      covers.after === null ? short : relative(adapter, covers.after),
+    lowOpen:  covers.after !== null,
+    high:     covers.through === null ? (short === '' ? EVERYTHING : ceiling(short)) : relative(adapter, covers.through),
+    highOpen: covers.through === null,
+  };
+};
+
+/** Above every path: the end of a venue walked from its root. */
+const EVERYTHING = '\u{10FFFF}';
+
 /** Pages between progress lines. Small enough to see movement, rare enough to read. */
 const PROGRESS_EVERY = 25;
 
@@ -769,10 +799,11 @@ const sweep = async (
 
   const started = Date.now();
 
-  let cursor   = run.cursor;
-  let requests = 0;
-  let found    = 0;
-  let spoke    = Date.now();
+  let cursor    = run.cursor;
+  let requests  = 0;
+  let found     = 0;
+  let withdrawn = 0;
+  let spoke     = Date.now();
 
   do {
     /**
@@ -794,6 +825,7 @@ const sweep = async (
     const page  = kind === 'update'
       ? updatePage(db, venueId, short, cursor, rulesFor(db, venueId, adapter))
       : await adapter.scanner.page(context, scope, cursor);
+    const read  = performance.now();
     const files = catalogued(db, adapter, venueId, page.listed,
       kind === 'walk' ? new Date(run.started) : null);
 
@@ -832,10 +864,18 @@ const sweep = async (
       })));
     }
     else
-      // Committed in short slices with the loop handed back between them, so a
-      // page of writes cannot hold the thread — see `putFiles`. Each slice is
-      // still atomic, and still cannot interleave with another partition's.
-      await putFiles(db, files);
+      /**
+       * Committed in short slices with the loop handed back between them, so a
+       * page of writes cannot hold the thread — see `putFiles`. Each slice is
+       * still atomic, and still cannot interleave with another partition's.
+       *
+       * **Withdrawal rides the page.** What the page covered it covered in
+       * full, so anything catalogued there that it did not list is gone — said
+       * here, with nothing written for the keys that did not change. Only a walk
+       * can say it: an update generates the dates a series is missing and claims
+       * nothing about what is no longer offered.
+       */
+      withdrawn += await putFiles(db, files, page.covers && spanOf(adapter, venueId, short, page.covers));
 
     /**
      * **Before the cursor, always.** The bounds this page derived are held in
@@ -860,6 +900,8 @@ const sweep = async (
      * to watch and rarely enough to cost nothing next to the write above.
      */
     flushCounts(db, adapter);
+
+    if (kind === 'walk') timed(labelOf(adapter), 'process', performance.now() - read);
 
     /**
      * A prefix the size of binance's spot klines is thousands of pages and runs
@@ -906,25 +948,6 @@ const sweep = async (
       return { requests, found };
     }
   } while (cursor);
-
-  /**
-   * Anything in this range the venue did not offer this time has been withdrawn.
-   * It is marked, never removed: what a venue once published stays on record,
-   * and a consumer that wants only live files says so.
-   *
-   * The epoch is the **job's** start, shared by every partition, so a walk that
-   * began hours after the job did still measures against the moment the job
-   * targeted. Only meaningful on a re-walk: the first job over a venue has
-   * nothing older than itself, so this marks nothing.
-   *
-   * **Only a walk can say a file was withdrawn**, because only a walk covers a
-   * range exhaustively. An update generates the dates a series is missing and
-   * claims nothing about what is no longer offered, so a range it finished says
-   * nothing about the keys inside it that it never asked for.
-   */
-  const withdrawn = kind === 'walk'
-    ? markWithdrawn(db, venueId, short, ceiling(short), run.started)
-    : 0;
 
   closeRun(db, run.id);
 
