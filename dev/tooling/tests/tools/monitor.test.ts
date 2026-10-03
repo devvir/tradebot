@@ -75,6 +75,27 @@ const mockStats = {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
+/** A restart reuses the container, so its creation time says nothing about how long it has been up. */
+describe('uptime', () => {
+  it('counts from the last start, not from when the container was created', async () => {
+    const { fetchContainerRows } = await import('../../src/tools/monitor/docker');
+    const started = new Date(Date.now() - 5 * 60_000 - 10_000).toISOString();
+
+    const docker = {
+      listContainers: async () => [mockContainerList[1]],
+      getContainer:   () => ({
+        stats:   (_options: unknown, done: (err: unknown, data: unknown) => void) => done(null, mockStats),
+        logs:    async () => Buffer.from(''),
+        inspect: async () => ({ RestartCount: 0, State: { StartedAt: started } }),
+      }),
+    };
+
+    const [row] = await fetchContainerRows(docker as never);
+
+    expect(row!.uptime).toMatch(/^5m \d+s$/);
+  });
+});
+
 describe('cpuPercent', () => {
   it('calculates cpu percentage from stats', async () => {
     const { cpuPercent } = await import('../../src/tools/monitor/docker');

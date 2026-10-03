@@ -62,7 +62,8 @@ export async function fetchContainerRows(docker: Dockerode): Promise<ContainerRo
       else if (c.Status.includes('unhealthy')) health = '\x1b[31m✗ unhealthy\x1b[0m';
       else if (c.Status.includes('starting')) health = '\x1b[33m⟳ starting\x1b[0m';
 
-      const uptime = isRunning ? fmtUptime(c.Created) : 'stopped';
+      // Since the container last started, which a restart resets — read from the inspect below.
+      let uptime = isRunning ? '—' : 'stopped';
 
       let cpu = '—';
       let mem = '—';
@@ -99,6 +100,10 @@ export async function fetchContainerRows(docker: Dockerode): Promise<ContainerRo
 
         if (inspectRes.status === 'fulfilled') {
           restarts = String(inspectRes.value.RestartCount ?? 0);
+
+          const started = Date.parse(inspectRes.value.State?.StartedAt ?? '');
+
+          if (Number.isFinite(started)) uptime = fmtUptime(Math.floor(started / 1000));
         }
       }
 

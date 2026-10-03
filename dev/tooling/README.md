@@ -322,7 +322,7 @@ Containers are grouped by Docker Compose project. For each container:
 | **ID** | Short container ID (12 chars) |
 | **NAME** | Container name, prefixed with green ● (running) or red ● (stopped) |
 | **HEALTH** | Health status from Docker healthcheck (healthy / unhealthy / starting) |
-| **UPTIME** | Time since container was created |
+| **UPTIME** | Time since the container last started — a restart resets it |
 | **CPU** | CPU usage percentage |
 | **MEMORY** | Memory used / limit (percentage) |
 | **RESTARTS** | Restart count (yellow if > 0) |
