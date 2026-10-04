@@ -1,5 +1,5 @@
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
-import * as cache from './cache/months';
+import * as cache from './cache/partitions';
 import * as wip from './wip';
 import { BREATH_MS, slice } from './serial';
 import { ceiling } from '../paths';
@@ -65,10 +65,12 @@ export const venueIds = (db: DatabaseSync, name: string): number[] =>
  *   of what a walk cost.
  * - `seen_at` is left alone. It is first discovery, and answers "when did we
  *   first learn this existed" — a question whose answer must not drift.
- * - If size, etag or the venue's `modified` differ, the new version becomes
- *   current **and the observation is appended to `revision`**, so a consumer can
- *   ask what changed since it last looked rather than being told only that
- *   something did.
+ * - If size or ETag differ, the new version becomes current, **the one it
+ *   replaced is appended to `revision`** — so a consumer can ask what changed
+ *   since it last looked rather than being told only that something did — and
+ *   it is owed again.
+ * - If only the venue's `modified` differs, the new time is recorded and
+ *   nothing else moves: the bytes are the ones already known.
  *
  * **A walked page states a span exhaustively** — see `Span` — so a file
  * catalogued inside it that the page did not list has been withdrawn, and is
@@ -97,13 +99,14 @@ export const putFiles = async (
 
   const insert = db.prepare(
     `INSERT INTO file (venue_id, path, date, size, etag, modified, existence,
-                       series_id, seen_at, downloaded_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                       series_id, partition_id, seen_at, downloaded_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (venue_id, path) DO UPDATE SET
           date          = excluded.date,
           -- Learned once and kept: a sighting that cannot name a series is not
           -- a statement that the file has none.
           series_id     = COALESCE(excluded.series_id, file.series_id),
+          partition_id  = excluded.partition_id,
           size          = COALESCE(excluded.size, file.size),
           etag          = COALESCE(excluded.etag, file.etag),
           modified      = COALESCE(excluded.modified, file.modified),
@@ -202,6 +205,7 @@ export const putFiles = async (
 
       try {
         const effects: FileEffect[] = [];
+        const partitions = cache.resolver(db);
 
         const fresh = (file: CatalogFile): Row | undefined =>
           current.get(file.venueId, file.path) as Row | undefined;
@@ -252,10 +256,10 @@ export const putFiles = async (
           // Complete this time. If it had been parked, it is parked no longer.
           if (! was) moved(file.venueId, backlog.unpark(file.venueId, file.path));
 
-          const changed = !! was && restated(file, was);
+          const changed = !! was && replaced(file, was);
 
-          // Appended to only when a *stated* field differs from a known one.
-          // Silence is not a change.
+          // Appended to only when a *stated* size or ETag differs from a known
+          // one. Silence is not a change, and neither is a new date on the same bytes.
           if (changed)
             revise.run(
               file.venueId, file.path, file.seenAt,
@@ -265,16 +269,19 @@ export const putFiles = async (
           // A changed file is a different file: whatever was downloaded is not it.
           const downloadedAt = changed ? null : was?.downloadedAt ?? null;
 
+          // The partition of where the file is now: its date or its series may have moved.
+          const partitionId = partitions.of(file.seriesId ?? was!.seriesId, file.date);
+
           insert.run(
             file.venueId, file.path, file.date,
             file.size, file.etag, file.modified, file.existence, file.seriesId,
-            file.seenAt, downloadedAt,
+            partitionId, file.seenAt, downloadedAt,
           );
 
           effects.push({
-            venueId: file.venueId,
-            was:     was ? stateOf(was.seriesId, was.date, was.existence, was.size, was.downloadedAt) : null,
-            now:     stateOf(file.seriesId, file.date, file.existence, file.size ?? was?.size ?? null, downloadedAt),
+            was:  was ? stateOf(was.partitionId, was.existence, was.size, was.etag, was.downloadedAt) : null,
+            now:  stateOf(partitionId, file.existence, file.size ?? was?.size ?? null,
+              file.etag ?? was?.etag ?? null, downloadedAt),
           });
         }
 
@@ -376,7 +383,7 @@ export const parkKeys = (db: DatabaseSync, rows: readonly Parking[]): number =>
  * on disk be adopted without any seeding step.
  *
  * Only rows still pending are touched, so a repeat costs nothing and cannot
- * double-count the rollup.
+ * double-count its partition.
  */
 export const markDownloaded = (
   db:    DatabaseSync,
@@ -386,8 +393,7 @@ export const markDownloaded = (
   if (files.length === 0) return 0;
 
   const pending = db.prepare(
-    `SELECT series_id AS seriesId, date, size, existence, downloaded_at AS downloadedAt
-       FROM file WHERE venue_id = ? AND path = ? AND downloaded_at IS NULL`,
+    `SELECT ${ROW} FROM file WHERE venue_id = ? AND path = ? AND downloaded_at IS NULL`,
   );
 
   const mark = db.prepare(
@@ -410,9 +416,8 @@ export const markDownloaded = (
       mark.run(at, venueId, path);
 
       effects.push({
-        venueId,
-        was: stateOf(row.seriesId, row.date, row.existence, row.size, null),
-        now: stateOf(row.seriesId, row.date, row.existence, row.size, at),
+        was: stateOf(row.partitionId, row.existence, row.size, row.etag, null),
+        now: stateOf(row.partitionId, row.existence, row.size, row.etag, at),
       });
     }
 
@@ -443,10 +448,7 @@ export const markDownloaded = (
  * the venue agrees the file has gone.
  */
 export const withdrawFile = (db: DatabaseSync, venueId: number, path: string): boolean => {
-  const current = db.prepare(
-    `SELECT series_id AS seriesId, date, size, existence, downloaded_at AS downloadedAt
-       FROM file WHERE venue_id = ? AND path = ?`,
-  );
+  const current = db.prepare(`SELECT ${ROW} FROM file WHERE venue_id = ? AND path = ?`);
 
   db.exec('BEGIN');
 
@@ -463,9 +465,8 @@ export const withdrawFile = (db: DatabaseSync, venueId: number, path: string): b
       .run(venueId, path);
 
     cache.record(db, ([{
-      venueId,
-      was: stateOf(was.seriesId, was.date, was.existence, was.size, was.downloadedAt),
-      now: stateOf(was.seriesId, was.date, 'absent',      was.size, was.downloadedAt),
+      was: stateOf(was.partitionId, was.existence, was.size, was.etag, was.downloadedAt),
+      now: stateOf(was.partitionId, 'absent',      was.size, was.etag, was.downloadedAt),
     }]));
 
     db.exec('COMMIT');
@@ -504,10 +505,7 @@ export const correctFile = (
   seenAt:     string,
   downloaded: boolean,
 ): boolean => {
-  const current = db.prepare(
-    `SELECT series_id AS seriesId, date, size, etag, modified, existence, downloaded_at AS downloadedAt
-       FROM file WHERE venue_id = ? AND path = ?`,
-  );
+  const current = db.prepare(`SELECT ${ROW} FROM file WHERE venue_id = ? AND path = ?`);
 
   db.exec('BEGIN');
 
@@ -520,7 +518,7 @@ export const correctFile = (
       return false;
     }
 
-    if (restated(observed, was))
+    if (replaced(observed, was))
       db.prepare(
         `INSERT INTO revision (venue_id, path, seen_at, size, etag, modified, downloaded_at)
               VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -538,9 +536,8 @@ export const correctFile = (
     ).run(observed.size, observed.etag, observed.modified, downloadedAt, venueId, path);
 
     cache.record(db, ([{
-      venueId,
-      was: stateOf(was.seriesId, was.date, was.existence, was.size, was.downloadedAt),
-      now: stateOf(was.seriesId, was.date, was.existence, size, downloadedAt),
+      was: stateOf(was.partitionId, was.existence, was.size, was.etag, was.downloadedAt),
+      now: stateOf(was.partitionId, was.existence, size, observed.etag ?? was.etag, downloadedAt),
     }]));
 
     db.exec('COMMIT');
@@ -556,24 +553,27 @@ export const correctFile = (
 /**
  * Every venue there is anything to say about, with its totals.
  *
- * Summed from the rollup rather than cached again: a venue is a few hundred
- * month rows, so this is instant, and a second cache would be a second thing
+ * Summed from its partitions rather than cached again: a venue is a few
+ * thousand of them, so this is quick, and a second cache would be a second thing
  * that can disagree with the first. `firstMonth` and `lastMonth` fall out of the
  * same rows, which is why they need no column of their own.
  *
- * A venue served by two hosts is one row here — the caller asked about a venue.
+ * A venue served by two hosts is one row here: a slice is the venue's, whichever
+ * server publishes it.
  */
 export const venueTotals = (db: DatabaseSync): VenueTotals[] =>
   db.prepare(
     `SELECT v.name                                    AS venue,
-            COALESCE(MIN(CASE WHEN m.files > 0 THEN m.month END), NULL) AS firstMonth,
-            COALESCE(MAX(CASE WHEN m.files > 0 THEN m.month END), NULL) AS lastMonth,
+            MIN(CASE WHEN m.files > 0 THEN m.month END) AS firstMonth,
+            MAX(CASE WHEN m.files > 0 THEN m.month END) AS lastMonth,
             COALESCE(SUM(m.files), 0)                 AS files,
             COALESCE(SUM(m.bytes), 0)                 AS bytes,
             COALESCE(SUM(m.pending), 0)               AS pending,
             COALESCE(SUM(m.pending_bytes), 0)         AS pendingBytes,
             COALESCE(SUM(m.withdrawn), 0)             AS withdrawn
-       FROM venue v LEFT JOIN rollup_venue m ON m.venue_id = v.id
+       FROM (SELECT DISTINCT name FROM venue) v
+       LEFT JOIN slice c     ON c.venue = v.name
+       LEFT JOIN partition m ON m.slice_id = c.id
       GROUP BY v.name
       ORDER BY v.name`,
   ).all() as unknown as VenueTotals[];
@@ -671,8 +671,8 @@ export const settleFiles = (db: DatabaseSync, settled: readonly Settlement[]): n
 
   const arrive = db.prepare(
     `INSERT INTO file (venue_id, path, date, size, etag, modified, existence,
-                       series_id, seen_at, downloaded_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                       series_id, partition_id, seen_at, downloaded_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
        ON CONFLICT (venue_id, path) DO NOTHING`,
   );
 
@@ -687,6 +687,7 @@ export const settleFiles = (db: DatabaseSync, settled: readonly Settlement[]): n
 
   try {
     const effects: FileEffect[] = [];
+    const partitions = cache.resolver(db);
     let   moved  = 0;
 
     for (const file of settled) {
@@ -709,10 +710,12 @@ export const settleFiles = (db: DatabaseSync, settled: readonly Settlement[]): n
 
       const existence = file.existence ?? 'confirmed';
 
+      const partitionId = partitions.of(was.seriesId, was.date);
+
       const arrived = Number(arrive.run(
         file.venueId, file.path, was.date,
         merged.size, merged.etag, merged.modified, existence, was.seriesId,
-        was.seenAt,
+        partitionId, was.seenAt,
       ).changes) > 0;
 
       unparked.set(file.venueId,
@@ -730,15 +733,14 @@ export const settleFiles = (db: DatabaseSync, settled: readonly Settlement[]): n
        * the catalog already holds: generation reads the tip and nothing else, and
        * a walk can catalogue a path while a row for it sits in the backlog.
        *
-       * Counting those was the rollup drifting above the table it describes, by
+       * Counting those was the counters drifting above the table they describe, by
        * one file per key that settled onto a row already there — 1,937,264 of
        * them, 0.59%, before this was measured.
        */
       if (arrived)
         effects.push({
-          venueId: file.venueId,
-          was:     null,
-          now:     stateOf(was.seriesId, was.date, existence, merged.size, null),
+          was:  null,
+          now:  stateOf(partitionId, existence, merged.size, merged.etag, null),
         });
     }
 
@@ -1480,7 +1482,8 @@ export const ancestorsOf = (prefix: string): string[] => {
 // ── Internals ─────────────────────────────────────────────────────────────────
 
 /** The columns a catalogued file is compared on — see `Row`. */
-const ROW = `series_id AS seriesId, date, size, etag, modified, existence, downloaded_at AS downloadedAt`;
+const ROW = `series_id AS seriesId, partition_id AS partitionId, date, size, etag, modified, existence,
+             downloaded_at AS downloadedAt`;
 
 const isRange = (span: Span): span is RangeSpan => 'low' in span;
 
@@ -1528,7 +1531,7 @@ const unchanged = (file: CatalogFile, was: Row): boolean =>
   && (file.seriesId === null || file.seriesId === was.seriesId);
 
 /**
- * Mark these files withdrawn, and say what that did to the rollups. Returns how
+ * Mark these files withdrawn, and say what that did to their partitions. Returns how
  * many were.
  *
  * **Only `existence` changes.** A withdrawn file keeps its row, its history and
@@ -1547,9 +1550,8 @@ const withdraw = (
     mark.run(venueId, path);
 
     effects.push({
-      venueId,
-      was: stateOf(row.seriesId, row.date, row.existence, row.size, row.downloadedAt),
-      now: stateOf(row.seriesId, row.date, 'absent',      row.size, row.downloadedAt),
+      was: stateOf(row.partitionId, row.existence, row.size, row.etag, row.downloadedAt),
+      now: stateOf(row.partitionId, 'absent',      row.size, row.etag, row.downloadedAt),
     });
   }
 
@@ -1669,23 +1671,23 @@ const PREPARED = new WeakMap<DatabaseSync, Map<string, StatementSync>>();
 const ready = (seen: Metadata): boolean => seen.size !== null && seen.etag !== null;
 
 /**
- * What a row counts as in the rollup.
+ * What a row counts as in its partition.
  *
  * The month is the date's first six characters — the one interpretation the
  * catalog makes of a stored value, and one it already makes elsewhere.
  */
 const stateOf = (
-  seriesId:     number,
-  date:         string,
+  partitionId:  number,
   existence:    Existence,
   size:         number | null,
+  etag:         string | null,
   downloadedAt: string | null,
 ): FileState => ({
-  seriesId,
-  month:      date.slice(0, 6),
+  partitionId,
   confirmed:  existence === 'confirmed',
   downloaded: downloadedAt !== null,
   bytes:      size ?? 0,
+  etag,
 });
 
 /**
@@ -1697,9 +1699,20 @@ const stateOf = (
  * every refresh — turning "what changed since I last looked" into "everything".
  */
 const restated = (seen: Metadata, was: Metadata): boolean =>
-  (seen.size !== null && seen.size !== was.size)
-  || (seen.etag !== null && ! sameTag(seen.etag, was.etag))
+  replaced(seen, was)
   || (seen.modified !== null && seen.modified !== was.modified);
+
+/**
+ * Whether a sighting states **different bytes** from the ones known: another
+ * size, or another ETag.
+ *
+ * **A new `modified` alone is not that.** A venue republishing the same bytes
+ * has changed nothing a consumer holds, so the file is not owed again and
+ * nothing is added to its trail — the new time is simply what the row says.
+ */
+const replaced = (seen: Metadata, was: Metadata): boolean =>
+  (seen.size !== null && seen.size !== was.size)
+  || (seen.etag !== null && ! sameTag(seen.etag, was.etag));
 
 /**
  * **The case of an ETag belongs to the server, not to the file.** Sightings are

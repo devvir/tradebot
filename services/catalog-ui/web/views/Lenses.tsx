@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert, Autocomplete, Badge, Button, Card, Group, Loader, Modal, MultiSelect, Progress,
+  Alert, Button, Card, Group, Loader, Modal, MultiSelect, Progress,
   Select, Stack, Text, TextInput, Title,
 } from '@mantine/core';
 import { catalog, poll, remove, send } from '../api';
@@ -198,7 +198,7 @@ const Editing = ({ lens, onStored, onFailed, onGone }: {
   useEffect(() => {
     const asked = new AbortController();
 
-    catalog<{ items: { venue: string }[] }>('/contents/venues', asked.signal)
+    catalog<{ items: { venue: string }[] }>('/venues', asked.signal)
       .then(({ items }) => setVenues(items.map(one => one.venue)))
       .catch(() => undefined);
 
@@ -399,7 +399,7 @@ const Editing = ({ lens, onStored, onFailed, onGone }: {
               <Text size="sm" c="dimmed">Everything this lens lets through:</Text>
               {size === undefined ? <Loader size="xs" type="dots" /> : (
                 <Text size="sm" fw={600}
-                  title={`${count(size.files)} files over ${count(size.series)} series`}>
+                  title={`${count(size.files)} files over ${count(size.partitions)} partitions`}>
                   {bytes(size.bytes)}
                 </Text>
               )}
@@ -500,25 +500,12 @@ const ForVenue = ({ venue, entries, problems, storing, onAdd, onClear, onEdit, o
   onDiscard: (entry: RuleEntry) => void;
 }) => {
   const [offered, setOffered] = useState<LensOption[]>([]);
-  const [symbols, setSymbols] = useState<string[]>([]);
 
   useEffect(() => {
     const asked = new AbortController();
 
     catalog<{ items: LensOption[] }>(`/lenses/options/${encodeURIComponent(venue)}`, asked.signal)
       .then(({ items }) => setOffered(items)).catch(() => undefined);
-
-    /**
-     * **The whole list, once.** A venue has thousands of instruments and the
-     * search is three characters deep, so filtering here costs nothing and asking
-     * the catalog on every keystroke would cost a request each.
-     *
-     * From the lens endpoint rather than the contents one, because a lens can be
-     * written about every venue at once and `*` is not a venue anything else
-     * knows about.
-     */
-    catalog<{ items: string[] }>(`/lenses/instruments/${encodeURIComponent(venue)}`, asked.signal)
-      .then(({ items }) => setSymbols(items)).catch(() => undefined);
 
     return () => asked.abort();
   }, [venue]);
@@ -548,7 +535,7 @@ const ForVenue = ({ venue, entries, problems, storing, onAdd, onClear, onEdit, o
 
         {entries.map(entry => (
           <Rule
-            key={entry.key} rule={entry.now} offered={offered} symbols={symbols}
+            key={entry.key} rule={entry.now} offered={offered}
             state={stateOf(entry)} busy={storing === entry.key} locked={storing !== null}
             problems={problems[entry.key] ?? []}
             onChanged={to => onEdit(entry.key, to)}
@@ -573,10 +560,9 @@ const ForVenue = ({ venue, entries, problems, storing, onAdd, onClear, onEdit, o
  * **Every list left empty is shown as `every`**, because a rule that constrains
  * nothing is the common case and an empty box reads as unfinished.
  */
-const Rule = ({ rule, offered, symbols, problems, state, busy, locked, onChanged, onConfirm, onDrop, onDiscard }: {
+const Rule = ({ rule, offered, problems, state, busy, locked, onChanged, onConfirm, onDrop, onDiscard }: {
   rule:      LensRule;
   offered:   LensOption[];
-  symbols:   string[];
   problems:  LensProblem[];
 
   /** Never confirmed, edited since it was, or as stored — which decides the buttons it has. */
@@ -687,11 +673,15 @@ const Rule = ({ rule, offered, symbols, problems, state, busy, locked, onChanged
           />
         </Group>
 
-        <Instruments
-          chosen={rule.instruments ?? []} symbols={symbols} error={wrong('instruments')}
-          buckets={offered.some(one => one.buckets > 0)}
-          onChanged={values => onChanged({
-            ...rule, instruments: values.length === 0 ? undefined : values,
+        {/*
+          Which files, by how many instruments each holds. A rule never names an
+          instrument, so what it selects is always every one of them or none.
+        */}
+        <Select
+          label="Bundle" w={230} allowDeselect={false} error={wrong('bundle')}
+          data={BUNDLES} value={rule.bundle ?? BOTH}
+          onChange={bundle => onChanged({
+            ...rule, bundle: bundle === BOTH || ! bundle ? undefined : bundle as LensRule['bundle'],
           })}
         />
 
@@ -758,114 +748,14 @@ const SPANS = {
   s: 1, m: 60, h: 3_600, d: 86_400, w: 604_800, mo: 2_592_000, y: 31_536_000,
 } as const;
 
-/**
- * The instruments a rule names, as a search and a row of badges.
- *
- * **A list of thousands is not a dropdown.** A venue lists more instruments than
- * anyone scrolls, so this is a search that stays quiet until three characters
- * make it worth answering — and what has been chosen sits beside it, where it can
- * be read at a glance and taken off one at a time.
- *
- * **Five, then a count.** A rule naming forty instruments is a legitimate rule
- * and an unreadable row, so the rest go behind a number that carries them in its
- * tooltip.
- */
-const Instruments = ({ chosen, symbols, error, buckets, onChanged }: {
-  chosen:    string[];
-  symbols:   string[];
-  error?:    string;
+/** Leaving the bundle out of a rule takes both, which a select needs a value for. */
+const BOTH = 'both';
 
-  /** Whether the venue publishes any venue-wide file — Buckets is only offered where it does. */
-  buckets:   boolean;
-  onChanged: (chosen: string[]) => void;
-}) => {
-  const [query, setQuery] = useState('');
-
-  /**
-   * **Three characters before anything is offered.** Below that every list is
-   * the whole list, which is a dropdown nobody can use and a page that stutters
-   * rendering it.
-   */
-  const matches = useMemo(() => {
-    if (query.trim().length < 3) return [];
-
-    const looking = query.trim().toUpperCase();
-
-    return symbols
-      .filter(one => one.toUpperCase().includes(looking) && ! chosen.includes(one))
-      .slice(0, 20);
-  }, [query, symbols, chosen]);
-
-  /** Buckets is a single thing rather than one of many, so it is counted apart. */
-  const named  = chosen.filter(one => one !== BUCKET);
-  const shown  = chosen.slice(0, 5);
-  const beyond = chosen.slice(5);
-
-  return (
-    <Group align="flex-end" gap="sm" wrap="nowrap">
-      <Autocomplete
-        label="Instruments" w={320} value={query} data={matches} error={error}
-        placeholder={placeholderFor(chosen, named)}
-        onChange={setQuery}
-        onOptionSubmit={one => {
-          onChanged([...chosen, one]);
-
-          /**
-           * **Cleared on the tick after the pick.** Mantine writes the chosen
-           * option back into the field as part of submitting it, so clearing in
-           * the same turn is undone by the component itself.
-           */
-          setTimeout(() => setQuery(''), 0);
-        }}
-      />
-
-      <Group gap={6} wrap="wrap" pb={6}>
-        {buckets && ! chosen.includes(BUCKET) && (
-          <Button
-            size="compact-xs" variant="subtle" color="teal"
-            title={'The venue-wide file: one file holding every instrument of a market, '
-                 + 'rather than one file per instrument'}
-            onClick={() => onChanged([...chosen, BUCKET])}
-          >Buckets</Button>
-        )}
-
-        {shown.map(one => (
-          <Badge
-            key={one} variant="light" color={one === BUCKET ? 'teal' : 'blue'}
-            style={{ cursor: 'pointer' }} rightSection={<Cross />}
-            title={one === BUCKET
-              ? 'Buckets — the venue-wide file. Click to remove'
-              : `Remove ${one}`}
-            onClick={() => onChanged(chosen.filter(each => each !== one))}
-          >{one === BUCKET ? 'Buckets' : one}</Badge>
-        ))}
-
-        {beyond.length > 0 && (
-          <Badge variant="default" title={beyond.join(', ')}>+{beyond.length}</Badge>
-        )}
-      </Group>
-    </Group>
-  );
-};
-
-/** The venue-wide file. Not in any venue's instrument list, and always offerable. */
-const BUCKET = '@';
-
-/**
- * What the field says about what is already chosen.
- *
- * **Buckets alone is a real selection, not an empty one.** Left saying *find
- * another* it reads as though more of them were expected, when there is exactly
- * one bucket per market and nothing else to add unless a named instrument is
- * wanted beside it.
- */
-const placeholderFor = (chosen: readonly string[], named: readonly string[]): string => {
-  if (chosen.length === 0) return 'All — or type 3 letters';
-
-  if (named.length === 0) return 'Only buckets — or add instruments';
-
-  return 'Add another';
-};
+const BUNDLES = [
+  { value: BOTH,         label: 'Both' },
+  { value: 'instrument', label: 'Per instrument' },
+  { value: 'market',     label: 'Buckets' },
+];
 
 /**
  * A bound, which is a month.
@@ -913,13 +803,6 @@ const Month = ({ label, value, error, onChanged }: {
     />
   );
 };
-
-const Cross = () => (
-  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor"
-    strokeWidth="1.8" strokeLinecap="round" aria-hidden>
-    <path d="M3.5 3.5l9 9m0-9l-9 9" />
-  </svg>
-);
 
 const Trash = () => (
   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor"

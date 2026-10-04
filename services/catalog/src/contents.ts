@@ -1,9 +1,13 @@
 import { lensFigures } from './lenses/figures';
+import { partitionContents } from './partitions';
 import { throughLens } from './lenses/scope';
 import { seriesFor, venueIds, venueTotals } from './queries';
 import { BUCKET, levelsOf } from './vocabulary';
 import type { DatabaseSync } from 'node:sqlite';
-import type { ContentsAsked, MarketContents, RequestedLens, Series, SeriesCount, SeriesCountRow, Shape, VenueContents } from './types';
+import type {
+  ContentsAsked, MarketContents, PartitionFilter, RequestedLens, Series, SeriesCount, SeriesCountRow, Shape,
+  SliceContents, VenueContents,
+} from './types';
 
 /**
  * What a venue holds, folded out of its series.
@@ -22,11 +26,10 @@ import type { ContentsAsked, MarketContents, RequestedLens, Series, SeriesCount,
 /**
  * Every venue and what it holds — through a lens where one is named.
  *
- * **Under a lens a venue is what the lens lets through**: its files, bytes and
- * pending from the lens's size, its months off the rollups, its series those
- * with a file inside it — and a venue it lets nothing through from is not
- * listed. All of it is one query over the lens's rows and the series rollup —
- * no file, and no rule evaluated — which is what lets every venue be answered at
+ * **Under a lens a venue is what the lens lets through**: its files, bytes,
+ * pending and months summed over the lens's partitions, its series those dated
+ * inside it — and a venue it lets nothing through from is not listed. No file is
+ * read and no rule evaluated, which is what lets every venue be answered at
  * once.
  */
 export const venueContents = (db: DatabaseSync, held: RequestedLens | null): VenueContents[] => {
@@ -47,7 +50,15 @@ export const venueContents = (db: DatabaseSync, held: RequestedLens | null): Ven
 
     const figures = through!.get(row.venue);
 
-    if (! figures || figures.withFiles === 0) return [];
+    if (! figures || figures.files === 0) return [];
+
+    /**
+     * **Counted by their dates, not by reading their files**: a series is in
+     * where its first and last file straddle or fall inside the lens's months
+     * for its slice.
+     */
+    const inside = throughLens(db, ids.flatMap(id => seriesFor(db, id)),
+      held.scope.get(row.venue) ?? new Map(), false).length;
 
     return [{
       ...row,
@@ -57,7 +68,7 @@ export const venueContents = (db: DatabaseSync, held: RequestedLens | null): Ven
       bytes:        figures.bytes,
       pending:      figures.pending,
       pendingBytes: figures.pendingBytes,
-      series:       { withFiles: figures.withFiles, total: figures.withFiles },
+      series:       { withFiles: inside, total: inside },
     }];
   });
 };
@@ -81,6 +92,18 @@ export const contentsOf = (
     : asked.give === 'symbols' ? intoSymbols(rows)
       : intoShapes(rows);
 };
+
+/**
+ * One venue's slices and the partitions of each, with their counts and versions
+ * — through a lens where one is named, which leaves only the partitions it lets
+ * through.
+ */
+export const partitionsOfVenue = (
+  db:     DatabaseSync,
+  venue:  string,
+  filter: PartitionFilter,
+  held:   RequestedLens | null,
+): SliceContents[] => partitionContents(db, venue, filter, held?.lens ?? null);
 
 /**
  * One row per distinct thing the venue publishes —

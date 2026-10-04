@@ -25,6 +25,9 @@ coin). It changes what a contract's sizes and volumes mean, and it is not part o
 
 **Instrument.** A market and a symbol. A symbol alone identifies nothing.
 
+**Chain.** A family of dated contracts published together under the family's name, every expiry in
+one file. Its members differ in expiry alone, so a chain is treated as one instrument.
+
 **Dataset.** A kind of data: `trades`, `klines`, `books`, `quotes`, `funding`, `markPrice`,
 `indexPrice`, `premiumIndex`, and so on. Some boundaries are conventions: a quote is level 1 of a
 book, yet `quotes` is a dataset of its own.
@@ -47,13 +50,16 @@ dates.
 **Bundle.** How many instruments one file holds: `instrument` (one) or `market` (all of the
 market's).
 
-**Partition.** Venue + market + dataset + variant + bundle + grain + month: every file those
-attributes select. The partition is the atom of data: it is downloaded, stocked, cold-stored,
-restored and deleted whole, or not at all. The same data at another grain or in another bundle is
-another partition.
+**Slice.** Venue + market + dataset + variant + grain + bundle. Picture a venue's data as long
+stripes, one per dataset of a market, growing with time: a slice is one lengthwise cut of a stripe by
+its finer traits. The same data at another grain or in another bundle is another slice.
 
-**Version.** A number per partition that changes whenever a file in it is added, modified or
-removed.
+**Partition.** One month of a slice: every file its attributes and that month select. The partition
+is the atom of data: it is downloaded, stocked, cold-stored, restored and deleted whole, or not at
+all.
+
+**Version.** A value per partition that changes whenever a file in it is added, modified or
+removed, and is the same wherever the same files are.
 
 **The archives.** The local folder holding downloaded archive files under their canonical keys.
 
@@ -62,8 +68,8 @@ removed.
 **Catalog.** The record of every file each venue's archives publish, served as one bucket keyed by
 what each file is. Where a venue keeps a file is the catalog's internal business.
 
-**Lens.** A named selection of the catalog. For whoever reads through it, what the lens lets through
-is the whole catalog.
+**Lens.** A named selection of the catalog: a set of whole partitions. For whoever reads through it,
+what the lens lets through is the whole catalog.
 
 **Hauling.** Bringing catalogued files to the archives.
 
@@ -72,8 +78,10 @@ their dataset in the vault. It applies to every source.
 
 **Vault.** The folder of Parquet files stocking produces: the curated product of every source. In
 the vault a dataset has one shape whatever venue, source, format, grain or bundle it came from, so
-the same data stocked from two partitions is identical. Vault files are monthly and one per
-instrument.
+the same data stocked from two partitions is identical, and is held once. Vault files are monthly.
+
+**Revision.** What identifies one stocking of a partition in the vault. It changes whenever the
+partition's version does, or anything about how it is stocked.
 
 **Cold storage.** The remote store that is the system of record for raw and vault data. Local disk
 holds only what the work in hand needs.

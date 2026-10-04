@@ -39,6 +39,9 @@ const loadConfig = (): Config => {
     scanMinutes:  parsePositiveInt(process.env.STOCKER_SCAN_MINUTES, 30),
     threads:      parsePositiveInt(process.env.STOCKER_THREADS, 4),
     minFreeGb:    parsePositiveInt(process.env.STOCKER_MIN_FREE_GB, 20),
+    memoryGb:     parsePositiveInt(process.env.STOCKER_MEMORY_GB, 4),
+    splitGb:      parsePositiveInt(process.env.STOCKER_SPLIT_GB, 1),
+    coolHours:    parsePositiveInt(process.env.STOCKER_COOL_HOURS, 1),
   };
 
   logger.info({ ...config, catalogToken: config.catalogToken ? '<set>' : '<none>' },

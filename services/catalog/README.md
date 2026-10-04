@@ -7,7 +7,7 @@ It surveys nothing and downloads nothing. It opens the `catalog.db` prospector w
 and writes only lenses. A download report is settled by prospector, which owns a file's state.
 
 ```
-GET  /contents/venues[/:venue[/markets/:market]][/symbols]
+GET  /venues[/:venue[/markets/:market]][/symbols]
 GET  /listings?prefix=<venue>/          S3 ListObjects, V1 or V2
 POST /listings/report                  by Key; settled by prospector
      /lenses …                         create, edit, check, size, resolve

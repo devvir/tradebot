@@ -31,11 +31,11 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-/** What the venue rollup holds for venue 1, month by month. */
+/** What the partitions hold, month by month. */
 const rollup = () =>
   db.prepare(
     `SELECT month, files, bytes, pending, pending_bytes AS pendingBytes, withdrawn
-       FROM rollup_venue WHERE venue_id = 1 ORDER BY month`,
+       FROM partition ORDER BY month`,
   ).all();
 
 /**

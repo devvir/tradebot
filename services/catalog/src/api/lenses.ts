@@ -1,5 +1,5 @@
 import {
-  dropLens, editLens, lensInstruments, lensNameIsSound, lensNamed, lensOptions, lensSize, lenses,
+  dropLens, editLens, lensNameIsSound, lensNamed, lensOptions, lensSize, lenses,
   problemsWith, putLens, resolvedSummary,
 } from '../lenses/lens';
 import { savedLensSize } from '../lenses/figures';
@@ -41,15 +41,6 @@ export const mountLenses = (app: Application, db: DatabaseSync): void => {
    */
   app.get('/lenses/options/:venue', (req, res) => {
     res.json({ items: lensOptions(db, String(req.params['venue'])) });
-  });
-
-  /**
-   * **The instruments a rule may name.** Its own endpoint rather than the
-   * contents one, because a lens can be written about every venue at once and
-   * `*` is not a venue anything else knows about.
-   */
-  app.get('/lenses/instruments/:venue', (req, res) => {
-    res.json({ items: lensInstruments(db, String(req.params['venue'])) });
   });
 
   app.post('/lenses', (req, res) => {

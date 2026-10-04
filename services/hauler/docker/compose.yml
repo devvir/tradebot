@@ -32,6 +32,7 @@ services:
 
       # Concurrent fetches per venue; venues never wait on each other
       HAULER_CONCURRENCY: ${HAULER_CONCURRENCY:-8}
+      HAULER_MIN_FREE_GB: ${HAULER_MIN_FREE_GB:-25}
 
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV:  ${APP_ENV:-prod}

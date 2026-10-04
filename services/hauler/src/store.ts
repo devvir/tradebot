@@ -1,18 +1,25 @@
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, opendir, rename, stat, unlink, utimes } from 'node:fs/promises';
+import { mkdir, readdir, rename, rm, stat, statfs, unlink, utimes } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import config from './config';
 
 /**
  * The disk, and the one rule that makes an interrupted hauler safe to restart.
  *
  * **Nothing appears at its final path until it has been checked.** Every
- * download lands as a `.part` file and is renamed only once its size and etag
- * agree with what the catalog said. Verifying after the rename would leave a
+ * download lands as a partial and is renamed only once its size and etag agree
+ * with what the catalog said. Verifying after the rename would leave a
  * truncated file sitting at the real path, where every later pass would see it
  * present and skip it — permanently, and silently.
+ *
+ * **Every partial lives in one directory**, `.hauler-tmp` at the archives'
+ * root — the same volume, so the rename that makes it a file is still one
+ * step. What an interrupted hauler leaves behind is then one directory to
+ * delete, where partials beside their files meant walking millions of
+ * directories to find them.
  */
 
 /** What is at a path, or `null` where nothing is. */
@@ -26,28 +33,46 @@ export const measure = async (path: string): Promise<number | null> => {
   }
 };
 
-/** Stream a response body to `<path>.part` and answer what it weighed. */
+/** Free space on the volume a directory is on, in GB. */
+export const freeGb = async (dir: string): Promise<number> => {
+  const info = await statfs(dir);
+
+  return (info.bavail * info.bsize) / 1024 ** 3;
+};
+
+/**
+ * Where the file bound for a path is written until it is verified: named by a
+ * digest of that path, so two files never share one and a path always finds
+ * its own.
+ */
+export const partialOf = (path: string): string =>
+  join(config.archivesDir, SCRATCH, `${createHash('sha1').update(path).digest('hex')}.part`);
+
+/** Stream a response body to the path's partial and answer what it weighed. */
 export const writePartial = async (path: string, body: ReadableStream<Uint8Array>): Promise<number> => {
-  await mkdir(dirname(path), { recursive: true });
+  const partial = partialOf(path);
 
-  await pipeline(Readable.fromWeb(body as never), createWriteStream(`${path}.part`));
+  await mkdir(dirname(partial), { recursive: true });
 
-  const { size } = await stat(`${path}.part`);
+  await pipeline(Readable.fromWeb(body as never), createWriteStream(partial));
+
+  const { size } = await stat(partial);
 
   return size;
 };
 
 /** Give a verified partial its real name. The last step, always. */
 export const commit = async (path: string): Promise<void> => {
-  await rename(`${path}.part`, path);
+  await mkdir(dirname(path), { recursive: true });
+  await rename(partialOf(path), path);
 };
 
 export const discard = async (path: string): Promise<void> => {
-  await unlink(`${path}.part`).catch(() => undefined);
+  await unlink(partialOf(path)).catch(() => undefined);
 };
 
 /**
- * Delete every `.part` under the archive, and answer how many there were.
+ * Delete every unfinished download, and answer how many there were.
  *
  * **Run once, before anything is fetched.** A partial is never a file — it only
  * becomes one by being verified and renamed — so whatever is left of one is a
@@ -55,36 +80,14 @@ export const discard = async (path: string): Promise<void> => {
  * a pulled plug. Nothing reads it and the next walk fetches the file again.
  * `.bak` files are not touched: they are whole files that disagreed, kept for a
  * person to read.
- *
- * Walked a directory at a time, never listed whole: the archive runs to
- * millions of files.
  */
-export const sweepPartials = async (root: string): Promise<number> => {
-  let swept = 0;
+export const sweepPartials = async (): Promise<number> => {
+  const scratch = join(config.archivesDir, SCRATCH);
+  const left    = await readdir(scratch).catch(() => [] as string[]);
 
-  const walk = async (dir: string): Promise<void> => {
-    let entries;
+  await rm(scratch, { recursive: true, force: true });
 
-    try {
-      entries = await opendir(dir);
-    } catch {
-      return;
-    }
-
-    for await (const entry of entries) {
-      const path = join(dir, entry.name);
-
-      if (entry.isDirectory()) await walk(path);
-      else if (entry.isFile() && entry.name.endsWith('.part')) {
-        await unlink(path).catch(() => undefined);
-        swept++;
-      }
-    }
-  };
-
-  await walk(root);
-
-  return swept;
+  return left.length;
 };
 
 /**
@@ -161,6 +164,9 @@ export const isDigest = (declared: string | undefined): declared is string =>
   declared !== undefined && /^[0-9a-f]{32}$/.test(cleaned(declared));
 
 // ── Internals ─────────────────────────────────────────────────────────────────
+
+/** The directory of unverified downloads, at the archives' root. */
+const SCRATCH = '.hauler-tmp';
 
 /** The quotes are HTTP's and the case is the server's; neither is the file's. */
 const cleaned = (etag: string): string => etag.replace(/^"|"$/g, '').toLowerCase();

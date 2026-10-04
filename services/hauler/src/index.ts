@@ -23,9 +23,11 @@ import config from './config';
 const main = async (service: Service): Promise<void> => {
   service.on('shutdown', stopAfterFlight);
 
-  const swept = await sweepPartials(config.archivesDir);
+  const swept = await sweepPartials();
 
-  if (swept > 0) logger.info({ swept, archives: config.archivesDir }, 'Removed unfinished downloads');
+  logger.info({ swept }, swept > 0 ? 'Removed unfinished downloads' : 'No unfinished downloads');
+
+  if (config.venues.length === 0) logger.info('Asking the catalog which venues there are');
 
   const names = config.venues.length > 0 ? config.venues : await untilAnswered(venues);
 
@@ -47,9 +49,13 @@ const loop = async (venue: string): Promise<void> => {
     try {
       const walked = await walkVenue(venue, () => stopping);
 
-      found = walked.progressed > 0;
+      found = walked.progressed > 0 && ! walked.full;
 
-      logger.info({ venue, ...walked, nextInMinutes: (found ? FOUND_MS : QUIET_MS) / 60_000 }, 'Walk finished');
+      if (walked.full)
+        logger.warn({ venue, ...walked, minFreeGb: config.minFreeGb, nextInMinutes: QUIET_MS / 60_000 },
+          'The archives volume is low on space — nothing more is fetched until there is room');
+      else
+        logger.info({ venue, ...walked, nextInMinutes: (found ? FOUND_MS : QUIET_MS) / 60_000 }, 'Walk finished');
     } catch (err) {
       logger.error({ err, venue }, 'Walk failed — trying again later');
     }
@@ -92,7 +98,7 @@ let hauling: Promise<unknown> = Promise.resolve();
 /**
  * **A shutdown waits for the files in flight.** No new file is taken, the ones
  * already downloading finish and are reported, and only then does the process
- * exit — so a stop leaves no `.part` behind and nothing done goes unreported.
+ * exit — so a stop leaves no partial behind and nothing done goes unreported.
  * How long that may take is the compose file's `stop_grace_period`.
  */
 const stopAfterFlight = async (): Promise<void> => {

@@ -1,7 +1,7 @@
 import { basename, join } from 'node:path';
 import { logger } from '@devvir/service-kit';
 import { sizeOf } from '@tradebot/utils';
-import { backup, commit, discard, etagAgrees, isDigest, md5, measure, touch, writePartial } from './store';
+import { backup, commit, discard, etagAgrees, isDigest, md5, measure, partialOf, touch, writePartial } from './store';
 import config from './config';
 import type { Haulable, Hauled } from './types';
 
@@ -110,7 +110,7 @@ const retrieve = async (file: Haulable, path: string): Promise<Hauled> => {
 
       const bytes = await writePartial(path, res.body);
 
-      if (! await agrees(file, `${path}.part`, bytes)) {
+      if (! await agrees(file, partialOf(path), bytes)) {
         await discard(path);
 
         logger.error({ key: file.key, size: bytes, expected: file.size, url: file.url }, 'Served differs from the catalog');

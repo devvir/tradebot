@@ -2,15 +2,15 @@
 
 The catalog service is how everything outside the [archives module](../modules/ARCHIVES.md) reads what
 prospector has found. It answers three kinds of question: what each venue publishes (contents), which
-files there are (one S3-style bucket, every venue under its own prefix), and which slice of it a consumer wants (lenses). Every
+files there are (one S3-style bucket, every venue under its own prefix), and which part of it a consumer wants (lenses). Every
 endpoint is in [CATALOG-API.md](../modules/CATALOG-API.md); lenses are in
 [CATALOG-LENSES.md](../modules/CATALOG-LENSES.md). This page is how it is built.
 
 ## One database, one writer per table
 
 **The database is prospector's.** Prospector creates `catalog.db`, migrates it, and writes every file,
-series, survey and rollup row. The catalog opens the same file from the same host directory, and writes
-two tables, both lenses: `lens`, and `lens_series`, what each lens lets through.
+series, partition and survey row. The catalog opens the same file from the same host directory, and
+writes two tables, both lenses: `lens`, and `lens_member`, what each lens lets through.
 
 **Lenses are written here because a lens is a consumer's choice**, not something collection knows or
 acts on. Prospector never reads one. Keeping them beside the API that reads through them means nothing
@@ -32,7 +32,7 @@ the files are listed again and reported on the next walk.
 must run on the same host and never over a network filesystem. Two rules follow from sharing:
 
 - **Reads stay short.** An open read transaction stops prospector's checkpoints, and the write-ahead log
-  grows for as long as it lasts. So every view pages, or answers from patterns, series and the rollups,
+  grows for as long as it lasts. So every view pages, or answers from patterns, series and partitions,
   never from a walk of `file` in one statement.
 - **A lens write waits rather than fails.** `busy_timeout` is five seconds, so a lens saved while
   prospector is mid-transaction waits its turn.
@@ -49,12 +49,17 @@ between the two services.
 
 Every contents answer is a fold over one read of a venue's patterns and series, which are thousands of
 rows where files are hundreds of millions. Markets, shapes and instruments are projections of the same
-rows, so no two levels can disagree about whether a retired pattern counts. Venue totals come from
-`rollup_venue`.
+rows, so no two levels can disagree about whether a retired pattern counts. Venue totals are sums
+over the venue's partitions, each of which carries its own counts.
 
-**Under a lens, a venue's figures are the lens's**: size, first and last month, and how many series
-hold a file inside it. They are one query, the lens's `lens_series` rows joined to `rollup_series` and
-grouped by venue, so nothing evaluates a rule and nothing is held in memory.
+**Under a lens, a venue's figures are the lens's**: its size and its first and last month are one
+query, the lens's `lens_member` rows joined to their partitions and grouped by venue, so nothing
+evaluates a rule. Its series are those dated inside the months the lens lets through for their
+slice, counted off the series' own first and last file.
+
+**A venue's partitions are their own view**: each slice once, with its months inside it, each month
+with its counts, its version and when that last moved. Through a lens it is the lens's partitions
+and no others. It is a read of a few thousand rows, so it is not paged.
 
 ## Listings
 
@@ -74,8 +79,15 @@ is held between pages: S3's marker is the whole cursor, read back into a series 
 one instrument, or two eras of it. Their files are one stream by date, and SQLite sorts them one prefix
 at a time as the walk passes, so a page never waits for more than that.
 
-**Through a lens**, each series the walk passes is looked up in `lens_series`, and only the files
-inside its spans are read. A series the lens leaves out costs that one lookup.
+**Through a lens**, the slices the lens holds a partition of are worked out once per page, and only
+their series are walked. For each, the partitions of its slice that are in `lens_member` say which
+months to read, and its files are read one month at a time. A series of any other slice costs one
+lookup. Measured on 2026-10-04 against the full catalog, a page of a
+thousand keys through a lens took about 110 ms.
+
+**A walk of what is owed reads only what owes.** A partition counts its own pending files, so the
+walk first takes the slices with a partition still owing one, and within them only those partitions.
+An empty answer for a venue of a hundred thousand series took 0.2 s on the same day.
 
 **A part is read through the pattern.** Where a venue splits a period, the pattern says `{PART}`, and
 the part is what the path holds there: an hour of gate's books, a numbered piece of a bitget day. A
@@ -87,16 +99,17 @@ listed once, so paging still ends.
 
 ## Lenses
 
-**A lens is stored as what it lets through**: rows of `lens_series`, a series and a span of its dates,
-rebuilt for the venues a save changed, and extended as series appear — in the background every
-fifteen minutes, a slice at a time, and by any request that finds the lens behind (see
+**A lens is stored as what it lets through**: rows of `lens_member`, one per partition,
+rebuilt for the venues a save changed, and extended as partitions appear — in the background every
+fifteen minutes, a few thousand at a time, and by any request that finds the lens behind (see
 [CATALOG-LENSES.md](../modules/CATALOG-LENSES.md#resolving-one)). The listing, the contents, the size and
 a report's check all read those rows, so they agree and none of them evaluates a rule. Only a
 definition being edited, which has no rows yet, is resolved as it stands.
 
 The code is `lenses/lens.ts` (definitions, checking, sizing a draft), `lenses/rules.ts` (what the rules
-say of one series), `lenses/members.ts` (the rows), `lenses/figures.ts` (a saved lens's figures),
+say of one slice), `lenses/members.ts` (the rows), `lenses/figures.ts` (a saved lens's figures),
 `lenses/spans.ts` (the date arithmetic) and `lenses/scope.ts` (the rows as the contents read them).
+`partitions.ts` reads slices and partitions for all of them.
 
 ## Requests nobody waits for
 

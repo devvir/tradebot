@@ -345,8 +345,9 @@ describe('what a preamble adds', () => {
   /**
    * **A shape the venue stopped writing to does not come back with the symbol.**
    * okx's plain order-book tree has a last file with a date on it; relisting an
-   * instrument says nothing about a tree that is finished. The pattern's state
-   * decides, not the series'.
+   * instrument says nothing about a tree that is finished. Being listed is the
+   * instrument's, so both series read it; whether a series still expects files is
+   * the shape's to end, and the retired one stays closed and is not revived.
    */
   it('does not resurrect a series whose pattern was retired', async () => {
     const gone = walked('OLD-USDT');
@@ -362,10 +363,11 @@ describe('what a preamble adds', () => {
     const out = await preamble(db, venue(), id, NOW);
 
     const back = seriesFor(db, id, { symbol: 'OLD-USDT' });
-    const byShape = Object.fromEntries(back.map(one => [one.dataset, one.state]));
+    const byShape = Object.fromEntries(back.map(one => [one.dataset, open(one)]));
 
     expect(out.revived).toBe(1);
-    expect(byShape).toEqual({ trades: 'active', books: 'delisted' });
+    expect(back.map(one => one.state)).toEqual(['active', 'active']);
+    expect(byShape).toEqual({ trades: true, books: false });
   });
 
   /**

@@ -15,6 +15,7 @@ describe('config', { timeout: 30_000 }, () => {
     delete process.env['HAULER_VENUES'];
     delete process.env['HAULER_LENS'];
     delete process.env['HAULER_CONCURRENCY'];
+    delete process.env['HAULER_MIN_FREE_GB'];
   });
 
   afterEach(() => {
@@ -24,7 +25,7 @@ describe('config', { timeout: 30_000 }, () => {
   it('defaults to every venue, no lens, and eight fetches at once', async () => {
     const { default: config } = await import('../src/config');
 
-    expect(config).toMatchObject({ venues: [], lens: '', concurrency: 8, catalogApi: 'http://catalog.invalid' });
+    expect(config).toMatchObject({ venues: [], lens: '', concurrency: 8, minFreeGb: 25, catalogApi: 'http://catalog.invalid' });
   });
 
   it('reads venues, a lens and a concurrency from env', async () => {

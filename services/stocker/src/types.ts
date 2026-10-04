@@ -1,5 +1,3 @@
-import type { Hash } from 'node:crypto';
-
 /** A canonical table. One table is one schema and one queryable dataset root. */
 export type Table =
   | 'trades' | 'quotes' | 'orderBook' | 'depthBands' | 'klines'
@@ -31,18 +29,26 @@ export interface Field {
   type: 'BIGINT' | 'DOUBLE' | 'VARCHAR' | 'BOOLEAN';
 }
 
-/** One object of a catalog listing page, as the catalog answers it in JSON. */
-export interface ListedObject {
-  Key:   string;
-  ETag?: string;
-  Size?: number;
+/** One month of a slice, as the catalog's partitions endpoint answers it. */
+export interface ListedPartition {
+  month:        string;
+  files:        number;
+  bytes:        number;
+  pending:      number;
+  pendingBytes: number;
+  withdrawn:    number;
+  version:      string;
+  updatedAt:    string;
 }
 
-/** One page of the catalog's bucket. */
-export interface BucketPage {
-  Contents?:   ListedObject[];
-  IsTruncated: boolean;
-  NextMarker?: string;
+/** One slice of a venue with its partitions, as the catalog answers it. */
+export interface ListedSlice {
+  market:     Market;
+  dataset:    string;
+  variant:    string;
+  grain:      Grain;
+  bundle:     Bundle;
+  partitions: ListedPartition[];
 }
 
 /** One column of a headerless file, in published order. */
@@ -151,25 +157,6 @@ export interface ArchiveFile {
   container: string;
 }
 
-/** A partition's stats while its listing is still being read. */
-export interface Building {
-  key:     PartitionKey;
-  id:      string;
-  files:   number;
-  bytes:   number | null;
-  digest:  Hash;
-  pending: number;
-  first:   BuildingEdge;
-  last:    BuildingEdge;
-}
-
-export interface BuildingEdge {
-  files:   number;
-  bytes:   number | null;
-  digest:  Hash;
-  pending: number;
-}
-
 /** What identifies a partition: everything but the files. */
 export interface PartitionKey {
   venue:   string;
@@ -181,39 +168,26 @@ export interface PartitionKey {
   month:   string;
 }
 
-/** What the catalog says about one partition's files, gathered from a listing. */
-export interface PartitionStats {
-  files:   number;
-
-  /** Total size, or null where the catalog lacks a size for any file. */
-  bytes:   number | null;
-
-  /** Digest of every key, ETag and size, in listing order. */
-  digest:  string;
-
-  /** Files not yet downloaded. */
-  pending: number;
-
-  /** The files of the month's first and last period, for a neighbour that spills into it. */
-  first:   EdgeStats;
-  last:    EdgeStats;
-}
-
-export interface EdgeStats {
-  files:   number;
-  bytes:   number | null;
-  digest:  string;
-  pending: number;
-}
-
-/** A partition and what the catalog says about it. */
+/** A partition and what the catalog says it holds. */
 export interface Partition {
-  key:   PartitionKey;
-  id:    string;
-  stats: PartitionStats;
+  key:       PartitionKey;
+  id:        string;
+
+  /** Files the venue serves of it, and their total size. */
+  files:     number;
+  bytes:     number;
+
+  /** Of those, the files not yet downloaded. */
+  pending:   number;
+
+  /** The catalog's version of it: it changes whenever a file of it does. */
+  version:   string;
+
+  /** When that version last changed. */
+  updatedAt: string;
 }
 
-/** Where a partition lands in the vault: everything but the symbol. */
+/** Where a partition lands in the vault: its slice there, and its month. */
 export interface VaultKey {
   table:     Table;
   venue:     string;
@@ -247,19 +221,49 @@ export interface Group {
 /** What one connection builds at a time: one big instrument, or a batch of small ones. */
 export type Task = Group[];
 
-/** A neighbouring month's edge a spilling partition reads. */
+/** A neighbouring month a spilling partition reads the edge of. */
 export interface Edge {
   partition: Partition;
   side:      'first' | 'last';
-  digest:    string;
+}
+
+/**
+ * What the vault holds of one slice, read once: for each month, the revisions
+ * present and how each is stored.
+ */
+export type SliceIndex = Map<string, Map<string, Stocked>>;
+
+/** One revision of one month in the vault. */
+export interface Stocked {
+  /** Whether it is one file for every instrument. */
+  bundle:     boolean;
+
+  /** The instruments it has a file for, where it is one file per instrument. */
+  symbols:    string[];
+
+  /** Whether it was still being put in place when something stopped it. */
+  publishing: boolean;
+}
+
+/** The instrument directories of each dataset in the archives, read once. */
+export interface InstrumentDirs {
+  of: (root: string) => Promise<string[]>;
+}
+
+/** What one sweep carries from partition to partition. */
+export interface Sweeping {
+  instruments:   InstrumentDirs;
+
+  /** What the vault holds of each slice, read once. */
+  slices:        { of: (key: VaultKey) => Promise<SliceIndex>; forget: (key: VaultKey) => void };
 }
 
 /** One sweep's outcome. */
 export interface Summary {
-  /** Partitions inside the configured scope. */
+  /** Vault partitions the catalog had something ready for, inside the configured scope. */
   considered: number;
 
-  /** Already in the vault at their current version. */
+  /** Already in the vault at their current revision. */
   current:    number;
 
   /** Stocked this sweep. */
@@ -268,7 +272,7 @@ export interface Summary {
   /** Stocked, and every input decoded to nothing. */
   empty:      number;
 
-  /** Not yet fully downloaded, per the catalog. */
+  /** Ready themselves, but reading the edge of a neighbouring month that is not. */
   waiting:    number;
 
   /** Downloaded per the catalog, but not on disk as it says. */
@@ -322,6 +326,15 @@ export interface Config {
 
   /** Free space below which no partition is started, in GB. */
   minFreeGb:    number;
+
+  /** Memory the engine may use before it spills to disk, in GB. */
+  memoryGb:     number;
+
+  /** A partition whose archive files weigh more than this is stored one file per instrument, in GB. */
+  splitGb:      number;
+
+  /** Hours a partition must have gone unchanged in the catalog before it is stocked. */
+  coolHours:    number;
 
   [key: string]: unknown;
 }

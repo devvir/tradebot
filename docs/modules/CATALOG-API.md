@@ -49,7 +49,7 @@ tells the two renderings apart.
 
 **Reading through a lens.** A consumer names a [lens](#lenses) in an `x-catalog-lens` header, or in
 a `lens` query parameter where it sends no header — so a browser can look through one too — and the
-listings and `/contents/*` answer only what it lets through. Naming none is the whole catalog; an
+listings and `/venues/*` answer only what it lets through. Naming none is the whole catalog; an
 unknown slug is a `422`, never the whole catalog in its place: the URL names something that exists, and
 the lens names something that does not.
 
@@ -62,11 +62,12 @@ errors included.
 What each venue holds, one level at a time:
 
 ```
-GET /contents/venues                                        every venue
-GET /contents/venues/:venue                                 its markets
-GET /contents/venues/:venue/symbols                         every instrument
-GET /contents/venues/:venue/markets/:market                 its shapes
-GET /contents/venues/:venue/markets/:market/symbols         its instruments
+GET /venues                                        every venue
+GET /venues/:venue                                 its markets
+GET /venues/:venue/symbols                         every instrument
+GET /venues/:venue/markets/:market                 its shapes
+GET /venues/:venue/markets/:market/symbols         its instruments
+GET /venues/:venue/partitions                      its slices, and the partitions of each
 ```
 
 A venue row carries `venue`, `firstMonth`, `lastMonth`, `files`, `bytes`, `pending`, `pendingBytes`,
@@ -74,6 +75,35 @@ A venue row carries `venue`, `firstMonth`, `lastMonth`, `files`, `bytes`, `pendi
 for. Under a lens every figure is the lens's, which costs resolving the lens: a few seconds on the
 full catalog the first time, and about one while the resolved lens is held. A caller that only wants
 venue names asks without one.
+
+**A venue's partitions** are what to read to handle its data a partition at a time. Each slice is
+listed once, with its months inside it:
+
+```json
+{ "market": "perp", "dataset": "trades", "variant": "", "grain": "daily", "bundle": "instrument",
+  "partitions": [
+    { "month": "202011", "files": 270, "bytes": 921878368, "pending": 0, "pendingBytes": 0,
+      "withdrawn": 0, "version": "9c41e07b25d3a6f8", "updatedAt": "2026-10-03T22:14:07.512Z" }
+  ] }
+```
+
+| | |
+|---|---|
+| `bundle` | `instrument` where a file holds one instrument, `market` where it holds every instrument of the market |
+| `files`, `bytes` | what the venue serves of that month, withdrawn files left out |
+| `pending`, `pendingBytes` | of those, what has not been reported downloaded |
+| `version` | sixteen hex digits that change whenever a file of the partition is added, withdrawn or changed, and are the same for the same files |
+| `updatedAt` | when the version last changed. A download does not move it |
+
+The whole venue comes back at once; it is a few thousand partitions. Under a lens only the lens's
+partitions are listed. Query parameters narrow it, and a slice left with no partition is left out:
+
+| | |
+|---|---|
+| `market`, `variant`, `grain`, `bundle` | one value each |
+| `datasets` | a comma-separated list |
+| `downloaded=true` | only partitions with nothing pending |
+| `settled-before` | an ISO timestamp: only partitions whose version last changed before it |
 
 **A shape is one distinct thing the venue publishes**, and the row to read before wanting anything:
 
@@ -267,11 +297,10 @@ A **lens** is a named way of looking at the catalog. See [CATALOG-LENSES.md](CAT
 | `PUT /lenses/:slug` | Replace it whole: `slug`, `name`, `note`, `definition`, or any of them. |
 | `DELETE /lenses/:slug` | Delete it. |
 | `GET /lenses/options/:venue` | The combinations that venue publishes (`market`, `dataset`, `variant`, `grain`), how many series each holds, and how many of those are venue-wide files (`buckets`). What a rule is written against. |
-| `GET /lenses/instruments/:venue` | Every instrument the venue publishes, for a rule's `instruments`. |
 | `POST /lenses/check` | What is wrong with a definition, without storing it. |
-| `POST /lenses/size` | What a definition would put on a disk: `series`, `files`, `bytes`, and of those `pending` and `pendingBytes`, not yet downloaded. Exact, summed off the rollups. |
+| `POST /lenses/size` | What a definition would put on a disk: `partitions`, `files`, `bytes`, and of those `pending` and `pendingBytes`, not yet downloaded. Exact, summed over the partitions it lets through. |
 | `GET /lenses/:slug/size` | The same, for one that exists. |
-| `POST /lenses/resolve` | What it actually selects, per venue: how many series, and the date spans. |
+| `POST /lenses/resolve` | What it actually selects, per venue: how many `slices`, how many `partitions`, and the month `spans` its rules bound them to. |
 
 **Addressed by `slug`, never by number**, in every path.
 

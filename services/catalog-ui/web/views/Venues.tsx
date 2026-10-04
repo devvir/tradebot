@@ -6,7 +6,7 @@ import type { Venue } from '../types';
 
 /** Every venue the catalog holds files for, and how much of it is on disk. */
 export const Venues = ({ lens }: { lens?: string }) => {
-  const asked = useAsk<{ items: Venue[] }>(lensed('/contents/venues', lens), catalogLensed);
+  const asked = useAsk<{ items: Venue[] }>(lensed('/venues', lens), catalogLensed);
 
   return (
     <Waiting asked={asked}>

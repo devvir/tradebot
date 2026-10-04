@@ -1,18 +1,19 @@
 import { lensNamed } from './lens';
 import { syncMembers } from './members';
+import { union } from './spans';
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import type { HeldScope, LensScope, LensSpan, LensWindow, Series } from '../types';
 
 /**
- * A lens as the contents read it: for each venue, the series it lets through
- * and the date spans of each. Null where no lens has that slug.
+ * A lens as the contents read it: for each venue, the slices it lets through
+ * and the months of each, as spans. Null where no lens has that slug.
  *
- * **Read off `lens_series`**, brought up to date first, so it is the same answer
+ * **Read off `lens_member`**, brought up to date first, so it is the same answer
  * the listing and the sizes read — and nothing here evaluates a rule.
  *
- * **Held until the lens changes**: until it is saved again, or rows are added
- * for series that appeared. Either moves what is compared below, so a held scope
- * is never stale and never thrown away while it is still true.
+ * **Held until the lens changes**: until it is saved again, or partitions are
+ * added to it. Either moves what is compared below, so a held scope is never
+ * stale and never thrown away while it is still true.
  */
 export const lensScope = (db: DatabaseSync, slug: string): LensScope | null => {
   const lens = lensNamed(db, slug);
@@ -21,7 +22,7 @@ export const lensScope = (db: DatabaseSync, slug: string): LensScope | null => {
 
   syncMembers(db, lens);
 
-  const through = (db.prepare('SELECT series_through AS at FROM lens WHERE id = ?').get(lens.id!) as { at: number }).at;
+  const through = (db.prepare('SELECT partitions_through AS at FROM lens WHERE id = ?').get(lens.id!) as { at: number }).at;
   const held    = SCOPES.get(slug);
 
   if (held && held.updatedAt === lens.updatedAt && held.through === through) return held.scope;
@@ -29,18 +30,16 @@ export const lensScope = (db: DatabaseSync, slug: string): LensScope | null => {
   const scope = new Map<string, Map<number, LensSpan[]>>();
 
   for (const row of db.prepare(
-    `SELECT v.name AS venue, l.series_id AS seriesId, l.lo, l.hi
-       FROM lens_series l
-       JOIN series s ON s.id = l.series_id
-       JOIN pattern p ON p.id = s.pattern_id
-       JOIN venue v ON v.id = p.venue_id
-      WHERE l.lens_id = ?`,
-  ).all(lens.id!) as { venue: string; seriesId: number; lo: string; hi: string }[]) {
+    `SELECT c.venue, q.slice_id AS sliceId, q.month
+       FROM lens_member l
+       JOIN partition q ON q.id = l.partition_id
+       JOIN slice c     ON c.id = q.slice_id
+      WHERE l.lens_id = ?
+      ORDER BY q.slice_id, q.month`,
+  ).all(lens.id!) as { venue: string; sliceId: number; month: string }[]) {
     const venue = scope.get(row.venue) ?? new Map<number, LensSpan[]>();
-    const spans = venue.get(row.seriesId) ?? [];
 
-    spans.push({ from: row.lo === '' ? null : row.lo, to: row.hi === '~' ? null : row.hi.slice(0, 6) });
-    venue.set(row.seriesId, spans);
+    venue.set(row.sliceId, union(venue.get(row.sliceId) ?? [], { from: row.month, to: row.month }));
     scope.set(row.venue, venue);
   }
 
@@ -50,8 +49,9 @@ export const lensScope = (db: DatabaseSync, slug: string): LensScope | null => {
 };
 
 /**
- * Series as a lens sees them: only those it lets through, each with its first
- * and last file **inside the lens's dates**, and none with no file inside them.
+ * Series as a lens sees them: only those of a slice it lets through, each with
+ * its first and last file **inside the lens's months**, and none with no file
+ * inside them.
  *
  * **Exact where it is asked to be.** A series the lens cuts then reports the
  * oldest and newest file it actually holds within the lens — one indexed read
@@ -74,7 +74,7 @@ export const throughLens = (
   const read = bounds(db);
 
   for (const row of rows) {
-    const held = spans.get(row.id!);
+    const held = spans.get(row.sliceId);
 
     if (! held || row.first === null) continue;
 
@@ -129,7 +129,7 @@ const bounds = (db: DatabaseSync): StatementSync => {
 
 const BOUNDS = new WeakMap<DatabaseSync, StatementSync>();
 
-/** The outermost dates of a series' spans; null where any of them is open that way. */
+/** The outermost dates of a slice's spans; null where any of them is open that way. */
 const windowOf = (spans: readonly LensSpan[]): LensWindow => ({
   from: spans.some(one => one.from === null) ? null : spans.reduce((min, one) => (one.from! < min ? one.from! : min), spans[0]!.from!),
   to:   spans.some(one => one.to === null) ? null : spans.reduce((max, one) => (one.to! > max ? one.to! : max), spans[0]!.to!),

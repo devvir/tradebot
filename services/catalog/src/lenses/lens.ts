@@ -1,11 +1,10 @@
-import { lastDay } from './spans';
 import { dropMembers, rebuildMembers } from './members';
-import { GLOBAL, rulesFor, spansFor, venuesIn } from './rules';
-import { monthTotals, seriesFor, venueIds, venues } from '../queries';
+import { GLOBAL, lets, rulesFor, spansFor, venuesIn } from './rules';
+import { partitionsOf, slicesOf } from '../partitions';
+import { seriesFor, venueIds, venues } from '../queries';
 import type { DatabaseSync } from 'node:sqlite';
 import type {
-  Lens, LensDefinition, LensFigures, LensOption, LensProblem, LensResolved, LensRow, LensRule, LensSize, LensSlice, LensSpan,
-  Series,
+  Lens, LensDefinition, LensOption, LensProblem, LensResolved, LensRow, LensRule, LensSize, LensSlice, Partition,
 } from '../types';
 
 /**
@@ -126,36 +125,60 @@ export const dropLens = (db: DatabaseSync, slug: string): boolean => {
 };
 
 /**
- * What a lens lets through: the series, and when.
- *
- * **Three steps, in this order, because of where each dimension lives.** Market,
- * dataset, variant and grain are properties of the *pattern*; the instrument is a
- * property of the *series*; the date is a property of the *file*. So this answers
- * the first two — a fold over rows already in memory — and hands back the date
- * bounds for whoever scans the large table.
+ * What a definition says of each venue's slices: the ones it lets through, and
+ * the months of each.
  *
  * **Includes minus excludes**, in no order: what any include matches, less what
- * any exclude matches (see `spansFor`). A series nothing included is absent
- * rather than empty.
+ * any exclude matches (see `spansFor`). A slice nothing included is absent
+ * rather than empty, and so is a venue with none.
  */
-export const resolve = (db: DatabaseSync, definition: LensDefinition): Map<string, LensSlice[]> => {
+export const resolveSlices = (db: DatabaseSync, definition: LensDefinition): Map<string, LensSlice[]> => {
   const out = new Map<string, LensSlice[]>();
 
   for (const venue of venuesIn(db, definition)) {
-    const slices = slicesFor(db, venueIds(db, venue), rulesFor(definition, venue));
+    const rules = rulesFor(definition, venue);
+    const held  = slicesOf(db, venue)
+      .map(slice => ({ slice, spans: spansFor(slice, rules) }))
+      .filter(one => one.spans.length > 0);
 
-    if (slices.length > 0) out.set(venue, slices);
+    if (held.length > 0) out.set(venue, held);
   }
 
   return out;
 };
 
-/** What a definition selects, per venue: how many series, and the date spans among them. */
-export const resolvedSummary = (db: DatabaseSync, definition: LensDefinition): Record<string, LensResolved> =>
-  Object.fromEntries([...resolve(db, definition)].map(([venue, slices]) => [venue, {
-    series: slices.length,
-    spans:  [...new Set(slices.flatMap(one => one.spans.map(span => `${span.from ?? ''}..${span.to ?? ''}`)))].sort(),
+/**
+ * What a definition lets through: for each venue, its partitions.
+ *
+ * **Two steps, because of where each dimension lives.** Market, dataset,
+ * variant, grain and bundle are traits of a *slice*, and the date is the
+ * *partition's* month. So the rules are folded once per slice, into the months
+ * it is let through for, and each of its partitions asks whether it is inside
+ * them.
+ */
+export const resolve = (db: DatabaseSync, definition: LensDefinition): Map<string, Partition[]> => {
+  const out = new Map<string, Partition[]>();
+
+  for (const [venue, slices] of resolveSlices(db, definition)) {
+    const spans = new Map(slices.map(one => [one.slice.id, one.spans]));
+    const held  = partitionsOf(db, venue).filter(one => lets(spans.get(one.sliceId) ?? [], one.month));
+
+    if (held.length > 0) out.set(venue, held);
+  }
+
+  return out;
+};
+
+/** What a definition selects, per venue: how many slices, how many partitions, and the months as its rules bound them. */
+export const resolvedSummary = (db: DatabaseSync, definition: LensDefinition): Record<string, LensResolved> => {
+  const partitions = resolve(db, definition);
+
+  return Object.fromEntries([...resolveSlices(db, definition)].map(([venue, slices]) => [venue, {
+    slices:     slices.length,
+    partitions: partitions.get(venue)?.length ?? 0,
+    spans:      [...new Set(slices.flatMap(one => one.spans.map(span => `${span.from ?? ''}..${span.to ?? ''}`)))].sort(),
   }]));
+};
 
 /**
  * What a venue publishes, as a rule is written against.
@@ -195,31 +218,7 @@ export const lensOptions = (db: DatabaseSync, venue: string): LensOption[] => {
     || a.variant.localeCompare(b.variant) || a.grain.localeCompare(b.grain));
 };
 
-/**
- * The instruments a rule may name, in the venue's own spelling.
- *
- * **`*` is offered every venue's**, for the same reason its datasets are: a rule
- * about all of them may name an instrument only one of them lists.
- *
- * The bucket is left out, as it is everywhere else — it is offered on its own,
- * because no venue's instrument list contains it.
- */
-export const lensInstruments = (db: DatabaseSync, venue: string): string[] => {
-  const names = venue === GLOBAL
-    ? [...new Set(venues(db).map(one => one.name))]
-    : [venue];
-
-  const out = new Set<string>();
-
-  for (const name of names)
-    for (const id of venueIds(db, name))
-      for (const series of seriesFor(db, id))
-        if (series.symbol !== BUCKET) out.add(series.symbol);
-
-  return [...out].sort();
-};
-
-/** The venue-wide file, which is never in a venue's instrument list. */
+/** The venue-wide file's name, where an instrument's would be. */
 const BUCKET = '@';
 
 /**
@@ -325,6 +324,10 @@ const faultsIn = (
        * collects up to the 14th — and a file covering a whole month cannot be
        * halved by one, so the two ends would stop meaning the same thing.
        */
+      if (rule.bundle !== undefined && rule.bundle !== 'instrument' && rule.bundle !== 'market')
+        out.push({ venue, rule: at, field: 'bundle',
+          message: `'${String(rule.bundle)}' is not a bundle. It is instrument or market; leave it out for both.` });
+
       for (const [field, bound] of [['from', rule.from], ['to', rule.to]] as const)
         if (bound !== undefined && ! /^\d{4}(0[1-9]|1[0-2])$/.test(bound))
           out.push({ venue, rule: at, field,
@@ -346,8 +349,8 @@ const faultsIn = (
  *
  * **A rule groups what it can, and a filter that fits only part of the group
  * drops the rest without a word.** `monthly` over two datasets of which one is
- * daily-only matches nothing of that one; `@` over datasets of which one has no
- * venue-wide file adds nothing there. Each is an empty selection that reads
+ * daily-only matches nothing of that one; a bundle over datasets of which one is
+ * not published in it adds nothing there. Each is an empty selection that reads
  * later as a decision, so it is refused naming what it misses — which is what
  * says where to split the rule.
  *
@@ -363,9 +366,9 @@ const unevenIn = (
   venue:   string,
 ): LensProblem[] => {
   const grains = rule.grains && rule.grains.length > 0 ? new Set<string>(rule.grains) : null;
-  const wantsBuckets = (rule.instruments ?? []).includes(BUCKET);
+  const bundle = rule.bundle;
 
-  if (! grains && ! wantsBuckets) return [];
+  if (! grains && ! bundle) return [];
 
   if (! (rule.markets && rule.markets.length > 0) && ! (rule.datasets && rule.datasets.length > 0)) return [];
 
@@ -393,15 +396,19 @@ const unevenIn = (
         message: `${[...grains].join(', ')} matches nothing of ${named(without)} — split those into a rule of their own.` });
   }
 
-  if (wantsBuckets) {
+  if (bundle) {
+    const held = (one: LensOption): number => (bundle === 'market' ? one.buckets : one.series - one.buckets);
+
     // Only in the grains the rule takes: a daily venue-wide file is nothing to a monthly rule.
     const without = [...groups]
-      .filter(([, all]) => ! all.some(one => one.buckets > 0 && (! grains || grains.has(one.grain))))
+      .filter(([, all]) => ! all.some(one => held(one) > 0 && (! grains || grains.has(one.grain))))
       .map(([key]) => key);
 
+    const what = bundle === 'market' ? 'venue-wide file' : 'file per instrument';
+
     if (without.length > 0)
-      out.push({ venue, rule: at, field: 'instruments',
-        message: `${named(without)} ${without.length === 1 ? 'has' : 'have'} no venue-wide file, so @ selects nothing there — split those into a rule of their own.` });
+      out.push({ venue, rule: at, field: 'bundle',
+        message: `${named(without)} ${without.length === 1 ? 'has' : 'have'} no ${what}, so the ${bundle} bundle selects nothing there — split those into a rule of their own.` });
   }
 
   return out;
@@ -412,79 +419,22 @@ const unevenIn = (
  * asks on every change. A saved lens is sized off its rows instead; see
  * `savedLensSize`.
  *
- * Exact, always: a definition taking whole venues is summed off `rollup_venue`,
- * and anything narrower off `rollup_series` — see `figuresOf`. Neither reads a
- * file.
+ * Exact, always: summed over the partitions the definition lets through, each of
+ * which carries its own counts. No file is read.
  */
 export const lensSize = (db: DatabaseSync, definition: LensDefinition): LensSize => {
-  const total: LensSize = { series: 0, files: 0, bytes: 0, pending: 0, pendingBytes: 0 };
+  const total: LensSize = { partitions: 0, files: 0, bytes: 0, pending: 0, pendingBytes: 0 };
 
-  /**
-   * **Venue by venue, because the cheapest answer is per venue.** A lens taking a
-   * whole venue between two dates is a sum over a few hundred rollup rows; one
-   * naming three instruments is a handful of file reads. Adding them separately
-   * lets each take the cheapest road.
-   */
-  for (const venue of venuesIn(db, definition)) {
-    const one = lensSizeOf(db, definition, venue);
-
-    total.series       += one.series;
-    total.files        += one.files;
-    total.bytes        += one.bytes;
-    total.pending      += one.pending;
-    total.pendingBytes += one.pendingBytes;
-  }
-
-  return total;
-};
-
-/**
- * What a lens puts on a disk from one venue — see `lensSize`.
- *
- * **`spans` is the venue's resolved scope, where the caller already holds it.**
- * Resolving reads every series of the venue and folds the rules over each, so a
- * caller holding the lens's scope passes it rather than paying for that again.
- */
-export const lensSizeOf = (
-  db:         DatabaseSync,
-  definition: LensDefinition,
-  venue:      string,
-  spans?:     ReadonlyMap<number, readonly LensSpan[]>,
-): LensSize => {
-  const size: LensSize = { series: 0, files: 0, bytes: 0, pending: 0, pendingBytes: 0 };
-  const ids   = venueIds(db, venue);
-  const rules = rulesFor(definition, venue);
-
-  if (ids.length === 0) return size;
-
-  const held = spans ?? spansOf(slicesFor(db, ids, rules));
-
-  size.series = held.size;
-
-  if (held.size === 0) return size;
-
-  /**
-   * **A venue nothing narrows is already added up.** `rollup_venue` holds its files
-   * and bytes per month — the same rollup the surveys page reads — so this is
-   * the one path whose figure cannot disagree with what the rest of the catalog
-   * reports about the same venue, and they are the same question.
-   */
-  const whole = wholeVenue(rules);
-
-  if (whole) {
-    for (const row of monthTotals(db, ids, whole)) {
-      size.files        += row.files;
-      size.bytes        += row.bytes;
-      size.pending      += row.pending;
-      size.pendingBytes += row.pendingBytes;
+  for (const held of resolve(db, definition).values())
+    for (const one of held) {
+      total.partitions++;
+      total.files        += one.files;
+      total.bytes        += one.bytes;
+      total.pending      += one.pending;
+      total.pendingBytes += one.pendingBytes;
     }
 
-    return size;
-  }
-
-  const { files, bytes, pending, pendingBytes } = figuresOf(db, held);
-
-  return { series: held.size, files, bytes, pending, pendingBytes };
+  return total;
 };
 
 /** Whether a slug is one a consumer can pass anywhere without quoting it. */
@@ -540,127 +490,3 @@ const months = (venues: LensDefinition['venues']): LensDefinition['venues'] =>
     ...(rule.from ? { from: rule.from.slice(0, 6) } : {}),
     ...(rule.to   ? { to:   rule.to.slice(0, 6)   } : {}),
   }))]));
-
-/**
- * The months a venue's rules bound it to, where they narrow nothing else.
- *
- * **Null unless the venue is taken whole**, because `rollup_venue` holds one row
- * per month and nothing finer — it cannot be asked about a market or a dataset. Where
- * a lens takes everything between two dates, that row *is* the answer.
- */
-const wholeVenue = (rules: readonly LensRule[]): { from?: string; to?: string } | null => {
-  const [only] = rules;
-
-  if (rules.length !== 1 || ! only || only.effect !== 'include') return null;
-
-  if (only.markets || only.datasets || only.grains || only.instruments) return null;
-
-  return {
-    ...(only.from ? { from: only.from } : {}),
-    ...(only.to   ? { to:   lastDay(only.to) } : {}),
-  };
-};
-
-/** What one venue's rules resolve to, without walking every venue in the lens. */
-const slicesFor = (
-  db:    DatabaseSync,
-  ids:   readonly number[],
-  rules: readonly LensRule[],
-): LensSlice[] => {
-  const out: LensSlice[] = [];
-
-  for (const id of ids)
-    for (const series of seriesFor(db, id)) {
-      const spans = spansFor(series, rules);
-
-      if (spans.length > 0) out.push({ seriesId: series.id!, spans, shape: shapeOf(series) });
-    }
-
-  return out;
-};
-
-/** The series sharing each span, so a span is asked about once for all of them. */
-const bySpan = (spans: ReadonlyMap<number, readonly LensSpan[]>): { span: LensSpan; ids: number[] }[] => {
-  const groups = new Map<string, { span: LensSpan; ids: number[] }>();
-
-  for (const [seriesId, held] of spans)
-    for (const span of held) {
-      const key   = `${span.from ?? ''}..${span.to ?? ''}`;
-      const group = groups.get(key);
-
-      if (group) group.ids.push(seriesId);
-      else groups.set(key, { span, ids: [seriesId] });
-    }
-
-  return [...groups.values()];
-};
-
-/** Slices as a scope holds them: each series' spans, by its id. */
-const spansOf = (slices: readonly LensSlice[]): Map<number, readonly LensSpan[]> =>
-  new Map(slices.map(slice => [slice.seriesId, slice.spans]));
-
-const shapeOf = (series: Series): string =>
-  [series.market, series.dataset, series.variant, series.grain].join('\u0000');
-
-/**
- * What these slices hold, off `rollup_series` — exact at any selection, without
- * reading a file: files, bytes and pending, the first and last month with a file,
- * and how many series hold one. A slice's spans are months, which is the
- * rollup's own grain, so each span is one indexed range of one series.
- *
- * **One statement per distinct span, not per series.** A lens almost always
- * gives every series it selects the same dates, so its series are grouped by
- * span and each group handed to SQLite whole: the seeks are the same, but run
- * inside one statement rather than as a round trip each — 187,403 of them on a
- * lens over two datasets, which took seconds by themselves. And one pass answers
- * every figure, where a pass per figure read the same rows three times.
- */
-const figuresOf = (db: DatabaseSync, spans: ReadonlyMap<number, readonly LensSpan[]>): LensFigures => {
-  const read = db.prepare(
-    `SELECT COALESCE(SUM(files), 0) AS files, COALESCE(SUM(bytes), 0) AS bytes,
-            COALESCE(SUM(pending), 0) AS pending, COALESCE(SUM(pending_bytes), 0) AS pendingBytes,
-            MIN(CASE WHEN files > 0 THEN month END) AS first,
-            MAX(CASE WHEN files > 0 THEN month END) AS last,
-            COUNT(DISTINCT CASE WHEN files > 0 THEN series_id END) AS withFiles
-       FROM rollup_series
-      WHERE series_id IN (SELECT value FROM json_each(?)) AND month >= ? AND month <= ?`);
-
-  const total: LensFigures = { files: 0, bytes: 0, pending: 0, pendingBytes: 0, first: null, last: null, withFiles: 0 };
-
-  for (const { span, ids } of bySpan(spans)) {
-    const one = read.get(JSON.stringify(ids), span.from ?? '000000', span.to ?? '999999') as unknown as LensFigures;
-
-    total.files        += one.files;
-    total.bytes        += one.bytes;
-    total.pending      += one.pending;
-    total.pendingBytes += one.pendingBytes;
-    total.withFiles    += one.withFiles;
-
-    if (one.first !== null && (total.first === null || one.first < total.first)) total.first = one.first;
-    if (one.last !== null && (total.last === null || one.last > total.last)) total.last = one.last;
-  }
-
-  /**
-   * **A series with two spans sits in two groups**, and adding the groups'
-   * counts would count it twice. Rare, so only then is the count asked for
-   * again, as the set of series it actually is.
-   */
-  if ([...spans.values()].some(held => held.length > 1)) total.withFiles = distinctWithFiles(db, spans);
-
-  return total;
-};
-
-/** How many series hold a file inside their spans, each counted once. */
-const distinctWithFiles = (db: DatabaseSync, spans: ReadonlyMap<number, readonly LensSpan[]>): number => {
-  const read = db.prepare(
-    `SELECT DISTINCT series_id AS id FROM rollup_series
-      WHERE series_id IN (SELECT value FROM json_each(?)) AND month >= ? AND month <= ? AND files > 0`);
-
-  const found = new Set<number>();
-
-  for (const { span, ids } of bySpan(spans))
-    for (const row of read.all(JSON.stringify(ids), span.from ?? '000000', span.to ?? '999999') as { id: number }[])
-      found.add(row.id);
-
-  return found.size;
-};

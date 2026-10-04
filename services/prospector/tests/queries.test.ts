@@ -106,7 +106,7 @@ describe('correcting what was recorded', () => {
 
     expect(db.prepare('SELECT downloaded_at FROM file').get())
       .toMatchObject({ downloaded_at: null });
-    expect(db.prepare('SELECT pending, pending_bytes AS pendingBytes, bytes FROM rollup_venue').get())
+    expect(db.prepare('SELECT pending, pending_bytes AS pendingBytes, bytes FROM partition').get())
       .toEqual({ pending: 1, pendingBytes: 99, bytes: 99 });
   });
 

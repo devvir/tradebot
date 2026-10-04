@@ -1,6 +1,9 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { prevPeriod } from '../../../dates';
+import { BUCKET } from '../../../canonical';
+import { grainOf } from '../../../catalog/series';
+import { INSTRUMENT_OF, SLICE_OF } from '../../schema';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Grain } from '../../../types';
 
@@ -32,19 +35,42 @@ export const seed = (db: DatabaseSync, venue: string): void => {
    * `virtual_id` is a line's identity inside the seed and nothing more; the real
    * id belongs to the database and is not knowable until the row is written.
    */
-  const ids = new Map<string, { id: number; grain: Grain }>();
+  const ids = new Map<string, { id: number; grain: Grain; bundle: string }>();
+
+  const slice = db.prepare(SLICE_OF);
 
   const pattern = db.prepare(
-    `INSERT INTO pattern (venue_id, market, dataset, variant, pattern, grain, retired_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO pattern (venue_id, slice_id, pattern, retired_at, holds)
+          VALUES (?, ?, ?, ?, ?)
        RETURNING id`,
   );
 
   for (const row of rows(venue, 'pattern')) {
-    const { id } = pattern.get(found.id, row.market, row.dataset, row.variant,
-      row.pattern, row.grain, row.retired_at || null) as { id: number };
+    /**
+     * **The grain is the pattern's, read off its slots**, as it is wherever a
+     * pattern is met. A seed stating another would plant a shape the walk that
+     * later meets it cannot recognise as the same one.
+     */
+    const grain = grainOf(row.pattern!);
 
-    ids.set(row.virtual_id!, { id, grain: row.grain as Grain });
+    if (row.grain && row.grain !== grain)
+      throw new Error(
+        `${venue}/pattern.csv gives pattern ${row.virtual_id} the grain "${row.grain}", `
+        + `and its slots say "${grain}"`);
+
+    /**
+     * **A shape with no place for an instrument's name holds a whole market**,
+     * and one with a place holds one instrument. `bundle` says otherwise where
+     * a pattern has to.
+     */
+    const bundle = row.bundle || (row.pattern!.includes('{SYMBOL}') ? 'instrument' : 'market');
+
+    const held = slice.get(found.id, row.market, row.dataset, row.variant, grain, bundle) as { id: number };
+
+    const { id } = pattern.get(found.id, held.id, row.pattern,
+      row.retired_at || null, row.holds || 'instrument') as { id: number };
+
+    ids.set(row.virtual_id!, { id, grain, bundle });
   }
 
   /**
@@ -53,9 +79,12 @@ export const seed = (db: DatabaseSync, venue: string): void => {
    * series file cannot be read before the pattern file it points into.
    */
   const series = db.prepare(
-    `INSERT INTO series (pattern_id, symbol, url_symbol, last, tip)
+    `INSERT INTO series (pattern_id, instrument_id, url_symbol, last, tip)
           VALUES (?, ?, ?, ?, ?)`,
   );
+
+  /** A seed names an instrument by its symbol; the table holds the instrument. */
+  const instrument = db.prepare(INSTRUMENT_OF);
 
   const seen = new Map<string, string>();
 
@@ -108,7 +137,16 @@ export const seed = (db: DatabaseSync, venue: string): void => {
      * So the file says `floor` and means it, and the conversion lives here —
      * one place, at the only boundary the two languages meet.
      */
-    series.run(patternId, row.symbol, row.url_symbol || null, row.last || null,
+    /** A series in the wrong bundle would be filed under a slice it does not belong to. */
+    if ((row.symbol === BUCKET) !== (shape.bundle === 'market'))
+      throw new Error(
+        `${venue}/series.csv names "${row.symbol}" under pattern ${row.pattern_id}, `
+        + `whose files hold ${shape.bundle === 'market' ? 'a whole market' : 'one instrument'}`);
+
+    const held = row.symbol === BUCKET ? null
+      : (instrument.get(patternId, row.symbol!) as { id: number }).id;
+
+    series.run(patternId, held, row.url_symbol || null, row.last || null,
       row.floor ? prevPeriod(row.floor, shape.grain) : null);
   }
 

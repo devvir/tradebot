@@ -36,8 +36,8 @@ without learning where they live.
   timeout, a busy venue or a `429` leaves it unreported, to come round on the
   next walk.
   A refusal also pauses every fetch from that venue for a while.
-- Removes every leftover `.part` file when it starts. `.bak` files stay for a
-  person to review.
+- Removes every unfinished download when it starts: they all sit in `.hauler-tmp` at the
+  archives' root, so that is one directory. `.bak` files stay for a person to review.
 
 See [HAULER.md](../../docs/services/HAULER.md) for the design.
 
@@ -50,6 +50,7 @@ See [HAULER.md](../../docs/services/HAULER.md) for the design.
 | `HAULER_LENS` | everything | the slug of the catalog lens to haul through |
 | `HAULER_VENUES` | all | comma-separated venues to haul |
 | `HAULER_CONCURRENCY` | 8 | concurrent fetches per venue |
+| `HAULER_MIN_FREE_GB` | 25 | free space on the archives volume below which nothing more is fetched |
 | `HAULER_ARCHIVES_DIR` | required (compose) | the host directory mounted at `/data/archives` |
 
 Hauler serves no API, and it keeps no state other than the files on disk.

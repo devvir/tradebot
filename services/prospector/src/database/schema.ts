@@ -1,27 +1,64 @@
 /**
- * A series' listing prefix, as SQL over `series` columns spelled `<row>.symbol`
- * and the series' pattern and venue — what the `series_prefix` trigger writes,
- * and what filled the column for series created before it.
+ * A series' listing prefix, as SQL over `series` columns spelled
+ * `<row>.instrument_id` and `<row>.pattern_id` — what the `series_prefix`
+ * trigger writes.
  *
  * **The venue-wide file has no letter folder**: its prefix is
  * `venue/market/dataset[,variant]/@/`, one level shorter than an instrument's.
- * `@` is only ever the bucket, so a key holding it says which depth it has; and
- * `@` sorts below every letter, so the bucket lists first in its dataset.
+ * It is the series with no instrument. `@` is only ever the bucket, so a key
+ * holding it says which depth it has; and `@` sorts below every letter, so the
+ * bucket lists first in its dataset.
  *
  * Any other symbol not starting with a Latin letter files under `_`: one
  * starting with a digit, and gate's Chinese symbols, since `upper` and `GLOB`
  * are ASCII-only in SQLite.
  */
 export const PREFIX_OF = (row: string): string => `
-  SELECT CASE WHEN ${row}.symbol = '' OR instr(${row}.symbol, '/') > 0 THEN NULL ELSE
-           v.name || '/' || p.market || '/' || p.dataset
-           || CASE WHEN p.variant <> '' THEN ',' || p.variant ELSE '' END
-           || '/' || CASE WHEN ${row}.symbol = '@' THEN '@/' ELSE
-                CASE WHEN upper(substr(${row}.symbol, 1, 1)) GLOB '[A-Z]'
-                     THEN upper(substr(${row}.symbol, 1, 1)) ELSE '_' END
-                || '/' || ${row}.symbol || '/' END END
-    FROM pattern p JOIN venue v ON v.id = p.venue_id
+  SELECT CASE WHEN i.symbol = '' OR instr(i.symbol, '/') > 0 THEN NULL ELSE
+           c.venue || '/' || c.market || '/' || c.dataset
+           || CASE WHEN c.variant <> '' THEN ',' || c.variant ELSE '' END
+           || '/' || CASE WHEN i.id IS NULL THEN '@/' ELSE
+                CASE WHEN upper(substr(i.symbol, 1, 1)) GLOB '[A-Z]'
+                     THEN upper(substr(i.symbol, 1, 1)) ELSE '_' END
+                || '/' || i.symbol || '/' END END
+    FROM pattern p JOIN slice c ON c.id = p.slice_id
+    LEFT JOIN instrument i ON i.id = ${row}.instrument_id
    WHERE p.id = ${row}.pattern_id`;
+
+/**
+ * The instrument a series of one pattern is a shape of, created where it is
+ * new: bound to the pattern's id and the symbol, and answering its `id` and
+ * `state`.
+ *
+ * **One statement for every writer of a series** — a survey or a seed — so the
+ * venue's name and the market are read off the pattern's slice, and what kind of
+ * instrument a shape holds off the pattern, in one place. A venue-wide bucket is not asked about: it has
+ * no instrument.
+ */
+export const INSTRUMENT_OF = `
+  INSERT INTO instrument (venue, market, symbol, kind)
+  SELECT c.venue, c.market, ?2, CASE p.holds WHEN 'chain' THEN 'chain' ELSE 'single' END
+    FROM pattern p JOIN slice c ON c.id = p.slice_id
+   WHERE p.id = ?1
+      -- A self-assignment, so the row is untouched and RETURNING still yields it.
+      ON CONFLICT (venue, market, symbol) DO UPDATE SET symbol = excluded.symbol
+  RETURNING id, state`;
+
+/**
+ * The slice a shape publishes into, created where it is new: bound to the
+ * server's id, then the market, dataset, variant, grain and bundle, and
+ * answering its `id`.
+ *
+ * **One statement for every writer of a pattern**, as `INSTRUMENT_OF` is for a
+ * series. The venue is its name, read off the server's row.
+ */
+export const SLICE_OF = `
+  INSERT INTO slice (venue, market, dataset, variant, grain, bundle)
+  SELECT name, ?2, ?3, ?4, ?5, ?6 FROM venue
+   WHERE id = ?1
+      -- A self-assignment, so the row is untouched and RETURNING still yields it.
+      ON CONFLICT (venue, market, dataset, variant, grain, bundle) DO UPDATE SET venue = excluded.venue
+  RETURNING id`;
 
 /**
  * The catalog's schema, in one place, because everything that touches it has to
@@ -56,6 +93,9 @@ CREATE TABLE IF NOT EXISTS file (
   modified      TEXT,
   series_id     INTEGER NOT NULL REFERENCES series (id),
 
+  -- The partition it belongs to: its series' slice, at the month of its date.
+  partition_id  INTEGER NOT NULL REFERENCES partition (id),
+
   -- Whether the venue still serves it: 'confirmed' or 'absent'. A withdrawn
   -- file is marked, never deleted.
   existence     TEXT NOT NULL,
@@ -67,6 +107,9 @@ CREATE TABLE IF NOT EXISTS file (
 
 -- "Which files does this venue hold, in date order".
 CREATE INDEX IF NOT EXISTS file_when ON file (venue_id, date);
+
+-- "Every file of this partition".
+CREATE INDEX IF NOT EXISTS file_partition ON file (partition_id);
 
 -- Candidate URLs that have not been confirmed yet.
 CREATE TABLE IF NOT EXISTS wip (
@@ -229,69 +272,87 @@ CREATE TABLE IF NOT EXISTS lens (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
 
-  -- The newest series the lens has been resolved against. A series past it is
-  -- one the lens has not looked at yet; the catalog adds what it lets through
-  -- to lens_series and moves this forward.
-  series_through INTEGER NOT NULL DEFAULT 0
+  -- The newest partition the lens has been resolved against. A partition past
+  -- it is one the lens has not looked at yet; the catalog adds it to lens_member
+  -- where the lens lets it through, and moves this forward.
+  partitions_through INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 
 CREATE UNIQUE INDEX IF NOT EXISTS lens_slug ON lens (slug);
 
--- What a lens lets through: a series, and a span of its dates. A series the lens
--- cuts a hole in has two rows. Written by the catalog -- rebuilt whole when the
--- lens is saved, extended as new series appear -- and read by every view through
--- the lens.
-CREATE TABLE IF NOT EXISTS lens_series (
-  lens_id   INTEGER NOT NULL REFERENCES lens (id),
-  series_id INTEGER NOT NULL,
+-- What a lens lets through: its partitions. Written by the catalog -- rebuilt
+-- when the lens is saved, extended as new partitions appear -- and read by
+-- every view through the lens.
+CREATE TABLE IF NOT EXISTS lens_member (
+  lens_id      INTEGER NOT NULL REFERENCES lens (id),
+  partition_id INTEGER NOT NULL REFERENCES partition (id),
+  PRIMARY KEY (lens_id, partition_id)
+) STRICT, WITHOUT ROWID;
 
-  -- File dates from and to, inclusive: '' where open below, '~' where open
-  -- above, a month followed by 99 for the last day of a month.
-  lo        TEXT    NOT NULL,
-  hi        TEXT    NOT NULL
+-- One lengthwise cut of a venue's data: a dataset of a market, narrowed by its
+-- finer traits. Every pattern publishes into one, and every file belongs to
+-- one month of one.
+--
+-- The venue is its NAME, not a "venue" row: those are servers, and a slice is
+-- what is published whichever server publishes it.
+CREATE TABLE IF NOT EXISTS slice (
+  id      INTEGER PRIMARY KEY,
+  venue   TEXT    NOT NULL,
+
+  -- Canonical, never the venue's own words: what gate calls "futures_usdt" is
+  -- "perp" here, and its own spelling survives inside "pattern.pattern".
+  market  TEXT    NOT NULL,
+  dataset TEXT    NOT NULL,
+  variant TEXT    NOT NULL DEFAULT '',
+
+  -- How much time one file covers: 'monthly', 'daily', 'hourly', 'minutely'.
+  grain   TEXT    NOT NULL,
+
+  -- How many instruments one file holds: 'instrument' for one, 'market' for
+  -- every instrument of the market at once.
+  bundle  TEXT    NOT NULL,
+  UNIQUE (venue, market, dataset, variant, grain, bundle)
 ) STRICT;
 
-CREATE INDEX IF NOT EXISTS lens_series_key ON lens_series (lens_id, series_id, lo);
-
--- Rollups: totals over \`file\`, kept in step with it so quantities are read
--- rather than aggregated. Per venue and month, for the constant questions.
-CREATE TABLE IF NOT EXISTS rollup_venue (
-  venue_id      INTEGER NOT NULL,
+-- One month of a slice: the unit that is downloaded, stocked and stored whole.
+-- A row exists once a file does.
+--
+-- The counters are totals over the partition's rows of "file", moved by the
+-- writes that move those rows, so quantities are read rather than aggregated.
+CREATE TABLE IF NOT EXISTS partition (
+  id            INTEGER PRIMARY KEY,
+  slice_id      INTEGER NOT NULL REFERENCES slice (id),
   month         TEXT    NOT NULL,           -- yyyymm
   files         INTEGER NOT NULL DEFAULT 0, -- confirmed
   bytes         INTEGER NOT NULL DEFAULT 0,
   pending       INTEGER NOT NULL DEFAULT 0, -- confirmed and not downloaded
   pending_bytes INTEGER NOT NULL DEFAULT 0,
   withdrawn     INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (venue_id, month)
-) STRICT;
 
--- "Which months have work left", across every venue at once.
-CREATE INDEX IF NOT EXISTS rollup_venue_pending ON rollup_venue (pending) WHERE pending > 0;
+  -- What the partition holds, as one number: sixteen hex digits, the sum of
+  -- its confirmed files -- each a 64-bit number hashed from its ETag --
+  -- wrapped at 64 bits. A file added, withdrawn or changed moves it; one the
+  -- venue only moved does not, and the same files give the same version in any
+  -- catalog. Summed by this
+  -- service rather than in SQL, where an overflowing sum becomes a float.
+  version       TEXT    NOT NULL DEFAULT '0000000000000000',
 
--- Per series and month, for anything narrower than a venue — a lens above all.
-CREATE TABLE IF NOT EXISTS rollup_series (
-  series_id     INTEGER NOT NULL,
-  month         TEXT    NOT NULL,           -- yyyymm
-  files         INTEGER NOT NULL DEFAULT 0, -- confirmed
-  bytes         INTEGER NOT NULL DEFAULT 0,
-  pending       INTEGER NOT NULL DEFAULT 0, -- confirmed and not downloaded
-  pending_bytes INTEGER NOT NULL DEFAULT 0,
-  withdrawn     INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (series_id, month)
+  -- When the version last moved. A download moves nothing here.
+  updated_at    TEXT    NOT NULL,
+  UNIQUE (slice_id, month)
 ) STRICT;
 
 -- What a venue's URLs look like: one row per shape, with slots where the parts
 -- that vary go.
 CREATE TABLE IF NOT EXISTS pattern (
   id       INTEGER PRIMARY KEY,
+
+  -- The server that publishes it.
   venue_id INTEGER NOT NULL,
 
-  -- Canonical, never the venue's own words: what gate calls "futures_usdt" is
-  -- "perp" here, and its own spelling survives inside "pattern".
-  market   TEXT    NOT NULL,
-  dataset  TEXT    NOT NULL,
-  variant  TEXT    NOT NULL DEFAULT '',
+  -- What it publishes: its market, dataset, variant, grain and bundle are the
+  -- slice's. One URL shape publishing into two slices is two rows.
+  slice_id INTEGER NOT NULL REFERENCES slice (id),
 
   -- The shape a URL is built from. Everything that is not a slot is literal:
   --
@@ -310,14 +371,16 @@ CREATE TABLE IF NOT EXISTS pattern (
   --   {TRANSFORM:kind:default}   see "transform"
   pattern  TEXT    NOT NULL,
 
-  -- How often the shape publishes, from the finest slot the pattern carries.
-  grain    TEXT    NOT NULL DEFAULT 'monthly',
+  -- What one file of this shape holds: 'instrument', or 'chain' where a file
+  -- carries every expiry of a family under the family's name. It is what makes
+  -- the instruments of its series chains.
+  holds    TEXT    NOT NULL DEFAULT 'instrument',
 
   -- The last date this shape ever served: yyyymm or yyyymmdd, inclusive. NULL
   -- while it is still served. Declared rather than observed, since a missing
   -- file and a tree that has ended are the same answer from an archive.
   retired_at TEXT,
-  UNIQUE (venue_id, market, dataset, pattern)
+  UNIQUE (venue_id, slice_id, pattern)
 ) STRICT;
 
 -- The part of a URL that follows no rule: what one instrument puts where a
@@ -362,6 +425,33 @@ CREATE TABLE IF NOT EXISTS transform (
   PRIMARY KEY (venue_id, market, symbol, dataset, kind, date_from)
 ) STRICT;
 
+-- What a venue trades: one row per instrument, stated once, so that everything
+-- true of the instrument -- whether the venue still lists it, and in time what
+-- it settles in -- is said here rather than repeated by each of its series.
+--
+-- The venue is its NAME, not a "venue" row: those are servers, and an instrument
+-- belongs to the venue whichever server publishes its files.
+CREATE TABLE IF NOT EXISTS instrument (
+  id     INTEGER PRIMARY KEY,
+  venue  TEXT    NOT NULL,
+
+  -- Canonical, as "slice.market" records it.
+  market TEXT    NOT NULL,
+
+  -- The venue's own name for it.
+  symbol TEXT    NOT NULL,
+
+  -- 'single', or 'chain': a family whose files hold every one of its expiries,
+  -- so that its members are only ever seen inside the files. A chain's members
+  -- differ in expiry alone, which is why it can stand as one instrument.
+  kind   TEXT    NOT NULL DEFAULT 'single',
+
+  -- What the venue's listing says today: 'active' or 'delisted'. It says
+  -- nothing about where the files stop -- an archive outlives a listing.
+  state  TEXT    NOT NULL DEFAULT 'active',
+  UNIQUE (venue, market, symbol)
+) STRICT;
+
 -- One instrument's occupancy of one pattern: where its files start, where they
 -- stop, and how far the venue has been asked.
 --
@@ -372,22 +462,19 @@ CREATE TABLE IF NOT EXISTS series (
   id         INTEGER PRIMARY KEY,
   pattern_id INTEGER NOT NULL REFERENCES pattern (id),
 
-  -- The venue's own name for the instrument. "@" where one file carries every
-  -- instrument of a market.
-  symbol     TEXT    NOT NULL DEFAULT '',
+  -- The instrument this series is one shape of, which is where its symbol is.
+  -- NULL for a venue-wide bucket, which holds every instrument of a market and
+  -- so is none of them.
+  instrument_id INTEGER REFERENCES instrument (id),
 
-  -- How the ARCHIVE spells it, where that differs inside the name rather than
-  -- around it. NULL means no transformation; a constant written around the
-  -- symbol belongs in the pattern instead.
+  -- How the ARCHIVE spells the instrument, where that differs inside the name
+  -- rather than around it. NULL means no transformation; a constant written
+  -- around the symbol belongs in the pattern instead.
   url_symbol TEXT,
 
   first      TEXT,  -- oldest date a file has been seen at; NULL where none has
   last       TEXT,  -- newest date a file has been seen at; NULL where none has
   tip        TEXT,  -- settled up to and including this; only ever moves forward
-
-  -- What the venue's listing says today: 'active' or 'delisted'. It says
-  -- nothing about where the files stop -- an archive outlives a listing.
-  state      TEXT    NOT NULL DEFAULT 'active',
 
   -- Where the series' files sit in the catalog's listing:
   -- venue/market/dataset[,variant]/F/symbol/ -- F the symbol's first letter,
@@ -398,11 +485,11 @@ CREATE TABLE IF NOT EXISTS series (
   prefix     TEXT
 ) STRICT;
 
--- What makes two series the same series: the shape, and the name its keys
--- carry. Over the expression rather than the column, so a url_symbol written
--- out and one left implicit collide as they should.
+-- What makes two series the same series: the shape, the instrument, and the
+-- name its keys carry. Over expressions rather than the columns, since SQLite
+-- holds NULLs distinct and a pattern has one bucket.
 CREATE UNIQUE INDEX IF NOT EXISTS series_key
-  ON series (pattern_id, COALESCE(url_symbol, symbol));
+  ON series (pattern_id, COALESCE(instrument_id, 0), COALESCE(url_symbol, ''));
 
 -- "Which files belong to this series, in order", and what state each is in.
 CREATE INDEX IF NOT EXISTS file_series ON file (series_id, date, existence);
@@ -412,9 +499,6 @@ CREATE INDEX IF NOT EXISTS file_series ON file (series_id, date, existence);
 -- of every series the walk passes through.
 CREATE INDEX IF NOT EXISTS file_pending ON file (series_id, date)
   WHERE downloaded_at IS NULL AND existence = 'confirmed';
-
--- "Which series belong to this symbol".
-CREATE INDEX IF NOT EXISTS series_symbol ON series (symbol);
 
 -- The listing's order: a venue's series are one range of it, already sorted as
 -- their keys sort.
@@ -426,6 +510,9 @@ CREATE TRIGGER IF NOT EXISTS series_prefix AFTER INSERT ON series
 BEGIN
   UPDATE series SET prefix = (${PREFIX_OF('NEW')}) WHERE id = NEW.id;
 END;
+
+-- "Which series belong to this instrument".
+CREATE INDEX IF NOT EXISTS series_instrument ON series (instrument_id);
 `;
 
 /**

@@ -20,7 +20,7 @@ import type { BucketPage, Report, ReportAnswer } from './types';
  * lens for every venue, which costs the catalog seconds.
  */
 export const venues = async (): Promise<string[]> => {
-  const body = await ask<{ items: { venue: string }[] }>('/contents/venues', {}, false);
+  const body = await ask<{ items: { venue: string }[] }>('/venues', {}, false);
 
   return body.items.map(one => one.venue);
 };

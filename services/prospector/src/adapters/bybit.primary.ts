@@ -223,7 +223,12 @@ const inspect = (path: string): Inspection => {
     return {
       of: 'series', date: `${year}${month}`,
       found: {
-        market:  'spot',
+        /**
+         * **These are the perpetual's bars.** The path names no market, and the
+         * symbols are spelled as spot's are; the bars themselves match the
+         * perpetual's trade tape and not spot's.
+         */
+        market:  'perp',
         dataset: 'klines',
 
         /**

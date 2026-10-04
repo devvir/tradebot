@@ -11,6 +11,38 @@ disk. How each works is [PROSPECTOR.md](../services/PROSPECTOR.md),
 [CATALOG-API.md](../modules/CATALOG-API.md). Moving stocker onto the catalog is
 [STOCKER.md](STOCKER.md). This is only the rest of the outstanding work.
 
+## Instruments as an entity
+
+An instrument is a row of its own — `(venue name, market, symbol)` — rather than a string every one of
+its series repeats. Its properties are stated once, and series inherit them.
+
+The entity, the link and the state are built — see
+[PROSPECTOR.md](../services/PROSPECTOR.md#storage). What is left:
+
+**Properties.** `margin` (`linear`/`inverse`/`quanto`), `base`, `quote`, `settle`,
+`contract_size`, `expiry`, listed and delisted dates, and one `sources` column — a comma-separated
+note of where the values came from (the venue's listing, a rule over the name, a seed, the files).
+Adapters return them with the listing for live instruments; rules and seeds cover delisted ones.
+Stocker then asks the catalog for margining, and its own symbol rules go.
+
+**Then:** matching instruments across venues, which this opens the door to.
+
+**The live database is fixed in place** so there is an honest backup to compare with, then set aside:
+a catalog built from scratch must arrive at the same place by seeding and discovery.
+
+## Slices and partitions
+
+Built — see [PROSPECTOR.md](../services/PROSPECTOR.md#storage), [CATALOG.md](../services/CATALOG.md)
+and [CATALOG-API.md](../modules/CATALOG-API.md#contents). What is left:
+
+**The live database is a backup, not a catalog.** It was converted in place on 2026-10-04 so it can
+be compared with a fresh one: its partitions carry counts taken from the old rollups, every version
+is zero, and `file` has no `partition_id`. Prospector cannot run on it. The catalog built from
+scratch is the first to hold real versions, and partition counts are what the two are compared by.
+
+**An audit of the counters.** Nothing recounts a partition from its files today. The index on
+`file.partition_id` is what makes it one range read; the check itself is unbuilt.
+
 ## Hauler
 
 In order:
@@ -22,8 +54,7 @@ In order:
    modification time, so a file under the archive with an older date is one nothing listed —
    misfiled, withdrawn, or junk.
 3. **Compare the new catalog against `catalog.bak`** once every backfill has completed.
-4. **The cold scripts, then stocker** ([STOCKER.md](STOCKER.md)), both on hauler's layout. Trucker
-   is removed after them.
+4. **The cold scripts, then stocker** ([STOCKER.md](STOCKER.md)), both on hauler's layout.
 
 **A walk that fails partway waits 30 minutes, not 5.** `found` is only set by a finished walk, so a
 failed listing request discards the progress the walk had made. Connection failures are retried now,

@@ -11,8 +11,9 @@ import type { ListingObject, ListingPage, ListingQuery, ListingRow } from '../ty
  *
  * **A page is one query.** Keys sort by series prefix, then date, then part, and
  * that is how the rows are indexed: `series.prefix` from where the page starts,
- * and each series' files by `(series_id, date)`. Through a lens, each series is
- * looked up in `lens_series` and its files read only within the lens's dates.
+ * and each series' files by `(series_id, date)`. Through a lens, only the series
+ * of a slice the lens holds a partition of are walked, and each one's files are
+ * read only within the months the lens lets through.
  * The page reads until it is full and stops; nothing behind the cursor, outside
  * the prefix or outside the lens is read.
  *
@@ -33,9 +34,8 @@ export const listingPage = (db: DatabaseSync, query: ListingQuery): ListingPage 
   const until   = query.prefix === '' ? LAST : ceiling(seriesPart(query.prefix));
   const objects: ListingObject[] = [];
   const read    = statements(db)[`${query.lens ? 'lens' : 'all'}:${query.pending ? 'pending' : 'any'}`]!;
-  const asked   = query.lens
-    ? [query.lens.id!, from.prefix, until, from.prefix, from.date]
-    : [from.prefix, until, from.prefix, from.date];
+  // The lens, where there is one, then where the page starts, where the prefix ends, and the date to start from.
+  const asked   = [query.lens?.id ?? null, from.prefix, until, from.date];
 
   for (const row of read.iterate(...asked) as Iterable<ListingRow>) {
     const key = keyOf(row.prefix, row.pattern, row);
@@ -105,10 +105,17 @@ const ceiling = (prefix: string): string =>
  *
  * **`pending` reads its own index**, the files not yet downloaded, so a walk of
  * what is owed costs what is owed — never every file the lens covers, which on
- * a backfilled archive is millions of rows to find a handful.
+ * a backfilled archive is millions of rows to find a handful. And it reads only
+ * the partitions that owe anything: each counts its own pending files, so a
+ * series is not asked about a month with none.
  *
  * **`CROSS JOIN` fixes the order**: SQLite never reorders one, so the walk is
- * always the series in prefix order, with the lens looked up for each. Left to
+ * always the series in prefix order, with the lens looked up for each — the
+ * partitions of its slice the lens lets through, and one read of its files per
+ * month.
+ *
+ * **The slices a lens touches are worked out once per page**, before the walk,
+ * so a series of any other slice is passed over at the cost of one lookup. Left to
  * choose, it drove from the lens's rows on the real catalog and sorted the whole
  * result before the first key: 55 seconds for three pages of gate, where the walk
  * answers in a fraction of one.
@@ -121,11 +128,11 @@ const statements = (db: DatabaseSync): Record<string, StatementSync> => {
       `SELECT s.prefix, p.pattern, f.rowid AS id, f.venue_id AS venueId, f.path, f.date, f.size, f.etag,
               f.modified, f.series_id AS seriesId
          FROM series s
-         ${lens ? 'CROSS JOIN lens_series l ON l.series_id = s.id AND l.lens_id = ?' : ''}
-         JOIN file f    ON f.series_id = s.id${lens ? ' AND f.date >= l.lo AND f.date <= l.hi' : ''}
-         JOIN pattern p ON p.id = s.pattern_id
-        WHERE s.prefix >= ? AND s.prefix < ?
-          AND (s.prefix, f.date) >= (?, ?)
+         CROSS JOIN pattern p ON p.id = s.pattern_id
+         ${members(lens, pending)}
+         CROSS JOIN file f ON f.series_id = s.id${lens || pending ? " AND f.date >= q.month AND f.date <= q.month || '99'" : ''}
+        WHERE s.prefix >= ?2 AND s.prefix < ?3
+          AND (s.prefix, f.date) >= (?2, ?4)${touched(lens, pending)}
           AND f.existence = 'confirmed'${pending ? ' AND f.downloaded_at IS NULL' : ''}
         ORDER BY s.prefix, f.date, f.path`);
 
@@ -141,5 +148,29 @@ const statements = (db: DatabaseSync): Record<string, StatementSync> => {
 
   return held;
 };
+
+/**
+ * The partitions of a series' slice that a walk reads: all of them where there
+ * is neither a lens nor a question of what is owed — then there is no join at
+ * all — and otherwise those the lens lets through, those still owing a file,
+ * or both.
+ */
+const members = (lens: boolean, pending: boolean): string =>
+  (! lens && ! pending ? '' : `
+         CROSS JOIN partition q ON q.slice_id = p.slice_id${pending ? ' AND q.pending > 0' : ''}${lens ? `
+         CROSS JOIN lens_member l ON l.lens_id = ?1 AND l.partition_id = q.id` : ''}`);
+
+/**
+ * The slices a walk reads at all: those with a partition the lens lets through,
+ * still owing a file where that is what is asked. Worked out once per page, so
+ * a series of any other slice costs one lookup rather than one per month.
+ */
+const touched = (lens: boolean, pending: boolean): string =>
+  (lens ? `
+          AND p.slice_id IN (SELECT o.slice_id FROM lens_member m JOIN partition o ON o.id = m.partition_id
+                              WHERE m.lens_id = ?1${pending ? ' AND o.pending > 0' : ''})`
+    : pending ? `
+          AND p.slice_id IN (SELECT slice_id FROM partition WHERE pending > 0)`
+      : '');
 
 const PREPARED = new WeakMap<DatabaseSync, Record<string, StatementSync>>();

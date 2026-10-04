@@ -12,18 +12,19 @@ modified, moved or deleted.
 ## What it does
 
 - Asks the catalog, through a lens, what every partition of the archives holds
-- Stocks each partition that is fully downloaded, on disk as the catalog lists it, and not yet in
-  the vault at its current version
+- Stocks each partition that is fully downloaded, unchanged in the catalog for a while, on disk
+  as the catalog says, and not yet in the vault at its current revision
 - Decodes `.zip`, `.csv.gz`, `.tar.gz` and Excel-inside-zip; `.csv.gz` is handed to the query
   engine untouched, since it reads gzip natively
 - Maps each format onto a **canonical table** with one schema across all venues, filling NULL
   where a venue publishes nothing
 - Converts every timestamp to **int64 microseconds UTC**, inferring each value's unit
-- Writes zstd Parquet, sorted by `ts`, one file per instrument, one directory per partition
-- Keeps no records: a partition's version directory in the vault is the record
+- Writes zstd Parquet: a small month as one file ordered by symbol and time, a large one as a
+  file per instrument
+- Keeps no records: a stocked partition's files carry its revision in their names
 - Runs long-lived, sweeping on a timer so files that land unattended are picked up on their own
 
-Full technical detail — how a sweep decides, the version, the path convention, the canonical
+Full technical detail — how a sweep decides, the revision, the path convention, the canonical
 schemas — is in [docs/services/STOCKER.md](../../docs/services/STOCKER.md). Every input format,
 and what is not mapped yet, is in
 [docs/services/STOCKER-PARTITIONS.md](../../docs/services/STOCKER-PARTITIONS.md).
@@ -31,17 +32,21 @@ and what is not mapped yet, is in
 ## Layout
 
 ```
-<vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…]/YYYYMM/<version>/{FL}/symbol=…/
-    {table}.{venue}.{market}.{symbol}[.{interval|kind}].{YYYYMM}.parquet
+<vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…]/@/<YYYYMM>.<revision>.parquet
+<vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…]/<symbol>/<YYYYMM>.<revision>.parquet
 ```
 
-`…/YYYYMM/<version>/` is one partition. The month, the version and `{FL}` — the symbol's first
-letter — are bare segments a query engine ignores; the `key=value` levels are read back as
-columns and pruned on:
+A month is one file under `@` holding every instrument, or — where its archive files weigh more
+than `STOCKER_SPLIT_GB` — a file per instrument under its symbol. The `key=value` levels are read
+back as columns and pruned on; `@`, the symbol folders and the file names are bare, and the symbol
+is a column of every file:
 
 ```sql
-SELECT * FROM read_parquet('<vault>/venue=okx/market=perp/dataset=trades/**/*.parquet', hive_partitioning=true)
-WHERE symbol = 'BTC-USDT-SWAP'
+SELECT * FROM read_parquet([
+  '<vault>/venue=okx/market=perp/dataset=trades/@/*.parquet',
+  '<vault>/venue=okx/market=perp/dataset=trades/BTC-USDT/*.parquet'
+], hive_partitioning=true)
+WHERE symbol = 'BTC-USDT'
 ```
 
 ## Storage
@@ -69,13 +74,16 @@ order-book month is ~23 GB and in a container `/tmp` is the overlay filesystem.
 | `STOCKER_LENS` | no | _(none)_ | The lens the catalog is read through; none reads the whole catalog |
 | `STOCKER_VENUES` | no | _(all)_ | Comma-separated venue filter, case-insensitive; an unknown venue fails startup |
 | `STOCKER_TABLES` | no | _(all)_ | Comma-separated table filter, case-insensitive; an unknown table fails startup |
-| `STOCKER_SYMBOLS` | no | _(all)_ | Symbol tokens, matched as case-insensitive substrings. A partition stocked through it carries it in its version |
+| `STOCKER_SYMBOLS` | no | _(all)_ | Symbol tokens, matched as case-insensitive substrings. A partition stocked through it carries it in its revision |
 | `STOCKER_START_MONTH` | no | _(none)_ | Oldest month to stock, inclusive. `yyyy-mm`, `yyyymm` or `yymm` |
 | `STOCKER_END_MONTH` | no | _(none)_ | Newest month to stock, inclusive |
 | `STOCKER_CONCURRENCY` | no | `2` | Instruments built at once, each holding a month-sized sort |
 | `STOCKER_SCAN_MINUTES` | no | `30` | Minutes between sweeps |
 | `STOCKER_THREADS` | no | `4` | Query engine threads |
 | `STOCKER_MIN_FREE_GB` | no | `20` | No partition is started below this much free space on the vault volume |
+| `STOCKER_MEMORY_GB` | no | `4` | Memory the query engine may use before it spills to disk |
+| `STOCKER_SPLIT_GB` | no | `1` | A month whose archive files weigh more than this is stored as a file per instrument |
+| `STOCKER_COOL_HOURS` | no | `1` | Hours a partition must have gone unchanged in the catalog before it is stocked |
 
 `STOCKER_ARCHIVES_DIR` and `STOCKER_VAULT_DIR` also override the container paths when running
 outside Docker.

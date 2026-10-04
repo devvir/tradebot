@@ -444,7 +444,7 @@ export const pathsIn = (db: DatabaseSync, venueId: number, from: Edge, to: Edge)
  *
  * **Generation writes nothing but backlog rows.** A generated key carries no
  * size and no etag, so it can never be `ready` — `putFiles` takes every one of
- * them down the parking branch and touches neither `file` nor the month rollup.
+ * them down the parking branch and touches neither `file` nor a partition.
  * What it does do is spend a slice on each page, and an update's page is a
  * single series: sixteen rows or so, for one turn of the event loop apiece.
  * Every venue generating at once shares that queue, so the whole catalog's

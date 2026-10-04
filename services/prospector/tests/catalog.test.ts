@@ -64,9 +64,9 @@ describe('opening', () => {
    */
   it('enforces column types', () => {
     expect(() => db.prepare(
-      `INSERT INTO file (venue_id, path, date, size, existence, seen_at, series_id)
-            VALUES (1, 'a', 'b', 'not-a-number', 'confirmed', 'now', ?)`)
-      .run(seriesOn(1)))
+      `INSERT INTO file (venue_id, path, date, size, existence, seen_at, series_id, partition_id)
+            VALUES (1, 'a', 'b', 'not-a-number', 'confirmed', 'now', 1, 1)`)
+      .run())
       .toThrow(/INTEGER/);
   });
 
@@ -226,6 +226,22 @@ describe('re-walking', () => {
       .toMatchObject({ downloaded_at: null });
     expect(db.prepare('SELECT etag, downloaded_at FROM revision').get())
       .toMatchObject({ etag: 'v1', downloaded_at: 'D1' });
+  });
+
+  /**
+   * **A venue republishing the same bytes has changed nothing anyone holds.**
+   * The new date is recorded; the file is not owed again and its trail is left
+   * alone.
+   */
+  it('records a new date on the same bytes, and owes nothing for it', async () => {
+    await seed();
+    markDownloaded(db, [{ venueId: 1, path: 'spot/a-2025-03.zip' }], 'D1');
+
+    await putFiles(db, [file('spot/a-2025-03.zip', { seenAt: 'T2', size: 10, etag: 'v1', modified: 'later' })]);
+
+    expect(db.prepare('SELECT modified, downloaded_at FROM file').get())
+      .toMatchObject({ modified: 'later', downloaded_at: 'D1' });
+    expect(db.prepare('SELECT count(*) n FROM revision').get()).toMatchObject({ n: 0 });
   });
 
   it('answers what changed since a given moment', async () => {

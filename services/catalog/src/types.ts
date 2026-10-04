@@ -26,6 +26,9 @@ export type Config = {
 export interface Series {
   id:        number;
   venueId:   number;
+
+  /** The slice its pattern publishes into, which is where a lens looks it up. */
+  sliceId:   number;
   symbol:    string;
   urlSymbol: string | null;
   market:    string;
@@ -38,9 +41,84 @@ export interface Series {
   retiredAt: string | null;
 }
 
-/** A series as a lens is evaluated against it: with the name of its venue. */
-export interface LensMember extends Series {
-  venue: string;
+/**
+ * One lengthwise cut of a venue's data: a dataset of a market, narrowed by its
+ * variant, its grain and its bundle. A lens's rules are matched against these.
+ */
+export interface Slice {
+  id:      number;
+  venue:   string;
+  market:  string;
+  dataset: string;
+  variant: string;
+  grain:   Grain;
+  bundle:  Bundle;
+}
+
+/** What a partition holds, and the version that says so. */
+export interface PartitionFigures {
+  month:        string;
+  files:        number;
+  bytes:        number;
+
+  /** Of those, the files not yet downloaded, and what they weigh. */
+  pending:      number;
+  pendingBytes: number;
+  withdrawn:    number;
+
+  /** Sixteen hex digits that move whenever a file is added, withdrawn or changed. */
+  version:      string;
+
+  /** When the version last moved. */
+  updatedAt:    string;
+}
+
+/** One month of a slice, as the `partition` table joined to its slice reads. */
+export interface Partition extends PartitionFigures, Omit<Slice, 'id'> {
+  id:      number;
+  sliceId: number;
+}
+
+/** A slice with the partitions it holds, as the contents serve it. */
+export interface SliceContents extends Omit<Slice, 'id' | 'venue'> {
+  partitions: PartitionFigures[];
+}
+
+/**
+ * Which partitions a caller means. Every field is optional and absent means
+ * "any".
+ */
+export interface PartitionFilter {
+  market?:   string;
+
+  /** Any of these datasets, case-blind. */
+  datasets?: readonly string[];
+  variant?:  string;
+  grain?:    Grain;
+  bundle?:   Bundle;
+
+  /** Only partitions with nothing left to download. */
+  downloaded?: boolean;
+
+  /**
+   * Only partitions whose version last moved before this instant — an ISO
+   * timestamp, compared as text. What a consumer waiting for a partition to go
+   * quiet asks with.
+   */
+  settledBefore?: string;
+}
+
+/** A partition as a lens is evaluated against it: where it is, and which month. */
+export interface PartitionMember extends Slice {
+  partitionId: number;
+  month:       string;
+}
+
+/** The partition reads, prepared once per database. */
+export interface PartitionStatements {
+  all:     StatementSync;
+  through: StatementSync;
+  slices:  StatementSync;
 }
 
 /** One host of a venue, as the `venue` table holds it. */
@@ -56,7 +134,7 @@ export interface QueryStatements {
   series: StatementSync;
 }
 
-/** A venue's totals, off the venue rollup. */
+/** A venue's totals, summed over its partitions. */
 export interface VenueTotals {
   venue:        string;
   firstMonth:   string | null;
@@ -71,7 +149,7 @@ export interface VenueTotals {
 /**
  * A named way of looking at the catalog.
  *
- * **Where a lens is in force, its slice *is* the catalog.** A consumer asks what
+ * **Where a lens is in force, what it lets through *is* the catalog.** A consumer asks what
  * exists and gets the lens's answer; the database stays complete and unfiltered
  * underneath. That is the whole idea, and the reason it is not called a
  * selection: nothing is being gathered, something is being looked through.
@@ -108,6 +186,9 @@ export interface LensDefinition {
   venues: Record<string, LensRule[]>;
 }
 
+/** How many instruments one file holds: one, or all of a market's. */
+export type Bundle = 'instrument' | 'market';
+
 /**
  * One rule, applied in order to what the rules before it left.
  *
@@ -119,7 +200,7 @@ export interface LensDefinition {
  *
  * **A rule states only what it constrains.** An absent dimension means all of it,
  * so `{ effect: 'include', datasets: ['trades'] }` is every market, variant,
- * grain and instrument, for all time.
+ * grain and bundle, for all time.
  *
  * Writing `markets: 'all'` everywhere was considered and rejected: it is not more
  * explicit, only longer, and it ages in the wrong direction. Datasets, variants
@@ -147,14 +228,13 @@ export interface LensRule {
   grains?:      Grain[];
 
   /**
-   * Matched against `series.symbol`, in the venue's own spelling.
+   * How many instruments one file holds: `instrument` is the files of one
+   * each, `market` the venue-wide files carrying every instrument at once.
    *
-   * **`@` is an ordinary value here.** It is the venue-wide file covering every
-   * instrument of a market, and naming it selects those series with no special
-   * case anywhere — so buckets for cold storage and a few instruments on their
-   * own for simulation is one rule with both in it.
+   * **A rule never names an instrument**, so what it selects is always whole:
+   * every instrument a market publishes in that form, or none of them.
    */
-  instruments?: string[];
+  bundle?:      Bundle;
 
   /** Inclusive `yyyymmdd` bounds on the period a file covers; absent is open. */
   from?:        string;
@@ -175,7 +255,7 @@ export interface LensOption {
   grain:   Grain;
   series:  number;
 
-  /** Of those, the venue-wide files — the series an `@` instrument selects. */
+  /** Of those, the venue-wide files — the series the `market` bundle selects. */
   buckets: number;
 }
 
@@ -204,6 +284,20 @@ export interface LensRow {
   updated_at: string;
 }
 
+/** What a saved lens holds of one venue — see `lensFigures`. */
+export interface LensVenueFigures {
+  /** Partitions the lens lets through. */
+  partitions:   number;
+  files:        number;
+  bytes:        number;
+  pending:      number;
+  pendingBytes: number;
+
+  /** The first and last month it holds a file in. */
+  first:        string | null;
+  last:         string | null;
+}
+
 /**
  * How much a lens would put on a disk.
  *
@@ -212,31 +306,11 @@ export interface LensRow {
  * lens should let through is this one — and it has to answer while somebody is
  * still choosing.
  *
- * Always exact: summed off the rollups, never off the files themselves.
+ * Always exact: summed off the partitions, never off the files themselves.
  */
-/**
- * Everything a venue row says under a lens, from one pass over the rollup: its
- * size, its first and last month, and how many series hold a file inside it.
- */
-export interface LensFigures {
-  files:        number;
-  bytes:        number;
-  pending:      number;
-  pendingBytes: number;
-  first:        string | null;
-  last:         string | null;
-  withFiles:    number;
-}
-
-/** What a saved lens holds of one venue — see `lensFigures`. */
-export interface LensVenueFigures extends LensFigures {
-  /** Series the lens lets through, whether or not any holds a file inside it. */
-  series: number;
-}
-
 export interface LensSize {
-  /** Series the lens selects. */
-  series:       number;
+  /** Partitions the lens selects. */
+  partitions:   number;
   files:        number;
   bytes:        number;
 
@@ -248,21 +322,14 @@ export interface LensSize {
   pendingBytes: number;
 }
 
-/** What a lens resolves to: the series it lets through, and when. */
+/** A slice a definition lets through, and the months it lets it through for. */
 export interface LensSlice {
-  seriesId: number;
-  spans:    LensSpan[];
-
-  /**
-   * Market, dataset, variant and grain, joined — what this series is a rendering
-   * of. Carried so that sizing can weigh a shape against its own series rather
-   * than against whatever the sample happened to land on.
-   */
-  shape:    string;
+  slice: Slice;
+  spans: LensSpan[];
 }
 
 /**
- * A stretch of time a lens lets through for one series.
+ * A stretch of time a lens lets through for one slice.
  *
  * **A list of them, because a rule can carve a hole.** Including 2019 to 2021 and
  * then excluding 2020 leaves two spans, and collapsing that to one range would
@@ -274,21 +341,22 @@ export interface LensSpan {
   to:   string | null;
 }
 
-/** The outermost dates of a series' spans under a lens — null where open that way. */
+/** The outermost dates of a slice's spans under a lens — null where open that way. */
 export interface LensWindow {
   from: string | null;
   to:   string | null;
 }
 
 /**
- * A lens as every query applies it: for each venue, the series it lets through
- * and the spans of each. A series absent from a venue's map is not in the lens.
+ * A lens as the contents apply it: for each venue, the slices it lets through
+ * and the months of each, as spans. A slice absent from a venue's map is not in
+ * the lens.
  */
 export type LensScope = ReadonlyMap<string, ReadonlyMap<number, readonly LensSpan[]>>;
 
 /** A resolved lens, and what it was resolved from. */
 export interface HeldScope {
-  /** The lens's `updatedAt` and `series_through` when it was read: a change to either replaces it. */
+  /** The lens's `updatedAt` and `partitions_through` when it was read: a change to either replaces it. */
   updatedAt: string;
   through:   number;
   scope:     LensScope;
@@ -484,20 +552,6 @@ export interface DatasetContents {
  */
 export type Grain = 'monthly' | 'daily' | 'hourly' | 'minutely';
 
-/** One month of one venue, with the state it is in. */
-export interface MonthTotals {
-  month:        string;
-  state:        MonthState;
-  files:        number;
-  bytes:        number;
-  pending:      number;
-  pendingBytes: number;
-  withdrawn:    number;
-}
-
-/** A month either has something left to download or it does not. */
-export type MonthState = 'open' | 'closed';
-
 /**
  * Which series a caller means, in the catalog's own vocabulary.
  *
@@ -597,8 +651,9 @@ export interface LensWrite {
 
 /** What a definition selects at one venue. */
 export interface LensResolved {
-  series: number;
-  spans:  string[];
+  slices:     number;
+  partitions: number;
+  spans:      string[];
 }
 
 /**

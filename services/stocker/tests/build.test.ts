@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DuckDBInstance } from '@duckdb/node-api';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { buildBatch, buildGroup } from '../src/build';
+import { buildBatch, buildGroup, bundleStaged } from '../src/build';
 import { parseKey } from '../src/keys';
 import { _test_tasksOf as tasksOf } from '../src/scan';
 import type { DiskFile, VaultKey } from '../src/types';
@@ -78,9 +78,40 @@ describe('a batch writes what instruments built alone would', () => {
 
     // Margining per instrument: the BTC-settled contract is inverse.
     const margins = await conn.runAndReadAll(
-      `SELECT DISTINCT margin FROM read_parquet('${join(batch, '**', '*BTC_USD.*.parquet')}')`);
+      `SELECT DISTINCT symbol, margin FROM read_parquet('${join(batch, 'BTC_USD.parquet')}')`);
 
-    expect(margins.getRows()).toEqual([['inverse']]);
+    expect(margins.getRows()).toEqual([['BTC_USD', 'inverse']]);
+  });
+
+  /**
+   * A small month is stored as one file: its instruments appended in symbol
+   * order, each already in time order, so nothing has to be sorted.
+   */
+  it('joins the instruments into one file, by symbol and then by time', async () => {
+    const usdt = await input('gate.futures_usdt-trades.csv', 'gate/perp/trades/B/BTC_USDT/202606/gate|perp|trades|BTC_USDT|202606.csv.gz');
+    const btc  = await input('gate.futures_btc-trades.csv', 'gate/perp/trades/B/BTC_USD/202606/gate|perp|trades|BTC_USD|202606.csv.gz');
+    const here = join(dir, 'joined');
+
+    // Built in the other order, so the join is what puts them right.
+    const one = await buildGroup(conn, gate, 'BTC_USDT', [usdt], here);
+    const two = await buildGroup(conn, gate, 'BTC_USD', [btc], here);
+
+    const joined = await bundleStaged(conn, gate, here);
+    const read   = await conn.runAndReadAll(`SELECT symbol, ts FROM read_parquet('${joined}')`);
+    const rows   = read.getRows().map(row => [String(row[0]), BigInt(row[1] as bigint)] as const);
+
+    expect(rows).toHaveLength(one.rows + two.rows);
+    expect(rows).toEqual([...rows].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0)));
+    expect(rows[0]![0]).toBe('BTC_USD');
+  });
+
+  /** A month with nothing in it is still a file, so it reads as stocked. */
+  it('joins nothing into a file with the table\'s columns and no rows', async () => {
+    const joined = await bundleStaged(conn, gate, join(dir, 'nothing'));
+    const read   = await conn.runAndReadAll(`SELECT * FROM read_parquet('${joined}')`);
+
+    expect(read.getRows()).toEqual([]);
+    expect(read.columnNames().slice(0, 2)).toEqual(['symbol', 'ts']);
   });
 
   it('for a headed format', async () => {

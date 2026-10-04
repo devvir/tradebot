@@ -351,8 +351,6 @@ and carry decimals.
 
 ## Known discrepancies with the catalog
 
-- **bybit MT4 klines** are perpetual (see [bybit](#bybit)); the catalog files them under `spot`.
-  The series reads them as `perp`, so until the catalog says so they are not stocked.
 - **Linear and inverse contracts** share one canonical key, so a partition mixes their formats —
   see [telling formats apart](#telling-formats-apart-inside-one-partition).
 - **bitget `future`** and **htx `future`** are read with their perpetuals' formats. Neither has been

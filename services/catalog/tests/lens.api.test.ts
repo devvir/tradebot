@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import express from 'express';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { putVenue, recordSeries } from './fixture';
+import { putFiles, putVenue, recordSeries } from './fixture';
 import { openScratch } from './fixture';
 import { mountLenses } from '../src/api/lenses';
 import type { Application } from 'express';
@@ -22,14 +22,20 @@ let dir: string;
 let db:  DatabaseSync;
 let app: Application;
 
-beforeEach(() => {
+beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'lens-api-'));
   db  = openScratch(join(dir, 'catalog.db'));
 
   const venue = putVenue(db, 'binance', 'https://x', '');
 
-  recordSeries(db, venue, { market: 'spot', dataset: 'trades', symbol: 'BTCUSDT',
+  const trades = recordSeries(db, venue, { market: 'spot', dataset: 'trades', symbol: 'BTCUSDT',
     pattern: 'spot/trades/{SYMBOL}/{YYYY}{MM}{DD}.zip' });
+
+  await putFiles(db, [
+    { venueId: venue, seriesId: trades.id, path: 'a', date: '20200101' },
+    { venueId: venue, seriesId: trades.id, path: 'b', date: '20210101' },
+  ]);
+
   recordSeries(db, venue, { market: 'spot', dataset: 'books', symbol: 'BTCUSDT',
     pattern: 'spot/books/{SYMBOL}/{YYYY}{MM}{DD}.zip' });
 
@@ -134,19 +140,20 @@ describe('refusing a definition', () => {
 
 describe('what a definition would select', () => {
   it('sizes one that has not been stored', async () => {
-    const { status, body } = await ask<{ series: number }>('POST', '/lenses/size',
+    const { status, body } = await ask<{ partitions: number; files: number }>('POST', '/lenses/size',
       lens({ binance: [{ effect: 'include', datasets: [{ dataset: 'trades' }] }] }));
 
     expect(status).toBe(200);
-    expect(body.series).toBe(1);
+    expect(body).toMatchObject({ partitions: 2, files: 2 });
   });
 
   it('says what it selects, by venue', async () => {
-    const { body } = await ask<{ venues: Record<string, { series: number; spans: string[] }> }>(
+    const { body } = await ask<{ venues: Record<string, { slices: number; partitions: number; spans: string[] }> }>(
       'POST', '/lenses/resolve',
-      lens({ binance: [{ effect: 'include', to: '20201231' }] }));
+      lens({ binance: [{ effect: 'include', to: '202012' }] }));
 
-    expect(body.venues['binance']).toMatchObject({ series: 2, spans: ['..20201231'] });
+    // Both slices are let through; only one month of one of them holds anything.
+    expect(body.venues['binance']).toEqual({ slices: 2, partitions: 1, spans: ['..202012'] });
   });
 
   it('offers what a venue publishes', async () => {

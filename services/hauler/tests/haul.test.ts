@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,7 +12,7 @@ import type { Haulable } from '../src/types';
  * different and moved aside first. See `fetch.ts`.
  */
 
-const cfg = vi.hoisted(() => ({ archivesDir: '', catalogApi: '', catalogToken: '', venues: [], lens: '', concurrency: 2 }));
+const cfg = vi.hoisted(() => ({ archivesDir: '', catalogApi: '', catalogToken: '', venues: [], lens: '', concurrency: 2, minFreeGb: 0 }));
 
 vi.mock('../src/config', () => ({ default: cfg }));
 
@@ -83,7 +83,7 @@ describe('a file not yet on disk', () => {
 
     expect(await haul(one)).toEqual({ outcome: 'mismatched', size: 5 });
     expect(existsSync(at(one))).toBe(false);
-    expect(existsSync(`${at(one)}.part`)).toBe(false);
+    expect(existsSync(join(cfg.archivesDir, '.hauler-tmp')) && readdirSync(join(cfg.archivesDir, '.hauler-tmp')).length > 0).toBe(false);
   });
 
   /** The venue's own answer that the file is not there makes it `failed`. */
@@ -163,7 +163,7 @@ describe('a file already on disk', () => {
 
 describe('a start', () => {
   /** A partial is a download that never finished; a `.bak` is a whole file kept for a person. */
-  it('removes every unfinished download, at any depth, and keeps everything else', async () => {
+  it('removes every unfinished download, and keeps everything else', async () => {
     const put = (rel: string) => {
       const at = join(cfg.archivesDir, rel);
 
@@ -173,15 +173,15 @@ describe('a start', () => {
       return at;
     };
 
-    const partials = [put('binance/a/b/c.zip.part'), put('gate/x.zip.part')];
+    const partials = [put('.hauler-tmp/aaaa.part'), put('.hauler-tmp/bbbb.part')];
     const kept     = [put('binance/a/b/c.zip'), put('binance/a/b/d.zip.bak'), put('gate/x.zip.bak.2')];
 
-    expect(await sweepPartials(cfg.archivesDir)).toBe(2);
+    expect(await sweepPartials()).toBe(2);
     expect(partials.some(existsSync)).toBe(false);
     expect(kept.every(existsSync)).toBe(true);
   });
 
-  it('finds nothing to do in an archive that is not there yet', async () => {
-    expect(await sweepPartials(join(cfg.archivesDir, 'nowhere'))).toBe(0);
+  it('finds nothing to do where nothing was left unfinished', async () => {
+    expect(await sweepPartials()).toBe(0);
   });
 });

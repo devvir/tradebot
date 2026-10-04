@@ -261,7 +261,9 @@ export interface LensRule {
   datasets?:    LensDataset[];
 
   grains?:      string[];
-  instruments?: string[];
+
+  /** Files of one instrument each, or the venue-wide ones; absent is both. */
+  bundle?:      'instrument' | 'market';
   from?:        string;
   to?:          string;
 }
@@ -299,7 +301,7 @@ export interface LensProblem {
 
 /** How much a lens would put on a disk, and how much of it is still to download. */
 export interface LensSize {
-  series:       number;
+  partitions:   number;
   files:        number;
   bytes:        number;
   pending:      number;

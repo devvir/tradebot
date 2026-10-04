@@ -234,19 +234,11 @@ and the vault is being rebuilt from the archives under those rules. What is left
 Whatever has not already been done alongside the steps above. Tooling changes may interleave wherever
 they are useful rather than waiting for the end.
 
-One hard dependency: **`cold audit` reads `archives` facts** for its month counts, so it needs the API
-or another source before that topic is retired.
-
 ---
 
 ## Smaller things, not yet scheduled
 
 Understood well enough to do; none justifies a planning document.
-
-**Delete the vault rows from `cold.sqlite`** — 411 parts, 152,401 members, `origin='vault'`. Deferred
-only because `cold push archives` held the database. Nothing else there is vault-scoped.
-
-**Refresh `cold audit` on a loop**, every 10 minutes, so a long run can be watched.
 
 **Guard against a wrong `VAULT_DIR`.** The default cannot tell "not configured" from "configured to
 the default", so a wrong root reads as an empty vault rather than an error — and for `evict`, absence

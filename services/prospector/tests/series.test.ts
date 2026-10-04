@@ -769,3 +769,200 @@ describe('a series\' listing prefix', () => {
     expect(prefixOf(record(venue, { symbol: 'A/B' }))).toBeNull();
   });
 });
+
+describe('instruments', () => {
+  const instruments = () => db.prepare(
+    'SELECT venue, market, symbol, kind, state FROM instrument ORDER BY market, symbol',
+  ).all() as { venue: string; market: string; symbol: string; kind: string; state: string }[];
+
+  /**
+   * **An instrument is stated once.** Every shape it is published in is a
+   * series of the same instrument, so there is one row for it however many
+   * series name it.
+   */
+  it('links every series of one market and symbol to one instrument', () => {
+    const daily   = record();
+    const monthly = record({ pattern: MONTHLY });
+
+    expect(daily.instrumentId).not.toBeNull();
+    expect(monthly.instrumentId).toBe(daily.instrumentId);
+    expect(instruments()).toEqual([
+      { venue: 'demo', market: 'SPOT', symbol: 'BTC-USDT', kind: 'single', state: 'active' },
+    ]);
+  });
+
+  /** A symbol alone identifies nothing: the same string in two markets is two instruments. */
+  it('keeps the same symbol in two markets apart', () => {
+    const spot = record();
+    const perp = record({ market: 'SWAP' });
+
+    expect(perp.instrumentId).not.toBe(spot.instrumentId);
+    expect(instruments()).toHaveLength(2);
+  });
+
+  /**
+   * The venue is its name: an instrument published from two servers of one
+   * venue is one instrument.
+   */
+  it('is one instrument across two servers of one venue', () => {
+    const second = putVenue(db, 'demo', okx.base, okx.keyRoot, 'books');
+
+    const here  = record();
+    const there = recordSeries(db, second, at({ dataset: 'books' }));
+
+    expect(there.instrumentId).toBe(here.instrumentId);
+  });
+
+  /** A bucket holds every instrument of a market, so it is none of them. */
+  it('gives a venue-wide bucket no instrument', () => {
+    expect(record({ symbol: '@', pattern: 'x/{YYYY}{MM}{DD}/all.zip' }).instrumentId).toBeNull();
+    expect(instruments()).toEqual([]);
+  });
+
+  /** A shape whose files hold a whole family makes its instruments chains. */
+  it('makes the instruments of a chain shape chains', () => {
+    record({ market: 'FUTURES', symbol: 'BTC-USD', pattern: 'x/{YYYY}{MM}{DD}/{SYMBOL}-chain.zip', holds: 'chain' });
+
+    expect(instruments()[0]).toMatchObject({ symbol: 'BTC-USD', kind: 'chain' });
+  });
+
+  /**
+   * **Listed or delisted is the instrument's**, so saying it of one series says
+   * it of all of them — and it is still so after the registry is read afresh.
+   */
+  it('shares one state between every series of an instrument', () => {
+    const daily = record();
+
+    record({ pattern: MONTHLY });
+    record({ symbol: 'ETH-USDT' });
+
+    updateSeries(db, { ...daily, state: 'delisted' });
+
+    const states = () => Object.fromEntries(seriesFor(db, id).map(one =>
+      [`${one.symbol} ${one.grain}`, one.state]));
+
+    const expected = {
+      'BTC-USDT daily': 'delisted', 'BTC-USDT monthly': 'delisted', 'ETH-USDT daily': 'active',
+    };
+
+    expect(states()).toEqual(expected);
+
+    loadSeries(db);
+
+    expect(states()).toEqual(expected);
+    expect(instruments().map(one => one.state)).toEqual(['delisted', 'active']);
+  });
+
+  /** A series created for an instrument already delisted is delisted from the start. */
+  it('gives a new series its instrument\'s state', () => {
+    updateSeries(db, { ...record(), state: 'delisted' });
+
+    expect(record({ pattern: MONTHLY }).state).toBe('delisted');
+  });
+
+  /** A series is a shape of an instrument of its own venue and market, never another's. */
+  it('never links a series to an instrument of another market or venue', () => {
+    record();
+    record({ pattern: MONTHLY });
+    record({ market: 'SWAP', symbol: 'BTC-USDT-SWAP' });
+
+    const astray = db.prepare(
+      `SELECT count(*) AS n FROM series s
+         JOIN pattern p ON p.id = s.pattern_id JOIN venue v ON v.id = p.venue_id
+         JOIN slice c ON c.id = p.slice_id
+         JOIN instrument i ON i.id = s.instrument_id
+        WHERE i.market <> c.market OR i.venue <> v.name OR c.venue <> v.name`).get() as { n: number };
+
+    expect(astray.n).toBe(0);
+  });
+
+  /**
+   * **A series has no symbol of its own.** The name is its instrument's, stated
+   * once, and a series read back carries it from there.
+   */
+  it('reads a series\' symbol from its instrument', () => {
+    record();
+    record({ symbol: '@', pattern: 'x/{YYYY}{MM}{DD}/all.zip' });
+
+    const columns = (db.prepare('PRAGMA table_info(series)').all() as { name: string }[]).map(one => one.name);
+
+    expect(columns).not.toContain('symbol');
+
+    loadSeries(db);
+
+    expect(seriesFor(db, id).map(one => one.symbol).sort()).toEqual(['@', 'BTC-USDT']);
+  });
+
+  /** One instrument's files under two names at once are two series of the one instrument. */
+  it('keeps two spellings of one instrument as two series of it', () => {
+    const plain   = record();
+    const spelled = record({ urlSymbol: 'BTCUSDT' });
+
+    expect(spelled.id).not.toBe(plain.id);
+    expect(spelled.instrumentId).toBe(plain.instrumentId);
+    expect(instruments()).toHaveLength(1);
+  });
+});
+
+/**
+ * What a shape publishes is its slice's to say: a pattern belongs to one, and
+ * every series on it files its data there.
+ */
+describe('slices', () => {
+  const slices = () => db.prepare(
+    'SELECT venue, market, dataset, variant, grain, bundle FROM slice ORDER BY grain, bundle',
+  ).all();
+
+  const patterns = (): number =>
+    (db.prepare('SELECT count(*) AS n FROM pattern').get() as { n: number }).n;
+
+  it('files a shape under the slice of what it publishes', () => {
+    record({ variant: 'aggregated' });
+
+    expect(slices()).toEqual([
+      { venue: 'demo', market: 'SPOT', dataset: 'trades', variant: 'aggregated', grain: 'daily', bundle: 'instrument' },
+    ]);
+  });
+
+  /** Two URL shapes carrying the same data — two eras of it — are one slice. */
+  it('shares a slice between two shapes of the same data', () => {
+    record();
+    record({ pattern: 'y/{YYYY}-{MM}-{DD}/{SYMBOL}.zip' });
+
+    expect(patterns()).toBe(2);
+    expect(slices()).toHaveLength(1);
+  });
+
+  /** The grain is part of what is published: the same data by the day and by the month is two slices. */
+  it('keeps two grains of the same data apart', () => {
+    record();
+    record({ pattern: MONTHLY });
+
+    expect(slices()).toMatchObject([{ grain: 'daily' }, { grain: 'monthly' }]);
+  });
+
+  /**
+   * One URL shape serving both a venue-wide file and a file per instrument
+   * publishes into two slices, so it is two patterns.
+   */
+  it('makes one URL shape in two bundles two patterns', () => {
+    const shape = 'x/{YYYY}{MM}{DD}/all.zip';
+
+    const bucket = record({ symbol: '@', pattern: shape });
+    const single = record({ pattern: shape });
+
+    expect(single.patternId).not.toBe(bucket.patternId);
+    expect(slices()).toMatchObject([{ bundle: 'instrument' }, { bundle: 'market' }]);
+  });
+
+  /** A slice is the venue's, whichever of its servers publishes it. */
+  it('is one slice across two servers of one venue', () => {
+    const second = putVenue(db, 'demo', okx.base, okx.keyRoot, 'books');
+
+    record();
+    recordSeries(db, second, at());
+
+    expect(patterns()).toBe(2);
+    expect(slices()).toHaveLength(1);
+  });
+});

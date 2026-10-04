@@ -356,7 +356,7 @@ describe('bybit', () => {
       'kline_for_metatrader4/ADAUSDT/2021/ADAUSDT_15_2021-01-01_2021-01-31.csv.gz',
       bybitPrimary.slotsFor);
 
-    expect(seen.found).toMatchObject({ dataset: 'klines', variant: '15m', symbol: 'ADAUSDT' });
+    expect(seen.found).toMatchObject({ market: 'perp', dataset: 'klines', variant: '15m', symbol: 'ADAUSDT' });
     expect(seen.date).toBe('202101');
     expect(seen.found.pattern).toContain('{YYYY}-{MM}-01_{YYYY}-{MM}-{MONTH_LAST_DAY}');
   });

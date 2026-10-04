@@ -56,7 +56,7 @@ BTC's books") is written as a narrower exclude, not as a later include.
 |---|---|
 | `markets`, `grains` | the pattern's own |
 | `datasets` | a list of `{ dataset, variant? }`; an absent `variant` is every variant of that dataset |
-| `instruments` | the series' symbol; `@` is the venue-wide file, and an ordinary value here |
+| `bundle` | `instrument` for the files of one instrument each, `market` for the venue-wide files |
 | `from`, `to` | months, `yyyymm`, inclusive; absent is open |
 
 Writing `markets: 'all'` everywhere was rejected: it is not more explicit, only longer, and it ages
@@ -70,8 +70,8 @@ say *one length of kline, and every trade*, which is an ordinary thing to want.
 "datasets": [{ "dataset": "klines", "variant": "1m" }, { "dataset": "trades" }]
 ```
 
-**`@` is an ordinary instrument**, so cold-storing the venue-wide files and keeping a few instruments
-on their own for simulation is one rule with both in it.
+**A rule never names an instrument.** What it selects is whole: every instrument a market publishes
+in a bundle, or none of them.
 
 ### What is refused
 
@@ -85,57 +85,54 @@ later as a decision rather than a mistake and arrive as an empty download notice
 - **an empty list in a dimension**, which matches nothing, where leaving it out matches all of it;
 - **a finer filter that does not fit everything a rule groups.** A rule naming markets or datasets
   is checked per `(market, dataset, variant)` it selects: `grains` that match nothing of one of them,
-  or `@` where one has no venue-wide file in the grains the rule takes, would drop it in silence. The problem names each one it
-  misses, which is what says where to split the rule. A rule naming neither markets nor datasets is
+  or a `bundle` one of them is not published in at the grains the rule takes, would drop it in
+  silence. The problem names each one it misses, which is what says where to split the rule. A rule naming neither markets nor datasets is
   read as "wherever this applies" and is not checked this way.
 
 ## Resolving one
 
-**Three steps, in this order, because of where each dimension lives.** Market, dataset, variant and
-grain are properties of the *pattern*; the instrument is a property of the *series*; the date is a
-property of the *file*. So a lens picks patterns, then the series on them, then applies the dates —
-the first two are folds over rows already in memory, and only the last touches the file table.
+**Two steps, because of where each dimension lives.** Market, dataset, variant, grain and bundle are
+the traits of a *slice*; the date is a *partition's* month. So a lens's rules are folded once per
+slice, into the months it is let through for, and each of the slice's partitions is in or out by its
+month. A rule never reaches inside a partition, so a lens is a list of whole partitions.
 
 **A lens resolves to spans, not to a range.** An exclude can carve a hole in an include: including
 2019 to 2021 and excluding 2020 leaves two spans, and collapsing them to
 one range would hand back a year nobody asked for. The arithmetic is in the catalog's `lenses/spans.ts`.
 
-**Resolved when it is saved, and stored.** What a lens lets through is kept as rows of `lens_series`:
-a series, and a span of its dates, with two rows for a series the lens cuts a hole in. Every view through
-a lens (the listing, the contents, the size, a report's check) reads those rows, and none of them
-evaluates a rule. So a lens costs the same after a restart as an hour into a run.
+**Resolved when it is saved, and stored.** What a lens lets through is kept as rows of `lens_member`,
+one per partition. Every view through a lens (the listing, the contents, the size, a report's check)
+reads those rows, and none of them evaluates a rule. So a lens costs the same after a restart as an
+hour into a run.
 
 - **Saving rebuilds the venues it changed.** A change to one venue's rules can only move that venue's
-  series; a change to the `*` rules can move any, and rebuilds every venue. A save that changes only
-  the name or the note rebuilds nothing.
-- **New series are added, never rebuilt.** Prospector numbers series in order, so a lens records the
-  newest it has looked at (`series_through`). **Every fifteen minutes, in the background**, each lens
-  folds in the series past that, a few thousand at a time with requests answered in between — a
-  venue's first walk creates them by the hundred thousand. **A request through a lens still catches up
-  first**, so a lens is never behind the catalog; the background makes that a primary-key seek that
-  finds nothing, nearly always.
-- **A series prospector deletes** leaves its rows behind with no files, which lets nothing through.
+  partitions; a change to the `*` rules can move any, and rebuilds every venue. A save that changes
+  only the name or the note rebuilds nothing.
+- **New partitions are added, never rebuilt.** Prospector numbers partitions in order, so a lens
+  records the newest it has looked at (`partitions_through`). **Every fifteen minutes, in the
+  background**, each lens folds in the partitions past that, a few thousand at a time with requests
+  answered in between. **A request through a lens still catches up first**, so a lens is never behind
+  the catalog; the background makes that a primary-key seek that finds nothing, nearly always.
 
-The catalog writes `lens_series`, as it writes `lens`. Both tables are lenses, the one thing in the
+The catalog writes `lens_member`, as it writes `lens`. Both tables are lenses, the one thing in the
 database collection never decides.
 
 ## What a lens costs, and how far along it is
 
 Nobody fetches everything, so the figure that decides a lens is its size, and it answers while
-somebody is still choosing. **It is always exact, and never reads a file**: it is summed off the series
-rollup, which holds files, bytes and what is still pending per series and month, kept in step with every
-write.
+somebody is still choosing. **It is always exact, and never reads a file**: every partition carries its
+own files, bytes and what is still pending, kept in step with every write, and a lens is a list of
+partitions.
 
-- **A saved lens** is one query: its `lens_series` rows joined to `rollup_series` over the months each
-  row's dates fall in. A lens's bounds are months, the rollup's own grain, so that is exact.
-- **A definition being edited** has no rows yet, so it is resolved as it stands: a venue it takes whole
-  is summed off `rollup_venue`, and anything narrower off `rollup_series` over the series it selects.
+- **A saved lens** is one query: its `lens_member` rows joined to their partitions and summed.
+- **A definition being edited** has no rows yet, so it is resolved as it stands, against the venue's
+  slices and partitions, and the partitions it lets through are summed.
 
 Sampling is what this replaced, and it is worth saying why it had to go: trade volume is so uneven
 between instruments that six series out of two thousand, scaled up, put bybit's 2021–2025 perpetual
 trades at 4.4 TB where they are 1.9.
 
-The date bounds are part of the price: a lens letting one year of a ten-year series through is sized
+The date bounds are part of the price: a lens letting one year of a ten-year slice through is sized
 at one year.
 
 **Progress comes from the same road.** The size carries `pending` and `pendingBytes` — the files not
@@ -147,13 +144,13 @@ A consumer names its lens in an `x-catalog-lens` header, or a `lens` query param
 the whole catalog; an unknown slug is a `422`, never the whole catalog in its place.**
 
 **The listing** lists only what the lens lets through — see [Listings](CATALOG-API.md#listings). Its
-walk takes each series in key order and reads only the ones the lens holds, and of those only the
-files inside its spans.
+walk takes each series in key order and reads only those of a slice the lens holds, and of those only
+the files in the months it lets through.
 
 **A report** through a lens settles only what the lens lets through; a key outside it is answered
 `AccessDenied`. See [Reporting](CATALOG-API.md#reporting).
 
-**The contents** — `/contents/venues` and everything under it — narrow to the lens too:
+**The contents** — `/venues` and everything under it — narrow to the lens too:
 
 - **Only series with a file inside the lens.** A seeded series nothing has been found for offers
   nothing, and a venue the lens lets nothing through from is not listed.
@@ -161,8 +158,9 @@ files inside its spans.
   newest file it actually holds inside it — one indexed read per such series — so a shape under a
   lens ending `202012` says where its data stops rather than claiming the lens's last day.
 - **The venue list is the lens's figures, for every venue at once**: files, bytes and pending are its
-  size, its months the first and last with a file, and its series those holding a file inside it. All
-  of it is the same one query as the size, grouped by venue.
+  size and its months the first and last with a file — the same one query as the size, grouped by
+  venue. Its series are those dated inside the months the lens lets through for their slice.
+- **A venue's partitions are the lens's partitions**, and no others.
 
 ## Who reads through one
 

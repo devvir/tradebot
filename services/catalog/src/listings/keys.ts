@@ -66,9 +66,14 @@ export const fileOfKey = (db: DatabaseSync, key: string, lens: Lens | null): Key
 
   const file = found[0]!;
 
+  // The file's partition: its series' slice, at the month of its date.
   if (lens && ! db.prepare(
-    'SELECT 1 FROM lens_series WHERE lens_id = ? AND series_id = ? AND lo <= ? AND hi >= ?',
-  ).get(lens.id!, file.seriesId, file.date, file.date)) return 'AccessDenied';
+    `SELECT 1 FROM series s
+       JOIN pattern p     ON p.id = s.pattern_id
+       JOIN partition q   ON q.slice_id = p.slice_id AND q.month = ?
+       JOIN lens_member l ON l.lens_id = ? AND l.partition_id = q.id
+      WHERE s.id = ?`,
+  ).get(file.date.slice(0, 6), lens.id!, file.seriesId)) return 'AccessDenied';
 
   return { id: file.id, seriesId: file.seriesId, date: file.date, path: file.path };
 };

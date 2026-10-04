@@ -14,7 +14,7 @@ import type { DatasetContents, MarketContents } from '../types';
  */
 export const VenueView = ({ venue, lens }: { venue: string; lens?: string }) => {
   const asked = useAsk<{ items: MarketContents[] }>(
-    lensed(`/contents/venues/${encodeURIComponent(venue)}`, lens), catalogLensed);
+    lensed(`/venues/${encodeURIComponent(venue)}`, lens), catalogLensed);
 
   return (
     <Waiting asked={asked}>

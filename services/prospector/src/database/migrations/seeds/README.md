@@ -40,6 +40,16 @@ virtual_id,market,dataset,variant,pattern,grain,retired_at
 34,spot,trades,,trades/SPBL/{SYMBOL}/{SYMBOL}_{YYYY}{MM}{DD}_001.zip,daily,
 ```
 
+`market`, `dataset` and `variant` are the pattern's slice, which is found or created as the row is
+read. `grain` is checked rather than taken: a pattern's grain is read off its slots, and a row
+stating another is refused.
+
+Two columns are optional. `holds` is `chain` where one file of the shape carries every expiry of a
+family under the family's name, as okx's `…-futureschain-…` files do; absent or empty is one
+instrument per file. `bundle` is `instrument` or `market`; absent or empty, a pattern with a
+`{SYMBOL}` slot holds one instrument per file and one without holds a whole market. A series named
+`@` under a per-instrument pattern, or an instrument under a venue-wide one, is refused.
+
 **transform.csv** — what one instrument puts where its pattern says `{TRANSFORM:kind:default}`,
 over a span of dates. Absent for a venue whose URLs follow their patterns.
 

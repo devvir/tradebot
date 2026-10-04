@@ -112,7 +112,7 @@ src/http.ts                 the single fetch every request passes through, retri
 src/paths.ts                the string rules the catalog and every scanner must agree on
 src/dates.ts                periods, grains, and what "the last complete one" means
 src/database/               opening, schema, migrations, and the seed data they insert
-src/catalog/                the domain: series, queries, keys, the rollup
+src/catalog/                the domain: series, queries, keys, the partitions
 src/api/routes.ts           the catalog, as everyone else reaches it
 src/venues.ts               the registry: which adapters exist, and addressing them at startup
 src/adapters/<venue>.ts     one server: its addresses, its date rule, its policy, its hooks
@@ -756,9 +756,10 @@ So **a page is compared with what the catalog holds in that stretch, and only th
 written**:
 
 - a key the catalog does not hold is added;
-- a key whose size, ETag or `modified` differ is updated, its previous version appended to
-  `revision`, and `downloaded_at` cleared — so does one that moved series or date, or came back
-  after being withdrawn;
+- a key whose size or ETag differ is updated, its previous version appended to `revision`, and
+  `downloaded_at` cleared, since what was downloaded is no longer the file;
+- a key whose `modified`, series, date or existence differ is updated and nothing else: the bytes
+  are the ones already known, so it is not owed again;
 - **a key that says nothing new is not written at all.** On a re-walk that is nearly every key;
 - a catalogued file inside the stretch that the page did not list has been withdrawn: its
   `existence` becomes `absent` and its row stays. A parked key the page did not list leaves `wip`.
@@ -841,7 +842,7 @@ is not offered for splitting again that pass — the cost of a prefix that could
 more. The walk's 30-second heartbeat (`Walking`) carries its request rates, the host's limiter state and the
 machine's ticket pool, so a request that is not going out says which of the two is holding it.
 
-**It also says where requests spend their time** (`timings`): average and 90th percentile, in
+**At `LOG_LEVEL=debug` it also says where requests spend their time** (`timings`): average and 90th percentile, in
 milliseconds, of each part of a request's way since the previous line — waiting for a slot, the trip
 to the transport worker, the venue's first byte, the body, reading the page, and the page's processing
 after its slot is given back. Only the last runs without a slot. See `timings.ts`.
@@ -2045,17 +2046,62 @@ nothing.
 
 The schema lives in `src/catalog/`, alongside the queries. **Prospector creates and migrates the
 file, and writes every row but one table's.** The [catalog](../../services/catalog/README.md) opens
-the same file to serve it, and writes only `lens` and `lens_series`: a lens is a consumer's choice,
+the same file to serve it, and writes only `lens` and `lens_member`: a lens is a consumer's choice,
 which collection neither knows nor acts on. Nothing is shared in code: the catalog carries its own queries, and its tests
 build their own tables.
 
-Sixteen tables. `venue`, `file`, `wip` and `revision` are what a venue serves and what became of
-it; `pattern`, `series` and `transform` are what it publishes, where, and how it spells an instrument
-the pattern cannot; `run` is how far each pass has read and `survey` whether this deployment reads it
-at all; `rollup_venue` and `rollup_series` are the rollups that keep a total from costing a scan,
-per venue and per series; `exclusion` and `unreadable` are the two lists of things ruled out and not
-yet read; and `lens` and `lens_series` are the one thing here nobody measured, and the two tables the
-catalog writes.
+Seventeen tables. `venue`, `file`, `wip` and `revision` are what a venue serves and what became of
+it; `instrument` is what it trades; `slice` and `partition` are what it publishes, cut the way it is
+handled; `pattern`, `series` and `transform` are where it publishes it, and how it spells an
+instrument the pattern cannot; `run` is how far each pass has read and `survey` whether this
+deployment reads it at all; `exclusion` and `unreadable` are the two lists of things ruled out and
+not yet read; and `lens` and `lens_member` are the one thing here nobody measured, and the two
+tables the catalog writes.
+
+**A slice is one lengthwise cut of a venue's data, and a partition is one month of it.** A slice is
+a dataset of a market narrowed by its variant, its grain and its bundle, under the venue's *name* —
+whichever of its servers publishes it. **A pattern belongs to a slice**: its market, dataset, variant
+and grain are the slice's, not columns of its own, and one URL shape publishing into two slices — a
+venue-wide file and a file per instrument, say — is two patterns. The one statement `SLICE_OF` in
+`schema.ts` finds a pattern's slice or creates it, for a survey and a seed alike.
+
+**Every file belongs to one partition**, its series' slice at the month of its date, and says so in
+`file.partition_id`, which is indexed: every file of a partition is one range read. A partition's
+row exists once a file does.
+
+**A partition carries its own counts and its version**, moved in the same transaction as the file
+rows they describe — `catalog/cache/partitions.ts`. The counts are files, bytes, what is still to
+download and what the venue has withdrawn, so a venue's totals and a lens's size are sums over a few
+thousand rows and never a scan of `file`. **The version is a sum too**: each confirmed file is a
+64-bit number hashed from its ETag, and the version is their sum, wrapped at 64 bits
+and written as sixteen hex digits. A file arriving adds its number, one withdrawn subtracts it, one
+that changed does both — so no file is read to state it, the order files arrived in does not matter,
+and the same files give the same version in a catalog rebuilt from nothing. **A file's path is no
+part of its number**: the version says what a partition holds, not where the venue keeps it, so a
+venue that moves or renames files without changing their bytes leaves every version where it was. The sum is done in this
+service, since SQLite turns an overflowing integer sum into a float. `updated_at` moves when the
+version does and at no other time: a download changes what is pending and nothing else.
+
+**An instrument is a row of its own**, `(venue, market, symbol)`, and a series is one shape it is
+published in. What is true of the instrument is stated once, there, and every series of it reads it:
+today that is `state` — whether the venue's listing still names it — since a venue lists or delists
+an instrument, never one of its shapes. The venue is its *name* rather than a `venue` row: those
+are servers, and an instrument published from two of them is one instrument.
+
+**A series holds no symbol: it holds its instrument**, and its name is read from there. Whoever
+creates a series — a survey or a seed — asks for the instrument first, through the one statement
+`INSTRUMENT_OF` in `schema.ts`, which creates it where it is new and reads its venue and market off
+the pattern's slice, and its kind off the pattern. A venue-wide bucket has no instrument: it holds every instrument of a market,
+which share nothing, and `@` is how a series without one is spelled wherever a symbol is expected.
+
+**What makes two series one** is the shape, the instrument and the name its keys carry. One
+instrument's files under two names at once are two series of the one instrument.
+
+**A chain is an instrument too**, of `kind` `chain`: a family whose files carry every one of its
+expiries under the family's name, as okx's `…-futureschain-…` files do. Its members differ in expiry
+alone, so everything else true of them is true of the chain, and it stands as one instrument; the
+members themselves are only ever seen inside the files. What makes an instrument a chain is its
+shape — `pattern.holds` says what one file of a pattern holds, `instrument` or `chain`.
 
 **A series carries its place in the catalog's listing**, `series.prefix`
 (`venue/market/dataset[,variant]/F/symbol/`, or `…/@/` for the venue-wide file), indexed, which is what lets a page of the listing be one

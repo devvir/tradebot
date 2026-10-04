@@ -509,8 +509,13 @@ export const surveyVenue = async (
       pace:     paceFor(adapter, adapter.base).state(),
       tickets:  ticketing(),
 
-      /** Where requests spent their time since the last line — see `timings.ts`. */
-      timings:  timingsOf(labelOf(adapter)),
+      /**
+       * Where requests spent their time since the last line — see `timings.ts`.
+       * **Only at debug**: it is for finding out why a walk is slow, and a
+       * dozen lines of it on every heartbeat bury the ones read every day. It
+       * is taken either way, so what it reports is always the last interval.
+       */
+      ...timingsAt(timingsOf(labelOf(adapter))),
     }, kind === 'walk' ? 'Walking' : 'Generating');
   }, HEARTBEAT_MS).unref();
 
@@ -716,6 +721,10 @@ const withinSplit = async <T>(reading: Promise<T>): Promise<T | null> => {
 const QUIET_MS = 120_000;
 
 /** How often a pass reports its speed — the same clock the probe's heartbeat keeps. */
+/** The timings as a heartbeat carries them: there at debug, and absent otherwise. */
+const timingsAt = <T>(timings: T): { timings?: T } =>
+  (logger.isLevelEnabled?.('debug') ? { timings } : {});
+
 const HEARTBEAT_MS = 30_000;
 
 /**

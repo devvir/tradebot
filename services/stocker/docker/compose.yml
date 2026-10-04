@@ -60,6 +60,9 @@ services:
 
       # No partition is started below this much free space on the vault volume.
       STOCKER_MIN_FREE_GB: ${STOCKER_MIN_FREE_GB:-20}
+      STOCKER_MEMORY_GB:  ${STOCKER_MEMORY_GB:-4}
+      STOCKER_SPLIT_GB:   ${STOCKER_SPLIT_GB:-1}
+      STOCKER_COOL_HOURS: ${STOCKER_COOL_HOURS:-1}
 
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV:  ${APP_ENV:-prod}

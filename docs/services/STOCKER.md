@@ -45,31 +45,58 @@ converting seconds to microseconds is mechanical and reversible. Deciding a 50-l
 ## Path convention
 
 ```
-<vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…]/YYYYMM/<version>/{FL}/symbol=…/
-    {table}.{venue}.{market}.{symbol}[.{interval|kind}].{YYYYMM}.parquet
+<vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…]/@/<YYYYMM>.<revision>.parquet
+<vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…]/<symbol>/<YYYYMM>.<revision>.parquet
 ```
 
-**A partition is one directory** — `…/YYYYMM/<version>/` — holding one file per instrument. That is
-what makes it the unit everything handles: it is written, replaced, packed for cold storage,
-restored and evicted as one thing. Venue first makes a venue one folder, and a dataset one subtree
-of it.
+**A month is stored one of two ways, decided by its size.** A small one is a single file holding
+every instrument, under `@`. One whose archive files weigh more than `STOCKER_SPLIT_GB` is a file
+per instrument, each under its symbol. Venue first makes a venue one folder, and a dataset one
+subtree of it.
 
-**The month, the version and `{FL}` are bare segments**, not `key=value`. They are devices for
+**Why two.** The number of files is what makes a tree slow to count, move or delete, and most
+months are small: a file per instrument would be thousands of tiny files each. But the largest
+months weigh hundreds of gigabytes, and fetching one of those whole from cold storage to read one
+instrument is most of a day. So small months stay one file, and large ones are cut where it is
+useful to cut them. The size is the archive files' as the catalog counts them, which is close
+enough to the stocked size to decide by. Measured against the catalog on 2026-10-04, a threshold
+of 1 GB stores 13,209 of 15,084 months whole and 1,875 per instrument, about 1.5 million files in
+all, and the most one instrument's whole history in a slice drags along in whole months is 41 GB.
+
+**The symbol is a column of every file**, in both forms, so the two read as one table and a
+slice whose months are stored both ways needs no special handling: one instrument's history is
+its own folder and `@`, filtered by symbol. **A whole month is ordered by symbol, then time** —
+one instrument's rows together, which is how it is read. Measured on a month of gate's spot
+trades (852 instruments, 24 million rows), one file in that order answered a single instrument's
+month in 196 ms against 186 ms for a file per instrument, and was 5% larger.
+
+**`@`, the symbol folders and the file names are bare**, not `key=value`. They are devices for
 handling the files rather than facts about the data, so a query engine ignores them and nothing
-can filter on them. `{FL}` is the symbol's first letter — uppercased, `_` for anything that is not
-a letter — so a partition holds a few dozen entries per letter instead of thousands of symbol
-directories side by side. The cost of a month level is a directory per instrument per month; it
-is paid for the partition being one directory.
+can filter on them.
 
 **`dataset=` rather than `table=`**, because `table` is a SQL reserved word — a column named that
 must be quoted in every query mentioning it.
 
-**Hive `key=value` directories.** The keys are not stored in the files — `parquet_schema` on a
-file shows only the data columns — yet queries return them as columns read from the directory
-names, and filtering prunes files without the caller building a path. Storing them as real columns
-would cost about 0.8 % (measured on a 200k-row sample: Parquet dictionary-encodes a constant column
-to one entry and zstd flattens the rest), so this buys ergonomics rather than space. **A filter on
-a plain column does not prune files** — only path keys do.
+**Hive `key=value` directories.** The venue, market, dataset and variant are not stored in the
+files — `parquet_schema` on a file shows only the data columns — yet queries return them as columns
+read from the directory names, and filtering prunes files without the caller building a path.
+Storing them as real columns would cost about 0.8 % (measured on a 200k-row sample: Parquet
+dictionary-encodes a constant column to one entry and zstd flattens the rest), so this buys
+ergonomics rather than space. **A filter on a plain column does not prune files** — only path keys
+do.
+
+**The symbol is the one key that lives in the file.** A month stored whole has no folder to say
+it, and a query engine refuses a tree where some files carry a key in their path and others do
+not — so the symbol is a column everywhere and its folder is bare. Reading one instrument is
+naming the two folders it can be in, `@` and its own:
+
+```sql
+SELECT * FROM read_parquet([
+  '<vault>/venue=okx/market=perp/dataset=trades/@/*.parquet',
+  '<vault>/venue=okx/market=perp/dataset=trades/BTC-USDT/*.parquet'
+], hive_partitioning=true)
+WHERE symbol = 'BTC-USDT'
+```
 
 **`market=` is the catalog's market** — `spot` · `perp` · `future` · `option` · `tradfi` — and
 carries contract shape only. Margining is not part of it: linear and inverse perpetuals are both
@@ -97,26 +124,36 @@ travels alone — an upload queue or transfer log shows the name, not the path.
 ## How a sweep decides
 
 A sweep asks the catalog what every partition holds, and stocks what the vault does not hold at
-its current version. Nothing is remembered between sweeps; nothing is written but the vault.
+its current revision. Nothing is remembered between sweeps; nothing is written but the vault.
 
-1. **List.** Each dataset stocker can read is listed from the catalog's bucket once, through the
-   configured lens, and every key is folded into the partition it belongs to — venue, market,
-   dataset, variant, bundle, grain and month, all read off the key's name. A second listing, of
-   only what is not yet downloaded, counts each partition's owed files.
-2. **Complete?** A partition with files still owed waits. So does one whose neighbouring edge it
-   spills into is still owed (see [buckets](#venues-whose-buckets-do-not-cut-at-utc-midnight)).
-3. **Current?** The partition's version — below — is computed from the listing alone. If the vault
-   holds that version, the partition is current and nothing is read.
+1. **Ask for what can be acted on.** One request per venue, through the configured lens, for the
+   datasets stocker reads: the partitions with nothing left to download that the catalog has not
+   seen change for `STOCKER_COOL_HOURS`. A partition a run is still adding to can be complete on
+   disk at every moment and still be a fraction of itself, and nothing but time says which — so
+   one that changed recently is simply not in the answer, and comes up in a later sweep. Each one
+   comes with how many files it has, their total size, and the catalog's version of it.
+2. **With its neighbour?** A partition that reads the edge of a neighbouring month needs that
+   month in the answer too (see [buckets](#venues-whose-buckets-do-not-cut-at-utc-midnight)).
+3. **Current?** The partition's revision — below — is computed from what the catalog answered. If
+   the vault holds that revision whole, the partition is current and nothing is read.
 4. **On disk?** The partition's files are gathered from the archives and compared with what the
-   catalog listed, by count and by total size. Where several renderings are complete, the
-   preferred one that is on disk is taken (see below); one the catalog calls downloaded but the
-   disk does not hold is skipped and reported.
-5. **Stock** into a staging directory under `<vault>/.stocker-tmp`, one instrument per build.
-6. **Unchanged?** Every input is stat-ed again; if any moved while the build ran, the staging
-   directory is thrown away and the partition comes round next sweep.
-7. **Publish.** The staging directory is renamed into place as `…/YYYYMM/<version>/` — one
-   directory on one volume, so a reader sees the old version or the new one, never half of
-   either — and every other version of the partition is removed.
+   catalog says, by count and by total size — no file is opened. Where several renderings are
+   ready, the preferred one that is on disk is taken (see below); one the catalog calls
+   downloaded but the disk does not hold is skipped and reported.
+5. **Stock** into a staging directory under `<vault>/.stocker-tmp`, one file per instrument.
+6. **Publish**, and remove every other revision of the month. A small month's instrument files
+   are appended into one, in symbol order, and that file is renamed into `@` — one rename, so a
+   reader sees it whole or not at all. A large month's files are renamed one by one under their
+   symbols, between a marker written into `@` before the first and removed after the last; a
+   revision whose marker is still there was interrupted and does not count as stocked.
+
+**Nothing is checked again after a build.** A partition that changed while it was being stocked
+has a new version in the catalog, so the next sweep computes a revision the vault does not hold
+and stocks it again.
+
+**What the vault holds is read once per slice per sweep.** A slice stored per instrument is a
+folder per symbol, so asking it about one month means listing every one of them; reading the
+slice once answers every month of it.
 
 **Several renderings of one month land in one partition of the vault.** A venue can publish the
 same data monthly and daily, or per instrument and in one market-wide file, and the catalog
@@ -126,29 +163,30 @@ market bundle, then the coarsest grain — the fewest files for the same rows.
 
 **The running month is never stocked**, whatever the bounds say: its files are still arriving.
 
-### The version
+### The revision
 
-A partition's version is the first twelve hex digits of a SHA-256 over:
+A stocked partition's revision is the first twelve hex digits of a SHA-256 over:
 
-- a revision of the build, bumped by hand when what the build writes changes for every partition;
+- a number for the build itself, bumped by hand when what it writes changes for every partition;
 - the canonical table's column list;
 - every series that can read the dataset;
-- the catalog's digest of the partition — every key, ETag and size, in listing order;
-- the digest of any neighbouring edge it spills into;
+- the catalog's version of the partition, which changes whenever a file of it does;
+- the catalog's version of any neighbouring month it reads the edge of;
 - the symbol filter, so a partly stocked partition never passes for a whole one.
 
-So **anything that would change the output changes the version**: a file added, replaced or
+So **anything that would change the output changes the revision**: a file added, replaced or
 withdrawn in the catalog, a series edited, a column added. Nothing else needs to be known about a
 partition, and nothing else is kept.
 
-**An empty partition is still published** — a version directory with no files — so a month whose
-every file the venue published empty reads as stocked rather than being rebuilt every sweep.
+**An empty partition is still published** — one file under `@` with the table's columns and no
+rows, whatever the month weighed — so a month whose every file the venue published empty reads as
+stocked rather than being rebuilt every sweep.
 
 ## Architecture
 
 | Concern | Where | |
 |---|---|---|
-| What exists | `src/catalog.ts` | the catalog's listing, folded into partitions |
+| What exists | `src/catalog.ts` | the catalog's partitions of a venue |
 | What a key says | `src/keys.ts` | venue, market, dataset, variant, bundle, grain, month, off a name |
 | What is on disk | `src/disk.ts` | a partition's files in the archives, and whether they match |
 | How bytes are wrapped | `src/containers/` | `native` or `unpack()` to a scratch dir |
@@ -156,7 +194,7 @@ every file the venue published empty reads as stocked rather than being rebuilt 
 | What a format means | `src/schema/series.ts` | declarative, one entry per format |
 | Which instruments are inverse | `src/schema/margin.ts` | one rule per venue |
 | What a table is | `src/schema/tables.ts` | declarative, the canonical column list |
-| Where it lands | `src/vault.ts` | the layout, the version, publishing |
+| Where it lands | `src/vault.ts` | the layout, the revision, what the vault holds, publishing |
 | The sweep | `src/scan.ts` | the decisions above, in order |
 
 Containers, formats, series and tables are extension points: a file or an entry you add rather
@@ -213,11 +251,17 @@ naming the file. Every positional format is comma-separated, which is all detect
 Every connection comes from **one DuckDB instance**, which is the load-bearing part:
 `memory_limit` and `threads` are instance-wide, so concurrent builds divide the configured budget
 rather than multiplying it. Raising concurrency never raises what the service may take from the
-box.
+box. The budget is `STOCKER_MEMORY_GB` and `STOCKER_THREADS`; past the first the engine spills to
+disk rather than taking more.
+
+**A month is joined by appending, never by sorting.** Each instrument's file is already in time
+order, so reading them in symbol order and writing what is read gives the whole month in symbol
+and time order while holding almost none of it. Measured on 24 million rows, appending peaked at
+0.27 GB where sorting the same rows by time took everything it was allowed.
 
 **No partition starts below `STOCKER_MIN_FREE_GB`** of free space on the vault's volume. The sweep
-stops there and says so, rather than filling the volume mid-build — and checks before listing each
-venue too, so a full volume costs the catalog nothing.
+stops there and says so, rather than filling the volume mid-build — and checks before asking about
+each venue too, so a full volume costs the catalog nothing.
 
 Venue and table filters are matched case-insensitively against what the series map declares, and
 an unknown token **fails startup** — those vocabularies are closed, so a token outside them can
@@ -415,10 +459,10 @@ Three things follow, and all are mechanical:
 - **The build clips to the month.** Pulling in a neighbour without bounding the output would
   write its rows into two partitions. Clipping applies **only** to spilling series: elsewhere it
   could only ever delete, since a stray out-of-period row has no neighbour supplying it.
-- **The partition waits for the edge.** It is complete only once the neighbour's edge is listed
-  and downloaded, and the edge's digest is part of its version — so the edge changing restocks
-  it. The newest month a lens holds therefore waits for the lens to reach the next month's first
-  bucket.
+- **The partition waits for its neighbour.** It is ready only once the neighbouring month is
+  downloaded and settled too, and the neighbour's version is part of its revision — so the
+  neighbour changing restocks it. The newest month a lens holds therefore waits for the lens to
+  reach the month after it.
 
 The trait assumes the offset is smaller than one bucket, so one neighbour in each direction is
 enough.

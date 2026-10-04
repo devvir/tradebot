@@ -28,6 +28,9 @@ export type Config = {
 
   /** Concurrent fetches within one venue. Venues never wait on each other. */
   concurrency:  number;
+
+  /** Free space on the archives' volume below which nothing more is fetched, in GB. */
+  minFreeGb:    number;
 };
 
 /** One object of a bucket listing, in S3's own field names. */
@@ -100,4 +103,7 @@ export interface Walked {
 
   /** Files the network would not bring, left unreported to come round again. */
   unreached:  number;
+
+  /** The walk stopped taking files because the archives' volume ran low. */
+  full:       boolean;
 }

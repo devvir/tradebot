@@ -1,32 +1,39 @@
-import { mkdir, rm } from 'node:fs/promises';
+import { rm } from 'node:fs/promises';
 import { logger } from '@devvir/service-kit';
 import { sizeOf } from '@tradebot/utils';
 import type { DuckDBConnection } from '@duckdb/node-api';
-import { buildBatch, buildGroup } from './build';
+import { buildBatch, buildGroup, bundleStaged } from './build';
 import { listPartitions } from './catalog';
 import config from './config';
-import { Instruments, edgeFilesOf, filesOf, matches, unchanged } from './disk';
+import { Instruments, edgeFilesOf, filesOf, matches } from './disk';
 import { idOf, neighbourOf } from './keys';
 import { SERIES, extrasOf, seriesOf } from './schema/series';
 import { reachOf } from './spill';
-import { freeGb, labelOf, publish, prune, stagingOf, versionOf, versionsOf } from './vault';
-import type { DiskFile, Edge, Grain, Group, Partition, Series, Summary, Target, Task, VaultKey } from './types';
+import { Slices, freeGb, isWhole, labelOf, monthOf, prune, publishBundle, publishSplit, revisionOf, stagingOf } from './vault';
+import type {
+  DiskFile, Edge, Grain, Group, InstrumentDirs, Partition, Series, Stocked, Summary, Sweeping, Target, Task, VaultKey,
+} from './types';
 
 /**
  * One pass: ask the catalog what every partition holds, and stock the ones the
- * vault does not hold at their current version.
+ * vault does not hold at their current revision.
  *
- * For each partition in scope, in order:
+ * The catalog is asked only for what can be acted on: partitions with nothing
+ * left to download that it has not seen change for `coolHours` — so nothing a
+ * run is still adding to. For each of those, in order:
  *
- * 1. **Complete in the catalog** — nothing of it is still to be downloaded, and
- *    for a spilling dataset, neither is the neighbouring edge it reaches into.
- * 2. **Not already stocked** — its version, computed from the catalog's
- *    identity of every input, is not in the vault.
- * 3. **On disk as the catalog lists it** — the same count and the same bytes.
+ * 1. **With its neighbour** — a spilling dataset reads the edge of the month
+ *    beside it, which has to be ready too.
+ * 2. **Not already stocked** — its revision, computed from the catalog's
+ *    version of every partition it is built from, is not in the vault.
+ * 3. **On disk as the catalog says** — the same count and the same bytes.
  * 4. **Stocked**, into a staging directory, one file per instrument.
- * 5. **Still on disk as it was** — nothing changed while it was built.
- * 6. **Published**: the staging directory is renamed into place as the new
- *    version, and every other version removed.
+ * 5. **Published**, as one file or as a file per instrument, and every other
+ *    revision removed.
+ *
+ * Nothing is checked again afterwards. A partition that changed while it was
+ * being stocked has a new version in the catalog, so the next sweep computes a
+ * revision the vault does not hold and stocks it again.
  *
  * Several renderings of the same data — a monthly and a daily grain, a market
  * bundle and per-instrument files — are several partitions of the archives
@@ -40,17 +47,17 @@ export const sweep = async (conns: DuckDBConnection[]): Promise<Summary> => {
   };
 
   const instruments = new Instruments();
+  const slices      = new Slices();
+
+  /** Changed in the catalog after this, and a partition is not taken as settled. */
+  const settledBefore = new Date(Date.now() - config.coolHours * 3_600_000).toISOString();
 
   for (const venue of venuesInScope()) {
-    const prefixes = prefixesOf(venue);
+    const datasets = datasetsOf(venue);
 
-    if (prefixes.length === 0) continue;
+    if (datasets.length === 0) continue;
 
-    /**
-     * Below the floor nothing can be stocked, so the catalog is not asked
-     * either: listing a big venue is minutes of the catalog's time, spent to
-     * stop at the first partition that needs building.
-     */
+    // Below the floor nothing can be stocked, so the catalog is not asked either.
     const free = await freeGb();
 
     if (free < config.minFreeGb) {
@@ -61,14 +68,14 @@ export const sweep = async (conns: DuckDBConnection[]): Promise<Summary> => {
       return finish(summary);
     }
 
-    const partitions = await listPartitions(prefixes);
+    const partitions = await listPartitions(venue, datasets, settledBefore);
     const targets    = targetsOf(partitions);
 
     for (const target of targets) {
       summary.considered++;
 
       try {
-        await settle(conns, target, partitions, instruments, summary);
+        await settle(conns, target, partitions, { instruments, slices }, summary);
       } catch (err) {
         if (err instanceof LowSpace) {
           summary.stopped = true;
@@ -114,7 +121,7 @@ export const report = (summary: Summary, scanMinutes: number): void => {
   }
 
   if (summary.waiting + summary.missing > 0) {
-    logger.info(counts, `Caught up — ${summary.waiting} partition${summary.waiting === 1 ? '' : 's'} still downloading, ` +
+    logger.info(counts, `Caught up — ${summary.waiting} partition${summary.waiting === 1 ? '' : 's'} waiting on a neighbouring month, ` +
       `${summary.missing} not on disk as catalogued; rescanning in ${scanMinutes} minutes`);
 
     return;
@@ -160,26 +167,12 @@ const finish = (summary: Summary): Summary => {
 const venuesInScope = (): string[] =>
   config.venues.length ? [...config.venues] : [...new Set(SERIES.map(s => s.venue))].sort();
 
-/**
- * The listing prefixes that hold a venue's mapped datasets — the narrowest
- * that cover them, so nothing stocker cannot read is listed.
- */
-const prefixesOf = (venue: string): string[] => {
-  const all = SERIES
-    .filter(series => series.venue === venue)
-    .filter(series => ! config.tables.length || config.tables.includes(series.table))
-    .map(series => {
-      const base = `${venue}/${series.market}/${series.dataset}`;
-
-      if (series.variant === '*') return `${base},`;
-
-      return series.variant ? `${base},${series.variant}/` : `${base}/`;
-    });
-
-  const unique = [...new Set(all)].sort();
-
-  return unique.filter(prefix => ! unique.some(other => other !== prefix && prefix.startsWith(other)));
-};
+/** The datasets of a venue the series map reads, within the configured tables. */
+const datasetsOf = (venue: string): string[] =>
+  [...new Set(SERIES
+    .filter(series => series.venue === venue
+      && (! config.tables.length || config.tables.includes(series.table)))
+    .map(series => series.dataset))].sort();
 
 /** Partitions grouped by where they land in the vault, oldest month first. */
 const targetsOf = (partitions: Map<string, Partition>): Target[] => {
@@ -218,32 +211,35 @@ const targetsOf = (partitions: Map<string, Partition>): Target[] => {
 
 /** Decide one vault partition, and stock it where it needs stocking. */
 const settle = async (
-  conns:       DuckDBConnection[],
-  target:      Target,
-  partitions:  Map<string, Partition>,
-  instruments: Instruments,
-  summary:     Summary,
+  conns:      DuckDBConnection[],
+  target:     Target,
+  partitions: Map<string, Partition>,
+  sweeping:   Sweeping,
+  summary:    Summary,
 ): Promise<void> => {
   const { key, series } = target;
   const spill = series[0]!.spill;
 
   const ready = target.candidates
-    .filter(candidate => candidate.stats.pending === 0 && candidate.stats.files > 0)
+    .filter(candidate => candidate.files > 0)
     .map(candidate => ({ candidate, edges: edgesFor(candidate, spill, partitions) }))
     .filter(({ edges }) => edges !== null)
     .map(({ candidate, edges }) => ({
       candidate,
-      edges:   edges!,
-      version: versionOf(key, candidate, series, edges!.map(edge => edge.digest)),
+      edges:    edges!,
+      revision: revisionOf(key, candidate, series, edges!),
     }));
 
-  const present = await versionsOf(key);
-  const current = ready.find(one => present.includes(one.version));
+  const held    = (await sweeping.slices.of(key)).get(monthOf(key)) ?? new Map<string, Stocked>();
+  const current = ready.find(one => isWhole(held.get(one.revision)));
 
   if (current) {
     summary.current++;
 
-    if (present.length > 1) await prune(key, current.version);
+    if (held.size > 1) {
+      await prune(key, current.revision, held);
+      sweeping.slices.forget(key);
+    }
 
     return;
   }
@@ -255,18 +251,19 @@ const settle = async (
   }
 
   /**
-   * The preferred rendering that is on disk as the catalog lists it — the next
-   * one if it is not, so a month whose monthly files are gone but whose dailies
-   * are here still stocks.
+   * The preferred rendering that is on disk as the catalog says — the next one
+   * if it is not, so a month whose monthly files are gone but whose dailies are
+   * here still stocks.
    */
   for (const one of ready.sort((x, y) => rank(x.candidate) - rank(y.candidate))) {
-    const inputs = await onDisk(one.candidate, one.edges, instruments);
+    const inputs = await onDisk(one.candidate, one.edges, sweeping.instruments);
 
     if (! inputs) continue;
 
     if (await freeGb() < config.minFreeGb) throw new LowSpace(await freeGb());
 
-    await stock(conns, key, one.candidate, one.version, inputs.files, inputs.donated, summary);
+    await stock(conns, key, one.candidate, one.revision, inputs.files, inputs.donated, held, summary);
+    sweeping.slices.forget(key);
 
     return;
   }
@@ -278,26 +275,25 @@ const settle = async (
 };
 
 /**
- * A rendering's files and its neighbours' edge files, or null unless every one
- * of them is on disk as the catalog lists it.
+ * A rendering's files and its neighbours' edge files, or null unless every
+ * partition they come from is on disk as the catalog says.
  */
 const onDisk = async (
   candidate:   Partition,
   edges:       Edge[],
-  instruments: Instruments,
+  instruments: InstrumentDirs,
 ): Promise<{ files: DiskFile[]; donated: DiskFile[] } | null> => {
   const files = await filesOf(candidate.key, instruments);
 
-  if (! matches(files, candidate.stats)) return null;
+  if (! matches(files, candidate)) return null;
 
   const donated: DiskFile[] = [];
 
   for (const edge of edges) {
-    const found = await edgeFilesOf(edge.partition.key, edge.side, instruments);
+    // The neighbour is checked whole, since that is what the catalog counts; only its edge is read.
+    if (! matches(await filesOf(edge.partition.key, instruments), edge.partition)) return null;
 
-    if (! matches(found, edge.partition.stats[edge.side])) return null;
-
-    donated.push(...found);
+    donated.push(...await edgeFilesOf(edge.partition.key, edge.side, instruments));
   }
 
   return { files, donated };
@@ -305,23 +301,25 @@ const onDisk = async (
 
 /**
  * Build a partition into staging, one instrument per connection at a time,
- * then publish it if nothing moved underneath.
+ * then publish it: as one file, or — where the archive files it came from
+ * weigh more than `splitGb` — as a file per instrument.
  */
 const stock = async (
   conns:     DuckDBConnection[],
   key:       VaultKey,
   partition: Partition,
-  version:   string,
+  revision:  string,
   files:     DiskFile[],
   donated:   DiskFile[],
+  held:      Map<string, Stocked>,
   summary:   Summary,
 ): Promise<void> => {
-  const staging = stagingOf(key, version);
+  const staging = stagingOf(key, revision);
   const started = Date.now();
-  const bytes   = files.reduce((total, one) => total + one.size, 0);
+  const split   = partition.bytes > config.splitGb * 1024 ** 3;
 
-  logger.info({ partition: labelOf(key), from: partition.id, version, files: files.length,
-    size: sizeOf(bytes) }, 'Stocking partition');
+  logger.info({ partition: labelOf(key), from: partition.id, revision, files: files.length,
+    size: sizeOf(partition.bytes), as: split ? 'a file per instrument' : 'one file' }, 'Stocking partition');
 
   await rm(staging, { recursive: true, force: true });
 
@@ -347,28 +345,27 @@ const stock = async (
 
   await Promise.all(conns.map(worker));
 
-  if (failure) {
+  try {
+    if (failure) throw failure;
+
+    /**
+     * A partition with nothing in it is stored as one file whatever it weighed:
+     * a file per instrument of no instruments would be nothing at all, and
+     * nothing is what an unstocked partition looks like.
+     */
+    if (split && written > 0) await publishSplit(key, revision, staging);
+    else await publishBundle(key, revision, await bundleStaged(conns[0]!, key, staging));
+
+    await prune(key, revision, held);
+  } catch (err) {
     summary.failed++;
 
-    logger.error({ err: failure, partition: labelOf(key), from: partition.id }, 'Stocking failed');
-    await rm(staging, { recursive: true, force: true });
+    logger.error({ err, partition: labelOf(key), from: partition.id }, 'Stocking failed');
 
     return;
-  }
-
-  if (! await unchanged([...files, ...donated])) {
-    summary.failed++;
-
-    logger.warn({ partition: labelOf(key) }, 'Inputs changed while stocking — discarded, comes round again');
+  } finally {
     await rm(staging, { recursive: true, force: true });
-
-    return;
   }
-
-  // A partition every input of which was empty still publishes — as an empty
-  // version — so it reads as stocked rather than being rebuilt every sweep.
-  await mkdir(staging, { recursive: true });
-  await publish(key, version, staging);
 
   if (written === 0) summary.empty++;
 
@@ -376,7 +373,7 @@ const stock = async (
   summary.rows  += rows;
   summary.files += written;
 
-  logger.info({ partition: labelOf(key), version, files: written, rows,
+  logger.info({ partition: labelOf(key), revision, instruments: written, rows,
     seconds: Math.round((Date.now() - started) / 100) / 10 }, 'Partition stocked');
 };
 
@@ -401,8 +398,8 @@ const groupsOf = (files: DiskFile[], donated: DiskFile[]): Group[] => {
 };
 
 /**
- * The neighbouring edges a candidate needs, or null when one is not complete
- * in the catalog yet. A partition that does not spill needs none.
+ * The neighbouring months a candidate reads the edge of, or null when one is
+ * not among the ready partitions. A partition that does not spill needs none.
  */
 const edgesFor = (
   candidate:  Partition,
@@ -414,9 +411,9 @@ const edgesFor = (
   for (const { by, side } of reachOf(spill)) {
     const neighbour = partitions.get(idOf(neighbourOf(candidate.key, by)));
 
-    if (! neighbour || neighbour.stats[side].files === 0 || neighbour.stats[side].pending > 0) return null;
+    if (! neighbour || neighbour.files === 0) return null;
 
-    edges.push({ partition: neighbour, side, digest: neighbour.stats[side].digest });
+    edges.push({ partition: neighbour, side });
   }
 
   return edges;
@@ -485,7 +482,6 @@ const lastClosedMonth = (): string => {
 
 // ── Test access ───────────────────────────────────────────────────────────────
 
-export const _test_prefixesOf  = prefixesOf;
 export const _test_wantedMonth = wantedMonth;
 export const _test_groupsOf    = groupsOf;
 export const _test_rank        = rank;

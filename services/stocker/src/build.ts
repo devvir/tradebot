@@ -1,5 +1,5 @@
-import { mkdir, rename, rm } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { mkdir, readdir, rename, rm } from 'node:fs/promises';
+import { join } from 'node:path';
 import { logger } from '@devvir/service-kit';
 import type { DuckDBConnection } from '@duckdb/node-api';
 import config from './config';
@@ -11,7 +11,7 @@ import { selectFor } from './schema/project';
 import { seriesFor } from './schema/series';
 import { MARGIN, fieldsOf } from './schema/tables';
 import { clipFor } from './spill';
-import { fileOf } from './vault';
+import { STAGED } from './vault';
 import type { Format } from './formats/types';
 import type { DiskFile, Series, VaultKey } from './types';
 
@@ -33,9 +33,10 @@ const ROW_GROUP = 100_000;
  * that claims it, so one call can union two formats (two eras, or two
  * margining shapes) into one canonical relation.
  *
- * **One output file per instrument.** Where the series names an instrument
- * column — a market bundle, a futures chain — the rows are split by it;
- * otherwise the catalog symbol is the instrument.
+ * **One output file per instrument**, in `staging`, each carrying its symbol
+ * as a column. Where the series names an instrument column — a market bundle, a
+ * futures chain — the rows are split by it; otherwise the catalog symbol is the
+ * instrument.
  *
  * Nothing is written outside `staging`; publishing it is the caller's.
  */
@@ -226,13 +227,13 @@ export const buildBatch = async (
     let files = 0;
 
     for (const instrument of instruments) {
-      const out  = join(staging, fileOf(key, instrument));
+      const out  = stagedOf(staging, instrument);
       const temp = `${out}.${++sequence}.tmp`;
 
-      await mkdir(dirname(out), { recursive: true });
+      await mkdir(staging, { recursive: true });
 
       await conn.run(
-        `COPY (SELECT ${repeats([...bySeries.keys()])}* EXCLUDE (_instrument, _wide, _sym, _file)${marginColumn(key, instrument)} FROM ${table}
+        `COPY (SELECT ${repeats([...bySeries.keys()])}${q(instrument)} AS symbol, * EXCLUDE (_instrument, _wide, _sym, _file)${marginColumn(key, instrument)} FROM ${table}
                WHERE _sym = ${q(instrument)} ORDER BY ts)
          TO ${q(temp)} (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE ${ROW_GROUP})`,
       );
@@ -248,6 +249,50 @@ export const buildBatch = async (
     await conn.run(`DROP TABLE IF EXISTS ${table}`).catch(() => {});
     await Promise.all(opened.map(o => o.unpacked.dispose()));
   }
+};
+
+/**
+ * Join a staged partition's per-instrument files into the one file a small
+ * month is stored as, and say where it is.
+ *
+ * **Appended, not sorted.** Each instrument's file is already in time order, so
+ * reading them in symbol order and writing what is read gives a file ordered by
+ * symbol and then by time — one instrument's rows together, which is how the
+ * file is read — without holding a month in memory to sort it.
+ *
+ * A partition every input of which was empty still becomes a file, with the
+ * table's columns and no rows, so it reads as stocked rather than being rebuilt
+ * every sweep.
+ */
+export const bundleStaged = async (conn: DuckDBConnection, key: VaultKey, staging: string): Promise<string> => {
+  await mkdir(staging, { recursive: true });
+
+  const out    = join(staging, '@.bundle');
+  const staged = (await readdir(staging))
+    .filter(name => name.endsWith(STAGED))
+    .map(name => name.slice(0, -STAGED.length))
+    .sort()
+    .map(symbol => q(stagedOf(staging, symbol)));
+
+  const rows = staged.length
+    ? `SELECT * FROM read_parquet([${staged.join(', ')}])`
+    : `SELECT CAST(NULL AS VARCHAR) AS symbol, ${fieldsOf(key.table)
+      .map(field => `CAST(NULL AS ${field.type}) AS ${field.name}`).join(', ')} WHERE false`;
+
+  /**
+   * Insertion order is what makes appending work, and it is off everywhere else
+   * — see `open`. Nothing else is being built while a partition is joined, so
+   * turning it on for this one statement costs nobody their memory.
+   */
+  await conn.run('SET preserve_insertion_order=true');
+
+  try {
+    await conn.run(`COPY (${rows}) TO ${q(out)} (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE ${ROW_GROUP})`);
+  } finally {
+    await conn.run('SET preserve_insertion_order=false');
+  }
+
+  return out;
 };
 
 /**
@@ -269,6 +314,9 @@ const LATEST   = 2_051_222_400_000_000;
 /** Sequence for temp tables and files, unique within the process. */
 let sequence = 0;
 
+/** Where one instrument's file is written while its partition is being built. */
+const stagedOf = (staging: string, symbol: string): string => join(staging, `${symbol}${STAGED}`);
+
 /** One instrument, one file. */
 const writeOne = async (
   conn:     DuckDBConnection,
@@ -280,13 +328,13 @@ const writeOne = async (
 ): Promise<{ rows: number; files: number }> => {
   if (! wantedSymbol(symbol)) return { rows: 0, files: 0 };
 
-  const out  = join(staging, fileOf(key, symbol));
+  const out  = stagedOf(staging, symbol);
   const temp = `${out}.${++sequence}.tmp`;
 
-  await mkdir(dirname(out), { recursive: true });
+  await mkdir(staging, { recursive: true });
 
   await conn.run(
-    `COPY (SELECT ${distinct}*${marginColumn(key, symbol)} FROM ${relation} ORDER BY ts)
+    `COPY (SELECT ${distinct}${q(symbol)} AS symbol, *${marginColumn(key, symbol)} FROM ${relation} ORDER BY ts)
      TO ${q(temp)} (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE ${ROW_GROUP})`,
   );
 
@@ -320,13 +368,13 @@ const writeSplit = async (
     let files = 0;
 
     for (const instrument of instruments) {
-      const out  = join(staging, fileOf(key, instrument));
+      const out  = stagedOf(staging, instrument);
       const temp = `${out}.${++sequence}.tmp`;
 
-      await mkdir(dirname(out), { recursive: true });
+      await mkdir(staging, { recursive: true });
 
       await conn.run(
-        `COPY (SELECT ${distinct}* EXCLUDE (_instrument)${marginColumn(key, instrument)} FROM ${table}
+        `COPY (SELECT ${distinct}${q(instrument)} AS symbol, * EXCLUDE (_instrument)${marginColumn(key, instrument)} FROM ${table}
                WHERE _instrument = ${q(instrument)} ORDER BY ts)
          TO ${q(temp)} (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE ${ROW_GROUP})`,
       );

@@ -69,4 +69,4 @@ export {
 
 export { addTransform, loadTransforms, transformsOf } from './transform';
 
-export * as cache from './cache/months';
+export * as cache from './cache/partitions';

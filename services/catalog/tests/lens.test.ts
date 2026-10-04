@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { dropLens, editLens, lensNamed, lensOptions, lensSize, lenses, problemsWith, putLens, resolve } from '../src/lenses/lens';
+import { dropLens, editLens, lensNamed, lensOptions, lensSize, lenses, problemsWith, putLens, resolveSlices } from '../src/lenses/lens';
 import { markDownloaded, putFiles, putVenue, recordSeries, venueIdOf } from './fixture';
 import { openScratch } from './fixture';
 import type { LensDefinition } from '../src/types';
@@ -47,9 +47,15 @@ afterEach(() => {
 
 const lens = (venues: LensDefinition['venues']): LensDefinition => ({ format: 1, venues });
 
-/** How many series a definition lets through, across every venue. */
+/** How many slices a definition lets through, across every venue. */
 const selects = (definition: LensDefinition): number =>
-  [...resolve(db, definition).values()].reduce((sum, one) => sum + one.length, 0);
+  [...resolveSlices(db, definition).values()].reduce((sum, one) => sum + one.length, 0);
+
+/** A series of one dataset, for a test to hang files on. */
+const seriesOf = (dataset: string): number =>
+  (db.prepare(
+    `SELECT s.id FROM series s JOIN pattern p ON p.id = s.pattern_id JOIN slice c ON c.id = p.slice_id
+      WHERE c.dataset = ? ORDER BY s.id LIMIT 1`).get(dataset) as { id: number }).id;
 
 describe('what a lens lets through', () => {
   it('lets nothing through where nothing is included', () => {
@@ -83,7 +89,7 @@ describe('what a lens lets through', () => {
     expect(selects(lens({ binance: [{ effect: 'include', datasets: [
       { dataset: 'klines', variant: '1m' },
       { dataset: 'trades' },
-    ] }] }))).toBe(5);   // four trades series, and one kline length
+    ] }] }))).toBe(5);   // four slices of trades, and one kline length
   });
 
   it('takes a dataset named without a variant as every variant of it', () => {
@@ -124,16 +130,17 @@ describe('what a lens lets through', () => {
   });
 
   /**
-   * **`@` is an ordinary instrument.** It is the venue-wide file covering every
-   * instrument of a market, and naming it selects those series with no special
-   * case — so buckets and a few named instruments is one rule.
+   * **A bundle splits every series in two**: the venue-wide files, and the files
+   * of one instrument each. Naming neither takes both.
    */
-  it('treats the bucket as an instrument like any other', () => {
-    expect(selects(lens({ binance: [{ effect: 'include', instruments: ['@'] }] }))).toBe(1);
+  it('selects by bundle', () => {
+    const all     = selects(lens({ binance: [{ effect: 'include' }] }));
+    const buckets = selects(lens({ binance: [{ effect: 'include', bundle: 'market' }] }));
+    const singles = selects(lens({ binance: [{ effect: 'include', bundle: 'instrument' }] }));
 
-    expect(selects(lens({ binance: [
-      { effect: 'include', instruments: ['@', 'ETHUSDT'] },
-    ] }))).toBe(2);
+    expect(buckets).toBe(1);
+    expect(singles).toBeGreaterThan(0);
+    expect(buckets + singles).toBe(all);
   });
 });
 
@@ -161,7 +168,7 @@ describe('rules that are about every venue', () => {
     expect(selects(lens({
       '*':    [{ effect: 'include' }],
       binance: [{ effect: 'exclude', datasets: [{ dataset: 'books' }] }],
-    }))).toBe(7);   // eight series in all, less binance's one books series
+    }))).toBe(7);   // eight slices in all, less binance's one of books
   });
 
   /** Global first: a venue's own rules see what the globals left. */
@@ -194,7 +201,7 @@ describe('rules that are about every venue', () => {
 
 describe('the time a lens lets through', () => {
   const spansOf = (definition: LensDefinition) =>
-    [...resolve(db, definition).values()].flat()[0]?.spans;
+    [...resolveSlices(db, definition).values()].flat()[0]?.spans;
 
   it('is everything where no bound is given', () => {
     expect(spansOf(lens({ binance: [{ effect: 'include', datasets: [{ dataset: 'books' }] }] })))
@@ -222,8 +229,8 @@ describe('the time a lens lets through', () => {
     ]);
   });
 
-  /** A series every rule excluded is absent, not present with no time. */
-  it('drops a series whose whole span was taken away', () => {
+  /** A slice every rule excluded is absent, not present with no time. */
+  it('drops a slice whose whole span was taken away', () => {
     expect(selects(lens({ binance: [
       { effect: 'include', datasets: [{ dataset: 'books' }], from: '201901', to: '201912' },
       { effect: 'exclude', datasets: [{ dataset: 'books' }] },
@@ -357,27 +364,33 @@ describe('why a lens is refused', () => {
     ] }))).toEqual([]);
   });
 
-  it('names the datasets with no venue-wide file to give @', () => {
+  it('names the datasets with no venue-wide file to give the market bundle', () => {
     expect(problemsWith(db, lens({ binance: [
-      { effect: 'include', datasets: [{ dataset: 'trades' }], instruments: ['@'] },
-    ] }))).toMatchObject([{ field: 'instruments', message: expect.stringContaining('spot trades') }]);
+      { effect: 'include', datasets: [{ dataset: 'trades' }], bundle: 'market' },
+    ] }))).toMatchObject([{ field: 'bundle', message: expect.stringContaining('spot trades') }]);
 
     expect(problemsWith(db, lens({ binance: [
-      { effect: 'include', markets: ['perp'], datasets: [{ dataset: 'trades' }], instruments: ['@'] },
+      { effect: 'include', markets: ['perp'], datasets: [{ dataset: 'trades' }], bundle: 'market' },
     ] }))).toEqual([]);
   });
 
-  /** perp trades' venue-wide file is daily, so a monthly rule's @ selects nothing of it. */
-  it('weighs @ only in the grains the rule takes', () => {
+  it('refuses a bundle that is neither', () => {
+    expect(problemsWith(db, lens({ binance: [
+      { effect: 'include', bundle: 'symbol' as never },
+    ] }))).toMatchObject([{ field: 'bundle' }]);
+  });
+
+  /** perp trades' venue-wide file is daily, so a monthly rule's market bundle selects nothing of it. */
+  it('weighs a bundle only in the grains the rule takes', () => {
     recordSeries(db, venueIdOf(db, 'binance'), { market: 'perp', dataset: 'trades', variant: '', symbol: 'ETHUSDT',
       pattern: 'perp/trades/monthly/{SYMBOL}/{YYYY}{MM}.zip' });
 
     const rule = (grain: 'daily' | 'monthly') => lens({ binance: [
-      { effect: 'include', markets: ['perp'], datasets: [{ dataset: 'trades' }], grains: [grain], instruments: ['@'] },
+      { effect: 'include', markets: ['perp'], datasets: [{ dataset: 'trades' }], grains: [grain], bundle: 'market' },
     ] });
 
     expect(problemsWith(db, rule('daily'))).toEqual([]);
-    expect(problemsWith(db, rule('monthly'))).toMatchObject([{ field: 'instruments' }]);
+    expect(problemsWith(db, rule('monthly'))).toMatchObject([{ field: 'bundle' }]);
   });
 
   /** Naming no markets or datasets means "wherever this applies", which is not a fault. */
@@ -405,8 +418,7 @@ describe('what a venue offers a rule', () => {
 
 describe('what it would cost', () => {
   it('counts a small selection exactly', async () => {
-    const one = resolve(db, lens({ binance: [{ effect: 'include', datasets: [{ dataset: 'books' }] }] }));
-    const id  = [...one.values()].flat()[0]!.seriesId;
+    const id = seriesOf('books');
 
     await putFiles(db, [
       { venueId: 1, path: 'a', date: '202401', size: 10, etag: 'e', modified: null,
@@ -416,13 +428,13 @@ describe('what it would cost', () => {
     ]);
 
     expect(lensSize(db, lens({ binance: [{ effect: 'include', datasets: [{ dataset: 'books' }] }] })))
-      .toEqual({ series: 1, files: 2, bytes: 30, pending: 2, pendingBytes: 30 });
+      .toEqual({ partitions: 2, files: 2, bytes: 30, pending: 2, pendingBytes: 30 });
   });
 
   /** Progress comes from the same files as the total, on either road. */
   it('says how much of it is still to download', async () => {
     const books = lens({ binance: [{ effect: 'include', datasets: [{ dataset: 'books' }] }] });
-    const id    = [...resolve(db, books).values()].flat()[0]!.seriesId;
+    const id    = seriesOf('books');
 
     await putFiles(db, [
       { venueId: 1, path: 'a', date: '20240101', size: 10, etag: 'e', modified: null,
@@ -440,8 +452,7 @@ describe('what it would cost', () => {
 
   /** The date bound is part of the price, not applied afterwards. */
   it('leaves out files the lens does not let through', async () => {
-    const one = resolve(db, lens({ binance: [{ effect: 'include', datasets: [{ dataset: 'books' }] }] }));
-    const id  = [...one.values()].flat()[0]!.seriesId;
+    const id = seriesOf('books');
 
     await putFiles(db, [
       { venueId: 1, path: 'a', date: '202401', size: 10, etag: 'e', modified: null,
@@ -455,15 +466,9 @@ describe('what it would cost', () => {
     ] }))).toMatchObject({ files: 1, bytes: 10 });
   });
 
-  /**
-   * **The bound has to survive the cheap road.** A lens that narrows nothing but
-   * the dates is answered from the `month` rollup rather than from `file`, and
-   * that is exactly the path where a dropped bound returns the whole archive
-   * while looking like a considered number.
-   */
-  it('honours a date bound on the rollup path', async () => {
-    const one = resolve(db, lens({ binance: [{ effect: 'include' }] }));
-    const id  = [...one.values()].flat()[0]!.seriesId;
+  /** A lens that narrows nothing but the dates takes only the partitions inside them. */
+  it('honours a date bound where nothing else narrows', async () => {
+    const id = seriesOf('trades');
 
     await putFiles(db, [
       { venueId: 1, path: 'a', date: '20230101', size: 10, etag: 'e', modified: null,
@@ -478,8 +483,7 @@ describe('what it would cost', () => {
 
   /** And the same where the bound is global rather than the venue's own. */
   it('honours a date bound that came from the global rules', async () => {
-    const one = resolve(db, lens({ binance: [{ effect: 'include' }] }));
-    const id  = [...one.values()].flat()[0]!.seriesId;
+    const id = seriesOf('trades');
 
     await putFiles(db, [
       { venueId: 1, path: 'a', date: '20230101', size: 10, etag: 'e', modified: null,
@@ -492,6 +496,6 @@ describe('what it would cost', () => {
   });
 
   it('is nothing where the lens selects nothing', () => {
-    expect(lensSize(db, lens({}))).toEqual({ series: 0, files: 0, bytes: 0, pending: 0, pendingBytes: 0 });
+    expect(lensSize(db, lens({}))).toEqual({ partitions: 0, files: 0, bytes: 0, pending: 0, pendingBytes: 0 });
   });
 });

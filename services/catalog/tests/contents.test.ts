@@ -80,15 +80,15 @@ describe('the contents through a lens', () => {
   it('lists only instruments with a file inside it', async () => {
     await lens();
 
-    expect((await call('/contents/venues/binance/symbols')).body.items).toEqual(['BTCUSDT', 'ETHUSDT']);
-    expect((await call('/contents/venues/binance/symbols', { headers: LENS })).body.items).toEqual(['BTCUSDT']);
+    expect((await call('/venues/binance/symbols')).body.items).toEqual(['BTCUSDT', 'ETHUSDT']);
+    expect((await call('/venues/binance/symbols', { headers: LENS })).body.items).toEqual(['BTCUSDT']);
   });
 
   /** The newest file inside the lens, not the lens's own last day. */
   it('dates a shape by the files inside it', async () => {
     await lens();
 
-    const [shape] = (await call('/contents/venues/binance/markets/perp', { headers: LENS })).body.items as
+    const [shape] = (await call('/venues/binance/markets/perp', { headers: LENS })).body.items as
       { first: string; last: string; symbols: number }[];
 
     expect(shape).toMatchObject({ first: '20200101', last: '20200102', symbols: 1 });
@@ -97,7 +97,7 @@ describe('the contents through a lens', () => {
   it('totals a venue as the lens sees it', async () => {
     await lens();
 
-    const [venue] = (await call('/contents/venues', { headers: LENS })).body.items as
+    const [venue] = (await call('/venues', { headers: LENS })).body.items as
       { files: number; firstMonth: string; lastMonth: string; series: { total: number } }[];
 
     expect(venue).toMatchObject({ files: 2, firstMonth: '202001', lastMonth: '202001', series: { total: 1 } });
@@ -115,14 +115,82 @@ describe('the contents through a lens', () => {
       ] } },
     }) });
 
-    const [venue] = (await call('/contents/venues', { headers: { 'x-catalog-lens': 'holed' } })).body.items as
+    const [venue] = (await call('/venues', { headers: { 'x-catalog-lens': 'holed' } })).body.items as
       { files: number; firstMonth: string; lastMonth: string; series: { withFiles: number } }[];
 
     expect(venue).toMatchObject({ files: 5, firstMonth: '202001', lastMonth: '202101', series: { withFiles: 2 } });
   });
 
   it('is a 422 for a lens that does not exist, never the whole catalog', async () => {
-    expect((await call('/contents/venues/binance/symbols', { headers: { 'x-catalog-lens': 'nope' } })).status)
+    expect((await call('/venues/binance/symbols', { headers: { 'x-catalog-lens': 'nope' } })).status)
       .toBe(422);
+  });
+});
+
+/**
+ * A venue's partitions: each slice once, its months inside it, each with its
+ * own counts and version.
+ */
+describe('a venue\'s partitions', () => {
+  interface Held {
+    market: string; dataset: string; variant: string; grain: string; bundle: string;
+    partitions: { month: string; files: number; pending: number; version: string; updatedAt: string }[];
+  }
+
+  const partitions = async (query = '', headers: Record<string, string> = {}): Promise<Held[]> =>
+    (await call(`/venues/binance/partitions${query}`, { headers })).body.items as unknown as Held[];
+
+  /** Two instruments of one slice share its partitions. */
+  it('nests each slice\'s months under it', async () => {
+    expect(await partitions()).toMatchObject([{
+      market: 'perp', dataset: 'klines', variant: '1m', grain: 'daily', bundle: 'instrument',
+      partitions: [{ month: '202001', files: 2, pending: 2 }, { month: '202101', files: 3, pending: 3 }],
+    }]);
+  });
+
+  it('gives each partition a version and when it last moved', async () => {
+    const [slice] = await partitions();
+
+    expect(slice!.partitions[0]).toMatchObject({ version: expect.stringMatching(/^[0-9a-f]{16}$/), updatedAt: 'T1' });
+  });
+
+  it('shows only what a lens lets through', async () => {
+    await lens();
+
+    expect((await partitions('', LENS))[0]!.partitions.map(one => one.month)).toEqual(['202001']);
+  });
+
+  /** A slice none of whose partitions were asked for is not listed empty. */
+  it('narrows by dataset, and leaves out a slice left with nothing', async () => {
+    const id = (db.prepare('SELECT id FROM venue').get() as { id: number }).id;
+
+    await publish(id, { dataset: 'trades', variant: '', symbol: 'SOLUSDT', urlSymbol: 'SOLUSDT', pattern: 't/{YYYY}{MM}{DD}/{SYMBOL}.zip' }, ['20200101']);
+
+    expect((await partitions()).map(one => one.dataset)).toEqual(['klines', 'trades']);
+    expect((await partitions('?datasets=trades,funding')).map(one => one.dataset)).toEqual(['trades']);
+    expect(await partitions('?datasets=funding')).toEqual([]);
+  });
+
+  it('narrows to what is fully downloaded', async () => {
+    expect(await partitions('?downloaded=true')).toEqual([]);
+
+    db.exec(`UPDATE partition SET pending = 0 WHERE month = '202001'`);
+
+    expect((await partitions('?downloaded=true'))[0]!.partitions.map(one => one.month)).toEqual(['202001']);
+  });
+
+  /** What a consumer waiting for a partition to go quiet asks with. */
+  it('narrows to what last moved before an instant', async () => {
+    db.exec(`UPDATE partition SET updated_at = '2026-10-01T00:00:00.000Z' WHERE month = '202001'`);
+    db.exec(`UPDATE partition SET updated_at = '2026-10-04T00:00:00.000Z' WHERE month = '202101'`);
+
+    expect((await partitions('?settled-before=2026-10-02T00:00:00.000Z'))[0]!.partitions.map(one => one.month))
+      .toEqual(['202001']);
+  });
+
+  it('refuses a grain or a bundle there is no such thing as', async () => {
+    expect((await call('/venues/binance/partitions?grain=weekly')).status).toBe(400);
+    expect((await call('/venues/binance/partitions?bundle=symbol')).status).toBe(400);
+    expect((await call('/venues/nowhere/partitions')).status).toBe(404);
   });
 });

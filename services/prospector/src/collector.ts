@@ -189,7 +189,7 @@ export const pauseSurveys = (surveys: Surveys, asked: readonly string[]): PauseA
   return { at: new Date().toISOString(), paused, skipped };
 };
 
-/** How every venue stands — or one — with the figures as the rollups hold them. */
+/** How every venue stands — or one — with the figures as its partitions hold them. */
 export const statusOf = (db: DatabaseSync, surveys: Surveys, only?: string): VenueStatus[] => {
   /** One pass for every venue, rather than one filtered scan per venue. */
   const counts = seriesCounts(db);

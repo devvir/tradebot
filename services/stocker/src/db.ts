@@ -13,9 +13,9 @@ import config from './config';
  * data will happily take the box down. With `temp_directory` set, DuckDB spills
  * to disk instead of failing or being killed.
  *
- * **How much memory the process may use is not this service's business.** It is
- * a property of the deployment, decided by whoever runs the container, and the
- * container states it once — so there is no setting here to disagree with it.
+ * **Memory is capped here too.** Left alone the engine takes most of the
+ * machine's memory before it spills, and one sort over a busy month is enough
+ * to starve everything else running beside it.
  *
  * One instance is the load-bearing part. `threads` is instance-wide, so
  * connections sharing an instance share the cap — while a second instance would
@@ -32,6 +32,7 @@ export const open = async (): Promise<{ conns: DuckDBConnection[]; close: () => 
   const first    = await instance.connect();
 
   await first.run(`SET threads=${config.threads}`);
+  await first.run(`SET memory_limit='${config.memoryGb}GB'`);
   await first.run(`SET temp_directory='${spill}'`);
 
   /**

@@ -321,8 +321,8 @@ about meaning rather than spelling, and both are silent faults: a venue whose ru
 **empty list** in a dimension matches nothing, where leaving it out matches all of
 it.
 
-**The lens carries what it costs** — the saved lens's size, exact, off the catalog's
-rollups — refreshed after every confirm and drop. A draft is never sized: what a
+**The lens carries what it costs** — the saved lens's size, exact, summed over its
+partitions — refreshed after every confirm and drop. A draft is never sized: what a
 rule would cost is answered by confirming it.
 
 **Drafts can be thrown away.** Drafts and unsaved names are kept in the browser, so a
@@ -335,13 +335,9 @@ downloaded by weight, not by count — files run from kilobytes to gigabytes, so
 count says little about the wait. The size is asked again every thirty seconds,
 so the bar moves while a downloader works through the lens.
 
-**`@` is offered as an instrument like any other.** It is the venue-wide file
-covering every instrument of a market, so cold-storing buckets and keeping a few
-instruments on their own for simulation is one rule with both in it. It is offered
-as its own chip rather than found by typing, because a venue's instrument list
-deliberately leaves the bucket out. **The chip appears only where the venue publishes a venue-wide file
-at all** — `GET /lenses/options/:venue` says how many each combination holds — so it is never offered
-where it could only select nothing.
+**A rule picks a bundle, never an instrument.** *Both*, *Per instrument* or *Buckets* — the files
+of one instrument each, the venue-wide files carrying every instrument of a market, or the two
+together. What a rule selects is therefore always whole.
 
 **Instruments are searched, not browsed.** A venue lists more of them than anyone
 scrolls, so the field stays quiet until three characters make it worth answering,

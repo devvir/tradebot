@@ -1,6 +1,8 @@
 import { logger } from '@devvir/service-kit';
 import { atGrain, dueAt, lastClosed, lastSettled } from '../dates';
 import { transformFor, transformsOf } from './transform';
+import { BUCKET } from '../canonical';
+import { INSTRUMENT_OF, SLICE_OF } from '../database/schema';
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import type { Found, Grain, Publishing, Reconciled, SeriesCount, SeriesFilter, Slots } from '../types';
 
@@ -60,6 +62,7 @@ export const recordSeries = (
 
   held.byKey.set(key, row);
   held.byId.set(row.id!, row);
+  shelve(held, row);
 
   return row;
 };
@@ -80,15 +83,15 @@ export const updateSeries = (db: DatabaseSync, series: Publishing): Publishing =
 
   if (! row) return series;
 
-  statements(db, held).update.run(series.first, series.last, series.tip,
-    series.state, row.id!);
+  statements(db, held).bounds.run(series.first, series.last, series.tip, row.id!);
 
   Object.assign(row, {
     first:  series.first,
     last:   series.last,
     tip:    series.tip,
-    state:  series.state,
   });
+
+  if (series.state !== row.state) setState(db, held, row, series.state);
 
   return row;
 };
@@ -296,12 +299,13 @@ export const retireSeries = (
 
   if (rows.length === 0) return 0;
 
-  const set = statements(db, registry(db)).state;
+  const held = registry(db);
 
   db.exec('BEGIN');
 
   try {
-    for (const row of rows) set.run(state, row.id!);
+    for (const row of rows)
+      if (row.state !== state) setState(db, held, row, state);
 
     db.exec('COMMIT');
   } catch (err) {
@@ -309,8 +313,6 @@ export const retireSeries = (
 
     throw err;
   }
-
-  for (const row of rows) row.state = state;
 
   return rows.length;
 };
@@ -755,14 +757,14 @@ export const loadSeries = (db: DatabaseSync): number => {
   if (had?.timer) clearTimeout(had.timer);
 
   const held: Registry = {
-    db, byKey: new Map(), byId: new Map(), patterns: new Map(),
+    db, byKey: new Map(), byId: new Map(), byInstrument: new Map(), patterns: new Map(),
     moved: new Set(), timer: null, sql: null,
   };
 
   REGISTRIES.set(db, held);
 
   for (const row of readPatterns(db))
-    held.patterns.set(patternKey(row.venueId, row.market, row.dataset, row.pattern),
+    held.patterns.set(patternKey(row.venueId, row.market, row.dataset, row.bundle, row.pattern),
       { id: row.id, retiredAt: row.retiredAt });
 
   /**
@@ -818,6 +820,7 @@ export const loadSeries = (db: DatabaseSync): number => {
 
     held.byKey.set(identity(series.venueId, series), series);
     held.byId.set(series.id!, series);
+    shelve(held, series);
   }
 
   return held.byId.size;
@@ -926,6 +929,9 @@ interface Registry {
 
   byKey:    Map<string, Publishing>;
   byId:     Map<number, Publishing>;
+
+  /** Every series of each instrument, since they share its state. */
+  byInstrument: Map<number, Publishing[]>;
   patterns: Map<string, { id: number; retiredAt: string | null }>;
   moved:    Set<number>;
 
@@ -936,9 +942,13 @@ interface Registry {
 }
 
 interface Statements {
+  /** The slice a shape publishes into, created where it is new. */
+  slice:    StatementSync;
   pattern:  StatementSync;
   insert:   StatementSync;
-  update:   StatementSync;
+
+  /** The instrument a series is a shape of, created where it is new, and its state. */
+  instrument: StatementSync;
   state:    StatementSync;
 
   /** The one place a series row is removed — see `remove`. */
@@ -956,37 +966,34 @@ interface Statements {
  */
 const statements = (db: DatabaseSync, held: Registry): Statements =>
   held.sql ??= {
+    slice: db.prepare(SLICE_OF),
+
     pattern: db.prepare(
-      `INSERT INTO pattern (venue_id, market, dataset, variant, pattern, grain)
-            VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT (venue_id, market, dataset, pattern) DO NOTHING
+      `INSERT INTO pattern (venue_id, slice_id, pattern, holds)
+            VALUES (?, ?, ?, ?)
+       ON CONFLICT (venue_id, slice_id, pattern) DO NOTHING
          RETURNING id`,
     ),
 
     insert: db.prepare(
-      `INSERT INTO series (pattern_id, symbol, url_symbol,
-                           first, last, tip, state)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO series (pattern_id, instrument_id, url_symbol,
+                           first, last, tip)
+            VALUES (?, ?, ?, ?, ?, ?)
        -- A self-assignment of half the conflict key, so the row is untouched and
        -- RETURNING still yields its id. DO NOTHING would return no row at all,
        -- and every caller here needs the id of the series it just named.
        --
-       -- The key is the name the keys carry rather than the symbol, matching
-       -- identity() -- see there for why. COALESCE also settles the NULL
-       -- convention: a url_symbol spelled out and one left implicit are the same
-       -- series, and collide as they should.
-       ON CONFLICT (pattern_id, COALESCE(url_symbol, symbol))
+       -- The registry refuses two series of one shape whose keys carry one name
+       -- before either reaches here -- see identity(). This is what is left for
+       -- the table to hold: one row per shape, instrument and spelling.
+       ON CONFLICT (pattern_id, COALESCE(instrument_id, 0), COALESCE(url_symbol, ''))
        DO UPDATE SET pattern_id = excluded.pattern_id
          RETURNING id`,
     ),
 
-    update: db.prepare(
-      `UPDATE series
-          SET first = ?, last = ?, tip = ?, state = ?
-        WHERE id = ?`,
-    ),
+    instrument: db.prepare(INSTRUMENT_OF),
 
-    state: db.prepare('UPDATE series SET state = ? WHERE id = ?'),
+    state: db.prepare('UPDATE instrument SET state = ? WHERE id = ?'),
     drop:  db.prepare('DELETE FROM series WHERE id = ?'),
     bounds: db.prepare('UPDATE series SET first = ?, last = ?, tip = ? WHERE id = ?'),
 
@@ -1063,8 +1070,17 @@ const identity = (
 ): string =>
   [venueId, of.market, of.dataset, of.pattern, of.urlSymbol ?? of.symbol].join(' ');
 
-const patternKey = (venueId: number, market: string, dataset: string, pattern: string): string =>
-  [venueId, market, dataset, pattern].join(' ');
+/**
+ * What makes two shapes the same shape: the server, what it publishes — as far
+ * as a path alone says it — and the URL shape. The bundle is part of it, so one
+ * URL shape serving both a venue-wide file and a file per instrument is two.
+ */
+const patternKey = (venueId: number, market: string, dataset: string, bundle: string, pattern: string): string =>
+  [venueId, market, dataset, bundle, pattern].join(' ');
+
+/** How many instruments one file of a series holds: every one of a market, or one. */
+const bundleOf = (symbol: string): 'instrument' | 'market' =>
+  (symbol === BUCKET ? 'market' : 'instrument');
 
 /**
  * Take a series out of the catalog and out of the registry that mirrors it.
@@ -1085,6 +1101,43 @@ const remove = (db: DatabaseSync, held: Registry, row: Publishing): void => {
   held.moved.delete(row.id!);
   held.byId.delete(row.id!);
   held.byKey.delete(identity(row.venueId, row));
+
+  if (row.instrumentId !== null) {
+    const siblings = held.byInstrument.get(row.instrumentId) ?? [];
+
+    held.byInstrument.set(row.instrumentId, siblings.filter(one => one !== row));
+  }
+};
+
+/** File a series under its instrument, beside the others that share its state. */
+const shelve = (held: Registry, row: Publishing): void => {
+  if (row.instrumentId === null) return;
+
+  const siblings = held.byInstrument.get(row.instrumentId);
+
+  if (siblings) siblings.push(row);
+  else held.byInstrument.set(row.instrumentId, [row]);
+};
+
+/**
+ * State what the venue's listing says of an instrument, through one of its
+ * series.
+ *
+ * **Written once, on the instrument, and every series of it follows** — the
+ * rows in memory included, since they answer reads. A bucket has no instrument:
+ * nothing lists it, so nothing can delist it, and it stays as it is.
+ */
+const setState = (
+  db:    DatabaseSync,
+  held:  Registry,
+  row:   Publishing,
+  state: Publishing['state'],
+): void => {
+  if (row.instrumentId === null) return;
+
+  statements(db, held).state.run(state, row.instrumentId);
+
+  for (const one of held.byInstrument.get(row.instrumentId) ?? []) one.state = state;
 };
 
 /**
@@ -1151,14 +1204,18 @@ const patternIdOf = (
   found:   Found,
 ): { id: number; retiredAt: string | null } => {
   const held = registry(db);
-  const key  = patternKey(venueId, found.market, found.dataset, found.pattern);
+  const key  = patternKey(venueId, found.market, found.dataset, bundleOf(found.symbol), found.pattern);
   const had  = held.patterns.get(key);
 
   if (had !== undefined) return had;
 
-  const made = statements(db, held).pattern.get(
+  /** The slice first, since the pattern is written against it. */
+  const slice = statements(db, held).slice.get(
     venueId, found.market, found.dataset, found.variant ?? '',
-    found.pattern, grainOf(found.pattern)) as { id: number } | undefined;
+    grainOf(found.pattern), bundleOf(found.symbol)) as { id: number };
+
+  const made = statements(db, held).pattern.get(
+    venueId, slice.id, found.pattern, found.holds ?? 'instrument') as { id: number } | undefined;
 
   /**
    * `DO NOTHING` returns nothing when the row was already there — because
@@ -1170,8 +1227,8 @@ const patternIdOf = (
    */
   const row: { id: number; retiredAt?: string | null } = made ?? db.prepare(
     `SELECT id, retired_at AS retiredAt FROM pattern
-      WHERE venue_id = ? AND market = ? AND dataset = ? AND pattern = ?`,
-  ).get(venueId, found.market, found.dataset, found.pattern) as
+      WHERE venue_id = ? AND slice_id = ? AND pattern = ?`,
+  ).get(venueId, slice.id, found.pattern) as
     { id: number; retiredAt: string | null };
 
   const shape = { id: row.id, retiredAt: row.retiredAt ?? null };
@@ -1209,12 +1266,34 @@ const insert = (
     first:        bounds?.first ?? null,
     last:         bounds?.last  ?? null,
     tip:          bounds?.tip   ?? null,
-    state:        bounds?.state ?? 'active',
+    state:        'active',
+    instrumentId: null,
   };
 
-  const { id } = statements(db, registry(db)).insert.get(
-    shape.id, row.symbol, row.urlSymbol, row.first, row.last, row.tip,
-    row.state) as { id: number };
+  const held = registry(db);
+
+  /**
+   * **The instrument first, since the series is written against it** — created
+   * here where it is new. Its state comes with it: a series created for an
+   * instrument already delisted is delisted from its first moment, unless the
+   * caller is saying otherwise. A bucket holds every instrument of a market and
+   * so has none.
+   */
+  const instrument = row.symbol === BUCKET ? undefined
+    : statements(db, held).instrument.get(shape.id, row.symbol) as { id: number; state: Publishing['state'] };
+
+  row.instrumentId = instrument?.id ?? null;
+  row.state        = instrument?.state ?? 'active';
+
+  const { id } = statements(db, held).insert.get(
+    shape.id, row.instrumentId, row.urlSymbol, row.first, row.last, row.tip) as { id: number };
+
+  if (bounds?.state && bounds.state !== row.state && row.instrumentId !== null) {
+    setState(db, held, row, bounds.state);
+
+    // Not shelved with its siblings yet, so it is told separately.
+    row.state = bounds.state;
+  }
 
   /**
    * **Asked here for the same reason `loadSeries` asks**: a key is built from
@@ -1252,23 +1331,28 @@ interface Row extends Omit<Publishing, 'found'> {
  */
 const read = (db: DatabaseSync): Row[] =>
   db.prepare(
-    `SELECT s.id, s.pattern_id AS patternId, s.symbol, s.url_symbol AS urlSymbol,
-            s.first, s.last, s.tip, s.state,
-            p.venue_id AS venueId, p.market, p.dataset, p.variant, p.pattern,
-            p.grain, p.retired_at AS retiredAt
+    `SELECT s.id, s.pattern_id AS patternId, COALESCE(i.symbol, '${BUCKET}') AS symbol,
+            s.url_symbol AS urlSymbol,
+            s.first, s.last, s.tip, s.instrument_id AS instrumentId,
+            COALESCE(i.state, 'active') AS state,
+            p.venue_id AS venueId, c.market, c.dataset, c.variant, p.pattern,
+            c.grain, p.retired_at AS retiredAt
        FROM series s JOIN pattern p ON p.id = s.pattern_id
+       JOIN slice c ON c.id = p.slice_id
+       LEFT JOIN instrument i ON i.id = s.instrument_id
       ORDER BY s.id`,
   ).all() as unknown as Row[];
 
 interface PatternRow {
-  id: number; venueId: number; market: string; dataset: string; variant: string;
-  pattern: string; grain: Grain; retiredAt: string | null;
+  id: number; venueId: number; market: string; dataset: string; bundle: string;
+  pattern: string; retiredAt: string | null;
 }
 
 const readPatterns = (db: DatabaseSync): PatternRow[] =>
   db.prepare(
-    'SELECT id, venue_id AS venueId, market, dataset, variant, pattern, grain,'
-    + ' retired_at AS retiredAt FROM pattern')
+    `SELECT p.id, p.venue_id AS venueId, c.market, c.dataset, c.bundle, p.pattern,
+            p.retired_at AS retiredAt
+       FROM pattern p JOIN slice c ON c.id = p.slice_id`)
     .all() as unknown as PatternRow[];
 
 // ── Test access ───────────────────────────────────────────────────────────────

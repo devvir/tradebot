@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { venues } from '../src/catalog';
+import { putVenue, venues } from '../src/catalog';
 import { openCatalog } from '../src/database';
 import { _test_relative } from '../src/paths';
 import { _test_pool } from '../src/pool';
@@ -42,6 +42,10 @@ let db:   DatabaseSync;
 beforeAll(() => {
   home = mkdtempSync(join(tmpdir(), 'survey-'));
   db   = openCatalog(join(home, 'catalog.db'), { seedData: false });
+
+  // The servers the keys below are catalogued under: a shape is some server's.
+  putVenue(db, 'demo', 'https://x', '');
+  putVenue(db, 'other', 'https://y', '');
 });
 
 afterAll(() => {

@@ -43,8 +43,8 @@ export const SymbolsPanel = ({ venue, market, lens }: { venue: string; market?: 
 
 const SymbolList = ({ venue, market, lens }: { venue: string; market?: string; lens?: string }) => {
   const at = market === undefined
-    ? `/contents/venues/${encodeURIComponent(venue)}/symbols`
-    : `/contents/venues/${encodeURIComponent(venue)}/markets/${encodeURIComponent(market)}/symbols`;
+    ? `/venues/${encodeURIComponent(venue)}/symbols`
+    : `/venues/${encodeURIComponent(venue)}/markets/${encodeURIComponent(market)}/symbols`;
 
   const asked = useAsk<{ items: string[] }>(lensed(at, lens), catalogLensed);
 

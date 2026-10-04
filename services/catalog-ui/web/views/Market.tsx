@@ -14,7 +14,7 @@ import type { Shape } from '../types';
  * seeing that is how somebody decides to fetch both rather than half.
  */
 export const MarketView = ({ venue, market, lens }: { venue: string; market: string; lens?: string }) => {
-  const at    = `/contents/venues/${encodeURIComponent(venue)}/markets/${encodeURIComponent(market)}`;
+  const at    = `/venues/${encodeURIComponent(venue)}/markets/${encodeURIComponent(market)}`;
   const asked = useAsk<{ items: Shape[] }>(lensed(at, lens), catalogLensed);
 
   return (

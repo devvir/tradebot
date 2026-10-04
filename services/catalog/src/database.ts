@@ -11,7 +11,7 @@ import { logger } from '@devvir/service-kit';
  *
  * **Reads stay short.** A read transaction held open stops prospector's
  * checkpoints, so the write-ahead log grows for as long as it lasts — which is
- * why every view here pages or answers from the rollups rather than walking a
+ * why every view here pages or answers from the partitions rather than walking a
  * table in one statement.
  */
 export const openCatalog = async (path: string): Promise<DatabaseSync> => {

@@ -10,11 +10,11 @@ import type { Server } from 'node:http';
  * and a report per page. See `venue.ts`.
  */
 
-const cfg = vi.hoisted(() => ({ archivesDir: '', catalogApi: '', catalogToken: 'secret', venues: [], lens: 'backfill-20', concurrency: 2 }));
+const cfg = vi.hoisted(() => ({ archivesDir: '', catalogApi: '', catalogToken: 'secret', venues: [], lens: 'backfill-20', concurrency: 2, minFreeGb: 0 }));
 
 vi.mock('../src/config', () => ({ default: cfg }));
 
-const { walkVenue, _test_safe } = await import('../src/venue');
+const { walkVenue, _test_safe, _test_lookAgain } = await import('../src/venue');
 const { venues } = await import('../src/catalog');
 
 let server:  Server;
@@ -54,7 +54,7 @@ beforeEach(async () => {
 
     asked.push({ url: req.url!, lens: req.headers['x-catalog-lens'] as string, token: req.headers['x-catalog-token'] as string });
 
-    if (url.pathname === '/contents/venues') {
+    if (url.pathname === '/venues') {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ items: [{ venue: 'binance' }, { venue: 'gate' }] }));
       return;
@@ -85,7 +85,7 @@ describe('a walk', () => {
   it('fetches every object of every page to its key, and reports each page', async () => {
     const walked = await walkVenue('binance', () => false);
 
-    expect(walked).toEqual({ listed: 3, progressed: 3, failed: 0, mismatched: 0, unreached: 0 });
+    expect(walked).toEqual({ listed: 3, progressed: 3, failed: 0, mismatched: 0, unreached: 0, full: false });
 
     for (const key of KEYS) expect(readFileSync(join(cfg.archivesDir, key), 'utf8')).toBe(`/files/${key}`);
 
@@ -96,11 +96,29 @@ describe('a walk', () => {
     ]);
   });
 
+  /**
+   * Below the floor nothing is fetched and nothing is reported: the
+   * walk ends saying the volume is why, and the files stay owed.
+   */
+  it('takes no file while the volume is below its floor', async () => {
+    cfg.minFreeGb = 1e9;
+    _test_lookAgain();
+
+    try {
+      expect(await walkVenue('binance', () => false)).toMatchObject({ progressed: 0, full: true });
+      expect(served).toBe(0);
+      expect(reports).toEqual([]);
+    } finally {
+      cfg.minFreeGb = 0;
+      _test_lookAgain();
+    }
+  });
+
   /** A connection the catalog dropped is asked again, not a walk lost for half an hour. */
   it('asks again when the catalog drops the connection', async () => {
     drops = 1;
 
-    expect(await walkVenue('binance', () => false)).toEqual({ listed: 3, progressed: 3, failed: 0, mismatched: 0, unreached: 0 });
+    expect(await walkVenue('binance', () => false)).toEqual({ listed: 3, progressed: 3, failed: 0, mismatched: 0, unreached: 0, full: false });
   });
 
   /** A stop finishes what is in flight and reports it, and takes nothing new. */
@@ -111,7 +129,7 @@ describe('a walk', () => {
       // Asked to stop the moment the first file has been served.
       const walked = await walkVenue('binance', () => served > 0);
 
-      expect(walked).toEqual({ listed: 2, progressed: 1, failed: 0, mismatched: 0, unreached: 0 });
+      expect(walked).toEqual({ listed: 2, progressed: 1, failed: 0, mismatched: 0, unreached: 0, full: false });
       expect(reports).toEqual([{ downloaded: [KEYS[0]], failed: [], mismatched: [] }]);
     } finally {
       cfg.concurrency = 2;
@@ -143,7 +161,7 @@ describe('the venues', () => {
   /** Only names are wanted; the lensed answer sizes the lens for every venue. */
   it('are asked for without the lens, but with the token', async () => {
     expect(await venues()).toEqual(['binance', 'gate']);
-    expect(asked).toEqual([{ url: '/contents/venues', lens: undefined, token: 'secret' }]);
+    expect(asked).toEqual([{ url: '/venues', lens: undefined, token: 'secret' }]);
   });
 });
 

@@ -1,4 +1,4 @@
-import type { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import type { LookupAddress } from 'node:dns';
 import type { ClientHttp2Session } from 'node:http2';
 import type { Worker } from 'node:worker_threads';
@@ -124,6 +124,7 @@ export interface FileMetadata {
 /** A catalogued file as `queries.ts` reads it back. */
 export interface FileRow extends FileMetadata {
   seriesId:     number;
+  partitionId:  number;
   date:         string;
   existence:    Existence;
   downloadedAt: string | null;
@@ -1812,21 +1813,21 @@ export interface VenueTotals {
   withdrawn:    number;
 }
 
-// ── The rollup ────────────────────────────────────────────────────────────────
+// ── The partitions ────────────────────────────────────────────────────────────
 
 /**
  * What one file counts as, at the moment a write observes it.
  *
- * The month is carried rather than derived here so that a file whose date moved
- * between versions subtracts from where it was and adds to where it now is,
- * which are simply two keys.
+ * The partition is carried rather than derived here so that a file whose date
+ * or series moved between versions is taken out of where it was and added to
+ * where it now is, which are simply two keys.
  */
 export interface FileState {
-  seriesId:   number;
-  month:      string;
-  confirmed:  boolean;
-  downloaded: boolean;
-  bytes:      number;
+  partitionId: number;
+  confirmed:   boolean;
+  downloaded:  boolean;
+  bytes:       number;
+  etag:        string | null;
 }
 
 /**
@@ -1837,31 +1838,29 @@ export interface FileState {
  * keeps its row.
  */
 export interface FileEffect {
-  venueId: number;
-  was:     FileState | null;
-  now:     FileState;
+  was: FileState | null;
+  now: FileState;
 }
 
-/** How much a batch moves one venue-month's counters. Signed. */
-export interface MonthDelta {
-  venueId:      number;
-  month:        string;
+/** How much a batch moves one partition's counters and its version. Signed. */
+export interface PartitionDelta {
+  partitionId:  number;
   files:        number;
   bytes:        number;
   pending:      number;
   pendingBytes: number;
   withdrawn:    number;
+
+  /** The sum of the file numbers added, less those taken out. */
+  version:      bigint;
 }
 
-/** How much a batch moves one series-month's counters. Signed. */
-export interface SeriesMonthDelta {
-  seriesId:     number;
-  month:        string;
-  files:        number;
-  bytes:        number;
-  pending:      number;
-  pendingBytes: number;
-  withdrawn:    number;
+/** The partition writer's statements, prepared once per database. */
+export type PartitionStatements = Record<'count' | 'version' | 'move' | 'slice' | 'find' | 'make', StatementSync>;
+
+/** Which partition a file of a series and a date belongs to, created where it is new. */
+export interface PartitionResolver {
+  of: (seriesId: number, date: string) => number;
 }
 
 /**
@@ -1977,6 +1976,13 @@ export interface Found {
    * pattern, where every series of that pattern gets it for free.
    */
   urlSymbol?: string;
+
+  /**
+   * What one file of this shape holds, where it is not one instrument: `chain`
+   * for a file carrying every expiry of a family under the family's name.
+   * Absent is the ordinary case.
+   */
+  holds?: 'instrument' | 'chain';
 }
 
 // ── Series ────────────────────────────────────────────────────────────────────
@@ -2089,6 +2095,11 @@ export interface Series {
    * an absence rather than a measurement, so reconciliation deletes it instead —
    * see `reconcile`. A series that exists has published something, or is still
    * expected to.
+   *
+   * **It is the instrument's, and every series of an instrument shares it.** A
+   * venue lists or delists an instrument, never one of the shapes it is
+   * published in, so the value is kept on the instrument and read from there. A
+   * bucket has no instrument and is always `'active'`: no listing can name it.
    */
   state:      'active' | 'delisted';
 
@@ -2152,6 +2163,9 @@ export interface Transform {
 
 export interface Publishing extends Series {
   venueId:      number;
+
+  /** The instrument this series is one shape of, or null for a venue-wide bucket. */
+  instrumentId: number | null;
 
 
   /**

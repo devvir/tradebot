@@ -1,8 +1,8 @@
 # Warehouse Module
 
 Turns the archives into the Parquet vault. Runs continuously: every sweep asks the catalog what
-each partition holds, and stocks whatever is downloaded in full and not yet in the vault at its
-current version.
+each partition holds, and stocks whatever is downloaded in full, has gone unchanged for a while,
+and is not yet in the vault at its current revision.
 
 ## Services
 
@@ -11,7 +11,8 @@ current version.
 | **stocker** | Reads the archives, normalises each format into the canonical tables, writes Parquet |
 
 No infrastructure of its own. Stocker needs the catalog, which the archives module runs, and keeps
-no records: a stocked partition's version directory in the vault is the whole record.
+no records: a stocked partition's files carry its revision in their names, and that is the whole
+record.
 
 ## Storage
 

@@ -8,21 +8,20 @@
 Stocker runs on the catalog: how it works is [STOCKER.md](../services/STOCKER.md), every format is
 [STOCKER-PARTITIONS.md](../services/STOCKER-PARTITIONS.md). What follows is not done.
 
-## bybit's MT4 klines are filed under the wrong market
+## A first run on real data
 
-They are perpetual klines (verified against the perp trades); the catalog files them as `spot`, and
-stocker reads them as `perp`, so they are not stocked. Fixing it is a prospector change plus a
-change to the live catalog and to hauler's files on disk — prepared, not applied:
-[STOCKER-NIGHT.md](STOCKER-NIGHT.md#the-bybit-mt4-catalog-fix).
+The layout and the sweep are tested on fixtures only. Nothing has been stocked through the
+partitions endpoint yet: the fresh catalog has no downloaded partitions until prospector and
+hauler have run on it. The first real run should check a month stored whole against one stored
+per instrument, and a books month's stocked size against its archive size, which is what the
+split is decided by.
 
-## Cold storage and the version
+## Cold storage and the revision
 
-A partition's version directory is its whole record, so evicting a stocked partition must leave
-something behind or stocker restocks it the next time its raw is on disk. The simplest contract:
-**eviction deletes the parquet files and keeps the empty `…/YYYYMM/<version>/` directory**.
-Stocker then reads it as stocked; restoring from cold storage puts the files back under the same
-directory. `tools cold` still packs and evicts the old layout and reads the facts store; it is
-the next piece to move onto partitions.
+A stocked partition's files are its whole record, so evicting one must leave something behind or
+stocker restocks it the next time its raw is on disk. What that is — an empty file at the same
+name, a marker beside it — is undecided. `tools cold` still packs and evicts an older layout and
+reads the facts store; it is the next piece to move onto partitions.
 
 ## Not modelled yet
 

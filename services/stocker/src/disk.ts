@@ -2,7 +2,7 @@ import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import config from './config';
 import { datasetDirOf, edgesOf, parseKey } from './keys';
-import type { DiskFile, EdgeStats, PartitionKey, PartitionStats } from './types';
+import type { DiskFile, InstrumentDirs, Partition, PartitionKey } from './types';
 
 /**
  * A partition's files as they are on disk, under the archives' canonical
@@ -20,7 +20,7 @@ import type { DiskFile, EdgeStats, PartitionKey, PartitionStats } from './types'
  * Only canonical names count. A download in progress, a backup, anything a
  * name does not parse as is not a file of the partition.
  */
-export const filesOf = async (key: PartitionKey, instruments: Instruments): Promise<DiskFile[]> => {
+export const filesOf = async (key: PartitionKey, instruments: InstrumentDirs): Promise<DiskFile[]> => {
   const root = join(config.archivesDir, datasetDirOf(key));
   const yyyymm = key.month.replace('-', '');
 
@@ -54,39 +54,21 @@ export const filesOf = async (key: PartitionKey, instruments: Instruments): Prom
 export const edgeFilesOf = async (
   key:         PartitionKey,
   side:        'first' | 'last',
-  instruments: Instruments,
+  instruments: InstrumentDirs,
 ): Promise<DiskFile[]> =>
   (await filesOf(key, instruments)).filter(found => edgesOf(found.file)[side]);
 
 /**
- * Whether what is on disk is what the catalog lists — by count, and by total
- * size where the catalog knows every size.
+ * Whether what is on disk is what the catalog says the partition holds — by
+ * count and by total size.
  *
- * Names are not compared one by one: the disk holds only canonical names under
- * the partition's own directories, so the count and the bytes agreeing is the
- * same answer for a fraction of the work.
+ * Names are not compared one by one, and no file is opened: the disk holds only
+ * canonical names under the partition's own directories, so the count and the
+ * bytes agreeing is the same answer for a fraction of the work.
  */
-export const matches = (found: DiskFile[], stats: PartitionStats | EdgeStats): boolean => {
-  if (found.length !== stats.files) return false;
-
-  if (stats.bytes === null) return true;
-
-  return found.reduce((total, one) => total + one.size, 0) === stats.bytes;
-};
-
-/**
- * Whether the files are still exactly as they were — after a build, so nothing
- * that changed while it ran goes unnoticed.
- */
-export const unchanged = async (files: DiskFile[]): Promise<boolean> => {
-  for (const one of files) {
-    const info = await stat(one.absolute).catch(() => null);
-
-    if (! info || info.size !== one.size || info.mtimeMs !== one.mtimeMs) return false;
-  }
-
-  return true;
-};
+export const matches = (found: DiskFile[], partition: Pick<Partition, 'files' | 'bytes'>): boolean =>
+  found.length === partition.files
+  && found.reduce((total, one) => total + one.size, 0) === partition.bytes;
 
 /**
  * The instrument directories of each dataset, read once per sweep.
@@ -94,7 +76,7 @@ export const unchanged = async (files: DiskFile[]): Promise<boolean> => {
  * A dataset can hold thousands of instruments and a sweep asks about it once
  * per month, so listing them each time would be most of the cost.
  */
-export class Instruments {
+export class Instruments implements InstrumentDirs {
   private readonly known = new Map<string, Promise<string[]>>();
 
   of(root: string): Promise<string[]> {

@@ -131,6 +131,15 @@ once; venues walk independently and never wait on each other.
 
 **A file added behind the cursor is found by the next walk**, as on any bucket.
 
+**Nothing is fetched below `HAULER_MIN_FREE_GB`** of free space on the archives' volume. The
+volume is looked at before each file, at most once a second; once it is low no new file is taken,
+the ones in flight finish and are reported, and the walk ends saying so. The venue is tried again
+after the long wait, so freeing space is all it takes to resume.
+
+**A walk says what it is doing.** Each walk says when it asks the catalog what is owed, when the catalog has answered, and
+what each page came to — so a quiet log means nothing is happening, not that something is
+unlogged.
+
 ### When it walks again
 
 Each venue walks on its own loop. After a walk that brought any file to disk —
@@ -152,7 +161,8 @@ against both before it is called done:
 | just fetched | no | **reported as a mismatch**, nothing kept |
 
 **Nothing appears at its final path until it has been checked.** A download
-lands as `<name>.part` and is renamed only once it agrees with the listing;
+lands in `.hauler-tmp` at the archives' root, under a name that is a digest of
+its destination, and is renamed into place only once it agrees with the listing;
 verifying after the rename would leave a truncated file at the real path, where
 every later pass would see it present and skip it.
 
@@ -227,7 +237,9 @@ finish, the page reports what it got through, and only then does the process
 exit. The largest files take minutes on a slow link, which is why the compose
 file gives a stop fifteen minutes rather than docker's ten seconds.
 
-**A start removes every `.part` under the archive** before it fetches anything.
+**A start removes every unfinished download** before it fetches anything, which
+is deleting one directory: every partial is in `.hauler-tmp`, on the archives'
+own volume so that the rename into place stays one step.
 A partial only becomes a file by being verified and renamed, so one left over is
 a download that never finished — a stop that outlived its grace period, a crash,
 a pulled plug — and the next walk fetches that file again. `.bak` files are left

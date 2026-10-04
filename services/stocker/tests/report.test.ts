@@ -25,11 +25,11 @@ describe('the end-of-sweep report', () => {
     expect(said(logger.info)).toContain('30 minutes');
   });
 
-  /** Waiting on downloads is a different situation with a different fix. */
-  it('separates caught up from waiting on downloads or the disk', () => {
+  /** Waiting on a neighbour or on the disk is a different situation with a different fix. */
+  it('separates caught up from waiting on a neighbouring month or the disk', () => {
     report(summary({ considered: 120, current: 100, waiting: 15, missing: 5 }), 30);
 
-    expect(said(logger.info)).toContain('15 partitions still downloading');
+    expect(said(logger.info)).toContain('15 partitions waiting on a neighbouring month');
     expect(said(logger.info)).toContain('5 not on disk as catalogued');
   });
 
