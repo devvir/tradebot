@@ -1,26 +1,23 @@
 # Warehouse Module
 
-Turns the collectors' raw archives into one queryable Parquet vault. Runs continuously — it
-rescans the raw tree on a timer and builds whatever is new, so archives that land unattended are
-picked up on their own.
+Turns the archives into the Parquet vault. Runs continuously: every sweep asks the catalog what
+each partition holds, and stocks whatever is downloaded in full and not yet in the vault at its
+current version.
 
 ## Services
 
 | Service | Role |
 |---------|------|
-| **stocker** | Reads the raw tree, normalises each venue's shape into the canonical tables, writes Parquet |
+| **stocker** | Reads the archives, normalises each format into the canonical tables, writes Parquet |
 
-No infrastructure. Stocker keeps its record of built partitions as files under `@meta/` in the
-vault and runs its queries in process, so there is no database or queue to start first.
+No infrastructure of its own. Stocker needs the catalog, which the archives module runs, and keeps
+no records: a stocked partition's version directory in the vault is the whole record.
 
 ## Storage
 
-Two host directories, and the module owns only one of them:
-
 | Directory | Mount | Owner |
 |---|---|---|
-| `TRUCKER_DATA_DIR` | `/data/trucker`, **read-only** | trucker — this module is only a consumer |
-| `DATA_DIR` | `/data/shared`, **read-only** | `@shared`, always `$DATA_DIR/@shared` on the host |
+| `STOCKER_ARCHIVES_DIR` | `/data/archives`, **read-only** | hauler — this module only reads it |
 | `STOCKER_VAULT_DIR` | `/data/vault` | stocker |
 
 Pre-create the vault owned by uid 1000:
@@ -29,8 +26,8 @@ Pre-create the vault owned by uid 1000:
 sudo mkdir -p /storage/tradebot/vault && sudo chown 1000:1000 /storage/tradebot/vault
 ```
 
-`TRUCKER_DATA_DIR` names the same host path as the collect module's `.env`. Repoint both
-together when storage moves.
+`STOCKER_ARCHIVES_DIR` names the same host path as `HAULER_ARCHIVES_DIR` in the archives module.
+Repoint both together when storage moves.
 
 ## Usage
 
@@ -41,18 +38,11 @@ tb down warehouse        # Stop
 tb logs warehouse        # Follow logs
 ```
 
-## Working an era at a time
+## Scoping a run
 
-`STOCKER_START_MONTH` and `STOCKER_END_MONTH` bound a run to inclusive `YYYY-MM` months. Neither is a
-commitment — nothing about them is recorded, so widening one later simply makes more months
-eligible.
+`STOCKER_LENS` decides what the catalog shows stocker at all; `STOCKER_VENUES`, `STOCKER_TABLES`
+and the month bounds narrow it further. None of them is a commitment — nothing about them is
+recorded, so widening one later simply makes more partitions eligible. The running month is never
+stocked, whatever the bounds say, because its files are still arriving.
 
-Holding `STOCKER_END_MONTH` below the era trucker is currently fetching means each month is built once,
-from a complete era, instead of being rebuilt every time more of its raw arrives. It is a saving
-in rework, not a correctness requirement: a partition built from a half-collected month is
-rebuilt whole once the rest lands.
-
-The running month is never processed, whatever the bounds say, because its raw is still arriving.
-
-Configuration and the full storage contract are in the
-[service README](../../../services/stocker/README.md).
+Configuration is in the [service README](../../../services/stocker/README.md).

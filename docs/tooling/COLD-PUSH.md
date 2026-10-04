@@ -104,7 +104,7 @@ A row is written **last**, after every part of the month is recorded, so a crash
 
 ### What makes an archive month a candidate
 
-The producer's own signal, and nothing inferred: a venue-month is a candidate once trucker has published it as collected through, as `topic=archives, fact=complete` in the facts store.
+The producer's own signal, and nothing inferred: a venue-month is a candidate once the collector has published it as collected through, as `topic=archives, fact=complete` in the facts store.
 
 **The tip is the unbroken run of closed months, not the highest one.** A month that fails part-way through collection is left open while the months after it go on closing, so the closings are not necessarily a range. Reading the maximum as the tip vouches for every month beneath it including the hole — bybit's read 202501 over open 202402 and 202405, and stocker built 2,091 partitions from two months that were never finished. Stopping at the break costs the closed months above it until the hole is filled, and filling it releases all of them at once.
 
@@ -290,7 +290,7 @@ Getting that wrong deadlocks a run, and did: `cold push vault kucoin` found seve
 
 `mega-put -q` hands a tar to Mega's queue and returns, so **Mega is the uploader** and there is no second loop here. `TOTAL` is the queue as it stands — active plus waiting, with finished transfers already gone — so the difference is what remains.
 
-**The summary is global on purpose.** There is one link and one FIFO queue, so a trucker backup running beside this one, or an upload started by hand, is genuinely in front of the next tar. Filtering to our own transfers would make the packer build tars that then sit on disk for days. `--summary` also sidesteps the per-transfer listing's default of showing only the first ten rows, which would quietly undercount a long queue.
+**The summary is global on purpose.** There is one link and one FIFO queue, so another backup running beside this one, or an upload started by hand, is genuinely in front of the next tar. Filtering to our own transfers would make the packer build tars that then sit on disk for days. `--summary` also sidesteps the per-transfer listing's default of showing only the first ten rows, which would quietly undercount a long queue.
 
 Because a tar stops counting as *waiting* the moment Mega picks it up, a single very large symbol cannot stall packing: the packer runs ahead behind it for as long as it uploads.
 

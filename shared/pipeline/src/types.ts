@@ -2,7 +2,7 @@
  * The trees the pipeline moves data through.
  *
  * A topic is the *tree* a fact is about, never the service that produced it —
- * `archives` rather than `trucker`, because a collector can be replaced and the
+ * `archives` rather than a collector's name, because a collector can be replaced and the
  * tree it fills means the same thing afterwards.
  */
 export type BaseTopic = 'archives' | 'vault' | 'rest' | 'websocket';
@@ -12,9 +12,9 @@ export type BaseTopic = 'archives' | 'vault' | 'rest' | 'websocket';
  *
  * `archives` is the contract: the handful of facts another service acts on.
  * `archives:bookkeeping` is everything the owner wants kept but nobody routinely
- * asks for — every file trucker downloaded, with its size and mtime — which is
- * worth having for an audit, a migration or a tool, and is noise in any normal
- * query.
+ * asks for — every file the collector downloaded, with its size and mtime —
+ * which is worth having for an audit, a migration or a tool, and is noise in any
+ * normal query.
  *
  * **The namespace does the filtering**, so no marker column is needed and no
  * consumer has to know which facts are the important ones: asking for `archives`
@@ -38,15 +38,15 @@ export type Topic =
   | `logs:${BaseTopic}`;
 
 /** Services that may write. Named for themselves, since a service is itself. */
-export type Owner = 'trucker' | 'stocker' | 'tooling' | 'hauler';
+export type Owner = 'stocker' | 'tooling' | 'hauler';
 
 /**
  * What identifies one fact.
  *
  * **Columns are for what the whole pipeline shares and filters on equality.**
  * venue, market, symbol and dataset are that vocabulary, even though no topic
- * populates all of them — the archives leave three blank, because trucker does
- * not track the shape of each venue's tree and should not have to.
+ * populates all of them — the archives leave three blank, because the collector
+ * does not track the shape of each venue's tree and should not have to.
  *
  * **`subject` is for what only the owner knows the shape of.** `interval=1m`
  * means something to klines in the vault and nothing to anybody else, and a

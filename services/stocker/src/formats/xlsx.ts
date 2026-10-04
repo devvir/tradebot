@@ -34,11 +34,12 @@ export const xlsx: Format = {
    * the hundreds of MB a CSV month runs to — so the per-reader overhead that
    * makes this shape wrong for CSV does not arise.
    */
-  relation: (paths) => {
+  relation: (paths, _series, named) => {
     if (paths.length === 0) throw new Error('xlsx needs at least one sheet file');
 
     const read = (path: string) =>
-      `SELECT * FROM read_xlsx(${q(path)}, header = true, all_varchar = true)`;
+      `SELECT *${named ? `, ${q(path)} AS filename` : ''} ` +
+      `FROM read_xlsx(${q(path)}, header = true, all_varchar = true)`;
 
     return `(${paths.map(read).join(' UNION ALL BY NAME ')})`;
   },

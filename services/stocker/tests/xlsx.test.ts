@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { DuckDBInstance } from '@duckdb/node-api';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { xlsx } from '../src/formats/xlsx';
+import { parseKey } from '../src/keys';
 import { seriesFor } from '../src/schema/series';
 import { selectFor } from '../src/schema/project';
 
@@ -50,7 +51,7 @@ afterAll(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-const series = () => seriesFor('bitget', 'depth/CETUSUSDT/1/20240903.zip')!.series;
+const series = () => seriesFor(parseKey('bitget/spot/quotes/C/CETUSUSDT/202409/bitget|spot|quotes|CETUSUSDT|20240903.zip')!)!;
 
 const rowsOf = async (paths: string[]): Promise<Record<string, unknown>[]> => {
   const reader = await conn.runAndReadAll(

@@ -357,12 +357,8 @@ What it cost, checking each of the 85 against its own history:
 So for 84 of 85 gate answered a URL for a market that had not launched with the wrong file instead
 of nothing. `SUN_USDT` is the only real gap.
 
-`futures_usdt/trades/202107/` keeps only the 78 genuine 4-column files. **The exclusion lives in
-code**, at `services/trucker/src/venues/gate.excluded.ts`, filtering those 85 symbols out of
-`futures_usdt-trades` for 2021-07 and nothing else. It has to be code rather than an absence,
-because gate still serves the same bytes — any walk fetches them again unless something refuses.
-Collection bookkeeping is disposable by design, so a rule about what must never be fetched cannot
-live there.
+Only 78 of that month's futures trade files are genuine 4-column files. Gate still serves the 85
+copies, so they are there to be fetched for as long as it keeps them.
 
 ## Known gap: `SUN_USDT`, 2021-07 to 2021-09
 
@@ -371,7 +367,7 @@ The archive cannot supply it. Asked of gate directly:
 | month | gate's answer | |
 |---|---|---|
 | 2021-06 | 200, 533,952 B | real data |
-| 2021-07 | 200, 84,860 B | the spot copy; deleted, and re-fetching restores it |
+| 2021-07 | 200, 84,860 B | the spot copy |
 | **2021-08** | **404** | gate publishes nothing |
 | **2021-09** | **404** | gate publishes nothing |
 | 2021-10 | 200, 1,013,625 B | real data |

@@ -1,15 +1,14 @@
 # Warehouse Module
 #
-# Infra: none — stocker keeps its own records as files and queries in process.
+# Infra: none of its own — stocker reads the catalog, which the archives module
+# runs, over the shared network.
 #
-# Normalises the collectors' raw archives into one queryable Parquet vault:
+# Turns the archives into the Parquet vault:
 #
-#   trucker's raw tree (read-only) → stocker → Parquet vault, partitioned by
-#                                              table / venue / market / symbol
+#   archives (read-only) → stocker → Parquet vault, one directory per partition
 #
-# The raw tree belongs to trucker and is mounted read-only here: this module is
-# purely a consumer of it, and the mount enforces that rather than trusting the
-# code.
+# The archives are hauler's and are mounted read-only here: this module only
+# reads them, and the mount enforces that rather than trusting the code.
 
 # Docker Compose Project
 name: store

@@ -32,12 +32,12 @@ its own checks is a restore rather than a loss.
 
 ## Origins
 
-An origin is a tree to back up, **named for the tree rather than for whatever writes it**. `archives` is not `trucker` because a service can be renamed or replaced and the tree's meaning does not change with it — nothing outside that service should have to be renamed alongside it.
+An origin is a tree to back up, **named for the tree rather than for whatever writes it**. `archives` is not a collector's name because a service can be renamed or replaced and the tree's meaning does not change with it.
 
 | origin | tree | state |
 |---|---|---|
 | `vault` | stocker's normalised partitions | done — `stocker` accepted as an alias |
-| `archives` | the raw venue trees, as the venues published them | done — `trucker` accepted as an alias |
+| `archives` | the raw venue trees, as the venues published them | done |
 | — | REST and websocket collector buckets | further off |
 
 **Only planning differs.** An origin contributes a way to find what is not backed up yet and a way to divide it into tars; packing, verification, queueing, confirmation, reclaiming, pacing and the resume rules are the same operation whatever produced the files. So the seam is a `Planner` and two constants, and `origin` is a column rather than a fork in the code.

@@ -67,7 +67,7 @@ export const archives: Planner = {
      * Venues vary wildly in where they put it — a directory, a filename, often
      * both — but none omits it, because a date is what a historical archive is
      * indexed by. So a path this cannot read is not a curiosity to note and
-     * move past; it is one of two bugs. Either trucker collected something it
+     * move past; it is one of two bugs. Either the collector fetched something it
      * should not have, or this detection is too narrow.
      *
      * Which is why it stops the run rather than warning. The failure mode is
@@ -428,7 +428,7 @@ const undatedReport = (undated: string[]): string => {
       + `can read, in: ${venues.join(', ')}`,
     '',
     'Every archive file has a date somewhere in its path, so this is a bug — either',
-    'trucker collected files it should not have, or the date detection is too narrow.',
+    'the collector fetched files it should not have, or the date detection is too narrow.',
     'Nothing was planned; these files would silently never be backed up.',
     '',
     ...undated.slice(0, 10).map(relative => `    ${relative}`),

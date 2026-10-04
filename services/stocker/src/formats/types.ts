@@ -11,8 +11,21 @@ export interface Format {
   /** DuckDB extensions this format needs loaded before it can be read. */
   extensions?: string[];
 
-  /** A relation expression: valid anywhere a table name would go in `FROM`. */
-  relation(paths: string[], series: Series): string;
+  /**
+   * A relation expression: valid anywhere a table name would go in `FROM`.
+   *
+   * With `named`, every row also carries `filename`: the path it was read
+   * from, which is how one read over many instruments' files says whose each
+   * row is.
+   */
+  relation(paths: string[], series: Series, named?: boolean): string;
+
+  /**
+   * An expression over the relation that is true on a row wider than the series
+   * describes, or null where the format cannot be read positionally. What a
+   * batched read checks instead of `overflow`, in the same pass.
+   */
+  wide?(series: Series): string | null;
 
   /**
    * A query listing files whose shape is wider than the series describes, or

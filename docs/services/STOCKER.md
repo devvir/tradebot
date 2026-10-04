@@ -1,33 +1,42 @@
 # Stocker
 
-Stocker normalises every collector's raw output into one partitioned Parquet vault, so
-consumers never learn where a dataset came from or what shape it arrived in.
+Stocker owns the vault and is its only writer. The vault is the output of the whole collection
+system: every venue and every source, normalised into one format per dataset, so a consumer never
+has to care which venue or source a row came from, or what shape it arrived in. It all looks the
+same, predictable and simple.
 
-Trucker fetches archives, and the REST and websocket collectors will add whatever no archive
-covers. Each drops data exactly as its source published it: different paths, containers, column
-names, timestamp units and symbol conventions. Stocker reads all of them and writes one
-uniform, queryable tree beside them. **Raw is never modified, moved or deleted.**
+**Stocker is not an archives service.** Collection has three standard sources — archives, REST
+and WS — and only archives is under development today. REST and WS files are raw too: their
+format is ours, but they may be saved exactly as they arrive, so nothing about them is assumed
+normalised. To stocker they are more formats, transformed the same way as an archive's. Further
+sources may join — a third-party provider, say, distributing Parquet or another digested format
+rather than raw files — and the job is the same: stocker turns all of it into the one format of
+its dataset, or of a variant where the variant changes the shape, as whether a book is snapshots
+or deltas does.
 
-Archives, REST and websocket are availability choices about *how* something was obtained, not
-different kinds of data — a trade is a trade. That is why one service handles all of them.
+Sources are availability choices about *how* something was obtained, not different kinds of
+data — a trade is a trade. That is why one service handles all of them. **Raw is never modified,
+moved or deleted.**
 
 ## Scope
 
 **Does:**
 
-- Decode every container and format the origins use
-- Map each source series onto a **canonical table** with one schema across all venues
+- Decode every container and format the sources use
+- Map each format onto a **canonical table** with one schema across all venues
 - Impose one path convention, one timestamp unit, one identity per instrument
 - Write Parquet partitioned so a query engine can prune
-- Rebuild any partition from raw, incrementally, as more lands
+- Restock a partition whenever anything it was built from changes
 
 **Does not:**
 
-- Modify anything under a raw tree — the mount is read-only, so the code is not trusted with it
+- Modify anything under the archives — the mount is read-only, so the code is not trusted with it
 - Invent data. A field a source does not publish stays NULL; it is never derived and presented
   as sourced
 - Merge venues into one series. Cross-venue is a query, not a stored artifact
 - Resample, fill gaps or clean outliers — those are opinions and belong downstream
+- Decide what a file is. The catalog says which venue, market, dataset and variant a file is;
+  stocker reads it accordingly and never second-guesses it
 
 The line: **normalise structure, never semantics.** Renaming `depth` → `orderBook` and
 converting seconds to microseconds is mechanical and reversible. Deciding a 50-level book and a
@@ -36,154 +45,184 @@ converting seconds to microseconds is mechanical and reversible. Deciding a 50-l
 ## Path convention
 
 ```
-<vault>/venue=…/market=…/{FL}/symbol=…/dataset=…[/interval=…][/variant=…][/kind=…]/
-    {table}.{venue}.{market}.{symbol}[.{interval|variant|kind}].{YYYYMM}.parquet
+<vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…]/YYYYMM/<version>/{FL}/symbol=…/
+    {table}.{venue}.{market}.{symbol}[.{interval|kind}].{YYYYMM}.parquet
 ```
 
-**The order is chosen for handling, not for querying.** A query engine harvests `key=value` from
-any position and prunes identically whichever way the levels are stacked, so what the order
-actually decides is what a *single directory* can be moved, backed up or evicted as. Venue first
-makes a venue one folder — which is the unit work is scheduled in: a few venues get built and
-pushed to cold storage while the rest wait, and a venue already done can be brought back from cold
-without touching anything else. Cross-venue queries are rare; cross-dataset queries for one venue
-are not, and those are one subtree here.
+**A partition is one directory** — `…/YYYYMM/<version>/` — holding one file per instrument. That is
+what makes it the unit everything handles: it is written, replaced, packed for cold storage,
+restored and evicted as one thing. Venue first makes a venue one folder, and a dataset one subtree
+of it.
 
-**`{FL}` is the symbol's first letter** — uppercased, `_` for anything that is not a letter, which
-catches digit-leading symbols like `1INCHUSDT` and the handful of CJK names. It exists so a market
-holds a few dozen entries per letter instead of thousands of symbol directories side by side, and
-it is deliberately a **bare segment rather than `key=value`**: it is a filesystem device, not a
-fact about the data, so nothing should be able to filter on it.
+**The month, the version and `{FL}` are bare segments**, not `key=value`. They are devices for
+handling the files rather than facts about the data, so a query engine ignores them and nothing
+can filter on them. `{FL}` is the symbol's first letter — uppercased, `_` for anything that is not
+a letter — so a partition holds a few dozen entries per letter instead of thousands of symbol
+directories side by side. The cost of a month level is a directory per instrument per month; it
+is paid for the partition being one directory.
 
 **`dataset=` rather than `table=`**, because `table` is a SQL reserved word — a column named that
-must be quoted in every query mentioning it. Stocker's `PartitionKey` still calls the field
-`table`; the path is what a person types.
+must be quoted in every query mentioning it.
 
 **Hive `key=value` directories.** The keys are not stored in the files — `parquet_schema` on a
-partition shows only the data columns — yet queries return them as columns read from the
-directory names, and filtering prunes files without the caller building a path. Storing them as
-real columns would cost about 0.8 % (measured on a 200k-row sample: Parquet dictionary-encodes
-a constant column to one entry and zstd flattens the rest), so this buys ergonomics rather than
-space. Two corollaries matter. **A filter on a plain column does not prune files** — only path keys
-do. And because a partition encodes nothing about where it lives, **moving one is lossless by
-construction**: the layout can be rearranged with `rename(2)` and no rebuild. The same fact is why
-dropping a level is not a free trade against a slower filter — removing the `market=` directory
-would not demote that column, it would delete it.
+file shows only the data columns — yet queries return them as columns read from the directory
+names, and filtering prunes files without the caller building a path. Storing them as real columns
+would cost about 0.8 % (measured on a 200k-row sample: Parquet dictionary-encodes a constant column
+to one entry and zstd flattens the rest), so this buys ergonomics rather than space. **A filter on
+a plain column does not prune files** — only path keys do.
 
-**A symbol literally named `null` exists in the vault.** A venue is unlikely to publish that name,
-so it most likely comes from a symbol that failed to parse upstream and was stringified. Unresolved,
-and worth tracing to whichever stage produced it; nothing depends on fixing it first.
+**`market=` is the catalog's market** — `spot` · `perp` · `future` · `option` · `tradfi` — and
+carries contract shape only. Margining is not part of it: linear and inverse perpetuals are both
+`perp`, and which one an instrument is travels as the `margin` column (see
+[Canonical tables](#canonical-tables)).
 
-**`market=` carries contract shape only** — `spot` · `perp` · `future` · `option` · `index`.
-Margining is deliberately excluded: Binance splits futures into `um`/`cm`, Gate into
-`futures_usdt`/`futures_btc`, Bybit into linear/inverse, three vocabularies for one idea. With
-shape in the path, `market=perp` means the same thing everywhere.
-
-**Interval, variant and kind are levels below `dataset=`**, present on the tables that need
-them. `klines` always carries `interval=`; `orderBook` always carries `variant=`; `funding`
-always carries `kind=`.
-
-**Which levels a dataset carries is a property of the dataset, never of the venue.** Once an
-attribute is in the path it is in the path for every venue — including one that publishes a
-single value, which then simply has one directory. Path depth that varied by venue inside one
-table would make every query and writer branch on which venue it was looking at, and a missing
-level would read as a different partition.
+**Interval and kind are levels below `dataset=`**, taken from the catalog's variant. `klines`,
+`markPrice`, `indexPrice` and `premiumIndex` carry `interval=` wherever the variant is a bar length
+— a tick stream (`ticks`) has none; `funding` always carries `kind=`. Which levels a dataset
+carries is a property of the table, never of the venue: path depth that varied by venue inside one
+table would make every query and writer branch on which venue it was looking at.
 
 `kind` separates funding that was **charged** from the running **estimate** of the next
-interval. Gate publishes both — 3 rows a day against 1,440 — and they are different things: a
-forecast is not a fact, and their timestamps coincide, so interleaving them in one file gives
-duplicate timestamps distinguished only by a column. It was a projected column until both
-series computed the same partition id and overwrote each other on every sweep, leaving all 757
-gate funding partitions holding half their rows. A column could not have worked: partition
-identity is what keeps two series apart, and a filter on a plain column prunes no files —
-reading realised funding would have scanned 480x the rows it needs.
+interval. They are different things: a forecast is not a fact, and their timestamps can coincide,
+so interleaving them in one file gives duplicate timestamps distinguished only by a column. It
+cannot be a column: a filter on a plain column prunes no files.
 
 **An attribute lives in the file or in the path, never both.** `interval` is a path attribute: no
-klines partition of any venue stores it as a column, and `ts` plus the path's interval is what
-defines a bar's period as `ts` to `ts + interval`. A series that captures no interval from the raw
-path must therefore declare one — okx and bitget both name none at any level, and both declare
-`1m` with the measurement written down beside it (bars a uniform 60 seconds apart, `open_time`
-stepping by exactly 60000 across the file).
-
-**And it belongs to klines alone.** Everything else in the vault is a point value with a
-timestamp — a mark price of 100 at an instant is complete on its own, and how often a venue emits
-one is a property of their pipeline, not of the datum. So `markPrice`, `indexPrice`,
-`premiumIndex`, `funding`, `trades` and `quotes` correctly carry no interval. It is kept as its own
-attribute rather than folded into the dataset name (`klines1m`) because it is an almost-free
-string, venues differ wildly — fifteen intervals at one, exotic ones like `10s` elsewhere — and
-"which intervals does this symbol offer" is far easier to ask when dataset and interval are
-separate.
-
-**The month is the partition, and it is one file.** It is named for the month rather than
-filed under a `date=` directory, because nothing queries by month — a reader wants a symbol, and
-a symbol holds one file per month it traded. Adding the level would prune nothing and deepen
-every path.
+klines file stores it as a column, and `ts` plus the path's interval is what defines a bar's period
+as `ts` to `ts + interval`.
 
 **File names are descriptive** rather than `data.parquet`, because a file that leaves the tree
 travels alone — an upload queue or transfer log shows the name, not the path.
 
+## How a sweep decides
+
+A sweep asks the catalog what every partition holds, and stocks what the vault does not hold at
+its current version. Nothing is remembered between sweeps; nothing is written but the vault.
+
+1. **List.** Each dataset stocker can read is listed from the catalog's bucket once, through the
+   configured lens, and every key is folded into the partition it belongs to — venue, market,
+   dataset, variant, bundle, grain and month, all read off the key's name. A second listing, of
+   only what is not yet downloaded, counts each partition's owed files.
+2. **Complete?** A partition with files still owed waits. So does one whose neighbouring edge it
+   spills into is still owed (see [buckets](#venues-whose-buckets-do-not-cut-at-utc-midnight)).
+3. **Current?** The partition's version — below — is computed from the listing alone. If the vault
+   holds that version, the partition is current and nothing is read.
+4. **On disk?** The partition's files are gathered from the archives and compared with what the
+   catalog listed, by count and by total size. Where several renderings are complete, the
+   preferred one that is on disk is taken (see below); one the catalog calls downloaded but the
+   disk does not hold is skipped and reported.
+5. **Stock** into a staging directory under `<vault>/.stocker-tmp`, one instrument per build.
+6. **Unchanged?** Every input is stat-ed again; if any moved while the build ran, the staging
+   directory is thrown away and the partition comes round next sweep.
+7. **Publish.** The staging directory is renamed into place as `…/YYYYMM/<version>/` — one
+   directory on one volume, so a reader sees the old version or the new one, never half of
+   either — and every other version of the partition is removed.
+
+**Several renderings of one month land in one partition of the vault.** A venue can publish the
+same data monthly and daily, or per instrument and in one market-wide file, and the catalog
+holds each as a partition of its own. They stock into the same vault partition, and whichever of
+them the vault already holds is current. Otherwise one is chosen: per-instrument files before a
+market bundle, then the coarsest grain — the fewest files for the same rows.
+
+**The running month is never stocked**, whatever the bounds say: its files are still arriving.
+
+### The version
+
+A partition's version is the first twelve hex digits of a SHA-256 over:
+
+- a revision of the build, bumped by hand when what the build writes changes for every partition;
+- the canonical table's column list;
+- every series that can read the dataset;
+- the catalog's digest of the partition — every key, ETag and size, in listing order;
+- the digest of any neighbouring edge it spills into;
+- the symbol filter, so a partly stocked partition never passes for a whole one.
+
+So **anything that would change the output changes the version**: a file added, replaced or
+withdrawn in the catalog, a series edited, a column added. Nothing else needs to be known about a
+partition, and nothing else is kept.
+
+**An empty partition is still published** — a version directory with no files — so a month whose
+every file the venue published empty reads as stocked rather than being rebuilt every sweep.
+
 ## Architecture
 
-Four extension points, each a file you add rather than a switch you edit. Nothing outside
-`sources/` and `schema/` names a venue.
-
-| Concern | Directory | Contract |
+| Concern | Where | |
 |---|---|---|
-| Where raw comes from | `src/sources/` | `walk()` yields `Candidate`s; knows its tree's layout |
+| What exists | `src/catalog.ts` | the catalog's listing, folded into partitions |
+| What a key says | `src/keys.ts` | venue, market, dataset, variant, bundle, grain, month, off a name |
+| What is on disk | `src/disk.ts` | a partition's files in the archives, and whether they match |
 | How bytes are wrapped | `src/containers/` | `native` or `unpack()` to a scratch dir |
 | How rows are read | `src/formats/` | `relation()` returns a SQL expression |
-| What a series means | `src/schema/series.ts` | declarative, one entry per series |
+| What a format means | `src/schema/series.ts` | declarative, one entry per format |
+| Which instruments are inverse | `src/schema/margin.ts` | one rule per venue |
 | What a table is | `src/schema/tables.ts` | declarative, the canonical column list |
+| Where it lands | `src/vault.ts` | the layout, the version, publishing |
+| The sweep | `src/scan.ts` | the decisions above, in order |
 
-Everything else — discovery, grouping, staleness, writing — is generic.
+Containers, formats, series and tables are extension points: a file or an entry you add rather
+than a switch you edit. Nothing outside `schema/` names a venue.
 
-### Discovery is cheap by construction
+### One series per format
 
-`walk()` yields a `Candidate` **without stat-ing it**. Config filters run first, and only the
-survivors are stat-ed for the size their manifest needs. Walking a tree of millions of files
-must not cost a syscall per file for a value most of them will never need — a scoped run cost
-one syscall per *kept* file instead of one per file in the tree, which was the difference
-between a ten-minute scan and a two-second one.
+A series is keyed by what the catalog says a file is — venue, market, dataset, variant — and
+never by where the venue keeps it. Where one dataset holds more than one format, an entry says
+which files it reads:
 
-### Grouping is streamed, and one venue cannot be
+- **by margining** (`margin`), asked of each file's own instrument — binance's coin-margined and
+  USDⓈ-margined trades share a partition and a fourth column that means opposite things;
+- **by era** (`from`/`until`, months) — htx's export changed shape on 2026-02-01.
 
-A partition is assembled **as the walk passes it**: the walk is depth-first and sorted, so a
-partition's files arrive consecutively and it is complete the moment a different one begins.
-Nothing is held in memory, and every venue satisfies this by construction — a partition lives in
-one directory.
+More than one entry claiming a file is a mistake in the map and throws; none claiming it means
+stocker does not read that dataset, and it is never listed.
 
-Bitget does not. It published klines under two names and still serves both, so one month arrives
-as `kline/BTCUSDT/BTCUSDT_UMCBL_1min_20200819.zip` *and* as `kline/BTCUSDT/UMCBL/20200824.zip` —
-and in name order every flat file of every month precedes the first nested one. The halves are
-separated by thousands of files belonging to other partitions.
+**A venue that repeats whole rows says so** (`repeatsRows`), and exact repeats — every column
+equal — are written once. It is declared per format rather than applied everywhere, because a
+repeated row is only an artifact where the venue is known to write them; elsewhere two equal rows
+could be two real events. okx's candlesticks are the case.
 
-A series says so with **`scattered`**, and is then gathered across the whole symbol and closed when
-the walk leaves it. That costs one symbol's files in memory, a few thousand at worst, which is why
-it is opt-in rather than the rule. The walk must be symbol-major for such a series — it is, for the
-only venue that needs it.
+Each file is read by the series that claims it, so one build can union two formats into one
+canonical relation.
 
-**The invariant is now enforced rather than assumed.** A partition assembled twice in one walk
-throws, naming the series and the fix. Before that check, a scattered series that did not declare
-itself produced its two halves as two partitions, the second silently overwrote the first, and every
-sweep afterwards saw the missing half as newly added and rebuilt for ever — with no new data
-anywhere. It cost 52 partitions half their rows and looked like a ledger bug.
+### Instruments, and files that hold several
+
+The vault holds one file per instrument. A file usually holds one instrument — the catalog's
+symbol. Where a file's rows name their own instrument and can hold several — a market-wide bundle,
+a futures chain — the series names that column (`instrument`) and the rows are split by it: the
+file is read once into a temporary table, then written one instrument at a time.
 
 ### Builds run concurrently under one memory budget
 
-Complete partitions go to a bounded pool — `STOCKER_CONCURRENCY` of them in flight, one DuckDB
-connection each — so one partition's extraction overlaps another's sort. The walk stays
-sequential and backpressured: when every connection is busy, discovery waits, so it can never
-pile up work unboundedly ahead of the builders.
+A partition's instruments are built `STOCKER_CONCURRENCY` at a time, one DuckDB connection each.
+Partitions go one after another, so a partition's staging directory is whole before the next
+starts.
+
+**Small instruments are read together.** The fixed cost of a read — opening files, setting up the
+reader, a width check of its own — dwarfs the work on a small file: a month of daily candles is a
+few dozen rows, and reading it alone cost ~86 ms where its share of a batched read costs ~20 ms
+(gate's `1d` klines, 2026-10-04). So an instrument under 32 MB of input joins a batch, read in one
+query into a temporary table that carries each row's instrument, and only the write is per
+instrument; a batch closes at 64 MB or 256 instruments. A bigger instrument is read on its own,
+straight into its file. Both write the same file, which a test holds them to.
+
+**Positional files are read with their columns declared and detection off.** Over a list of files a
+sniffed read takes the column count from what it sniffs and silently drops a declared column
+beyond it — the one that catches a wider file. Declared, every file reads as declared: a short row
+is padded, a row one column wider fills the overflow column, and a row wider still fails the read,
+naming the file. Every positional format is comma-separated, which is all detection was finding.
 
 Every connection comes from **one DuckDB instance**, which is the load-bearing part:
-`memory_limit` and `threads` are instance-wide, so concurrent builds divide the configured
-budget rather than multiplying it. Raising concurrency never raises what the service may take
-from the box.
+`memory_limit` and `threads` are instance-wide, so concurrent builds divide the configured budget
+rather than multiplying it. Raising concurrency never raises what the service may take from the
+box.
 
-Config filters run at discovery. Venue and table tokens are matched case-insensitively against
-what the series map declares, and an unknown token **fails startup** — those vocabularies are
-closed, so a token outside them can never match, and accepting one would turn a typo into an
-eternally clean run of zero partitions. Symbols stay substring tokens: theirs is an open set,
-where matching nothing today and something after the next trucker sweep is normal.
+**No partition starts below `STOCKER_MIN_FREE_GB`** of free space on the vault's volume. The sweep
+stops there and says so, rather than filling the volume mid-build — and checks before listing each
+venue too, so a full volume costs the catalog nothing.
+
+Venue and table filters are matched case-insensitively against what the series map declares, and
+an unknown token **fails startup** — those vocabularies are closed, so a token outside them can
+never match, and accepting one would turn a typo into an eternally clean run of nothing. Symbols
+stay substring tokens: theirs is an open set.
 
 ### Containers are unpacked only when they must be
 
@@ -194,8 +233,8 @@ Only `.zip` and `.tar.gz` are extracted.
 Extraction lands in `<vault>/.stocker-tmp`, **never the system temp directory**: these archives
 run to hundreds of MB, and in a container `os.tmpdir()` is the overlay filesystem, where filling
 up presents as a corrupt build rather than the full disk it is. Everything transient — the
-extraction, the part-written Parquet, the engine's spill — lives in that one directory, so
-clearing it after a hard kill is a single delete rather than a walk over the vault.
+extraction, the staging partition, the engine's spill — lives in that one directory, so clearing it
+after a hard kill is a single delete rather than a walk over the vault.
 
 ### Files a venue published empty
 
@@ -206,10 +245,8 @@ file of no bytes at all for a symbol that listed and never traded.
 Left in the file set they break a header-mapped series two ways: alone, the reader finds no
 header and invents a single `column0`, so every projected column fails to bind; mixed into a
 month, the sniffer takes that invented schema as the file set's and rejects the real files
-against it. So empty inputs are dropped before the reader sees them, and a month with nothing
-but empty inputs is **not built at all** — the venue published nothing for it, and a partition
-that does not exist says exactly that. It is counted as `empty` in the sweep summary rather than
-passing in silence.
+against it. So empty inputs are dropped before the reader sees them, and an instrument with
+nothing but empty inputs **has no file** — the venue published nothing for it.
 
 Emptiness is decided by **decoding**, not by reading the gzip trailer. A gzip records its
 uncompressed size in its last four bytes, and for a concatenated gzip that describes only the
@@ -237,14 +274,11 @@ to a single column are named as malformed. One column is the whole signal and it
 knowledge of the delimiter — every series maps a timestamp and at least one value, so a usable
 file never parses as one column.
 
-**It runs only after a build has already failed**, which is the difference from the width check
-above. A file *wider* than the series reads successfully and means something other than what the
-map says, so it must be caught before anything is written. A file that will not parse produces no
-data rather than wrong data, so the build stops on its own and this exists only to say why in
-terms of the file. The happy path never pays for it.
-
-A positional read cannot land here: it declares its own column names and pads short rows
-deliberately, so it parses whatever it is given.
+**It runs only after a build has already failed**, which is the difference from the width check.
+A file *wider* than a positional series reads successfully and means something other than what the
+map says, so it is caught before anything is written. A file that will not parse produces no data
+rather than wrong data, so the build stops on its own and this exists only to say why in terms of
+the file. The happy path never pays for it.
 
 Formats differ in how many files one relation may span. `read_csv` takes the whole list, which
 is what keeps a month of CSV to a single reader. `read_xlsx` takes one path: it rejects a list,
@@ -284,179 +318,114 @@ Notes on the ones whose boundaries are not obvious:
 - **`depthBands` is not a book.** Binance's `bookDepth` is notional within ±% bands of the mid —
   a summary. `quotes` is level 1 only; Bitget's "depth" belongs there despite its name.
 - **`orderBook` is an event log**, not reconstructed books: one row per level change, with
-  `action` ∈ snapshot/set/delta. That is the shape OKX, HTX and Gate already publish and the
-  degenerate case of KuCoin's periodic snapshots. Rebuilding a book at an instant is the
-  consumer's job, since the depth it needs is its decision.
-- **`funding` carries a `kind`** of `realised` or `predicted`. Gate publishes both
-  (`funding_applies` and `funding_updates`); conflating them would invent a series.
+  `action` ∈ snapshot/set/delta. Rebuilding a book at an instant is the consumer's job, since the
+  depth it needs is its decision. No venue's books are mapped yet.
+- **`funding` carries a `kind`** of `realised` or `predicted`. Gate publishes both; conflating
+  them would invent a series.
 - **`aggTrades` is not a table.** Binance's aggregated form was verified exactly reconstructible
   from `trades` — 52,231 spot and 113,501 futures aggregates rebuilt from their published id
   ranges with zero mismatches — and `trades` covers the same symbols and starts earlier.
-  Trucker no longer downloads it.
+
+**`margin` says what a contract settles in** — `linear` (its USD-like quote) or `inverse` (the
+coin) — and is NULL on spot and options. It is carried by every table whose numbers mean something
+different on the two: `trades`, `klines`, `quotes`, `orderBook`, `depthBands`, `openInterest` and
+`liquidations`. A coin-margined trade's size is a contract count and its other leg is the coin; a
+linear one's is base and quote. It is a constant per file, filled as each instrument is written,
+from one rule per venue over the venue's own symbol (`schema/margin.ts`) — a stopgap until
+instrument metadata says it.
 
 ## Time
 
 One canonical unit: **int64 microseconds since epoch, UTC**, in a column named `ts`, and the
-sort key of every partition.
+sort key of every file.
 
-**The unit is read from the value, never declared.** Over 2015–2035 the plausible ranges sit
+**The unit is read from the value by default.** Over 2015–2035 the plausible ranges sit
 three orders of magnitude apart — seconds near 1.4e9, millis 1.4e12, micros 1.4e15, nanos
 1.4e18 — so which one a value belongs to follows from the value itself, with the thresholds
 falling in empty space between them. Text forms are handled too: ISO, and the dotted
 `2024.11.01 00:00` of Bybit's MT4 klines.
 
-Declaring the unit per series was the alternative, and the archive does not permit it. Binance
+Declaring the unit per series cannot be the default, because the archives do not permit it. Binance
 spot trades are milliseconds through 2024-12 and microseconds from 2025-01, inside a single
 dataset a consumer reads as one series, so any fixed declaration is wrong for one side of that
 line. Bybit stamps fractional seconds on perpetuals and integer milliseconds on spot, under a
 header saying `timestamp` for both. Inference costs one `CASE` per row and removes a whole class
 of silent 1000× error.
 
+**Generic by default, specific where it is justified.** Inference assumes the Unix epoch and a
+value in one of those four units. A format that breaks either — another epoch, a unit the ranges
+cannot separate — or one where detection costs more than a stated rule is better served by the
+series saying so. That is a trade between generality, readability, complexity and speed, decided
+per case. The one such statement today is a **zone**: a venue writing local datetimes declares
+`utcOffsetHours`, and bybit's MT4 klines are UTC+3.
+
 The parse is computed **once per row**, in inner projections the CASE then reads, with a
-`BIGINT` fast path ahead of the general parse — essentially every file publishes integral
-epochs. Both halves of that sentence are load-bearing: inlining the parse into every CASE
-branch evaluates it five times per row, and routing every value through DECIMAL costs ~20× the
-integer parse; together they made builds ~100× slower than this (96.7 s → 1.0 s for 500k rows
-of Binance trades, byte-identical output).
+`BIGINT` fast path ahead of everything else — most files publish integral epochs. Inlining the
+parse into every CASE branch instead evaluates it five times per row.
 
 The fast path takes only **integral text** — DuckDB's VARCHAR→BIGINT cast *rounds* fractional
 text rather than failing, so ungated it would silently strip the sub-second part of Bybit's
-`1784937600.0683`. Fractional values convert through `DECIMAL(38,9)`, never `DOUBLE`: an epoch
-in microseconds is a 16-digit integer, at the edge of exact DOUBLE range, where a multiply
-would silently round the last digit.
+`1784937600.0683`. **A fractional epoch is split at its dot into two integers** — the whole part
+and nine fractional digits — and combined at the unit the whole part names, rounded half-up to the
+microsecond. Never `DOUBLE`: an epoch in microseconds is a 16-digit integer, at the edge of exact
+DOUBLE range, where a multiply would silently round the last digit. Never `DECIMAL(38,9)` either:
+it is exact, and it was the parse here, at 5.5 s for one day of bybit perpetual trades against
+0.23 s for the split, with identical results on every row (measured 2026-10-04).
 
 Anything that resolves to nothing lands as NULL and **the row is dropped**. That is what carries
 a dataset across a format change: nine Binance futures datasets grew a header between 2021-01
 and 2022-07, and read positionally the header line is simply a row whose timestamp is the text
 `open_time`. No boundary date is written down anywhere.
 
-**Every partition is written `ORDER BY ts`, and the sort stays.** Many arrive sorted already, so
+**Every file is written `ORDER BY ts`, and the sort stays.** Many arrive sorted already, so
 skipping it where inputs are provably ordered looked like the big win; measured on 2026-08-02,
 removing it entirely was worth ~9% of build time. What the sort does set is the memory ceiling — it
 is why a big month needs the spill directory — and that is not worth extra machinery while spilling
 works.
 
-**A partition whose timestamps fall outside 2015–2035 is rejected rather than published.**
-Inference removes the wrong-unit mistake the guard was written for, but not the one it still
-catches: a `ts` naming the wrong column, where values parse cleanly and mean nothing. It reads
-min/max from the row-group statistics, so it costs nothing.
+**A file whose timestamps fall outside 2015–2035 is rejected rather than published.** Inference
+removes the wrong-unit mistake the guard was written for, but not the one it still catches: a `ts`
+naming the wrong column, where values parse cleanly and mean nothing.
 
 ### Venues whose buckets do not cut at UTC midnight
 
-Not every venue's day is a UTC day. Bitget cuts at **16:00 UTC** — midnight UTC+8 — so the file
-named `20250101` opens at 2024-12-31 16:00 UTC and its head belongs to December.
+Not every venue's day is a UTC day. Bitget, okx and htx cut at **16:00 UTC** — midnight UTC+8 — so the
+file named `20250101` opens at 2024-12-31 16:00 UTC and its head belongs to December. Bybit's MT4 files
+are UTC+3 months, so each opens with the previous UTC month's last three hours.
 
-Nothing about the *rows* is wrong: the timestamps are plain epoch milliseconds UTC, correct as
-published. Only which file holds a row is shifted. Left alone, that would make a month partition
-a shifted window — eight hours of the previous month present, the last eight hours of its own
-month missing — which is invisible to anyone filtering on `ts` and wrong for anyone reading a
-partition as a calendar month.
+Nothing about the *rows* is wrong once their zone is applied; only which file holds a row is
+shifted. Left alone, that would make a month a shifted window — hours of the previous month
+present, the last hours of its own month missing — which is invisible to anyone filtering on `ts`
+and wrong for anyone reading a partition as a calendar month.
 
-This is declared, never coded per venue, because a second venue with the same boundary must not
-mean a second implementation. A series states where its buckets can spill:
+This is declared, never coded per venue. A series states where its buckets can spill:
 
 | `spill` | meaning | to complete period P, also read |
 |---|---|---|
 | _(unset)_ | buckets match UTC cuts | — |
-| `back` | a bucket holds rows from before its label | the bucket **after** P |
-| `forward` | a bucket holds rows from after its label | the bucket **before** P |
+| `back` | a bucket holds rows from before its label | the next month's **first** bucket |
+| `forward` | a bucket holds rows from after its label | the previous month's **last** bucket |
 | `both` | either way | both |
 
-Three things follow, and all three are mechanical:
+Three things follow, and all are mechanical:
 
-- **The walk donates edge buckets.** A file in the first or last bucket of its month is handed to
-  the neighbouring partition as well as its own. A multi-part day donates every part, since a
-  day's tail is split across them.
+- **The neighbour's edge is read too.** Each instrument's files are joined by that instrument's
+  files in the neighbouring month's edge bucket — every part of it, since a split day's tail is
+  spread across them. For a monthly grain the edge is the neighbour's whole file.
 - **The build clips to the month.** Pulling in a neighbour without bounding the output would
   write its rows into two partitions. Clipping applies **only** to spilling series: elsewhere it
   could only ever delete, since a stray out-of-period row has no neighbour supplying it.
-- **The readiness gate waits one bucket longer.** A back-spilling month is complete only once the
-  next bucket has landed, so it asks for `endOfMonth(M) + 1 day` rather than `endOfMonth(M)`.
-  That covers both granularities: for a daily-bucket venue it is the file dated the 1st of the
-  next month, and a monthly-bucket venue's milestone only reaches that date when the whole next
-  month lands — which is exactly the file needed.
+- **The partition waits for the edge.** It is complete only once the neighbour's edge is listed
+  and downloaded, and the edge's digest is part of its version — so the edge changing restocks
+  it. The newest month a lens holds therefore waits for the lens to reach the next month's first
+  bucket.
 
 The trait assumes the offset is smaller than one bucket, so one neighbour in each direction is
-enough. A venue shifted further would be messy enough not to collect from archives at all.
-
-**A venue that spills backwards everywhere is permanently one month behind its collector**, and it
-says so. The newest closed month needs a day the collector has not reached, so it yields no
-partition at all and the vault's month count sits one below the archives' — for as long as that
-month is the tip. Counting alone cannot tell that from a backlog, so stocker records a `spills`
-fact against the venue and whoever is comparing reads it. It is stated only where **every** series
-of the venue spills that way: with a mix, the month still builds from the series that do not, and
-there is no shortfall to explain.
+enough.
 
 Verified on real bitget data across the 2024-12/2025-01 boundary: the December partition ends at
 `23:59:59` UTC and January's starts at `00:00:00`, no `tradeId` appears in both, and the two
 together hold exactly the number of rows the raw files hold over the same span.
-
-## Rebuilding
-
-Parquet is immutable: you append by writing files and "edit" by rewriting a partition. That
-makes the vault a read-only database whose data directory is also its dump.
-
-The unit of work is one partition, rebuilt whole and never appended to, written to scratch and
-renamed into place — so a crash mid-build leaves the previous partition intact.
-
-**A partition is stale only when raw appears that is not in its record — never when recorded
-raw has gone missing.** Raw is expected to be backed up to cold storage and deleted locally
-once processed, so absence must read as "already done, leave alone". Any other rule would turn
-reclaiming disk into a silent rebuild of everything.
-
-The record lives in the shared facts store as `topic=vault, fact=built`, one fact per
-partition, and deliberately **not** beside the data. The steady state is a vault whose
-partitions have been backed up and evicted while their raw may still be local; a record kept
-next to a partition would leave with it, and stocker could no longer tell "never built" from
-"built and evicted". Keeping it separate means reclaiming space is deleting `.parquet` files by
-any means — by file, by directory, or by whole subtree — with the knowledge of the work intact.
-A rebuild re-states the same fact, so the key collapses what an append-only file needed a
-"later line wins" rule for.
-
-**The members are a topic of their own**, `vault:details`, one fact per input with the raw path
-as the fact and its size as the value. That list is twenty times the volume of the partitions
-themselves and is wanted only by the one thing that asks which raw file became which partition,
-so it is a separate topic and therefore a separate database — the common question never pays
-for the rare one's rows.
-
-**A rebuild replaces its members rather than adding to them.** The inputs a rebuild records are
-the whole truth about that partition, and accumulating instead would leave a raw file a rebuild
-dropped still vouching for a partition it no longer feeds. bitget's klines were rebuilt from one
-of two published layouts at a time, and thirty-five months read as fully normalised and were
-offered for eviction, taking with them the raw the repair needed.
-
-Whether the partition is still on local disk is not consulted, and a rebuild never reads the
-previous Parquet — only raw. Raw is reclaimed a **whole month at a time**, so finding any raw
-for a partition means none of that month has been reclaimed, and the files in hand are always a
-superset of the ones the last build recorded. A rebuild can therefore only ever be more complete
-than what it replaces, evicted or not. When a month's raw is gone the walk yields no candidates
-for it and nothing is considered at all.
-
-### When a settled month changes — `logs:vault`, `fact=drifted`
-
-The record holds each input's **path and size**, so a month that gains a raw file after it was
-built comes back as changed and is rebuilt without anyone asking. That is the mechanism working,
-but it is also an event worth knowing about: a partition is only built once its collector
-publishes the month as finished, and finished is a promise the month will not change. By the
-time it does, the same month may already be tarred into cold storage or mirrored offsite.
-
-So the rebuild is announced twice — a `WARN` in the log for whoever is watching, and a fact
-under `logs:vault` for whoever is not, carrying how many inputs appeared, the first of them and
-when the partition had been built.
-
-**It accumulates rather than replaces**, which is what the `logs:` layer is for. Every other
-fact stocker states describes how something *is*; drift is something that *happened*, can happen
-again, and a partition that has drifted three times is saying something one that drifted once is
-not. `seq` carries the moment, which both separates the occurrences and orders them.
-
-Container logs do not survive the container, which is the whole reason this is a fact rather
-than only a log line: something that goes wrong months from now is diagnosed from what was
-recorded when it happened, and by then the log is long gone. Nothing acts on these; they exist
-so a person can decide whether a tarball needs rebuilding.
-
-Additions are what this catches. A file **removed** leaves the remaining inputs matching what was
-recorded and passes unnoticed — deliberately, since nothing deletes raw archives, and detecting
-it would mean re-`stat`ing every input of every settled partition on every sweep.
 
 ## Coverage
 
@@ -464,140 +433,34 @@ Every entry was written from a decoded file — one probed at each end of the da
 and the semantics a file cannot state were settled by arithmetic over real rows, not by reading
 documentation.
 
-**Every dataset trucker collects is mapped except the order books**, which are not modelled yet
-and are the next piece of work rather than a permanent exclusion.
+Every format, venue by venue — what each file holds, how it maps, and what is not mapped yet — is
+in [STOCKER-PARTITIONS.md](STOCKER-PARTITIONS.md).
 
-That claim is worth checking rather than trusting, and checking it is mechanical: run every path
-in the raw tree against the matchers and see what falls through. It costs a walk and answers
-exactly, which is how both of the gaps below were found — neither was visible by reading the list
-of entries.
-
-- **Gate publishes spot candlesticks**, and only the futures ones were mapped. It was the whole
-  reason gate's archive months could not be evicted.
-- **Bitget publishes klines under two names** and serves both, and only the newer one was mapped.
-  The venue's own two shapes were already written down in [BITGET.md](../venues/BITGET.md); the
-  series simply did not carry both.
-
-Neither is a count worth keeping here. How many files a venue has published is a fact about the
-tree on a given day, not about this service, and a doc that states one is stale as soon as the
-next bucket lands.
-
-Two cases needed the interval established rather than read:
-
-- **OKX candlesticks** name it nowhere, at any level. The bars step by a uniform 60000 ms across
-  the file, so the series records `1m` directly.
-- **Bybit's MT4 klines** name it as a bare count of minutes in the filename
-  (`BTCUSDT_15_2024-02-01_2024-02-29`). Anything numeric is converted to the vocabulary every
-  other venue already uses, so `15` becomes `15m` and `1440` becomes `1d` rather than sitting in
-  the same table under a different spelling. The filename carries a date *range*, but the range
-  is always exactly one calendar month, so the period is not in doubt.
-
-### What the survey found
-
-Shapes were checked at both ends of every dataset's history, then bisected where the ends
-disagreed. Twenty-one datasets change shape partway through, and the mapping absorbs all of them
-without a boundary date:
-
-- **binance spot trades and klines** switch milliseconds → microseconds (2024-12 → 2025-01)
-- **nine binance futures datasets** gain a header (2021-01 → 2022-07, each on its own date)
-- **bybit perpetual and spot trades** gain a column (`RPI`, 2025-04), absorbed by name mapping
-
-Three findings were invisible in the files themselves and were settled by arithmetic:
-
-- **gate spot** encodes side as `1`/`2` — price impact over 7.5M trades says `1` is a buy
-- **gate futures** carry no side at all; the sign of the size is the side
-- **gate candlesticks** are `close, high, low, open` — open and close reversed from the obvious
-  reading, proved by four intervals of one symbol sharing a bar start and an open
-
-And one sentinel that would have poisoned every spread on the venue: **bitget publishes a missing
-quote as `-999999`**, which is mapped to NULL.
-
-The map is exercised against 71 fixtures cut from real archive files, so a renamed column, a
-swapped pair or a misread unit fails a test rather than producing plausible-looking data.
+The map is exercised against fixtures cut from real archive files, so a renamed column, a swapped
+pair or a misread unit fails a test rather than producing plausible-looking data.
 
 ## Running it
 
-Long-lived rather than a batch job, so raw that lands unattended is picked up on its own. That
-makes **"nothing to do" a signal worth acting on**: every raw file visible has been normalised,
-and once backed up it is safe to delete locally.
+Long-lived rather than a batch job, so files that land unattended are picked up on their own.
+That makes **"caught up" a signal worth acting on**: everything in scope that is downloaded is
+stocked.
 
 So every sweep ends by saying what it means, rather than leaving it to be inferred from an
-absence of work. A log that only reports partitions built looks the same when it is finished as
-when it is wedged — the last line is a build from minutes ago and nothing since — and telling
-those apart is exactly what someone watching needs:
+absence of work:
 
 | Outcome | Reported as |
 |---|---|
-| built something | `Built N partitions — rescanning in M minutes` |
-| built nothing, nothing waiting | `Caught up — every partition available is built` |
-| built nothing, some waiting | `Caught up — N partitions waiting on months the collectors have not closed yet` |
+| stocked something | `Stocked N partitions — rescanning in M minutes` |
+| nothing to do, some still downloading or not on disk | `Caught up — N partitions still downloading, M not on disk as catalogued` |
+| nothing to do at all | `Caught up — every partition in scope is stocked` |
 | anything failed | a warning naming the count, never "caught up" |
-
-The last two are deliberately separate. Both mean this sweep did no work, but one is finished
-and the other is blocked upstream, and they have different fixes.
+| stopped for want of space | a warning, never "caught up" |
 
 Sweeps cannot overlap; a tick landing mid-sweep is skipped and logged.
 
-### A month is built only once the collector says it is finished
-
-A directory of files says which periods arrived; it never says whether more are coming. Only the
-collector knows, and trucker publishes it as **one fact per venue** — the month it is collected
-through, in the shared facts store as `topic=archives, fact=complete`:
-
-```
-201802	2026-08-03T14:22:10.004Z
-```
-
-Stocker reads it once per sweep and builds a partition only when its month is at or below that
-tip. Trucker walks month-major, so the tip is a statement about every dataset and every symbol of
-the venue at once.
-
-**The tip is the unbroken run of closed months, not the highest one in the file.** A month left
-open by a failed collection pass is stepped over by the months that close after it, so reading
-the maximum vouches for a hole underneath it. bybit's file said 202501 while 202402 and 202405
-were never finished, and stocker built 2,091 partitions from the two of them. Stopping at the
-break means the closed months above a hole read as `pending` until it is filled — which is the
-right answer, and the one that resolves itself when the collector goes back.
-
-Four conditions, all of which must hold:
-
-1. every file of the month that has been collected is on disk;
-2. trucker's tip for the venue reaches the month's last day — one day further for a series whose
-   buckets spill backwards, whose tail lives in the next one, which in practice means waiting for
-   the following month to close;
-3. the partition is not already built from exactly these inputs;
-4. the month is inside `STOCKER_START_MONTH`/`STOCKER_END_MONTH`, and is not the running month.
-
-A partition that fails only the second is counted as **`pending`** in the sweep summary — sitting
-on disk, complete as far as it goes, waiting for the collector to finish the month.
-
-**A venue that has published no tip is skipped entirely.** That is deliberate: a venue excluded
-from `TRUCKER_VENUES` while attention is elsewhere is not being collected, so nothing it has on
-disk can be called complete. Removing a venue from collection therefore also stops it being
-normalised, with no second switch to remember.
-
-**Stocker reads that one file and nothing else of trucker's.** The other ledgers beside it —
-per-symbol cursors, coverage, listing ranges — answer "where is this symbol up to", whose answer
-changes for ever, because an active symbol always has more coming. Consuming them meant mapping
-every raw path back to trucker's own vocabulary for a collection effort (`um-trades`,
-`futures_usdt-candlesticks_1m`), asking per symbol, and knowing which symbols had delisted — a
-whole module of per-venue path rules reconstructing a fact the collector can simply state.
-
-### Working an era at a time
-
-`STOCKER_START_MONTH` and `STOCKER_END_MONTH` bound a run to inclusive `YYYY-MM` months, applied at discovery
-so anything outside is never even grouped into a partition. The running month is excluded
-regardless, since its raw is still arriving.
-
-Neither bound is a commitment. Nothing about them is written down — the ledger is keyed by
-partition — so widening one later makes more months eligible without rebuilding or re-scanning
-what is already done, and either end can be pinned independently to work the oldest data or the
-newest.
-
-These bound *which* months a run considers; the tip above decides whether a month it considers is
-ready. They are independent, and the bounds are the coarser tool: pin `STOCKER_END_MONTH`
-to work an era at a time in step with whatever is being moved to cold storage, without waiting
-for the walk to cross months you are not interested in yet.
+`STOCKER_LENS`, `STOCKER_VENUES`, `STOCKER_TABLES` and `STOCKER_START_MONTH`/`STOCKER_END_MONTH`
+scope a sweep. None of them is a commitment — nothing about them is recorded, so widening one
+later makes more partitions eligible without restocking what is already done.
 
 Configuration and the storage contract are in the
 [service README](../../services/stocker/README.md).

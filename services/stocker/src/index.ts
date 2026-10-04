@@ -5,25 +5,22 @@ import SK from './service';
 import config from './config';
 import { sweepScratch } from './build';
 import { open } from './db';
-import * as ledger from './ledger';
 import { report, sweep } from './scan';
 
 /**
- * Raw is read-only to this service and must never be written to, so it is
- * checked for readability rather than writability — a mount that arrived
- * read-write would still work, but one that is missing should fail loudly here
- * rather than as an empty scan that looks like "nothing to do".
+ * The archives are read-only to this service and must never be written to, so
+ * they are checked for readability rather than writability — a mount that is
+ * missing should fail loudly here rather than as a sweep that finds nothing on
+ * disk.
  */
 const assertReadable = async (dir: string): Promise<void> => {
   try {
     await access(dir);
   } catch {
-    throw new Error(
-      `Raw directory '${dir}' is not readable. It is the collectors' output, mounted read-only.`,
-    );
+    throw new Error(`Archives directory '${dir}' is not readable. It is hauler's, mounted read-only.`);
   }
 
-  logger.info({ dir }, 'Raw directory ready');
+  logger.info({ dir }, 'Archives directory ready');
 };
 
 const assertWritable = async (dir: string): Promise<void> => {
@@ -47,27 +44,21 @@ const assertWritable = async (dir: string): Promise<void> => {
 /**
  * Declared above rather than below, deliberately: `SK.run` invokes its callback
  * while this module is still evaluating, so the first thing the callback touches
- * must already exist. A `const` arrow function further down the file is still in
- * its temporal dead zone at that moment.
+ * must already exist.
  */
 SK.run(async () => {
-  await assertReadable(config.truckerDir);
+  await assertReadable(config.archivesDir);
   await assertWritable(config.vaultDir);
 
   await sweepScratch();
 
-  // Stated before the first sweep, because a consumer reading the vault while
-  // stocker is still starting should already be able to tell a venue that is
-  // one month short by design from one that is one month behind.
-  ledger.publishTraits();
-
   const { conns } = await open();
 
   /**
-   * Long-lived rather than a batch job, so raw that lands while nobody is
-   * watching is picked up on its own. "Nothing to do" from a completed sweep is
-   * then a signal worth acting on: every raw file visible has been normalised,
-   * and once backed up it is safe to delete locally.
+   * Long-lived rather than a batch job, so files that land while nobody is
+   * watching are picked up on its own. "Caught up" from a completed sweep is
+   * then a signal worth acting on: everything in scope that is on disk is
+   * stocked.
    */
   let sweeping = false;
 
@@ -91,7 +82,5 @@ SK.run(async () => {
 
   await pass();
 
-  // No 'now watching' line: the sweep report above already ends with when the
-  // next one runs, and saying it twice makes the log noisier, not clearer.
   setInterval(() => void pass(), config.scanMinutes * 60 * 1000);
 });

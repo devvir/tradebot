@@ -1,4 +1,4 @@
-import type { Table } from '../types';
+import type { Field, Table } from '../types';
 
 /**
  * The canonical schema of each table.
@@ -13,13 +13,21 @@ import type { Table } from '../types';
  * is meaningless to lose. Anything venue-specific stays out — normalise
  * structure, never semantics.
  */
-export interface Field {
-  name: string;
-  type: 'BIGINT' | 'DOUBLE' | 'VARCHAR' | 'BOOLEAN';
-}
 
 /** `ts` is first everywhere: it is the sort key and the one universal column. */
 const TS: Field = { name: 'ts', type: 'BIGINT' };
+
+/**
+ * Whether a contract is `linear` (settles in its USD-like quote) or `inverse`
+ * (settles in the coin), NULL on spot.
+ *
+ * Carried on every table whose numbers mean something different on the two:
+ * a coin-margined trade's size is a contract count and its other leg is the
+ * coin, a linear one's is base and quote. A constant per file — stocker knows it
+ * per instrument, not per row — so it is the last column, filled when each
+ * instrument's file is written rather than by the projection.
+ */
+export const MARGIN: Field = { name: 'margin', type: 'VARCHAR' };
 
 export const TABLES: Record<Table, Field[]> = {
   trades: [
@@ -49,6 +57,7 @@ export const TABLES: Record<Table, Field[]> = {
      */
     { name: 'side',       type: 'VARCHAR' },
     { name: 'buyerMaker', type: 'BOOLEAN' },
+    MARGIN,
   ],
 
   klines: [
@@ -76,6 +85,7 @@ export const TABLES: Record<Table, Field[]> = {
     { name: 'trades',         type: 'BIGINT' },
     { name: 'takerBuyVolume', type: 'DOUBLE' },
     { name: 'takerBuyQuote',  type: 'DOUBLE' },
+    MARGIN,
   ],
 
   quotes: [
@@ -84,6 +94,7 @@ export const TABLES: Record<Table, Field[]> = {
     { name: 'bidSize',  type: 'DOUBLE' },
     { name: 'askPrice', type: 'DOUBLE' },
     { name: 'askSize',  type: 'DOUBLE' },
+    MARGIN,
   ],
 
   /**
@@ -100,6 +111,7 @@ export const TABLES: Record<Table, Field[]> = {
     { name: 'size',       type: 'DOUBLE'  },
     { name: 'orderCount', type: 'BIGINT'  },
     { name: 'sequence',   type: 'BIGINT'  },
+    MARGIN,
   ],
 
   /** Notional within ±% bands of the mid. A summary, not a book. */
@@ -108,6 +120,7 @@ export const TABLES: Record<Table, Field[]> = {
     { name: 'percentage', type: 'DOUBLE' },
     { name: 'depth',      type: 'DOUBLE' },
     { name: 'notional',   type: 'DOUBLE' },
+    MARGIN,
   ],
 
   markPrice:    [TS, { name: 'price', type: 'DOUBLE' },
@@ -148,6 +161,7 @@ export const TABLES: Record<Table, Field[]> = {
     { name: 'openInterestValue', type: 'DOUBLE' },
     { name: 'longShortRatio',    type: 'DOUBLE' },
     { name: 'takerLongShortVol', type: 'DOUBLE' },
+    MARGIN,
   ],
 
   liquidations: [
@@ -157,6 +171,7 @@ export const TABLES: Record<Table, Field[]> = {
     { name: 'size',        type: 'DOUBLE'  },
     { name: 'averagePrice', type: 'DOUBLE' },
     { name: 'status',      type: 'VARCHAR' },
+    MARGIN,
   ],
 
   settlement: [TS, { name: 'price', type: 'DOUBLE' }],

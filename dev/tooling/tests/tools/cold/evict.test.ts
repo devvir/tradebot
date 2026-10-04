@@ -74,7 +74,7 @@ describe('deciding whether a venue-month can be evicted', () => {
 
   /**
    * The alignment gate. Raw that reached no partition is either something
-   * trucker should stop collecting or something stocker should model, and
+   * the collector should stop collecting or something stocker should model, and
    * evicting it would settle that by forgetting it.
    */
   it('blocks on raw that never reached the vault', () => {

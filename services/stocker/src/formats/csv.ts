@@ -35,20 +35,36 @@ import type { Format } from './types';
  */
 const OVERFLOW = '_overflow_';
 
-const positional = (paths: string[], names: string[]): string =>
-  `read_csv([${paths.map(q).join(', ')}], header = false, all_varchar = true, ` +
-  `null_padding = true, names = [${names.map(q).join(', ')}])`;
+/**
+ * A positional read, every column named and typed up front rather than
+ * sniffed.
+ *
+ * **Declared, because a sniffed read drops the overflow column across files.**
+ * Over a list of files DuckDB takes the column count from what it sniffs and
+ * silently leaves off a declared name beyond it, so a wider file could no longer
+ * be told apart. With the columns stated and detection off, every file is read
+ * as declared: a short row is padded, a row one wider fills the overflow column,
+ * and a row wider still fails the read, naming the file. Every positional series
+ * is comma-separated, which is the one thing detection was finding.
+ */
+const positional = (paths: string[], names: string[], named = false): string =>
+  `read_csv([${paths.map(q).join(', ')}], header = false, auto_detect = false, ` +
+  `delim = ',', quote = '"', null_padding = true${named ? ', filename = true' : ''}, ` +
+  `columns = {${names.map(name => `${q(name)}: 'VARCHAR'`).join(', ')}})`;
 
 const declared = (series: { columns?: { as: string | null }[] }): string[] =>
   series.columns!.map((c, i) => c.as ?? `_drop_${i}`);
 
 export const csv: Format = {
-  relation: (paths, series) => {
+  relation: (paths, series, named) => {
     if (series.header)
-      return `read_csv([${paths.map(q).join(', ')}], header = true, all_varchar = true)`;
+      return `read_csv([${paths.map(q).join(', ')}], header = true, all_varchar = true` +
+        `${named ? ', filename = true' : ''})`;
 
-    return positional(paths, [...declared(series), OVERFLOW]);
+    return positional(paths, [...declared(series), OVERFLOW], named);
   },
+
+  wide: series => (series.header ? null : `${OVERFLOW} IS NOT NULL`),
 
   /**
    * Whether any file is **wider** than the series describes, sampled one row

@@ -211,43 +211,23 @@ for ever. Unsolved, and the last thing between the catalog and a downloader that
 venue and left alone
 ([CATALOG.md](planning/CATALOG.md#unsolved-what-to-do-about-data-we-do-not-want)).
 
-**Gate's 85 exclusions** must reach the catalog before gate's first survey, or the bad files are
-catalogued and offered for download. They live in trucker's code today and disappear with it.
-
 **A survey is decided by its worst partition.** Binance and gate each end with one partition walking
 alone for hours while every worker idles — 29,150 and ~9,500 pages respectively. The archive is
 carved up once, up front, from directory *shape*, which is not size.
 [planning/SCOPING.md](planning/SCOPING.md) replaces that with partitions refined on demand, using
 idle workers as the signal.
 
-### 2 · Make the archives rock solid — trucker on the catalog
-
-Trucker stops discovering and starts asking: fetch venues, fetch a batch, download, report, loop.
-Deletes seven modules and the class of bug that came with them
-([CATALOG.md § Iteration 2](planning/CATALOG.md#iteration-2--trucker)).
+### 2 · Make the archives rock solid
 
 **Audit every venue's floor** — bybit's was `202001` while the catalog proved it publishes from
 `201910`, hiding 1,104 files across three datasets. One indexed `min(date)` per venue against the
 adapter's floor; not yet run for the others.
 
-**Gaps fill themselves.** Once trucker asks the catalog rather than its own ledgers, anything
-previously missed is an ordinary pending file. No backfill step for the surveyable venues.
-
 ### 3 · Rebuild the vault — stocker on the catalog
 
-Stocker takes its month queue from the catalog and processes much as it does now; the tip concept and
-the `archives` facts dependency go. The vault, its Mega copy and its `vault` / `vault:details` /
-`logs:vault` facts have been discarded rather than patched further, so what replaces them is built
-once, on new rules, from a catalog and an archive tree already trusted.
-
-This is where stocker's accumulated patches get undone rather than extended:
-
-- **Complete months wherever they are**, not a contiguous frontier from a tip. A gap below the tip is
-  a month to build when it closes, not a wall.
-- **Never process an open month**, empty or not. Leftover files from an abandoned layout are not a
-  reason to build.
-- **One rebuild, after the above exists.** Raw is entirely local, so it costs CPU and one re-upload —
-  and doing it under the rules being removed would reproduce the vault that was just thrown away.
+Stocker runs on the catalog and the archives, with no facts and no records beyond the vault itself,
+and the vault is being rebuilt from the archives under those rules. What is left is in
+**[planning/STOCKER.md](planning/STOCKER.md)**.
 
 ### 4 · Tooling
 

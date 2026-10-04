@@ -22,9 +22,8 @@ describe('a file that will not parse into columns', () => {
   let dir:  string;
 
   const series = (over: Partial<Series> = {}): Series => ({
-    source: 'trucker', venue: 'kucoin', table: 'klines', market: 'perp',
-    match: /(?<symbol>x)/, container: 'none', format: 'csv', header: true,
-    project: {}, ts: 'time', ...over,
+    venue: 'kucoin', market: 'perp', dataset: 'klines', variant: '*', table: 'klines',
+    format: 'csv', header: true, project: {}, ts: 'time', ...over,
   });
 
   const write = (name: string, body: string): string => {

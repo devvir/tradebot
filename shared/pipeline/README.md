@@ -41,7 +41,7 @@ The primary key is everything from `topic` through `seq`.
 
 **Columns are for what the whole pipeline shares and filters on equality.** venue, market, symbol
 and dataset are that vocabulary even though no topic populates all of them — the archives leave
-three blank, because trucker does not track the shape of each venue's tree and should not have to.
+three blank, because the collector does not track the shape of each venue's tree and should not have to.
 
 **`subject` is for what only the owner knows the shape of.** `1m` means something to klines in the
 vault and nothing to anybody else, and a column per such thing is how a shared schema becomes one
@@ -87,10 +87,10 @@ repeats differs.
 ## Topics and ownership
 
 A topic is the *tree* a fact is about, never the service that produced it — `archives` rather than
-`trucker`, because a collector can be replaced and the tree it fills means the same afterwards.
+a collector's name, because a collector can be replaced and the tree it fills means the same afterwards.
 
 ```
-archives → trucker      vault → stocker      rest, websocket → tooling
+archives → hauler       vault → stocker      rest, websocket → tooling
 ```
 
 `FactManager` takes its owner at construction, because a service does not stop being itself while it
@@ -229,6 +229,5 @@ whatever it is given — which surfaces as a query silently matching nothing, mo
 The facts themselves, and why each is shaped the way it is, belong to the services that state them:
 
 - [STOCKER.md](../../docs/services/STOCKER.md) — `vault`, `vault:details`, `logs:vault`
-- [TRUCKER.md](../../docs/services/TRUCKER.md) — `archives`
 - [COLD-EVICT.md](../../docs/tooling/COLD-EVICT.md), [COLD-PUSH.md](../../docs/tooling/COLD-PUSH.md)
   — the tooling that reads them

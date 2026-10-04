@@ -37,7 +37,7 @@ Two families of steps, sharing the command and its conventions and nothing else.
 
 **The BitMEX vault** (steps 0-5): only days from **2026-01-01 onward**. Earlier data is already fully handled outside this script.
 
-**The venue archives are not here.** Taking trucker's tree to cold storage belongs to [`tools cold push archives`](COLD-PUSH.md), which owns the record of what is in cold storage and everything that follows from it. `data sync` will eventually call it the way it already calls `data prepare`, rather than owning the steps itself.
+**The venue archives are not here.** Taking the archives to cold storage belongs to [`tools cold push archives`](COLD-PUSH.md), which owns the record of what is in cold storage and everything that follows from it. `data sync` will eventually call it the way it already calls `data prepare`, rather than owning the steps itself.
 
 ---
 

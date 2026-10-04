@@ -118,8 +118,8 @@ Two things this is worth beyond enumeration:
   anything to verify a download against, and it does it with `.CHECKSUM` files.
 - **It answers absence directly**, which a probe can only ever infer from a 404. That is worth
   having as a second opinion when a file is expected and missing — see
-  [the unsupported claim](#the-unreliable-404-claim-is-unsupported) about okx's 404s, which is
-  what this used to be justified by.
+  [the unsupported claim](#a-404-is-reliable-as-far-as-anyone-has-checked) that okx's 404s are
+  unreliable.
 
 The endpoint rate-limits: a handful of rapid calls returns `{"msg":"Too Many Requests",
 "code":"50011"}`, so it needs the same pacing as any other okx call.
@@ -284,7 +284,7 @@ report 202201.
 ```
 
 So the gaps are the venue's, not an artifact of guessing URLs — which also rules out the
-[unsupported "404 may be 200" claim](#the-unreliable-404-claim-is-unsupported) as an explanation
+[unsupported "404 may be 200" claim](#a-404-is-reliable-as-far-as-anyone-has-checked) as an explanation
 for them.
 
 **Whether the book window rolls is not established.** 2023-12-18 sat ~2.6 years back when
@@ -791,31 +791,31 @@ re-investigated as a possible shortcut:
 So the portal index is already better than any of them: it enumerates, and it answers for
 instruments and prefixes a constructed URL has to guess at.
 
-## The "unreliable 404" claim is unsupported
+## A 404 is reliable, as far as anyone has checked
 
-Trucker's adapter carries `unreliableAbsence: true` for okx alone, on the stated grounds that the
-same URL has answered 404 and then 200 seconds later. It is the reason okx's absences are probed
-twice and ledgered for spaced re-checks — a doubling of the request count for the venue with the
-most files.
+The claim is that the same URL has answered 404 and then 200 seconds later. **The evidence does not
+support it.** Of 46,847 recorded okx absences, 219 were re-probed at the origin, sampled across all
+eight datasets, and none exists. A 404 that was spurious at the time would serve `200` today, so zero
+hits is a real result rather than an inconclusive one.
 
-**The evidence available does not support it.** `@shared/archives/absences.jsonl` holds 46,847
-recorded absences, every one of them okx:
+Not disproven — 219 is a sample, and nobody has caught the alternating behaviour in the act.
 
-- **`attempts` is `1` on all 46,847.** Not one was ever retried, so the double-probe this claim
-  justifies has never run on any of them — and this ledger cannot be where the observation came
-  from.
-- **219 were re-probed at the origin, sampled across all eight datasets. None exists.** A 404 that
-  was spurious at the time would serve `200` today, so zero hits is a real result rather than an
-  inconclusive one.
+## Periods are UTC+8
 
-Not disproven — 219 is a sample, and nobody has caught the alternating behaviour in the act. But
-nothing here justifies paying double for it, and the claim should be re-established before it is
-relied on again.
+**A day or a month in the archive is a UTC+8 one.** The candlestick file dated 2020-06-15 holds
+2020-06-14 16:00 → 2020-06-15 15:59 UTC, and the June 2020 monthly file 2020-05-31 16:00 →
+2020-06-30 15:59 UTC (read off `BTC-USDT` and `BTC-USDC` on 2026-10-04). The timestamps inside are
+plain epoch milliseconds; only which file holds a row is shifted — a UTC day's last eight hours
+are in the next day's file. It is also why a download window ending `2021-09-05T23:59:59.999Z`
+returned a 2021-09-06 file.
+
+**Candlestick files can repeat rows.** Measured on 2026-10-04: of 200 random 2020 spot 1m files, 96
+carry every bar exactly twice, byte for byte — `BTC-USDT`'s June 2020 monthly file holds 86,400 rows
+for 43,200 bars — and 104 carry each once; 2021 perpetual files, 0 of 40; 2023 perpetual files, 4 of
+40, and those repeat a handful of rows rather than all (`KSM-USDT` 2023-10: 44,651 rows, 44,640
+bars). Which way a file goes varies by instrument, by day and by year.
 
 ## Not yet established
-
-- Whether the endpoint reckons days in UTC. A window ending `2021-09-05T23:59:59.999Z` returned a
-  2021-09-06 file, which suggests a venue-local zone.
 - Where exactly the monthly window boundary falls: three months is accepted and a span of exactly
   six is refused, so the limit is inclusive of fewer months than the message implies.
 - Whether anything sits below 2023-01 for the 400-level books. The seed experiment found one on the

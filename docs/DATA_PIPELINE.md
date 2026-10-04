@@ -50,7 +50,7 @@ documentation.
 
 | Service | Venues | Source | Writes to |
 |---|---|---|---|
-| [trucker](services/TRUCKER.md) | binance, bitget, bybit, gate, htx, kucoin, okx | published archives | host disk, mirroring each venue's own layout |
+| [hauler](services/HAULER.md) | every venue the [catalog](services/CATALOG.md) holds | published archives | host disk, under canonical keys |
 | [courier](services/COURIER.md) | BitMEX | S3 daily dumps (`trade`, `quote`) | vault service |
 | [scribe](services/SCRIBE.md) | BitMEX | REST endpoints | vault service |
 | [tardy](services/TARDY.md) | BitMEX | Tardis monthly samples of the seven WS-only tables | vault service |
@@ -58,7 +58,7 @@ documentation.
 | hoarder | every venue except BitMEX | live WebSocket | RabbitMQ |
 
 Each is a stage, not a pipeline; the modules that wire them into running deployments are
-[depot](modules/DEPOT.md) (bulk and REST collection) and [journal](modules/JOURNAL.md) (live
+[archives](modules/ARCHIVES.md) (venue archives), [depot](modules/DEPOT.md) (BitMEX bulk and REST collection) and [journal](modules/JOURNAL.md) (live
 WebSocket capture).
 
 Live capture is split by venue rather than unified. `hoarder` handles the venues that have a
@@ -94,29 +94,11 @@ Two stores, both historically called "vault", holding different things:
 courier PUTs complete S3 gzips as-is. It is write-optimised and has no query capability. All
 BitMEX collection lands here. → [services/VAULT.md](services/VAULT.md)
 
-**Trucker's archive tree** — plain directories on the host, one root per venue, each venue's own
-path structure mirrored verbatim beneath it. No service in front of it: a URL maps to exactly
-one path mechanically, which makes "do I already have this?" a filesystem question rather than a
-bookkeeping one.
+**The archives** — plain directories on the host, every file at its canonical key. No service in
+front of it, because its inputs are already files. → [services/HAULER.md](services/HAULER.md#the-layout-on-disk)
 
 The Parquet vault that stocker writes is a third store, described below. When it matters, name
-them: *the vault service*, *the archive tree*, *the Parquet vault*.
-
-## The completeness contract
-
-A consumer can see which files exist but not whether more are coming, and that difference
-decides whether a period is safe to process. Only the collector knows, so trucker writes it
-down: `@meta/settled/{venue}.tsv`, one line per dataset and symbol holding the date collection
-is complete through.
-
-```
-spot-deals	BTC_USDT	20180531
-```
-
-"Is 2018-05 ready?" becomes a lookup rather than a guess from file counts. Milestones only ever
-move forward, since a consumer may already have acted on one. Stocker builds a month only once
-its milestone covers the last day of it — which is what keeps a partition write-once rather than
-rewritten on every later arrival.
+them: *the vault service*, *the archives*, *the Parquet vault*.
 
 ## Normalisation — stocker
 
@@ -129,9 +111,9 @@ vault beside it. Raw is never modified, moved or deleted.
 - **One time unit.** `ts` is int64 microseconds UTC everywhere, and the sort key of every
   partition. The unit is read from each value rather than declared, because venues change
   precision mid-history inside a single series.
-- **Hive partitioning** by table, venue, market, symbol, interval where the table needs one, and
-  month. The month is the unit of work: built whole, never appended to, rebuilt only when its
-  raw inputs change.
+- **Hive partitioning** by venue, market, table, and interval or kind where the table needs one.
+  The partition — a month of a dataset, one file per instrument — is the unit of work: built
+  whole, never appended to, restocked whenever anything it was built from changes.
 - **Venue vocabulary is preserved, not translated.** Symbols stay as the venue writes them, and
   a size stays in the unit the venue publishes. Normalising structure is safe; normalising
   semantics invents data.
@@ -141,13 +123,12 @@ container or tree layout. Nothing in the core learns a venue's name.
 
 ### Origins arrive one at a time
 
-Stocker reads **bulk-origin** data today: trucker's archive tree, where a file is a published
+Stocker reads **bulk-origin** data today: the archives, where a file is a published
 archive of a finished period. The other two origins land alongside it as their collectors mature
 — **WebSocket-origin** files, which are message streams with actions and partials rather than
 rows, and **REST-origin** files, which are paginated records.
 
-Each needs its own reader under `sources/`, because the shapes differ in kind rather than in
-detail, and the canonical tables they project into are the same. That work is also what brings
+Each is more formats to read, and the canonical tables they project into are the same. That work is also what brings
 BitMEX's collected history into the Parquet vault: it arrived over WebSocket and REST into the
 vault service, so it normalises through those readers, not the archive one.
 

@@ -1,10 +1,9 @@
 # Depot Module
 
-Bulk and REST collection: everything a venue has already published, downloaded once and kept
-current. The live-WebSocket counterpart is [journal](JOURNAL.md).
+BitMEX bulk and REST collection: everything BitMEX has already published, downloaded once and
+kept current. The live-WebSocket counterpart is [journal](JOURNAL.md).
 
 ```
-venue archives (7 venues)  →  trucker  →  host archive tree
 BitMEX S3 dumps            →  courier  ─┐
 BitMEX REST endpoints      →  scribe   ─┼→  vault service (CSV)
 Tardis monthly samples     →  tardy    ─┘
@@ -15,20 +14,6 @@ appeared at its source and fetches it. A restart costs listings, never re-downlo
 disk is the record of what has been collected.
 
 ## Services
-
-### trucker
-
-Downloads each venue's published historical archives, byte-for-byte, for **binance, bitget,
-bybit, gate, htx, kucoin and okx** — 107 datasets covering trades, klines, order books, funding,
-borrowing, mark and index series, open interest and liquidations.
-
-Files land under `<host dir>/<venue>/<the venue's own path>`. Layouts are mirrored rather than
-renamed, so a URL maps to one path mechanically and resuming is a `stat` rather than
-bookkeeping. Trucker holds no state outside its data directory: progress, symbol lists and
-archive ranges are all ledgers under `@meta/`.
-
-It also publishes `@meta/settled/{venue}.tsv` — how far collection is complete per dataset and
-symbol — which is the signal stocker gates on. → [services/TRUCKER.md](../services/TRUCKER.md)
 
 ### courier
 
@@ -54,19 +39,14 @@ WS-only tables that neither S3 nor REST publishes. Present in the module but **n
 commented out of the compose file until that history is needed.
 → [services/TARDY.md](../services/TARDY.md)
 
-## Two destinations
+## Where it writes
 
-BitMEX collection writes to the **vault service** over HTTP: one sealed gzip CSV per
+Every service writes to the **vault service** over HTTP: one sealed gzip CSV per
 `(table, date)`, with vault owning serialisation and the open→closed transition. A file is
 either open or closed, never both, and a closed file is permanent.
 → [services/VAULT.md](../services/VAULT.md)
 
-Trucker writes to the **host filesystem** directly, because its inputs are already files.
-Putting a service in front of them would mean re-encoding a venue's own bytes in order to store
-them, which is the one thing the archive exists to avoid.
-
-Both are read by [stocker](../services/STOCKER.md), which normalises them into the Parquet
-vault. Depot itself transforms nothing.
+Depot itself transforms nothing.
 
 ## Configuration
 
@@ -75,11 +55,6 @@ matter day to day are the levers bounding how much work is in flight:
 
 | Variable | Effect |
 |---|---|
-| `TRUCKER_DATA_DIR` | Host directory for the archive tree — required, pre-created for uid 1000 |
-| `TRUCKER_VENUES` | Which venues to collect; unset means all seven |
-| `TRUCKER_SYMBOLS` | Symbol tokens, case-insensitive substrings. Unset means **every** symbol, which is terabytes |
-| `TRUCKER_START_MONTH` / `TRUCKER_END_MONTH` | Inclusive month bounds — walk a backfill an era at a time |
-| `TRUCKER_MIN_FREE_GB` | Stop fetching when the volume drops below this |
 | `SCRIBE_TABLES`, `SCRIBE_START_DATE` | Scope REST collection |
 | `SCRIBE_IDENTITIES` | Each credential adds a rate-limit lane |
 | `COURIER_START_DATE` | Where the S3 backfill begins |
@@ -94,6 +69,6 @@ because completeness is published separately from the files themselves.
 tb up depot
 ```
 
-Host directories must exist and be writable by uid 1000 before the module starts. Both trucker
-and vault check at startup and fail immediately with the command to fix it, rather than after a
+Host directories must exist and be writable by uid 1000 before the module starts. The vault
+service checks at startup and fails immediately with the command to fix it, rather than after a
 long listing pass.

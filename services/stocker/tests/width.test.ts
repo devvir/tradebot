@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { DuckDBInstance } from '@duckdb/node-api';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { csv } from '../src/formats/csv';
+import { parseKey } from '../src/keys';
 import { seriesFor } from '../src/schema/series';
 
 /**
@@ -34,7 +35,7 @@ const file = (name: string, rows: string[]): string => {
 
 /** Gate futures trades: headerless, four declared columns. */
 const series = () =>
-  seriesFor('gate', 'futures_usdt/trades/202107/FIDA_USDT-202107.csv.gz')!.series;
+  seriesFor(parseKey('gate/perp/trades/F/FIDA_USDT/202107/gate|perp|trades|FIDA_USDT|202107.csv.gz')!)!;
 
 const wider = async (paths: string[]): Promise<string[]> => {
   const query = csv.overflow!(paths, series());
@@ -90,7 +91,7 @@ describe('files wider than the series describes', () => {
   });
 
   it('does not ask the question of a header-mapped series', () => {
-    const headed = seriesFor('bybit', 'trading/BTCUSDT/BTCUSDT2024-01-01.csv.gz')!.series;
+    const headed = seriesFor(parseKey('bybit/perp/trades/B/BTCUSDT/202401/bybit|perp|trades|BTCUSDT|20240101.csv.gz')!)!;
 
     expect(headed.header).toBe(true);
     expect(csv.overflow!(['x.csv.gz'], headed)).toBeNull();

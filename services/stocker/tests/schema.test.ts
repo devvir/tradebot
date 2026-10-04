@@ -1,28 +1,35 @@
 import { describe, expect, it } from 'vitest';
-import { SERIES, seriesFor } from '../src/schema/series';
-import { _test_decimalCol, _test_integralCols, _test_microsOf, _test_projectionFor as projectionFor, selectFor } from '../src/schema/project';
+import { parseKey } from '../src/keys';
+import { marginOf } from '../src/schema/margin';
+import { SERIES, extrasOf, seriesFor, seriesOf } from '../src/schema/series';
+import { _test_fractionCols, _test_integralCols, _test_microsOf, _test_projectionFor as projectionFor, selectFor } from '../src/schema/project';
 import { fieldsOf } from '../src/schema/tables';
-import type { Series } from '../src/types';
+import type { ArchiveFile, Series } from '../src/types';
+
+/** A catalog file, as its key names it. */
+const file = (key: string): ArchiveFile => {
+  const parsed = parseKey(key);
+
+  if (! parsed) throw new Error(`not a key: ${key}`);
+
+  return parsed;
+};
 
 describe('the series map', () => {
   /**
-   * **Which levels a dataset carries is a property of the dataset, not of the
-   * venue.** A venue that publishes only realised funding still files it under
-   * `kind=realised`, so path depth never varies inside one table — otherwise
-   * every reader and writer would have to branch on which venue it was looking
-   * at, and a missing level would read as a different partition.
-   *
-   * Enforced rather than documented, because the failure is silent: a funding
-   * series added without a `kind` would collide with whatever else that venue
-   * publishes for the table, which is exactly the bug this replaced.
+   * **Which levels a dataset carries is a property of the table, not of the
+   * venue.** Funding always carries its kind, so a venue publishing only
+   * realised funding still files it under `kind=realised`.
    */
-  it('gives every funding series a kind, whatever the venue publishes', () => {
+  it('gives every funding series a kind, from the catalog variant', () => {
     const funding = SERIES.filter(series => series.table === 'funding');
 
     expect(funding.length).toBeGreaterThan(0);
 
-    for (const series of funding)
-      expect(series.kind, `${series.venue} funding has no kind`).toBeTruthy();
+    for (const series of funding) {
+      expect(series.variant, `${series.venue} funding has no variant`).toBeTruthy();
+      expect(extrasOf(series, series.variant!).kind).toBe(series.variant);
+    }
   });
 
   /** An attribute lives in the file or in the path, never both. */
@@ -34,48 +41,36 @@ describe('the series map', () => {
     expect(fieldsOf('funding').map(f => f.name)).not.toContain('kind');
   });
 
-  it('resolves a real trucker path to a series, symbol and interval', () => {
-    const trades = seriesFor('binance', 'spot/monthly/trades/BTCUSDT/BTCUSDT-trades-2026-06.zip');
+  it('resolves a catalog key to a series, and its variant to the path levels', () => {
+    const trades = seriesFor(file('binance/spot/trades,default/B/BTCUSDT/202606/binance|spot|trades,default|BTCUSDT|202606.zip'));
 
-    expect(trades?.series.table).toBe('trades');
-    expect(trades?.symbol).toBe('BTCUSDT');
-    expect(trades?.interval).toBeUndefined();
+    expect(trades?.table).toBe('trades');
+    expect(extrasOf(trades!, 'default')).toEqual({});
 
-    const klines = seriesFor('htx', 'spot/daily/klines/4-USDT/5m/4-USDT-klines-5m-2026-06-08.zip');
+    const klines = seriesFor(file('htx/spot/klines,5m/_/4-USDT/202606/htx|spot|klines,5m|4-USDT|20260608.zip'));
 
-    expect(klines?.series.table).toBe('klines');
-    expect(klines?.symbol).toBe('4-USDT');
-    expect(klines?.interval).toBe('5m');
+    expect(klines?.table).toBe('klines');
+    expect(extrasOf(klines!, '5m')).toEqual({ interval: '5m' });
   });
 
-  /**
-   * Trucker deliberately collects more than stocker maps — order books above
-   * all — so an unmatched path must be skipped, never guessed at.
-   */
-  it('returns null for a path it does not know', () => {
-    expect(seriesFor('okx', 'orderbook/L2/400lv/daily/20260725/BTC-USDT-L2orderbook-400lv-2026-07-25.tar.gz'))
+  /** `ticks` is a stream of point values, not a bar length. */
+  it('gives tick datasets no interval', () => {
+    const mark = seriesFor(file('gate/perp/markPrice,ticks/B/BTC_USDT/202001/gate|perp|markPrice,ticks|BTC_USDT|202001.csv.gz'));
+
+    expect(mark?.table).toBe('markPrice');
+    expect(extrasOf(mark!, 'ticks')).toEqual({});
+  });
+
+  /** What is not mapped is left alone, never guessed at. */
+  it('returns null for a dataset it does not read', () => {
+    expect(seriesFor(file('okx/spot/books,400,incremental/B/BTC-USDT/202607/okx|spot|books,400,incremental|BTC-USDT|20260725.tar.gz')))
       .toBeNull();
-    expect(seriesFor('binance', 'spot/daily/somethingNew/BTCUSDT/x.zip')).toBeNull();
-  });
-
-  /**
-   * Named group present *and* usable. Checking the pattern's source text for
-   * `?<symbol>` was the previous version of this, and it passes for a regex
-   * that matches nothing on earth — which is how a broken entry survived.
-   * Whether each pattern matches its venue's real paths is settled in
-   * `mapping.test.ts`, against files from the venue.
-   */
-  it('captures a symbol group for every series', () => {
-    for (const series of SERIES) {
-      const label = `${series.venue}/${series.table}/${series.market}`;
-
-      expect(series.match.exec('')?.groups, label).toBeUndefined();
-      expect(new RegExp(series.match).source, label).toMatch(/\(\?<symbol>/);
-    }
+    expect(seriesFor(file('binance/spot/trades,aggregated/B/BTCUSDT/202607/binance|spot|trades,aggregated|BTCUSDT|20260725.zip')))
+      .toBeNull();
   });
 
   /** A headerless file has no other way to know what its columns are. */
-  it('declares columns for every headerless series and none for header ones', () => {
+  it('declares columns for every headerless series', () => {
     for (const series of SERIES) {
       if (series.header) continue;
 
@@ -94,35 +89,133 @@ describe('the series map', () => {
       expect(names, `${series.venue}/${series.table}/${series.market}`).toContain(series.ts);
     }
   });
+
+  /**
+   * Two entries claiming one file would read it two ways depending on their
+   * order. For every dataset, every margining and both sides of every era, at
+   * most one entry may answer.
+   */
+  it('never lets two entries claim the same file', () => {
+    for (const series of SERIES) {
+      for (const month of ['2020-06', '2026-01', '2026-02', '2026-07']) {
+        for (const margin of ['linear', 'inverse', null]) {
+          const claims = seriesOf({ ...series, variant: series.variant === '*' ? '1m' : series.variant ?? '' })
+            .filter(one =>
+              (! one.margin || one.margin === margin) &&
+              (! one.from  || month >= one.from) &&
+              (! one.until || month <  one.until));
+
+          expect(claims.length, `${series.venue}/${series.market}/${series.dataset} ${month} ${margin}`)
+            .toBeLessThanOrEqual(1);
+        }
+      }
+    }
+  });
+});
+
+describe('formats chosen inside one dataset', () => {
+  /**
+   * Binance's USDⓈ-M and COIN-M trades share a partition and a position for
+   * their fourth column, which is the quote on one and the base on the other.
+   * The instrument's margining is what picks the reading.
+   */
+  it('reads binance perpetual trades by the instrument\'s margining', () => {
+    const linear  = seriesFor(file('binance/perp/trades,default/B/BTCUSDT/202001/binance|perp|trades,default|BTCUSDT|20200101.zip'));
+    const inverse = seriesFor(file('binance/perp/trades,default/B/BTCUSD_PERP/202001/binance|perp|trades,default|BTCUSD_PERP|20200101.zip'));
+
+    expect(linear?.project.quoteSize).toBe('quoteQty');
+    expect(inverse?.project.baseSize).toBe('baseQty');
+    expect(inverse?.project.quoteSize).toBeUndefined();
+  });
+
+  /** HTX's exports are cut flat at 2026-02-01: headerless before, headed from it. */
+  it('reads htx by era', () => {
+    const before = seriesFor(file('htx/spot/trades/B/BTC-USDT/202601/htx|spot|trades|BTC-USDT|20260131.zip'));
+    const after  = seriesFor(file('htx/spot/trades/B/BTC-USDT/202602/htx|spot|trades|BTC-USDT|20260201.zip'));
+
+    expect(before?.header).toBe(false);
+    expect(after?.header).toBe(true);
+  });
+
+  /** Coin-margined htx contract trades lack the quote turnover the linear ones carry. */
+  it('reads htx contract trades of the older era by margining', () => {
+    const inverse = seriesFor(file('htx/perp/trades/A/AKRO-USD/202010/htx|perp|trades|AKRO-USD|20201004.zip'));
+    const linear  = seriesFor(file('htx/perp/trades/A/AKRO-USDT/202010/htx|perp|trades|AKRO-USDT|20201004.zip'));
+
+    expect(inverse?.columns).toHaveLength(6);
+    expect(linear?.columns).toHaveLength(7);
+  });
+});
+
+describe('venues whose buckets do not cut at UTC midnight', () => {
+  /** bitget, okx and htx cut at 16:00 UTC; bybit's MT4 files are UTC+3 months. */
+  it('declares a back spill for every bitget, okx and htx series, and for bybit\'s MT4 klines', () => {
+    for (const series of SERIES.filter(one => ['bitget', 'okx', 'htx'].includes(one.venue)))
+      expect(series.spill, `${series.venue} ${series.market} ${series.dataset}`).toBe('back');
+
+    const mt4 = SERIES.find(one => one.venue === 'bybit' && one.dataset === 'klines');
+
+    expect(mt4).toMatchObject({ spill: 'back', utcOffsetHours: 3 });
+  });
+});
+
+describe('margining', () => {
+  it.each([
+    ['binance', 'BTCUSD_PERP', 'inverse'], ['binance', 'BTCUSD_230331', 'inverse'],
+    ['binance', 'BTCUSDT', 'linear'], ['binance', 'BTCUSDT_230630', 'linear'],
+    ['bybit', 'BTCUSD', 'inverse'], ['bybit', 'BTCUSDZ22', 'inverse'],
+    ['bybit', 'BTCUSDT', 'linear'], ['bybit', 'BTCPERP', 'linear'],
+    ['gate', 'BTC_USD', 'inverse'], ['gate', 'BTC_USDT', 'linear'], ['gate', 'ADA_USDT_20240301', 'linear'],
+    ['kucoin', 'XBTUSDM', 'inverse'], ['kucoin', 'XBTUSDTM', 'linear'], ['kucoin', 'XBTUSDCM', 'linear'],
+    ['okx', 'BTC-USD-SWAP', 'inverse'], ['okx', 'BTC-USD', 'inverse'], ['okx', 'BTC-USD-250328', 'inverse'],
+    ['okx', 'BTC-USDT-SWAP', 'linear'], ['okx', 'BTC-USD_UM', 'linear'], ['okx', 'AAPL-USD_UM_XPERP', 'linear'],
+    ['htx', 'BTC-USD', 'inverse'], ['htx', 'BTC-USD-260529', 'inverse'], ['htx', 'BTC-USDT', 'linear'],
+    ['bitget', 'BTCUSD', 'inverse'], ['bitget', 'BTCUSD_CM', 'inverse'], ['bitget', 'BTCCMZ26', 'inverse'],
+    ['bitget', 'BTCUSDT', 'linear'], ['bitget', 'ACTUSDC', 'linear'], ['bitget', 'AAVEPERP', 'linear'],
+  ] as const)('%s %s is %s', (venue, symbol, margin) => {
+    expect(marginOf(venue, 'perp', symbol)).toBe(margin);
+  });
+
+  it('gives spot and options none', () => {
+    expect(marginOf('binance', 'spot', 'BTCUSD_PERP')).toBeNull();
+    expect(marginOf('okx', 'option', 'BTC-USD-250328-50000-C')).toBeNull();
+  });
 });
 
 describe('projection into the canonical schema', () => {
-  const seriesOf = (over: Partial<Series>): Series => ({
-    source: 't', venue: 'v', table: 'trades', market: 'spot',
-    match: /(?<symbol>x)/, container: 'zip', format: 'csv', header: true,
-    project: {}, ts: 'time', ...over,
+  const make = (over: Partial<Series>): Series => ({
+    venue: 'v', market: 'spot', dataset: 'trades', table: 'trades',
+    format: 'csv', header: true, project: {}, ts: 'time', ...over,
   });
 
   /**
-   * Every series emits the table's full column list in the table's order. That
-   * is what makes one table one dataset rather than a pile of venue shapes.
+   * Every series emits the table's full column list in the table's order — all
+   * but `margin`, which the writer fills per instrument.
    */
-  it('emits every canonical column, in order, whatever the venue publishes', () => {
-    const sql = projectionFor(seriesOf({ project: { price: 'p' } }));
+  it('emits every canonical column but margin, in order, whatever the venue publishes', () => {
+    const sql   = projectionFor(make({ project: { price: 'p' } }));
+    const names = fieldsOf('trades').map(f => f.name).filter(name => name !== 'margin');
 
-    for (const field of fieldsOf('trades'))
-      expect(sql).toContain(` AS ${field.name}`);
+    for (const name of names) expect(sql).toContain(` AS ${name}`);
 
-    const order = fieldsOf('trades').map(f => sql.indexOf(` AS ${f.name}`));
+    expect(sql).not.toContain(' AS margin');
+
+    const order = names.map(name => sql.indexOf(` AS ${name}`));
 
     expect(order).toEqual([...order].sort((a, b) => a - b));
   });
 
   it('fills a field the venue does not publish with a typed NULL', () => {
-    const sql = projectionFor(seriesOf({ project: { price: 'p' } }));
+    const sql = projectionFor(make({ project: { price: 'p' } }));
 
     expect(sql).toContain('CAST(p AS DOUBLE) AS price');
     expect(sql).toContain('CAST(NULL AS VARCHAR) AS side');
+  });
+
+  /** A venue writing local datetimes has them moved to UTC by its declared offset. */
+  it('moves a declared zone to UTC', () => {
+    expect(projectionFor(make({ utcOffsetHours: 3 }))).toContain('- 10800000000');
+    expect(projectionFor(make({}))).not.toContain('10800000000');
   });
 });
 
@@ -134,26 +227,26 @@ describe('timestamp conversion', () => {
   it('decides the unit from the value rather than from a declaration', () => {
     const sql = _test_microsOf();
 
-    expect(sql).toContain('100000000000');
-    expect(sql).toContain('1e14');
-    expect(sql).toContain('1e17');
+    expect(sql).toContain('< 100000000000 ');
+    expect(sql).toContain('< 100000000000000 ');
+    expect(sql).toContain('< 100000000000000000 ');
   });
 
   /**
    * An epoch in microseconds is a 16-digit integer, right at the edge of what a
-   * DOUBLE holds exactly, so a DOUBLE multiply would silently round the last
-   * digit of Bybit's `1784937600.0683`. Fractional values go through DECIMAL.
+   * DOUBLE holds exactly, and DECIMAL is exact but ruinously slow. Fractional
+   * values are split into two integers instead.
    */
-  it('routes fractional values through DECIMAL, never DOUBLE', () => {
-    expect(_test_decimalCol()).toContain('DECIMAL(38,9)');
+  it('parses fractional values as integers, never DOUBLE or DECIMAL', () => {
+    expect(_test_fractionCols()).toContain('split_part');
+    expect(_test_fractionCols()).not.toContain('DECIMAL');
     expect(_test_microsOf()).not.toContain('AS DOUBLE');
+    expect(_test_microsOf()).not.toContain('DECIMAL');
   });
 
   /**
    * DuckDB's VARCHAR→BIGINT cast **rounds** fractional text rather than
-   * failing, so the integer fast path must be gated on the text being integral
-   * — without the dot guard, Bybit's fractional seconds would silently lose
-   * their sub-second part.
+   * failing, so the integer fast path must be gated on the text being integral.
    */
   it('takes the integer path only for integral text', () => {
     expect(_test_integralCols('raw')).toContain(`strpos`);
@@ -173,15 +266,16 @@ describe('timestamp conversion', () => {
    * relation `selectFor` builds — the two halves only work together.
    */
   it('wraps the relation so every parse column the CASE reads exists', () => {
-    const series = {
-      source: 't', venue: 'v', table: 'trades' as const, market: 'spot',
-      match: /(?<symbol>x)/, container: 'zip' as const, format: 'csv' as const,
-      header: true, project: {}, ts: 'time',
+    const series: Series = {
+      venue: 'v', market: 'spot', dataset: 'trades', table: 'trades',
+      format: 'csv', header: true, project: {}, ts: 'time',
     };
 
-    const sql = selectFor(series, 'read_csv([\'f\'])');
+    const sql = selectFor(series, 'read_csv([\'f\'])', ['x AS _instrument']);
 
-    for (const col of ['_tsText', '_tsInt', '_tsDec'])
+    for (const col of ['_tsText', '_tsInt', '_tsWhole', '_tsFrac'])
       expect(sql).toContain(`AS ${col}`);
+
+    expect(sql).toContain('x AS _instrument');
   });
 });

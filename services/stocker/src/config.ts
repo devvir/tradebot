@@ -5,22 +5,17 @@ import type { Config } from './types';
 
 /**
  * Container paths are fixed and private; the host directories behind them are
- * chosen by the compose mounts, which may put them on separate volumes or
- * separate machines. `STOCKER_*_DIR` exist only so the service can run outside
- * a container during development.
+ * chosen by the compose mounts. `STOCKER_ARCHIVES_DIR` and `STOCKER_VAULT_DIR`
+ * override them only so the service can run outside a container.
  *
- * Two of the three are mounted read-only, which is the ownership rule made
- * mechanical rather than conventional: trucker's archives are trucker's, and
- * `@shared` is written by whoever produced the fact. Stocker reads
- * both and writes neither.
- *
- * Trucker's directory is named for its owner in both worlds — `TRUCKER_DATA_DIR`
- * on the host, `/data/trucker` in the container — because reading someone
- * else's directory should look like exactly that at every layer.
+ * The archives are mounted read-only: they are hauler's, and the mount makes
+ * that mechanical rather than conventional.
  */
-const CONTAINER_TRUCKER_DIR = '/data/trucker';
-const CONTAINER_VAULT_DIR   = '/data/vault';
-const CONTAINER_SHARED_DIR  = '/data/shared';
+const CONTAINER_ARCHIVES_DIR = '/data/archives';
+const CONTAINER_VAULT_DIR    = '/data/vault';
+
+/** Where the catalog answers inside the shared network. */
+const CATALOG_API = 'http://catalog:8080';
 
 const loadConfig = (): Config => {
   const startMonth = parseMonth(process.env.STOCKER_START_MONTH, 'STOCKER_START_MONTH');
@@ -30,20 +25,24 @@ const loadConfig = (): Config => {
     throw new Error(`STOCKER_END_MONTH (${endMonth}) is before STOCKER_START_MONTH (${startMonth})`);
 
   const config: Config = {
-    truckerDir:  process.env.TRUCKER_DATA_DIR   ?? CONTAINER_TRUCKER_DIR,
-    vaultDir:    process.env.STOCKER_VAULT_DIR  ?? CONTAINER_VAULT_DIR,
-    sharedDir:   process.env.STOCKER_SHARED_DIR ?? CONTAINER_SHARED_DIR,
-    venues:      parseKnown(process.env.STOCKER_VENUES, 'STOCKER_VENUES', VENUES),
-    tables:      parseKnown(process.env.STOCKER_TABLES, 'STOCKER_TABLES', TABLE_NAMES),
-    symbols:     parseList(process.env.STOCKER_SYMBOLS),
+    archivesDir:  process.env.STOCKER_ARCHIVES_DIR ?? CONTAINER_ARCHIVES_DIR,
+    vaultDir:     process.env.STOCKER_VAULT_DIR    ?? CONTAINER_VAULT_DIR,
+    catalogApi:   (process.env.CATALOG_API?.trim() || CATALOG_API).replace(/\/$/, ''),
+    catalogToken: (process.env.CATALOG_TOKEN ?? '').trim(),
+    lens:         (process.env.STOCKER_LENS ?? '').trim(),
+    venues:       parseKnown(process.env.STOCKER_VENUES, 'STOCKER_VENUES', VENUES),
+    tables:       parseKnown(process.env.STOCKER_TABLES, 'STOCKER_TABLES', TABLE_NAMES),
+    symbols:      parseList(process.env.STOCKER_SYMBOLS),
     startMonth,
     endMonth,
-    concurrency: parsePositiveInt(process.env.STOCKER_CONCURRENCY, 2),
-    scanMinutes: parsePositiveInt(process.env.STOCKER_SCAN_MINUTES, 30),
-    threads:     parsePositiveInt(process.env.STOCKER_THREADS, 4),
+    concurrency:  parsePositiveInt(process.env.STOCKER_CONCURRENCY, 2),
+    scanMinutes:  parsePositiveInt(process.env.STOCKER_SCAN_MINUTES, 30),
+    threads:      parsePositiveInt(process.env.STOCKER_THREADS, 4),
+    minFreeGb:    parsePositiveInt(process.env.STOCKER_MIN_FREE_GB, 20),
   };
 
-  logger.info(config, 'Configuration loaded and validated!');
+  logger.info({ ...config, catalogToken: config.catalogToken ? '<set>' : '<none>' },
+    'Configuration loaded and validated!');
 
   return config;
 };
@@ -83,20 +82,13 @@ const parseKnown = (raw: string | undefined, name: string, known: string[]): str
 };
 
 /**
- * A month bound, as `yyyy-mm`, `yyyymm` or `yymm` — the forms trucker takes, so
- * the two ends of the pipeline are configured the same way.
+ * A month bound, as `yyyy-mm`, `yyyymm` or `yymm`.
  *
  * **Months rather than dates, and both bounds inclusive.** A partition covers a
  * whole month, so a bound landing mid-month either takes a month only partly
- * wanted or drops days already past. `2026-03` says exactly what it does, in
- * three months' time as much as today.
+ * wanted or drops days already past.
  *
- * Returned dashed, which is the form partitions are keyed by here — so what a
- * person types and what the comparison uses need not be the same thing.
- *
- * Bounds scope a run to a slice that can then be confirmed, backed up and
- * reclaimed. The running month is excluded separately regardless, since its raw
- * is still arriving.
+ * Returned dashed, which is the form partitions are keyed by here.
  */
 const parseMonth = (raw: string | undefined, name: string): string | null => {
   if (! raw?.trim()) return null;

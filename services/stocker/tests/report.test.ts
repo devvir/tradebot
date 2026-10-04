@@ -4,7 +4,8 @@ import { report } from '../src/scan';
 import type { Summary } from '../src/types';
 
 const summary = (over: Partial<Summary> = {}): Summary => ({
-  discovered: 0, partitions: 0, built: 0, skipped: 0, pending: 0, failed: 0, rows: 0, ...over,
+  considered: 0, current: 0, built: 0, empty: 0, waiting: 0, missing: 0,
+  unmapped: 0, failed: 0, rows: 0, files: 0, stopped: false, ...over,
 });
 
 const said = (fn: typeof logger.info): string =>
@@ -18,24 +19,24 @@ beforeEach(() => vi.clearAllMocks());
  */
 describe('the end-of-sweep report', () => {
   it('says it is caught up when there is nothing left at all', () => {
-    report(summary({ partitions: 120, skipped: 120 }), 30);
+    report(summary({ considered: 120, current: 120 }), 30);
 
-    expect(said(logger.info)).toContain('every partition available is built');
+    expect(said(logger.info)).toContain('every partition in scope is stocked');
     expect(said(logger.info)).toContain('30 minutes');
   });
 
-  /** Waiting on a collector is a different situation with a different fix. */
-  it('separates caught up from waiting on the collectors', () => {
-    report(summary({ partitions: 120, skipped: 100, pending: 20 }), 30);
+  /** Waiting on downloads is a different situation with a different fix. */
+  it('separates caught up from waiting on downloads or the disk', () => {
+    report(summary({ considered: 120, current: 100, waiting: 15, missing: 5 }), 30);
 
-    expect(said(logger.info)).toContain('20 partitions waiting');
-    expect(said(logger.info)).toContain('collectors have not closed');
+    expect(said(logger.info)).toContain('15 partitions still downloading');
+    expect(said(logger.info)).toContain('5 not on disk as catalogued');
   });
 
-  it('reports what it built when it built something', () => {
-    report(summary({ built: 3, rows: 42, pending: 1 }), 15);
+  it('reports what it stocked when it stocked something', () => {
+    report(summary({ built: 3, rows: 42, waiting: 1 }), 15);
 
-    expect(said(logger.info)).toContain('Built 3 partitions');
+    expect(said(logger.info)).toContain('Stocked 3 partitions');
     expect(said(logger.info)).not.toContain('Caught up');
   });
 
@@ -46,9 +47,15 @@ describe('the end-of-sweep report', () => {
     expect(said(logger.info)).toBe('');
   });
 
+  it('warns when it stopped for want of space', () => {
+    report(summary({ built: 2, stopped: true }), 30);
+
+    expect(said(logger.warn)).toContain('want of space');
+  });
+
   it('says one partition, not 1 partitions', () => {
     report(summary({ built: 1 }), 30);
 
-    expect(said(logger.info)).toContain('Built 1 partition —');
+    expect(said(logger.info)).toContain('Stocked 1 partition —');
   });
 });

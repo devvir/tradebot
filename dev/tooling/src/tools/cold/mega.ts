@@ -44,7 +44,7 @@ export const queueUpload = async (local: string, remoteDir: string): Promise<voi
  * What the whole upload queue still has to send.
  *
  * **Deliberately not filtered to our own transfers.** There is one link and one
- * FIFO queue, so anything already queued — a trucker backup running beside this
+ * FIFO queue, so anything already queued — another backup running beside this
  * one, an upload started by hand — is genuinely in front of our next tar. A
  * packer that ignored it would build tars that then sit on disk for days.
  *

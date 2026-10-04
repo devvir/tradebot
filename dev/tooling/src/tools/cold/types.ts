@@ -4,7 +4,7 @@ import type { DatabaseSync } from 'node:sqlite';
  * Where a set of tars comes from.
  *
  * The tree, not the producer that fills it. `archives` is the raw venue tree
- * trucker writes, and is named for what it *is* — the producer's name may
+ * the collector writes, and is named for what it *is* — the producer's name may
  * change, and nothing downstream should have to change with it. `vault` is
  * stocker's normalised output.
  */
@@ -18,7 +18,7 @@ export interface ColdConfig {
   /**
    * The collector's published state, which says what is final.
    *
-   * Only `archives` reads it: a venue-month is a candidate once trucker has
+   * Only `archives` reads it: a venue-month is a candidate once the collector has
    * published it as collected through. The vault has no such signal and does
    * not need one — stocker's partitions are packed as they appear.
    */

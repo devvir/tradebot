@@ -16,17 +16,7 @@ import type { BaseTopic, Owner, Topic } from './types';
  * a producer has got to; that is the entire purpose.
  */
 export const OWNERS: Record<BaseTopic, Owner | readonly Owner[]> = {
-  /**
-   * **Two writers, for as long as the archives have two collectors.** Trucker
-   * discovers and downloads in one service; hauler works from the catalog and
-   * writes at a finer grain. They fill the same tree and say the same kind of
-   * thing about it, so the tree keeps one meaning and the handover needs no
-   * migration — trucker's entry goes when trucker does.
-   *
-   * A list is still an enumeration, so this is not a hole: a service not named
-   * here cannot write here, which is the whole job.
-   */
-  archives:  ['trucker', 'hauler'],
+  archives:  'hauler',
   vault:     'stocker',
   rest:      'tooling',
   websocket: 'tooling',
@@ -57,8 +47,8 @@ export const assertOwns = (owner: Owner, topic: Topic): void => {
 /**
  * The tree a topic is about, however it is namespaced.
  *
- * `archives:bookkeeping` and `logs:archives` are both trucker saying more about
- * the archives — not a second tree with a second owner — so ownership is
+ * `archives:bookkeeping` and `logs:archives` are both the collector saying more
+ * about the archives — not a second tree with a second owner — so ownership is
  * answered by the tree and a subtopic needs no entry of its own.
  *
  * **The tree is whichever segment names one, wherever it sits.** Fixing it to

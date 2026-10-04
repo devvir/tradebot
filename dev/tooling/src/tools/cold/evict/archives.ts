@@ -27,7 +27,7 @@ import type { ColdConfig, EvictCause, EvictGroup, EvictMonth } from '../types';
  *
  * The second is not about safety — a file backed up as raw can be deleted with
  * nothing lost either way. It is about **alignment**: raw exists to become
- * parquet, so raw that never became any is either something trucker should stop
+ * parquet, so raw that never became any is either something the collector should stop
  * collecting or something stocker should be modelling. Evicting it would settle
  * that by forgetting it. Blocking says so out loud instead, which is how gate's
  * unmodelled spot klines were found.

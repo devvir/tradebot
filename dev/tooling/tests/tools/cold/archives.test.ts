@@ -125,11 +125,11 @@ describe('a path whose date cannot be read', () => {
   const withArchive = async (files: string[], run: (config: never) => Promise<unknown>) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-arch-'));
 
-    const trucker = new FactManager({ owner: 'trucker', root: path.join(root, 'shared', 'facts') });
+    const collector = new FactManager({ owner: 'hauler', root: path.join(root, 'shared', 'facts') });
 
-    trucker.record({ topic: 'archives', venue: 'acme', period: '202601',
+    collector.record({ topic: 'archives', venue: 'acme', period: '202601',
       fact: 'complete', value: '2026-02-01T00:00:00Z' });
-    trucker.close();
+    collector.close();
 
     for (const relative of files) {
       fs.mkdirSync(path.join(root, 'raw', path.dirname(relative)), { recursive: true });
@@ -217,7 +217,7 @@ describe('reading what the collector has closed', () => {
   const withClosings = <T>(closed: FactInput[], run: (facts: FactManager) => T): T => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-archives-'));
 
-    if (closed.length > 0) new FactManager({ owner: 'trucker', root }).recordAll(closed);
+    if (closed.length > 0) new FactManager({ owner: 'hauler', root }).recordAll(closed);
 
     const facts = new FactManager({ owner: 'tooling', root });
 

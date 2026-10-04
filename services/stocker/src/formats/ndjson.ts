@@ -7,6 +7,7 @@ import type { Format } from './types';
  * projection decides what is kept.
  */
 export const ndjson: Format = {
-  relation: (paths) =>
-    `read_json([${paths.map(q).join(', ')}], format = 'newline_delimited', union_by_name = true)`,
+  relation: (paths, _series, named) =>
+    `read_json([${paths.map(q).join(', ')}], format = 'newline_delimited', union_by_name = true` +
+    `${named ? ', filename = true' : ''})`,
 };

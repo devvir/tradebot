@@ -73,6 +73,17 @@ whole calendar month, across five intervals, with no exceptions — so it is an 
 series that happens to spell out its own last day. The pattern says so with `{MONTH_LAST_DAY}`, which bybit's
 adapter fills in; February is why it cannot be a literal.
 
+**The metatrader klines are the USDT perpetuals, stamped in UTC+3.** The datetimes (`2024.11.01 00:00`)
+are the MetaTrader server's zone, with no daylight-saving switch: `BTCUSDT`'s 1h bars equal the perpetual
+trades summed per hour, exactly, on every hour of 2020-10 and 2020-12 (over 1,000 hours), and only with
+the bar labelled 03:00 holding the trades of 00:00–01:00 UTC. A month's file is therefore a UTC+3 month:
+it opens with the previous UTC month's last three hours.
+
+**Four metatrader months are truncated.** `BTCUSDT`'s 1h files for 2023-12, 2024-01 and 2024-03
+hold 200 bars and 2024-02 holds 400, against 721–745 for a whole month; the 1m file of 2024-03 holds
+200 bars (2024-03-01 00:00 → 03:19). Every other month from 2021-01 to 2024-11 is complete.
+Checked on `BTCUSDT` only, on 2026-10-04.
+
 **The order-book host changed depth.** Bybit moved from 500 levels to 200, so a symbol has files of
 both and the depth stays literal in the pattern — different depth, different series, exactly as an
 interval is treated elsewhere. The host carries `linear/` and `inverse/` and no third market.

@@ -1,12 +1,13 @@
-# Stocker Service — normalises every collector's raw output into a Parquet vault.
+# Stocker Service — turns every collector's raw files into the Parquet vault.
 #
-# Three mounts. The collectors' raw tree comes in **read-only**: stocker must
-# never write to it, and the mount enforces that rather than trusting the code.
-# The vault is the volume it owns. `@shared` is writable because it is where any
-# service publishes facts for the others — stocker reads the collectors' tips
-# there and records a settled month that changed after it was built.
+# Two mounts. The archives come in **read-only**: they are hauler's, and the
+# mount enforces that rather than trusting the code. The vault is the volume
+# stocker owns, and where it keeps everything transient.
 #
-# Pre-create both writable volumes for uid 1000, as with the collectors:
+# What exists, and whether it is all downloaded, is asked of the catalog over
+# the shared network — through a lens, where one is set.
+#
+# Pre-create the vault for uid 1000:
 #   sudo mkdir -p /storage/tradebot/vault && sudo chown 1000:1000 /storage/tradebot/vault
 
 services:
@@ -26,31 +27,39 @@ services:
     container_name: stocker
 
     environment:
-      # Which venues and tables to normalise (default: everything mapped)
+      CATALOG_API:   ${CATALOG_API:-http://catalog:8080}
+      CATALOG_TOKEN: ${CATALOG_TOKEN:-}
+
+      # The lens the catalog is read through. Empty reads the whole catalog,
+      # where most partitions are owed files and simply wait.
+      STOCKER_LENS: ${STOCKER_LENS:-}
+
+      # Which venues and tables to stock (default: everything mapped)
       STOCKER_VENUES:  ${STOCKER_VENUES:-}
       STOCKER_TABLES:  ${STOCKER_TABLES:-}
 
-      # Symbol tokens, case-insensitive substrings. Empty means every symbol.
+      # Symbol tokens, case-insensitive substrings. Empty means every symbol. A
+      # partition stocked through a filter carries it in its version, so it never
+      # passes for a whole one.
       STOCKER_SYMBOLS: ${STOCKER_SYMBOLS:-}
 
-      # Inclusive month bounds, YYYY-MM. Neither is a commitment: they filter
-      # what a run considers, nothing is written down about them, and widening
-      # them later simply makes more months eligible. Pinning the ceiling below
-      # the era still being collected is what keeps a run from touching raw that
-      # is still arriving — which is what makes reclaiming the era below it safe.
+      # Inclusive month bounds, YYYY-MM. They filter what a sweep considers and
+      # nothing is written down about them.
       STOCKER_START_MONTH: ${STOCKER_START_MONTH:-}
       STOCKER_END_MONTH:   ${STOCKER_END_MONTH:-}
 
-      # Partitions built at once. Each holds a month-sized sort, so this is what
-      # decides how much memory and CPU a sweep actually wants.
+      # Builds run at once, one instrument each. Each holds a month-sized sort.
       STOCKER_CONCURRENCY: ${STOCKER_CONCURRENCY:-2}
 
-      # Minutes between rescans of the raw tree
+      # Minutes between sweeps
       STOCKER_SCAN_MINUTES: ${STOCKER_SCAN_MINUTES:-30}
 
       # Cores a build may take. DuckDB spills to disk inside the vault volume
       # rather than being killed; this host runs the collectors at the same time.
       STOCKER_THREADS: ${STOCKER_THREADS:-4}
+
+      # No partition is started below this much free space on the vault volume.
+      STOCKER_MIN_FREE_GB: ${STOCKER_MIN_FREE_GB:-20}
 
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV:  ${APP_ENV:-prod}
@@ -60,12 +69,8 @@ services:
 
     volumes:
       - ../../../:/live
-      - ${TRUCKER_DATA_DIR:?TRUCKER_DATA_DIR is not defined}:/data/trucker:ro
+      - ${STOCKER_ARCHIVES_DIR:?STOCKER_ARCHIVES_DIR is not defined}:/data/archives:ro
       - ${STOCKER_VAULT_DIR:?STOCKER_VAULT_DIR is not defined}:/data/vault
-
-      # Writable: stocker reads the published tips here and publishes its own
-      # fact beside them — a settled month that changed after it was built.
-      - ${DATA_DIR:?DATA_DIR is not defined}/@shared:/data/shared
 
     ports:
       - :3000

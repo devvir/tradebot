@@ -1,4 +1,4 @@
-import { fieldsOf } from './tables';
+import { MARGIN, fieldsOf } from './tables';
 import type { Series } from '../types';
 
 /**
@@ -6,7 +6,10 @@ import type { Series } from '../types';
  * table: `selectFor(series, relation)` → projection over a wrapped relation.
  *
  * Every series emits the table's full column list, in the table's order, with
- * NULL where the venue publishes nothing. That is what makes a table one
+ * NULL where the venue publishes nothing — all but `margin`, which the writer
+ * fills per instrument — followed by any `extra` expressions the caller needs
+ * carried through, such as the column naming each row's instrument. That is
+ * what makes a table one
  * dataset instead of a pile of venue-shaped files — a reader gets identical
  * columns whether the rows came from Binance or Gate, and Parquet gets one
  * stable schema to append to.
@@ -19,9 +22,9 @@ import type { Series } from '../types';
  * Benchmarked on a month of Binance trades: 96.7s → 1.0s for 500k rows, with
  * byte-identical output.
  */
-export const selectFor = (series: Series, relation: string): string =>
-  `SELECT ${projectionFor(series)} FROM ` +
-  `(SELECT *, ${decimalCol()} FROM (SELECT *, ${integralCols(series.ts)} FROM ${relation}))`;
+export const selectFor = (series: Series, relation: string, extra: string[] = []): string =>
+  `SELECT ${[projectionFor(series), ...extra].join(', ')} FROM ` +
+  `(SELECT *, ${fractionCols()} FROM (SELECT *, ${integralCols(series.ts)} FROM ${relation}))`;
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
@@ -52,8 +55,9 @@ export const selectFor = (series: Series, relation: string): string =>
  */
 const projectionFor = (series: Series): string =>
   fieldsOf(series.table)
+    .filter(field => field.name !== MARGIN.name)
     .map(field => {
-      if (field.name === 'ts') return `${microsOf()} AS ts`;
+      if (field.name === 'ts') return `${utcOf(series)} AS ts`;
 
       const expr = series.project[field.name];
 
@@ -80,15 +84,29 @@ const integralCols = (column: string): string => {
 };
 
 /**
- * Second inner projection: the DECIMAL parse, only where the integer one did
- * not apply. DECIMAL rather than DOUBLE deliberately — an epoch in microseconds
- * is a 16-digit integer, right at the edge of what a double holds exactly, so a
- * DOUBLE multiply would silently round the last digit. It is also ~20× the cost
- * of the BIGINT parse, which is why it only runs for the values that need it:
- * essentially every file publishes integral epochs.
+ * Second inner projection: a fractional epoch split at its one dot, as a whole
+ * part and nine fractional digits — both integers, only where the integer
+ * parse did not apply.
+ *
+ * **Integers, never DOUBLE and never DECIMAL.** An epoch in microseconds is a
+ * 16-digit integer, at the edge of what a double holds exactly, so a DOUBLE
+ * multiply would silently round the last digit. DECIMAL(38,9) is exact and was
+ * the parse here, and it is ruinous: on one day of bybit perpetual trades
+ * (71k rows) it took 5.5 s where this split takes 0.23 s, with identical
+ * results on every row (measured 2026-10-04). Every venue stamping fractional
+ * seconds — bybit's perpetuals, all of gate — was paying it on every row.
+ *
+ * Exactly one dot, and digits after it, or this is not a fractional epoch:
+ * `2024.11.01 00:00` has two and falls through to the datetime parse.
  */
-const decimalCol = (): string =>
-  `CASE WHEN _tsInt IS NULL THEN TRY_CAST(_tsText AS DECIMAL(38,9)) END AS _tsDec`;
+const fractionCols = (): string => {
+  const single   = `_tsInt IS NULL AND length(_tsText) - length(replace(_tsText, '.', '')) = 1`;
+  const fraction = `rpad(split_part(_tsText, '.', 2), 9, '0')`;
+
+  return `CASE WHEN ${single} AND TRY_CAST(${fraction} AS BIGINT) IS NOT NULL ` +
+      `THEN TRY_CAST(split_part(_tsText, '.', 1) AS BIGINT) END AS _tsWhole, ` +
+    `CASE WHEN ${single} THEN ${fraction} END AS _tsFrac`;
+};
 
 /**
  * Convert the parsed source timestamp to int64 microseconds UTC, deciding its
@@ -114,9 +132,9 @@ const decimalCol = (): string =>
  * history is read without knowing when that happened. The build drops those
  * rows.
  *
- * The nanosecond branch adds 500 before integer division to round half-up,
- * matching what the DECIMAL division does on the fractional path — the two
- * paths must not disagree about the same instant.
+ * Both paths round half-up to the microsecond: the nanosecond branch adds 500
+ * before dividing, and the fractional one adds the digit past the last one it
+ * keeps — the two must not disagree about the same instant.
  */
 const microsOf = (): string =>
   `CASE ` +
@@ -125,19 +143,33 @@ const microsOf = (): string =>
     `WHEN abs(_tsInt) < 100000000000000 THEN _tsInt * 1000 ` +
     `WHEN abs(_tsInt) < 100000000000000000 THEN _tsInt ` +
     `ELSE (_tsInt + 500) // 1000 END ` +
-  `WHEN _tsDec IS NOT NULL THEN CASE ` +
-    `WHEN abs(_tsDec) < 1e11 THEN CAST(_tsDec * 1000000 AS BIGINT) ` +
-    `WHEN abs(_tsDec) < 1e14 THEN CAST(_tsDec * 1000 AS BIGINT) ` +
-    `WHEN abs(_tsDec) < 1e17 THEN CAST(_tsDec AS BIGINT) ` +
-    `ELSE CAST(_tsDec / 1000 AS BIGINT) END ` +
+  `WHEN _tsWhole IS NOT NULL THEN CASE ` +
+    `WHEN abs(_tsWhole) < 100000000000 THEN _tsWhole * 1000000 + ${digits(6)} ` +
+    `WHEN abs(_tsWhole) < 100000000000000 THEN _tsWhole * 1000 + ${digits(3)} ` +
+    `WHEN abs(_tsWhole) < 100000000000000000 THEN _tsWhole + ${digits(0)} ` +
+    `ELSE (_tsWhole + 500) // 1000 END ` +
   `ELSE epoch_us(COALESCE(` +
     `TRY_CAST(_tsText AS TIMESTAMP), ` +
     `try_strptime(_tsText, '%Y.%m.%d %H:%M'), ` +
     `try_strptime(_tsText, '%Y.%m.%d %H:%M:%S'))) END`;
+
+/** The first `keep` fractional digits as an integer, rounded half-up on the next one. */
+const digits = (keep: number): string =>
+  (keep ? `CAST(substr(_tsFrac, 1, ${keep}) AS BIGINT) + ` : '') +
+  `CASE WHEN substr(_tsFrac, ${keep + 1}, 1) >= '5' THEN 1 ELSE 0 END`;
+
+/**
+ * The timestamp in UTC microseconds: inferred, then moved out of the zone a
+ * venue writes its local datetimes in, where it declares one.
+ */
+const utcOf = (series: Series): string =>
+  series.utcOffsetHours
+    ? `(${microsOf()} - ${series.utcOffsetHours * 3_600_000_000})`
+    : microsOf();
 
 // ── Test access ───────────────────────────────────────────────────────────────
 
 export const _test_projectionFor = projectionFor;
 export const _test_microsOf      = microsOf;
 export const _test_integralCols  = integralCols;
-export const _test_decimalCol    = decimalCol;
+export const _test_fractionCols  = fractionCols;

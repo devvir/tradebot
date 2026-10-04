@@ -193,9 +193,8 @@ const cancelled = (err: unknown): boolean =>
  * Which tree to work on.
  *
  * Named for the tree rather than for whatever writes it. The raw archives are
- * `archives` and not `trucker` because the collector's name may change and the
- * tree's meaning will not — nothing outside that service should have to be
- * renamed with it.
+ * `archives` and not a collector's name, because the collector may change and
+ * the tree's meaning will not.
  */
 const ORIGINS: { value: Origin; name: string }[] = [
   { value: 'vault',    name: 'vault — stocker\'s normalised partitions' },
@@ -220,7 +219,6 @@ const resolve = async (given?: string): Promise<Origin | null> => {
 
   // What a person says when they mean the tree that service writes.
   if (given === 'stocker') return 'vault';
-  if (given === 'trucker') return 'archives';
 
   error(`Unknown origin "${given}". Known: ${ORIGINS.map(o => o.value).join(', ')}`);
 

@@ -258,8 +258,7 @@ Note the two trees **invert dataset and market**: `historical_data/spot/daily/tr
 from and reconstructs as `base` + `/` + `path`.
 
 Only a daily shape exists in both — no monthly files — so the granularity cutover never applies
-here. Trucker's own tree, written before `data/` was known, mirrors `historical_data/` with its
-wrapper removed.
+here.
 
 ## `markPrice` and `indexPrice` may be mislabelled
 

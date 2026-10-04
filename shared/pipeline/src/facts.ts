@@ -10,8 +10,8 @@ import type { Fact, FactInput, FactKey, FactManagerOptions, FactQuery, Owner, To
  *
  * **Writing is owned, reading is not.** A service states facts about its own
  * tree and asks freely about anyone else's, which is the shape the pipeline
- * already has: stocker needs to know what trucker has finished, and trucker
- * needs to know nothing at all.
+ * already has: stocker needs to know what the collector has finished, and the
+ * collector needs to know nothing at all.
  *
  * **One database per topic**, which follows from one owner per topic — exactly
  * one writer per file, and readers are whoever turns up. It also keeps the

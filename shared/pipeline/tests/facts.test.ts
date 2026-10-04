@@ -7,48 +7,31 @@ import type { Topic } from '../src/types';
 
 let root  = '';
 let stocker: FactManager;
-let trucker: FactManager;
+let collector: FactManager;
 
 beforeEach(() => {
   root    = fs.mkdtempSync(path.join(os.tmpdir(), 'facts-'));
   stocker = new FactManager({ owner: 'stocker', root });
-  trucker = new FactManager({ owner: 'trucker', root });
+  collector = new FactManager({ owner: 'hauler', root });
 });
 
 afterEach(() => {
   stocker.close();
-  trucker.close();
+  collector.close();
   fs.rmSync(root, { recursive: true, force: true });
 });
 
 describe('who may write what', () => {
   it('lets an owner state facts about its own tree', () => {
-    trucker.record({ topic: 'archives', venue: 'gate', period: '202003', fact: 'complete' });
+    collector.record({ topic: 'archives', venue: 'gate', period: '202003', fact: 'complete' });
 
-    expect(trucker.find({ topic: 'archives' })).toHaveLength(1);
+    expect(collector.find({ topic: 'archives' })).toHaveLength(1);
   });
 
   it('refuses a service writing somebody else\'s topic', () => {
     expect(() => stocker.record({
       topic: 'archives', venue: 'gate', period: '202003', fact: 'complete',
-    })).toThrow(/belongs to 'trucker'/);
-  });
-
-  /**
-   * The archives have two collectors while one replaces the other, and they
-   * fill the same tree. A list of owners is still an enumeration: everyone not
-   * on it is refused exactly as before.
-   */
-  it('lets either collector write the archives, and nobody else', () => {
-    const hauler = new FactManager({ owner: 'hauler', root });
-
-    expect(() => hauler.record({
-      topic: 'archives', venue: 'gate', period: '202003', fact: 'complete',
-    })).not.toThrow();
-
-    expect(() => hauler.record({
-      topic: 'vault', venue: 'gate', period: '202003', fact: 'built',
-    })).toThrow(/belongs to 'stocker'/);
+    })).toThrow(/belongs to 'hauler'/);
   });
 
   /**
@@ -57,13 +40,13 @@ describe('who may write what', () => {
    * looking perfectly fine to whoever wrote it.
    */
   it('refuses a topic nobody owns', () => {
-    expect(() => trucker.record({
+    expect(() => collector.record({
       topic: 'archivez' as Topic, venue: 'gate', period: '202003', fact: 'complete',
     })).toThrow(/Unknown topic/);
   });
 
   it('lets anyone read anything', () => {
-    trucker.record({ topic: 'archives', venue: 'gate', period: '202003', fact: 'complete' });
+    collector.record({ topic: 'archives', venue: 'gate', period: '202003', fact: 'complete' });
 
     expect(stocker.find({ topic: 'archives', venue: 'gate' })).toHaveLength(1);
   });
@@ -71,40 +54,40 @@ describe('who may write what', () => {
 
 describe('stating a fact', () => {
   it('carries a value, and existence is the truth', () => {
-    trucker.record({ topic: 'archives', venue: 'gate', period: '202003',
+    collector.record({ topic: 'archives', venue: 'gate', period: '202003',
       fact: 'complete', value: '2026-08-11T13:25:29.862Z' });
 
-    expect(trucker.value({ topic: 'archives', venue: 'gate', period: '202003', fact: 'complete' }))
+    expect(collector.value({ topic: 'archives', venue: 'gate', period: '202003', fact: 'complete' }))
       .toBe('2026-08-11T13:25:29.862Z');
   });
 
   it('answers null for a fact never stated, and empty for one with no value', () => {
-    trucker.record({ topic: 'archives', venue: 'gate', period: '202003', fact: 'complete' });
+    collector.record({ topic: 'archives', venue: 'gate', period: '202003', fact: 'complete' });
 
     const key = { topic: 'archives', venue: 'gate', fact: 'complete' } as const;
 
-    expect(trucker.value({ ...key, period: '202003' })).toBe('');
-    expect(trucker.value({ ...key, period: '209912' })).toBeNull();
+    expect(collector.value({ ...key, period: '202003' })).toBe('');
+    expect(collector.value({ ...key, period: '209912' })).toBeNull();
   });
 
   it('replaces what was said about the same key before', () => {
     const key = { topic: 'archives', venue: 'gate', period: '202003', fact: 'complete' } as const;
 
-    trucker.record({ ...key, value: 'first' });
-    trucker.record({ ...key, value: 'second' });
+    collector.record({ ...key, value: 'first' });
+    collector.record({ ...key, value: 'second' });
 
-    expect(trucker.find({ topic: 'archives' })).toHaveLength(1);
-    expect(trucker.value(key)).toBe('second');
+    expect(collector.find({ topic: 'archives' })).toHaveLength(1);
+    expect(collector.value(key)).toBe('second');
   });
 
   it('takes a fact back', () => {
     const key = { topic: 'archives', venue: 'gate', period: '202003', fact: 'complete' } as const;
 
-    trucker.record(key);
+    collector.record(key);
 
-    expect(trucker.forget(key)).toBe(true);
-    expect(trucker.value(key)).toBeNull();
-    expect(trucker.forget(key)).toBe(false);
+    expect(collector.forget(key)).toBe(true);
+    expect(collector.value(key)).toBeNull();
+    expect(collector.forget(key)).toBe(false);
   });
 });
 
@@ -157,11 +140,11 @@ describe('discriminants that a topic does not use', () => {
   it('treats an unset discriminant as one value, not as unknown', () => {
     const key = { topic: 'archives', venue: 'gate', period: '202003', fact: 'complete' } as const;
 
-    trucker.record({ ...key, value: 'a' });
-    trucker.record({ ...key, market: '', value: 'b' });
+    collector.record({ ...key, value: 'a' });
+    collector.record({ ...key, market: '', value: 'b' });
 
-    expect(trucker.find({ topic: 'archives' })).toHaveLength(1);
-    expect(trucker.value(key)).toBe('b');
+    expect(collector.find({ topic: 'archives' })).toHaveLength(1);
+    expect(collector.value(key)).toBe('b');
   });
 
   it('keeps facts apart when a discriminant differs', () => {
@@ -186,7 +169,7 @@ describe('discriminants that a topic does not use', () => {
 
 describe('asking a partial key', () => {
   beforeEach(() => {
-    trucker.recordAll([
+    collector.recordAll([
       { topic: 'archives', venue: 'gate',   period: '202001', fact: 'complete' },
       { topic: 'archives', venue: 'gate',   period: '202002', fact: 'complete' },
       { topic: 'archives', venue: 'bitget', period: '202001', fact: 'complete' },
@@ -194,17 +177,17 @@ describe('asking a partial key', () => {
   });
 
   it('matches anything for a field left out', () => {
-    expect(trucker.find({ topic: 'archives', fact: 'complete' })).toHaveLength(3);
-    expect(trucker.find({ topic: 'archives', venue: 'gate' })).toHaveLength(2);
+    expect(collector.find({ topic: 'archives', fact: 'complete' })).toHaveLength(3);
+    expect(collector.find({ topic: 'archives', venue: 'gate' })).toHaveLength(2);
   });
 
   it('returns them in a stable order', () => {
-    expect(trucker.find({ topic: 'archives' }).map(row => `${row.venue}/${row.period}`))
+    expect(collector.find({ topic: 'archives' }).map(row => `${row.venue}/${row.period}`))
       .toEqual(['bitget/202001', 'gate/202001', 'gate/202002']);
   });
 
   it('fills every discriminant it did not store', () => {
-    const [first] = trucker.find({ topic: 'archives', venue: 'bitget' });
+    const [first] = collector.find({ topic: 'archives', venue: 'bitget' });
 
     expect(first).toMatchObject({ market: '', symbol: '', dataset: '', subject: '' });
   });
@@ -212,7 +195,7 @@ describe('asking a partial key', () => {
 
 describe('streaming the same question', () => {
   beforeEach(() => {
-    trucker.recordAll([
+    collector.recordAll([
       { topic: 'archives', venue: 'gate',   period: '202001', fact: 'complete', value: 'a' },
       { topic: 'archives', venue: 'gate',   period: '202002', fact: 'complete', value: 'b' },
       { topic: 'archives', venue: 'bitget', period: '202001', fact: 'complete', value: 'c' },
@@ -220,12 +203,12 @@ describe('streaming the same question', () => {
   });
 
   it('answers exactly what find would, in the same order', () => {
-    expect([...trucker.stream({ topic: 'archives' })])
-      .toEqual(trucker.find({ topic: 'archives' }));
+    expect([...collector.stream({ topic: 'archives' })])
+      .toEqual(collector.find({ topic: 'archives' }));
   });
 
   it('narrows on a partial key the same way', () => {
-    expect([...trucker.stream({ topic: 'archives', venue: 'gate' })].map(row => row.period))
+    expect([...collector.stream({ topic: 'archives', venue: 'gate' })].map(row => row.period))
       .toEqual(['202001', '202002']);
   });
 
@@ -238,7 +221,7 @@ describe('streaming the same question', () => {
   });
 
   it('yields before the whole answer has been read', () => {
-    const rows = trucker.stream({ topic: 'archives' });
+    const rows = collector.stream({ topic: 'archives' });
 
     expect(rows.next().value).toMatchObject({ venue: 'bitget' });
   });
@@ -263,7 +246,7 @@ describe('the owner\'s private state', () => {
 
 describe('writing many at once', () => {
   it('refuses a batch spanning two topics, since they are two databases', () => {
-    expect(() => trucker.recordAll([
+    expect(() => collector.recordAll([
       { topic: 'archives', venue: 'gate', period: '202001', fact: 'complete' },
       { topic: 'vault',    venue: 'gate', period: '202001', fact: 'built' },
     ])).toThrow(/one topic at a time/);
@@ -277,7 +260,7 @@ describe('writing many at once', () => {
 /** One writer per topic is what one database per topic buys. */
 describe('where the databases live', () => {
   it('creates one file per topic, and only on first use', () => {
-    trucker.record({ topic: 'archives', venue: 'gate', period: '202001', fact: 'complete' });
+    collector.record({ topic: 'archives', venue: 'gate', period: '202001', fact: 'complete' });
 
     expect(fs.readdirSync(root).filter(name => name.endsWith('.sqlite'))).toEqual(['archives.sqlite']);
 
@@ -288,7 +271,7 @@ describe('where the databases live', () => {
   });
 
   it('reads back what another manager wrote', () => {
-    trucker.record({ topic: 'archives', venue: 'gate', period: '202001', fact: 'complete' });
+    collector.record({ topic: 'archives', venue: 'gate', period: '202001', fact: 'complete' });
 
     const fresh = new FactManager({ owner: 'stocker', root });
 
@@ -307,33 +290,33 @@ describe('where the databases live', () => {
  */
 describe('subtopics', () => {
   it('are owned by whoever owns the tree they name', () => {
-    expect(() => trucker.record({
+    expect(() => collector.record({
       topic: 'logs:archives', venue: 'gate', period: '202003', fact: 'downloaded',
     })).not.toThrow();
 
     expect(() => stocker.record({
       topic: 'logs:archives', venue: 'gate', period: '202003', fact: 'downloaded',
-    })).toThrow(/belongs to 'trucker'/);
+    })).toThrow(/belongs to 'hauler'/);
   });
 
   it('finds the tree wherever it sits in the name', () => {
-    trucker.record({ topic: 'archives:bookkeeping', venue: 'gate', period: '202003', fact: 'x' });
-    trucker.record({ topic: 'logs:archives', venue: 'gate', period: '202003', fact: 'x' });
+    collector.record({ topic: 'archives:bookkeeping', venue: 'gate', period: '202003', fact: 'x' });
+    collector.record({ topic: 'logs:archives', venue: 'gate', period: '202003', fact: 'x' });
 
     expect(fs.readdirSync(root).filter(name => name.endsWith('.sqlite')).sort())
       .toEqual(['archives.bookkeeping.sqlite', 'logs.archives.sqlite']);
   });
 
   it('cannot be reached by a query for the tree itself', () => {
-    trucker.record({ topic: 'archives', venue: 'gate', period: '202003', fact: 'complete' });
-    trucker.record({ topic: 'logs:archives', venue: 'gate', period: '202003', fact: 'downloaded' });
+    collector.record({ topic: 'archives', venue: 'gate', period: '202003', fact: 'complete' });
+    collector.record({ topic: 'logs:archives', venue: 'gate', period: '202003', fact: 'downloaded' });
 
-    expect(trucker.find({ topic: 'archives' })).toHaveLength(1);
-    expect(trucker.find({ topic: 'archives' })[0]!.fact).toBe('complete');
+    expect(collector.find({ topic: 'archives' })).toHaveLength(1);
+    expect(collector.find({ topic: 'archives' })[0]!.fact).toBe('complete');
   });
 
   it('refuses a topic naming two trees', () => {
-    expect(() => trucker.record({
+    expect(() => collector.record({
       topic: 'archives:vault' as Topic, venue: 'gate', period: '202003', fact: 'x',
     })).toThrow(/more than one tree/);
   });
@@ -343,14 +326,14 @@ describe('when a fact was first known and last heard', () => {
   it('keeps the first statement and moves the last', async () => {
     const key = { topic: 'archives', venue: 'gate', period: '202003', fact: 'complete' } as const;
 
-    trucker.record({ ...key, value: 'first' });
+    collector.record({ ...key, value: 'first' });
 
-    const before = trucker.find({ topic: 'archives' })[0]!;
+    const before = collector.find({ topic: 'archives' })[0]!;
 
     await new Promise(resolve => setTimeout(resolve, 5));
-    trucker.record({ ...key, value: 'second' });
+    collector.record({ ...key, value: 'second' });
 
-    const after = trucker.find({ topic: 'archives' })[0]!;
+    const after = collector.find({ topic: 'archives' })[0]!;
 
     expect(after.createdAt).toBe(before.createdAt);
     expect(after.updatedAt > before.updatedAt).toBe(true);
@@ -361,14 +344,14 @@ describe('when a fact was first known and last heard', () => {
     const key = { topic: 'archives', venue: 'gate', period: '202003',
       fact: 'complete', value: 'same' } as const;
 
-    trucker.record(key);
+    collector.record(key);
 
-    const before = trucker.find({ topic: 'archives' })[0]!;
+    const before = collector.find({ topic: 'archives' })[0]!;
 
     await new Promise(resolve => setTimeout(resolve, 5));
-    trucker.record(key);
+    collector.record(key);
 
-    expect(trucker.find({ topic: 'archives' })[0]!.updatedAt > before.updatedAt).toBe(true);
+    expect(collector.find({ topic: 'archives' })[0]!.updatedAt > before.updatedAt).toBe(true);
   });
 });
 
@@ -379,7 +362,7 @@ describe('when a fact was first known and last heard', () => {
  */
 describe('matching by prefix', () => {
   beforeEach(() => {
-    trucker.recordAll([
+    collector.recordAll([
       { topic: 'archives', venue: 'gate', period: '202512', fact: 'complete' },
       { topic: 'archives', venue: 'gate', period: '202601', fact: 'complete' },
       { topic: 'archives', venue: 'gate', period: '20260115', fact: 'complete' },
@@ -388,19 +371,19 @@ describe('matching by prefix', () => {
   });
 
   it('takes every grain under the prefix', () => {
-    expect(trucker.find({ topic: 'archives', prefix: { period: '2026' } })
+    expect(collector.find({ topic: 'archives', prefix: { period: '2026' } })
       .map(row => row.period)).toEqual(['202601', '20260115']);
   });
 
   it('stops at the boundary rather than spilling into the next', () => {
-    expect(trucker.find({ topic: 'archives', prefix: { period: '2027' } })
+    expect(collector.find({ topic: 'archives', prefix: { period: '2027' } })
       .map(row => row.period)).toEqual(['202701']);
   });
 
   it('combines with an exact match on another field', () => {
-    trucker.record({ topic: 'archives', venue: 'okx', period: '202601', fact: 'complete' });
+    collector.record({ topic: 'archives', venue: 'okx', period: '202601', fact: 'complete' });
 
-    expect(trucker.find({ topic: 'archives', venue: 'gate', prefix: { period: '2026' } }))
+    expect(collector.find({ topic: 'archives', venue: 'gate', prefix: { period: '2026' } }))
       .toHaveLength(2);
   });
 
@@ -419,7 +402,7 @@ describe('matching by prefix', () => {
   });
 
   it('ignores an empty prefix rather than matching everything twice', () => {
-    expect(trucker.find({ topic: 'archives', venue: 'gate', prefix: { period: '' } }))
+    expect(collector.find({ topic: 'archives', venue: 'gate', prefix: { period: '' } }))
       .toHaveLength(4);
   });
 });
@@ -459,12 +442,12 @@ describe('facts that are additive', () => {
 
   /** Most facts are state, and state must still replace rather than accumulate. */
   it('leaves an ordinary fact replacing itself', () => {
-    trucker.record({ topic: 'archives', venue: 'gate', period: '202003',
+    collector.record({ topic: 'archives', venue: 'gate', period: '202003',
       fact: 'complete', value: 'a' });
-    trucker.record({ topic: 'archives', venue: 'gate', period: '202003',
+    collector.record({ topic: 'archives', venue: 'gate', period: '202003',
       fact: 'complete', value: 'b' });
 
-    expect(trucker.find({ topic: 'archives' })).toHaveLength(1);
+    expect(collector.find({ topic: 'archives' })).toHaveLength(1);
   });
 
   it('separates one occurrence from another when forgetting', () => {

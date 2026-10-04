@@ -606,9 +606,6 @@ importers:
       '@duckdb/node-api':
         specifier: ^1.5.5-r.2
         version: 1.5.5-r.5
-      '@tradebot/pipeline':
-        specifier: workspace:*
-        version: link:../../shared/pipeline
       '@tradebot/utils':
         specifier: workspace:*
         version: link:../../shared/utils
@@ -628,18 +625,6 @@ importers:
       '@devvir/service-kit':
         specifier: workspace:*
         version: link:../../packages/service-kit
-      '@tradebot/utils':
-        specifier: workspace:*
-        version: link:../../shared/utils
-
-  services/trucker:
-    dependencies:
-      '@devvir/service-kit':
-        specifier: workspace:*
-        version: link:../../packages/service-kit
-      '@tradebot/pipeline':
-        specifier: workspace:*
-        version: link:../../shared/pipeline
       '@tradebot/utils':
         specifier: workspace:*
         version: link:../../shared/utils
