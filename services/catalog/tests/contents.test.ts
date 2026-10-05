@@ -179,13 +179,90 @@ describe('a venue\'s partitions', () => {
     expect((await partitions('?downloaded=true'))[0]!.partitions.map(one => one.month)).toEqual(['202001']);
   });
 
-  /** What a consumer waiting for a partition to go quiet asks with. */
-  it('narrows to what last moved before an instant', async () => {
-    db.exec(`UPDATE partition SET updated_at = '2026-10-01T00:00:00.000Z' WHERE month = '202001'`);
-    db.exec(`UPDATE partition SET updated_at = '2026-10-04T00:00:00.000Z' WHERE month = '202101'`);
+  describe('narrowed to what is settled', () => {
+    const months = async (query: string): Promise<string[]> =>
+      (await partitions(query)).flatMap(slice => slice.partitions.map(one => one.month));
 
-    expect((await partitions('?settled-before=2026-10-02T00:00:00.000Z'))[0]!.partitions.map(one => one.month))
-      .toEqual(['202001']);
+    const venueId = (): number => (db.prepare('SELECT id FROM venue').get() as { id: number }).id;
+
+    const run = (started: string, completed: string | null = null, venue = venueId()): void => {
+      db.prepare(`INSERT INTO run (venue_id, kind, scope, started, completed) VALUES (?, 'walk', '', ?, ?)`)
+        .run(venue, started, completed);
+    };
+
+    /** yyyymm of the month `days` ago, as the catalog counts it. */
+    const monthAgo = (days: number): string =>
+      new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 7).replace('-', '');
+
+    beforeEach(() => {
+      db.exec(`UPDATE partition SET updated_at = '2026-10-01T00:00:00.000Z' WHERE month = '202001'`);
+      db.exec(`UPDATE partition SET updated_at = '2026-10-04T00:00:00.000Z' WHERE month = '202101'`);
+    });
+
+    it('takes an old month no run is at work on as settled', async () => {
+      expect(await months('?settled')).toEqual(['202001', '202101']);
+      expect(await months('?settled=true')).toEqual(['202001', '202101']);
+    });
+
+    /** A venue goes on publishing a period after it closes. */
+    it('never takes a month that is running, or that closed only days ago', async () => {
+      db.prepare(`UPDATE partition SET month = ? WHERE month = '202101'`).run(monthAgo(0));
+      expect(await months('?settled')).toEqual(['202001']);
+
+      db.prepare(`UPDATE partition SET month = ? WHERE month = ?`).run(monthAgo(14), monthAgo(0));
+      expect(await months('?settled')).toEqual(['202001']);
+
+      db.prepare(`UPDATE partition SET month = ? WHERE month = ?`).run(monthAgo(50), monthAgo(14));
+      expect(await months('?settled')).toEqual(['202001', monthAgo(50)]);
+    });
+
+    /** The run that changed it may not be done with it. */
+    it('leaves out what a run still open has changed', async () => {
+      run('2026-10-03T00:00:00.000Z');
+
+      expect(await months('?settled')).toEqual(['202001']);
+    });
+
+    it('takes it back once that run completes', async () => {
+      run('2026-10-03T00:00:00.000Z', '2026-10-05T00:00:00.000Z');
+
+      expect(await months('?settled')).toEqual(['202001', '202101']);
+    });
+
+    it('counts the open run of any host of the venue, and of no other venue', async () => {
+      const other = putVenue(db, 'binance', 'https://books.binance.test', '', 'secondary');
+      const else_ = putVenue(db, 'okx', 'https://okx.test');
+
+      run('2026-09-01T00:00:00.000Z', null, else_);
+      expect(await months('?settled')).toEqual(['202001', '202101']);
+
+      run('2026-10-03T00:00:00.000Z', null, other);
+      expect(await months('?settled')).toEqual(['202001']);
+    });
+
+    /** What a consumer waiting for a partition to go quiet asks with. */
+    it('narrows further to what had gone quiet by an instant', async () => {
+      expect(await months('?settled-before=2026-10-02T00:00:00.000Z')).toEqual(['202001']);
+      expect(await months('?settled-before=2026-09-01T00:00:00.000Z')).toEqual([]);
+    });
+
+    it('holds an instant to the settled rule as well', async () => {
+      run('2026-09-15T00:00:00.000Z');
+
+      expect(await months('?settled-before=2026-10-02T00:00:00.000Z')).toEqual([]);
+
+      db.prepare(`UPDATE partition SET month = ? WHERE month = '202001'`).run(monthAgo(0));
+      db.exec('DELETE FROM run');
+
+      expect(await months('?settled-before=2026-10-02T00:00:00.000Z')).toEqual([]);
+    });
+
+    it('leaves everything in for a caller that does not ask', async () => {
+      run('2020-01-01T00:00:00.000Z');
+
+      expect(await months('')).toEqual(['202001', '202101']);
+      expect(await months('?settled=false')).toEqual(['202001', '202101']);
+    });
   });
 
   it('refuses a grain or a bundle there is no such thing as', async () => {

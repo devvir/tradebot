@@ -24,7 +24,7 @@ export const probed: Scanner<ProbedContext> = {
   confirm: async (context, path) => {
     const seen = await context.head(`${context.base}/${context.keyRoot}${path}`);
 
-    if (seen.status !== 200) return null;
+    if (seen.status < 200 || seen.status > 299) return seen;
 
     const size = seen.headers.get('content-length');
 

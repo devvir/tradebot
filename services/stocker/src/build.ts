@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { logger } from '@devvir/service-kit';
 import type { DuckDBConnection } from '@duckdb/node-api';
 import config from './config';
-import { SCRATCH, hasContent, unpack } from './containers';
+import { SCRATCH, hasContent, unpackAll } from './containers';
 import { q } from './db';
 import { formatFor } from './formats';
 import { marginOf } from './schema/margin';
@@ -12,6 +12,7 @@ import { seriesFor } from './schema/series';
 import { MARGIN, fieldsOf } from './schema/tables';
 import { clipFor } from './spill';
 import { STAGED } from './vault';
+import type { UnpackedAll } from './containers';
 import type { Format } from './formats/types';
 import type { DiskFile, Series, VaultKey } from './types';
 
@@ -39,6 +40,9 @@ const ROW_GROUP = 100_000;
  * instrument.
  *
  * Nothing is written outside `staging`; publishing it is the caller's.
+ *
+ * `prepared` is the inputs' archives already extracted, in the inputs' order,
+ * where the caller had that done ahead; they are removed here either way.
  */
 export const buildGroup = async (
   conn:    DuckDBConnection,
@@ -46,10 +50,11 @@ export const buildGroup = async (
   symbol:  string,
   inputs:  DiskFile[],
   staging: string,
+  prepared?: UnpackedAll,
 ): Promise<{ rows: number; files: number }> => {
-  const opened = await Promise.all(
-    inputs.map(async input => ({ input, unpacked: await unpack(input.absolute, input.file.container) })),
-  );
+  const unpacked = prepared
+    ?? await unpackAll(inputs.map(input => ({ absolute: input.absolute, container: input.file.container })));
+  const opened   = inputs.map((input, at) => ({ input, unpacked: { paths: unpacked.paths[at]! } }));
 
   try {
     const bySeries = new Map<Series, string[]>();
@@ -117,7 +122,7 @@ export const buildGroup = async (
       throw err;
     }
   } finally {
-    await Promise.all(opened.map(o => o.unpacked.dispose()));
+    await unpacked.dispose();
   }
 };
 
@@ -140,12 +145,12 @@ export const buildBatch = async (
   key:     VaultKey,
   groups:  { symbol: string; inputs: DiskFile[] }[],
   staging: string,
+  prepared?: UnpackedAll,
 ): Promise<{ rows: number; files: number }> => {
-  const opened = await Promise.all(groups.flatMap(group => group.inputs.map(async input => ({
-    symbol:   group.symbol,
-    input,
-    unpacked: await unpack(input.absolute, input.file.container),
-  }))));
+  const flat     = groups.flatMap(group => group.inputs.map(input => ({ symbol: group.symbol, input })));
+  const unpacked = prepared
+    ?? await unpackAll(flat.map(({ input }) => ({ absolute: input.absolute, container: input.file.container })));
+  const opened   = flat.map((one, at) => ({ ...one, unpacked: { paths: unpacked.paths[at]! } }));
 
   const table = `batch_${process.pid}_${++sequence}`;
 
@@ -247,7 +252,7 @@ export const buildBatch = async (
     return { rows, files };
   } finally {
     await conn.run(`DROP TABLE IF EXISTS ${table}`).catch(() => {});
-    await Promise.all(opened.map(o => o.unpacked.dispose()));
+    await unpacked.dispose();
   }
 };
 

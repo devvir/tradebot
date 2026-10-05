@@ -100,12 +100,23 @@ export interface PartitionFilter {
   /** Only partitions with nothing left to download. */
   downloaded?: boolean;
 
+  /** Only settled partitions — see `settledEdge` in `partitions.ts`. */
+  settled?: boolean;
+
   /**
-   * Only partitions whose version last moved before this instant — an ISO
-   * timestamp, compared as text. What a consumer waiting for a partition to go
-   * quiet asks with.
+   * Only settled partitions whose version last moved before this instant — an
+   * ISO timestamp, compared as text. It implies `settled`.
    */
   settledBefore?: string;
+}
+
+/**
+ * Where settled ends for one venue, at one moment: a partition is settled when
+ * its month is below `month` and its version last moved before `before`.
+ */
+export interface SettledEdge {
+  month:  string;
+  before: string;
 }
 
 /** A partition as a lens is evaluated against it: where it is, and which month. */
@@ -119,6 +130,7 @@ export interface PartitionStatements {
   all:     StatementSync;
   through: StatementSync;
   slices:  StatementSync;
+  running: StatementSync;
 }
 
 /** One host of a venue, as the `venue` table holds it. */

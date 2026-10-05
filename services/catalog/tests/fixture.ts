@@ -187,4 +187,6 @@ const SCHEMA = `
   CREATE UNIQUE INDEX lens_slug ON lens (slug);
   CREATE TABLE lens_member (lens_id INTEGER NOT NULL, partition_id INTEGER NOT NULL,
     PRIMARY KEY (lens_id, partition_id)) WITHOUT ROWID;
+  CREATE TABLE run (id INTEGER PRIMARY KEY, venue_id INTEGER NOT NULL, kind TEXT NOT NULL, scope TEXT NOT NULL,
+    started TEXT NOT NULL, completed TEXT);
 `;

@@ -25,7 +25,9 @@ function parseEnvFile(filePath: string): Record<string, string> {
 
     // Skip malformed lines that have no = separator
     if (key && valueParts.length > 0) {
-      env[key.trim()] = valueParts.join('=').trim();
+      // A # after whitespace starts a comment, as it does for docker compose;
+      // one with nothing before it is part of the value.
+      env[key.trim()] = valueParts.join('=').replace(/\s+#.*$/, '').trim();
     }
   });
 

@@ -103,7 +103,17 @@ partitions are listed. Query parameters narrow it, and a slice left with no part
 | `market`, `variant`, `grain`, `bundle` | one value each |
 | `datasets` | a comma-separated list |
 | `downloaded=true` | only partitions with nothing pending |
-| `settled-before` | an ISO timestamp: only partitions whose version last changed before it |
+| `settled` | only settled partitions |
+| `settled-before` | an ISO timestamp: only settled partitions whose version last changed before it |
+
+**A settled partition is one a completed run saw whole, after the venue had stopped publishing into
+it.** Its month ended more than 15 days ago, and the venue's open run, if it has one, has not changed it. A
+month that is running or only just closed is never settled, and neither is anything an unfinished run
+has changed, whether that run is at work or stopped half way. `settled-before` asks for the same and
+for quiet on top: settled, and unchanged since the instant given.
+
+Settled is not final. A venue can republish, withdraw or publish late, and the partition's version
+moves when it does.
 
 **A shape is one distinct thing the venue publishes**, and the row to read before wanting anything:
 

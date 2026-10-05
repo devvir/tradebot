@@ -217,9 +217,55 @@ export interface Scanner<C> {
    * but "almost always" is not a thing to write into a database on, and the
    * alternative to asking is finding out at the next full survey, days away.
    *
-   * Null means the venue does not serve that key at all.
+   * See `Confirmation` for what it may answer.
    */
-  confirm(context: C, path: string): Promise<Listed | null>;
+  confirm(context: C, path: string): Promise<Confirmation>;
+}
+
+/**
+ * What a venue said about one key.
+ *
+ * - **The file**, where it serves it.
+ * - **`'absent'`**, where the scanner itself established that it does not: a
+ *   listing that answered and did not hold the key.
+ * - **The answer as it came**, status and headers, where the venue answered
+ *   anything else. What that means is not a scanner's to say — a status is read
+ *   by the venue's adapter, which knows how its venue spells absence.
+ * - **Null**, where this scanner cannot ask.
+ *
+ * A request that fails outright throws, and says nothing about the file.
+ */
+export type Confirmation = Listed | Probed | 'absent' | null;
+
+/** What asking a venue about one reported file came to: the file, its absence, or neither. */
+export interface Asked {
+  file:    Listed | null;
+
+  /** The venue says it does not have it. False with no file means nothing was learned. */
+  absent:  boolean;
+
+  /** What it answered, where the answer was not the file. */
+  status?: number;
+}
+
+/** One line of the withdrawals log, before it is stamped and named. */
+export interface Withdrawal {
+  event:   'withdrawn' | 'returned';
+
+  /** Whose word it was: a walk that no longer lists it, a download report, a probe that found it again. */
+  cause:   'walk' | 'report' | 'probe';
+
+  venueId: number;
+  path:    string;
+  date:    string;
+  size:    number | null;
+  etag:    string | null;
+
+  /** Whether the archives held it when it went. */
+  downloaded?: boolean;
+
+  /** What the venue answered, where the withdrawal came of asking it. */
+  status?: number;
 }
 
 /**

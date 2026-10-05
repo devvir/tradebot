@@ -771,8 +771,41 @@ per page, before the page is cut into write slices; a key that is about to be wr
 withdrawn is looked up again inside the slice that writes it, since another writer may have touched
 it in between, and a key that said nothing new is skipped on the read's word.
 
-Only a walk withdraws. Keys that reach the catalog any other way — a backfill, a probe's answer —
-cover no stretch, and say nothing about what is no longer there.
+Of everything that discovers files, only a walk withdraws. Keys that reach the catalog any other
+way — a backfill, a probe's answer — cover no stretch, and say nothing about what is no longer there.
+A probe that keeps missing a key gives up on a row in `wip`; it never touches a row in `file`. The
+one other way a file is withdrawn is a download report the venue confirms — see
+[Withdrawals](#withdrawals).
+
+#### Withdrawals
+
+**A file is marked `absent` in two places and no others**: a walked page that covers where it is and
+does not list it, and a download report the venue confirms. Its row stays, with its history; only
+`existence` changes, and the partition's counts and version move with it.
+
+**A withdrawn file comes back the way any file arrives.** A listing that states it in full writes the
+row again. A listing that only names it sends it to `wip` although the catalog holds a row for it,
+because a row marked absent says nothing a probe could not correct; the probe's answer then brings
+the row back. What the archives hold of it still counts where it returns with the size and ETag it
+had, and is owed again where it does not.
+
+**Every one is written to `withdrawals.log`, beside the database.** A withdrawal is rare and never
+ordinary: an archive is insert-only unless somebody erred, so it means the venue corrected a mistake
+or is making one. The catalog keeps only the outcome, so the log keeps the event — one JSON line per
+file:
+
+| Field | |
+|---|---|
+| `at` | when it was written |
+| `event` | `withdrawn`, or `returned` for a withdrawn file catalogued again |
+| `cause` | `walk`, `report`, or `probe` for a file a probe found again |
+| `venue`, `host`, `path`, `date` | the file |
+| `size`, `etag` | what the catalog held, or holds now |
+| `downloaded` | on a withdrawal: whether the archives held it |
+| `status` | on a withdrawal by report: what the venue answered |
+
+Each batch is also one warning in the service's log, naming the venue, the cause, how many files and
+the first of them. Nothing reads the file back; it is a record and not state.
 
 ### Partitions split themselves
 
@@ -1097,7 +1130,8 @@ window is for: the periods nobody has answered for yet.
 
 **A withdrawn file is not a held one.** Its row stays as the record that the venue
 once served it, and the check reads `existence <> 'absent'`, so a file that went
-away is asked about again — which is the only way to learn it is back.
+away is asked about again — which is the only way to learn it is back. Settling it
+writes over the absent row, and over no other.
 
 ### One module owns `wip`, because the count has to be exact
 
@@ -2004,9 +2038,24 @@ service names a file: the Key and the lens are the catalog's business. The answe
 holds at most 10,000 files; more is a `400`.
 
 **The caller reports problems; this service rules on them.** Nothing a caller sends is taken as fact
-about a venue: a file reported as undownloadable is checked against the venue, and either stays owed
-(it is still served, and comes round again) or is ruled absent so nothing is left outstanding. A
-reported mismatch is confirmed the same way, below.
+about a venue: a file reported as undownloadable is asked of the venue, and one of three things
+follows.
+
+| The venue | The file |
+|---|---|
+| serves it | stays owed, and comes round again |
+| says it does not have it | is ruled absent, so nothing is left outstanding |
+| could not be asked, or answered something that says nothing about the file | stays owed; nothing is written |
+
+**What an answer means is the adapter's to say.** A `2xx` is the file. Any other status goes to the
+venue's `ruleOnFailure`, which knows how its venue spells absence: `'drop'` is absence and `'keep'`
+is not, whatever the status. Where the adapter has no rule, or its rule declines, absence is the
+statuses it names in `notFoundCodes` — `404` unless it says otherwise — and every other answer is
+unknown. A listing venue is asked for the one key, and a listing that answers without it is absence.
+A request that fails or times out is never absence.
+
+One answer is enough. An adapter that wants a venue asked more than once before a file is given up
+has the rule to say so. A reported mismatch is confirmed the same way, below.
 
 **Reporting is not transactional with the download, on purpose.** A file fetched but never reported is
 listed again, found on disk by the downloader, and reported then, which is also what lets a machine

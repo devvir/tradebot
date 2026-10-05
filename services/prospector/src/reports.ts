@@ -3,7 +3,7 @@ import { correctFile, markDownloaded, withdrawFile } from './catalog';
 import { etagOf } from './etag';
 import { adaptersForVenue } from './venues';
 import type { DatabaseSync } from 'node:sqlite';
-import type { Adapter, Listed, ReportFile, Reported, ReportedById, Settled, Settling } from './types';
+import type { Adapter, Asked, Listed, ReportFile, Reported, ReportedById, Settled, Settling, Unsettled } from './types';
 
 /**
  * What a downloader says became of the files it was listed.
@@ -68,6 +68,10 @@ export const settleById = async (db: DatabaseSync, body: Partial<ReportedById>):
  * it stays owed and comes round again — or it has gone, and is ruled absent so
  * nothing is left outstanding. A disagreement about the bytes is settled the
  * same way, by asking. Shared by every report, whatever key it names files by.
+ *
+ * **Only the venue saying so withdraws a file.** Where it could not be asked,
+ * or answered something that says nothing about the file, nothing is written:
+ * the file stays owed, and is reported again the next time it will not come.
  */
 const settleReport = async (db: DatabaseSync, report: Settling): Promise<Settled> => {
   const recorded = markDownloaded(db, report.downloaded, new Date().toISOString());
@@ -76,15 +80,22 @@ const settleReport = async (db: DatabaseSync, report: Settling): Promise<Settled
 
   for (const file of report.failed) {
     const adapter = adapterFor(db, file.venueId);
-    const seen    = adapter ? await confirm(db, adapter, file.path) : null;
+    const asked   = adapter ? await confirm(db, adapter, file.path) : UNKNOWN;
 
-    if (seen) {
+    if (asked.file) {
       logger.warn({ path: file.path }, 'Reported as undownloadable, but the venue still serves it');
 
       continue;
     }
 
-    withdrawn += withdrawFile(db, file.venueId, file.path) ? 1 : 0;
+    if (! asked.absent) {
+      logger.warn({ path: file.path, ...(asked.status === undefined ? {} : { status: asked.status }) },
+        'Reported as undownloadable, and the venue did not say whether it has it; left owed');
+
+      continue;
+    }
+
+    withdrawn += withdrawFile(db, file.venueId, file.path, asked.status) ? 1 : 0;
   }
 
   let corrected = 0;
@@ -131,7 +142,7 @@ const reconcile = async (
 
   if (! adapter) return false;
 
-  const seen = await confirm(db, adapter, file.path);
+  const seen = (await confirm(db, adapter, file.path)).file;
 
   if (! seen) {
     logger.warn({ path: file.path, claimed }, 'Could not confirm a reported change');
@@ -158,7 +169,21 @@ const reconcile = async (
 };
 
 /**
- * Ask the venue about one key, through the context its scanner expects.
+ * Ask the venue about one key, through the context its scanner expects, and
+ * say what its answer means.
+ *
+ * **Three outcomes, and only one of them is absence.** The venue serves the
+ * file; the venue says it does not have it; or nothing was learned about the
+ * file at all — the request failed, timed out, or was answered with something
+ * that speaks of the way to the file and not of the file.
+ *
+ * **What an answer means is the adapter's to say.** A `2xx` is the file.
+ * Anything else goes to the venue's `ruleOnFailure`, which knows how its venue
+ * spells absence: `'drop'` is absence, `'keep'` is not, whatever the status.
+ * Where the adapter has no rule, or its rule declines, absence is the statuses
+ * the venue names in `notFoundCodes` — `404` unless it says otherwise — and
+ * every other answer is unknown. One such answer is enough: an adapter that
+ * wants more patience than that has the hook to ask for it.
  *
  * **A scanner is never handed an adapter.** It is written against the context
  * its venue builds — `text` and `head` already paced, or a set of ranges — and
@@ -174,13 +199,43 @@ const confirm = async (
   db:      DatabaseSync,
   adapter: Adapter,
   path:    string,
-): Promise<Listed | null> => {
+): Promise<Asked> => {
+  let said;
+
   try {
-    return await adapter.scanner.confirm(await adapter.getContext(db, 'lookup'), path);
-  } catch {
-    return null;
+    said = await adapter.scanner.confirm(await adapter.getContext(db, 'lookup'), path);
+  } catch (err) {
+    logger.warn({ path, error: (err as Error).message }, 'Could not ask the venue about a file');
+
+    return UNKNOWN;
   }
+
+  if (said === null) return UNKNOWN;
+  if (said === 'absent') return { file: null, absent: true };
+  if (! ('status' in said)) return { file: said, absent: false };
+
+  const { status, headers } = said;
+
+  const row = db.prepare(
+    `SELECT rowid AS seq, venue_id AS venueId, path, date, series_id AS seriesId FROM file
+      WHERE venue_id = (SELECT id FROM venue WHERE name = ? AND host = ?) AND path = ?`,
+  ).get(adapter.name, adapter.host ?? '', path) as { seq: number; venueId: number; path: string; date: string; seriesId: number } | undefined;
+
+  const verdict = row && adapter.ruleOnFailure
+    ? adapter.ruleOnFailure({ ...row, tries: 0, existence: 'confirmed' } as Unsettled, status, headers, 1)
+    : null;
+
+  const absent = verdict === 'drop'
+    || (verdict === null && (adapter.notFoundCodes ?? NOT_FOUND).includes(status));
+
+  return { file: null, absent, status };
 };
+
+/** Nothing was learned about the file. */
+const UNKNOWN: Asked = { file: null, absent: false };
+
+/** How a venue says a key is not there, where it names nothing else. */
+const NOT_FOUND: readonly number[] = [404];
 
 const adapterFor = (db: DatabaseSync, venueId: number): Adapter | null => {
   const row = db.prepare('SELECT name, host FROM venue WHERE id = ?')

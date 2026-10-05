@@ -1,52 +1,45 @@
 import { loadConfig } from './config';
-import * as db from './db';
+import * as record from './record';
 import { fmtBytes } from '../../shared/utils/format';
-import { info, spacer, success } from '../../shared/ui/logger';
+import { info, spacer, table } from '../../shared/ui/logger';
 import type { Origin } from './types';
 
-/**
- * What cold storage holds, shallowly.
- *
- * Deliberately one summary rather than the drill-down by venue and symbol we
- * will want: the interesting cuts are the ones a restore asks for, and those
- * are better shaped against a table with real data in it than guessed at now.
- */
+/** What the record holds of one origin, venue by venue. */
 export const runStats = async (origin: Origin): Promise<void> => {
   const config = loadConfig(origin);
-  const handle = db.open(config.dbPath);
+  const db     = record.open(config.dbPath);
 
   try {
-    const totals = db.totals(handle, origin);
+    const tars   = record.tarsOf(db, origin);
+    const venues = [...new Set(tars.map(tar => tar.venue))].sort();
 
-    spacer();
-
-    if (totals.parts === 0) {
-      info(`Nothing from ${origin} is in cold storage yet`);
+    if (tars.length === 0) {
+      info(`Nothing recorded for ${origin} yet`);
 
       return;
     }
 
-    const pending = totals.parts - totals.uploaded;
-
-    info(`origin      ${origin}`);
-    info(`parts       ${totals.uploaded.toLocaleString()} uploaded`
-      + (pending > 0 ? `, ${pending.toLocaleString()} pending` : '')
-      + ` of ${totals.parts.toLocaleString()}`);
-    info(`files       ${totals.files.toLocaleString()}`);
-    info(`size        ${fmtBytes(totals.uploadedBytes)} in Mega of ${fmtBytes(totals.bytes)} planned`);
-
     spacer();
 
-    const venues = db.byVenue(handle, origin);
+    table(venues.map(venue => {
+      const own    = tars.filter(tar => tar.venue === venue);
+      const stored = own.filter(tar => tar.state === 'stored');
+      const months = [...new Set(own.map(tar => tar.month))].sort();
 
-    for (const row of venues)
-      info(`  ${row.venue.padEnd(10)} ${String(row.parts).padStart(5)} parts  `
-        + `${fmtBytes(row.bytes).padStart(10)}  ${row.months} month${row.months === 1 ? '' : 's'}`);
+      return {
+        venue,
+        months:     `${months[0]}–${months[months.length - 1]}`,
+        tars:       `${stored.length}/${own.length}`,
+        partitions: record.heldOf(db, origin, venue).length,
+        stored:     fmtBytes(stored.reduce((sum, tar) => sum + (tar.bytes ?? 0), 0)),
+      };
+    }), ['venue', 'months', 'tars', 'partitions', 'stored']);
+
+    const all = record.totals(db, origin);
 
     spacer();
-
-    if (pending === 0) success('Everything planned is in cold storage');
+    info(`${all.stored}/${all.tars} tars stored · ${fmtBytes(all.storedBytes)} · ${all.partitions} partitions`);
   } finally {
-    db.close(handle);
+    record.close(db);
   }
 };

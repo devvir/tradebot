@@ -12,8 +12,8 @@ modified, moved or deleted.
 ## What it does
 
 - Asks the catalog, through a lens, what every partition of the archives holds
-- Stocks each partition that is fully downloaded, unchanged in the catalog for a while, on disk
-  as the catalog says, and not yet in the vault at its current revision
+- Stocks each partition that is fully downloaded, settled in the catalog, on disk as the catalog
+  says, and not yet in the vault at its current revision
 - Decodes `.zip`, `.csv.gz`, `.tar.gz` and Excel-inside-zip; `.csv.gz` is handed to the query
   engine untouched, since it reads gzip natively
 - Maps each format onto a **canonical table** with one schema across all venues, filling NULL
@@ -83,7 +83,8 @@ order-book month is ~23 GB and in a container `/tmp` is the overlay filesystem.
 | `STOCKER_MIN_FREE_GB` | no | `20` | No partition is started below this much free space on the vault volume |
 | `STOCKER_MEMORY_GB` | no | `4` | Memory the query engine may use before it spills to disk |
 | `STOCKER_SPLIT_GB` | no | `1` | A month whose archive files weigh more than this is stored as a file per instrument |
-| `STOCKER_COOL_HOURS` | no | `1` | Hours a partition must have gone unchanged in the catalog before it is stocked |
+| `STOCKER_UNPACK_WORKERS` | no | `2` | Threads that extract archives beside the builds; `0` extracts on the main thread |
+| `STOCKER_COOL_HOURS` | no | _(none)_ | Hours a settled partition must also have gone unchanged in the catalog before it is stocked |
 
 `STOCKER_ARCHIVES_DIR` and `STOCKER_VAULT_DIR` also override the container paths when running
 outside Docker.

@@ -33,6 +33,14 @@ describe('parseEnvFile', () => {
     fs.unlinkSync(file);
   });
 
+  /** As docker compose reads the same files: a # after whitespace starts a comment. */
+  it('leaves an inline comment out of the value', () => {
+    const file = writeTmp('env-test-inline.env',
+      'DIR=/data/vault        # Default: somewhere\nEMPTY=   # nothing set\nCOLOUR=#ff0000\nURL=http://host/#anchor\n');
+    expect(parseEnvFile(file)).toEqual({ DIR: '/data/vault', EMPTY: '', COLOUR: '#ff0000', URL: 'http://host/#anchor' });
+    fs.unlinkSync(file);
+  });
+
   it('trims whitespace from keys and values', () => {
     const file = writeTmp('env-test-trim.env', '  KEY  =  value  \n');
     expect(parseEnvFile(file)).toEqual({ KEY: 'value' });

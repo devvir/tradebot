@@ -1,3 +1,4 @@
+import { mkdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import type { Container } from './types';
 
@@ -5,13 +6,18 @@ import type { Container } from './types';
 export const targz: Container = {
   native: false,
 
-  unpack: async (absolute, into) => {
+  unpack: async (absolute, into, tag) => {
     const { list, x } = await import('tar');
     const names: string[] = [];
 
-    await list({ file: absolute, onentry: (e: { path: string }) => { names.push(e.path); } });
-    await x({ file: absolute, cwd: into });
+    // A directory of its own: `tar` writes members under their own names.
+    const own = join(into, tag);
 
-    return names.filter(n => ! n.endsWith('/')).map(n => join(into, basename(n)));
+    await mkdir(own, { recursive: true });
+
+    await list({ file: absolute, onentry: (e: { path: string }) => { names.push(e.path); } });
+    await x({ file: absolute, cwd: own });
+
+    return names.filter(n => ! n.endsWith('/')).map(n => join(own, basename(n)));
   },
 };

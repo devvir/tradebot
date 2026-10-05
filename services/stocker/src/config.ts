@@ -41,7 +41,8 @@ const loadConfig = (): Config => {
     minFreeGb:    parsePositiveInt(process.env.STOCKER_MIN_FREE_GB, 20),
     memoryGb:     parsePositiveInt(process.env.STOCKER_MEMORY_GB, 4),
     splitGb:      parsePositiveInt(process.env.STOCKER_SPLIT_GB, 1),
-    coolHours:    parsePositiveInt(process.env.STOCKER_COOL_HOURS, 1),
+    unpackWorkers: parseCount(process.env.STOCKER_UNPACK_WORKERS, 2),
+    coolHours:    process.env.STOCKER_COOL_HOURS?.trim() ? parsePositiveInt(process.env.STOCKER_COOL_HOURS, 1) : null,
   };
 
   logger.info({ ...config, catalogToken: config.catalogToken ? '<set>' : '<none>' },
@@ -108,6 +109,18 @@ const parseMonth = (raw: string | undefined, name: string): string | null => {
     throw new Error(`${name} names month ${month.slice(4)}, got: ${raw}`);
 
   return `${month.slice(0, 4)}-${month.slice(4)}`;
+};
+
+/** A count that may be none at all. */
+const parseCount = (raw: string | undefined, fallback: number): number => {
+  if (! raw?.trim()) return fallback;
+
+  const n = parseInt(raw, 10);
+
+  if (! Number.isInteger(n) || n < 0)
+    throw new Error(`Expected zero or a positive integer, got: ${raw}`);
+
+  return n;
 };
 
 const parsePositiveInt = (raw: string | undefined, fallback: number): number => {

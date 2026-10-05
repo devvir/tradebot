@@ -1,4 +1,5 @@
 export { dropAbove, flushParked, parkSoon } from './wip';
+export { WITHDRAWALS_LOG } from './withdrawals';
 
 export {
   putVenue,

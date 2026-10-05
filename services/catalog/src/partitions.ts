@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
-import type { Lens, Partition, PartitionFilter, PartitionStatements, Slice, SliceContents } from './types';
+import type { Lens, Partition, PartitionFilter, PartitionStatements, SettledEdge, Slice, SliceContents } from './types';
 
 /**
  * Slices and their partitions, as prospector keeps them.
@@ -37,10 +37,13 @@ export const partitionContents = (
 ): SliceContents[] => {
   const out: SliceContents[] = [];
 
+  /** Worked out only for a caller that asks about settled: nobody else's answer depends on it. */
+  const edge = filter.settled || filter.settledBefore ? settledEdge(db, venue, filter.settledBefore) : null;
+
   let at = -1;
 
   for (const row of partitionsOf(db, venue, lens)) {
-    if (! asked(row, filter)) continue;
+    if (! asked(row, filter, edge)) continue;
 
     if (row.sliceId !== at) {
       at = row.sliceId;
@@ -61,17 +64,52 @@ export const partitionContents = (
   return out;
 };
 
+/**
+ * Where settled ends for a venue right now.
+ *
+ * **Settled means a completed run saw the partition whole, after its venue had
+ * stopped publishing into it.** Two things have to hold:
+ *
+ * - **Its month ended more than `SETTLE_DAYS` ago.** A venue goes on publishing
+ *   a period's files for days after the period closes, so a month that is
+ *   running, or closed only recently, is never settled.
+ * - **No run that is still open has changed it.** A run that changed a
+ *   partition may not be done with it — a backfill least of all — and a run
+ *   that stopped half way is no different from one in progress: what it would
+ *   have found next is still unfound. A partition the open run has not changed
+ *   holds everything an earlier, completed run found.
+ *
+ * It is not a promise that nothing changes afterwards — a venue can republish,
+ * withdraw or publish late, and the version moves when it does. It is the point
+ * past which that takes something unusual.
+ *
+ * `before` narrows it further, to partitions that had also gone unchanged by
+ * that instant.
+ *
+ * **A run is the venue's, not a host's**, and a venue has one open or none. The
+ * table keeps that one run as a row per host and per part of the tree, so its
+ * start is the earliest among the venue's unfinished rows.
+ */
+export const settledEdge = (db: DatabaseSync, venue: string, before?: string): SettledEdge => {
+  const closed  = new Date(Date.now() - SETTLE_DAYS * 86_400_000).toISOString();
+  const running = (statements(db).running.get(venue) as { started: string | null }).started;
+
+  const limits = [before, running].filter((one): one is string => !! one).sort();
+
+  return { month: closed.slice(0, 4) + closed.slice(5, 7), before: limits[0] ?? OPEN };
+};
+
 // ── Internals ─────────────────────────────────────────────────────────────────
 
 /** Whether a partition is one the caller asked about; an absent field asks for any. */
-const asked = (row: Partition, filter: PartitionFilter): boolean =>
+const asked = (row: Partition, filter: PartitionFilter, edge: SettledEdge | null): boolean =>
   (! filter.market      || row.market.toLowerCase()  === filter.market.toLowerCase())
   && (! filter.datasets || filter.datasets.some(one => one.toLowerCase() === row.dataset.toLowerCase()))
   && (! filter.variant  || row.variant.toLowerCase() === filter.variant.toLowerCase())
   && (! filter.grain    || row.grain === filter.grain)
   && (! filter.bundle   || row.bundle === filter.bundle)
   && (! filter.downloaded || row.pending === 0)
-  && (! filter.settledBefore || row.updatedAt < filter.settledBefore);
+  && (! edge || (row.month < edge.month && row.updatedAt < edge.before));
 
 /** Prepared once per database. */
 const statements = (db: DatabaseSync): PartitionStatements => {
@@ -94,6 +132,11 @@ const statements = (db: DatabaseSync): PartitionStatements => {
       slices:  db.prepare(
         `SELECT id, venue, market, dataset, variant, grain, bundle FROM slice
           WHERE venue = ? ORDER BY market, dataset, variant, grain, bundle`),
+      running: db.prepare(
+        `SELECT min(r.started) AS started
+           FROM venue v
+           JOIN run r ON r.venue_id = v.id AND r.completed IS NULL
+          WHERE v.name = ?`),
     };
 
     PREPARED.set(db, held);
@@ -103,3 +146,12 @@ const statements = (db: DatabaseSync): PartitionStatements => {
 };
 
 const PREPARED = new WeakMap<DatabaseSync, PartitionStatements>();
+
+/**
+ * Days after a month ends before its partitions can be settled: how long a
+ * venue may still be publishing a period that has closed.
+ */
+const SETTLE_DAYS = 15;
+
+/** Sorts after every timestamp: the limit where nothing sets one. */
+const OPEN = '9999';

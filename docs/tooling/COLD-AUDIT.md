@@ -1,5 +1,9 @@
 # cold audit
 
+> **Not running.** `cold audit` has not moved onto partitions yet, and refuses to start. This is
+> the command as designed and built before that move — its code is in
+> `dev/tooling/src/tools/cold/legacy/` — and it is what the rebuild starts from.
+
 `cold audit [origin]` checks that cold storage is what the record says it is, and reports every place they differ. With no origin it checks them all.
 
 **Everything else in this family trusts `cold.sqlite`.** `push` decides what to pack from it, `evict` decides what may be *deleted* from it, and neither can afford to re-derive the world on every run. This is where that trust is earned back.

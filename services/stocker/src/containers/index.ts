@@ -3,11 +3,9 @@ import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createGunzip } from 'node:zlib';
 import config from '../config';
-import { gzip } from './gzip';
-import { plain } from './plain';
-import { targz } from './targz';
-import { zip } from './zip';
-import type { Container, Unpacked } from './types';
+import { needsExtracting } from './extract';
+import { Pool } from './pool';
+import type { UnpackedAll, Wrapped } from './types';
 
 /** The one transient directory, inside the volume stocker owns. */
 export const SCRATCH = '.stocker-tmp';
@@ -73,20 +71,20 @@ export const hasContent = async (path: string): Promise<boolean> => {
   });
 };
 
-const CONTAINERS: Record<string, Container> = { zip, gzip, 'tar.gz': targz, plain };
-
-export const containerFor = (name: string): Container => {
-  const container = CONTAINERS[name];
-
-  if (! container)
-    throw new Error(`Unknown container '${name}'. Known: ${Object.keys(CONTAINERS).join(', ')}`);
-
-  return container;
-};
-
 /**
- * Present a raw archive as paths the engine can read, extracting only when it
- * has to. The raw file is never modified or moved.
+ * Present raw archives as paths the engine can read, extracting only when it
+ * has to. The raw files are never modified or moved.
+ *
+ * **One directory for all of them, removed at once.** A build reads thousands
+ * of archives at a time, and a directory made and removed per archive was a
+ * measurable share of what stocking a month of small files cost. Each archive
+ * writes under a tag of its own, so two holding a member of the same name do
+ * not meet.
+ *
+ * **A few at a time, and the loop is handed back as they go.** A small zip is
+ * extracted without waiting on anything — see `zip` — so thousands in a row
+ * would otherwise hold the thread for as long as they take, and whatever else
+ * the service is doing with it.
  *
  * Extraction lands beside the vault, **never in the system temp directory**.
  * These archives are not small — a Binance monthly is hundreds of MB and a Gate
@@ -94,10 +92,9 @@ export const containerFor = (name: string): Container => {
  * overlay filesystem. Filling it presents as a corrupt build rather than as the
  * full disk it actually is. The vault volume is the one sized for this data.
  */
-export const unpack = async (absolute: string, container: string): Promise<Unpacked> => {
-  const handler = containerFor(container);
-
-  if (handler.native) return { paths: [absolute], dispose: async () => {} };
+export const unpackAll = async (inputs: readonly Wrapped[]): Promise<UnpackedAll> => {
+  if (! needsExtracting(inputs))
+    return { paths: inputs.map(input => [input.absolute]), bytes: 0, dispose: async () => {} };
 
   const scratch = join(config.vaultDir, SCRATCH);
 
@@ -107,7 +104,7 @@ export const unpack = async (absolute: string, container: string): Promise<Unpac
   const dispose = async (): Promise<void> => { await rm(dir, { recursive: true, force: true }); };
 
   try {
-    return { paths: await handler.unpack(absolute, dir), dispose };
+    return { ...await pool.extract(inputs, dir), dispose };
   } catch (err) {
     await dispose();
 
@@ -115,4 +112,9 @@ export const unpack = async (absolute: string, container: string): Promise<Unpac
   }
 };
 
-export type { Container, Unpacked } from './types';
+/** The threads extraction runs on — see `Pool`. */
+export const pool = new Pool(config.unpackWorkers);
+
+export { containerFor } from './registry';
+export { needsExtracting } from './extract';
+export type { Container, UnpackedAll, Wrapped } from './types';

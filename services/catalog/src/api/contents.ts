@@ -63,6 +63,7 @@ export const mountContents = (app: Application, db: DatabaseSync): void => {
     const datasets = text(req.query['datasets'])?.split(',').map(one => one.trim()).filter(one => one !== '');
     const variant  = text(req.query['variant']);
     const before   = text(req.query['settled-before']);
+    const settled  = req.query['settled'] !== undefined && req.query['settled'] !== 'false';
 
     res.json({ items: partitionsOfVenue(db, name, {
       ...(market   ? { market }   : {}),
@@ -71,6 +72,7 @@ export const mountContents = (app: Application, db: DatabaseSync): void => {
       ...(grain    ? { grain: grain as Grain }    : {}),
       ...(bundle   ? { bundle: bundle as Bundle } : {}),
       ...(req.query['downloaded'] === 'true' ? { downloaded: true } : {}),
+      ...(settled  ? { settled: true } : {}),
       ...(before   ? { settledBefore: before } : {}),
     }, lens) });
   });

@@ -52,7 +52,8 @@ export const s3: Scanner<ListingContext> = {
     const page  = await context.page(listingUrl(context.base, context.keyRoot + path, null, false), 's3');
     const found = page.listed.find(row => row.key === context.keyRoot + path);
 
-    return found ?? null;
+    // The listing answered, so a key it does not hold is one the venue does not have.
+    return found ?? 'absent';
   },
 };
 

@@ -73,7 +73,7 @@ export const html: Scanner<ListingContext> = {
   confirm: async (context, path) => {
     const { status, headers } = await context.head(`${context.base.replace(/\/$/, '')}/${context.keyRoot}${path}`);
 
-    if (status === 404) return null;
+    if (status < 200 || status > 299) return { status, headers };
 
     const size = Number(headers.get('content-length'));
 

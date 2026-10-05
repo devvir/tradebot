@@ -1,7 +1,7 @@
 import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { advanceRun, ancestorsOf, beginJob, closeRun, establishedAt, exclusionsFor, markDownloaded, openJob, openPartitions, putFiles, putVenue, recordSeries, venueIds, settleFiles, unsettled } from '../src/catalog';
 import { assertWritable, migrate, openCatalog, SCHEMA_VERSION, version } from '../src/database';
 import { _test_BREATH_MS as BREATH_MS } from '../src/catalog/queries';
@@ -18,6 +18,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
+
   db.close();
   rmSync(dir, { recursive: true, force: true });
 });
@@ -920,6 +922,31 @@ describe('holding the thread', () => {
     }));
 
   /**
+   * **The clock is the test's, so the cuts are too.** A slice ends when its time
+   * is up, and a real clock needs thousands of rows to end one — which made
+   * these tests as slow as the machine was busy. This clock moves a quarter of
+   * a slice every time it is read, which ends a slice after a handful of rows:
+   * many slices from a page small enough to write at once. Returns a count of
+   * the slices begun since it was last reset.
+   */
+  const sliced = (): { count: () => number; reset: () => void } => {
+    let now    = 0;
+    let slices = 0;
+
+    vi.spyOn(Date, 'now').mockImplementation(() => (now += BREATH_MS / 4));
+
+    const exec = db.exec.bind(db);
+
+    vi.spyOn(db, 'exec').mockImplementation((sql: string) => {
+      if (sql === 'BEGIN') slices++;
+
+      return exec(sql);
+    });
+
+    return { count: () => slices, reset: () => { slices = 0; } };
+  };
+
+  /**
    * **A page larger than one slice is judged once, across all of them.** Each
    * slice withdraws only the stretch it reached, so a key is never judged twice
    * nor skipped between two slices — whatever the page's size, and however many
@@ -928,22 +955,27 @@ describe('holding the thread', () => {
   it('withdraws exactly what a many-slice page left out, and writes nothing that did not change', async () => {
     putVenue(db, 'binance', 'https://x', 'data/');
 
-    const all  = many(1, 6_000);
+    const all  = many(1, 60);
     const span: Span = { venueId: 1, low: 'p/', lowOpen: false, high: 'p0', highOpen: true };
 
     await putFiles(db, all);
 
+    const slices = sliced();
     const before = changes();
 
     expect(await putFiles(db, all, span)).toBe(0);
     expect(changes()).toBe(before);
 
-    // Every kept key restated, so the page is written in full and the clock cuts it into many slices.
-    const kept = all.filter((_one, at) => at % 1_000 !== 0).map(one => ({ ...one, etag: 'restated' }));
+    // Every kept key restated, so the whole page is written.
+    const kept = all.filter((_one, at) => at % 10 !== 0).map(one => ({ ...one, etag: 'restated' }));
+
+    slices.reset();
 
     expect(await putFiles(db, kept, span)).toBe(6);
-    expect(db.prepare(`SELECT count(*) n FROM file WHERE etag = 'restated'`).get()).toMatchObject({ n: 5_994 });
-    expect(db.prepare(`SELECT count(*) n FROM file WHERE existence = 'absent'`).get()).toMatchObject({ n: 6 });
+    expect(slices.count()).toBeGreaterThan(5);
+    expect(db.prepare(`SELECT count(*) n FROM file WHERE etag = 'restated'`).get()).toMatchObject({ n: 54 });
+    expect(db.prepare(`SELECT path FROM file WHERE existence = 'absent' ORDER BY path`).all().map(row => (row as { path: string }).path))
+      .toEqual([0, 10, 20, 30, 40, 50].map(at => `p/${String(at).padStart(6, '0')}.zip`));
   });
 
   /**
@@ -958,6 +990,8 @@ describe('holding the thread', () => {
   it('lets the loop turn over between concurrent writers', async () => {
     const venues = [1, 2, 3, 4, 5, 6].map(at => putVenue(db, `v${at}`, 'https://x', ''));
 
+    const slices = sliced();
+
     let turns   = 0;
     let writing = true;
 
@@ -971,44 +1005,42 @@ describe('holding the thread', () => {
 
     setImmediate(tick);
 
-    const began = Date.now();
-
-    await Promise.all(venues.map(venueId => putFiles(db, many(venueId, 4_000))));
-
-    const elapsed = Date.now() - began;
+    await Promise.all(venues.map(venueId => putFiles(db, many(venueId, 40))));
 
     writing = false;
 
     /**
-     * **Measured against how long the writing took, never against a fixed
+     * **Measured against the slices that ran, never against a clock or a fixed
      * count.**
      *
-     * One slice holds the thread for `BREATH_MS` and then hands it back, so a
-     * correct run turns the loop over about once per slice. The per-caller
-     * budget this replaced ran all six writers' slices in the *same* turn, so
-     * it turned over about once per six. Half way between the two is the line,
-     * and it separates them by the same margin whether these rows take the
-     * machine a tenth of a second or ten seconds.
-     *
-     * `turns > 10` was a floor on how *slow* the machine had to be: it counted
-     * slices, and a machine quick enough to write all of this inside ten of
-     * them failed for being fast.
+     * A slice holds the thread and then hands it back, so a correct run turns
+     * the loop over about once per slice. The per-caller budget this replaced
+     * ran all six writers' slices in the *same* turn, so it turned over about
+     * once per six. Half way between the two is the line, and it separates them
+     * by the same margin however long the machine takes over a slice — which a
+     * comparison against elapsed time did not: a process that is kept waiting
+     * for the processor takes longer over every slice and turns no more often.
      */
-    expect(turns).toBeGreaterThanOrEqual(elapsed / (2 * BREATH_MS));
+    expect(slices.count()).toBeGreaterThan(30);
+    expect(turns).toBeGreaterThanOrEqual(slices.count() / 2);
 
     for (const venueId of venues)
       expect(db.prepare('SELECT COUNT(*) n FROM file WHERE venue_id = ?').get(venueId))
-        .toMatchObject({ n: 4_000 });
-  }, 60_000);
+        .toMatchObject({ n: 40 });
+  });
 
   /** Every row still lands, and a page written twice says what writing it once said. */
   it('writes the same thing whether it took one slice or twenty', async () => {
     const venueId = putVenue(db, 'twice', 'https://x', '');
+    const slices  = sliced();
 
-    await putFiles(db, many(venueId, 2_000));
-    await putFiles(db, many(venueId, 2_000));
+    await putFiles(db, many(venueId, 80));
+
+    expect(slices.count()).toBeGreaterThanOrEqual(20);
+
+    await putFiles(db, many(venueId, 80));
 
     expect(db.prepare('SELECT COUNT(*) n FROM file WHERE venue_id = ?').get(venueId))
-      .toMatchObject({ n: 2_000 });
-  }, 60_000);
+      .toMatchObject({ n: 80 });
+  });
 });

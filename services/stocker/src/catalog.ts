@@ -3,8 +3,8 @@ import { idOf } from './keys';
 import type { ListedSlice, Partition, PartitionKey } from './types';
 
 /**
- * A venue's partitions that are ready to be stocked: fully downloaded, and
- * unchanged in the catalog since `settledBefore`.
+ * A venue's partitions that are ready to be stocked: fully downloaded and
+ * settled — and, where `settledBefore` is given, unchanged in the catalog since.
  *
  * The catalog keeps, for each partition, how many files it has, their total
  * size, how many are still to be downloaded, a version that changes whenever a
@@ -18,12 +18,12 @@ import type { ListedSlice, Partition, PartitionKey } from './types';
 export const listPartitions = async (
   venue:         string,
   datasets:      readonly string[],
-  settledBefore: string,
+  settledBefore: string | null,
 ): Promise<Map<string, Partition>> => {
   const query = new URLSearchParams({
-    'downloaded':     'true',
-    'settled-before': settledBefore,
-    'datasets':       datasets.join(','),
+    'downloaded': 'true',
+    ...(settledBefore ? { 'settled-before': settledBefore } : { 'settled': 'true' }),
+    'datasets':   datasets.join(','),
   });
 
   const { items } = await ask<{ items: ListedSlice[] }>(

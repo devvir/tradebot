@@ -4,8 +4,9 @@ import * as wip from './wip';
 import { BREATH_MS, slice } from './serial';
 import { ceiling } from '../paths';
 import { sawFile } from './series';
+import { noteWithdrawals } from './withdrawals';
 import type { FileMetadata as Metadata, FileRow as Row, PathRow } from '../types';
-import type { CatalogFile, DirectorySpan, Edge, FinishedRun, RangeSpan, Span, LastRun, Existence, FileEffect, FileState, Parking, Phase, Run, RunKind, Settlement, Standing, Unreadable, Unsettled, VenueTotals } from '../types';
+import type { CatalogFile, DirectorySpan, Edge, FinishedRun, RangeSpan, Span, LastRun, Existence, FileEffect, FileState, Parking, Phase, Run, RunKind, Settlement, Standing, Unreadable, Unsettled, VenueTotals, Withdrawal } from '../types';
 
 /**
  * Every write and read the catalog supports, as prepared statements over one
@@ -161,6 +162,9 @@ export const putFiles = async (
 
   let withdrawn = 0;
 
+  /** What each slice withdrew or brought back, written to the withdrawals log once it has committed. */
+  const notes: Withdrawal[] = [];
+
   /**
    * **Written in short transactions with the thread handed back between them.**
    *
@@ -232,9 +236,14 @@ export const putFiles = async (
            * catalogued means measured. Parked in `wip` for a probe to settle —
            * and if it is already catalogued, the row says more than this
            * sighting does, so nothing is written.
+           *
+           * **Unless the row says the file was withdrawn.** A listing that names
+           * it again is the venue saying otherwise, and a row marked absent
+           * says nothing a probe could not correct — so it is asked about, and
+           * comes back through `settleFiles` if it is there.
            */
           if (! ready(file)) {
-            if (! was) moved(file.venueId, backlog.park({
+            if (! was || was.existence === 'absent') moved(file.venueId, backlog.park({
               venueId:   file.venueId,
               path:      file.path,
               date:      file.date,
@@ -283,6 +292,12 @@ export const putFiles = async (
             now:  stateOf(partitionId, file.existence, file.size ?? was?.size ?? null,
               file.etag ?? was?.etag ?? null, downloadedAt),
           });
+
+          if (was?.existence === 'absent' && file.existence !== 'absent')
+            notes.push({
+              event: 'returned', cause: 'walk', venueId: file.venueId, path: file.path, date: file.date,
+              size: file.size ?? was.size, etag: file.etag ?? was.etag,
+            });
         }
 
         last = at >= ordered.length;
@@ -309,7 +324,7 @@ export const putFiles = async (
             if (row && row.existence !== 'absent') gone.push({ path, row });
           }
 
-          withdrawn += withdraw(db, span.venueId, gone, effects);
+          withdrawn += withdraw(db, span.venueId, gone, effects, notes);
           moved(span.venueId, dropParked(db, backlog, span.venueId, from!, upto, offered));
 
           if (! last) from = { path: ordered[at]!.path, open: false };
@@ -318,13 +333,13 @@ export const putFiles = async (
         if (span && ! isRange(span) && last) {
           const { gone, subtrees } = vacated(db, span, offered);
 
-          withdrawn += withdraw(db, span.venueId, gone, effects);
+          withdrawn += withdraw(db, span.venueId, gone, effects, notes);
 
           for (const tree of subtrees) {
             const rows = rowsIn(db, span.venueId, { path: tree, open: false }, { path: ceiling(tree), open: true });
 
             withdrawn += withdraw(db, span.venueId,
-              rows.filter(row => row.existence !== 'absent').map(row => ({ path: row.path, row })), effects);
+              rows.filter(row => row.existence !== 'absent').map(row => ({ path: row.path, row })), effects, notes);
             moved(span.venueId, dropParked(db, backlog, span.venueId,
               { path: tree, open: false }, { path: ceiling(tree), open: true }, offered));
           }
@@ -339,8 +354,12 @@ export const putFiles = async (
       } catch (err) {
         db.exec('ROLLBACK');
 
+        notes.length = 0;
+
         throw err;
       }
+
+      noteWithdrawals(db, notes.splice(0));
 
       for (const [venueId, delta] of parked) wip.counted(db, venueId, delta);
 
@@ -447,7 +466,7 @@ export const markDownloaded = (
  * the two services is wrong — so withdrawing is how the disagreement ends when
  * the venue agrees the file has gone.
  */
-export const withdrawFile = (db: DatabaseSync, venueId: number, path: string): boolean => {
+export const withdrawFile = (db: DatabaseSync, venueId: number, path: string, status?: number): boolean => {
   const current = db.prepare(`SELECT ${ROW} FROM file WHERE venue_id = ? AND path = ?`);
 
   db.exec('BEGIN');
@@ -470,6 +489,12 @@ export const withdrawFile = (db: DatabaseSync, venueId: number, path: string): b
     }]));
 
     db.exec('COMMIT');
+
+    noteWithdrawals(db, [{
+      event: 'withdrawn', cause: 'report', venueId, path, date: was.date,
+      size: was.size, etag: was.etag, downloaded: was.downloadedAt !== null,
+      ...(status === undefined ? {} : { status }),
+    }]);
 
     return true;
   } catch (err) {
@@ -673,9 +698,26 @@ export const settleFiles = (db: DatabaseSync, settled: readonly Settlement[]): n
     `INSERT INTO file (venue_id, path, date, size, etag, modified, existence,
                        series_id, partition_id, seen_at, downloaded_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
-       ON CONFLICT (venue_id, path) DO NOTHING`,
+       ON CONFLICT (venue_id, path) DO UPDATE SET
+          date          = excluded.date,
+          size          = excluded.size,
+          etag          = excluded.etag,
+          modified      = excluded.modified,
+          existence     = excluded.existence,
+          series_id     = excluded.series_id,
+          partition_id  = excluded.partition_id,
+          downloaded_at = CASE WHEN file.size IS excluded.size AND file.etag IS excluded.etag
+                               THEN file.downloaded_at END
+        WHERE file.existence = 'absent' AND excluded.existence <> 'absent'`,
   );
 
+  /** The row a settlement lands on, where the catalog holds it as withdrawn. */
+  const lost = db.prepare(
+    `SELECT ${ROW} FROM file WHERE venue_id = ? AND path = ? AND existence = 'absent'`,
+  );
+
+  /** Withdrawn files a probe found again, for the withdrawals log. */
+  const notes: Withdrawal[] = [];
 
   /** As in `putFiles`: applied after the commit, never on a row that stayed. */
   const answered: { seriesId: number; date: string }[] = [];
@@ -712,6 +754,8 @@ export const settleFiles = (db: DatabaseSync, settled: readonly Settlement[]): n
 
       const partitionId = partitions.of(was.seriesId, was.date);
 
+      const gone = lost.get(file.venueId, file.path) as Row | undefined;
+
       const arrived = Number(arrive.run(
         file.venueId, file.path, was.date,
         merged.size, merged.etag, merged.modified, existence, was.seriesId,
@@ -736,17 +780,32 @@ export const settleFiles = (db: DatabaseSync, settled: readonly Settlement[]): n
        * Counting those was the counters drifting above the table they describe, by
        * one file per key that settled onto a row already there — 1,937,264 of
        * them, 0.59%, before this was measured.
+       *
+       * **A row held as withdrawn is the one that does not stay as it was.** The
+       * venue serves the file after all, so the row is brought back — and what
+       * the archives hold of it still counts where the bytes are the same.
        */
-      if (arrived)
+      if (arrived) {
+        const same = !! gone && gone.size === merged.size && gone.etag === merged.etag;
+
         effects.push({
-          was:  null,
-          now:  stateOf(partitionId, existence, merged.size, merged.etag, null),
+          was:  gone ? stateOf(gone.partitionId, 'absent', gone.size, gone.etag, gone.downloadedAt) : null,
+          now:  stateOf(partitionId, existence, merged.size, merged.etag, same ? gone.downloadedAt : null),
         });
+
+        if (gone)
+          notes.push({
+            event: 'returned', cause: 'probe', venueId: file.venueId, path: file.path, date: was.date,
+            size: merged.size, etag: merged.etag,
+          });
+      }
     }
 
     cache.record(db, (effects));
 
     db.exec('COMMIT');
+
+    noteWithdrawals(db, notes);
 
     for (const [venueId, delta] of unparked) wip.counted(db, venueId, delta);
 
@@ -1492,8 +1551,36 @@ const isRange = (span: Span): span is RangeSpan => 'low' in span;
  * stretch is judged here the same way the database reads it — not by UTF-16
  * code units, which disagree past the Basic Multilingual Plane, and gate
  * publishes symbols written in Chinese.
+ *
+ * **Compared in place, without encoding either string.** UTF-8 sorts as code
+ * points do, and UTF-16 units sort the same way but for one stretch: a
+ * surrogate, which spells a code point past the plane, has a lower unit than
+ * the top of the plane it sorts above. So the first unit that differs decides,
+ * with those two ranges swapped. Encoding both strings to compare them cost
+ * two buffers a comparison, on a sort of every page and twice more per key —
+ * 1.1 s of a 6,000-key page's writes when it was measured.
  */
-const byteOrder = (a: string, b: string): number => Buffer.compare(Buffer.from(a), Buffer.from(b));
+const byteOrder = (a: string, b: string): number => {
+  const shared = Math.min(a.length, b.length);
+
+  for (let at = 0; at < shared; at++) {
+    let one = a.charCodeAt(at);
+    let two = b.charCodeAt(at);
+
+    if (one === two) continue;
+
+    if (one >= SURROGATES) one = one >= ABOVE_SURROGATES ? one - 0x800 : one + 0x2000;
+    if (two >= SURROGATES) two = two >= ABOVE_SURROGATES ? two - 0x800 : two + 0x2000;
+
+    return one < two ? -1 : 1;
+  }
+
+  return a.length === b.length ? 0 : a.length < b.length ? -1 : 1;
+};
+
+/** Where the units that spell a code point past the plane begin, and where they end. */
+const SURROGATES       = 0xd800;
+const ABOVE_SURROGATES = 0xe000;
 
 /** Whether a path sorts before an upper edge. */
 const below = (path: string, upto: Edge): boolean => {
@@ -1543,11 +1630,17 @@ const withdraw = (
   venueId: number,
   gone:    readonly { path: string; row: Row }[],
   effects: FileEffect[],
+  notes:   Withdrawal[],
 ): number => {
   const mark = statement(db, `UPDATE file SET existence = 'absent' WHERE venue_id = ? AND path = ?`);
 
   for (const { path, row } of gone) {
     mark.run(venueId, path);
+
+    notes.push({
+      event: 'withdrawn', cause: 'walk', venueId, path, date: row.date,
+      size: row.size, etag: row.etag, downloaded: row.downloadedAt !== null,
+    });
 
     effects.push({
       was: stateOf(row.partitionId, row.existence, row.size, row.etag, row.downloadedAt),
@@ -1836,3 +1929,4 @@ const progress = (
  * drift.
  */
 export const _test_BREATH_MS = BREATH_MS;
+export const _test_byteOrder = byteOrder;

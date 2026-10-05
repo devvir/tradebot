@@ -8,10 +8,11 @@ import config from './config';
 import { Instruments, edgeFilesOf, filesOf, matches } from './disk';
 import { idOf, neighbourOf } from './keys';
 import { SERIES, extrasOf, seriesOf } from './schema/series';
+import { Prefetch } from './prepare';
 import { reachOf } from './spill';
 import { Slices, freeGb, isWhole, labelOf, monthOf, prune, publishBundle, publishSplit, revisionOf, stagingOf } from './vault';
 import type {
-  DiskFile, Edge, Grain, Group, InstrumentDirs, Partition, Series, Stocked, Summary, Sweeping, Target, Task, VaultKey,
+  DiskFile, Edge, Grain, Group, InstrumentDirs, Job, Partition, Series, Stocked, Summary, Sweeping, Target, Task, VaultKey,
 } from './types';
 
 /**
@@ -19,8 +20,9 @@ import type {
  * vault does not hold at their current revision.
  *
  * The catalog is asked only for what can be acted on: partitions with nothing
- * left to download that it has not seen change for `coolHours` — so nothing a
- * run is still adding to. For each of those, in order:
+ * left to download that it takes as settled — so nothing a run is still adding
+ * to — and, where `coolHours` is set, unchanged for that long as well. For each
+ * of those, in order:
  *
  * 1. **With its neighbour** — a spilling dataset reads the edge of the month
  *    beside it, which has to be ready too.
@@ -49,46 +51,54 @@ export const sweep = async (conns: DuckDBConnection[]): Promise<Summary> => {
   const instruments = new Instruments();
   const slices      = new Slices();
 
-  /** Changed in the catalog after this, and a partition is not taken as settled. */
-  const settledBefore = new Date(Date.now() - config.coolHours * 3_600_000).toISOString();
+  /** Where a cool-down is set: changed in the catalog after this, and a partition is left for later. */
+  const settledBefore = config.coolHours === null
+    ? null
+    : new Date(Date.now() - config.coolHours * 3_600_000).toISOString();
 
-  for (const venue of venuesInScope()) {
-    const datasets = datasetsOf(venue);
+  const upcoming = jobsOf({ instruments, slices }, settledBefore, summary);
 
-    if (datasets.length === 0) continue;
+  /** Decided and not yet stocked: its extraction is under way, and is given up if the sweep ends first. */
+  let ahead: Job | null = null;
 
-    // Below the floor nothing can be stocked, so the catalog is not asked either.
-    const free = await freeGb();
+  /**
+   * **The partition after this one is decided while this one is stocked.**
+   * Deciding it is what starts its archives being extracted, so that by the
+   * time the engine is free they are there to be read — see `Prefetch`.
+   */
+  const following = (): Promise<IteratorResult<Job, void>> => {
+    const asked = upcoming.next().then((one) => {
+      ahead = one.done ? null : one.value;
 
-    if (free < config.minFreeGb) {
-      summary.stopped = true;
+      return one;
+    });
 
-      logger.warn({ freeGb: free, minFreeGb: config.minFreeGb }, 'Vault volume is low on space — stopping this sweep');
+    // Awaited once the partition in hand is stocked; until then a refusal is nobody's to handle.
+    asked.catch(() => {});
 
-      return finish(summary);
+    return asked;
+  };
+
+  try {
+    let next = await following();
+
+    while (! next.done) {
+      const job   = next.value;
+      const after = following();
+
+      await stock(conns, job, summary);
+      slices.forget(job.key);
+
+      next = await after;
     }
+  } catch (err) {
+    if (! (err instanceof LowSpace)) throw err;
 
-    const partitions = await listPartitions(venue, datasets, settledBefore);
-    const targets    = targetsOf(partitions);
+    summary.stopped = true;
 
-    for (const target of targets) {
-      summary.considered++;
-
-      try {
-        await settle(conns, target, partitions, { instruments, slices }, summary);
-      } catch (err) {
-        if (err instanceof LowSpace) {
-          summary.stopped = true;
-
-          logger.warn({ freeGb: err.free, minFreeGb: config.minFreeGb },
-            'Vault volume is low on space — stopping this sweep');
-
-          return finish(summary);
-        }
-
-        throw err;
-      }
-    }
+    logger.warn({ freeGb: err.free, minFreeGb: config.minFreeGb }, 'Vault volume is low on space — stopping this sweep');
+  } finally {
+    (ahead as Job | null)?.prefetch.release();
   }
 
   return finish(summary);
@@ -209,14 +219,47 @@ const targetsOf = (partitions: Map<string, Partition>): Target[] => {
     labelOf(a.key) < labelOf(b.key) ? -1 : 1);
 };
 
-/** Decide one vault partition, and stock it where it needs stocking. */
-const settle = async (
-  conns:      DuckDBConnection[],
+/**
+ * The partitions to stock, in the order they are stocked, each decided only
+ * when it is asked for: venue by venue, the catalog asked once for each.
+ */
+const jobsOf = async function* (
+  sweeping:      Sweeping,
+  settledBefore: string | null,
+  summary:       Summary,
+): AsyncGenerator<Job, void> {
+  for (const venue of venuesInScope()) {
+    const datasets = datasetsOf(venue);
+
+    if (datasets.length === 0) continue;
+
+    // Below the floor nothing can be stocked, so the catalog is not asked either.
+    const free = await freeGb();
+
+    if (free < config.minFreeGb) throw new LowSpace(free);
+
+    const partitions = await listPartitions(venue, datasets, settledBefore);
+
+    for (const target of targetsOf(partitions)) {
+      summary.considered++;
+
+      const job = await decide(target, partitions, sweeping, summary);
+
+      if (job) yield job;
+    }
+  }
+};
+
+/**
+ * Decide one vault partition: nothing to do, or what to stock it from — with
+ * its archives' extraction started.
+ */
+const decide = async (
   target:     Target,
   partitions: Map<string, Partition>,
   sweeping:   Sweeping,
   summary:    Summary,
-): Promise<void> => {
+): Promise<Job | null> => {
   const { key, series } = target;
   const spill = series[0]!.spill;
 
@@ -241,13 +284,13 @@ const settle = async (
       sweeping.slices.forget(key);
     }
 
-    return;
+    return null;
   }
 
   if (ready.length === 0) {
     summary.waiting++;
 
-    return;
+    return null;
   }
 
   /**
@@ -262,16 +305,20 @@ const settle = async (
 
     if (await freeGb() < config.minFreeGb) throw new LowSpace(await freeGb());
 
-    await stock(conns, key, one.candidate, one.revision, inputs.files, inputs.donated, held, summary);
-    sweeping.slices.forget(key);
+    const tasks = tasksOf(groupsOf(inputs.files, inputs.donated));
 
-    return;
+    return {
+      key, partition: one.candidate, revision: one.revision, held, tasks,
+      files: inputs.files.length, prefetch: new Prefetch(tasks),
+    };
   }
 
   summary.missing++;
 
   logger.info({ partition: labelOf(key), renderings: ready.map(one => one.candidate.id) },
     'Not on disk as catalogued — skipped');
+
+  return null;
 };
 
 /**
@@ -304,36 +351,34 @@ const onDisk = async (
  * then publish it: as one file, or — where the archive files it came from
  * weigh more than `splitGb` — as a file per instrument.
  */
-const stock = async (
-  conns:     DuckDBConnection[],
-  key:       VaultKey,
-  partition: Partition,
-  revision:  string,
-  files:     DiskFile[],
-  donated:   DiskFile[],
-  held:      Map<string, Stocked>,
-  summary:   Summary,
-): Promise<void> => {
+const stock = async (conns: DuckDBConnection[], job: Job, summary: Summary): Promise<void> => {
+  const { key, partition, revision, held, tasks, prefetch } = job;
+
   const staging = stagingOf(key, revision);
   const started = Date.now();
   const split   = partition.bytes > config.splitGb * 1024 ** 3;
 
-  logger.info({ partition: labelOf(key), from: partition.id, revision, files: files.length,
+  logger.info({ partition: labelOf(key), from: partition.id, revision, files: job.files,
     size: sizeOf(partition.bytes), as: split ? 'a file per instrument' : 'one file' }, 'Stocking partition');
 
   await rm(staging, { recursive: true, force: true });
 
-  const queue   = tasksOf(groupsOf(files, donated));
+  let cursor    = 0;
   let rows      = 0;
   let written   = 0;
   let failure: Error | null = null;
 
   const worker = async (conn: DuckDBConnection): Promise<void> => {
-    for (let next = queue.shift(); next && ! failure; next = queue.shift()) {
+    for (let at = cursor++; at < tasks.length && ! failure; at = cursor++) {
+      const next = tasks[at]!;
+
       try {
+        // Extracted ahead where there was time; the build removes it when it has read it.
+        const prepared = await prefetch.take(at);
+
         const done = next.length === 1 && bytesOf(next[0]!) >= DIRECT_BYTES
-          ? await buildGroup(conn, key, next[0]!.symbol, next[0]!.inputs, staging)
-          : await buildBatch(conn, key, next, staging);
+          ? await buildGroup(conn, key, next[0]!.symbol, next[0]!.inputs, staging, prepared)
+          : await buildBatch(conn, key, next, staging, prepared);
 
         rows    += done.rows;
         written += done.files;
@@ -344,6 +389,9 @@ const stock = async (
   };
 
   await Promise.all(conns.map(worker));
+
+  // Whatever was extracted for a task no build reached — after a failure — is removed.
+  prefetch.release();
 
   try {
     if (failure) throw failure;

@@ -18,8 +18,6 @@ import type { Origin } from '../tools/cold/types';
  * nothing at runtime.
  */
 const tools = {
-  audit: async (): Promise<typeof import('../tools/cold/audit')> => import('../tools/cold/audit'),
-  evict: async (): Promise<typeof import('../tools/cold/evict')> => import('../tools/cold/evict'),
   push:  async (): Promise<typeof import('../tools/cold/push')>  => import('../tools/cold/push'),
   stats: async (): Promise<typeof import('../tools/cold/stats')> => import('../tools/cold/stats'),
 };
@@ -45,92 +43,30 @@ export function register(program: Command): void {
    */
   cold
     .command('push [origin] [venues...]')
-    .description('Pack what is not backed up yet and upload it to Mega')
-    .action(gracefully(async (origin?: string, venues: string[] = []) => {
+    .description('Pack what is ready and not backed up yet, and upload it to Mega')
+    .option('-L, --lens [slug]', 'only what a catalog lens lets through; asks which when none is named')
+    .option('-W, --watch', 'keep running, and ask the catalog again every 30 minutes')
+    .action(gracefully(async (origin?: string, venues: string[] = [], options: { lens?: string | true; watch?: boolean } = {}) => {
       const chosen = await resolve(origin);
 
-      if (chosen) await (await tools.push()).runPush(chosen, venues);
+      if (! chosen || ! built(chosen)) return;
+
+      await (await tools.push()).runPush(chosen, {
+        venues: venues.map(venue => venue.toLowerCase()),
+        ...(options.lens === undefined ? {} : { lens: options.lens }),
+        ...(options.watch ? { watch: true } : {}),
+      });
     }));
 
-  /**
-   * Prompts for its origin like the rest of the family, because the safety here
-   * is not in making the command awkward to name. Nothing is deleted before a
-   * confirmation that lists what would go and defaults to no, and what is taken
-   * goes to the host's trash rather than away. A missing argument that errors out
-   * instead of asking only teaches people to type it without reading it.
-   *
-   * **The four filters are the vault's, and the vault's alone.** Archives have
-   * no dataset, symbol or market to speak of — seven venues, seven tree shapes,
-   * and no level that reliably names one — so their `SourceFile` leaves those
-   * null and a filter over them could only ever match nothing. Accepting the
-   * option there and quietly ignoring it is how a person comes to believe they
-   * narrowed a deletion that was in fact total.
-   */
   cold
     .command('evict [origin] [venues...]')
-    .description('Reclaim what is safely in Mega')
-    .option('--purge', 'delete outright instead of moving to the trash')
-    .option('-M, --market <list>', 'vault only: markets to evict, comma-separated')
-    .option('-D, --dataset <list>', 'vault only: datasets to evict, comma-separated')
-    .option('-S, --symbol <list>', 'vault only: symbols to evict, comma-separated (exact)')
-    .option('-P, --period <list>', 'vault only: YYYY or YYYYMM, comma-separated')
-    .action(gracefully(async (
-      origin?:  string,
-      venues:   string[] = [],
-      options: {
-        purge?: boolean; market?: string; dataset?: string; symbol?: string; period?: string;
-      } = {},
-    ) => {
-      const chosen = await resolve(origin);
+    .description('Reclaim what is safely in Mega (not built on partitions yet)')
+    .action(gracefully(async () => { error('cold evict is not built on partitions yet'); }));
 
-      // `resolve` has already said why, so an unknown origin must not also
-      // collect a second message and read as two separate problems.
-      if (! chosen) return;
-
-      const filter = {
-        markets:  list(options.market),
-        datasets: list(options.dataset),
-        symbols:  list(options.symbol),
-        periods:  list(options.period),
-      };
-
-      if (chosen !== 'vault' && Object.values(filter).some(values => values.length > 0)) {
-        error(`--market, --dataset, --symbol and --period apply to the vault only — `
-          + `archives are evicted a venue-month at a time`);
-
-        return;
-      }
-
-      /**
-       * Rejected here rather than matched loosely, because a period nobody can
-       * match is indistinguishable from a selection that is genuinely empty —
-       * and "nothing matched" is exactly what a typo looks like.
-       */
-      const wrong = filter.periods.filter(period => ! /^\d{4}(\d{2})?$/.test(period));
-
-      if (wrong.length > 0) {
-        error(`--period takes YYYY or YYYYMM: ${wrong.join(', ')}`);
-
-        return;
-      }
-
-      await (await tools.evict()).runEvict(chosen, venues, filter, options.purge ?? false);
-    }));
-
-  /**
-   * Read-only, so it names no origin by default and checks them all — the
-   * question "is cold storage sound" is not one you ask per tree.
-   */
   cold
     .command('audit [origin]')
-    .description('Check cold storage against the record, and say where they differ')
-    .action(gracefully(async (origin?: string) => {
-      const chosen = origin ? await resolve(origin) : null;
-
-      if (origin && ! chosen) return;
-
-      await (await tools.audit()).runAudit(chosen ? [chosen] : ORIGINS.map(o => o.value));
-    }));
+    .description('Check cold storage against the record (not built on partitions yet)')
+    .action(gracefully(async () => { error('cold audit is not built on partitions yet'); }));
 
   cold
     .command('stats [origin]')
@@ -138,7 +74,7 @@ export function register(program: Command): void {
     .action(gracefully(async (origin?: string) => {
       const chosen = await resolve(origin);
 
-      if (chosen) await (await tools.stats()).runStats(chosen);
+      if (chosen && built(chosen)) await (await tools.stats()).runStats(chosen);
     }));
 }
 
@@ -165,7 +101,7 @@ const gracefully = <A extends unknown[]>(action: (...args: A) => Promise<void>) 
       if (cancelled(err)) {
         release();
         spacer();
-        info('Cancelled — nothing was left half-done; re-run to pick up where this stopped');
+        info('Stopped - will resume on next restart');
         process.exit(130);
       }
 
@@ -173,16 +109,6 @@ const gracefully = <A extends unknown[]>(action: (...args: A) => Promise<void>) 
       process.exit(1);
     }
   };
-
-/**
- * A comma-separated option as the values it names.
- *
- * Lowercased here so the filter is one shape by the time anything compares it,
- * and blanks dropped so a trailing comma is a typo rather than an empty value
- * that matches nothing.
- */
-const list = (given?: string): string[] =>
-  (given ?? '').split(',').map(value => value.trim().toLowerCase()).filter(Boolean);
 
 /** Ctrl-C at a prompt, however the version of inquirer in use reports it. */
 const cancelled = (err: unknown): boolean =>
@@ -197,10 +123,19 @@ const cancelled = (err: unknown): boolean =>
  * the tree's meaning will not.
  */
 const ORIGINS: { value: Origin; name: string }[] = [
-  { value: 'vault',    name: 'vault — stocker\'s normalised partitions' },
-  { value: 'archives', name: 'archives — the raw venue trees, as published' },
+  { value: 'archives', name: 'archives — the venues\' archive files, as published' },
+  { value: 'vault',    name: 'vault — the normalised partitions (not built on partitions yet)' },
   // The REST and websocket collector buckets get their own beside these.
 ];
+
+/** Whether an origin can be worked on yet; says so where it cannot. */
+const built = (origin: Origin): boolean => {
+  if (origin === 'archives') return true;
+
+  error(`cold is not built for the ${origin} on partitions yet — only archives`);
+
+  return false;
+};
 
 const resolve = async (given?: string): Promise<Origin | null> => {
   if (! given) {

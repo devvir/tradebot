@@ -127,11 +127,13 @@ A sweep asks the catalog what every partition holds, and stocks what the vault d
 its current revision. Nothing is remembered between sweeps; nothing is written but the vault.
 
 1. **Ask for what can be acted on.** One request per venue, through the configured lens, for the
-   datasets stocker reads: the partitions with nothing left to download that the catalog has not
-   seen change for `STOCKER_COOL_HOURS`. A partition a run is still adding to can be complete on
-   disk at every moment and still be a fraction of itself, and nothing but time says which — so
-   one that changed recently is simply not in the answer, and comes up in a later sweep. Each one
-   comes with how many files it has, their total size, and the catalog's version of it.
+   datasets stocker reads: the partitions with nothing left to download that the catalog takes as
+   settled. A partition a run is still adding to can be complete on disk at every moment and still
+   be a fraction of itself, and only the catalog knows which — so one that is not settled is simply
+   not in the answer, and comes up in a later sweep. What settled means is the catalog's to say
+   ([CATALOG.md](CATALOG.md)); `STOCKER_COOL_HOURS`, where set, asks on top that the partition has
+   gone unchanged for that long. Each one comes with how many files it has, their total size, and
+   the catalog's version of it.
 2. **With its neighbour?** A partition that reads the edge of a neighbouring month needs that
    month in the answer too (see [buckets](#venues-whose-buckets-do-not-cut-at-utc-midnight)).
 3. **Current?** The partition's revision — below — is computed from what the catalog answered. If
@@ -273,6 +275,37 @@ stay substring tokens: theirs is an open set.
 DuckDB reads gzip natively, so `.csv.gz` is handed over untouched — which covers Bybit and Gate
 entirely, and is the difference between copying a 23 GB order-book month to scratch and not.
 Only `.zip` and `.tar.gz` are extracted.
+
+**A build's archives are extracted together, into one directory removed at once**, each under a tag
+of its own so that two holding a member of the same name do not meet. A zip up to 32 MB is read
+whole and inflated in memory, its members checked against the size and CRC its directory states; a
+larger one, or one in a form that read does not cover, is streamed. Most archives are a few hundred
+bytes and a month holds tens of thousands, so what costs is the handling per archive and not the
+bytes: read whole, an archive already in the page cache is extracted about ten times faster than
+streamed. One that has never been read costs a disk read either way, and that read is then most of
+the time.
+
+### Extraction runs ahead of the builds, on threads of its own
+
+A month of small files is nearly all extraction: the engine has a few megabytes of rows to read and
+tens of thousands of archives to wait for. So extraction does not wait to be asked. `STOCKER_UNPACK_WORKERS`
+threads extract and do nothing else, and what they work on is chosen ahead of the builds:
+
+- the tasks of the partition being built that no connection has reached yet, and then
+- the tasks of the partition after it, which the sweep decides while the current one is being stocked.
+
+A build that reaches a task finds its archives extracted, or waits only for what is left of them. A
+task read natively passes straight through, so none of this is decided by venue or by format: it is
+read off the files of each task.
+
+**What is extracted ahead is bounded by the disk.** No more than a fifth of the vault volume's free
+space is held in scratch for archives nothing has read yet, counted in what the extractions wrote —
+and by eight times the compressed size for one still running. Past that nothing more is started
+until a build removes what it has read. A task a build is waiting on is never held back: the bound is
+on getting ahead, not on working. What was extracted for a build that never came — the sweep stopped,
+the partition failed — is removed.
+
+With no threads configured the same order holds and the work is done on the main thread.
 
 Extraction lands in `<vault>/.stocker-tmp`, **never the system temp directory**: these archives
 run to hundreds of MB, and in a container `os.tmpdir()` is the overlay filesystem, where filling

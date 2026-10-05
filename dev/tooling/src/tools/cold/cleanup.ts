@@ -60,7 +60,7 @@ const install = (): void => {
   const stop = (code: number) => (): void => {
     release();
     process.stdout.write('\n');
-    info('Cancelled — nothing was left half-done; re-run to pick up where this stopped');
+    info('Stopped - will resume on next restart');
     process.exit(code);
   };
 

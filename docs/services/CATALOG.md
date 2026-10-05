@@ -61,6 +61,32 @@ slice, counted off the series' own first and last file.
 with its counts, its version and when that last moved. Through a lens it is the lens's partitions
 and no others. It is a read of a few thousand rows, so it is not paged.
 
+**Settled is worked out when it is asked about, and only then.** A caller can narrow the view to
+settled partitions, and the answer takes two facts that are not on the partition: today's date and
+the venue's open runs. A partition is settled when both hold:
+
+- **Its month ended more than 15 days ago.** A venue goes on publishing a period's files for days
+  after the period closes. The same 15 days decide, in prospector, when a file that has not appeared
+  stops being waited for, so a month is taken as closed here when nothing is being waited for in it.
+- **Its version last moved before the venue's open run started.** A run that has changed a
+  partition may not be done with it, and during a backfill it usually is not. A run that stopped
+  half way counts the same as one at work: what it would have found next is still unfound. A
+  partition the open run has not changed holds all that an earlier, completed run found, so it was
+  whole at least once.
+
+A run is the venue's, whichever hosts it reaches, and a venue has one open or none. The `run` table
+holds that one run as several rows — one per host and per part of the tree — so the run's start is
+read as the earliest start among the venue's unfinished rows, by venue name and never by host.
+
+Settled is the strongest thing that can be said, and it is not a promise. A walk can find a change
+anywhere in a venue's history, and a republish, a withdrawal or a very late file moves the version
+of a partition long settled. Those are rare, and whoever acted on the old version sees the new one.
+
+`settled-before` adds quiet to it: settled, and unchanged since an instant the caller names. The two
+limits on the version are one comparison, against whichever is earlier. The open run is a single
+read of `run` through its index of unfinished rows, made once per request and not at all for a
+caller that asks for neither.
+
 ## Listings
 
 **One bucket, every venue's files, keyed by what each file is** — see the key in

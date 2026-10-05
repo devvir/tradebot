@@ -41,6 +41,37 @@ export const queueUpload = async (local: string, remoteDir: string): Promise<voi
 };
 
 /**
+ * Ask Mega to bring a stored tar back, and return without waiting.
+ *
+ * Queued like an upload, so it runs beside whatever else is going on: a tar
+ * coming back to be corrected costs download capacity, and the link's upload
+ * side stays busy with other tars meanwhile.
+ */
+export const queueDownload = async (remotePath: string, localDir: string): Promise<void> => {
+  await execFileAsync('mega-get', ['-q', remotePath, `${localDir.replace(/\/$/, '')}/`], { timeout: 120_000 });
+};
+
+/**
+ * The local paths Mega is bringing files back to, active or waiting.
+ *
+ * As with uploads, the queue outlives this command — so a tar still on its way
+ * is not asked for a second time.
+ */
+export const downloadingPaths = async (): Promise<Set<string>> => {
+  try {
+    const { stdout } = await execFileAsync(
+      'mega-transfers',
+      ['--only-downloads', '--limit=100000', '--col-separator=|', '--output-cols=DESTINYPATH'],
+      { timeout: 60_000, maxBuffer: 64 * 1024 * 1024 },
+    );
+
+    return new Set(stdout.split('\n').map(line => line.trim()).filter(line => line.startsWith('/')));
+  } catch {
+    return new Set();
+  }
+};
+
+/**
  * What the whole upload queue still has to send.
  *
  * **Deliberately not filtered to our own transfers.** There is one link and one

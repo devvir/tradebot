@@ -90,6 +90,7 @@ const catalog = async (url: string | URL): Promise<Response> => {
     slices.set(id, slice);
   }
 
+  // The catalog's own settled rule is its business; here it is whatever went quiet in time.
   const before = asked.get('settled-before');
   const wanted = asked.get('datasets')?.split(',');
 
@@ -127,6 +128,8 @@ beforeEach(async () => {
   pending   = [];
   queries   = [];
   updatedAt = '2020-01-01T00:00:00.000Z';
+
+  config.coolHours = null;
 
   await rm(config.archivesDir, { recursive: true, force: true });
   await rm(config.vaultDir, { recursive: true, force: true });
@@ -179,15 +182,27 @@ describe('a sweep', () => {
   });
 
   /** The catalog is asked only for what can be acted on, and only for what stocker reads. */
-  it('asks for partitions that are downloaded and have gone quiet', async () => {
+  it('asks for partitions that are downloaded and settled', async () => {
+    await sweep(conns);
+
+    const [asked] = queries;
+
+    expect(asked!.get('downloaded')).toBe('true');
+    expect(asked!.get('settled')).toBe('true');
+    expect(asked!.has('settled-before')).toBe(false);
+    expect(asked!.get('datasets')!.split(',')).toContain('trades');
+  });
+
+  it('asks for quiet on top where a cool-down is set', async () => {
+    config.coolHours = 3;
+
     await sweep(conns);
 
     const [asked] = queries;
     const quiet   = Date.now() - new Date(asked!.get('settled-before')!).getTime();
 
-    expect(asked!.get('downloaded')).toBe('true');
-    expect(Math.round(quiet / 3_600_000)).toBe(config.coolHours);
-    expect(asked!.get('datasets')!.split(',')).toContain('trades');
+    expect(Math.round(quiet / 3_600_000)).toBe(3);
+    expect(asked!.has('settled')).toBe(false);
   });
 
   it('leaves a partition alone while any file of it is still owed', async () => {
@@ -200,12 +215,14 @@ describe('a sweep', () => {
 
   /** A partition a run may still be adding to is left alone until it has gone quiet. */
   it('leaves a partition that changed too recently for a later sweep', async () => {
+    config.coolHours = 1;
+
     await place('gate.futures_usdt-trades.csv', key('BTC_USDT'));
     updatedAt = new Date().toISOString();
 
     expect(await sweep(conns)).toMatchObject({ built: 0, considered: 0 });
 
-    updatedAt = new Date(Date.now() - 2 * config.coolHours * 3_600_000).toISOString();
+    updatedAt = new Date(Date.now() - 2 * 3_600_000).toISOString();
 
     expect(await sweep(conns)).toMatchObject({ built: 1 });
   });

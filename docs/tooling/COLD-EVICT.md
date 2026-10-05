@@ -1,5 +1,9 @@
 # cold evict
 
+> **Not running.** `cold evict` has not moved onto partitions yet, and refuses to start. This is
+> the command as designed and built before that move — its code is in
+> `dev/tooling/src/tools/cold/legacy/` — and it is what the rebuild starts from.
+
 `cold evict [origin] [venues…]` reclaims local disk once cold storage provably holds what is being deleted. See [COLD.md](COLD.md) for the namespace and origins, and [COLD-PUSH.md](COLD-PUSH.md) for how things got into cold storage in the first place.
 
 **This is the only irreversible command in the family**, and the safeguards are the confirmation that lists what would go and defaults to no, and the trash that catches what does. Naming the origin is not one of them, so it prompts like the rest — an argument that errors out instead of asking only teaches people to type it without reading it.

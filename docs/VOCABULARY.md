@@ -61,6 +61,15 @@ all.
 **Version.** A value per partition that changes whenever a file in it is added, modified or
 removed, and is the same wherever the same files are.
 
+**Run.** One pass of discovery over a venue's archives, finding what was published, changed or
+withdrawn since the last. A run belongs to the venue, however many hosts the venue publishes from,
+and a venue has at most one unfinished run at a time.
+
+**Settled (partition).** A partition whose month ended long enough ago for the venue to have
+finished publishing into it, and that no unfinished run has changed. Everything in a settled
+partition was found by a run that completed. Settled is not final: a venue can still republish,
+withdraw or publish late, and the partition's version changes when it does.
+
 **The archives.** The local folder holding downloaded archive files under their canonical keys.
 
 ## Pipeline

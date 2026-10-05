@@ -221,6 +221,39 @@ export interface Group {
 /** What one connection builds at a time: one big instrument, or a batch of small ones. */
 export type Task = Group[];
 
+/** One task's archives, as extraction ahead of the builds keeps track of them. */
+export interface PrepareSlot {
+  inputs:   { absolute: string; container: string }[];
+
+  /** Whether anything of it has to be extracted; a task read natively costs nothing to prepare. */
+  extracts: boolean;
+
+  /** What it is expected to write to scratch, before it has. */
+  estimate: number;
+
+  /** What it is counted as holding of scratch right now. */
+  charged:  number;
+
+  /** Whether it is being extracted on a thread of the pool. */
+  flying:   boolean;
+
+  promise:  Promise<import('./containers').UnpackedAll> | null;
+
+  /** Whether a build has asked for it, or it has been given up. */
+  taken:    boolean;
+}
+
+/** A partition decided on and about to be stocked: what it is built from, and its extraction under way. */
+export interface Job {
+  key:       VaultKey;
+  partition: Partition;
+  revision:  string;
+  held:      Map<string, Stocked>;
+  tasks:     Task[];
+  files:     number;
+  prefetch:  import('./prepare').Prefetch;
+}
+
 /** A neighbouring month a spilling partition reads the edge of. */
 export interface Edge {
   partition: Partition;
@@ -333,8 +366,14 @@ export interface Config {
   /** A partition whose archive files weigh more than this is stored one file per instrument, in GB. */
   splitGb:      number;
 
-  /** Hours a partition must have gone unchanged in the catalog before it is stocked. */
-  coolHours:    number;
+  /**
+   * Hours a settled partition must also have gone unchanged in the catalog
+   * before it is stocked; `null` asks for settled alone.
+   */
+  coolHours:    number | null;
+
+  /** Threads that extract archives beside the builds; zero extracts on the main thread. */
+  unpackWorkers: number;
 
   [key: string]: unknown;
 }
