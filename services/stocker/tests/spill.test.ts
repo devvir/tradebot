@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseKey } from '../src/keys';
-import { _test_groupsOf as groupsOf } from '../src/scan';
+import { _test_groupsOf as groupsOf, _test_sideGroupsOf as sideGroupsOf } from '../src/scan';
 import { clipFor, reachOf } from '../src/spill';
 import type { DiskFile, Series, Spill } from '../src/types';
 
@@ -52,22 +52,28 @@ describe('clipFor', () => {
 });
 
 describe('handing a neighbour\'s edge to the instruments that need it', () => {
-  it('adds each instrument its own share of the neighbour\'s first bucket', () => {
-    const groups = groupsOf(
-      [disk('BTCUSDT', '20241230'), disk('BTCUSDT', '20241231'), disk('ETHUSDT', '20241231')],
-      [disk('BTCUSDT', '20250101'), disk('ETHUSDT', '20250101')],
-    );
+  /** A month's own files and what its neighbour holds of it are built apart, so they are grouped apart. */
+  it('groups each instrument\'s share of the neighbour\'s first bucket by itself', () => {
+    const own = groupsOf([disk('BTCUSDT', '20241230'), disk('BTCUSDT', '20241231'), disk('ETHUSDT', '20241231')]);
+    const side = sideGroupsOf([disk('BTCUSDT', '20250101'), disk('ETHUSDT', '20250101')], new Set(own.map(g => g.symbol)));
 
-    expect(groups.map(g => [g.symbol, g.inputs.map(i => i.file.date)])).toEqual([
-      ['BTCUSDT', ['20241230', '20241231', '20250101']],
-      ['ETHUSDT', ['20241231', '20250101']],
+    expect(own.map(g => [g.symbol, g.inputs.map(i => i.file.date)])).toEqual([
+      ['BTCUSDT', ['20241230', '20241231']],
+      ['ETHUSDT', ['20241231']],
+    ]);
+    expect(side.map(g => [g.symbol, g.inputs.map(i => i.file.date)])).toEqual([
+      ['BTCUSDT', ['20250101']],
+      ['ETHUSDT', ['20250101']],
     ]);
   });
 
   /** An instrument that only appears next month has nothing of this month to complete. */
   it('drops a neighbour\'s file for an instrument this month does not hold', () => {
-    const groups = groupsOf([disk('BTCUSDT', '20241231')], [disk('NEWUSDT', '20250101')]);
+    expect(sideGroupsOf([disk('NEWUSDT', '20250101')], new Set(['BTCUSDT']))).toEqual([]);
+  });
 
-    expect(groups.map(g => g.symbol)).toEqual(['BTCUSDT']);
+  /** Where the month's instruments are not known by name — one file holds them all — nothing is dropped here. */
+  it('keeps every file where the instruments are not known by name', () => {
+    expect(sideGroupsOf([disk('@', '20250101')], null).map(g => g.symbol)).toEqual(['@']);
   });
 });

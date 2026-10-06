@@ -5,13 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Archives } from '../../../src/tools/cold/disk';
 import { _test_remove as remove, _test_survey as survey } from '../../../src/tools/cold/evict';
 import * as record from '../../../src/tools/cold/record';
-import { errorsIn, evictedFrom, stockedIn } from '../../../src/tools/cold/vault';
+import { errorsIn, stockedIn } from '../../../src/tools/cold/vault';
 import type { DatabaseSync } from 'node:sqlite';
 import type { CatalogPartition, ColdConfig, Grain, ListedSlice } from '../../../src/tools/cold/types';
 
 /**
  * What of the archives can leave the disk: only what cold storage holds and
- * the vault was stocked from, with the months either side of it stocked too.
+ * the vault was stocked from, and that no neighbouring month still needs.
  */
 
 let dir:      string;
@@ -75,15 +75,25 @@ const stock = (...lines: (CatalogPartition & { pre?: string; post?: string })[])
 
   if (! fs.existsSync(file)) fs.writeFileSync(file, `${head}\n`);
 
-  for (const one of lines)
+  for (const one of lines) {
     fs.appendFileSync(file, [
-      `venue=gate/market=spot/dataset=trades/${one.month}`, one.venue, one.market, one.dataset, one.variant, one.grain,
-      one.bundle, one.month, 'bundle', one.version, one.pre ?? '', one.post ?? '', 'abcdef012345', 10, 1, 'T',
+      `${SLICE}/${one.month}`, one.venue, one.market, one.dataset, one.variant, one.grain,
+      one.bundle, one.month, 'bundle', one.version, one.pre ?? '', one.post ?? '', REVISION, 10, 1, 'T',
     ].join('|') + '\n');
+
+    // And the file the line speaks of, in the vault.
+    fs.mkdirSync(path.join(dir, 'vault', SLICE, '@'), { recursive: true });
+    fs.writeFileSync(vaultFile(one.month), 'x'.repeat(10));
+  }
 };
 
+const SLICE    = 'venue=gate/market=spot/dataset=trades';
+const REVISION = 'abcdef012345';
+
+const vaultFile = (month: string): string => path.join(dir, 'vault', SLICE, '@', `${month}.parquet`);
+
 const look = (now?: number) =>
-  survey(db, config(), 'archives', 'gate', stockedIn(config().vaultRoot) ?? [], evictedFrom(config().vaultRoot), now);
+  survey(db, config(), 'archives', 'gate', stockedIn(config().vaultRoot) ?? [], now);
 
 const evictable = async (now?: number): Promise<string[]> =>
   (await look(now)).ready.map(one => `${one.month} ${one.grain}`);
@@ -129,33 +139,13 @@ describe('what of the archives can be evicted', () => {
     expect(await evictable()).toEqual(['202001 daily', '202002 daily', '202003 daily', '202004 daily']);
   });
 
-  /**
-   * A month can be settled fifteen days after it ends. So the newest month that
-   * can be settled today has nothing after it yet — which is the venue not
-   * having published it, and no sign that the dataset has ended.
-   */
-  it('does not take a month for the last while the month after it has not had its time', async () => {
-    // 6 May: April ended six days ago, so March is the newest month that can be settled, and April is not it.
-    expect(await evictable(Date.UTC(2020, 4, 6))).toEqual(['202001 daily', '202002 daily', '202003 daily']);
-    expect((await look(Date.UTC(2020, 4, 6))).held).toMatchObject({ 'a neighbouring month is not stocked': 1 });
+  /** A dataset whose months keep to themselves: its lines name no side, and no month waits on another. */
+  it('does not wait on the months beside it where its ledger line names no side', async () => {
+    fs.rmSync(path.join(dir, 'vault', 'ledger.csv'));
+    stock(partition('202001'), partition('202002'), partition('202004'));
 
-    // 16 May: April can be settled now, and still has nothing after it that could be.
-    expect(await evictable(Date.UTC(2020, 4, 16))).toEqual(['202001 daily', '202002 daily', '202003 daily']);
-  });
-
-  /** May could have been settled by now and never came: April was the last. */
-  it('takes a month for the last once the month after it could have been settled and is not there', async () => {
-    expect(await evictable(Date.UTC(2020, 5, 15))).toEqual(['202001 daily', '202002 daily', '202003 daily']);
-    expect(await evictable(Date.UTC(2020, 5, 16))).toEqual(['202001 daily', '202002 daily', '202003 daily', '202004 daily']);
-  });
-
-  /** The months after it are there and not settled yet, so it has a neighbour, and waits. */
-  it('does not take the last settled month for the last there is', async () => {
-    publish([...MONTHS, '202005'].map(month => partition(month)));
-    onDisk('202005');
-
-    expect(await evictable()).toEqual(['202001 daily', '202002 daily', '202003 daily']);
-    expect((await look()).held).toMatchObject({ 'a neighbouring month is not stocked': 1 });
+    expect(await evictable()).toEqual(['202001 daily', '202002 daily', '202004 daily']);
+    expect((await look()).held).toMatchObject({ 'not stocked': 1, 'a neighbouring month still needs it': 0 });
   });
 
   it('leaves what cold storage does not hold, or holds at another version', async () => {
@@ -181,16 +171,15 @@ describe('what of the archives can be evicted', () => {
     fs.rmSync(path.join(dir, 'vault', 'ledger.csv'));
     stock(partition('202001'), partition('202002', 'daily', 'old'), partition('202003'), partition('202004'));
 
-    // 202002 is not stocked as it is now, so neither it nor the months beside it can go.
-    expect(await evictable()).toEqual(['202004 daily']);
-    expect((await look()).held).toMatchObject({ 'not stocked': 1, 'a neighbouring month is not stocked': 2 });
+    expect(await evictable()).toEqual(['202001 daily', '202003 daily', '202004 daily']);
+    expect((await look()).held).toMatchObject({ 'not stocked': 1 });
   });
 
   /** The last line for a partition is the one that counts. */
   it('reads the last line the ledger has for a partition', async () => {
     stock(partition('202002', 'daily', 'old'));
 
-    expect(await evictable()).toEqual(['202004 daily']);
+    expect(await evictable()).toEqual(['202001 daily', '202003 daily', '202004 daily']);
 
     stock(partition('202002'));
 
@@ -220,11 +209,39 @@ describe('what of the archives can be evicted', () => {
     expect((await look()).held).toMatchObject({ 'not stocked': 1 });
   });
 
-  it('holds a month whose neighbour is not stocked, and not the first for having none before it', async () => {
+  /** Stocked without the hours a neighbour holds of it, and stocked all the same: its own files have given all they hold. */
+  it('takes a month stocked without a neighbour\'s hours as stocked', async () => {
     fs.rmSync(path.join(dir, 'vault', 'ledger.csv'));
-    stock(partition('202001'), partition('202002'), partition('202004'));
+    stock(...MONTHS.map(month => ({ ...partition(month), post: 'missing' })));
 
-    expect(await evictable()).toEqual(['202001 daily']);
+    expect(await evictable()).toContain('202001 daily');
+    expect((await look()).held).toMatchObject({ 'not stocked': 0 });
+  });
+
+  /** What was stocked has to be held somewhere still: on disk in the vault, or in cold storage. */
+  it('does not take a month for stocked whose vault file is gone and is not in cold storage', async () => {
+    fs.rmSync(vaultFile('202002'));
+
+    expect(await evictable()).toEqual(['202001 daily', '202003 daily', '202004 daily']);
+    expect((await look()).held).toMatchObject({ 'not stocked': 1 });
+  });
+
+  it('takes it for stocked where the vault file is gone and cold storage holds it', async () => {
+    fs.rmSync(vaultFile('202002'));
+
+    record.planVaultFiles(db, [{ partition: `${SLICE}/202002`, revision: REVISION, instrument: '@', side: '', path: 'p', bytes: 10 }]);
+    record.storeVaultPartition(db, `${SLICE}/202002`, REVISION);
+
+    expect(await evictable()).toHaveLength(4);
+  });
+
+  it('does not take cold storage holding another revision for holding this one', async () => {
+    fs.rmSync(vaultFile('202002'));
+
+    record.planVaultFiles(db, [{ partition: `${SLICE}/202002`, revision: '000000000000', instrument: '@', side: '', path: 'p', bytes: 10 }]);
+    record.storeVaultPartition(db, `${SLICE}/202002`, '000000000000');
+
+    expect(await evictable()).toEqual(['202001 daily', '202003 daily', '202004 daily']);
   });
 
   /** A month the venue published nothing in is nobody's neighbour. */
@@ -268,18 +285,105 @@ describe('what of the archives can be evicted', () => {
     expect((await look()).gone).toBe(0);
     expect(await evictable()).toHaveLength(4);
   });
+});
 
-  /** A vault partition moved out is not accounted for until the vault is in cold storage too. */
-  it('does not take a vault partition marked as moved out for stocked', async () => {
-    fs.writeFileSync(path.join(dir, 'vault', 'evicted.csv'),
-      'partition|revision|evicted|date\nvenue=gate/market=spot/dataset=trades/202002|abcdef012345|true|T\n');
+/**
+ * A venue that cuts its days away from UTC midnight: a month's first or last
+ * hours are in a file of the month next door. A month's own ledger line says
+ * which way, and so which neighbour its files hold hours of.
+ */
+describe('where a month\'s last hours are in the next month\'s files', () => {
+  /** Each month's line names the month after it; the last has none to name yet. */
+  const stocked = (...post: string[]): void => {
+    fs.rmSync(path.join(dir, 'vault', 'ledger.csv'));
+    stock(...MONTHS.map((month, at) => ({ ...partition(month), post: post[at]! })));
+  };
 
-    expect(await evictable()).toEqual(['202004 daily']);
+  it('lets a month go once the month before has the hours its files hold', async () => {
+    stocked('v1', 'v1', 'v1', 'missing');
 
-    fs.appendFileSync(path.join(dir, 'vault', 'evicted.csv'),
-      'venue=gate/market=spot/dataset=trades/202002|abcdef012345|false|T\n');
+    expect(await evictable()).toEqual(['202001 daily', '202002 daily', '202003 daily', '202004 daily']);
+  });
 
-    expect(await evictable()).toHaveLength(4);
+  /** January was stocked before February came: February's files are what will complete it. */
+  it('keeps a month whose files hold hours the month before is still without', async () => {
+    stocked('missing', 'v1', 'v1', 'missing');
+
+    expect(await evictable()).toEqual(['202001 daily', '202003 daily', '202004 daily']);
+    expect((await look()).held).toMatchObject({ 'a neighbouring month still needs it': 1 });
+  });
+
+  it('keeps it where the month before is not stocked at all', async () => {
+    fs.rmSync(path.join(dir, 'vault', 'ledger.csv'));
+    stock(...MONTHS.slice(1).map(month => ({ ...partition(month), post: month === '202004' ? 'missing' : 'v1' })));
+
+    expect(await evictable()).toEqual(['202003 daily', '202004 daily']);
+    expect((await look()).held).toMatchObject({ 'not stocked': 1, 'a neighbouring month still needs it': 1 });
+  });
+
+  /** A month the venue published nothing in will never need anything. */
+  it('does not wait on a month before that the dataset does not have', async () => {
+    const some = ['202001', '202003', '202004'].map(month => partition(month));
+
+    publish(some);
+    fs.rmSync(path.join(dir, 'vault', 'ledger.csv'));
+    stock(...some.map(one => ({ ...one, post: one.month === '202003' ? 'v1' : 'missing' })));
+
+    expect(await evictable()).toEqual(['202001 daily', '202003 daily', '202004 daily']);
+  });
+
+  /** The newest month has nothing after it and is nobody's to wait for: its files hold hours of the month before. */
+  it('does not wait on the month after it', async () => {
+    stocked('v1', 'v1', 'v1', 'missing');
+
+    expect(await evictable(Date.UTC(2020, 4, 6))).toContain('202004 daily');
+  });
+});
+
+describe('where a month\'s first hours are in the files of the month before', () => {
+  /** Each month's line names the month before it; the first has none to name. */
+  const stocked = (...pre: string[]): void => {
+    fs.rmSync(path.join(dir, 'vault', 'ledger.csv'));
+    stock(...MONTHS.map((month, at) => ({ ...partition(month), pre: pre[at]! })));
+  };
+
+  it('keeps a month whose files hold hours the month after is still without', async () => {
+    stocked('missing', 'v1', 'missing', 'v1');
+
+    expect(await evictable()).toEqual(['202001 daily', '202003 daily', '202004 daily']);
+  });
+
+  /**
+   * A month can be settled fifteen days after it ends. So the newest month that
+   * can be settled today has nothing after it yet — which is the venue not
+   * having published it, and no sign that the dataset has ended.
+   */
+  it('does not take a month for the last while the month after it has not had its time', async () => {
+    stocked('missing', 'v1', 'v1', 'v1');
+
+    // 6 May: April ended six days ago, so March is the newest month that can be settled, and April is not it.
+    expect(await evictable(Date.UTC(2020, 4, 6))).toEqual(['202001 daily', '202002 daily', '202003 daily']);
+    expect((await look(Date.UTC(2020, 4, 6))).held).toMatchObject({ 'a neighbouring month still needs it': 1 });
+
+    // 16 May: April can be settled now, and still has nothing after it that could be.
+    expect(await evictable(Date.UTC(2020, 4, 16))).toEqual(['202001 daily', '202002 daily', '202003 daily']);
+  });
+
+  /** May could have been settled by now and never came: April was the last. */
+  it('takes a month for the last once the month after it could have been settled and is not there', async () => {
+    stocked('missing', 'v1', 'v1', 'v1');
+
+    expect(await evictable(Date.UTC(2020, 5, 15))).toEqual(['202001 daily', '202002 daily', '202003 daily']);
+    expect(await evictable(Date.UTC(2020, 5, 16))).toEqual(['202001 daily', '202002 daily', '202003 daily', '202004 daily']);
+  });
+
+  /** The month after it is there and not stocked yet: it will want these files. */
+  it('keeps the last settled month while the one after it is in the catalog and not stocked', async () => {
+    publish([...MONTHS, '202005'].map(month => partition(month)));
+    stocked('missing', 'v1', 'v1', 'v1');
+
+    expect(await evictable()).toEqual(['202001 daily', '202002 daily', '202003 daily']);
+    expect((await look()).held).toMatchObject({ 'a neighbouring month still needs it': 1 });
   });
 });
 

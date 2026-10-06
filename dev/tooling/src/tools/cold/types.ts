@@ -80,10 +80,114 @@ export interface Stocked {
   postVersion: string;
 
   revision:    string;
+
+  /** How it is stored: one file for every instrument, or a file per instrument. */
+  mode:        'bundle' | 'split';
+
+  /** What its files weigh, and how many there are. */
+  size:        number;
+  count:       number;
+}
+
+/**
+ * One file of the vault: a partition stored whole, or one instrument of a
+ * partition stored per instrument. The unit that is moved out of the vault and
+ * brought back — where a partition is the unit that is stored.
+ */
+export interface VaultFile {
+  partition:  string;
+  revision:   string;
+
+  /** The instrument the file is of; `@` for the one file of a partition stored whole. */
+  instrument: string;
+
+  /**
+   * Which rows of the month it holds: its own (`''`), or the hours a neighbouring
+   * month's files held of it — `pre` the first, `post` the last.
+   */
+  side:       '' | 'pre' | 'post';
+
+  /** Below the vault. */
+  path:       string;
+  bytes:      number;
+}
+
+/** A vault file as the record holds it: on its way to cold storage, or in it. */
+export interface StoredFile extends VaultFile {
+  state:     'planned' | 'queued' | 'stored';
+  handle:    string | null;
+
+  /** When it was taken off the local disk, where it has been and is not back. */
+  evictedAt: string | null;
+}
+
+/**
+ * Which of the vault is meant, for moving it out and for bringing it back.
+ * Every field narrows; one left out means any.
+ */
+export interface Selection {
+  venues:      string[];
+  market?:     string;
+  dataset?:    string;
+
+  /** A dataset's flavour as the vault's path names it: a kline's interval, funding's kind. */
+  variant?:    string;
+
+  /** Months, `YYYYMM`, both ends included. */
+  from?:       string;
+  to?:         string;
+
+  /** Instruments, by name. Empty means all of them. */
+  instruments: string[];
+}
+
+/** What storing the vault asks of Mega: the part of it a run can be given a stand-in for. */
+export interface Remote {
+  queuedPaths: () => Promise<Set<string>>;
+  queue:       () => Promise<QueueState>;
+  listing:     (root: string) => Promise<Map<string, { bytes: number; handle: string | null }>>;
+  queueUpload: (local: string, remoteDir: string) => Promise<void>;
+  remove:      (remotePath: string) => Promise<void>;
+}
+
+/** What bringing vault files back asks of Mega. */
+export interface Fetching {
+  downloadingPaths: () => Promise<Set<string>>;
+  queueDownload:    (remotePath: string, localDir: string) => Promise<void>;
+}
+
+/** What a look at the vault's ledger found still to store, venue by venue. */
+export interface VaultPlan {
+  venues:  Map<string, { partitions: number; files: number; bytes: number }>;
+
+  /** Partitions the vault does not hold as its ledger says: left out. */
+  skipped: number;
+}
+
+/** The options `evict` and `pull` take, as they are written on the command line. */
+export interface Chosen {
+  dryRun?:      boolean;
+  purge?:       boolean;
+  market?:      string;
+  dataset?:     string;
+  variant?:     string;
+  from?:        string;
+  to?:          string;
+
+  /** Comma-separated. */
+  instruments?: string;
+}
+
+export interface VaultOptions {
+  /** Say what would be done, and do nothing. */
+  dryRun?: boolean;
+
+  /** Delete outright, where the default is the host's trash. */
+  purge?:  boolean;
 }
 
 /** Why a partition of the archives stays on disk. */
-export type HeldBack = 'not in cold storage' | 'not stocked' | 'a neighbouring month is not stocked';
+export type HeldBack = 'not in cold storage' | 'not stocked' | 'a neighbouring month still needs it';
 
 /** What a look at one venue's archives came to. */
 export interface Evictable {

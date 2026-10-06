@@ -65,7 +65,7 @@ takerBuyQuote`. The interval is the variant; it is never a column.
 | kucoin | spot | all | zip · csv | yes | no | int s | **O C H L** | base, quote (`turnover`) | variant | by name, so the order costs nothing |
 | kucoin | perp | all | zip · csv | yes | no | int ms | OHLC | one | variant | `1d` files are malformed — see [details](#kucoin) |
 | htx | spot | before 2026-02-01 | zip · csv | no | no | int s | **O C H L** | **`vol` is quote, `amount` base** | variant | names invert against the later era |
-| htx | perp, future, option | before 2026-02-01 | zip · csv | no | no | int s | **O C H L** | `vol` contracts, `amount` base — **both sides counted** | variant | twice the trades on every minute checked — see [details](#htx) |
+| htx | perp, future, option | before 2026-02-01 | zip · csv | no | no | int s | **O C H L** | `vol` contracts, `amount` base | variant | twice the trades on the days checked — see [details](#htx) |
 | htx | spot, perp, future | from 2026-02-01 | zip · csv | yes | **yes** | int s | OHLC | `vol` (base on spot, contracts on contracts), quote `volCcyQuote` | variant | |
 | gate | spot, perp | all | csv.gz | no | no | int s | **`volume, close, high, low, open`** | base | variant | open and close reversed — see [details](#gate) |
 | gate | tradfi | all | csv.gz | no | no | int s | **`close, high, low, open`** | none published | variant | the spot candle less its volume |
@@ -134,7 +134,7 @@ surveyed.
 | books | gate future (full · incremental) | |
 | books | kucoin spot, perp (50 · snapshot) | csv with one `data` column of JSON: `sequence`, `asks`, `bids` |
 | books | bitget spot, perp, future | |
-| trades | binance spot, perp (aggregated) | reconstructible exactly from `trades` — deliberately no table |
+| trades | binance spot, perp (aggregated) | consecutive trades at one price and side, merged. Not read yet |
 | markPrice | bybit option (1m) | zip · csv, an underlying's whole book a day. `instrument_name, open_time, open, high, low, close, delta, gama, vega, theta` — the four greeks have no column in `markPrice` |
 | indexPrice | gate spot (ticks, **market** bundle) | plain text, a line per instrument: `<symbol> <price>`. **The time is in the file's name** (`slice_index_<epoch>`), not in any row |
 | liquidations | binance perp (USDⓈ-M) · binance future | |
@@ -272,11 +272,12 @@ the earlier `vol` is quote and `amount` base (868.87 ZEC against 44,492 USDT at 
 `vol` is the contract count in both eras, and the earlier `amount` the base coin. On the same day the two eras agree bar for bar
 (`BTC-USDT` 1m, all 1,440 bars). The earlier perp trades carry both legs, which the later shape drops.
 
-**A contract's earlier klines count both sides of every trade.** `vol` and `amount` are exactly twice
-the trades summed per minute, on every minute that traded: 1,438 of 1,438 on `BTC-USDT` and 1,440 of
-1,440 on `BTC-USD` for 2020-11-14, and each traded minute of two option days. They are stored as
-published, so a contract's kline volume in the vault is twice its trades'. Spot was not checked this
-way, nor the later era on contracts.
+**On the days checked, a contract's kline volume is twice its trades.** `vol` and `amount` are
+exactly twice the trades summed per minute, on every minute that traded: 1,438 of 1,438 on
+`BTC-USDT` and 1,440 of 1,440 on `BTC-USD` for 2020-11-14, and each traded minute of two option days
+in the same month. That is three instruments and one month. Whether it holds across the history, on
+dated futures, on spot or in the later export has not been checked, and neither has why. Klines are
+stored as published.
 
 **Options** (`BTC-USDT-201225-C-13000`) ran from 2020-08 to 2021-06, USDT-margined throughout, and
 are the linear contract's shapes: trades with contracts, base and a quote leg that is the premium

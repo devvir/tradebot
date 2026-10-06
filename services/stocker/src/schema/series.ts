@@ -411,11 +411,11 @@ export const SERIES: Series[] = [
     until: HTX_CUT, header: false, columns: HTX_OLD_KLINE,
     project: { ...OHLC, volume: 'amount', quoteVolume: 'vol' }, ts: 'rawTs',
   },
-  // **A contract's kline counts both sides of every trade.** `vol` and `amount`
-  // are exactly twice the day's trades summed per minute, on every minute that
-  // traded: 1,438 of 1,438 on `BTC-USDT` and 1,440 of 1,440 on `BTC-USD` for
-  // 2020-11-14, and every traded minute of the two option days read. They are
-  // stored as published.
+  // On the days checked, `vol` and `amount` are exactly twice the day's trades
+  // summed per minute, on every minute that traded: 1,438 of 1,438 on
+  // `BTC-USDT` and 1,440 of 1,440 on `BTC-USD` for 2020-11-14, and every traded
+  // minute of two option days of that month. Whether that holds elsewhere, and
+  // why, is not known. They are stored as published.
   ...(['perp', 'future', 'option'] as const).map((market): Series => ({
     venue: 'htx', market, dataset: 'klines', variant: '*', table: 'klines', ...csv, spill: 'back',
     until: HTX_CUT, header: false, columns: HTX_OLD_KLINE,

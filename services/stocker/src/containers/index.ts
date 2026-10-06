@@ -7,6 +7,12 @@ import { needsExtracting } from './extract';
 import { Pool } from './pool';
 import type { UnpackedAll, Wrapped } from './types';
 
+/**
+ * Threads that extract archives beside the builds. Two keep extraction ahead of
+ * the engine without taking the machine from everything else running on it.
+ */
+const UNPACK_WORKERS = 2;
+
 /** The one transient directory, inside the volume stocker owns. */
 export const SCRATCH = '.stocker-tmp';
 
@@ -113,7 +119,7 @@ export const unpackAll = async (inputs: readonly Wrapped[]): Promise<UnpackedAll
 };
 
 /** The threads extraction runs on — see `Pool`. */
-export const pool = new Pool(config.unpackWorkers);
+export const pool = new Pool(UNPACK_WORKERS);
 
 export { containerFor } from './registry';
 export { needsExtracting } from './extract';

@@ -6,7 +6,7 @@ import config from './config';
 import { sweepScratch } from './build';
 import { open } from './db';
 import { validate } from './ledger';
-import { report, sweep } from './scan';
+import { SCAN_MINUTES, report, sweep } from './scan';
 
 /**
  * The archives are read-only to this service and must never be written to, so
@@ -76,7 +76,7 @@ SK.run(async () => {
     sweeping = true;
 
     try {
-      report(await sweep(conns), config.scanMinutes);
+      report(await sweep(conns), SCAN_MINUTES);
     } catch (err) {
       logger.error({ err }, 'Sweep failed');
     } finally {
@@ -86,5 +86,5 @@ SK.run(async () => {
 
   await pass();
 
-  setInterval(() => void pass(), config.scanMinutes * 60 * 1000);
+  setInterval(() => void pass(), SCAN_MINUTES * 60 * 1000);
 });

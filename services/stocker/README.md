@@ -21,6 +21,8 @@ modified, moved or deleted.
 - Converts every timestamp to **int64 microseconds UTC**, inferring each value's unit
 - Writes zstd Parquet: a small month as one file ordered by symbol and time, a large one as a
   file per instrument
+- Stocks a month whose first or last hours sit in a neighbouring month's files without them where
+  that month is not there yet, and adds them as a file of their own when it is
 - Keeps a ledger in the vault, a line per partition stocked: what it was stocked from, at which
   version, and what it weighs
 - Runs long-lived, sweeping on a timer so files that land unattended are picked up on their own
@@ -33,12 +35,14 @@ and what is not mapped yet, is in
 ## Layout
 
 ```
-<vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…]/@/<YYYYMM>.<revision>.parquet
-<vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…]/<symbol>/<YYYYMM>.<revision>.parquet
+<vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…]/@/<YYYYMM>.parquet
+<vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…]/<symbol>/<YYYYMM>.parquet
+…/<@ or symbol>/<YYYYMM>.pre.parquet     the month's first hours, from the month before
+…/<@ or symbol>/<YYYYMM>.post.parquet    the month's last hours, from the month after
 ```
 
 A month is one file under `@` holding every instrument, or — where its archive files weigh more
-than `STOCKER_SPLIT_GB` — a file per instrument under its symbol. The `key=value` levels are read
+than 1 GB — a file per instrument under its symbol. The `key=value` levels are read
 back as columns and pruned on; `@`, the symbol folders and the file names are bare, and the symbol
 is a column of every file:
 
@@ -73,27 +77,17 @@ order-book month is ~23 GB and in a container `/tmp` is the overlay filesystem.
 | `CATALOG_API` | no | `http://catalog:8080` | Where the catalog answers |
 | `CATALOG_TOKEN` | no | _(none)_ | The catalog's shared secret |
 | `STOCKER_LENS` | no | _(none)_ | The lens the catalog is read through; none reads the whole catalog |
-| `STOCKER_VENUES` | no | _(all)_ | Comma-separated venue filter, case-insensitive; an unknown venue fails startup |
-| `STOCKER_TABLES` | no | _(all)_ | Comma-separated table filter, case-insensitive; an unknown table fails startup |
-| `STOCKER_SYMBOLS` | no | _(all)_ | Symbol tokens, matched as case-insensitive substrings. A partition stocked through it carries it in its revision |
-| `STOCKER_START_MONTH` | no | _(none)_ | Oldest month to stock, inclusive. `yyyy-mm`, `yyyymm` or `yymm` |
-| `STOCKER_END_MONTH` | no | _(none)_ | Newest month to stock, inclusive |
+| `STOCKER_VENUES` | no | _(all)_ | Comma-separated venue filter, case-insensitive; an unknown venue fails startup. Venues are swept alphabetically, whatever order they are listed in |
 | `STOCKER_CONCURRENCY` | no | `2` | Instruments built at once, each holding a month-sized sort |
-| `STOCKER_SCAN_MINUTES` | no | `30` | Minutes between sweeps |
 | `STOCKER_THREADS` | no | `4` | Query engine threads |
 | `STOCKER_MIN_FREE_GB` | no | `20` | No partition is started below this much free space on the vault volume |
-| `STOCKER_MEMORY_GB` | no | `4` | Memory the query engine may use before it spills to disk |
-| `STOCKER_SPLIT_GB` | no | `1` | A month whose archive files weigh more than this is stored as a file per instrument |
-| `STOCKER_UNPACK_WORKERS` | no | `2` | Threads that extract archives beside the builds; `0` extracts on the main thread |
-| `STOCKER_COOL_HOURS` | no | _(none)_ | Hours a settled partition must also have gone unchanged in the catalog before it is stocked |
+| `STOCKER_ENGINE_MEMORY_GB` | no | `4` | Memory the query engine may use before it spills to disk |
 
 `STOCKER_ARCHIVES_DIR` and `STOCKER_VAULT_DIR` also override the container paths when running
 outside Docker.
 
-`STOCKER_MEMORY_MB` (default `4096`) is a **build argument**, not one of these. Nothing in stocker
-reads it or behaves differently for it — the container's entrypoint turns it into the node heap and
-that is the end of it. Appetite is set by `STOCKER_CONCURRENCY`, since every concurrent build holds
-a sort; this is only the ceiling the host will tolerate while the collectors run alongside.
+A sweep runs every 5 minutes. The node heap is fixed at 4096 MB: what grows with a month's size is
+the query engine's memory, which is `STOCKER_ENGINE_MEMORY_GB`.
 
 ## Extending it
 

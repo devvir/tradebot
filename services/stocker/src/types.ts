@@ -248,26 +248,51 @@ export interface Job {
   key:       VaultKey;
   partition: Partition;
   revision:  string;
-  held:      Map<string, Stocked>;
   edges:     Edge[];
+
+  /** The sides a neighbouring month holds of it that are not there to be read. */
+  missing:   Side[];
+
   tasks:     Task[];
+
+  /** What each task builds: the month's own rows, or what a neighbour holds of it. */
+  passes:    Pass[];
+
   files:     number;
   prefetch:  import('./prepare').Prefetch;
+
+  /**
+   * Where the month is already in the vault with a side missing, and this is
+   * that side arriving: the revision it is stocked at, and the sides that
+   * arrive. Only they are built; the month's own rows are not read again.
+   */
+  completes: { revision: string; sides: Side[] } | null;
 }
+
+/** What a build writes: a month's own rows, or one side of what its neighbours hold of it. */
+export type Pass = 'own' | Side;
+
+/**
+ * Which end of a month a neighbouring month holds: `pre` its first hours, in a
+ * file of the month before, `post` its last, in a file of the month after.
+ */
+export type Side = 'pre' | 'post';
 
 /** A neighbouring month a spilling partition reads the edge of. */
 export interface Edge {
   partition: Partition;
+
+  /** Which of the neighbour's files are read: those of its first period, or of its last. */
   side:      'first' | 'last';
+
+  /** Which end of this month they hold. */
+  end:       Side;
 }
 
-/**
- * What the vault holds of one slice, read once: for each month, the revisions
- * present and how each is stored.
- */
-export type SliceIndex = Map<string, Map<string, Stocked>>;
+/** What the vault holds of one slice, read once: for each month, how it is stored. */
+export type SliceIndex = Map<string, Stocked>;
 
-/** One revision of one month in the vault. */
+/** One month of a slice in the vault. */
 export interface Stocked {
   /** Whether it is one file for every instrument. */
   bundle:     boolean;
@@ -275,8 +300,8 @@ export interface Stocked {
   /** The instruments it has a file for, where it is one file per instrument. */
   symbols:    string[];
 
-  /** Whether it was still being put in place when something stopped it. */
-  publishing: boolean;
+  /** The files of what neighbouring months held of it, each by where it sits and which side it is. */
+  sides:      { symbol: string; side: Side }[];
 }
 
 /** The instrument directories of each dataset in the archives, read once. */
@@ -340,8 +365,14 @@ export interface Summary {
   /** Stocked, and every input decoded to nothing. */
   empty:      number;
 
-  /** Ready themselves, but reading the edge of a neighbouring month that is not. */
+  /** In the catalog's answer with no file to stock from. */
   waiting:    number;
+
+  /** Stocked, or already in the vault, without the hours a neighbouring month holds of them. */
+  partial:    number;
+
+  /** Stocked partial before, and given the hours a neighbouring month held of them. */
+  completed:  number;
 
   /** Downloaded per the catalog, but not on disk as it says. */
   missing:    number;
@@ -373,21 +404,8 @@ export interface Config {
   /** Venues to process. Empty = all with a mapping. */
   venues:       readonly string[];
 
-  /** Tables to process. Empty = all mapped. */
-  tables:       readonly string[];
-
-  /** Symbol tokens, case-insensitive substrings. Empty = all. */
-  symbols:      readonly string[];
-
-  /** Inclusive month bounds, `YYYY-MM`, or null for none. */
-  startMonth:   string | null;
-  endMonth:     string | null;
-
   /** Builds run at once, one DuckDB connection each. */
   concurrency:  number;
-
-  /** Minutes between sweeps. */
-  scanMinutes:  number;
 
   /** Cores a build may use, so it cannot take every one on the box. */
   threads:      number;
@@ -397,18 +415,6 @@ export interface Config {
 
   /** Memory the engine may use before it spills to disk, in GB. */
   memoryGb:     number;
-
-  /** A partition whose archive files weigh more than this is stored one file per instrument, in GB. */
-  splitGb:      number;
-
-  /**
-   * Hours a settled partition must also have gone unchanged in the catalog
-   * before it is stocked; `null` asks for settled alone.
-   */
-  coolHours:    number | null;
-
-  /** Threads that extract archives beside the builds; zero extracts on the main thread. */
-  unpackWorkers: number;
 
   [key: string]: unknown;
 }

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { onExit } from './cleanup';
+import { isYes } from './options';
 import { confirm } from '../../shared/ui/prompts';
 import { info, warn } from '../../shared/ui/logger';
 
@@ -70,7 +71,8 @@ export const acquire = async (
     } else {
       warn(`A cold ${command} ${origin} run is already holding the lock: ${held}`);
 
-      if (! await confirm('Remove it and continue anyway?', false))
+      // Not a question `--yes` answers: with nobody to ask, a lock that is held stops the run.
+      if (isYes() || ! await confirm('Remove it and continue anyway?', false))
         throw new Error('Locked — another cold run is in progress');
 
       fs.rmSync(file, { force: true });

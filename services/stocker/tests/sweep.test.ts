@@ -1,13 +1,13 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import config from '../src/config';
 import { open } from '../src/db';
 import { parseKey } from '../src/keys';
 import { BACKEDUP, ERRORS, LEDGER, validate } from '../src/ledger';
-import { sweep } from '../src/scan';
+import { _test_splitAt as splitAt, sweep } from '../src/scan';
 import type { DuckDBConnection } from '@duckdb/node-api';
 import type { ListedSlice } from '../src/types';
 
@@ -31,8 +31,9 @@ let pending: string[];
 /** When the catalog last saw anything change: long ago, unless a test says otherwise. */
 let updatedAt: string;
 
-/** What each request to the catalog asked for. */
+/** What each request to the catalog asked for, and of which venue. */
 let queries: URLSearchParams[];
+let venuesAsked: string[];
 
 const key = (symbol: string, date = MONTH) =>
   `gate/perp/trades/B/${symbol}/${date.slice(0, 6)}/gate|perp|trades|${symbol}|${date}.csv.gz`;
@@ -57,6 +58,7 @@ const catalog = async (url: string | URL): Promise<Response> => {
   const asked  = new URL(String(url)).searchParams;
 
   queries.push(asked);
+  venuesAsked.push(venue ?? '');
 
   const slices = new Map<string, ListedSlice>();
   const tags   = new Map<string, string[]>();
@@ -107,7 +109,29 @@ const catalog = async (url: string | URL): Promise<Response> => {
 /** Every file of the slice in the vault, relative to it. */
 const stocked = async (): Promise<string[]> =>
   ((await readdir(join(config.vaultDir, SLICE), { recursive: true }).catch(() => [])) as string[])
-    .filter(name => /\.(parquet|publishing)$/.test(name)).sort();
+    .filter(name => name.endsWith('.parquet')).sort();
+
+/** A file of the vault's as its lines, each by its heading. */
+const linesOf = async (name: string): Promise<Record<string, string>[]> => {
+  const [head, ...rest] = (await readFile(join(config.vaultDir, name), 'utf8')).trim().split('\n');
+
+  return rest.map(line => Object.fromEntries(line.split('|').map((field, at) => [head!.split('|')[at]!, field])));
+};
+
+/**
+ * Leave the ledger as it is when something stops a partition between the first
+ * file moving and the last: its last line again, saying `updating`, changed as
+ * the test says.
+ */
+const interrupt = async (change: Record<string, string> = {}): Promise<void> => {
+  const text = await readFile(join(config.vaultDir, LEDGER), 'utf8');
+  const [head, ...rest] = text.trim().split('\n');
+  const columns = head!.split('|');
+  const last    = rest.at(-1)!.split('|');
+  const line    = { ...Object.fromEntries(columns.map((name, at) => [name, last[at]!])), revision: 'updating', ...change };
+
+  await appendFile(join(config.vaultDir, LEDGER), `${columns.map(name => line[name]).join('|')}\n`);
+};
 
 const rowsOf = async (path: string): Promise<unknown[][]> =>
   (await conns[0]!.runAndReadAll(`SELECT symbol, count(*)::INT FROM read_parquet('${path}') GROUP BY 1 ORDER BY 1`)).getRows();
@@ -128,9 +152,9 @@ beforeEach(async () => {
   listed    = [];
   pending   = [];
   queries   = [];
+  venuesAsked = [];
   updatedAt = '2020-01-01T00:00:00.000Z';
 
-  config.coolHours = null;
 
   await rm(config.archivesDir, { recursive: true, force: true });
   await rm(config.vaultDir, { recursive: true, force: true });
@@ -149,7 +173,7 @@ describe('a sweep', () => {
     const [file, ...rest] = await stocked();
 
     expect(rest).toEqual([]);
-    expect(file).toMatch(/^@\/202606\.[0-9a-f]{12}\.parquet$/);
+    expect(file).toBe('@/202606.parquet');
 
     // Each row says whose it is, and the instruments follow one another.
     const rows = await rowsOf(join(config.vaultDir, SLICE, file!));
@@ -165,21 +189,48 @@ describe('a sweep', () => {
     expect(await sweep(conns)).toMatchObject({ built: 0, current: 1 });
   });
 
-  /** Whatever changes in the catalog changes the revision, and the old one goes. */
-  it('restocks when a file changes in the catalog, and keeps only the new revision', async () => {
+  /** Whatever changes in the catalog changes the revision, and the month is written where it was. */
+  it('restocks when a file changes in the catalog, over the month that was there', async () => {
     await place('gate.futures_usdt-trades.csv', key('BTC_USDT'));
     await sweep(conns);
 
     const before = await stocked();
+    const [was]  = await linesOf(LEDGER);
 
     listed[0]!.ETag = '"e2"';
 
     expect(await sweep(conns)).toMatchObject({ built: 1 });
+    expect(await stocked()).toEqual(before);
 
-    const after = await stocked();
+    // The ledger is what tells the two apart: it said the month was changing, then what it holds.
+    const [, changing, now] = await linesOf(LEDGER);
 
-    expect(after).toHaveLength(1);
-    expect(after).not.toEqual(before);
+    expect(changing!['revision']).toBe('updating');
+    expect(now!['revision']).toMatch(/^[0-9a-f]{12}$/);
+    expect(now!['revision']).not.toBe(was!['revision']);
+  });
+
+  /** Stopped between the first file and the last: some of one build, some of another, and nothing to tell them apart. */
+  it('stocks again a partition something stopped while its files were replaced', async () => {
+    await place('gate.futures_usdt-trades.csv', key('BTC_USDT'));
+    await sweep(conns);
+    await interrupt();
+
+    expect(await sweep(conns)).toMatchObject({ built: 1, current: 0 });
+    expect(await stocked()).toEqual(['@/202606.parquet']);
+    expect((await linesOf(LEDGER)).at(-1)!['revision']).toMatch(/^[0-9a-f]{12}$/);
+    expect(await sweep(conns)).toMatchObject({ built: 0, current: 1 });
+  });
+
+  /** Its archives have gone, so there is nothing to stock it from — and what is left of it is still not a month. */
+  it('holds nothing of a partition stopped half way, until it can be stocked again', async () => {
+    await place('gate.futures_usdt-trades.csv', key('BTC_USDT'));
+    await sweep(conns);
+    await interrupt();
+    await rm(join(config.archivesDir, key('BTC_USDT')));
+
+    expect(await sweep(conns)).toMatchObject({ built: 0, current: 0, missing: 1 });
+    expect(await stocked()).toEqual([]);
   });
 
   /** The catalog is asked only for what can be acted on, and only for what stocker reads. */
@@ -194,16 +245,19 @@ describe('a sweep', () => {
     expect(asked!.get('datasets')!.split(',')).toContain('trades');
   });
 
-  it('asks for quiet on top where a cool-down is set', async () => {
-    config.coolHours = 3;
+  /** The setting says which venues, and nothing of the order they are taken in. */
+  it('works through the venues alphabetically, whatever order they were named in', async () => {
+    const all = config.venues;
 
-    await sweep(conns);
+    config.venues = ['okx', 'gate', 'bybit'];
 
-    const [asked] = queries;
-    const quiet   = Date.now() - new Date(asked!.get('settled-before')!).getTime();
+    try {
+      await sweep(conns);
+    } finally {
+      config.venues = all;
+    }
 
-    expect(Math.round(quiet / 3_600_000)).toBe(3);
-    expect(asked!.has('settled')).toBe(false);
+    expect(venuesAsked).toEqual(['bybit', 'gate', 'okx']);
   });
 
   it('leaves a partition alone while any file of it is still owed', async () => {
@@ -212,20 +266,6 @@ describe('a sweep', () => {
 
     expect(await sweep(conns)).toMatchObject({ built: 0, considered: 0 });
     expect(await stocked()).toEqual([]);
-  });
-
-  /** A partition a run may still be adding to is left alone until it has gone quiet. */
-  it('leaves a partition that changed too recently for a later sweep', async () => {
-    config.coolHours = 1;
-
-    await place('gate.futures_usdt-trades.csv', key('BTC_USDT'));
-    updatedAt = new Date().toISOString();
-
-    expect(await sweep(conns)).toMatchObject({ built: 0, considered: 0 });
-
-    updatedAt = new Date(Date.now() - 2 * 3_600_000).toISOString();
-
-    expect(await sweep(conns)).toMatchObject({ built: 1 });
   });
 
   it('skips a partition that is not on disk as catalogued', async () => {
@@ -249,10 +289,8 @@ describe('a sweep', () => {
  * file per instrument, so one instrument's share can be handled on its own.
  */
 describe('a partition over the split size', () => {
-  const was = config.splitGb;
-
-  beforeEach(() => { config.splitGb = 1e-9; });
-  afterEach(() => { config.splitGb = was; });
+  beforeEach(() => { splitAt(1); });
+  afterEach(() => { splitAt(null); });
 
   it('is stored as a file per instrument, each under its symbol', async () => {
     await place('gate.futures_usdt-trades.csv', key('BTC_USDT'));
@@ -263,8 +301,7 @@ describe('a partition over the split size', () => {
     const files = await stocked();
 
     expect(files).toHaveLength(2);
-    expect(files[0]).toMatch(/^BTC_USD\/202606\.[0-9a-f]{12}\.parquet$/);
-    expect(files[1]).toMatch(/^BTC_USDT\/202606\.[0-9a-f]{12}\.parquet$/);
+    expect(files).toEqual(['BTC_USD/202606.parquet', 'BTC_USDT/202606.parquet']);
 
     // The symbol is a column there too, so both forms read as one table.
     expect((await rowsOf(join(config.vaultDir, SLICE, files[0]!))).map(row => row[0])).toEqual(['BTC_USD']);
@@ -280,7 +317,8 @@ describe('a partition over the split size', () => {
     await place('gate.futures_btc-trades.csv', key('BTC_USD'));
     await sweep(conns);
 
-    const [gone] = await stocked();
+    const [gone]         = await stocked();
+    const [{ revision }] = await linesOf(LEDGER) as [Record<string, string>];
 
     await rm(join(config.vaultDir, SLICE, gone!));
 
@@ -288,44 +326,227 @@ describe('a partition over the split size', () => {
 
     await rm(join(config.vaultDir, ERRORS));
     await writeFile(join(config.vaultDir, BACKEDUP),
-      `partition|revision|date\n${SLICE}/${MONTH}|${gone!.split('.')[1]}|2026-10-06T00:00:00.000Z\n`);
+      `partition|revision|date\n${SLICE}/${MONTH}|${revision}|2026-10-06T00:00:00.000Z\n`);
 
     expect(await validate()).toBe(0);
     expect(await stocked()).toHaveLength(1);
   });
 
-  /** A publish something interrupted left its marker behind, and is done again. */
-  it('does not take an interrupted publish for a stocked partition', async () => {
+  /** Some instruments' files in place and some not, when something stopped it: none of them is kept. */
+  it('does not take a month stopped half way through its files for a stocked partition', async () => {
     await place('gate.futures_usdt-trades.csv', key('BTC_USDT'));
+    await place('gate.futures_btc-trades.csv', key('BTC_USD'));
     await sweep(conns);
+    await interrupt();
+    await rm(join(config.vaultDir, SLICE, 'BTC_USD', '202606.parquet'));
 
-    const [file] = await stocked();
-    const revision = file!.split('.')[1]!;
-
-    // Stopped before the last file was in place: the marker is there, and nothing was written down.
-    await mkdir(join(config.vaultDir, SLICE, '@'), { recursive: true });
-    await writeFile(join(config.vaultDir, SLICE, '@', `${MONTH}.${revision}.publishing`), '');
-    await rm(join(config.vaultDir, LEDGER));
+    expect(await validate()).toBe(0);
+    expect(await stocked()).toEqual([]);
 
     expect(await sweep(conns)).toMatchObject({ built: 1, current: 0 });
-    expect(await stocked()).toEqual([file]);
+    expect(await stocked()).toEqual(['BTC_USD/202606.parquet', 'BTC_USDT/202606.parquet']);
   });
 
   /** A month that grew past the threshold changes form with its revision; the old form goes. */
   it('replaces a month stored whole when it comes back over the size', async () => {
-    config.splitGb = was;
+    splitAt(null);
 
     await place('gate.futures_usdt-trades.csv', key('BTC_USDT'));
     await sweep(conns);
 
     expect((await stocked())[0]).toMatch(/^@\//);
 
-    config.splitGb = 1e-9;
+    splitAt(1);
     listed[0]!.ETag = '"e2"';
 
     expect(await sweep(conns)).toMatchObject({ built: 1 });
     expect(await stocked()).toHaveLength(1);
     expect((await stocked())[0]).toMatch(/^BTC_USDT\//);
+  });
+});
+
+/**
+ * A venue that cuts its periods away from UTC midnight: a month's last hours
+ * sit in a file of the month after. They are stocked beside the month and not
+ * into it, and a month whose neighbour is not there is stocked without them.
+ */
+describe('a month whose last hours are in the next month\'s file', () => {
+  /** bybit's MT4 klines: a file is a UTC+3 month, so it opens with the last three hours of the UTC month before. */
+  const KLINES = join('venue=bybit', 'market=perp', 'dataset=klines', 'interval=1h');
+
+  const month = (at: string): string => `bybit/perp/klines,1h/B/BTCUSDT/${at}/bybit|perp|klines,1h|BTCUSDT|${at}.csv.gz`;
+
+  /** A file of rows written by hand: stamped in UTC+3, as the venue stamps them. */
+  const publish = async (at: string, rows: string[], etag = 'e1'): Promise<void> => {
+    const path = join(config.archivesDir, month(at));
+
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(`${path}.txt`, rows.join('\n') + '\n');
+    execFileSync('bash', ['-c', `gzip -c ${JSON.stringify(`${path}.txt`)} > ${JSON.stringify(path)}`]);
+    await rm(`${path}.txt`);
+
+    listed.push({ Key: month(at), ETag: `"${etag}"`, Size: (await stat(path)).size });
+  };
+
+  const NOVEMBER = [
+    '2024.11.01 00:00,1,1,1,1,10',   // 31 October 21:00 UTC: October's, and not kept here
+    '2024.11.01 03:00,2,2,2,2,20',   // 1 November 00:00 UTC
+    '2024.11.15 00:00,3,3,3,3,30',
+  ];
+
+  const DECEMBER = [
+    '2024.12.01 00:00,4,4,4,4,40',   // 30 November 21:00 UTC: November's last hours
+    '2024.12.01 02:00,5,5,5,5,50',   // 30 November 23:00 UTC
+    '2024.12.01 05:00,6,6,6,6,60',   // 1 December 02:00 UTC
+  ];
+
+  const files = async (): Promise<string[]> =>
+    ((await readdir(join(config.vaultDir, KLINES), { recursive: true }).catch(() => [])) as string[])
+      .filter(name => name.endsWith('.parquet')).sort();
+
+  const closes = async (file: string): Promise<number[]> =>
+    (await conns[0]!.runAndReadAll(`SELECT close FROM read_parquet('${join(config.vaultDir, KLINES, file)}') ORDER BY ts`))
+      .getRows().map(row => Number(row[0]));
+
+  const lines = async (): Promise<Record<string, string>[]> => {
+    const [head, ...rest] = (await readFile(join(config.vaultDir, LEDGER), 'utf8')).trim().split('\n');
+
+    return rest.map(line => Object.fromEntries(line.split('|').map((field, at) => [head!.split('|')[at]!, field])));
+  };
+
+  it('is stocked without them where the next month is not there, and says so', async () => {
+    await publish('202411', NOVEMBER);
+
+    expect(await sweep(conns)).toMatchObject({ built: 1, partial: 1, waiting: 0 });
+
+    const [only, ...rest] = await files();
+
+    expect(rest).toEqual([]);
+    expect(only).toBe('@/202411.parquet');
+    expect(await closes(only!)).toEqual([2, 3]);
+    expect(await lines()).toMatchObject([{ month: '202411', preVersion: '', postVersion: 'missing', count: '1' }]);
+  });
+
+  it('is current as it is, sweep after sweep, while the next month stays away', async () => {
+    await publish('202411', NOVEMBER);
+    await sweep(conns);
+
+    expect(await sweep(conns)).toMatchObject({ built: 0, completed: 0, current: 1, partial: 1 });
+  });
+
+  /** The month's own rows are in the vault and unchanged: only the hours the neighbour holds are built. */
+  it('is given them when the next month arrives, as a file of their own, without its own archives', async () => {
+    await publish('202411', NOVEMBER);
+    await sweep(conns);
+
+    const written = (await stat(join(config.vaultDir, KLINES, '@/202411.parquet'))).mtimeMs;
+
+    // November's archives have left the disk; the catalog still says they are downloaded.
+    await rm(join(config.archivesDir, month('202411')));
+    await publish('202412', DECEMBER);
+
+    expect(await sweep(conns)).toMatchObject({ completed: 1, built: 1, failed: 0 });
+
+    const november = (await files()).filter(name => name.includes('202411'));
+
+    expect(november).toEqual(['@/202411.parquet', '@/202411.post.parquet']);
+
+    // Its own file is the one that was there: nothing wrote to it.
+    expect((await stat(join(config.vaultDir, KLINES, '@/202411.parquet'))).mtimeMs).toBe(written);
+
+    expect(await closes(november[0]!)).toEqual([2, 3]);
+    expect(await closes(november[1]!)).toEqual([4, 5]);
+
+    const ledger = (await lines()).filter(one => one['month'] === '202411');
+
+    expect(ledger.map(one => one['revision'] === 'updating')).toEqual([false, true, false]);
+    expect(ledger[2]!['postVersion']).toMatch(/^[0-9a-f]{16}$/);
+    expect(ledger[2]!['count']).toBe('2');
+    expect(await validate()).toBe(0);
+  });
+
+  /** Its own file was never touched, so it goes back to what it was: stocked, and without those hours. */
+  it('is still stocked where something stopped it while those hours were added', async () => {
+    await publish('202411', NOVEMBER);
+    await sweep(conns);
+
+    const own = join(config.vaultDir, KLINES, '@/202411.parquet');
+    const [partial] = await lines();
+
+    await interrupt({ postVersion: '0123456789abcdef' });
+    await writeFile(own.replace('.parquet', '.post.parquet'), 'half written');
+
+    expect(await sweep(conns)).toMatchObject({ built: 0, current: 1, partial: 1 });
+    expect(await files()).toEqual(['@/202411.parquet']);
+    expect((await lines()).at(-1)).toEqual(partial);
+    expect(await validate()).toBe(0);
+
+    // And the hours are added as they would have been.
+    await rm(join(config.archivesDir, month('202411')));
+    await publish('202412', DECEMBER);
+
+    expect(await sweep(conns)).toMatchObject({ completed: 1, failed: 0 });
+    expect(await closes('@/202411.post.parquet')).toEqual([4, 5]);
+  });
+
+  /** The same files whether the neighbour was there when the month was stocked or came later. */
+  it('comes to the same files whichever way it got them', async () => {
+    await publish('202411', NOVEMBER);
+    await sweep(conns);
+    await publish('202412', DECEMBER);
+    await sweep(conns);
+
+    const later = (await files()).filter(name => name.includes('202411'));
+
+    await rm(config.vaultDir, { recursive: true, force: true });
+    await mkdir(config.vaultDir, { recursive: true });
+
+    expect(await sweep(conns)).toMatchObject({ built: 2, completed: 0 });
+
+    const atOnce = (await files()).filter(name => name.includes('202411'));
+
+    expect(atOnce).toEqual(later);
+    expect(await closes(atOnce[0]!)).toEqual([2, 3]);
+    expect(await closes(atOnce[1]!)).toEqual([4, 5]);
+  });
+
+  /** December is stocked from its own file, whose first hours are November's and are not December's. */
+  it('keeps the next month\'s own rows to that month', async () => {
+    await publish('202411', NOVEMBER);
+    await publish('202412', DECEMBER);
+    await sweep(conns);
+
+    const [december] = (await files()).filter(name => name.includes('202412'));
+
+    expect(await closes(december!)).toEqual([6]);
+    expect((await lines()).find(one => one['month'] === '202412')).toMatchObject({ postVersion: 'missing' });
+  });
+
+  /** Anything but the neighbour arriving is a month to stock again from its own archives. */
+  it('is stocked again, and not completed, where its own files changed', async () => {
+    await publish('202411', NOVEMBER);
+    await sweep(conns);
+
+    listed[0]!.ETag = '"e2"';
+
+    await publish('202412', DECEMBER);
+
+    expect(await sweep(conns)).toMatchObject({ completed: 0, built: 2 });
+    expect((await files()).filter(name => name.includes('202411'))).toHaveLength(2);
+  });
+
+  it('is left as it is where it has to be stocked again and its own archives are gone', async () => {
+    await publish('202411', NOVEMBER);
+    await sweep(conns);
+
+    const before = await files();
+
+    listed[0]!.ETag = '"e2"';
+
+    await rm(join(config.archivesDir, month('202411')));
+
+    expect(await sweep(conns)).toMatchObject({ built: 0, completed: 0, missing: 1 });
+    expect(await files()).toEqual(before);
   });
 });
 
@@ -355,11 +576,11 @@ describe('the ledger', () => {
 
     expect(entry).toMatchObject({
       partition: PARTITION, venue: 'gate', market: 'perp', dataset: 'trades', variant: '', grain: 'monthly',
-      bundle: 'instrument', month: '202606', mode: 'bundle', preVersion: '', postVersion: '',
-      revision: file!.split('.')[1], count: '1',
+      bundle: 'instrument', month: '202606', mode: 'bundle', preVersion: '', postVersion: '', count: '1',
       size: String((await stat(join(config.vaultDir, SLICE, file!))).size),
     });
     expect(entry!['version']).toMatch(/^[0-9a-f]{16}$/);
+    expect(entry!['revision']).toMatch(/^[0-9a-f]{12}$/);
   });
 
   it('gains another when the partition is stocked again, and the last one counts', async () => {
@@ -367,11 +588,10 @@ describe('the ledger', () => {
 
     await sweep(conns);
 
-    const [file] = await stocked();
-    const all    = await lines(LEDGER);
+    const all = (await lines(LEDGER)).filter(one => one['revision'] !== 'updating');
 
     expect(all).toHaveLength(2);
-    expect(all[1]!['revision']).toBe(file!.split('.')[1]);
+    expect(all[1]!['revision']).not.toBe(all[0]!['revision']);
     expect(await sweep(conns)).toMatchObject({ built: 0, current: 1 });
   });
 
@@ -383,12 +603,13 @@ describe('the ledger', () => {
     expect(await stocked()).toEqual([]);
   });
 
-  /** Stocked before there was a ledger, or published a moment before the service stopped. */
-  it('writes down a partition found in the vault that it has no line for', async () => {
+  /** A file says nothing of what it was built from, so one the ledger has no line for is nobody's word for anything. */
+  it('stocks a partition it has no line for, whatever of it is in the vault', async () => {
     await rm(join(config.vaultDir, LEDGER));
 
-    expect(await sweep(conns)).toMatchObject({ built: 0, current: 1 });
-    expect(await lines(LEDGER)).toMatchObject([{ partition: PARTITION, mode: 'bundle', count: '1' }]);
+    expect(await sweep(conns)).toMatchObject({ built: 1, current: 0 });
+    expect(await stocked()).toHaveLength(1);
+    expect((await lines(LEDGER)).at(-1)).toMatchObject({ partition: PARTITION, mode: 'bundle', count: '1' });
   });
 
   describe('set against the vault as the service starts', () => {
@@ -445,7 +666,7 @@ describe('the ledger', () => {
       await writeFile(join(config.vaultDir, SLICE, file!), 'not a parquet');
 
       expect(await validate()).toBe(1);
-      expect(await readFile(join(config.vaultDir, ERRORS), 'utf8')).toMatch(/its file weighs 13 bytes where the ledger says \d+/);
+      expect(await readFile(join(config.vaultDir, ERRORS), 'utf8')).toMatch(/its files weigh 13 bytes where the ledger says \d+/);
 
       expect(await sweep(conns)).toMatchObject({ built: 1, current: 0 });
       expect(await validate()).toBe(0);

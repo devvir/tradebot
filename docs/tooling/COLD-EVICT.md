@@ -4,8 +4,8 @@
 [COLD.md](COLD.md) for the namespace and origins, and [COLD-PUSH.md](COLD-PUSH.md) for how things
 got into cold storage.
 
-It is built for the **archives**. The vault is not evicted yet: nothing stores it, so there is
-nothing to say it is safe to remove.
+This page is the **archives**. The vault is evicted on request, by a selection, and brought back
+again as a matter of routine: [COLD-VAULT.md](COLD-VAULT.md).
 
 **This is the only command in the family that removes anything.** It says what it would remove,
 venue by venue, and asks before removing anything; the answer defaults to no. What it removes goes to
@@ -22,15 +22,16 @@ things, and stays unless all three hold:
 | | |
 |---|---|
 | **It is in cold storage at the catalog's version** | a tar that is stored holds it, at the version the catalog has now |
-| **It is stocked** | the vault's ledger has it — or another rendering of the same data — at versions that are still the catalog's |
-| **The months either side of it are stocked** | so that a neighbour that reads into it can still be stocked |
+| **It is stocked** | the vault's ledger has it — or another rendering of the same data — at versions that are still the catalog's, and what was stocked is still held: in cold storage, or on disk in the vault |
+| **No neighbouring month still needs it** | where its files hold the first or last hours of the month next door, that month has them in the vault |
 
 What is left is removed, unless the record says it already was at the version it has now.
 
-**Nothing on disk is looked at to decide.** Whatever the archives hold of a partition that passes —
-the same files, older ones, or only some — goes, so no answer the disk could give would change
-anything. Deciding is two requests to the catalog per venue, the record and the vault's ledger; the
-file and byte counts shown are the catalog's.
+**Nothing of the archives is looked at to decide.** Whatever they hold of a partition that passes —
+the same files, older ones, or only some — goes, so no answer their disk could give would change
+anything. Deciding is two requests to the catalog per venue, the record and the vault's ledger — and,
+for a vault partition that is not in cold storage, a look for its files in the vault. The file and
+byte counts shown are the catalog's.
 
 ### In cold storage
 
@@ -43,38 +44,50 @@ corrected.
 ### Stocked
 
 The vault keeps a ledger of what it holds, a line per partition, saying which partition of the
-archives it was stocked from and at which catalog version — and, where it read the edge of a
-neighbouring month, that month's version too. A line counts while every version it names is still
-the catalog's.
+archives it was stocked from and at which catalog version — and, for each side a neighbouring month
+holds of it, that month's version, or `missing` where that month was not there to be read. A line
+counts while every version it names is still the catalog's.
+
+**A month stocked without a neighbour's hours is stocked.** Its own files have given the vault
+everything they hold; what it lacks is in the neighbour's files. A partition whose ledger line says
+`updating` is having its files changed and is not stocked.
 
 **Any rendering will do.** The same data is often published at more than one grain, or per
 instrument and as a market's bundle, and the vault is built from one of them. Which one is the
 vault's business. What matters here is that none of them is needed any more, so once a month of a
 dataset is stocked from any rendering, every rendering of it is taken as stocked.
 
-A vault partition whose files have themselves been moved out counts only once cold storage holds
-it. Nothing stores the vault yet, so such a partition is taken as not accounted for and what it was
-stocked from stays.
+**What was stocked has to be held somewhere still.** The record is asked first: a vault partition it
+has stored, at the revision the ledger names, is held. Only one it does not have stored is looked for
+on disk in the vault, where its files have to be. A ledger line whose partition is neither is not
+taken as stocked, and what it was stocked from stays.
 
-### The months either side
+### No neighbouring month still needs it
 
 Some venues cut their days away from UTC midnight, so a month's first or last hours sit in a file of
-the month next door, and stocking one month reads the edge of its neighbour. Rather than know which
-venues do that, a month stays until both its neighbours are stocked.
+the month next door, and the vault stocks them from there. **A month's own ledger line says whether
+its dataset does that, and which way**: a side it names, with a version or as `missing`, is a side a
+neighbour's files hold.
 
-**Which months a dataset has is read from everything the catalog holds, never from what is
-settled**, asked without any filter:
+| The month's line names | so its own files hold | and they stay until |
+|---|---|---|
+| neither side | nothing of any other month | — |
+| the month after (`postVersion`) | the last hours of the month before | the month before is stocked with a `postVersion` that is a version |
+| the month before (`preVersion`) | the first hours of the month after | the month after is stocked with a `preVersion` that is a version |
 
-- **The first month has none before it**, and waits only on the one after.
-- **A month the venue published nothing in** is nobody's neighbour, and is not waited on.
-- **A month followed by one that is not settled yet** has a neighbour, and waits until that one is
-  stocked.
-- **A month with nothing after it is the last only once the month after could have been settled and
-  still is not there.** A month can be settled 15 days after it ends, so the newest month that can
-  be settled today often has nothing after it in the catalog at all: the venue has not published it
-  yet. That is no sign the dataset has ended, and such a month waits. A month whose following month
-  has had its time and never came is the last month of a dataset the venue stopped publishing, and
-  goes.
+So a month of a dataset that keeps to UTC midnight waits on nothing, and where a month was stocked
+before its neighbour arrived, the neighbour's files stay until they have been read for it.
+
+**Only a month the catalog holds is waited for**, read from everything the catalog holds and never
+from what is settled:
+
+- **A month the venue published nothing in** will never need anything, and is not waited for.
+- **A month the catalog holds that is not stocked yet** will, and its neighbour's files stay.
+- **A month whose files hold the first hours of the month after, where that month is not in the
+  catalog**, waits until the month after could have been settled and still is not there. A month
+  can be settled 15 days after it ends, so until then the venue has simply not published it. One
+  whose following month has had its time and never came is the last month of a dataset the venue
+  stopped publishing, and goes.
 
 ## A vault that reports a loss stops everything
 

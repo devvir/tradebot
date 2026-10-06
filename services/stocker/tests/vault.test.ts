@@ -32,26 +32,25 @@ describe('the vault layout', () => {
     expect(labelOf(predicted)).toContain('predicted');
   });
 
-  /** A month and its revision are the whole of a file's name, in either form. */
-  it('names a file by its month and its revision', () => {
-    expect(bundleOf(key(), 'aaaaaaaaaaaa')).toMatch(/\/dataset=trades\/@\/202001\.aaaaaaaaaaaa\.parquet$/);
-    expect(fileOf(key(), 'aaaaaaaaaaaa', 'BTCUSDT')).toMatch(/\/dataset=trades\/BTCUSDT\/202001\.aaaaaaaaaaaa\.parquet$/);
+  /** A month is the whole of a file's name, in either form: stocked again, it is found where it was. */
+  it('names a file by its month, and by the side it holds of it', () => {
+    expect(bundleOf(key())).toMatch(/\/dataset=trades\/@\/202001\.parquet$/);
+    expect(fileOf(key(), 'BTCUSDT')).toMatch(/\/dataset=trades\/BTCUSDT\/202001\.parquet$/);
+    expect(bundleOf(key(), 'post')).toMatch(/\/dataset=trades\/@\/202001\.post\.parquet$/);
+    expect(fileOf(key(), 'BTCUSDT', 'pre')).toMatch(/\/dataset=trades\/BTCUSDT\/202001\.pre\.parquet$/);
   });
 });
 
 describe('what counts as stocked', () => {
   it('is one file for every instrument, or files under the symbols', () => {
-    expect(isWhole({ bundle: true, symbols: [], publishing: false })).toBe(true);
-    expect(isWhole({ bundle: false, symbols: ['BTCUSDT'], publishing: false })).toBe(true);
+    expect(isWhole({ bundle: true, symbols: [], sides: [] })).toBe(true);
+    expect(isWhole({ bundle: false, symbols: ['BTCUSDT'], sides: [] })).toBe(true);
   });
 
-  it('is not a revision something stopped while it was being put in place', () => {
-    expect(isWhole({ bundle: false, symbols: ['BTCUSDT'], publishing: true })).toBe(false);
-  });
-
-  it('is not a revision the vault holds nothing of', () => {
+  it('is not a month the vault holds nothing of, or only a neighbour\'s hours of', () => {
     expect(isWhole(undefined)).toBe(false);
-    expect(isWhole({ bundle: false, symbols: [], publishing: false })).toBe(false);
+    expect(isWhole({ bundle: false, symbols: [], sides: [] })).toBe(false);
+    expect(isWhole({ bundle: false, symbols: [], sides: [{ symbol: '@', side: 'post' }] })).toBe(false);
   });
 });
 

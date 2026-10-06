@@ -18,11 +18,10 @@ services:
       args:
         SERVICE_NAME: stocker
 
-        # A build input, not a setting: nothing in stocker reads it or adapts to
-        # it. Concurrency is what decides the appetite — each build holds a
-        # month-sized sort — and this is only the ceiling the box will tolerate
-        # alongside the collectors.
-        NODE_MEMORY_MB: ${STOCKER_MEMORY_MB:-4096}
+        # The node heap. The service holds listings and small archives in it and
+        # nothing that grows with a month's size: the sort is the query engine's,
+        # which keeps its own memory — see STOCKER_ENGINE_MEMORY_GB.
+        NODE_MEMORY_MB: 4096
 
     container_name: stocker
 
@@ -34,25 +33,11 @@ services:
       # where most partitions are owed files and simply wait.
       STOCKER_LENS: ${STOCKER_LENS:-}
 
-      # Which venues and tables to stock (default: everything mapped)
+      # Which venues to stock (default: everything mapped)
       STOCKER_VENUES:  ${STOCKER_VENUES:-}
-      STOCKER_TABLES:  ${STOCKER_TABLES:-}
-
-      # Symbol tokens, case-insensitive substrings. Empty means every symbol. A
-      # partition stocked through a filter carries it in its version, so it never
-      # passes for a whole one.
-      STOCKER_SYMBOLS: ${STOCKER_SYMBOLS:-}
-
-      # Inclusive month bounds, YYYY-MM. They filter what a sweep considers and
-      # nothing is written down about them.
-      STOCKER_START_MONTH: ${STOCKER_START_MONTH:-}
-      STOCKER_END_MONTH:   ${STOCKER_END_MONTH:-}
 
       # Builds run at once, one instrument each. Each holds a month-sized sort.
       STOCKER_CONCURRENCY: ${STOCKER_CONCURRENCY:-2}
-
-      # Minutes between sweeps
-      STOCKER_SCAN_MINUTES: ${STOCKER_SCAN_MINUTES:-30}
 
       # Cores a build may take. DuckDB spills to disk inside the vault volume
       # rather than being killed; this host runs the collectors at the same time.
@@ -60,10 +45,7 @@ services:
 
       # No partition is started below this much free space on the vault volume.
       STOCKER_MIN_FREE_GB: ${STOCKER_MIN_FREE_GB:-20}
-      STOCKER_MEMORY_GB:  ${STOCKER_MEMORY_GB:-4}
-      STOCKER_SPLIT_GB:   ${STOCKER_SPLIT_GB:-1}
-      STOCKER_COOL_HOURS: ${STOCKER_COOL_HOURS:-}
-      STOCKER_UNPACK_WORKERS: ${STOCKER_UNPACK_WORKERS:-2}
+      STOCKER_ENGINE_MEMORY_GB: ${STOCKER_ENGINE_MEMORY_GB:-4}
 
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV:  ${APP_ENV:-prod}

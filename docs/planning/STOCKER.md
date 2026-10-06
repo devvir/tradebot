@@ -24,8 +24,9 @@ within a venue and market must be a hard error. The same listing is where margin
 **Options.** Option trades and klines are stocked where they are the other markets' shapes (htx,
 okx, bybit trades). What an option has that nothing else does has no place yet: the greeks, implied
 volatility, and the strike, expiry and side that are only spelled inside the symbol. Three datasets
-wait on that, and want deciding together — one table for an option's mark and greeks, or columns on
-`markPrice` that everything else leaves empty:
+wait on that, and want deciding together. The leaning is a table of their own, `optionMarkPrice`,
+over columns on `markPrice` that every other market would leave empty — to be checked against what
+each of the three actually carries:
 
 - **bybit option `markPrice`, 1m.** `instrument_name, open_time, open, high, low, close, delta,
   gama, vega, theta`. The bars fit `markPrice`; the four greeks do not.
@@ -43,6 +44,11 @@ spot index is otherwise `<symbol> <price>` and fits `indexPrice` as ticks.
 **binance `volatilityIndex`.** `calc_time, symbol, base_asset, quote_asset, index_value`, a value a
 second. It is an index and not a price of anything stocked; it needs a table, or a decision that
 `indexPrice` holds it.
+
+**binance aggregated trades**, spot and perp. A slice like any other: which of two renderings of the
+trades is downloaded is decided upstream, by the lens, and whatever is downloaded and in stocker's
+targets is stocked. So they need a series, and a place in the vault that keeps them apart from the
+plain trades.
 
 **binance liquidations on USDⓈ-M perpetuals and on futures.** Only the coin-margined files are
 mapped. The others have not been read.
@@ -64,21 +70,3 @@ of two without it being double counting. Only then is halving a correction and n
 
 **Verification against source.** Nothing re-reads a built partition against raw. Rebinning trades
 and comparing against the venue's published klines is the natural check.
-
-## A lens that is cut in time never completes on a venue that spills
-
-Stocking a month of a spilling dataset reads the edge of the month next to it. Under a lens that
-stops at 2020-12, htx's 2020-12 waits for 2021-01, which the lens never lets through; under one that
-starts at 2021-01 the same edge is missing from the other side. So the last month of every such lens
-is never stocked, and the month before it is never evicted. Ways out, none chosen:
-
-- **Take the lens out of stocker.** What to download is the costly decision and the lens makes it;
-  stocker can stock whatever is downloaded and settled. It does not by itself bring the neighbouring
-  month to disk: some lens that is hauled still has to let it through.
-- **Have a lens extend itself**: an option on the lens, or on the request, that adds one month
-  before, after or both to every unbroken run of months of a slice.
-- **Have `cold push` notice**: where the vault's ledger is missing a month only for want of its
-  neighbour, offer to add that month to the lens.
-
-Only the neighbour's edge is read — the first or last day's files of it — while the whole
-neighbouring partition has to be downloaded and settled for it to count.

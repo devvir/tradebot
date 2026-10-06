@@ -226,7 +226,7 @@ export const buildBatch = async (
       );
 
     const reader      = await conn.runAndReadAll(`SELECT DISTINCT _sym FROM ${table} ORDER BY 1`);
-    const instruments = reader.getRows().map(row => String(row[0])).filter(wantedSymbol);
+    const instruments = reader.getRows().map(row => String(row[0]));
 
     let rows  = 0;
     let files = 0;
@@ -331,8 +331,6 @@ const writeOne = async (
   staging:  string,
   distinct: string,
 ): Promise<{ rows: number; files: number }> => {
-  if (! wantedSymbol(symbol)) return { rows: 0, files: 0 };
-
   const out  = stagedOf(staging, symbol);
   const temp = `${out}.${++sequence}.tmp`;
 
@@ -367,7 +365,7 @@ const writeSplit = async (
   try {
     const reader = await conn.runAndReadAll(
       `SELECT DISTINCT _instrument FROM ${table} WHERE _instrument IS NOT NULL ORDER BY 1`);
-    const instruments = reader.getRows().map(row => String(row[0])).filter(wantedSymbol);
+    const instruments = reader.getRows().map(row => String(row[0]));
 
     let rows  = 0;
     let files = 0;
@@ -454,10 +452,6 @@ const marginColumn = (key: VaultKey, symbol: string): string => {
 
   return `, CAST(${margin ? q(margin) : 'NULL'} AS VARCHAR) AS ${MARGIN.name}`;
 };
-
-/** The symbol filter, as substrings, case-insensitively. Empty lets everything through. */
-const wantedSymbol = (symbol: string): boolean =>
-  ! config.symbols.length || config.symbols.some(token => symbol.toUpperCase().includes(token.toUpperCase()));
 
 const labelFor = (key: VaultKey, symbol: string): string =>
   [key.venue, key.market, symbol, key.table, key.interval ?? key.kind ?? '', key.month]

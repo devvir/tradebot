@@ -4,7 +4,7 @@ import { report } from '../src/scan';
 import type { Summary } from '../src/types';
 
 const summary = (over: Partial<Summary> = {}): Summary => ({
-  considered: 0, current: 0, built: 0, empty: 0, waiting: 0, missing: 0,
+  considered: 0, current: 0, built: 0, empty: 0, waiting: 0, partial: 0, completed: 0, missing: 0,
   unmapped: 0, failed: 0, rows: 0, files: 0, stopped: false, ...over,
 });
 
@@ -25,11 +25,11 @@ describe('the end-of-sweep report', () => {
     expect(said(logger.info)).toContain('30 minutes');
   });
 
-  /** Waiting on a neighbour or on the disk is a different situation with a different fix. */
-  it('separates caught up from waiting on a neighbouring month or the disk', () => {
-    report(summary({ considered: 120, current: 100, waiting: 15, missing: 5 }), 30);
+  /** Lacking a neighbour's hours, or not being on disk, is a different situation with a different fix. */
+  it('separates caught up from lacking a neighbouring month or the disk', () => {
+    report(summary({ considered: 120, current: 115, partial: 15, missing: 5 }), 30);
 
-    expect(said(logger.info)).toContain('15 partitions waiting on a neighbouring month');
+    expect(said(logger.info)).toContain('15 partitions without a neighbouring month\'s hours');
     expect(said(logger.info)).toContain('5 not on disk as catalogued');
   });
 

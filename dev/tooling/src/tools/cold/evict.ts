@@ -1,20 +1,18 @@
-import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { promisify } from 'node:util';
 import * as catalog from './catalog';
 import { SETTLE_DAYS, WATCH_MS, loadConfig } from './config';
 import { onExit } from './cleanup';
+import { discard } from './discard';
 import { Archives } from './disk';
 import { idOf, partitionOf } from './keys';
 import { acquire } from './lock';
-import { isWatch } from './options';
+import { agreed, isWatch } from './options';
 import { meter } from './progress';
 import * as record from './record';
-import { ERRORS, LEDGER, errorsIn, evictedFrom, stockedIn } from './vault';
+import { ERRORS, LEDGER, MISSING, errorsIn, filesOf, stockedIn } from './vault';
 import { fmtBytes } from '../../shared/utils/format';
 import { error, info, spacer, success } from '../../shared/ui/logger';
-import { confirm } from '../../shared/ui/prompts';
 import type { DatabaseSync } from 'node:sqlite';
 import type { CatalogPartition, ColdConfig, EvictOptions, Evictable, HeldBack, Origin, PartitionKey, Run, Stocked } from './types';
 
@@ -38,25 +36,28 @@ import type { CatalogPartition, ColdConfig, EvictOptions, Evictable, HeldBack, O
  *   grain, or the market's bundle. Which rendering the vault was built from is
  *   the vault's business; what matters is that none is needed any more. The
  *   vault's ledger says so, and says it only while the versions it was stocked
- *   from are still the catalog's.
- * - **So are the months either side of it.** A month can be read again when its
- *   neighbour is stocked, where a venue cuts its days away from UTC midnight and
- *   a month's first or last hours sit in the file next door. Rather than know
- *   which venues do that, a month stays until both its neighbours are stocked.
+ *   from are still the catalog's — and only while what was stocked is still
+ *   held somewhere: in cold storage, as the record says, or on disk in the
+ *   vault.
+ * - **No neighbouring month still needs it.** Where a venue cuts its days away
+ *   from UTC midnight, a month's first or last hours sit in a file of the month
+ *   next door, and the vault stocks them from there. A month's own ledger line
+ *   says whether its dataset does that, and which way: a side it names — with
+ *   the neighbour's version, or as `missing` — is a side a neighbour's files
+ *   hold. A month whose last hours are in the next month's files has files
+ *   that hold the last hours of the month before; so they stay until the month
+ *   before has them, which its own line says. A month whose line names no side
+ *   is in nobody's way.
  *
- * **Which months are a month's neighbours is read from everything the catalog
- * holds, never from what is settled.** The first month of a dataset has none
- * before it and the last none after, and each waits only on the neighbour it
- * has.
+ * **A month stocked without a neighbour's hours is stocked.** Its own files
+ * have given the vault everything they hold, and what it lacks is in the
+ * neighbour's.
  *
- * **A month with nothing after it is the last only once the month after could
- * have been settled and still is not there.** A month can be settled
- * `SETTLE_DAYS` after it ends, so the newest month that can be settled today
- * always has nothing after it in the catalog's settled months, and often
- * nothing after it at all — the venue has simply not published it yet. That is
- * no sign the dataset has ended, and such a month waits. One whose following
- * month has had its time and never came is the last month of a dataset the
- * venue stopped publishing, and goes.
+ * **Only a month the catalog holds is waited for.** A neighbour the venue
+ * published nothing in will never need anything. The one exception is a month
+ * whose files hold the first hours of the month after, where that month is not
+ * in the catalog yet and has not had its time: a month can be settled
+ * `SETTLE_DAYS` after it ends, so until then not published is not ended.
  *
  * **What is removed goes to the host's trash**, never straight to nothing.
  * Every check above has to be right for a removal to be safe, and the one thing
@@ -148,7 +149,7 @@ const pass = async (db: DatabaseSync, run: Run, first: boolean): Promise<boolean
 
   try {
     for (const venue of venues) {
-      const one = await survey(db, config, origin, venue, stocked, evictedFrom(config.vaultRoot));
+      const one = await survey(db, config, origin, venue, stocked);
 
       found.push(one);
 
@@ -188,7 +189,7 @@ const pass = async (db: DatabaseSync, run: Run, first: boolean): Promise<boolean
 
   const purge = options.purge ?? false;
 
-  if (! run.agreed && ! await confirm(purge ? 'Delete them from disk?' : 'Move them to the trash?', false)) return false;
+  if (! run.agreed && ! await agreed(purge ? 'Delete them from disk?' : 'Move them to the trash?', false)) return false;
 
   run.agreed = true;
 
@@ -208,6 +209,13 @@ const pass = async (db: DatabaseSync, run: Run, first: boolean): Promise<boolean
   success('Evicted. What was removed is in cold storage and in the vault.');
 
   if (! purge) info(`${fmtBytes(bytes)} is reclaimed once the trash is emptied — nothing is freed until then`);
+
+  // Done for now, and said: the next look is half an hour away.
+  if (isWatch()) {
+    info('Watch mode - Waiting for new partitions to evict');
+
+    run.waiting = true;
+  }
 
   return true;
 };
@@ -229,7 +237,6 @@ const survey = async (
   origin:   Origin,
   venue:    string,
   stocked:  readonly Stocked[],
-  away:     ReadonlyMap<string, string>,
   now:      number = Date.now(),
 ): Promise<Evictable> => {
   const all        = await catalog.partitions(config, venue);
@@ -255,23 +262,45 @@ const survey = async (
     lines.set(at, [...lines.get(at) ?? [], one]);
   }
 
-  /** Whether the versions a line was stocked from are still the catalog's, and its files are accounted for. */
+  /**
+   * **The vault's own copy has to be somewhere**: in cold storage, as the record
+   * says, or on disk. The record is asked first and answers without touching
+   * anything; only a partition it does not have stored is looked for in the
+   * vault, and each one once.
+   */
+  const vaultStored = record.vaultStored(db);
+  const found       = new Map<string, boolean>();
+
+  const held = (one: Stocked): boolean => {
+    if (vaultStored.get(one.partition)?.has(one.revision)) return true;
+
+    if (! found.has(one.partition)) found.set(one.partition, filesOf(config.vaultRoot, one) !== null);
+
+    return found.get(one.partition)!;
+  };
+
+  /** Whether a side a line names is as the catalog has it: not named, not there to be read, or the neighbour's version still. */
+  const sideHolds = (one: Stocked, side: string, by: number): boolean =>
+    ! side || side === MISSING || versions.get(idOf({ ...one.source, month: shift(one.source.month, by) })) === side;
+
+  /** Whether the versions a line was stocked from are still the catalog's, and what was stocked is still held. */
   const current = (one: Stocked): boolean =>
     versions.get(idOf(one.source)) === one.version
-    && (! one.preVersion  || versions.get(idOf({ ...one.source, month: shift(one.source.month, -1) })) === one.preVersion)
-    && (! one.postVersion || versions.get(idOf({ ...one.source, month: shift(one.source.month, 1) })) === one.postVersion)
-    && (away.get(one.partition) !== one.revision || vaultInColdStorage(one));
+    && sideHolds(one, one.preVersion, -1)
+    && sideHolds(one, one.postVersion, 1)
+    && held(one);
 
-  const isStocked = (data: string, month: string): boolean =>
-    (lines.get(`${data}|${month}`) ?? []).some(current);
+  /** The line a month of a dataset is stocked by, in whichever rendering; nothing where it is not stocked. */
+  const lineOf = (data: string, month: string): Stocked | undefined =>
+    (lines.get(`${data}|${month}`) ?? []).find(current);
 
   const out: Evictable = {
     venue, ready: [], gone: 0,
-    held: { 'not in cold storage': 0, 'not stocked': 0, 'a neighbouring month is not stocked': 0 },
+    held: { 'not in cold storage': 0, 'not stocked': 0, 'a neighbouring month still needs it': 0 },
   };
 
   for (const one of candidates) {
-    const why = heldBack(one, inCold, months.get(dataOf(one)) ?? new Set(), isStocked, settlable(now));
+    const why = heldBack(one, inCold, months.get(dataOf(one)) ?? new Set(), lineOf, settlable(now));
 
     if (why) {
       out.held[why]++;
@@ -291,26 +320,33 @@ const heldBack = (
   one:       CatalogPartition,
   inCold:    ReadonlyMap<string, string>,
   months:    ReadonlySet<string>,
-  isStocked: (data: string, month: string) => boolean,
+  lineOf:    (data: string, month: string) => Stocked | undefined,
   settlable: string,
 ): HeldBack | null => {
   if (inCold.get(idOf(one)) !== one.version) return 'not in cold storage';
 
   const data = dataOf(one);
+  const own  = lineOf(data, one.month);
 
-  if (! isStocked(data, one.month)) return 'not stocked';
+  if (! own) return 'not stocked';
 
-  // Of every month the catalog holds, settled or not: the first has none before it, the last none after.
-  for (const by of [-1, 1]) {
-    const beside = shift(one.month, by);
+  /** Whether a neighbouring month has, in the vault, the hours these files hold of it. */
+  const given = (version: string | undefined): boolean => !! version && version !== MISSING;
 
-    if (months.has(beside) && ! isStocked(data, beside)) return 'a neighbouring month is not stocked';
+  // Its last hours are in the next month's files — so its own hold the last hours of the month before.
+  if (own.postVersion) {
+    const before = shift(one.month, -1);
+
+    if (months.has(before) && ! given(lineOf(data, before)?.postVersion)) return 'a neighbouring month still needs it';
   }
 
-  // Nothing after it, and the month after has not had its time yet: not published is not ended.
-  const after = shift(one.month, 1);
+  // Its first hours are in the files of the month before — so its own hold the first hours of the month after.
+  if (own.preVersion) {
+    const after = shift(one.month, 1);
 
-  if (! months.has(after) && after > settlable) return 'a neighbouring month is not stocked';
+    // Not in the catalog, and it has not had its time yet: not published is not ended.
+    if (months.has(after) ? ! given(lineOf(data, after)?.preVersion) : after > settlable) return 'a neighbouring month still needs it';
+  }
 
   return null;
 };
@@ -321,19 +357,6 @@ const settlable = (now: number): string => {
 
   return shift(`${at.getUTCFullYear()}${String(at.getUTCMonth() + 1).padStart(2, '0')}`, -1);
 };
-
-/**
- * Whether cold storage holds a vault partition whose files are meant to be
- * absent.
- *
- * **Not built: nothing stores the vault yet**, so nothing moves a partition out
- * of it and this is never reached with a true answer to give. When the vault is
- * stored it is recorded as the archives are — `tar` and `held` rows under the
- * `vault` origin, a row of `held` being a vault partition at its revision — and
- * this becomes a lookup of that row. Until then a vault partition marked as
- * moved out is taken as not accounted for, and what it was stocked from stays.
- */
-const vaultInColdStorage = (_stocked: Stocked): boolean => false;
 
 /**
  * Remove one venue's evictable partitions from disk — to the trash, or outright
@@ -437,53 +460,6 @@ const remove = async (
   return total;
 };
 
-/** Take these files and directories off the disk: to the trash, or outright. */
-const discard = async (paths: readonly string[], purge: boolean): Promise<void> => {
-  if (! purge) return trash(paths);
-
-  let breathed = Date.now();
-
-  for (const one of paths) {
-    fs.rmSync(one, { recursive: true, force: true });
-
-    // Hundreds of thousands of them: the thread is handed back so that a Ctrl-C is heard.
-    if (Date.now() - breathed >= BREATH_MS) {
-      await new Promise(resolve => setImmediate(resolve));
-
-      breathed = Date.now();
-    }
-  }
-};
-
-/**
- * Hand files and directories to the host's trash.
- *
- * Through `gio`, never by moving files into a `.Trash-*` directory by hand: it
- * picks the trash of the volume the file is on, so the move is a rename, and
- * writes the record holding where each file came from — which is what makes
- * putting one back possible.
- *
- * Chunked because the argument vector is finite and a partition can hold
- * hundreds of thousands of files, and batched because a process per file would
- * be most of the run.
- */
-const trash = async (paths: readonly string[]): Promise<void> => {
-  for (let at = 0; at < paths.length; at += BATCH) {
-    try {
-      await execFileAsync('gio', ['trash', ...paths.slice(at, at + BATCH)], { timeout: 300_000 });
-    } catch (err) {
-      const detail = (err as { stderr?: string }).stderr?.toString().trim();
-
-      throw new Error(`gio trash failed: ${detail || (err as Error).message}`);
-    }
-  }
-};
-
-const execFileAsync = promisify(execFile);
-
-/** Paths per `gio trash` call. Far under any argument limit, far over one spawn. */
-const BATCH = 500;
-
 /** One venue's answer in a line: what can go. What stays, and why, is counted and not said. */
 const said = (found: Evictable): string => [
   found.ready.length > 0 ? loadOf(found.ready) : 'nothing to evict',
@@ -508,9 +484,6 @@ const shift = (month: string, by: number): string => {
 
   return `${at.getUTCFullYear()}${String(at.getUTCMonth() + 1).padStart(2, '0')}`;
 };
-
-/** How long removal may hold the thread before handing it back. */
-const BREATH_MS = 20;
 
 // ── Test access ───────────────────────────────────────────────────────────────
 

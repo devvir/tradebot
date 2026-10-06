@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { idOf } from './keys';
-import type { CatalogPartition, Held, HeldRow, Origin, PartitionKey, Tar, TarState, Totals } from './types';
+import type { CatalogPartition, Held, HeldRow, Origin, PartitionKey, StoredFile, Tar, TarState, Totals, VaultFile } from './types';
 
 /**
  * The record of cold storage: every tar, and which partitions each one holds.
@@ -209,6 +209,114 @@ export const noteEviction = (
     removed.files, removed.bytes, new Date().toISOString());
 };
 
+// ── The vault ─────────────────────────────────────────────────────────────────
+
+/** Every vault file the record holds, whatever its state. */
+export const vaultFiles = (db: DatabaseSync): StoredFile[] =>
+  db.prepare(`SELECT ${VAULT_FILE} FROM vault_file ORDER BY partition, revision, instrument, side`).all() as unknown as StoredFile[];
+
+/** The vault files that are not in cold storage yet, in the order they were planned. */
+export const vaultFilesPending = (db: DatabaseSync): StoredFile[] =>
+  db.prepare(`SELECT ${VAULT_FILE} FROM vault_file WHERE state <> 'stored' ORDER BY rowid`).all() as unknown as StoredFile[];
+
+/** The files of one partition at one revision. */
+export const vaultFilesOf = (db: DatabaseSync, partition: string, revision: string): StoredFile[] =>
+  db.prepare(`SELECT ${VAULT_FILE} FROM vault_file WHERE partition = ? AND revision = ? ORDER BY instrument, side`)
+    .all(partition, revision) as unknown as StoredFile[];
+
+/**
+ * Plan a partition's files for cold storage. One already in the record keeps
+ * the state it has: planning is asked again on every run, and must not undo
+ * what an earlier one did.
+ */
+export const planVaultFiles = (db: DatabaseSync, files: readonly VaultFile[]): void => {
+  const insert = db.prepare(
+    `INSERT INTO vault_file (partition, revision, instrument, side, path, bytes, state)
+          VALUES (?, ?, ?, ?, ?, ?, 'planned')
+       ON CONFLICT (partition, revision, instrument, side) DO NOTHING`);
+
+  db.exec('BEGIN IMMEDIATE');
+
+  try {
+    for (const one of files) insert.run(one.partition, one.revision, one.instrument, one.side, one.path, one.bytes);
+
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+
+    throw err;
+  }
+};
+
+/** Move a vault file on: handed to Mega, confirmed there, or back to be handed over again. */
+export const moveVaultFile = (
+  db:     DatabaseSync,
+  file:   Pick<VaultFile, 'partition' | 'revision' | 'instrument' | 'side'>,
+  state:  StoredFile['state'],
+  handle: string | null = null,
+): void => {
+  db.prepare(
+    `UPDATE vault_file SET state = ?, handle = ?, stored_at = ?
+      WHERE partition = ? AND revision = ? AND instrument = ? AND side = ?`,
+  ).run(state, handle, state === 'stored' ? new Date().toISOString() : null, file.partition, file.revision, file.instrument, file.side);
+};
+
+/** Every file of a partition is in cold storage: the partition is. */
+export const storeVaultPartition = (db: DatabaseSync, partition: string, revision: string): void => {
+  db.prepare(
+    `INSERT INTO vault_partition (partition, revision, files, bytes, stored_at)
+          SELECT partition, revision, COUNT(*), SUM(bytes), ? FROM vault_file
+           WHERE partition = ? AND revision = ?
+           GROUP BY partition, revision
+       ON CONFLICT (partition, revision) DO NOTHING`,
+  ).run(new Date().toISOString(), partition, revision);
+};
+
+/** The vault partitions in cold storage, each by the revisions that are. */
+export const vaultStored = (db: DatabaseSync): Map<string, Set<string>> => {
+  const stored = new Map<string, Set<string>>();
+
+  for (const row of db.prepare('SELECT partition, revision FROM vault_partition').all() as { partition: string; revision: string }[])
+    stored.set(row.partition, (stored.get(row.partition) ?? new Set()).add(row.revision));
+
+  return stored;
+};
+
+/** Forget what of a revision never reached cold storage. What did stays, to be removed from there when another replaces it. */
+export const dropVaultPending = (db: DatabaseSync, partition: string, revision: string): void => {
+  db.prepare(`DELETE FROM vault_file WHERE partition = ? AND revision = ? AND state <> 'stored'`).run(partition, revision);
+};
+
+/** Forget a revision of a partition: its files have been removed from cold storage, or were never sent. */
+export const dropVaultRevision = (db: DatabaseSync, partition: string, revision: string): void => {
+  db.prepare('DELETE FROM vault_file WHERE partition = ? AND revision = ?').run(partition, revision);
+  db.prepare('DELETE FROM vault_partition WHERE partition = ? AND revision = ?').run(partition, revision);
+};
+
+/** Vault files were taken off the local disk, or brought back to it: how things stand now, and a line of history each. */
+export const noteVaultMoves = (db: DatabaseSync, files: readonly VaultFile[], action: 'evicted' | 'restored'): void => {
+  const insert = db.prepare(
+    `INSERT INTO vault_move (partition, revision, instrument, side, bytes, action, moved_at) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+  const stand  = db.prepare(
+    `UPDATE vault_file SET evicted_at = ? WHERE partition = ? AND revision = ? AND instrument = ? AND side = ?`);
+  const at = new Date().toISOString();
+
+  db.exec('BEGIN IMMEDIATE');
+
+  try {
+    for (const one of files) {
+      insert.run(one.partition, one.revision, one.instrument, one.side, one.bytes, action, at);
+      stand.run(action === 'evicted' ? at : null, one.partition, one.revision, one.instrument, one.side);
+    }
+
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+
+    throw err;
+  }
+};
+
 /** What the record holds of an origin, added up. */
 export const totals = (db: DatabaseSync, origin: Origin): Totals => ({
   ...(db.prepare(
@@ -291,9 +399,57 @@ CREATE TABLE IF NOT EXISTS eviction (
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS eviction_venue ON eviction (origin, venue);
+
+-- One file of the vault in cold storage, or on its way there: a partition
+-- stored whole, or one instrument of a partition stored per instrument. The
+-- vault is stored as it is — the same files, at the same paths — so there is no
+-- tar to describe, and a file is found in cold storage where it is on disk.
+CREATE TABLE IF NOT EXISTS vault_file (
+  partition  TEXT    NOT NULL,           -- the slice's directory below the vault, then its month
+  revision   TEXT    NOT NULL,
+  instrument TEXT    NOT NULL,           -- '@' for the one file of a partition stored whole
+  side       TEXT    NOT NULL,           -- '' the month's own rows; 'pre', 'post' what a neighbouring month held of it
+  path       TEXT    NOT NULL,           -- below the vault
+  bytes      INTEGER NOT NULL,
+  state      TEXT    NOT NULL,           -- planned, queued, stored
+  handle     TEXT,                       -- Mega's own identifier for the stored object
+  stored_at  TEXT,
+  evicted_at TEXT,                       -- taken off the local disk and not brought back
+  PRIMARY KEY (partition, revision, instrument, side)
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS vault_file_state ON vault_file (state);
+
+-- A vault partition every file of which is in cold storage, at the revision
+-- that is. Written when the last of its files is confirmed, and what "stored"
+-- means for a partition.
+CREATE TABLE IF NOT EXISTS vault_partition (
+  partition TEXT    NOT NULL,
+  revision  TEXT    NOT NULL,
+  files     INTEGER NOT NULL,
+  bytes     INTEGER NOT NULL,
+  stored_at TEXT    NOT NULL,
+  PRIMARY KEY (partition, revision)
+) STRICT;
+
+-- A vault file taken off the local disk, or brought back to it, and when. One
+-- row each time: the history, where vault_file says only how things stand.
+CREATE TABLE IF NOT EXISTS vault_move (
+  partition  TEXT    NOT NULL,
+  revision   TEXT    NOT NULL,
+  instrument TEXT    NOT NULL,
+  side       TEXT    NOT NULL,
+  bytes      INTEGER NOT NULL,
+  action     TEXT    NOT NULL,           -- evicted, restored
+  moved_at   TEXT    NOT NULL
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS vault_move_file ON vault_move (partition, instrument);
 `;
 
 const TAR = `id, origin, venue, month, seq, remote, local, bytes, state, handle, stored_at AS storedAt`;
+
+const VAULT_FILE = 'partition, revision, instrument, side, path, bytes, state, handle, evicted_at AS evictedAt';
 
 const HELD = `tar_id AS tarId, venue, market, dataset, variant, grain, bundle, month, version, files, bytes,
               next_version AS nextVersion, next_files AS nextFiles, next_bytes AS nextBytes`;

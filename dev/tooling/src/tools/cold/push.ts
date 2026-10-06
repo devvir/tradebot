@@ -9,13 +9,13 @@ import { Archives, matches } from './disk';
 import { idOf, partitionOf } from './keys';
 import { acquire } from './lock';
 import * as mega from './mega';
-import { isWatch } from './options';
+import { agreed, isWatch } from './options';
 import { Progress } from './progress';
+import { runPushVault } from './push-vault';
 import * as record from './record';
 import { clearTemporary, membersOf, replaceMembers, tarSize, writePart } from './tar';
 import { fmtBytes } from '../../shared/utils/format';
 import { error, info, spacer, success, warn } from '../../shared/ui/logger';
-import { confirm } from '../../shared/ui/prompts';
 import type { DatabaseSync } from 'node:sqlite';
 import type { CatalogPartition, ColdConfig, Origin, Planned, PushOptions, Round, SourceFile, Tar } from './types';
 
@@ -47,6 +47,9 @@ import type { CatalogPartition, ColdConfig, Origin, Planned, PushOptions, Round,
  * and an upload is confirmed from Mega rather than from an exit code.
  */
 export const runPush = async (origin: Origin, options: PushOptions): Promise<void> => {
+  // The vault is stored as it is, file by file, and has a run of its own.
+  if (origin === 'vault') return runPushVault(options);
+
   const config  = loadConfig(origin);
   const release = await acquire(config.coldRoot, origin, 'push');
 
@@ -244,7 +247,7 @@ const approve = async (db: DatabaseSync, todo: Tar[], planned: Planned): Promise
 
   spacer();
 
-  return confirm('Go ahead?', true);
+  return agreed('Go ahead?', true);
 };
 
 /**

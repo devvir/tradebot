@@ -266,10 +266,7 @@ describe('what the numbers mean', () => {
     expect(row!.side).toBe('sell');
   });
 
-  /**
-   * Stored as published — and what is published counts both sides: this minute's
-   * two trades are 8 + 12 contracts, and the bar says 40.
-   */
+  /** Stored as published: this minute's two trades are 8 + 12 contracts, and the bar says 40. */
   it('reads htx\'s option klines with the contract count as volume', async () => {
     const [row] = await rowsOf(resolve(named('htx.old-option-klines.csv'))!, 'htx.old-option-klines.csv', 1);
 

@@ -45,13 +45,25 @@ converting seconds to microseconds is mechanical and reversible. Deciding a 50-l
 ## Path convention
 
 ```
-<vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…]/@/<YYYYMM>.<revision>.parquet
-<vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…]/<symbol>/<YYYYMM>.<revision>.parquet
+<vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…]/@/<YYYYMM>.parquet
+<vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…]/<symbol>/<YYYYMM>.parquet
+…/<@ or symbol>/<YYYYMM>.pre.parquet     the month's first hours, from the month before
+…/<@ or symbol>/<YYYYMM>.post.parquet    the month's last hours, from the month after
 ```
 
+**A file's name says what it holds, and never which build wrote it.** A month stocked again is
+written over the month that was there, so a file is found at the same path for as long as the vault
+holds it. What it was built from is written in [the ledger](#the-ledger) and nowhere else.
+
+**The hours a neighbouring month's files hold of a month are a file of their own**, beside the
+month's own rows and never in them — see
+[buckets](#venues-whose-buckets-do-not-cut-at-utc-midnight). A month has such a file only where its
+venue cuts its days away from UTC midnight.
+
 **A month is stored one of two ways, decided by its size.** A small one is a single file holding
-every instrument, under `@`. One whose archive files weigh more than `STOCKER_SPLIT_GB` is a file
-per instrument, each under its symbol. Venue first makes a venue one folder, and a dataset one
+every instrument, under `@`. One whose archive files weigh more than 1 GB is a file per instrument,
+each under its symbol. That weight is one number for every deployment and not a setting: how a month
+is stored is how it is found in cold storage, which every machine shares. Venue first makes a venue one folder, and a dataset one
 subtree of it.
 
 **Why two.** The number of files is what makes a tree slow to count, move or delete, and most
@@ -131,33 +143,39 @@ have at its current revision. Nothing is written but the vault.
    settled. A partition a run is still adding to can be complete on disk at every moment and still
    be a fraction of itself, and only the catalog knows which — so one that is not settled is simply
    not in the answer, and comes up in a later sweep. What settled means is the catalog's to say
-   ([CATALOG.md](CATALOG.md)); `STOCKER_COOL_HOURS`, where set, asks on top that the partition has
-   gone unchanged for that long. Each one comes with how many files it has, their total size, and
-   the catalog's version of it.
-2. **With its neighbour?** A partition that reads the edge of a neighbouring month needs that
-   month in the answer too (see [buckets](#venues-whose-buckets-do-not-cut-at-utc-midnight)).
+   ([CATALOG.md](CATALOG.md)). Each one comes with how many files it has, their total size, and the
+   catalog's version of it.
+2. **With or without its neighbour.** A partition that reads the edge of a neighbouring month reads
+   it where that month is in the answer too, and is stocked without those hours where it is not
+   (see [buckets](#venues-whose-buckets-do-not-cut-at-utc-midnight)).
 3. **Current?** The partition's revision — below — is computed from what the catalog answered. If
    [the ledger](#the-ledger) has the partition at that revision, it is current and nothing is read,
-   whether or not its files are there. If the ledger does not, the vault itself is read: a partition
-   found there whole at that revision is written into the ledger and is current.
-4. **On disk?** The partition's files are gathered from the archives and compared with what the
+   whether or not its files are there. The vault's files are never asked: a file does not say what
+   it was built from, so one the ledger has no line for is nobody's word for anything.
+4. **Only its neighbour new?** A month stocked without a neighbour's hours, whose neighbour is in
+   the answer now, has only those hours built — from the neighbour's files. Its own archives are
+   not read, and need not be on disk any more.
+5. **On disk?** The partition's files are gathered from the archives and compared with what the
    catalog says, by count and by total size — no file is opened. Where several renderings are
    ready, the preferred one that is on disk is taken (see below); one the catalog calls
    downloaded but the disk does not hold is skipped and reported.
-5. **Stock** into a staging directory under `<vault>/.stocker-tmp`, one file per instrument.
-6. **Publish**, write the partition into the ledger, and remove every other revision of the month. A small month's instrument files
-   are appended into one, in symbol order, and that file is renamed into `@` — one rename, so a
-   reader sees it whole or not at all. A large month's files are renamed one by one under their
-   symbols, between a marker written into `@` before the first and removed after the last; a
-   revision whose marker is still there was interrupted and does not count as stocked.
+6. **Stock** into a staging directory under `<vault>/.stocker-tmp`, one file per instrument: the
+   month's own rows, and each neighbour's hours, apart. A small month's instrument files are then
+   appended into one, in symbol order.
+7. **Put in place.** Nothing in the vault is touched until everything is built. Then, in order: the
+   ledger is told the month is changing; whatever of the month is in the vault is removed; the new
+   files are renamed in, under `@` or under their symbols; and the ledger is told what the month
+   holds. A month that was never in the vault skips the first step — until its line is written it
+   is not stocked, whatever of it is in place.
 
 **Nothing is checked again after a build.** A partition that changed while it was being stocked
 has a new version in the catalog, so the next sweep computes a revision the vault does not hold
 and stocks it again.
 
-**The vault is read only for a partition the ledger does not settle**, once per slice per sweep. A
-slice stored per instrument is a folder per symbol, so asking it about one month means listing every
-one of them; reading the slice once answers every month of it.
+**The vault is read only for a partition about to be put in place**, to find what of the month is
+there to make way, once per slice. A slice stored per instrument is a folder per symbol, so asking
+it about one month means listing every one of them; reading the slice once answers every month of
+it.
 
 **Several renderings of one month land in one partition of the vault.** A venue can publish the
 same data monthly and daily, or per instrument and in one market-wide file, and the catalog
@@ -175,11 +193,11 @@ A stocked partition's revision is the first twelve hex digits of a SHA-256 over:
 - the canonical table's column list;
 - every series that can read the dataset;
 - the catalog's version of the partition, which changes whenever a file of it does;
-- the catalog's version of any neighbouring month it reads the edge of;
-- the symbol filter, so a partly stocked partition never passes for a whole one.
+- the catalog's version of any neighbouring month it reads the edge of — or, for a neighbour that
+  was not there to be read, the fact that it was not.
 
 So **anything that would change the output changes the revision**: a file added, replaced or
-withdrawn in the catalog, a series edited, a column added.
+withdrawn in the catalog, a series edited, a column added, a neighbour arriving.
 
 **An empty partition is still published** — one file under `@` with the table's columns and no
 rows, whatever the month weighed — so a month whose every file the venue published empty reads as
@@ -198,8 +216,8 @@ stocked again.
 | `venue`, `market`, `dataset`, `variant`, `grain`, `bundle`, `month` | the partition of the archives it was stocked from, as the catalog names it |
 | `mode` | `bundle`, one file for every instrument, or `split`, a file per instrument |
 | `version` | the catalog's version of that partition when it was stocked |
-| `preVersion`, `postVersion` | the catalog's version of the month before and after, where the partition read their edge |
-| `revision` | the revision it was stocked at |
+| `preVersion`, `postVersion` | what the month before and the month after held of it: empty where the month has no such side, the catalog's version of that neighbour where its hours were read, `missing` where it was not there to be read |
+| `revision` | the revision it was stocked at — or `updating`, while its files are being changed |
 | `size`, `count` | what its files weigh, and how many there are |
 | `stockedAt` | when |
 
@@ -207,12 +225,33 @@ Fields are separated by `|`, since the catalog's own names carry commas. **A lin
 A partition stocked again gets another line, and the last line for a partition is the one that
 counts — so the file is only ever appended to.
 
+**A month with a side `missing` is stocked.** It holds every row its own files have, and says
+exactly what it lacks. When the neighbour arrives the side is added and the month gets another line.
+
+**A partition whose files are being changed says so first.** Files carry no mark of which build
+wrote them, so the ledger is the only thing that can tell a month whole from one caught half way.
+Before the first file of a stocked month is touched, a line is written for it with `updating` where
+its revision goes; the line that says what it now holds follows the last file. A partition whose
+last line says `updating` is not stocked, to anyone reading.
+
+**A partition caught half way is put right before anything reads the vault** — as the service
+starts, and before each sweep. Nothing else writes there, so a partition still saying `updating`
+then is one nobody is updating:
+
+- **One that was only being given a neighbour's hours goes back to what it was.** Its own files
+  were never touched, so the side files being added are removed and the line it had before is
+  written again: stocked, and still without them. The two lines tell it apart — the same rendering
+  at the same version, with a side that was `missing` and no longer is.
+- **Any other is no longer stocked.** Some of its files are of the month that was there and some of
+  the one arriving, and nothing tells them apart, so all of them are removed and the next sweep
+  stocks it from its archives. Its `updating` line stays the last, which is what says so.
+
 **`backedup.csv` says which partitions have a safe copy elsewhere.** It sits beside the ledger and
 holds a partition, the revision that was copied, and when. Stocker reads it and never writes it.
 
 **The ledger is set against the vault once, as the service starts.** Every partition it holds must
-be in the vault at its revision — a bundle as one file of the size the ledger gives, a split
-partition as the number of files it gives — **unless `backedup.csv` has that revision**. A partition
+be in the vault — a bundle as files of the size the ledger gives, a split partition as the number
+of files it gives — **unless `backedup.csv` has its revision**. A partition
 with a safe copy is not looked at: whatever of it is in the vault, all of its files, some of them or
 none, nothing is lost. One without a safe copy that is not there is a loss:
 
@@ -236,7 +275,8 @@ front of whoever looks next: nothing removes `ERROR.log` but a person.
 | What a format means | `src/schema/series.ts` | declarative, one entry per format |
 | Which instruments are inverse | `src/schema/margin.ts` | one rule per venue |
 | What a table is | `src/schema/tables.ts` | declarative, the canonical column list |
-| Where it lands | `src/vault.ts` | the layout, the revision, what the vault holds, publishing |
+| Where it lands | `src/vault.ts` | the layout, the revision, what the vault holds, putting a month in place |
+| What was stocked | `src/ledger.ts` | the ledger, a partition caught half way, the ledger against the vault |
 | The sweep | `src/scan.ts` | the decisions above, in order |
 
 Containers, formats, series and tables are extension points: a file or an entry you add rather
@@ -293,7 +333,7 @@ naming the file. Every positional format is comma-separated, which is all detect
 Every connection comes from **one DuckDB instance**, which is the load-bearing part:
 `memory_limit` and `threads` are instance-wide, so concurrent builds divide the configured budget
 rather than multiplying it. Raising concurrency never raises what the service may take from the
-box. The budget is `STOCKER_MEMORY_GB` and `STOCKER_THREADS`; past the first the engine spills to
+box. The budget is `STOCKER_ENGINE_MEMORY_GB` and `STOCKER_THREADS`; past the first the engine spills to
 disk rather than taking more.
 
 **A month is joined by appending, never by sorting.** Each instrument's file is already in time
@@ -328,8 +368,8 @@ the time.
 ### Extraction runs ahead of the builds, on threads of its own
 
 A month of small files is nearly all extraction: the engine has a few megabytes of rows to read and
-tens of thousands of archives to wait for. So extraction does not wait to be asked. `STOCKER_UNPACK_WORKERS`
-threads extract and do nothing else, and what they work on is chosen ahead of the builds:
+tens of thousands of archives to wait for. So extraction does not wait to be asked. Two threads
+extract and do nothing else, and what they work on is chosen ahead of the builds:
 
 - the tasks of the partition being built that no connection has reached yet, and then
 - the tasks of the partition after it, which the sweep decides while the current one is being stocked.
@@ -344,8 +384,6 @@ and by eight times the compressed size for one still running. Past that nothing 
 until a build removes what it has read. A task a build is waiting on is never held back: the bound is
 on getting ahead, not on working. What was extracted for a build that never came — the sweep stopped,
 the partition failed — is removed.
-
-With no threads configured the same order holds and the work is done on the main thread.
 
 Extraction lands in `<vault>/.stocker-tmp`, **never the system temp directory**: these archives
 run to hundreds of MB, and in a container `os.tmpdir()` is the overlay filesystem, where filling
@@ -524,18 +562,25 @@ This is declared, never coded per venue. A series states where its buckets can s
 | `forward` | a bucket holds rows from after its label | the previous month's **last** bucket |
 | `both` | either way | both |
 
-Three things follow, and all are mechanical:
+Four things follow, and all are mechanical:
 
-- **The neighbour's edge is read too.** Each instrument's files are joined by that instrument's
-  files in the neighbouring month's edge bucket — every part of it, since a split day's tail is
-  spread across them. For a monthly grain the edge is the neighbour's whole file.
-- **The build clips to the month.** Pulling in a neighbour without bounding the output would
-  write its rows into two partitions. Clipping applies **only** to spilling series: elsewhere it
-  could only ever delete, since a stray out-of-period row has no neighbour supplying it.
-- **The partition waits for its neighbour.** It is ready only once the neighbouring month is
-  downloaded and settled too, and the neighbour's version is part of its revision — so the
-  neighbour changing restocks it. The newest month a lens holds therefore waits for the lens to
-  reach the month after it.
+- **The neighbour's edge is read too.** Each instrument's files in the neighbouring month's edge
+  bucket are read — every part of it, since a split day's tail is spread across them. For a
+  monthly grain the edge is the neighbour's whole file.
+- **Every build clips to the month.** The month's own files are clipped, so the hours they hold of
+  another month are left out; the neighbour's edge is clipped the same way, so only this month's
+  hours are taken from it. Clipping applies **only** to spilling series: elsewhere it could only
+  ever delete, since a stray out-of-period row has no neighbour supplying it.
+- **What the neighbour holds is stored apart.** The hours from the month before are
+  `<YYYYMM>.pre.parquet` and those from the month after `<YYYYMM>.post.parquet`, beside the month's
+  own file — under `@`, or under each symbol the month itself has a file for. A month is therefore
+  the same files whether its neighbour was there when it was stocked or came later, and a
+  neighbour arriving adds a small file where it would otherwise rewrite a large one.
+- **The partition does not wait for its neighbour.** Where the neighbouring month is not in the
+  catalog's answer, the month is stocked without that side and its ledger line says `missing`.
+  When the neighbour is there, the side is built from the neighbour's edge files alone and the
+  month's own archives are not needed. The neighbour's version is part of the revision, so a
+  neighbour that changes afterwards restocks the month.
 
 The trait assumes the offset is smaller than one bucket, so one neighbour in each direction is
 enough.
@@ -568,16 +613,18 @@ absence of work:
 | Outcome | Reported as |
 |---|---|
 | stocked something | `Stocked N partitions — rescanning in M minutes` |
-| nothing to do, some still downloading or not on disk | `Caught up — N partitions still downloading, M not on disk as catalogued` |
+| nothing to do, some without a neighbour's hours or not on disk | `Caught up — N partitions without a neighbouring month's hours, M not on disk as catalogued` |
 | nothing to do at all | `Caught up — every partition in scope is stocked` |
 | anything failed | a warning naming the count, never "caught up" |
 | stopped for want of space | a warning, never "caught up" |
 
-Sweeps cannot overlap; a tick landing mid-sweep is skipped and logged.
+A sweep runs every 5 minutes, which is a constant and not a setting: one with nothing to stock costs
+a request to the catalog per venue and a read of the ledger. Sweeps cannot overlap; a tick landing
+mid-sweep is skipped and logged.
 
-`STOCKER_LENS`, `STOCKER_VENUES`, `STOCKER_TABLES` and `STOCKER_START_MONTH`/`STOCKER_END_MONTH`
-scope a sweep. None of them is a commitment — nothing about them is recorded, so widening one
-later makes more partitions eligible without restocking what is already done.
+`STOCKER_LENS` and `STOCKER_VENUES` scope a sweep; venues are swept alphabetically. Neither is a commitment — nothing about them is
+recorded, so widening one later makes more partitions eligible without restocking what is already
+done. Everything else in scope is stocked: every table, every instrument, every closed month.
 
 Configuration and the storage contract are in the
 [service README](../../services/stocker/README.md).

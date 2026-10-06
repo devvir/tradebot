@@ -3,6 +3,8 @@ import { C } from '../utils/colors';
 
 let debugStream: fs.WriteStream | null = null;
 
+let prefix = '';
+
 export function openDebugLog(filePath: string): void {
   debugStream = fs.createWriteStream(filePath, { flags: 'a' });
 }
@@ -18,20 +20,29 @@ export function closeDebugLog(): Promise<void> {
   });
 }
 
+/**
+ * A word put in front of every line from here on, dimmed and in brackets — for
+ * a command that does several things in turn and has to say which one each line
+ * is about. Null takes it away again.
+ */
+export function setPrefix(label: string | null): void {
+  prefix = label ? `${C.dim}(${label})${C.reset} ` : '';
+}
+
 export function info(message: string): void {
-  console.log(`${C.cyan}ℹ${C.reset} ${message}`);
+  console.log(`${C.cyan}ℹ${C.reset} ${prefix}${message}`);
 }
 
 export function success(message: string): void {
-  console.log(`${C.green}✓${C.reset} ${message}`);
+  console.log(`${C.green}✓${C.reset} ${prefix}${message}`);
 }
 
 export function warn(message: string): void {
-  console.log(`${C.yellow}⚠${C.reset} ${message}`);
+  console.log(`${C.yellow}⚠${C.reset} ${prefix}${message}`);
 }
 
 export function error(message: string): void {
-  console.log(`${C.red}✗${C.reset} ${message}`);
+  console.log(`${C.red}✗${C.reset} ${prefix}${message}`);
 }
 
 export function debug(message: string): void {

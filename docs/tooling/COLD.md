@@ -1,15 +1,16 @@
 # cold
 
-`tools cold` owns cold storage: packing what is finished into tars, uploading them to Mega, and
-keeping the record of what went where.
+`tools cold` owns cold storage: uploading what is finished to Mega, taking off the local disk what
+is safely there, bringing it back, and keeping the record of what went where.
 
 **Cold storage is a DX concern, not a service's job.** Nothing running in a container reads or
 writes any of it, so it lives in the tooling and holds its own state.
 
-**It stores partitions.** A partition is one month of one slice of a venue's data, and it is stored,
-restored and replaced whole. Which partitions exist, which are finished and what each holds is the
-catalog's to say; `cold` asks it, and keeps its own record of which tar each partition went into
-and at which version.
+**It stores partitions.** A partition is one month of one slice of a venue's data, and it is stored
+and replaced whole. For the archives, which partitions exist, which are finished and what each holds
+is the catalog's to say; `cold` asks it, and keeps its own record of which tar each partition went
+into and at which version. For the vault it is the vault's own ledger that says, and the files are
+stored as they are — see [COLD-VAULT.md](COLD-VAULT.md).
 
 ---
 
@@ -17,12 +18,18 @@ and at which version.
 
 | | |
 |---|---|
-| [`cold push`](COLD-PUSH.md) | Pack what is ready and not backed up yet, and upload it |
+| `cold push` | Upload what is ready and not backed up yet — [archives](COLD-PUSH.md), [vault](COLD-VAULT.md#cold-push-vault) |
+| `cold evict` | Remove from local disk what is safely in cold storage — [archives](COLD-EVICT.md), [vault](COLD-VAULT.md#cold-evict-vault) |
+| [`cold pull`](COLD-VAULT.md#cold-pull-vault) | Bring back what was evicted — the vault; the archives are not built |
 | `cold stats` | What the record holds, venue by venue |
-| [`cold evict`](COLD-EVICT.md) | Remove from local disk what is in cold storage and stocked — the archives only |
 | [`cold audit`](COLD-AUDIT.md) | Check cold storage against the record — **not running**, see its page |
 
-`push`, `evict` and `stats` take an **origin** and prompt for one when it is omitted.
+Each takes an **origin**: `archives`, `vault`, or `all` for every tree the command is built for, one
+after the other. With none given it asks, and `all` is the first answer.
+
+**With `all`, every line says which tree it is about** — `(archives)`, `(vault)` — and nothing else
+tells them apart. A command that is not built for one of the trees says so on that tree's turn and
+carries on with the rest: `pull` brings back the vault, and not yet the archives.
 
 **Options given at the `cold` level are every command's.** They are written once, before the command
 or after it, and each command that has a use for one reads it:
@@ -30,6 +37,17 @@ or after it, and each command that has a use for one reads it:
 | | |
 |---|---|
 | `-W`, `--watch` | keep running once the work is done, and look again every 30 minutes — `push` and `evict` |
+| `-A`, `--all-sources` | every tree, without asking which. With it there is no origin on the line, so every argument is a venue |
+| `-Y`, `--yes` | answer yes to what a command asks before it acts |
+
+`--all-sources` and `--yes` together are what a script or a crontab runs: nothing is asked.
+
+**`--yes` answers what a command asks about its own work, and nothing else.** A lock another run is
+holding still stops the run.
+
+**Watching every tree, each is seen through before the next begins**, and the whole round comes
+again after the wait. A command watching one tree looks again in the middle of its own work; over
+several that would never hand over to the next. What a command asks, it asks in the first round only.
 
 ---
 
@@ -40,6 +58,7 @@ An origin is a tree to back up, **named for the tree rather than for whatever wr
 | origin | tree | in Mega |
 |---|---|---|
 | `archives` | the venues' archive files, as published | `<MEGA_ROOT>/sources/archives` |
+| `vault` | the stocked partitions, as Parquet | `<MEGA_ROOT>/vault` |
 
 `sources/` holds the trees data arrives in, one folder per way of obtaining it. The vault — the
 normalised product, whatever it was made from — sits beside `sources/`, not inside it.
@@ -62,10 +81,11 @@ caller that reasons about Mega without going through the record of what is in it
 
 | | |
 |---|---|
-| the record | `<cold>/cold.sqlite` — every tar, and the partitions each holds |
+| the record | `<cold>/cold.sqlite` — every tar and the partitions each holds, and every vault file |
 | local tars | `<cold>/<origin>/<venue>/<venue>-<YYYYMM>.<NNN>.tar` — staging only, deleted once stored |
 | lock | `<cold>/cold.<origin>.<command>.lock` — one run of a command per origin |
-| remote | `<MEGA_ROOT>/sources/archives/<venue>/<YYYY>/<venue>-<YYYYMM>.<NNN>.tar` |
+| remote, archives | `<MEGA_ROOT>/sources/archives/<venue>/<YYYY>/<venue>-<YYYYMM>.<NNN>.tar` |
+| remote, vault | `<MEGA_ROOT>/vault/<venue>/<market>/<dataset>[,<variant>…]/<@ or instrument>/<YYYYMM>[.pre|.post].parquet` |
 
 **The record is the only thing that knows what a tar holds.** A tar's name says which venue-month
 it belongs to and nothing about what is inside. So losing the record loses the map, and it belongs
@@ -90,10 +110,11 @@ Configuration is read from `dev/tooling/.env`; see [COLD-PUSH.md](COLD-PUSH.md) 
 ## What it deliberately does not do
 
 **`push` never deletes anything from the tree it backs up.** It removes its own staging tar once
-Mega confirms it, and nothing else.
+Mega confirms it, and nothing else. In Mega it removes one thing: a file a vault partition's
+earlier revision had and the revision that replaces it has not, once that one is confirmed.
 
 **And it does not decide what is worth keeping.** What is stored is what the catalog says is
 finished — through a lens, where one is asked for.
 
-Related: [COLD-PUSH.md](COLD-PUSH.md), and [DATA-SYNC.md](DATA-SYNC.md) for the Mega steps that have
+Related: [COLD-PUSH.md](COLD-PUSH.md), [COLD-EVICT.md](COLD-EVICT.md), [COLD-VAULT.md](COLD-VAULT.md), and [DATA-SYNC.md](DATA-SYNC.md) for the Mega steps that have
 not moved here yet.

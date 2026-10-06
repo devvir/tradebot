@@ -1,29 +1,42 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readdir, rename, rm, statfs, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, rename, rm, statfs } from 'node:fs/promises';
 import { join } from 'node:path';
 import config from './config';
 import { SCRATCH } from './containers';
 import { fieldsOf } from './schema/tables';
-import type { Edge, Partition, Series, SliceIndex, Stocked, VaultKey } from './types';
+import type { Edge, Partition, Series, Side, SliceIndex, Stocked, VaultKey } from './types';
 
 /**
- * The vault's layout, and how a stocked partition is recorded in it.
+ * The vault's layout, and how a partition is put in place in it.
  *
- *     <vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…]/@/<YYYYMM>.<revision>.parquet
- *     <vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…]/<symbol>/<YYYYMM>.<revision>.parquet
+ *     <vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…]/@/<YYYYMM>.parquet
+ *     <vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…]/<symbol>/<YYYYMM>.parquet
+ *     …/<@ or symbol>/<YYYYMM>.pre.parquet    the month's first hours, from the month before
+ *     …/<@ or symbol>/<YYYYMM>.post.parquet   the month's last hours, from the month after
+ *
+ * **A file's name says what it holds and never which build wrote it.** A month
+ * stocked again is written over the month that was there, so a file is found at
+ * the same path for as long as the vault holds it. What it was built from is
+ * written in the vault's ledger, and nowhere else — see `ledger.ts`.
+ *
+ * **What a neighbouring month's files hold of this one is a file of its own.**
+ * Where a venue cuts its days away from UTC midnight, a month's first or last
+ * hours sit in a file of the month next door. They are stocked beside the
+ * month's own rows and not into them — so a month is the same files whether its
+ * neighbour was there when it was stocked or came later, and the neighbour
+ * arriving adds a small file where it would otherwise rewrite a large one.
  *
  * **A month of a slice is stored one of two ways.** A small one is a single
  * file holding every instrument, under `@`. A large one is a file per
  * instrument, each under its symbol — so one instrument's share of a month that
  * weighs hundreds of gigabytes can be moved on its own. Which one is decided by
- * the weight of the archive files it was built from (`splitGb`). Every file
+ * the weight of the archive files it was built from. Every file
  * carries the symbol as a column, so the two read as one table.
  *
  * **The revision names what a partition was built from.** It is a digest of
  * every input, so a month stocked at a revision is current while that is the
  * revision its inputs compute, and one whose inputs changed anywhere computes a
- * revision that has not been stocked. Which revision each month was stocked at
- * is written in the vault's ledger — see `ledger.ts`.
+ * revision that has not been stocked.
  *
  * Hive-style `key=value` directories are read back as columns by a query engine
  * and pruned on. `@`, the symbol directories and the file names are **bare**:
@@ -33,13 +46,17 @@ import type { Edge, Partition, Series, SliceIndex, Stocked, VaultKey } from './t
 /** `…/dataset=…[/interval=…][/kind=…]`: where every month of a slice sits. */
 export const sliceDirOf = (key: VaultKey): string => join(config.vaultDir, ...levelsOf(key));
 
-/** The one file of a month stored whole. */
-export const bundleOf = (key: VaultKey, revision: string): string =>
-  join(sliceDirOf(key), BUNDLE, `${monthOf(key)}.${revision}.parquet`);
+/** The one file of a month stored whole — or, with a side, the file of what a neighbouring month held of it. */
+export const bundleOf = (key: VaultKey, side?: Side): string =>
+  fileOf(key, BUNDLE, side);
 
-/** One instrument's file of a month stored per instrument. */
-export const fileOf = (key: VaultKey, revision: string, symbol: string): string =>
-  join(sliceDirOf(key), symbol, `${monthOf(key)}.${revision}.parquet`);
+/** One instrument's file of a month stored per instrument, or its file of a side. */
+export const fileOf = (key: VaultKey, symbol: string, side?: Side): string =>
+  pathOf(sliceDirOf(key), monthOf(key), symbol, side);
+
+/** The same, for a slice named by its directory and a month as file names write it. */
+export const pathOf = (dir: string, month: string, symbol: string, side?: Side): string =>
+  join(dir, symbol, `${month}${side ? `.${side}` : ''}.parquet`);
 
 /** How a vault partition is named in a log line. */
 export const labelOf = (key: VaultKey): string =>
@@ -53,15 +70,19 @@ export const monthOf = (key: VaultKey): string => key.month.replace('-', '');
  *
  * Folded in, in order: a revision of the build itself, bumped by hand when its
  * output changes for every partition alike; the canonical table; every series
- * that can read the dataset; the catalog's version of the partition, and of any
- * neighbouring month it reads the edge of; and the symbol filter, so a partly
- * stocked partition can never pass for a whole one.
+ * that can read the dataset; and the catalog's version of the partition, and of
+ * any neighbouring month it reads the edge of.
+ *
+ * **A neighbour that is not there is part of it too**: a month stocked without
+ * the hours a neighbouring month holds of it has a revision of its own, and
+ * gets another when they arrive.
  */
 export const revisionOf = (
   key:       VaultKey,
   partition: Partition,
   series:    Series[],
   edges:     Edge[],
+  missing:   readonly Side[] = [],
 ): string => {
   const hash = createHash('sha256');
 
@@ -70,9 +91,11 @@ export const revisionOf = (
   hash.update(JSON.stringify(series));
   hash.update(`${partition.id}\n${partition.version}\n`);
 
-  for (const edge of edges) hash.update(`${edge.partition.id}\n${edge.side}\n${edge.partition.version}\n`);
+  // What a neighbour holds of the month is stored apart from it: a layout a revision without this does not have.
+  if (edges.length + missing.length > 0) hash.update('apart\n');
 
-  hash.update(config.symbols.join(','));
+  for (const edge of edges) hash.update(`${edge.partition.id}\n${edge.side}\n${edge.partition.version}\n`);
+  for (const side of [...missing].sort()) hash.update(`${side}\nmissing\n`);
 
   return hash.digest('hex').slice(0, 12);
 };
@@ -113,66 +136,79 @@ export class Slices {
   }
 }
 
-/**
- * Whether a revision is in the vault whole: one file under `@`, or files under
- * the symbols with nothing left saying they were still arriving.
- */
+/** Whether a month's own rows are in the vault: one file under `@`, or files under the symbols. */
 export const isWhole = (stocked: Stocked | undefined): boolean =>
-  !! stocked && ! stocked.publishing && (stocked.bundle || stocked.symbols.length > 0);
+  !! stocked && (stocked.bundle || stocked.symbols.length > 0);
+
+/** Every file of a stocked month, absolute: its own, then what its neighbours held of it. */
+export const filesOf = (key: VaultKey, stocked: Stocked): string[] =>
+  filesAt(sliceDirOf(key), monthOf(key), stocked);
+
+/** The same, for a slice named by its directory and a month as file names write it. */
+export const filesAt = (dir: string, month: string, stocked: Stocked): string[] => [
+  ...(stocked.bundle ? [BUNDLE] : stocked.symbols).map(symbol => pathOf(dir, month, symbol)),
+  ...stocked.sides.map(({ symbol, side }) => pathOf(dir, month, symbol, side)),
+];
 
 /**
- * Put a month built as one file in place. The rename is the publish: one file
- * moves, on the same volume, so a reader sees it whole or not at all.
+ * Take a month's files out of the vault: all of them, or only what neighbouring
+ * months held of it on these sides.
+ *
+ * The first half of putting a month in place where one already is. Nothing of
+ * the month that was there is left beside the one that arrives — not an
+ * instrument it no longer has, nor a side its neighbour no longer gives.
  */
-export const publishBundle = async (key: VaultKey, revision: string, built: string): Promise<void> => {
-  const out = bundleOf(key, revision);
+export const clear = async (dir: string, month: string, held: Stocked | undefined, sides?: readonly Side[]): Promise<void> => {
+  if (! held) return;
 
+  const files = sides
+    ? held.sides.filter(one => sides.includes(one.side)).map(({ symbol, side }) => pathOf(dir, month, symbol, side))
+    : filesAt(dir, month, held);
+
+  for (const file of files) await rm(file, { force: true });
+};
+
+/** Put a month built as one file in place — or, with a side, the file of what a neighbouring month held of it. */
+export const publishBundle = async (key: VaultKey, built: string, side?: Side): Promise<void> => {
   await mkdir(join(sliceDirOf(key), BUNDLE), { recursive: true });
-  await rename(built, out);
+  await rename(built, bundleOf(key, side));
 };
 
 /**
  * Put a month built as a file per instrument in place, each under its symbol.
  *
- * **Many renames cannot be one**, so a marker under `@` says the month is still
- * arriving: written before the first file moves and removed after the last. A
- * revision with its marker still there was interrupted, is not counted as
- * stocked, and is put in place again from the start.
- */
-export const publishSplit = async (key: VaultKey, revision: string, staging: string): Promise<string[]> => {
-  const marker = join(sliceDirOf(key), BUNDLE, `${monthOf(key)}.${revision}${PUBLISHING}`);
-  const built  = (await readdir(staging)).filter(name => name.endsWith(STAGED));
-
-  await mkdir(join(sliceDirOf(key), BUNDLE), { recursive: true });
-  await writeFile(marker, '');
-
-  for (const name of built) {
-    const symbol = name.slice(0, -STAGED.length);
-
-    await mkdir(join(sliceDirOf(key), symbol), { recursive: true });
-    await rename(join(staging, name), fileOf(key, revision, symbol));
-  }
-
-  await rm(marker);
-
-  return built.map(name => name.slice(0, -STAGED.length));
-};
-
-/**
- * Remove every revision of a month but this one, wherever each is stored.
+ * `sides` are the staging directories of what neighbouring months held of this
+ * one; with no staging directory of its own, only they are put in place. Returns the instruments the month has a file for, and the side files
+ * that went with them.
  *
- * A crash between a publish and this leaves two revisions; the next sweep finds
- * the current one and removes the rest.
+ * **Many renames cannot be one**, so a month is in neither state while they
+ * run. That is the ledger's to say, before the first file moves — see `mark`.
  */
-export const prune = async (key: VaultKey, keep: string, held: Map<string, Stocked>): Promise<void> => {
-  for (const [revision, stocked] of held) {
-    if (revision === keep) continue;
+export const publishSplit = async (
+  key:     VaultKey,
+  staging: string | null,
+  sides:   readonly { side: Side; staging: string }[] = [],
+): Promise<Pick<Stocked, 'symbols' | 'sides'>> => {
+  const staged = async (dir: string): Promise<string[]> =>
+    (await readdir(dir).catch(() => [] as string[])).filter(name => name.endsWith(STAGED)).map(name => name.slice(0, -STAGED.length));
 
-    await rm(bundleOf(key, revision), { force: true });
-    await rm(join(sliceDirOf(key), BUNDLE, `${monthOf(key)}.${revision}${PUBLISHING}`), { force: true });
+  const symbols = staging === null ? [] : await staged(staging);
+  const beside: Stocked['sides'] = [];
 
-    for (const symbol of stocked.symbols) await rm(fileOf(key, revision, symbol), { force: true });
+  for (const symbol of symbols) {
+    await mkdir(join(sliceDirOf(key), symbol), { recursive: true });
+    await rename(join(staging!, `${symbol}${STAGED}`), fileOf(key, symbol));
   }
+
+  for (const { side, staging: from } of sides)
+    for (const symbol of await staged(from)) {
+      await mkdir(join(sliceDirOf(key), symbol), { recursive: true });
+      await rename(join(from, `${symbol}${STAGED}`), fileOf(key, symbol, side));
+
+      beside.push({ symbol, side });
+    }
+
+  return { symbols, sides: beside };
 };
 
 /** Free space on the vault's volume, in GB. */
@@ -196,24 +232,19 @@ export const STAGED = '.parquet';
 const BUILD = 2;
 
 /** The directory of the months stored whole, where a symbol's would be. */
-const BUNDLE = '@';
+export const BUNDLE = '@';
 
-/** What marks a month stored per instrument as still being put in place. */
-const PUBLISHING = '.publishing';
+/** `YYYYMM[.pre|.post].parquet`. */
+const NAME = /^(\d{6})(?:\.(pre|post))?\.parquet$/;
 
-/** `YYYYMM.<revision>.parquet`, or the same ending in the publishing marker. */
-const NAME = /^(\d{6})\.([0-9a-f]{12})(\.parquet|\.publishing)$/;
-
-/** Everything a slice's directory holds, by month and revision. */
+/** Everything a slice's directory holds, by month. */
 const indexOf = async (dir: string): Promise<SliceIndex> => {
   const index: SliceIndex = new Map();
 
-  const at = (month: string, revision: string): Stocked => {
-    const revisions = index.get(month) ?? new Map<string, Stocked>();
-    const stocked   = revisions.get(revision) ?? { bundle: false, symbols: [], publishing: false };
+  const at = (month: string): Stocked => {
+    const stocked = index.get(month) ?? { bundle: false, symbols: [], sides: [] };
 
-    revisions.set(revision, stocked);
-    index.set(month, revisions);
+    index.set(month, stocked);
 
     return stocked;
   };
@@ -228,10 +259,10 @@ const indexOf = async (dir: string): Promise<SliceIndex> => {
 
       if (! match) continue;
 
-      const [, month, revision, kind] = match as unknown as [string, string, string, string];
-      const stocked = at(month, revision);
+      const [, month, side] = match as unknown as [string, string, Side | undefined];
+      const stocked = at(month);
 
-      if (kind === PUBLISHING) stocked.publishing = true;
+      if (side) stocked.sides.push({ symbol: entry.name, side });
       else if (entry.name === BUNDLE) stocked.bundle = true;
       else stocked.symbols.push(entry.name);
     }
