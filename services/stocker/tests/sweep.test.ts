@@ -6,7 +6,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import config from '../src/config';
 import { open } from '../src/db';
 import { parseKey } from '../src/keys';
-import { ERRORS, EVICTED, LEDGER, validate } from '../src/ledger';
+import { BACKEDUP, ERRORS, LEDGER, validate } from '../src/ledger';
 import { sweep } from '../src/scan';
 import type { DuckDBConnection } from '@duckdb/node-api';
 import type { ListedSlice } from '../src/types';
@@ -271,6 +271,29 @@ describe('a partition over the split size', () => {
     expect(await sweep(conns)).toMatchObject({ built: 0, current: 1 });
   });
 
+  /**
+   * With a safe copy elsewhere, whatever of a partition is here is fine: all of
+   * its files, some of them, or none.
+   */
+  it('is nothing to report with some of its files away, where it has a safe copy', async () => {
+    await place('gate.futures_usdt-trades.csv', key('BTC_USDT'));
+    await place('gate.futures_btc-trades.csv', key('BTC_USD'));
+    await sweep(conns);
+
+    const [gone] = await stocked();
+
+    await rm(join(config.vaultDir, SLICE, gone!));
+
+    expect(await validate()).toBe(1);
+
+    await rm(join(config.vaultDir, ERRORS));
+    await writeFile(join(config.vaultDir, BACKEDUP),
+      `partition|revision|date\n${SLICE}/${MONTH}|${gone!.split('.')[1]}|2026-10-06T00:00:00.000Z\n`);
+
+    expect(await validate()).toBe(0);
+    expect(await stocked()).toHaveLength(1);
+  });
+
   /** A publish something interrupted left its marker behind, and is done again. */
   it('does not take an interrupted publish for a stocked partition', async () => {
     await place('gate.futures_usdt-trades.csv', key('BTC_USDT'));
@@ -395,27 +418,22 @@ describe('the ledger', () => {
       expect((await readFile(join(config.vaultDir, ERRORS), 'utf8')).trim().split('\n')).toHaveLength(1);
     });
 
-    /** Whoever moved it out said so, and that is not a loss. */
-    it('lets be a partition that is meant to be absent', async () => {
+    /** A safe copy exists, so nothing is lost whatever is here. */
+    it('lets be a partition that has a safe copy at its revision', async () => {
       const [{ revision }] = await lines(LEDGER) as [Record<string, string>];
 
       await rm(join(config.vaultDir, SLICE), { recursive: true });
-      await writeFile(join(config.vaultDir, EVICTED),
-        `partition|revision|evicted|date\n${PARTITION}|${revision}|true|2026-10-06T00:00:00.000Z\n`);
+      await writeFile(join(config.vaultDir, BACKEDUP),
+        `partition|revision|date\n${PARTITION}|${revision}|2026-10-06T00:00:00.000Z\n`);
 
       expect(await validate()).toBe(0);
       expect(await there(ERRORS)).toBe(false);
     });
 
-    it('takes a partition brought back as one that has to be there', async () => {
-      const [{ revision }] = await lines(LEDGER) as [Record<string, string>];
-
+    it('does not take a copy of another revision for one of this', async () => {
       await rm(join(config.vaultDir, SLICE), { recursive: true });
-      await writeFile(join(config.vaultDir, EVICTED), [
-        'partition|revision|evicted|date',
-        `${PARTITION}|${revision}|true|2026-10-06T00:00:00.000Z`,
-        `${PARTITION}|${revision}|false|2026-10-07T00:00:00.000Z`,
-      ].join('\n') + '\n');
+      await writeFile(join(config.vaultDir, BACKEDUP),
+        `partition|revision|date\n${PARTITION}|000000000000|2026-10-06T00:00:00.000Z\n`);
 
       expect(await validate()).toBe(1);
     });

@@ -207,14 +207,14 @@ Fields are separated by `|`, since the catalog's own names carry commas. **A lin
 A partition stocked again gets another line, and the last line for a partition is the one that
 counts — so the file is only ever appended to.
 
-**`evicted.csv` says which partitions are meant to be absent.** It sits beside the ledger, holds a
-partition, its revision, whether it is evicted and since when, and its last line for a partition
-counts. Stocker reads it and never writes it.
+**`backedup.csv` says which partitions have a safe copy elsewhere.** It sits beside the ledger and
+holds a partition, the revision that was copied, and when. Stocker reads it and never writes it.
 
 **The ledger is set against the vault once, as the service starts.** Every partition it holds must
 be in the vault at its revision — a bundle as one file of the size the ledger gives, a split
-partition as the number of files it gives — unless `evicted.csv` says that revision is meant to be
-absent. One that is not is a loss:
+partition as the number of files it gives — **unless `backedup.csv` has that revision**. A partition
+with a safe copy is not looked at: whatever of it is in the vault, all of its files, some of them or
+none, nothing is lost. One without a safe copy that is not there is a loss:
 
 - it is appended to `ERROR.log` at the vault's root — partition, revision, what was found — once,
   however often it is found again;

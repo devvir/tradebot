@@ -81,6 +81,7 @@ const GATE_FUT_TRADE = [col('rawTs'), col('id'), col('price'), col('size')];
 const GATE_CANDLE = [
   col('rawTs'), col('volume'), col('close'), col('high'), col('low'), col('open'),
 ];
+const GATE_TRADFI_CANDLE = [col('rawTs'), col('close'), col('high'), col('low'), col('open')];
 
 /** Three prices per row; only the first is identified, so the others are dropped. */
 const GATE_MARK = [col('rawTs'), col('price'), drop, drop];
@@ -294,6 +295,17 @@ export const SERIES: Series[] = [
     project: { tradeId: 'id', price: 'price', size: 'volume', baseSize: 'volume', side: SIDE },
     ts: 'timestamp',
   },
+  // An underlying's whole option book in one file a day, each row naming its
+  // instrument (`BTC-4OCT26-84500-C-USDT`). The side is spelled `direction`, and
+  // `amount` is the size as published; which leg it measures is not settled, so
+  // neither is filled. The implied volatility and the index and mark prices
+  // each row carries have no column in the trades table, and are not kept.
+  {
+    venue: 'bybit', market: 'option', dataset: 'trades', table: 'trades', ...csv,
+    header: true, instrument: 'instrument_name',
+    project: { tradeId: 'trade_id', price: 'price', size: 'amount', side: `lower(direction)` },
+    ts: 'timestamp',
+  },
   // MT4 klines: headerless, dated `2024.11.01 00:00` **in UTC+3** — the
   // MetaTrader server's zone, with no daylight-saving switch. Settled against
   // the perpetual trades: BTCUSDT's 1h bars equal the trades summed per hour on
@@ -383,12 +395,28 @@ export const SERIES: Series[] = [
       ts: 'rawTs',
     },
   ]),
+  // Options were USDT-margined throughout (`BTC-USDT-201225-C-13000`), and their
+  // trades are the linear contract shape column for column: contracts, base and
+  // turnover, where turnover is the premium paid — price × base on every row
+  // read. They stopped in 2021-06, so there is no later export of them.
+  {
+    venue: 'htx', market: 'option', dataset: 'trades', table: 'trades', ...csv, spill: 'back',
+    until: HTX_CUT, header: false, columns: HTX_OLD_LINEAR_TRADE,
+    project: { tradeId: 'id', price: 'price', size: 'contracts', baseSize: 'base',
+      quoteSize: 'quote', side: SIDE },
+    ts: 'rawTs',
+  },
   {
     venue: 'htx', market: 'spot', dataset: 'klines', variant: '*', table: 'klines', ...csv, spill: 'back',
     until: HTX_CUT, header: false, columns: HTX_OLD_KLINE,
     project: { ...OHLC, volume: 'amount', quoteVolume: 'vol' }, ts: 'rawTs',
   },
-  ...(['perp', 'future'] as const).map((market): Series => ({
+  // **A contract's kline counts both sides of every trade.** `vol` and `amount`
+  // are exactly twice the day's trades summed per minute, on every minute that
+  // traded: 1,438 of 1,438 on `BTC-USDT` and 1,440 of 1,440 on `BTC-USD` for
+  // 2020-11-14, and every traded minute of the two option days read. They are
+  // stored as published.
+  ...(['perp', 'future', 'option'] as const).map((market): Series => ({
     venue: 'htx', market, dataset: 'klines', variant: '*', table: 'klines', ...csv, spill: 'back',
     until: HTX_CUT, header: false, columns: HTX_OLD_KLINE,
     project: { ...OHLC, volume: 'vol' }, ts: 'rawTs',
@@ -397,6 +425,16 @@ export const SERIES: Series[] = [
     venue: 'htx', market: 'perp', dataset, variant: '*', table: dataset, ...csv, spill: 'back',
     until: HTX_CUT, header: false, columns: HTX_OLD_REFERENCE, project: OHLC, ts: 'rawTs',
   })),
+  // Dated futures publish a mark price and no index. The same five columns in
+  // the same order, read by position — and **some of these files do carry a
+  // header**, `id,open,close,high,low`, where others of the same years do not
+  // (`ADA210702` of 2021-07-02 has one, `BTC-USDT-230714` of 2023-07-14 none).
+  // Read by position either way: a header line is a row whose timestamp does
+  // not parse, and is dropped as every such row is.
+  {
+    venue: 'htx', market: 'future', dataset: 'markPrice', variant: '*', table: 'markPrice', ...csv, spill: 'back',
+    until: HTX_CUT, header: false, columns: HTX_OLD_REFERENCE, project: OHLC, ts: 'rawTs',
+  },
   {
     venue: 'htx', market: 'spot', dataset: 'trades', table: 'trades', ...csv, spill: 'back',
     from: HTX_CUT, header: true,
@@ -426,6 +464,10 @@ export const SERIES: Series[] = [
     venue: 'htx', market: 'perp', dataset, variant: '*', table: dataset, ...csv, spill: 'back',
     from: HTX_CUT, header: true, project: OHLC, ts: 'ts',
   })),
+  {
+    venue: 'htx', market: 'future', dataset: 'markPrice', variant: '*', table: 'markPrice', ...csv, spill: 'back',
+    from: HTX_CUT, header: true, project: OHLC, ts: 'ts',
+  },
 
   // ── Gate ────────────────────────────────────────────────────────────────────
   //
@@ -454,6 +496,16 @@ export const SERIES: Series[] = [
     venue: 'gate', market, dataset: 'klines', variant: '*', table: 'klines', ...csv,
     header: false, columns: GATE_CANDLE, project: OHLCV, ts: 'rawTs',
   })),
+  // Stocks and other tradfi instruments are candles without a volume: five
+  // columns, the spot candle's less its second. Settled from the rows: the
+  // third is each bar's highest value and the fourth its lowest, and the second
+  // of one bar is the fifth of the next on every consecutive pair read (AAPL
+  // 1m, 2024-01) — a close and the open that follows it. Stamped in plain UTC
+  // seconds: AAPL's first 1m bar of a day is 14:30 UTC, the New York open.
+  {
+    venue: 'gate', market: 'tradfi', dataset: 'klines', variant: '*', table: 'klines', ...csv,
+    header: false, columns: GATE_TRADFI_CANDLE, project: OHLC, ts: 'rawTs',
+  },
   {
     venue: 'gate', market: 'perp', dataset: 'markPrice', variant: 'ticks', table: 'markPrice', ...csv,
     header: false, columns: GATE_MARK, project: { price: 'price' }, ts: 'rawTs',
@@ -481,7 +533,11 @@ export const SERIES: Series[] = [
   // day file dated 2020-06-15 holds 06-14 16:00 → 06-15 15:59 UTC, and the
   // June file 05-31 16:00 → 06-30 15:59. Declared venue-wide, as bitget's is: a
   // dataset that turned out UTC-aligned would make the trait a no-op.
-  ...(['spot', 'perp', 'future'] as const).map((market): Series => ({
+  // Options are the same files with the same columns: a family's whole chain
+  // in one (`BTC-USD-optionchain`), or every option there is (`alloption`). The
+  // price is the premium in the coin and `size` the contract count, as on the
+  // other contracts.
+  ...(['spot', 'perp', 'future', 'option'] as const).map((market): Series => ({
     venue: 'okx', market, dataset: 'trades', table: 'trades', ...csv, spill: 'back',
     header: true, instrument: 'instrument_name',
     project: market === 'spot'
@@ -495,7 +551,10 @@ export const SERIES: Series[] = [
   // **Many files repeat every row**, byte for byte: of twelve 2020 spot files
   // sampled on 2026-10-04, seven held each bar twice (BTC-USDT's June monthly:
   // 86,400 rows, 43,200 bars). Exact repeats are dropped.
-  ...(['spot', 'perp', 'future'] as const).map((market): Series => ({
+  //
+  // The earliest option bars spell an absent volume `None`, which reads as no
+  // value at all (`BTC-USD-optionchain`, 2021-09-01).
+  ...(['spot', 'perp', 'future', 'option'] as const).map((market): Series => ({
     venue: 'okx', market, dataset: 'klines', variant: '*', table: 'klines', ...csv, spill: 'back',
     repeatsRows: true,
     header: true, instrument: 'instrument_name',

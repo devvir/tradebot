@@ -248,6 +248,50 @@
     "key": "htx/perp/klines,1m/B/BTC-USD/202012/htx|perp|klines,1m|BTC-USD|20201201.zip"
   },
   {
+    "fixture": "htx.old-future-markKlines-headed.csv",
+    "key": "htx/future/markPrice,1m/A/ADA-USD-210702/202107/htx|future|markPrice,1m|ADA-USD-210702|20210702.zip"
+  },
+  {
+    "fixture": "htx.old-future-markKlines.csv",
+    "key": "htx/future/markPrice,1m/B/BTC-USDT-230714/202307/htx|future|markPrice,1m|BTC-USDT-230714|20230714.zip"
+  },
+  {
+    "fixture": "htx.future-markKlines.csv",
+    "key": "htx/future/markPrice,1m/B/BTC-USD-260213/202602/htx|future|markPrice,1m|BTC-USD-260213|20260212.zip"
+  },
+  {
+    "fixture": "okx.option-trades.csv",
+    "key": "okx/option/trades/B/BTC-USD/202301/okx|option|trades|BTC-USD|20230101.zip"
+  },
+  {
+    "fixture": "okx.option-trades-source.csv",
+    "key": "okx/option/trades/@/202610/okx|option|trades|@|20261003.zip"
+  },
+  {
+    "fixture": "okx.option-klines-none.csv",
+    "key": "okx/option/klines,1m/B/BTC-USD/202109/okx|option|klines,1m|BTC-USD|20210901.zip"
+  },
+  {
+    "fixture": "okx.option-klines.csv",
+    "key": "okx/option/klines,1m/B/BTC-USD/202610/okx|option|klines,1m|BTC-USD|20261003.zip"
+  },
+  {
+    "fixture": "bybit.option-trades.csv",
+    "key": "bybit/option/trades/B/BTC/202610/bybit|option|trades|BTC|20261004.trades.csv.zip"
+  },
+  {
+    "fixture": "gate.tradfi-candlesticks.csv",
+    "key": "gate/tradfi/klines,1m/A/AAPL/202401/gate|tradfi|klines,1m|AAPL|202401.csv.gz"
+  },
+  {
+    "fixture": "htx.old-option-trades.csv",
+    "key": "htx/option/trades/B/BTC-USDT-201225-C-13000/202011/htx|option|trades|BTC-USDT-201225-C-13000|20201114.zip"
+  },
+  {
+    "fixture": "htx.old-option-klines.csv",
+    "key": "htx/option/klines,1m/B/BTC-USDT-201225-C-13000/202011/htx|option|klines,1m|BTC-USDT-201225-C-13000|20201114.zip"
+  },
+  {
     "fixture": "kucoin.spot-trades.csv",
     "key": "kucoin/spot/trades/B/BTC-USDT/202607/kucoin|spot|trades|BTC-USDT|20260729.zip"
   },

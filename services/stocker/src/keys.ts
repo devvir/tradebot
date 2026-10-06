@@ -110,7 +110,7 @@ export const lastDayOf = (month: string): string => {
 // ── Internals ─────────────────────────────────────────────────────────────────
 
 /** `date[.partNN].ext` — the date's length is the grain. */
-const TAIL = /^(\d{6}|\d{8}|\d{10}|\d{12})(?:\.part(\d+))?\.(zip|csv\.gz|tar\.gz|gz|csv|data\.zip)$/;
+const TAIL = /^(\d{6}|\d{8}|\d{10}|\d{12})(?:\.part(\d+))?\.(zip|csv\.gz|tar\.gz|gz|csv|data\.zip|trades\.csv\.zip)$/;
 
 const GRAINS: Record<number, Grain> = { 6: 'monthly', 8: 'daily', 10: 'hourly', 12: 'minutely' };
 
@@ -118,6 +118,7 @@ const GRAINS: Record<number, Grain> = { 6: 'monthly', 8: 'daily', 10: 'hourly', 
 const CONTAINERS: Record<string, string> = {
   'zip':      'zip',
   'data.zip': 'zip',
+  'trades.csv.zip': 'zip',
   'csv.gz':   'gzip',
   'gz':       'gzip',
   'tar.gz':   'tar.gz',

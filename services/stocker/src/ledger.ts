@@ -3,13 +3,13 @@ import { basename, dirname, join, relative } from 'node:path';
 import { logger } from '@devvir/service-kit';
 import config from './config';
 import { Slices, bundleOf, fileOf, isWhole, monthOf, sliceDirOf } from './vault';
-import type { Edge, Entry, Evicted, Partition, Stocked, VaultKey } from './types';
+import type { Edge, Entry, Partition, Stocked, VaultKey } from './types';
 
 /**
  * The vault's own account of what it holds: one line per partition stocked.
  *
  *     <vault>/ledger.csv    written here, a line appended as each partition is stocked
- *     <vault>/evicted.csv   written by whoever moves partitions out of the vault; read here
+ *     <vault>/backedup.csv  written by whoever keeps a copy of the vault elsewhere; read here
  *     <vault>/ERROR.log     written here, when the vault is not what the ledger says
  *
  * **The ledger says what was stocked, from what, and what it weighed.** Whether
@@ -25,9 +25,12 @@ import type { Edge, Entry, Evicted, Partition, Stocked, VaultKey } from './types
  * (`klines,1h`). No field may hold one, or a line break; a value that does is
  * refused, never escaped.
  *
- * `evicted.csv` answers one thing: whether a partition's files are meant to be
- * absent. It is read here and never written; who writes it keeps the history of
- * what it moved and when.
+ * `backedup.csv` answers one thing: which partitions have a safe copy
+ * somewhere else, at which revision. A partition that has one is nothing to
+ * worry about here whatever of it is in the vault — all of it, some of its
+ * files, or none: whoever holds the copy moves files out and brings them back
+ * as space allows, and that is theirs to keep track of. It is read here and
+ * never written.
  */
 
 /** A vault partition as both files name it: its slice's directory below the vault, then its month. */
@@ -57,14 +60,14 @@ export const read = async (): Promise<Map<string, Entry>> => {
   return entries;
 };
 
-/** Which partitions are meant to be absent from the vault: the last line for each. */
-export const readEvicted = async (): Promise<Map<string, Evicted>> => {
-  const evicted = new Map<string, Evicted>();
+/** The partitions that have a safe copy elsewhere, each by the revisions that do. */
+export const readBackedUp = async (): Promise<Map<string, Set<string>>> => {
+  const safe = new Map<string, Set<string>>();
 
-  for (const [partition, revision, flag, date] of await linesOf(EVICTED, 4))
-    evicted.set(partition!, { partition: partition!, revision: revision!, evicted: flag === 'true', date: date! });
+  for (const [partition, revision] of await linesOf(BACKEDUP, 2))
+    safe.set(partition!, (safe.get(partition!) ?? new Set()).add(revision!));
 
-  return evicted;
+  return safe;
 };
 
 /**
@@ -125,26 +128,26 @@ export const record = async (
 /**
  * Set the ledger against the vault, once, as the service starts.
  *
- * **A partition the ledger holds and the vault does not is a loss**, unless it
- * is meant to be absent. It is written to `ERROR.log` — a file, so that it is
+ * **A partition the ledger holds and the vault does not is a loss**, unless a
+ * safe copy of it exists. It is written to `ERROR.log` — a file, so that it is
  * still there when nobody was watching the log — and from then on the partition
  * is taken as not stocked, so the next sweep stocks it again. The service
  * carries on: one partition gone is no reason to stop stocking the rest, and
  * every reason to find out why.
  *
  * A bundle is checked for its file and its size; a partition stored per
- * instrument for how many files it has. Returns how many were found wrong.
+ * instrument for how many files it has. **A partition with a safe copy at its
+ * revision is not looked at**: whatever of it is here, nothing is lost. Returns
+ * how many were found wrong.
  */
 export const validate = async (): Promise<number> => {
   const entries = await read();
-  const evicted = await readEvicted();
+  const safe    = await readBackedUp();
   const slices  = new Slices();
   const wrong: string[] = [];
 
   for (const entry of entries.values()) {
-    const away = evicted.get(entry.partition);
-
-    if (away?.evicted && away.revision === entry.revision) continue;
+    if (safe.get(entry.partition)?.has(entry.revision)) continue;
 
     const dir   = join(config.vaultDir, dirname(entry.partition));
     const month = basename(entry.partition);
@@ -154,7 +157,7 @@ export const validate = async (): Promise<number> => {
 
     if (! isWhole(held)) problem = 'its files are not in the vault';
     else if (entry.mode === 'bundle') {
-      const size = (await stat(join(dir, '@', `${month}.${entry.revision}.parquet`))).size;
+      const size = (await stat(join(dir, BUNDLE, `${month}.${entry.revision}.parquet`))).size;
 
       if (size !== entry.size) problem = `its file weighs ${size} bytes where the ledger says ${entry.size}`;
     }
@@ -188,10 +191,13 @@ export const distrusts = (partition: string): boolean => distrusted.has(partitio
 
 /** What the vault's files are called. */
 export const LEDGER  = 'ledger.csv';
-export const EVICTED = 'evicted.csv';
+export const BACKEDUP = 'backedup.csv';
 export const ERRORS  = 'ERROR.log';
 
 // ── Internals ─────────────────────────────────────────────────────────────────
+
+/** The directory of a partition stored whole. */
+const BUNDLE = '@';
 
 /** The ledger's columns, in the order a line holds them. */
 const COLUMNS = [

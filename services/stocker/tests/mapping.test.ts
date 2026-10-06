@@ -255,6 +255,88 @@ describe('what the numbers mean', () => {
     expect(row!.side).toBe('sell');
   });
 
+  /** Options are the linear contract shape: contracts, base, and the premium paid as the quote leg. */
+  it('reads htx\'s option trades as linear contracts', async () => {
+    const [row] = await rowsOf(resolve(named('htx.old-option-trades.csv'))!, 'htx.old-option-trades.csv', 1);
+
+    expect(Number(row!.price)).toBeCloseTo(3504.23, 2);
+    expect(Number(row!.size)).toBe(8);
+    expect(Number(row!.baseSize)).toBeCloseTo(0.008, 6);
+    expect(Number(row!.quoteSize)).toBeCloseTo(28.03384, 5);
+    expect(row!.side).toBe('sell');
+  });
+
+  /**
+   * Stored as published — and what is published counts both sides: this minute's
+   * two trades are 8 + 12 contracts, and the bar says 40.
+   */
+  it('reads htx\'s option klines with the contract count as volume', async () => {
+    const [row] = await rowsOf(resolve(named('htx.old-option-klines.csv'))!, 'htx.old-option-klines.csv', 1);
+
+    expect(Number(row!.open)).toBeCloseTo(3504.23, 2);
+    expect(Number(row!.close)).toBeCloseTo(3504.22, 2);
+    expect(Number(row!.high)).toBeCloseTo(3504.23, 2);
+    expect(Number(row!.low)).toBeCloseTo(3504.22, 2);
+    expect(Number(row!.volume)).toBe(40);
+  });
+
+  /** Some of the older dated-futures mark files carry a header and some do not; both read by position. */
+  it('reads htx\'s dated-futures mark price with a header line or without', async () => {
+    const headed = await rowsOf(resolve(named('htx.old-future-markKlines-headed.csv'))!, 'htx.old-future-markKlines-headed.csv');
+    const bare   = await rowsOf(resolve(named('htx.old-future-markKlines.csv'))!, 'htx.old-future-markKlines.csv');
+
+    // Three bars each: the header line is not one.
+    expect(headed).toHaveLength(3);
+    expect(headed[0]).toMatchObject({ open: 1.33618, close: 1.33607, high: 1.33618, low: 1.33607 });
+    expect(bare).toHaveLength(3);
+    expect(bare[1]).toMatchObject({ open: 30912.5, close: 30910.8, high: 30912.8, low: 30907.7 });
+  });
+
+  it('reads htx\'s later dated-futures mark price by name', async () => {
+    const [row] = await rowsOf(resolve(named('htx.future-markKlines.csv'))!, 'htx.future-markKlines.csv', 1);
+
+    expect(row).toMatchObject({ open: 65882.35, high: 65907.37, low: 65874.9, close: 65907.37 });
+  });
+
+  /** A chain's file names each row's own instrument, and the price is the premium in the coin. */
+  it('reads okx\'s option trades, with the later files\' extra column or without', async () => {
+    const [early] = await rowsOf(resolve(named('okx.option-trades.csv'))!, 'okx.option-trades.csv', 1);
+    const [late]  = await rowsOf(resolve(named('okx.option-trades-source.csv'))!, 'okx.option-trades-source.csv', 1);
+
+    expect(early).toMatchObject({ tradeId: '1', price: 0.0015, size: 500, side: 'buy' });
+    expect(late).toMatchObject({ tradeId: '149', price: 0.0002, size: 565, side: 'sell' });
+  });
+
+  /** The earliest option bars spell an absent volume `None`. */
+  it('reads okx\'s option klines, a volume spelled None as none', async () => {
+    const [early] = await rowsOf(resolve(named('okx.option-klines-none.csv'))!, 'okx.option-klines-none.csv', 1);
+    const [late]  = await rowsOf(resolve(named('okx.option-klines.csv'))!, 'okx.option-klines.csv', 1);
+
+    expect(early).toMatchObject({ open: 0.002, high: 0.002, low: 0.002, close: 0.002, quoteVolume: null });
+    expect(Number(early!.volume)).toBe(0);
+    expect(late).toMatchObject({ open: 0.0002, close: 0.0002 });
+    expect(Number(late!.quoteVolume)).toBe(0);
+  });
+
+  /** The side is spelled `direction`; which leg `amount` measures is not settled, so neither is filled. */
+  it('reads bybit\'s option trades', async () => {
+    const [row] = await rowsOf(resolve(named('bybit.option-trades.csv'))!, 'bybit.option-trades.csv', 1);
+
+    expect(row).toMatchObject({
+      tradeId: '8e65661a-79a1-5254-b8c7-743a2f250ae2', price: 315, size: 0.05, side: 'buy',
+      baseSize: null, quoteSize: null,
+    });
+  });
+
+  /** Five columns and no volume: close, high, low, open after the stamp. */
+  it('reads gate\'s tradfi candles', async () => {
+    const [first, second] = await rowsOf(resolve(named('gate.tradfi-candlesticks.csv'))!, 'gate.tradfi-candlesticks.csv', 2);
+
+    expect(first).toMatchObject({ open: 186.91, high: 187.99, low: 186.56, close: 187.76, volume: null });
+    // A bar opens where the one before it closed.
+    expect(second!.open).toBe(first!.close);
+  });
+
   /** And the coin-margined ones lack the quote turnover. */
   it('reads htx\'s older inverse contract trades without a quote leg', async () => {
     const [row] = await rowsOf(resolve(named('htx.old-perp-trades-inverse.csv'))!, 'htx.old-perp-trades-inverse.csv', 1);

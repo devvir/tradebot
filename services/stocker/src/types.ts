@@ -315,14 +315,6 @@ export interface Entry {
   stockedAt:   string;
 }
 
-/** Whether a vault partition's files are meant to be absent, as whoever moved them says. */
-export interface Evicted {
-  partition: string;
-  revision:  string;
-  evicted:   boolean;
-  date:      string;
-}
-
 /** What one sweep carries from partition to partition. */
 export interface Sweeping {
   instruments:   InstrumentDirs;

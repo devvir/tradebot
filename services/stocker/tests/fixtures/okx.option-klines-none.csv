@@ -1,0 +1,4 @@
+instrument_name,open,high,low,close,vol,vol_ccy,vol_quote,open_time,confirm
+BTC-USD-210831-45000-P,0.002,0.002,0.002,0.002,0,None,None,1630425600000,1
+BTC-USD-210831-45000-P,0.002,0.002,0.002,0.002,0,None,None,1630425660000,1
+BTC-USD-210831-45000-P,0.002,0.002,0.002,0.002,0,None,None,1630425720000,1

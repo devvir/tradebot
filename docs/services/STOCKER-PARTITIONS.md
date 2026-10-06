@@ -36,17 +36,20 @@ lowercase `buy`/`sell`.
 | binance | perp | inverse | zip · csv | grew | no | int ms | from `is_buyer_maker` | contracts; base published | 4th column is `base_qty` — **same position, opposite meaning** |
 | bybit | perp | all | csv.gz | yes | **yes** | float s, µs | `Buy`/`Sell` | base on linear, **quote on inverse** — the leg filled follows the margining | gained `RPI` 2025-04 |
 | bybit | spot | all | csv.gz | yes | no | int ms | `buy`/`sell` | base | gained `rpi` 2025-04 |
+| bybit | option | all | zip · csv | yes | **yes** | int ms | `Buy`/`Sell`, in `direction` | `amount`, as published — which leg it is, not settled | an underlying's whole book a day: **several instruments**; iv, index and mark price per row are not kept |
 | kucoin | spot | all | zip · csv | yes | no | int ms | `BUY`/`SELL` | base | |
 | kucoin | perp | all | zip · csv | yes | no | int ms | `BUY`/`SELL` | contracts | |
 | htx | spot | before 2026-02-01 | zip · csv | no | no | int ms | `buy`/`sell` | base | 5 columns |
 | htx | perp, future | before 2026-02-01, inverse | zip · csv | no | no | int ms | `buy`/`sell` | contracts; base published | 6 columns — see [details](#htx) |
 | htx | perp, future | before 2026-02-01, linear | zip · csv | no | no | int ms | `buy`/`sell` | contracts; base · quote published | 7 columns |
+| htx | option | all (ended 2021-06) | zip · csv | no | no | int ms | `buy`/`sell` | contracts; base · quote published | the linear contract's 7 columns; the quote leg is the premium paid |
 | htx | spot | from 2026-02-01 | zip · csv | yes | **yes** | int ms | `buy`/`sell` | base | |
 | htx | perp, future | from 2026-02-01 | zip · csv | yes | **yes** | int ms | `buy`/`sell` | contracts | |
 | gate | spot | all | csv.gz | no | no | float s, µs | `1`/`2` (1 = buy, by price impact) | base | rows in **descending** time |
 | gate | perp | all | csv.gz | no | no | float s, µs | **sign of size** (negative = sell) | unsigned after `abs` | a file wider than 4 columns is refused — see [details](#gate) |
 | okx | spot, perp | all | zip · csv | yes | **yes** | int ms | `buy`/`BUY`, by year | base on spot, contracts on perp | |
 | okx | future | all | zip · csv | yes | **yes** | int ms | `buy`/`BUY` | as published | one file holds a whole expiry chain: **several instruments** |
+| okx | option | all | zip · csv | yes | **yes** | int ms | `buy`/`sell` | contracts | a family's whole chain in a file, or every option; gained `source` by 2026 |
 | bitget | spot, perp | all | zip · csv, in parts | yes | no | int ms; **whole seconds** in later files | `buy`/`sell` | base · quote both published | spills back; every part has its own header |
 
 ### klines
@@ -62,10 +65,11 @@ takerBuyQuote`. The interval is the variant; it is never a column.
 | kucoin | spot | all | zip · csv | yes | no | int s | **O C H L** | base, quote (`turnover`) | variant | by name, so the order costs nothing |
 | kucoin | perp | all | zip · csv | yes | no | int ms | OHLC | one | variant | `1d` files are malformed — see [details](#kucoin) |
 | htx | spot | before 2026-02-01 | zip · csv | no | no | int s | **O C H L** | **`vol` is quote, `amount` base** | variant | names invert against the later era |
-| htx | perp, future | before 2026-02-01 | zip · csv | no | no | int s | **O C H L** | `vol` contracts, `amount` base | variant | |
+| htx | perp, future, option | before 2026-02-01 | zip · csv | no | no | int s | **O C H L** | `vol` contracts, `amount` base — **both sides counted** | variant | twice the trades on every minute checked — see [details](#htx) |
 | htx | spot, perp, future | from 2026-02-01 | zip · csv | yes | **yes** | int s | OHLC | `vol` (base on spot, contracts on contracts), quote `volCcyQuote` | variant | |
 | gate | spot, perp | all | csv.gz | no | no | int s | **`volume, close, high, low, open`** | base | variant | open and close reversed — see [details](#gate) |
-| okx | spot, perp, future | all | zip · csv | yes | **yes** | int ms | OHLC | base, quote | the catalog's `1m`, named nowhere in a file | spills back; literal `None` in early volume columns; exact repeated rows dropped |
+| gate | tradfi | all | csv.gz | no | no | int s | **`close, high, low, open`** | none published | variant | the spot candle less its volume |
+| okx | spot, perp, future, option | all | zip · csv | yes | **yes** | int ms | OHLC | base, quote | the catalog's `1m`, named nowhere in a file | spills back; literal `None` in early volume columns; exact repeated rows dropped |
 | bitget | spot, perp | two layouts, interleaved | zip · **xlsx** | yes | no | int ms | OHLC | base, quote | **declared `1m`**, named nowhere | spills back; see [details](#bitget) |
 
 ### Reference prices — markPrice · indexPrice · premiumIndex
@@ -80,6 +84,7 @@ high, low, close`. A bar of a reference price is OHLC; a tick of one is `price`.
 | bybit | indexPrice | spot | csv.gz | yes | ? | `start_at` | OHLC bars | |
 | kucoin | mark, index | perp | zip · csv | yes | no | int ms | OHLC bars | |
 | htx | mark, index | perp | zip · csv | yes | **yes** | int s | OHLC bars | before 2026-02-01: headerless O C H L, no symbol — mapped from the published header names, not yet seen in a file |
+| htx | mark | future | zip · csv | yes | **yes** | int s | OHLC bars | before 2026-02-01: O C H L by position, no symbol, **some files with a header line and some without** |
 | gate | markPrice | perp | csv.gz | no | no | float s, µs | ticks: `ts` and three prices | only the first price is identified |
 
 ### quotes
@@ -130,13 +135,12 @@ surveyed.
 | books | kucoin spot, perp (50 · snapshot) | csv with one `data` column of JSON: `sequence`, `asks`, `bids` |
 | books | bitget spot, perp, future | |
 | trades | binance spot, perp (aggregated) | reconstructible exactly from `trades` — deliberately no table |
-| trades | bybit option · htx option · okx option | |
-| klines | htx option · okx option · gate tradfi | |
-| markPrice | htx future · bybit option (1m) | |
-| indexPrice | gate spot (ticks, **market** bundle) | |
+| markPrice | bybit option (1m) | zip · csv, an underlying's whole book a day. `instrument_name, open_time, open, high, low, close, delta, gama, vega, theta` — the four greeks have no column in `markPrice` |
+| indexPrice | gate spot (ticks, **market** bundle) | plain text, a line per instrument: `<symbol> <price>`. **The time is in the file's name** (`slice_index_<epoch>`), not in any row |
 | liquidations | binance perp (USDⓈ-M) · binance future | |
-| optionSummary · volatilityIndex | binance option | |
-| optionTicker | gate option (ticks, **market** bundle) | |
+| optionSummary | binance option | zip · csv, headed: an hour's summary per option — OHLC, volumes, best bid and ask, mark, greeks, open interest. No table |
+| volatilityIndex | binance option | zip · csv, headed: `calc_time, symbol, base_asset, quote_asset, index_value`, a value a second. No table |
+| optionTicker | gate option (ticks, **market** bundle) | plain text, a line per option of 13 space-separated values, unnamed. The time is in the file's name |
 | quotes | bitget future | |
 
 ## Telling formats apart inside one partition
@@ -202,6 +206,13 @@ is fractional seconds (`1785283200.0635`). `size` is base for USDT and PERP symb
 the `USD` inverse ones — checked over 160 symbols against `foreignNotional` — so it turns on the
 instrument's margining: `baseSize = size` on linear, `quoteSize = size` on inverse.
 
+**trades, option** — `trade_id, trade_seq, timestamp, instrument_name, direction, price, amount, iv,
+index_price, mark_price, mark_iv` → `tradeId = trade_id, ts, price, size = amount, side =
+direction`. One file a day per underlying holds every option of it, so the rows are split by
+`instrument_name`. `timestamp` is integer milliseconds, plain UTC: the 2026-10-04 file opens four
+seconds after midnight. Which leg `amount` measures has not been settled, so neither `baseSize` nor
+`quoteSize` is filled. `iv`, `index_price`, `mark_price` and `mark_iv` are not kept.
+
 **trades, spot** — `id, timestamp, price, volume, side[, rpi]` → `tradeId, ts, price, size =
 volume, side`. Integer milliseconds under the same `timestamp` name the perp files use for seconds.
 
@@ -261,6 +272,21 @@ the earlier `vol` is quote and `amount` base (868.87 ZEC against 44,492 USDT at 
 `vol` is the contract count in both eras, and the earlier `amount` the base coin. On the same day the two eras agree bar for bar
 (`BTC-USDT` 1m, all 1,440 bars). The earlier perp trades carry both legs, which the later shape drops.
 
+**A contract's earlier klines count both sides of every trade.** `vol` and `amount` are exactly twice
+the trades summed per minute, on every minute that traded: 1,438 of 1,438 on `BTC-USDT` and 1,440 of
+1,440 on `BTC-USD` for 2020-11-14, and each traded minute of two option days. They are stored as
+published, so a contract's kline volume in the vault is twice its trades'. Spot was not checked this
+way, nor the later era on contracts.
+
+**Options** (`BTC-USDT-201225-C-13000`) ran from 2020-08 to 2021-06, USDT-margined throughout, and
+are the linear contract's shapes: trades with contracts, base and a quote leg that is the premium
+paid, and the seven-column kline.
+
+**Dated futures publish a mark price and no index.** Before the cut it is the perpetual's five
+columns by position — except that some files open with a header line, `id,open,close,high,low`
+(`ADA210702`, 2021-07-02) and others do not (`BTC-USDT-230714`, 2023-07-14). Read by position, the
+header is a row whose time does not parse.
+
 Later-era klines and mark/index are stamped in seconds, trades and funding in milliseconds. `vol` and
 `volCcyQuote` were confirmed as base and quote by rebinning a day of trades into 1m bars.
 
@@ -288,6 +314,11 @@ the signed one. So a file **wider than its series declares is refused**, naming 
 known case: 85 perp-trade files are truncated copies of the spot file for the same symbol, five
 columns wide, and their last lines are cut mid-row.
 
+**klines, tradfi** — `ts, close, high, low, open`: the candle below less its volume. Settled from the
+rows: the third column is each bar's highest value and the fourth its lowest, and the second of one
+bar is the fifth of the next on every consecutive pair read (AAPL 1m, 2024-01). Stamped in plain UTC
+seconds — AAPL's first 1m bar of a day is 14:30 UTC.
+
 **klines** — `ts, volume, close, high, low, open`. **Open and close are reversed** from the obvious
 reading; nothing in a single bar shows it. Settled by alignment: bars of 1m, 5m, 1h and 1d sharing a
 start share the last column and differ in the third, so the last is the open. `volume` is the base
@@ -306,6 +337,11 @@ it is empty and skipped.
 **Every dataset spills back**: a day or month file is a UTC+8 period, so the file dated
 2020-06-15 holds 06-14 16:00 → 06-15 15:59 UTC — the same cut as bitget's
 ([STOCKER.md](STOCKER.md#venues-whose-buckets-do-not-cut-at-utc-midnight)).
+
+**Options** are the other markets' files with the same columns: a family's whole chain in one
+(`BTC-USD-optionchain`), or every option there is (`alloption`). The price is the premium in the
+coin. The earliest kline files spell an absent volume `None` (2021-09-01); later trade files carry a
+`source` column the earlier ones lack.
 
 **Duplicated bars.** Candlestick files can repeat rows byte for byte: 96 of 200 sampled 2020 spot
 files repeat every bar, 4 of 40 sampled 2023 perpetual files repeat a few. The series declares it
