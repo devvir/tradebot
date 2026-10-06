@@ -8,11 +8,12 @@ import config from './config';
 import { Instruments, edgeFilesOf, filesOf, matches } from './disk';
 import { idOf, neighbourOf } from './keys';
 import { SERIES, extrasOf, seriesOf } from './schema/series';
+import { distrusts, partitionOf, read as readLedger, record } from './ledger';
 import { Prefetch } from './prepare';
 import { reachOf } from './spill';
 import { Slices, freeGb, isWhole, labelOf, monthOf, prune, publishBundle, publishSplit, revisionOf, stagingOf } from './vault';
 import type {
-  DiskFile, Edge, Grain, Group, InstrumentDirs, Job, Partition, Series, Stocked, Summary, Sweeping, Target, Task, VaultKey,
+  DiskFile, Edge, Entry, Grain, Group, InstrumentDirs, Job, Partition, Series, Stocked, Summary, Sweeping, Target, Task, VaultKey,
 } from './types';
 
 /**
@@ -50,13 +51,14 @@ export const sweep = async (conns: DuckDBConnection[]): Promise<Summary> => {
 
   const instruments = new Instruments();
   const slices      = new Slices();
+  const sweeping    = { instruments, slices, ledger: await readLedger() };
 
   /** Where a cool-down is set: changed in the catalog after this, and a partition is left for later. */
   const settledBefore = config.coolHours === null
     ? null
     : new Date(Date.now() - config.coolHours * 3_600_000).toISOString();
 
-  const upcoming = jobsOf({ instruments, slices }, settledBefore, summary);
+  const upcoming = jobsOf(sweeping, settledBefore, summary);
 
   /** Decided and not yet stocked: its extraction is under way, and is given up if the sweep ends first. */
   let ahead: Job | null = null;
@@ -86,7 +88,7 @@ export const sweep = async (conns: DuckDBConnection[]): Promise<Summary> => {
       const job   = next.value;
       const after = following();
 
-      await stock(conns, job, summary);
+      await stock(conns, job, sweeping.ledger, summary);
       slices.forget(job.key);
 
       next = await after;
@@ -273,10 +275,35 @@ const decide = async (
       revision: revisionOf(key, candidate, series, edges!),
     }));
 
+  /**
+   * **The ledger answers first, and without looking at the vault.** A partition
+   * it holds at a revision one of these renderings computes is current —
+   * whether or not its files are there, since a partition moved out of the
+   * vault is still a partition stocked.
+   */
+  const partition = partitionOf(key);
+  const entry     = sweeping.ledger.get(partition);
+
+  if (entry && ready.some(one => one.revision === entry.revision)) {
+    summary.current++;
+
+    return null;
+  }
+
+  /**
+   * Nothing the ledger bears out, so the vault is read. A partition found there
+   * whole is written down and is current: one stocked before there was a
+   * ledger, or published a moment before something stopped the service. One the
+   * vault was found not to hold as its ledger line says is never taken this way
+   * — it is stocked again.
+   */
   const held    = (await sweeping.slices.of(key)).get(monthOf(key)) ?? new Map<string, Stocked>();
-  const current = ready.find(one => isWhole(held.get(one.revision)));
+  const current = distrusts(partition) ? undefined : ready.find(one => isWhole(held.get(one.revision)));
 
   if (current) {
+    sweeping.ledger.set(partition,
+      await record(key, current.candidate, current.edges, current.revision, held.get(current.revision)!));
+
     summary.current++;
 
     if (held.size > 1) {
@@ -308,7 +335,7 @@ const decide = async (
     const tasks = tasksOf(groupsOf(inputs.files, inputs.donated));
 
     return {
-      key, partition: one.candidate, revision: one.revision, held, tasks,
+      key, partition: one.candidate, revision: one.revision, held, edges: one.edges, tasks,
       files: inputs.files.length, prefetch: new Prefetch(tasks),
     };
   }
@@ -351,8 +378,13 @@ const onDisk = async (
  * then publish it: as one file, or — where the archive files it came from
  * weigh more than `splitGb` — as a file per instrument.
  */
-const stock = async (conns: DuckDBConnection[], job: Job, summary: Summary): Promise<void> => {
-  const { key, partition, revision, held, tasks, prefetch } = job;
+const stock = async (
+  conns:   DuckDBConnection[],
+  job:     Job,
+  ledger:  Map<string, Entry>,
+  summary: Summary,
+): Promise<void> => {
+  const { key, partition, revision, held, edges, tasks, prefetch } = job;
 
   const staging = stagingOf(key, revision);
   const started = Date.now();
@@ -401,8 +433,14 @@ const stock = async (conns: DuckDBConnection[], job: Job, summary: Summary): Pro
      * a file per instrument of no instruments would be nothing at all, and
      * nothing is what an unstocked partition looks like.
      */
-    if (split && written > 0) await publishSplit(key, revision, staging);
-    else await publishBundle(key, revision, await bundleStaged(conns[0]!, key, staging));
+    const symbols = split && written > 0 ? await publishSplit(key, revision, staging) : null;
+
+    if (! symbols) await publishBundle(key, revision, await bundleStaged(conns[0]!, key, staging));
+
+    // In the vault whole, so it is written down — before the revisions it replaces are removed.
+    const entry = await record(key, partition, edges, revision, { bundle: ! symbols, symbols: symbols ?? [], publishing: false });
+
+    ledger.set(entry.partition, entry);
 
     await prune(key, revision, held);
   } catch (err) {

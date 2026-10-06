@@ -5,6 +5,8 @@ The cold commands as they were before `cold push archives` moved onto partitions
 per-file record (`db.ts`), the facts store (`ledger.ts`) and tree layouts that no longer exist, so
 this folder is left out of the build and its tests (`tests/tools/cold/legacy/`) out of the test run.
 
+`docs/` holds how they were described: the push they shared, and `evict` as it was designed.
+
 It is here because of what it knows. The checks `evict` makes before it deletes anything, the ways
 `audit` found the record and Mega can disagree, how a replaced tar is told from the one it
 replaces — each was a decision taken for a reason, and each command is rebuilt on partitions from

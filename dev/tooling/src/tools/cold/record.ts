@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { idOf } from './keys';
 import type { CatalogPartition, Held, HeldRow, Origin, PartitionKey, Tar, TarState, Totals } from './types';
 
 /**
@@ -172,6 +173,42 @@ export const stored = (db: DatabaseSync, id: number, handle: string | null): voi
     .run(handle, new Date().toISOString(), id);
 };
 
+/**
+ * The partitions cold storage holds as the record wants them: in a tar that is
+ * stored, with nothing noted as having changed since. By partition, each with
+ * the version stored.
+ */
+export const storedOf = (db: DatabaseSync, origin: Origin, venue: string): Held[] =>
+  (db.prepare(
+    `SELECT ${HELD} FROM held
+      WHERE origin = ? AND venue = ? AND next_version IS NULL
+        AND tar_id IN (SELECT id FROM tar WHERE state = 'stored')`,
+  ).all(origin, venue) as unknown as HeldRow[]).map(asHeld);
+
+/** The partitions already taken off the local disk, each by the version that went: the last time for each. */
+export const evictedOf = (db: DatabaseSync, origin: Origin, venue: string): Map<string, string> => {
+  const rows = db.prepare(
+    `SELECT venue, market, dataset, variant, grain, bundle, month, version FROM eviction
+      WHERE origin = ? AND venue = ? ORDER BY evicted_at`,
+  ).all(origin, venue) as unknown as (PartitionKey & { version: string })[];
+
+  return new Map(rows.map(row => [idOf(row), row.version]));
+};
+
+/** A partition was taken off the local disk. */
+export const noteEviction = (
+  db:      DatabaseSync,
+  origin:  Origin,
+  key:     PartitionKey & { version: string },
+  removed: { files: number; bytes: number },
+): void => {
+  db.prepare(
+    `INSERT INTO eviction (origin, venue, market, dataset, variant, grain, bundle, month, version, files, bytes, evicted_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(origin, key.venue, key.market, key.dataset, key.variant, key.grain, key.bundle, key.month, key.version,
+    removed.files, removed.bytes, new Date().toISOString());
+};
+
 /** What the record holds of an origin, added up. */
 export const totals = (db: DatabaseSync, origin: Origin): Totals => ({
   ...(db.prepare(
@@ -234,6 +271,26 @@ CREATE TABLE IF NOT EXISTS held (
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS held_tar ON held (tar_id);
+
+-- A partition taken off the local disk because cold storage holds it, and when.
+-- One row each time: the history of what was moved out, which the tree itself
+-- does not keep.
+CREATE TABLE IF NOT EXISTS eviction (
+  origin     TEXT    NOT NULL,
+  venue      TEXT    NOT NULL,
+  market     TEXT    NOT NULL,
+  dataset    TEXT    NOT NULL,
+  variant    TEXT    NOT NULL,
+  grain      TEXT    NOT NULL,
+  bundle     TEXT    NOT NULL,
+  month      TEXT    NOT NULL,
+  version    TEXT    NOT NULL,           -- the version cold storage held of it
+  files      INTEGER NOT NULL,           -- what was removed from disk
+  bytes      INTEGER NOT NULL,
+  evicted_at TEXT    NOT NULL
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS eviction_venue ON eviction (origin, venue);
 `;
 
 const TAR = `id, origin, venue, month, seq, remote, local, bytes, state, handle, stored_at AS storedAt`;

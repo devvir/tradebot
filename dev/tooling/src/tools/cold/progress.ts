@@ -293,7 +293,8 @@ const sizeOf = (file: string): number => {
   }
 };
 
-const meter = (percent: number): string => {
+/** A bar filled to a percentage. */
+export const meter = (percent: number): string => {
   const filled = Math.max(0, Math.min(WIDTH, Math.round((percent / 100) * WIDTH)));
 
   return `${C.cyan}${'█'.repeat(filled)}${C.dim}${'░'.repeat(WIDTH - filled)}${C.reset}`;

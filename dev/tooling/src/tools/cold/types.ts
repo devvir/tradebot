@@ -20,6 +20,9 @@ export interface ColdConfig {
   /** The tree being backed up. */
   sourceRoot:    string;
 
+  /** The vault, whichever tree is being worked on: its ledger says what is stocked. */
+  vaultRoot:     string;
+
   /** Cold's own directory: staging tars, locks and the record. */
   coldRoot:      string;
 
@@ -61,6 +64,64 @@ export interface CatalogPartition extends PartitionKey {
 
   /** Changes whenever a file of the partition is added, withdrawn or changed. */
   version: string;
+}
+
+/** One line of the vault's ledger, as far as cold reads it: a vault partition, and what it was stocked from. */
+export interface Stocked {
+  /** The vault partition: its slice's directory below the vault, then its month. */
+  partition:   string;
+
+  /** The partition of the archives it was stocked from. */
+  source:      PartitionKey;
+
+  /** The catalog's version of that partition when it was stocked, and of a neighbouring month it read the edge of. */
+  version:     string;
+  preVersion:  string;
+  postVersion: string;
+
+  revision:    string;
+}
+
+/** Why a partition of the archives stays on disk. */
+export type HeldBack = 'not in cold storage' | 'not stocked' | 'a neighbouring month is not stocked';
+
+/** What a look at one venue's archives came to. */
+export interface Evictable {
+  venue:     string;
+
+  /** Partitions that can go, each as the catalog counts it. */
+  ready:     CatalogPartition[];
+
+  /** Settled partitions that stay, by why. */
+  held:      Record<HeldBack, number>;
+
+  /** Partitions that could go and already have, at the version they have now. */
+  gone:      number;
+}
+
+/** What one run of `evict` carries from one look to the next. */
+export interface Run {
+  config:   ColdConfig;
+  origin:   Origin;
+  venues:   readonly string[];
+  archives: import('./disk').Archives;
+  options:  EvictOptions;
+
+  /** Whether removing was agreed to: asked before the first removal of a run, and not again. */
+  agreed:   boolean;
+
+  /** Whether a watching run has said that it is waiting, since it last had something to do. */
+  waiting:  boolean;
+}
+
+export interface EvictOptions {
+  venues:  string[];
+
+  /** Say what would go, and remove nothing. */
+  dryRun?: boolean;
+
+  /** Delete outright, where the default is the host's trash. */
+  purge?:  boolean;
 }
 
 /** One slice of a venue with its partitions, as the catalog's endpoint answers it. */
@@ -168,9 +229,6 @@ export interface PushOptions {
 
   /** A lens's slug, or `true` to be asked which. Absent reads the whole catalog. */
   lens?:  string | true;
-
-  /** Keep running once everything is pushed, and ask the catalog again at intervals. */
-  watch?: boolean;
 }
 
 /** What one planning pass found. */

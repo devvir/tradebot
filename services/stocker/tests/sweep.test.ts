@@ -1,11 +1,12 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import config from '../src/config';
 import { open } from '../src/db';
 import { parseKey } from '../src/keys';
+import { ERRORS, EVICTED, LEDGER, validate } from '../src/ledger';
 import { sweep } from '../src/scan';
 import type { DuckDBConnection } from '@duckdb/node-api';
 import type { ListedSlice } from '../src/types';
@@ -278,8 +279,10 @@ describe('a partition over the split size', () => {
     const [file] = await stocked();
     const revision = file!.split('.')[1]!;
 
+    // Stopped before the last file was in place: the marker is there, and nothing was written down.
     await mkdir(join(config.vaultDir, SLICE, '@'), { recursive: true });
     await writeFile(join(config.vaultDir, SLICE, '@', `${MONTH}.${revision}.publishing`), '');
+    await rm(join(config.vaultDir, LEDGER));
 
     expect(await sweep(conns)).toMatchObject({ built: 1, current: 0 });
     expect(await stocked()).toEqual([file]);
@@ -300,6 +303,135 @@ describe('a partition over the split size', () => {
     expect(await sweep(conns)).toMatchObject({ built: 1 });
     expect(await stocked()).toHaveLength(1);
     expect((await stocked())[0]).toMatch(/^BTC_USDT\//);
+  });
+});
+
+/**
+ * The vault's own account of what it holds — what makes a partition current
+ * without its slice being walked, and without its files being there.
+ */
+describe('the ledger', () => {
+  const PARTITION = `${SLICE}/${MONTH}`;
+
+  const lines = async (name: string): Promise<Record<string, string>[]> => {
+    const [head, ...rest] = (await readFile(join(config.vaultDir, name), 'utf8')).trim().split('\n');
+
+    return rest.map(line => Object.fromEntries(line.split('|').map((field, at) => [head!.split('|')[at]!, field])));
+  };
+
+  const there = (name: string): Promise<boolean> => stat(join(config.vaultDir, name)).then(() => true, () => false);
+
+  beforeEach(async () => {
+    await place('gate.futures_usdt-trades.csv', key('BTC_USDT'));
+    await sweep(conns);
+  });
+
+  it('gains a line for a partition stocked: what from, and what it weighed', async () => {
+    const [file]  = await stocked();
+    const [entry] = await lines(LEDGER);
+
+    expect(entry).toMatchObject({
+      partition: PARTITION, venue: 'gate', market: 'perp', dataset: 'trades', variant: '', grain: 'monthly',
+      bundle: 'instrument', month: '202606', mode: 'bundle', preVersion: '', postVersion: '',
+      revision: file!.split('.')[1], count: '1',
+      size: String((await stat(join(config.vaultDir, SLICE, file!))).size),
+    });
+    expect(entry!['version']).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it('gains another when the partition is stocked again, and the last one counts', async () => {
+    listed[0]!.ETag = '"e2"';
+
+    await sweep(conns);
+
+    const [file] = await stocked();
+    const all    = await lines(LEDGER);
+
+    expect(all).toHaveLength(2);
+    expect(all[1]!['revision']).toBe(file!.split('.')[1]);
+    expect(await sweep(conns)).toMatchObject({ built: 0, current: 1 });
+  });
+
+  /** A partition moved out of the vault is still a partition stocked. */
+  it('is taken at its word where the files are not there', async () => {
+    await rm(join(config.vaultDir, SLICE), { recursive: true });
+
+    expect(await sweep(conns)).toMatchObject({ built: 0, current: 1 });
+    expect(await stocked()).toEqual([]);
+  });
+
+  /** Stocked before there was a ledger, or published a moment before the service stopped. */
+  it('writes down a partition found in the vault that it has no line for', async () => {
+    await rm(join(config.vaultDir, LEDGER));
+
+    expect(await sweep(conns)).toMatchObject({ built: 0, current: 1 });
+    expect(await lines(LEDGER)).toMatchObject([{ partition: PARTITION, mode: 'bundle', count: '1' }]);
+  });
+
+  describe('set against the vault as the service starts', () => {
+    it('finds nothing wrong with a vault that holds what it says', async () => {
+      expect(await validate()).toBe(0);
+      expect(await there(ERRORS)).toBe(false);
+    });
+
+    /** A loss: written where it cannot be missed, and stocked again. */
+    it('reports a partition whose files have gone, and has it stocked again', async () => {
+      await rm(join(config.vaultDir, SLICE), { recursive: true });
+
+      expect(await validate()).toBe(1);
+      expect(await readFile(join(config.vaultDir, ERRORS), 'utf8')).toMatch(
+        new RegExp(`^\\d{4}-.*\\|${PARTITION}\\|[0-9a-f]{12}\\|its files are not in the vault\\n$`));
+
+      expect(await sweep(conns)).toMatchObject({ built: 1, current: 0 });
+      expect(await stocked()).toHaveLength(1);
+    });
+
+    it('says the same loss once, however often it is found', async () => {
+      await rm(join(config.vaultDir, SLICE), { recursive: true });
+
+      await validate();
+      await validate();
+
+      expect((await readFile(join(config.vaultDir, ERRORS), 'utf8')).trim().split('\n')).toHaveLength(1);
+    });
+
+    /** Whoever moved it out said so, and that is not a loss. */
+    it('lets be a partition that is meant to be absent', async () => {
+      const [{ revision }] = await lines(LEDGER) as [Record<string, string>];
+
+      await rm(join(config.vaultDir, SLICE), { recursive: true });
+      await writeFile(join(config.vaultDir, EVICTED),
+        `partition|revision|evicted|date\n${PARTITION}|${revision}|true|2026-10-06T00:00:00.000Z\n`);
+
+      expect(await validate()).toBe(0);
+      expect(await there(ERRORS)).toBe(false);
+    });
+
+    it('takes a partition brought back as one that has to be there', async () => {
+      const [{ revision }] = await lines(LEDGER) as [Record<string, string>];
+
+      await rm(join(config.vaultDir, SLICE), { recursive: true });
+      await writeFile(join(config.vaultDir, EVICTED), [
+        'partition|revision|evicted|date',
+        `${PARTITION}|${revision}|true|2026-10-06T00:00:00.000Z`,
+        `${PARTITION}|${revision}|false|2026-10-07T00:00:00.000Z`,
+      ].join('\n') + '\n');
+
+      expect(await validate()).toBe(1);
+    });
+
+    /** A file that is there and is not the one that was stocked is rebuilt, never written down as it is. */
+    it('reports a file that does not weigh what was stocked, and has it stocked again', async () => {
+      const [file] = await stocked();
+
+      await writeFile(join(config.vaultDir, SLICE, file!), 'not a parquet');
+
+      expect(await validate()).toBe(1);
+      expect(await readFile(join(config.vaultDir, ERRORS), 'utf8')).toMatch(/its file weighs 13 bytes where the ledger says \d+/);
+
+      expect(await sweep(conns)).toMatchObject({ built: 1, current: 0 });
+      expect(await validate()).toBe(0);
+    });
   });
 });
 

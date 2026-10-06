@@ -144,7 +144,7 @@ between a month's tars when one changes.
 
 ## Watching
 
-`--watch` keeps the run going once everything ready is stored, and asks the catalog again every 30
+`--watch`, one of the options every `cold` command shares ([COLD.md](COLD.md)), keeps the run going once everything ready is stored, and asks the catalog again every 30
 minutes. Each asking redraws the plan as a new run would, and whatever is newly ready joins the tars
 already in hand. A tar that could not be moved on is tried again at each asking.
 

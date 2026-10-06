@@ -21,7 +21,8 @@ modified, moved or deleted.
 - Converts every timestamp to **int64 microseconds UTC**, inferring each value's unit
 - Writes zstd Parquet: a small month as one file ordered by symbol and time, a large one as a
   file per instrument
-- Keeps no records: a stocked partition's files carry its revision in their names
+- Keeps a ledger in the vault, a line per partition stocked: what it was stocked from, at which
+  version, and what it weighs
 - Runs long-lived, sweeping on a timer so files that land unattended are picked up on their own
 
 Full technical detail — how a sweep decides, the revision, the path convention, the canonical

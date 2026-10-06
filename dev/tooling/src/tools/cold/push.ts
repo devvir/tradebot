@@ -9,6 +9,7 @@ import { Archives, matches } from './disk';
 import { idOf, partitionOf } from './keys';
 import { acquire } from './lock';
 import * as mega from './mega';
+import { isWatch } from './options';
 import { Progress } from './progress';
 import * as record from './record';
 import { clearTemporary, membersOf, replaceMembers, tarSize, writePart } from './tar';
@@ -78,7 +79,7 @@ export const runPush = async (origin: Origin, options: PushOptions): Promise<voi
       const planned = await plan(db, config, origin, venues, lens);
       const todo    = outstanding(db, origin, venues);
 
-      if (todo.length === 0 && ! options.watch) {
+      if (todo.length === 0 && ! isWatch()) {
         success(`Everything that is ready from ${venues.join(', ')} is in cold storage — nothing to push`);
 
         return;
@@ -86,7 +87,7 @@ export const runPush = async (origin: Origin, options: PushOptions): Promise<voi
 
       if (todo.length > 0 && ! await approve(db, todo, planned)) return;
 
-      await work(db, config, origin, venues, lens, options.watch ?? false);
+      await work(db, config, origin, venues, lens, isWatch());
     } finally {
       record.close(db);
     }

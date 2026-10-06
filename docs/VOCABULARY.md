@@ -54,6 +54,11 @@ market's).
 stripes, one per dataset of a market, growing with time: a slice is one lengthwise cut of a stripe by
 its finer traits. The same data at another grain or in another bundle is another slice.
 
+**Rendering.** One of the ways a venue publishes the same data: the same venue, market, dataset and
+variant at a particular grain and bundle. A day's trades published daily and monthly, or per
+instrument and as the market's bundle, are renderings of one another. A slice is one rendering of its
+data.
+
 **Partition.** One month of a slice: every file its attributes and that month select. The partition
 is the atom of data: it is downloaded, stocked, cold-stored, restored and deleted whole, or not at
 all.

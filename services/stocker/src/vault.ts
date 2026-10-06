@@ -19,10 +19,11 @@ import type { Edge, Partition, Series, SliceIndex, Stocked, VaultKey } from './t
  * the weight of the archive files it was built from (`splitGb`). Every file
  * carries the symbol as a column, so the two read as one table.
  *
- * **The revision is the record.** It is a digest of everything the partition
- * was built from, so a month whose revision is in the vault is current, and one
- * whose inputs changed anywhere computes a revision that is not there yet.
- * Nothing else is kept: no ledger, no list of files.
+ * **The revision names what a partition was built from.** It is a digest of
+ * every input, so a month stocked at a revision is current while that is the
+ * revision its inputs compute, and one whose inputs changed anywhere computes a
+ * revision that has not been stocked. Which revision each month was stocked at
+ * is written in the vault's ledger — see `ledger.ts`.
  *
  * Hive-style `key=value` directories are read back as columns by a query engine
  * and pruned on. `@`, the symbol directories and the file names are **bare**:
@@ -91,8 +92,11 @@ export class Slices {
   private readonly known = new Map<string, Promise<SliceIndex>>();
 
   of(key: VaultKey): Promise<SliceIndex> {
-    const dir = sliceDirOf(key);
+    return this.at(sliceDirOf(key));
+  }
 
+  /** The same, for a slice named by its directory. */
+  at(dir: string): Promise<SliceIndex> {
     let read = this.known.get(dir);
 
     if (! read) {
@@ -135,7 +139,7 @@ export const publishBundle = async (key: VaultKey, revision: string, built: stri
  * revision with its marker still there was interrupted, is not counted as
  * stocked, and is put in place again from the start.
  */
-export const publishSplit = async (key: VaultKey, revision: string, staging: string): Promise<number> => {
+export const publishSplit = async (key: VaultKey, revision: string, staging: string): Promise<string[]> => {
   const marker = join(sliceDirOf(key), BUNDLE, `${monthOf(key)}.${revision}${PUBLISHING}`);
   const built  = (await readdir(staging)).filter(name => name.endsWith(STAGED));
 
@@ -151,7 +155,7 @@ export const publishSplit = async (key: VaultKey, revision: string, staging: str
 
   await rm(marker);
 
-  return built.length;
+  return built.map(name => name.slice(0, -STAGED.length));
 };
 
 /**

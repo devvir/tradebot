@@ -5,6 +5,7 @@ import SK from './service';
 import config from './config';
 import { sweepScratch } from './build';
 import { open } from './db';
+import { validate } from './ledger';
 import { report, sweep } from './scan';
 
 /**
@@ -51,6 +52,9 @@ SK.run(async () => {
   await assertWritable(config.vaultDir);
 
   await sweepScratch();
+
+  // Once, before the first sweep: what the ledger says against what the vault holds.
+  await validate();
 
   const { conns } = await open();
 

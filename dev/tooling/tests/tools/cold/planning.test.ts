@@ -21,7 +21,7 @@ let slices: ListedSlice[];
 let asked:  { url: URL; lens: string | null }[];
 
 const config = (): ColdConfig => ({
-  sourceRoot: dir, coldRoot: dir, megaRoot: '/x', dbPath: path.join(dir, 'cold.sqlite'),
+  sourceRoot: dir, vaultRoot: dir, coldRoot: dir, megaRoot: '/x', dbPath: path.join(dir, 'cold.sqlite'),
   capBytes: 5 * GB, queueTargetGb: 10, settledHours: null, catalogUrl: 'http://catalog.test', catalogToken: 't',
 });
 

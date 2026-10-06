@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import inquirer from 'inquirer';
 import { release } from '../tools/cold/cleanup';
+import { setWatch } from '../tools/cold/options';
 import { error, info, spacer } from '../shared/ui/logger';
 import type { Origin } from '../tools/cold/types';
 
@@ -19,6 +20,7 @@ import type { Origin } from '../tools/cold/types';
  */
 const tools = {
   push:  async (): Promise<typeof import('../tools/cold/push')>  => import('../tools/cold/push'),
+  evict: async (): Promise<typeof import('../tools/cold/evict')> => import('../tools/cold/evict'),
   stats: async (): Promise<typeof import('../tools/cold/stats')> => import('../tools/cold/stats'),
 };
 
@@ -31,9 +33,15 @@ const tools = {
  * and `db dump` will ask it rather than shelling out themselves.
  */
 export function register(program: Command): void {
+  /**
+   * Options here are every command's: given once at this level, read by each
+   * command that has a use for them — see `tools/cold/options.ts`. They may be
+   * written before the command or after it.
+   */
   const cold = program
     .command('cold')
-    .description('Cold storage: pack, upload, and account for what is backed up');
+    .description('Cold storage: pack, upload, and account for what is backed up')
+    .option('-W, --watch', 'keep running, and look again every 30 minutes');
 
   /**
    * The venue filter sits **after** the origin and never instead of it. One
@@ -45,8 +53,9 @@ export function register(program: Command): void {
     .command('push [origin] [venues...]')
     .description('Pack what is ready and not backed up yet, and upload it to Mega')
     .option('-L, --lens [slug]', 'only what a catalog lens lets through; asks which when none is named')
-    .option('-W, --watch', 'keep running, and ask the catalog again every 30 minutes')
-    .action(gracefully(async (origin?: string, venues: string[] = [], options: { lens?: string | true; watch?: boolean } = {}) => {
+    .action(gracefully(async (origin: string | undefined, venues: string[] = [], options: { lens?: string | true } = {}, command: Command) => {
+      shared(command);
+
       const chosen = await resolve(origin);
 
       if (! chosen || ! built(chosen)) return;
@@ -54,14 +63,33 @@ export function register(program: Command): void {
       await (await tools.push()).runPush(chosen, {
         venues: venues.map(venue => venue.toLowerCase()),
         ...(options.lens === undefined ? {} : { lens: options.lens }),
-        ...(options.watch ? { watch: true } : {}),
       });
     }));
 
   cold
     .command('evict [origin] [venues...]')
-    .description('Reclaim what is safely in Mega (not built on partitions yet)')
-    .action(gracefully(async () => { error('cold evict is not built on partitions yet'); }));
+    .description('Remove from disk what is in cold storage and stocked')
+    .option('-n, --dry-run', 'say what would be removed, and remove nothing')
+    .option('--purge', 'delete outright, where the default is the trash')
+    .action(gracefully(async (origin: string | undefined, venues: string[] = [], options: { dryRun?: boolean; purge?: boolean } = {}, command: Command) => {
+      shared(command);
+
+      const chosen = await resolve(origin);
+
+      if (! chosen) return;
+
+      if (chosen !== 'archives') {
+        error('cold evict is built for the archives only');
+
+        return;
+      }
+
+      await (await tools.evict()).runEvict(chosen, {
+        venues: venues.map(venue => venue.toLowerCase()),
+        ...(options.dryRun ? { dryRun: true } : {}),
+        ...(options.purge ? { purge: true } : {}),
+      });
+    }));
 
   cold
     .command('audit [origin]')
@@ -93,6 +121,11 @@ export function register(program: Command): void {
  * command keeps whatever behaviour it has, and `cold` answers a Ctrl-C the way
  * a command-line tool should.
  */
+/** Take the options given at the `cold` level, wherever on the line they were written. */
+const shared = (command: Command): void => {
+  setWatch(command.optsWithGlobals<{ watch?: boolean }>().watch ?? false);
+};
+
 const gracefully = <A extends unknown[]>(action: (...args: A) => Promise<void>) =>
   async (...args: A): Promise<void> => {
     try {

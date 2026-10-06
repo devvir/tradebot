@@ -19,10 +19,17 @@ and at which version.
 |---|---|
 | [`cold push`](COLD-PUSH.md) | Pack what is ready and not backed up yet, and upload it |
 | `cold stats` | What the record holds, venue by venue |
-| [`cold evict`](COLD-EVICT.md) | Reclaim local disk once cold storage provably holds what is deleted — **not running**, see its page |
+| [`cold evict`](COLD-EVICT.md) | Remove from local disk what is in cold storage and stocked — the archives only |
 | [`cold audit`](COLD-AUDIT.md) | Check cold storage against the record — **not running**, see its page |
 
-`push` and `stats` take an **origin** and prompt for one when it is omitted.
+`push`, `evict` and `stats` take an **origin** and prompt for one when it is omitted.
+
+**Options given at the `cold` level are every command's.** They are written once, before the command
+or after it, and each command that has a use for one reads it:
+
+| | |
+|---|---|
+| `-W`, `--watch` | keep running once the work is done, and look again every 30 minutes — `push` and `evict` |
 
 ---
 

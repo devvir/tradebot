@@ -249,6 +249,7 @@ export interface Job {
   partition: Partition;
   revision:  string;
   held:      Map<string, Stocked>;
+  edges:     Edge[];
   tasks:     Task[];
   files:     number;
   prefetch:  import('./prepare').Prefetch;
@@ -283,9 +284,51 @@ export interface InstrumentDirs {
   of: (root: string) => Promise<string[]>;
 }
 
+/** One line of the vault's ledger: a partition stocked, what from, and what it weighed. */
+export interface Entry {
+  /** The vault partition: its slice's directory below the vault, then its month as `YYYYMM`. */
+  partition:   string;
+
+  /** The partition of the archives it was stocked from, as the catalog names it — its month as `YYYYMM`. */
+  venue:       string;
+  market:      string;
+  dataset:     string;
+  variant:     string;
+  grain:       string;
+  bundle:      string;
+  month:       string;
+
+  /** How it is stored: one file for every instrument, or a file per instrument. */
+  mode:        'bundle' | 'split';
+
+  /** The catalog's version of what it was stocked from, and of a neighbouring month it read the edge of. */
+  version:     string;
+  preVersion:  string;
+  postVersion: string;
+
+  revision:    string;
+
+  /** What its files weigh, and how many there are. */
+  size:        number;
+  count:       number;
+
+  stockedAt:   string;
+}
+
+/** Whether a vault partition's files are meant to be absent, as whoever moved them says. */
+export interface Evicted {
+  partition: string;
+  revision:  string;
+  evicted:   boolean;
+  date:      string;
+}
+
 /** What one sweep carries from partition to partition. */
 export interface Sweeping {
   instruments:   InstrumentDirs;
+
+  /** The vault's ledger as the sweep found it, added to as partitions are stocked. */
+  ledger:        Map<string, Entry>;
 
   /** What the vault holds of each slice, read once. */
   slices:        { of: (key: VaultKey) => Promise<SliceIndex>; forget: (key: VaultKey) => void };

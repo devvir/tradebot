@@ -27,6 +27,36 @@ export class Archives {
 
   private readonly instruments = new Map<string, string[]>();
 
+  /**
+   * The directories a partition's files are in, each with everything it holds
+   * — named and not measured. For when the files are to be removed and nothing
+   * is asked of them: a listing each, and no look at any file.
+   *
+   * **Everything, not only the partition's.** A month's directory holds every
+   * rendering of the data side by side, and whoever removes a partition needs
+   * to know whether the directory is all its own to take.
+   */
+  async monthDirsOf(key: PartitionKey): Promise<{ dir: string; names: string[] }[]> {
+    const dataset = path.join(key.venue, key.market, descriptorOf(key));
+    const breath  = breather();
+
+    const dirs = key.bundle === 'market'
+      ? [path.join(dataset, '@', key.month)]
+      : (await this.instrumentsOf(dataset, breath)).map(instrument => path.join(dataset, instrument, key.month));
+
+    const found: { dir: string; names: string[] }[] = [];
+
+    for (const dir of dirs) {
+      const held = names(path.join(this.root, dir));
+
+      if (held.length > 0) found.push({ dir, names: held });
+
+      await breath();
+    }
+
+    return found;
+  }
+
   /** A partition's files, in path order, relative to the root. */
   async filesOf(key: PartitionKey): Promise<SourceFile[]> {
     const dataset = path.join(key.venue, key.market, descriptorOf(key));

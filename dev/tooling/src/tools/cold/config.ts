@@ -24,6 +24,14 @@ export const CAPS: Record<Origin, number> = {
 /** How long to wait before asking Mega again. */
 export const POLL_MS = 30_000;
 
+/**
+ * Days after a month ends before the catalog takes its partitions as settled.
+ * The catalog's own rule, repeated here for the one question only this side
+ * asks: whether a month that is not in the catalog could have been settled by
+ * now.
+ */
+export const SETTLE_DAYS = 15;
+
 /** Between two askings of the catalog, in watch mode. */
 export const WATCH_MS = 30 * 60_000;
 
@@ -62,6 +70,7 @@ export const loadConfig = (origin: Origin): ColdConfig => {
 
   return {
     sourceRoot:    under(SOURCES[origin].env, SOURCES[origin].under),
+    vaultRoot:     under(SOURCES.vault.env, SOURCES.vault.under),
     coldRoot,
     megaRoot:      `${requiredEnv('MEGA_ROOT').replace(/\/$/, '')}/${REMOTE[origin]}`,
     dbPath:        path.join(coldRoot, 'cold.sqlite'),

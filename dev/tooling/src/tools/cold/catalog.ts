@@ -29,13 +29,26 @@ export const readyPartitions = async (
   venue:         string,
   settledBefore: string | null,
   lens:          string | null,
-): Promise<CatalogPartition[]> => {
-  const query = new URLSearchParams({
+): Promise<CatalogPartition[]> =>
+  partitions(config, venue, {
     'downloaded': 'true',
     ...(settledBefore ? { 'settled-before': settledBefore } : { 'settled': 'true' }),
-  });
+  }, lens);
+
+/**
+ * A venue's partitions that hold a file, narrowed by whatever the catalog's
+ * endpoint narrows by — and every one of them where nothing is asked.
+ */
+export const partitions = async (
+  config:  ColdConfig,
+  venue:   string,
+  filters: Record<string, string> = {},
+  lens:    string | null = null,
+): Promise<CatalogPartition[]> => {
+  const query = new URLSearchParams(filters).toString();
+
   const { items } = await ask<{ items: ListedSlice[] }>(
-    config, `/venues/${encodeURIComponent(venue)}/partitions?${query.toString()}`, lens);
+    config, `/venues/${encodeURIComponent(venue)}/partitions${query ? `?${query}` : ''}`, lens);
 
   return items.flatMap(slice => slice.partitions
     .filter(one => one.files > 0)

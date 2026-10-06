@@ -123,8 +123,8 @@ travels alone — an upload queue or transfer log shows the name, not the path.
 
 ## How a sweep decides
 
-A sweep asks the catalog what every partition holds, and stocks what the vault does not hold at
-its current revision. Nothing is remembered between sweeps; nothing is written but the vault.
+A sweep asks the catalog what every partition holds, and stocks what the vault's ledger does not
+have at its current revision. Nothing is written but the vault.
 
 1. **Ask for what can be acted on.** One request per venue, through the configured lens, for the
    datasets stocker reads: the partitions with nothing left to download that the catalog takes as
@@ -137,13 +137,15 @@ its current revision. Nothing is remembered between sweeps; nothing is written b
 2. **With its neighbour?** A partition that reads the edge of a neighbouring month needs that
    month in the answer too (see [buckets](#venues-whose-buckets-do-not-cut-at-utc-midnight)).
 3. **Current?** The partition's revision — below — is computed from what the catalog answered. If
-   the vault holds that revision whole, the partition is current and nothing is read.
+   [the ledger](#the-ledger) has the partition at that revision, it is current and nothing is read,
+   whether or not its files are there. If the ledger does not, the vault itself is read: a partition
+   found there whole at that revision is written into the ledger and is current.
 4. **On disk?** The partition's files are gathered from the archives and compared with what the
    catalog says, by count and by total size — no file is opened. Where several renderings are
    ready, the preferred one that is on disk is taken (see below); one the catalog calls
    downloaded but the disk does not hold is skipped and reported.
 5. **Stock** into a staging directory under `<vault>/.stocker-tmp`, one file per instrument.
-6. **Publish**, and remove every other revision of the month. A small month's instrument files
+6. **Publish**, write the partition into the ledger, and remove every other revision of the month. A small month's instrument files
    are appended into one, in symbol order, and that file is renamed into `@` — one rename, so a
    reader sees it whole or not at all. A large month's files are renamed one by one under their
    symbols, between a marker written into `@` before the first and removed after the last; a
@@ -153,9 +155,9 @@ its current revision. Nothing is remembered between sweeps; nothing is written b
 has a new version in the catalog, so the next sweep computes a revision the vault does not hold
 and stocks it again.
 
-**What the vault holds is read once per slice per sweep.** A slice stored per instrument is a
-folder per symbol, so asking it about one month means listing every one of them; reading the
-slice once answers every month of it.
+**The vault is read only for a partition the ledger does not settle**, once per slice per sweep. A
+slice stored per instrument is a folder per symbol, so asking it about one month means listing every
+one of them; reading the slice once answers every month of it.
 
 **Several renderings of one month land in one partition of the vault.** A venue can publish the
 same data monthly and daily, or per instrument and in one market-wide file, and the catalog
@@ -177,12 +179,50 @@ A stocked partition's revision is the first twelve hex digits of a SHA-256 over:
 - the symbol filter, so a partly stocked partition never passes for a whole one.
 
 So **anything that would change the output changes the revision**: a file added, replaced or
-withdrawn in the catalog, a series edited, a column added. Nothing else needs to be known about a
-partition, and nothing else is kept.
+withdrawn in the catalog, a series edited, a column added.
 
 **An empty partition is still published** — one file under `@` with the table's columns and no
 rows, whatever the month weighed — so a month whose every file the venue published empty reads as
 stocked rather than being rebuilt every sweep.
+
+### The ledger
+
+**The vault keeps its own account of what it holds**: `ledger.csv` at its root, a line per partition
+stocked. That is what makes a partition current without its slice being walked — and what keeps it
+current when its files are not there, so a partition can be moved out of the vault without being
+stocked again.
+
+| Column | |
+|---|---|
+| `partition` | the vault partition: its slice's directory below the vault, then its month |
+| `venue`, `market`, `dataset`, `variant`, `grain`, `bundle`, `month` | the partition of the archives it was stocked from, as the catalog names it |
+| `mode` | `bundle`, one file for every instrument, or `split`, a file per instrument |
+| `version` | the catalog's version of that partition when it was stocked |
+| `preVersion`, `postVersion` | the catalog's version of the month before and after, where the partition read their edge |
+| `revision` | the revision it was stocked at |
+| `size`, `count` | what its files weigh, and how many there are |
+| `stockedAt` | when |
+
+Fields are separated by `|`, since the catalog's own names carry commas. **A line is never changed.**
+A partition stocked again gets another line, and the last line for a partition is the one that
+counts — so the file is only ever appended to.
+
+**`evicted.csv` says which partitions are meant to be absent.** It sits beside the ledger, holds a
+partition, its revision, whether it is evicted and since when, and its last line for a partition
+counts. Stocker reads it and never writes it.
+
+**The ledger is set against the vault once, as the service starts.** Every partition it holds must
+be in the vault at its revision — a bundle as one file of the size the ledger gives, a split
+partition as the number of files it gives — unless `evicted.csv` says that revision is meant to be
+absent. One that is not is a loss:
+
+- it is appended to `ERROR.log` at the vault's root — partition, revision, what was found — once,
+  however often it is found again;
+- from then on it is taken as not stocked, so the next sweep stocks it again, and never by writing
+  down whatever is in the vault in its place.
+
+The service carries on. A file is written, and not only a log line, so that the loss is still in
+front of whoever looks next: nothing removes `ERROR.log` but a person.
 
 ## Architecture
 
