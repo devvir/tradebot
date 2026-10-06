@@ -1,7 +1,7 @@
 {
   "name": "@tradebot/prospector",
   "version": "1.0.0",
-  "description": "Prospector service — surveys venue archives and records every file they publish",
+  "description": "Prospector service \u2014 surveys venue archives and records every file they publish",
   "main": "dist/index.js",
   "private": true,
   "scripts": {
@@ -15,6 +15,7 @@
   "dependencies": {
     "@devvir/netgate": "workspace:*",
     "@devvir/service-kit": "workspace:*",
+    "@tradebot/lenses": "workspace:*",
     "@tradebot/utils": "workspace:*",
     "express": "^5.2.1"
   },

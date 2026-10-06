@@ -39,6 +39,9 @@ is that file *of*.
   publishes no listing at all, that same probe is what decides whether a constructed key is a file.
   The probe follows its walk and ends with it: once the walk is done it drains the backlog, then
   announces the venue synced and stops
+- **Is the only writer of the catalog database.** Every row of every table is written here,
+  including the ones collection does not read: a lens is stored through this service's private API,
+  and what each lens lets through is kept current here as partitions appear
 - **Keeps up without re-walking.** Once a venue's shapes and instruments are known, finding what has
   appeared since is generating the dates each series is missing and asking about those — no listing
   read, and the same code for every venue, which is the only thing the two venues that cannot be

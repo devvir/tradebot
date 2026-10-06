@@ -1,15 +1,17 @@
 import { logger } from '@devvir/service-kit';
 import { fault } from '../faults';
 import { mountCollector } from './collector';
+import { mountLenses } from './lenses';
 import { mountReports } from './reports';
 import type { Application, Request, Response, NextFunction } from 'express';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Surveys } from '../types';
 
 /**
- * Prospector's private API — the collector and the reports — mounted on the
- * server service-kit already runs. Nothing outside the module reaches it: the
- * catalog service is the public face, and forwards reports here.
+ * Prospector's private API — the collector, the reports and the storing of
+ * lenses — mounted on the server service-kit already runs. Nothing outside the
+ * module reaches it: the catalog service is the public face, and forwards here
+ * whatever it is sent to be stored.
  *
  * Body parsing, request logging, `/ping` and rate limiting come with that
  * server, so what is added here is the two things it cannot know about: who is
@@ -82,6 +84,7 @@ export const mount = (
 
   mountCollector(app, db, surveys);
   mountReports(app, db);
+  mountLenses(app, db);
 
   app.use(onError);
 };

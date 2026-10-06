@@ -1,5 +1,4 @@
 import { logger } from '@devvir/service-kit';
-import { syncMembers } from '../lenses/members';
 import { depthOf, keyOf } from './keys';
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import type { ListingObject, ListingPage, ListingQuery, ListingRow } from '../types';
@@ -27,8 +26,6 @@ import type { ListingObject, ListingPage, ListingQuery, ListingRow } from '../ty
  * ends.
  */
 export const listingPage = (db: DatabaseSync, query: ListingQuery): ListingPage => {
-  if (query.lens) syncMembers(db, query.lens);
-
   const start   = query.after !== null && query.after > query.prefix ? query.after : query.prefix;
   const from    = startOf(start);
   const until   = query.prefix === '' ? LAST : ceiling(seriesPart(query.prefix));

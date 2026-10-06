@@ -1,7 +1,7 @@
 {
   "name": "@tradebot/catalog",
   "version": "1.0.0",
-  "description": "Catalog service — the public API over the catalog database: listings, contents and lenses",
+  "description": "Catalog service \u2014 the public API over the catalog database: listings, contents and lenses",
   "main": "dist/index.js",
   "private": true,
   "scripts": {
@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@devvir/service-kit": "workspace:*",
+    "@tradebot/lenses": "workspace:*",
     "@tradebot/utils": "workspace:*",
     "express": "^5.2.1",
     "fast-xml-parser": "^5.11.2"

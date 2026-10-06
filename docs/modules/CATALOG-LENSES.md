@@ -54,10 +54,29 @@ BTC's books") is written as a narrower exclude, not as a later include.
 
 | field | matched against |
 |---|---|
-| `markets`, `grains` | the pattern's own |
+| `markets` | the pattern's own |
 | `datasets` | a list of `{ dataset, variant? }`; an absent `variant` is every variant of that dataset |
-| `bundle` | `instrument` for the files of one instrument each, `market` for the venue-wide files |
+| `grain` | `{ only }` or `{ prefer }` one of `monthly`, `daily`, `hourly`, `minutely` |
+| `bundle` | `{ only }` or `{ prefer }` one of `instrument`, the files of one instrument each, and `market`, the venue-wide files |
 | `from`, `to` | months, `yyyymm`, inclusive; absent is open |
+
+**A grain and a bundle are forms the same month can be published in**, and a rule takes them one of
+three ways:
+
+- **absent** — any form;
+- **`only`** — that form and no other. Where a month is not published in it, the rule matches
+  nothing of that month;
+- **`prefer`** — any form, and of the forms a month is published in, that one alone where it is
+  among them, and whatever there is where it is not. So one rule covers a venue whose datasets are
+  monthly here and daily there, without anybody having to find out which.
+
+```jsonc
+{ "effect": "include", "datasets": [{ "dataset": "trades" }], "grain": { "prefer": "monthly" } }
+```
+
+**A rule that prefers both settles the bundle first**, then the grain within it. **Each include is
+settled on its own and they add up**, so a second rule that takes the other form brings it back.
+An exclude cannot prefer: it keeps nothing, so it has nothing to choose between.
 
 Writing `markets: 'all'` everywhere was rejected: it is not more explicit, only longer, and it ages
 the wrong way — datasets, variants and grains are *added* over time, and a rule that names only what
@@ -83,39 +102,47 @@ later as a decision rather than a mistake and arrive as an empty download notice
 - **a venue whose rules include nothing**, which lets nothing through — an exclude only takes away
   from what an include lets in;
 - **an empty list in a dimension**, which matches nothing, where leaving it out matches all of it;
-- **a finer filter that does not fit everything a rule groups.** A rule naming markets or datasets
-  is checked per `(market, dataset, variant)` it selects: `grains` that match nothing of one of them,
-  or a `bundle` one of them is not published in at the grains the rule takes, would drop it in
-  silence. The problem names each one it misses, which is what says where to split the rule. A rule naming neither markets nor datasets is
+- **a form taken alone that does not fit everything a rule groups.** A rule naming markets or datasets
+  is checked per `(market, dataset, variant)` it selects: an `only` grain that matches nothing of one
+  of them, or an `only` bundle one of them is not published in at the grain the rule takes, would drop
+  it in silence. A form that is only preferred drops nothing and is not checked. The problem names each one it misses, which is what says where to split the rule. A rule naming neither markets nor datasets is
   read as "wherever this applies" and is not checked this way.
 
 ## Resolving one
 
-**Two steps, because of where each dimension lives.** Market, dataset, variant, grain and bundle are
-the traits of a *slice*; the date is a *partition's* month. So a lens's rules are folded once per
-slice, into the months it is let through for, and each of the slice's partitions is in or out by its
-month. A rule never reaches inside a partition, so a lens is a list of whole partitions.
+**A lens is a list of whole partitions.** Market, dataset, variant, grain and bundle are the traits
+of a *slice*; the date is a *partition's* month. A rule never reaches inside a partition, so each is
+in or out whole.
 
-**A lens resolves to spans, not to a range.** An exclude can carve a hole in an include: including
-2019 to 2021 and excluding 2020 leaves two spans, and collapsing them to
-one range would hand back a year nobody asked for. The arithmetic is in the catalog's `lenses/spans.ts`.
+**A partition is never decided alone.** A month of a dataset published in several forms — monthly and
+daily, per instrument and for the whole market — is as many partitions, and they are siblings. What a
+rule that prefers a form keeps of them depends on which are there, so the siblings are decided
+together: each include keeps what it keeps of them, the keeps are added up, and what any exclude
+matches is taken away.
 
-**Resolved when it is saved, and stored.** What a lens lets through is kept as rows of `lens_member`,
-one per partition. Every view through a lens (the listing, the contents, the size, a report's check)
-reads those rows, and none of them evaluates a rule. So a lens costs the same after a restart as an
-hour into a run.
+**A lens's bounds resolve to spans, not to a range.** An exclude can carve a hole in an include:
+including 2019 to 2021 and excluding 2020 leaves two spans, and collapsing them to one range would
+hand back a year nobody asked for.
 
-- **Saving rebuilds the venues it changed.** A change to one venue's rules can only move that venue's
-  partitions; a change to the `*` rules can move any, and rebuilds every venue. A save that changes
-  only the name or the note rebuilds nothing.
-- **New partitions are added, never rebuilt.** Prospector numbers partitions in order, so a lens
-  records the newest it has looked at (`partitions_through`). **Every fifteen minutes, in the
-  background**, each lens folds in the partitions past that, a few thousand at a time with requests
-  answered in between. **A request through a lens still catches up first**, so a lens is never behind
-  the catalog; the background makes that a primary-key seek that finds nothing, nearly always.
+**Stored as what it lets through.** A lens's partitions are kept as rows of `lens_member`. Every view
+through a lens (the listing, the contents, the size, a report's check) reads those rows, and none of
+them evaluates a rule. So a lens costs the same after a restart as an hour into a run.
 
-The catalog writes `lens_member`, as it writes `lens`. Both tables are lenses, the one thing in the
-database collection never decides.
+**One walk works a lens out, and keeps it so.** Partitions are numbered in order, and a lens records
+the newest it has looked at (`partitions_through`). The walk looks at the ones past it, a few hundred
+at a time, and settles each with its siblings — the ones already let through included:
+
+- **As the catalog grows**, that is the partitions that have just appeared, every thirty seconds. A
+  lens is at most that far behind partitions that have only just been found. A sibling arriving can
+  take a partition *out*: a daily month let through while it was the only form leaves when its
+  monthly sibling appears, under a rule that prefers monthly.
+- **When a lens's rules are saved**, the walk starts again from the first partition, at once. **The
+  save has already answered**: it says the lens was stored, and the lens is `updating` until the walk
+  has read every partition. Meanwhile its partitions are partly those of the rules before and partly
+  those of the new ones. A save that changes only the name or the note works nothing out.
+
+Both tables are written by prospector, like every other table of the database: a lens saved through
+the catalog's API is checked there and stored by prospector, which also keeps `lens_member` current.
 
 ## What a lens costs, and how far along it is
 

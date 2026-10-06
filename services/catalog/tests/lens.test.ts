@@ -2,8 +2,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { dropLens, editLens, lensNamed, lensOptions, lensSize, lenses, problemsWith, putLens, resolveSlices } from '../src/lenses/lens';
-import { markDownloaded, putFiles, putVenue, recordSeries, venueIdOf } from './fixture';
+import { dropLens, lensNamed, lensOptions, lensSize, lenses, problemsWith, resolveSlices } from '@tradebot/lenses';
+import { changeLens, markDownloaded, putFiles, putVenue, recordSeries, storeLens, venueIdOf } from './fixture';
 import { openScratch } from './fixture';
 import type { LensDefinition } from '../src/types';
 import type { DatabaseSync } from 'node:sqlite';
@@ -75,7 +75,7 @@ describe('what a lens lets through', () => {
   it('narrows on one dimension and leaves the rest open', () => {
     expect(selects(lens({ binance: [{ effect: 'include', datasets: [{ dataset: 'trades' }] }] }))).toBe(4);
     expect(selects(lens({ binance: [{ effect: 'include', markets: ['perp'] }] }))).toBe(2);
-    expect(selects(lens({ binance: [{ effect: 'include', grains: ['monthly'] }] }))).toBe(1);
+    expect(selects(lens({ binance: [{ effect: 'include', grain: { only: 'monthly' } }] }))).toBe(1);
   });
 
   /**
@@ -135,8 +135,8 @@ describe('what a lens lets through', () => {
    */
   it('selects by bundle', () => {
     const all     = selects(lens({ binance: [{ effect: 'include' }] }));
-    const buckets = selects(lens({ binance: [{ effect: 'include', bundle: 'market' }] }));
-    const singles = selects(lens({ binance: [{ effect: 'include', bundle: 'instrument' }] }));
+    const buckets = selects(lens({ binance: [{ effect: 'include', bundle: { only: 'market' } }] }));
+    const singles = selects(lens({ binance: [{ effect: 'include', bundle: { only: 'instrument' } }] }));
 
     expect(buckets).toBe(1);
     expect(singles).toBeGreaterThan(0);
@@ -240,7 +240,7 @@ describe('the time a lens lets through', () => {
 
 describe('storing one', () => {
   it('makes one, lists it, and gives it back by name', () => {
-    const made = putLens(db, 'cold-store', 'Cold store', 'everything old');
+    const made = storeLens(db, 'cold-store', 'Cold store', 'everything old');
 
     expect(made).toMatchObject({ slug: 'cold-store', name: 'Cold store', note: 'everything old' });
     expect(lenses(db)).toHaveLength(1);
@@ -248,29 +248,29 @@ describe('storing one', () => {
   });
 
   it('refuses a name already taken', () => {
-    putLens(db, 'cold-store', '', '');
+    storeLens(db, 'cold-store', '', '');
 
-    expect(putLens(db, 'cold-store', '', '')).toBeNull();
+    expect(storeLens(db, 'cold-store', '', '')).toBeNull();
   });
 
   it('replaces the definition whole', () => {
-    putLens(db, 'cold-store', '', '');
+    storeLens(db, 'cold-store', '', '');
 
     const to = lens({ binance: [{ effect: 'include', datasets: [{ dataset: 'trades' }] }] });
 
-    expect(editLens(db, 'cold-store', { definition: to })?.definition).toEqual(to);
+    expect(changeLens(db, 'cold-store', { definition: to })?.definition).toEqual(to);
   });
 
   it('re-addresses one, and the old slug stops answering', () => {
-    putLens(db, 'cold-store', '', '');
-    editLens(db, 'cold-store', { slug: 'archive' });
+    storeLens(db, 'cold-store', '', '');
+    changeLens(db, 'cold-store', { slug: 'archive' });
 
     expect(lensNamed(db, 'cold-store')).toBeNull();
     expect(lensNamed(db, 'archive')).not.toBeNull();
   });
 
   it('takes one away, and says whether there was one', () => {
-    putLens(db, 'cold-store', '', '');
+    storeLens(db, 'cold-store', '', '');
 
     expect(dropLens(db, 'cold-store')).toBe(true);
     expect(dropLens(db, 'cold-store')).toBe(false);
@@ -278,7 +278,7 @@ describe('storing one', () => {
 
   /** A lens is an allow-list, so a document nobody can read lets nothing through. */
   it('reads an unparseable definition as letting nothing through', () => {
-    putLens(db, 'cold-store', '', '');
+    storeLens(db, 'cold-store', '', '');
     db.prepare(`UPDATE lens SET definition = 'not json'`).run();
 
     expect(lensNamed(db, 'cold-store')?.definition).toEqual({ format: 1, venues: {} });
@@ -296,43 +296,25 @@ describe('why a lens is refused', () => {
       .toMatchObject([{ venue: 'nowhere', rule: -1 }]);
   });
 
-  /** The silent fault: a dataset the venue does not have looks like a quiet venue. */
-  it('names a dataset the venue does not publish, and where', () => {
+  /**
+   * What a rule matches is its author's business: one that selects nothing
+   * today, or takes a form alone that only some of what it names is published
+   * in, may be exactly what was meant.
+   */
+  it('has nothing to say of what a rule matches, or fails to', () => {
     expect(problemsWith(db, lens({ binance: [
-      { effect: 'include', datasets: [{ dataset: 'trades' }] },
-      { effect: 'exclude', datasets: [{ dataset: 'funding' }] },
-    ] }))).toMatchObject([{ venue: 'binance', rule: 1, field: 'datasets' }]);
-  });
-
-  /** A variant is weighed against the dataset it was named with, never loose. */
-  it('names a variant that dataset does not publish', () => {
-    expect(problemsWith(db, lens({ binance: [
-      { effect: 'include', datasets: [{ dataset: 'trades', variant: '1m' }] },
-    ] }))).toMatchObject([{ field: 'datasets' }]);
-
-    expect(problemsWith(db, lens({ binance: [
-      { effect: 'include', datasets: [{ dataset: 'klines', variant: '1m' }] },
+      { effect: 'include', datasets: [{ dataset: 'funding' }] },
+      { effect: 'include', datasets: [{ dataset: 'klines', variant: '7m' }] },
+      { effect: 'include', markets: ['option'] },
+      { effect: 'include', markets: ['spot'], datasets: [{ dataset: 'trades' }, { dataset: 'klines' }], grain: { only: 'monthly' } },
+      { effect: 'include', datasets: [{ dataset: 'trades' }], bundle: { only: 'market' } },
+      { effect: 'include', markets: [] },
     ] }))).toEqual([]);
   });
 
-  /** An exclude only takes from what an include lets in, so a venue that only excludes sees nothing. */
-  it('warns that a venue whose rules include nothing sees nothing', () => {
-    expect(problemsWith(db, lens({ binance: [{ effect: 'exclude', datasets: [{ dataset: 'books' }] }] })))
-      .toMatchObject([{ rule: -1 }]);
-  });
-
-  it('takes an exclude written first as it takes one written last', () => {
-    expect(problemsWith(db, lens({ binance: [
-      { effect: 'exclude', datasets: [{ dataset: 'books' }] },
-      { effect: 'include' },
-    ] }))).toEqual([]);
-  });
-
-  it('separates an empty list from an absent one', () => {
-    expect(problemsWith(db, lens({ binance: [{ effect: 'include', datasets: [] as never[] }] })))
-      .toMatchObject([{ field: 'datasets' }]);
-
-    expect(problemsWith(db, lens({ binance: [{ effect: 'include' }] }))).toEqual([]);
+  it('has nothing to say of a venue whose rules include nothing', () => {
+    expect(problemsWith(db, lens({ binance: [] }))).toEqual([]);
+    expect(problemsWith(db, lens({ binance: [{ effect: 'exclude', datasets: [{ dataset: 'books' }] }] }))).toEqual([]);
   });
 
   /** A day is a false precision here — a monthly file cannot be halved by one. */
@@ -350,52 +332,23 @@ describe('why a lens is refused', () => {
     ] }))).toEqual([]);
   });
 
-  /**
-   * A finer filter that fits only part of what a rule groups drops the rest in
-   * silence; refusing it, naming what it misses, is what says where to split.
-   */
-  it('names the datasets a grain matches nothing of', () => {
-    expect(problemsWith(db, lens({ binance: [
-      { effect: 'include', markets: ['spot'], datasets: [{ dataset: 'trades' }, { dataset: 'klines' }], grains: ['monthly'] },
-    ] }))).toMatchObject([{ field: 'grains', message: expect.stringContaining('spot klines 1h, spot klines 1m') }]);
-
-    expect(problemsWith(db, lens({ binance: [
-      { effect: 'include', datasets: [{ dataset: 'trades' }], markets: ['spot'], grains: ['monthly'] },
-    ] }))).toEqual([]);
-  });
-
-  it('names the datasets with no venue-wide file to give the market bundle', () => {
-    expect(problemsWith(db, lens({ binance: [
-      { effect: 'include', datasets: [{ dataset: 'trades' }], bundle: 'market' },
-    ] }))).toMatchObject([{ field: 'bundle', message: expect.stringContaining('spot trades') }]);
-
-    expect(problemsWith(db, lens({ binance: [
-      { effect: 'include', markets: ['perp'], datasets: [{ dataset: 'trades' }], bundle: 'market' },
-    ] }))).toEqual([]);
-  });
-
   it('refuses a bundle that is neither', () => {
     expect(problemsWith(db, lens({ binance: [
       { effect: 'include', bundle: 'symbol' as never },
     ] }))).toMatchObject([{ field: 'bundle' }]);
   });
 
-  /** perp trades' venue-wide file is daily, so a monthly rule's market bundle selects nothing of it. */
-  it('weighs a bundle only in the grains the rule takes', () => {
-    recordSeries(db, venueIdOf(db, 'binance'), { market: 'perp', dataset: 'trades', variant: '', symbol: 'ETHUSDT',
-      pattern: 'perp/trades/monthly/{SYMBOL}/{YYYY}{MM}.zip' });
-
-    const rule = (grain: 'daily' | 'monthly') => lens({ binance: [
-      { effect: 'include', markets: ['perp'], datasets: [{ dataset: 'trades' }], grains: [grain], bundle: 'market' },
-    ] });
-
-    expect(problemsWith(db, rule('daily'))).toEqual([]);
-    expect(problemsWith(db, rule('monthly'))).toMatchObject([{ field: 'bundle' }]);
+  /** Preferring is choosing what to keep, and an exclude keeps nothing. */
+  it('refuses an exclude that prefers a form', () => {
+    expect(problemsWith(db, lens({ binance: [
+      { effect: 'include' },
+      { effect: 'exclude', grain: { prefer: 'monthly' } },
+    ] }))).toMatchObject([{ rule: 1, field: 'grain', message: expect.stringContaining('exclude cannot prefer') }]);
   });
 
-  /** Naming no markets or datasets means "wherever this applies", which is not a fault. */
-  it('leaves a rule alone that groups nothing', () => {
-    expect(problemsWith(db, lens({ binance: [{ effect: 'include', grains: ['monthly'] }] }))).toEqual([]);
+  it('refuses a grain that is not one', () => {
+    expect(problemsWith(db, lens({ binance: [{ effect: 'include', grain: { only: 'weekly' as never } }] })))
+      .toMatchObject([{ field: 'grain' }]);
   });
 
   it('refuses a range that ends before it starts', () => {

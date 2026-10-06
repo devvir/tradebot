@@ -1,4 +1,3 @@
-import { syncMembers } from './members';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Lens, LensSize, LensVenueFigures } from '../types';
 
@@ -12,8 +11,6 @@ import type { Lens, LensSize, LensVenueFigures } from '../types';
  * hour into a run.
  */
 export const lensFigures = (db: DatabaseSync, lens: Lens): Map<string, LensVenueFigures> => {
-  syncMembers(db, lens);
-
   const rows = db.prepare(
     `SELECT c.venue,
             COUNT(*)                          AS partitions,

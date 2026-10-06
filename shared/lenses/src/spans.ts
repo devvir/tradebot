@@ -1,4 +1,4 @@
-import type { LensSpan } from '../types';
+import type { LensSpan } from './types';
 
 /**
  * Stretches of time, added to and taken away from.

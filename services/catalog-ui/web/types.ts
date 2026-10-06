@@ -241,7 +241,16 @@ export interface Lens {
   createdAt:  string;
   updatedAt:  string;
   definition: LensDefinition;
+
+  /** Whether what it lets through is still being worked out from its rules as last saved. */
+  updating?:  boolean;
 }
+
+/**
+ * How a rule takes a grain or a bundle: only that form, or any form with that
+ * one kept where a month is published in it.
+ */
+export type Choice<T extends string> = { only: T } | { prefer: T };
 
 /** What a lens lets through, keyed by venue name. */
 export interface LensDefinition {
@@ -260,10 +269,11 @@ export interface LensRule {
   /** Each kind of data, optionally narrowed to one of its own variants. */
   datasets?:    LensDataset[];
 
-  grains?:      string[];
+  /** Absent is any grain. */
+  grain?:       Choice<string>;
 
-  /** Files of one instrument each, or the venue-wide ones; absent is both. */
-  bundle?:      'instrument' | 'market';
+  /** Files of one instrument each, or the venue-wide ones; absent is either. */
+  bundle?:      Choice<'instrument' | 'market'>;
   from?:        string;
   to?:          string;
 }
@@ -306,5 +316,8 @@ export interface LensSize {
   bytes:        number;
   pending:      number;
   pendingBytes: number;
+
+  /** Whether the lens is still being worked out, so these are of a part of it. */
+  updating?:    boolean;
 }
 

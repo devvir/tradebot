@@ -444,6 +444,9 @@ importers:
       '@devvir/service-kit':
         specifier: workspace:*
         version: link:../../packages/service-kit
+      '@tradebot/lenses':
+        specifier: workspace:*
+        version: link:../../shared/lenses
       '@tradebot/utils':
         specifier: workspace:*
         version: link:../../shared/utils
@@ -566,6 +569,9 @@ importers:
       '@devvir/service-kit':
         specifier: workspace:*
         version: link:../../packages/service-kit
+      '@tradebot/lenses':
+        specifier: workspace:*
+        version: link:../../shared/lenses
       '@tradebot/utils':
         specifier: workspace:*
         version: link:../../shared/utils
@@ -653,6 +659,8 @@ importers:
       supertest:
         specifier: ^7.1.0
         version: 7.3.0(supports-color@10.2.2)
+
+  shared/lenses: {}
 
   shared/pipeline: {}
 

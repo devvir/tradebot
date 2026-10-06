@@ -4,7 +4,9 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 import express from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { markDownloaded, openScratch, putFiles, putVenue, recordSeries } from './fixture';
+import { catchUp, lensNamed } from '@tradebot/lenses';
+import { markDownloaded, openScratch, putFiles, putVenue, recordSeries, storeLens } from './fixture';
+import type { LensDefinition } from '../src/types';
 import type { Application } from 'express';
 import type { SeriesSpec as Found } from './types';
 import type { DatabaseSync } from 'node:sqlite';
@@ -256,8 +258,9 @@ describe('a prefix', () => {
 });
 
 describe('a lens', () => {
+  /** A lens in the catalog, as prospector stores one: this service only reads through it. */
   const lens = async (slug: string, definition: unknown) =>
-    call('/lenses', { method: 'POST', body: JSON.stringify({ slug, definition }) });
+    storeLens(db, slug, '', '', definition as LensDefinition);
 
   it('leaves out what it does not let through', async () => {
     await lens('to-2020', { format: 1, venues: { '*': [{ effect: 'include', to: '202012' }] } });
@@ -290,13 +293,15 @@ describe('a lens', () => {
     ]);
   });
 
-  /** A series found after the lens was saved is in it from the next request. */
+  /** A series found after the lens was saved is in it once prospector has folded it in. */
   it('takes in series that appear after it was saved', async () => {
     await lens('gate-only', { format: 1, venues: { gate: [{ effect: 'include' }] } });
 
     await publish(gate, { market: 'spot', dataset: 'books', variant: '', symbol: 'ETH_USDT', urlSymbol: 'ETH_USDT',
       pattern: 'spot/orderbooks/{YYYY}{MM}/{SYMBOL}-{YYYY}{MM}{DD}{PART}.gz' },
     [['spot/orderbooks/202107/ETH_USDT-2021072600.gz', '20210726']]);
+
+    while (catchUp(db, lensNamed(db, 'gate-only')!, 1_000));
 
     expect(await walk('', { 'x-catalog-lens': 'gate-only' })).toContain(
       'gate/spot/books/E/ETH_USDT/202107/gate|spot|books|ETH_USDT|20210726.part00.gz');
@@ -375,8 +380,7 @@ describe('a report', () => {
     const stand = await prospector();
 
     try {
-      await call('/lenses', { method: 'POST', body: JSON.stringify({ slug: 'to-2020',
-        definition: { format: 1, venues: { '*': [{ effect: 'include', to: '202012' }] } } }) });
+      storeLens(db, 'to-2020', '', '', { format: 1, venues: { '*': [{ effect: 'include', to: '202012' }] } });
 
       const late = EXPECTED.find(one => one.includes('/202101/'))!;
       const { status, body } = await report({ downloaded: [late, EXPECTED[0]] }, { 'x-catalog-lens': 'to-2020' });

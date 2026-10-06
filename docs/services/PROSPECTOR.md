@@ -1063,9 +1063,16 @@ not bookkeeping fussiness: the job sits at the empty scope, which is every prefi
 so closing it around a failure would answer "established" for the whole venue — including the
 prefix nobody has read.
 
-Leaving it open instead means the next turn of the loop finds a job to resume and retries exactly
-the partitions that failed, half a minute later, **for as long as the service runs**. Nothing counts
-attempts and nothing gives up.
+**A page that fails is asked again where it is, before its partition is given up on.** What fails a
+page is nearly always what would fail any other at that moment — the link, the venue, a write that
+could not get its turn — so moving on to another prefix gains nothing and leaves this one half read.
+The page is read again from the same cursor, up to twelve times, after a wait that doubles from two
+seconds to a minute: a little under seven minutes in all. A refusal is the venue's answer and is not
+repeated. Nothing of a page counts until its cursor is written, so asking again costs one request.
+
+Only a page that outlasts that fails its partition, and the job stays open over it. The next turn of
+the loop finds a job to resume and takes up exactly the partitions that failed, half a minute later,
+**for as long as the service runs**. Nothing counts passes and nothing gives up.
 
 That is safe because there is no per-partition failure that stays failed. A prefix that no longer
 exists answers `200` with an empty listing — a successful walk of an empty scope, not an error. A
@@ -1073,10 +1080,12 @@ given page is a fixed URL, so it cannot deterministically fail while its neighbo
 left is transient (a 5xx, a 429, a reaped connection), venue-wide (a bucket whose policy changed,
 which fails descent first), or local — and every one of those is cured by asking again later.
 
-The retry is also cheap, because a resume does not re-map: one listing request per remaining
-partition. So the cost of being wrong about all this is a warning every thirty seconds naming the
-partition, while its siblings finish and go quiet — loud enough to find without any bookkeeping to
-support it.
+Resuming is also cheap, because it does not re-map: one listing request per remaining partition.
+
+**A pass that ends with partitions still open says how many failed, and names none of them**: each
+was said as it happened, kept its cursor, and is resumed. A partition that is open with no failure
+to explain it — stopped to be split and never queued again — is named, since nothing else would say
+so.
 
 ### An update's rows are its progress, and reconciliation deletes them
 
@@ -2094,10 +2103,17 @@ SQLite, in WAL mode, with `STRICT` tables — SQLite is otherwise dynamically ty
 nothing.
 
 The schema lives in `src/catalog/`, alongside the queries. **Prospector creates and migrates the
-file, and writes every row but one table's.** The [catalog](../../services/catalog/README.md) opens
-the same file to serve it, and writes only `lens` and `lens_member`: a lens is a consumer's choice,
-which collection neither knows nor acts on. Nothing is shared in code: the catalog carries its own queries, and its tests
-build their own tables.
+file, and is the only thing that writes it — every row of every table.** Two writers on one SQLite
+file wait on each other's locks, and the one that waits longest fails; with one writer, every write
+takes its turn in one queue (`slice`) and nothing waits on a lock at all.
+
+**That includes lenses**, which collection neither reads nor acts on. A lens is stored here because
+storing is a write: the private API makes, replaces and removes one (`src/api/lenses.ts`) and answers
+as soon as the row is written. What the lens lets through is worked out afterwards by `src/lenses.ts`,
+which walks each lens over the partitions it has not looked at — all of them after a save, the newly
+found ones otherwise — a few hundred a turn in the write queue, every thirty seconds and at once when
+a lens is saved. What a lens is and how its rows are decided is the `@tradebot/lenses` package, which
+this service calls and does not own.
 
 Seventeen tables. `venue`, `file`, `wip` and `revision` are what a venue serves and what became of
 it; `instrument` is what it trades; `slice` and `partition` are what it publishes, cut the way it is

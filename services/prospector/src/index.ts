@@ -1,6 +1,7 @@
 import { setDefaultAutoSelectFamily } from 'node:net';
 import { join } from 'node:path';
 import { logger, type Service, type ExpressServerHandle } from '@devvir/service-kit';
+import { keepLensesCurrent } from './lenses';
 import {
   enrol, enrolled, enrolment, flushParked, flushTips, pauseSurvey, resetRuns, resumeSurvey,
   venueIdOf, venues,
@@ -163,6 +164,9 @@ const main = async (service: Service): Promise<void> => {
   await api.start();
 
   logger.info({ port: config.port }, 'Catalog API listening');
+
+  // What each lens lets through, kept up with the partitions this service adds.
+  keepLensesCurrent(db);
 
   /**
    * **After the API is answering, not before.** Resuming starts long-running

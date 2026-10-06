@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeWalk, establishedAt, openJob, openPartitions, putVenue } from '../src/catalog';
 import { openCatalog } from '../src/database';
 import { Refused } from '../src/http';
-import { surveyVenue } from '../src/survey';
+import { _test_retryWait as retryWait, surveyVenue } from '../src/survey';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Adapter, Config, Page, Scanner } from '../src/types';
 
@@ -27,6 +27,9 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'prospector-'));
   db  = openCatalog(join(dir, 'catalog.db'), { seedData: false });
 
+  // A page that fails is asked again after a wait; nothing here is about how long.
+  retryWait(async () => {});
+
   /**
    * **The venue row is a constant, not something a survey writes.** A real one
    * arrives with the `venues` migration; this venue is invented for the test, so
@@ -36,6 +39,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  retryWait(null);
   db.close();
   rmSync(dir, { recursive: true, force: true });
 });

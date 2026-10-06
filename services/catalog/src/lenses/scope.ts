@@ -1,6 +1,4 @@
-import { lensNamed } from './lens';
-import { syncMembers } from './members';
-import { union } from './spans';
+import { lensNamed, union } from '@tradebot/lenses';
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import type { HeldScope, LensScope, LensSpan, LensWindow, Series } from '../types';
 
@@ -8,8 +6,8 @@ import type { HeldScope, LensScope, LensSpan, LensWindow, Series } from '../type
  * A lens as the contents read it: for each venue, the slices it lets through
  * and the months of each, as spans. Null where no lens has that slug.
  *
- * **Read off `lens_member`**, brought up to date first, so it is the same answer
- * the listing and the sizes read — and nothing here evaluates a rule.
+ * **Read off `lens_member`**, so it is the same answer the listing and the
+ * sizes read — and nothing here evaluates a rule.
  *
  * **Held until the lens changes**: until it is saved again, or partitions are
  * added to it. Either moves what is compared below, so a held scope is never
@@ -19,8 +17,6 @@ export const lensScope = (db: DatabaseSync, slug: string): LensScope | null => {
   const lens = lensNamed(db, slug);
 
   if (! lens) return null;
-
-  syncMembers(db, lens);
 
   const through = (db.prepare('SELECT partitions_through AS at FROM lens WHERE id = ?').get(lens.id!) as { at: number }).at;
   const held    = SCOPES.get(slug);

@@ -2,6 +2,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { catchUp, editLens, lensNamed, putLens } from '@tradebot/lenses';
+import type { Lens, LensDefinition, LensWrite } from '@tradebot/lenses';
 import type { FileSpec, Scratch, SeriesSpec } from './types';
 
 /**
@@ -30,6 +32,29 @@ export const scratch = (): Scratch => {
   db.exec(SCHEMA);
 
   return { db, close: () => { db.close(); rmSync(dir, { recursive: true, force: true }); } };
+};
+
+/**
+ * A lens as it stands once prospector has stored it and worked out what it
+ * lets through — which in the service is two moments, and here is one.
+ */
+export const storeLens = (db: DatabaseSync, slug: string, name = '', note = '', definition?: LensDefinition): Lens | null =>
+  (putLens(db, slug, name, note, definition) ? worked(db, slug) : null);
+
+/** The same, for a lens replaced. */
+export const changeLens = (db: DatabaseSync, slug: string, to: LensWrite): Lens | null => {
+  const saved = editLens(db, slug, to);
+
+  return saved ? worked(db, saved.slug) : null;
+};
+
+/** Have a lens's partitions worked out to the newest there is, as prospector does in the background. */
+export const worked = (db: DatabaseSync, slug: string): Lens | null => {
+  const lens = lensNamed(db, slug);
+
+  if (lens) while (catchUp(db, lens, 1_000));
+
+  return lensNamed(db, slug);
 };
 
 /** One host of a venue. */
@@ -183,7 +208,7 @@ const SCHEMA = `
   CREATE INDEX file_pending ON file (series_id, date) WHERE downloaded_at IS NULL AND existence = 'confirmed';
   CREATE TABLE lens (id INTEGER PRIMARY KEY, slug TEXT NOT NULL, name TEXT NOT NULL DEFAULT '',
     note TEXT NOT NULL DEFAULT '', definition TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-    partitions_through INTEGER NOT NULL DEFAULT 0);
+    partitions_through INTEGER NOT NULL DEFAULT 0, rebuilding INTEGER NOT NULL DEFAULT 0);
   CREATE UNIQUE INDEX lens_slug ON lens (slug);
   CREATE TABLE lens_member (lens_id INTEGER NOT NULL, partition_id INTEGER NOT NULL,
     PRIMARY KEY (lens_id, partition_id)) WITHOUT ROWID;

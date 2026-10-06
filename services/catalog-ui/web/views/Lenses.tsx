@@ -7,7 +7,7 @@ import { catalog, poll, remove, send } from '../api';
 import { linkTo, rememberLens } from '../App';
 import { bytes, count } from './Table';
 import type {
-  Lens, LensDefinition, LensDraft, LensOption, LensProblem, LensRule, LensSize, RuleEntry,
+  Choice, Lens, LensDefinition, LensDraft, LensOption, LensProblem, LensRule, LensSize, RuleEntry,
 } from '../types';
 
 /** The key a lens keeps its all-venue rules under — see the catalog's `GLOBAL`. */
@@ -133,6 +133,9 @@ export const Lenses = ({ slug }: { slug?: string | undefined }) => {
 /** How often an open lens asks its size again, so progress moves while hauling. */
 const SIZE_REFRESH_MS = 30_000;
 
+/** The same, while the lens is still being worked out after a save. */
+const UPDATING_REFRESH_MS = 2_000;
+
 /** Where a lens's last known size is kept, one entry per lens. */
 const sizeKey = (slug: string): string => `catalog-ui:lens-size:${slug}`;
 
@@ -221,7 +224,15 @@ const Editing = ({ lens, onStored, onFailed, onGone }: {
     sizing.current = poll(
       signal => catalog<LensSize>(`/lenses/${encodeURIComponent(lens.slug)}/size`, signal),
       SIZE_REFRESH_MS,
-      { data: found => { setSize(found); keepSize(lens, found); } },
+      {
+        data: (found) => {
+          setSize(found);
+
+          // Still being worked out: what it holds is moving, so it is not kept, and it is asked again shortly.
+          if (found.updating) setTimeout(() => sizing.current?.now(), UPDATING_REFRESH_MS);
+          else keepSize(lens, found);
+        },
+      },
     );
 
     return () => sizing.current?.stop();
@@ -403,6 +414,12 @@ const Editing = ({ lens, onStored, onFailed, onGone }: {
                   {bytes(size.bytes)}
                 </Text>
               )}
+              {size?.updating && (
+                <Group gap={4} wrap="nowrap" title="The rules are saved; what they let through is still being worked out">
+                  <Loader size="xs" />
+                  <Text size="xs" c="dimmed">Updating…</Text>
+                </Group>
+              )}
             </Group>
             {size !== undefined && size.files > 0 && typeof size.pendingBytes === 'number' && <Downloaded size={size} />}
           </Stack>
@@ -577,7 +594,20 @@ const Rule = ({ rule, offered, problems, state, busy, locked, onChanged, onConfi
   onDiscard: () => void;
 }) => {
   const markets = useMemo(() => [...new Set(offered.map(one => one.market))].sort(), [offered]);
-  const grains  = useMemo(() => [...new Set(offered.map(one => one.grain))].sort(), [offered]);
+
+  /**
+   * **One choice, not a list.** Only a grain, or any grain with one preferred:
+   * a rule that prefers a grain keeps it where a month is published in it and
+   * whatever there is where it is not, so one rule covers datasets that are
+   * monthly here and daily there. An exclude keeps nothing, so it has nothing
+   * to prefer.
+   */
+  const grains = useMemo(() => choices(
+    [...new Set(offered.map(one => one.grain))].sort().map(grain => ({ value: grain, label: capital(grain) })),
+    rule.effect === 'include',
+  ), [offered, rule.effect]);
+
+  const bundles = useMemo(() => choices(BUNDLES, rule.effect === 'include'), [rule.effect]);
 
   /**
    * **A variant has no meaning apart from its dataset**, so the two are one
@@ -629,8 +659,8 @@ const Rule = ({ rule, offered, problems, state, busy, locked, onChanged, onConfi
 
   const wrong = (field: keyof LensRule) => problems.find(one => one.field === field)?.message;
 
-  const set = (field: 'markets' | 'grains') => (values: string[]) =>
-    onChanged({ ...rule, [field]: values.length === 0 ? undefined : values });
+  const markets_set = (values: string[]) =>
+    onChanged({ ...rule, markets: values.length === 0 ? undefined : values });
 
   return (
     <Card withBorder padding="sm" radius="sm" bg="var(--mantine-color-default)"
@@ -641,7 +671,11 @@ const Rule = ({ rule, offered, problems, state, busy, locked, onChanged, onConfi
             label="Action" w={130} allowDeselect={false}
             data={[{ value: 'include', label: 'Include' }, { value: 'exclude', label: 'Exclude' }]}
             value={rule.effect}
-            onChange={effect => onChanged({ ...rule, effect: effect as LensRule['effect'] })}
+            onChange={effect => onChanged({
+              ...rule, effect: effect as LensRule['effect'],
+              // An exclude has nothing to prefer: a form it preferred is any form again.
+              ...(effect === 'exclude' ? { grain: onlyOf(rule.grain), bundle: onlyOf(rule.bundle) } : {}),
+            })}
           />
           <Group gap="xs" align="flex-end" wrap="nowrap">
             <Month
@@ -659,17 +693,17 @@ const Rule = ({ rule, offered, problems, state, busy, locked, onChanged, onConfi
           <MultiSelect
             w={230} label="Markets" placeholder={(rule.markets ?? []).length === 0 ? 'All' : ''}
             data={markets} value={rule.markets ?? []} error={wrong('markets')}
-            searchable clearable onChange={set('markets')}
+            searchable clearable onChange={markets_set}
           />
           <MultiSelect
             w={260} label="Datasets" placeholder={chosen.length === 0 ? 'All' : ''}
             data={datasets} value={chosen} error={wrong('datasets')}
             searchable clearable onChange={pick}
           />
-          <MultiSelect
-            w={200} label="Grains" placeholder={(rule.grains ?? []).length === 0 ? 'All' : ''}
-            data={grains} value={rule.grains ?? []} error={wrong('grains')}
-            searchable clearable onChange={set('grains')}
+          <Select
+            w={200} label="Grain" allowDeselect={false} error={wrong('grain')}
+            data={grains} value={chosenOf(rule.grain)}
+            onChange={picked => onChanged({ ...rule, grain: choiceOf(picked) })}
           />
         </Group>
 
@@ -679,10 +713,8 @@ const Rule = ({ rule, offered, problems, state, busy, locked, onChanged, onConfi
         */}
         <Select
           label="Bundle" w={230} allowDeselect={false} error={wrong('bundle')}
-          data={BUNDLES} value={rule.bundle ?? BOTH}
-          onChange={bundle => onChanged({
-            ...rule, bundle: bundle === BOTH || ! bundle ? undefined : bundle as LensRule['bundle'],
-          })}
+          data={bundles} value={chosenOf(rule.bundle)}
+          onChange={picked => onChanged({ ...rule, bundle: choiceOf(picked) as LensRule['bundle'] })}
         />
 
         {/*
@@ -748,14 +780,41 @@ const SPANS = {
   s: 1, m: 60, h: 3_600, d: 86_400, w: 604_800, mo: 2_592_000, y: 31_536_000,
 } as const;
 
-/** Leaving the bundle out of a rule takes both, which a select needs a value for. */
-const BOTH = 'both';
+/** Leaving a grain or a bundle out of a rule takes any, which a select needs a value for. */
+const ANY = 'any';
 
 const BUNDLES = [
-  { value: BOTH,         label: 'Both' },
-  { value: 'instrument', label: 'Per instrument' },
-  { value: 'market',     label: 'Buckets' },
+  { value: 'instrument', label: 'per Instrument' },
+  { value: 'market',     label: 'Market Bundles' },
 ];
+
+/**
+ * What a grain or a bundle select offers: any form, only one of them, or any
+ * with one of them preferred — the last only where the rule can prefer.
+ */
+const choices = (forms: { value: string; label: string }[], preferring: boolean): { value: string; label: string }[] => [
+  { value: ANY, label: 'Any' },
+  ...forms.map(one => ({ value: `only:${one.value}`, label: `Only ${one.label}` })),
+  ...(preferring ? forms.map(one => ({ value: `prefer:${one.value}`, label: `Prefer ${one.label}` })) : []),
+];
+
+/** A rule's choice as the select's value, and back. */
+const chosenOf = (choice: Choice<string> | undefined): string =>
+  (! choice || typeof choice !== 'object' ? ANY : 'only' in choice ? `only:${choice.only}` : `prefer:${choice.prefer}`);
+
+const choiceOf = (picked: string | null): Choice<string> | undefined => {
+  if (! picked || picked === ANY) return undefined;
+
+  const [how, form] = picked.split(':') as ['only' | 'prefer', string];
+
+  return how === 'only' ? { only: form } : { prefer: form };
+};
+
+/** A choice kept where it takes one form alone, and dropped where it only prefers one. */
+const onlyOf = <T extends string>(choice: Choice<T> | undefined): Choice<T> | undefined =>
+  (choice && typeof choice === 'object' && 'only' in choice ? choice : undefined);
+
+const capital = (word: string): string => word.charAt(0).toUpperCase() + word.slice(1);
 
 /**
  * A bound, which is a month.

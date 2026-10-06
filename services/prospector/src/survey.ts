@@ -174,6 +174,9 @@ export const surveyVenue = async (
 
   let settled = 0;
 
+  /** The scopes that failed in this pass: open at its end, and with a reason to be. */
+  const failed = new Set<string>();
+
   /**
    * The work list, which **grows while it is being worked**.
    *
@@ -226,6 +229,7 @@ export const surveyVenue = async (
        * declaring the venue established and sleeping until the next refresh.
        */
       summary.failed++;
+      failed.add(partition.scope);
 
       if (err instanceof Refused && blocked(adapter, err.status, err.headers)) summary.blocked = true;
 
@@ -242,7 +246,7 @@ export const surveyVenue = async (
         ...(summary.blocked ? { blocked: true, ...paceFor(adapter, adapter.base).rates() } : {}),
       }, summary.blocked
         ? 'Venue blocked us; stopping this pass'
-        : 'Partition failed; will retry');
+        : 'Partition failed; left for the next pass');
     }
 
     settled++;
@@ -536,7 +540,9 @@ export const surveyVenue = async (
    * reads as established, and a prefix with a live cursor is never walked again
    * by anything.
    */
-  const abandoned = openPartitions(db, venueId, kind).filter(one => one.scope !== '');
+  const unexplained = openPartitions(db, venueId, kind)
+    .filter(one => one.scope !== '' && ! failed.has(one.scope))
+    .map(one => one.scope);
 
   summary.paused = paused();
 
@@ -547,7 +553,7 @@ export const surveyVenue = async (
     return summary;
   }
 
-  if (summary.failed === 0 && abandoned.length === 0) {
+  if (summary.failed === 0 && unexplained.length === 0) {
     summary.generated = true;
 
     /**
@@ -585,9 +591,15 @@ export const surveyVenue = async (
      */
     logger.info({ ...summary, established: job.started }, 'Venue surveyed');
   } else {
+    /**
+     * A scope that failed is counted and not named: it kept its cursor, each
+     * was said as it happened, and the next pass resumes it. One that is open
+     * with no failure to explain it is named, since nothing else will say so.
+     */
     logger.warn({ ...summary, job: job.started,
-      ...(abandoned.length > 0 ? { abandoned: abandoned.map(one => one.scope) } : {}) },
-    'Survey incomplete; will retry');
+      ...(summary.failed > 0 ? { failed: `${summary.failed} ${summary.failed === 1 ? 'scope' : 'scopes'} (will be retried)` } : {}),
+      ...(unexplained.length > 0 ? { openWithoutAFailure: unexplained } : {}) },
+    'Survey incomplete; the next pass resumes it');
   }
 
   return summary;
@@ -681,6 +693,22 @@ const EVERYTHING = '\u{10FFFF}';
 
 /** Pages between progress lines. Small enough to see movement, rare enough to read. */
 const PROGRESS_EVERY = 25;
+
+/**
+ * How often one page is asked before its prefix is left for the next pass, and
+ * the wait before asking again: doubled each time, up to a minute. Twelve
+ * attempts are a little under seven minutes of waiting — longer than a lock or
+ * a bad moment on the link lasts, and short enough that a page that can never
+ * be read does not hold a lane for the afternoon.
+ */
+const PAGE_ATTEMPTS = 12;
+const RETRY_MS      = 2_000;
+const RETRY_MAX_MS  = 60_000;
+
+/** The failed attempt at which a page is first said to be failing. */
+const PAGE_ATTEMPTS_QUIET = 3;
+
+let retryWait = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
  * How long a split may take before it is given up on.
@@ -831,84 +859,118 @@ const sweep = async (
      */
     await new Promise(resolve => setImmediate(resolve));
 
-    const page  = kind === 'update'
-      ? updatePage(db, venueId, short, cursor, rulesFor(db, venueId, adapter))
-      : await adapter.scanner.page(context, scope, cursor);
-    const read  = performance.now();
-    const files = catalogued(db, adapter, venueId, page.listed,
-      kind === 'walk' ? new Date(run.started) : null);
-
     /**
-     * **A generated key is a backlog row and nothing else.** It carries no size
-     * and no etag, so `putFiles` could only ever park it — the `file` table and
-     * the month rollup have no part in an update. Going straight to `wip` lets
-     * the pages of every lane and every venue share one transaction instead of
-     * spending a slice, and a turn of the event loop, on sixteen rows.
+     * **A page that fails is asked again, here.** What fails a page is nearly
+     * always what would fail any other at that moment — the link, the venue, a
+     * write that could not get its turn — so moving on to another prefix gains
+     * nothing and leaves this one half read. The page is read again from the
+     * same cursor after a wait that grows, which is what resuming it later would
+     * do anyway: nothing of a page counts until its cursor is written.
      *
-     * A walk keeps `putFiles`: its findings are a mix of rows that are complete
-     * and rows that are not, and which table each lands in is that function's
-     * whole job.
-     *
-     * Both await the write, so a cursor still only moves over work on disk.
+     * A refusal is an answer, not a failure, and is never repeated here. Past
+     * `PAGE_ATTEMPTS` the page is taken to be wrong in a way waiting does not
+     * mend, and the prefix is left for the next pass.
      */
-    if (kind === 'update') {
-      /**
-       * **What to ask next travels with the key, and only generation knows it.**
-       * A `CatalogFile` is what a file *is*; what the venue said follows it is
-       * how the period is finished, so it is carried across here rather than
-       * written into the row's shape.
-       */
-      const parts = new Map(page.listed
-        .filter(one => one.nextPart)
-        .map(one => [relative(adapter, one.key), one.nextPart!]));
+    let read = 0;
 
-      await parkSoon(db, files.map(one => ({
-        venueId:   one.venueId,
-        path:      one.path,
-        date:      one.date,
-        seriesId:  one.seriesId,
-        existence: one.existence,
-        tries:     0,
-        ...(parts.has(one.path) ? { nextPart: parts.get(one.path)! } : {}),
-      })));
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const page = kind === 'update'
+          ? updatePage(db, venueId, short, cursor, rulesFor(db, venueId, adapter))
+          : await adapter.scanner.page(context, scope, cursor);
+
+        read = performance.now();
+
+        const files = catalogued(db, adapter, venueId, page.listed,
+          kind === 'walk' ? new Date(run.started) : null);
+
+        /**
+         * **A generated key is a backlog row and nothing else.** It carries no size
+         * and no etag, so `putFiles` could only ever park it — the `file` table and
+         * the month rollup have no part in an update. Going straight to `wip` lets
+         * the pages of every lane and every venue share one transaction instead of
+         * spending a slice, and a turn of the event loop, on sixteen rows.
+         *
+         * A walk keeps `putFiles`: its findings are a mix of rows that are complete
+         * and rows that are not, and which table each lands in is that function's
+         * whole job.
+         *
+         * Both await the write, so a cursor still only moves over work on disk.
+         */
+        if (kind === 'update') {
+          /**
+           * **What to ask next travels with the key, and only generation knows it.**
+           * A `CatalogFile` is what a file *is*; what the venue said follows it is
+           * how the period is finished, so it is carried across here rather than
+           * written into the row's shape.
+           */
+          const parts = new Map(page.listed
+            .filter(one => one.nextPart)
+            .map(one => [relative(adapter, one.key), one.nextPart!]));
+
+          await parkSoon(db, files.map(one => ({
+            venueId:   one.venueId,
+            path:      one.path,
+            date:      one.date,
+            seriesId:  one.seriesId,
+            existence: one.existence,
+            tries:     0,
+            ...(parts.has(one.path) ? { nextPart: parts.get(one.path)! } : {}),
+          })));
+        }
+        else
+          /**
+           * Committed in short slices with the loop handed back between them, so a
+           * page of writes cannot hold the thread — see `putFiles`. Each slice is
+           * still atomic, and still cannot interleave with another partition's.
+           *
+           * **Withdrawal rides the page.** What the page covered it covered in
+           * full, so anything catalogued there that it did not list is gone — said
+           * here, with nothing written for the keys that did not change. Only a walk
+           * can say it: an update generates the dates a series is missing and claims
+           * nothing about what is no longer offered.
+           */
+          withdrawn += await putFiles(db, files, page.covers && spanOf(adapter, venueId, short, page.covers));
+
+        /**
+         * **Before the cursor, always.** The bounds this page derived are held in
+         * memory, and the cursor is the promise that the page will not be read
+         * again. Advancing one over the other is how a series ends up on disk with a
+         * `first` later than the truth, and nothing afterwards re-reads the page
+         * that would have corrected it — see `flushTips`.
+         */
+        flushTips(db);
+
+        cursor = page.cursor;
+        requests++;
+        found += files.length;
+        live.pages++;
+        live.found += files.length;
+
+        advanceRun(db, run.id, cursor, 1, files.length);
+
+        /**
+         * **On the cadence the cursor already sets.** A page is one listing request
+         * or a thousand generated keys, so riding it writes the counts often enough
+         * to watch and rarely enough to cost nothing next to the write above.
+         */
+        flushCounts(db, adapter);
+
+        break;
+      } catch (err) {
+        if (err instanceof Refused || attempt >= PAGE_ATTEMPTS) throw err;
+
+        // Said once it is clearly more than a blip, and not again for the same page.
+        if (attempt === PAGE_ATTEMPTS_QUIET)
+          logger.warn({ ...fault(err), venue: labelOf(adapter), scope: short, attempts: attempt },
+            'A page keeps failing; still trying');
+
+        await retryWait(Math.min(RETRY_MAX_MS, RETRY_MS * 2 ** (attempt - 1)));
+
+        // Told to stop while it waited: where it stands is on disk, so it simply leaves.
+        if (stopped()) return { requests, found };
+      }
     }
-    else
-      /**
-       * Committed in short slices with the loop handed back between them, so a
-       * page of writes cannot hold the thread — see `putFiles`. Each slice is
-       * still atomic, and still cannot interleave with another partition's.
-       *
-       * **Withdrawal rides the page.** What the page covered it covered in
-       * full, so anything catalogued there that it did not list is gone — said
-       * here, with nothing written for the keys that did not change. Only a walk
-       * can say it: an update generates the dates a series is missing and claims
-       * nothing about what is no longer offered.
-       */
-      withdrawn += await putFiles(db, files, page.covers && spanOf(adapter, venueId, short, page.covers));
-
-    /**
-     * **Before the cursor, always.** The bounds this page derived are held in
-     * memory, and the cursor is the promise that the page will not be read
-     * again. Advancing one over the other is how a series ends up on disk with a
-     * `first` later than the truth, and nothing afterwards re-reads the page
-     * that would have corrected it — see `flushTips`.
-     */
-    flushTips(db);
-
-    cursor = page.cursor;
-    requests++;
-    found += files.length;
-    live.pages++;
-    live.found += files.length;
-
-    advanceRun(db, run.id, cursor, 1, files.length);
-
-    /**
-     * **On the cadence the cursor already sets.** A page is one listing request
-     * or a thousand generated keys, so riding it writes the counts often enough
-     * to watch and rarely enough to cost nothing next to the write above.
-     */
-    flushCounts(db, adapter);
 
     if (kind === 'walk') timed(labelOf(adapter), 'process', performance.now() - read);
 
@@ -1165,3 +1227,8 @@ const elapsed = (since: number): number => Math.round((Date.now() - since) / 100
 // ── Test access ───────────────────────────────────────────────────────────────
 
 export const _test_catalogued = catalogued;
+
+/** Wait between attempts at a page as this says, or as the service does again. */
+export const _test_retryWait = (wait: ((ms: number) => Promise<void>) | null): void => {
+  retryWait = wait ?? ((ms: number) => new Promise(resolve => setTimeout(resolve, ms)));
+};

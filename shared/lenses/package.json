@@ -1,0 +1,14 @@
+{
+  "name": "@tradebot/lenses",
+  "version": "1.0.0",
+  "description": "What a lens is: its rules, how they are evaluated, and how a lens and its members are stored",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "private": true,
+  "keywords": ["tradebot", "lenses"]
+}

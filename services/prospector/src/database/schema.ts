@@ -273,16 +273,20 @@ CREATE TABLE IF NOT EXISTS lens (
   updated_at TEXT NOT NULL,
 
   -- The newest partition the lens has been resolved against. A partition past
-  -- it is one the lens has not looked at yet; the catalog adds it to lens_member
-  -- where the lens lets it through, and moves this forward.
-  partitions_through INTEGER NOT NULL DEFAULT 0
+  -- it is one the lens has not looked at yet; it is added to lens_member where
+  -- the lens lets it through, and this moves forward.
+  partitions_through INTEGER NOT NULL DEFAULT 0,
+
+  -- 1 while what the lens lets through is being worked out again from the first
+  -- partition, as saving its rules asks; 0 once the walk has read them all.
+  rebuilding INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 
 CREATE UNIQUE INDEX IF NOT EXISTS lens_slug ON lens (slug);
 
--- What a lens lets through: its partitions. Written by the catalog -- rebuilt
--- when the lens is saved, extended as new partitions appear -- and read by
--- every view through the lens.
+-- What a lens lets through: its partitions. Worked out again when the lens's
+-- rules are saved, settled as new partitions appear, and read by every view
+-- through the lens.
 CREATE TABLE IF NOT EXISTS lens_member (
   lens_id      INTEGER NOT NULL REFERENCES lens (id),
   partition_id INTEGER NOT NULL REFERENCES partition (id),

@@ -3,14 +3,15 @@
 The public API over what prospector has catalogued: what each venue publishes, every venue's files as
 one S3-style bucket, and the lenses consumers read through.
 
-It surveys nothing and downloads nothing. It opens the `catalog.db` prospector writes, answers from it,
-and writes only lenses. A download report is settled by prospector, which owns a file's state.
+It surveys nothing, downloads nothing and writes nothing. It opens the `catalog.db` prospector writes
+**read-only** and answers from it. What it is sent to be stored — a lens, a download report — it
+forwards to prospector, the database's only writer.
 
 ```
 GET  /venues[/:venue[/markets/:market]][/symbols]
 GET  /listings?prefix=<venue>/          S3 ListObjects, V1 or V2
 POST /listings/report                  by Key; settled by prospector
-     /lenses …                         create, edit, check, size, resolve
+     /lenses …                         check, size, resolve; create and edit are stored by prospector
 ```
 
 Every endpoint is in [CATALOG-API.md](../../docs/modules/CATALOG-API.md); how it is built is in

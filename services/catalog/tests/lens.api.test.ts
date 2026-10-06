@@ -2,12 +2,13 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import express from 'express';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { putFiles, putVenue, recordSeries } from './fixture';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { dropLens, lensNamed } from '@tradebot/lenses';
+import { changeLens, putFiles, putVenue, recordSeries, storeLens } from './fixture';
 import { openScratch } from './fixture';
 import { mountLenses } from '../src/api/lenses';
 import type { Application } from 'express';
-import type { Lens, LensDefinition, LensProblem } from '../src/types';
+import type { Lens, LensDefinition, LensProblem, LensWrite } from '../src/types';
 import type { DatabaseSync } from 'node:sqlite';
 
 /**
@@ -42,12 +43,53 @@ beforeEach(async () => {
   app = express();
   app.use(express.json());
   mountLenses(app, db);
+
+  // Anything sent to prospector is answered by a stand-in; everything else is a real request.
+  const real = globalThis.fetch;
+
+  forwarded = [];
+
+  vi.stubGlobal('fetch', async (url: string, init?: RequestInit) =>
+    (String(url).startsWith('http://prospector:8080') ? prospector(String(url), init) : real(url, init)));
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   db.close();
   rmSync(dir, { recursive: true, force: true });
 });
+
+/** What the catalog handed to prospector, as `METHOD path`. */
+let forwarded: string[];
+
+/**
+ * Prospector, as far as storing a lens goes: the one thing that writes, here
+ * writing to the test's own database.
+ */
+const prospector = async (url: string, init?: RequestInit): Promise<Response> => {
+  const path   = new URL(url).pathname;
+  const method = init?.method ?? 'GET';
+  const body   = (init?.body ? JSON.parse(String(init.body)) : {}) as LensWrite;
+  const slug   = decodeURIComponent(path.split('/')[2] ?? '');
+  const json   = (status: number, value: unknown): Response =>
+    new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
+
+  forwarded.push(`${method} ${path}`);
+
+  if (method === 'POST') {
+    const made = storeLens(db, body.slug!, body.name ?? '', body.note ?? '', body.definition);
+
+    return made ? json(201, made) : json(409, { error: 'taken' });
+  }
+
+  if (method === 'PUT') {
+    const saved = changeLens(db, slug, body);
+
+    return saved ? json(200, saved) : json(lensNamed(db, slug) ? 409 : 404, { error: 'refused' });
+  }
+
+  return dropLens(db, slug) ? new Response(null, { status: 204 }) : json(404, { error: 'No such lens' });
+};
 
 const ask = async <T>(
   method: 'GET' | 'POST' | 'PUT' | 'DELETE',
@@ -117,23 +159,23 @@ describe('keeping a lens', () => {
 });
 
 describe('refusing a definition', () => {
-  it('will not store one that names what the venue does not publish', async () => {
+  it('will not store one that is not a rule', async () => {
     await ask('POST', '/lenses', { slug: 'cold-store' });
 
     const { status, body } = await ask<{ problems: LensProblem[] }>(
       'PUT', '/lenses/cold-store',
-      { definition: lens({ binance: [{ effect: 'include', datasets: [{ dataset: 'funding' }] }] }) });
+      { definition: lens({ binance: [{ effect: 'include', from: '2020-06' }] }) });
 
     expect(status).toBe(400);
-    expect(body.problems[0]).toMatchObject({ venue: 'binance', field: 'datasets' });
+    expect(body.problems[0]).toMatchObject({ venue: 'binance', field: 'from' });
   });
 
   /** The editor asks on every keystroke, so this takes the document rather than a name. */
   it('says what is wrong without storing anything', async () => {
     const { body } = await ask<{ problems: LensProblem[] }>('POST', '/lenses/check',
-      lens({ binance: [{ effect: 'exclude', datasets: [{ dataset: 'books' }] }] }));
+      lens({ nowhere: [{ effect: 'include' }] }));
 
-    expect(body.problems[0]).toMatchObject({ rule: -1 });
+    expect(body.problems[0]).toMatchObject({ venue: 'nowhere', rule: -1 });
     expect((await ask<{ items: Lens[] }>('GET', '/lenses')).body.items).toHaveLength(0);
   });
 });
@@ -160,5 +202,40 @@ describe('what a definition would select', () => {
     const { body } = await ask<{ items: { dataset: string }[] }>('GET', '/lenses/options/binance');
 
     expect(body.items.map(one => one.dataset).sort()).toEqual(['books', 'trades']);
+  });
+});
+
+/**
+ * This service reads the catalog and never writes it: whatever it is sent to be
+ * stored is prospector's to store.
+ */
+describe('storing a lens', () => {
+  it('hands every write to prospector, and answers what it answered', async () => {
+    await ask('POST', '/lenses', { slug: 'cold-store', definition: lens({ binance: [{ effect: 'include' }] }) });
+    await ask('PUT', '/lenses/cold-store', { note: 'what is old' });
+    await ask('DELETE', '/lenses/cold-store');
+
+    expect(forwarded).toEqual(['POST /lenses', 'PUT /lenses/cold-store', 'DELETE /lenses/cold-store']);
+  });
+
+  it('hands nothing over that it refused itself', async () => {
+    await ask('POST', '/lenses', { slug: 'Not Sound' });
+    await ask('POST', '/lenses', { slug: 'cold-store', definition: lens({ nowhere: [{ effect: 'include' }] }) });
+
+    expect(forwarded).toEqual([]);
+  });
+
+  it('says so where prospector is not answering', async () => {
+    const real = globalThis.fetch;
+
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      if (String(url).startsWith('http://prospector:8080')) throw new TypeError('fetch failed');
+
+      return real(url, init);
+    });
+
+    const made = await ask<{ error: string }>('POST', '/lenses', { slug: 'cold-store' });
+
+    expect(made.status).toBe(502);
   });
 });

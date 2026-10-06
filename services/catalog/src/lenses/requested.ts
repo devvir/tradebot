@@ -1,4 +1,4 @@
-import { lensNamed } from './lens';
+import { lensNamed } from '@tradebot/lenses';
 import { lensScope } from './scope';
 import type { Request } from 'express';
 import type { DatabaseSync } from 'node:sqlite';

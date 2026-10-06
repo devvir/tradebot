@@ -1,9 +1,10 @@
+import { logger } from '@devvir/service-kit';
 import {
-  dropLens, editLens, lensNameIsSound, lensNamed, lensOptions, lensSize, lenses,
-  problemsWith, putLens, resolvedSummary,
-} from '../lenses/lens';
+  lensNameIsSound, lensNamed, lensOptions, lensSize, lenses, problemsWith, resolvedSummary,
+} from '@tradebot/lenses';
 import { savedLensSize } from '../lenses/figures';
-import type { Application, Request } from 'express';
+import { send } from '../prospector';
+import type { Application, Request, Response } from 'express';
 import type { DatabaseSync } from 'node:sqlite';
 import type { LensDefinition, LensWrite } from '../types';
 
@@ -14,6 +15,9 @@ import type { LensDefinition, LensWrite } from '../types';
  * and rules need no ids — their position in the array is what identifies them.
  * Every write validates first and says what is wrong in a person's words, because
  * the only consumer that writes here is a form.
+ *
+ * **A lens is stored by prospector, never here.** A write that passes is handed
+ * to it, and what it answers is what the caller is told — see `stored`.
  *
  * Applying a lens to the rest of the API is a separate thing and lives elsewhere:
  * these endpoints are how one is defined, not how one is used.
@@ -43,7 +47,7 @@ export const mountLenses = (app: Application, db: DatabaseSync): void => {
     res.json({ items: lensOptions(db, String(req.params['venue'])) });
   });
 
-  app.post('/lenses', (req, res) => {
+  app.post('/lenses', async (req, res) => {
     const { slug, name, note, definition } = (req.body ?? {}) as LensWrite;
 
     if (! slug || ! lensNameIsSound(slug)) {
@@ -62,19 +66,11 @@ export const mountLenses = (app: Application, db: DatabaseSync): void => {
       return;
     }
 
-    const lens = putLens(db, slug, name ?? '', note ?? '', definition);
-
-    if (! lens) {
-      res.status(409).json({ error: `A lens addressed as '${slug}' already exists` });
-
-      return;
-    }
-
-    res.status(201).json(lens);
+    await stored(res, 'POST', '/lenses', { slug, name: name ?? '', note: note ?? '', definition });
   });
 
   /** Replace a lens, whole — its name, its note, its definition, or all three. */
-  app.put('/lenses/:slug', (req, res) => {
+  app.put('/lenses/:slug', async (req, res) => {
     const slug = String(req.params['slug']);
 
     const to = (req.body ?? {}) as LensWrite;
@@ -97,26 +93,11 @@ export const mountLenses = (app: Application, db: DatabaseSync): void => {
       }
     }
 
-    const saved = editLens(db, slug, to);
-
-    if (! saved) {
-      res.status(lensNamed(db, slug) ? 409 : 404)
-        .json({ error: lensNamed(db, slug) ? 'That address is taken' : 'No such lens' });
-
-      return;
-    }
-
-    res.json(saved);
+    await stored(res, 'PUT', `/lenses/${encodeURIComponent(slug)}`, to);
   });
 
-  app.delete('/lenses/:slug', (req, res) => {
-    if (! dropLens(db, String(req.params['slug']))) {
-      res.status(404).json({ error: 'No such lens' });
-
-      return;
-    }
-
-    res.status(204).end();
+  app.delete('/lenses/:slug', async (req, res) => {
+    await stored(res, 'DELETE', `/lenses/${encodeURIComponent(String(req.params['slug']))}`);
   });
 
   /**
@@ -128,7 +109,7 @@ export const mountLenses = (app: Application, db: DatabaseSync): void => {
     res.json(lensSize(db, definitionOf(req)));
   });
 
-  /** The same, for a lens that exists — summed off its rows, so nothing is evaluated. */
+  /** The same, for a lens that exists — summed off its rows, so nothing is evaluated — and whether it is still being worked out. */
   app.get('/lenses/:slug/size', (req, res) => {
     const found = lensNamed(db, String(req.params['slug']));
 
@@ -138,7 +119,8 @@ export const mountLenses = (app: Application, db: DatabaseSync): void => {
       return;
     }
 
-    res.json(savedLensSize(db, found));
+    // While the lens is being worked out its rows are part of the old rules' and part of the new: the caller is told.
+    res.json({ ...savedLensSize(db, found), updating: found.updating });
   });
 
   /** Whether a definition can be stored, and what is wrong where it cannot. */
@@ -156,6 +138,23 @@ export const mountLenses = (app: Application, db: DatabaseSync): void => {
 };
 
 // ── Internals ─────────────────────────────────────────────────────────────────
+
+/**
+ * Have prospector store what was asked, and answer with what it said: its
+ * status and its body, as they are. `502` where it does not answer at all.
+ */
+const stored = async (res: Response, method: string, path: string, body?: unknown): Promise<void> => {
+  try {
+    const answer = await send(method, path, body);
+
+    if (answer.body === null) res.status(answer.status).end();
+    else res.status(answer.status).json(answer.body);
+  } catch (err) {
+    logger.warn({ err }, 'Prospector did not store a lens');
+
+    res.status(502).json({ error: 'The collector is not answering; try again shortly' });
+  }
+};
 
 const definitionOf = (req: Request): LensDefinition => {
   const body = (req.body ?? {}) as LensDefinition & { definition?: LensDefinition };

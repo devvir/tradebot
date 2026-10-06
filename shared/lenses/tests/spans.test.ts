@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ALL, holds, union, without } from '../src/lenses/spans';
+import { ALL, holds, union, without } from '../src/spans';
 import type { LensSpan } from '../src/types';
 
 /**

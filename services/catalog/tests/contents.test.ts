@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import express from 'express';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { putFiles, putVenue, recordSeries } from './fixture';
+import { putFiles, putVenue, recordSeries, storeLens } from './fixture';
 import { _test_scopes } from '../src/lenses/scope';
 import { openScratch } from './fixture';
 import { mount } from '../src/api';
@@ -72,9 +72,8 @@ const call = async (path: string, init: RequestInit = {}) => {
 
 const LENS = { 'x-catalog-lens': 'to-2020' };
 
-const lens = () => call('/lenses', { method: 'POST', body: JSON.stringify({
-  slug: 'to-2020', definition: { format: 1, venues: { '*': [{ effect: 'include', to: '202012' }] } },
-}) });
+/** A lens in the catalog, as prospector stores one: this service only reads through it. */
+const lens = () => storeLens(db, 'to-2020', '', '', { format: 1, venues: { '*': [{ effect: 'include', to: '202012' }] } });
 
 describe('the contents through a lens', () => {
   it('lists only instruments with a file inside it', async () => {
@@ -108,12 +107,10 @@ describe('the contents through a lens', () => {
    * the groups its figures are summed over — and must still be counted once.
    */
   it('counts a series with two spans once', async () => {
-    await call('/lenses', { method: 'POST', body: JSON.stringify({
-      slug: 'holed', definition: { format: 1, venues: { binance: [
-        { effect: 'include' },
-        { effect: 'exclude', from: '202006', to: '202012' },
-      ] } },
-    }) });
+    storeLens(db, 'holed', '', '', { format: 1, venues: { binance: [
+      { effect: 'include' },
+      { effect: 'exclude', from: '202006', to: '202012' },
+    ] } });
 
     const [venue] = (await call('/venues', { headers: { 'x-catalog-lens': 'holed' } })).body.items as
       { files: number; firstMonth: string; lastMonth: string; series: { withFiles: number } }[];
