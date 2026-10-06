@@ -38,10 +38,10 @@ answered as an object naming each level:
 | `funding` | `{ "kind": "realised" }` |
 | `quotes`, `liquidations`, `borrowing`, … | `{}`: no level below the dataset |
 
-The keys come in the order the levels belong in. **`aggregation: "default"` claims only "the one this
-venue publishes"**, never that it is raw: most venues publish one flavour of trades and say nothing about
-it, so the catalog stores nothing and reports the default. Binance publishes both and names them, so its
-raw feed is `default` and its `aggTrades` is `aggregated`.
+The keys come in the order the levels belong in. **Trades with no variant are every trade**, at every
+venue: nothing is stored for them, and they are answered as `aggregation: "default"`. A venue's
+aggregation of its trades is a variant of them, `aggregated`. Most venues publish only the first;
+binance publishes both.
 
 **`grain` is the size of the thing; `period` is which one.** A monthly series has a grain of `monthly`
 and a period of `202506`. Many venues publish the same data both monthly and daily, so `grain` is what
@@ -218,7 +218,7 @@ gate/spot/trades/@/202107/gate|spot|trades|@|202107.csv.gz
 - The name repeats the whole prefix but the letter, so a name read alone says everything.
 
 **Keys sort as bytes, as S3's do**, and that order is instrument, then date, then part. So
-`trades,default/` comes before `trades/`, a month's file before its days (`.` sorts below every digit),
+`trades,aggregated/` comes before `trades/`, a month's file before its days (`.` sorts below every digit),
 and a monthly and a daily rendering of one instrument interleave by date under the same prefix.
 
 **`prefix` narrows the listing**, as on S3: a venue (`gate/`), a dataset (`gate/spot/books/`), an

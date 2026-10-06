@@ -209,12 +209,12 @@ const MARKET_OF: Record<string, string> = {
 /** Binance's own words for a dataset, in the catalog's. */
 const MEANINGS: Record<string, { dataset: string; variant?: string; binned?: true }> = {
   /**
-   * **Binance publishes trades twice**, raw and aggregated, so here — and only
-   * where a venue says so itself — the raw one is named. Everywhere else the
-   * catalog holds no opinion about aggregation, because nothing in those
-   * archives states one.
+   * **Binance publishes trades twice**: every trade, and the trades an order
+   * filled at one price rolled into a row. The first is what `trades` means at
+   * every venue, and is given no variant, here as there; the second is a
+   * variant of them, and is named.
    */
-  trades:             { dataset: 'trades', variant: 'default' },
+  trades:             { dataset: 'trades' },
   aggTrades:          { dataset: 'trades', variant: 'aggregated' },
 
   klines:             { dataset: 'klines',       binned: true },

@@ -1,15 +1,27 @@
 [
   {
     "fixture": "binance.spot-trades.csv",
-    "key": "binance/spot/trades,default/B/BTCUSDT/202607/binance|spot|trades,default|BTCUSDT|20260729.zip"
+    "key": "binance/spot/trades/B/BTCUSDT/202607/binance|spot|trades|BTCUSDT|20260729.zip"
   },
   {
     "fixture": "binance.um-trades.csv",
-    "key": "binance/perp/trades,default/B/BTCUSDT/202607/binance|perp|trades,default|BTCUSDT|20260729.zip"
+    "key": "binance/perp/trades/B/BTCUSDT/202607/binance|perp|trades|BTCUSDT|20260729.zip"
   },
   {
     "fixture": "binance.cm-trades.csv",
-    "key": "binance/perp/trades,default/B/BTCUSD_PERP/202607/binance|perp|trades,default|BTCUSD_PERP|20260729.zip"
+    "key": "binance/perp/trades/B/BTCUSD_PERP/202607/binance|perp|trades|BTCUSD_PERP|20260729.zip"
+  },
+  {
+    "fixture": "binance.spot-aggTrades.csv",
+    "key": "binance/spot/trades,aggregated/B/BTCUSDT/201806/binance|spot|trades,aggregated|BTCUSDT|20180630.zip"
+  },
+  {
+    "fixture": "binance.um-aggTrades.csv",
+    "key": "binance/perp/trades,aggregated/B/BTCUSDT/202012/binance|perp|trades,aggregated|BTCUSDT|202012.zip"
+  },
+  {
+    "fixture": "binance.cm-aggTrades.csv",
+    "key": "binance/perp/trades,aggregated/X/XRPUSD_PERP/202012/binance|perp|trades,aggregated|XRPUSD_PERP|202012.zip"
   },
   {
     "fixture": "binance.spot-klines.csv",

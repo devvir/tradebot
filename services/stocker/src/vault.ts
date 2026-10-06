@@ -9,8 +9,8 @@ import type { Edge, Partition, Series, Side, SliceIndex, Stocked, VaultKey } fro
 /**
  * The vault's layout, and how a partition is put in place in it.
  *
- *     <vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…]/@/<YYYYMM>.parquet
- *     <vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…]/<symbol>/<YYYYMM>.parquet
+ *     <vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…][/aggregated=…]/@/<YYYYMM>.parquet
+ *     <vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…][/aggregated=…]/<symbol>/<YYYYMM>.parquet
  *     …/<@ or symbol>/<YYYYMM>.pre.parquet    the month's first hours, from the month before
  *     …/<@ or symbol>/<YYYYMM>.post.parquet   the month's last hours, from the month after
  *
@@ -43,7 +43,7 @@ import type { Edge, Partition, Series, Side, SliceIndex, Stocked, VaultKey } fro
  * devices for handling the files, not facts about the data.
  */
 
-/** `…/dataset=…[/interval=…][/kind=…]`: where every month of a slice sits. */
+/** `…/dataset=…[/interval=…][/kind=…][/aggregated=…]`: where every month of a slice sits. */
 export const sliceDirOf = (key: VaultKey): string => join(config.vaultDir, ...levelsOf(key));
 
 /** The one file of a month stored whole — or, with a side, the file of what a neighbouring month held of it. */
@@ -277,7 +277,8 @@ const levelsOf = (key: VaultKey): string[] => [
   `dataset=${key.table}`,
   ...(key.interval ? [`interval=${key.interval}`] : []),
   ...(key.kind ? [`kind=${key.kind}`] : []),
+  ...(key.aggregated ? [`aggregated=${key.aggregated}`] : []),
 ];
 
 const extrasOf = (key: VaultKey): string[] =>
-  [key.interval, key.kind].filter((x): x is string => !! x);
+  [key.interval, key.kind, key.aggregated && `aggregated=${key.aggregated}`].filter((x): x is string => !! x);

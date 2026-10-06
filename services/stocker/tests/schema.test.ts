@@ -42,10 +42,12 @@ describe('the series map', () => {
   });
 
   it('resolves a catalog key to a series, and its variant to the path levels', () => {
-    const trades = seriesFor(file('binance/spot/trades,default/B/BTCUSDT/202606/binance|spot|trades,default|BTCUSDT|202606.zip'));
+    const trades = seriesFor(file('binance/spot/trades/B/BTCUSDT/202606/binance|spot|trades|BTCUSDT|202606.zip'));
 
     expect(trades?.table).toBe('trades');
-    expect(extrasOf(trades!, 'default')).toEqual({});
+    // Every trade as it happened, said outright; a venue's aggregation of them is another slice.
+    expect(extrasOf(trades!, '')).toEqual({ aggregated: 'false' });
+    expect(extrasOf(trades!, 'aggregated')).toEqual({ aggregated: 'true' });
 
     const klines = seriesFor(file('htx/spot/klines,5m/_/4-USDT/202606/htx|spot|klines,5m|4-USDT|20260608.zip'));
 
@@ -61,11 +63,17 @@ describe('the series map', () => {
     expect(extrasOf(mark!, 'ticks')).toEqual({});
   });
 
+  /** A venue's aggregation of its trades is trades too, of another kind: its own series, and its own place in the vault. */
+  it('reads aggregated trades as a slice of their own', () => {
+    const aggregated = seriesFor(file('binance/spot/trades,aggregated/B/BTCUSDT/202607/binance|spot|trades,aggregated|BTCUSDT|20260725.zip'));
+
+    expect(aggregated?.table).toBe('trades');
+    expect(extrasOf(aggregated!, 'aggregated')).toEqual({ aggregated: 'true' });
+  });
+
   /** What is not mapped is left alone, never guessed at. */
   it('returns null for a dataset it does not read', () => {
     expect(seriesFor(file('okx/spot/books,400,incremental/B/BTC-USDT/202607/okx|spot|books,400,incremental|BTC-USDT|20260725.tar.gz')))
-      .toBeNull();
-    expect(seriesFor(file('binance/spot/trades,aggregated/B/BTCUSDT/202607/binance|spot|trades,aggregated|BTCUSDT|20260725.zip')))
       .toBeNull();
   });
 
@@ -120,8 +128,8 @@ describe('formats chosen inside one dataset', () => {
    * The instrument's margining is what picks the reading.
    */
   it('reads binance perpetual trades by the instrument\'s margining', () => {
-    const linear  = seriesFor(file('binance/perp/trades,default/B/BTCUSDT/202001/binance|perp|trades,default|BTCUSDT|20200101.zip'));
-    const inverse = seriesFor(file('binance/perp/trades,default/B/BTCUSD_PERP/202001/binance|perp|trades,default|BTCUSD_PERP|20200101.zip'));
+    const linear  = seriesFor(file('binance/perp/trades/B/BTCUSDT/202001/binance|perp|trades|BTCUSDT|20200101.zip'));
+    const inverse = seriesFor(file('binance/perp/trades/B/BTCUSD_PERP/202001/binance|perp|trades|BTCUSD_PERP|20200101.zip'));
 
     expect(linear?.project.quoteSize).toBe('quoteQty');
     expect(inverse?.project.baseSize).toBe('baseQty');

@@ -93,18 +93,29 @@ export const noteBackedUp = (vaultRoot: string, partition: string, revision: str
  *
  *     venue/market/dataset[,variant…]/<@ or instrument>/<month>[.pre|.post].parquet
  *
- * **The values, without the names.** In the vault a directory is `interval=1h`
- * because a query engine reads it back as a column; in cold storage nothing
- * reads it, and the names are only noise. The variants are joined to the
+ * **The catalog's own variants, without the names.** In the vault a directory is
+ * `interval=1h` because a query engine reads it back as a column; in cold
+ * storage nothing reads it, and the names are only noise — see `variantsOf`. The variants are joined to the
  * dataset, so every file sits at the same depth whatever its dataset has —
  * which is how the archives are laid out there too.
  */
 export const remoteOf = (file: Pick<VaultFile, 'partition' | 'instrument' | 'path'>): string => {
   const { levels } = locate(file.partition);
-  const { venue, market, dataset, ...variants } = levels;
 
-  return [venue, market, [dataset, ...Object.values(variants)].join(','), file.instrument, path.basename(file.path)].join('/');
+  return [levels['venue'], levels['market'], [levels['dataset'], ...variantsOf(levels)].join(','), file.instrument,
+    path.basename(file.path)].join('/');
 };
+
+/**
+ * A partition's variants as the catalog names them, read off the levels its
+ * path carries beyond venue, market and dataset: a kline's interval, funding's
+ * kind — and, for trades, `aggregated` where the path says `aggregated=true`
+ * and nothing where it says `false`, trades with no variant being every trade.
+ */
+export const variantsOf = (levels: Record<string, string>): string[] =>
+  Object.entries(levels)
+    .filter(([name]) => ! ['venue', 'market', 'dataset'].includes(name))
+    .flatMap(([name, value]) => (name !== 'aggregated' ? [value] : value === 'false' ? [] : [value === 'true' ? 'aggregated' : value]));
 
 /**
  * A stocked partition's files as they are on disk, or null where the vault does

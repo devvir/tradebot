@@ -194,6 +194,9 @@ export interface VaultKey {
   market:    Market;
   interval?: string;
   kind?:     string;
+
+  /** Trades only: `false` for every trade as it happened, `true` for a venue's aggregation of them. */
+  aggregated?: string;
   month:     string;
 }
 

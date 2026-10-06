@@ -273,6 +273,38 @@ begins at the trades floor, skips three months, and resumes — which means **th
 is not proof of a contiguous start**, and a bisect over a funding range would land in the hole and
 report 202201.
 
+### Swap trades for 2021-10 list every trade twice
+
+**The first month of swap trades is not usable as published.** Every swap instrument's trades for
+October 2021 carry each trade on two rows, one after the other: the same `trade_id`, price, size and
+time, once as `BUY` and once as `SELL`.
+
+```
+BTC-USDT-SWAP,118368467,SELL,43135.1,4.0,1633017600564
+BTC-USDT-SWAP,118368467,BUY,43135.1,4.0,1633017600564
+BTC-USDT-SWAP,118368468,SELL,43135.1,1.0,1633017600564
+BTC-USDT-SWAP,118368468,BUY,43135.1,1.0,1633017600564
+```
+
+- **Every swap, the whole month, both grains.** All 72 monthly files of 202110 have it from their
+  first row, and so do the daily files (`BTC-USDT-SWAP` on 2021-10-01, -15 and -31, read on
+  2026-10-07).
+- **It ends at the month.** From 2021-11-01 a trade is one row, in the daily and the monthly files
+  alike — every day of 2021-11 was read — and no later month has it.
+- **Spot never had it**, from its own first month, 202109.
+- **Dated futures never had it either.** The daily chain files for `BTC-USD`, `BTC-USDT` and `ETH-USD`
+  and the venue-wide `allfutures` file list each trade once on 2021-09-15, on 2021-10-01, -15 and
+  -31, and after.
+
+**Which row is the trade as it happened is not stated anywhere.** Which side comes first varies from
+pair to pair, about evenly. Read against the price movement, the first row of a pair behaves as a
+taker's side does and the second as its mirror — one-instant sweeps of several prices agree with the
+first row in 96% of cases for `BTC-USDT-SWAP` and 100% for `ETH-USDT-SWAP`, against 99.8% and 99.9%
+for the side as published in 2021-11. That is an inference from the prices and not the venue's word,
+so the month's sides are not known, and taken as published its rows and its volume are double.
+
+**Swap trades are therefore usable from 2021-11.**
+
 ### The book holes are real, and two methods agree
 
 `BTC-USDT` 400lv, asked of the index and probed directly on the same days:

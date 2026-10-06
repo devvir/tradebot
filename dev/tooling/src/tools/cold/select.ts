@@ -1,4 +1,4 @@
-import { BUNDLE, locate } from './vault';
+import { BUNDLE, locate, variantsOf } from './vault';
 import type { Selection } from './types';
 
 /**
@@ -44,10 +44,6 @@ export const meansToPull = (selection: Selection, partition: string, instrument:
   && (selection.instruments.length === 0 || instrument === BUNDLE || named(selection, instrument));
 
 // ── Internals ─────────────────────────────────────────────────────────────────
-
-/** Whatever a partition's path says beyond its venue, market and dataset: a kline's interval, funding's kind. */
-const variantsOf = (levels: Record<string, string>): string[] =>
-  Object.entries(levels).filter(([name]) => ! ['venue', 'market', 'dataset'].includes(name)).map(([, value]) => value);
 
 const same = (asked: string | undefined, held: string | undefined): boolean =>
   ! asked || asked.toLowerCase() === (held ?? '').toLowerCase();

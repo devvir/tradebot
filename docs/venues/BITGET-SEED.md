@@ -225,7 +225,6 @@ is why no `last` is seeded and why `SEEDED_AT` is withheld - see `seed.ts`.
 
 The seed is data, not a pipeline, and none of this runs in the service. It is written down so a
 future seed - a newer one, or one for another venue shaped like this - does not start from nothing.
-The scripts live in `@claude.tmp/bitget-index/`, one folder per stage, each with its own README.
 
 **1 - The universe.** `getSymbolList`, the endpoint behind the form's dropdown, matches a substring
 anywhere in a display symbol and caps its reply at 200 with no pagination. So it is crawled: ask a

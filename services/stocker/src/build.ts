@@ -454,7 +454,7 @@ const marginColumn = (key: VaultKey, symbol: string): string => {
 };
 
 const labelFor = (key: VaultKey, symbol: string): string =>
-  [key.venue, key.market, symbol, key.table, key.interval ?? key.kind ?? '', key.month]
+  [key.venue, key.market, symbol, key.table, key.interval ?? key.kind ?? (key.aggregated === 'true' ? 'aggregated' : ''), key.month]
     .filter(Boolean).join('|');
 
 /**

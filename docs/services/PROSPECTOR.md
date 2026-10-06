@@ -2109,11 +2109,14 @@ takes its turn in one queue (`slice`) and nothing waits on a lock at all.
 
 **That includes lenses**, which collection neither reads nor acts on. A lens is stored here because
 storing is a write: the private API makes, replaces and removes one (`src/api/lenses.ts`) and answers
-as soon as the row is written. What the lens lets through is worked out afterwards by `src/lenses.ts`,
-which walks each lens over the partitions it has not looked at — all of them after a save, the newly
-found ones otherwise — a few hundred a turn in the write queue, every thirty seconds and at once when
-a lens is saved. What a lens is and how its rows are decided is the `@tradebot/lenses` package, which
-this service calls and does not own.
+as soon as the row is written. What a lens lets through is kept in two places. A partition is taken
+into its lenses in the transaction that creates it (`catalog/cache/partitions.ts`) — about a
+millisecond, a few thousand times in a venue's history. And `src/lenses.ts` works a lens out whole
+after its rules are saved, in one pass a few seconds long, five seconds after the last save of a run;
+its round every thirty seconds settles whatever a lens has not looked at. None of it waits in the
+queue the survey's writes use: every write here is synchronous from `BEGIN` to `COMMIT`, so a step run
+between two turns of the loop finds nothing half done. What a lens is and how its rows are decided is
+the `@tradebot/lenses` package, which this service calls and does not own.
 
 Seventeen tables. `venue`, `file`, `wip` and `revision` are what a venue serves and what became of
 it; `instrument` is what it trades; `slice` and `partition` are what it publishes, cut the way it is

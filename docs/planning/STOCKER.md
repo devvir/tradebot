@@ -45,11 +45,6 @@ spot index is otherwise `<symbol> <price>` and fits `indexPrice` as ticks.
 second. It is an index and not a price of anything stocked; it needs a table, or a decision that
 `indexPrice` holds it.
 
-**binance aggregated trades**, spot and perp. A slice like any other: which of two renderings of the
-trades is downloaded is decided upstream, by the lens, and whatever is downloaded and in stocker's
-targets is stocked. So they need a series, and a place in the vault that keeps them apart from the
-plain trades.
-
 **binance liquidations on USDⓈ-M perpetuals and on futures.** Only the coin-margined files are
 mapped. The others have not been read.
 

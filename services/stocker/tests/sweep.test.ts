@@ -19,7 +19,7 @@ import type { ListedSlice } from '../src/types';
 
 const FIXTURES = join(__dirname, 'fixtures');
 const MONTH    = '202606';
-const SLICE    = join('venue=gate', 'market=perp', 'dataset=trades');
+const SLICE    = join('venue=gate', 'market=perp', 'dataset=trades', 'aggregated=false');
 
 interface Listed { Key: string; ETag: string; Size: number }
 

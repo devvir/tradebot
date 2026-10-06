@@ -8,8 +8,8 @@ const key = (over: Partial<VaultKey> = {}): VaultKey => ({
 });
 
 const partition = (version: string, month = '2020-01'): Partition => ({
-  id: `binance|spot|trades,default|*|daily|${month}`,
-  key: { venue: 'binance', market: 'spot', dataset: 'trades', variant: 'default',
+  id: `binance|spot|trades|*|daily|${month}`,
+  key: { venue: 'binance', market: 'spot', dataset: 'trades', variant: '',
     bundle: 'instrument', grain: 'daily', month },
   files: 1, bytes: 1, pending: 0, version, updatedAt: '2020-02-01T00:00:00.000Z',
 });
@@ -17,6 +17,8 @@ const partition = (version: string, month = '2020-01'): Partition => ({
 describe('the vault layout', () => {
   it('files a slice under its dataset levels', () => {
     expect(sliceDirOf(key())).toMatch(/\/venue=binance\/market=spot\/dataset=trades$/);
+    expect(sliceDirOf(key({ aggregated: 'false' }))).toMatch(/\/dataset=trades\/aggregated=false$/);
+    expect(sliceDirOf(key({ aggregated: 'true' }))).toMatch(/\/dataset=trades\/aggregated=true$/);
     expect(sliceDirOf(key({ table: 'klines', interval: '1m' }))).toMatch(/\/dataset=klines\/interval=1m$/);
   });
 
@@ -55,7 +57,7 @@ describe('what counts as stocked', () => {
 });
 
 describe('the revision', () => {
-  const series = seriesOf({ venue: 'binance', market: 'spot', dataset: 'trades', variant: 'default' });
+  const series = seriesOf({ venue: 'binance', market: 'spot', dataset: 'trades', variant: '' });
 
   it('is the same for the same inputs', () => {
     expect(revisionOf(key(), partition('a'), series, []))

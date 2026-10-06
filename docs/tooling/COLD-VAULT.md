@@ -30,9 +30,10 @@ file at a time, since a large month's instruments can leave and return one by on
 names its files, and they are stored under the names they have. The revision a partition is stored
 at is in the record, read off the vault's ledger.
 
-**The values, without the names.** In the vault a directory is `interval=1h` because a query engine
-reads it back as a column. In cold storage nothing reads it, so the names are dropped, and the
-variants are joined to the dataset — which puts every file at the same depth whatever its dataset
+**The catalog's variants, without the names.** In the vault a directory is `interval=1h` because a
+query engine reads it back as a column. In cold storage nothing reads it, so the names are dropped, and
+the variants are joined to the dataset as the catalog writes them — `klines,1h`, `trades,aggregated`,
+and plain `trades` for the vault's `aggregated=false` — which puts every file at the same depth whatever its dataset
 has. `@` holds a month stored whole, as it does in the vault.
 
 ## `cold push vault`

@@ -204,6 +204,23 @@ describe('shapes that changed mid-history', () => {
 });
 
 describe('what the numbers mean', () => {
+  /** One row for the trades an order filled at a price: the size is their sum, and the id the aggregate's. */
+  it('reads binance aggregated trades by position, with the leg each market gives', async () => {
+    const spot = await rowsOf(resolve(named('binance.spot-aggTrades.csv'))!, 'binance.spot-aggTrades.csv');
+
+    expect(spot[0]).toMatchObject({ tradeId: '47487584', price: 6197.92, size: 0.006453, baseSize: 0.006453, side: 'buy' });
+    expect(spot[1]).toMatchObject({ tradeId: '47487585', side: 'sell' });
+
+    const linear = await rowsOf(resolve(named('binance.um-aggTrades.csv'))!, 'binance.um-aggTrades.csv');
+
+    expect(linear[0]).toMatchObject({ tradeId: '191966988', price: 19722.09, size: 0.002, baseSize: 0.002 });
+
+    // Coin-margined: the size is a contract count, and neither leg is published.
+    const inverse = await rowsOf(resolve(named('binance.cm-aggTrades.csv'))!, 'binance.cm-aggTrades.csv');
+
+    expect(inverse[0]).toMatchObject({ tradeId: '1099246', price: 0.6644, size: 4, baseSize: null });
+  });
+
   /** Fractional seconds, to the microsecond and no further from the truth. */
   it('reads fractional-second epochs exactly', async () => {
     const [gate]  = await rowsOf(resolve(named('gate.spot-deals.csv'))!, 'gate.spot-deals.csv', 1);

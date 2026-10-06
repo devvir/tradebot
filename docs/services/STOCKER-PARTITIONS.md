@@ -134,7 +134,6 @@ surveyed.
 | books | gate future (full · incremental) | |
 | books | kucoin spot, perp (50 · snapshot) | csv with one `data` column of JSON: `sequence`, `asks`, `bids` |
 | books | bitget spot, perp, future | |
-| trades | binance spot, perp (aggregated) | consecutive trades at one price and side, merged. Not read yet |
 | markPrice | bybit option (1m) | zip · csv, an underlying's whole book a day. `instrument_name, open_time, open, high, low, close, delta, gama, vega, theta` — the four greeks have no column in `markPrice` |
 | indexPrice | gate spot (ticks, **market** bundle) | plain text, a line per instrument: `<symbol> <price>`. **The time is in the file's name** (`slice_index_<epoch>`), not in any row |
 | liquidations | binance perp (USDⓈ-M) · binance future | |

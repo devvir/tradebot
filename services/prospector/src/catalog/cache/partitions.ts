@@ -1,3 +1,4 @@
+import { admit, lenses } from '@tradebot/lenses';
 import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { FileEffect, FileState, PartitionDelta, PartitionResolver, PartitionStatements } from '../../types';
@@ -140,6 +141,15 @@ export const resolver = (db: DatabaseSync, at: string = new Date().toISOString()
 
       const found = sql.find.get(slice, month) as { id: number } | undefined;
       const id    = found ? found.id : Number(sql.make.run(slice, month, at).lastInsertRowid);
+
+      /**
+       * **A partition is in its lenses from the moment it exists.** It is taken
+       * into them here, in the transaction that made it, so whoever reads
+       * through a lens never meets a partition the lens has not yet looked at.
+       * A partition is made once per slice and month — a few thousand times in
+       * a venue's whole history — so this is not on the path of a file.
+       */
+      if (! found) admit(db, lenses(db), id);
 
       ids.set(key, id);
 

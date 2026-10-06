@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { putFiles, putVenue, recordSeries } from '../src/catalog';
 import { openCatalog } from '../src/database';
 import { mount } from '../src/api';
-import { keepLensesCurrent } from '../src/lenses';
+import { _test_settleMs as settleMs, keepLensesCurrent } from '../src/lenses';
 import type { Application } from 'express';
 import type { CatalogFile, Surveys } from '../src/types';
 import type { DatabaseSync } from 'node:sqlite';
@@ -45,11 +45,15 @@ beforeEach(async () => {
   app.use(express.json());
   mount(app, db, '', { venues: () => ['binance', 'gate'] } as unknown as Surveys);
 
+  // The wait after a save is for a person changing several rules; nothing here is about how long it is.
+  settleMs(20);
+
   stop = keepLensesCurrent(db);
 });
 
 afterEach(() => {
   stop();
+  settleMs(null);
   db.close();
   rmSync(dir, { recursive: true, force: true });
 });
@@ -87,7 +91,7 @@ const settled = async (slug: string): Promise<void> => {
   const updating = (): boolean =>
     (db.prepare('SELECT rebuilding FROM lens WHERE slug = ?').get(slug) as { rebuilding: number } | undefined)?.rebuilding === 1;
 
-  for (let turn = 0; turn < 500 && updating(); turn++) await new Promise(done => setImmediate(done));
+  for (let turn = 0; turn < 400 && updating(); turn++) await new Promise(done => setTimeout(done, 10));
 };
 
 const all  = { format: 1, venues: { '*': [{ effect: 'include' }] } };
@@ -128,6 +132,22 @@ describe('storing a lens', () => {
     expect((await ask('PUT', '/lenses/nobody', { note: 'x' })).status).toBe(404);
   });
 
+  /** Rules are stored one at a time: a run of saves is worked out once, as the last of them left it. */
+  it('works a run of saves out as the last one left the lens', async () => {
+    // Longer than the three requests take between them, as the service's wait is longer than a person takes.
+    settleMs(1_000);
+
+    await ask('POST', '/lenses', { slug: 'everything', definition: all });
+    await ask('PUT', '/lenses/everything', { definition: old });
+    await ask('PUT', '/lenses/everything', { definition: { format: 1, venues: { gate: [{ effect: 'include' }] } } });
+
+    expect(members('everything')).toEqual([]);
+
+    await settled('everything');
+
+    expect(members('everything')).toEqual(['gate 202001']);
+  });
+
   it('removes one, and its members', async () => {
     await ask('POST', '/lenses', { slug: 'everything', definition: all });
     await settled('everything');
@@ -139,19 +159,33 @@ describe('storing a lens', () => {
 });
 
 describe('keeping the lenses current', () => {
-  /** A partition that arrives after a lens was saved is folded in without anybody asking through the lens. */
-  it('folds in the partitions that appeared since a lens was stored', async () => {
+  /** In the transaction that makes it: there is no moment at which the partition exists and the lens has not seen it. */
+  it('takes a partition into its lenses as it is made', async () => {
     await ask('POST', '/lenses', { slug: 'everything', definition: all });
+    await ask('POST', '/lenses', { slug: 'old', definition: old });
     await settled('everything');
+    await settled('old');
+
     await putFiles(db, [file(2, 'h.zip', '20220101')]);
 
-    expect(members('everything')).not.toContain('gate 202201');
+    expect(members('everything')).toEqual(['binance 202001', 'binance 202101', 'gate 202001', 'gate 202201']);
+    expect(members('old')).toEqual(['binance 202001', 'gate 202001']);
 
-    // A round is what the timer runs; saving any lens starts one at once.
-    await ask('POST', '/lenses', { slug: 'another', definition: old });
+    // And the lens knows it has read it: nothing is left for a round to find.
+    expect(db.prepare('SELECT partitions_through = (SELECT MAX(id) FROM partition) AS caught FROM lens WHERE slug = ?').get('everything'))
+      .toEqual({ caught: 1 });
+  });
 
-    for (let turn = 0; turn < 500 && ! members('everything').includes('gate 202201'); turn++)
-      await new Promise(done => setImmediate(done));
+  /** A lens whose rules were just saved is worked out whole, the new partition with the rest. */
+  it('leaves a lens that is being worked out to the pass that does it', async () => {
+    settleMs(1_000);
+
+    await ask('POST', '/lenses', { slug: 'everything', definition: all });
+    await putFiles(db, [file(2, 'h.zip', '20220101')]);
+
+    expect(members('everything')).toEqual([]);
+
+    await settled('everything');
 
     expect(members('everything')).toEqual(['binance 202001', 'binance 202101', 'gate 202001', 'gate 202201']);
   });

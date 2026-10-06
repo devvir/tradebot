@@ -25,7 +25,7 @@ let line: string[];
 const GB = 1024 ** 3;
 
 const SMALL = 'venue=gate/market=spot/dataset=klines/interval=1h';
-const LARGE = 'venue=gate/market=perp/dataset=trades';
+const LARGE = 'venue=gate/market=perp/dataset=trades/aggregated=false';
 
 const config = (): ColdConfig => ({
   sourceRoot: path.join(dir, 'vault'), vaultRoot: path.join(dir, 'vault'), coldRoot: dir, megaRoot: '/Mega/vault',
@@ -138,6 +138,10 @@ describe('the vault\'s files', () => {
 
     expect(remoteOf(small!)).toBe('gate/spot/klines,1h/@/202001.parquet');
     expect(remoteOf(large!)).toBe('gate/perp/trades/BTC_USDT/202001.parquet');
+
+    // Trades with no variant are every trade, and say nothing more; a venue's aggregation of them is named.
+    expect(remoteOf({ partition: 'venue=binance/market=spot/dataset=trades/aggregated=true/202001', instrument: '@', path: 'x/@/202001.parquet' }))
+      .toBe('binance/spot/trades,aggregated/@/202001.parquet');
   });
 });
 
@@ -413,9 +417,9 @@ describe('moving vault files out', () => {
     await storeAll();
 
     expect(going()).toEqual([
-      'dataset=trades/202001 BTC_USDT', 'dataset=trades/202001 ETH_USDT', 'dataset=klines/interval=1h/202001 @',
+      'dataset=trades/aggregated=false/202001 BTC_USDT', 'dataset=trades/aggregated=false/202001 ETH_USDT', 'dataset=klines/interval=1h/202001 @',
     ]);
-    expect(going({ ...all, instruments: ['ETH_USDT'] })).toEqual(['dataset=trades/202001 ETH_USDT']);
+    expect(going({ ...all, instruments: ['ETH_USDT'] })).toEqual(['dataset=trades/aggregated=false/202001 ETH_USDT']);
     expect(going({ ...all, dataset: 'klines' })).toEqual(['dataset=klines/interval=1h/202001 @']);
   });
 
@@ -451,7 +455,7 @@ describe('moving vault files out', () => {
 
     expect(fs.existsSync(path.join(dir, 'vault', LARGE, 'BTC_USDT'))).toBe(false);
     expect(fs.existsSync(path.join(dir, 'vault', LARGE, 'ETH_USDT', '202001.parquet'))).toBe(true);
-    expect(going()).toEqual(['dataset=trades/202001 ETH_USDT', 'dataset=klines/interval=1h/202001 @']);
+    expect(going()).toEqual(['dataset=trades/aggregated=false/202001 ETH_USDT', 'dataset=klines/interval=1h/202001 @']);
     expect(db.prepare('SELECT instrument, action FROM vault_move').all()).toEqual([{ instrument: 'BTC_USDT', action: 'evicted' }]);
   });
 

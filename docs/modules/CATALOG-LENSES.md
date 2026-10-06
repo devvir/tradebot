@@ -94,19 +94,19 @@ in a bundle, or none of them.
 
 ### What is refused
 
-A definition that claims more than a venue publishes is refused with `400` and a `problems` list, each
-naming the venue, the rule's position and, where one part is at fault, the field — so the editor can
-put it where the choice was made. Two faults are refused rather than warned about, because both read
-later as a decision rather than a mistake and arrive as an empty download noticed weeks afterwards:
+A definition that is not one is refused with `400` and a `problems` list, each naming the venue, the
+rule's position and, where one part is at fault, the field — so the editor can put it where the choice
+was made:
 
-- **a venue whose rules include nothing**, which lets nothing through — an exclude only takes away
-  from what an include lets in;
-- **an empty list in a dimension**, which matches nothing, where leaving it out matches all of it;
-- **a form taken alone that does not fit everything a rule groups.** A rule naming markets or datasets
-  is checked per `(market, dataset, variant)` it selects: an `only` grain that matches nothing of one
-  of them, or an `only` bundle one of them is not published in at the grain the rule takes, would drop
-  it in silence. A form that is only preferred drops nothing and is not checked. The problem names each one it misses, which is what says where to split the rule. A rule naming neither markets nor datasets is
-  read as "wherever this applies" and is not checked this way.
+- a venue that does not exist;
+- a grain or a bundle that is not one of the values above;
+- an exclude that prefers a form;
+- a bound that is not a month, or a range that ends before it starts.
+
+**What a rule matches is never weighed.** A rule that selects nothing today, a venue whose rules
+include nothing, a form taken alone that only part of what the rule names is published in — each may
+be exactly what was meant, and where it was not, preferring the form says so. What a definition
+selects is there to be looked at before it is saved: its size and what it resolves to, per venue.
 
 ## Resolving one
 
@@ -128,18 +128,22 @@ hand back a year nobody asked for.
 through a lens (the listing, the contents, the size, a report's check) reads those rows, and none of
 them evaluates a rule. So a lens costs the same after a restart as an hour into a run.
 
-**One walk works a lens out, and keeps it so.** Partitions are numbered in order, and a lens records
-the newest it has looked at (`partitions_through`). The walk looks at the ones past it, a few hundred
-at a time, and settles each with its siblings — the ones already let through included:
+**A partition is in its lenses from the moment it exists.** Prospector takes a new partition into
+every lens it belongs in, in the transaction that creates it, settling its siblings with it — the ones
+already let through included. So a sibling arriving can take a partition *out*: a daily month let
+through while it was the only form leaves when its monthly sibling appears, under a rule that prefers
+monthly. A round every thirty seconds settles anything a lens has not looked at, which is ordinarily
+nothing.
 
-- **As the catalog grows**, that is the partitions that have just appeared, every thirty seconds. A
-  lens is at most that far behind partitions that have only just been found. A sibling arriving can
-  take a partition *out*: a daily month let through while it was the only form leaves when its
-  monthly sibling appears, under a rule that prefers monthly.
-- **When a lens's rules are saved**, the walk starts again from the first partition, at once. **The
-  save has already answered**: it says the lens was stored, and the lens is `updating` until the walk
-  has read every partition. Meanwhile its partitions are partly those of the rules before and partly
-  those of the new ones. A save that changes only the name or the note works nothing out.
+**When a lens's rules are saved, the save answers and the lens is worked out after.** It says the lens
+was stored, and the lens is `updating` until it has been worked out — in one pass over every partition,
+read once and decided in memory, with only the rows that differ written; a few seconds for the whole
+catalog. Meanwhile its partitions are those of the rules before.
+
+- **A run of saves is worked out once.** Rules are stored one at a time, so somebody changing several
+  saves the lens several times in a row. The pass starts five seconds after the last save, over the
+  rules as they stand then.
+- **A save that changes only the name or the note works nothing out.**
 
 Both tables are written by prospector, like every other table of the database: a lens saved through
 the catalog's API is checked there and stored by prospector, which also keeps `lens_member` current.

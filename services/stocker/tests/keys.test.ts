@@ -39,7 +39,7 @@ describe('reading a catalog key', () => {
 
 describe('partitions', () => {
   const daily = (symbol: string, date: string) =>
-    parseKey(`binance/spot/trades,default/B/${symbol}/${date.slice(0, 6)}/binance|spot|trades,default|${symbol}|${date}.zip`)!;
+    parseKey(`binance/spot/trades/B/${symbol}/${date.slice(0, 6)}/binance|spot|trades|${symbol}|${date}.zip`)!;
 
   /** Every instrument's files of a month are one partition. */
   it('puts every instrument of a month in one partition', () => {
@@ -49,8 +49,8 @@ describe('partitions', () => {
 
   /** The same data at another grain or bundle is another partition. */
   it('separates grains and bundles', () => {
-    const month = parseKey('binance/spot/trades,default/B/BTCUSDT/202001/binance|spot|trades,default|BTCUSDT|202001.zip')!;
-    const bundle = parseKey('binance/spot/trades,default/@/202001/binance|spot|trades,default|@|20200101.zip')!;
+    const month = parseKey('binance/spot/trades/B/BTCUSDT/202001/binance|spot|trades|BTCUSDT|202001.zip')!;
+    const bundle = parseKey('binance/spot/trades/@/202001/binance|spot|trades|@|20200101.zip')!;
 
     expect(idOf(partitionOf(month))).not.toBe(idOf(partitionOf(daily('BTCUSDT', '20200101'))));
     expect(idOf(partitionOf(bundle))).not.toBe(idOf(partitionOf(daily('BTCUSDT', '20200101'))));

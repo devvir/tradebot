@@ -55,6 +55,19 @@ const BINANCE_CM_TRADE = [
 ];
 
 /**
+ * Binance's aggregated trades: the trades one order filled at one price, as one
+ * row. Seven columns on the futures markets and an eighth, `is_best_match`, on
+ * spot. The row's own id is the aggregate's; the ids of the first and last
+ * trade it stands for are dropped, the table having nowhere to keep them.
+ * Unlike a trade, a row carries one leg of the size only.
+ */
+const BINANCE_AGG_TRADE = [
+  col('id'), col('price'), col('qty'), drop, drop, col('rawTs'), col('buyerMaker'),
+];
+
+const BINANCE_SPOT_AGG_TRADE = [...BINANCE_AGG_TRADE, drop];
+
+/**
  * Twelve columns on every market and every kline variant. The seventh is
  * Binance's `close_time`, dropped rather than carried — see `tables.ts` — and
  * the last is theirs.
@@ -188,7 +201,7 @@ export const SERIES: Series[] = [
   // 2021-01 and 2022-07 depending on the dataset, so all of them are read
   // positionally and the header line is dropped as an unparseable timestamp.
   {
-    venue: 'binance', market: 'spot', dataset: 'trades', variant: 'default', table: 'trades', ...csv,
+    venue: 'binance', market: 'spot', dataset: 'trades', table: 'trades', ...csv,
     header: false, columns: BINANCE_SPOT_TRADE,
     project: {
       tradeId: 'id', price: 'price', size: 'qty', baseSize: 'qty',
@@ -197,7 +210,7 @@ export const SERIES: Series[] = [
     ts: 'rawTs',
   },
   {
-    venue: 'binance', market: 'perp', dataset: 'trades', variant: 'default', table: 'trades', ...csv,
+    venue: 'binance', market: 'perp', dataset: 'trades', table: 'trades', ...csv,
     margin: 'linear', header: false, columns: BINANCE_UM_TRADE,
     project: {
       tradeId: 'id', price: 'price', size: 'qty', baseSize: 'qty',
@@ -208,12 +221,32 @@ export const SERIES: Series[] = [
   // Coin-margined size is a contract count; `base_qty` is the coin amount it
   // settles, so that is the base leg and `qty` is neither base nor quote.
   {
-    venue: 'binance', market: 'perp', dataset: 'trades', variant: 'default', table: 'trades', ...csv,
+    venue: 'binance', market: 'perp', dataset: 'trades', table: 'trades', ...csv,
     margin: 'inverse', header: false, columns: BINANCE_CM_TRADE,
     project: {
       tradeId: 'id', price: 'price', size: 'qty', baseSize: 'baseQty',
       side: BINANCE_SIDE, buyerMaker: BINANCE_MAKER,
     },
+    ts: 'rawTs',
+  },
+  // Aggregated trades. On spot and USD-margined futures the size is the base
+  // amount; on coin-margined futures it is a contract count, and no leg is given.
+  {
+    venue: 'binance', market: 'spot', dataset: 'trades', variant: 'aggregated', table: 'trades', ...csv,
+    header: false, columns: BINANCE_SPOT_AGG_TRADE,
+    project: { tradeId: 'id', price: 'price', size: 'qty', baseSize: 'qty', side: BINANCE_SIDE, buyerMaker: BINANCE_MAKER },
+    ts: 'rawTs',
+  },
+  {
+    venue: 'binance', market: 'perp', dataset: 'trades', variant: 'aggregated', table: 'trades', ...csv,
+    margin: 'linear', header: false, columns: BINANCE_AGG_TRADE,
+    project: { tradeId: 'id', price: 'price', size: 'qty', baseSize: 'qty', side: BINANCE_SIDE, buyerMaker: BINANCE_MAKER },
+    ts: 'rawTs',
+  },
+  {
+    venue: 'binance', market: 'perp', dataset: 'trades', variant: 'aggregated', table: 'trades', ...csv,
+    margin: 'inverse', header: false, columns: BINANCE_AGG_TRADE,
+    project: { tradeId: 'id', price: 'price', size: 'qty', side: BINANCE_SIDE, buyerMaker: BINANCE_MAKER },
     ts: 'rawTs',
   },
   {
@@ -659,14 +692,24 @@ export const seriesFor = (file: ArchiveFile): Series | null => {
  * **Which ones is a property of the table, never of the venue.** A kline and
  * the reference-price bars carry their interval; funding carries its kind.
  * `ticks` is not an interval — it is a stream of point values — and carries
- * none. Everything else carries nothing, whatever the catalog's variant says
- * (`default` trades are just trades).
+ * none.
+ *
+ * **Trades always say whether they are aggregated.** Every trade as it happened
+ * and a venue's aggregation of them are not the same data — the second can be
+ * made from the first and never the other way — so they are two slices, as two
+ * kline intervals are. Trades the catalog gives no variant are every trade,
+ * which is `aggregated=false`: said outright, so the level is there to filter
+ * on whether or not a venue publishes the other kind. `aggregated` is `true`,
+ * and any other variant is itself.
  */
 export const extrasOf = (
   series: Series,
   variant: string,
-): { interval?: string; kind?: string } => {
+): { interval?: string; kind?: string; aggregated?: string } => {
   if (series.table === 'funding') return variant ? { kind: variant } : {};
+
+  if (series.table === 'trades')
+    return { aggregated: variant === '' ? 'false' : variant === 'aggregated' ? 'true' : variant };
 
   if (series.table === 'klines' || (REFERENCE as readonly string[]).includes(series.table))
     return variant && variant !== 'ticks' ? { interval: variant } : {};

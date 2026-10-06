@@ -627,14 +627,22 @@ const Rule = ({ rule, offered, problems, state, busy, locked, onChanged, onConfi
     }
 
     return [...byDataset.entries()].sort().flatMap(([dataset, variants]) => {
-      const each = [...variants].filter(Boolean).sort(byPeriod);
+      const each = [...variants].sort(byPeriod);
 
-      if (each.length < 2) return [{ value: dataset, label: dataset }];
+      // No variant at all: the dataset says everything there is to say.
+      if (each.length === 1 && each[0] === '') return [{ value: dataset, label: dataset }];
 
-      return [
-        { value: dataset, label: `${dataset} (any)` },
-        ...each.map(one => ({ value: `${dataset}\u0000${one}`, label: `${dataset} (${one})` })),
-      ];
+      /**
+       * **A variant is always shown, even where it is the only one** — `klines
+       * (1m)` — since which one a rule would take is worth seeing before taking
+       * it. The data with no variant, where the dataset also has ones that are
+       * named, is its default: every trade, beside the aggregated ones.
+       */
+      const named = each.map(one => ({
+        value: `${dataset}\u0000${one}`, label: `${dataset} (${one === '' ? 'default' : one})`,
+      }));
+
+      return each.length === 1 ? named : [{ value: dataset, label: `${dataset} (any)` }, ...named];
     });
   }, [offered]);
 

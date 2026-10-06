@@ -45,8 +45,8 @@ converting seconds to microseconds is mechanical and reversible. Deciding a 50-l
 ## Path convention
 
 ```
-<vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…]/@/<YYYYMM>.parquet
-<vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…]/<symbol>/<YYYYMM>.parquet
+<vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…][/aggregated=…]/@/<YYYYMM>.parquet
+<vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…][/aggregated=…]/<symbol>/<YYYYMM>.parquet
 …/<@ or symbol>/<YYYYMM>.pre.parquet     the month's first hours, from the month before
 …/<@ or symbol>/<YYYYMM>.post.parquet    the month's last hours, from the month after
 ```
@@ -477,9 +477,14 @@ Notes on the ones whose boundaries are not obvious:
   depth it needs is its decision. No venue's books are mapped yet.
 - **`funding` carries a `kind`** of `realised` or `predicted`. Gate publishes both; conflating
   them would invent a series.
-- **`aggTrades` is not a table.** Binance's aggregated form was verified exactly reconstructible
-  from `trades` — 52,231 spot and 113,501 futures aggregates rebuilt from their published id
-  ranges with zero mismatches — and `trades` covers the same symbols and starts earlier.
+- **Trades say whether they are aggregated**, as a level of their path: `aggregated=false` for
+  every trade as it happened, `aggregated=true` for a venue's aggregation of them. The two are not
+  the same data — the second can be made from the first and never the other way, as a 1h kline can
+  from 1m ones — so they are two slices of one table, each stocked where it is downloaded, and
+  neither stands in for the other. Trades the catalog gives no variant are every trade, at every
+  venue; the level is there all the same, so it can be filtered on. Binance publishes both. An
+  aggregated row is the trades one order filled at one price: its id is the aggregate's, and the
+  ids of the first and last trade it stands for have no column and are not kept.
 
 **`margin` says what a contract settles in** — `linear` (its USD-like quote) or `inverse` (the
 coin) — and is NULL on spot and options. It is carried by every table whose numbers mean something
