@@ -782,7 +782,9 @@ describe('exclusions', () => {
    *
    * The 85 are gate's 2021-07 month, where the futures URL served spot files;
    * the two others are zero-byte upload tests left in the bucket. Both classes
-   * have to survive a rebuild, because gate still serves the same bytes.
+   * have to survive a rebuild, because gate still serves the same bytes. Bybit's
+   * one is a file of one instrument left in another's folder, refused on each of
+   * the venue's servers.
    *
    * **Given room deliberately.** This builds a whole second catalog — every
    * migration, seeds included — and it cannot use `seedData: false`, because the
@@ -808,6 +810,11 @@ describe('exclusions', () => {
 
     expect(substituted).toHaveLength(85);
     expect(substituted).toContain('futures_usdt/trades/202107/SUN_USDT-202107.csv.gz');
+
+    for (const bybit of venueIds(fresh, 'bybit'))
+      expect(exclusionsFor(fresh, bybit)).toEqual(['trading/DOTUSD/DOTUSDT2021-12-06.csv.gz']);
+
+    expect(venueIds(fresh, 'bybit').length).toBeGreaterThan(0);
 
     fresh.close();
   }, 60_000);

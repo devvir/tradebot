@@ -50,7 +50,8 @@ counts while every version it names is still the catalog's.
 
 **A month stocked without a neighbour's hours is stocked.** Its own files have given the vault
 everything they hold; what it lacks is in the neighbour's files. A partition whose ledger line says
-`updating` is having its files changed and is not stocked.
+`updating` is having its files changed and is not stocked; one that says `outdated` is waiting to be
+stocked again from these very archives, and is not stocked either.
 
 **Any rendering will do.** The same data is often published at more than one grain, or per
 instrument and as a market's bundle, and the vault is built from one of them. Which one is the

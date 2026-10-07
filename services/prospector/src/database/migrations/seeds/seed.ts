@@ -258,7 +258,7 @@ const rows = (venue: string, table: string): Record<string, string>[] => {
  * them.
  *
  * **A field is quoted only where it has to be**, which is where it contains a
- * comma or a quote — okx's `400,incremental` variant and nothing else today. A
+ * comma or a quote — okx's `incremental,400` variant and nothing else today. A
  * doubled quote inside a quoted field is one literal quote, as everywhere else
  * that writes CSV.
  */

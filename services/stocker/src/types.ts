@@ -1,6 +1,6 @@
 /** A canonical table. One table is one schema and one queryable dataset root. */
 export type Table =
-  | 'trades' | 'quotes' | 'orderBook' | 'orderBookSnapshot' | 'depthBands' | 'klines'
+  | 'trades' | 'quotes' | 'orderBook' | 'orderBookSnapshot' | 'orderBookBands' | 'klines'
   | 'markPrice' | 'indexPrice' | 'premiumIndex' | 'volatilityIndex'
   | 'optionMarkPrice' | 'optionTicker'
   | 'funding' | 'borrowing' | 'openInterest' | 'liquidations' | 'settlement';
@@ -220,13 +220,12 @@ export interface VaultKey {
   venue:     string;
   market:    Market;
   interval?: string;
+
+  /** Which of a dataset's kinds: funding `realised` or `predicted`, a book `incremental`, `snapshot` or `bands`. */
   kind?:     string;
 
-  /** Order books only: how many levels a side the venue publishes — `400`, `full`. */
+  /** Order books only: how far the book goes — levels a side (`400`, `full`), or the widest band (`5pct`). */
   depth?:    string;
-
-  /** Order books only: `incremental` for an image and the changes since, `snapshot` for an image a tick. */
-  mode?:     string;
 
   /** Trades only: `false` for every trade as it happened, `true` for a venue's aggregation of them. */
   aggregated?: string;

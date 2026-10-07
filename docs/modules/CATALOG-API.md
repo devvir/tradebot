@@ -27,13 +27,13 @@ vocabulary (`perp`, `klines`, `1m`); the translation from `futures_usdt/candlest
 the prospector adapter that read it. See [PROSPECTOR.md](../services/PROSPECTOR.md).
 
 **`variant` is the level below the dataset, whatever that level happens to be.** For klines it is the
-bar length; for books it is the depth and the kind. It is stored as one string (`500,incremental`) and
+bar length; for books it is the kind and the depth. It is stored as one string (`incremental,500`) and
 answered as an object naming each level:
 
 | dataset | variant |
 |---|---|
 | `klines`, `markPrice`, `indexPrice`, `premiumIndex` | `{ "interval": "1m" }` |
-| `books` | `{ "depth": "400", "mode": "incremental" }` |
+| `books` | `{ "kind": "incremental", "depth": "400" }` — the kind is `incremental`, `snapshot` or `bands` |
 | `trades` | `{ "aggregation": "default" }` or `"aggregated"` |
 | `funding` | `{ "kind": "realised" }` |
 | `quotes`, `liquidations`, `borrowing`, … | `{}`: no level below the dataset |
@@ -220,6 +220,12 @@ gate/spot/trades/@/202107/gate|spot|trades|@|202107.csv.gz
 - `date` is the file's period, a month (`202001`) or a day (`20200101`).
 - `.partNN` is a piece of a period a venue splits, as bitget's trades and gate's hourly books are. It
   sits before the extension, where a downloaded file's name carries it.
+- `.ext` is how the file is wrapped, said the same way whatever its venue wrote, and it is always
+  there. It is the last extension, and before it the one saying what a compressed stream is: `.zip`,
+  `.csv.gz`, `.tar.gz`. Whatever a venue writes in front of an archive's extension is dropped. A
+  file whose venue names it wrongly, or not at all, is given the ending of what it holds —
+  `.json.gz` for a gzip of JSON lines named `.gz`, `.txt` for text with no extension — so a name is
+  matched as `date[.partNN].*` and no reader keeps a list of endings or allows for a missing one.
 - The name repeats the whole prefix but the letter, so a name read alone says everything.
 
 **Keys sort as bytes, as S3's do**, and that order is instrument, then date, then part. So

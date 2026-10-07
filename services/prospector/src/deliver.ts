@@ -28,7 +28,7 @@ export const deliver = (url: string, read: PageRead | null): Promise<Carried> =>
 // ── Internals ─────────────────────────────────────────────────────────────────
 
 /** A listing answers in about a second; anything not replying by now is wedged. */
-const ANSWER_MS = 15_000;
+let ANSWER_MS = 15_000;
 
 
 /**
@@ -239,11 +239,24 @@ const headOverH2 = (url: string): Promise<Carried> =>
       over = true;
       carrier.open--;
       clearTimeout(answer);
+
+      // Nothing new goes on a retired connection, so the last stream off it is the end of it.
+      if (carrier.retired && carrier.open === 0 && ! carrier.session.destroyed) carrier.session.destroy();
     };
 
+    /**
+     * **A stream nobody answered takes its connection out of use.** A
+     * connection can die without either end being told, and every stream sent
+     * on it afterwards waits out the deadline and fails — so one left in the
+     * pool fails every probe given to it, for as long as the service runs. The
+     * next probe opens another. A healthy connection that was merely slow once
+     * costs a handshake.
+     */
     const answer = setTimeout(() => {
-      finish();
+      carrier.retired = true;
+
       stream.close(h2.NGHTTP2_CANCEL);
+      finish();
       reject(unanswered());
     }, ANSWER_MS);
 
@@ -366,3 +379,6 @@ const plain = (raw: Record<string, string | string[] | number | undefined>): Rec
 // ── Test access ───────────────────────────────────────────────────────────────
 
 export const _test_readAll = readAll;
+
+/** The answer deadline, for a test that cannot wait it out; null puts it back. */
+export const _test_answerWithin = (ms: number | null): void => { ANSWER_MS = ms ?? 15_000; };

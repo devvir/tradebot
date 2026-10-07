@@ -235,8 +235,14 @@ describe('a batch read from gathered files', () => {
     return { absolute, file: { ...parseKey(key)!, container: 'plain' }, size: (await stat(absolute)).size, mtimeMs: 0 };
   };
 
+  /** Every row, in an order of its own: rows of one instrument at one time are written in no order to hold them to. */
   const rowsOf = async (path: string): Promise<string> =>
-    JSON.stringify((await conn.runAndReadAll(`SELECT * FROM read_parquet('${path}')`)).getRows(),
+    JSON.stringify((await conn.runAndReadAll(`SELECT * FROM read_parquet('${path}') ORDER BY ALL`)).getRows(),
+      (_k, v) => (typeof v === 'bigint' ? String(v) : v));
+
+  /** The order the file is written in: by instrument, then by time. */
+  const orderOf = async (path: string): Promise<string> =>
+    JSON.stringify((await conn.runAndReadAll(`SELECT symbol, ts FROM read_parquet('${path}')`)).getRows(),
       (_k, v) => (typeof v === 'bigint' ? String(v) : v));
 
   const columnsOf = async (path: string): Promise<string[]> =>
@@ -270,6 +276,7 @@ describe('a batch read from gathered files', () => {
     expect(both.done).toEqual(both.plain);
     expect(await columnsOf(both.gathered)).toEqual(await columnsOf(both.apart));
     expect(await rowsOf(both.gathered)).toBe(await rowsOf(both.apart));
+    expect(await orderOf(both.gathered)).toBe(await orderOf(both.apart));
   });
 
   it('is what the files apart give, for files with a header', async () => {
@@ -293,6 +300,7 @@ describe('a batch read from gathered files', () => {
     expect(both.done).toEqual(both.plain);
     expect(both.done.files).toBe(2);
     expect(await rowsOf(both.gathered)).toBe(await rowsOf(both.apart));
+    expect(await orderOf(both.gathered)).toBe(await orderOf(both.apart));
   });
 
   /**

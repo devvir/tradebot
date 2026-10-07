@@ -42,7 +42,8 @@ Stores every partition the vault's ledger holds that cold storage does not have 
 
 1. **Read the ledger.** Each partition it lists, at the revision it lists, is looked up in the
    record. One already stored is done. One the ledger says is `updating` — its files are being
-   changed — is not listed at all.
+   changed — or `outdated` — its files are of an older making, waiting to be stocked again — is
+   not listed at all.
 2. **Find its files.** They are found on disk and measured once: what they weigh is what Mega has to
    hold for them to count. A partition the vault does not hold as its ledger says is left out and
    counted.

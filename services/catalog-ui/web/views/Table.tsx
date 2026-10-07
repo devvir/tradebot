@@ -121,8 +121,8 @@ export const Table = <T,>({ caption, columns, rows, empty }: {
  * A span, from the oldest period to the newest file anybody has seen.
  *
  * **Both ends are measurements**, so a variant that stopped beside the one that
- * replaced it reads as two adjacent spans — bybit's books at `500,incremental`
- * to 2025-08-20 and `200,incremental` from the 21st — which is exactly what
+ * replaced it reads as two adjacent spans — bybit's books at `incremental,500`
+ * to 2025-08-20 and `incremental,200` from the 21st — which is exactly what
  * somebody comes to this table for.
  */
 export const Span = ({ first, last }: { first: string | null; last: string | null }) =>

@@ -29,9 +29,9 @@ export const parseKey = (key: string): ArchiveFile | null => {
 
   if (! match) return null;
 
-  const [, date, part, ext] = match as unknown as [string, string, string | undefined, string | undefined];
+  const [, date, part, inner, ext] = match as unknown as [string, string, string | undefined, string | undefined, string];
   const grain     = GRAINS[date.length];
-  const container = CONTAINERS[ext ?? ''];
+  const container = containerOf(inner, ext);
 
   if (! grain || ! container) return null;
 
@@ -109,22 +109,29 @@ export const lastDayOf = (month: string): string => {
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
-/** `date[.partNN][.ext]` — the date's length is the grain. Gate's slices have no extension at all. */
-const TAIL = /^(\d{6}|\d{8}|\d{10}|\d{12})(?:\.part(\d+))?(?:\.(zip|csv\.gz|tar\.gz|gz|csv|data\.zip|trades\.csv\.zip|OHLC\.csv\.zip))?$/;
+/**
+ * `date[.partNN].ext` — the date's length is the grain. The ending is how the
+ * file is wrapped, and the catalog gives every file a valid one: an extension,
+ * or two where a compressed stream says what it is (`.csv.gz`, `.tar.gz`).
+ * Anything after that — `.bak`, a download's `.part` — is not a file of the
+ * archive.
+ */
+const TAIL = /^(\d{6}|\d{8}|\d{10}|\d{12})(?:\.part(\d+))?\.(?:([0-9a-z]*[a-z][0-9a-z]*)\.(?=(?:gz|bz2|xz|zst)$))?(?!(?:bak|part\d*)$)([0-9a-z]*[a-z][0-9a-z]*)$/;
 
 const GRAINS: Record<number, Grain> = { 6: 'monthly', 8: 'daily', 10: 'hourly', 12: 'minutely' };
 
-/** What wraps the bytes, from the extension. */
-const CONTAINERS: Record<string, string> = {
-  'zip':      'zip',
-  'data.zip': 'zip',
-  'trades.csv.zip': 'zip',
-  'OHLC.csv.zip': 'zip',
-  'csv.gz':   'gzip',
-  'gz':       'gzip',
-  'tar.gz':   'tar.gz',
-  'csv':      'plain',
-  '':         'plain',
+/**
+ * What wraps the bytes, from the ending: an archive, a compressed stream, or
+ * nothing at all — and undefined where it is a wrapping this cannot open.
+ */
+const containerOf = (inner: string | undefined, ext: string): string | undefined => {
+  if (ext === 'zip') return 'zip';
+  if (ext === 'gz') return inner === 'tar' ? 'tar.gz' : 'gzip';
+
+  return UNOPENED.has(ext) ? undefined : 'plain';
 };
+
+/** Compressors nothing here opens yet. */
+const UNOPENED = new Set(['bz2', 'xz', 'zst']);
 
 const bundleMark = (bundle: Bundle): string => (bundle === 'market' ? '@' : '*');

@@ -7,54 +7,8 @@ import { bybitInstruments } from './bybit/instruments';
 import { declare } from './declare';
 
 /**
- * Bybit's archive is a standard S3 bucket, surveyed at its **origin** rather
- * than through the CDN in front of it.
- *
- * `public.bybit.com` is CloudFront, and CloudFront answers no listing API at
- * all: every query parameter is ignored, `?prefix=` returns the same browsable
- * HTML index as `/`, and the index names files while saying nothing about them.
- * It also bans an address that asks too fast — with an HTML error page naming no
- * key, and no budget stated in any header.
- *
- * The bucket behind it is publicly listable, and answers the ordinary listing
- * API with `prefix`, `delimiter`, `max-keys` and `marker` all honoured. Three
- * things follow, and together they are why the origin is the address used here:
- *
- * - **Listings carry metadata.** Size, last-modified and a real md5 ETag arrive
- *   with every key, which is why `probes` is false below.
- * - **A listing is a slice of the keyspace**, so a partition is a marker walked
- *   in a straight line rather than a tree traversal, and the shared `s3` scanner
- *   serves it with no dialect of its own.
- * - **The block is a property of the edge, not of the bucket.** Both have been
- *   observed at the same instant: CloudFront refusing every request from this
- *   address while the origin answered normally.
- *
- * The path-style URL is deliberate. `public.bybit.com.s3-ap-southeast-1.
- * amazonaws.com` puts the bucket's own dots in the hostname, where the wildcard
- * certificate does not reach and TLS fails outright; addressing the bucket as a
- * path keeps the hostname clean.
- *
- * Eight trees, and descent finds all of them without any being named here:
- *
- * ```
- * trading/<SYMBOL>/<SYMBOL><yyyy-mm-dd>.csv.gz              derivatives trades
- * spot/<SYMBOL>/<SYMBOL>-<yyyy-mm>.csv.gz                   spot, monthly
- *                <SYMBOL>_<yyyy-mm-dd>.csv.gz               spot, daily
- * premium_index/<SYMBOL>/<SYMBOL><date>_premium_index.csv.gz
- * spot_index/<SYMBOL>/<SYMBOL><date>_index_price.csv.gz
- * kline_for_metatrader4/<SYMBOL>/<year>/<SYMBOL>_<interval>_<from>_<to>.csv.gz
- * trade/option/<UNDERLYING>/<date>_<UNDERLYING>_USDT.trades.csv.zip
- * mark_kline/option/<UNDERLYING>/<date>_<UNDERLYING>_USDT.OHLC.csv.zip
- * ```
- *
- * The last two are options, and the HTML index exposes neither — they are
- * reachable and promised to nobody, which is a reason to take them sooner rather
- * than to skip them.
- *
- * The one known bad file, `trading/DOTUSD/DOTUSDT2021-12-06.csv.gz`, is a
- * truncated duplicate of a file served correctly under `trading/DOTUSDT/`. It is
- * a single misfiled artifact rather than a pattern, so it belongs in the
- * `exclusion` table rather than in code here.
+ * Bybit's archive, listed at the bucket behind its CDN — the CDN answers no
+ * listing. The venue is described in `docs/venues/BYBIT.md`.
  */
 export const bybitPrimary: Adapter = declare({
   /** The shared listing context — this venue differs by address, not by shape. */
@@ -64,57 +18,17 @@ export const bybitPrimary: Adapter = declare({
   host:    'primary',
   scanner: s3,
 
-  /**
-   * What is in the bucket but is not archive.
-   *
-   * - `backup/` is a copy: one symbol's `trading/` files, served correctly under
-   *   `trading/` as well.
-   * - A key with no `/` in it sits at the bucket root, which serves the browsing
-   *   UI rather than the archive. A directory can never match, since every
-   *   prefix carries a trailing slash.
-   * - **The four 2021 expiries** — `BTCUSDU21`, `BTCUSDZ21`, `ETHUSDU21`,
-   *   `ETHUSDZ21` — are abandoned rather than archived, and nothing in them can
-   *   be relied on. See `docs/venues/BYBIT.md`.
-   */
+  /** Not archive: the `backup/` copy, keys at the bucket root, and the four abandoned 2021 expiries. */
   accepts: (path) => ! /^(?:backup\/|[^/]+$)/.test(path)
     && ! /^trading\/(?:BTC|ETH)USD[UZ]21\//.test(path),
 
-  /**
-   * **Nothing to probe.** A listing here states size, ETag and last-modified
-   * for every key, so a HEAD would ask for what the listing already gave.
-   */
+  /** A listing states size, ETag and last-modified, so there is nothing to probe. */
   probes:  false,
 
-  /**
-   * **No limit found.** Measured 2026-09-30 with HEAD probes: ~1,190/s from
-   * the remote and ~1,800/s from here, without a single throttling answer. The
-   * ban bybit is known for (~40/s) is its CDN and its trading API, not this
-   * bucket. A probe takes ~300 ms from here, so what is in flight sets the
-   * rate: 600 at once held ~1,800/s on missing keys.
-   */
+  /** No limit was found on this bucket — measured in `docs/venues/BYBIT.md`. */
   pacing:  { perSecond: 2000, concurrency: 500 },
 
-  /**
-   * Walking, every update — see `docs/services/PROSPECTOR.md`, *How each venue updates*.
-   */
-
-  /**
-   * How far behind today this venue is worth asking about.
-   *
-   * **Measured from the venue's own `Last-Modified`**, 2026-09-25 over the files
-   * of 2026-09-15 to 21: p99 26.0 hours after the dated day begins, over 16,571 files across both of this venue's servers.
-   *
-   * **Every venue publishes more than a day after its period begins**, so a pass
-   * running in the small hours finds nothing for yesterday whatever the catalog's
-   * newest file suggests — a snapshot taken in the afternoon says only that the
-   * file had arrived by the afternoon.
-   *
-   * **A day further back again**, because a publishing hour that drifts later
-   * would put the frontier in front of the archive. Asking early costs a probe
-   * per series per night, every night, for a period that cannot exist yet; asking
-   * late costs the catalog's edge a day, and loses nothing — the frontier
-   * advances daily and the patience window covers what it has not reached.
-   */
+  /** Days behind today a probing pass stops asking: the venue's measured publishing delay, and a day more. */
   probingLag: 3,
 
   /** What bybit lists today — see `bybit/instruments.ts`. */
@@ -124,29 +38,15 @@ export const bybitPrimary: Adapter = declare({
   inspectUrl: (path) => inspect(path),
 
   /**
-   * `{MONTH_LAST_DAY}` — the last day of the month being generated.
-   *
-   * `kline_for_metatrader4` names a whole month by both its ends,
-   * `ADAUSDT_15_2021-01-01_2021-01-31.csv.gz`, and February is why it cannot be
-   * a literal in the pattern. Nothing else on this venue, or any other here,
-   * spells a period that way.
+   * `{MONTH_LAST_DAY}`: MetaTrader klines name a month by both its ends, and
+   * February is why the last is not a literal.
    */
   slotsFor: (at) => ({
     '{MONTH_LAST_DAY}': String(new Date(Date.UTC(+at.slice(0, 4), +at.slice(4, 6), 0)).getUTCDate())
       .padStart(2, '0'),
   }),
 
-  /**
-   * The date is wherever it falls in the name rather than at the end of it —
-   * `premium_index` puts a suffix after it and MetaTrader klines put a second
-   * date after the first — so the **first** date in the filename is the one
-   * that counts, and a range is dated by where it starts.
-   *
-   * **A month is dated as a month.** A file covering all of November is
-   * `202211`, not `20221101` — it is not a file for the 1st, and may hold
-   * nothing for that day. Six characters sort correctly against that month's
-   * eight-character days, because a month is their prefix.
-   */
+  /** The first date in the filename; a month with no day is dated as the month. */
   dateOf: (path) => {
     const file = path.slice(path.lastIndexOf('/') + 1);
 
@@ -162,26 +62,7 @@ export const bybitPrimary: Adapter = declare({
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
-/**
- * Bybit, which is four shapes rather than one.
- *
- * The others put the instrument in a directory and repeat it in the filename
- * with a separator. Bybit does three different things:
- *
- * - **the instrument runs straight into the date** — `BTCUSD2019-10-01_…` — so
- *   there is no separator to anchor on and the directory name is what says where
- *   the instrument ends;
- * - **options are dated first** and keyed by the underlying coin:
- *   `trade/option/BTC/2026-08-03_BTC_USDT.trades.csv.zip`;
- * - **spot publishes both grains** under one directory, told apart by the
- *   separator — `-2026-08` monthly against `_2026-08-03` daily.
- *
- * - **`kline_for_metatrader4` names a range** rather than a date —
- *   `BTCUSDT_15_2020-01-01_2020-01-31.csv.gz`. Every one of the 4,423 files in
- *   the archive is a whole calendar month, five intervals, no exceptions, so it
- *   is an ordinary monthly series that happens to spell out its own last day —
- *   which is what `{MONTH_LAST_DAY}` renders.
- */
+/** Read a path as one of bybit's four shapes — see `docs/venues/BYBIT.md`. */
 const inspect = (path: string): Inspection => {
   const option = BYBIT_OPTION.exec(path);
 
@@ -212,28 +93,17 @@ const inspect = (path: string): Inspection => {
   if (range) {
     const { symbol, interval, year, month, last } = range.groups!;
 
-    /**
-     * **A range that is not a whole month is not this series.** The venue has
-     * never published one, and a pattern that assumed otherwise would generate
-     * keys for months it would then report as missing.
-     */
+    /** A range that is not a whole month is not this series. */
     if (+last! !== new Date(Date.UTC(+year!, +month!, 0)).getUTCDate()) return { of: 'unknown', date: null };
 
     return {
       of: 'series', date: `${year}${month}`,
       found: {
-        /**
-         * **These are the perpetual's bars.** The path names no market, and the
-         * symbols are spelled as spot's are; the bars themselves match the
-         * perpetual's trade tape and not spot's.
-         */
+        /** The path names no market: these are the perpetual's bars. */
         market:  'perp',
         dataset: 'klines',
 
-        /**
-         * **Bybit's MetaTrader feed counts bare minutes** — `_15_` — and means
-         * nothing else by the number. Every other venue writes a unit.
-         */
+        /** A bare number here is minutes. */
         variant: canonicalInterval(interval!) ?? interval!,
         symbol:  symbol!,
         pattern: `kline_for_metatrader4/${symbol}/{YYYY}/{SYMBOL}_${interval}`
@@ -251,19 +121,9 @@ const BYBIT_OPTION = new RegExp(
   + '/(?<date>\\d{4}-\\d{2}-\\d{2})_[^/]+\\.[a-z.]+$');
 
 /**
- * `premium_index/BTCUSD/BTCUSD2019-10-01_premium_index.csv.gz` — no separator at
- * all, so the date is what says where the instrument ends.
- *
- * **An instrument name is letters, digits, dashes and underscores** — bybit
- * lists match-outcome markets like `WC_ARG_ALG_USDT-17JUN26` — so its own
- * punctuation says nothing about where it ends. The date does.
- *
- * **The directory is not required to agree with the filename**, because at least
- * once it does not: bybit renamed `DATAUSDT` to `DATAOLD01USDT`, moved the
- * directory and left every filename as it was — 527 files across eighteen
- * months, and there is no `trading/DATAUSDT/` at all. Anchoring on the date
- * rather than on the directory repeating itself reads them, and the directory
- * stays literal in the pattern, which is what the URL needs.
+ * `premium_index/BTCUSD/BTCUSD2019-10-01_premium_index.csv.gz` — no separator, so
+ * the date says where the instrument ends. The directory need not repeat the
+ * instrument: a renamed one does not.
  */
 const BYBIT_JOINED = new RegExp(
   '^(?<dataset>premium_index|spot_index|trading)/[^/]+'
@@ -281,13 +141,7 @@ const BYBIT_RANGE = new RegExp(
   '^kline_for_metatrader4/[^/]+/\\d{4}/(?<symbol>[A-Za-z0-9_-]+)_(?<interval>\\d+)'
   + '_(?<year>\\d{4})-(?<month>\\d{2})-01_\\k<year>-\\k<month>-(?<last>\\d{2})\\.csv\\.gz$');
 
-/**
- * Which market a bybit dataset belongs to.
- *
- * `trading` is the perpetual trade tape and `premium_index` its funding input,
- * so both are linear; `spot_index` is spot's. The venue does not put a market in
- * the path, so this is the one place its own arrangement has to be written down.
- */
+/** Which market a dataset is: the path names none. */
 const marketOf = (dataset: string): string =>
   (dataset === 'spot_index' ? 'spot' : 'linear');
 
@@ -304,12 +158,7 @@ const read = (
   return canonical ? asSeries(path, { ...canonical, symbol, date }) : { of: 'unknown', date: null };
 };
 
-/**
- * Bybit's own words for a market, in the catalog's.
- *
- * `linear` and `inverse` are both perpetual swaps, differing in what settles
- * them — a property of the instrument rather than of the market.
- */
+/** Bybit's words for a market, in the catalog's. */
 const MARKET_OF: Record<string, string> = {
   spot:    'spot',
   linear:  'perp',
@@ -317,15 +166,7 @@ const MARKET_OF: Record<string, string> = {
   option:  'option',
 };
 
-/**
- * Bybit's own words for a dataset, in the catalog's.
- *
- * **The three index series are minute bars, and they say so.** Each carries a
- * `period` column reading `1` and its rows are a measured 60 seconds apart —
- * 1,440 a day, checked across twelve files of each — so the length is stated by
- * the data rather than declared from outside it. Option mark bars are the same,
- * measured at a uniform 60,000 ms between `open_time` values.
- */
+/** Bybit's words for a dataset, in the catalog's. The index and mark series are one-minute bars. */
 const MEANINGS: Record<string, { dataset: string; variant?: string }> = {
   trading:       { dataset: 'trades' },
   trade:         { dataset: 'trades' },

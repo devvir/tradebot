@@ -1,4 +1,5 @@
 import { marginOf } from './margin';
+import { rootOf } from './tables';
 import type { ArchiveFile, Series } from '../types';
 
 /**
@@ -213,9 +214,9 @@ const lines  = { format: 'lines' }  as const;
 
 /**
  * The moment a file is named by, where no row states one: the part the catalog
- * gives the file, which is the last thing in its name.
+ * gives the file, which is the last thing in its name before the extension.
  */
-const NAMED_AT = `regexp_extract(filename, '\\.part(\\d+)$', 1)`;
+const NAMED_AT = `regexp_extract(filename, '\\.part(\\d+)\\.[a-z0-9]+$', 1)`;
 
 
 // ── Order books ───────────────────────────────────────────────────────────────
@@ -356,7 +357,7 @@ export const SERIES: Series[] = [
   },
   // `timestamp` here is a datetime string (`2026-07-29 00:00:01`), not an epoch.
   {
-    venue: 'binance', market: 'perp', dataset: 'depthBands', table: 'depthBands', ...csv,
+    venue: 'binance', market: 'perp', dataset: 'books', variant: 'bands,5pct', table: 'orderBookBands', ...csv,
     header: true,
     project: { percentage: 'percentage', depth: 'depth', notional: 'notional' },
     ts: 'timestamp',
@@ -698,7 +699,7 @@ export const SERIES: Series[] = [
   // futures sign the size instead, negative for an ask. The id rises through a
   // file and orders the changes inside one tenth of a second.
   {
-    venue: 'gate', market: 'spot', dataset: 'books', variant: 'full,incremental', table: 'orderBook', ...csv,
+    venue: 'gate', market: 'spot', dataset: 'books', variant: 'incremental,full', table: 'orderBook', ...csv,
     header: false, columns: GATE_SPOT_BOOK,
     project: {
       action: 'action', side: `CASE trim(side) WHEN '1' THEN 'ask' WHEN '2' THEN 'bid' END`,
@@ -707,7 +708,7 @@ export const SERIES: Series[] = [
     ts: 'rawTs',
   },
   ...(['perp', 'future'] as const).map((market): Series => ({
-    venue: 'gate', market, dataset: 'books', variant: 'full,incremental', table: 'orderBook', ...csv,
+    venue: 'gate', market, dataset: 'books', variant: 'incremental,full', table: 'orderBook', ...csv,
     header: false, columns: GATE_FUT_BOOK,
     project: {
       action: 'action',
@@ -722,14 +723,14 @@ export const SERIES: Series[] = [
   // changed; both are seconds in the early files and milliseconds in the later
   // ones.
   {
-    venue: 'gate', market: 'spot', dataset: 'books', variant: '20,snapshot', table: 'orderBookSnapshot', ...ndjson,
+    venue: 'gate', market: 'spot', dataset: 'books', variant: 'snapshot,20', table: 'orderBookSnapshot', ...ndjson,
     header: true,
     fields: { id: 'BIGINT', current: 'VARCHAR', asks: 'VARCHAR[][]', bids: 'VARCHAR[][]' },
     project: { asks: 'asks', bids: 'bids', sequence: 'id' },
     ts: '"current"',
   },
   {
-    venue: 'gate', market: 'perp', dataset: 'books', variant: '20,snapshot', table: 'orderBookSnapshot', ...ndjson,
+    venue: 'gate', market: 'perp', dataset: 'books', variant: 'snapshot,20', table: 'orderBookSnapshot', ...ndjson,
     header: true,
     fields: {
       id: 'BIGINT', current: 'VARCHAR',
@@ -957,10 +958,11 @@ export const seriesFor = (file: ArchiveFile): Series | null => {
  * `ticks` is not an interval — it is a stream of point values — and carries
  * none.
  *
- * **A book says how deep it is and in which mode it is published**: the
- * catalog's variant is the two together — `400,incremental`, `20,snapshot` —
- * and each is a level, `depth=` and `mode=`, named as the catalog names them. A venue's two depths are two datasets of different
- * cost, and an image a tick is not read the way a stream of changes is.
+ * **A book says which kind it is and how deep**: the catalog's variant is the
+ * two together — `incremental,400`, `snapshot,20`, `bands,5pct` — and each is a
+ * level, `kind=` and then `depth=`, named as the catalog names them. A venue's
+ * two depths are two datasets of different cost, and an image a tick is not
+ * read the way a stream of changes is.
  *
  * **Trades always say whether they are aggregated.** Every trade as it happened
  * and a venue's aggregation of them are not the same data — the second can be
@@ -973,13 +975,13 @@ export const seriesFor = (file: ArchiveFile): Series | null => {
 export const extrasOf = (
   series: Series,
   variant: string,
-): { interval?: string; kind?: string; aggregated?: string; depth?: string; mode?: string } => {
+): { interval?: string; kind?: string; aggregated?: string; depth?: string } => {
   if (series.table === 'funding') return variant ? { kind: variant } : {};
 
-  if (series.table === 'orderBook' || series.table === 'orderBookSnapshot') {
-    const [depth, ...mode] = variant.split(',');
+  if (rootOf(series.table) === 'orderBook') {
+    const [kind, ...depth] = variant.split(',');
 
-    return { ...(depth ? { depth } : {}), ...(mode.length ? { mode: mode.join(',') } : {}) };
+    return { ...(kind ? { kind } : {}), ...(depth.length ? { depth: depth.join(',') } : {}) };
   }
 
   if (series.table === 'trades')

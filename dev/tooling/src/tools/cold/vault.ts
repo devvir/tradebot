@@ -29,8 +29,9 @@ import type { Bundle, Grain, Stocked, VaultFile } from './types';
  * where the vault has no ledger.
  *
  * A partition whose last line says `updating` in place of a revision is having
- * its files changed, or was when something stopped it. It is not stocked, and
- * is not answered here.
+ * its files changed, or was when something stopped it; one whose last line says
+ * `outdated` holds files of an older making, waiting to be stocked again.
+ * Neither is stocked, and neither is answered here.
  */
 export const stockedIn = (vaultRoot: string): Stocked[] | null => {
   const rows = rowsOf(path.join(vaultRoot, LEDGER));
@@ -40,7 +41,7 @@ export const stockedIn = (vaultRoot: string): Stocked[] | null => {
   const last = new Map<string, Stocked>();
 
   for (const row of rows) {
-    if (row['revision'] === UPDATING) {
+    if (row['revision'] === UPDATING || row['revision'] === OUTDATED) {
       last.delete(row['partition']!);
 
       continue;
@@ -201,6 +202,7 @@ export const errorsIn = (vaultRoot: string): string[] => {
 
 /** What a ledger line says in place of a revision while its partition's files are being changed. */
 const UPDATING = 'updating';
+const OUTDATED = 'outdated';
 
 /** What a ledger line says of a side a neighbouring month holds, where that month was not there to be read. */
 export const MISSING = 'missing';

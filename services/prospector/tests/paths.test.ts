@@ -128,7 +128,7 @@ describe('htx', () => {
 
     /** The depth is a path level, and it is what tells two books apart. */
     expect(seen.found).toMatchObject({
-      market: 'spot', dataset: 'books', variant: '400,incremental',
+      market: 'spot', dataset: 'books', variant: 'incremental,400',
     });
   });
 });
@@ -198,7 +198,7 @@ describe('htx, which has two trees', () => {
       'historical_data/spot/daily/orderbook/lv400/M-USDT/M-USDT-l2orderbook-400lv-2026-07-13.tar.gz');
 
     expect(seen.found).toMatchObject({
-      market: 'spot', dataset: 'books', variant: '400,incremental', symbol: 'M-USDT',
+      market: 'spot', dataset: 'books', variant: 'incremental,400', symbol: 'M-USDT',
     });
   });
 
@@ -390,7 +390,7 @@ describe('bybit, second host', () => {
     const seen = roundTrips(bybitSecondary.inspectUrl!, 'linear/BTCUSDT/2025-08-21_BTCUSDT_ob200.data.zip');
 
     expect(seen.found).toMatchObject({
-      market: 'perp', dataset: 'books', variant: '200,incremental', symbol: 'BTCUSDT',
+      market: 'perp', dataset: 'books', variant: 'incremental,200', symbol: 'BTCUSDT',
     });
 
     expect(seen.date).toBe('20250821');
@@ -410,8 +410,8 @@ describe('bybit, second host', () => {
      * depth, which is the variant and stays literal in the pattern.
      */
     expect(five.found.market).toBe('perp');
-    expect(five.found.variant).toBe('500,incremental');
-    expect(two.found.variant).toBe('200,incremental');
+    expect(five.found.variant).toBe('incremental,500');
+    expect(two.found.variant).toBe('incremental,200');
     expect(five.found.pattern).toContain('ob500');
     expect(two.found.pattern).toContain('ob200');
     expect(five.found.pattern).not.toBe(two.found.pattern);
@@ -435,7 +435,7 @@ describe('kucoin', () => {
 
     /** Whole books, fifty levels a side, one per row — read off a real file. */
     expect(seen.found).toMatchObject({
-      market: 'perp', dataset: 'books', variant: '50,snapshot',
+      market: 'perp', dataset: 'books', variant: 'snapshot,50',
     });
   });
 
@@ -697,9 +697,9 @@ describe('gate speaks canonically', () => {
   /** Read off real files: a delta stream at full depth, and 20-level snapshots. */
   it('tells gate\'s two books apart', () => {
     expect(readOf('futures_usdt/orderbooks/202107/1INCH_USDT-2021071200.csv.gz'))
-      .toMatchObject({ dataset: 'books', variant: 'full,incremental' });
+      .toMatchObject({ dataset: 'books', variant: 'incremental,full' });
     expect(readOf('spot/orderbooks_slice/202108/BTC_USDT-2021080103.gz'))
-      .toMatchObject({ dataset: 'books', variant: '20,snapshot' });
+      .toMatchObject({ dataset: 'books', variant: 'snapshot,20' });
   });
 
   it('marks a mark price that is ticks rather than bars', () => {

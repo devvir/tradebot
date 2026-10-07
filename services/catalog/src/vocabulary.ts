@@ -16,7 +16,7 @@ export const GRAINS = ['monthly', 'daily', 'hourly', 'minutely'] as const;
 /**
  * One dataset's variant, taken apart into the levels it is made of.
  *
- * `books` + `400,incremental` becomes `{ depth: '400', mode: 'incremental' }`,
+ * `books` + `incremental,400` becomes `{ kind: 'incremental', depth: '400' }`,
  * and a dataset with no levels — or a series with no variant — becomes `{}`.
  * **Order is preserved**, so anything rebuilding the string can join the values
  * as they come.
@@ -63,7 +63,7 @@ const LEVELS: Record<string, readonly string[]> = {
   volatilityIndex: ['interval'],
   optionSummary:   ['interval'],
   optionTicker:    ['interval'],
-  books:           ['depth', 'mode'],
+  books:           ['kind', 'depth'],
   trades:          ['aggregation'],
   funding:         ['kind'],
 };

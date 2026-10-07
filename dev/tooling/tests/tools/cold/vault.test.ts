@@ -355,6 +355,15 @@ describe('storing the vault', () => {
     expect(record.vaultFilesPending(db).filter(file => file.partition.startsWith(SMALL))).toEqual([]);
   });
 
+  /** Whole and readable, and of an older making: stored again only once it has been stocked again. */
+  it('plans nothing of a partition the ledger says is outdated', () => {
+    stock(SMALL, '202001', 'outdated', null);
+
+    plan(db, config(), []);
+
+    expect(record.vaultFilesPending(db).filter(file => file.partition.startsWith(SMALL))).toEqual([]);
+  });
+
   it('forgets what it planned for a revision the ledger moved on from before it was sent', () => {
     plan(db, config(), []);
 

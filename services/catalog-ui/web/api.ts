@@ -188,7 +188,8 @@ const ask = async <T>(url: string, init?: RequestInit): Promise<T> => {
 
   if (! res.ok) throw new Error(`${res.status} — ${detail(text)}`);
 
-  return JSON.parse(text) as T;
+  // Done with nothing to say — a removal answers so — is an answer, and not one to parse.
+  return (text ? JSON.parse(text) : undefined) as T;
 };
 
 const detail = (text: string): string => {

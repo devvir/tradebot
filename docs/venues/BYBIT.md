@@ -36,6 +36,9 @@ So bybit is surveyed and served there. Three things follow:
 own dots into the hostname, where the wildcard certificate does not reach and TLS fails outright.
 Addressing the bucket as a path keeps the hostname clean.
 
+**No limit found on the bucket.** Measured 2026-09-30 with `HEAD` requests: about 1,190 a second
+from a remote machine and 1,800 from a home link, without a single throttling answer.
+
 This is bybit's setting and it could be revoked. The HTML scanner it used to need stays in the
 codebase for that reason and for the next venue that publishes indexes — it is infrastructure for a
 platform, not a property of one venue.
@@ -65,6 +68,10 @@ where other venues need one:
 | `trade/option/`, `mark_kline/option/` | dated **first**, keyed by the underlying coin — `2026-08-03_BTC_USDT.trades.csv.zip` |
 | `kline_for_metatrader4/` | a whole month named by **both its ends** — `ADAUSDT_15_2021-01-01_2021-01-31.csv.gz` |
 | `quote-saver.bycsi.com` (second host) | market, instrument, then date first and the depth last — `linear/BTCUSDT/2025-08-21_BTCUSDT_ob200.data.zip` |
+
+**An instrument's name is letters, digits, dashes and underscores** — match-outcome markets are
+listed as `WC_ARG_ALG_USDT-17JUN26` — so its own punctuation says nothing about where it ends. The
+date does.
 
 Two of these are worth keeping in mind.
 
@@ -215,6 +222,10 @@ nobody, which is a reason to take them sooner rather than to skip them — the s
 binance's `data3/` and htx's `data/`. They are keyed by underlying rather than by symbol, and are the
 only trees here in `.csv.zip`.
 
+**The index and mark trees are one-minute bars, and say so.** Each `premium_index` and `spot_index`
+file carries a `period` column reading `1`, and its rows are 60 seconds apart — 1,440 a day, checked
+across twelve files of each. Option mark bars are a uniform 60,000 ms between `open_time` values.
+
 Everything below the root is discovered rather than declared, so the adapter names none of it.
 
 ## A second host: the order books
@@ -316,11 +327,33 @@ two dates. So the **first** date in the filename is the one that counts, and a r
 where it starts. A month with no day is stamped at the first of that month, as everywhere else, so a
 query for a month catches it alongside that month's days.
 
+## The instrument listing
+
+`api.bybit.com/v5/market/instruments-info`, asked a category at a time: `spot`; `linear` and
+`inverse`, which are both perpetual swaps, settled in stablecoin and in the base coin; and `option`,
+answered one underlying at a time. Option defaults to `baseCoin=BTC` and there is no public way to
+enumerate the underlyings — there are eight.
+
+**Names are the archive's.** All 549 live spot symbols and 859 of 862 live perpetuals are in the
+archive under exactly the name the API returns; the three that were not had been listed that day.
+
+**Derivatives state an ending; spot does not.** Asked for `status=Closed`, a derivative category
+answers 955 contracts that share nothing with its 836 live ones. Spot answers the live list again,
+byte for byte, so there an ending is only ever an absence.
+
 ## The misfiled file
 
-`trading/DOTUSD/DOTUSDT2021-12-06.csv.gz` is genuinely served, holds DOTUSDT rows, and is a truncated
-duplicate of a file that exists correctly under `trading/DOTUSDT/`. One misfiled artifact rather than
-a pattern, so it belongs in the catalog's `exclusion` table rather than in an adapter's rules.
+`trading/DOTUSD/DOTUSDT2021-12-06.csv.gz` is genuinely served: a file named for `DOTUSDT`, in
+`DOTUSD`'s folder. It holds DOTUSDT rows and is a shorter copy of the day served whole at
+`trading/DOTUSDT/DOTUSDT2021-12-06.csv.gz`:
+
+| | bytes | trades | from | timestamps |
+|---|---|---|---|---|
+| under `DOTUSDT/` | 2,185,333 | 55,249 | 00:00:02 UTC | with fractions of a second |
+| under `DOTUSD/` | 1,758,646 | 45,780 | 06:06:23 UTC | whole seconds |
+
+Every trade id of the shorter one is in the whole one (2026-10-07). One misfiled artifact, not a
+pattern.
 
 ## WebSocket
 

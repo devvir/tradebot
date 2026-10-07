@@ -97,7 +97,8 @@ says how many parts a day has, so the only way to learn is that the next answers
 `_101`; 98% of day-series are `_001` alone.
 
 A size short-circuit was considered and rejected: compressed size varies with symbol, precision and
-era, and the full and terminal distributions overlap. Stopping on a small part would save one `HEAD`
+era, and the full and terminal distributions overlap — full parts run from 215,212 bytes upward while
+terminal parts have a median of 135,981. Stopping on a small part would save one `HEAD`
 per day-series and cost a silently truncated day whenever the bet was wrong.
 
 ### Sentinel value in depth
@@ -315,7 +316,8 @@ in `fileUrl`. From 2026-08-19 some rows carry `<displayName>-<real basename>` in
 
 **The trading platform search.** `POST /v1/mix/index/search/trade/coin` with
 `{searchContent, showOpenTime, languageType}`, returning `spot`, `margin` and `contract` buckets.
-This is the only place bitget states the correspondence between its own names.
+This is the only place bitget states the correspondence between its own names. It answers about
+two requests a second, and it does not list the coin-margined family at all.
 
 Measured by asking it for every name both REST versions list — 1,957 queries, 2,104 distinct records
 — and checking each field against the archive paths and REST names held independently:
@@ -544,6 +546,10 @@ that named something else, dated futures answer with their expiry label (`BTCUSD
 `RAMCRUSDT`). So `displayName` identifies the *file*, and the archive directory identifies the
 instrument.
 
+**A quarterly's label is a date, and the date is a rule.** Quarterly contracts settle on the last
+Friday of their month, so `BTCUSD0327` is the one expiring on 27 March — and only 2026 has its last
+Friday on that date, which makes it `BTCUSDH26`. It reads either way.
+
 Where a pairing is not obvious, the fix is not a cleverer inference: **ask the index again with one
 symbol**. The batch is a speed strategy, not a requirement, and a single-symbol request is
 categorical about what that instrument has.
@@ -750,6 +756,10 @@ see below.
 The index omits files that exist. Measured on the era-boundary candlesticks: of six days it listed
 under the era-2 key only, five have an era-1 file too, serving the same candles — see *The three
 naming eras*. On those six keys it under-reported by five files.
+
+Measured against 1.46 million files held locally, the index is complete for candlesticks and misses
+0.27% of trades and 1.30% of depth — every one of which the CDN serves. It also leaves instruments
+out altogether: 585 series came from the venue's instrument listing and from nowhere in the index.
 
 Nothing in the file list has been fetched, so it bounds nothing in either direction. A seed built
 from it would inherit that silence permanently, because nothing walks this venue: a key the seed does

@@ -282,7 +282,7 @@ export interface LensRule {
  * One kind of data, whole or at one variant.
  *
  * **A variant belongs to its dataset and to nothing else** — `1m` is a kline
- * length, `full,incremental` a book shape — so the two travel together.
+ * length, `incremental,full` a book shape — so the two travel together.
  */
 export interface LensDataset {
   dataset:  string;

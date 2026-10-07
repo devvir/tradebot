@@ -10,8 +10,8 @@ import { levelsOf } from '../src/vocabulary';
  */
 describe('naming a variant\'s levels', () => {
   it('names each level of a multi-level variant', () => {
-    expect(levelsOf('books', '400,incremental'))
-      .toEqual({ depth: '400', mode: 'incremental' });
+    expect(levelsOf('books', 'incremental,400'))
+      .toEqual({ kind: 'incremental', depth: '400' });
   });
 
   it('names the single level of a simple one', () => {
@@ -39,7 +39,7 @@ describe('naming a variant\'s levels', () => {
 
   /** A level nobody has named yet is reported rather than silently dropped. */
   it('gives the last named level whatever is left over', () => {
-    expect(levelsOf('books', '400,incremental,surprise'))
-      .toEqual({ depth: '400', mode: 'incremental,surprise' });
+    expect(levelsOf('books', 'incremental,400,surprise'))
+      .toEqual({ kind: 'incremental', depth: '400,surprise' });
   });
 });

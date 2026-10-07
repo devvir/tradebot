@@ -8,44 +8,8 @@ import { gateMisfiled, gateWrongTree } from './gate/misfiled';
 import { declare } from './declare';
 
 /**
- * Gate's archive is a standard S3 bucket — `gateio-public-data` — surveyed at
- * its **origin** rather than through the CDN that serves the files.
- *
- * `download.gatedata.org` is CloudFront, and it answers listings while ignoring
- * every query parameter: `?prefix=`, `?marker=` and `?max-keys=` all come back
- * as the same cached first thousand keys of the bucket root, byte for byte. A
- * reply that looks exactly like a working listing and is not one is worse than
- * no listing at all, which is why the address here is the bucket. Asked
- * directly, it honours `prefix`, `delimiter`, `max-keys` and
- * `continuation-token` in the ordinary way.
- *
- * This is why gate was believed to publish no listing and was collected by
- * constructing URLs and probing them: the CDN was answering, so nobody read
- * past it.
- *
- * **Nothing to probe.** Every key arrives with size, ETag and last-modified.
- *
- * Four path shapes, all keyed by a stamp after the last `-`:
- *
- * ```
- * <market>/<dataset>/<yyyymm>/<SYMBOL>-<yyyymm>.csv.gz        a month
- * <market>/<dataset>/<yyyymm>/<SYMBOL>-<yyyymmdd>.csv.gz      a day
- * <market>/<dataset>/<yyyymm>/<SYMBOL>-<yyyymmddHH>.csv.gz    a day, one hour of it
- * <tree>/<yyyymm>/slice_<name>_<epoch>                        a month, one snapshot of it
- * ```
- *
- * Which shape a dataset uses is the dataset's own business and is not declared
- * here — spot candlesticks are daily below 30 minutes and monthly above, books
- * are filed by the hour, everything else is monthly. The stamp's length says
- * which, so no dataset needs naming. **The finest grain is the day**: an hour of
- * books is a part of its day (`{PART}`), and a snapshot a part of its month, so
- * a day of books is one day in twenty-four parts rather than an hourly series.
- *
- * Two of them are worth pointing at. `orderbooks_slice` is a plain `.gz` where
- * everything else is `.csv.gz`. And `delivery_usdt` carries a second date inside
- * the symbol — `ADA_USDT_20260605-2026060100.csv.gz` is the 2026-06-05 expiry,
- * hour 00 of 2026-06-01 — which is why the stamp is read from the last `-` and
- * not from the first date in the name.
+ * Gate's archive, listed at the bucket behind its CDN — the CDN's own listing
+ * ignores what it is asked. The venue is described in `docs/venues/GATE.md`.
  */
 export const gate: Adapter = declare({
   /** The shared listing context — this venue differs by address, not by shape. */
@@ -55,70 +19,19 @@ export const gate: Adapter = declare({
   scanner: s3,
   probes:  false,
 
-
-  /**
-   * Probing, with a walking update on Mondays.
-   * @see docs/services/PROSPECTOR.md > *How each venue updates*.
-   */
-
-  /**
-   * **No limit found.** Measured 2026-09-29/30 with HEAD and LIST probes: up
-   * to 1,781/s from one machine and ~1,190/s from the remote, without a single
-   * throttling answer. A probe takes ~300 ms from here, found or missing, so
-   * what is in flight sets the rate: 600 at once held ~1,770/s on missing keys
-   * (2026-09-30).
-   */
+  /** No limit was found on the bucket — measured in `docs/venues/GATE.md`. */
   pacing:  { perSecond: 2000, concurrency: 500 },
 
   /**
-   * The seven trees gate still publishes. Everything else in the bucket is dead
-   * or is not market data, and a refused prefix is never descended into.
-   *
-   * Not collected anywhere before this: `delivery_usdt` (dated-futures books,
-   * current), `spot_index` and `options_ticker` (venue-wide snapshots, hourly
-   * and per minute, both current).
-   *
-   * What is refused, and why none of it is data a consumer could want:
-   *
-   * - `v2/` — two months, 202211 and 202212, and nothing since.
-   * - `hk/`, `malta/` — separate Gate entities with their own order books, so
-   *   their `BTC_USDT` is **not** this venue's. Both stop at 202402, retired in
-   *   the same month. If either is ever wanted it is a venue row of its own,
-   *   never a prefix of this one, or two unrelated books merge under one symbol
-   *   with nothing said.
-   * - `future_usdt/` — nine months to 202211, last written 2022-11-24. Note the
-   *   singular, beside the live `futures_usdt/`.
-   * - `futures_usd/` — five months to 202212, last written 2022-12-01.
-   * - `gatepay/` — two spreadsheet templates.
-   *
-   * **What sits one level below a tree is a month or a dataset, and which one
-   * the tree decides.** `spot_index/` and `options_ticker/` are a dataset in
-   * themselves and carry the month there; every other tree names a dataset and
-   * carries the month a level lower. Either in the other's place is a key
-   * somebody filed in the wrong place, and both happen:
-   *
-   * - 571 keys sit at `spot/201905/`, `futures_usdt/202107/` and
-   *   `futures_btc/202107/`, a month where a dataset belongs. Each is
-   *   byte-for-byte the size of its canonical twin with a different ETag and an
-   *   earlier mtime — the same data under a layout gate abandoned.
-   * - 179 sit at `spot_index/slice_index_…`, a file where a month belongs, and
-   *   every one has a twin under its proper `spot_index/{YYYYMM}/` with the
-   *   **same size and the same ETag** — the identical object served at a second
-   *   key.
-   *
-   * Neither is data a consumer could want: the first cannot be placed in a
-   * series at all with no dataset segment, and the second is a byte-identical
-   * duplicate of a key already catalogued.
+   * The trees gate still publishes, and in them only keys at the depth their
+   * tree keeps them; what is refused and why is in `docs/venues/GATE.md`.
    */
   accepts: (path) => {
     const [tree, next = '', , stray] = path.split('/');
 
     if (! TREES.has(tree ?? '')) return false;
 
-    /**
-     * An empty `next` is the tree itself — `spot_index/` as a prefix — which is
-     * what descent asks about before it can reach anything below it.
-     */
+    /** An empty `next` is the tree itself, which descent asks about first. */
     if (next !== '' && /^\d{6}$/.test(next) !== SNAPSHOTS.has(tree ?? '')) return false;
 
     if (gateMisfiled(path) || gateWrongTree(path)) return false;
@@ -132,33 +45,7 @@ export const gate: Adapter = declare({
   /** Reading this venue's paths back into series — see `paths.ts`. */
   inspectUrl: (path) => inspect(path),
 
-  /**
-   * The stamp after the last `-`, or the epoch a snapshot is named for.
-   *
-   * **Every stamp keeps exactly the digits it was published with**, a month
-   * included: a file covering all of January is `202401`, not `20240101`, which
-   * would claim a day it may hold nothing for. Six characters sort correctly
-   * among that month's eight-character days because a month is their prefix.
-   *
-   * **Nor is anything finer flattened.** Gate is the only venue here publishing
-   * below a day — 24 books an hour apart, and a ticker snapshot a minute apart.
-   * Flattening those to the day they fall in gives 24 files one date between
-   * them, which is not a coarser answer but a wrong one: a date is what
-   * distinguishes one file of a series from the next, and they would no longer.
-   *
-   * Lengths are enumerated rather than taken as a range: a 7- or 9-digit stamp
-   * is not a shape gate publishes, and reading one as a date would place a file
-   * in a month that does not exist.
-   */
-  /**
-   * **The period a file belongs to, not the instant it covers.**
-   *
-   * Gate publishes below a day — twenty-four books an hour apart, a snapshot a
-   * minute apart — and those are parts of a period rather than periods of their
-   * own: a consumer asks for a day or a month and gets everything under it. So
-   * an hourly book is dated by its day and a snapshot by its month, and which
-   * part of it the file is lives in the path, where `{PART}` stands.
-   */
+  /** The period a file belongs to: an hourly book is dated by its day and a snapshot by its month. */
   dateOf: (path) => {
     const slice = /\/(\d{6})\/slice_(?:index|options_ticker)_\d{10}$/.exec(path);
 
@@ -173,25 +60,9 @@ export const gate: Adapter = declare({
   },
 
   /**
-   * How gate splits a period, which is the only thing about its sub-day files
-   * the catalog cannot work out for itself.
-   *
-   * **Every period is published whole or not at all.** Measured over forty
-   * hourly series: 753 of 769 days in the middle of a series carry all
-   * twenty-four hours, and the snapshot trees carry all 1,440 minutes of every
-   * day. A missing hour means the instrument was not listed yet or had stopped —
-   * not that nothing traded — so one part answers for its period.
-   *
-   * **Which is why the first part is asked alone.** If it is there the rest
-   * follow without being guessed at; if it is not, the period is not there and
-   * nothing else needs asking. That turns a quiet day from twenty-four requests
-   * into one, and a quiet month of the ticker from 43,200 into one.
-   *
-   * **Except where the series has never held a file.** A series' first day
-   * starts when the instrument was listed, which is mid-day — measured, none of
-   * forty first days carried hour 00 — so asking hour 00 there would write off a
-   * day that exists. With nothing yet known, every part is asked and probing
-   * decides.
+   * A period is published whole or not at all, so its first part is asked
+   * alone and the rest follow only if it is there — except on a series with no
+   * file yet, whose first day starts mid-day.
    */
   expandParts: ({ series, date, lastPartFound, nextPart }) => {
     const every = partsOf(series.pattern, date);
@@ -211,37 +82,8 @@ export const gate: Adapter = declare({
 
 
 /**
- * Gate: `<market>/<dataset>/<YYYYMM>/<SYMBOL>-<stamp>.csv.gz`, and one snapshot
- * shape that is nothing like it.
- *
- * **The month is a directory as well as part of the filename**, which is why the
- * date here is undashed where the others use the dashed form — and why a pattern
- * for gate carries `{YYYY}{MM}` twice.
- *
- * The stamp's length is the grain, and no dataset has to be named for it: six
- * digits a month, eight a day, ten an hour. All three sit in the same monthly
- * directory, because gate files a period under the month it falls in whatever
- * its size — `spot/candlesticks_1h/202607/BTC_USDT-202607.csv.gz` beside
- * `spot/candlesticks_1m/202608/BTC_USDT-20260801.csv.gz` beside
- * `spot/orderbooks/202108/BTC_USDT-2021082503.csv.gz`.
- *
- * The interval is folded into the dataset rather than a segment of its own:
- * `candlesticks_1m` and `candlesticks_1h` are different directories, so they are
- * different datasets by the venue's own arrangement.
- *
- * **The snapshot trees name an instant and nothing else** —
- * `spot_index/202312/slice_index_1702857600` — so their pattern has no date in
- * it at all, only the epoch slot that renders one. Both are venue-wide files
- * covering every instrument, so like okx's buckets they carry no symbol: the
- * dataset is the whole of their identity. `spot_index` is exactly hourly and
- * `options_ticker` exactly per minute, measured over a month of each, which is
- * what tells the two epoch slots apart.
- *
- * **Markets are matched by shape rather than named**, because which trees are
- * surveyed is the adapter's `accepts` to decide and not this expression's. Gate
- * has thirteen top-level trees and six of them are refused there — dead
- * branches, separate entities, and a spreadsheet folder — each with its reason
- * written beside it. Nothing here is a second opinion on that.
+ * Read `<market>/<dataset>/<YYYYMM>/<SYMBOL>-<stamp>.csv.gz`, the stamp's length
+ * being its grain, or a snapshot `<tree>/<YYYYMM>/slice_<name>_<epoch>`.
  */
 const inspect = (path: string): Inspection => {
   const snapshot = GATE_SLICE.exec(path);
@@ -262,18 +104,10 @@ const inspect = (path: string): Inspection => {
         dataset: meaning.dataset,
         ...(meaning.variant ? { variant: meaning.variant } : {}),
 
-        /**
-         * **A slice carries every instrument there is**, so the bucket symbol is
-         * what it is of. Gate's own name for it is nothing at all, which is
-         * exactly why the catalog gives it one.
-         */
+        /** A slice holds every instrument, so it is the market's bundle. */
         symbol:  BUCKET,
 
-        /**
-         * The instant names which part of the month this file is, and the month
-         * is the period — so the epoch lives in the path under `{PART}` and
-         * nothing here has to render it.
-         */
+        /** The epoch is the part, and the month the period. */
         pattern: `${tree}/{YYYY}{MM}/slice_${name}_{PART}`,
       },
     };
@@ -289,28 +123,17 @@ const inspect = (path: string): Inspection => {
 
   if (! canonical) return { of: 'unknown', date: null };
 
-  /**
-   * **Ten digits is an hour, and an hour is part of a day.** Gate's books are
-   * published every hour; the day is the period a consumer asks for and the two
-   * hour digits are which part of it this file is.
-   */
+  /** Ten digits is an hour: the day is the period and the hour its part. */
   const part = date!.length === 10 ? date!.slice(8, 10) : '';
 
-  /**
-   * **Gate spells an instrument the same way everywhere**, in its keys and in
-   * its own listing alike, so there is no second name to carry.
-   */
+  /** Gate spells an instrument one way everywhere, so there is no second name to carry. */
   return asSeries(path, { ...canonical, symbol: symbol!,
     date: part ? date!.slice(0, 8) : date!, ...(part ? { part } : {}) });
 };
 
 /**
- * Gate's own words for a market, in the catalog's.
- *
- * **Two trees are one market**: `futures_usdt` and `futures_btc` are both
- * perpetual swaps, differing only in what settles them — which is a property of
- * the instrument and legible from its symbol. `delivery_usdt` genuinely expires,
- * so it is not one of them.
+ * Gate's words for a market, in the catalog's: both futures trees are perpetuals,
+ * and `delivery_usdt` expires.
  */
 const MARKET_OF: Record<string, string> = {
   spot:           'spot',
@@ -322,40 +145,21 @@ const MARKET_OF: Record<string, string> = {
   tradfi:         'tradfi',
 };
 
-/**
- * Gate's own words for a dataset, in the catalog's.
- *
- * `candlesticks_*` is absent because it is not one name but a family: the bar
- * length is spelled into it, and `canonicalise` reads it out.
- */
+/** Gate's words for a dataset, in the catalog's. Candlesticks are a family: see `canonicalise`. */
 const MEANINGS: Record<string, { dataset: string; variant?: string }> = {
   deals:            { dataset: 'trades' },
   trades:           { dataset: 'trades' },
 
-  /**
-   * **Two funding series that mean different things.** `funding_applies` is what
-   * was actually charged at the end of an interval; `funding_updates` is the
-   * running estimate as it moved during one. They are not interchangeable in any
-   * calculation.
-   */
+  /** What was charged at the end of an interval, and the running estimate during one. */
   funding_applies:  { dataset: 'funding', variant: 'realised' },
   funding_updates:  { dataset: 'funding', variant: 'predicted' },
 
-  /**
-   * Gate's mark price is a tick series where every other venue's is bars, so the
-   * level below the name has to say which — `ticks` is a grain like any other.
-   */
+  /** Ticks, where every other venue's mark price is bars. */
   mark_prices:      { dataset: 'markPrice', variant: 'ticks' },
 
-  /**
-   * **Two books, and the names say which.** `orderbooks` opens with a `set`
-   * snapshot and then streams `make` and `take` deltas for the hour, at whatever
-   * depth the book has — measured between 45 and 2,204 levels a side across
-   * sampled symbols, so it is capped at nothing. `orderbooks_slice` is whole
-   * books, twenty levels a side, one per row.
-   */
-  orderbooks:       { dataset: 'books', variant: 'full,incremental' },
-  orderbooks_slice: { dataset: 'books', variant: '20,snapshot' },
+  /** A stream of changes at whatever depth the book has, and whole books of twenty levels. */
+  orderbooks:       { dataset: 'books', variant: 'incremental,full' },
+  orderbooks_slice: { dataset: 'books', variant: 'snapshot,20' },
 
   /** An hourly slice of every spot pair's index price at that instant. */
   index:            { dataset: 'indexPrice', variant: 'ticks' },
@@ -396,18 +200,7 @@ const GATE = new RegExp(
 const GATE_SLICE = new RegExp(
   '^(?<tree>[a-z_]+)/(?<month>\\d{6})/slice_(?<name>[a-z_]+)_(?<epoch>\\d{10})$');
 
-/**
- * Every part one period is published in, in the order they are written.
- *
- * **Two shapes, and the pattern says which.** A day of books is twenty-four
- * hours named by their own two digits. A month of snapshots is an instant every
- * hour or every minute, named by the epoch itself — so the tokens are computed
- * from the month rather than listed.
- *
- * **Bounded by the period, not by the clock.** Nothing generates for a period
- * that has not closed, so every part of the period asked about could exist by
- * now and none of these is a guess about the future.
- */
+/** Every part of one period, in order: a day's twenty-four hours, or a month's instants. */
 const partsOf = (pattern: string, date: string): string[] => {
   const slice = /\/slice_([a-z_]+)_\{PART\}$/.exec(pattern);
 
@@ -426,25 +219,13 @@ const partsOf = (pattern: string, date: string): string[] => {
   return out;
 };
 
-/**
- * What gate asks itself for after the opening part: everything else there is.
- *
- * **Not a part.** Gate knows every part of a period from the period alone, so it
- * needs no token to work out what follows — only to be asked once more. The core
- * carries this unread, and this file is the only place it means anything.
- */
+/** Asked for after the opening part: all the rest of the period. Not a part's name. */
 const THE_REST = '*';
 
 /** A day's parts, which are the same twenty-four for every day there has ever been. */
 const HOURS = Array.from({ length: 24 }, (_, at) => String(at).padStart(2, '0'));
 
-/**
- * How often each snapshot tree publishes, in seconds — the filename cannot say.
- *
- * Established by measuring a month of each: `spot_index` gave 450 consecutive
- * gaps of 3,600 seconds and `options_ticker` 999 of 60, with no exceptions
- * either way.
- */
+/** How often each snapshot tree publishes, in seconds. */
 const STEPS: Record<string, number> = {
   spot_index:     3_600,
   options_ticker:    60,
@@ -457,23 +238,11 @@ const TREES = new Set([
   'delivery_usdt', 'spot_index', 'options_ticker',
 ]);
 
-/**
- * The two trees that are a dataset in themselves, and so carry a month directly
- * where every other tree carries a dataset name.
- *
- * Read as the whole of the rule rather than as an exception to it: what sits
- * one level below a tree is a month here and a dataset everywhere else, and
- * either one in the other's place is a misfiled key.
- */
+/** The trees that are a dataset in themselves, and so carry a month where the others carry a dataset. */
 const SNAPSHOTS = new Set(['spot_index', 'options_ticker']);
 
 /**
- * A directory of spot deals filed inside the daily-candlestick tree of one
- * month: `spot/candlesticks_1d/201802/s3deals/`, 227 keys.
- *
- * Refused here rather than listed as exclusions because it is a **directory**,
- * whatever it comes to hold — the kind of thing `accepts` is for. The two
- * individual junk keys gate left in the bucket are rows in the `exclusion`
- * table instead, being exactly two files and nothing more.
+ * A directory of spot deals filed inside one month of daily candlesticks:
+ * `spot/candlesticks_1d/201802/s3deals/`.
  */
 const STRAY = 's3deals';

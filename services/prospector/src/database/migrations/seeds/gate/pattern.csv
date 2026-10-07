@@ -1,7 +1,7 @@
 virtual_id,market,dataset,variant,pattern,grain,retired_at
-1,spot,books,"full,incremental",spot/orderbooks/202212/{SYMBOL}-{YYYY}{MM}{DD}{PART}.csv.gz,daily,20221130
-2,perp,books,"full,incremental",futures_usdt/orderbooks/202212/{SYMBOL}-{YYYY}{MM}{DD}{PART}.csv.gz,daily,20221130
-3,perp,books,"full,incremental",futures_btc/orderbooks/202212/{SYMBOL}-{YYYY}{MM}{DD}{PART}.csv.gz,daily,20221130
+1,spot,books,"incremental,full",spot/orderbooks/202212/{SYMBOL}-{YYYY}{MM}{DD}{PART}.csv.gz,daily,20221130
+2,perp,books,"incremental,full",futures_usdt/orderbooks/202212/{SYMBOL}-{YYYY}{MM}{DD}{PART}.csv.gz,daily,20221130
+3,perp,books,"incremental,full",futures_btc/orderbooks/202212/{SYMBOL}-{YYYY}{MM}{DD}{PART}.csv.gz,daily,20221130
 4,spot,klines,1m,spot/candlesticks_1m/202407/{SYMBOL}-{YYYY}{MM}{DD}.csv.gz,daily,20240630
 5,spot,klines,1m,spot/candlesticks_1m/202408/{SYMBOL}-{YYYY}{MM}{DD}.csv.gz,daily,20240731
 6,spot,klines,1m,spot/candlesticks_1m/202409/{SYMBOL}-{YYYY}{MM}{DD}.csv.gz,daily,20240831

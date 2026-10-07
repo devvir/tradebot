@@ -69,11 +69,11 @@
   },
   {
     "fixture": "binance.um-bookDepth.csv",
-    "key": "binance/perp/depthBands/B/BTCUSDT/202607/binance|perp|depthBands|BTCUSDT|20260729.zip"
+    "key": "binance/perp/books,bands,5pct/B/BTCUSDT/202607/binance|perp|books,bands,5pct|BTCUSDT|20260729.zip"
   },
   {
     "fixture": "binance.cm-bookDepth.csv",
-    "key": "binance/perp/depthBands/B/BTCUSD_PERP/202607/binance|perp|depthBands|BTCUSD_PERP|20260729.zip"
+    "key": "binance/perp/books,bands,5pct/B/BTCUSD_PERP/202607/binance|perp|books,bands,5pct|BTCUSD_PERP|20260729.zip"
   },
   {
     "fixture": "binance.um-fundingRate.csv",
@@ -217,15 +217,15 @@
   },
   {
     "fixture": "gate.spot-orderbooks.csv",
-    "key": "gate/spot/books,full,incremental/B/BTC_USDT/202607/gate|spot|books,full,incremental|BTC_USDT|2026072923.csv.gz"
+    "key": "gate/spot/books,incremental,full/B/BTC_USDT/202607/gate|spot|books,incremental,full|BTC_USDT|2026072923.csv.gz"
   },
   {
     "fixture": "gate.futures_usdt-orderbooks.csv",
-    "key": "gate/perp/books,full,incremental/B/BTC_USDT/202607/gate|perp|books,full,incremental|BTC_USDT|2026072923.csv.gz"
+    "key": "gate/perp/books,incremental,full/B/BTC_USDT/202607/gate|perp|books,incremental,full|BTC_USDT|2026072923.csv.gz"
   },
   {
     "fixture": "gate.futures_btc-orderbooks.csv",
-    "key": "gate/perp/books,full,incremental/B/BTC_USD/202607/gate|perp|books,full,incremental|BTC_USD|2026072923.csv.gz"
+    "key": "gate/perp/books,incremental,full/B/BTC_USD/202607/gate|perp|books,incremental,full|BTC_USD|2026072923.csv.gz"
   },
   {
     "fixture": "htx.spot-trades.csv",
@@ -309,7 +309,7 @@
   },
   {
     "fixture": "bybit.option-trades.csv",
-    "key": "bybit/option/trades/B/BTC/202610/bybit|option|trades|BTC|20261004.trades.csv.zip"
+    "key": "bybit/option/trades/B/BTC/202610/bybit|option|trades|BTC|20261004.zip"
   },
   {
     "fixture": "gate.tradfi-candlesticks.csv",
@@ -353,11 +353,11 @@
   },
   {
     "fixture": "kucoin.spot-orderbooklv50.csv",
-    "key": "kucoin/spot/books,50,snapshot/B/BTC-USDT/202607/kucoin|spot|books,50,snapshot|BTC-USDT|20260729.zip"
+    "key": "kucoin/spot/books,snapshot,50/B/BTC-USDT/202607/kucoin|spot|books,snapshot,50|BTC-USDT|20260729.zip"
   },
   {
     "fixture": "kucoin.futures-orderbooklv50.csv",
-    "key": "kucoin/perp/books,50,snapshot/X/XBTUSDTM/202607/kucoin|perp|books,50,snapshot|XBTUSDTM|20260729.zip"
+    "key": "kucoin/perp/books,snapshot,50/X/XBTUSDTM/202607/kucoin|perp|books,snapshot,50|XBTUSDTM|20260729.zip"
   },
   {
     "fixture": "okx.swap-trades.csv",
@@ -397,6 +397,6 @@
   },
   {
     "fixture": "bybit.option-markkline.csv",
-    "key": "bybit/option/markPrice,1m/B/BTC/202603/bybit|option|markPrice,1m|BTC|20260310.OHLC.csv.zip"
+    "key": "bybit/option/markPrice,1m/B/BTC/202603/bybit|option|markPrice,1m|BTC|20260310.zip"
   }
 ]

@@ -974,8 +974,9 @@ Gate's refused trees, each of which is a decision rather than an oversight —
 |---|---|---|
 | gate | 85 × `futures_usdt/trades/202107/<SYMBOL>-202107.csv.gz` | **spot data served at the futures URL** for that one month. Gate publishes those bytes — five columns where futures has four, and a re-fetch returns the same md5 — so read as futures the file "works" and every trade appears to be a buy. [GATE.md](../venues/GATE.md#2021-07-spot-data-served-at-the-futures-url) |
 | gate | `futures_usdt/candlesticks_10s/202107/123`, `futures_btc/mark_prices/202107/hello/123` | zero bytes, uploaded four minutes apart on 2021-08-11 |
+| bybit | `trading/DOTUSD/DOTUSDT2021-12-06.csv.gz` | **a `DOTUSDT` file in `DOTUSD`'s folder**, and a shorter copy of the day served whole under `trading/DOTUSDT/`. Read by its name it is a second file for a day that has one, landing on the same path in the archives. [BYBIT.md](../venues/BYBIT.md#the-misfiled-file) |
 
-Both ship as migrations, so a catalog rebuilt from scratch has them. **A walk of that month
+All ship as migrations, so a catalog rebuilt from scratch has them. **A walk of that month
 re-fetches the 85 unless something refuses them**, which is why they cannot live only in collection
 bookkeeping — that is disposable by design.
 

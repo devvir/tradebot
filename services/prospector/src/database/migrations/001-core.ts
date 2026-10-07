@@ -41,6 +41,7 @@ export const core: Migration = {
     db.exec(VENUES);
     db.exec(ZERO_BYTE_UPLOADS);
     db.exec(SPOT_AT_A_FUTURES_URL);
+    db.exec(MISFILED_AT_BYBIT);
   },
 };
 
@@ -76,6 +77,25 @@ const ZERO_BYTE_UPLOADS = `
         SELECT 'futures_btc/mark_prices/202107/hello/123'
       )
      WHERE venue.name = 'gate';`;
+
+/**
+ * The one bybit file that is not where its name says.
+ *
+ * `trading/DOTUSD/DOTUSDT2021-12-06.csv.gz` is a `DOTUSDT` file in `DOTUSD`'s
+ * folder, and a shorter copy of the day `trading/DOTUSDT/` serves whole: 45,780
+ * of its 55,249 trades, the first six hours missing. Read by its name it is
+ * `DOTUSDT`'s 2021-12-06, so catalogued it is a second file for a day that has
+ * one — the same path in the archives — and whichever is fetched second replaces
+ * the first.
+ *
+ * **One file, so it is a row**: there is no shape to describe.
+ */
+const MISFILED_AT_BYBIT = `
+    INSERT OR IGNORE INTO exclusion (venue_id, path, reason)
+    SELECT id, 'trading/DOTUSD/DOTUSDT2021-12-06.csv.gz',
+           'DOTUSDT''s day misfiled under DOTUSD: a shorter copy of the one under DOTUSDT'
+      FROM venue
+     WHERE venue.name = 'bybit';`;
 
 /**
  * The 85 gate files that are **not** what their URL says.

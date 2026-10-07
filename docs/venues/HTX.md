@@ -212,6 +212,9 @@ That also restores readable semantics: through the edge a `403` with no `x-amz-e
 indistinguishable from a real block, so absence and rejection arrive as the same answer. Against S3
 a missing key is a plain `404`.
 
+**No limit found on the bucket.** Measured 2026-09-29 and 30 with `HEAD` requests: about 1,800 a
+second from one machine and 1,180 from a remote one, without a single throttling answer.
+
 HTX is surveyed **from the bucket root**, with `assets/` and `test/` refused, because descent
 guarantees nothing above where it starts: a root of `historical_data/` keeps the sibling tree out of
 the search entirely. That is the general rule — a hardcoded root reintroduces one level up precisely
@@ -221,6 +224,29 @@ the omission that discovering prefixes exists to prevent — and it applies iden
 **`remark.txt` sits at the root of each `data/` dataset+market** — thirteen of them, holding the
 field descriptions that the new portal shows in a dialog instead. They are documentation rather than
 data.
+
+## The instrument listings
+
+Four endpoints on two hosts, because htx files its markets separately: spot on the exchange API,
+and each derivative family on its own service of `api.hbdm.com`.
+
+| market | endpoint | htx answers | the archive spells | checked |
+|---|---|---|---|---|
+| spot | `api.huobi.pro/v2/settings/common/symbols` | `btcusdt`, with `bc` and `qc` | `BTC-USDT` | 609 of 609 |
+| dated futures | `api.hbdm.com/api/v1/contract_contract_info` | `BTC` and `20260828` | `BTC-USD-260828` | 8 of 8 |
+| coin swap | `api.hbdm.com/swap-api/v1/swap_contract_info` | `BTC-USD` | `BTC-USD` | |
+| linear swap | `api.hbdm.com/linear-swap-api/v1/swap_contract_info` | `BTC-USDT` | `BTC-USDT` | 301 of 303, the two missing listed that day |
+
+**Spot's base and quote are read, not parsed.** `btcusdt` does not say where the base ends; `bc` and
+`qc` do. A dated contract's delivery day likewise comes from its own field.
+
+**Only spot states an ending.** It returns 1,547 `offline` symbols beside 609 `online`. The
+derivative endpoints answer with what is trading and nothing else, so there a symbol leaving the
+list is the only ending stated. A `suspend` is a halt, not an ending.
+
+**Under `linear-swap` a dated contract is told by its expiry.** Every symbol there ending in six
+digits is dash-separated and parses as a `YYMMDD` expiry, and no perpetual ends in digits at all.
+Options are another matter: their symbols end in a strike, and a six-figure one reads as a date.
 
 ## Daily files are UTC+8 days, not UTC days
 

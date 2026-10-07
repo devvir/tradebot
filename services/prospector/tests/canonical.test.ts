@@ -53,7 +53,7 @@ describe('canonicalInterval', () => {
 
 describe('variantOf', () => {
   it('joins the levels a dataset carries, in order', () => {
-    expect(variantOf('500', 'incremental')).toBe('500,incremental');
+    expect(variantOf('incremental', '500')).toBe('incremental,500');
     expect(variantOf('1m')).toBe('1m');
   });
 

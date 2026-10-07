@@ -3,7 +3,7 @@ import { createServer as createHttps } from 'node:https';
 import { createSecureServer } from 'node:http2';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { deliver } from '../src/deliver';
+import { _test_answerWithin as answerWithin, deliver } from '../src/deliver';
 import type { Server as HttpsServer } from 'node:https';
 import type { Http2SecureServer, ServerHttp2Session } from 'node:http2';
 
@@ -37,6 +37,9 @@ beforeAll(async () => {
   connections = 0;
 
   h2server = createSecureServer({ ...tls, allowHTTP1: true }, (req, res) => {
+    // Never answered: what a connection that died without a word looks like from the other end.
+    if (req.url.includes('silent')) return;
+
     if (req.url.includes('missing')) {
       res.writeHead(403, { server: 'AmazonS3' });
       res.end();
@@ -94,6 +97,45 @@ describe('a host that speaks HTTP/2', () => {
       expect((await deliver(`${h2url}/missing-${i}.zip`, null)).status).toBe(403);
 
     expect(connections - before).toBe(0);
+  });
+});
+
+describe('a connection that stops answering', () => {
+  /** Left in use, it fails every probe after it: 10,650 in a row against okx on 2026-10-08. */
+  it('is not given another probe', async () => {
+    await deliver(`${h2url}/a.zip`, null);
+
+    const before = connections;
+
+    answerWithin(200);
+
+    try {
+      await expect(deliver(`${h2url}/silent.zip`, null)).rejects.toThrow(/No answer within/);
+    } finally {
+      answerWithin(null);
+    }
+
+    expect((await deliver(`${h2url}/a.zip`, null)).status).toBe(200);
+    expect(connections - before).toBe(1);
+  });
+
+  it('is kept until the probes already on it have ended', async () => {
+    await deliver(`${h2url}/a.zip`, null);
+
+    answerWithin(300);
+
+    try {
+      // Sent together, on the one connection: the slow one is answered, the silent one is not.
+      const [answered, silent] = await Promise.allSettled([
+        deliver(`${h2url}/a.zip`, null),
+        deliver(`${h2url}/silent.zip`, null),
+      ]);
+
+      expect(answered.status).toBe('fulfilled');
+      expect(silent.status).toBe('rejected');
+    } finally {
+      answerWithin(null);
+    }
   });
 });
 

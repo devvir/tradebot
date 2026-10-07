@@ -110,7 +110,7 @@ export interface LensRule {
    * Which kinds of data, each optionally narrowed to one of its variants.
    *
    * **A variant belongs to its dataset and to nothing else.** `1m` is a kline
-   * length, `full,incremental` is a book shape, and trades have variants of their
+   * length, `incremental,full` is a book shape, and trades have variants of their
    * own — so a flat list of variants beside a flat list of datasets cannot say
    * which belongs to which, and `klines` at `1m` together with every `trades`
    * becomes unsayable. A pair says it exactly.

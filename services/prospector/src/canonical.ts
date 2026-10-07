@@ -44,7 +44,7 @@ export const MARKETS = ['spot', 'perp', 'future', 'option', 'tradfi'] as const;
  */
 export const DATASETS = [
   'trades', 'klines', 'markPrice', 'indexPrice',
-  'premiumIndex', 'funding', 'borrowing', 'quotes', 'depthBands',
+  'premiumIndex', 'funding', 'borrowing', 'quotes',
   'openInterest', 'liquidations', 'books', 'volatilityIndex',
   'optionSummary', 'optionTicker',
 ] as const;
@@ -114,7 +114,7 @@ export const canonicalInterval = (token: string): string | null => {
   return seconds % WEEK === 0 ? `${seconds / WEEK}w` : finest(seconds);
 };
 
-/** The variants of a dataset, as one string — `500,incremental`, `1m`. */
+/** The variants of a dataset, as one string — `incremental,500`, `1m`. */
 export const variantOf = (...levels: readonly (string | null | undefined)[]): string =>
   levels.filter((one): one is string => Boolean(one)).join(',');
 

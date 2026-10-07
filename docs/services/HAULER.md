@@ -52,7 +52,7 @@ varies.
 |---|---|---|
 | `venue` | `bitget` | |
 | `market` | `perp` | canonical; a venue with one market still names it |
-| `dataset` | `klines,1m` | canonical, **with its variants** — `books,500,incremental`; no comma where a dataset has none |
+| `dataset` | `klines,1m` | canonical, **with its variants** — `books,incremental,500`; no comma where a dataset has none |
 | `FL` | `B` | the symbol's first letter, `_` for anything that is not a Latin letter |
 | `symbol` | `BTCUSDT` | the venue's own name for the instrument |
 | `@` | `@` | in place of `FL/symbol`, where one file carries every instrument |

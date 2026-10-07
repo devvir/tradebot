@@ -49,7 +49,8 @@ In order:
 
 1. **Finish the first haul**, through `backfill-20` into `/data/tradebot/archives`. Every
    `downloaded_at` was reset on 2026-10-02, so the pass re-confirms everything already on disk and
-   fetches the rest; a clean catalog should produce no `.bak` at all.
+   fetches the rest; a clean catalog should produce no `.bak` at all. The pass of 2026-10-07 produced
+   370 for bitget — see *Prospector* below.
 2. **Look at what it did not touch.** Every file the catalog lists gets the pass's date as its
    modification time, so a file under the archive with an older date is one nothing listed —
    misfiled, withdrawn, or junk.
@@ -69,6 +70,13 @@ is what bypasses their 30 attempts.
 
 **The ticket ramp does not restart when venues are resumed mid-run.** It restarts on "Network back"
 only. Proposed, not built.
+
+**Bitget's seed describes the poorer of two copies of some days** — era-1 kline files that are
+empty archives where an era-2 copy holds the day, and perp depth read from a folder holding a
+fragment where the folder under the plain symbol holds the day. What was seen, what was not checked
+and how to check it are in
+[BUGS.md](BUGS.md#bitget-the-catalog-holds-the-poorer-of-two-copies-of-some-days). Seed work: every
+pairing confirmed against the venue first, none inferred.
 
 **Thin series that stopped.** Measured on 2026-10-02, 700 of bitget's 15,845 daily series hold fewer
 than 50 files and published nothing after 2026-07-01 — 17,406 files, 0.3% of the venue's daily files.

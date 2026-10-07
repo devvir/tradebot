@@ -842,11 +842,22 @@ and it answers `50011 Too Many Requests` if the four calls are made back to back
 | FUTURES | 162 | 187 contracts / 161 families |
 | OPTION | 6 | by `uly` only |
 
+**Options cannot be listed whole on v5.** `instType=OPTION` on its own answers `50015, Either
+parameter uly or instFamily is required` — an empty list beside the error — so option families are
+asked for one underlying at a time; there are four. The two parameters are not interchangeable:
+`instFamily` answers for `BTC-USD` and `ETH-USD` and rejects `SOL-USD` and `XAU-USD` with `51000,
+Parameter instFamily error`, while `uly` answers for all four, and `uly` is what the underlying
+endpoint returns.
+
+**The v5 lists throttle sooner than the archive does.** They refuse the second or third call in a
+row: the eight calls it takes to list every market trip a `429` when made back to back.
+
 **The test pairs are the one thing the full listing is missing and v5 has.** `XTESTA-USDT` and
 `XTESTA-USDC` come back from v5 as `state: 'live'` — okx documents a `test` state and does not use it
 for these — while the full listing omits them entirely, and the archive publishes nothing for them.
 They are also the only two of 196 margin instruments that are not spot pairs. So they cannot be
-filtered on state; they are excluded by name.
+filtered on state; they are excluded by name — by their base, since the quote varies: `XTESTA-*` in
+spot and margin, and `TEST002-*` among the futures families.
 
 **Margin needs no handling of its own.** 194 of 196 margin instruments are spot pairs, and the
 archive has exactly one margin-specific series — the venue-wide `allmargin` borrowing rates, filed

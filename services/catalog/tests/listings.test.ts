@@ -62,11 +62,11 @@ const EXPECTED = [
   'binance/perp/trades/B/BTCUSDT/202001/binance|perp|trades|BTCUSDT|20200101.zip',
   'binance/perp/trades/B/BTCUSDT/202001/binance|perp|trades|BTCUSDT|20200102.zip',
   'binance/perp/trades/B/BTCUSDT/202002/binance|perp|trades|BTCUSDT|202002.zip',
-  'gate/spot/books/B/BTC_USDT/202107/gate|spot|books|BTC_USDT|20210726.part03.gz',
-  'gate/spot/books/B/BTC_USDT/202107/gate|spot|books|BTC_USDT|20210726.part04.gz',
-  'gate/spot/trades/@/202107/gate|spot|trades|@|202107.gz',
-  'gate/spot/trades/@/202108/gate|spot|trades|@|202108.gz',
-  'gate/spot/trades/A/ADA_USDT/202107/gate|spot|trades|ADA_USDT|202107.gz',
+  'gate/spot/books/B/BTC_USDT/202107/gate|spot|books|BTC_USDT|20210726.part03.csv.gz',
+  'gate/spot/books/B/BTC_USDT/202107/gate|spot|books|BTC_USDT|20210726.part04.csv.gz',
+  'gate/spot/trades/@/202107/gate|spot|trades|@|202107.csv.gz',
+  'gate/spot/trades/@/202108/gate|spot|trades|@|202108.csv.gz',
+  'gate/spot/trades/A/ADA_USDT/202107/gate|spot|trades|ADA_USDT|202107.csv.gz',
 ].sort();
 
 beforeEach(async () => {
@@ -93,16 +93,16 @@ beforeEach(async () => {
 
   // A day in parts, the part named by the pattern's {PART}.
   await publish(gate, { market: 'spot', dataset: 'books', variant: '', symbol: 'BTC_USDT', urlSymbol: 'BTC_USDT',
-    pattern: 'spot/orderbooks/{YYYY}{MM}/{SYMBOL}-{YYYY}{MM}{DD}{PART}.gz' },
-  [['spot/orderbooks/202107/BTC_USDT-2021072604.gz', '20210726'], ['spot/orderbooks/202107/BTC_USDT-2021072603.gz', '20210726']]);
+    pattern: 'spot/orderbooks/{YYYY}{MM}/{SYMBOL}-{YYYY}{MM}{DD}{PART}.csv.gz' },
+  [['spot/orderbooks/202107/BTC_USDT-2021072604.csv.gz', '20210726'], ['spot/orderbooks/202107/BTC_USDT-2021072603.csv.gz', '20210726']]);
 
   // The venue-wide file has no letter folder, and lists before every instrument.
   await publish(gate, { market: 'spot', dataset: 'trades', variant: '', symbol: '@', urlSymbol: '@',
-    pattern: 'spot/trades/{YYYY}{MM}/all-{YYYY}{MM}.gz' },
-  [['spot/trades/202107/all-202107.gz', '202107'], ['spot/trades/202108/all-202108.gz', '202108']]);
+    pattern: 'spot/trades/{YYYY}{MM}/all-{YYYY}{MM}.csv.gz' },
+  [['spot/trades/202107/all-202107.csv.gz', '202107'], ['spot/trades/202108/all-202108.csv.gz', '202108']]);
   await publish(gate, { market: 'spot', dataset: 'trades', variant: '', symbol: 'ADA_USDT', urlSymbol: 'ADA_USDT',
-    pattern: 'spot/trades/{YYYY}{MM}/{SYMBOL}-{YYYY}{MM}.gz' },
-  [['spot/trades/202107/ADA_USDT-202107.gz', '202107']]);
+    pattern: 'spot/trades/{YYYY}{MM}/{SYMBOL}-{YYYY}{MM}.csv.gz' },
+  [['spot/trades/202107/ADA_USDT-202107.csv.gz', '202107']]);
 
   app = express();
   app.use(express.json({ limit: '5mb' }));
@@ -232,8 +232,8 @@ describe('a prefix', () => {
   /** `@` is only ever the bucket, so a prefix reaching into its months is read at its depth. */
   it('narrows into the bucket\'s months, a level shallower', async () => {
     expect(await walk('&prefix=gate/spot/trades/@/2021')).toEqual([
-      'gate/spot/trades/@/202107/gate|spot|trades|@|202107.gz',
-      'gate/spot/trades/@/202108/gate|spot|trades|@|202108.gz',
+      'gate/spot/trades/@/202107/gate|spot|trades|@|202107.csv.gz',
+      'gate/spot/trades/@/202108/gate|spot|trades|@|202108.csv.gz',
     ]);
   });
 
@@ -299,13 +299,13 @@ describe('a lens', () => {
     await lens('gate-only', { format: 1, venues: { gate: [{ effect: 'include' }] } });
 
     await publish(gate, { market: 'spot', dataset: 'books', variant: '', symbol: 'ETH_USDT', urlSymbol: 'ETH_USDT',
-      pattern: 'spot/orderbooks/{YYYY}{MM}/{SYMBOL}-{YYYY}{MM}{DD}{PART}.gz' },
-    [['spot/orderbooks/202107/ETH_USDT-2021072600.gz', '20210726']]);
+      pattern: 'spot/orderbooks/{YYYY}{MM}/{SYMBOL}-{YYYY}{MM}{DD}{PART}.csv.gz' },
+    [['spot/orderbooks/202107/ETH_USDT-2021072600.csv.gz', '20210726']]);
 
     while (catchUp(db, lensNamed(db, 'gate-only')!, 1_000));
 
     expect(await walk('', { 'x-catalog-lens': 'gate-only' })).toContain(
-      'gate/spot/books/E/ETH_USDT/202107/gate|spot|books|ETH_USDT|20210726.part00.gz');
+      'gate/spot/books/E/ETH_USDT/202107/gate|spot|books|ETH_USDT|20210726.part00.csv.gz');
   });
 
   it('is a 422 when it does not exist, never the whole bucket', async () => {
@@ -347,13 +347,13 @@ describe('a report', () => {
 
     try {
       const { status } = await report({
-        downloaded: [EXPECTED.find(one => one.endsWith('part03.gz'))],
+        downloaded: [EXPECTED.find(one => one.endsWith('part03.csv.gz'))],
         mismatched: [{ Key: EXPECTED.find(one => one.endsWith('quotes|BTCUSDT|20200101.zip')), Size: 9 }],
       });
 
       expect(status).toBe(200);
       expect(stand.got).toEqual([{ url: '/reports', body: {
-        downloaded: [idOf('spot/orderbooks/202107/BTC_USDT-2021072603.gz')],
+        downloaded: [idOf('spot/orderbooks/202107/BTC_USDT-2021072603.csv.gz')],
         failed:     [],
         mismatched: [{ FileId: idOf('q/20200101/BTCUSDT.zip'), Size: 9 }],
       } }]);
@@ -397,8 +397,8 @@ describe('a report', () => {
     const stand = await prospector();
 
     try {
-      expect((await report({ downloaded: ['gate/spot/trades/@/202108/gate|spot|trades|@|202108.gz'] })).status).toBe(200);
-      expect(stand.got).toMatchObject([{ body: { downloaded: [idOf('spot/trades/202108/all-202108.gz')] } }]);
+      expect((await report({ downloaded: ['gate/spot/trades/@/202108/gate|spot|trades|@|202108.csv.gz'] })).status).toBe(200);
+      expect(stand.got).toMatchObject([{ body: { downloaded: [idOf('spot/trades/202108/all-202108.csv.gz')] } }]);
     } finally {
       await stand.close();
     }

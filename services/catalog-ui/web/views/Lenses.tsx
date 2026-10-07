@@ -52,7 +52,8 @@ export const Lenses = ({ slug }: { slug?: string | undefined }) => {
    */
   const open = (to: string) => { location.hash = linkTo({ section: 'lenses', lens: to }).slice(1); };
 
-  const load = useCallback(async (keep?: string) => {
+  /** Read the lenses again, and say whether they were read. */
+  const load = useCallback(async (keep?: string): Promise<boolean> => {
     try {
       const { items } = await catalog<{ items: Lens[] }>('/lenses');
 
@@ -60,8 +61,12 @@ export const Lenses = ({ slug }: { slug?: string | undefined }) => {
       setError(null);
 
       if (keep) open(keep);
+
+      return true;
     } catch (err) {
       setError((err as Error).message);
+
+      return false;
     }
   }, []);
 
@@ -69,11 +74,17 @@ export const Lenses = ({ slug }: { slug?: string | undefined }) => {
 
   const lens = lenses?.find(one => one.slug === slug) ?? (fresh?.slug === slug ? fresh : null);
 
-  /** Once stored, a new lens is the catalog's: the page forgets its own copy. */
-  const stored = (made: string) => {
-    if (fresh?.slug === made) { setFresh(null); keepUnsaved(null); }
+  /**
+   * Once stored, a new lens is the catalog's: the page forgets its own copy —
+   * **but only once the catalog's is here to take its place.** Forgotten first,
+   * there is a moment with no lens to edit, the editor is put away, and what it
+   * holds unsaved goes with it: the draft rules of a lens whose name is being
+   * saved.
+   */
+  const stored = async (made: string) => {
+    const read = await load(made);
 
-    load(made);
+    if (read && fresh?.slug === made) { setFresh(null); keepUnsaved(null); }
   };
 
   /**
@@ -98,7 +109,14 @@ export const Lenses = ({ slug }: { slug?: string | undefined }) => {
 
   return (
     <Stack gap="md">
-      {error && <Alert color="orange" variant="light" title="The catalog refused that">{error}</Alert>}
+      {error && (
+        <Alert
+          color="orange" variant="light" title="The catalog refused that"
+          withCloseButton closeButtonLabel="Dismiss" onClose={() => setError(null)}
+        >
+          {error}
+        </Alert>
+      )}
 
       <Group align="flex-end" gap="sm">
         <Select

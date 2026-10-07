@@ -19,9 +19,9 @@ describe('reading a catalog key', () => {
   });
 
   it('reads a market bundle, a part and a multi-level variant', () => {
-    const file = parseKey('gate/spot/books,full,incremental/B/BTC_USDT/202107/gate|spot|books,full,incremental|BTC_USDT|20210726.part03.csv.gz')!;
+    const file = parseKey('gate/spot/books,incremental,full/B/BTC_USDT/202107/gate|spot|books,incremental,full|BTC_USDT|20210726.part03.csv.gz')!;
 
-    expect(file.variant).toBe('full,incremental');
+    expect(file.variant).toBe('incremental,full');
     expect(file.part).toBe('03');
     expect(file.container).toBe('gzip');
 
@@ -29,10 +29,25 @@ describe('reading a catalog key', () => {
       .toBe('market');
   });
 
+  /** The ending says how a file is wrapped, and nothing else is read off it. */
+  it('reads the container off the ending, whatever the venue', () => {
+    const containerOf = (tail: string) => parseKey(`x/spot/trades/B/BTC/202107/x|spot|trades|BTC|${tail}`)?.container;
+
+    expect(containerOf('20210726.zip')).toBe('zip');
+    expect(containerOf('20210726.csv.gz')).toBe('gzip');
+    expect(containerOf('20210726.gz')).toBe('gzip');
+    expect(containerOf('20210726.tar.gz')).toBe('tar.gz');
+    expect(containerOf('20210726.json.gz')).toBe('gzip');
+    expect(containerOf('202107.part1702857600.txt')).toBe('plain');
+    expect(containerOf('20210726.csv.zst')).toBeUndefined();
+  });
+
   /** A name that is not canonical is not a file of any partition. */
   it('refuses anything that is not a canonical name', () => {
     expect(parseKey('x/spot/trades/B/BTC/202107/x|spot|trades|BTC|20210726.zip.part')).toBeNull();
     expect(parseKey('x/spot/trades/B/BTC/202107/x|spot|trades|BTC|20210726.zip.bak')).toBeNull();
+    expect(parseKey('x/spot/trades/B/BTC/202107/x|spot|trades|BTC|20210726')).toBeNull();
+    expect(parseKey('x/spot/trades/B/BTC/202107/x|spot|trades|BTC|20210726.gz.bak')).toBeNull();
     expect(parseKey('README.md')).toBeNull();
   });
 });

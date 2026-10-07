@@ -115,7 +115,6 @@ running estimate).
 
 | Venue | Dataset | Market | File | Hdr | Sym | ts | Notes |
 |---|---|---|---|---|---|---|---|
-| binance | depthBands | perp | zip · csv | yes | no | **datetime text** | notional within ±% bands of the mid; not a book |
 | binance | openInterest | perp | zip · csv | yes | **yes** | **datetime text** | `metrics`: OI, OI value, two of four ratios mapped |
 | binance | liquidations | perp, future | zip · csv | yes | no | int ms | `liquidationSnapshot`, one shape on every line of futures; **every row written twice**, written once here |
 | binance | volatilityIndex | option | zip · csv | yes | **yes** | int ms (`calc_time`) | `BVOLIndex`, a value a second → `volatilityIndex.value` |
@@ -126,23 +125,29 @@ running estimate).
 A book published as an image and the changes since is `orderBook`: `ts, action, side, price, size,
 orderCount, sequence`, a row a level ([what `action` says](STOCKER.md#canonical-tables)). A book
 published whole at each tick is `orderBookSnapshot`: `ts, asks, bids, sequence`, a row a message, each
-side a list of `[price, size]`. The catalog's variant is the depth and the mode, and both are levels of
-the path, under one dataset: `dataset=orderBook/depth=400/mode=incremental`.
+side a list of `[price, size]`. A book summed into bands either side of the mid is `orderBookBands`:
+`ts, percentage, depth, notional`, a row a band. The catalog's variant is the kind and the depth, and
+both are levels of the path, the kind first, under one dataset:
+`dataset=orderBook/kind=incremental/depth=400`.
 
-| Venue | Market | Depth · mode | File | Read as | Sym | ts | Action | Sequence | Notes |
+| Venue | Market | Kind · depth | File | Read as | Sym | ts | Action | Sequence | Notes |
 |---|---|---|---|---|---|---|---|---|---|
-| okx | spot, perp, future, option | 400, 5000 · incremental | tar.gz · JSON a line | ndjson | **yes** | int ms | `snapshot` → snapshot, `update` → set | — | a level is `[price, size, orders]`; an image a minute at 400 levels, padded with price-0 levels that are dropped; **cuts at UTC midnight**, unlike the rest of okx |
+| okx | spot, perp, future, option | incremental · 400, 5000 | tar.gz · JSON a line | ndjson | **yes** | int ms | `snapshot` → snapshot, `update` → set | — | a level is `[price, size, orders]`; an image a minute at 400 levels, padded with price-0 levels that are dropped; **cuts at UTC midnight**, unlike the rest of okx |
 | htx | spot (400), perp, future (150) | incremental | tar.gz · JSON a line | ndjson | yes, unused | int µs | `snapshot` → snapshot, `update` → set | — | okx's record with a level of two values; one image as the file opens; spills back |
-| bybit | perp | 200, 500 · incremental | zip · JSON a line | ndjson | yes, unused | int ms | `snapshot` → snapshot, `delta` → set | `data.seq` | levels under `data.b` / `data.a` |
-| gate | spot | full · incremental | csv.gz, an hour a part | csv, by position | no | float s, tenths | as published: `set`, `make`, `take` | the id | `ts, side, action, price, amount, id, merged`; side `1` ask, `2` bid |
-| gate | perp, future | full · incremental | csv.gz, an hour a part | csv, by position | no | float s, tenths | as published | the id | `ts, action, price, size, id, merged`; **a negative size is an ask** |
+| bybit | perp | incremental · 200, 500 | zip · JSON a line | ndjson | yes, unused | int ms | `snapshot` → snapshot, `delta` → set | `data.seq` | levels under `data.b` / `data.a` |
+| gate | spot | incremental · full | csv.gz, an hour a part | csv, by position | no | float s, tenths | as published: `set`, `make`, `take` | the id | `ts, side, action, price, amount, id, merged`; side `1` ask, `2` bid |
+| gate | perp, future | incremental · full | csv.gz, an hour a part | csv, by position | no | float s, tenths | as published | the id | `ts, action, price, size, id, merged`; **a negative size is an ask** |
 
-| Venue | Market | Depth · mode | File | Read as | ts | Sequence | Notes |
+| Venue | Market | Kind · depth | File | Read as | ts | Sequence | Notes |
 |---|---|---|---|---|---|---|---|
-| gate | spot | 20 · snapshot | gz · JSON a line, an hour a part | ndjson | `current`: float s early, int ms later | `id` | a level is `[price, size]` |
-| gate | perp | 20 · snapshot | gz · JSON a line, an hour a part | ndjson | `current` | `id` | a level is `{p, s}`, stored as `[price, size]` |
-| kucoin | spot, perp | 50 · snapshot | zip · JSON a line under a one-word header | lines | int ms (`timestamp`) | `sequence`, futures only | **some files write every line twice**, written once here; lines are not in time order |
-| bitget | spot, perp, future | 500 · snapshot | zip · **xlsx** in a day's file, **csv** in a month's | xlsx · csv | int s | — | `timestamp, asks, bids`, a side JSON text in one cell; an image every 20 s; spills back |
+| gate | spot | snapshot · 20 | gz · JSON a line, an hour a part | ndjson | `current`: float s early, int ms later | `id` | a level is `[price, size]` |
+| gate | perp | snapshot · 20 | gz · JSON a line, an hour a part | ndjson | `current` | `id` | a level is `{p, s}`, stored as `[price, size]` |
+| kucoin | spot, perp | snapshot · 50 | zip · JSON a line under a one-word header | lines | int ms (`timestamp`) | `sequence`, futures only | **some files write every line twice**, written once here; lines are not in time order |
+| bitget | spot, perp, future | snapshot · 500 | zip · **xlsx** in a day's file, **csv** in a month's | xlsx · csv | int s | — | `timestamp, asks, bids`, a side JSON text in one cell; an image every 20 s; spills back |
+
+| Venue | Market | Kind · depth | File | Hdr | ts | Notes |
+|---|---|---|---|---|---|---|
+| binance | perp | bands · 5pct | zip · csv | yes | **datetime text** | `bookDepth`: ten bands a moment, ±1% to ±5% of the mid; a summary, none of the book's levels |
 
 ### Options — optionTicker · optionMarkPrice · volatilityIndex
 
@@ -205,7 +210,8 @@ is 0 and `count` is a sample count. Spot has never had a header; the futures fil
 **quotes** (`bookTicker`) — `update_id, best_bid_price, best_bid_qty, best_ask_price, best_ask_qty,
 transaction_time, event_time`; `ts = transaction_time`.
 
-**depthBands** (`bookDepth`) — `timestamp, percentage, depth, notional`; `timestamp` is
+**books, bands** (`bookDepth`) — `timestamp, percentage, depth, notional`: the size and the notional
+within ±1% to ±5% of the mid, ten rows a moment, so its depth is `5pct`. `timestamp` is
 `2026-07-29 00:00:01` text.
 
 **openInterest** (`metrics`) — `create_time, symbol, sum_open_interest, sum_open_interest_value,
@@ -399,9 +405,9 @@ Both are seconds with a fraction in the early files (2021) and whole millisecond
 Spot writes a level `[price, size]`, futures `{"p": price, "s": size}`.
 
 **Files named by the moment they hold** — the spot index (`indexPrice`, an hour apart) and the option
-ticker (`optionTicker`, a minute apart) are plain text with no header, no extension and no time
-inside: a line an instrument, its values parted by blanks, a line sometimes beginning with one. The
-catalog keeps the moment as the file's part — `…|202606.part1780272000` — and `ts` is read from it.
+ticker (`optionTicker`, a minute apart) are plain text with no header and no time inside: a line an
+instrument, its values parted by blanks, a line sometimes beginning with one. The catalog keeps the
+moment as the file's part — `…|202606.part1780272000.txt` — and `ts` is read from it.
 
 - **indexPrice** — `<symbol> <price>`.
 - **optionTicker** — the option's name and twelve unnamed values, read as: mark price, mark iv; bid

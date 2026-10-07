@@ -15,8 +15,8 @@ import { extrasOf, seriesFor } from '../src/schema/series';
 
 const DIR = join(__dirname, 'fixtures');
 
-const INDEX  = 'gate/spot/indexPrice,ticks/@/202606/gate|spot|indexPrice,ticks|@|202606.part1780272000';
-const TICKER = 'gate/option/optionTicker,ticks/@/202606/gate|option|optionTicker,ticks|@|202606.part1780272000';
+const INDEX  = 'gate/spot/indexPrice,ticks/@/202606/gate|spot|indexPrice,ticks|@|202606.part1780272000.txt';
+const TICKER = 'gate/option/optionTicker,ticks/@/202606/gate|option|optionTicker,ticks|@|202606.part1780272000.txt';
 
 let conn: Awaited<ReturnType<DuckDBInstance['connect']>>;
 
@@ -39,7 +39,7 @@ const rowsOf = async (key: string, fixture: string): Promise<Record<string, unkn
 };
 
 describe('files named by the moment they hold', () => {
-  it('are files of the catalog though they have no extension', () => {
+  it('are files of the catalog, named as the text they are', () => {
     expect(parseKey(INDEX)).toMatchObject({
       venue: 'gate', dataset: 'indexPrice', variant: 'ticks', bundle: 'market',
       grain: 'monthly', part: '1780272000', container: 'plain',
@@ -48,7 +48,7 @@ describe('files named by the moment they hold', () => {
 
   /** A line that begins with a blank still reads as its instrument and its price. */
   it('reads the spot index, the time from the name', async () => {
-    const rows = await rowsOf(INDEX, 'gate.spot-index.part1780272000');
+    const rows = await rowsOf(INDEX, 'gate.spot-index.part1780272000.txt');
 
     expect(rows).toHaveLength(6);
     expect(rows[0]).toMatchObject({ _instrument: 'DOGE_USD1', price: 0.1003325 });
@@ -59,7 +59,7 @@ describe('files named by the moment they hold', () => {
 
   /** Thirteen unnamed values: the mark, the two sides of the quote, the greeks. */
   it('reads the option ticker', async () => {
-    const rows = await rowsOf(TICKER, 'gate.options-ticker.part1780272000');
+    const rows = await rowsOf(TICKER, 'gate.options-ticker.part1780272000.txt');
     const call = rows.find(row => row['option'] === 'BTC_USDT-20260603-80000-C')!;
     const put  = rows.find(row => row['option'] === 'BTC_USDT-20260603-80000-P')!;
 
@@ -82,7 +82,7 @@ describe('files named by the moment they hold', () => {
     const series = seriesFor(parseKey(INDEX)!)!;
     const format = formatFor(series.format);
     const reader = await conn.runAndReadAll(
-      format.overflow!([join(DIR, 'gate.options-ticker.part1780272000')], series)!);
+      format.overflow!([join(DIR, 'gate.options-ticker.part1780272000.txt')], series)!);
 
     expect(reader.getRows()).toHaveLength(1);
   });

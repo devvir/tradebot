@@ -176,6 +176,6 @@ Nothing in the service knows which kind of seed it is holding, and nothing needs
 ## Quoting
 
 A field is quoted only where it contains a comma or a quote — today that is okx's
-`"400,incremental"` and `"5000,incremental"` variants and nothing else. A doubled quote inside a
+`"incremental,400"` and `"incremental,5000"` variants and nothing else. A doubled quote inside a
 quoted field is one literal quote. Empty is empty; there is no distinction between an empty
 string and a null, and none is needed.

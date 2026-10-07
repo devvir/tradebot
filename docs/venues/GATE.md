@@ -33,7 +33,7 @@ headers separate them.
 So gate is addressed at its bucket for everything — listing, probing and downloading. The CDN serves
 the same files byte for byte (MD5 = ETag on both), and measured 2026-09-29 the bucket answered HEAD at
 up to 1,781/s and LIST at up to 1,710/s, flat at ~270 ms, without a single throttling answer — the
-ceiling was the client's.
+ceiling was the client's. From a remote machine the same requests reached about 1,190 a second.
 
 Symbols need not be enumerated: they fall out of the walk. Gate's public API carries each one's
 `launch_time` / `create_time`. The portal's own symbol list sits in a Next.js chunk
@@ -118,7 +118,8 @@ Both are hourly, 24 files a day, from 2021-08. The snapshot ships plain `.gz` JS
 stream a `.csv.gz`. The snapshot's `id` exists only for data generated after 2023-04-26.
 
 The delta stream records full depth once, then a change record every 100 ms, with same-price changes
-inside the window merged into one row.
+inside the window merged into one row. Its depth is whatever the book has: between 45 and 2,204
+levels a side across sampled symbols. The snapshot is twenty levels a side, one book a row.
 
 **What a delta row means, measured.** An hour's file opens with the whole book as `set` rows sharing
 one `begin_id`; `make` and `take` rows follow, and each carries an amount that is added to its level
@@ -172,6 +173,10 @@ with no trade has no row rather than an empty one.
 
 `tradfi/candlesticks_1h/202605/XAUUSD-202605.csv.gz` serves 200. It is the one market with no
 trades, no depth and no funding.
+
+It is one flat namespace: 508 equities and leveraged ETFs, 80 FX pairs, 54 indices, and 19 each of
+metals and commodities, so `AAPL`, `AUDCAD` and `GER40` are siblings. `tradfi/symbols` lists all
+680, and every one matches the archive.
 
 ### Its `status` is a market session, not a listing
 
@@ -254,6 +259,12 @@ The `exclusion` table — two specific files, with no shape to describe:
 - `futures_btc/mark_prices/202107/hello/123`
 
 Both zero bytes, uploaded four minutes apart on 2021-08-11.
+
+## A dated future's file carries two dates
+
+`delivery_usdt` names a contract by its expiry, so a file there has a date inside the symbol and
+another after it: `ADA_USDT_20260605-2026060100.csv.gz` is the 2026-06-05 expiry, hour 00 of
+2026-06-01. The period is whatever follows the last `-`.
 
 ## The files named by an instant hold a line an instrument
 

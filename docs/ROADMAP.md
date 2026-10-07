@@ -133,6 +133,24 @@ One service, [stocker](services/STOCKER.md), turning every origin into the same 
 **REST and WebSocket are pending**, and will be a matter of new series rather than new machinery if
 the archive work has been done right.
 
+### Reduced order books — later
+
+**The books the venues publish are too large to work with.** Of everything the catalog lists, order
+books are about 85 TB and all the rest about 15 TB, at one rendering a month (2026-10-07). Cold
+storage for all of it would still leave the working copy: a 20 TB disk attached just to have the
+relevant books at hand is not a way to work.
+
+**So the vault gets books of its own making, far smaller**: the top 25 to 50 levels of each book, as
+snapshots or as throttled increments. Which of the two, and how deep, is open.
+
+**From a venue's snapshots it is cutting the tail** — the levels beyond the depth kept are dropped.
+
+**From a venue's increments it is a book kept whole and published pruned.** Every change is applied
+to the full book in memory, and only what changes within the top levels is written; the rest moves
+the book and is not written.
+
+Not now — some months out.
+
 ## Part 3 · Categorise the markets
 
 Nothing built, nothing planned. It becomes possible the moment the vault is trustworthy, and it is

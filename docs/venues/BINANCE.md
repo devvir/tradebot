@@ -189,6 +189,7 @@ interval as a path segment, which covers both trees and all four datasets in one
 
 Left live they were the venue's largest single waste: 3,761 series whose tips sat frozen fifteen
 days behind the frontier, re-asking every open day, for **some 55% of the whole nightly update**.
+Refused, they are 51 patterns and 22,155 series fewer.
 
 **`data2/` is a staging area** and can be ignored: uncompressed `.csv` files sitting beside their
 own `.zip` for the same period, a `.DS_Store`, everything dated 2020-10 to 2020-12.
@@ -217,7 +218,7 @@ What is under it, measured:
 
 ```
 /data/spot/{aggTrades,klines}/<SYMBOL>/[<INTERVAL>/]…-<yyyy-mm>.zip
-137,212 files      2017-07 → 2021-01, then nothing
+137,212 files, 86.7 GB      2017-07 → 2021-01, then nothing
 ```
 
 Both trees fetch with `200`. The reconstructed URL keeps the double slash —
@@ -276,6 +277,29 @@ Ten `delimiter=/` requests map the whole archive, and doing it that way rather t
 in code is what surfaced `option/`, `BVOLIndex`, `EOHSummary` and `aggTrades` — none of which were
 being collected.
 
+## The instrument listings
+
+Four hosts, because binance runs a service per margin:
+
+| | endpoint |
+|---|---|
+| spot | `api.binance.com/api/v3/exchangeInfo` |
+| USDⓈ-margined futures | `fapi.binance.com/fapi/v1/exchangeInfo` |
+| coin-margined futures | `dapi.binance.com/dapi/v1/exchangeInfo` |
+| options | `eapi.binance.com/eapi/v1/exchangeInfo` |
+
+**Names pass through.** The archive files an instrument under the name the API returns — `0GBNB`,
+`DOGSUSDT`, `BTCUSDT_230630`.
+
+**A contract's type decides its market, and the service that listed it decides its archive.** Both
+futures services mix perpetuals and dated contracts in one answer, told apart by `contractType`;
+and every contract is domiciled in exactly one of the two, which is the `um` or `cm` of its path.
+Whether it is trading is `status` on one service and `contractStatus` on the other — the same field
+under two names.
+
+**Options are listed by contract and filed by underlying**: the 1,862 contracts listed collapse to
+the handful of underlyings the archive holds.
+
 ## Rate limits
 
 **None documented, and none signalled in responses.** No `x-ratelimit-*`, no `retry-after`, and
@@ -297,7 +321,8 @@ listing endpoint.
 | LIST (`max-keys=1`) | 1,562/s sustained | none in ~1.4 M requests | 272 ms, flat |
 | HEAD on a file | 1,788/s | none in ~290 k requests | 267 ms, flat |
 
-Every run ended at the client's own ceiling — 500 requests in flight at ~270 ms each — not at the
+From a remote machine the same requests reached about 1,200 a second, with no throttling answer
+either. Every run ended at the client's own ceiling — 500 requests in flight at ~270 ms each — not at the
 bucket's. S3's published ceiling is 5,500 GET/HEAD a second per partitioned prefix.
 
 **The connect timeouts that once looked like a limit were the client.** The bucket is ~260 ms away,

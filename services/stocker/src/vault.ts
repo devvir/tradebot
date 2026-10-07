@@ -10,8 +10,8 @@ import type { Edge, Partition, Series, Side, SliceIndex, Stocked, VaultKey } fro
 /**
  * The vault's layout, and how a partition is put in place in it.
  *
- *     <vault>/venue=…/market=…/dataset=…[/interval=…][/depth=…][/mode=…][/kind=…][/aggregated=…]/@/<YYYYMM>.parquet
- *     <vault>/venue=…/market=…/dataset=…[/interval=…][/depth=…][/mode=…][/kind=…][/aggregated=…]/<symbol>/<YYYYMM>.parquet
+ *     <vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…][/depth=…][/aggregated=…]/@/<YYYYMM>.parquet
+ *     <vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…][/depth=…][/aggregated=…]/<symbol>/<YYYYMM>.parquet
  *     …/<@ or symbol>/<YYYYMM>.pre.parquet    the month's first hours, from the month before
  *     …/<@ or symbol>/<YYYYMM>.post.parquet   the month's last hours, from the month after
  *
@@ -45,7 +45,7 @@ import type { Edge, Partition, Series, Side, SliceIndex, Stocked, VaultKey } fro
  * devices for handling the files, not facts about the data.
  */
 
-/** `…/dataset=…[/interval=…][/depth=…][/mode=…][/kind=…][/aggregated=…]`: where every month of a slice sits. */
+/** `…/dataset=…[/interval=…][/kind=…][/depth=…][/aggregated=…]`: where every month of a slice sits. */
 export const sliceDirOf = (key: VaultKey): string => join(config.vaultDir, ...levelsOf(key));
 
 /** The one file of a month stored whole — or, with a side, the file of what a neighbouring month held of it. */
@@ -272,12 +272,11 @@ const levelsOf = (key: VaultKey): string[] => [
   `market=${key.market}`,
   `dataset=${rootOf(key.table)}`,
   ...(key.interval ? [`interval=${key.interval}`] : []),
-  ...(key.depth ? [`depth=${key.depth}`] : []),
-  ...(key.mode ? [`mode=${key.mode}`] : []),
   ...(key.kind ? [`kind=${key.kind}`] : []),
+  ...(key.depth ? [`depth=${key.depth}`] : []),
   ...(key.aggregated ? [`aggregated=${key.aggregated}`] : []),
 ];
 
 const extrasOf = (key: VaultKey): string[] =>
-  [key.interval, key.depth, key.mode, key.kind, key.aggregated && `aggregated=${key.aggregated}`]
+  [key.interval, key.kind, key.depth, key.aggregated && `aggregated=${key.aggregated}`]
     .filter((x): x is string => !! x);

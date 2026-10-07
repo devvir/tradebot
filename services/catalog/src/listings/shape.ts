@@ -1,3 +1,4 @@
+import { logger } from '@devvir/service-kit';
 /**
  * What a pattern and a path say about a file, beyond which series it belongs to.
  *
@@ -35,23 +36,62 @@ export const intervalOf = (pattern: string): string | undefined => {
 };
 
 /**
- * A file's extension, from the first dot of its name to the end.
+ * A file's ending: how it is wrapped, said the same way whatever its venue wrote.
  *
- * **Not the last dot.** `.csv.gz`, `.tar.gz` and `.data.zip` are all one
- * extension in two or three parts, and taking only `.gz` would leave the rest
- * looking like part of the name. No venue in the catalog puts a dot in a symbol
- * or a date, so the first dot is always where the name stops.
+ * **Always a valid one.** The last extension — and, where that compresses one
+ * stream, the extension before it saying what the stream is: `.csv.gz`,
+ * `.tar.gz`. An archive names its own members, so whatever a venue writes in
+ * front of `.zip` is dropped: `.data.zip` and `.trades.csv.zip` are both `.zip`.
  *
- * Gate's slices carry no extension at all, and answer the empty string.
+ * **Where a venue gives none, or a wrong one, it is put right here**, so that
+ * nobody reading a listing has to. The files known to be so are named for what
+ * they hold — see `KNOWN`. One nobody has met is taken for text and said aloud,
+ * every time it is listed: `.txt`, or `.txt.gz` for a compressed stream that
+ * does not say what it is.
  */
 export const extensionOf = (path: string): string => {
-  const name = path.slice(path.lastIndexOf('/') + 1);
-  const dot  = name.indexOf('.');
+  const known = KNOWN.find(one => one.paths.test(path));
 
-  return dot === -1 ? '' : name.slice(dot);
+  if (known) return known.ending;
+
+  const parts = path.slice(path.lastIndexOf('/') + 1).split('.').slice(1).map(part => part.toLowerCase());
+  const last  = parts.at(-1);
+
+  if (last === undefined || ! EXTENSION.test(last)) return assumed(path, '.txt');
+
+  if (! COMPRESSORS.has(last)) return `.${last}`;
+
+  const inner = parts.at(-2);
+
+  return inner !== undefined && EXTENSION.test(inner) ? `.${inner}.${last}` : assumed(path, `.txt.${last}`);
 };
 
 // ── Internals ─────────────────────────────────────────────────────────────────
+
+/** What compresses one stream and names nothing inside it. */
+const COMPRESSORS = new Set(['gz', 'bz2', 'xz', 'zst']);
+
+/** What an extension looks like: letters and digits, a letter among them — `7z` is one, `08` is not. */
+const EXTENSION = /^[0-9a-z]*[a-z][0-9a-z]*$/;
+
+/**
+ * Files their venue names wrongly or not at all, and the ending they are given.
+ *
+ * - gate's book snapshots are a JSON object a line, gzipped, and named `.gz`;
+ * - gate's files named by an instant are space-separated text with no
+ *   extension at all.
+ */
+const KNOWN: { paths: RegExp; ending: string }[] = [
+  { paths: /(?:^|\/)orderbooks_slice\/[^/]+\/[^/]+\.gz$/, ending: '.json.gz' },
+  { paths: /(?:^|\/)slice_[a-z_]+_\d+$/,                  ending: '.txt' },
+];
+
+/** An ending given to a file whose own says nothing usable. Said each time, so that it is met early. */
+const assumed = (path: string, ending: string): string => {
+  logger.warn({ path, ending }, 'A file with no usable extension — named as text');
+
+  return ending;
+};
 
 /**
  * A segment that is a length and nothing else.

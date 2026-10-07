@@ -48,8 +48,10 @@ export const descriptorOf = (key: Pick<PartitionKey, 'dataset' | 'variant'>): st
 /**
  * `date[.partNN].ext`, and nothing after it — so a download in progress or a
  * file set aside beside a real one is not taken for a file of the partition.
+ * The ending is one extension, or two where a compressed stream says what it is
+ * (`.csv.gz`, `.tar.gz`); which ones a venue uses is nothing this has to know.
  */
-const TAIL = /^(\d{6}|\d{8}|\d{10}|\d{12})(?:\.part\d+)?\.(?:zip|csv\.gz|tar\.gz|gz|csv|data\.zip)$/;
+const TAIL = /^(\d{6}|\d{8}|\d{10}|\d{12})(?:\.part\d+)?\.(?:[0-9a-z]*[a-z][0-9a-z]*\.(?=(?:gz|bz2|xz|zst)$))?(?!(?:bak|part\d*)$)[0-9a-z]*[a-z][0-9a-z]*$/;
 
 /** The length of a file's date is its grain. */
 const GRAINS: Record<number, Grain> = { 6: 'monthly', 8: 'daily', 10: 'hourly', 12: 'minutely' };

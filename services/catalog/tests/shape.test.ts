@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { logger } from '@devvir/service-kit';
 import { extensionOf, intervalOf } from '../src/listings/shape';
 
 /**
@@ -48,19 +49,58 @@ describe('the bar length a pattern names', () => {
 });
 
 describe('a file\'s extension', () => {
-  /** Two- and three-part extensions are one extension, so the first dot wins. */
-  it('takes everything from the first dot of the name', () => {
-    expect(extensionOf('spot/deals/202106/BTC_USDT-202106.csv.gz')).toBe('.csv.gz');
-    expect(extensionOf('orderbook/linear/0GUSDT/2025-09-18_0GUSDT_ob200.data.zip')).toBe('.data.zip');
-    expect(extensionOf('a/b/BTC-USDT-L2orderbook-400lv-2023-09-18.tar.gz')).toBe('.tar.gz');
+  it('is the last extension', () => {
     expect(extensionOf('kline/ENJUSDT/UMCBL/20221006.zip')).toBe('.zip');
+    expect(extensionOf('kline/ENJUSDT/UMCBL/20221006.ZIP')).toBe('.zip');
+    expect(extensionOf('kline/ENJUSDT/UMCBL/20221006.7z')).toBe('.7z');
   });
 
-  it('is empty where a venue publishes no extension at all', () => {
-    expect(extensionOf('spot_index/202312/slice_index_1702857600')).toBe('');
+  /** A compressed stream names nothing inside it, so what it holds is part of how it is wrapped. */
+  it('keeps what a compressed stream is', () => {
+    expect(extensionOf('spot/deals/202106/BTC_USDT-202106.csv.gz')).toBe('.csv.gz');
+    expect(extensionOf('a/b/BTC-USDT-L2orderbook-400lv-2023-09-18.tar.gz')).toBe('.tar.gz');
+    expect(extensionOf('tradfi/candlesticks_1h/202605/BRK.B-202605.csv.gz')).toBe('.csv.gz');
   });
 
-  it('is not confused by dots in a directory above the file', () => {
-    expect(extensionOf('a.b/c/plain')).toBe('');
+  /** An archive names its own members: what a venue writes before `.zip` is its styling, not the file's kind. */
+  it('drops what a venue styles in front of an archive\'s extension', () => {
+    expect(extensionOf('orderbook/linear/0GUSDT/2025-09-18_0GUSDT_ob200.data.zip')).toBe('.zip');
+    expect(extensionOf('trade/option/BTC/2024-12-16_BTC_USDT.trades.csv.zip')).toBe('.zip');
+    expect(extensionOf('mark_kline/option/BTC/2024-12-16_BTC_USDT.OHLC.csv.zip')).toBe('.zip');
+  });
+
+  /** What gate names wrongly, or not at all, is named for what it holds. */
+  it('gives the files known to be misnamed the ending they should have', () => {
+    expect(extensionOf('spot/orderbooks_slice/202108/BTC_USDT-2021080100.gz')).toBe('.json.gz');
+    expect(extensionOf('futures_btc/orderbooks_slice/202610/BTC_USD-2026100100.gz')).toBe('.json.gz');
+    expect(extensionOf('spot_index/202312/slice_index_1702857600')).toBe('.txt');
+    expect(extensionOf('options_ticker/202509/slice_options_ticker_1756691880')).toBe('.txt');
+  });
+
+  describe('where a file\'s own ending says nothing usable', () => {
+    const warned = vi.spyOn(logger, 'warn').mockImplementation(() => logger);
+
+    beforeEach(() => warned.mockClear());
+
+    /** Never a bare compressor: a stream that does not say what it is, is text. */
+    it('takes a compressed stream for text, and says so', () => {
+      expect(extensionOf('x/something.gz')).toBe('.txt.gz');
+      expect(extensionOf('x/BRK.B-202605.gz')).toBe('.txt.gz');
+      expect(extensionOf('x/BTC_USDT-2021.08.gz')).toBe('.txt.gz');
+      expect(warned).toHaveBeenCalledTimes(3);
+    });
+
+    it('takes a file with no extension for text, and says so', () => {
+      expect(extensionOf('x/plain')).toBe('.txt');
+      expect(extensionOf('a.b/c/plain')).toBe('.txt');
+      expect(extensionOf('x/BTC_USDT-2021.08')).toBe('.txt');
+      expect(warned).toHaveBeenCalledTimes(3);
+    });
+
+    it('says nothing of a file it names by a rule', () => {
+      extensionOf('spot/deals/202106/BTC_USDT-202106.csv.gz');
+      extensionOf('spot_index/202312/slice_index_1702857600');
+      expect(warned).not.toHaveBeenCalled();
+    });
   });
 });

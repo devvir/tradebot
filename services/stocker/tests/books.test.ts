@@ -6,6 +6,8 @@ import { parseKey } from '../src/keys';
 import { selectFor } from '../src/schema/project';
 import { extrasOf, seriesFor } from '../src/schema/series';
 import { rootOf } from '../src/schema/tables';
+import { sliceDirOf } from '../src/vault';
+import type { VaultKey } from '../src/types';
 
 /**
  * Order books, venue by venue, against the first records of files each venue
@@ -41,21 +43,21 @@ const rowsOf = async (key: string, fixture: string): Promise<Row[]> => {
     [name, typeof row[at] === 'bigint' ? Number(row[at]) : row[at]])));
 };
 
-const OKX_SPOT   = 'okx/spot/books,5000,incremental/A/AUDF-USDT/202606/okx|spot|books,5000,incremental|AUDF-USDT|20260601.tar.gz';
-const OKX_PADDED = 'okx/spot/books,400,incremental/M/MCO-USDT/202303/okx|spot|books,400,incremental|MCO-USDT|20230301.tar.gz';
-const OKX_CHAIN  = 'okx/future/books,5000,incremental/T/TRX-USD_UM_XPERP/202606/okx|future|books,5000,incremental|TRX-USD_UM_XPERP|20260601.tar.gz';
-const HTX_PERP   = 'htx/perp/books,150,incremental/O/ORCA-USDT/202606/htx|perp|books,150,incremental|ORCA-USDT|20260601.tar.gz';
-const BYBIT      = 'bybit/perp/books,200,incremental/X/XAUTUSDT-19JUN26/202606/bybit|perp|books,200,incremental|XAUTUSDT-19JUN26|20260601.data.zip';
-const GATE_SPOT  = 'gate/spot/books,full,incremental/B/BTC_USDT/202108/gate|spot|books,full,incremental|BTC_USDT|20210801.part00.csv.gz';
-const GATE_PERP  = 'gate/perp/books,full,incremental/B/BTC_USD/202606/gate|perp|books,full,incremental|BTC_USD|20260601.part21.csv.gz';
-const GATE_FUT   = 'gate/future/books,full,incremental/B/BTC_USDT_20260626/202606/gate|future|books,full,incremental|BTC_USDT_20260626|20260601.part21.csv.gz';
-const GATE_SLICE = 'gate/spot/books,20,snapshot/E/ETH_USDT/202606/gate|spot|books,20,snapshot|ETH_USDT|20260601.part20.gz';
-const GATE_OLD   = 'gate/spot/books,20,snapshot/B/BTC_USDT/202108/gate|spot|books,20,snapshot|BTC_USDT|20210801.part09.gz';
-const GATE_USDT  = 'gate/perp/books,20,snapshot/E/ETH_USDT/202606/gate|perp|books,20,snapshot|ETH_USDT|20260601.part20.gz';
-const KUCOIN     = 'kucoin/spot/books,50,snapshot/B/BTC-USDT/202607/kucoin|spot|books,50,snapshot|BTC-USDT|20260729.zip';
-const KUCOIN_FUT = 'kucoin/perp/books,50,snapshot/X/XBTUSDTM/202607/kucoin|perp|books,50,snapshot|XBTUSDTM|20260729.zip';
-const BITGET     = 'bitget/spot/books,500,snapshot/G/GHOUSDT/202606/bitget|spot|books,500,snapshot|GHOUSDT|202606.zip';
-const BITGET_DAY = 'bitget/spot/books,500,snapshot/G/GHOUSDT/202606/bitget|spot|books,500,snapshot|GHOUSDT|20260601.zip';
+const OKX_SPOT   = 'okx/spot/books,incremental,5000/A/AUDF-USDT/202606/okx|spot|books,incremental,5000|AUDF-USDT|20260601.tar.gz';
+const OKX_PADDED = 'okx/spot/books,incremental,400/M/MCO-USDT/202303/okx|spot|books,incremental,400|MCO-USDT|20230301.tar.gz';
+const OKX_CHAIN  = 'okx/future/books,incremental,5000/T/TRX-USD_UM_XPERP/202606/okx|future|books,incremental,5000|TRX-USD_UM_XPERP|20260601.tar.gz';
+const HTX_PERP   = 'htx/perp/books,incremental,150/O/ORCA-USDT/202606/htx|perp|books,incremental,150|ORCA-USDT|20260601.tar.gz';
+const BYBIT      = 'bybit/perp/books,incremental,200/X/XAUTUSDT-19JUN26/202606/bybit|perp|books,incremental,200|XAUTUSDT-19JUN26|20260601.zip';
+const GATE_SPOT  = 'gate/spot/books,incremental,full/B/BTC_USDT/202108/gate|spot|books,incremental,full|BTC_USDT|20210801.part00.csv.gz';
+const GATE_PERP  = 'gate/perp/books,incremental,full/B/BTC_USD/202606/gate|perp|books,incremental,full|BTC_USD|20260601.part21.csv.gz';
+const GATE_FUT   = 'gate/future/books,incremental,full/B/BTC_USDT_20260626/202606/gate|future|books,incremental,full|BTC_USDT_20260626|20260601.part21.csv.gz';
+const GATE_SLICE = 'gate/spot/books,snapshot,20/E/ETH_USDT/202606/gate|spot|books,snapshot,20|ETH_USDT|20260601.part20.gz';
+const GATE_OLD   = 'gate/spot/books,snapshot,20/B/BTC_USDT/202108/gate|spot|books,snapshot,20|BTC_USDT|20210801.part09.gz';
+const GATE_USDT  = 'gate/perp/books,snapshot,20/E/ETH_USDT/202606/gate|perp|books,snapshot,20|ETH_USDT|20260601.part20.gz';
+const KUCOIN     = 'kucoin/spot/books,snapshot,50/B/BTC-USDT/202607/kucoin|spot|books,snapshot,50|BTC-USDT|20260729.zip';
+const KUCOIN_FUT = 'kucoin/perp/books,snapshot,50/X/XBTUSDTM/202607/kucoin|perp|books,snapshot,50|XBTUSDTM|20260729.zip';
+const BITGET     = 'bitget/spot/books,snapshot,500/G/GHOUSDT/202606/bitget|spot|books,snapshot,500|GHOUSDT|202606.zip';
+const BITGET_DAY = 'bitget/spot/books,snapshot,500/G/GHOUSDT/202606/bitget|spot|books,snapshot,500|GHOUSDT|20260601.zip';
 
 describe('books that are an image and the changes since', () => {
   it('reads okx: a snapshot, then levels set — gone at size zero', async () => {
@@ -206,16 +208,32 @@ describe('books that are an image a tick', () => {
 });
 
 describe('where a book sits in the vault', () => {
-  it('says how deep it is and in which mode', () => {
+  it('says which kind it is and how deep', () => {
     const okx    = seriesFor(parseKey(OKX_SPOT)!)!;
     const bitget = seriesFor(parseKey(BITGET)!)!;
 
-    expect(extrasOf(okx, '5000,incremental')).toEqual({ depth: '5000', mode: 'incremental' });
-    expect(extrasOf(okx, 'full,incremental')).toEqual({ depth: 'full', mode: 'incremental' });
-    expect(extrasOf(bitget, '500,snapshot')).toEqual({ depth: '500', mode: 'snapshot' });
+    expect(extrasOf(okx, 'incremental,5000')).toEqual({ kind: 'incremental', depth: '5000' });
+    expect(extrasOf(okx, 'incremental,full')).toEqual({ kind: 'incremental', depth: 'full' });
+    expect(extrasOf(bitget, 'snapshot,500')).toEqual({ kind: 'snapshot', depth: '500' });
   });
 
-  /** Two kinds of book are two tables of one dataset: the mode in the path is what tells their files apart. */
+  /** The kind comes first in the path, as it does in the name: it is what a reader chooses by. */
+  it('puts the kind above the depth', () => {
+    const book: VaultKey = { table: 'orderBook', venue: 'okx', market: 'spot', kind: 'incremental', depth: '400', month: '2023-09' };
+
+    expect(sliceDirOf(book)).toMatch(/\/dataset=orderBook\/kind=incremental\/depth=400$/);
+  });
+
+  /** Binance's bands are a book summed up, and sit with the books as a kind of their own. */
+  it('files the bands as a kind of book', () => {
+    const bands = seriesFor(parseKey('binance/perp/books,bands,5pct/B/BTCUSDT/202607/binance|perp|books,bands,5pct|BTCUSDT|20260729.zip')!)!;
+
+    expect(bands.table).toBe('orderBookBands');
+    expect(extrasOf(bands, 'bands,5pct')).toEqual({ kind: 'bands', depth: '5pct' });
+    expect(rootOf('orderBookBands')).toBe('orderBook');
+  });
+
+  /** Every kind of book is a table of its own under one dataset: the kind in the path is what tells their files apart. */
   it('keeps both kinds under the one dataset name', () => {
     expect(rootOf('orderBookSnapshot')).toBe('orderBook');
     expect(rootOf('orderBook')).toBe('orderBook');

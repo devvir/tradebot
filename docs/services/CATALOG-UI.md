@@ -97,7 +97,7 @@ thousands of instruments and almost every visit is about something else.
 **A shape's span is two measurements**: the oldest period anything covers, and
 the newest file the catalog has seen. So a variant that stopped beside the one
 that replaced it reads as two adjacent spans — bybit's perpetual books are
-`500,incremental` reaching 2025-08-20 and `200,incremental` from the 21st —
+`incremental,500` reaching 2025-08-20 and `incremental,200` from the 21st —
 which is what tells a reader to fetch both.
 
 **The contents can be seen through a lens.** A picker beside the breadcrumbs narrows every list and

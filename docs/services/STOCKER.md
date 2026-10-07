@@ -45,8 +45,8 @@ converting seconds to microseconds is mechanical and reversible. Deciding a 50-l
 ## Path convention
 
 ```
-<vault>/venue=…/market=…/dataset=…[/interval=…][/depth=…][/mode=…][/kind=…][/aggregated=…]/@/<YYYYMM>.parquet
-<vault>/venue=…/market=…/dataset=…[/interval=…][/depth=…][/mode=…][/kind=…][/aggregated=…]/<symbol>/<YYYYMM>.parquet
+<vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…][/depth=…][/aggregated=…]/@/<YYYYMM>.parquet
+<vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…][/depth=…][/aggregated=…]/<symbol>/<YYYYMM>.parquet
 …/<@ or symbol>/<YYYYMM>.pre.parquet     the month's first hours, from the month before
 …/<@ or symbol>/<YYYYMM>.post.parquet    the month's last hours, from the month after
 ```
@@ -541,7 +541,7 @@ The cost is that a wrongly *mapped* column yields NULLs instead of an error. `ma
 covers that: it drives every series against a real file from the venue and asserts the projected
 values, catching a bad mapping where it can be read and fixed.
 
-`trades` · `quotes` · `orderBook` · `orderBookSnapshot` · `depthBands` · `klines` · `markPrice` · `indexPrice` ·
+`trades` · `quotes` · `orderBook` · `orderBookSnapshot` · `orderBookBands` · `klines` · `markPrice` · `indexPrice` ·
 `premiumIndex` · `volatilityIndex` · `optionMarkPrice` · `optionTicker` · `funding` · `borrowing` ·
 `openInterest` · `liquidations` · `settlement`
 
@@ -551,11 +551,10 @@ Notes on the ones whose boundaries are not obvious:
   bins too, but of a *reference series* — a virtual price with no market behind it, the same
   idea as BitMEX's referential ticks. A Binance mark row reads `volume=0, count=60` under the
   identical 12-column kline header. Same file shape, different data, different table.
-- **`depthBands` is not a book.** Binance's `bookDepth` is notional within ±% bands of the mid —
-  a summary. `quotes` is level 1 only; Bitget's "depth" belongs there despite its name.
-- **A book is one of two kinds of data, and each has its table.** Which kind is the catalog's
-  variant, and a level of the path: `depth=400/mode=incremental`, `depth=50/mode=snapshot`, both under
-  `dataset=orderBook`.
+- `quotes` is level 1 only; Bitget's "depth" belongs there despite its name.
+- **A book is one of three kinds of data, and each has its table.** The kind and the depth are the
+  catalog's variant, and levels of the path, the kind first: `kind=incremental/depth=400`,
+  `kind=snapshot/depth=50`, `kind=bands/depth=5pct`, all under `dataset=orderBook`.
   - **`orderBook`** — a book published as an image and the changes since. An event log, one row a
     level: `ts, action, side, price, size, orderCount, sequence`. `action` says what the row does to
     the book: `snapshot`, a level of a whole image, the rows sharing its time being the book; `set`,
@@ -567,7 +566,11 @@ Notes on the ones whose boundaries are not obvious:
     alone and says nothing of what happened before the next, so there are no changes to log; kept
     whole it is what was published, at about the size it was published at.
 
-  Neither is a reconstructed book: rebuilding one at an instant is the consumer's job, since the
+  - **`orderBookBands`** — a book summed into bands either side of the mid: `ts, percentage, depth,
+    notional`, a row a band, the size and the notional resting within that many percent of the mid.
+    Its depth is the widest band. It is a summary of a book and holds none of its levels.
+
+  None is a reconstructed book: rebuilding one at an instant is the consumer's job, since the
   depth it needs is its decision.
 - **An option has three tables of its own.** `optionTicker` is an option's state at a moment or over
   a bar — what traded (OHLC and volumes, of trades), the quote, the mark, the implied volatility
@@ -590,7 +593,7 @@ Notes on the ones whose boundaries are not obvious:
 
 **`margin` says what a contract settles in** — `linear` (its USD-like quote) or `inverse` (the
 coin) — and is NULL on spot and options. It is carried by every table whose numbers mean something
-different on the two: `trades`, `klines`, `quotes`, `orderBook`, `depthBands`, `openInterest` and
+different on the two: `trades`, `klines`, `quotes`, `orderBook`, `orderBookBands`, `openInterest` and
 `liquidations`. A coin-margined trade's size is a contract count and its other leg is the coin; a
 linear one's is base and quote. It is a constant per file, filled as each instrument is written,
 from one rule per venue over the venue's own symbol (`schema/margin.ts`) — a stopgap until

@@ -284,7 +284,7 @@ export interface Shape {
 
   /**
    * The levels below the dataset, named — `{ interval: '1m' }`,
-   * `{ depth: '400', mode: 'incremental' }`. Empty where the dataset has none.
+   * `{ kind: 'incremental', depth: '400' }`. Empty where the dataset has none.
    */
   variant:  Record<string, string>;
 

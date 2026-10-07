@@ -2310,7 +2310,7 @@ export interface Carrier {
   session: ClientHttp2Session;
   open:    number;
 
-  /** Set once the server refuses a stream on it: what is in flight finishes, nothing new is sent. */
+  /** Set once the server refuses a stream on it, or leaves one unanswered: what is in flight finishes, nothing new is sent. */
   retired: boolean;
 }
 

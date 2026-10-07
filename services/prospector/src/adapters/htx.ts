@@ -8,40 +8,8 @@ import { htxInstruments } from './htx/instruments';
 import { declare } from './declare';
 
 /**
- * HTX publishes a standard S3 listing, and keeps **two archives** in the same
- * bucket — differing in what is promised, not only in depth:
- *
- * - `historical_data/<market>/daily/<dataset>/<SYMBOL>/…` — what HTX announces
- *   and offers. Starts `2026-02-01` and written daily since, dashed symbols
- *   (`BTC-USDT`), markets `spot` and `futures`.
- * - `data/<dataset>/<market>/daily/<SYMBOL>/…` — reachable but never announced,
- *   so promised to nobody. Six years deep, stopped `2026-08-04`, undashed spot
- *   symbols (`BTCUSDT`) and dashed elsewhere except a dated `future`, which is
- *   `BTC260206` with no quote currency at all. Markets `spot`, `future`, `swap`,
- *   `linear-swap` and `option`.
- *
- * **Neither is a rolling window** — both still hold their first day, so a floor
- * here is a launch date as it is at every other venue.
- *
- * Surveying from the bucket root is what makes the second visible at all;
- * starting at `historical_data/` hid it entirely. Nothing is stripped, so each
- * path says which tree it came from and a URL is `base` + `/` + `path`.
- *
- * Books ship as `.tar.gz` where everything else is `.zip`, so the date pattern
- * accepts both. One granularity — days — so nothing to tag.
- *
- * **Addressed at the bucket, not at `www.htx.com/data` which fronts it.** The
- * domain is an Akamai edge and enforces its own limit, far below what the
- * bucket behind it will serve: half a dozen listing requests earned a
- * `403 AkamaiGHost` on every prefix at once, and probes that were neither
- * answered nor refused — sockets accepted and left silent until each died on
- * its own deadline, where the bucket answers a plain `404`. The bucket names
- * itself in every listing it serves (`<Name>huobi-service-data</Name>`), and
- * both trees are there in full.
- *
- * The edge's refusals are also unreadable: a `403` with no `x-amz-error-code`
- * is indistinguishable from a real block, so absence and rejection arrived as
- * the same answer. Against S3 the two are separate again.
+ * HTX's archive: two trees in one bucket, listed at the bucket and not at the
+ * CDN in front of it. The venue is described in `docs/venues/HTX.md`.
  */
 export const htx: Adapter = declare({
   /** The shared listing context — this venue differs by address, not by shape. */
@@ -51,15 +19,8 @@ export const htx: Adapter = declare({
   scanner: s3,
 
   /**
-   * The bucket also serves the browsing UI, a scratch directory, and a page of
-   * documentation at the root of each dataset.
-   *
-   * **`remark.txt` is the field descriptions**, one per dataset and market
-   * under `data/` — thirteen of them, saying what each column means, which the
-   * newer tree shows in a dialog on its portal instead. It is documentation and
-   * carries no date, so nothing would place it in a series; refusing it by name
-   * keeps it out of the unreadable list, where it would sit for ever looking
-   * like a shape nobody has parsed yet.
+   * Not archive: the browsing UI, a scratch directory, each dataset's
+   * `remark.txt`, and `data/` from the day the other tree took over.
    */
   accepts: (path) =>
     ! /^(assets|test)\//.test(path)
@@ -69,36 +30,10 @@ export const htx: Adapter = declare({
   /** What htx lists today — see `htx/instruments.ts`. */
   instruments: htxInstruments,
 
-  /**
-   * **No limit found.** Measured 2026-09-29/30 with HEAD probes: ~1,800/s from
-   * one machine and ~1,180/s from the remote, without a single throttling
-   * answer. A probe takes ~300 ms from here, found or missing, so what is in
-   * flight sets the rate: 600 at once held ~1,750/s on missing keys
-   * (2026-09-30).
-   */
+  /** No limit was found on the bucket — measured in `docs/venues/HTX.md`. */
   pacing:  { perSecond: 2000, concurrency: 500 },
 
-  /**
-   * Walking, every update — see `docs/services/PROSPECTOR.md`, *How each venue updates*.
-   */
-
-  /**
-   * How far behind today this venue is worth asking about.
-   *
-   * **Measured from the venue's own `Last-Modified`**, 2026-09-25 over the files
-   * of 2026-09-15 to 21: p99 30.9 hours after the dated day begins, over 99,429 files.
-   *
-   * **Every venue publishes more than a day after its period begins**, so a pass
-   * running in the small hours finds nothing for yesterday whatever the catalog's
-   * newest file suggests — a snapshot taken in the afternoon says only that the
-   * file had arrived by the afternoon.
-   *
-   * **A day further back again**, because a publishing hour that drifts later
-   * would put the frontier in front of the archive. Asking early costs a probe
-   * per series per night, every night, for a period that cannot exist yet; asking
-   * late costs the catalog's edge a day, and loses nothing — the frontier
-   * advances daily and the patience window covers what it has not reached.
-   */
+  /** Days behind today a probing pass stops asking: the venue's measured publishing delay, and a day more. */
   probingLag: 3,
 
   /** Reading this venue's paths back into series — see `paths.ts`. */
@@ -110,11 +45,8 @@ export const htx: Adapter = declare({
 // ── Internals ─────────────────────────────────────────────────────────────────
 
 /**
- * The day `historical_data/` took over, and the cut between the two trees.
- *
- * Both were written from here until 2026-08-04 — the same trading twice, in two
- * schemas — so `accepts` refuses `data/` from this date on and the overlap is
- * catalogued once. Below it, `data/` is the only source there has ever been.
+ * The day `historical_data/` took over: `data/` is refused from here on, so the
+ * months both wrote are catalogued once.
  */
 const MIGRATED = '20260201';
 
@@ -127,10 +59,8 @@ const supersededDuplicate = (path: string): boolean => {
 };
 
 /**
- * The date a path names, read the same way the adapter reads it.
- *
- * Declared here rather than reaching for `htx.dateOf`, because the adapter is
- * still being built when `accepts` is written into it.
+ * The date a path names. Declared apart from the adapter, which is still being
+ * built when `accepts` needs it.
  */
 const dateIn = (path: string): string | null => {
   const m = /(\d{4})-(\d{2})-(\d{2})\.(?:zip|tar\.gz)$/.exec(path);
@@ -140,19 +70,9 @@ const dateIn = (path: string): string | null => {
 
 
 /**
- * HTX, which publishes **two separate trees with the segments in different
- * orders** — documented in `docs/venues/HTX.md`, and the reason one expression
- * cannot cover it:
- *
- * ```
- * data/<dataset>/<market>/daily/<SYMBOL>/[<interval>/]…
- * historical_data/<market>/daily/<dataset>/[<level>/]<SYMBOL>/[<interval>/]…
- * ```
- *
- * The first is the tree htx does not announce and which reaches back six years;
- * the second is the offered one. They carry the same data under different
- * arrangements, so a series in one is not a series in the other — which is
- * exactly what two patterns mean.
+ * Read a path of either tree:
+ * `data/<dataset>/<market>/daily/<SYMBOL>/[<interval>/]…` or
+ * `historical_data/<market>/daily/<dataset>/[<level>/]<SYMBOL>/[<interval>/]…`.
  */
 const inspect = (path: string): Inspection => {
   const quiet = HTX_DATA.exec(path);
@@ -175,17 +95,9 @@ const inspect = (path: string): Inspection => {
 };
 
 /**
- * **Which tree a key came from decides how its instrument is named**, and the
- * two trees are wrong about it in opposite directions.
- *
- * The offered one decorates a name with `-PERP`, which is a constant of the
- * shape and belongs in the pattern — so the symbol loses it and no `urlSymbol`
- * is recorded, leaving `patternise` to write the suffix into the template.
- *
- * The old one joins names that the rest of htx separates, which no pattern can
- * express because the change is *inside* the name. So the symbol takes the
- * dashed form and the archive's own spelling is recorded beside it, which is
- * exactly what `urlSymbol` is for.
+ * The instrument a key names. The offered tree's `-PERP` belongs to the
+ * pattern and is dropped; the old tree's joined name is dashed, with its own
+ * spelling kept beside it.
  */
 const read = (
   path:     string,
@@ -208,29 +120,12 @@ const read = (
     { ...canonical, symbol: dashed(market, symbol), urlSymbol: symbol, date });
 };
 
-/**
- * The instrument, as against the archive's spelling of it.
- *
- * **`-PERP` is a constant of the shape rather than part of the name.** Every
- * series of the offered tree's perpetual patterns carries it and none of its
- * dated ones do, so it belongs in the pattern —
- * `futures/daily/trades/{SYMBOL}-PERP/{SYMBOL}-PERP-trades-…` — which is where
- * `patternise` writes it and `keyFor` reads it back.
- *
- * **Keeping it on the series would spell one contract two ways.** `data/` calls
- * the same instrument `BTC-USDT`, and a suffix carried on one branch and not the
- * other would put the two trees' rows under different names for no reason the
- * venue recognises. The market already says which kind of contract it is.
- */
+/** The instrument without `-PERP`, which is the pattern's and not the name's. */
 const instrumentOf = (symbol: string): string => symbol.replace(PERPETUAL, '');
 
 /**
- * Htx's own words for a market, in the catalog's — the ones that map straight
- * through, because the word alone settles what the instrument is.
- *
- * `future` really is dated throughout, and `option` and `spot` cannot be
- * anything else. The two words missing from here are the ones that name how a
- * contract settles rather than what kind it is — see `marketOf`.
+ * Htx's words for a market, in the catalog's, where the word alone settles it —
+ * see `marketOf` for the rest.
  */
 const MARKET_OF: Record<string, string> = {
   spot:   'spot',
@@ -239,25 +134,8 @@ const MARKET_OF: Record<string, string> = {
 };
 
 /**
- * **Three of htx's words group perpetuals with dated contracts**, so for those
- * the market is a property of the instrument and only the symbol can answer.
- * Each tree spells the same question differently:
- *
- * - `futures` is the offered tree's single word for everything it carries, and
- *   its perpetuals name themselves — `BTC-USD-PERP` beside `BTC-USD-260206`.
- * - `linear-swap` is the unannounced tree's word for *USDT-margined*, which
- *   covers both kinds — `BTC-USDT` beside `BTC-USDT-230407` in one directory.
- *   Its dated contracts carry the expiry instead, since nothing there is
- *   suffixed.
- *
- * `swap` is the coin-margined half of the same idea and has never carried a
- * dated contract — those live under `future` — but it is asked the same
- * question, because a word that groups by settlement may group by it again.
- *
- * **Measured before it was relied on**: of the symbols under `linear-swap`, every
- * one ending in six digits is dash-separated and parses as a `YYMMDD` expiry, and
- * no perpetual there ends in digits at all. `option` is deliberately not asked —
- * its symbols end in a strike, and a six-figure one would read as a date.
+ * `futures`, `linear-swap` and `swap` hold perpetuals and dated contracts alike,
+ * so the symbol says which.
  */
 const PERPETUAL = /-PERP$/;
 const DATED     = /-\d{6}$/;
@@ -280,11 +158,7 @@ const MEANINGS: Record<string, { dataset: string; variant?: string; binned?: tru
   'mark-price-klines': { dataset: 'markPrice',  binned: true },
   'funding-rates':     { dataset: 'funding', variant: 'realised' },
 
-  /**
-   * **Htx serves okx's book format**, verified on a real file: one `snapshot`
-   * line then `update` lines, JSON per row. The depth is a path level rather
-   * than part of the name — 400 for spot, 150 for futures.
-   */
+  /** Books: a snapshot and then updates, with the depth a level of the path. */
   orderbook:           { dataset: 'books', book: true },
 };
 
@@ -305,7 +179,7 @@ const canonicalise = (
     const depth = level?.match(/[0-9]+/)?.[0];
 
     return depth
-      ? { market: canonical, dataset: 'books', variant: `${depth},incremental` }
+      ? { market: canonical, dataset: 'books', variant: `incremental,${depth}` }
       : null;
   }
 
@@ -326,10 +200,7 @@ const HTX_DATA = new RegExp(
   + '(?:/(?<level>[a-z0-9]+))?/(?<symbol>[^/]+)(?:/(?<interval>[^/]+))?'
   + '/[^/]*(?<date>\\d{4}-\\d{2}(?:-\\d{2})?)\\.[a-z.]+$');
 
-/**
- * The offered tree: market first, and with a level segment where the dataset has
- * one — `spot/daily/orderbook/lv400/<SYMBOL>/…`.
- */
+/** The offered tree: market first, with a level segment where the dataset has one. */
 const HTX_OFFERED = new RegExp(
   '^(?:historical_data/)?(?<market>spot|futures)/(?:daily|monthly)/(?<dataset>[a-z-]+)'
   + '(?:/(?<level>(?:lv)?[0-9]+(?:lv)?))?/(?<symbol>[^/]+)(?:/(?<interval>[^/]+))?'

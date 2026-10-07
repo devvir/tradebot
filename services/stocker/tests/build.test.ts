@@ -243,9 +243,9 @@ describe('a book\'s rows', () => {
    * sequence — whatever order the rows were read in.
    */
   it('are written in the venue\'s sequence inside one time', async () => {
-    const book: VaultKey = { table: 'orderBook', venue: 'gate', market: 'perp', depth: 'full', mode: 'incremental', month: '2026-06' };
+    const book: VaultKey = { table: 'orderBook', venue: 'gate', market: 'perp', kind: 'incremental', depth: 'full', month: '2026-06' };
     const file = await input('gate.futures-books-shuffled.csv',
-      'gate/perp/books,full,incremental/B/BTC_USD/202606/gate|perp|books,full,incremental|BTC_USD|20260601.part21.csv.gz');
+      'gate/perp/books,incremental,full/B/BTC_USD/202606/gate|perp|books,incremental,full|BTC_USD|20260601.part21.csv.gz');
     const here = join(dir, 'book');
 
     await buildGroup(conn, book, 'BTC_USD', [file], here);

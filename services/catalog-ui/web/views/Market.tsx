@@ -10,7 +10,7 @@ import type { Shape } from '../types';
  *
  * **The spans are the point of this view.** A variant that stopped and the one
  * that replaced it are two rows with adjacent ends — bybit's perpetual books are
- * `500,incremental` to 2025-08-20 and `200,incremental` from the 21st — and
+ * `incremental,500` to 2025-08-20 and `incremental,200` from the 21st — and
  * seeing that is how somebody decides to fetch both rather than half.
  */
 export const MarketView = ({ venue, market, lens }: { venue: string; market: string; lens?: string }) => {
@@ -28,7 +28,7 @@ export const MarketView = ({ venue, market, lens }: { venue: string; market: str
   );
 };
 
-/** The canonical variant string, as the archives spell it — `400,incremental`. */
+/** The canonical variant string, as the archives spell it — `incremental,400`. */
 export const variantOf = (shape: Shape): string => Object.values(shape.variant).join(',');
 
 // ── Internals ─────────────────────────────────────────────────────────────────

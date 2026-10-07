@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { _test_parseKnown as parseKnown } from '../src/config';
 
 describe('the venue filter', () => {
-  const known = ['binance', 'depthBands', 'trades'];
+  const known = ['binance', 'orderBookBands', 'trades'];
 
   /**
    * These vocabularies are closed — every venue and table stocker will ever see
@@ -17,8 +17,8 @@ describe('the venue filter', () => {
 
   it('accepts any case and returns the canonical spelling', () => {
     expect(parseKnown('BINANCE', 'STOCKER_VENUES', known)).toEqual(['binance']);
-    expect(parseKnown('depthbands,TRADES', 'STOCKER_VENUES', known))
-      .toEqual(['depthBands', 'trades']);
+    expect(parseKnown('orderbookbands,TRADES', 'STOCKER_VENUES', known))
+      .toEqual(['orderBookBands', 'trades']);
   });
 
   it('treats empty as no filter and de-duplicates the rest', () => {

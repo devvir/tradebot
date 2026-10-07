@@ -134,8 +134,8 @@ export const TABLES: Record<Table, Field[]> = {
     MARGIN,
   ],
 
-  /** Notional within ±% bands of the mid. A summary, not a book. */
-  depthBands: [
+  /** A book summed into bands either side of the mid: the size and the notional within each ±%. Not its levels. */
+  orderBookBands: [
     TS,
     { name: 'percentage', type: 'DOUBLE' },
     { name: 'depth',      type: 'DOUBLE' },
@@ -246,12 +246,12 @@ export const TABLES: Record<Table, Field[]> = {
 
 /**
  * The name a table's files are kept under, where that is not its own: a book's
- * two kinds are two tables — two schemas — of one dataset, told apart in the
- * vault by the `mode=` level its variant gives, as in the catalog.
+ * kinds are a table each — a schema each — of one dataset, told apart in the
+ * vault by the `kind=` level its variant gives, as in the catalog.
  */
 export const rootOf = (table: Table): string => ROOTS[table] ?? table;
 
-const ROOTS: Partial<Record<Table, string>> = { orderBookSnapshot: 'orderBook' };
+const ROOTS: Partial<Record<Table, string>> = { orderBookSnapshot: 'orderBook', orderBookBands: 'orderBook' };
 
 export const fieldsOf = (table: Table): Field[] => {
   const fields = TABLES[table];
