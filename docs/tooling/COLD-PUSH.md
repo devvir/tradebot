@@ -132,6 +132,14 @@ other tars go on being packed and uploaded while it does.
 nor needed. Afterwards the tar must list exactly what it listed before, less what was taken out,
 plus what was put in — and what was put in is compared against the tree.
 
+**A partition that is no longer whole on disk is made whole from the two.** One that was evicted
+after it was stored comes back only in the files that changed, since only those are downloaded
+again. Then what is on disk goes in — replacing any member of the same name — and the rest of what
+the tar holds of the partition stays where it is. That is taken as the partition only where the two
+add up to exactly what the catalog says, as many files weighing as much. Where they do not — a file
+the venue withdrew, a download still on its way — nothing is guessed: the tar stays as it was
+brought back, on disk, and the next run tries again without fetching it a second time.
+
 **The record holds both versions until the corrected tar is stored**: the one Mega has, and the one
 it is being corrected to. An interrupted correction therefore resumes from whichever step it
 reached, and a corrected tar is told from the one it replaces by its handle, since the two can weigh

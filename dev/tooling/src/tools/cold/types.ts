@@ -168,6 +168,9 @@ export interface VaultPlan {
 export interface Chosen {
   dryRun?:      boolean;
   purge?:       boolean;
+
+  /** Archives only: also remove what is on disk again of partitions already evicted. */
+  cleanup?:     boolean;
   market?:      string;
   dataset?:     string;
   variant?:     string;
@@ -201,6 +204,9 @@ export interface Evictable {
 
   /** Partitions that could go and already have, at the version they have now. */
   gone:      number;
+
+  /** Of `ready`, the ones that went already and have files on disk again. */
+  returned:  number;
 }
 
 /** What one run of `evict` carries from one look to the next. */
@@ -226,6 +232,9 @@ export interface EvictOptions {
 
   /** Delete outright, where the default is the host's trash. */
   purge?:  boolean;
+
+  /** Look on disk for files of partitions already evicted, and remove those too. */
+  cleanup?: boolean;
 }
 
 /** One slice of a venue with its partitions, as the catalog's endpoint answers it. */

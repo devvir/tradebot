@@ -54,14 +54,5 @@ mapped. The others have not been read.
 `baseSize` nor `quoteSize`. Settle it against the underlying — an option on BTC with `amount` 0.05 —
 and fill the leg.
 
-**Whether htx counts both sides in a contract's kline volume, always.** On every minute checked the
-published `vol` and `amount` are exactly twice the day's trades: `BTC-USDT` and `BTC-USD` perpetuals
-on 2020-11-14, and two option days in 2020-11. That is three instruments and one month, and the
-vault stores the klines as published. Before anything is changed it wants checking across the whole
-history and every contract market: whether it holds in every year, whether it stops at the
-2026-02-01 export or anywhere before it, whether dated futures do it, whether spot ever does, and
-whether there is another reading — two files of one trade, a per-side feed — that explains a factor
-of two without it being double counting. Only then is halving a correction and not a corruption.
-
 **Verification against source.** Nothing re-reads a built partition against raw. Rebinning trades
 and comparing against the venue's published klines is the natural check.

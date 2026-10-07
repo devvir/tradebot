@@ -23,13 +23,6 @@ the record, the disk check, correcting a tar — and has not yet packed and uplo
 Two things in it are unverified against Mega itself: the column `mega-transfers` names a
 download's local path by, and that uploading over an existing name leaves a new handle.
 
-**A partition that changed after it was evicted.** Only the files that changed are downloaded
-again, so the partition is on disk in part and its tar cannot be corrected from disk alone. `cold
-push` handles it without a hand: it sees a stored partition whose version changed, confirms that
-every file that changed is on disk, brings the tar back, and makes the partition whole from the two
-— the unchanged files from the tar, the changed ones from disk — before storing it again. Whether it
-uses `cold pull` to do so is open.
-
 **A first real run of the vault commands.** `cold push vault`, `cold evict vault` and `cold pull
 vault` are tested against a stand-in for Mega and have not stored, removed or fetched a real file.
 Unverified against Mega itself: that a download lands under its final name only once it is whole,

@@ -7,11 +7,12 @@ import * as mega from './mega';
 import { agreed, isWatch } from './options';
 import { Progress } from './progress';
 import * as record from './record';
-import { ERRORS, LEDGER, backedUpIn, errorsIn, filesOf, locate, noteBackedUp, remoteOf, stockedIn } from './vault';
+import { ERRORS, LEDGER, backedUpIn, errorsIn, filesOf, labelOf, locate, noteBackedUp, remoteOf, stockedIn } from './vault';
 import { fmtBytes } from '../../shared/utils/format';
 import { error, info, spacer, success, warn } from '../../shared/ui/logger';
 import type { DatabaseSync } from 'node:sqlite';
 import type { ColdConfig, PushOptions, Remote, StoredFile, VaultPlan } from './types';
+import { byKey } from './order';
 
 /**
  * Store the vault: every partition its ledger holds that cold storage does not
@@ -187,7 +188,7 @@ const plan = (db: DatabaseSync, config: ColdConfig, venues: readonly string[]): 
 
   for (const venue of venues) if (! out.venues.has(venue)) out.venues.set(venue, { partitions: 0, files: 0, bytes: 0 });
 
-  return { ...out, venues: new Map([...out.venues].sort()) };
+  return { ...out, venues: new Map([...out.venues].sort(byKey)) };
 };
 
 /** The files still to reach cold storage, of the venues asked for. */
@@ -243,7 +244,8 @@ const work = async (db: DatabaseSync, config: ColdConfig, venues: readonly strin
 
     waiting = false;
 
-    if (! await round(db, config, pending, remote, line => progress.log(line))) await sleep(POLL_MS);
+    if (! await round(db, config, pending, remote, line => progress.log(line), (name, bytes) => progress.stored(name, bytes)))
+      await sleep(POLL_MS);
   }
 
   progress.stop();
@@ -272,6 +274,9 @@ const round = async (
   pending: readonly StoredFile[],
   remote:  Remote,
   say:     (line: string) => void,
+
+  /** A partition was stored: its name and what it weighs, said with how far the run has got. */
+  stored:  (name: string, bytes: number) => void = (name, bytes) => say(`Stored ${name} · ${fmtBytes(bytes)}`),
 ): Promise<boolean> => {
   const queued = await remote.queuedPaths();
 
@@ -346,8 +351,8 @@ const round = async (
     // Told to the vault: there is a safe copy of this revision now, whatever of it stays on disk.
     noteBackedUp(config.vaultRoot, partition, revision);
 
-    say(`Stored ${partition} · ${files.length} file${files.length === 1 ? '' : 's'} · `
-      + fmtBytes(files.reduce((sum, file) => sum + file.bytes, 0)));
+    stored(`${labelOf(partition)} · ${files.length} file${files.length === 1 ? '' : 's'}`,
+      files.reduce((sum, file) => sum + file.bytes, 0));
 
     await retire(db, config, partition, revision, remote, say);
   }

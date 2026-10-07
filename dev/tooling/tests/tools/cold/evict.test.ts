@@ -387,11 +387,48 @@ describe('where a month\'s first hours are in the files of the month before', ()
   });
 });
 
+describe('what was evicted and is on disk again', () => {
+  const again = () =>
+    survey(db, config(), 'archives', 'gate', stockedIn(config().vaultRoot) ?? [], undefined, new Archives(config().sourceRoot));
+
+  /** Asked to look, the disk is read for each partition that went, and what is there goes again. */
+  it('is offered again only where it is looked for, and only where files are back', async () => {
+    record.noteEviction(db, 'archives', partition('202001'), { files: 1, bytes: 2 });
+    record.noteEviction(db, 'archives', partition('202002'), { files: 1, bytes: 2 });
+    fs.rmSync(path.join(dir, 'archives', 'gate/spot/trades/B/BTC_USDT/202002'), { recursive: true });
+
+    expect((await look()).ready.map(one => one.month)).toEqual(['202003', '202004']);
+
+    const found = await again();
+
+    expect(found.ready.map(one => one.month).sort()).toEqual(['202001', '202003', '202004']);
+    expect(found).toMatchObject({ returned: 1, gone: 1 });
+  });
+
+  /** The same rules as any eviction: what cold storage holds at another version stays where it is. */
+  it('is left where cold storage no longer holds the version the catalog has', async () => {
+    record.noteEviction(db, 'archives', partition('202001'), { files: 1, bytes: 2 });
+    publish(MONTHS.map(month => partition(month, 'daily', month === '202001' ? 'v2' : 'v1')));
+
+    expect((await again()).ready.map(one => one.month)).not.toContain('202001');
+  });
+
+  /** Another rendering's file in the same month is not this partition's, and does not bring it back. */
+  it('is not taken for back by a file of another rendering', async () => {
+    record.noteEviction(db, 'archives', partition('202001'), { files: 1, bytes: 2 });
+    fs.rmSync(path.join(dir, 'archives', 'gate/spot/trades/B/BTC_USDT/202001'), { recursive: true });
+    onDisk('202001', 'monthly');
+
+    expect((await again()).returned).toBe(0);
+  });
+});
+
 describe('evicting', () => {
   it('removes the files, the directories they emptied, and writes down what went', async () => {
     expect(await evict()).toEqual({ files: 4, bytes: 8 });
 
-    expect(fs.readdirSync(path.join(dir, 'archives', 'gate/spot/trades/B/BTC_USDT'))).toEqual([]);
+    // Every directory the files left empty is gone, up to the venue's own, which stays.
+    expect(fs.readdirSync(path.join(dir, 'archives', 'gate'))).toEqual([]);
     expect(db.prepare('SELECT month, version, files, bytes FROM eviction ORDER BY month').all())
       .toEqual(MONTHS.map(month => ({ month, version: 'v1', files: 1, bytes: 2 })));
   });
@@ -419,7 +456,7 @@ describe('evicting', () => {
     for (const month of MONTHS) onDisk(month, 'monthly');
 
     expect(await evict()).toEqual({ files: 8, bytes: 16 });
-    expect(fs.readdirSync(path.join(dir, 'archives', 'gate/spot/trades/B/BTC_USDT'))).toEqual([]);
+    expect(fs.existsSync(path.join(dir, 'archives', 'gate/spot'))).toBe(false);
     expect(db.prepare('SELECT grain, sum(files) AS files FROM eviction GROUP BY grain ORDER BY grain').all())
       .toEqual([{ grain: 'daily', files: 4 }, { grain: 'monthly', files: 4 }]);
   });

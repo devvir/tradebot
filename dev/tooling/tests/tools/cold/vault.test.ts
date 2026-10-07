@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { _test_evictable as evictable, _test_remove as remove } from '../../../src/tools/cold/evict-vault';
+import { _test_byVenue as byVenue, _test_evictable as evictable, _test_remove as remove } from '../../../src/tools/cold/evict-vault';
 import { _test_fetch as fetch, _test_pullable as pullable } from '../../../src/tools/cold/pull-vault';
 import { _test_plan as plan, _test_round as round } from '../../../src/tools/cold/push-vault';
 import * as record from '../../../src/tools/cold/record';
@@ -203,7 +203,8 @@ describe('storing the vault', () => {
     await round(db, config(), record.vaultFilesPending(db), remote, said => line.push(said));
 
     expect([...record.vaultStored(db).keys()]).toEqual([`${SMALL}/202001`]);
-    expect(line).toEqual([`Stored ${SMALL}/202001 · 1 file · 10B`].map(one => expect.stringContaining(one.slice(0, 40))));
+    // Named as a person reads it, without the names the vault's path carries for a query engine.
+    expect(line).toEqual([expect.stringContaining('Stored gate/spot/klines,1h/202001 · 1 file')]);
   });
 
   it('does not take a file of another size for the file', async () => {
@@ -444,6 +445,15 @@ describe('moving vault files out', () => {
 
     expect(fs.existsSync(path.join(dir, 'vault', SMALL, '@', '202001.parquet'))).toBe(true);
     expect(db.prepare('SELECT count(*) AS n FROM vault_move').get()).toEqual({ n: 0 });
+  });
+
+  /** Rows as the record gives them, of more than one venue: what a run over the real vault is. */
+  it('groups what can go by venue, in venue order', async () => {
+    stock('venue=bybit/market=perp/dataset=trades/aggregated=false', '202001', 'ffffffffffff', null);
+
+    await storeAll();
+
+    expect([...byVenue(evictable(db, config(), all)).keys()]).toEqual(['bybit', 'gate']);
   });
 
   it('removes the files, writes down that they are away, and offers them no more', async () => {

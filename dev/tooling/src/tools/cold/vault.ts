@@ -107,6 +107,17 @@ export const remoteOf = (file: Pick<VaultFile, 'partition' | 'instrument' | 'pat
 };
 
 /**
+ * A partition as a person reads it: `htx/perp/klines,1d/202010`. The same
+ * values its path in the vault carries, without the names a query engine needs
+ * and a reader does not.
+ */
+export const labelOf = (partition: string): string => {
+  const { month, levels } = locate(partition);
+
+  return [levels['venue'], levels['market'], [levels['dataset'], ...variantsOf(levels)].join(','), month].join('/');
+};
+
+/**
  * A partition's variants as the catalog names them, read off the levels its
  * path carries beyond venue, market and dataset: a kline's interval, funding's
  * kind — and, for trades, `aggregated` where the path says `aggregated=true`

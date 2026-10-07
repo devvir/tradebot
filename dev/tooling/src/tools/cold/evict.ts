@@ -66,11 +66,29 @@ import type { CatalogPartition, ColdConfig, EvictOptions, Evictable, HeldBack, O
  * the chance to look at what was taken. A trash that fails is never retried as
  * a delete. `purge` removes outright, for when that is what is wanted.
  *
+ * **What was evicted and is on disk again is not looked for, unless asked.**
+ * The record says a partition went, at the version it has now, and it is not
+ * offered again — files brought back since, pulled from cold storage to be read
+ * or fetched some other way, are nobody's to remove. `cleanup` looks: for every
+ * partition that went and could still go by every rule above, it reads the
+ * disk, and whatever of the partition is there goes again. Cold storage holds
+ * the version the catalog has, so what is on disk is spare whatever it is — the
+ * same files, older ones, or half of them. It is a look taken on purpose and
+ * once: never while watching, where it would take files as they are pulled.
+ *
  * **Nothing is evicted while the vault reports a loss.** `ERROR.log` in the
  * vault means its ledger said something its disk did not bear out — and the
  * ledger is what this trusts.
  */
 export const runEvict = async (origin: Origin, options: EvictOptions): Promise<void> => {
+  if (options.cleanup && isWatch()) {
+    error('--cleanup looks at the disk once and removes what it finds; it does not run with --watch');
+
+    process.exitCode = 1;
+
+    return;
+  }
+
   const config  = loadConfig(origin);
   const release = await acquire(config.coldRoot, origin, 'evict');
 
@@ -149,7 +167,7 @@ const pass = async (db: DatabaseSync, run: Run, first: boolean): Promise<boolean
 
   try {
     for (const venue of venues) {
-      const one = await survey(db, config, origin, venue, stocked);
+      const one = await survey(db, config, origin, venue, stocked, Date.now(), options.cleanup ? run.archives : undefined);
 
       found.push(one);
 
@@ -229,7 +247,8 @@ const pass = async (db: DatabaseSync, run: Run, first: boolean): Promise<boolean
  *
  * The record says which of them have gone already, at the version they have
  * now, so that what was evicted is not offered again. The disk says nothing,
- * and is not asked.
+ * and is not asked — unless `returned` is given: then each partition that went
+ * is looked for there, and goes again where any file of it is back.
  */
 const survey = async (
   db:       DatabaseSync,
@@ -238,6 +257,7 @@ const survey = async (
   venue:    string,
   stocked:  readonly Stocked[],
   now:      number = Date.now(),
+  returned?: Archives,
 ): Promise<Evictable> => {
   const all        = await catalog.partitions(config, venue);
   const candidates = await catalog.partitions(config, venue, { downloaded: 'true', settled: 'true' });
@@ -295,7 +315,7 @@ const survey = async (
     (lines.get(`${data}|${month}`) ?? []).find(current);
 
   const out: Evictable = {
-    venue, ready: [], gone: 0,
+    venue, ready: [], gone: 0, returned: 0,
     held: { 'not in cold storage': 0, 'not stocked': 0, 'a neighbouring month still needs it': 0 },
   };
 
@@ -308,11 +328,31 @@ const survey = async (
       continue;
     }
 
-    if (evicted.get(idOf(one)) === one.version) out.gone++;
-    else out.ready.push(one);
+    if (evicted.get(idOf(one)) !== one.version) {
+      out.ready.push(one);
+    } else if (returned && await isBack(returned, one)) {
+      out.ready.push(one);
+      out.returned++;
+    } else {
+      out.gone++;
+    }
   }
 
   return out;
+};
+
+/** Whether any file of a partition is on disk. */
+const isBack = async (archives: Archives, partition: CatalogPartition): Promise<boolean> => {
+  const mine = idOf(partition);
+
+  for (const { names } of await archives.monthDirsOf(partition))
+    for (const name of names) {
+      const key = partitionOf(name);
+
+      if (key && idOf(key) === mine) return true;
+    }
+
+  return false;
 };
 
 /** Why a partition stays on disk, or null where it can go. */
@@ -434,14 +474,10 @@ const remove = async (
 
     await discard([...whole, ...single].map(one => path.join(config.sourceRoot, one)), purge);
 
-    // A directory the partition's files were picked out of, where they were all it held after all.
-    for (const dir of new Set(single.map(file => path.dirname(file)))) {
-      try {
-        fs.rmdirSync(path.join(config.sourceRoot, dir));
-      } catch {
-        // Another rendering's files are still in it.
-      }
-    }
+    // The directories this emptied go too, upward as far as they are empty: a month's where the
+    // files were picked out of it, then the instrument's, its letter's, the dataset's and the market's.
+    for (const dir of new Set([...whole.map(one => path.dirname(one)), ...single.map(file => path.dirname(file))]))
+      prune(config.sourceRoot, dir);
 
     const files = took.get(mine) ?? 0;
 
@@ -460,9 +496,25 @@ const remove = async (
   return total;
 };
 
+/**
+ * Remove a directory and each one above it for as long as they are empty,
+ * never the venue's own. A directory that holds anything is left, and so is
+ * everything above it: `rmdir` refuses it, which is the whole of the check.
+ */
+const prune = (root: string, dir: string): void => {
+  for (let at = dir; at.split(path.sep).length > 1; at = path.dirname(at)) {
+    try {
+      fs.rmdirSync(path.join(root, at));
+    } catch {
+      return;
+    }
+  }
+};
+
 /** One venue's answer in a line: what can go. What stays, and why, is counted and not said. */
 const said = (found: Evictable): string => [
   found.ready.length > 0 ? loadOf(found.ready) : 'nothing to evict',
+  ...(found.returned > 0 ? [`${found.returned.toLocaleString('en-US')} of them evicted before and on disk again`] : []),
   ...(found.gone > 0 ? [`${found.gone.toLocaleString('en-US')} already evicted`] : []),
 ].join(' · ');
 

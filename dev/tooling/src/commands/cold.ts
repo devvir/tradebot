@@ -77,6 +77,7 @@ export function register(program: Command): void {
     .description('Remove from disk what is in cold storage and stocked')
     .option('-n, --dry-run', 'say what would be removed, and remove nothing')
     .option('--purge', 'delete outright, where the default is the trash')
+    .option('--cleanup', 'archives: also remove whatever is on disk again of partitions already evicted — not with --watch')
     .option('--market <market>', 'vault: only this market')
     .option('--dataset <dataset>', 'vault: only this dataset')
     .option('--variant <variant>', 'vault: only this variant of it — a kline\'s interval, funding\'s kind')
@@ -93,7 +94,7 @@ export function register(program: Command): void {
 
       await each(asked.origins, async chosen => {
         if (chosen === 'vault') await (await tools.evictVault()).runEvictVault(selection, how);
-        else await (await tools.evict()).runEvict(chosen, { venues: asked.venues, ...how });
+        else await (await tools.evict()).runEvict(chosen, { venues: asked.venues, ...how, ...(options.cleanup ? { cleanup: true } : {}) });
       });
     }));
 

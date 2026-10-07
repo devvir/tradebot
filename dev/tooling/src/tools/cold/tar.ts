@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import type { SourceFile } from './types';
 
 const execFileAsync = promisify(execFile);
 
@@ -114,6 +115,50 @@ export const membersOf = async (local: string): Promise<string[]> =>
     .split('\n')
     .map(entry => entry.replace(/\/$/, '').trim())
     .filter(Boolean);
+
+/** Every member of a tar with what it weighs, by its path inside it. */
+export const sizedMembersOf = async (local: string): Promise<SourceFile[]> =>
+  (await capture('tar', ['-tvf', local]))
+    .split('\n')
+    .map(line => /^\S+\s+\S+\s+(\d+)\s+\S+\s+\S+\s+(.+)$/.exec(line))
+    .filter((found): found is RegExpExecArray => found !== null && ! found[2]!.endsWith('/'))
+    .map(found => ({ path: found[2]!, bytes: Number(found[1]) }));
+
+/**
+ * What to take out of a tar and what to put in, to bring one partition in it to
+ * what the catalog says now — or null where that cannot be done from what is at
+ * hand.
+ *
+ * **Whole from disk where the disk has it whole**: everything the tar holds of
+ * the partition comes out, and the partition goes in as it is on disk.
+ *
+ * **From the two together where the disk has only part.** A partition taken off
+ * the disk after it was stored comes back only in the files that changed, since
+ * only those are downloaded again. Then what is on disk goes in, replacing any
+ * member of the same name, and the rest of what the tar holds of the partition
+ * stays where it is. That is taken as the partition only where it adds up to
+ * exactly what the catalog says: as many files, weighing as much. Anything else
+ * — a file the venue withdrew, a download still on its way — is not guessed at.
+ */
+export const correctionOf = (
+  inTar:  readonly SourceFile[],
+  onDisk: readonly SourceFile[],
+  next:   { files: number; bytes: number },
+): { remove: string[]; add: string[] } | null => {
+  const weigh = (files: readonly SourceFile[]): number => files.reduce((sum, one) => sum + one.bytes, 0);
+  const add   = onDisk.map(one => one.path);
+
+  if (onDisk.length === next.files && weigh(onDisk) === next.bytes)
+    return { remove: inTar.map(one => one.path), add };
+
+  const here = new Set(add);
+  const kept = inTar.filter(one => ! here.has(one.path));
+
+  if (onDisk.length === 0 || kept.length + onDisk.length !== next.files || weigh(kept) + weigh(onDisk) !== next.bytes)
+    return null;
+
+  return { remove: inTar.filter(one => here.has(one.path)).map(one => one.path), add };
+};
 
 /**
  * Correct a tar in place: take some members out, put others in, and prove it.

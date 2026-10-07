@@ -14,6 +14,7 @@ import { fmtBytes } from '../../shared/utils/format';
 import { error, info, spacer, success, warn } from '../../shared/ui/logger';
 import type { DatabaseSync } from 'node:sqlite';
 import type { ColdConfig, Fetching, Selection, StoredFile, VaultOptions } from './types';
+import { byKey } from './order';
 
 /**
  * Bring vault files back from cold storage to the local disk.
@@ -220,7 +221,7 @@ const byVenue = (files: readonly StoredFile[]): Map<string, StoredFile[]> => {
     venues.set(venue, [...venues.get(venue) ?? [], file]);
   }
 
-  return new Map([...venues].sort());
+  return new Map([...venues].sort(byKey));
 };
 
 const bytesOf = (files: readonly StoredFile[]): number => files.reduce((sum, file) => sum + file.bytes, 0);

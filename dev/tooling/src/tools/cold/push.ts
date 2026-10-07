@@ -13,11 +13,12 @@ import { agreed, isWatch } from './options';
 import { Progress } from './progress';
 import { runPushVault } from './push-vault';
 import * as record from './record';
-import { clearTemporary, membersOf, replaceMembers, tarSize, writePart } from './tar';
+import { clearTemporary, correctionOf, replaceMembers, sizedMembersOf, tarSize, writePart } from './tar';
 import { fmtBytes } from '../../shared/utils/format';
 import { error, info, spacer, success, warn } from '../../shared/ui/logger';
 import type { DatabaseSync } from 'node:sqlite';
 import type { CatalogPartition, ColdConfig, Origin, Planned, PushOptions, Round, SourceFile, Tar } from './types';
+import { byKey } from './order';
 
 /**
  * Store what is ready and not in cold storage yet.
@@ -188,7 +189,7 @@ const plan = async (
 
     let tars = 0;
 
-    for (const [month, partitions] of [...fresh].sort())
+    for (const [month, partitions] of [...fresh].sort(byKey))
       for (const bin of binsOf(partitions, config.capBytes)) {
         record.planTar(db, origin, venue, month, seq => ({
           remote: `${venue}/${month.slice(0, 4)}/${tarName(venue, month, seq)}`,
@@ -550,20 +551,33 @@ const step = async (
       const stale   = new Set(changed.map(idOf));
       const add: string[] = [];
 
-      for (const one of changed) {
-        const files = await archives.filesOf(one);
+      const remove: string[] = [];
 
-        if (! matches(files, one.next!))
-          throw new Error(`${idOf(one)} is not on disk as the catalog says — left for the next run`);
+      /** What the tar holds of each partition that changed. */
+      const inTar = new Map<string, SourceFile[]>();
 
-        add.push(...files.map(file => file.path));
+      for (const member of await sizedMembersOf(local)) {
+        const key = partitionOf(member.path);
+
+        if (key !== null && stale.has(idOf(key))) inTar.set(idOf(key), [...inTar.get(idOf(key)) ?? [], member]);
       }
 
-      const remove = (await membersOf(local)).filter(member => {
-        const key = partitionOf(member);
+      /**
+       * **From the disk, or from the disk and the tar together.** A partition
+       * that was taken off the disk after it was stored is here only in the
+       * files that changed; the tar just brought back has the rest. See
+       * `correctionOf`.
+       */
+      for (const one of changed) {
+        const fix = correctionOf(inTar.get(idOf(one)) ?? [], await archives.filesOf(one), one.next!);
 
-        return key !== null && stale.has(idOf(key));
-      });
+        if (! fix)
+          throw new Error(`${idOf(one)} is not on disk as the catalog says, and what is on disk does not complete `
+            + 'what the tar holds of it — left for the next run');
+
+        remove.push(...fix.remove);
+        add.push(...fix.add);
+      }
 
       progress.working('Correcting', labelOf(tar));
 

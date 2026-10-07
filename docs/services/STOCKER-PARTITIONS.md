@@ -65,7 +65,7 @@ takerBuyQuote`. The interval is the variant; it is never a column.
 | kucoin | spot | all | zip · csv | yes | no | int s | **O C H L** | base, quote (`turnover`) | variant | by name, so the order costs nothing |
 | kucoin | perp | all | zip · csv | yes | no | int ms | OHLC | one | variant | `1d` files are malformed — see [details](#kucoin) |
 | htx | spot | before 2026-02-01 | zip · csv | no | no | int s | **O C H L** | **`vol` is quote, `amount` base** | variant | names invert against the later era |
-| htx | perp, future, option | before 2026-02-01 | zip · csv | no | no | int s | **O C H L** | `vol` contracts, `amount` base | variant | twice the trades on the days checked — see [details](#htx) |
+| htx | perp, future, option | before 2026-02-01 | zip · csv | no | no | int s | **O C H L** | `vol` contracts, `amount` base | variant | two-sided, by the venue's definition — see [details](#htx) |
 | htx | spot, perp, future | from 2026-02-01 | zip · csv | yes | **yes** | int s | OHLC | `vol` (base on spot, contracts on contracts), quote `volCcyQuote` | variant | |
 | gate | spot, perp | all | csv.gz | no | no | int s | **`volume, close, high, low, open`** | base | variant | open and close reversed — see [details](#gate) |
 | gate | tradfi | all | csv.gz | no | no | int s | **`close, high, low, open`** | none published | variant | the spot candle less its volume |
@@ -271,12 +271,11 @@ the earlier `vol` is quote and `amount` base (868.87 ZEC against 44,492 USDT at 
 `vol` is the contract count in both eras, and the earlier `amount` the base coin. On the same day the two eras agree bar for bar
 (`BTC-USDT` 1m, all 1,440 bars). The earlier perp trades carry both legs, which the later shape drops.
 
-**On the days checked, a contract's kline volume is twice its trades.** `vol` and `amount` are
-exactly twice the trades summed per minute, on every minute that traded: 1,438 of 1,438 on
-`BTC-USDT` and 1,440 of 1,440 on `BTC-USD` for 2020-11-14, and each traded minute of two option days
-in the same month. That is three instruments and one month. Whether it holds across the history, on
-dated futures, on spot or in the later export has not been checked, and neither has why. Klines are
-stored as published.
+**A contract's kline volume is two-sided, and is stored as published.** htx counts both the buy and
+the sell side of every trade in a contract kline's `vol` and `amount`, so they are twice what its
+trades add up to — by its own definition, on every contract market and never on spot
+([HTX.md](../venues/HTX.md#a-contracts-kline-volume-counts-both-sides-of-every-trade)). Nothing is
+halved here: the column holds what the venue reports, and what the venue means by it is the venue's.
 
 **Options** (`BTC-USDT-201225-C-13000`) ran from 2020-08 to 2021-06, USDT-margined throughout, and
 are the linear contract's shapes: trades with contracts, base and a quote leg that is the premium

@@ -260,6 +260,36 @@ from and reconstructs as `base` + `/` + `path`.
 Only a daily shape exists in both — no monthly files — so the granularity cutover never applies
 here.
 
+## A contract's kline volume counts both sides of every trade
+
+**On perpetuals, dated futures and options a kline's volume is twice what was traded.** A trade of
+ten contracts is ten bought and ten sold, and the kline reports twenty. That is the venue's
+definition and not a fault in its files: its API reference says of `vol`, of `amount` and of `count`
+alike, *"Sum of both buy and sell sides"* — in the futures reference and the USDT-margined swap
+reference, and nowhere in the spot one.
+
+**Spot is counted once**, as everywhere else.
+
+| | kline volume ÷ the same minutes' trades |
+|---|---|
+| perpetuals, linear and inverse | 2 |
+| dated futures, linear and inverse | 2 |
+| options | 2 |
+| spot | 1 |
+
+- **Exact, and in every minute.** Summed over a day the two differ by a factor of exactly two, to the
+  last contract, and so does each of a day's 1,440 one-minute bars against the trades inside that
+  minute — it is never held in a first or a last bar.
+- **Always.** The same in 2020 and in 2026, on every instrument and day measured, and on both sides
+  of the 2026-02 change of export.
+- **The trades themselves are listed once.** Only the figure a kline adds up is two-sided.
+
+**The archive's own `remark.txt` does not say so.** It describes `vol` as "Trading volume denominated
+in contracts" and `amount` as "Trading volume denominated in the base currency" — and carries that
+same text for spot, where `vol` is the quote leg.
+
+Measured on 1m klines; the contract count (`vol`) throughout, and the base amount beside it in 2020.
+
 ## `markPrice` and `indexPrice` may be mislabelled
 
 Unresolved, and worth settling before anything downstream reads them.

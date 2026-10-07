@@ -108,6 +108,10 @@ its own, in cold storage or not:
 - **Where something in it is staying** — a rendering not stored yet, a file that is nobody's — the
   partition's files are picked out of it by name, and the directory is left.
 
+**Directories left empty are removed**, upward for as long as they are empty: a month's, then the
+instrument's, its letter's, the dataset's and the market's — never the venue's own. One that holds
+anything is left, and so is everything above it.
+
 This is the only time the disk is read, and only for names: no file is opened or measured. Each
 partition removed is written to the record, in `eviction`: what it was, the version cold storage
 holds of it, how many files went, what the catalog says it weighed, and when. That row is what keeps
@@ -139,6 +143,23 @@ downloaded again. If a partition changes after it was evicted, only the files th
 downloaded, and the partition is on disk in part until the rest is brought back from cold storage.
 
 Removal goes a partition at a time, and a line per venue says how far it is.
+
+## What was evicted and is on disk again
+
+The record says what went, and a partition that went at the version it has now is not offered again.
+So files brought back afterwards — pulled from cold storage to be read, or fetched some other way —
+stay where they are: nothing looks for them.
+
+`--cleanup` looks. For every partition that went and can still go by every rule above — in cold
+storage at the catalog's version, stocked from it, no neighbour needing it — the archives are read,
+and whatever of the partition is on disk goes again. Nothing is compared file by file: cold storage
+holds the version the catalog has, so what is on disk is spare whatever it is, the same files, older
+ones or part of them. A partition whose version has moved on since it went is left alone, like any
+other that cold storage does not hold as it is now.
+
+It is a look taken on purpose and once. With `--watch` it is refused: a run left going would take
+files as they are pulled. It honours `--dry-run` and `--purge`, and is for the archives only — asked
+of the vault, it changes nothing.
 
 ## Watching
 
