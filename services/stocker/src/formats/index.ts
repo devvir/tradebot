@@ -45,6 +45,9 @@ export const formatOf = async (declared: string, path: string): Promise<string> 
   }
 };
 
+/** Whether a series' files are a table, whichever way a file of it is written. */
+export const isTable = (declared: string): boolean => TABLES.has(declared);
+
 // ── Internals ─────────────────────────────────────────────────────────────────
 
 /** The formats that are a table, and so one another's alternatives. */

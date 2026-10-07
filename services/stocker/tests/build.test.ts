@@ -105,6 +105,60 @@ describe('a batch writes what instruments built alone would', () => {
     expect(rows[0]![0]).toBe('BTC_USD');
   });
 
+  /**
+   * Where the month is one file, a batch is written as one: the same rows in
+   * the same order as its instruments' files joined, margining and all.
+   */
+  it('as one file, what the instruments\' files join into', async () => {
+    const usdt = await input('gate.futures_usdt-trades.csv', 'gate/perp/trades/B/BTC_USDT/202606/gate|perp|trades|BTC_USDT|202606.csv.gz');
+    const btc  = await input('gate.futures_btc-trades.csv', 'gate/perp/trades/B/BTC_USD/202606/gate|perp|trades|BTC_USD|202606.csv.gz');
+
+    const groups = [{ symbol: 'BTC_USDT', inputs: [usdt] }, { symbol: 'BTC_USD', inputs: [btc] }];
+    const apart  = join(dir, 'whole-apart');
+    const whole  = join(dir, 'whole');
+
+    const parts = await buildBatch(conn, gate, groups, apart);
+    const done  = await buildBatch(conn, gate, groups, whole, undefined, true);
+
+    expect(done).toEqual(parts);
+    expect(await written(whole)).toHaveLength(1);
+
+    const ordered = async (path: string): Promise<string> =>
+      JSON.stringify((await conn.runAndReadAll(`SELECT * FROM read_parquet('${path}')`)).getRows(),
+        (_k, v) => (typeof v === 'bigint' ? String(v) : v));
+
+    const columns = async (path: string): Promise<string[]> =>
+      (await conn.runAndReadAll(`SELECT * FROM read_parquet('${path}') LIMIT 0`)).columnNames();
+
+    const joined = await bundleStaged(conn, gate, apart);
+    const single = await bundleStaged(conn, gate, whole);
+
+    expect(await columns(single)).toEqual(await columns(joined));
+    expect(await ordered(single)).toBe(await ordered(joined));
+  });
+
+  /**
+   * A big instrument is read on its own, whatever the batches around it hold:
+   * its symbol can fall in the middle of one, and the month is still in order.
+   */
+  it('joins a batch written whole with an instrument from the middle of it', async () => {
+    const usdt = await input('gate.futures_usdt-trades.csv', 'gate/perp/trades/B/BTC_USDT/202606/gate|perp|trades|BTC_USDT|202606.csv.gz');
+    const btc  = await input('gate.futures_btc-trades.csv', 'gate/perp/trades/B/BTC_USD/202606/gate|perp|trades|BTC_USD|202606.csv.gz');
+    const here = join(dir, 'whole-mixed');
+
+    // The batch holds AAA and ZZZ; BTC_USD, alone, sorts between them.
+    const batch = await buildBatch(conn, gate, [{ symbol: 'AAA_USDT', inputs: [usdt] }, { symbol: 'ZZZ_USDT', inputs: [usdt] }], here, undefined, true);
+    const alone = await buildGroup(conn, gate, 'BTC_USD', [btc], here);
+
+    const joined = await bundleStaged(conn, gate, here);
+    const read   = await conn.runAndReadAll(`SELECT symbol, ts FROM read_parquet('${joined}')`);
+    const rows   = read.getRows().map(row => [String(row[0]), BigInt(row[1] as bigint)] as const);
+
+    expect(rows).toHaveLength(batch.rows + alone.rows);
+    expect(rows).toEqual([...rows].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0)));
+    expect([...new Set(rows.map(row => row[0]))]).toEqual(['AAA_USDT', 'BTC_USD', 'ZZZ_USDT']);
+  });
+
   /** A month with nothing in it is still a file, so it reads as stocked. */
   it('joins nothing into a file with the table\'s columns and no rows', async () => {
     const joined = await bundleStaged(conn, gate, join(dir, 'nothing'));

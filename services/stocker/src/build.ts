@@ -4,17 +4,18 @@ import { logger } from '@devvir/service-kit';
 import type { DuckDBConnection } from '@duckdb/node-api';
 import config from './config';
 import { SCRATCH, hasContent, unpackAll } from './containers';
+import { TAG } from './containers/pack';
 import { q } from './db';
-import { formatFor, formatOf } from './formats';
+import { formatFor, formatOf, isTable } from './formats';
 import { marginOf } from './schema/margin';
 import { selectFor } from './schema/project';
 import { seriesFor } from './schema/series';
 import { MARGIN, fieldsOf } from './schema/tables';
 import { clipFor } from './spill';
 import { STAGED } from './vault';
-import type { UnpackedAll } from './containers';
+import type { Pack, UnpackedAll, Wrapped } from './containers';
 import type { Format } from './formats/types';
-import type { DiskFile, Series, VaultKey } from './types';
+import type { DiskFile, Group, Series, Spent, VaultKey } from './types';
 
 /**
  * Row group size, in rows rather than bytes.
@@ -51,12 +52,18 @@ export const buildGroup = async (
   inputs:  DiskFile[],
   staging: string,
   prepared?: UnpackedAll,
+  spent?:  Spent,
 ): Promise<{ rows: number; files: number }> => {
+  const lap      = lapsInto(spent);
   const unpacked = prepared
     ?? await unpackAll(inputs.map(input => ({ absolute: input.absolute, container: input.file.container })));
   const opened   = inputs.map((input, at) => ({ input, unpacked: { paths: unpacked.paths[at]! } }));
 
   try {
+    // Nothing here reads a gathered file, so one handed in would be rows left out.
+    if (unpacked.packs.some(pack => pack !== null))
+      throw new Error(`${labelFor(key, symbol)}: its archives were gathered for a batch, and it is not built as one`);
+
     const bySeries = new Map<Series, string[]>();
 
     for (const { input, unpacked } of opened) {
@@ -83,6 +90,8 @@ export const buildGroup = async (
 
     // Nothing but empty files: the venue published for this month and
     // published nothing in it, so this instrument has no file.
+    lap('inspect');
+
     if (bySeries.size === 0) return { rows: 0, files: 0 };
 
     const selects: string[] = [];
@@ -128,6 +137,8 @@ export const buildGroup = async (
       throw err;
     }
   } finally {
+    lap('write');
+
     await unpacked.dispose();
   }
 };
@@ -152,11 +163,80 @@ export const buildBatch = async (
   groups:  { symbol: string; inputs: DiskFile[] }[],
   staging: string,
   prepared?: UnpackedAll,
+  whole    = false,
+  spent?:  Spent,
 ): Promise<{ rows: number; files: number }> => {
-  const flat     = groups.flatMap(group => group.inputs.map(input => ({ symbol: group.symbol, input })));
-  const unpacked = prepared
-    ?? await unpackAll(flat.map(({ input }) => ({ absolute: input.absolute, container: input.file.container })));
-  const opened   = flat.map((one, at) => ({ ...one, unpacked: { paths: unpacked.paths[at]! } }));
+  const { inputs, series: shapes } = wrappedFor(groups);
+
+  const asTheyAre = (): Promise<UnpackedAll> =>
+    unpackAll(inputs.map(({ absolute, container }) => ({ absolute, container })));
+
+  const first = prepared ?? await asTheyAre();
+
+  try {
+    return await batchFrom(conn, key, groups, staging, first, shapes, whole, spent);
+  } catch (err) {
+    if (! first.packs.some(pack => pack !== null)) throw err;
+
+    /**
+     * A read of gathered files that fails says little about which archive is
+     * why, and may have failed only for being gathered. Read as the archives
+     * are, it either works or fails as it always did, naming the file.
+     */
+    logger.warn({ err, partition: labelFor(key, groups[0]!.symbol), instruments: groups.length },
+      'A read of gathered files failed — reading its archives one by one');
+
+    return await batchFrom(conn, key, groups, staging, await asTheyAre(), shapes, whole, spent);
+  }
+};
+
+/**
+ * A batch's archives as extraction is asked for them, and the series each
+ * shape is read as.
+ *
+ * **Small files of a table are gathered** — see `Packer` — one file for each
+ * series the batch's files are read as, since a series is a shape: its columns,
+ * and whether a file opens with their names. A series that reshapes its rows,
+ * or types them itself, or names each row's instrument, is read from its files
+ * as they are.
+ *
+ * Asked for the same batch, it answers the same: it is how the build knows
+ * which series a gathered file is, without being told.
+ */
+export const wrappedFor = (
+  groups:    readonly Group[],
+  gathering = true,
+): { inputs: Wrapped[]; shapes: Pack[]; series: Series[] } => {
+  const series: Series[] = [];
+
+  const inputs = groups.flatMap(group => group.inputs.map((input): Wrapped => {
+    const wrapped = { absolute: input.absolute, container: input.file.container };
+    const read    = gathering ? seriesFor(input.file) : null;
+
+    if (! read || ! isTable(read.format) || read.rows || read.fields || read.instrument) return wrapped;
+
+    if (! series.includes(read)) series.push(read);
+
+    return { ...wrapped, shape: series.indexOf(read) };
+  }));
+
+  return { inputs, shapes: series.map(one => ({ header: one.header })), series };
+};
+
+/** One read of a batch's archives as they were extracted, gathered or not, and its instruments written from it. */
+const batchFrom = async (
+  conn:     DuckDBConnection,
+  key:      VaultKey,
+  groups:   { symbol: string; inputs: DiskFile[] }[],
+  staging:  string,
+  unpacked: UnpackedAll,
+  shapes:   Series[],
+  whole:    boolean,
+  spent?:   Spent,
+): Promise<{ rows: number; files: number }> => {
+  const lap    = lapsInto(spent);
+  const flat   = groups.flatMap(group => group.inputs.map(input => ({ symbol: group.symbol, input })));
+  const opened = flat.map((one, at) => ({ ...one, unpacked: { paths: unpacked.paths[at]! } }));
 
   const table = `batch_${process.pid}_${++sequence}`;
 
@@ -184,9 +264,34 @@ export const buildBatch = async (
       }
     }
 
-    if (bySeries.size === 0) return { rows: 0, files: 0 };
+    /** What was gathered: a file a shape, every line opening with the number of the archive it is from. */
+    const gathered = unpacked.packs.flatMap((path, at) => {
+      if (path === null) return [];
+
+      if (! shapes[at]) throw new Error(`${labelFor(key, groups[0]!.symbol)}: a gathered file of no series the batch reads`);
+
+      return [{ path, series: asWritten(shapes[at]!, 'csv') }];
+    });
+
+    if (gathered.length > 0) flat.forEach((one, at) => owners.push(`(${q(String(at))}, ${q(one.symbol)})`));
+
+    lap('inspect');
+
+    if (bySeries.size === 0 && gathered.length === 0) return { rows: 0, files: 0 };
 
     const selects: string[] = [];
+
+    for (const { path, series } of gathered) {
+      const format = formatFor(series.format);
+
+      const extra = [
+        `${TAG} AS _file`,
+        'CAST(NULL AS VARCHAR) AS _instrument',
+        `${format.wide?.(series) ?? 'false'} AS _wide`,
+      ];
+
+      selects.push(`SELECT * FROM (${selectFor(series, format.packed!(path, series), extra)})`);
+    }
 
     for (const [series, paths] of bySeries) {
       const format = formatFor(series.format);
@@ -207,7 +312,8 @@ export const buildBatch = async (
       selects.push(`SELECT * FROM (${selectFor(series, format.relation(paths, series, true), extra)})`);
     }
 
-    const anySeries = [...bySeries.keys()][0]!;
+    const reading   = [...gathered.map(one => one.series), ...bySeries.keys()];
+    const anySeries = reading[0]!;
 
     try {
       await conn.run(
@@ -231,11 +337,20 @@ export const buildBatch = async (
      */
     const wide = (await conn.runAndReadAll(`SELECT _file FROM ${table} WHERE _wide LIMIT 1`)).getRows();
 
-    if (wide.length)
+    if (wide.length) {
+      // A gathered line names its archive by number; the archive is what is worth naming.
+      const named = String(wide[0]![0]);
+      const file  = /^\d+$/.test(named) ? flat[Number(named)]!.input.absolute : named;
+
       throw new Error(
         `${labelFor(key, groups[0]!.symbol)}: an input file has more columns than the series declares, ` +
-        `so reading it by position would mean something other than what the map says: ${wide[0]![0]}`,
+        `so reading it by position would mean something other than what the map says: ${file}`,
       );
+    }
+
+    lap('read');
+
+    if (whole) return await writeWhole(conn, key, table, staging, repeats(reading));
 
     const reader      = await conn.runAndReadAll(`SELECT DISTINCT _sym FROM ${table} ORDER BY 1`);
     const instruments = reader.getRows().map(row => String(row[0]));
@@ -250,7 +365,7 @@ export const buildBatch = async (
       await mkdir(staging, { recursive: true });
 
       await conn.run(
-        `COPY (SELECT ${repeats([...bySeries.keys()])}${q(instrument)} AS symbol, * EXCLUDE (_instrument, _wide, _sym, _file)${marginColumn(key, instrument)} FROM ${table}
+        `COPY (SELECT ${repeats(reading)}${q(instrument)} AS symbol, * EXCLUDE (_instrument, _wide, _sym, _file)${marginColumn(key, instrument)} FROM ${table}
                WHERE _sym = ${q(instrument)} ORDER BY ${orderOf(key)})
          TO ${q(temp)} (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE ${ROW_GROUP})`,
       );
@@ -264,18 +379,25 @@ export const buildBatch = async (
     return { rows, files };
   } finally {
     await conn.run(`DROP TABLE IF EXISTS ${table}`).catch(() => {});
+
+    lap('write');
+
     await unpacked.dispose();
   }
 };
 
 /**
- * Join a staged partition's per-instrument files into the one file a small
- * month is stored as, and say where it is.
+ * Join a staged partition's files into the one file a small month is stored
+ * as, and say where it is.
  *
- * **Appended, not sorted.** Each instrument's file is already in time order, so
- * reading them in symbol order and writing what is read gives a file ordered by
- * symbol and then by time — one instrument's rows together, which is how the
- * file is read — without holding a month in memory to sort it.
+ * **Appended, not sorted.** Each file is already in symbol and time order —
+ * one instrument's, or a batch of them written together — so reading them in
+ * symbol order and writing what is read gives a file ordered by symbol and then
+ * by time, one instrument's rows together, which is how the file is read,
+ * without holding a month in memory to sort it. A single file is the month
+ * already, and is not rewritten. Only where two files hold symbols that
+ * interleave — a big instrument read on its own, out of the middle of a batch —
+ * is the join a sort.
  *
  * A partition every input of which was empty still becomes a file, with the
  * table's columns and no rows, so it reads as stocked rather than being rebuilt
@@ -284,15 +406,22 @@ export const buildBatch = async (
 export const bundleStaged = async (conn: DuckDBConnection, key: VaultKey, staging: string): Promise<string> => {
   await mkdir(staging, { recursive: true });
 
-  const out    = join(staging, '@.bundle');
-  const staged = (await readdir(staging))
-    .filter(name => name.endsWith(STAGED))
-    .map(name => name.slice(0, -STAGED.length))
-    .sort()
-    .map(symbol => q(stagedOf(staging, symbol)));
+  const out   = join(staging, '@.bundle');
+  const names = (await readdir(staging)).filter(name => name.endsWith(STAGED)).map(name => name.slice(0, -STAGED.length));
+
+  // One batch, written whole: it is the month's file as it stands.
+  if (names.length === 1 && names[0]!.startsWith(WHOLE)) {
+    await rename(stagedOf(staging, names[0]!), out);
+
+    return out;
+  }
+
+  const spans  = names.some(name => name.startsWith(WHOLE)) ? await spansOf(conn, names.map(name => stagedOf(staging, name))) : null;
+  const staged = spans ? spans.map(span => q(span.path)) : names.sort().map(symbol => q(stagedOf(staging, symbol)));
+  const sorted = spans !== null && spans.some((span, at) => at > 0 && span.first <= spans[at - 1]!.last);
 
   const rows = staged.length
-    ? `SELECT * FROM read_parquet([${staged.join(', ')}])`
+    ? `SELECT * FROM read_parquet([${staged.join(', ')}])${sorted ? ` ORDER BY symbol, ${orderOf(key)}` : ''}`
     : `SELECT CAST(NULL AS VARCHAR) AS symbol, ${fieldsOf(key.table)
       .map(field => `CAST(NULL AS ${field.type}) AS ${field.name}`).join(', ')} WHERE false`;
 
@@ -352,6 +481,105 @@ let sequence = 0;
 
 /** Where one instrument's file is written while its partition is being built. */
 const stagedOf = (staging: string, symbol: string): string => join(staging, `${symbol}${STAGED}`);
+
+/** A clock that adds the time since it was last read to one of a partition's counts; nothing where none is kept. */
+const lapsInto = (spent?: Spent): ((into: keyof Spent) => void) => {
+  let since = Date.now();
+
+  return (into) => {
+    const now = Date.now();
+
+    if (spent) spent[into] += now - since;
+
+    since = now;
+  };
+};
+
+/** What a batch written as one file is named by, in place of an instrument: nothing a venue calls one begins so. */
+const WHOLE = '@batch.';
+
+/**
+ * A batch of small instruments as **one file**, ordered by symbol and then as
+ * any instrument's file is — what joining their separate files would give,
+ * without writing them.
+ *
+ * **For a month stored as one file, where the instruments' own files are only
+ * a step.** A write is some ten milliseconds whatever it holds, and a month of
+ * a few megabytes over five hundred instruments is five hundred of them and
+ * then a read of all five hundred back: seconds, for a quarter of a second's
+ * worth of rows.
+ *
+ * The checks a file gets are made on the table before anything is written:
+ * each instrument's times have to be times.
+ */
+const writeWhole = async (
+  conn:     DuckDBConnection,
+  key:      VaultKey,
+  table:    string,
+  staging:  string,
+  distinct: string,
+): Promise<{ rows: number; files: number }> => {
+  const found = (await conn.runAndReadAll(`SELECT _sym, min(ts), max(ts) FROM ${table} GROUP BY 1 ORDER BY 1`)).getRows()
+    .map(row => ({ symbol: String(row[0]), lo: Number(row[1]), hi: Number(row[2]) }));
+
+  if (found.length === 0) return { rows: 0, files: 0 };
+
+  for (const one of found) plausible(key, one.symbol, one.lo, one.hi);
+
+  const out  = stagedOf(staging, `${WHOLE}${process.pid}.${++sequence}`);
+  const temp = `${out}.tmp`;
+
+  const margins = fieldsOf(key.table).some(field => field.name === MARGIN.name);
+  const side    = margins
+    ? ` JOIN (VALUES ${found.map(one => { const margin = marginOf(key.venue, key.market, one.symbol);
+
+      return `(${q(one.symbol)}, CAST(${margin ? q(margin) : 'NULL'} AS VARCHAR))`; }).join(', ')}) _m(_of, ${MARGIN.name}) ON _m._of = _sym`
+    : '';
+
+  await mkdir(staging, { recursive: true });
+
+  try {
+    await conn.run(
+      `COPY (SELECT ${distinct}_sym AS symbol, * EXCLUDE (_instrument, _wide, _sym, _file${margins ? ', _of' : ''})
+               FROM ${table}${side} ORDER BY symbol, ${orderOf(key)})
+       TO ${q(temp)} (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE ${ROW_GROUP})`,
+    );
+
+    const rows = Number((await conn.runAndReadAll(`SELECT count(*) FROM read_parquet(${q(temp)})`)).getRows()[0]![0]);
+
+    await rename(temp, out);
+
+    return { rows, files: found.length };
+  } catch (err) {
+    await rm(temp, { force: true });
+
+    throw err;
+  }
+};
+
+/** The symbols each staged file holds, first and last, in the order of their first. */
+const spansOf = async (
+  conn:  DuckDBConnection,
+  paths: string[],
+): Promise<{ path: string; first: string; last: string }[]> =>
+  (await conn.runAndReadAll(
+    `SELECT filename, min(symbol), max(symbol) FROM read_parquet([${paths.map(q).join(', ')}], filename = true) GROUP BY 1`,
+  )).getRows()
+    .map(row => ({ path: String(row[0]), first: String(row[1]), last: String(row[2]) }))
+    .sort((a, b) => (a.first < b.first ? -1 : a.first > b.first ? 1 : 0));
+
+/**
+ * Refuse rows whose timestamps are not plausibly timestamps. Inference removes
+ * the whole-file-1000×-off mistake; this catches the one it cannot — a `ts`
+ * naming the wrong column, where values parse and mean nothing.
+ */
+const plausible = (key: VaultKey, symbol: string, lo: number, hi: number): void => {
+  if (lo < EARLIEST || hi > LATEST)
+    throw new Error(
+      `Implausible timestamps in ${labelFor(key, symbol)}: ${lo}..${hi} µs is outside 2015–2035. ` +
+      `The series' 'ts' almost certainly names the wrong column.`,
+    );
+};
 
 /** One instrument, one file. */
 const writeOne = async (
@@ -448,16 +676,7 @@ const settleFile = async (
       return 0;
     }
 
-    /**
-     * Refuse a file whose timestamps are not plausibly timestamps. Inference
-     * removes the whole-file-1000×-off mistake; this catches the one it cannot —
-     * a `ts` naming the wrong column, where values parse and mean nothing.
-     */
-    if (Number(lo) < EARLIEST || Number(hi) > LATEST)
-      throw new Error(
-        `Implausible timestamps in ${labelFor(key, symbol)}: ${lo}..${hi} µs is outside 2015–2035. ` +
-        `The series' 'ts' almost certainly names the wrong column.`,
-      );
+    plausible(key, symbol, Number(lo), Number(hi));
 
     await rename(temp, out);
 

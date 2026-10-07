@@ -1,0 +1,394 @@
+{
+  "binance.cm-aggTrades.csv": {
+    "versions": "every=1.0.0",
+    "digest": "bc1c8df85d4b0be9"
+  },
+  "binance.cm-bookDepth.csv": {
+    "versions": "every=1.0.0",
+    "digest": "6672ccba482af621"
+  },
+  "binance.cm-bookTicker.csv": {
+    "versions": "every=1.0.0",
+    "digest": "6946d90610988893"
+  },
+  "binance.cm-fundingRate.csv": {
+    "versions": "every=1.0.0",
+    "digest": "23e9fecfc5b43885"
+  },
+  "binance.cm-indexPriceKlines.csv": {
+    "versions": "every=1.0.0",
+    "digest": "e13bd7b744afedaa"
+  },
+  "binance.cm-klines.csv": {
+    "versions": "every=1.0.0",
+    "digest": "7836811da82c43ce"
+  },
+  "binance.cm-liquidationSnapshot.csv": {
+    "versions": "every=1.0.0",
+    "digest": "f2ec28c80e5e8f1a"
+  },
+  "binance.cm-markPriceKlines.csv": {
+    "versions": "every=1.0.0",
+    "digest": "b32eda7073d4ad69"
+  },
+  "binance.cm-metrics.csv": {
+    "versions": "every=1.0.0",
+    "digest": "3da38aacee8ee9dc"
+  },
+  "binance.cm-premiumIndexKlines.csv": {
+    "versions": "every=1.0.0",
+    "digest": "d31b876e956770c7"
+  },
+  "binance.cm-trades.csv": {
+    "versions": "every=1.0.0",
+    "digest": "8f3e9eff563218c8"
+  },
+  "binance.option-bvolindex.csv": {
+    "versions": "every=1.0.0",
+    "digest": "4c19299ccd8d3d7f"
+  },
+  "binance.option-eohsummary.csv": {
+    "versions": "every=1.0.0",
+    "digest": "a355ca0ffbccc22f"
+  },
+  "binance.spot-aggTrades.csv": {
+    "versions": "every=1.0.0",
+    "digest": "33435e8ce5e210b1"
+  },
+  "binance.spot-klines.csv": {
+    "versions": "every=1.0.0",
+    "digest": "fc39ac0c0d7235bb"
+  },
+  "binance.spot-trades.csv": {
+    "versions": "every=1.0.0",
+    "digest": "7da1767219dc2297"
+  },
+  "binance.um-aggTrades.csv": {
+    "versions": "every=1.0.0",
+    "digest": "1eadb8a777b46576"
+  },
+  "binance.um-bookDepth.csv": {
+    "versions": "every=1.0.0",
+    "digest": "c600337a375e1829"
+  },
+  "binance.um-bookTicker.csv": {
+    "versions": "every=1.0.0",
+    "digest": "25b5f18e067290cb"
+  },
+  "binance.um-fundingRate.csv": {
+    "versions": "every=1.0.0",
+    "digest": "6d7b4f5cc7d42a67"
+  },
+  "binance.um-indexPriceKlines.csv": {
+    "versions": "every=1.0.0",
+    "digest": "72af926cd832da45"
+  },
+  "binance.um-klines.csv": {
+    "versions": "every=1.0.0",
+    "digest": "4c8a54154aeb9bce"
+  },
+  "binance.um-liquidationSnapshot.csv": {
+    "versions": "every=1.0.0",
+    "digest": "454ed4df7140b985"
+  },
+  "binance.um-markPriceKlines.csv": {
+    "versions": "every=1.0.0",
+    "digest": "12ac8396818fe9e8"
+  },
+  "binance.um-metrics.csv": {
+    "versions": "every=1.0.0",
+    "digest": "79577e2a779954dd"
+  },
+  "binance.um-premiumIndexKlines.csv": {
+    "versions": "every=1.0.0",
+    "digest": "d27e193aed6b28af"
+  },
+  "binance.um-trades.csv": {
+    "versions": "every=1.0.0",
+    "digest": "df444b254e977f2a"
+  },
+  "bitget.dmcbl-trades.csv": {
+    "versions": "every=1.0.0",
+    "digest": "86d543e168e2bec2"
+  },
+  "bitget.future-klines-month.csv": {
+    "versions": "every=1.0.0",
+    "digest": "c7488787b8f5cc55"
+  },
+  "bitget.future-trades-month.csv": {
+    "versions": "every=1.0.0",
+    "digest": "faa2f4bac0168d78"
+  },
+  "bitget.perp-quotes-month.csv": {
+    "versions": "every=1.0.0",
+    "digest": "e213955dd912ddfa"
+  },
+  "bitget.spot-klines-month.csv": {
+    "versions": "every=1.0.0",
+    "digest": "2435d8ad73c55866"
+  },
+  "bitget.spot-trades.csv": {
+    "versions": "every=1.0.0",
+    "digest": "c83132cab87334bf"
+  },
+  "bitget.umcbl-trades.csv": {
+    "versions": "every=1.0.0",
+    "digest": "e127e9e47f67a1ec"
+  },
+  "bybit.mt4-klines.csv": {
+    "versions": "every=1.0.0",
+    "digest": "6fdd6dd97b27c373"
+  },
+  "bybit.option-markkline.csv": {
+    "versions": "every=1.0.0",
+    "digest": "3870f953ef390743"
+  },
+  "bybit.option-trades.csv": {
+    "versions": "every=1.0.0",
+    "digest": "f81fc541acb73562"
+  },
+  "bybit.perp-trades.csv": {
+    "versions": "every=1.0.0",
+    "digest": "63178e55c7da9cba"
+  },
+  "bybit.spot-trades.csv": {
+    "versions": "every=1.0.0",
+    "digest": "da8a05c746eac96e"
+  },
+  "gate.futures_btc-candlesticks_1d.csv": {
+    "versions": "every=1.0.0",
+    "digest": "09771045cf1a0b81"
+  },
+  "gate.futures_btc-candlesticks_1h.csv": {
+    "versions": "every=1.0.0",
+    "digest": "8e83e2bf2f0b7bbb"
+  },
+  "gate.futures_btc-candlesticks_1m.csv": {
+    "versions": "every=1.0.0",
+    "digest": "28f49952b10e5189"
+  },
+  "gate.futures_btc-candlesticks_4h.csv": {
+    "versions": "every=1.0.0",
+    "digest": "9a88bb36872beca1"
+  },
+  "gate.futures_btc-candlesticks_5m.csv": {
+    "versions": "every=1.0.0",
+    "digest": "94ebd94ee9aa00ff"
+  },
+  "gate.futures_btc-funding_applies.csv": {
+    "versions": "every=1.0.0",
+    "digest": "fdbe1a219f4c636f"
+  },
+  "gate.futures_btc-funding_updates.csv": {
+    "versions": "every=1.0.0",
+    "digest": "5dbbf13003c1efea"
+  },
+  "gate.futures_btc-mark_prices.csv": {
+    "versions": "every=1.0.0",
+    "digest": "0d79a664493f1cac"
+  },
+  "gate.futures_btc-orderbooks.csv": {
+    "versions": "every=1.0.0",
+    "digest": "d62c577b67f425c1"
+  },
+  "gate.futures_btc-trades.csv": {
+    "versions": "every=1.0.0",
+    "digest": "8547d926c098399f"
+  },
+  "gate.futures_usdt-candlesticks_1d.csv": {
+    "versions": "every=1.0.0",
+    "digest": "5ed62991399a1668"
+  },
+  "gate.futures_usdt-candlesticks_1h.csv": {
+    "versions": "every=1.0.0",
+    "digest": "0647fc9566fba06d"
+  },
+  "gate.futures_usdt-candlesticks_1m.csv": {
+    "versions": "every=1.0.0",
+    "digest": "24732f6d649b3301"
+  },
+  "gate.futures_usdt-candlesticks_4h.csv": {
+    "versions": "every=1.0.0",
+    "digest": "550109a2c7b98149"
+  },
+  "gate.futures_usdt-candlesticks_5m.csv": {
+    "versions": "every=1.0.0",
+    "digest": "cef15d729a6b4603"
+  },
+  "gate.futures_usdt-funding_applies.csv": {
+    "versions": "every=1.0.0",
+    "digest": "baa47ebd6bc0e848"
+  },
+  "gate.futures_usdt-funding_updates.csv": {
+    "versions": "every=1.0.0",
+    "digest": "85a8cc0c08e67c74"
+  },
+  "gate.futures_usdt-mark_prices.csv": {
+    "versions": "every=1.0.0",
+    "digest": "756ad44023808a26"
+  },
+  "gate.futures_usdt-orderbooks.csv": {
+    "versions": "every=1.0.0",
+    "digest": "47ade0b7c9a98441"
+  },
+  "gate.futures_usdt-trades.csv": {
+    "versions": "every=1.0.0",
+    "digest": "9dff818473a1c691"
+  },
+  "gate.spot-deals.csv": {
+    "versions": "every=1.0.0",
+    "digest": "b3beec09dec6a59f"
+  },
+  "gate.spot-orderbooks.csv": {
+    "versions": "every=1.0.0",
+    "digest": "b5bce07e852c5ee2"
+  },
+  "gate.tradfi-candlesticks.csv": {
+    "versions": "every=1.0.0",
+    "digest": "4467570d1a2ac161"
+  },
+  "htx.future-markKlines.csv": {
+    "versions": "every=1.0.0",
+    "digest": "f2dbfae01d7ee1de"
+  },
+  "htx.futures-fundingRates.csv": {
+    "versions": "every=1.0.0",
+    "digest": "43375c09a55e1551"
+  },
+  "htx.futures-indexKlines.csv": {
+    "versions": "every=1.0.0",
+    "digest": "1f7e8b53fb2221a4"
+  },
+  "htx.futures-klines.csv": {
+    "versions": "every=1.0.0",
+    "digest": "ff88270c5d3a8dd1"
+  },
+  "htx.futures-markKlines.csv": {
+    "versions": "every=1.0.0",
+    "digest": "8da2619029019d24"
+  },
+  "htx.futures-trades.csv": {
+    "versions": "every=1.0.0",
+    "digest": "17d650e5080a144b"
+  },
+  "htx.old-future-markKlines-headed.csv": {
+    "versions": "every=1.0.0",
+    "digest": "b059e6a3f9da6592"
+  },
+  "htx.old-future-markKlines.csv": {
+    "versions": "every=1.0.0",
+    "digest": "e528ac840daf9462"
+  },
+  "htx.old-future-trades.csv": {
+    "versions": "every=1.0.0",
+    "digest": "e9e3569d9083c2cc"
+  },
+  "htx.old-option-klines.csv": {
+    "versions": "every=1.0.0",
+    "digest": "1cedf1db63167202"
+  },
+  "htx.old-option-trades.csv": {
+    "versions": "every=1.0.0",
+    "digest": "28f23e4f724d3a69"
+  },
+  "htx.old-perp-klines.csv": {
+    "versions": "every=1.0.0",
+    "digest": "02b292fc64e73088"
+  },
+  "htx.old-perp-trades-inverse.csv": {
+    "versions": "every=1.0.0",
+    "digest": "207fff1581e14041"
+  },
+  "htx.old-perp-trades-linear.csv": {
+    "versions": "every=1.0.0",
+    "digest": "f4f35ffd5a59b461"
+  },
+  "htx.old-spot-klines.csv": {
+    "versions": "every=1.0.0",
+    "digest": "a5c5a7639d96829b"
+  },
+  "htx.old-spot-trades.csv": {
+    "versions": "every=1.0.0",
+    "digest": "11b52fba87061f09"
+  },
+  "htx.spot-klines.csv": {
+    "versions": "every=1.0.0",
+    "digest": "be3f2aa97651f3f7"
+  },
+  "htx.spot-trades.csv": {
+    "versions": "every=1.0.0",
+    "digest": "f9b6ddcdfecc5d19"
+  },
+  "kucoin.futures-fundingRates.csv": {
+    "versions": "every=1.0.0",
+    "digest": "95f1f50b5a505bb5"
+  },
+  "kucoin.futures-index.csv": {
+    "versions": "every=1.0.0",
+    "digest": "a3e3912b4bc4e5f3"
+  },
+  "kucoin.futures-klines.csv": {
+    "versions": "every=1.0.0",
+    "digest": "d9a45584f6223741"
+  },
+  "kucoin.futures-mark.csv": {
+    "versions": "every=1.0.0",
+    "digest": "7d8416b466af3fd2"
+  },
+  "kucoin.futures-trades.csv": {
+    "versions": "every=1.0.0",
+    "digest": "a708fb3f437a76dd"
+  },
+  "kucoin.spot-klines.csv": {
+    "versions": "every=1.0.0",
+    "digest": "ed9b9167949e0b9d"
+  },
+  "kucoin.spot-trades.csv": {
+    "versions": "every=1.0.0",
+    "digest": "32b948921b830409"
+  },
+  "okx.all-borrowrates.csv": {
+    "versions": "every=1.0.0",
+    "digest": "53ba68556c19a2a4"
+  },
+  "okx.all-fundingrates.csv": {
+    "versions": "every=1.0.0",
+    "digest": "bb9cbd05f8fbe1ec"
+  },
+  "okx.option-klines-none.csv": {
+    "versions": "every=1.0.0",
+    "digest": "2ceedea535c58a21"
+  },
+  "okx.option-klines.csv": {
+    "versions": "every=1.0.0",
+    "digest": "eb61343b99e49558"
+  },
+  "okx.option-trades-source.csv": {
+    "versions": "every=1.0.0",
+    "digest": "362fbb78cfdba3ae"
+  },
+  "okx.option-trades.csv": {
+    "versions": "every=1.0.0",
+    "digest": "b7c82392a058dd08"
+  },
+  "okx.spot-candlesticks-volccy.csv": {
+    "versions": "every=1.0.0",
+    "digest": "c59f93f0d2c9c641"
+  },
+  "okx.spot-candlesticks.csv": {
+    "versions": "every=1.0.0",
+    "digest": "46c6d7685bf966dd"
+  },
+  "okx.spot-trades.csv": {
+    "versions": "every=1.0.0",
+    "digest": "fbab06fb772cee3c"
+  },
+  "okx.swap-candlesticks.csv": {
+    "versions": "every=1.0.0",
+    "digest": "ce3610993b99de3c"
+  },
+  "okx.swap-trades.csv": {
+    "versions": "every=1.0.0",
+    "digest": "ec2886b9329741d0"
+  }
+}

@@ -21,6 +21,14 @@ export interface Format {
   relation(paths: string[], series: Series, named?: boolean): string;
 
   /**
+   * A relation over one file that small files of the series were gathered
+   * into — see `Packer`: the rows `relation` would give of them, each with the
+   * number of the archive it came from as `_tag`. Absent where the format's
+   * files are not gathered.
+   */
+  packed?(path: string, series: Series): string;
+
+  /**
    * An expression over the relation that is true on a row wider than the series
    * describes, or null where the format cannot be read positionally. What a
    * batched read checks instead of `overflow`, in the same pass.

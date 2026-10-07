@@ -29,6 +29,13 @@ import type { Edge, Entry, Partition, Side, Stocked, VaultKey } from './types';
  * A partition whose last line says `updating` is not stocked, to anyone reading:
  * its files are some of one build and some of another. See `repair`.
  *
+ * **A partition that is no longer what would be stocked says so too.** Its
+ * archives changed, or what is written of them did, and its files are whole and
+ * readable but of an older making. A line is written for it with `outdated`
+ * where its revision goes, and it stays that way until it is stocked again —
+ * which needs its archives on disk, and they may not be. The line before still
+ * says what its files are; this one says only that they are not current.
+ *
  * **A side a neighbouring month holds is said three ways**: nothing, where the
  * month has no such side; the neighbour's version, where its hours were read;
  * and `missing`, where the neighbour was not there. A month with a side missing
@@ -52,14 +59,18 @@ export const partitionOf = (key: VaultKey): string =>
 
 /**
  * The ledger as it is now: the last line for each partition, less any the
- * vault was found not to hold.
+ * vault was found not to hold. A partition whose last line says `outdated` is
+ * answered with the line before it, marked.
  */
 export const read = async (): Promise<Map<string, Entry>> => {
   const entries = new Map<string, Entry>();
 
   for (const entry of await entriesOf()) {
+    const held = entries.get(entry.partition);
+
     if (entry.revision === UPDATING) entries.delete(entry.partition);
-    else entries.set(entry.partition, entry);
+    else if (entry.revision !== OUTDATED) entries.set(entry.partition, entry);
+    else if (held) entries.set(entry.partition, { ...held, outdated: true });
   }
 
   for (const [partition, revision] of distrusted)
@@ -122,6 +133,25 @@ export const mark = async (
   append({ ...lineOf(key, source, edges, missing, split), revision: UPDATING, size: 0, count: 0 });
 
 /**
+ * Say that a stocked partition is no longer what would be stocked today. Its
+ * files stay as they are.
+ */
+export const outdate = async (entry: Entry): Promise<Entry> => {
+  await append({ ...entry, revision: OUTDATED, stockedAt: new Date().toISOString() });
+
+  return { ...entry, outdated: true };
+};
+
+/** Say that a partition marked outdated is what would be stocked today after all: its line, written again. */
+export const reinstate = async (entry: Entry): Promise<Entry> => {
+  const { outdated: _, ...line } = entry;
+
+  await append(line);
+
+  return line;
+};
+
+/**
  * Put right every partition that was being changed when something stopped it.
  *
  * Run before anything reads the vault: as the service starts, and before each
@@ -146,7 +176,7 @@ export const repair = async (): Promise<number> => {
   const before = new Map<string, Entry>();
 
   for (const entry of await entriesOf()) {
-    if (entry.revision !== UPDATING) before.set(entry.partition, entry);
+    if (entry.revision !== UPDATING && entry.revision !== OUTDATED) before.set(entry.partition, entry);
 
     last.set(entry.partition, entry);
   }
@@ -264,6 +294,9 @@ export const MISSING = 'missing';
 /** What a line says in place of a revision while its partition's files are being changed. */
 export const UPDATING = 'updating';
 
+/** What a line says in place of a revision once its partition's files are no longer what would be stocked. */
+export const OUTDATED = 'outdated';
+
 /** What the vault's files are called. */
 export const LEDGER  = 'ledger.csv';
 export const BACKEDUP = 'backedup.csv';
@@ -322,7 +355,7 @@ const append = async (entry: Entry): Promise<void> => {
 /** Every line of the ledger, in the order they were written. */
 const entriesOf = async (): Promise<Entry[]> =>
   (await linesOf(LEDGER, COLUMNS.length)).map((fields) => {
-    const entry = Object.fromEntries(COLUMNS.map((name, at) => [name, fields[at]!])) as unknown as Record<keyof Entry, string>;
+    const entry = Object.fromEntries(COLUMNS.map((name, at) => [name, fields[at]!])) as unknown as Record<(typeof COLUMNS)[number], string>;
 
     return { ...entry, size: Number(entry.size), count: Number(entry.count) } as Entry;
   });

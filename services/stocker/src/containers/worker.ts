@@ -10,7 +10,7 @@ import type { ExtractAsked, ExtractAnswered } from './types';
  * on the main thread — see `pool.ts`.
  */
 parentPort!.on('message', (asked: ExtractAsked) => {
-  extractInto(asked.inputs, asked.dir).then(
+  extractInto(asked.inputs, asked.dir, asked.shapes).then(
     done => parentPort!.postMessage({ id: asked.id, ...done } satisfies ExtractAnswered),
     err  => parentPort!.postMessage({ id: asked.id, error: (err as Error).message } satisfies ExtractAnswered),
   );

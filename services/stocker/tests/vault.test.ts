@@ -65,7 +65,7 @@ describe('the revision', () => {
   });
 
   /** Whatever changed in the catalog changes the revision. */
-  it('changes with the partition\'s version, a neighbour\'s and the series', () => {
+  it('changes with the partition\'s version and a neighbour\'s', () => {
     const base      = revisionOf(key(), partition('a'), series, []);
     const neighbour = (version: string) => [{ partition: partition(version, '2020-02'), side: 'first' as const }];
 
@@ -73,7 +73,22 @@ describe('the revision', () => {
     expect(revisionOf(key(), partition('a'), series, neighbour('n'))).not.toBe(base);
     expect(revisionOf(key(), partition('a'), series, neighbour('n')))
       .not.toBe(revisionOf(key(), partition('a'), series, neighbour('m')));
-    expect(revisionOf(key(), partition('a'), [{ ...series[0]!, ts: 'other' }], [])).not.toBe(base);
+  });
+
+  /** How a month is read is free to change; what is written of it is said by a version, and only that moves it. */
+  it('changes with a version of what is written, and not with how it is read', () => {
+    const base = revisionOf(key(), partition('a'), series, []);
+
+    expect(revisionOf(key(), partition('a'), [{ ...series[0]!, ts: 'other' }], [])).toBe(base);
+    expect(revisionOf(key(), partition('a'), [...series, { ...series[0]!, margin: 'inverse' }], [])).toBe(base);
+    expect(revisionOf(key(), partition('a'), [{ ...series[0]!, version: '1.1.0' }], [])).not.toBe(base);
+  });
+
+  it('is not moved by the version of an entry that does not hold for the month', () => {
+    const base  = revisionOf(key(), partition('a'), series, []);
+    const later = { ...series[0]!, from: '2030-01', version: '1.1.0' };
+
+    expect(revisionOf(key(), partition('a'), [...series, later], [])).toBe(base);
   });
 
   it('is twelve hex digits', () => {

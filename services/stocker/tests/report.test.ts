@@ -4,7 +4,7 @@ import { report } from '../src/scan';
 import type { Summary } from '../src/types';
 
 const summary = (over: Partial<Summary> = {}): Summary => ({
-  considered: 0, current: 0, built: 0, empty: 0, waiting: 0, partial: 0, completed: 0, missing: 0,
+  considered: 0, current: 0, outdated: 0, built: 0, empty: 0, waiting: 0, partial: 0, completed: 0, missing: 0,
   unmapped: 0, failed: 0, rows: 0, files: 0, stopped: false, ...over,
 });
 

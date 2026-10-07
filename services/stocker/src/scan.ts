@@ -3,14 +3,14 @@ import { join } from 'node:path';
 import { logger } from '@devvir/service-kit';
 import { sizeOf } from '@tradebot/utils';
 import type { DuckDBConnection } from '@duckdb/node-api';
-import { buildBatch, buildGroup, bundleStaged } from './build';
+import { buildBatch, buildGroup, bundleStaged, wrappedFor } from './build';
 import { listPartitions } from './catalog';
 import config from './config';
 import { q } from './db';
 import { Instruments, edgeFilesOf, filesOf, matches } from './disk';
 import { idOf, neighbourOf } from './keys';
 import { SERIES, extrasOf, seriesOf } from './schema/series';
-import { MISSING, mark, partitionOf, read as readLedger, record, repair } from './ledger';
+import { MISSING, mark, outdate, partitionOf, read as readLedger, record, reinstate, repair } from './ledger';
 import { Prefetch } from './prepare';
 import { reachOf } from './spill';
 import {
@@ -18,7 +18,7 @@ import {
   stagingOf,
 } from './vault';
 import type {
-  DiskFile, Edge, Entry, Grain, Group, InstrumentDirs, Job, Partition, Pass, Series, Side, Stocked, Summary, Sweeping, Target, Task,
+  DiskFile, Edge, Entry, Grain, Group, InstrumentDirs, Job, Partition, Pass, Series, Side, Spent, Stocked, Summary, Sweeping, Target, Task,
   VaultKey,
 } from './types';
 
@@ -34,7 +34,9 @@ import type {
  *    the month beside it. Where that month is in the answer its edge is read;
  *    where it is not, the partition is stocked without those hours and says so.
  * 2. **Not already stocked** — its revision, computed from the catalog's
- *    version of every partition it is built from, is not in the ledger.
+ *    version of every partition it is built from, is not in the ledger. One
+ *    the ledger holds at another revision is marked outdated there, and stays
+ *    so until it is stocked again.
  * 3. **Only its neighbour new?** — a month stocked without a side, whose
  *    neighbour is here now, has that side built and nothing else.
  * 4. **On disk as the catalog says** — the same count and the same bytes.
@@ -57,7 +59,7 @@ export const sweep = async (conns: DuckDBConnection[]): Promise<Summary> => {
   await repair();
 
   const summary: Summary = {
-    considered: 0, current: 0, built: 0, empty: 0, waiting: 0, partial: 0, completed: 0, missing: 0,
+    considered: 0, current: 0, outdated: 0, built: 0, empty: 0, waiting: 0, partial: 0, completed: 0, missing: 0,
     unmapped: 0, failed: 0, rows: 0, files: 0, stopped: false,
   };
 
@@ -67,37 +69,88 @@ export const sweep = async (conns: DuckDBConnection[]): Promise<Summary> => {
 
   const upcoming = jobsOf(sweeping, summary);
 
-  /** Decided and not yet stocked: its extraction is under way, and is given up if the sweep ends first. */
-  let ahead: Job | null = null;
+  /**
+   * **Partitions are decided ahead of the one being stocked**, and wait here.
+   * Deciding is what starts a partition's archives being extracted — see
+   * `Prefetch` — and it is light work that is mostly waiting on the disk: a
+   * stretch of months that turn out not to be there is walked through while
+   * the engine is busy, and not while it stands idle. How far ahead is bounded
+   * in partitions and in what their archives weigh; what is extracted of them
+   * is bounded again, by the disk, where it is done.
+   */
+  const ready: Job[] = [];
+  const stirred: (() => void)[] = [];
+
+  let ended    = false;
+  let stopping = false;
+  let refused: unknown = null;
+
+  const stir  = (): void => { for (const wake of stirred.splice(0)) wake(); };
+  const moved = (): Promise<void> => new Promise(resolve => { stirred.push(resolve); });
+  const full  = (): boolean =>
+    ready.length >= AHEAD_JOBS || ready.reduce((total, job) => total + job.partition.bytes, 0) >= AHEAD_BYTES;
+
+  const deciding = (async (): Promise<void> => {
+    try {
+      for await (const job of upcoming) {
+        ready.push(job);
+        stir();
+
+        while (full() && ! stopping) await moved();
+
+        if (stopping) break;
+      }
+    } catch (err) {
+      // The sweep's to handle, once what was decided before it has been stocked.
+      refused = err;
+    } finally {
+      ended = true;
+      stir();
+    }
+  })();
+
+  /** The next partition to stock, or null when there are no more. */
+  const following = async (): Promise<Job | null> => {
+    while (ready.length === 0 && ! ended) await moved();
+
+    const job = ready.shift() ?? null;
+
+    stir();
+
+    if (! job && refused) throw refused;
+
+    return job;
+  };
 
   /**
-   * **The partition after this one is decided while this one is stocked.**
-   * Deciding it is what starts its archives being extracted, so that by the
-   * time the engine is free they are there to be read — see `Prefetch`.
+   * **One pool of connections, shared by partitions.** A light partition takes
+   * one connection and works through its tasks on it, so as many of those are
+   * stocked side by side as there are connections; a heavy one takes them all,
+   * and is stocked alone with its tasks side by side as they always were. Most
+   * months are the first kind, and built one after another they left every
+   * connection but one idle. Weight, not the number of tasks, is what tells
+   * them apart: a month of a few hundred kilobytes over five hundred
+   * instruments is two tasks and still nothing.
    */
-  const following = (): Promise<IteratorResult<Job, void>> => {
-    const asked = upcoming.next().then((one) => {
-      ahead = one.done ? null : one.value;
+  const idle    = [...conns];
+  const running = new Set<Promise<void>>();
 
-      return one;
-    });
+  const freed = async (wanted: number): Promise<DuckDBConnection[]> => {
+    while (idle.length < wanted) await Promise.race(running);
 
-    // Awaited once the partition in hand is stocked; until then a refusal is nobody's to handle.
-    asked.catch(() => {});
-
-    return asked;
+    return idle.splice(0, wanted);
   };
 
   try {
-    let next = await following();
+    for (let job = await following(); job; job = await following()) {
+      const mine = await freed(job.partition.bytes >= ALONE_BYTES ? conns.length : 1);
 
-    while (! next.done) {
-      const job   = next.value;
-      const after = following();
+      const run: Promise<void> = stock(mine, job, sweeping, summary).finally(() => {
+        idle.push(...mine);
+        running.delete(run);
+      });
 
-      await stock(conns, job, sweeping, summary);
-
-      next = await after;
+      running.add(run);
     }
   } catch (err) {
     if (! (err instanceof LowSpace)) throw err;
@@ -106,7 +159,15 @@ export const sweep = async (conns: DuckDBConnection[]): Promise<Summary> => {
 
     logger.warn({ freeGb: err.free, minFreeGb: config.minFreeGb }, 'Vault volume is low on space — stopping this sweep');
   } finally {
-    (ahead as Job | null)?.prefetch.release();
+    await Promise.allSettled(running);
+
+    stopping = true;
+    stir();
+
+    await deciding;
+
+    // Decided and never stocked: what was extracted for them is given up.
+    for (const job of ready) job.prefetch.release();
   }
 
   return finish(summary);
@@ -140,7 +201,8 @@ export const report = (summary: Summary, scanMinutes: number): void => {
 
   if (summary.partial + summary.missing > 0) {
     logger.info(counts, `Caught up — ${summary.partial} partition${summary.partial === 1 ? '' : 's'} without a neighbouring month's hours, ` +
-      `${summary.missing} not on disk as catalogued; rescanning in ${scanMinutes} minutes`);
+      `${summary.missing} not on disk as catalogued` + (summary.outdated > 0 ? ` (${summary.outdated} of them stocked and outdated)` : '') +
+      `; rescanning in ${scanMinutes} minutes`);
 
     return;
   }
@@ -159,6 +221,20 @@ export const report = (summary: Summary, scanMinutes: number): void => {
 export const SCAN_MINUTES = 5;
 
 // ── Internals ─────────────────────────────────────────────────────────────────
+
+/**
+ * Run one thing at a time, in the order asked: each waits for the one before
+ * it, however that one ended.
+ */
+const oneAtATime = <T>(work: () => Promise<T>): Promise<T> => {
+  const mine = last.then(work, work);
+
+  last = mine.catch(() => undefined);
+
+  return mine;
+};
+
+let last: Promise<unknown> = Promise.resolve();
 
 /** Why a sweep stops early: the vault's volume is below the configured floor. */
 class LowSpace extends Error {
@@ -193,6 +269,18 @@ const DIRECT_BYTES = 32 * 1024 ** 2;
 const SPLIT_GB = 1;
 
 let splitBytes = SPLIT_GB * 1024 ** 3;
+
+/** How many partitions are decided ahead of the one being stocked, and how much archive they may weigh together. */
+const AHEAD_JOBS  = 16;
+const AHEAD_BYTES = 2 * 1024 ** 3;
+
+/**
+ * A partition whose archives weigh this much has the engine to itself; a
+ * lighter one shares it with others. The weight of one batch: below it a month
+ * is a batch or two of small instruments, and nothing in it is worth a second
+ * connection.
+ */
+const ALONE_BYTES = 64 * 1024 ** 2;
 
 /** Where a batch closes: input bytes, or instruments. */
 const BATCH_BYTES       = 64 * 1024 ** 2;
@@ -311,6 +399,8 @@ const decide = async (
 
     if (stocked.missing.length > 0) summary.partial++;
 
+    if (entry!.outdated) sweeping.ledger.set(partition, await reinstate(entry!));
+
     return null;
   }
 
@@ -319,6 +409,17 @@ const decide = async (
 
     return null;
   }
+
+  /**
+   * **Stocked, and not at a revision any rendering computes: it is outdated**,
+   * and the ledger says so before anything is done about it — unless all that
+   * is new is a neighbour's hours, which is a month still current and about to
+   * be completed. Said first, so it is true however the stocking below ends:
+   * its archives may not be on disk, and it then stays outdated until they are.
+   */
+  const stale = !! entry && ! ready.some(one => arrivedFor(entry, key, one, series).length > 0);
+
+  if (entry && stale && ! entry.outdated) sweeping.ledger.set(partition, await outdate(entry));
 
   /**
    * The preferred rendering that is on disk as the catalog says — the next one
@@ -350,7 +451,7 @@ const decide = async (
       return {
         key, partition: one.candidate, revision: one.revision, edges: one.edges, missing: one.missing, tasks,
         passes: built.flatMap((own, at) => own.map(() => arrived[at]!.end)),
-        files: [...donated.values()].flat().length, prefetch: new Prefetch(tasks),
+        files: [...donated.values()].flat().length, prefetch: new Prefetch(tasks, wrapOf),
         completes: { revision: entry.revision, sides: arrived.map(edge => edge.end) },
       };
     }
@@ -373,11 +474,20 @@ const decide = async (
     return {
       key, partition: one.candidate, revision: one.revision, edges: one.edges, missing: one.missing, tasks,
       passes: [...tasksOf(own).map((): Pass => 'own'), ...sides.flatMap((side, at) => side.map(() => one.edges[at]!.end))],
-      files: files.length, prefetch: new Prefetch(tasks), completes: null,
+      files: files.length, prefetch: new Prefetch(tasks, wrapOf), completes: null,
     };
   }
 
   summary.missing++;
+
+  if (stale) {
+    summary.outdated++;
+
+    logger.warn({ partition: labelOf(key), renderings: ready.map(one => one.candidate.id) },
+      'Outdated, and its archives are not on disk — it stays as it is until they are back');
+
+    return null;
+  }
 
   logger.info({ partition: labelOf(key), renderings: ready.map(one => one.candidate.id) },
     'Not on disk as catalogued — skipped');
@@ -465,18 +575,27 @@ const stock = async (
   const staging = stagingOf(key, revision);
   const dirOf   = (pass: Pass): string => join(staging, pass);
   const started = Date.now();
+  const spent: Spent = { extract: 0, inspect: 0, read: 0, write: 0, join: 0, queued: 0, place: 0 };
 
   /** What the vault holds of the month as this starts: what a completion adds to, and what anything else replaces. */
   const before  = (await slices.of(key)).get(monthOf(key));
   const split   = completes ? ! before?.bundle : partition.bytes > splitBytes;
 
   logger.info({ partition: labelOf(key), from: partition.id, revision, files: job.files,
-    size: sizeOf(partition.bytes), as: split ? 'a file per instrument' : 'one file',
+    size: sizeOf(partition.bytes), as: split ? 'a file per instrument' : 'one file', tasks: tasks.length, connections: conns.length,
     ...(completes ? { completing: completes.revision } : {}),
     ...(missing.length > 0 ? { without: missing } : {}) },
   completes ? 'Completing partition' : 'Stocking partition');
 
   await rm(staging, { recursive: true, force: true });
+
+  /**
+   * Whether a batch is written as one file and not a file per instrument: where
+   * the month is stored as one file and is its own rows alone. With a
+   * neighbour's hours beside it, or added to it, the instruments' own files are
+   * what says which instruments the month has.
+   */
+  const asOne = ! split && ! completes && passes.every(pass => pass === 'own');
 
   let cursor    = 0;
   let rows      = 0;
@@ -490,11 +609,14 @@ const stock = async (
 
       try {
         // Extracted ahead where there was time; the build removes it when it has read it.
+        const asked    = Date.now();
         const prepared = await prefetch.take(at);
 
-        const done = next.length === 1 && bytesOf(next[0]!) >= DIRECT_BYTES
-          ? await buildGroup(conn, key, next[0]!.symbol, next[0]!.inputs, into, prepared)
-          : await buildBatch(conn, key, next, into, prepared);
+        spent.extract += Date.now() - asked;
+
+        const done = direct(next)
+          ? await buildGroup(conn, key, next[0]!.symbol, next[0]!.inputs, into, prepared, spent)
+          : await buildBatch(conn, key, next, into, prepared, asOne, spent);
 
         rows += done.rows;
 
@@ -510,99 +632,125 @@ const stock = async (
   // Whatever was extracted for a task no build reached — after a failure — is removed.
   prefetch.release();
 
-  /** Whether the vault has been told the month is changing: from then on a failure leaves it to be put right. */
-  let marked = false;
+  /**
+   * **Put in place one partition at a time**, whatever else is being built.
+   * Three things here are the vault's as a whole and not this partition's: the
+   * engine's setting that keeps rows in the order they are appended, which is
+   * on for the length of one join and off again; the ledger, whose lines say
+   * which months are mid-change; and the repair that reads them, which would
+   * take another partition's month for abandoned while it was only half moved.
+   * It is the short end of a build — joins of small files, and renames.
+   */
+  const built = Date.now();
 
-  try {
-    if (failure) throw failure;
+  const placed = await oneAtATime(async (): Promise<boolean> => {
+    const entered = Date.now();
 
-    if (completes && ! isWhole(before)) throw new Error('The month it completes is no longer in the vault');
+    spent.queued = entered - built;
 
-    const sides = [...new Set(passes.filter((pass): pass is Side => pass !== 'own'))];
+    /** Whether the vault has been told the month is changing: from then on a failure leaves it to be put right. */
+    let marked = false;
 
-    /**
-     * **A side holds only instruments the month has.** One that appears in the
-     * neighbour's first hours and nowhere in the month has nothing of this
-     * month to add to — and a file the neighbour holds every instrument in
-     * names many the month never saw.
-     */
-    const own = completes
-      ? await instrumentsOf(conns[0]!, key, before!)
-      : await stagedIn(dirOf('own'));
+    try {
+      if (failure) throw failure;
 
-    for (const side of sides) await keepOnly(dirOf(side), own);
+      if (completes && ! isWhole(before)) throw new Error('The month it completes is no longer in the vault');
 
-    /**
-     * How the month is stored: as it already is where a side is arriving, and
-     * otherwise by its weight. A partition with nothing in it is one file
-     * whatever it weighed: a file per instrument of no instruments would be
-     * nothing at all, and nothing is what an unstocked partition looks like.
-     */
-    const bundle = completes ? before!.bundle : ! (split && written > 0);
+      const sides = [...new Set(passes.filter((pass): pass is Side => pass !== 'own'))];
 
-    // Everything the engine has to write is written before the vault is touched.
-    const whole  = bundle && ! completes ? await bundleStaged(conns[0]!, key, dirOf('own')) : null;
-    const beside = new Map<Side, string>();
+      /**
+       * **A side holds only instruments the month has.** One that appears in the
+       * neighbour's first hours and nowhere in the month has nothing of this
+       * month to add to — and a file the neighbour holds every instrument in
+       * names many the month never saw.
+       */
+      const own = completes
+        ? await instrumentsOf(conns[0]!, key, before!)
+        : await stagedIn(dirOf('own'));
 
-    if (bundle)
-      for (const side of sides)
-        if ((await stagedIn(dirOf(side))).size > 0) beside.set(side, await bundleStaged(conns[0]!, key, dirOf(side)));
+      for (const side of sides) await keepOnly(dirOf(side), own);
 
-    /**
-     * A month the vault has never held has nothing to be caught half way
-     * between: until its line is written it is not stocked, whatever of it is
-     * in place. One that is there, or that the ledger holds, says it is
-     * changing before any file of it does.
-     */
-    if (before || ledger.has(partitionOf(key))) {
-      await mark(key, partition, edges, missing, ! bundle);
+      /**
+       * How the month is stored: as it already is where a side is arriving, and
+       * otherwise by its weight. A partition with nothing in it is one file
+       * whatever it weighed: a file per instrument of no instruments would be
+       * nothing at all, and nothing is what an unstocked partition looks like.
+       */
+      const bundle = completes ? before!.bundle : ! (split && written > 0);
 
-      marked = true;
-      ledger.delete(partitionOf(key));
-    }
+      // Everything the engine has to write is written before the vault is touched.
+      const joining = Date.now();
+      const whole   = bundle && ! completes ? await bundleStaged(conns[0]!, key, dirOf('own')) : null;
+      const beside  = new Map<Side, string>();
 
-    // What is there of the month makes way: all of it, or only the sides that are arriving.
-    await clear(sliceDirOf(key), monthOf(key), before, completes?.sides);
+      if (bundle)
+        for (const side of sides)
+          if ((await stagedIn(dirOf(side))).size > 0) beside.set(side, await bundleStaged(conns[0]!, key, dirOf(side)));
 
-    const stocked: Stocked = completes
-      ? { ...before!, sides: before!.sides.filter(one => ! completes.sides.includes(one.side)) }
-      : { bundle, symbols: [], sides: [] };
+      spent.join = Date.now() - joining;
 
-    if (bundle) {
-      if (whole) await publishBundle(key, whole);
+      /**
+       * A month the vault has never held has nothing to be caught half way
+       * between: until its line is written it is not stocked, whatever of it is
+       * in place. One that is there, or that the ledger holds, says it is
+       * changing before any file of it does.
+       */
+      if (before || ledger.has(partitionOf(key))) {
+        await mark(key, partition, edges, missing, ! bundle);
 
-      for (const [side, built] of beside) {
-        await publishBundle(key, built, side);
-
-        stocked.sides.push({ symbol: BUNDLE, side });
+        marked = true;
+        ledger.delete(partitionOf(key));
       }
+
+      // What is there of the month makes way: all of it, or only the sides that are arriving.
+      await clear(sliceDirOf(key), monthOf(key), before, completes?.sides);
+
+      const stocked: Stocked = completes
+        ? { ...before!, sides: before!.sides.filter(one => ! completes.sides.includes(one.side)) }
+        : { bundle, symbols: [], sides: [] };
+
+      if (bundle) {
+        if (whole) await publishBundle(key, whole);
+
+        for (const [side, built] of beside) {
+          await publishBundle(key, built, side);
+
+          stocked.sides.push({ symbol: BUNDLE, side });
+        }
+      }
+      else {
+        const placed = await publishSplit(key, completes ? null : dirOf('own'), sides.map(side => ({ side, staging: dirOf(side) })));
+
+        if (! completes) stocked.symbols = placed.symbols;
+
+        stocked.sides.push(...placed.sides);
+      }
+
+      // In the vault whole, so the ledger says what it holds.
+      const entry = await record(key, partition, edges, missing, revision, stocked);
+
+      ledger.set(entry.partition, entry);
+    } catch (err) {
+      summary.failed++;
+
+      logger.error({ err, partition: labelOf(key), from: partition.id }, 'Stocking failed');
+
+      // Stopped with the month half in place: put right now, not left for the next sweep to find.
+      if (marked) await repair().catch(fault => logger.error({ err: fault, partition: labelOf(key) }, 'Could not put the partition right'));
+
+      return false;
+    } finally {
+      slices.forget(key);
+
+      await rm(staging, { recursive: true, force: true });
+
+      spent.place = Date.now() - entered - spent.join;
     }
-    else {
-      const placed = await publishSplit(key, completes ? null : dirOf('own'), sides.map(side => ({ side, staging: dirOf(side) })));
 
-      if (! completes) stocked.symbols = placed.symbols;
+    return true;
+  });
 
-      stocked.sides.push(...placed.sides);
-    }
-
-    // In the vault whole, so the ledger says what it holds.
-    const entry = await record(key, partition, edges, missing, revision, stocked);
-
-    ledger.set(entry.partition, entry);
-  } catch (err) {
-    summary.failed++;
-
-    logger.error({ err, partition: labelOf(key), from: partition.id }, 'Stocking failed');
-
-    // Stopped with the month half in place: put right now, not left for the next sweep to find.
-    if (marked) await repair().catch(fault => logger.error({ err: fault, partition: labelOf(key) }, 'Could not put the partition right'));
-
-    return;
-  } finally {
-    slices.forget(key);
-
-    await rm(staging, { recursive: true, force: true });
-  }
+  if (! placed) return;
 
   if (completes) summary.completed++;
   else {
@@ -617,7 +765,7 @@ const stock = async (
   summary.rows += rows;
 
   logger.info({ partition: labelOf(key), revision, instruments: written, rows,
-    seconds: Math.round((Date.now() - started) / 100) / 10 }, completes ? 'Partition completed' : 'Partition stocked');
+    seconds: Math.round((Date.now() - started) / 100) / 10, ms: spent }, completes ? 'Partition completed' : 'Partition stocked');
 };
 
 /** The instruments with a file built in a staging directory. */
@@ -726,6 +874,12 @@ const tasksOf = (groups: Group[]): Task[] => {
 };
 
 const bytesOf = (group: Group): number => group.inputs.reduce((total, one) => total + one.size, 0);
+
+/** Whether a task is one big instrument, read on its own straight into its file, and not a batch. */
+const direct = (task: Task): boolean => task.length === 1 && bytesOf(task[0]!) >= DIRECT_BYTES;
+
+/** A task's archives as extraction is asked for them: a batch's small files gathered, a big instrument's as they are. */
+const wrapOf = (task: Task): ReturnType<typeof wrappedFor> => wrappedFor(task, ! direct(task));
 
 const rank = (partition: Partition): number =>
   (partition.key.bundle === 'instrument' ? 0 : 10) + PREFERENCE.indexOf(partition.key.grain);

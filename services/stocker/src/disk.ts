@@ -30,22 +30,30 @@ export const filesOf = async (key: PartitionKey, instruments: InstrumentDirs): P
 
   const found: DiskFile[] = [];
 
-  for (const dir of dirs) {
-    const names = await readdir(dir).catch(() => [] as string[]);
+  let next = 0;
 
-    for (const name of names) {
-      const file = parseKey(name);
+  const reader = async (): Promise<void> => {
+    while (next < dirs.length) {
+      const dir   = dirs[next++]!;
+      const names = await readdir(dir).catch(() => [] as string[]);
 
-      if (! file || file.grain !== key.grain || file.month !== key.month) continue;
+      for (const name of names) {
+        const file = parseKey(name);
 
-      const absolute = join(dir, name);
-      const info     = await stat(absolute).catch(() => null);
+        if (! file || file.grain !== key.grain || file.month !== key.month) continue;
 
-      if (! info?.isFile()) continue;
+        const absolute = join(dir, name);
+        const info     = await stat(absolute).catch(() => null);
 
-      found.push({ absolute, file: { ...file, key: relativeKey(absolute) }, size: info.size, mtimeMs: info.mtimeMs });
+        if (! info?.isFile()) continue;
+
+        found.push({ absolute, file: { ...file, key: relativeKey(absolute) }, size: info.size, mtimeMs: info.mtimeMs });
+      }
     }
-  }
+  };
+
+  // Mostly waiting on the disk, so several directories are asked for at once; the order is put right below.
+  await Promise.all(Array.from({ length: Math.min(READERS, dirs.length) }, reader));
 
   return found.sort((a, b) => (a.file.key < b.file.key ? -1 : a.file.key > b.file.key ? 1 : 0));
 };
@@ -92,6 +100,9 @@ export class Instruments implements InstrumentDirs {
 }
 
 // ── Internals ─────────────────────────────────────────────────────────────────
+
+/** Directories read at once when a partition's files are looked for. */
+const READERS = 16;
 
 /** `FL/symbol` for every instrument of a dataset; the `@` bundle is not one. */
 const listInstruments = async (root: string): Promise<string[]> => {

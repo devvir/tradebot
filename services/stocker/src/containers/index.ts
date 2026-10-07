@@ -5,7 +5,7 @@ import { createGunzip } from 'node:zlib';
 import config from '../config';
 import { needsExtracting } from './extract';
 import { Pool } from './pool';
-import type { UnpackedAll, Wrapped } from './types';
+import type { Pack, UnpackedAll, Wrapped } from './types';
 
 /**
  * Threads that extract archives beside the builds. Two keep extraction ahead of
@@ -98,9 +98,9 @@ export const hasContent = async (path: string): Promise<boolean> => {
  * overlay filesystem. Filling it presents as a corrupt build rather than as the
  * full disk it actually is. The vault volume is the one sized for this data.
  */
-export const unpackAll = async (inputs: readonly Wrapped[]): Promise<UnpackedAll> => {
+export const unpackAll = async (inputs: readonly Wrapped[], shapes: readonly Pack[] = []): Promise<UnpackedAll> => {
   if (! needsExtracting(inputs))
-    return { paths: inputs.map(input => [input.absolute]), bytes: 0, dispose: async () => {} };
+    return { paths: inputs.map(input => [input.absolute]), packs: shapes.map(() => null), bytes: 0, dispose: async () => {} };
 
   const scratch = join(config.vaultDir, SCRATCH);
 
@@ -110,7 +110,7 @@ export const unpackAll = async (inputs: readonly Wrapped[]): Promise<UnpackedAll
   const dispose = async (): Promise<void> => { await rm(dir, { recursive: true, force: true }); };
 
   try {
-    return { ...await pool.extract(inputs, dir), dispose };
+    return { ...await pool.extract(inputs, dir, shapes), dispose };
   } catch (err) {
     await dispose();
 
@@ -123,4 +123,4 @@ export const pool = new Pool(UNPACK_WORKERS);
 
 export { containerFor } from './registry';
 export { needsExtracting } from './extract';
-export type { Container, UnpackedAll, Wrapped } from './types';
+export type { Container, Pack, UnpackedAll, Wrapped } from './types';

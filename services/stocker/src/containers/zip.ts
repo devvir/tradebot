@@ -3,7 +3,7 @@ import { basename, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { crc32, inflateRawSync } from 'node:zlib';
 import yauzl from 'yauzl';
-import type { Container } from './types';
+import type { Container, Member } from './types';
 
 /**
  * Every entry is extracted, not just the first.
@@ -32,27 +32,31 @@ export const zip: Container = {
   native: false,
 
   unpack: async (absolute, into, tag) => {
-    if (statSync(absolute).size <= WHOLE_BYTES) {
-      const members = membersOf(readFileSync(absolute), absolute);
+    const members = whole(absolute);
 
-      if (members)
-        return members.map(({ name, data }) => {
-          const out = join(into, `${tag}${basename(name)}`);
+    if (members)
+      return members.map(({ name, data }) => {
+        const out = join(into, `${tag}${basename(name)}`);
 
-          writeFileSync(out, data);
+        writeFileSync(out, data);
 
-          return out;
-        });
-    }
+        return out;
+      });
 
     return streamed(absolute, into, tag);
   },
+
+  members: absolute => whole(absolute),
 };
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
 /** An archive up to this size is read whole; a larger one is streamed. */
 const WHOLE_BYTES = 32 * 1024 ** 2;
+
+/** A small archive's members, read whole; null where it is large, or is not a zip the direct read knows. */
+const whole = (absolute: string): Member[] | null =>
+  (statSync(absolute).size <= WHOLE_BYTES ? membersOf(readFileSync(absolute), absolute) : null);
 
 /**
  * The members of a zip held in memory, inflated — or null where this cannot
@@ -67,7 +71,7 @@ const WHOLE_BYTES = 32 * 1024 ** 2;
  * the CRC its directory entry states is not a member this can vouch for, and
  * that throws: a short or altered file must not reach a table as data.
  */
-const membersOf = (buffer: Buffer, absolute: string): { name: string; data: Buffer }[] | null => {
+const membersOf = (buffer: Buffer, absolute: string): Member[] | null => {
   const directory = endOfDirectory(buffer);
 
   if (directory < 0) return null;
@@ -78,7 +82,7 @@ const membersOf = (buffer: Buffer, absolute: string): { name: string; data: Buff
 
   if (count === 0xffff || at === 0xffffffff) return null;
 
-  const members: { name: string; data: Buffer }[] = [];
+  const members: Member[] = [];
 
   for (let entry = 0; entry < count; entry++) {
     if (at + 46 > buffer.length || buffer.readUInt32LE(at) !== ENTRY) return null;

@@ -202,12 +202,65 @@ describe('a sweep', () => {
     expect(await sweep(conns)).toMatchObject({ built: 1 });
     expect(await stocked()).toEqual(before);
 
-    // The ledger is what tells the two apart: it said the month was changing, then what it holds.
-    const [, changing, now] = await linesOf(LEDGER);
+    // The ledger is what tells the two apart: it said the month was outdated, then changing, then what it holds.
+    const [, stale, changing, now] = await linesOf(LEDGER);
 
+    expect(stale!['revision']).toBe('outdated');
     expect(changing!['revision']).toBe('updating');
     expect(now!['revision']).toMatch(/^[0-9a-f]{12}$/);
     expect(now!['revision']).not.toBe(was!['revision']);
+  });
+
+  /** Its archives changed and are not on disk: nothing to stock it from, so it says what it is and keeps its files. */
+  it('marks a stocked partition outdated, once, where it cannot be stocked again', async () => {
+    await place('gate.futures_usdt-trades.csv', key('BTC_USDT'));
+    await sweep(conns);
+
+    const before = await stocked();
+
+    listed[0]!.ETag = '"e2"';
+    await rm(join(config.archivesDir, key('BTC_USDT')));
+
+    expect(await sweep(conns)).toMatchObject({ built: 0, current: 0, missing: 1, outdated: 1 });
+    expect(await sweep(conns)).toMatchObject({ built: 0, current: 0, missing: 1, outdated: 1 });
+    expect(await stocked()).toEqual(before);
+    expect((await linesOf(LEDGER)).map(line => line['revision'])).toEqual([expect.stringMatching(/^[0-9a-f]{12}$/), 'outdated']);
+
+    // Its files are whole, so it is nothing for a start to report.
+    expect(await validate()).toBe(0);
+  });
+
+  it('stocks an outdated partition again once its archives are back', async () => {
+    await place('gate.futures_usdt-trades.csv', key('BTC_USDT'));
+    await sweep(conns);
+
+    listed[0]!.ETag = '"e2"';
+    await rm(join(config.archivesDir, key('BTC_USDT')));
+    await sweep(conns);
+
+    listed = [];
+    await place('gate.futures_usdt-trades.csv', key('BTC_USDT'), 'e2');
+
+    expect(await sweep(conns)).toMatchObject({ built: 1, outdated: 0 });
+    expect(await sweep(conns)).toMatchObject({ built: 0, current: 1 });
+    expect((await linesOf(LEDGER)).at(-1)!['revision']).toMatch(/^[0-9a-f]{12}$/);
+  });
+
+  /** What made it outdated was taken back: its files are what would be stocked, and the ledger says so again. */
+  it('takes an outdated partition as current again where its revision is the one computed', async () => {
+    await place('gate.futures_usdt-trades.csv', key('BTC_USDT'));
+    await sweep(conns);
+
+    const [was] = await linesOf(LEDGER);
+
+    listed[0]!.ETag = '"e2"';
+    await rm(join(config.archivesDir, key('BTC_USDT')));
+    await sweep(conns);
+
+    listed[0]!.ETag = '"e1"';
+
+    expect(await sweep(conns)).toMatchObject({ built: 0, current: 1, outdated: 0 });
+    expect((await linesOf(LEDGER)).at(-1)!['revision']).toBe(was!['revision']);
   });
 
   /** Stopped between the first file and the last: some of one build, some of another, and nothing to tell them apart. */
@@ -588,7 +641,7 @@ describe('the ledger', () => {
 
     await sweep(conns);
 
-    const all = (await lines(LEDGER)).filter(one => one['revision'] !== 'updating');
+    const all = (await lines(LEDGER)).filter(one => ! ['updating', 'outdated'].includes(one['revision']!));
 
     expect(all).toHaveLength(2);
     expect(all[1]!['revision']).not.toBe(all[0]!['revision']);

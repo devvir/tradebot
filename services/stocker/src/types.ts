@@ -127,6 +127,13 @@ export interface Series {
   ts:       string;
 
   /**
+   * The stocker version in which what this entry writes last changed. Absent
+   * where it never has. Part of the revision of every partition it reads —
+   * see `versions.ts`.
+   */
+  version?: string;
+
+  /**
    * The zone a text timestamp is written in, in whole hours east of UTC — for a
    * venue that writes local datetimes. Absent means UTC (and is irrelevant to an
    * epoch, which has no zone).
@@ -252,7 +259,10 @@ export type Task = Group[];
 
 /** One task's archives, as extraction ahead of the builds keeps track of them. */
 export interface PrepareSlot {
-  inputs:   { absolute: string; container: string }[];
+  inputs:   import('./containers').Wrapped[];
+
+  /** The shapes its small files may be gathered under — see `Packer`. */
+  shapes:   import('./containers').Pack[];
 
   /** Whether anything of it has to be extracted; a task read natively costs nothing to prepare. */
   extracts: boolean;
@@ -367,6 +377,13 @@ export interface Entry {
   count:       number;
 
   stockedAt:   string;
+
+  /**
+   * Whether the ledger says its files are no longer what would be stocked from
+   * the same archives today. Read off the ledger's last line for it, never
+   * written as a column.
+   */
+  outdated?:   boolean;
 }
 
 /** What one sweep carries from partition to partition. */
@@ -381,12 +398,31 @@ export interface Sweeping {
 }
 
 /** One sweep's outcome. */
+/**
+ * Where a partition's time went, in milliseconds: waiting for its archives to
+ * be extracted, looking at what was extracted, the engine reading it, the
+ * engine writing it, the join into one file, waiting for the vault, and putting
+ * it in place.
+ */
+export interface Spent {
+  extract: number;
+  inspect: number;
+  read:    number;
+  write:   number;
+  join:    number;
+  queued:  number;
+  place:   number;
+}
+
 export interface Summary {
   /** Vault partitions the catalog had something ready for, inside the configured scope. */
   considered: number;
 
   /** Already in the vault at their current revision. */
   current:    number;
+
+  /** In the vault at a revision that is no longer theirs, and not stocked again this sweep. */
+  outdated:   number;
 
   /** Stocked this sweep. */
   built:      number;

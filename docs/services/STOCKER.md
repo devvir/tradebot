@@ -151,7 +151,9 @@ have at its current revision. Nothing is written but the vault.
 3. **Current?** The partition's revision — below — is computed from what the catalog answered. If
    [the ledger](#the-ledger) has the partition at that revision, it is current and nothing is read,
    whether or not its files are there. The vault's files are never asked: a file does not say what
-   it was built from, so one the ledger has no line for is nobody's word for anything.
+   it was built from, so one the ledger has no line for is nobody's word for anything. One the
+   ledger has at another revision is **outdated**, and the ledger is told so before anything else
+   is done about it.
 4. **Only its neighbour new?** A month stocked without a neighbour's hours, whose neighbour is in
    the answer now, has only those hours built — from the neighbour's files. Its own archives are
    not read, and need not be on disk any more.
@@ -159,9 +161,9 @@ have at its current revision. Nothing is written but the vault.
    catalog says, by count and by total size — no file is opened. Where several renderings are
    ready, the preferred one that is on disk is taken (see below); one the catalog calls
    downloaded but the disk does not hold is skipped and reported.
-6. **Stock** into a staging directory under `<vault>/.stocker-tmp`, one file per instrument: the
-   month's own rows, and each neighbour's hours, apart. A small month's instrument files are then
-   appended into one, in symbol order.
+6. **Stock** into a staging directory under `<vault>/.stocker-tmp`: the month's own rows, and each
+   neighbour's hours, apart. A month stored per instrument is built a file per instrument; a small
+   month is built a file per batch of instruments, appended into one in symbol order.
 7. **Put in place.** Nothing in the vault is touched until everything is built. Then, in order: the
    ledger is told the month is changing; whatever of the month is in the vault is removed; the new
    files are renamed in, under `@` or under their symbols; and the ledger is told what the month
@@ -189,15 +191,37 @@ market bundle, then the coarsest grain — the fewest files for the same rows.
 
 A stocked partition's revision is the first twelve hex digits of a SHA-256 over:
 
-- a number for the build itself, bumped by hand when what it writes changes for every partition;
+- the versions that say what is written — below;
 - the canonical table's column list;
-- every series that can read the dataset;
 - the catalog's version of the partition, which changes whenever a file of it does;
 - the catalog's version of any neighbouring month it reads the edge of — or, for a neighbour that
   was not there to be read, the fact that it was not.
 
-So **anything that would change the output changes the revision**: a file added, replaced or
-withdrawn in the catalog, a series edited, a column added, a neighbour arriving.
+So **a revision moves when a partition's archives do, or when what is written of them does — and
+for no other reason**: a file added, replaced or withdrawn in the catalog, a neighbour arriving, a
+column added, a version bumped.
+
+**What is written is said by versions, set by hand** (`src/versions.ts`). Stocking a partition
+again is expensive — its archives may have left the disk, and have to be brought back first — so
+how a partition is read and built is free to change without one: a series rewritten, a reader
+fixed, the build reorganised. Only a change to the output moves a version: columns, types, rows,
+their order. It is said at the narrowest level that covers it:
+
+| Level | Where | Moves |
+|---|---|---|
+| the vault | `EVERY` | every partition |
+| a table | `TABLES` | every partition of that canonical table |
+| a series | the series' own `version` | the partitions that entry of the map reads, in the months it holds for |
+
+Each is the stocker version the change shipped in, so a value is never used twice. Only what has
+changed is listed: a table that is not there and a series without a version are as first written,
+and adding either without a version moves nothing.
+
+**A test holds the hand to it.** `tests/output.test.ts` reads every fixture through its series and
+compares a digest of the columns, their types and the rows with the one recorded in
+`tests/fixtures/output.json` beside the versions it was made under. Output that changed under
+versions that did not fails, and names what to bump; `STOCKER_RECORD_OUTPUT=1` records what is
+written once a version has moved, and never over a digest whose versions did not.
 
 **An empty partition is still published** — one file under `@` with the table's columns and no
 rows, whatever the month weighed — so a month whose every file the venue published empty reads as
@@ -217,7 +241,7 @@ stocked again.
 | `mode` | `bundle`, one file for every instrument, or `split`, a file per instrument |
 | `version` | the catalog's version of that partition when it was stocked |
 | `preVersion`, `postVersion` | what the month before and the month after held of it: empty where the month has no such side, the catalog's version of that neighbour where its hours were read, `missing` where it was not there to be read |
-| `revision` | the revision it was stocked at — or `updating`, while its files are being changed |
+| `revision` | the revision it was stocked at — or `updating`, while its files are being changed, or `outdated`, once they are no longer what would be stocked |
 | `size`, `count` | what its files weigh, and how many there are |
 | `stockedAt` | when |
 
@@ -233,6 +257,20 @@ wrote them, so the ledger is the only thing that can tell a month whole from one
 Before the first file of a stocked month is touched, a line is written for it with `updating` where
 its revision goes; the line that says what it now holds follows the last file. A partition whose
 last line says `updating` is not stocked, to anyone reading.
+
+**A partition that is no longer what would be stocked says so too.** Its archives changed, or
+what is written of them did, and the revision it computes is not the one it was stocked at. Its
+files are whole and readable, of an older making. A line is written for it with `outdated` where
+its revision goes — the line before still says what its files are — and then:
+
+- **Its archives are on disk**: it is stocked again in the same sweep, and gets a line at its new
+  revision.
+- **They are not**: it is counted and logged, and stays outdated. Every later sweep tries again, so
+  it is stocked the first time its archives are back.
+- **What made it outdated is taken back**: the line it had is written again, and it is current.
+
+An outdated partition keeps its files and is read like any other. What the mark changes is what
+others make of it: it is not a partition to copy elsewhere until it has been stocked again.
 
 **A partition caught half way is put right before anything reads the vault** — as the service
 starts, and before each sweep. Nothing else writes there, so a partition still saying `updating`
@@ -276,7 +314,8 @@ front of whoever looks next: nothing removes `ERROR.log` but a person.
 | Which instruments are inverse | `src/schema/margin.ts` | one rule per venue |
 | What a table is | `src/schema/tables.ts` | declarative, the canonical column list |
 | Where it lands | `src/vault.ts` | the layout, the revision, what the vault holds, putting a month in place |
-| What was stocked | `src/ledger.ts` | the ledger, a partition caught half way, the ledger against the vault |
+| What was stocked | `src/ledger.ts` | the ledger, a partition caught half way or outdated, the ledger against the vault |
+| What says the output changed | `src/versions.ts` | the version of what is written, for the vault, a table, a series |
 | The sweep | `src/scan.ts` | the decisions above, in order |
 
 Containers, formats, series and tables are extension points: a file or an entry you add rather
@@ -341,9 +380,17 @@ starts.
 reader, a width check of its own — dwarfs the work on a small file: a month of daily candles is a
 few dozen rows, and reading it alone cost ~86 ms where its share of a batched read costs ~20 ms
 (gate's `1d` klines, 2026-10-04). So an instrument under 32 MB of input joins a batch, read in one
-query into a temporary table that carries each row's instrument, and only the write is per
-instrument; a batch closes at 64 MB or 256 instruments. A bigger instrument is read on its own,
-straight into its file. Both write the same file, which a test holds them to.
+query into a temporary table that carries each row's instrument; a batch closes at 64 MB or 256
+instruments. A bigger instrument is read on its own, straight into its file. Both write the same
+file, which a test holds them to.
+
+**A batch of a small month is written as one file.** A write costs some ten milliseconds whatever
+it holds, so a file per instrument of a month of a few megabytes is mostly writes: 460 instruments
+of 744 rows each took 4.9 s written apart and 0.6 s more to join, against 0.25 s written once,
+ordered by symbol and then by time (2026-10-07). Where the month is stored as one file and is its
+own rows alone, the batch is that one write, and the times of every instrument in it are checked on
+the table beforehand. A month with a neighbour's hours beside it, or one stored per instrument,
+is written a file per instrument: there the files are what says which instruments it has.
 
 **Positional files are read with their columns declared and detection off.** Over a list of files a
 sniffed read takes the column count from what it sniffs and silently drops a declared column
@@ -357,9 +404,11 @@ rather than multiplying it. Raising concurrency never raises what the service ma
 box. The budget is `STOCKER_ENGINE_MEMORY_GB` and `STOCKER_THREADS`; past the first the engine spills to
 disk rather than taking more.
 
-**A month is joined by appending, never by sorting.** Each instrument's file is already in time
-order, so reading them in symbol order and writing what is read gives the whole month in symbol
-and time order while holding almost none of it. Measured on 24 million rows, appending peaked at
+**A month is joined by appending, never by sorting.** Each staged file is already in symbol and
+time order — one instrument's, or a batch of them — so reading them in symbol order and writing
+what is read gives the whole month in symbol and time order while holding almost none of it. A
+month built as a single file is that file, renamed. The one join that sorts is of files whose
+symbols interleave: a big instrument read on its own out of the middle of a batch. Measured on 24 million rows, appending peaked at
 0.27 GB where sorting the same rows by time took everything it was allowed.
 
 **No partition starts below `STOCKER_MIN_FREE_GB`** of free space on the vault's volume. The sweep
@@ -393,14 +442,24 @@ tens of thousands of archives to wait for. So extraction does not wait to be ask
 extract and do nothing else, and what they work on is chosen ahead of the builds:
 
 - the tasks of the partition being built that no connection has reached yet, and then
-- the tasks of the partition after it, which the sweep decides while the current one is being stocked.
+- the tasks of the partitions after it, which the sweep decides while the current one is being
+  stocked: up to sixteen of them, or as many as weigh 2 GB of archives together.
 
 A build that reaches a task finds its archives extracted, or waits only for what is left of them. A
 task read natively passes straight through, so none of this is decided by venue or by format: it is
 read off the files of each task.
 
+**Small files of one shape are gathered into one as they are extracted.** Reading a file costs the
+engine a fixed amount before it has read a byte, and a month of daily candles pays that tens of
+thousands of times. So the lines of members up to 64 KB are written one after another into a single
+file, each opening with the number of the archive it came from, and the engine reads that file
+once. It is done only where a line is a row — a member holding a quoted cell, a sheet, or a header
+unlike the first one's is left as a file — and only for batches of small instruments: one big
+instrument is read as its files are, where many files read faster than one. A gathered file that
+cannot be read is given up and its members read one by one.
+
 **What is extracted ahead is bounded by the disk.** No more than a fifth of the vault volume's free
-space is held in scratch for archives nothing has read yet, counted in what the extractions wrote —
+space, and never more than 2 GB, is held in scratch for archives nothing has read yet, counted in what the extractions wrote —
 and by eight times the compressed size for one still running. Past that nothing more is started
 until a build removes what it has read. A task a build is waiting on is never held back: the bound is
 on getting ahead, not on working. What was extracted for a build that never came — the sweep stopped,

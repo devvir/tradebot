@@ -1,3 +1,4 @@
+import { TAG } from '../containers/pack';
 import { q } from '../db';
 import type { Format } from './types';
 
@@ -63,6 +64,11 @@ export const csv: Format = {
 
     return positional(paths, [...declared(series), OVERFLOW], named);
   },
+
+  // The tag is the first thing on every line: one more column in front, named by the file's own header where it has one.
+  packed: (path, series) => (series.header
+    ? `read_csv([${q(path)}], header = true, all_varchar = true)`
+    : positional([path], [TAG, ...declared(series), OVERFLOW])),
 
   wide: series => (series.header ? null : `${OVERFLOW} IS NOT NULL`),
 

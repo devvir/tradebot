@@ -47,7 +47,7 @@ lowercase `buy`/`sell`.
 | htx | perp, future | from 2026-02-01 | zip · csv | yes | **yes** | int ms | `buy`/`sell` | contracts | |
 | gate | spot | all | csv.gz | no | no | float s, µs | `1`/`2` (1 = buy, by price impact) | base | rows in **descending** time |
 | gate | perp | all | csv.gz | no | no | float s, µs | **sign of size** (negative = sell) | unsigned after `abs` | a file wider than 4 columns is refused — see [details](#gate) |
-| okx | spot, perp | all | zip · csv | yes | **yes** | int ms | `buy`/`BUY`, by year | base on spot, contracts on perp | |
+| okx | spot, perp | all | zip · csv | yes | **yes** | int ms | `buy`/`BUY`, by year | base on spot, contracts on perp | perp files from 2025-11 carry `source`, not kept |
 | okx | future | all | zip · csv | yes | **yes** | int ms | `buy`/`BUY` | as published | one file holds a whole expiry chain: **several instruments** |
 | okx | option | all | zip · csv | yes | **yes** | int ms | `buy`/`sell` | contracts | a family's whole chain in a file, or every option; gained `source` by 2026 |
 | bitget | spot, perp, future | all | zip · csv, a day in parts, a month whole | yes | no | int ms; **whole seconds** in later files | `buy`/`sell` | base · quote both published | spills back; every part has its own header |
@@ -432,6 +432,13 @@ The eras are in [OKX.md](../venues/OKX.md#candlestick-volumes-are-three-columns-
 **trades** — `instrument_name, trade_id, side, price, size, created_time`. Side is `buy` or `BUY`,
 depending on the year. A dated-futures file covers a whole expiry chain, so its rows name several
 instruments.
+
+**`source` is not kept.** A perpetual's monthly file from 2025-11 carries a seventh column, `source`:
+`1` where the resting order came through okx's Retail Price Improvement programme — its Enhanced
+Liquidity Program until 2026-07 — and `0` otherwise (seen on 2025-11 and 2025-12, 2026-10-07; every
+row of the one file counted is `0`). The trades table has no column for it and gains none for one
+venue's flag. The files are read by their header's names, so the extra column changes nothing else,
+and a file with it and one without are the same rows.
 
 **klines** — `instrument_name, open, high, low, close, vol, vol_ccy, vol_quote, open_time, confirm`
 → OHLC, `volume = vol`, `quoteVolume = vol_quote`, `ts = open_time`. No interval is named anywhere;

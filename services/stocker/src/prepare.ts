@@ -1,6 +1,6 @@
 import { needsExtracting, pool, unpackAll } from './containers';
 import { freeGb } from './vault';
-import type { UnpackedAll } from './containers';
+import type { Pack, UnpackedAll, Wrapped } from './containers';
 import type { PrepareSlot, Task } from './types';
 
 /**
@@ -25,16 +25,19 @@ import type { PrepareSlot, Task } from './types';
  * back by it — the bound is on getting ahead, not on working.
  */
 export class Prefetch {
-  constructor(tasks: readonly Task[]) {
+  /**
+   * `wrap` says how a task's archives are asked for — which of them may have
+   * their small files gathered, and under what shape. Left out, every archive
+   * is extracted as it is.
+   */
+  constructor(tasks: readonly Task[], wrap: (task: Task) => { inputs: Wrapped[]; shapes: Pack[] } = asTheyAre) {
     this.slots = tasks.map(task => {
-      const inputs = task.flatMap(group => group.inputs.map(input => ({
-        absolute: input.absolute, container: input.file.container,
-      })));
+      const { inputs, shapes } = wrap(task);
 
       const extracts = needsExtracting(inputs);
       const weight   = task.reduce((sum, group) => sum + group.inputs.reduce((all, one) => all + one.size, 0), 0);
 
-      return { inputs, extracts, estimate: extracts ? weight * EXPANSION : 0, charged: 0, flying: false, promise: null, taken: false };
+      return { inputs, shapes, extracts, estimate: extracts ? weight * EXPANSION : 0, charged: 0, flying: false, promise: null, taken: false };
     });
 
     waiting.push(this);
@@ -97,6 +100,12 @@ export const _test_held = (): number => held;
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
+/** A task's archives, each to be extracted as it is. */
+const asTheyAre = (task: Task): { inputs: Wrapped[]; shapes: Pack[] } => ({
+  inputs: task.flatMap(group => group.inputs.map(input => ({ absolute: input.absolute, container: input.file.container }))),
+  shapes: [],
+});
+
 /** Every prefetch that may still want something started, the one being built first. */
 const waiting: Prefetch[] = [];
 
@@ -121,7 +130,7 @@ const pump = (): void => {
     measuring = true;
 
     void freeGb().then(
-      (free) => { limit = free * 1024 ** 3 * SCRATCH_SHARE; },
+      (free) => { limit = Math.min(free * 1024 ** 3 * SCRATCH_SHARE, SCRATCH_BYTES); },
       () => {},
     ).then(() => {
       measured  = Date.now();
@@ -159,7 +168,7 @@ const start = (slot: PrepareSlot): Promise<UnpackedAll> => {
     flying--;
   };
 
-  slot.promise = unpackAll(slot.inputs).then(
+  slot.promise = unpackAll(slot.inputs, slot.shapes).then(
     (unpacked) => {
       landed();
 
@@ -192,6 +201,8 @@ const EXPANSION = 8;
 
 /** The share of the vault volume's free space that may be filled with archives extracted ahead. */
 const SCRATCH_SHARE = 0.2;
+
+const SCRATCH_BYTES = 2 * 1024 ** 3;
 
 /** How long a reading of the disk's free space is used for. */
 const MEASURE_MS = 5_000;

@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { extractInto } from './extract';
-import type { ExtractAnswered, Extracted, PoolWorker, Wrapped } from './types';
+import type { ExtractAnswered, Extracted, Pack, PoolWorker, Wrapped } from './types';
 
 /**
  * Threads that extract archives, so that extraction runs beside the builds and
@@ -23,7 +23,7 @@ export class Pool {
   constructor(private readonly width: number) {}
 
   private readonly idle:    PoolWorker[] = [];
-  private readonly queued:  { inputs: readonly Wrapped[]; dir: string; settle: PoolWorker['settle'] & {} }[] = [];
+  private readonly queued:  { inputs: readonly Wrapped[]; dir: string; shapes: readonly Pack[]; settle: PoolWorker['settle'] & {} }[] = [];
   private started = 0;
   private sequence = 0;
 
@@ -32,11 +32,11 @@ export class Pool {
     return Math.max(1, this.width);
   }
 
-  extract(inputs: readonly Wrapped[], dir: string): Promise<Extracted> {
-    if (this.width <= 0 || ! existsSync(WORKER)) return extractInto(inputs, dir);
+  extract(inputs: readonly Wrapped[], dir: string, shapes: readonly Pack[] = []): Promise<Extracted> {
+    if (this.width <= 0 || ! existsSync(WORKER)) return extractInto(inputs, dir, shapes);
 
     return new Promise<Extracted>((resolve, reject) => {
-      this.queued.push({ inputs, dir, settle: { resolve, reject } });
+      this.queued.push({ inputs, dir, shapes, settle: { resolve, reject } });
       this.pump();
     });
   }
@@ -49,10 +49,10 @@ export class Pool {
 
       if (! worker) return;
 
-      const { inputs, dir, settle } = this.queued.shift()!;
+      const { inputs, dir, shapes, settle } = this.queued.shift()!;
 
       worker.settle = settle;
-      worker.thread.postMessage({ id: ++this.sequence, inputs, dir });
+      worker.thread.postMessage({ id: ++this.sequence, inputs, dir, shapes });
     }
   }
 
@@ -71,7 +71,7 @@ export class Pool {
       this.idle.push(worker);
 
       if ('error' in answered) settle?.reject(new Error(answered.error));
-      else settle?.resolve({ paths: answered.paths, bytes: answered.bytes });
+      else settle?.resolve({ paths: answered.paths, packs: answered.packs, bytes: answered.bytes });
 
       this.pump();
     });

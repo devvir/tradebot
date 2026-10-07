@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import config from './config';
 import { SCRATCH } from './containers';
 import { fieldsOf, rootOf } from './schema/tables';
+import { versionsOf } from './versions';
 import type { Edge, Partition, Series, Side, SliceIndex, Stocked, VaultKey } from './types';
 
 /**
@@ -33,10 +34,11 @@ import type { Edge, Partition, Series, Side, SliceIndex, Stocked, VaultKey } fro
  * the weight of the archive files it was built from. Every file
  * carries the symbol as a column, so the two read as one table.
  *
- * **The revision names what a partition was built from.** It is a digest of
- * every input, so a month stocked at a revision is current while that is the
- * revision its inputs compute, and one whose inputs changed anywhere computes a
- * revision that has not been stocked.
+ * **The revision names what a partition holds.** It is a digest of the archives
+ * it was built from and of the versions that say what is written of them, so a
+ * month stocked at a revision is current while that is the revision it
+ * computes, and one whose archives or whose output changed computes a revision
+ * that has not been stocked.
  *
  * Hive-style `key=value` directories are read back as columns by a query engine
  * and pruned on. `@`, the symbol directories and the file names are **bare**:
@@ -68,10 +70,13 @@ export const monthOf = (key: VaultKey): string => key.month.replace('-', '');
 /**
  * The revision a partition would be stocked at from these inputs.
  *
- * Folded in, in order: a revision of the build itself, bumped by hand when its
- * output changes for every partition alike; the canonical table; every series
- * that can read the dataset; and the catalog's version of the partition, and of
- * any neighbouring month it reads the edge of.
+ * Folded in, in order: the versions that say what is written — see
+ * `versions.ts`; the canonical table's columns; and the catalog's version of
+ * the partition, and of any neighbouring month it reads the edge of.
+ *
+ * **How a partition is read is not part of it**: an entry of the map can be
+ * rewritten, and the code that builds changed, without a month being stocked
+ * again, so long as what is written stays the same.
  *
  * **A neighbour that is not there is part of it too**: a month stocked without
  * the hours a neighbouring month holds of it has a revision of its own, and
@@ -86,9 +91,8 @@ export const revisionOf = (
 ): string => {
   const hash = createHash('sha256');
 
-  hash.update(`${BUILD}\n`);
+  hash.update(`${versionsOf(key.table, series, key.month).join('\n')}\n`);
   hash.update(JSON.stringify(fieldsOf(key.table)));
-  hash.update(JSON.stringify(series));
   hash.update(`${partition.id}\n${partition.version}\n`);
 
   // What a neighbour holds of the month is stored apart from it: a layout a revision without this does not have.
@@ -222,14 +226,6 @@ export const freeGb = async (): Promise<number> => {
 export const STAGED = '.parquet';
 
 // ── Internals ─────────────────────────────────────────────────────────────────
-
-/**
- * Bumped by hand when what the build writes changes for every partition alike —
- * a column added to every table, a change to how timestamps are read — so the
- * whole vault is restocked. A change to one series needs no bump: the series is
- * part of its own partitions' revision.
- */
-const BUILD = 2;
 
 /** The directory of the months stored whole, where a symbol's would be. */
 export const BUNDLE = '@';
