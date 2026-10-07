@@ -48,8 +48,8 @@ export const WATCH_MS = 30 * 60_000;
  *
  * Optional:
  *   - `SOURCES_COLD_DIR`     — cold's own directory (`<DATA_DIR>/@cold`)
- *   - `ARCHIVES_DIR`         — the archives (`<DATA_DIR>/archives`)
- *   - `VAULT_DIR`            — the vault (`<DATA_DIR>/vault`)
+ *   - `DATA_ARCHIVES_DIR`         — the archives (`<DATA_DIR>/archives`)
+ *   - `DATA_VAULT_DIR`            — the vault (`<DATA_DIR>/vault`)
  *   - `COLD_QUEUE_TARGET_GB` — GB still queued before packing pauses (10)
  *   - `COLD_SETTLED_HOURS`   — hours a settled partition must also have gone unchanged (none)
  *   - `CATALOG_URL`          — where the catalog answers from this host
@@ -119,8 +119,8 @@ const QUEUE_TARGET_GB = 10;
  * it and not for the tool that reads it.
  */
 const SOURCES: Record<Origin, { env: string; under: string }> = {
-  vault:    { env: 'VAULT_DIR',    under: 'vault' },
-  archives: { env: 'ARCHIVES_DIR', under: 'archives' },
+  vault:    { env: 'DATA_VAULT_DIR',    under: 'vault' },
+  archives: { env: 'DATA_ARCHIVES_DIR', under: 'archives' },
 };
 
 /**

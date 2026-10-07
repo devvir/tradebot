@@ -38,8 +38,11 @@ export interface BucketObject {
   /** The canonical archive path, venue first — where the file is written, and how a report names it. */
   Key:           string;
 
-  /** The whole address the file is fetched from. */
-  Url:           string;
+  /** The file's own path, below whichever address its server is reached at. */
+  Path:          string;
+
+  /** Which of the venue's servers holds it: `''` where the venue has one. */
+  Host:          string;
   ETag?:         string;
   Size?:         number;
   LastModified?: string;
@@ -56,13 +59,68 @@ export interface BucketPage {
   Contents:    BucketObject[];
 }
 
+/** One listed page as a walk works through it: how much of it is left, and what came of the rest. */
+export interface Leaf {
+  /** Objects the page listed. */
+  size:      number;
+
+  /** Objects not yet settled; the page is reported when none are. */
+  left:      number;
+
+  /** Files the network would not bring, which go unreported. */
+  unreached: number;
+  done:      Report;
+}
+
 /** One file to bring to disk: where it goes, where it comes from, and what it must be. */
 export interface Haulable {
   venue: string;
   key:   string;
-  url:   string;
+
+  /** The venue's server that holds it, and its path there. */
+  server: string;
+  path:   string;
   size?: number;
   etag?: string;
+}
+
+/** One address a venue's server answers at, and how it has been doing. */
+export interface Host {
+  venue:  string;
+  server: string;
+
+  /** The address up to where a file's path begins. */
+  base:   string;
+
+  /** Whether this is the address the catalog lists: the one whose word on a file is the venue's. */
+  main:   boolean;
+
+  /** Its share of the server's requests, of 1. */
+  weight: number;
+
+  /** Bytes per second while delivering, less its failures; null until it has been measured. */
+  score:  number | null;
+
+  /** Since the weights were last looked at: bytes delivered, time in flight, files delivered, requests that failed. */
+  bytes:  number;
+  ms:     number;
+  ok:     number;
+  errors: number;
+
+  /** Refusals in a row, nothing delivered between them. */
+  refusals: number;
+
+  /** Until when it is out of rotation, in epoch milliseconds; in it where that has passed. */
+  outUntil: number;
+
+  /** Times running it has been taken out, which lengthens the next. */
+  strikes:  number;
+
+  /** Since when its share has been at the floor, or null where it is above it. */
+  lowSince: number | null;
+
+  /** Until when it is on trial: given a fixed share, whatever it scores. */
+  trialUntil: number;
 }
 
 /** What happened to one file. */

@@ -75,6 +75,28 @@ const LENS = { 'x-catalog-lens': 'to-2020' };
 /** A lens in the catalog, as prospector stores one: this service only reads through it. */
 const lens = () => storeLens(db, 'to-2020', '', '', { format: 1, venues: { '*': [{ effect: 'include', to: '202012' }] } });
 
+describe('where a venue\'s files are served from', () => {
+  /** The address that is listed, then whatever else serves the same files — each ending where a path begins. */
+  it('lists the main address first and its alternatives after it, the key root applied to each', async () => {
+    db.prepare(`UPDATE venue SET alternative_hosts = '["https://mirror.example/"]' WHERE name = 'binance'`).run();
+
+    const [venue] = (await call('/venues')).body.items as { hosts: Record<string, string[]> }[];
+
+    expect(venue!.hosts).toEqual({ '': ['https://data.binance.vision/data/', 'https://mirror.example/data/'] });
+    expect(venue).not.toHaveProperty('alternative_hosts');
+  });
+
+  it('names each server of a venue that has two', async () => {
+    putVenue(db, 'binance', 'https://books.example', 'orderbook/', 'secondary');
+
+    const [venue] = (await call('/venues')).body.items as { hosts: Record<string, string[]> }[];
+
+    expect(venue!.hosts).toEqual({
+      '': ['https://data.binance.vision/data/'], secondary: ['https://books.example/orderbook/'],
+    });
+  });
+});
+
 describe('the contents through a lens', () => {
   it('lists only instruments with a file inside it', async () => {
     await lens();

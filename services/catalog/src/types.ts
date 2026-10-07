@@ -433,6 +433,14 @@ export interface SeriesCount {
 /** One venue's row in the contents: its totals, and its series. */
 export interface VenueContents extends VenueTotals {
   series: SeriesCount;
+
+  /**
+   * Where its files are served from, by server: the address that is listed
+   * first, then any other that serves the same files. A file's address is one
+   * of these and the file's `Path`. Keyed by the server's name — `''` where the
+   * venue has one, `primary` and `secondary` where it has two.
+   */
+  hosts:  Record<string, string[]>;
 }
 
 /** What one venue's contents request asks for. */

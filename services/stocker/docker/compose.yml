@@ -55,8 +55,8 @@ services:
 
     volumes:
       - ../../../:/live
-      - ${STOCKER_ARCHIVES_DIR:?STOCKER_ARCHIVES_DIR is not defined}:/data/archives:ro
-      - ${STOCKER_VAULT_DIR:?STOCKER_VAULT_DIR is not defined}:/data/vault
+      - ${DATA_ARCHIVES_DIR:?DATA_ARCHIVES_DIR is not defined}:/data/archives:ro
+      - ${DATA_VAULT_DIR:?DATA_VAULT_DIR is not defined}:/data/vault
 
     ports:
       - :3000

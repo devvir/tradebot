@@ -178,7 +178,7 @@ Read from `dev/tooling/.env`.
 | `DATA_DIR` | — | the data root the rest hang off |
 | `MEGA_ROOT` | — | where this project's trees live in Mega |
 | `SOURCES_COLD_DIR` | `<DATA_DIR>/@cold` | staging tars, the locks, and the record |
-| `ARCHIVES_DIR` | `<DATA_DIR>/archives` | the tree the `archives` origin backs up |
+| `DATA_ARCHIVES_DIR` | `<DATA_DIR>/archives` | the tree the `archives` origin backs up |
 | `COLD_QUEUE_TARGET_GB` | `10` | GB still queued for upload before packing pauses |
 | `COLD_SETTLED_HOURS` | _(none)_ | hours a settled partition must also have gone unchanged before it is stored |
 | `CATALOG_URL` | `http://localhost:<port>` | where the catalog answers from this host |

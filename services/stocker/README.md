@@ -59,8 +59,8 @@ Two volumes. The archives come in **read-only**; the vault is the one stocker ow
 exist, writable by uid 1000:
 
 ```bash
-sudo mkdir -p "$STOCKER_VAULT_DIR"
-sudo chown 1000:1000 "$STOCKER_VAULT_DIR"
+sudo mkdir -p "$DATA_VAULT_DIR"
+sudo chown 1000:1000 "$DATA_VAULT_DIR"
 ```
 
 Everything transient — archive extraction, partitions being built, the query engine's spill —
@@ -71,8 +71,8 @@ order-book month is ~23 GB and in a container `/tmp` is the overlay filesystem.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `STOCKER_ARCHIVES_DIR` | yes | — | **Host** archives directory (hauler's), mounted read-only at `/data/archives` |
-| `STOCKER_VAULT_DIR` | yes | — | **Host** vault directory, mounted at `/data/vault` |
+| `DATA_ARCHIVES_DIR` | yes | — | **Host** archives directory (hauler's), mounted read-only at `/data/archives` |
+| `DATA_VAULT_DIR` | yes | — | **Host** vault directory, mounted at `/data/vault` |
 | `CATALOG_API` | no | `http://catalog:8080` | Where the catalog answers |
 | `CATALOG_TOKEN` | no | _(none)_ | The catalog's shared secret |
 | `STOCKER_LENS` | no | _(none)_ | The lens the catalog is read through; none reads the whole catalog |
@@ -82,7 +82,7 @@ order-book month is ~23 GB and in a container `/tmp` is the overlay filesystem.
 | `STOCKER_MIN_FREE_GB` | no | `20` | No partition is started below this much free space on the vault volume |
 | `STOCKER_ENGINE_MEMORY_GB` | no | `4` | Memory the query engine may use before it spills to disk |
 
-`STOCKER_ARCHIVES_DIR` and `STOCKER_VAULT_DIR` also override the container paths when running
+`DATA_ARCHIVES_DIR` and `DATA_VAULT_DIR` also override the container paths when running
 outside Docker.
 
 A sweep runs every 5 minutes. The node heap is fixed at 4096 MB: what grows with a month's size is

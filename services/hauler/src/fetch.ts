@@ -2,8 +2,9 @@ import { basename, join } from 'node:path';
 import { logger } from '@devvir/service-kit';
 import { sizeOf } from '@tradebot/utils';
 import { backup, commit, discard, etagAgrees, isDigest, md5, measure, partialOf, touch, writePartial } from './store';
+import { backAt, delivered, faltered, hostFor, mainOf, refused } from './hosts';
 import config from './config';
-import type { Haulable, Hauled } from './types';
+import type { Haulable, Hauled, Host } from './types';
 
 /**
  * Bring one file to `<archives>/<key>` — the key starts with the venue — and say
@@ -33,8 +34,12 @@ import type { Haulable, Hauled } from './types';
  * file, only about the way to it: those are tried again, and if they persist the
  * file is `unreached`, left out of the report, and listed again on the next walk.
  *
- * **A refusal stands the whole venue down**, not just the file — see
- * `standDown`.
+ * **A server can answer at several addresses** — its bucket, a CDN in front of
+ * it — and each attempt asks one of them, chosen by how each has been doing;
+ * see `hosts.ts`. A file is gone only where every address in rotation answers
+ * `404`; any other failure of an address that is not the listed one marks it
+ * down and the file is asked elsewhere. **A refusal takes the
+ * address that refused out of rotation**, not the file's chances.
  */
 export const haul = async (file: Haulable): Promise<Hauled> => {
   const path = join(config.archivesDir, file.key);
@@ -58,6 +63,12 @@ export const haul = async (file: Haulable): Promise<Hauled> => {
   return await retrieve(file, path);
 };
 
+/**
+ * From this size a file is a large one: announced as it starts, not only when
+ * it ends, and fetched a few at a time — see `walkVenue`.
+ */
+export const LARGE_BYTES = 50 * 1024 ** 2;
+
 // ── Internals ─────────────────────────────────────────────────────────────────
 
 const ATTEMPTS = 3;
@@ -74,31 +85,75 @@ const GONE = new Set([404, 410]);
 const HIDDEN = 403;
 
 const retrieve = async (file: Haulable, path: string): Promise<Hauled> => {
+  const tried = new Set<Host>();
+
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
-    await standingDown(file.venue);
+    const host = await hostToAsk(file, tried);
+
+    if (! host) {
+      logger.error({ key: file.key, venue: file.venue, server: file.server }, 'No address is known for this file\'s server');
+
+      return { outcome: 'unreached' };
+    }
+
+    const url   = `${host.base}${file.path}`;
+    const began = Date.now();
+
+    // A large file is minutes with nothing else said of it, so its start is said.
+    if (attempt === 1 && (file.size ?? 0) >= LARGE_BYTES)
+      logger.info({ key: file.key, size: sizeOf(file.size!), host: host.base }, 'Downloading a large file');
 
     try {
-      const res = await fetch(file.url);
+      const res = await fetch(url);
 
       if (! res.ok || ! res.body) {
         await res.body?.cancel().catch(() => undefined);
 
-        standDown(file.venue, res.status, res.headers);
+        const wait = retryAfter(res.headers);
 
+        if (REFUSED.has(res.status) || wait !== null) refused(host, res.status, wait);
+        else faltered(host);
+
+        /**
+         * **A file is gone only where every address in rotation says so.** One
+         * address not having it is asked no more for it, and the next is asked
+         * at once; a withdrawal is rare, and an edge that has lost a file the
+         * bucket still holds is not one.
+         */
         if (GONE.has(res.status)) {
-          logger.warn({ key: file.key, status: res.status, url: file.url }, 'Gone at the venue');
+          tried.add(host);
+
+          if (hostFor(file.venue, file.server, tried)) {
+            attempt--;
+
+            continue;
+          }
+
+          logger.warn({ key: file.key, status: res.status, url }, 'Gone at the venue');
 
           return { outcome: 'failed' };
         }
 
+        /**
+         * **Past that, only the listed address speaks for the venue.** Another
+         * that will not serve the file is an address doing badly: it is marked
+         * down, and the file is asked of one not tried yet — at once, since
+         * nothing said to wait.
+         */
+        if (! host.main) {
+          tried.add(host);
+
+          continue;
+        }
+
         if (attempt === ATTEMPTS && res.status === HIDDEN) {
-          logger.warn({ key: file.key, status: res.status, url: file.url }, 'Refused throughout — reported for the catalog to rule');
+          logger.warn({ key: file.key, status: res.status, url }, 'Refused throughout — reported for the catalog to rule');
 
           return { outcome: 'failed' };
         }
 
         if (attempt === ATTEMPTS) {
-          logger.warn({ key: file.key, status: res.status, url: file.url }, 'Unreachable — stays owed');
+          logger.warn({ key: file.key, status: res.status, url }, 'Unreachable — stays owed');
 
           return { outcome: 'unreached' };
         }
@@ -110,10 +165,12 @@ const retrieve = async (file: Haulable, path: string): Promise<Hauled> => {
 
       const bytes = await writePartial(path, res.body);
 
+      delivered(host, bytes, Date.now() - began);
+
       if (! await agrees(file, partialOf(path), bytes)) {
         await discard(path);
 
-        logger.error({ key: file.key, size: bytes, expected: file.size, url: file.url }, 'Served differs from the catalog');
+        logger.error({ key: file.key, size: bytes, expected: file.size, url }, 'Served differs from the catalog');
 
         return { outcome: 'mismatched', size: bytes };
       }
@@ -126,8 +183,12 @@ const retrieve = async (file: Haulable, path: string): Promise<Hauled> => {
     } catch (err) {
       await discard(path);
 
+      faltered(host);
+
+      if (! host.main) tried.add(host);
+
       if (attempt === ATTEMPTS) {
-        logger.warn({ key: file.key, err: reason(err), url: file.url }, 'Unreachable — stays owed');
+        logger.warn({ key: file.key, err: reason(err), url }, 'Unreachable — stays owed');
 
         return { outcome: 'unreached' };
       }
@@ -140,47 +201,32 @@ const retrieve = async (file: Haulable, path: string): Promise<Hauled> => {
 };
 
 /**
+ * The address to ask next for a file: any in rotation not yet tried for it, by
+ * weight — and where none is, the listed one, once it is back. An address that
+ * turned us away is left alone until it said, or for the default, and a server
+ * whose every address did is waited for: every request sent meanwhile would be
+ * turned away too.
+ */
+const hostToAsk = async (file: Haulable, tried: ReadonlySet<Host>): Promise<Host | null> => {
+  for (;;) {
+    const host = hostFor(file.venue, file.server, tried) ?? hostFor(file.venue, file.server);
+
+    if (host) return host;
+
+    const main = mainOf(file.venue, file.server);
+
+    if (! main) return null;
+
+    await sleep(Math.max(backAt(main) - Date.now(), 100));
+  }
+};
+
+/**
  * The statuses a venue turns *us* away with, rather than answering about a
  * file: `429` says so outright, and a `403` is as often a CDN refusing an
  * address as a bucket hiding what it lacks.
  */
 const REFUSED = new Set([403, 429]);
-
-/** How long a venue that turned us away is left alone, where it does not say. */
-const STAND_DOWN_MS = 2 * 60_000;
-
-/** Until when each venue is left alone. */
-const standing = new Map<string, number>();
-
-/**
- * Leave a venue alone after it refused us, or after it said how long to wait.
- *
- * **The whole venue, because a refusal is aimed at the address**, and every
- * request sent through it meanwhile is refused too — some venues keep refusing
- * for minutes after the burst that tripped them. The wait is the venue's own
- * `Retry-After` where it gives one, and `STAND_DOWN_MS` otherwise. Logged once
- * per stand-down, however many fetches ran into it.
- */
-const standDown = (venue: string, status: number, headers: Headers): void => {
-  const said = retryAfter(headers);
-
-  if (! REFUSED.has(status) && said === null) return;
-
-  const was   = standing.get(venue) ?? 0;
-  const until = Date.now() + (said ?? STAND_DOWN_MS);
-
-  if (until <= was) return;
-
-  standing.set(venue, until);
-
-  if (was <= Date.now()) logger.warn({ venue, status, seconds: Math.round((until - Date.now()) / 1000) }, 'Turned away — standing the venue down');
-};
-
-/** Wait out a venue's stand-down, however often it is extended meanwhile. */
-const standingDown = async (venue: string): Promise<void> => {
-  for (let until = standing.get(venue) ?? 0; until > Date.now(); until = standing.get(venue) ?? 0)
-    await sleep(until - Date.now());
-};
 
 /** `Retry-After` in milliseconds, given as seconds or as a date; null where absent or unreadable. */
 const retryAfter = (headers: Headers): number | null => {

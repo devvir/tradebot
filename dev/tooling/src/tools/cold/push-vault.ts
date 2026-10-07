@@ -114,7 +114,7 @@ export const trusted = (config: ColdConfig): boolean => {
   }
 
   if (! stockedIn(config.vaultRoot)) {
-    error(`No ${LEDGER} in ${config.vaultRoot} — the vault's ledger is what says what the vault holds. Is VAULT_DIR right?`);
+    error(`No ${LEDGER} in ${config.vaultRoot} — the vault's ledger is what says what the vault holds. Is DATA_VAULT_DIR right?`);
 
     process.exitCode = 1;
 

@@ -240,7 +240,7 @@ they are useful rather than waiting for the end.
 
 Understood well enough to do; none justifies a planning document.
 
-**Guard against a wrong `VAULT_DIR`.** The default cannot tell "not configured" from "configured to
+**Guard against a wrong `DATA_VAULT_DIR`.** The default cannot tell "not configured" from "configured to
 the default", so a wrong root reads as an empty vault rather than an error — and for `evict`, absence
 is an input to what it considers reclaimable.
 

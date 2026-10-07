@@ -45,7 +45,7 @@ export const venueContents = (db: DatabaseSync, held: RequestedLens | null): Ven
         total:     sum.total     + (counts.get(id)?.total ?? 0),
       }), { withFiles: 0, total: 0 });
 
-      return [{ ...row, series }];
+      return [{ ...row, series, hosts: hostsOf(db, row.venue) }];
     }
 
     const figures = through!.get(row.venue);
@@ -69,6 +69,7 @@ export const venueContents = (db: DatabaseSync, held: RequestedLens | null): Ven
       pending:      figures.pending,
       pendingBytes: figures.pendingBytes,
       series:       { withFiles: inside, total: inside },
+      hosts:        hostsOf(db, row.venue),
     }];
   });
 };
@@ -219,6 +220,21 @@ export const intoMarkets = (rows: readonly Series[]): MarketContents[] => {
  */
 export const intoSymbols = (rows: readonly Series[]): string[] =>
   [...new Set(rows.filter(one => one.symbol !== BUCKET).map(one => one.symbol))].sort();
+
+/**
+ * A venue's servers and the addresses each is reached at: the one the catalog
+ * lists and probes, then every alternative recorded for it, each with the
+ * server's key root applied so that an address and a file's path make its URL.
+ */
+export const hostsOf = (db: DatabaseSync, venue: string): Record<string, string[]> => {
+  const rows = db.prepare('SELECT host, base, key_root AS keyRoot, alternative_hosts AS others FROM venue WHERE name = ? ORDER BY id')
+    .all(venue) as unknown as { host: string; base: string; keyRoot: string; others: string }[];
+
+  return Object.fromEntries(rows.map(row => [
+    row.host,
+    [row.base, ...(JSON.parse(row.others) as string[])].map(base => `${base.replace(/\/$/, '')}/${row.keyRoot}`),
+  ]));
+};
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 

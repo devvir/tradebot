@@ -80,6 +80,12 @@ CREATE TABLE IF NOT EXISTS venue (
   host TEXT NOT NULL DEFAULT '',
   base TEXT NOT NULL,
   key_root TEXT NOT NULL,
+
+  -- Other addresses that serve the same files under the same keys, as a JSON
+  -- array of bases: a CDN in front of the bucket, or the bucket behind one.
+  -- "base" is the one that is listed and probed; any of these can be downloaded
+  -- from as well.
+  alternative_hosts TEXT NOT NULL DEFAULT '[]',
   UNIQUE (name, host)
 ) STRICT;
 

@@ -47,15 +47,15 @@ export const core: Migration = {
 // ── The shipped rows ──────────────────────────────────────────────────────────
 
 const VENUES = `
-    INSERT OR IGNORE INTO venue (name, host, base, key_root) VALUES
-      ('binance', '',          'https://s3-ap-northeast-1.amazonaws.com/data.binance.vision', ''),
-      ('bitget',  '',          'https://img.bitgetimg.com/online',                            ''),
-      ('bybit',   'primary',   'https://s3.ap-southeast-1.amazonaws.com/public.bybit.com',    ''),
-      ('bybit',   'secondary', 'https://quote-saver.bycsi.com',                               'orderbook/'),
-      ('gate',    '',          'https://s3-ap-northeast-1.amazonaws.com/gateio-public-data',  ''),
-      ('htx',     '',          'https://huobi-service-data.s3.amazonaws.com',                 ''),
-      ('kucoin',  '',          'https://historical-data.kucoin.com',                          'data/'),
-      ('okx',     '',          'https://static.okx.com/cdn',                                  '');`;
+    INSERT OR IGNORE INTO venue (name, host, base, key_root, alternative_hosts) VALUES
+      ('binance', '',          'https://s3-ap-northeast-1.amazonaws.com/data.binance.vision', '',           '["https://data.binance.vision"]'),
+      ('bitget',  '',          'https://img.bitgetimg.com/online',                            '',           '[]'),
+      ('bybit',   'primary',   'https://s3.ap-southeast-1.amazonaws.com/public.bybit.com',    '',           '[]'),
+      ('bybit',   'secondary', 'https://quote-saver.bycsi.com',                               'orderbook/', '[]'),
+      ('gate',    '',          'https://s3-ap-northeast-1.amazonaws.com/gateio-public-data',  '',           '["https://download.gatedata.org"]'),
+      ('htx',     '',          'https://huobi-service-data.s3.amazonaws.com',                 '',           '["https://www.htx.com/data"]'),
+      ('kucoin',  '',          'https://historical-data.kucoin.com',                          'data/',      '[]'),
+      ('okx',     '',          'https://static.okx.com/cdn',                                  '',           '[]');`;
 
 /**
  * Two files gate left in its bucket that are not data.

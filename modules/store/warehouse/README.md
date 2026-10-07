@@ -18,8 +18,8 @@ ledger.
 
 | Directory | Mount | Owner |
 |---|---|---|
-| `STOCKER_ARCHIVES_DIR` | `/data/archives`, **read-only** | hauler — this module only reads it |
-| `STOCKER_VAULT_DIR` | `/data/vault` | stocker |
+| `DATA_ARCHIVES_DIR` | `/data/archives`, **read-only** | hauler — this module only reads it |
+| `DATA_VAULT_DIR` | `/data/vault` | stocker |
 
 Pre-create the vault owned by uid 1000:
 
@@ -27,8 +27,8 @@ Pre-create the vault owned by uid 1000:
 sudo mkdir -p /storage/tradebot/vault && sudo chown 1000:1000 /storage/tradebot/vault
 ```
 
-`STOCKER_ARCHIVES_DIR` names the same host path as `HAULER_ARCHIVES_DIR` in the archives module.
-Repoint both together when storage moves.
+Both are set once, in the monorepo's root `.env`, so hauler and stocker cannot disagree about where the
+archives are. Set either in this module's `.env` only to move it for this module alone.
 
 ## Usage
 

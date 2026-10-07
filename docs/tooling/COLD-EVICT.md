@@ -187,4 +187,4 @@ As [COLD-PUSH.md](COLD-PUSH.md), and:
 
 | | | |
 |---|---|---|
-| `VAULT_DIR` | `<DATA_DIR>/vault` | the vault whose ledger says what is stocked |
+| `DATA_VAULT_DIR` | `<DATA_DIR>/vault` | the vault whose ledger says what is stocked |

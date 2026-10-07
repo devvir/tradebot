@@ -15,6 +15,7 @@ const cfg = vi.hoisted(() => ({ archivesDir: '', catalogApi: '', catalogToken: '
 vi.mock('../src/config', () => ({ default: cfg }));
 
 const { walkVenue, _test_safe, _test_lookAgain } = await import('../src/venue');
+const { setHosts } = await import('../src/hosts');
 const { venues } = await import('../src/catalog');
 
 let server:  Server;
@@ -23,6 +24,8 @@ let reports: unknown[];
 let served:  number;
 let drops:   number;
 let refused: boolean;
+let flying:  number;
+let most:    number;
 
 const KEYS = ['binance/a/1.zip', 'binance/a/2.zip', 'binance/b/3.zip'];
 
@@ -33,9 +36,19 @@ beforeEach(async () => {
   served  = 0;
   drops   = 0;
   refused = false;
+  flying  = 0;
+  most    = 0;
 
   server = createServer((req, res) => {
     const url = new URL(req.url!, 'http://x');
+
+    // Large files are held a moment, so that how many are in flight at once can be seen.
+    if (url.pathname.startsWith('/files/big/')) {
+      flying++;
+      most = Math.max(most, flying);
+      setTimeout(() => { flying--; res.writeHead(200); res.end('x'); }, 25);
+      return;
+    }
 
     if (url.pathname.startsWith('/files/')) { served++; res.writeHead(200); res.end(url.pathname); return; }
 
@@ -56,7 +69,33 @@ beforeEach(async () => {
 
     if (url.pathname === '/venues') {
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ items: [{ venue: 'binance' }, { venue: 'gate' }] }));
+      res.end(JSON.stringify({ items: [
+        { venue: 'binance', hosts: { '': ['https://bucket.example/', 'https://cdn.example/'] }, files: 3 },
+        { venue: 'gate', hosts: { '': ['https://gate.example/'] }, files: 1 },
+      ] }));
+      return;
+    }
+
+    if (url.searchParams.get('prefix') === 'big/') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        Name: 'catalog', Prefix: 'big/', Marker: '', MaxKeys: 1000, IsTruncated: false,
+        Contents: Array.from({ length: 30 }, (_, at) => `big/spot/trades/B/BTC/202001/f-${at}`)
+          .map(Key => ({ Key, Path: `files/${Key}`, Host: '', Size: 60 * 1024 ** 2 })),
+      }));
+      return;
+    }
+
+    // A venue with more listed than is ever held ready: pages of four, said to be pages of one.
+    if (url.searchParams.get('prefix') === 'many/') {
+      const from = Number(url.searchParams.get('marker')?.split('-').at(-1) ?? -1) + 1;
+      const keys = [0, 1, 2, 3].map(at => `many/spot/trades/B/BTC/202001/f-${from + at}`);
+
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        Name: 'catalog', Prefix: 'many/', Marker: '', MaxKeys: 1, IsTruncated: from < 40, NextMarker: keys.at(-1),
+        Contents: keys.map(Key => ({ Key, Path: `files/${Key}`, Host: '' })),
+      }));
       return;
     }
 
@@ -67,13 +106,15 @@ beforeEach(async () => {
     res.end(JSON.stringify({
       Name: 'catalog', Prefix: url.searchParams.get('prefix'), Marker: marker ?? '', MaxKeys: 2, IsTruncated: marker === null,
       ...(marker === null ? { NextMarker: keys.at(-1) } : {}),
-      Contents: keys.map(Key => ({ Key, Url: `${cfg.catalogApi}/files/${Key}` })),
+      Contents: keys.map(Key => ({ Key, Path: `files/${Key}`, Host: '' })),
     }));
   });
 
   await new Promise<void>(ready => server.listen(0, '127.0.0.1', ready));
 
   cfg.catalogApi = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+
+  setHosts('binance', { '': [`${cfg.catalogApi}/`] });
 });
 
 afterEach(async () => {
@@ -136,6 +177,32 @@ describe('a walk', () => {
     }
   });
 
+  /** The listing is held back while enough is ready; a stop must not leave it waiting for room nobody will make. */
+  it('ends when stopped while the listing is waiting for room', async () => {
+    setHosts('many', { '': [`${cfg.catalogApi}/`] });
+
+    const walked = await walkVenue('many', () => served > 0);
+
+    expect(walked.progressed).toBeGreaterThan(0);
+    expect(walked.progressed).toBeLessThan(40);
+    expect(reports.flatMap(one => one.downloaded)).toHaveLength(walked.progressed);
+  });
+
+  /** A large file is bounded by the link: a hundred at once arrive no sooner than six, and starve everything else. */
+  it('fetches large files six at a time, whatever the budget', async () => {
+    cfg.concurrency = 20;
+    setHosts('big', { '': [`${cfg.catalogApi}/`] });
+
+    try {
+      const walked = await walkVenue('big', () => false);
+
+      expect(walked.listed).toBe(30);
+      expect(most).toBe(6);
+    } finally {
+      cfg.concurrency = 2;
+    }
+  });
+
   it('asks only for what is owed, through the lens, with the token, resuming after the last key', async () => {
     await walkVenue('binance', () => false);
 
@@ -159,8 +226,11 @@ describe('a report the catalog could not settle in full', () => {
 
 describe('the venues', () => {
   /** Only names are wanted; the lensed answer sizes the lens for every venue. */
-  it('are asked for without the lens, but with the token', async () => {
-    expect(await venues()).toEqual(['binance', 'gate']);
+  it('are asked for without the lens, but with the token, each with where its servers answer', async () => {
+    expect(await venues()).toEqual([
+      { venue: 'binance', hosts: { '': ['https://bucket.example/', 'https://cdn.example/'] } },
+      { venue: 'gate', hosts: { '': ['https://gate.example/'] } },
+    ]);
     expect(asked).toEqual([{ url: '/venues', lens: undefined, token: 'secret' }]);
   });
 });

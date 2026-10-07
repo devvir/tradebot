@@ -23,8 +23,8 @@ Read from `dev/tooling/.env`.
 | `DATA_DIR` | — | the data root the rest hang off |
 | `MEGA_ROOT` | — | where this project's trees live in Mega |
 | `SOURCES_COLD_DIR` | `<DATA_DIR>/@cold` | staging tars, the locks, and `cold.sqlite` |
-| `VAULT_DIR` | `<DATA_DIR>/vault` | the tree the `vault` origin backs up |
-| `ARCHIVES_DIR` | `<DATA_DIR>/archives` | the tree the `archives` origin backs up |
+| `DATA_VAULT_DIR` | `<DATA_DIR>/vault` | the tree the `vault` origin backs up |
+| `DATA_ARCHIVES_DIR` | `<DATA_DIR>/archives` | the tree the `archives` origin backs up |
 | `COLD_QUEUE_TARGET_GB` | `10` | GB still queued before packing pauses |
 
 **The trees are named for themselves — not for the service that fills one, and not for `cold`.** The vault is the vault whether or not stocker is deployed on this host, and it is still the vault when something other than `cold` wants it. Reusing the service's own variable looks like it keeps the two in agreement and does the reverse: that name is set in the service's module `.env`, which tooling reads only when asked for it by name, so the two agree exactly until somebody overrides the default. A host that backs up a vault built elsewhere may not have that module checked out at all, and nobody would think to edit an inactive module's configuration to make a backup run.

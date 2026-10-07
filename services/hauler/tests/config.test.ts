@@ -22,10 +22,10 @@ describe('config', { timeout: 30_000 }, () => {
     process.env = original;
   });
 
-  it('defaults to every venue, no lens, and eight fetches at once', async () => {
+  it('defaults to every venue, no lens, and a hundred fetches at once', async () => {
     const { default: config } = await import('../src/config');
 
-    expect(config).toMatchObject({ venues: [], lens: '', concurrency: 8, minFreeGb: 25, catalogApi: 'http://catalog.invalid' });
+    expect(config).toMatchObject({ venues: [], lens: '', concurrency: 100, minFreeGb: 25, catalogApi: 'http://catalog.invalid' });
   });
 
   it('reads venues, a lens and a concurrency from env', async () => {

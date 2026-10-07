@@ -13,16 +13,16 @@ import type { BucketPage, Report, ReportAnswer } from './types';
  */
 
 /**
- * Every venue the catalog holds files for.
+ * Every venue the catalog holds files for, and where each one's servers answer.
  *
- * **Asked without the lens.** Only the names are wanted, and a venue the lens
- * lets nothing through from simply lists nothing; the lensed answer sizes the
- * lens for every venue, which costs the catalog seconds.
+ * **Asked without the lens.** Only the names and the addresses are wanted, and
+ * a venue the lens lets nothing through from simply lists nothing; the lensed
+ * answer sizes the lens for every venue, which costs the catalog seconds.
  */
-export const venues = async (): Promise<string[]> => {
-  const body = await ask<{ items: { venue: string }[] }>('/venues', {}, false);
+export const venues = async (): Promise<{ venue: string; hosts: Record<string, string[]> }[]> => {
+  const body = await ask<{ items: { venue: string; hosts: Record<string, string[]> }[] }>('/venues', {}, false);
 
-  return body.items.map(one => one.venue);
+  return body.items.map(one => ({ venue: one.venue, hosts: one.hosts }));
 };
 
 /** One page of a venue's part of the bucket, after `marker`, of files not yet downloaded. */

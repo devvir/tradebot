@@ -281,4 +281,4 @@ Nothing is deleted before the confirmation is answered, so Ctrl-C at any point b
 
 ## Environment
 
-The same variables [`cold push`](COLD-PUSH.md#environment) uses. `evict archives` additionally reads `VAULT_DIR`, even though it is deleting from `ARCHIVES_DIR` — a partition's local size and mtime are what say whether cold storage holds the current build of it.
+The same variables [`cold push`](COLD-PUSH.md#environment) uses. `evict archives` additionally reads `DATA_VAULT_DIR`, even though it is deleting from `DATA_ARCHIVES_DIR` — a partition's local size and mtime are what say whether cold storage holds the current build of it.

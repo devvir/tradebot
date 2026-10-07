@@ -173,7 +173,8 @@ const tally = (db: DatabaseSync, one: FileSpec): void => {
 
 const SCHEMA = `
   CREATE TABLE venue (id INTEGER PRIMARY KEY, name TEXT NOT NULL, host TEXT NOT NULL DEFAULT '',
-    base TEXT NOT NULL, key_root TEXT NOT NULL, UNIQUE (name, host));
+    base TEXT NOT NULL, key_root TEXT NOT NULL,
+    alternative_hosts TEXT NOT NULL DEFAULT '[]', UNIQUE (name, host));
   CREATE TABLE slice (id INTEGER PRIMARY KEY, venue TEXT NOT NULL, market TEXT NOT NULL, dataset TEXT NOT NULL,
     variant TEXT NOT NULL DEFAULT '', grain TEXT NOT NULL, bundle TEXT NOT NULL,
     UNIQUE (venue, market, dataset, variant, grain, bundle));

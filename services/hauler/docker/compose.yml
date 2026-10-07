@@ -1,9 +1,9 @@
 # Hauler Service — brings catalogued venue files to disk under canonical names.
 #
 # Walks each venue the catalog serves as a bucket and writes to
-# HAULER_ARCHIVES_DIR on the host, mounted at a fixed path in the container.
+# DATA_ARCHIVES_DIR on the host, mounted at a fixed path in the container.
 # Pre-create it writable by uid 1000:
-#   sudo mkdir -p "$HAULER_ARCHIVES_DIR" && sudo chown 1000:1000 "$HAULER_ARCHIVES_DIR"
+#   sudo mkdir -p "$DATA_ARCHIVES_DIR" && sudo chown 1000:1000 "$DATA_ARCHIVES_DIR"
 #
 # It discovers nothing and serves nothing. Prospector establishes what every
 # venue publishes; this fetches what the catalog lists — only what is still
@@ -31,7 +31,7 @@ services:
       HAULER_LENS:        ${HAULER_LENS:-}
 
       # Concurrent fetches per venue; venues never wait on each other
-      HAULER_CONCURRENCY: ${HAULER_CONCURRENCY:-8}
+      HAULER_CONCURRENCY: ${HAULER_CONCURRENCY:-100}
       HAULER_MIN_FREE_GB: ${HAULER_MIN_FREE_GB:-25}
 
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -42,7 +42,7 @@ services:
 
     volumes:
       - ../../../:/live
-      - ${HAULER_ARCHIVES_DIR:?HAULER_ARCHIVES_DIR is not defined}:/data/archives
+      - ${DATA_ARCHIVES_DIR:?DATA_ARCHIVES_DIR is not defined}:/data/archives
 
     ports:
       - :3000
@@ -54,10 +54,10 @@ services:
       retries: 3
       start_period: 10s
 
-    # A stop waits for the files in flight to finish and be reported. The
-    # largest are binance's monthly trades, a few GB each, so this is room for
-    # one at a slow link rather than docker's ten seconds. One that outlives it
-    # leaves a .part, which the next start removes.
-    stop_grace_period: 15m
+    # A stop is answered within half a minute, whatever is downloading. Files
+    # in flight that finish in that time are reported; one that does not is cut
+    # short and leaves a .part, which the next start removes, and the file is
+    # fetched again.
+    stop_grace_period: 30s
 
     restart: unless-stopped

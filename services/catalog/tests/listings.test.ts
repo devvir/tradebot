@@ -173,11 +173,12 @@ describe('the bucket', () => {
     expect(await walk('&prefix=gate/')).toEqual(EXPECTED.filter(one => one.startsWith('gate/')));
   });
 
-  it('gives each object the whole address of its file', async () => {
+  /** The address is not the listing's to give: a server can be reached at several, and `/venues` lists them. */
+  it('gives each object its file\'s path and its server\'s name, and no address', async () => {
     const { body } = await call('/listings?prefix=binance/perp/quotes/');
 
-    expect(body.Contents).toMatchObject([{ Url: 'https://data.binance.vision/data/q/20200101/BTCUSDT.zip' }]);
-    expect(body).not.toHaveProperty('BaseUrl');
+    expect(body.Contents).toMatchObject([{ Path: 'q/20200101/BTCUSDT.zip', Host: '' }]);
+    expect(body.Contents[0]).not.toHaveProperty('Url');
   });
 
   it('lists only what is still owed when asked', async () => {

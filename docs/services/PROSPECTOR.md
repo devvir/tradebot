@@ -1480,10 +1480,12 @@ took LIST and HEAD at up to ~1,700 a second from one machine without a single th
 ceiling was the machine. **Per host within a venue**, because a venue's own API — its instrument
 listing — is a different machine from its archive, and a block on one should not stop the other.
 
-**A venue has one address.** `base` in the `venue` table is where it is listed, probed and downloaded,
-with `key_root` the prefix every key shares, and every lookup of a venue's gate asks at `base`. Where a
+**A venue is listed and probed at one address.** `base` in the `venue` table is that address, with
+`key_root` the prefix every key shares, and every lookup of a venue's gate asks at `base`. Where a
 venue's bucket answers directly, that is the bucket and not a CDN in front of it: on binance and gate
-the bucket served everything the CDN did, byte for byte, at a higher ceiling.
+the bucket served everything the CDN did, byte for byte, at a higher ceiling. Other addresses that
+serve the same files under the same keys are recorded beside it, in `alternative_hosts`, a JSON array
+of bases; nothing here asks them.
 
 **The gate is inside the fetch.** `send` in `http.ts` is the single function every request goes
 through, which makes it the only place a limit can be complete. Putting it there also brings the

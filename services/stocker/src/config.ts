@@ -4,7 +4,7 @@ import type { Config } from './types';
 
 /**
  * Container paths are fixed and private; the host directories behind them are
- * chosen by the compose mounts. `STOCKER_ARCHIVES_DIR` and `STOCKER_VAULT_DIR`
+ * chosen by the compose mounts. `DATA_ARCHIVES_DIR` and `DATA_VAULT_DIR`
  * override them only so the service can run outside a container.
  *
  * The archives are mounted read-only: they are hauler's, and the mount makes
@@ -18,8 +18,8 @@ const CATALOG_API = 'http://catalog:8080';
 
 const loadConfig = (): Config => {
   const config: Config = {
-    archivesDir:  process.env.STOCKER_ARCHIVES_DIR ?? CONTAINER_ARCHIVES_DIR,
-    vaultDir:     process.env.STOCKER_VAULT_DIR    ?? CONTAINER_VAULT_DIR,
+    archivesDir:  process.env.DATA_ARCHIVES_DIR ?? CONTAINER_ARCHIVES_DIR,
+    vaultDir:     process.env.DATA_VAULT_DIR    ?? CONTAINER_VAULT_DIR,
     catalogApi:   (process.env.CATALOG_API?.trim() || CATALOG_API).replace(/\/$/, ''),
     catalogToken: (process.env.CATALOG_TOKEN ?? '').trim(),
     lens:         (process.env.STOCKER_LENS ?? '').trim(),

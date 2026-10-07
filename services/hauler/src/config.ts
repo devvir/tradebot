@@ -17,7 +17,7 @@ const loadConfig = (): Config => {
     catalogToken: (process.env['CATALOG_TOKEN'] ?? '').trim(),
     venues:       parseList(process.env['HAULER_VENUES']),
     lens:         (process.env['HAULER_LENS'] ?? '').trim(),
-    concurrency:  parsePositiveInt(process.env['HAULER_CONCURRENCY'], 8),
+    concurrency:  parsePositiveInt(process.env['HAULER_CONCURRENCY'], 100),
     minFreeGb:    parsePositiveInt(process.env['HAULER_MIN_FREE_GB'], 25),
   };
 

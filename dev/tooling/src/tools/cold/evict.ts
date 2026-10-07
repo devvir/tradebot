@@ -154,7 +154,7 @@ const pass = async (db: DatabaseSync, run: Run, first: boolean): Promise<boolean
   const stocked = stockedIn(config.vaultRoot);
 
   if (! stocked) {
-    error(`No ${LEDGER} in ${config.vaultRoot} — without the vault's ledger nothing can be said to be stocked. Is VAULT_DIR right?`);
+    error(`No ${LEDGER} in ${config.vaultRoot} — without the vault's ledger nothing can be said to be stocked. Is DATA_VAULT_DIR right?`);
 
     process.exitCode = 1;
 

@@ -60,8 +60,8 @@ const QUEUE_TARGET_GB = 10;
  *
  * Optional, each defaulting under `DATA_DIR`:
  *   - `SOURCES_COLD_DIR`        — cold's own directory (`@cold`)
- *   - `VAULT_DIR`               — the vault (`vault`)
- *   - `ARCHIVES_DIR`            — the raw venue archives (`archives`)
+ *   - `DATA_VAULT_DIR`               — the vault (`vault`)
+ *   - `DATA_ARCHIVES_DIR`            — the raw venue archives (`archives`)
  *   - `COLD_QUEUE_TARGET_GB`
  */
 export const loadConfig = (origin: Origin): ColdConfig => {
@@ -129,8 +129,8 @@ export const localPath = (config: ColdConfig, origin: Origin, part: { local: str
  * would think to edit an inactive module's configuration to make a backup run.
  */
 const SOURCES: Record<Origin, { env: string; under: string }> = {
-  vault:    { env: 'VAULT_DIR',    under: 'vault' },
-  archives: { env: 'ARCHIVES_DIR', under: 'archives' },
+  vault:    { env: 'DATA_VAULT_DIR',    under: 'vault' },
+  archives: { env: 'DATA_ARCHIVES_DIR', under: 'archives' },
 };
 
 /**

@@ -117,17 +117,29 @@ For each venue — every one the catalog holds files for, or `HAULER_VENUES` —
 through `GET /listings?prefix=<venue>/&pending=true`, 1,000 keys at a time, resuming after
 the last key of each page. `pending=true` asks only for files not yet
 downloaded, and `HAULER_LENS` travels as `x-catalog-lens`, so the catalog leaves
-everything else out of the listing and nothing here filters. Each object's
-`Url` is the whole address of the file, and a key outside the venue asked for
-is refused rather than written.
+everything else out of the listing and nothing here filters. Each object names
+its server and its `Path` there — [which address](#which-address-a-file-is-fetched-from) it is
+fetched from is decided here — and a key outside the venue asked for is refused rather than written.
 
-**The venue list is asked for without the lens.** Only the names are wanted, a
+**The venue list is asked for without the lens.** Only the names and the addresses are wanted, a
 venue the lens lets nothing through from simply lists nothing, and the lensed
 venue list sizes the lens for every venue, which costs the catalog seconds.
 
-**The next page is asked for while this one is fetched**, so listing is never
-what anything waits on. Within a page, `HAULER_CONCURRENCY` files are fetched at
-once; venues walk independently and never wait on each other.
+**Pages are listed ahead of the fetching and held ready** — three of them — and the files of every
+page held are one queue, fetched as turns come up. So listing is never what anything
+waits on, and neither is a page's end: its last slow files hold up nobody, the next page's being
+fetched already. A page is reported the moment its last file settles.
+
+**Files of 50 MB or more are fetched six at a time**, across every venue, the size being the listing's.
+A large file is bounded by the link, not by the wait for an answer: a hundred at once arrive no sooner
+than six, each takes as long as all of them, nothing else is fetched meanwhile, and a stop loses every
+one part-done. Six share the link and the rest of the budget stays with the small files. Each is
+logged as it starts (`Downloading a large file`), since it is minutes before anything else is said of it.
+
+**`HAULER_CONCURRENCY` is how many files are in flight across every venue together.** What it protects
+is the link: every connection goes through one router whichever venue it is to, and a budget for each
+venue would multiply by the venues walking. A venue walking alone has all of it; several share it in
+the order their files asked.
 
 **A file added behind the cursor is found by the next walk**, as on any bucket.
 
@@ -181,6 +193,40 @@ or junk — and finds itself by its date alone.
 updates to a published archive are rare; whichever this turns out to be, it is
 there to read.
 
+## Which address a file is fetched from
+
+A venue's server can answer at more than one address: its bucket, and a CDN in front of it, the same
+files under the same paths. At startup hauler asks the catalog where each venue's servers answer
+(`GET /venues`, `hosts`); a listed file names its server and its path, and its URL is one of the
+server's addresses followed by the path.
+
+Which address is faster depends on where hauler runs, on what a CDN has cached and on the hour, so it
+is measured as it goes. Each file is asked of an address chosen at random, by weight:
+
+- **An address is scored by what it delivers while it is delivering**: bytes per second of the time
+  its requests were in flight, less its share of requests that failed. How often it was chosen does
+  not enter into it, so an address given little work is not marked down for doing little.
+- **Weights move once a minute, and half way.** Each look blends the last minute into the score — the
+  first time, into the server's average for that minute — and only where the address answered at
+  least 20 requests in it. A slow minute does not turn the choice
+  round; several agreeing ones do. Shares are the scores in proportion, logged as `Hosts reweighed`
+  when one moves by five points or more.
+- **A refusal does not wait for the minute.** An address that answers `429`, or any answer saying how
+  long to wait, is out of rotation at once: for as long as it said, or three minutes, doubling each
+  time it does it again, to half an hour. So is one that answers `403` five times running with
+  nothing delivered between — one `403` can be a file an edge will not serve, five are a block.
+  Logged as `Turned away — out of rotation`.
+- **No address is left out for good.** The least any address in rotation gets is one request in a
+  hundred. One that has sat at that floor for half an hour is given a tenth of the work for five
+  minutes, its old score forgotten, to show what it does now; one that was taken out comes back the
+  same way.
+
+**A file is gone only where every address in rotation says so.** A `404` from one address has the
+file asked of the next at once, and it is `failed` when none is left to ask. For anything else, only
+the listed address — the first of a server, the one the catalog lists and probes — speaks for the
+venue: another that refuses a file or fails is an address doing badly, marked down, and the file is
+asked of one not tried for it yet, without waiting.
+
 ## Reporting
 
 After each page, hauler posts what became of it to `POST /listings/report`, by
@@ -205,15 +251,11 @@ walk's log line counts them as `unreached`. Reporting them as failures had
 prospector asking the venue about hundreds of files it was serving perfectly
 well, during a burst of connect timeouts on this machine's side.
 
-**A refusal stands the whole venue down.** A `403` or a `429` is aimed at the
-address as often as at the file, and every request sent through a refusing
-address is refused too — some venues keep refusing for minutes after the burst
-that tripped them. So the venue's fetches all wait: for as long as its
-`Retry-After` says, on any answer that carries one, and two minutes otherwise.
-Other venues carry on. The rule is the same for every venue, and is logged once
-per stand-down as `Turned away — standing the venue down`. Hauler sets no rate
-of its own; a venue that keeps refusing is a sign to lower
-`HAULER_CONCURRENCY`.
+**A refusal takes the address that refused out of rotation.** A `403` or a `429` is aimed at the
+address as often as at the file, and every request sent through a refusing address is refused too.
+So that address is left alone — see [which address](#which-address-a-file-is-fetched-from) — and the
+file is asked elsewhere. Where a server has one address, its fetches wait for it. Hauler sets no rate
+of its own; a venue that keeps refusing is a sign to lower `HAULER_CONCURRENCY`.
 
 **The caller reports problems; prospector rules on them.** The catalog forwards
 each report to prospector, which owns a file's state. A failed file is checked
@@ -232,10 +274,13 @@ file reported twice is recorded once.
 
 ## Stopping
 
-**A stop takes no new file and abandons none.** The files already downloading
-finish, the page reports what it got through, and only then does the process
-exit. The largest files take minutes on a slow link, which is why the compose
-file gives a stop fifteen minutes rather than docker's ten seconds.
+**A stop is answered within thirty seconds, whatever is downloading.** It takes
+no new file; the files already downloading that finish in that time are
+reported, the page reports what it got through, and the process exits. Thirty
+seconds is the compose file's `stop_grace_period`: a stop is an order, and
+matters more than a download. A file still downloading when it runs out is cut
+short with the process and fetched again by the next walk — the largest take
+minutes on a slow link, so a stop does not wait for them.
 
 **A start removes every unfinished download** before it fetches anything, which
 is deleting one directory: every partial is in `.hauler-tmp`, on the archives'

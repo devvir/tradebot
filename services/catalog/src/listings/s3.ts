@@ -1,6 +1,6 @@
 import { XMLBuilder } from 'fast-xml-parser';
 import type { DatabaseSync } from 'node:sqlite';
-import type { ListingFile, ListingPage, ListingRequest, S3Body, VenueRow } from '../types';
+import type { ListingFile, ListingPage, ListingRequest, S3Body } from '../types';
 
 /**
  * The catalog's listing in S3's own shape: one bucket, every venue's files.
@@ -12,8 +12,10 @@ import type { ListingFile, ListingPage, ListingRequest, S3Body, VenueRow } from 
  * anything finer. Not implemented, until something needs them: `delimiter`,
  * `encoding-type`, `fetch-owner`.
  *
- * **Each object's `Url` is the whole address** of the file at its venue — a
- * page spans venues, and one venue can be served from two hosts.
+ * **Each object's `Path` is the file's own, below its server's address**, and
+ * `Host` names the server where the venue has more than one. A server can be
+ * reached at several addresses — `/venues` lists them — so the listing names
+ * none: which one a file is fetched from is the fetcher's choice.
  */
 
 /** The bucket's name, as S3 answers it. */
@@ -44,12 +46,13 @@ export const requestOf = (query: Record<string, unknown>): ListingRequest | stri
 
 /** One page as S3's `ListBucketResult`, V1 or V2 as asked. */
 export const resultOf = (db: DatabaseSync, asked: ListingRequest, page: ListingPage): S3Body => {
-  const bases = basesOf(db);
+  const hosts = hostNamesOf(db);
   const last  = page.objects[page.objects.length - 1]?.key;
 
   const contents = page.objects.map(({ key, file }) => ({
     Key: key,
-    Url: `${bases.get(file.venueId) ?? ''}${file.path}`,
+    Path: file.path,
+    Host: hosts.get(file.venueId) ?? '',
     ...described(file),
   }));
 
@@ -107,11 +110,10 @@ const keysAsked = (raw: unknown): number | null => {
   return Math.min(count, MAX_KEYS);
 };
 
-/** Each host's address up to the key, so a path below the key root completes it. */
-const basesOf = (db: DatabaseSync): Map<number, string> =>
-  new Map((db.prepare('SELECT id, base, key_root AS keyRoot FROM venue').all() as unknown as
-    (Pick<VenueRow, 'base' | 'keyRoot'> & { id: number })[])
-    .map(row => [row.id, `${row.base.replace(/\/$/, '')}/${row.keyRoot}`]));
+/** Each server's name within its venue: `''` where the venue has one. */
+const hostNamesOf = (db: DatabaseSync): Map<number, string> =>
+  new Map((db.prepare('SELECT id, host FROM venue').all() as unknown as { id: number; host: string }[])
+    .map(row => [row.id, row.host]));
 
 /** What S3 says about an object beyond its key, where the catalog knows it. */
 const described = (file: ListingFile): Record<string, string | number> => ({

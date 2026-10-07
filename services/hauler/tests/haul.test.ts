@@ -17,6 +17,7 @@ const cfg = vi.hoisted(() => ({ archivesDir: '', catalogApi: '', catalogToken: '
 vi.mock('../src/config', () => ({ default: cfg }));
 
 const { haul, _test_retryAfter } = await import('../src/fetch');
+const { setHosts, _test_forget, _test_hostsOf } = await import('../src/hosts');
 const { sweepPartials } = await import('../src/store');
 
 const BODY = 'the file';
@@ -49,6 +50,11 @@ beforeEach(async () => {
   await new Promise<void>(ready => server.listen(0, '127.0.0.1', ready));
 
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+
+  _test_forget();
+  setHosts('binance', { '': [`${base}/`] });
+  setHosts('gate', { '': [`${base}/`] });
+  setHosts('nowhere', { '': ['http://127.0.0.1:1/'] });
 });
 
 afterEach(async () => {
@@ -58,7 +64,7 @@ afterEach(async () => {
 });
 
 const file = (over: Partial<Haulable> = {}): Haulable => ({
-  venue: 'binance', key: 'binance/perp/trades/B/BTCUSDT/202001/x.zip', url: `${base}/file.zip`,
+  venue: 'binance', key: 'binance/perp/trades/B/BTCUSDT/202001/x.zip', server: '', path: 'file.zip',
   size: BODY.length, etag: `"${md5(BODY)}"`, ...over,
 });
 
@@ -79,7 +85,7 @@ describe('a file not yet on disk', () => {
   });
 
   it('is reported as a mismatch, and nothing is kept, when the venue serves something else', async () => {
-    const one = file({ url: `${base}/short.zip` });
+    const one = file({ path: 'short.zip' });
 
     expect(await haul(one)).toEqual({ outcome: 'mismatched', size: 5 });
     expect(existsSync(at(one))).toBe(false);
@@ -88,25 +94,25 @@ describe('a file not yet on disk', () => {
 
   /** The venue's own answer that the file is not there makes it `failed`. */
   it('fails, at once, where the venue says it is not there', async () => {
-    expect((await haul(file({ url: `${base}/gone.zip` }))).outcome).toBe('failed');
+    expect((await haul(file({ path: 'gone.zip' }))).outcome).toBe('failed');
     expect(asked).toBe(1);
   });
 
   /** A busy venue says nothing about the file: it is tried again, then left owed, unreported. */
   it('is unreached, after every attempt, where the venue is only busy', async () => {
-    expect((await haul(file({ url: `${base}/busy.zip` }))).outcome).toBe('unreached');
+    expect((await haul(file({ path: 'busy.zip' }))).outcome).toBe('unreached');
     expect(asked).toBe(3);
   });
 
   /** A `403` may be aimed at us, so it is tried again — and reported only where it holds. */
   it('fails, after every attempt, where the venue keeps answering 403', async () => {
-    expect((await haul(file({ url: `${base}/forbidden.zip` }))).outcome).toBe('failed');
+    expect((await haul(file({ path: 'forbidden.zip' }))).outcome).toBe('failed');
     expect(asked).toBe(3);
   });
 
-  /** A refusal is aimed at the address: every file of that venue waits it out, other venues do not. */
-  it('stands the whole venue down when it refuses', async () => {
-    const refused = haul(file({ url: `${base}/refused.zip` }));
+  /** A refusal is aimed at us by the address that gave it: every file it alone serves waits it out, other venues do not. */
+  it('leaves an address alone when it refuses, and waits for it where there is no other', async () => {
+    const refused = haul(file({ path: 'refused.zip' }));
 
     while (asked === 0) await new Promise(done => setTimeout(done, 10));
 
@@ -121,6 +127,27 @@ describe('a file not yet on disk', () => {
     expect((await refused).outcome).toBe('unreached');
   });
 
+  /** Only the listed address speaks for the venue: another that lacks a file is asked no more for it. */
+  it('asks the listed address where another does not have the file', async () => {
+    setHosts('binance', { '': [`${base}/`, `${base}/elsewhere/`] });
+    vi.spyOn(Math, 'random').mockReturnValue(0.99);
+
+    expect((await haul(file())).outcome).toBe('downloaded');
+    expect(_test_hostsOf('binance', '').map(host => [host.ok, host.errors])).toEqual([[1, 0], [0, 1]]);
+  });
+
+  /** A withdrawal is rare; an edge without a file its bucket holds is not one. */
+  it('takes a file for gone only when every address says so', async () => {
+    setHosts('binance', { '': [`${base}/elsewhere/`, `${base}/`] });
+
+    expect((await haul(file())).outcome).toBe('downloaded');
+
+    asked = 0;
+
+    expect((await haul(file({ path: 'gone.zip', key: 'binance/perp/trades/B/BTCUSDT/202001/y.zip' }))).outcome).toBe('failed');
+    expect(asked).toBe(1);
+  });
+
   it('reads Retry-After as seconds or as a date', () => {
     const after = (said: string) => _test_retryAfter(new Headers({ 'retry-after': said }));
 
@@ -131,14 +158,14 @@ describe('a file not yet on disk', () => {
   });
 
   it('is unreached where no connection opens', async () => {
-    expect((await haul(file({ url: 'http://127.0.0.1:1/file.zip' }))).outcome).toBe('unreached');
+    expect((await haul(file({ venue: 'nowhere' }))).outcome).toBe('unreached');
   });
 });
 
 describe('a file already on disk', () => {
   /** Its new date is what says this pass accounted for it. */
   it('is touched, not fetched, where it matches', async () => {
-    const one = file({ url: `${base}/gone.zip` });
+    const one = file({ path: 'gone.zip' });
 
     place(one, BODY);
 

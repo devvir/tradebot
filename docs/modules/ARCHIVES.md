@@ -53,7 +53,7 @@ modules/collect/archives/
 | `CATALOG_UI_PORT` | host port for the page. `9020` |
 | `PROSPECTOR_VENUES` | the venues prospector surveys; empty for every venue |
 | `PROSPECTOR_CONCURRENCY` | how many requests prospector keeps in flight — see the [prospector README](../../services/prospector/README.md) |
-| `HAULER_ARCHIVES_DIR` | host directory hauler writes the archives into |
+| `DATA_ARCHIVES_DIR` | host directory hauler writes the archives into |
 | `HAULER_LENS`, `HAULER_VENUES`, `HAULER_CONCURRENCY` | what hauler fetches and how many at once — see the [hauler README](../../services/hauler/README.md) |
 
 **An empty `CATALOG_TOKEN` means an open catalog**, and every service treats it the same way: catalog

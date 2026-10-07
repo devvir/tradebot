@@ -2,6 +2,7 @@ import { logger } from '@devvir/service-kit';
 import type { Service } from '@devvir/service-kit';
 import { venues } from './catalog';
 import { sweepPartials } from './store';
+import { setHosts } from './hosts';
 import { walkVenue } from './venue';
 import SK from './service';
 import config from './config';
@@ -27,9 +28,13 @@ const main = async (service: Service): Promise<void> => {
 
   logger.info({ swept }, swept > 0 ? 'Removed unfinished downloads' : 'No unfinished downloads');
 
-  if (config.venues.length === 0) logger.info('Asking the catalog which venues there are');
+  logger.info('Asking the catalog which venues there are, and where they answer');
 
-  const names = config.venues.length > 0 ? config.venues : await untilAnswered(venues);
+  // Asked whichever venues are configured: where each one's servers answer is the catalog's to say.
+  const found = await untilAnswered(venues);
+  const names = config.venues.length > 0 ? config.venues : found.map(one => one.venue);
+
+  for (const one of found) setHosts(one.venue, one.hosts);
 
   logger.info({ venues: names, lens: config.lens || '(none — every file)', archives: config.archivesDir },
     'Hauling');
@@ -96,10 +101,13 @@ let stopping = false;
 let hauling: Promise<unknown> = Promise.resolve();
 
 /**
- * **A shutdown waits for the files in flight.** No new file is taken, the ones
- * already downloading finish and are reported, and only then does the process
- * exit — so a stop leaves no partial behind and nothing done goes unreported.
- * How long that may take is the compose file's `stop_grace_period`.
+ * **A shutdown waits for the files in flight, for as long as it is given.** No
+ * new file is taken, and the ones already downloading finish and are reported
+ * before the process exits, so nothing done goes unreported. How long it is
+ * given is the compose file's `stop_grace_period`, which is short: a stop is
+ * an order, and matters more than a download. A file still downloading when it
+ * runs out is cut short with the process — its partial is removed by the next
+ * start and the file fetched again.
  */
 const stopAfterFlight = async (): Promise<void> => {
   stopping = true;

@@ -71,8 +71,13 @@ GET /venues/:venue/partitions                      its slices, and the partition
 ```
 
 A venue row carries `venue`, `firstMonth`, `lastMonth`, `files`, `bytes`, `pending`, `pendingBytes`,
-`withdrawn`, and `series` (`withFiles` out of `total`). It lists only venues the catalog holds anything
-for. Under a lens every figure is the lens's, which costs resolving the lens: a few seconds on the
+`withdrawn`, `series` (`withFiles` out of `total`) and `hosts`. It lists only venues the catalog holds
+anything for.
+
+`hosts` is where the venue's files are served from, by server: `{ "": [address, …] }`, or one entry for
+each of `primary` and `secondary` where a venue has two. The first address of each is the one the
+catalog lists and probes; any after it serve the same files under the same paths. Each ends where a
+file's `Path` begins. Under a lens every figure is the lens's, which costs resolving the lens: a few seconds on the
 full catalog the first time, and about one while the resolved lens is held. A caller that only wants
 venue names asks without one.
 
@@ -243,9 +248,10 @@ object; an element S3 repeats (`Contents`) is an array under its own name. An er
 shape with a `Code` and a `Message` in either format. An ETag keeps S3's quotes as part of its value, so
 in XML it reads `&quot;…&quot;` and in JSON `"\"…\""`.
 
-**Each object carries `Key`, `Url`, and, where the catalog knows them, `ETag`, `Size` and
-`LastModified`.** `Url` is the whole address of the file at its venue. A page can span venues, and one
-venue can be served from two hosts, so there is no base to share.
+**Each object carries `Key`, `Path`, `Host`, and, where the catalog knows them, `ETag`, `Size` and
+`LastModified`.** `Path` is the file's own, below its server's address, and `Host` names the server
+where the venue has more than one (`''` otherwise). The listing gives no address: a server can be
+reached at several, which `/venues` lists, and a file's URL is any of them followed by its `Path`.
 
 **Two filters S3 does not have.** Each one leaves files out, as though the bucket did not hold them:
 

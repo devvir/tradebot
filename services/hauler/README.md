@@ -49,9 +49,9 @@ See [HAULER.md](../../docs/services/HAULER.md) for the design.
 | `CATALOG_TOKEN` | — | sent to the catalog on every request; empty sends none |
 | `HAULER_LENS` | everything | the slug of the catalog lens to haul through |
 | `HAULER_VENUES` | all | comma-separated venues to haul |
-| `HAULER_CONCURRENCY` | 8 | concurrent fetches per venue |
+| `HAULER_CONCURRENCY` | 100 | concurrent fetches, across every venue together |
 | `HAULER_MIN_FREE_GB` | 25 | free space on the archives volume below which nothing more is fetched |
-| `HAULER_ARCHIVES_DIR` | required (compose) | the host directory mounted at `/data/archives` |
+| `DATA_ARCHIVES_DIR` | required (compose) | the host directory mounted at `/data/archives` |
 
 Hauler serves no API, and it keeps no state other than the files on disk.
 

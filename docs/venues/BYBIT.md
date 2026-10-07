@@ -166,6 +166,27 @@ So the **edge** tolerates neither 50 nor a sustained 40. Whether the trigger is 
 over a window, or the burst to the cap is still not separated — 3,855 in under two minutes is
 consistent with all three.
 
+**Tested directly on 2026-10-07**, to see the ban rather than infer it. Paced `GET`s of real files of
+about 25 KB (`premium_index` and `spot_index`, 2021), over HTTP/2 on four connections to
+`public.bybit.com`, thirty seconds at each rate:
+
+| asked | answered |
+|---|---|
+| 10, 20, 30 a second | every request `200` |
+| 40 a second | every request `200`, 124 ms at the median once the edge had the files |
+| 50 a second | 256 answered `200`, then `403` for the remaining 1,244 |
+
+- **Where it tripped:** about five seconds into the 50-a-second stage, after roughly 3,250 requests in
+  128 seconds. That does not separate a rate from a total: "more than 40 a second" and "about 3,000 in
+  two minutes" both fit, as they fit the earlier 3,855 in 103 seconds.
+- **How long it lasted:** refused from about 14:13:20 UTC and answering `200` again by 14:18:39 — some
+  five minutes, not ten.
+- **What it covered:** `public.bybit.com` alone. The bucket,
+  `s3.ap-southeast-1.amazonaws.com/public.bybit.com`, answered `200` for the same file throughout.
+- **A request with no `User-Agent` is refused outright**: the first attempt, at 10 a second from a
+  client that sent none, got `403` on every one of 300 requests, with no ban involved — curl was
+  answered `200` at the same moment.
+
 **None of that measures the bucket**, which is a different host with a different limiter: S3 asks for
 a slower pace with a retryable 503 rather than turning an address away. 30 is carried over because it
 is below every figure in that line and nothing yet says the origin is more permissive. If it refuses,
