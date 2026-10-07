@@ -133,7 +133,6 @@ An adapter answers a handful of questions and holds no control flow:
 | `tagOf(path)` | a discriminator where a venue publishes the same period twice; opaque, never parsed here |
 | `accepts(path)` | **policy**: whether a path belongs in the catalog at all. Asked of prefixes as well as keys, so a refused directory is never descended into |
 | `listable` | whether the archive can be listed. False means it never walks: its series are declared and every pass is an update |
-| `recurs` | how the venue updates once its backfill is behind it: `'update'` probes (the default), `'walk'` walks, and a function of the time since the last walk and the moment decides per pass — `walkOn(day)` walks on one UTC weekday. See [how each venue updates](#how-each-venue-updates). Declaring `'walk'` on a venue that cannot be listed is refused at load |
 | `probes` | whether a `HEAD` is needed. True for two opposite reasons — a listing that names files and nothing else, and a venue with no listing at all |
 | `pacing` | what this host tolerates, beside the evidence for the number. Never configurable: what a venue tolerates is a fact about that venue |
 | `getContext(db, occasion)` | everything its scanner needs, assembled before the walk. The **occasion** says how much reaching out is allowed |
@@ -173,10 +172,10 @@ inside a request, where an adapter that fetched would turn one confirmation into
 a request handler.
 
 **Which of the first two is decided by where the venue has got to**, never by what a caller asked
-for — see `phaseOf`. A venue that has been complete recurs the way its adapter says for ever after —
-an update unless it declares `recurs: 'walk'` — and one that cannot be listed at all never walks even
-once. An update asked for by name is still an update, and one already open is finished before a
-recurring walk begins.
+for — see `phaseOf`. A venue that has been complete updates, and walks again on the days this deployment's
+[walk schedule](#when-an-update-is-a-walk) sets for it; one that cannot be listed at all never walks
+even once. An update asked for by name is still an update, and one already open is finished before a
+scheduled walk begins.
 
 ### One run, two ways of making its scopes
 
@@ -431,20 +430,18 @@ Measured 2026-09-29 on a catalog rebuilt from nothing, in `run.asked` — one re
 or per probe, HTTP retries excluded, which is what a venue's limit is spent against. The probing
 figure is a steady update: one new day due on every active series.
 
-| venue | updates by | a walking update | a probing update |
-|---|---|---|---|
-| bybit, both hosts | **walking** | 3,716 + ≈ 2,970 | 3,740 + 15,203 |
-| kucoin | **walking** | 61,857 | 53,114 |
-| htx | **walking** | 64,253 | 46,837 |
-| binance | **probing**, walking on Thursdays | 205,733 | 97,075 |
-| gate | **probing**, walking on Mondays | 171,466 | 41,042 |
-| okx | **probing** — nothing to walk | — | 10,139 |
-| bitget | **probing** — nothing to walk | — | 7,867 |
+| venue | a walking update | a probing update |
+|---|---|---|
+| bybit, both hosts | 3,716 + ≈ 2,970 | 3,740 + 15,203 |
+| kucoin | 61,857 | 53,114 |
+| htx | 64,253 | 46,837 |
+| binance | 205,733 | 97,075 |
+| gate | 171,466 | 41,042 |
+| okx | nothing to walk | 10,139 |
+| bitget | nothing to walk | 7,867 |
 
-**Walking every update** where it costs about the same or less: bybit is a tie on one host and five
-times cheaper on the other, and kucoin and htx cost 16% and 37% more than probing for discovery every
-night. **A weekly walking update** where walking is dear: 16% a night on binance, 45% on gate, whose
-listing is the largest in the catalog. okx and bitget publish no listing.
+okx and bitget publish no listing, so every update of theirs probes. For the rest, which updates are
+walks is not the venue's to say: see [when an update is a walk](#when-an-update-is-a-walk).
 
 **A walking update costs what the backfill's walk cost**, wherever the listing carries size and
 etag. bybit's second host is the exception: its listing names files without describing them, so its
@@ -1211,16 +1208,48 @@ A survey begins when something asks for one, over the API. From then on that ven
 current** — across any number of restarts — until it is paused or refreshed:
 
 ```
-[ backfill ] → sleep → probe → sleep → probe → …                     recurs 'update'
-[ backfill ] → sleep → walk  → sleep → walk  → …                     recurs 'walk'
-[ backfill ] → sleep → probe → … → walk on its weekday → probe → …   recurs walkOn(day)
+[ backfill ] → sleep → probe → sleep → probe → … → walk on a scheduled day → probe → …
 ```
 
 **A venue is never finished, only current.** The archives grow every day, so reaching the end of one
 is not a state to stop in — it is the point at which the cheap half becomes possible. The first pass
 is a walk where there is a keyspace to read and an update where there is not; every pass after it is
-whichever the adapter recurs by, an update unless it says otherwise. Nothing else chooses: `phaseOf`
-reads where the venue has got to and the pass works out what that means today.
+an update, which probes — except where the walk schedule says this one is a walk. Nothing else
+chooses: `phaseOf` reads where the venue has got to and the pass works out what that means today.
+
+#### When an update is a walk
+
+**Probing finds no shape that did not exist before.** It asks only about series the catalog already
+holds, at patterns it already knows, so a dataset a venue adds, or a naming it changes, is invisible
+until the archive is listed again. Every venue that can be listed therefore has to be walked now and
+then, and a walk of a large one is days on a slow link. How often that can be afforded is a fact
+about where this runs, so it is set per deployment, in `src/walk-schedule.yaml` — a file that is not
+versioned and need not exist (`walk-schedule.example.yaml` beside it shows the form):
+
+```yaml
+binance: 15        # walks on the 15th of each month
+bitget: 1,10,20    # on the 1st, the 10th and the 20th
+gate:              # never walks for an update
+```
+
+- **A venue the file does not name walks once a month, on the day that is its own number**: the
+  lowest id its servers have in the `venue` table, wrapped to a day from 1 to 30. Nobody chose, so no
+  two venues walk the same night.
+- **Only a venue that can be listed may be named.** One that cannot is never walked.
+- **Days run from 1 to 30**, since that is what every month but February has; a month without the day
+  is passed over.
+
+**A walk runs when it is due, not on its day**, because this service can be down for days. At each
+update the question is whether a scheduled day has come round since the last walk began: the update
+is a walk where the last walk began before the newest scheduled day that is today or earlier, and
+more than 24 hours ago. So a day missed is made up at the next update, a day is walked once, and a
+walk that began the evening before its day is not repeated at midnight.
+
+**The file is read once, at startup, and has to be right.** A venue that does not exist or cannot be
+listed, a day that is not a whole number from 1 to 30, a line that is not `venue: days`, a venue
+named twice: any of these is logged as `The walk schedule cannot be used`, naming the line, and the
+service stops with a clean exit so that nothing restarts it into the same refusal. What is in force
+is logged as `Walk schedule in force`.
 
 **A day, and measured from the start of a pass.** Every venue here publishes at most one file per
 series per day, so asking more often is asking the same question twice. Measuring from the start

@@ -109,6 +109,14 @@ catalog and catalog-ui reach it, over the module network — see
 [PROSPECTOR.md](../../docs/services/PROSPECTOR.md#the-api). See [docs/services/PROSPECTOR.md](../../docs/services/PROSPECTOR.md)
 for how surveying works.
 
+## When a venue is walked again
+
+Updates probe, and probing never finds a new shape, so a venue that can be listed is walked again on
+set days of the month. Those days are this deployment's: copy `src/walk-schedule.example.yaml` to
+`src/walk-schedule.yaml` (not versioned, read at startup) and give a venue its days — `binance: 15`,
+`bitget: 1,10,20`, or `gate:` for never. A venue left out walks once a month on the day of its own
+id. A file that cannot be used stops the service, saying which line.
+
 ## What it does not do
 
 It fetches no archive data, and it does not select — everything a venue publishes is catalogued,

@@ -1,0 +1,13 @@
+# On which days of the month each venue's update is a walk rather than a
+# generation. Copy to walk-schedule.yaml, which is read at startup and is not
+# versioned: how often a walk can be afforded depends on where this runs.
+#
+#   venue: days     whole numbers from 1 to 30, parted by commas
+#   venue:          never walk for an update
+#
+# A venue left out walks once a month, on the day that is its own id in the
+# catalog's venue table. Only venues that can be listed may be named.
+
+# binance: 15
+# gate:
+# kucoin: 1,10,20

@@ -97,7 +97,6 @@ export const bybitPrimary: Adapter = declare({
   /**
    * Walking, every update — see `docs/services/PROSPECTOR.md`, *How each venue updates*.
    */
-  recurs:  'walk',
 
   /**
    * How far behind today this venue is worth asking about.

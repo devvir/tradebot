@@ -10,6 +10,7 @@ import { STEADY, describeWait, labelOf, paceFor } from './pace';
 import { probeFiles } from './probe';
 import { flushCounts } from './counts';
 import { probing, surveyVenue } from './survey';
+import { walkDaysOf, walkIsDue } from './schedule';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Adapter, Config, Occasion, Phase, RunKind } from './types';
 
@@ -28,17 +29,16 @@ import type { Adapter, Config, Occasion, Phase, RunKind } from './types';
  * Keep one server up to date, for as long as this process runs.
  *
  * ```
- * [ walk ] → sleep → update → sleep → update → …     recurs 'update'
- * [ walk ] → sleep → walk   → sleep → walk   → …     recurs 'walk'
+ * [ walk ] → sleep → update → sleep → update → … → walk → sleep → update → …
  * ```
  *
  * **A venue is never finished, only current.** The archives grow every day, so
  * reaching the end of one is not a state to stop in — it is the point at which
  * the cheap half becomes possible. The first pass is a walk where there is a
- * keyspace to read and an update where there is not; every pass after it is
- * whichever the adapter recurs by. An update by default, since by then the walk
- * is complete and only what has appeared since is owed; a walk again where
- * reading the listing costs fewer requests than asking series by series.
+ * keyspace to read and an update where there is not; every pass after it is an
+ * update, since by then the walk is complete and only what has appeared since is
+ * owed — except on the days this deployment's schedule sets for the venue to be
+ * walked again, which is the only way a new shape is ever found.
  *
  * **Nothing here decides which.** `onePass` reads where the venue has got to and
  * works it out, so this loop states the cadence and nothing else.
@@ -203,8 +203,8 @@ export const everyMs = (): number => EVERY_HOURS * 3_600_000;
  * One pass: walk it or update it, settle what that could not state, and stop.
  *
  * **Which of the two happens is never asked for.** Where the venue has got to
- * decides it — a venue that has been complete recurs the way its adapter says,
- * for ever after — so the loop above passes the same occasion every time and
+ * decides it — a venue that has been complete updates, and walks again when its
+ * schedule says — so the loop above passes the same occasion every time and
  * this works out what it means today.
  *
  * **The probe follows the walk rather than running beside it for ever.** While
@@ -225,8 +225,8 @@ const onePass = async (
    * **What will actually run, decided here rather than inside the loop.**
    *
    * Where the venue is decides it, and the request only decides whether to start
-   * over: a venue that has been complete recurs the way its adapter says, whatever
-   * is asked for — see `passFor`. It matters at this level because probing has to
+   * over: a venue that has been complete updates or walks as its schedule says,
+   * whatever is asked for — see `passFor`. It matters at this level because probing has to
    * be started before the walk that feeds it, and an update always needs a probe.
    */
   const venueId = venueIdOf(db, adapter.name, adapter.host ?? '');
@@ -446,17 +446,17 @@ const began = (db: DatabaseSync, venueId: number): Date =>
  * - **An update asked for by name is an update.** That is the one request that
  *   says what kind of pass it wants.
  * - **A venue whose first walk is not behind it goes on walking.**
- * - **An update already open is finished**, whatever the venue recurs by. Its
+ * - **An update already open is finished**, whatever the schedule says. Its
  *   per-series rows are its progress and only reconciliation ends it; starting a
  *   walk over it would leave that job open for ever, and a venue's standing is
  *   read off which job is open. The phase cannot see it, since it is read off
  *   the walk rows of a venue that has any.
- * - **A venue that recurs by walking walks again** — a fresh job, since the last
- *   one is closed. Everything else updates.
+ * - **A venue whose scheduled day has come round since its last walk walks
+ *   again** — a fresh job, since the last one is closed. Everything else
+ *   updates. See `schedule.ts`.
  *
- * **The listing rule comes first on purpose.** A venue that cannot be listed
- * updates whatever it says, so an adapter deciding its own recurrence cannot
- * strand itself by answering `'walk'` where there is nothing to walk.
+ * **The listing rule comes first on purpose**: a venue that cannot be listed has
+ * no schedule and nothing to walk.
  */
 const passFor = (
   adapter:    Adapter,
@@ -471,19 +471,8 @@ const passFor = (
   if (phase !== 'updating')       return 'full';
   if (updateOpen)                 return 'partial';
 
-  return recursBy(adapter, sinceWalk, now) === 'walk' ? 'full' : 'partial';
+  return walkIsDue(walkDaysOf(adapter.name), sinceWalk, now) ? 'full' : 'partial';
 };
-
-/**
- * What this venue says its pass is, whether it says it once or per pass.
- *
- * A venue that says nothing updates, which is what every venue did before any of
- * them had an opinion.
- */
-const recursBy = (adapter: Adapter, sinceWalk: number, now: Date): 'update' | 'walk' =>
-  (typeof adapter.recurs === 'function'
-    ? adapter.recurs(sinceWalk, now)
-    : adapter.recurs ?? 'update');
 
 /**
  * How long ago this venue's last walk began, in seconds — `Infinity` where it

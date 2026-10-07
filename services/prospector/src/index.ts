@@ -1,4 +1,5 @@
 import { setDefaultAutoSelectFamily } from 'node:net';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { logger, type Service, type ExpressServerHandle } from '@devvir/service-kit';
 import { keepLensesCurrent } from './lenses';
@@ -17,7 +18,8 @@ import { cacheLookups } from './lookup';
 import { capacity, reopenGradually } from './pace';
 import { openTransport } from './transport';
 import { dueAfter, everyMs, inPass, syncVenue } from './sync';
-import { adaptersFor, adaptersForVenue, addressVenues } from './venues';
+import { applySchedule, loadSchedule, schedulePath, walkDaysOf } from './schedule';
+import { VENUE_NAMES, adaptersFor, adaptersForVenue, addressVenues } from './venues';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Adapter, Occasion } from './types';
 
@@ -84,6 +86,26 @@ const main = async (service: Service): Promise<void> => {
   addressVenues(venues(db));
 
   logger.info({ venues: surveyable() }, 'Servers registered');
+
+  /**
+   * **When each venue's update is a walk is this deployment's to say**, in a
+   * file that need not be there. A file that is there and cannot be taken as
+   * written stops the service — with a clean exit, so that nothing restarts it
+   * into the same refusal: the alternative is walking a venue on a day nobody
+   * chose, and a walk is days of this machine's link.
+   */
+  try {
+    applySchedule(loadSchedule(schedulePath(), walkable(db), VENUE_NAMES));
+  } catch (err) {
+    logger.error({ file: schedulePath(), problem: (err as Error).message },
+      'The walk schedule cannot be used — fix it or remove it; stopping');
+
+    process.exit(0);
+  }
+
+  logger.info({ file: existsSync(schedulePath()) ? schedulePath() : '(none — every venue on its default day)',
+    days: Object.fromEntries(adaptersFor([]).filter(one => one.listable !== false).map(one => [one.name, walkDaysOf(one.name)])) },
+  'Walk schedule in force');
 
   /**
    * **One fact about the network, established once.** Without it every request
@@ -514,6 +536,24 @@ export const running = (venue: string): boolean => walking.has(venue);
  * A venue registered without a scanner is left out rather than offered and
  * refused — it cannot be read, so it is not something to ask about.
  */
+/**
+ * Every venue that can be listed, with the lowest id its servers have in the
+ * `venue` table — which is the day of the month it walks on where nobody set one.
+ */
+const walkable = (db: DatabaseSync): Map<string, number> => {
+  const found = new Map<string, number>();
+
+  for (const adapter of adaptersFor([])) {
+    if (adapter.listable === false) continue;
+
+    const id = venueIdOf(db, adapter.name, adapter.host ?? '');
+
+    found.set(adapter.name, Math.min(found.get(adapter.name) ?? Infinity, id));
+  }
+
+  return found;
+};
+
 export const surveyable = (): string[] =>
   [...new Set(adaptersFor(config.venues).filter(a => a.scanner.name !== 'none').map(a => a.name))];
 

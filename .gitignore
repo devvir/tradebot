@@ -39,3 +39,6 @@ __pycache__/
 vitest.config.*.timestamp*
 .nx/polygraph
 .claude/settings.json
+
+# Prospector: when each venue walks, per deployment
+services/prospector/src/walk-schedule.yaml

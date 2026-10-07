@@ -793,27 +793,34 @@ export const loadSeries = (db: DatabaseSync): number => {
     return value;
   };
 
+  /**
+   * **Read a row at a time, and copied field by field.** Fetched whole, half a
+   * million driver rows are all alive at once and every one is walked by the
+   * collector again and again while the copies are made; read one at a time,
+   * each dies as soon as it has been copied. And a copy written out as a
+   * literal is an ordinary object of one shape, where spreading a driver row
+   * builds each one key by key — together, most of what loading used to cost.
+   */
   for (const row of read(db)) {
     const series = {
-      ...row,
+      id:           row.id,
+      patternId:    row.patternId,
+      symbol:       shared(row.symbol),
+      urlSymbol:    row.urlSymbol,
+      first:        shared(row.first),
+      last:         shared(row.last),
+      tip:          shared(row.tip),
+      instrumentId: row.instrumentId,
+      state:        shared(row.state),
+      venueId:      row.venueId,
       market:       shared(row.market),
       dataset:      shared(row.dataset),
       variant:      shared(row.variant),
       pattern:      shared(row.pattern),
       grain:        shared(row.grain),
       retiredAt:    shared(row.retiredAt),
-      symbol:       shared(row.symbol),
-      state:        shared(row.state),
-      first:        shared(row.first),
-      last:         shared(row.last),
-      tip:          shared(row.tip),
     } as unknown as Publishing;
 
-    /**
-     * Only where there is something to attach. Almost no instrument of almost
-     * any venue has a transform, and a field on every row of a registry this
-     * size is paid for whether it holds anything or not.
-     */
     const exceptions = transformsOf(db, row.venueId, row.market, row.symbol);
 
     if (exceptions) series.transforms = exceptions;
@@ -1329,7 +1336,7 @@ interface Row extends Omit<Publishing, 'found'> {
  * first: measured at **17.7s against 0.9s**, for an ordering nothing reads. The
  * registry is two maps and the only two places that iterate it are filters.
  */
-const read = (db: DatabaseSync): Row[] =>
+const read = (db: DatabaseSync): IterableIterator<Row> =>
   db.prepare(
     `SELECT s.id, s.pattern_id AS patternId, COALESCE(i.symbol, '${BUCKET}') AS symbol,
             s.url_symbol AS urlSymbol,
@@ -1341,7 +1348,7 @@ const read = (db: DatabaseSync): Row[] =>
        JOIN slice c ON c.id = p.slice_id
        LEFT JOIN instrument i ON i.id = s.instrument_id
       ORDER BY s.id`,
-  ).all() as unknown as Row[];
+  ).iterate() as unknown as IterableIterator<Row>;
 
 interface PatternRow {
   id: number; venueId: number; market: string; dataset: string; bundle: string;

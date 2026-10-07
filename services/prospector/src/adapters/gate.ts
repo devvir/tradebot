@@ -1,5 +1,4 @@
 import { asSeries } from '../paths';
-import { walkOn } from './recurrence';
 import { BUCKET, canonicalInterval } from '../canonical';
 import { s3 } from '../scanners/s3';
 import { listing } from '../context';
@@ -61,7 +60,6 @@ export const gate: Adapter = declare({
    * Probing, with a walking update on Mondays.
    * @see docs/services/PROSPECTOR.md > *How each venue updates*.
    */
-  recurs:  walkOn('monday'),
 
   /**
    * **No limit found.** Measured 2026-09-29/30 with HEAD and LIST probes: up

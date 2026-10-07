@@ -10,7 +10,7 @@ import { okx } from '../src/adapters/okx';
 import { pathSymbolOf } from '../src/adapters/bitget/symbols';
 import { tokenOf, unknownMargin } from '../src/adapters/bitget/shapes';
 import { _test_marginOf } from '../src/adapters/bitget/instruments';
-import { VENUE_NAMES, _test_refuseContradictions, adaptersForVenue, adaptersFor } from '../src/venues';
+import { VENUE_NAMES, adaptersForVenue, adaptersFor } from '../src/venues';
 import type { Adapter, Publishing, Unsettled } from '../src/types';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -23,13 +23,6 @@ const S3  = [binance, htx, kucoin, bybit];
 const ALL = [...S3];
 
 describe('every adapter', () => {
-  /** A venue with no listing has no walk to repeat, and saying so is refused at load. */
-  it('cannot recur by walking a venue it cannot list', () => {
-    expect(() => _test_refuseContradictions([{ ...okx, recurs: 'walk' }])).toThrow(/cannot be listed/);
-    expect(() => _test_refuseContradictions([{ ...okx, recurs: 'update' }])).not.toThrow();
-    expect(() => _test_refuseContradictions([{ ...binance, recurs: 'walk' }])).not.toThrow();
-  });
-
   /**
    * The reason the scanner is a separate concept. Four venues, one paging
    * implementation — if this ever stops holding, someone has copied a walk.

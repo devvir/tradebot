@@ -1,5 +1,4 @@
 import { asSeries } from '../paths';
-import { walkOn } from './recurrence';
 import { canonicalInterval } from '../canonical';
 import { s3 } from '../scanners/s3';
 import { listing } from '../context';
@@ -35,7 +34,6 @@ export const binance: Adapter = declare({
   /**
    * Probing, with a walking update on Thursdays — see `docs/services/PROSPECTOR.md`, *How each venue updates*.
    */
-  recurs:  walkOn('thursday'),
 
   /**
    * How far behind today this venue is worth asking about.

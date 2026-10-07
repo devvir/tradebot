@@ -10,7 +10,7 @@ import {
   _test_EVERY_HOURS, _test_PROBE_EMPTY_MS, _test_passFor, _test_probing, _test_settle, dueAfter,
 } from '../src/sync';
 import type { DatabaseSync } from 'node:sqlite';
-import { walkEvery, walkOn } from '../src/adapters/recurrence';
+import { applySchedule } from '../src/schedule';
 import type { Adapter, Config } from '../src/types';
 
 vi.mock('../src/http', async (importOriginal) => ({
@@ -294,129 +294,57 @@ describe('when a pass still owes a probe', () => {
 /**
  * Which pass runs.
  *
- * **A venue that has not said how it recurs behaves exactly as before:** walk
- * until the first walk is behind it, update for ever after. Saying `'walk'`
- * changes only what follows a completed pass, and never strands one in
- * progress.
+ * **Walk until the first walk is behind a venue, update after** — and walk again
+ * when one of the days its schedule sets has come round since the last walk
+ * began. The schedule never strands a pass in progress.
  */
 describe('which pass runs', () => {
-  const walker: Adapter = { ...indexed, recurs: 'walk' };
-  const blind:  Adapter = { ...indexed, listable: false };
+  const blind: Adapter = { ...indexed, listable: false };
 
   /** How long since the last walk began, and when the pass is being decided. */
   const DAYS = 86_400;
   const said = (days = Infinity) => days * DAYS;
   const NOW  = new Date('2026-09-30T12:00:00Z');
 
+  /** The venue walks on these days of the month, or never. */
+  const on = (...days: number[]): void => applySchedule(new Map([[indexed.name, days]]));
+
+  beforeEach(() => on(15));
+
   it('walks until the first walk is behind a venue', () => {
-    for (const phase of ['not run', 'planned', 'running', 'complete'] as const) {
+    for (const phase of ['not run', 'planned', 'running', 'complete'] as const)
       expect(_test_passFor(indexed, 'full', phase, false, said(), NOW)).toBe('full');
-      expect(_test_passFor(walker, 'full', phase, false, said(), NOW)).toBe('full');
-    }
   });
 
-  it('updates after that by default', () => {
-    expect(_test_passFor(indexed, 'full', 'updating', false, said(), NOW)).toBe('partial');
-    expect(_test_passFor({ ...indexed, recurs: 'update' }, 'full', 'updating', false, said(), NOW))
-      .toBe('partial');
+  it('updates after that, while no scheduled day has come round since the last walk', () => {
+    // Walked on the 20th; the 15th before today is behind that walk.
+    expect(_test_passFor(indexed, 'full', 'updating', false, said(10.5), NOW)).toBe('partial');
   });
 
-  it('walks again where the venue recurs by walking', () => {
-    expect(_test_passFor(walker, 'full', 'updating', false, said(), NOW)).toBe('full');
+  it('walks again once a scheduled day has come round since the last walk began', () => {
+    // Walked on the 10th; the 15th has passed since.
+    expect(_test_passFor(indexed, 'full', 'updating', false, said(20.5), NOW)).toBe('full');
+  });
+
+  it('never walks for an update where the schedule gives the venue no day', () => {
+    on();
+
+    expect(_test_passFor(indexed, 'full', 'updating', false, said(400), NOW)).toBe('partial');
   });
 
   /** Its rows are its progress, and only reconciliation ends it. */
   it('finishes an update already open before walking again', () => {
-    expect(_test_passFor(walker, 'full', 'updating', true, said(), NOW)).toBe('partial');
+    expect(_test_passFor(indexed, 'full', 'updating', true, said(20.5), NOW)).toBe('partial');
   });
 
-  it('runs an update asked for by name, whatever the venue recurs by', () => {
-    expect(_test_passFor(walker, 'partial', 'updating', false, said(), NOW)).toBe('partial');
-    expect(_test_passFor(walker, 'partial', 'running', false, said(), NOW)).toBe('partial');
+  it('runs an update asked for by name, whatever the schedule says', () => {
+    expect(_test_passFor(indexed, 'partial', 'updating', false, said(20.5), NOW)).toBe('partial');
+    expect(_test_passFor(indexed, 'partial', 'running', false, said(20.5), NOW)).toBe('partial');
   });
 
   it('only ever updates a venue that cannot be listed', () => {
     for (const phase of ['not run', 'running', 'updating'] as const)
       expect(_test_passFor(blind, 'full', phase, false, said(), NOW)).toBe('partial');
-  });
-
-  /**
-   * **A venue that wants it both ways.** Updating finds no shape that did not
-   * exist before, so a venue cheapest to update still needs its index re-read on
-   * a cadence — and how often is a fact about what a walk of that archive costs.
-   */
-  describe('where the venue decides per pass', () => {
-    const weekly: Adapter = { ...indexed, recurs: walkEvery(7) };
-
-    it('updates while the last walk is recent enough', () => {
-      expect(_test_passFor(weekly, 'full', 'updating', false, said(5), NOW))
-        .toBe('partial');
-    });
-
-    it('walks once the cadence has elapsed', () => {
-      expect(_test_passFor(weekly, 'full', 'updating', false, said(7), NOW))
-        .toBe('full');
-    });
-
-    /**
-     * **`Infinity`, and no special case for it.** A venue that has never walked
-     * is overdue by any cadence, so the same comparison answers it.
-     */
-    it('walks a venue that has never walked', () => {
-      expect(_test_passFor(weekly, 'full', 'updating', false, Infinity, NOW)).toBe('full');
-    });
-
-    /**
-     * **The listing rule comes first.** A venue with nothing to walk cannot
-     * strand itself by answering `'walk'`, whatever it was told.
-     */
-    it('overrules a venue that cannot be listed', () => {
-      const wrong: Adapter = { ...blind, recurs: () => 'walk' };
-
-      expect(_test_passFor(wrong, 'full', 'updating', false, said(), NOW)).toBe('partial');
-    });
-
-    /** The boundary is the cadence itself, so a walk exactly that old is due. */
-    it('walks on the day the cadence falls, not after it', () => {
-      expect(_test_passFor(weekly, 'full', 'updating', false, said(6.99), NOW)).toBe('partial');
-      expect(_test_passFor(weekly, 'full', 'updating', false, said(7), NOW)).toBe('full');
-    });
-  });
-
-  /**
-   * **A walking update on one weekday.** Two venues given different days never
-   * walk the same night, however their passes drift — which an interval counted
-   * from each venue's own last walk cannot promise.
-   */
-  describe('where the venue walks on a day of the week', () => {
-    const mondays: Adapter = { ...indexed, recurs: walkOn('monday') };
-
-    const MONDAY  = new Date('2026-09-28T03:00:00Z');
-    const TUESDAY = new Date('2026-09-29T03:00:00Z');
-
-    it('walks on its day', () => {
-      expect(_test_passFor(mondays, 'full', 'updating', false, said(7), MONDAY)).toBe('full');
-    });
-
-    it('probes on every other day, however long ago the last walk was', () => {
-      expect(_test_passFor(mondays, 'full', 'updating', false, said(30), TUESDAY)).toBe('partial');
-    });
-
-    /**
-     * **A day is not a pass.** A second pass on the same Monday, or a walk that
-     * ran into the next one, is kept from walking again by the gap.
-     */
-    it('does not walk twice within three days, even on its day', () => {
-      expect(_test_passFor(mondays, 'full', 'updating', false, said(3), MONDAY)).toBe('partial');
-      expect(_test_passFor(mondays, 'full', 'updating', false, said(3.01), MONDAY)).toBe('full');
-    });
-
-    /** The day is the UTC one, like every other clock here. */
-    it('reads the day in UTC', () => {
-      const sundayEvening = new Date('2026-09-27T23:30:00Z');
-
-      expect(_test_passFor(mondays, 'full', 'updating', false, said(7), sundayEvening)).toBe('partial');
-    });
   });
 });
 

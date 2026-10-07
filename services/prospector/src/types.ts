@@ -751,32 +751,6 @@ export interface Adapter<S extends Scanner<any> = Scanner<any>> {
    */
   probingLag?: number;
 
-  /**
-   * What this venue's pass is once its first walk is behind it.
-   *
-   * **`'update'`** generates each open series' recent keys from its patterns and
-   * probes them one request per key. **`'walk'`** lists the archive again from
-   * the top, which answers hundreds of keys per request but re-reads all of
-   * history every time. Which is cheaper depends on the venue — how many series
-   * are open against how large the archive is, and whether its listing states
-   * enough that nothing has to be probed afterwards — so it is the adapter's to
-   * say, and the `sent` count on each run is what settles it.
-   *
-   * **A function where the answer is neither, every time.** A venue can be
-   * cheapest to update most nights and still need the index re-read now and
-   * then, because only a walk finds a shape nobody predicted — so it is told
-   * when it last walked and says which this pass is. That is the whole of what
-   * the decision can depend on: a cadence, measured from the last walk.
-   *
-   * An update asked for by name still runs as one, and an update already open is
-   * finished before the next walk starts, so changing this never strands a pass.
-   * A venue that cannot be listed has no walk to recur: declaring `'walk'` there
-   * is refused when the adapters are loaded, and a function that answers `'walk'`
-   * for one is overruled by the listing rule in `passFor`.
-   *
-   * Default `'update'`.
-   */
-  recurs?: Recurs;
 
 
   /**
@@ -1352,30 +1326,6 @@ export interface Reconciled {
 
 /** What kind of work a discovery run is doing, and therefore what `cursor` means. */
 export type RunKind = 'walk' | 'probe' | 'update';
-
-/**
- * What a venue's pass is once its first walk is behind it — see `recurs`.
- *
- * **A function, where a venue wants it both ways.** Updating nightly is cheaper
- * on most listed venues and finds nothing new in the shapes; walking is the only
- * thing that does. A venue that wants a periodic clean slate says so here rather
- * than in the core, because how often is a fact about that archive's cost.
- *
- * It is handed **how long ago this venue's last walk began, in seconds**, and
- * `Infinity` where it has never walked — which needs no special case, since a
- * venue that has never walked is overdue for one by any cadence — and **the
- * moment the decision is taken**, for a cadence tied to the calendar. Both are
- * handed in rather than read, so an adapter's rule can be tested at a moment.
- *
- * **The walk it measures from is always a completed one.** A venue whose walk
- * has not finished keeps walking by the phase rule in `passFor`, which is
- * decided before this is consulted.
- */
-export type Recurs = 'update' | 'walk' | ((sinceWalk: number, now: Date) => 'update' | 'walk');
-
-/** A day of the week, as a calendar cadence names it — read in UTC. */
-export type Weekday =
-  'sunday' | 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday';
 
 /**
  * A venue, as the catalog knows it: a name and enough to rebuild a URL from a
