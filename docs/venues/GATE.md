@@ -120,6 +120,23 @@ stream a `.csv.gz`. The snapshot's `id` exists only for data generated after 202
 The delta stream records full depth once, then a change record every 100 ms, with same-price changes
 inside the window merged into one row.
 
+**What a delta row means, measured.** An hour's file opens with the whole book as `set` rows sharing
+one `begin_id`; `make` and `take` rows follow, and each carries an amount that is added to its level
+or taken from it, not the level's new size. Rebuilding a book that way from a file never drives a
+level below zero and never crosses the sides (`BTC_USD`, 2026-06-01 21h, 18,538 rows; `BTC_USDT`
+spot, 2021-08-01 00h, 497,333 rows). `timestamp` is in tenths of a second and `begin_id` rises
+through the file, so the id is what orders the rows inside one tenth.
+
+**Spot names the side and futures sign the amount.** A spot row is the seven fields above, and `side`
+is `1` for an ask and `2` for a bid — in a file's first image every `2` sits below every `1`. A
+futures row has six fields and no side, `timestamp, action, price, size, begin_id, merged`, and its
+`size` is negative for an ask.
+
+**The snapshot's shape differs by market and by year.** A spot level is `[price, qty]`; a futures level
+is an object, `{"p": price, "s": size}`. `current` and `update` are seconds with a fraction in the
+2021 files (`1627808401.603536`) and whole milliseconds in the 2026 ones (`1780343999931`). A
+coin-margined file can hold nothing but records with empty sides.
+
 **The snapshot is not collected.** It covers two pairs per market — `BTC_USDT` and `ETH_USDT`, or
 `BTC_USD` and `ETH_USD` coin-margined — which gate documents and its contract dropdown confirms. A
 20-level snapshot adds little over the delta stream, which carries full depth and every change to
@@ -237,6 +254,28 @@ The `exclusion` table — two specific files, with no shape to describe:
 - `futures_btc/mark_prices/202107/hello/123`
 
 Both zero bytes, uploaded four minutes apart on 2021-08-11.
+
+## The files named by an instant hold a line an instrument
+
+`spot_index/` and `options_ticker/` files are plain text with no header and no extension. Each line is
+one instrument, its values parted by single blanks with one trailing; some lines begin with a blank
+as well (` DOGE_USD1 0.1003325 `). Nothing inside says when: the instant is the file's name.
+
+A spot index line is `<pair> <price>`.
+
+An option ticker line is the option's name and twelve values with no names:
+
+```
+BTC_USDT-20260603-80000-C 9.2 0.4491 701 4 0.4069 200 17 0.4875 0.01039 0.00001 -15.60348 1.62129
+BTC_USDT-20260603-80000-P 6430.4 0.4491 200 6162 0 200 6478 0.5931 -0.9896 0.00001 -15.60287 1.62119
+```
+
+Read from the numbers, in order: mark price, mark implied volatility; bid size, bid price, bid
+implied volatility; ask size, ask price, ask implied volatility; delta, gamma, theta, vega. The
+second value is the same for the call and the put of one strike. The fourth and seventh bracket the
+first, and the fifth and eighth bracket the second. The ninth is negative on puts and positive on
+calls, and the eleventh is negative on both. Gate documents none of this for the files; its API
+names the same quantities.
 
 ## 2022-11-30 23:00: one hour filed under the wrong month
 

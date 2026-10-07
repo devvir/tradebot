@@ -241,6 +241,19 @@ without a single throttling answer.
 by closing the connection. The host speaks HTTP/2, where a probe is a stream and the question does
 not arise — prospector probes it that way.
 
+### What a book file holds
+
+The `.data.zip` holds one file of a JSON record a line:
+
+```
+{"topic":"orderbook.200.XAUTUSDT-19JUN26","type":"snapshot","ts":1780272001020,
+ "data":{"s":"XAUTUSDT-19JUN26","b":[["4518.3","1.178"],…],"a":[…],"u":1,"seq":13314825492},"cts":…}
+```
+
+`type` is `snapshot` where the stream opens — twice in each of three files read — and `delta` after.
+`b` and `a` are `[price, size]` levels, and a size of `0` removes the level. `ts` is in milliseconds,
+unique and rising through a file. `seq` rises through a file; `u` starts over at each snapshot.
+
 ### Its origin bucket is not findable
 
 Repeating the search that worked for the primary is a waste of time:

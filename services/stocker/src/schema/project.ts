@@ -24,9 +24,13 @@ import type { Series } from '../types';
  */
 export const selectFor = (series: Series, relation: string, extra: string[] = []): string =>
   `SELECT ${[projectionFor(series), ...extra].join(', ')} FROM ` +
-  `(SELECT *, ${fractionCols()} FROM (SELECT *, ${integralCols(series.ts)} FROM ${relation}))`;
+  `(SELECT *, ${fractionCols()} FROM (SELECT *, ${integralCols(series.ts)} FROM ${rowsOf(series, relation)}))`;
 
 // ── Internals ─────────────────────────────────────────────────────────────────
+
+/** What the projection reads: the format's relation, or the series' own rows made from it. */
+const rowsOf = (series: Series, relation: string): string =>
+  (series.rows ? `(${series.rows.replaceAll('{src}', relation)})` : relation);
 
 /**
  * Values convert with **`TRY_CAST`**: a cell that will not parse becomes NULL

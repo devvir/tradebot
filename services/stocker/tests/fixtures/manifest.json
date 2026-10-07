@@ -96,6 +96,10 @@
     "key": "binance/perp/liquidations/B/BTCUSD_PERP/202410/binance|perp|liquidations|BTCUSD_PERP|20241014.zip"
   },
   {
+    "fixture": "binance.um-liquidationSnapshot.csv",
+    "key": "binance/future/liquidations/B/BTCUSDT_230630/202306/binance|future|liquidations|BTCUSDT_230630|20230625.zip"
+  },
+  {
     "fixture": "bitget.spot-trades.csv",
     "key": "bitget/spot/trades/B/BTCUSDT/202607/bitget|spot|trades|BTCUSDT|20260728.part001.zip"
   },
@@ -106,6 +110,22 @@
   {
     "fixture": "bitget.dmcbl-trades.csv",
     "key": "bitget/perp/trades/B/BTCUSD/202607/bitget|perp|trades|BTCUSD|20260728.part001.zip"
+  },
+  {
+    "fixture": "bitget.future-trades-month.csv",
+    "key": "bitget/future/trades/B/BTCUSDU26/202603/bitget|future|trades|BTCUSDU26|202603.zip"
+  },
+  {
+    "fixture": "bitget.spot-klines-month.csv",
+    "key": "bitget/spot/klines,1m/E/ETHUSDT/202609/bitget|spot|klines,1m|ETHUSDT|202609.zip"
+  },
+  {
+    "fixture": "bitget.future-klines-month.csv",
+    "key": "bitget/future/klines,1m/B/BTCUSDU26/202609/bitget|future|klines,1m|BTCUSDU26|202609.zip"
+  },
+  {
+    "fixture": "bitget.perp-quotes-month.csv",
+    "key": "bitget/perp/quotes/E/ETHUSDT/202603/bitget|perp|quotes|ETHUSDT|202603.zip"
   },
   {
     "fixture": "bybit.perp-trades.csv",
@@ -356,11 +376,27 @@
     "key": "okx/spot/klines,1m/B/BTC-USDT/202607/okx|spot|klines,1m|BTC-USDT|20260729.zip"
   },
   {
+    "fixture": "okx.spot-candlesticks-volccy.csv",
+    "key": "okx/spot/klines,1m/E/ETH-BTC/202012/okx|spot|klines,1m|ETH-BTC|202012.zip"
+  },
+  {
     "fixture": "okx.all-fundingrates.csv",
     "key": "okx/perp/funding,realised/@/202607/okx|perp|funding,realised|@|20260729.zip"
   },
   {
     "fixture": "okx.all-borrowrates.csv",
     "key": "okx/spot/borrowing/@/202607/okx|spot|borrowing|@|20260729.zip"
+  },
+  {
+    "fixture": "binance.option-eohsummary.csv",
+    "key": "binance/option/optionSummary,1h/B/BNBUSDT/202305/binance|option|optionSummary,1h|BNBUSDT|20230518.zip"
+  },
+  {
+    "fixture": "binance.option-bvolindex.csv",
+    "key": "binance/option/volatilityIndex,ticks/B/BTCBVOLUSDT/202306/binance|option|volatilityIndex,ticks|BTCBVOLUSDT|20230620.zip"
+  },
+  {
+    "fixture": "bybit.option-markkline.csv",
+    "key": "bybit/option/markPrice,1m/B/BTC/202603/bybit|option|markPrice,1m|BTC|20260310.OHLC.csv.zip"
   }
 ]

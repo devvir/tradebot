@@ -10,45 +10,18 @@ Stocker runs on the catalog: how it works is [STOCKER.md](../services/STOCKER.md
 
 ## Not modelled yet
 
-**Order books.** No venue's books are mapped. A book row nests an array of levels and has to be
-exploded into one row per level change to fit the canonical event log; the explosion, the
-per-venue projections and the depth and snapshot/delta levels do not exist. They will dominate the
-vault.
-
 **Instruments and canonical symbols.** `symbol=` holds the venue's own string, so `BTCUSDT` at
 binance and `BTC-USDT-SWAP` at okx are not yet one instrument. The mapping has to come from each
 venue's instrument listing, never from parsing a symbol, and two pairs producing one canonical id
 within a venue and market must be a hard error. The same listing is where margining belongs —
 `schema/margin.ts` reads it off symbols until then.
 
-**Options.** Option trades and klines are stocked where they are the other markets' shapes (htx,
-okx, bybit trades). What an option has that nothing else does has no place yet: the greeks, implied
-volatility, and the strike, expiry and side that are only spelled inside the symbol. Three datasets
-wait on that, and want deciding together. The leaning is a table of their own, `optionMarkPrice`,
-over columns on `markPrice` that every other market would leave empty — to be checked against what
-each of the three actually carries:
+**What an option is.** The strike, the expiry and the side of an option are only spelled inside its
+symbol; nothing stocked says them as columns.
 
-- **bybit option `markPrice`, 1m.** `instrument_name, open_time, open, high, low, close, delta,
-  gama, vega, theta`. The bars fit `markPrice`; the four greeks do not.
-- **binance `optionSummary`, 1h.** An hour's summary per option: OHLC, volumes in contracts and in
-  USDT, best bid and ask with their sizes and implied volatilities, mark price and mark iv, the four
-  greeks, open interest.
-- **gate `optionTicker`, ticks.** A line per option of 13 space-separated values with no names. What
-  each is has to be settled from gate's own API fields before it is read.
-
-**A format whose time is in the file's name.** Gate publishes its spot index and its option ticker
-as one small file per moment, named `slice_index_<epoch>` and `slice_options_ticker_<epoch>`, every
-instrument a line. No row carries a time, so a format has to take it from the name; none does. The
-spot index is otherwise `<symbol> <price>` and fits `indexPrice` as ticks.
-
-**binance `volatilityIndex`.** `calc_time, symbol, base_asset, quote_asset, index_value`, a value a
-second. It is an index and not a price of anything stocked; it needs a table, or a decision that
-`indexPrice` holds it.
-
-**binance liquidations on USDⓈ-M perpetuals and on futures.** Only the coin-margined files are
-mapped. The others have not been read.
-
-**bitget future quotes.** Not read.
+**When binance's option summary stamps its hour.** A row is `date` and `hour`, stored as the start of
+that hour. "EOH" in the venue's name for the dataset suggests the row is the state at the hour's end;
+which it is has not been settled against another source.
 
 **Which leg bybit's option `amount` is.** The trades are stocked with `size = amount` and neither
 `baseSize` nor `quoteSize`. Settle it against the underlying — an option on BTC with `amount` 0.05 —

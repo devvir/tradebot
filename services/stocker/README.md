@@ -28,8 +28,7 @@ modified, moved or deleted.
 - Runs long-lived, sweeping on a timer so files that land unattended are picked up on their own
 
 Full technical detail — how a sweep decides, the revision, the path convention, the canonical
-schemas — is in [docs/services/STOCKER.md](../../docs/services/STOCKER.md). Every input format,
-and what is not mapped yet, is in
+schemas — is in [docs/services/STOCKER.md](../../docs/services/STOCKER.md). Every input format is in
 [docs/services/STOCKER-PARTITIONS.md](../../docs/services/STOCKER-PARTITIONS.md).
 
 ## Layout

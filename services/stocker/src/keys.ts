@@ -29,9 +29,9 @@ export const parseKey = (key: string): ArchiveFile | null => {
 
   if (! match) return null;
 
-  const [, date, part, ext] = match as unknown as [string, string, string | undefined, string];
+  const [, date, part, ext] = match as unknown as [string, string, string | undefined, string | undefined];
   const grain     = GRAINS[date.length];
-  const container = CONTAINERS[ext];
+  const container = CONTAINERS[ext ?? ''];
 
   if (! grain || ! container) return null;
 
@@ -109,8 +109,8 @@ export const lastDayOf = (month: string): string => {
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
-/** `date[.partNN].ext` — the date's length is the grain. */
-const TAIL = /^(\d{6}|\d{8}|\d{10}|\d{12})(?:\.part(\d+))?\.(zip|csv\.gz|tar\.gz|gz|csv|data\.zip|trades\.csv\.zip)$/;
+/** `date[.partNN][.ext]` — the date's length is the grain. Gate's slices have no extension at all. */
+const TAIL = /^(\d{6}|\d{8}|\d{10}|\d{12})(?:\.part(\d+))?(?:\.(zip|csv\.gz|tar\.gz|gz|csv|data\.zip|trades\.csv\.zip|OHLC\.csv\.zip))?$/;
 
 const GRAINS: Record<number, Grain> = { 6: 'monthly', 8: 'daily', 10: 'hourly', 12: 'minutely' };
 
@@ -119,10 +119,12 @@ const CONTAINERS: Record<string, string> = {
   'zip':      'zip',
   'data.zip': 'zip',
   'trades.csv.zip': 'zip',
+  'OHLC.csv.zip': 'zip',
   'csv.gz':   'gzip',
   'gz':       'gzip',
   'tar.gz':   'tar.gz',
   'csv':      'plain',
+  '':         'plain',
 };
 
 const bundleMark = (bundle: Bundle): string => (bundle === 'market' ? '@' : '*');

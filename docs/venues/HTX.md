@@ -243,6 +243,11 @@ anything that treats it as a UTC day misplaces eight hours of every file.
 uses. Records carry the same `instId`/`action`/`ts` shape as OKX's, which is why the two venues'
 portals look alike.
 
+A file is one JSON record a line: `{"instId", "action", "ts", "asks", "bids"}`. The first is a
+`snapshot` of the whole book and the rest are `update`s holding the levels that changed, a level
+`[price, size]` and a size of `0.0` removing it. `ts` is in microseconds and rises through the file.
+A day's file runs 16:00 UTC to 16:00 UTC, like every other daily file here.
+
 ## Layout
 
 ```

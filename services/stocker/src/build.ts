@@ -5,7 +5,7 @@ import type { DuckDBConnection } from '@duckdb/node-api';
 import config from './config';
 import { SCRATCH, hasContent, unpackAll } from './containers';
 import { q } from './db';
-import { formatFor } from './formats';
+import { formatFor, formatOf } from './formats';
 import { marginOf } from './schema/margin';
 import { selectFor } from './schema/project';
 import { seriesFor } from './schema/series';
@@ -72,7 +72,13 @@ export const buildGroup = async (
       const content = await Promise.all(unpacked.paths.map(hasContent));
       const paths   = unpacked.paths.filter((_, at) => content[at]);
 
-      if (paths.length) bySeries.set(series, [...bySeries.get(series) ?? [], ...paths]);
+      for (const path of paths) {
+        const read = asWritten(series, await formatOf(series.format, path));
+
+        if (! bySeries.has(read)) bySeries.set(read, []);
+
+        bySeries.get(read)!.push(path);
+      }
     }
 
     // Nothing but empty files: the venue published for this month and
@@ -169,7 +175,13 @@ export const buildBatch = async (
 
       for (const path of paths) owners.push(`(${q(path)}, ${q(symbol)})`);
 
-      if (paths.length) bySeries.set(series, [...bySeries.get(series) ?? [], ...paths]);
+      for (const path of paths) {
+        const read = asWritten(series, await formatOf(series.format, path));
+
+        if (! bySeries.has(read)) bySeries.set(read, []);
+
+        bySeries.get(read)!.push(path);
+      }
     }
 
     if (bySeries.size === 0) return { rows: 0, files: 0 };
@@ -239,7 +251,7 @@ export const buildBatch = async (
 
       await conn.run(
         `COPY (SELECT ${repeats([...bySeries.keys()])}${q(instrument)} AS symbol, * EXCLUDE (_instrument, _wide, _sym, _file)${marginColumn(key, instrument)} FROM ${table}
-               WHERE _sym = ${q(instrument)} ORDER BY ts)
+               WHERE _sym = ${q(instrument)} ORDER BY ${orderOf(key)})
          TO ${q(temp)} (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE ${ROW_GROUP})`,
       );
 
@@ -316,6 +328,25 @@ export const sweepScratch = async (): Promise<void> => {
 const EARLIEST = 1_420_070_400_000_000;
 const LATEST   = 2_051_222_400_000_000;
 
+/**
+ * A series as one of its files is written: itself, or itself read as the other
+ * kind of table where the file turned out to be that. One object per series
+ * and format, so files of one kind gather under one key.
+ */
+const asWritten = (series: Series, format: string): Series => {
+  if (format === series.format) return series;
+
+  const known = written.get(series) ?? new Map<string, Series>();
+
+  if (! known.has(format)) known.set(format, { ...series, format });
+
+  written.set(series, known);
+
+  return known.get(format)!;
+};
+
+const written = new WeakMap<Series, Map<string, Series>>();
+
 /** Sequence for temp tables and files, unique within the process. */
 let sequence = 0;
 
@@ -337,7 +368,7 @@ const writeOne = async (
   await mkdir(staging, { recursive: true });
 
   await conn.run(
-    `COPY (SELECT ${distinct}${q(symbol)} AS symbol, *${marginColumn(key, symbol)} FROM ${relation} ORDER BY ts)
+    `COPY (SELECT ${distinct}${q(symbol)} AS symbol, *${marginColumn(key, symbol)} FROM ${relation} ORDER BY ${orderOf(key)})
      TO ${q(temp)} (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE ${ROW_GROUP})`,
   );
 
@@ -378,7 +409,7 @@ const writeSplit = async (
 
       await conn.run(
         `COPY (SELECT ${distinct}${q(instrument)} AS symbol, * EXCLUDE (_instrument)${marginColumn(key, instrument)} FROM ${table}
-               WHERE _instrument = ${q(instrument)} ORDER BY ts)
+               WHERE _instrument = ${q(instrument)} ORDER BY ${orderOf(key)})
          TO ${q(temp)} (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE ${ROW_GROUP})`,
       );
 
@@ -454,8 +485,17 @@ const marginColumn = (key: VaultKey, symbol: string): string => {
 };
 
 const labelFor = (key: VaultKey, symbol: string): string =>
-  [key.venue, key.market, symbol, key.table, key.interval ?? key.kind ?? (key.aggregated === 'true' ? 'aggregated' : ''), key.month]
+  [key.venue, key.market, symbol, key.table, key.depth,
+    key.interval ?? key.mode ?? key.kind ?? (key.aggregated === 'true' ? 'aggregated' : ''), key.month]
     .filter(Boolean).join('|');
+
+/**
+ * What a file's rows are sorted by: time, and where a table carries the
+ * venue's own sequence, that within one time — a book's changes are stamped
+ * coarsely enough that several share an instant, and their order is the book.
+ */
+const orderOf = (key: VaultKey): string =>
+  (fieldsOf(key.table).some(field => field.name === 'sequence') ? 'ts, sequence' : 'ts');
 
 /**
  * Refuse a file wider than the series describes, naming it.

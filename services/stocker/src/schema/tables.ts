@@ -98,10 +98,11 @@ export const TABLES: Record<Table, Field[]> = {
   ],
 
   /**
-   * An event log, not reconstructed books. One row per level change, which is
-   * the shape OKX, HTX and Gate already publish and the degenerate case of
-   * KuCoin's periodic snapshots. Rebuilding a book at an instant is the
-   * consumer's job, since the depth it needs is its decision.
+   * A book published as an image and the changes since: an event log, one row a
+   * level change, which is the shape OKX, HTX, Bybit and Gate publish. Not
+   * reconstructed books — rebuilding one at an instant is the consumer's job,
+   * since the depth it needs is its decision. A book published whole at each
+   * tick is another kind of data, and `orderBookSnapshot`.
    */
   orderBook: [
     TS,
@@ -111,6 +112,25 @@ export const TABLES: Record<Table, Field[]> = {
     { name: 'size',       type: 'DOUBLE'  },
     { name: 'orderCount', type: 'BIGINT'  },
     { name: 'sequence',   type: 'BIGINT'  },
+    MARGIN,
+  ],
+
+  /**
+   * A book published whole at each tick: one row a message, each side a list of
+   * `[price, size]` in the venue's own order. A different kind of data from a
+   * book published as an image and the changes since, which is `orderBook` — a
+   * tick stands alone and says nothing of what happened between it and the
+   * next, so there are no changes to log, only images to keep.
+   *
+   * Kept as the venue sends it rather than cut into a row a level: a tick is
+   * read whole, and stored whole it is what was published, at about the size
+   * it was published at.
+   */
+  orderBookSnapshot: [
+    TS,
+    { name: 'asks',     type: 'DOUBLE[][]' },
+    { name: 'bids',     type: 'DOUBLE[][]' },
+    { name: 'sequence', type: 'BIGINT'     },
     MARGIN,
   ],
 
@@ -134,6 +154,53 @@ export const TABLES: Record<Table, Field[]> = {
   premiumIndex: [TS,
     { name: 'open', type: 'DOUBLE' }, { name: 'high', type: 'DOUBLE' },
     { name: 'low',  type: 'DOUBLE' }, { name: 'close', type: 'DOUBLE' }],
+
+  /**
+   * An index of implied volatility — Binance's BVOL. A level, not a price of
+   * anything that trades, which is why it is not `indexPrice`.
+   */
+  volatilityIndex: [TS, { name: 'value', type: 'DOUBLE' }],
+
+  /**
+   * An option's mark price as bars, with the greeks the venue computed for the
+   * bar. Apart from `markPrice` because the greeks belong to options alone and
+   * every other market's mark price would carry four empty columns.
+   *
+   * **The instrument of an option table is the underlying, and `option` names
+   * the contract.** A venue lists thousands of contracts a month and each lives
+   * days, so a file per contract would be tens of thousands of files of a few
+   * rows; every venue's own files are an underlying's, or a whole market's.
+   */
+  optionMarkPrice: [TS,
+    { name: 'option', type: 'VARCHAR' },
+    { name: 'open',  type: 'DOUBLE' }, { name: 'high',  type: 'DOUBLE' },
+    { name: 'low',   type: 'DOUBLE' }, { name: 'close', type: 'DOUBLE' },
+    { name: 'delta', type: 'DOUBLE' }, { name: 'gamma', type: 'DOUBLE' },
+    { name: 'vega',  type: 'DOUBLE' }, { name: 'theta', type: 'DOUBLE' }],
+
+  /**
+   * The state of an option at a moment, or summed over a bar: what it trades
+   * at, what it is quoted at, what the venue marks it at, the implied
+   * volatility behind each of those, the greeks and the open interest.
+   *
+   * A tick fills the quote, the mark and the greeks; a bar adds what traded in
+   * it — OHLC and both volumes are of **trades**, never of the mark. Sizes and
+   * volumes are in contracts, as every venue publishes them. `option` names the
+   * contract, the instrument being its underlying — see `optionMarkPrice`.
+   */
+  optionTicker: [TS,
+    { name: 'option', type: 'VARCHAR' },
+    { name: 'open',  type: 'DOUBLE' }, { name: 'high',  type: 'DOUBLE' },
+    { name: 'low',   type: 'DOUBLE' }, { name: 'close', type: 'DOUBLE' },
+    { name: 'volume',      type: 'DOUBLE' },
+    { name: 'quoteVolume', type: 'DOUBLE' },
+    { name: 'bidPrice', type: 'DOUBLE' }, { name: 'bidSize', type: 'DOUBLE' }, { name: 'bidIv', type: 'DOUBLE' },
+    { name: 'askPrice', type: 'DOUBLE' }, { name: 'askSize', type: 'DOUBLE' }, { name: 'askIv', type: 'DOUBLE' },
+    { name: 'markPrice', type: 'DOUBLE' }, { name: 'markIv', type: 'DOUBLE' },
+    { name: 'delta', type: 'DOUBLE' }, { name: 'gamma', type: 'DOUBLE' },
+    { name: 'vega',  type: 'DOUBLE' }, { name: 'theta', type: 'DOUBLE' },
+    { name: 'openInterest',      type: 'DOUBLE' },
+    { name: 'openInterestValue', type: 'DOUBLE' }],
 
   /**
    * What was actually applied and the running estimate for the next interval
@@ -176,6 +243,15 @@ export const TABLES: Record<Table, Field[]> = {
 
   settlement: [TS, { name: 'price', type: 'DOUBLE' }],
 };
+
+/**
+ * The name a table's files are kept under, where that is not its own: a book's
+ * two kinds are two tables — two schemas — of one dataset, told apart in the
+ * vault by the `mode=` level its variant gives, as in the catalog.
+ */
+export const rootOf = (table: Table): string => ROOTS[table] ?? table;
+
+const ROOTS: Partial<Record<Table, string>> = { orderBookSnapshot: 'orderBook' };
 
 export const fieldsOf = (table: Table): Field[] => {
   const fields = TABLES[table];

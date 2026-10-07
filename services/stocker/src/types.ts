@@ -1,7 +1,8 @@
 /** A canonical table. One table is one schema and one queryable dataset root. */
 export type Table =
-  | 'trades' | 'quotes' | 'orderBook' | 'depthBands' | 'klines'
-  | 'markPrice' | 'indexPrice' | 'premiumIndex'
+  | 'trades' | 'quotes' | 'orderBook' | 'orderBookSnapshot' | 'depthBands' | 'klines'
+  | 'markPrice' | 'indexPrice' | 'premiumIndex' | 'volatilityIndex'
+  | 'optionMarkPrice' | 'optionTicker'
   | 'funding' | 'borrowing' | 'openInterest' | 'liquidations' | 'settlement';
 
 /**
@@ -26,7 +27,7 @@ export type Spill = 'back' | 'forward' | 'both';
 /** One column of a canonical table. */
 export interface Field {
   name: string;
-  type: 'BIGINT' | 'DOUBLE' | 'VARCHAR' | 'BOOLEAN';
+  type: 'BIGINT' | 'DOUBLE' | 'VARCHAR' | 'BOOLEAN' | 'DOUBLE[][]';
 }
 
 /** One month of a slice, as the catalog's partitions endpoint answers it. */
@@ -89,7 +90,10 @@ export interface Series {
   /** First month (`YYYY-MM`) it no longer holds for. */
   until?:   string;
 
-  /** How rows are read once the container is undone: `csv` or `xlsx`. */
+  /**
+   * How rows are read once the container is undone: a table (`csv` or `xlsx` —
+   * which of the two is read off each file), `ndjson`, `lines` or `words`.
+   */
   format:   string;
 
   /**
@@ -99,6 +103,22 @@ export interface Series {
    */
   header:   boolean;
   columns?: Column[];
+
+  /**
+   * The fields read from each record and their types, where the format reads
+   * records that name their own fields (`ndjson`) and their types must not be
+   * left to sampling.
+   */
+  fields?:  Record<string, string>;
+
+  /**
+   * A query that turns what the format reads into the rows the projection
+   * reads, where a record is not yet a row — a book message holds a list of
+   * levels a side, and a row is one level. `{src}` stands for the format's
+   * relation. It keeps every column it does not consume, since the build
+   * carries some of its own through.
+   */
+  rows?:    string;
 
   /** Canonical field → expression over the source relation. Absent fields are NULL. */
   project:  Record<string, string>;
@@ -194,6 +214,12 @@ export interface VaultKey {
   market:    Market;
   interval?: string;
   kind?:     string;
+
+  /** Order books only: how many levels a side the venue publishes — `400`, `full`. */
+  depth?:    string;
+
+  /** Order books only: `incremental` for an image and the changes since, `snapshot` for an image a tick. */
+  mode?:     string;
 
   /** Trades only: `false` for every trade as it happened, `true` for a venue's aggregation of them. */
   aggregated?: string;

@@ -73,7 +73,7 @@ describe('the series map', () => {
 
   /** What is not mapped is left alone, never guessed at. */
   it('returns null for a dataset it does not read', () => {
-    expect(seriesFor(file('okx/spot/books,400,incremental/B/BTC-USDT/202607/okx|spot|books,400,incremental|BTC-USDT|20260725.tar.gz')))
+    expect(seriesFor(file('okx/spot/insurance/B/BTC-USDT/202607/okx|spot|insurance|BTC-USDT|20260725.zip')))
       .toBeNull();
   });
 
@@ -87,10 +87,18 @@ describe('the series map', () => {
     }
   });
 
-  /** The ts column must be one stocker can actually find in the relation. */
+  /**
+   * The ts column must be one stocker can actually find in the relation — or,
+   * for a file named by the moment it holds, the name every row carries.
+   */
   it('names a ts column that the headerless column list contains', () => {
     for (const series of SERIES) {
-      if (series.header || ! series.columns) continue;
+      if (series.header || ! series.columns || series.rows) continue;
+
+      if (series.format === 'words') {
+        expect(series.ts, `${series.venue}/${series.table}/${series.market}`).toContain('filename');
+        continue;
+      }
 
       const names = series.columns.map(c => c.as).filter(Boolean);
 
@@ -104,20 +112,24 @@ describe('the series map', () => {
    * most one entry may answer.
    */
   it('never lets two entries claim the same file', () => {
+    const claimedTwice: string[] = [];
+
     for (const series of SERIES) {
+      const readers = seriesOf({ ...series, variant: series.variant === '*' ? '1m' : series.variant ?? '' });
+
       for (const month of ['2020-06', '2026-01', '2026-02', '2026-07']) {
         for (const margin of ['linear', 'inverse', null]) {
-          const claims = seriesOf({ ...series, variant: series.variant === '*' ? '1m' : series.variant ?? '' })
-            .filter(one =>
-              (! one.margin || one.margin === margin) &&
-              (! one.from  || month >= one.from) &&
-              (! one.until || month <  one.until));
+          const claims = readers.filter(one =>
+            (! one.margin || one.margin === margin) &&
+            (! one.from  || month >= one.from) &&
+            (! one.until || month <  one.until));
 
-          expect(claims.length, `${series.venue}/${series.market}/${series.dataset} ${month} ${margin}`)
-            .toBeLessThanOrEqual(1);
+          if (claims.length > 1) claimedTwice.push(`${series.venue}/${series.market}/${series.dataset} ${month} ${margin}`);
         }
       }
     }
+
+    expect(claimedTwice).toEqual([]);
   });
 });
 
@@ -156,10 +168,16 @@ describe('formats chosen inside one dataset', () => {
 });
 
 describe('venues whose buckets do not cut at UTC midnight', () => {
-  /** bitget, okx and htx cut at 16:00 UTC; bybit's MT4 files are UTC+3 months. */
+  /**
+   * bitget, okx and htx cut at 16:00 UTC; bybit's MT4 files are UTC+3 months.
+   * okx's books are the one exception: their files cut at UTC midnight.
+   */
   it('declares a back spill for every bitget, okx and htx series, and for bybit\'s MT4 klines', () => {
-    for (const series of SERIES.filter(one => ['bitget', 'okx', 'htx'].includes(one.venue)))
-      expect(series.spill, `${series.venue} ${series.market} ${series.dataset}`).toBe('back');
+    for (const series of SERIES.filter(one => ['bitget', 'okx', 'htx'].includes(one.venue))) {
+      const aligned = series.venue === 'okx' && series.dataset === 'books';
+
+      expect(series.spill, `${series.venue} ${series.market} ${series.dataset}`).toBe(aligned ? undefined : 'back');
+    }
 
     const mt4 = SERIES.find(one => one.venue === 'bybit' && one.dataset === 'klines');
 

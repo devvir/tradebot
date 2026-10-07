@@ -45,8 +45,8 @@ converting seconds to microseconds is mechanical and reversible. Deciding a 50-l
 ## Path convention
 
 ```
-<vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…][/aggregated=…]/@/<YYYYMM>.parquet
-<vault>/venue=…/market=…/dataset=…[/interval=…][/kind=…][/aggregated=…]/<symbol>/<YYYYMM>.parquet
+<vault>/venue=…/market=…/dataset=…[/interval=…][/depth=…][/mode=…][/kind=…][/aggregated=…]/@/<YYYYMM>.parquet
+<vault>/venue=…/market=…/dataset=…[/interval=…][/depth=…][/mode=…][/kind=…][/aggregated=…]/<symbol>/<YYYYMM>.parquet
 …/<@ or symbol>/<YYYYMM>.pre.parquet     the month's first hours, from the month before
 …/<@ or symbol>/<YYYYMM>.post.parquet    the month's last hours, from the month after
 ```
@@ -298,10 +298,31 @@ stocker does not read that dataset, and it is never listed.
 **A venue that repeats whole rows says so** (`repeatsRows`), and exact repeats — every column
 equal — are written once. It is declared per format rather than applied everywhere, because a
 repeated row is only an artifact where the venue is known to write them; elsewhere two equal rows
-could be two real events. okx's candlesticks are the case.
+could be two real events. okx's candlesticks, binance's liquidations and kucoin's books are the
+cases.
 
 Each file is read by the series that claims it, so one build can union two formats into one
 canonical relation.
+
+**Whether a table is text or a sheet is read off the file, never declared.** `csv` and `xlsx` are one
+thing to the map — a table, whose columns and meaning the series states — and each file is read as
+what it is: a sheet opens with a zip archive's signature, anything else is text. A venue that writes
+a day's klines as a sheet and a month's as text, as bitget does, or that changes from one to the
+other, needs no entry changed.
+
+**How a file is read is a format, and there are five**: `csv`, by header or by declared position;
+`xlsx`, a sheet; `ndjson`, a JSON record a line, its fields and their types declared where sampling
+them would be wrong (`fields`); `lines`, a line a value, for JSON under a header that calls itself
+CSV; and `words`, values parted by blanks, for gate's files that have neither a header nor a
+delimiter a CSV reader can be trusted with.
+
+**Where a record is not yet a row, the series says how it becomes rows** (`rows`): a book message
+holds a list of levels a side, and a row is one level. It is a query over what the format read, run
+before the projection.
+
+**A row's time can be the file's name.** Gate names some files by the moment they hold and writes no
+time inside; the catalog keeps that moment as the file's part, the last thing in its name, and the
+series reads `ts` from there.
 
 ### Instruments, and files that hold several
 
@@ -461,8 +482,9 @@ The cost is that a wrongly *mapped* column yields NULLs instead of an error. `ma
 covers that: it drives every series against a real file from the venue and asserts the projected
 values, catching a bad mapping where it can be read and fixed.
 
-`trades` · `quotes` · `orderBook` · `depthBands` · `klines` · `markPrice` · `indexPrice` ·
-`premiumIndex` · `funding` · `borrowing` · `openInterest` · `liquidations` · `settlement`
+`trades` · `quotes` · `orderBook` · `orderBookSnapshot` · `depthBands` · `klines` · `markPrice` · `indexPrice` ·
+`premiumIndex` · `volatilityIndex` · `optionMarkPrice` · `optionTicker` · `funding` · `borrowing` ·
+`openInterest` · `liquidations` · `settlement`
 
 Notes on the ones whose boundaries are not obvious:
 
@@ -472,9 +494,30 @@ Notes on the ones whose boundaries are not obvious:
   identical 12-column kline header. Same file shape, different data, different table.
 - **`depthBands` is not a book.** Binance's `bookDepth` is notional within ±% bands of the mid —
   a summary. `quotes` is level 1 only; Bitget's "depth" belongs there despite its name.
-- **`orderBook` is an event log**, not reconstructed books: one row per level change, with
-  `action` ∈ snapshot/set/delta. Rebuilding a book at an instant is the consumer's job, since the
-  depth it needs is its decision. No venue's books are mapped yet.
+- **A book is one of two kinds of data, and each has its table.** Which kind is the catalog's
+  variant, and a level of the path: `depth=400/mode=incremental`, `depth=50/mode=snapshot`, both under
+  `dataset=orderBook`.
+  - **`orderBook`** — a book published as an image and the changes since. An event log, one row a
+    level: `ts, action, side, price, size, orderCount, sequence`. `action` says what the row does to
+    the book: `snapshot`, a level of a whole image, the rows sharing its time being the book; `set`,
+    the level is now this size, and gone at size 0; `make` and `take`, this much was added to the
+    level or taken from it. `side` is `bid` or `ask`. Rows are sorted by time and then by the venue's
+    sequence, since several changes can share a stamp and their order is the book.
+  - **`orderBookSnapshot`** — a book published whole at each tick. One row a message: `ts, asks,
+    bids, sequence`, each side a list of `[price, size]` in the venue's own order. A tick stands
+    alone and says nothing of what happened before the next, so there are no changes to log; kept
+    whole it is what was published, at about the size it was published at.
+
+  Neither is a reconstructed book: rebuilding one at an instant is the consumer's job, since the
+  depth it needs is its decision.
+- **An option has three tables of its own.** `optionTicker` is an option's state at a moment or over
+  a bar — what traded (OHLC and volumes, of trades), the quote, the mark, the implied volatility
+  behind each, the greeks, the open interest. `optionMarkPrice` is its mark price as bars with the
+  greeks beside them. `volatilityIndex` is an index of implied volatility, a level and not a price.
+  The two bar tables carry an `interval=` level like klines do; ticks carry none. In `optionTicker`
+  and `optionMarkPrice` the instrument is the **underlying** and `option` names the contract: a venue
+  lists thousands of contracts a month, each living days, and every venue's own files are an
+  underlying's or a whole market's.
 - **`funding` carries a `kind`** of `realised` or `predicted`. Gate publishes both; conflating
   them would invent a series.
 - **Trades say whether they are aggregated**, as a level of their path: `aggregated=false` for
@@ -600,7 +643,7 @@ Every entry was written from a decoded file — one probed at each end of the da
 and the semantics a file cannot state were settled by arithmetic over real rows, not by reading
 documentation.
 
-Every format, venue by venue — what each file holds, how it maps, and what is not mapped yet — is
+Every format, venue by venue — what each file holds and how it maps — is
 in [STOCKER-PARTITIONS.md](STOCKER-PARTITIONS.md).
 
 The map is exercised against fixtures cut from real archive files, so a renamed column, a swapped

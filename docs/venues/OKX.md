@@ -305,6 +305,47 @@ so the month's sides are not known, and taken as published its rows and its volu
 
 **Swap trades are therefore usable from 2021-11.**
 
+### Candlestick volumes are three columns, filled by era
+
+A candlestick row is `instrument_name, open, high, low, close, vol, vol_ccy, vol_quote, open_time,
+confirm`. `vol` is always filled. The other two are not, and a column okx did not fill holds the text
+`None` on every row of the file.
+
+| Months | `vol_ccy` | `vol_quote` |
+|---|---|---|
+| up to 2021-08 (spot; nothing else is published yet) | filled | `None` |
+| 2021-09 to 2023-08 | `None` | `None` |
+| from 2023-09 | filled | filled |
+
+What they measure depends on the market:
+
+- **Spot**: `vol` is the base amount, and `vol_ccy` and `vol_quote` are both the quote amount — the
+  same number wherever both are filled. `ETH-BTC`, 2020-12: `vol` 113.075912 at 0.0309, `vol_ccy`
+  3.4946. `BTC-USDT`, 2023-09: 5.52708124, 148781.61, 148781.61.
+- **Contracts**: `vol` is the number of contracts, `vol_ccy` the base coin and `vol_quote` the quote.
+  `BTC-USDT-SWAP`, 2023-09: 11060, 110.6, 2976805.145. `BTC-USD-SWAP`: 3204, 11.9026, 320400.
+
+Read from the monthly files of `BTC-USDT`, `ETH-BTC`, `BTC-USDT-SWAP` and `BTC-USD-SWAP`, one row a
+month.
+
+### What a book file holds
+
+The `.tar.gz` holds one `.data` file of a JSON record a line:
+
+```
+{"instId":"AUDF-USDT","action":"snapshot","ts":"1780272000008","asks":[["0.7189","50000","1"]],"bids":[…]}
+{"instId":"AUDF-USDT","action":"update","ts":"1780272031008","asks":[["0.7189","0","0"]],"bids":[…]}
+```
+
+A `snapshot` is the whole book to the file's depth and an `update` the levels that changed; a level
+is `[price, size, orders]`, and a size of `0` removes it. At 400 levels there is a snapshot a minute
+(1,440 in a day's file), each side filled out to 400 with `["0","0.0","0"]`. `ts` is in milliseconds,
+unique and rising through a file. A `futureschain` or `optionchain` file holds every contract of the
+family, each record naming its own.
+
+**Book files are UTC days.** A day's file runs 00:00 to 24:00 UTC (2023-03-01, 2023-12-18,
+2026-06-01; spot, swap and futures), where a day of trades or candlesticks is a UTC+8 day.
+
 ### The book holes are real, and two methods agree
 
 `BTC-USDT` 400lv, asked of the index and probed directly on the same days:

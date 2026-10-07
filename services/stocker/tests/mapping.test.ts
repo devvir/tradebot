@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DuckDBInstance } from '@duckdb/node-api';
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
+import { formatOf } from '../src/formats';
 import { csv } from '../src/formats/csv';
 import { parseKey } from '../src/keys';
 import { selectFor } from '../src/schema/project';
@@ -70,7 +71,7 @@ const rowsOf = async (
 };
 
 /** Fixtures this file can drive end to end: mapped, and stored as CSV. */
-const mapped = FIXTURES.filter(f => resolve(f)?.format === 'csv');
+const mapped = FIXTURES.filter(f => ['csv', 'xlsx'].includes(resolve(f)?.format ?? ''));
 
 const label = (f: Fixture): string => f.fixture.replace(/\.csv$/, '');
 
@@ -78,16 +79,7 @@ describe('the map against real files', () => {
   it('resolves the datasets it claims, and only those', () => {
     const unmapped = FIXTURES.filter(f => resolve(f) === null).map(label);
 
-    // What is left out is left out for one reason only: order books are an
-    // event log with a shape of their own — nested arrays of levels per row,
-    // rather than one row per fact — and are the last table to build.
-    expect(unmapped.sort()).toEqual([
-      'gate.futures_btc-orderbooks',
-      'gate.futures_usdt-orderbooks',
-      'gate.spot-orderbooks',
-      'kucoin.futures-orderbooklv50',
-      'kucoin.spot-orderbooklv50',
-    ]);
+    expect(unmapped).toEqual([]);
 
     expect(mapped.length).toBeGreaterThanOrEqual(60);
   });
@@ -330,6 +322,98 @@ describe('what the numbers mean', () => {
     expect(Number(early!.volume)).toBe(0);
     expect(late).toMatchObject({ open: 0.0002, close: 0.0002 });
     expect(Number(late!.quoteVolume)).toBe(0);
+  });
+
+  /** An option an hour: trades, the quote, the mark, the greeks and the open interest, under one stamp. */
+  it('reads binance\'s hourly option summary', async () => {
+    const series = resolve(named('binance.option-eohsummary.csv'))!;
+    const [row]  = await rowsOf(series, 'binance.option-eohsummary.csv', 1);
+
+    expect(series.table).toBe('optionTicker');
+    expect(series.instrument).toBeUndefined();
+    expect(row).toMatchObject({
+      option: 'BNB-230519-300-P', open: 1.1, high: 1.1, low: 0.4, close: 0.4, volume: 138.33, quoteVolume: 138.33,
+      bidPrice: 0.1, askPrice: 0.4, bidSize: 17.65, askSize: 3.74, bidIv: null, askIv: 0.55774391,
+      markPrice: 0.2, markIv: 0.48713863, delta: -0.0569008, gamma: 0.01255983, vega: 0.02133924,
+      theta: -0.40239005, openInterest: 271.36, openInterestValue: 85203.21729198,
+    });
+    expect(Number(row!.ts)).toBe(Date.UTC(2023, 4, 18, 0) * 1000);
+  });
+
+  /** The same ten columns on every line of futures, and every row written twice. */
+  it('reads binance\'s liquidations on a USD-margined future as on a coin-margined perpetual', async () => {
+    const usd  = resolve(named('binance.um-liquidationSnapshot.csv'))!;
+    const coin = resolve(named('binance.cm-liquidationSnapshot.csv'))!;
+    const rows = await rowsOf(usd, 'binance.um-liquidationSnapshot.csv', 4);
+
+    expect(usd.repeatsRows).toBe(true);
+    expect(coin.repeatsRows).toBe(true);
+    expect(rows[0]).toMatchObject({ side: 'buy', price: 30637.11, size: 0.041, averagePrice: 30512.82, status: 'FILLED' });
+    expect(rows[1]).toEqual(rows[0]);
+    expect(Number(rows[0]!.ts)).toBe(1_687_651_650_612_000);
+  });
+
+  it('reads binance\'s volatility index', async () => {
+    const series = resolve(named('binance.option-bvolindex.csv'))!;
+    const [row]  = await rowsOf(series, 'binance.option-bvolindex.csv', 1);
+
+    expect(series.table).toBe('volatilityIndex');
+    expect(row).toMatchObject({ value: 47.332 });
+    expect(Number(row!.ts)).toBe(1_687_219_900_000_000);
+  });
+
+  /** Mark-price bars with the greeks beside them; gamma is spelled `gama`. */
+  it('reads bybit\'s option mark price, greeks and all', async () => {
+    const series = resolve(named('bybit.option-markkline.csv'))!;
+    const rows   = await rowsOf(series, 'bybit.option-markkline.csv', 10);
+
+    expect(series.table).toBe('optionMarkPrice');
+    expect(series.instrument).toBeUndefined();
+    expect(rows[0]).toMatchObject({
+      option: 'BTC-10MAR26-60000-C-USDT', open: 9516.4927594, high: 9522.44610348, low: 9387.01937696, close: 9456.94777849,
+      delta: 0.99999912, gamma: 0, vega: 0.00006644, theta: -0.00469967,
+    });
+    expect(Number(rows[0]!.ts)).toBe(1_773_114_660_000_000);
+    expect(rows.some(row => Number(row.delta) < 0)).toBe(true);
+  });
+
+  /**
+   * A month of bitget's klines or depth is plain text where a day of them is a
+   * sheet: the same columns, read by the same names, by the same entry. Which
+   * one a file is, is read off the file.
+   */
+  it('reads bitget\'s monthly klines and depth, which are text where the daily ones are sheets', async () => {
+    const day   = seriesFor(parseKey('bitget/spot/klines,1m/E/ETHUSDT/202609/bitget|spot|klines,1m|ETHUSDT|20260910.zip')!)!;
+    const month = resolve(named('bitget.spot-klines-month.csv'))!;
+
+    expect(month).toBe(day);
+    expect(await formatOf(month.format, join(DIR, 'bitget.spot-klines-month.csv'))).toBe('csv');
+    expect(await formatOf('ndjson', join(DIR, 'bitget.spot-klines-month.csv'))).toBe('ndjson');
+
+    const [spot]   = await rowsOf(resolve(named('bitget.spot-klines-month.csv'))!, 'bitget.spot-klines-month.csv', 1);
+    const [future] = await rowsOf(resolve(named('bitget.future-klines-month.csv'))!, 'bitget.future-klines-month.csv', 1);
+    const [depth]  = await rowsOf(resolve(named('bitget.perp-quotes-month.csv'))!, 'bitget.perp-quotes-month.csv', 1);
+
+    expect(spot).toMatchObject({ open: 2467.6, close: 2466.44, volume: 52.2801, quoteVolume: 128949.329914 });
+    expect(Number(spot!.ts)).toBe(1_788_192_000_000_000);
+    expect(future).toMatchObject({ open: 78780.4, volume: 0.003, quoteVolume: 236.3303 });
+    expect(depth).toMatchObject({ askPrice: 1962.18, bidPrice: 1962.17, askSize: 55.85, bidSize: 0.5 });
+    expect(Number(depth!.ts)).toBe(1_772_317_030_000_000);
+  });
+
+  /**
+   * Until 2021-08 the quote turnover of a spot bar is in `vol_ccy` and
+   * `vol_quote` is `None`; later files hold it in both, and a contract's
+   * `vol_ccy` is the base coin, which is never the quote.
+   */
+  it('reads okx\'s spot quote volume from whichever column holds it', async () => {
+    const [early] = await rowsOf(resolve(named('okx.spot-candlesticks-volccy.csv'))!, 'okx.spot-candlesticks-volccy.csv', 1);
+    const [late]  = await rowsOf(resolve(named('okx.spot-candlesticks.csv'))!, 'okx.spot-candlesticks.csv', 1);
+    const [swap]  = await rowsOf(resolve(named('okx.swap-candlesticks.csv'))!, 'okx.swap-candlesticks.csv', 1);
+
+    expect(early).toMatchObject({ close: 0.03093, volume: 113.075912, quoteVolume: 3.49460009735 });
+    expect(late).toMatchObject({ volume: 1.8975694, quoteVolume: 121270.316982828 });
+    expect(Number(swap!.quoteVolume)).toBeGreaterThan(Number(swap!.volume) * 100);
   });
 
   /** The side is spelled `direction`; which leg `amount` measures is not settled, so neither is filled. */

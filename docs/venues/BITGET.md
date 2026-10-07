@@ -105,6 +105,26 @@ per day-series and cost a silently truncated day whenever the bet was wrong.
 Depth publishes a missing quote as **`-999999`**, not an empty field. It must become NULL or every
 spread computed from this venue is wrong. Handled in the series map.
 
+### A day's klines and depth are a sheet, a month's are text
+
+The `.zip` of a day holds an Excel file (`20260910.xlsx`, or `<name>.xlsx` in the older naming); the
+`.zip` of a month, under `kline_month/` and `depth_month/`, holds a CSV named after the file
+(`ETHUSDT_SP_1min_202609.csv`, `ETHUSDT_3_202603.csv`). The columns and their names are the same:
+
+```
+klines  timestamp, open, high, low, close, basevolume, usdtvolume
+depth   timestamp, ask_price, bid_price, ask_volume, bid_volume
+```
+
+`timestamp` is in whole seconds in both, and the rows of a depth file are not in time order. Trades
+are CSV at either grain, `trade_id, timestamp, price, side, volume(quote), size(base)`, with
+`timestamp` in milliseconds. Seen on spot, USDT futures and delivery contracts, 2025-08 to 2026-09.
+
+**Depth sizes follow the product line.** They are in the base coin (`BTCUSDT`: 14.4588;
+`BTCUSDU24`: 0.082), and in whole contracts on the coin-margined line filed under `…CM…`
+(`BTCCMZ26`, 2026-09-10: every one of 3,658 rows a whole number, median 10,417) — see
+[the two product lines](#coin-margined-futures-are-two-live-product-lines).
+
 ### Depth is two datasets, and one of them is invisible without a parameter
 
 `deptType: 2` on the download index returns a different tree from the one every earlier sweep saw:
@@ -116,6 +136,10 @@ books   depth_500/BTCUSDT/1/BTCUSDT_1_20260901.zip
 
 A level-1 depth file is quotes; `depth_500` is a real 500-level book. The two are separate
 datasets with separate keys, and nothing that omits `deptType` will ever see the second.
+
+A `depth_500` file is `timestamp, asks, bids`: an image of the book every twenty seconds, `timestamp`
+in whole seconds, each side JSON text in one cell — `[[1.0082,0.7161],[1.0173,0.7161],…]`, a level
+`[price, size]`. Like klines and quotes it is a sheet in a day's file and a CSV in a month's.
 
 **Books carry one shape and no eras.** Measured over 794 windows across both business lines, the
 whole range, with no window failing: 324,979 files under `depth_500/{S}/1/{S}_1_{DATE}.zip` for

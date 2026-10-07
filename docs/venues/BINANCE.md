@@ -148,6 +148,12 @@ measurement that settles it:
 | `data/futures/cm/daily/liquidationSnapshot/` | exists, coin-margined only |
 | `data3/liquidationSnapshot/1000FLOKIUSDT/` | exists; the same symbol is absent from `data/` |
 
+**Every liquidation row is written twice.** The files of all three families — `data3/`, and
+coin-margined perpetuals and dated contracts under `data/futures/cm/` — share ten columns, `time, side,
+order_type, time_in_force, original_quantity, price, average_price, order_status, last_fill_quantity,
+accumulated_fill_quantity`, and hold each row twice in a row: `BTCUSDT` 2023-06-25 has 1,720 rows of
+which 860 repeat the one before, `BTCUSD_PERP` 2024-10-14 100 and 50.
+
 So the USDT-margined liquidation snapshots live *only* in `data3/`. This also corrects an earlier
 note that "liquidationSnapshot exists only under `cm`" — true of `data/`, false of the bucket.
 

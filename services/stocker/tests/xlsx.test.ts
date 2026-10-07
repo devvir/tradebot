@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { DuckDBInstance } from '@duckdb/node-api';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { xlsx } from '../src/formats/xlsx';
+import { formatOf } from '../src/formats';
 import { parseKey } from '../src/keys';
 import { seriesFor } from '../src/schema/series';
 import { selectFor } from '../src/schema/project';
@@ -76,6 +77,14 @@ describe('reading a month of spreadsheets', () => {
 
     expect(rows).toHaveLength(3);
     expect(rows.map(r => Number(r.bidPrice))).toEqual([1.4, 1.41, 1.6]);
+  });
+
+  /** A table is read as what its file is, whatever the entry that claims it says. */
+  it('is known for a sheet by the file itself', async () => {
+    const path = await sheet('known.xlsx', [[1_725_321_600, 1.5, 1.6]]);
+
+    expect(await formatOf('csv', path)).toBe('xlsx');
+    expect(await formatOf('xlsx', path)).toBe('xlsx');
   });
 
   it('still reads a month that really is one sheet', async () => {

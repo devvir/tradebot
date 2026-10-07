@@ -182,6 +182,30 @@ describe('a batch writes what instruments built alone would', () => {
   });
 });
 
+describe('a book\'s rows', () => {
+  /**
+   * Gate stamps a tenth of a second, and several changes share one. Their
+   * order is the book, so a file is sorted by time and then by the venue's own
+   * sequence — whatever order the rows were read in.
+   */
+  it('are written in the venue\'s sequence inside one time', async () => {
+    const book: VaultKey = { table: 'orderBook', venue: 'gate', market: 'perp', depth: 'full', mode: 'incremental', month: '2026-06' };
+    const file = await input('gate.futures-books-shuffled.csv',
+      'gate/perp/books,full,incremental/B/BTC_USD/202606/gate|perp|books,full,incremental|BTC_USD|20260601.part21.csv.gz');
+    const here = join(dir, 'book');
+
+    await buildGroup(conn, book, 'BTC_USD', [file], here);
+
+    const [name] = await written(here);
+    const read   = await conn.runAndReadAll(`SELECT sequence, action, side FROM read_parquet('${join(here, name!)}')`);
+
+    expect(read.getRows().map(row => [Number(row[0]), row[1], row[2]])).toEqual([
+      [5_301_531_664, 'set', 'bid'], [5_301_531_665, 'take', 'ask'], [5_301_531_666, 'take', 'bid'],
+      [5_301_531_667, 'make', 'ask'], [5_301_531_668, 'make', 'bid'],
+    ]);
+  });
+});
+
 describe('splitting a partition into work', () => {
   const group = (symbol: string, size: number) => ({
     symbol, inputs: [{ absolute: symbol, file: parseKey(`x/spot/trades/B/${symbol}/202001/x|spot|trades|${symbol}|202001.zip`)!, size, mtimeMs: 0 }],

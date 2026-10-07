@@ -16,6 +16,10 @@ import type { ArchiveFile, Series } from '../types';
  * than one format, an entry says which files it reads: by the instrument's
  * margining (`margin`), or by the months it holds for (`from`/`until`).
  *
+ * **Whether a table is written as text or as a sheet is not declared at all.**
+ * `csv` and `xlsx` both say "a table", and each file is read as what it is —
+ * see `formatOf`.
+ *
  * Two shapes of entry, because the files come in two shapes:
  *
  * - A file whose header can be trusted for the whole of its history is mapped
@@ -99,6 +103,16 @@ const GATE_TRADFI_CANDLE = [col('rawTs'), col('close'), col('high'), col('low'),
 /** Three prices per row; only the first is identified, so the others are dropped. */
 const GATE_MARK = [col('rawTs'), col('price'), drop, drop];
 
+const GATE_OPTION_TICKER = [
+  col('name'), col('markPrice'), col('markIv'),
+  col('bidSize'), col('bidPrice'), col('bidIv'),
+  col('askSize'), col('askPrice'), col('askIv'),
+  col('delta'), col('gamma'), col('theta'), col('vega'),
+];
+
+/** The underlying of a gate option: `BTC_USDT` of `BTC_USDT-20260603-80000-C`. */
+const GATE_UNDERLYING = `regexp_extract(name, '^([^-]+)-', 1)`;
+
 const GATE_FUNDING_APPLY  = [col('rawTs'), col('rate')];
 const GATE_FUNDING_UPDATE = [col('rawTs'), col('rate'), drop, drop, drop, drop, drop, drop];
 
@@ -180,6 +194,9 @@ const GATE_FUT_SIZE = `abs(TRY_CAST(size AS DOUBLE))`;
 const quote = (column: string): string =>
   `nullif(TRY_CAST(${column} AS DOUBLE), -999999)`;
 
+/** OKX's spot quote volume, from whichever of its two columns holds a number. */
+const OKX_SPOT_QUOTE = `coalesce(TRY_CAST(vol_quote AS DOUBLE), TRY_CAST(vol_ccy AS DOUBLE))`;
+
 const OHLC  = { open: 'open', high: 'high', low: 'low', close: 'close' };
 const OHLCV = { ...OHLC, volume: 'volume' };
 
@@ -188,8 +205,68 @@ const BINANCE_KLINE_COLUMNS = {
   takerBuyVolume: 'takerBuyVolume', takerBuyQuote: 'takerBuyQuote',
 };
 
-const csv  = { format: 'csv' }  as const;
-const xlsx = { format: 'xlsx' } as const;
+const csv   = { format: 'csv' }   as const;
+const xlsx  = { format: 'xlsx' }  as const;
+const words  = { format: 'words' }  as const;
+const ndjson = { format: 'ndjson' } as const;
+const lines  = { format: 'lines' }  as const;
+
+/**
+ * The moment a file is named by, where no row states one: the part the catalog
+ * gives the file, which is the last thing in its name.
+ */
+const NAMED_AT = `regexp_extract(filename, '\\.part(\\d+)$', 1)`;
+
+
+// ── Order books ───────────────────────────────────────────────────────────────
+
+/**
+ * One row a level, from records that hold a list of levels a side.
+ *
+ * A book published as an image and the changes since comes, from every venue
+ * but gate, as messages of two lists — asks and bids — of `[price, size]`, some
+ * with a third value. This unfolds them: `_side`, `_price`, `_size` and `_third` beside whatever else
+ * the record held. A level whose price is `0` is padding — okx fills an image
+ * out to its depth with them — and is not a level.
+ */
+const levels = (asks: string, bids: string, src = '{src}'): string =>
+  `SELECT * EXCLUDE (_s, _l), _s.side AS _side, _l[1] AS _price, _l[2] AS _size, _l[3] AS _third ` +
+  `FROM (SELECT *, unnest(_s.levels) AS _l FROM (` +
+  `SELECT *, unnest([{'side': 'ask', 'levels': ${asks}}, {'side': 'bid', 'levels': ${bids}}]) AS _s FROM ${src})) ` +
+  `WHERE TRY_CAST(_l[1] AS DOUBLE) IS DISTINCT FROM 0`;
+
+/** A list of `[price, size]` written as JSON text, as a list of lists. */
+const jsonLevels = (column: string): string => `from_json(CAST(${column} AS JSON), '[["VARCHAR"]]')`;
+
+const LEVEL = { side: '_side', price: '_price', size: '_size' };
+
+/**
+ * What a row does to the book, in four words:
+ *
+ * - `snapshot` — a level of a whole image: the rows sharing its time are the
+ *   book, and anything not among them is gone;
+ * - `set` — the level is now this size, and gone at size 0;
+ * - `make`, `take` — this much was added to the level, or taken from it.
+ */
+const IMAGE_OR_SET = (column: string, image = 'snapshot'): string =>
+  `CASE WHEN ${column} = '${image}' THEN 'snapshot' ELSE 'set' END`;
+
+/** OKX's and HTX's book record: the same five fields, a level of three values or of two. */
+const BOOK_FIELDS = {
+  instId: 'VARCHAR', action: 'VARCHAR', ts: 'VARCHAR', asks: 'VARCHAR[][]', bids: 'VARCHAR[][]',
+};
+
+/** Gate's incremental books: a row a level change already. Spot names the side, futures sign the size. */
+const GATE_SPOT_BOOK = [
+  col('rawTs'), col('side'), col('action'), col('price'), col('size'), col('id'), drop,
+];
+const GATE_FUT_BOOK = [col('rawTs'), col('action'), col('price'), col('size'), col('id'), drop];
+
+/** Gate's futures images write a level as `{p, s}`; this is it as `[price, size]`. */
+const GATE_LEVEL_LIST = (column: string): string => `list_transform(${column}, lambda x: [x.p, x.s])`;
+
+/** The other tables of bars, whose catalog variant is an interval too — where it is not `ticks`. */
+const BARS = ['optionMarkPrice', 'optionTicker'] as const;
 
 /** The klines-shaped datasets whose catalog variant is their interval. */
 const REFERENCE = ['markPrice', 'indexPrice', 'premiumIndex'] as const;
@@ -293,13 +370,44 @@ export const SERIES: Series[] = [
       takerLongShortVol: 'sum_taker_long_short_vol_ratio' },
     ts: 'create_time',
   },
+  // One shape on every line — coin-margined and USDⓈ-M, perpetual and dated —
+  // and **every row is written twice**, one after the other, in all of them
+  // (`BTCUSDT`, 2023-06-25: 1,720 rows, 860 of them; `BTCUSD_PERP`, 2024-10-14:
+  // 100 and 50). Exact repeats are dropped. `original_quantity` is contracts
+  // on a coin-margined instrument and the base coin on the others.
   ...(['perp', 'future'] as const).map((market): Series => ({
     venue: 'binance', market, dataset: 'liquidations', table: 'liquidations', ...csv,
+    repeatsRows: true,
     header: true,
     project: { side: SIDE, price: 'price', size: 'original_quantity',
       averagePrice: 'average_price', status: 'order_status' },
     ts: 'time',
   })),
+  // An underlying's file holds every option on it, a row an option an hour,
+  // and stays the underlying's — `option` names the contract of each row:
+  // what traded, the best bid and ask with their implied volatilities, the
+  // mark and its own, the greeks and the open interest. The hour is two
+  // columns, `date` and `hour`, and the row is stored at the hour they name.
+  // An empty quote is `""` or `0E-8`, kept as published.
+  {
+    venue: 'binance', market: 'option', dataset: 'optionSummary', variant: '*', table: 'optionTicker', ...csv,
+    header: true,
+    project: {
+      option: 'symbol',
+      ...OHLC, volume: 'volume_contracts', quoteVolume: 'volume_usdt',
+      bidPrice: 'best_bid_price', bidSize: 'best_bid_qty', bidIv: 'best_buy_iv',
+      askPrice: 'best_ask_price', askSize: 'best_ask_qty', askIv: 'best_sell_iv',
+      markPrice: 'mark_price', markIv: 'mark_iv',
+      delta: 'delta', gamma: 'gamma', vega: 'vega', theta: 'theta',
+      openInterest: 'openinterest_contracts', openInterestValue: 'openinterest_usdt',
+    },
+    ts: `"date" || ' ' || "hour" || ':00:00'`,
+  },
+  // BVOL: an implied-volatility index a second, one file per index.
+  {
+    venue: 'binance', market: 'option', dataset: 'volatilityIndex', variant: 'ticks', table: 'volatilityIndex', ...csv,
+    header: true, project: { value: 'index_value' }, ts: 'calc_time',
+  },
 
   // ── Bybit ───────────────────────────────────────────────────────────────────
   //
@@ -358,6 +466,25 @@ export const SERIES: Series[] = [
   {
     venue: 'bybit', market: 'spot', dataset: 'indexPrice', variant: '*', table: 'indexPrice', ...csv,
     header: true, project: OHLC, ts: 'start_at',
+  },
+  // Books: a `snapshot` when the stream opens, `delta`s after, the levels under
+  // `data` as `b` and `a`. `seq` is bybit's cross sequence, which rises through
+  // a file; `u`, the update id, starts over at every snapshot.
+  {
+    venue: 'bybit', market: 'perp', dataset: 'books', variant: '*', table: 'orderBook', ...ndjson,
+    header: true,
+    fields: { type: 'VARCHAR', ts: 'BIGINT', data: 'STRUCT(a VARCHAR[][], b VARCHAR[][], seq BIGINT)' },
+    rows: levels('data.a', 'data.b'),
+    project: { ...LEVEL, action: IMAGE_OR_SET('type'), sequence: 'data.seq' },
+    ts: 'ts',
+  },
+  // An underlying's file holds a day of every option on it: mark-price bars
+  // with the greeks beside them. Gamma is spelled `gama`.
+  {
+    venue: 'bybit', market: 'option', dataset: 'markPrice', variant: '*', table: 'optionMarkPrice', ...csv,
+    header: true,
+    project: { option: 'instrument_name', ...OHLC, delta: 'delta', gamma: 'gama', vega: 'vega', theta: 'theta' },
+    ts: 'open_time',
   },
 
   // ── KuCoin ──────────────────────────────────────────────────────────────────
@@ -500,6 +627,16 @@ export const SERIES: Series[] = [
     from: HTX_CUT, header: true, project: OHLC, ts: 'ts',
   },
 
+  // Books are okx's record with a level of two values and the time in
+  // microseconds: one image when the file opens, then changes. The files cut at
+  // 16:00 UTC like the rest of htx.
+  ...(['spot', 'perp', 'future'] as const).map((market): Series => ({
+    venue: 'htx', market, dataset: 'books', variant: '*', table: 'orderBook', ...ndjson, spill: 'back',
+    header: true, fields: BOOK_FIELDS, rows: levels('asks', 'bids'),
+    project: { ...LEVEL, action: IMAGE_OR_SET('action') },
+    ts: 'ts',
+  })),
+
   // ── Gate ────────────────────────────────────────────────────────────────────
   //
   // Headerless throughout. Spot deals carry fractional seconds at microsecond
@@ -553,6 +690,85 @@ export const SERIES: Series[] = [
     header: false, columns: GATE_FUNDING_UPDATE, project: { rate: 'rate' }, ts: 'rawTs',
   },
 
+  // Incremental books: a row a level change already. An hour's file opens with
+  // the whole book as `set` rows under one id, and `make`/`take` rows follow,
+  // each adding to a level or taking from it — rebuilt from a file, no level
+  // ever goes below zero and the sides never cross. Spot names the side (`1`
+  // the asks, `2` the bids: the first image's `2`s all sit below its `1`s);
+  // futures sign the size instead, negative for an ask. The id rises through a
+  // file and orders the changes inside one tenth of a second.
+  {
+    venue: 'gate', market: 'spot', dataset: 'books', variant: 'full,incremental', table: 'orderBook', ...csv,
+    header: false, columns: GATE_SPOT_BOOK,
+    project: {
+      action: 'action', side: `CASE trim(side) WHEN '1' THEN 'ask' WHEN '2' THEN 'bid' END`,
+      price: 'price', size: 'size', sequence: 'id',
+    },
+    ts: 'rawTs',
+  },
+  ...(['perp', 'future'] as const).map((market): Series => ({
+    venue: 'gate', market, dataset: 'books', variant: 'full,incremental', table: 'orderBook', ...csv,
+    header: false, columns: GATE_FUT_BOOK,
+    project: {
+      action: 'action',
+      side: `CASE WHEN TRY_CAST(size AS DOUBLE) < 0 THEN 'ask' WHEN TRY_CAST(size AS DOUBLE) > 0 THEN 'bid' END`,
+      price: 'price', size: GATE_FUT_SIZE, sequence: 'id',
+    },
+    ts: 'rawTs',
+  })),
+  // Snapshot books: the top 20 levels a side, whole, about once a second — a
+  // row an image. Spot writes a level `[price, size]`, futures `{p, s}`.
+  // `current` is when the image was taken and `update` when the book last
+  // changed; both are seconds in the early files and milliseconds in the later
+  // ones.
+  {
+    venue: 'gate', market: 'spot', dataset: 'books', variant: '20,snapshot', table: 'orderBookSnapshot', ...ndjson,
+    header: true,
+    fields: { id: 'BIGINT', current: 'VARCHAR', asks: 'VARCHAR[][]', bids: 'VARCHAR[][]' },
+    project: { asks: 'asks', bids: 'bids', sequence: 'id' },
+    ts: '"current"',
+  },
+  {
+    venue: 'gate', market: 'perp', dataset: 'books', variant: '20,snapshot', table: 'orderBookSnapshot', ...ndjson,
+    header: true,
+    fields: {
+      id: 'BIGINT', current: 'VARCHAR',
+      asks: 'STRUCT(p VARCHAR, s VARCHAR)[]', bids: 'STRUCT(p VARCHAR, s VARCHAR)[]',
+    },
+    project: { asks: GATE_LEVEL_LIST('asks'), bids: GATE_LEVEL_LIST('bids'), sequence: 'id' },
+    ts: '"current"',
+  },
+
+  // **Files named by the moment they hold.** The spot index and the option
+  // ticker are one small file per moment — an hour apart, a minute apart — a
+  // line an instrument, with no time anywhere inside. The catalog keeps the
+  // moment as the file's part, so that is where `ts` is read from.
+  {
+    venue: 'gate', market: 'spot', dataset: 'indexPrice', variant: 'ticks', table: 'indexPrice', ...words,
+    header: false, columns: [col('name'), col('price')], instrument: 'name',
+    project: { price: 'price' }, ts: NAMED_AT,
+  },
+  // Thirteen unnamed values. Which is which was settled from the numbers: the
+  // second is the same for a call and a put at one strike (the mark's implied
+  // volatility), the two triples that follow bracket the first value from
+  // below and from above (size, price and implied volatility of the bid, then
+  // of the ask), and of the last four the first is negative on every put and
+  // the third negative throughout (delta, gamma, theta, vega). The file holds
+  // every option gate lists; its rows are filed under each one's underlying,
+  // which is the name up to its first hyphen.
+  {
+    venue: 'gate', market: 'option', dataset: 'optionTicker', variant: 'ticks', table: 'optionTicker', ...words,
+    header: false, columns: GATE_OPTION_TICKER, instrument: GATE_UNDERLYING,
+    project: {
+      option: 'name',
+      markPrice: 'markPrice', markIv: 'markIv',
+      bidPrice: 'bidPrice', bidSize: 'bidSize', bidIv: 'bidIv',
+      askPrice: 'askPrice', askSize: 'askSize', askIv: 'askIv',
+      delta: 'delta', gamma: 'gamma', vega: 'vega', theta: 'theta',
+    },
+    ts: NAMED_AT,
+  },
+
   // ── OKX ─────────────────────────────────────────────────────────────────────
   //
   // Every row names its instrument, which matters twice: a dated-futures file
@@ -585,11 +801,32 @@ export const SERIES: Series[] = [
   //
   // The earliest option bars spell an absent volume `None`, which reads as no
   // value at all (`BTC-USD-optionchain`, 2021-09-01).
+  //
+  // **`vol_ccy` means a different thing by market.** On a contract it is the
+  // base coin (`BTC-USDT-SWAP`, 2023-09: 11060 contracts, 110.6, 2976805.145),
+  // and the quote is `vol_quote` alone. On spot it is the quote, the same number
+  // `vol_quote` holds — and until 2021-08 the only place it is, `vol_quote`
+  // being `None` on every row (`ETH-BTC`, 2020-12: 113.075912 at 0.0309 against
+  // 3.4946). So spot reads `vol_quote` and, where that is no number, `vol_ccy`.
+  // Between 2021-09 and 2023-08 both are `None` and no quote is published.
   ...(['spot', 'perp', 'future', 'option'] as const).map((market): Series => ({
     venue: 'okx', market, dataset: 'klines', variant: '*', table: 'klines', ...csv, spill: 'back',
     repeatsRows: true,
     header: true, instrument: 'instrument_name',
-    project: { ...OHLC, volume: 'vol', quoteVolume: 'vol_quote' }, ts: 'open_time',
+    project: { ...OHLC, volume: 'vol', quoteVolume: market === 'spot' ? OKX_SPOT_QUOTE : 'vol_quote' },
+    ts: 'open_time',
+  })),
+  // Books: a record is a whole image (`snapshot`, one a minute at 400 levels)
+  // or the levels that changed since (`update`), a level `[price, size, orders]`.
+  // Times are unique and rising through a file, so they order it. Unlike every
+  // other okx dataset **these files cut at UTC midnight**, so nothing spills.
+  // A dated-futures or option file holds a whole chain, each record naming its
+  // instrument.
+  ...(['spot', 'perp', 'future', 'option'] as const).map((market): Series => ({
+    venue: 'okx', market, dataset: 'books', variant: '*', table: 'orderBook', ...ndjson,
+    header: true, fields: BOOK_FIELDS, rows: levels('asks', 'bids'), instrument: 'instId',
+    project: { ...LEVEL, action: IMAGE_OR_SET('action'), orderCount: '_third' },
+    ts: 'ts',
   })),
   {
     venue: 'okx', market: 'perp', dataset: 'funding', variant: 'realised', table: 'funding', ...csv,
@@ -602,11 +839,30 @@ export const SERIES: Series[] = [
     project: { currency: 'currency_name', rate: 'borrow_rate' }, ts: 'time',
   },
 
+  // Books: the top 50 levels a side, whole, at each tick — a row an image. The
+  // file is JSON a line under a one-word header, so it is read a line at a time
+  // and each line parsed here; the header parses to nothing, and so does a
+  // line cut short. Futures name a `sequence`, spot does not. **Some files
+  // write every line twice** (`BTC-USDT`, 2026-07-29), so exact repeats are
+  // dropped.
+  ...(['spot', 'perp'] as const).map((market): Series => ({
+    venue: 'kucoin', market, dataset: 'books', variant: '*', table: 'orderBookSnapshot', ...lines,
+    repeatsRows: true,
+    header: false, columns: [col('line')],
+    rows: `SELECT * EXCLUDE (line), CASE WHEN json_valid(line) AND line LIKE '{%' THEN from_json(CAST(line AS JSON), ` +
+      `'{"asks":[["VARCHAR"]],"bids":[["VARCHAR"]],"timestamp":"BIGINT","sequence":"BIGINT"}') END AS _m FROM {src}`,
+    project: { asks: '_m.asks', bids: '_m.bids', sequence: '_m.sequence' },
+    ts: '_m.timestamp',
+  })),
+
   // ── Bitget ──────────────────────────────────────────────────────────────────
   //
-  // A day is split across numbered parts. Trades are CSV; klines and depth are
-  // an **XLSX inside the same `.zip`**, so the container says nothing about the
-  // format and each entry declares it.
+  // A day is split across numbered parts. Trades are CSV. Klines and depth are
+  // an **XLSX inside the same `.zip`** in the files of a day and a **CSV** in
+  // the files of a month — the same columns under the same names either way
+  // (`ETHUSDT_SP_1min_202609.csv`, `ETHUSDT_3_202603.csv`). Which of the two a
+  // file is, is read off the file: a table is a table, and an entry that reads
+  // one reads it as text or as a sheet alike.
   //
   // **Buckets cut at 16:00 UTC** — midnight UTC+8 — so every dataset spills
   // `back`: a file dated `20250101` opens at 2024-12-31 16:00 UTC. Verified on
@@ -636,6 +892,15 @@ export const SERIES: Series[] = [
       venue: 'bitget', market, dataset: 'klines', variant: '*', table: 'klines', ...xlsx, spill: 'back',
       header: true,
       project: { ...OHLC, volume: 'basevolume', quoteVolume: 'usdtvolume' }, ts: 'timestamp',
+    },
+    // The 500-level book: an image every twenty seconds — a row an image — its
+    // two sides JSON text in a cell each. A sheet by day and plain text by
+    // month, like the klines.
+    {
+      venue: 'bitget', market, dataset: 'books', variant: '*', table: 'orderBookSnapshot', ...xlsx, spill: 'back',
+      header: true,
+      project: { asks: jsonLevels('asks'), bids: jsonLevels('bids') },
+      ts: 'timestamp',
     },
     // "Depth" is best bid/ask over time, not a ladder.
     {
@@ -692,6 +957,11 @@ export const seriesFor = (file: ArchiveFile): Series | null => {
  * `ticks` is not an interval — it is a stream of point values — and carries
  * none.
  *
+ * **A book says how deep it is and in which mode it is published**: the
+ * catalog's variant is the two together — `400,incremental`, `20,snapshot` —
+ * and each is a level, `depth=` and `mode=`, named as the catalog names them. A venue's two depths are two datasets of different
+ * cost, and an image a tick is not read the way a stream of changes is.
+ *
  * **Trades always say whether they are aggregated.** Every trade as it happened
  * and a venue's aggregation of them are not the same data — the second can be
  * made from the first and never the other way — so they are two slices, as two
@@ -703,13 +973,19 @@ export const seriesFor = (file: ArchiveFile): Series | null => {
 export const extrasOf = (
   series: Series,
   variant: string,
-): { interval?: string; kind?: string; aggregated?: string } => {
+): { interval?: string; kind?: string; aggregated?: string; depth?: string; mode?: string } => {
   if (series.table === 'funding') return variant ? { kind: variant } : {};
+
+  if (series.table === 'orderBook' || series.table === 'orderBookSnapshot') {
+    const [depth, ...mode] = variant.split(',');
+
+    return { ...(depth ? { depth } : {}), ...(mode.length ? { mode: mode.join(',') } : {}) };
+  }
 
   if (series.table === 'trades')
     return { aggregated: variant === '' ? 'false' : variant === 'aggregated' ? 'true' : variant };
 
-  if (series.table === 'klines' || (REFERENCE as readonly string[]).includes(series.table))
+  if (series.table === 'klines' || ([...REFERENCE, ...BARS] as readonly string[]).includes(series.table))
     return variant && variant !== 'ticks' ? { interval: variant } : {};
 
   return {};
