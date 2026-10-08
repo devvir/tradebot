@@ -17,7 +17,7 @@ const cfg = vi.hoisted(() => ({ archivesDir: '', catalogApi: '', catalogToken: '
 
 vi.mock('../src/config', () => ({ default: cfg }));
 
-const { haul, _test_retryAfter } = await import('../src/fetch');
+const { haul, abandon, _test_resume, _test_retryAfter } = await import('../src/fetch');
 const { setHosts, _test_forget, _test_hostsOf } = await import('../src/hosts');
 const { sweepPartials } = await import('../src/store');
 
@@ -39,6 +39,8 @@ beforeEach(async () => {
     if (req.url === '/file.zip') { res.writeHead(200); res.end(BODY); return; }
     if (req.url === '/short.zip') { res.writeHead(200); res.end('short'); return; }
     if (req.url === '/busy.zip') { asked++; res.writeHead(503); res.end(); return; }
+    // Begun and never finished: a download slow enough to outlast a stop.
+    if (req.url === '/slow.zip') { asked++; res.writeHead(200); res.write('BO'); return; }
     // An address having a bad moment: all is well, says the status, and there is nothing in the body.
     if (req.url === '/empty.zip') { asked++; res.writeHead(200); res.end(); return; }
     if (req.url === '/empty-once.zip') { res.writeHead(200); res.end(++asked === 1 ? '' : BODY); return; }
@@ -63,6 +65,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.restoreAllMocks();
+
+  _test_resume();
 
   // What a test left held is not the next one's.
   for (const venue of ['binance', 'gate', 'nowhere']) await dropHeld(venue);
@@ -168,6 +172,21 @@ describe('a file not yet on disk', () => {
 
     expect(await haul(one)).toEqual({ outcome: 'downloaded' });
     expect(readFileSync(at(one), 'utf8')).toBe('');
+  });
+
+  /** A stop that has waited long enough: the file is left owed, nothing of it is kept, and nothing is asked again. */
+  it('is unreached, at once, where a download in flight is given up', async () => {
+    const one     = file({ path: 'slow.zip' });
+    const hauling = haul(one);
+
+    while (asked === 0) await new Promise(done => setTimeout(done, 10));
+
+    abandon();
+
+    expect(await hauling).toEqual({ outcome: 'unreached' });
+    expect(asked).toBe(1);
+    expect(existsSync(at(one))).toBe(false);
+    expect(readdirSync(join(cfg.archivesDir, '.hauler-tmp'))).toEqual([]);
   });
 
   /** A `403` may be aimed at us, so it is tried again — and reported only where it holds. */

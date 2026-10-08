@@ -23,6 +23,12 @@ export interface Container {
    * be read whole; null where it is not, and it is taken the ordinary way.
    */
   members?(absolute: string): Member[] | null;
+
+  /**
+   * What extracting the archive writes, in bytes, where the archive itself
+   * states it — read off it without extracting anything.
+   */
+  weight?(absolute: string): Promise<number>;
 }
 
 /** One file inside an archive, read into memory. */

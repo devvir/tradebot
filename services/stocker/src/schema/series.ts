@@ -453,9 +453,10 @@ export const SERIES: Series[] = [
   // the perpetual trades: BTCUSDT's 1h bars equal the trades summed per hour on
   // every hour of 2020-10 and 2020-12, and only three hours apart. Each file is
   // a UTC+3 month, so its head is the previous UTC month's last three hours:
-  // the files spill back.
+  // the files spill back. A file also carries the first bar of the UTC+3 month
+  // after it, which that month's file opens with: the bar is kept once.
   {
-    venue: 'bybit', market: 'perp', dataset: 'klines', variant: '*', table: 'klines', ...csv,
+    venue: 'bybit', market: 'perp', dataset: 'klines', variant: '*', table: 'klines', ...csv, version: '1.0.1',
     header: false,
     columns: [col('rawTs'), col('open'), col('high'), col('low'), col('close'), col('volume')],
     project: OHLCV, ts: 'rawTs', utcOffsetHours: 3, spill: 'back',

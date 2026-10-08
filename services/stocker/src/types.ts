@@ -251,6 +251,18 @@ export interface Target {
 export interface Group {
   symbol: string;
   inputs: DiskFile[];
+
+  /**
+   * Where these are only some of the symbol's files — it is built a piece at a
+   * time: which symbol's pieces these belong to, and which of them this is.
+   */
+  piece?: { of: number; at: number };
+}
+
+/** What extracting some archives needs and what the vault's volume has free, in bytes, where the first does not fit. */
+export interface Short {
+  needs: number;
+  free:  number;
 }
 
 /** What one connection builds at a time: one big instrument, or a batch of small ones. */
@@ -266,8 +278,14 @@ export interface PrepareSlot {
   /** Whether anything of it has to be extracted; a task read natively costs nothing to prepare. */
   extracts: boolean;
 
+  /** What its archives weigh on disk. */
+  weight:   number;
+
   /** What it is expected to write to scratch, before it has. */
   estimate: number;
+
+  /** Whether there was no room to extract it ahead: it is extracted when its build asks, if there is room then. */
+  waits:    boolean;
 
   /** What it is counted as holding of scratch right now. */
   charged:  number;
@@ -394,6 +412,9 @@ export interface Sweeping {
 
   /** What the vault holds of each slice, read once. */
   slices:        { of: (key: VaultKey) => Promise<SliceIndex>; forget: (key: VaultKey) => void };
+
+  /** The partitions that have a safe copy elsewhere, by revision — read the first time a sweep asks. */
+  backedUp?:     Map<string, Set<string>>;
 }
 
 /** One sweep's outcome. */

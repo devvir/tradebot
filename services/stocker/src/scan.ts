@@ -3,22 +3,24 @@ import { join } from 'node:path';
 import { logger } from '@devvir/service-kit';
 import { sizeOf } from '@tradebot/utils';
 import type { DuckDBConnection } from '@duckdb/node-api';
-import { buildBatch, buildGroup, bundleStaged, wrappedFor } from './build';
+import { PIECES, buildBatch, buildGroup, bundleStaged, dropOverlap, joinPieces, wrappedFor } from './build';
 import { listPartitions } from './catalog';
 import config from './config';
+import { weightsOf } from './containers';
 import { q } from './db';
 import { Instruments, edgeFilesOf, filesOf, matches } from './disk';
 import { idOf, neighbourOf } from './keys';
-import { SERIES, extrasOf, seriesOf } from './schema/series';
-import { MISSING, mark, outdate, partitionOf, read as readLedger, record, reinstate, repair } from './ledger';
+import { SERIES, extrasOf, seriesFor, seriesOf } from './schema/series';
+import { MISSING, mark, outdate, partitionOf, read as readLedger, readBackedUp, record, reinstate, repair } from './ledger';
 import { Prefetch } from './prepare';
+import { NoRoom, shortOf } from './room';
 import { reachOf } from './spill';
 import {
-  BUNDLE, STAGED, Slices, bundleOf, clear, freeGb, isWhole, labelOf, monthOf, publishBundle, publishSplit, revisionOf, sliceDirOf,
+  BUNDLE, STAGED, Slices, bundleOf, clear, fileOf, freeGb, isWhole, labelOf, monthOf, publishBundle, publishSplit, revisionOf, sliceDirOf,
   stagingOf,
 } from './vault';
 import type {
-  DiskFile, Edge, Entry, Grain, Group, InstrumentDirs, Job, Partition, Pass, Series, Side, Spent, Stocked, Summary, Sweeping, Target, Task,
+  DiskFile, Edge, Entry, Grain, Group, InstrumentDirs, Job, Partition, Pass, Series, Short, Side, Spent, Stocked, Summary, Sweeping, Target, Task,
   VaultKey,
 } from './types';
 
@@ -282,6 +284,11 @@ const AHEAD_BYTES = 2 * 1024 ** 3;
  */
 const ALONE_BYTES = 64 * 1024 ** 2;
 
+/** What a piece of a big instrument's archives inflates to, at most — unless one file is more. */
+const PIECE_BYTES = 8 * 1024 ** 3;
+
+let pieceBytes = PIECE_BYTES;
+
 /** Where a batch closes: input bytes, or instruments. */
 const BATCH_BYTES       = 64 * 1024 ** 2;
 const BATCH_INSTRUMENTS = 256;
@@ -426,6 +433,9 @@ const decide = async (
    * if it is not, so a month whose monthly files are gone but whose dailies are
    * here still stocks.
    */
+  /** The sides a neighbour has arrived with that could not be built, and what of what they need is on disk. */
+  let unbuilt: { sides: Side[]; main: boolean; sources: boolean } | null = null;
+
   for (const one of ready.sort((x, y) => rank(x.candidate) - rank(y.candidate))) {
     /**
      * **A month already stocked, whose neighbour has arrived, is not stocked
@@ -437,16 +447,25 @@ const decide = async (
     const arrived = entry ? arrivedFor(entry, key, one, series) : [];
     const before  = arrived.length > 0 ? (await sweeping.slices.of(key)).get(monthOf(key)) : undefined;
 
+    if (arrived.length > 0 && ! isWhole(before))
+      unbuilt = { sides: arrived.map(edge => edge.end), main: false, sources: (await edgesOnDisk(arrived, sweeping.instruments)) !== null };
+
     if (entry && arrived.length > 0 && isWhole(before)) {
       const donated = await edgesOnDisk(arrived, sweeping.instruments);
 
-      if (! donated) continue;
+      if (! donated) {
+        unbuilt = { sides: arrived.map(edge => edge.end), main: true, sources: false };
+
+        continue;
+      }
 
       if (await freeGb() < config.minFreeGb) throw new LowSpace(await freeGb());
 
       const symbols = before!.bundle ? null : new Set(before!.symbols);
-      const built   = arrived.map(edge => tasksOf(sideGroupsOf(donated.get(edge.end) ?? [], symbols)));
+      const built   = await Promise.all(arrived.map(edge => piecedOf(tasksOf(sideGroupsOf(donated.get(edge.end) ?? [], symbols)))));
       const tasks   = built.flat();
+
+      if (! await fits(key, tasks)) continue;
 
       return {
         key, partition: one.candidate, revision: one.revision, edges: one.edges, missing: one.missing, tasks,
@@ -466,16 +485,46 @@ const decide = async (
 
     if (await freeGb() < config.minFreeGb) throw new LowSpace(await freeGb());
 
-    const own     = groupsOf(files);
-    const symbols = new Set(own.map(group => group.symbol));
-    const sides   = one.edges.map(edge => tasksOf(sideGroupsOf(donated.get(edge.end) ?? [], symbols)));
-    const tasks   = [...tasksOf(own), ...sides.flat()];
+    const groups  = groupsOf(files);
+    const symbols = new Set(groups.map(group => group.symbol));
+    const own     = await piecedOf(tasksOf(groups));
+    const sides   = await Promise.all(one.edges.map(edge => piecedOf(tasksOf(sideGroupsOf(donated.get(edge.end) ?? [], symbols)))));
+    const tasks   = [...own, ...sides.flat()];
+
+    if (! await fits(key, tasks)) continue;
 
     return {
       key, partition: one.candidate, revision: one.revision, edges: one.edges, missing: one.missing, tasks,
-      passes: [...tasksOf(own).map((): Pass => 'own'), ...sides.flatMap((side, at) => side.map(() => one.edges[at]!.end))],
+      passes: [...own.map((): Pass => 'own'), ...sides.flatMap((side, at) => side.map(() => one.edges[at]!.end))],
       files: files.length, prefetch: new Prefetch(tasks, wrapOf), completes: null,
     };
+  }
+
+  /**
+   * **Stocked, and the hours a neighbour holds of it cannot be added yet.**
+   * They are built from the neighbour's archives, beside the month's own files
+   * — and one of the two is not on disk. Said for what it is: which is here,
+   * which is not, and whether the month's own files have a copy elsewhere,
+   * since that is the difference between bringing a file back and stocking the
+   * month again. What is known of that copy is what the vault's own list says;
+   * where the neighbour's archives are, only whether they are on disk.
+   */
+  if (entry && unbuilt) {
+    summary.partial++;
+
+    sweeping.backedUp ??= await readBackedUp();
+
+    const safe  = sweeping.backedUp.get(partition)?.has(entry.revision) ?? false;
+    const needs = [...(unbuilt.main ? [] : ['main parquet']), ...(unbuilt.sources ? [] : ['its sources'])].join(' and ');
+
+    logger.warn({
+      partition:      labelOf(key),
+      'main parquet': `${safe ? 'backed up' : 'NOT backed up'}, ${unbuilt.main ? 'on disk' : 'not on disk'}`,
+      ...Object.fromEntries(unbuilt.sides.map(side => [side, `pending, needs ${needs}`])),
+      sources:        `${unbuilt.sides.join(' and ')} sources ${unbuilt.sources ? 'on disk' : 'missing on disk'}`,
+    }, 'Spill pending');
+
+    return null;
   }
 
   summary.missing++;
@@ -484,13 +533,13 @@ const decide = async (
     summary.outdated++;
 
     logger.warn({ partition: labelOf(key), renderings: ready.map(one => one.candidate.id) },
-      'Outdated, and its archives are not on disk — it stays as it is until they are back');
+      'Outdated, and its archives are not on disk as the catalog has them — it stays as it is until they are back');
 
     return null;
   }
 
   logger.info({ partition: labelOf(key), renderings: ready.map(one => one.candidate.id) },
-    'Not on disk as catalogued — skipped');
+    'Its archives are not on disk as the catalog has them — skipped');
 
   return null;
 };
@@ -604,8 +653,11 @@ const stock = async (
 
   const worker = async (conn: DuckDBConnection): Promise<void> => {
     for (let at = cursor++; at < tasks.length && ! failure; at = cursor++) {
-      const next = tasks[at]!;
-      const into = dirOf(passes[at]!);
+      const next  = tasks[at]!;
+      const piece = next[0]!.piece;
+
+      // A piece of a symbol is built where its other pieces are, apart from what is built whole.
+      const into = piece ? join(dirOf(passes[at]!), PIECES, String(piece.of), String(piece.at)) : dirOf(passes[at]!);
 
       try {
         // Extracted ahead where there was time; the build removes it when it has read it.
@@ -628,6 +680,17 @@ const stock = async (
   };
 
   await Promise.all(conns.map(worker));
+
+  // What was built a piece at a time is made the files it would have been built as whole.
+  for (const pass of new Set(passes)) {
+    if (failure) break;
+
+    const repeating = new Set(tasks
+      .filter((task, at) => passes[at] === pass && task[0]!.piece && task[0]!.inputs.some(input => seriesFor(input.file)?.repeatsRows))
+      .map(task => String(task[0]!.piece!.of)));
+
+    await joinPieces(conns[0]!, key, dirOf(pass), of => repeating.has(of)).catch((err) => { failure = err as Error; });
+  }
 
   // Whatever was extracted for a task no build reached — after a failure — is removed.
   prefetch.release();
@@ -669,6 +732,23 @@ const stock = async (
         : await stagedIn(dirOf('own'));
 
       for (const side of sides) await keepOnly(dirOf(side), own);
+
+      /**
+       * **A bar a neighbour's file repeats is kept once, in the month's own
+       * file** — see `dropOverlap`. Held against the month's own rows as they
+       * are in the vault, or as they were just built.
+       */
+      if (key.table === 'klines' && sides.length > 0) {
+        const mine = completes
+          ? (before!.bundle ? [bundleOf(key)] : before!.symbols.map(symbol => fileOf(key, symbol)))
+          : [...own].map(symbol => join(dirOf('own'), `${symbol}${STAGED}`));
+
+        for (const side of sides) {
+          const dropped = await dropOverlap(conns[0]!, key, dirOf(side), side, mine);
+
+          if (dropped > 0) logger.info({ partition: labelOf(key), side, rows: dropped }, 'Bars the month already holds left out of its side');
+        }
+      }
 
       /**
        * How the month is stored: as it already is where a side is arriving, and
@@ -731,9 +811,13 @@ const stock = async (
 
       ledger.set(entry.partition, entry);
     } catch (err) {
-      summary.failed++;
+      // Not a failure: nothing was written, and it is stocked when there is room.
+      if (err instanceof NoRoom) logger.warn({ partition: labelOf(key), ...roomIn(err.short) }, NO_ROOM);
+      else {
+        summary.failed++;
 
-      logger.error({ err, partition: labelOf(key), from: partition.id }, 'Stocking failed');
+        logger.error({ err, partition: labelOf(key), from: partition.id }, 'Stocking failed');
+      }
 
       // Stopped with the month half in place: put right now, not left for the next sweep to find.
       if (marked) await repair().catch(fault => logger.error({ err: fault, partition: labelOf(key) }, 'Could not put the partition right'));
@@ -873,10 +957,79 @@ const tasksOf = (groups: Group[]): Task[] => {
   return tasks;
 };
 
+/**
+ * The same tasks, with a big instrument whose archives inflate to more than
+ * `PIECE_BYTES` made several: a piece each, of as many of its files as inflate
+ * to that much, or of one file that outweighs it alone. Scratch then holds a
+ * piece of it at a time and never the whole — see `joinPieces`.
+ */
+const piecedOf = async (tasks: Task[]): Promise<Task[]> => {
+  const pieced: Task[] = [];
+
+  for (const task of tasks) {
+    const group = task[0]!;
+
+    if (! direct(task) || group.inputs.length === 1) {
+      pieced.push(task);
+
+      continue;
+    }
+
+    const weights = await weightsOf(wrapOf(task).inputs);
+    const pieces: DiskFile[][] = [[]];
+
+    let held = 0;
+
+    group.inputs.forEach((input, at) => {
+      if (held > 0 && held + weights[at]! > pieceBytes) {
+        pieces.push([]);
+        held = 0;
+      }
+
+      pieces.at(-1)!.push(input);
+      held += weights[at]!;
+    });
+
+    if (pieces.length === 1) pieced.push(task);
+    else {
+      const of = pieced.length;
+
+      pieces.forEach((inputs, at) => pieced.push([{ symbol: group.symbol, inputs, piece: { of, at } }]));
+    }
+  }
+
+  return pieced;
+};
+
+/**
+ * Whether there is room to extract each of a partition's tasks, said where
+ * there is not. Asked before the partition is started; each extraction asks
+ * again as it starts, of the space there is then.
+ */
+const fits = async (key: VaultKey, tasks: Task[]): Promise<boolean> => {
+  for (const task of tasks) {
+    const short = await shortOf(wrapOf(task).inputs, task.reduce((total, group) => total + bytesOf(group), 0));
+
+    if (! short) continue;
+
+    logger.warn({ partition: labelOf(key), ...roomIn(short) }, NO_ROOM);
+
+    return false;
+  }
+
+  return true;
+};
+
+/** How a want of room is written in a log line. */
+const roomIn = (short: Short): Record<string, string> =>
+  ({ needs: sizeOf(short.needs), free: sizeOf(short.free), keeps: `${config.minFreeGb} GB` });
+
+const NO_ROOM = 'Not enough space to extract — partition skipped';
+
 const bytesOf = (group: Group): number => group.inputs.reduce((total, one) => total + one.size, 0);
 
-/** Whether a task is one big instrument, read on its own straight into its file, and not a batch. */
-const direct = (task: Task): boolean => task.length === 1 && bytesOf(task[0]!) >= DIRECT_BYTES;
+/** Whether a task is one big instrument — or a piece of one — read on its own straight into its file, and not a batch. */
+const direct = (task: Task): boolean => task.length === 1 && (!! task[0]!.piece || bytesOf(task[0]!) >= DIRECT_BYTES);
 
 /** A task's archives as extraction is asked for them: a batch's small files gathered, a big instrument's as they are. */
 const wrapOf = (task: Task): ReturnType<typeof wrappedFor> => wrappedFor(task, ! direct(task));
@@ -907,3 +1060,7 @@ export const _test_groupsOf    = groupsOf;
 export const _test_sideGroupsOf = sideGroupsOf;
 export const _test_rank        = rank;
 export const _test_tasksOf     = tasksOf;
+export const _test_piecedOf    = piecedOf;
+
+/** Build in pieces as if a piece held this much, or what it really does again. */
+export const _test_pieceAt = (bytes: number | null): void => { pieceBytes = bytes ?? PIECE_BYTES; };

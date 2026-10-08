@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { appendFile, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { logger } from '@devvir/service-kit';
 import config from '../src/config';
 import { open } from '../src/db';
 import { parseKey } from '../src/keys';
@@ -542,6 +543,41 @@ describe('a month whose last hours are in the next month\'s file', () => {
     expect(await closes('@/202411.post.parquet')).toEqual([4, 5]);
   });
 
+  /**
+   * A venue's month file can carry the first bar of the next month, which the
+   * next month's file opens with too. A bar is kept once, in the month's own
+   * file — whether the neighbour was there when the month was stocked or came later.
+   */
+  it('leaves out of those hours a bar the month\'s own file already holds', async () => {
+    const REACHING = [...NOVEMBER, '2024.12.01 00:00,4,4,4,4,40'];   // 30 November 21:00 UTC, as December's file has it
+
+    await publish('202411', REACHING);
+    await sweep(conns);
+
+    expect(await closes('@/202411.parquet')).toEqual([2, 3, 4]);
+
+    await rm(join(config.archivesDir, month('202411')));
+    await publish('202412', DECEMBER);
+
+    expect(await sweep(conns)).toMatchObject({ completed: 1, failed: 0 });
+    expect(await closes('@/202411.parquet')).toEqual([2, 3, 4]);
+    expect(await closes('@/202411.post.parquet')).toEqual([5]);
+
+    // And stocked with its neighbour there from the start.
+    await rm(config.vaultDir, { recursive: true, force: true });
+    await mkdir(config.vaultDir, { recursive: true });
+
+    listed.length = 0;
+
+    await publish('202411', REACHING);
+    await publish('202412', DECEMBER);
+
+    expect(await sweep(conns)).toMatchObject({ built: 2, failed: 0 });
+    expect(await closes('@/202411.parquet')).toEqual([2, 3, 4]);
+    expect(await closes('@/202411.post.parquet')).toEqual([5]);
+    expect(await validate()).toBe(0);
+  });
+
   /** The same files whether the neighbour was there when the month was stocked or came later. */
   it('comes to the same files whichever way it got them', async () => {
     await publish('202411', NOVEMBER);
@@ -586,6 +622,35 @@ describe('a month whose last hours are in the next month\'s file', () => {
 
     expect(await sweep(conns)).toMatchObject({ completed: 0, built: 2 });
     expect((await files()).filter(name => name.includes('202411'))).toHaveLength(2);
+  });
+
+  /** Its hours are built beside its own file, and that has been moved out of the vault: said for what it is. */
+  it('waits for its own file where that is not in the vault, and is not taken for one whose archives are missing', async () => {
+    await publish('202411', NOVEMBER);
+    await sweep(conns);
+
+    // Moved out of the vault, with a copy elsewhere — and its archives gone from the disk too.
+    const [line] = await lines();
+
+    await writeFile(join(config.vaultDir, BACKEDUP), `partition|revision|date\n${line!['partition']}|${line!['revision']}|T\n`);
+    await rm(join(config.vaultDir, KLINES, '@/202411.parquet'));
+    await rm(join(config.archivesDir, month('202411')));
+    await publish('202412', DECEMBER);
+
+    const warned = vi.spyOn(logger, 'warn');
+
+    // December is stocked, itself without its last hours; November waits.
+    expect(await sweep(conns)).toMatchObject({ built: 1, completed: 0, missing: 0, partial: 2, failed: 0 });
+
+    const said = warned.mock.calls.find(call => call[1] === 'Spill pending');
+
+    expect(said?.[0]).toMatchObject({
+      'main parquet': 'backed up, not on disk',
+      post:           'pending, needs main parquet',
+      sources:        'post sources on disk',
+    });
+
+    warned.mockRestore();
   });
 
   it('is left as it is where it has to be stocked again and its own archives are gone', async () => {

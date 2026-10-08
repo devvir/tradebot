@@ -156,7 +156,10 @@ have at its current revision. Nothing is written but the vault.
    is done about it.
 4. **Only its neighbour new?** A month stocked without a neighbour's hours, whose neighbour is in
    the answer now, has only those hours built — from the neighbour's files. Its own archives are
-   not read, and need not be on disk any more.
+   not read, and need not be on disk any more. Its own files in the vault are: the hours are
+   built beside them. Where those have been moved out, the month waits and says so — with whether
+   a copy of them exists elsewhere, which is the difference between bringing a file back and
+   stocking the month again.
 5. **On disk?** The partition's files are gathered from the archives and compared with what the
    catalog says, by count and by total size — no file is opened. Where several renderings are
    ready, the preferred one that is on disk is taken (see below); one the catalog calls
@@ -415,6 +418,15 @@ symbols interleave: a big instrument read on its own out of the middle of a batc
 stops there and says so, rather than filling the volume mid-build — and checks before asking about
 each venue too, so a full volume costs the catalog nothing.
 
+**Nothing is extracted without room for it.** What archives inflate to is read off them before any
+is extracted — a zip states it in its directory; a container that does not state it is counted at
+eight times its size — and set against the volume's free space at that moment, less
+`STOCKER_MIN_FREE_GB`. It is asked twice: of every task of a partition before the partition is
+started, and again by each extraction as it starts. A partition that does not fit is skipped with a
+warning saying what it needs and what is free, and is stocked by a later sweep that finds the room.
+Archives are opened for this only where the answer could be no: nothing inflates to more than 1032
+times its size, so what fits at that ratio fits unopened.
+
 Venue and table filters are matched case-insensitively against what the series map declares, and
 an unknown token **fails startup** — those vocabularies are closed, so a token outside them can
 never match, and accepting one would turn a typo into an eternally clean run of nothing. Symbols
@@ -434,6 +446,13 @@ bytes and a month holds tens of thousands, so what costs is the handling per arc
 bytes: read whole, an archive already in the page cache is extracted about ten times faster than
 streamed. One that has never been read costs a disk read either way, and that read is then most of
 the time.
+
+**A big instrument whose archives inflate to more than 8 GB is built a piece at a time.** Its files
+are taken a few at a time — as many as inflate to 8 GB, or one that outweighs that alone — and each
+piece is extracted, written and removed before scratch is asked to hold the next. The pieces are
+then joined, sorted, into the files the instrument would have been built as whole, so what reaches
+the vault is the same either way. A month of one market-wide file a day, each inflating to tens of
+gigabytes, is built this way and never held extracted at once.
 
 ### Extraction runs ahead of the builds, on threads of its own
 
@@ -686,6 +705,10 @@ Four things follow, and all are mechanical:
   own file — under `@`, or under each symbol the month itself has a file for. A month is therefore
   the same files whether its neighbour was there when it was stocked or came later, and a
   neighbour arriving adds a small file where it would otherwise rewrite a large one.
+- **A bar is kept once.** A month's file can carry the first bar of the next month, which the next
+  month's file carries too. For klines, each instrument's side holds only the times its own rows do
+  not reach — after its last bar for `post`, before its first for `pre` — read off the month's own
+  files as they are in the vault. The month's own files are never rewritten for it.
 - **The partition does not wait for its neighbour.** Where the neighbouring month is not in the
   catalog's answer, the month is stocked without that side and its ledger line says `missing`.
   When the neighbour is there, the side is built from the neighbour's edge files alone and the

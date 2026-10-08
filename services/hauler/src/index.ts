@@ -4,6 +4,7 @@ import { venues } from './catalog';
 import { sweepPartials } from './store';
 import { dropHeld } from './held';
 import { setHosts } from './hosts';
+import { abandon } from './fetch';
 import { walkVenue } from './venue';
 import SK from './service';
 import config from './config';
@@ -105,21 +106,41 @@ let stopping = false;
 let hauling: Promise<unknown> = Promise.resolve();
 
 /**
- * **A shutdown waits for the files in flight, for as long as it is given.** No
- * new file is taken, and the ones already downloading finish and are reported
- * before the process exits, so nothing done goes unreported. How long it is
- * given is the compose file's `stop_grace_period`, which is short: a stop is
- * an order, and matters more than a download. A file still downloading when it
- * runs out is cut short with the process — its partial is removed by the next
- * start and the file fetched again.
+ * **A shutdown gives the files in flight `FLIGHT_MS`, and no longer.** No new
+ * file is taken, and the ones already downloading are given that long to
+ * finish. Whatever is still downloading then is given up — left owed, its
+ * partial removed — so that every page is reported before the process exits:
+ * a stop is an order, and what was done before it is not to be done twice
+ * for the sake of a few files that were slow.
+ *
+ * `FLIGHT_MS` is half the compose file's `stop_grace_period`, which leaves the
+ * other half for the reports to go out before the container is killed.
  */
 const stopAfterFlight = async (): Promise<void> => {
   stopping = true;
 
-  logger.info('Stopping after the files in flight');
+  logger.info({ seconds: FLIGHT_MS / 1000 }, 'Stopping — the files in flight are given a moment to finish');
 
-  await hauling;
+  let waited: NodeJS.Timeout | undefined;
+
+  const landed = await Promise.race([
+    hauling.then(() => true),
+    new Promise<boolean>((resolve) => { waited = setTimeout(() => resolve(false), FLIGHT_MS); }),
+  ]);
+
+  clearTimeout(waited);
+
+  if (! landed) {
+    logger.info('Giving up the files still in flight — they stay owed');
+
+    abandon();
+
+    await hauling;
+  }
 };
+
+/** How long a stop waits for the files in flight before giving them up. */
+const FLIGHT_MS = 15_000;
 
 
 SK.run(main);

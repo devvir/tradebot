@@ -136,7 +136,7 @@
     "digest": "e127e9e47f67a1ec"
   },
   "bybit.mt4-klines.csv": {
-    "versions": "every=1.0.0",
+    "versions": "every=1.0.0 series=1.0.1",
     "digest": "6fdd6dd97b27c373"
   },
   "bybit.option-markkline.csv": {

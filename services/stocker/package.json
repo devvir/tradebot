@@ -1,6 +1,6 @@
 {
   "name": "@tradebot/stocker",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Stocker service — normalises collected raw data into a partitioned Parquet vault",
   "main": "dist/index.js",
   "private": true,

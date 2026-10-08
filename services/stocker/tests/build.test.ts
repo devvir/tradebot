@@ -1,12 +1,13 @@
 import { execFileSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
 import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DuckDBInstance } from '@duckdb/node-api';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { buildBatch, buildGroup, bundleStaged } from '../src/build';
+import { PIECES, buildBatch, buildGroup, bundleStaged, joinPieces } from '../src/build';
 import { parseKey } from '../src/keys';
-import { _test_tasksOf as tasksOf } from '../src/scan';
+import { _test_pieceAt as pieceAt, _test_piecedOf as piecedOf, _test_tasksOf as tasksOf } from '../src/scan';
 import type { DiskFile, VaultKey } from '../src/types';
 
 /**
@@ -277,5 +278,67 @@ describe('splitting a partition into work', () => {
     expect(tasks.map(task => task.map(one => one.symbol))).toEqual([['A', 'B', 'C']]);
     expect(tasksOf(Array.from({ length: 300 }, (_, i) => group(`S${i}`, 1))).map(task => task.length))
       .toEqual([256, 44]);
+  });
+});
+
+/**
+ * An instrument whose archives inflate to more than scratch should hold at
+ * once is built a few of them at a time, and comes out as it would whole.
+ */
+describe('a big instrument built a piece at a time', () => {
+  /** A zip holding `bytes` of rows, said to weigh enough on disk to be read alone. */
+  const heavy = (name: string, bytes: number): DiskFile => {
+    const from = join(dir, `${name}.d`);
+    const path = join(dir, `${name}.zip`);
+
+    execFileSync('mkdir', ['-p', from]);
+    writeFileSync(join(from, 'rows.csv'), 'x'.repeat(bytes));
+    execFileSync('zip', ['-q', path, 'rows.csv'], { cwd: from });
+
+    return { absolute: path, size: 40 * 1024 ** 2, mtimeMs: 0, file: { container: 'zip' } } as unknown as DiskFile;
+  };
+
+  it('is cut where its files would inflate past a piece, by what they inflate to', async () => {
+    const files = [heavy('p1', 600), heavy('p2', 300), heavy('p3', 300), heavy('p4', 2_000), heavy('p5', 100)];
+
+    pieceAt(1_000);
+
+    try {
+      const pieced = await piecedOf([[{ symbol: 'A', inputs: [files[0]!] }], [{ symbol: 'BIG', inputs: files }]]);
+
+      expect(pieced.map(task => task[0]!.inputs.map(one => files.indexOf(one)))).toEqual([[0], [0, 1], [2], [3], [4]]);
+      expect(pieced.map(task => task[0]!.piece?.at)).toEqual([undefined, 0, 1, 2, 3]);
+      expect(new Set(pieced.slice(1).map(task => task[0]!.piece!.of)).size).toBe(1);
+
+      // Small enough to be held at once: left as it was.
+      pieceAt(10_000);
+
+      expect(await piecedOf([[{ symbol: 'BIG', inputs: files }]])).toEqual([[{ symbol: 'BIG', inputs: files }]]);
+    } finally {
+      pieceAt(null);
+    }
+  });
+
+  it('joins into the file it would have been built as whole', async () => {
+    const one = await input('gate.futures_usdt-trades.csv', 'gate/perp/trades/B/BTC_USDT/202606/gate|perp|trades|BTC_USDT|202606.csv.gz');
+    const two = await input('gate.futures_btc-trades.csv', 'gate/perp/trades/B/BTC_USDT/202606/gate|perp|trades|BTC_USDT|202606.csv.gz');
+
+    const whole  = join(dir, 'pieces-whole');
+    const pieced = join(dir, 'pieces');
+
+    await buildGroup(conn, gate, 'BTC_USDT', [one, two], whole);
+
+    // Built later piece first: the join is what puts the rows in order.
+    await buildGroup(conn, gate, 'BTC_USDT', [two], join(pieced, PIECES, '0', '1'));
+    await buildGroup(conn, gate, 'BTC_USDT', [one], join(pieced, PIECES, '0', '0'));
+
+    await joinPieces(conn, gate, pieced, () => false);
+
+    expect(await written(pieced)).toEqual(['BTC_USDT.parquet']);
+    expect(await rowsOf(join(pieced, 'BTC_USDT.parquet'))).toBe(await rowsOf(join(whole, 'BTC_USDT.parquet')));
+
+    const times = (await conn.runAndReadAll(`SELECT ts FROM read_parquet('${join(pieced, 'BTC_USDT.parquet')}')`)).getRows().map(row => BigInt(row[0] as bigint));
+
+    expect(times).toEqual([...times].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
   });
 });

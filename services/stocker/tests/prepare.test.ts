@@ -1,10 +1,12 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import config from '../src/config';
 import { Prefetch, _test_held as held } from '../src/prepare';
+import { NoRoom } from '../src/room';
 import type { DiskFile, Task } from '../src/types';
 
 /**
@@ -39,7 +41,11 @@ const native = (name: string): Task => {
 /** Long enough for whatever was started to finish; nothing here waits on a clock otherwise. */
 const settled = async (): Promise<void> => { await new Promise(resolve => setTimeout(resolve, 150)); };
 
-beforeAll(async () => { dir = await mkdtemp(join(tmpdir(), 'prepare-')); });
+beforeAll(async () => {
+  dir = await mkdtemp(join(tmpdir(), 'prepare-'));
+
+  await mkdir(config.vaultDir, { recursive: true });
+});
 afterAll(async () => { await rm(dir, { recursive: true, force: true }); });
 
 describe('extracting ahead of the builds', () => {
@@ -138,5 +144,38 @@ describe('extracting ahead of the builds', () => {
     expect(held()).toBe(before);
 
     ahead.release();
+  });
+
+  /** Nothing is extracted that would leave the volume under its floor: asked before, never found out by a failed write. */
+  it('extracts nothing there is no room for, and extracts it once there is', async () => {
+    const before = held();
+    const floor  = config.minFreeGb;
+
+    config.minFreeGb = 1e9;
+
+    try {
+      const ahead = new Prefetch([zipped('roomless-a', 'x'), zipped('roomless-b', 'y')]);
+
+      await settled();
+
+      // Not extracted ahead, and not to the build that asks either.
+      expect(held()).toBe(before);
+
+      await expect(ahead.take(0)).rejects.toBeInstanceOf(NoRoom);
+
+      expect(held()).toBe(before);
+
+      config.minFreeGb = floor;
+
+      const taken = await ahead.take(1);
+
+      expect(readFileSync(taken.paths[0]![0]!, 'utf8')).toBe('y');
+
+      await taken.dispose();
+
+      ahead.release();
+    } finally {
+      config.minFreeGb = floor;
+    }
   });
 });

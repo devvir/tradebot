@@ -1,4 +1,4 @@
-import { createWriteStream, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, createWriteStream, openSync, readFileSync, readSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { crc32, inflateRawSync } from 'node:zlib';
@@ -47,6 +47,8 @@ export const zip: Container = {
   },
 
   members: absolute => whole(absolute),
+
+  weight: async absolute => statedAtEnd(absolute) ?? await statedByEntry(absolute),
 };
 
 // ── Internals ─────────────────────────────────────────────────────────────────
@@ -131,6 +133,75 @@ const endOfDirectory = (buffer: Buffer): number => {
 
   return -1;
 };
+
+/**
+ * What a zip's directory says its members inflate to, read from the end of the
+ * file — or null where the directory is not all there, or is in a form this
+ * does not read, and the library is asked.
+ */
+const statedAtEnd = (absolute: string): number | null => {
+  const size   = statSync(absolute).size;
+  const length = Math.min(size, END_BYTES);
+  const buffer = Buffer.alloc(length);
+  const file   = openSync(absolute, 'r');
+
+  try {
+    readSync(file, buffer, 0, length, size - length);
+  } finally {
+    closeSync(file);
+  }
+
+  const directory = endOfDirectory(buffer);
+
+  if (directory < 0) return null;
+
+  const count = buffer.readUInt16LE(directory + 10);
+  const start = buffer.readUInt32LE(directory + 16);
+
+  if (count === 0xffff || start === 0xffffffff) return null;
+
+  // Where the directory starts in what was read of the file.
+  let at    = start - (size - length);
+  let total = 0;
+
+  if (at < 0) return null;
+
+  for (let entry = 0; entry < count; entry++) {
+    if (at + 46 > buffer.length || buffer.readUInt32LE(at) !== ENTRY) return null;
+
+    const stated = buffer.readUInt32LE(at + 24);
+
+    if (stated === 0xffffffff) return null;
+
+    total += stated;
+    at    += 46 + buffer.readUInt16LE(at + 28) + buffer.readUInt16LE(at + 30) + buffer.readUInt16LE(at + 32);
+  }
+
+  return total;
+};
+
+/** The same, asked of the library: any zip there is. */
+const statedByEntry = (absolute: string): Promise<number> =>
+  new Promise<number>((resolve, reject) => {
+    yauzl.open(absolute, { lazyEntries: true }, (err, archive) => {
+      if (err || ! archive) return reject(err ?? new Error(`unreadable zip: ${absolute}`));
+
+      let total = 0;
+
+      archive.on('error', reject);
+      archive.on('end', () => resolve(total));
+      archive.on('entry', (entry) => {
+        total += entry.uncompressedSize;
+
+        archive.readEntry();
+      });
+
+      archive.readEntry();
+    });
+  });
+
+/** How much of a zip's end is read to find its directory in. */
+const END_BYTES = 128 * 1024;
 
 /** One member at a time, through the library: any zip there is, at any size. */
 const streamed = (absolute: string, into: string, tag: string): Promise<string[]> =>

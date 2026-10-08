@@ -123,4 +123,5 @@ export const pool = new Pool(UNPACK_WORKERS);
 
 export { containerFor } from './registry';
 export { needsExtracting } from './extract';
+export { EXPANSION, MOST, weightsOf } from './weigh';
 export type { Container, Pack, UnpackedAll, Wrapped } from './types';

@@ -1,4 +1,5 @@
-import { needsExtracting, pool, unpackAll } from './containers';
+import { EXPANSION, needsExtracting, pool, unpackAll } from './containers';
+import { NoRoom, shortOf } from './room';
 import { freeGb } from './vault';
 import type { Pack, UnpackedAll, Wrapped } from './containers';
 import type { PrepareSlot, Task } from './types';
@@ -23,6 +24,10 @@ import type { PrepareSlot, Task } from './types';
  * extractions actually wrote. Past that nothing more is started until a build
  * has read and removed something. A task a build is waiting on is never held
  * back by it — the bound is on getting ahead, not on working.
+ *
+ * **Nothing is extracted without room for it** — see `room.ts` — ahead or
+ * asked for. Ahead, a task there is no room for is left for its build to ask
+ * for; asked for, it fails with `NoRoom`.
  */
 export class Prefetch {
   /**
@@ -37,7 +42,7 @@ export class Prefetch {
       const extracts = needsExtracting(inputs);
       const weight   = task.reduce((sum, group) => sum + group.inputs.reduce((all, one) => all + one.size, 0), 0);
 
-      return { inputs, shapes, extracts, estimate: extracts ? weight * EXPANSION : 0, charged: 0, flying: false, promise: null, taken: false };
+      return { inputs, shapes, extracts, weight, estimate: extracts ? weight * EXPANSION : 0, waits: false, charged: 0, flying: false, promise: null, taken: false };
     });
 
     waiting.push(this);
@@ -91,7 +96,7 @@ export class Prefetch {
 
   /** The next task nothing has started on, or null. */
   upcoming(): PrepareSlot | null {
-    return this.slots.find(slot => ! slot.promise && ! slot.taken) ?? null;
+    return this.slots.find(slot => ! slot.promise && ! slot.taken && ! slot.waits) ?? null;
   }
 }
 
@@ -168,7 +173,13 @@ const start = (slot: PrepareSlot): Promise<UnpackedAll> => {
     flying--;
   };
 
-  slot.promise = unpackAll(slot.inputs, slot.shapes).then(
+  const extracting = shortOf(slot.inputs, slot.weight).then((short) => {
+    if (short) throw new NoRoom(short);
+
+    return unpackAll(slot.inputs, slot.shapes);
+  });
+
+  const promise: Promise<UnpackedAll> = extracting.then(
     (unpacked) => {
       landed();
 
@@ -182,22 +193,28 @@ const start = (slot: PrepareSlot): Promise<UnpackedAll> => {
     (err) => {
       landed();
       uncharge(slot);
+
+      // No room for it ahead of its build: asked again when the build gets to it.
+      if (err instanceof NoRoom && ! slot.taken && slot.promise === promise) {
+        slot.promise = null;
+        slot.waits   = true;
+      }
+
       pump();
 
       throw err;
     },
   );
 
-  return slot.promise;
+  slot.promise = promise;
+
+  return promise;
 };
 
 const uncharge = (slot: PrepareSlot): void => {
   held -= slot.charged;
   slot.charged = 0;
 };
-
-/** What extracted archives weigh against their compressed size, until one has been extracted and measured. */
-const EXPANSION = 8;
 
 /** The share of the vault volume's free space that may be filled with archives extracted ahead. */
 const SCRATCH_SHARE = 0.2;

@@ -285,13 +285,13 @@ file reported twice is recorded once.
 
 ## Stopping
 
-**A stop is answered within thirty seconds, whatever is downloading.** It takes
-no new file; the files already downloading that finish in that time are
-reported, the page reports what it got through, and the process exits. Thirty
-seconds is the compose file's `stop_grace_period`: a stop is an order, and
-matters more than a download. A file still downloading when it runs out is cut
-short with the process and fetched again by the next walk — the largest take
-minutes on a slow link, so a stop does not wait for them.
+**A stop gives the files in flight fifteen seconds, and no longer.** It takes no new file. The
+files already downloading that finish in that time are counted; whatever is still downloading after
+it is given up — left owed, its partial removed — and every page then reports what it got through
+before the process exits. Fifteen seconds is half the compose file's `stop_grace_period`, which
+leaves the other half for the reports to go out: a stop is an order and matters more than a
+download, and what was downloaded before it is not checked a second time for the sake of a few
+files that were slow.
 
 **A start removes every unfinished download** before it fetches anything, which
 is deleting one directory: every partial is in `.hauler-tmp`, on the archives'

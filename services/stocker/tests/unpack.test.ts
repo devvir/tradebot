@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { unpackAll } from '../src/containers';
+import { unpackAll, weightsOf } from '../src/containers';
 
 /**
  * Archives are presented as paths the engine can read. Most are tiny and there
@@ -118,5 +118,15 @@ describe('unpacking archives', () => {
     expect(read(all.paths[0]!)).toEqual(['wide']);
 
     await all.dispose();
+  });
+
+  /** What extraction writes is known before anything is extracted: a zip states it. */
+  it('says what archives inflate to without extracting them', async () => {
+    const pair  = zipOf('weighed.zip', { 'a.csv': 'x'.repeat(5_000), 'b.csv': 'y'.repeat(700) });
+    const plain = join(dir, 'weighed.csv');
+
+    writeFileSync(plain, '1,2\n');
+
+    expect(await weightsOf([{ absolute: pair, container: 'zip' }, { absolute: plain, container: 'plain' }])).toEqual([5_700, 0]);
   });
 });

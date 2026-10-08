@@ -79,7 +79,7 @@ order-book month is ~23 GB and in a container `/tmp` is the overlay filesystem.
 | `STOCKER_VENUES` | no | _(all)_ | Comma-separated venue filter, case-insensitive; an unknown venue fails startup. Venues are swept alphabetically, whatever order they are listed in |
 | `STOCKER_CONCURRENCY` | no | `2` | Instruments built at once, each holding a month-sized sort |
 | `STOCKER_THREADS` | no | `4` | Query engine threads |
-| `STOCKER_MIN_FREE_GB` | no | `20` | No partition is started below this much free space on the vault volume |
+| `STOCKER_MIN_FREE_GB` | no | `20` | No partition is started, and no archive extracted, where it would leave less than this free on the vault volume |
 | `STOCKER_ENGINE_MEMORY_GB` | no | `4` | Memory the query engine may use before it spills to disk |
 
 `DATA_ARCHIVES_DIR` and `DATA_VAULT_DIR` also override the container paths when running

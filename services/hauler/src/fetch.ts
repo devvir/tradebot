@@ -85,6 +85,15 @@ export const haul = async (file: Haulable): Promise<Hauled> => {
 };
 
 /**
+ * Give up every download in flight, now. Each is left owed and its partial
+ * removed: for a stop that has waited as long as it is going to.
+ */
+export const abandon = (): void => given.abort();
+
+/** Take downloads up again after they were given up. For tests: a service that gave up is one that is ending. */
+export const _test_resume = (): void => { given = new AbortController(); };
+
+/**
  * From this size a file is a large one: announced as it starts, not only when
  * it ends, and fetched a few at a time — see `walkVenue`.
  */
@@ -105,11 +114,17 @@ const GONE = new Set([404, 410]);
  */
 const HIDDEN = 403;
 
+/** What every download is tied to, so all of them can be given up at once. */
+let given = new AbortController();
+
 const retrieve = async (file: Haulable, path: string): Promise<Hauled> => {
   const tried = new Set<Host>();
 
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
     const host = await hostToAsk(file, tried);
+
+    // Given up while waiting its turn: not begun, and left owed.
+    if (given.signal.aborted) return { outcome: 'unreached' };
 
     if (! host) {
       logger.error({ key: file.key, venue: file.venue, server: file.server }, 'No address is known for this file\'s server');
@@ -125,7 +140,7 @@ const retrieve = async (file: Haulable, path: string): Promise<Hauled> => {
       logger.info({ key: file.key, size: sizeOf(file.size!), host: host.base }, 'Downloading a large file');
 
     try {
-      const res = await fetch(url);
+      const res = await fetch(url, { signal: given.signal });
 
       if (! res.ok || ! res.body) {
         await res.body?.cancel().catch(() => undefined);
@@ -237,6 +252,9 @@ const retrieve = async (file: Haulable, path: string): Promise<Hauled> => {
       return { outcome: 'downloaded' };
     } catch (err) {
       await discard(path);
+
+      // Given up, not failed: nothing is held against the address, and nothing is tried again.
+      if (given.signal.aborted) return { outcome: 'unreached' };
 
       faltered(host);
 

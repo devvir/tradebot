@@ -15,7 +15,7 @@ import { clipFor } from './spill';
 import { STAGED } from './vault';
 import type { Pack, UnpackedAll, Wrapped } from './containers';
 import type { Format } from './formats/types';
-import type { DiskFile, Group, Series, Spent, VaultKey } from './types';
+import type { DiskFile, Group, Series, Side, Spent, VaultKey } from './types';
 
 /**
  * Row group size, in rows rather than bytes.
@@ -440,6 +440,120 @@ export const bundleStaged = async (conn: DuckDBConnection, key: VaultKey, stagin
 
   return out;
 };
+
+/**
+ * Join what was built a piece at a time into the files it would have been
+ * built as whole: each instrument's rows, from every piece that has any, in
+ * one file in `staging`.
+ *
+ * **A symbol whose archives inflate to more than scratch should hold at once is
+ * built from a few of them at a time** — each piece extracted, written and
+ * removed before the next — into `PIECES` under the staging directory, a
+ * directory a symbol and a directory a piece within it. A piece is in time
+ * order and the pieces need not follow one another, so this join sorts.
+ *
+ * `repeats` says whether a symbol's files repeat whole rows: a row repeated
+ * across two pieces is then written once, as it is within one.
+ */
+export const joinPieces = async (
+  conn:    DuckDBConnection,
+  key:     VaultKey,
+  staging: string,
+  repeats: (of: string) => boolean,
+): Promise<void> => {
+  const root = join(staging, PIECES);
+
+  for (const of of await readdir(root).catch(() => [] as string[])) {
+    const parts = new Map<string, string[]>();
+
+    for (const piece of await readdir(join(root, of)))
+      for (const name of await readdir(join(root, of, piece)))
+        if (name.endsWith(STAGED)) parts.set(name, [...parts.get(name) ?? [], join(root, of, piece, name)]);
+
+    for (const [name, paths] of parts) {
+      const out  = join(staging, name);
+      const temp = `${out}.${++sequence}.tmp`;
+
+      await conn.run(
+        `COPY (SELECT ${repeats(of) ? 'DISTINCT ' : ''}* FROM read_parquet([${paths.map(q).join(', ')}]) ORDER BY ${orderOf(key)})
+         TO ${q(temp)} (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE ${ROW_GROUP})`,
+      );
+
+      await settleFile(conn, temp, out, key, name.slice(0, -STAGED.length));
+    }
+  }
+
+  await rm(root, { recursive: true, force: true });
+};
+
+/**
+ * Take out of a side's staged files the rows the month's own files already
+ * hold, and say how many went.
+ *
+ * **A bar is one row, in one file.** What a neighbouring month holds of this
+ * one is meant to begin where the month's own rows end — and a venue's files
+ * do not always cut that cleanly: a month's file can carry the first bar of the
+ * next, which the next month's file carries too. Each instrument's side is held
+ * to the times its own rows do not reach: after its last for `post`, before its
+ * first for `pre`. The month's own files are what is in the vault and are never
+ * rewritten for it; an instrument's side left with nothing has no file.
+ *
+ * `own` are the month's own files: one of every instrument, or a file each.
+ */
+export const dropOverlap = async (
+  conn: DuckDBConnection,
+  key:  VaultKey,
+  dir:  string,
+  side: Side,
+  own:  readonly string[],
+): Promise<number> => {
+  const names = (await readdir(dir).catch(() => [] as string[])).filter(name => name.endsWith(STAGED));
+
+  if (names.length === 0 || own.length === 0) return 0;
+
+  const reach = new Map((await conn.runAndReadAll(
+    `SELECT symbol, min(ts), max(ts) FROM read_parquet([${own.map(q).join(', ')}]) GROUP BY 1`,
+  )).getRows().map(row => [String(row[0]), { first: String(row[1]), last: String(row[2]) }] as const));
+
+  let dropped = 0;
+
+  for (const name of names) {
+    const held = reach.get(name.slice(0, -STAGED.length));
+
+    if (! held) continue;
+
+    const file  = join(dir, name);
+    const clear = side === 'post' ? `ts > ${held.last}` : `ts < ${held.first}`;
+
+    const [over, all] = (await conn.runAndReadAll(
+      `SELECT count(*) FILTER (WHERE NOT (${clear})), count(*) FROM read_parquet(${q(file)})`,
+    )).getRows()[0]!.map(Number) as [number, number];
+
+    if (over === 0) continue;
+
+    dropped += over;
+
+    if (over === all) {
+      await rm(file, { force: true });
+
+      continue;
+    }
+
+    const temp = `${file}.${++sequence}.tmp`;
+
+    await conn.run(
+      `COPY (SELECT * FROM read_parquet(${q(file)}) WHERE ${clear} ORDER BY ${orderOf(key)})
+       TO ${q(temp)} (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE ${ROW_GROUP})`,
+    );
+
+    await rename(temp, file);
+  }
+
+  return dropped;
+};
+
+/** Under a staging directory: what is built a piece at a time, until it is joined. */
+export const PIECES = '.pieces';
 
 /**
  * Clear what a hard kill leaves behind: extractions, part-built partitions, the
