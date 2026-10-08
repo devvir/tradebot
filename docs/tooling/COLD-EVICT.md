@@ -8,7 +8,8 @@ This page is the **archives**. The vault is evicted on request, by a selection, 
 again as a matter of routine: [COLD-VAULT.md](COLD-VAULT.md).
 
 **This is the only command in the family that removes anything.** It says what it would remove,
-venue by venue, and asks before removing anything; the answer defaults to no. What it removes goes to
+venue by venue, and asks before removing anything; the answer defaults to yes, since removing is
+what it was run to do. What it removes goes to
 the trash. `--dry-run` stops after saying.
 
 ## What can go

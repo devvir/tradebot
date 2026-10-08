@@ -1,5 +1,6 @@
-import { idOf } from './keys';
-import type { Bin, CatalogPartition } from './types';
+import { idOf } from '../../shared/keys';
+import type { Bin } from '../types';
+import type { CatalogPartition } from '../../shared/types';
 
 /**
  * Divide a venue-month's partitions into the tars they will travel in.

@@ -3,7 +3,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { correctionOf, membersOf, replaceMembers, sizedMembersOf, writePart } from '../../../src/tools/cold/tar';
+import { correctionOf, replaceMembers } from '../../../src/tools/cold/push/archives/correct';
+import { membersOf, sizedMembersOf } from '../../../src/tools/cold/shared/tar';
+import { writePart } from '../../../src/tools/cold/push/archives/pack';
 
 /**
  * A stored tar brought back because one partition in it changed: the old

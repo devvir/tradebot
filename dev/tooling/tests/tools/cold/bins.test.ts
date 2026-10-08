@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { binsOf } from '../../../src/tools/cold/bins';
-import type { CatalogPartition } from '../../../src/tools/cold/types';
+import { binsOf } from '../../../src/tools/cold/push/archives/bins';
+import type { CatalogPartition } from '../../../src/tools/cold/shared/types';
 
 const GB = 1024 ** 3;
 

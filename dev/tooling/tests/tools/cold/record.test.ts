@@ -2,9 +2,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import * as record from '../../../src/tools/cold/record';
+import * as record from '../../../src/tools/cold/shared/record';
 import type { DatabaseSync } from 'node:sqlite';
-import type { CatalogPartition } from '../../../src/tools/cold/types';
+import type { CatalogPartition } from '../../../src/tools/cold/shared/types';
 
 let dir: string;
 let db:  DatabaseSync;

@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { clearTemporary, membersOf, writePart } from '../../../src/tools/cold/tar';
+import { clearTemporary, writePart } from '../../../src/tools/cold/push/archives/pack';
+import { membersOf } from '../../../src/tools/cold/shared/tar';
 
 /**
  * A tar is written, then proven, then named — and a run stopped between any two

@@ -98,6 +98,8 @@ export const acquire = async (
   return give;
 };
 
+// ── Internals ─────────────────────────────────────────────────────────────────
+
 /** Whether a process exists. Signal 0 delivers nothing and only asks. */
 const alive = (pid: number): boolean => {
   try {

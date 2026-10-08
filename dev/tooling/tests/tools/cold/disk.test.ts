@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { Archives, matches } from '../../../src/tools/cold/disk';
-import type { PartitionKey } from '../../../src/tools/cold/types';
+import { Archives, matches } from '../../../src/tools/cold/shared/disk';
+import type { PartitionKey } from '../../../src/tools/cold/shared/types';
 
 let root: string;
 

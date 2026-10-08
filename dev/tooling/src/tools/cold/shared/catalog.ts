@@ -1,4 +1,5 @@
-import type { CatalogPartition, ColdConfig, ListedLens, ListedSlice } from './types';
+import type { CatalogPartition, ListedLens, ListedSlice } from './types';
+import type { ColdConfig } from '../types';
 
 /**
  * The catalog, as `cold` asks it: which venues there are, which lenses, and

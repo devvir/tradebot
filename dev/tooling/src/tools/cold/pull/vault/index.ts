@@ -1,20 +1,21 @@
 import fs from 'node:fs';
-import path from 'node:path';
-import { GB, POLL_MS, loadConfig } from './config';
-import { onExit } from './cleanup';
-import { acquire } from './lock';
-import * as mega from './mega';
-import { meter } from './progress';
-import { trusted } from './push-vault';
-import { agreed } from './options';
-import * as record from './record';
-import { meansToPull } from './select';
-import { locate, remoteOf, stockedIn } from './vault';
-import { fmtBytes } from '../../shared/utils/format';
-import { error, info, spacer, success, warn } from '../../shared/ui/logger';
+import { GB, loadConfig } from '../../config';
+import { onExit } from '../../cleanup';
+import { acquire } from '../../lock';
+import * as mega from '../../shared/mega';
+import { trusted } from '../../shared/vault/trusted';
+import { agreed } from '../../options';
+import * as record from '../../shared/record';
+import { meansToPull } from '../../shared/vault/select';
+import { locate } from '../../shared/vault/layout';
+import { stockedIn } from '../../shared/vault/ledger';
+import { fmtBytes } from '../../../../shared/utils/format';
+import { error, info, spacer, success, warn } from '../../../../shared/ui/logger';
+import { byKey } from '../../order';
+import { fetch } from './fetch';
 import type { DatabaseSync } from 'node:sqlite';
-import type { ColdConfig, Fetching, Selection, StoredFile, VaultOptions } from './types';
-import { byKey } from './order';
+import type { ColdConfig, Selection } from '../../types';
+import type { StoredFile, VaultOptions } from '../../shared/types';
 
 /**
  * Bring vault files back from cold storage to the local disk.
@@ -116,96 +117,6 @@ const pullable = (db: DatabaseSync, config: ColdConfig, selection: Selection): S
     && meansToPull(selection, file.partition, file.instrument));
 };
 
-/**
- * Ask Mega for every file and wait until each is back. Returns how many never
- * came.
- *
- * All of them are asked for at once: Mega keeps its own queue, which outlives
- * this command, so a run stopped here leaves them coming and the next run finds
- * them arrived. A file Mega drops without delivering is asked for again, up to
- * `ATTEMPTS` times.
- */
-const fetch = async (
-  db:      DatabaseSync,
-  config:  ColdConfig,
-  wanted:  readonly StoredFile[],
-  remote:  Fetching,
-  pollMs = POLL_MS,
-): Promise<number> => {
-  const local   = (file: StoredFile): string => path.join(config.vaultRoot, file.path);
-  const arrived = (file: StoredFile): boolean => {
-    try {
-      return fs.statSync(local(file)).size === file.bytes;
-    } catch {
-      return false;
-    }
-  };
-
-  const tries   = new Map<StoredFile, number>();
-  let   pending = [...wanted];
-  let   failed  = 0;
-
-  const show = (): void => {
-    if (! process.stdout.isTTY) return;
-
-    const done = wanted.length - pending.length - failed;
-
-    process.stdout.write(`\r\x1b[K  ${meter((done / wanted.length) * 100)} ${done}/${wanted.length} files back`);
-  };
-
-  for (;;) {
-    const coming = await remote.downloadingPaths();
-    const still: StoredFile[] = [];
-    const back:  StoredFile[] = [];
-
-    for (const file of pending) {
-      if (coming.has(local(file))) {
-        still.push(file);
-
-        continue;
-      }
-
-      if (arrived(file)) {
-        back.push(file);
-
-        continue;
-      }
-
-      const asked = tries.get(file) ?? 0;
-
-      if (asked >= ATTEMPTS) {
-        failed++;
-
-        continue;
-      }
-
-      fs.mkdirSync(path.dirname(local(file)), { recursive: true });
-
-      // Whatever is there is not the file: a download cut short, or something else's.
-      fs.rmSync(local(file), { force: true });
-
-      await remote.queueDownload(`${config.megaRoot}/${remoteOf(file)}`, path.dirname(local(file)));
-
-      tries.set(file, asked + 1);
-      still.push(file);
-    }
-
-    record.noteVaultMoves(db, back, 'restored');
-
-    pending = still;
-
-    show();
-
-    if (pending.length === 0) break;
-
-    await new Promise(resolve => setTimeout(resolve, pollMs));
-  }
-
-  if (process.stdout.isTTY) process.stdout.write('\r\x1b[K');
-
-  return failed;
-};
-
 const freeBytes = (dir: string): number => {
   const info = fs.statfsSync(dir);
 
@@ -233,13 +144,9 @@ const loadOf = (files: readonly StoredFile[]): string => {
     + `in ${partitions.toLocaleString('en-US')} partition${partitions === 1 ? '' : 's'} (${fmtBytes(bytesOf(files))})`;
 };
 
-/** Times a file is asked for before it is given up on for this run. */
-const ATTEMPTS = 3;
-
 /** Free space left on the vault's volume after everything asked for is back, at the least. */
 const RESERVE_GB = 5;
 
 // ── Test access ───────────────────────────────────────────────────────────────
 
 export const _test_pullable = pullable;
-export const _test_fetch    = fetch;

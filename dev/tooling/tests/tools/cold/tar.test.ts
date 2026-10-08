@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { tarSize } from '../../../src/tools/cold/tar';
+import { tarSize } from '../../../src/tools/cold/push/archives/pack';
 
 /**
  * The point of this is checking a tar that is *only* in cold storage: its size

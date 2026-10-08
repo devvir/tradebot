@@ -2,12 +2,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Archives } from '../../../src/tools/cold/disk';
-import { _test_remove as remove, _test_survey as survey } from '../../../src/tools/cold/evict';
-import * as record from '../../../src/tools/cold/record';
-import { errorsIn, stockedIn } from '../../../src/tools/cold/vault';
+import { Archives } from '../../../src/tools/cold/shared/disk';
+import { _test_remove as remove } from '../../../src/tools/cold/evict/archives/remove';
+import { _test_survey as survey } from '../../../src/tools/cold/evict/archives/survey';
+import * as record from '../../../src/tools/cold/shared/record';
+import { errorsIn, stockedIn } from '../../../src/tools/cold/shared/vault/ledger';
 import type { DatabaseSync } from 'node:sqlite';
-import type { CatalogPartition, ColdConfig, Grain, ListedSlice } from '../../../src/tools/cold/types';
+import type { CatalogPartition, Grain, ListedSlice } from '../../../src/tools/cold/shared/types';
+import type { ColdConfig } from '../../../src/tools/cold/types';
 
 /**
  * What of the archives can leave the disk: only what cold storage holds and

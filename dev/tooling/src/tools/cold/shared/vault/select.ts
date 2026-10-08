@@ -1,5 +1,5 @@
-import { BUNDLE, locate, variantsOf } from './vault';
-import type { Selection } from './types';
+import { BUNDLE, locate, variantsOf } from './layout';
+import type { Selection } from '../../types';
 
 /**
  * Which of the vault a selection means.

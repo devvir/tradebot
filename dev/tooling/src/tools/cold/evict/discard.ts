@@ -31,6 +31,8 @@ export const discard = async (paths: readonly string[], purge: boolean): Promise
   }
 };
 
+// ── Internals ─────────────────────────────────────────────────────────────────
+
 /**
  * Hand files and directories to the host's trash.
  *

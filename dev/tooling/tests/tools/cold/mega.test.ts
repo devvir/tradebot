@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import {
-  _test_parseListing as parseListing,
-  _test_parseSummary as parseSummary,
-} from '../../../src/tools/cold/mega';
+import { _test_parseListing as parseListing } from '../../../src/tools/cold/shared/mega/listing';
+import { _test_parseSummary as parseSummary } from '../../../src/tools/cold/shared/mega/transfers';
+import * as mega from '../../../src/tools/cold/shared/mega';
+import * as record from '../../../src/tools/cold/shared/record';
 
 /**
  * Both of these read mega-cmd's human output, so they are the parts most likely
@@ -80,5 +80,16 @@ describe('confirming a file landed', () => {
   /** A file Mega does not hold is how "not uploaded yet" is expressed. */
   it('returns nothing when the name is absent', () => {
     expect(parseListing(LISTING, '202405.p09.tar')).toBeNull();
+  });
+});
+
+/** Commands reach both through one name each: a function missing there is a command that fails as it starts. */
+describe('what the commands reach Mega and the record through', () => {
+  it('holds every function they call', () => {
+    for (const name of ['available', 'queueUpload', 'queueDownload', 'downloadingPaths', 'queue', 'queuedPaths', 'active', 'remove', 'listing', 'remote'] as const)
+      expect(typeof mega[name], name).toBe('function');
+
+    for (const name of ['open', 'close', 'tarsOf', 'storedOf', 'evictedOf', 'vaultFiles', 'totals'] as const)
+      expect(typeof record[name], name).toBe('function');
   });
 });

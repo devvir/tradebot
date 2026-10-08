@@ -2,14 +2,19 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { _test_byVenue as byVenue, _test_evictable as evictable, _test_remove as remove } from '../../../src/tools/cold/evict-vault';
-import { _test_fetch as fetch, _test_pullable as pullable } from '../../../src/tools/cold/pull-vault';
-import { _test_plan as plan, _test_round as round } from '../../../src/tools/cold/push-vault';
-import * as record from '../../../src/tools/cold/record';
-import { meansPartition, meansToEvict, meansToPull } from '../../../src/tools/cold/select';
-import { backedUpIn, filesOf, remoteOf, stockedIn } from '../../../src/tools/cold/vault';
+import { _test_byVenue as byVenue, _test_evictable as evictable, _test_remove as remove } from '../../../src/tools/cold/evict/vault';
+import { _test_fetch as fetch } from '../../../src/tools/cold/pull/vault/fetch';
+import { _test_pullable as pullable } from '../../../src/tools/cold/pull/vault';
+import { _test_plan as plan } from '../../../src/tools/cold/push/vault/plan';
+import { _test_round as round } from '../../../src/tools/cold/push/vault/work';
+import * as record from '../../../src/tools/cold/shared/record';
+import { meansPartition, meansToEvict, meansToPull } from '../../../src/tools/cold/shared/vault/select';
+import { backedUpIn, stockedIn } from '../../../src/tools/cold/shared/vault/ledger';
+import { filesOf, remoteOf } from '../../../src/tools/cold/shared/vault/layout';
 import type { DatabaseSync } from 'node:sqlite';
-import type { ColdConfig, Fetching, Remote, Selection } from '../../../src/tools/cold/types';
+import type { ColdConfig, Selection } from '../../../src/tools/cold/types';
+import type { Fetching } from '../../../src/tools/cold/pull/types';
+import type { Remote } from '../../../src/tools/cold/push/types';
 
 /**
  * The vault in cold storage: stored a partition at a time, as the files it is,
@@ -204,7 +209,7 @@ describe('storing the vault', () => {
 
     expect([...record.vaultStored(db).keys()]).toEqual([`${SMALL}/202001`]);
     // Named as a person reads it, without the names the vault's path carries for a query engine.
-    expect(line).toEqual([expect.stringContaining('Stored gate/spot/klines,1h/202001 · 1 file')]);
+    expect(line).toEqual([expect.stringContaining('Stored gate: spot/klines,1h/202001 · 1 file')]);
   });
 
   it('does not take a file of another size for the file', async () => {

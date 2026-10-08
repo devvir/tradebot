@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { idOf, partitionOf } from '../../../src/tools/cold/keys';
+import { idOf, partitionOf } from '../../../src/tools/cold/shared/keys';
 
 /** A file's name says which partition it belongs to, and nothing else is read. */
 describe('the partition a file belongs to', () => {

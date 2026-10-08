@@ -20,7 +20,7 @@ stored as they are — see [COLD-VAULT.md](COLD-VAULT.md).
 |---|---|
 | `cold push` | Upload what is ready and not backed up yet — [archives](COLD-PUSH.md), [vault](COLD-VAULT.md#cold-push-vault) |
 | `cold evict` | Remove from local disk what is safely in cold storage — [archives](COLD-EVICT.md), [vault](COLD-VAULT.md#cold-evict-vault) |
-| [`cold pull`](COLD-VAULT.md#cold-pull-vault) | Bring back what was evicted — the vault; the archives are not built |
+| [`cold pull`](COLD-PULL.md) | Bring back a venue's dataset, or a partition of it — [archives](COLD-PULL.md#the-archives), [vault](COLD-VAULT.md#cold-pull-vault) |
 | `cold stats` | What the record holds, venue by venue |
 | [`cold audit`](COLD-AUDIT.md) | Check cold storage against the record — **not running**, see its page |
 
@@ -29,21 +29,25 @@ after the other. With none given it asks, and `all` is the first answer.
 
 **With `all`, every line says which tree it is about** — `(archives)`, `(vault)` — and nothing else
 tells them apart. A command that is not built for one of the trees says so on that tree's turn and
-carries on with the rest: `pull` brings back the vault, and not yet the archives.
+carries on with the rest.
 
 **Options given at the `cold` level are every command's.** They are written once, before the command
 or after it, and each command that has a use for one reads it:
 
 | | |
 |---|---|
-| `-W`, `--watch` | keep running once the work is done, and look again every 30 minutes — `push` and `evict` |
-| `-A`, `--all-sources` | every tree, without asking which. With it there is no origin on the line, so every argument is a venue |
-| `-Y`, `--yes` | answer yes to what a command asks before it acts |
+| `-w`, `--watch` | keep running once the work is done, and look again every 30 minutes — `push` and `evict` |
+| `-a`, `--all-sources` | every tree, without asking which. With it there is no origin on the line, so every argument is a venue |
+| `-y`, `--yes` | answer what a command asks before it acts: each question's own default |
 
 `--all-sources` and `--yes` together are what a script or a crontab runs: nothing is asked.
 
-**`--yes` answers what a command asks about its own work, and nothing else.** A lock another run is
-holding still stops the run.
+**`--yes` gives every question its own default** — what pressing return would answer. That is yes
+wherever a command asks whether to do what it was run to do, and no where doing it would change
+nothing: `pull`, about what is on disk exactly as stored. It answers what a command asks about its
+own work and nothing else: a lock another run is holding still stops the run.
+
+**Short options are lower case**, here and on every command.
 
 **Watching every tree, each is seen through before the next begins**, and the whole round comes
 again after the wait. A command watching one tree looks again in the middle of its own work; over
@@ -84,6 +88,8 @@ caller that reasons about Mega without going through the record of what is in it
 | the record | `<cold>/cold.sqlite` — every tar and the partitions each holds, and every vault file |
 | local tars | `<cold>/<origin>/<venue>/<venue>-<YYYYMM>.<NNN>.tar` — staging only, deleted once stored |
 | lock | `<cold>/cold.<origin>.<command>.lock` — one run of a command per origin |
+| tars coming back | `<cold>/pulling/<origin>/…` — a pull's download and what it takes out of it, deleted as each tar is done |
+| older versions pulled | `<cold>/pulled/<origin>/…` — partitions of a version the catalog has moved on from, for looking at |
 | remote, archives | `<MEGA_ROOT>/sources/archives/<venue>/<YYYY>/<venue>-<YYYYMM>.<NNN>.tar` |
 | remote, vault | `<MEGA_ROOT>/vault/<venue>/<market>/<dataset>[,<variant>…]/<@ or instrument>/<YYYYMM>[.pre|.post].parquet` |
 
@@ -104,6 +110,20 @@ Everything a run holds sits in **one directory**, `<cold>`: the staging tars, th
 record. It is `SOURCES_COLD_DIR` if set and `<DATA_DIR>/@cold` otherwise.
 
 Configuration is read from `dev/tooling/.env`; see [COLD-PUSH.md](COLD-PUSH.md) for the variables.
+
+### The code
+
+`dev/tooling/src/tools/cold/`, a directory for each subcommand and one for what they share:
+
+| | |
+|---|---|
+| `push/`, `evict/`, `pull/`, `stats/` | everything that is one subcommand's alone: `command.ts` is its place on the command line, and `archives` and `vault` are the two trees it works on |
+| `shared/` | what two subcommands or more use: the record, Mega, the catalog, the archives on disk, the vault's ledger and layout, the progress display |
+| the directory itself | what every command is run with: configuration, the options given at the `cold` level, the lock, and how a line is read into trees and venues |
+| `legacy/` | the commands not yet rebuilt on partitions — see [COLD-AUDIT.md](COLD-AUDIT.md) |
+
+Types sit in a `types.ts` at the level that uses them: a subcommand's own in its directory, shared
+ones in `shared/`, and those the whole command is built on at the top.
 
 ---
 

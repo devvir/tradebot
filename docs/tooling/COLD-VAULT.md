@@ -96,8 +96,9 @@ Files go to the host's trash by default and `--purge` deletes outright, as for t
 
 ## `cold pull vault`
 
-Brings files back, each to the place in the vault it was taken from. It is `evict`'s other half and
-is selected the same way.
+Brings files back, each to the place in the vault it was taken from. It is `evict`'s other half,
+and asked for as every pull is: a venue, and a dataset or a partition of it — see
+[COLD-PULL.md](COLD-PULL.md#what-is-asked-for) — with `--instruments` besides.
 
 - **Only what is away**, and only of the revision the ledger still has: a file of a revision the
   vault has since restocked is not brought back.
@@ -111,7 +112,8 @@ is selected the same way.
 
 ## Selecting part of the vault
 
-`evict` and `pull` take the same arguments. Each narrows; one left out means any.
+What `evict` takes. Each narrows; one left out means any. `pull` takes `--instruments` from here
+and names the rest its own way.
 
 | | |
 |---|---|
@@ -131,8 +133,8 @@ does not.** A small month is one file holding every instrument:
 
 ```
 tools cold evict vault htx --dataset trades --to 202212
-tools cold pull vault bybit --market perp --dataset klines --variant 1m --from 202301 --to 202306
-tools cold pull vault binance --dataset trades --instruments BTCUSDT,ETHUSDT --from 202401
+tools cold pull vault bybit --partition perp/klines,1m/2023
+tools cold pull vault binance --dataset trades --instruments BTCUSDT,ETHUSDT --date 2024
 ```
 
 ## `cold stats vault`

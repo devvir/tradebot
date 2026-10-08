@@ -1,20 +1,22 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { loadConfig } from './config';
-import { onExit } from './cleanup';
+import { loadConfig } from '../config';
+import { onExit } from '../cleanup';
 import { discard } from './discard';
-import { acquire } from './lock';
-import { meter } from './progress';
-import { trusted } from './push-vault';
-import { agreed } from './options';
-import * as record from './record';
-import { meansToEvict } from './select';
-import { locate, stockedIn } from './vault';
-import { fmtBytes } from '../../shared/utils/format';
-import { info, spacer, success } from '../../shared/ui/logger';
+import { acquire } from '../lock';
+import { meter } from '../shared/meter';
+import { trusted } from '../shared/vault/trusted';
+import { agreed } from '../options';
+import * as record from '../shared/record';
+import { meansToEvict } from '../shared/vault/select';
+import { locate } from '../shared/vault/layout';
+import { stockedIn } from '../shared/vault/ledger';
+import { fmtBytes } from '../../../shared/utils/format';
+import { info, spacer, success } from '../../../shared/ui/logger';
+import { byKey } from '../order';
 import type { DatabaseSync } from 'node:sqlite';
-import type { ColdConfig, Selection, StoredFile, VaultOptions } from './types';
-import { byKey } from './order';
+import type { ColdConfig, Selection } from '../types';
+import type { StoredFile, VaultOptions } from '../shared/types';
 
 /**
  * Take vault files off the local disk, to make room.
@@ -73,7 +75,7 @@ export const runEvictVault = async (selection: Selection, options: VaultOptions)
 
       const purge = options.purge ?? false;
 
-      if (! await agreed(purge ? 'Delete them from disk?' : 'Move them to the trash?', false)) return;
+      if (! await agreed(purge ? 'Delete them from disk?' : 'Move them to the trash?', true)) return;
 
       for (const [venue, files] of byVenue(going)) {
         await remove(db, config, venue, files, purge);
@@ -190,5 +192,7 @@ const loadOf = (files: readonly StoredFile[]): string => {
 // ── Test access ───────────────────────────────────────────────────────────────
 
 export const _test_evictable = evictable;
+
 export const _test_byVenue   = byVenue;
+
 export const _test_remove    = remove;

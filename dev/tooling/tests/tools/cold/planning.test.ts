@@ -2,11 +2,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { _test_plan as plan, _test_scan as scan } from '../../../src/tools/cold/push';
-import type { Progress } from '../../../src/tools/cold/progress';
-import * as record from '../../../src/tools/cold/record';
+import { _test_plan as plan } from '../../../src/tools/cold/push/archives/plan';
+import { _test_scan as scan } from '../../../src/tools/cold/push/archives/work';
+import type { Progress } from '../../../src/tools/cold/shared/progress';
+import * as record from '../../../src/tools/cold/shared/record';
 import type { DatabaseSync } from 'node:sqlite';
-import type { ColdConfig, ListedSlice } from '../../../src/tools/cold/types';
+import type { ColdConfig } from '../../../src/tools/cold/types';
+import type { ListedSlice } from '../../../src/tools/cold/shared/types';
 
 /**
  * What a run decides before it packs anything: the catalog's ready partitions
