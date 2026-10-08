@@ -1,17 +1,9 @@
 import { fileLabelOf } from '../vault/layout';
-import { execFileAsync } from './exec';
+import { answering, megaCmd } from './exec';
 import type { ActiveTransfer, QueueState } from '../types';
 
 /** Whether mega-cmd will answer at all. */
-export const available = async (): Promise<boolean> => {
-  try {
-    await execFileAsync('mega-whoami', [], { timeout: 30_000 });
-
-    return true;
-  } catch {
-    return false;
-  }
-};
+export const available = answering;
 
 /**
  * Hand a tar to Mega's queue and return without waiting.
@@ -25,7 +17,7 @@ export const available = async (): Promise<boolean> => {
  * `cp`, and silent.
  */
 export const queueUpload = async (local: string, remoteDir: string): Promise<void> => {
-  await execFileAsync('mega-put', ['-q', '-c', local, `${remoteDir.replace(/\/$/, '')}/`],
+  await megaCmd('mega-put', ['-q', '-c', local, `${remoteDir.replace(/\/$/, '')}/`],
     { timeout: 120_000 });
 };
 
@@ -37,7 +29,7 @@ export const queueUpload = async (local: string, remoteDir: string): Promise<voi
  * side stays busy with other tars meanwhile.
  */
 export const queueDownload = async (remotePath: string, localDir: string): Promise<void> => {
-  await execFileAsync('mega-get', ['-q', remotePath, `${localDir.replace(/\/$/, '')}/`], { timeout: 120_000 });
+  await megaCmd('mega-get', ['-q', remotePath, `${localDir.replace(/\/$/, '')}/`], { timeout: 120_000 });
 };
 
 /**
@@ -48,7 +40,7 @@ export const queueDownload = async (remotePath: string, localDir: string): Promi
  */
 export const downloadingPaths = async (): Promise<Set<string>> => {
   try {
-    const { stdout } = await execFileAsync(
+    const { stdout } = await megaCmd(
       'mega-transfers',
       ['--only-downloads', '--limit=100000', '--col-separator=|', '--output-cols=DESTINYPATH'],
       { timeout: 60_000, maxBuffer: 64 * 1024 * 1024 },
@@ -75,7 +67,7 @@ export const queue = async (): Promise<QueueState> => {
   const empty: QueueState = { remaining: 0, total: 0, uploaded: 0, transfers: 0 };
 
   try {
-    const { stdout } = await execFileAsync(
+    const { stdout } = await megaCmd(
       'mega-transfers', ['--summary', '--only-uploads'], { timeout: 60_000 });
 
     return parseSummary(stdout) ?? empty;
@@ -102,7 +94,7 @@ export const queue = async (): Promise<QueueState> => {
  */
 export const queuedPaths = async (): Promise<Set<string>> => {
   try {
-    const { stdout } = await execFileAsync(
+    const { stdout } = await megaCmd(
       'mega-transfers',
       ['--only-uploads', '--limit=100000', '--col-separator=|', '--output-cols=SOURCEPATH'],
       { timeout: 60_000, maxBuffer: 64 * 1024 * 1024 },
@@ -121,6 +113,55 @@ export const queuedPaths = async (): Promise<Set<string>> => {
 };
 
 /**
+ * Take out of the upload queue every transfer that is a second one of the same
+ * file to the same place, below these local directories. Returns how many went.
+ *
+ * A file can be handed over twice: Mega is slow to show a transfer it has
+ * accepted, and for a moment after one finishes it is in neither the queue nor
+ * the listing. Sent twice it is stored twice, as two versions. The one already
+ * being sent is kept, else the first asked for; what belongs to anything else
+ * using the same queue is not looked at.
+ *
+ * Not a guarantee — the second may already be on its way — only tidiness.
+ */
+export const dropDuplicateUploads = async (under: readonly string[]): Promise<number> => {
+  try {
+    const { stdout } = await megaCmd(
+      'mega-transfers',
+      ['--only-uploads', '--limit=100000', '--col-separator=|', '--output-cols=TAG,STATE,SOURCEPATH,DESTINYPATH'],
+      { timeout: 60_000, maxBuffer: 64 * 1024 * 1024 },
+    );
+
+    const extra = duplicatesIn(stdout, under);
+
+    for (const tag of extra) await megaCmd('mega-transfers', ['-c', tag], { timeout: 60_000 });
+
+    return extra.length;
+  } catch {
+    return 0;
+  }
+};
+
+/** The tags of the transfers to cancel, read off the queue as `TAG|STATE|SOURCEPATH|DESTINYPATH` lines. */
+const duplicatesIn = (stdout: string, under: readonly string[]): string[] => {
+  const same = new Map<string, { tag: string; active: boolean }[]>();
+
+  for (const line of stdout.split('\n')) {
+    const [tag, state, source, destiny] = line.split('|').map(part => part.trim());
+
+    if (! tag || ! /^\d+$/.test(tag) || ! source || ! under.some(dir => source.startsWith(`${dir.replace(/\/$/, '')}/`))) continue;
+
+    same.set(`${source}|${destiny}`, [...same.get(`${source}|${destiny}`) ?? [], { tag, active: state === 'ACTIVE' }]);
+  }
+
+  return [...same.values()].flatMap((transfers) => {
+    const keep = transfers.find(one => one.active) ?? transfers.sort((a, b) => Number(a.tag) - Number(b.tag))[0]!;
+
+    return transfers.filter(one => one !== keep).map(one => one.tag);
+  });
+};
+
+/**
  * The transfer Mega is working on right now, or null when it is idle.
  *
  * Mega sends one file at a time, so there is only ever one of these — which is
@@ -128,7 +169,7 @@ export const queuedPaths = async (): Promise<Set<string>> => {
  */
 export const active = async (): Promise<ActiveTransfer | null> => {
   try {
-    const { stdout } = await execFileAsync(
+    const { stdout } = await megaCmd(
       'mega-transfers',
       ['--only-uploads', '--limit=100000', '--col-separator=|',
         '--output-cols=SOURCEPATH,PROGRESS,STATE'],
@@ -222,3 +263,4 @@ const bytesOf = (value: string, unit: string): number => Number(value) * (UNITS[
 // ── Test access ───────────────────────────────────────────────────────────────
 
 export const _test_parseSummary = parseSummary;
+export const _test_duplicatesIn = duplicatesIn;

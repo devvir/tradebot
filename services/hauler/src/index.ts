@@ -2,6 +2,7 @@ import { logger } from '@devvir/service-kit';
 import type { Service } from '@devvir/service-kit';
 import { venues } from './catalog';
 import { sweepPartials } from './store';
+import { dropHeld } from './held';
 import { setHosts } from './hosts';
 import { walkVenue } from './venue';
 import SK from './service';
@@ -61,6 +62,9 @@ const loop = async (venue: string): Promise<void> => {
           'The archives volume is low on space — nothing more is fetched until there is room');
       else
         logger.info({ venue, ...walked, nextInMinutes: (found ? FOUND_MS : QUIET_MS) / 60_000 }, 'Walk finished');
+
+      // Nothing owed is nothing left to settle: what was held for the catalog to rule on was not what it ruled for.
+      if (walked.listed === 0) await dropHeld(venue);
     } catch (err) {
       logger.error({ err, venue }, 'Walk failed — trying again later');
     }

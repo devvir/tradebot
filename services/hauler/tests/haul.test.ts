@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Server } from 'node:http';
 import type { Haulable } from '../src/types';
+import { dropHeld } from '../src/held';
 
 /**
  * One file brought to disk: fetched, found there already and touched, or found
@@ -38,6 +39,9 @@ beforeEach(async () => {
     if (req.url === '/file.zip') { res.writeHead(200); res.end(BODY); return; }
     if (req.url === '/short.zip') { res.writeHead(200); res.end('short'); return; }
     if (req.url === '/busy.zip') { asked++; res.writeHead(503); res.end(); return; }
+    // An address having a bad moment: all is well, says the status, and there is nothing in the body.
+    if (req.url === '/empty.zip') { asked++; res.writeHead(200); res.end(); return; }
+    if (req.url === '/empty-once.zip') { res.writeHead(200); res.end(++asked === 1 ? '' : BODY); return; }
     // Refusals say how long to wait, so a test is never held for the default.
     if (req.url === '/forbidden.zip') { asked++; res.writeHead(403, { 'retry-after': '0' }); res.end(); return; }
     if (req.url === '/refused.zip') { asked++; res.writeHead(429, { 'retry-after': '1' }); res.end(); return; }
@@ -59,6 +63,10 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.restoreAllMocks();
+
+  // What a test left held is not the next one's.
+  for (const venue of ['binance', 'gate', 'nowhere']) await dropHeld(venue);
+
   await new Promise(done => server.close(done));
   rmSync(cfg.archivesDir, { recursive: true, force: true });
 });
@@ -84,12 +92,45 @@ describe('a file not yet on disk', () => {
     expect(readFileSync(at(one), 'utf8')).toBe(BODY);
   });
 
-  it('is reported as a mismatch, and nothing is kept, when the venue serves something else', async () => {
+  it('is reported as a mismatch, and not put in place, when the venue serves something else', async () => {
     const one = file({ path: 'short.zip' });
 
     expect(await haul(one)).toEqual({ outcome: 'mismatched', size: 5 });
     expect(existsSync(at(one))).toBe(false);
-    expect(existsSync(join(cfg.archivesDir, '.hauler-tmp')) && readdirSync(join(cfg.archivesDir, '.hauler-tmp')).length > 0).toBe(false);
+  });
+
+  /** Likely the venue's newer file: once the catalog has asked and says the same, that download is the file. */
+  it('is not fetched twice where the catalog comes to agree with what was fetched', async () => {
+    const one = file({ path: 'short.zip' });
+
+    await haul(one);
+
+    // The same file, as the catalog has it after asking the venue — at a path that would fail if it were asked for again.
+    expect(await haul({ ...one, path: 'gone.zip', size: 5, etag: `"${md5('short')}"` })).toEqual({ outcome: 'downloaded' });
+    expect(readFileSync(at(one), 'utf8')).toBe('short');
+    expect(asked).toBe(0);
+  });
+
+  it('is dropped and fetched like any other where the catalog settles on something else', async () => {
+    const one = file({ path: 'short.zip' });
+
+    await haul(one);
+
+    expect(await haul({ ...one, path: 'file.zip' })).toEqual({ outcome: 'downloaded' });
+    expect(readFileSync(at(one), 'utf8')).toBe(BODY);
+  });
+
+  /** A venue with nothing owed has nothing left to settle. */
+  it('is dropped with everything else held of its venue once that venue owes nothing', async () => {
+    const one = file({ path: 'short.zip' });
+
+    await haul(one);
+
+    expect(await dropHeld('binance')).toBe(1);
+    expect(readdirSync(join(cfg.archivesDir, '.hauler-tmp'))).toEqual([]);
+
+    // Nothing held any more: it is asked of the venue, which no longer has it at that path.
+    expect((await haul({ ...one, path: 'gone.zip', size: 5, etag: `"${md5('short')}"` })).outcome).toBe('failed');
   });
 
   /** The venue's own answer that the file is not there makes it `failed`. */
@@ -102,6 +143,31 @@ describe('a file not yet on disk', () => {
   it('is unreached, after every attempt, where the venue is only busy', async () => {
     expect((await haul(file({ path: 'busy.zip' }))).outcome).toBe('unreached');
     expect(asked).toBe(3);
+  });
+
+  /** Nothing where there should be something is a transfer that failed, not a file that differs. */
+  it('is asked for again where the venue serves nothing, and fetched once it serves the file', async () => {
+    const one = file({ path: 'empty-once.zip' });
+
+    expect(await haul(one)).toEqual({ outcome: 'downloaded' });
+    expect(readFileSync(at(one), 'utf8')).toBe(BODY);
+    expect(asked).toBe(2);
+  });
+
+  it('is unreached, and not a mismatch, where every attempt is served nothing', async () => {
+    const one = file({ path: 'empty.zip' });
+
+    expect(await haul(one)).toEqual({ outcome: 'unreached' });
+    expect(asked).toBe(3);
+    expect(existsSync(at(one))).toBe(false);
+  });
+
+  /** A file the catalog says is empty is a file like any other. */
+  it('is fetched as it is where the catalog says it is empty', async () => {
+    const one = file({ path: 'empty.zip', size: 0, etag: undefined });
+
+    expect(await haul(one)).toEqual({ outcome: 'downloaded' });
+    expect(readFileSync(at(one), 'utf8')).toBe('');
   });
 
   /** A `403` may be aimed at us, so it is tried again — and reported only where it holds. */

@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { confirmVault } from '../confirm';
 import { ledgersOf, recordOf, save } from '../../shared/backup';
 import path from 'node:path';
 import { GB, POLL_MS, WATCH_MS } from '../../config';
@@ -7,7 +8,7 @@ import { isWatch } from '../../options';
 import { Progress } from '../../shared/progress';
 import * as record from '../../shared/record';
 import { labelOf, remoteOf } from '../../shared/vault/layout';
-import { noteBackedUp } from '../../shared/vault/ledger';
+import { noteBackedUp, stockedIn } from '../../shared/vault/ledger';
 import { fmtBytes } from '../../../../shared/utils/format';
 import { spacer, success } from '../../../../shared/ui/logger';
 import { pendingOf, plan } from './plan';
@@ -23,7 +24,9 @@ import type { StoredFile } from '../../shared/types';
  * been stocked since.
  */
 export const work = async (db: DatabaseSync, config: ColdConfig, venues: readonly string[], remote: Remote): Promise<void> => {
-  const partitions = (): number => new Set(pendingOf(db, venues).map(file => `${file.partition}|${file.revision}`)).size;
+  /** The partitions still to be stored: those with a file to send, and those a run before this one left a step short. */
+  const partitions = (): number =>
+    new Set([...pendingOf(db, venues), ...unfinishedOf(db, config)].map(one => `${one.partition}|${one.revision}`)).size;
 
   const done     = record.vaultStored(db).size;
   const progress = new Progress(done + partitions(), done);
@@ -34,7 +37,20 @@ export const work = async (db: DatabaseSync, config: ColdConfig, venues: readonl
   let scanAt  = Date.now() + WATCH_MS;
   let waiting = false;
 
+  /** From when what was stored has not had its second look — see `confirm.ts`. */
+  let unconfirmed = new Date().toISOString();
+
+  const confirm = async (): Promise<void> => {
+    const from = unconfirmed;
+
+    unconfirmed = new Date().toISOString();
+
+    await confirmVault(db, config, from, remote, line => progress.log(line));
+  };
+
   for (;;) {
+    await remote.dropDuplicateUploads?.([config.vaultRoot]);
+
     if (isWatch() && Date.now() >= scanAt) {
       const before = partitions();
 
@@ -51,7 +67,15 @@ export const work = async (db: DatabaseSync, config: ColdConfig, venues: readonl
 
     const pending = pendingOf(db, venues);
 
-    if (pending.length === 0) {
+    // A partition left a step short has nothing pending, and still has a round coming to it.
+    if (pending.length === 0 && unfinishedOf(db, config).length === 0) {
+      // Everything found has been sent: what was stored is looked at once more, and what that undoes is sent again.
+      if (! waiting) {
+        await confirm();
+
+        if (pendingOf(db, venues).length > 0) continue;
+      }
+
       if (! isWatch()) break;
 
       if (! waiting) progress.log('Watch mode - Waiting for new partitions to push');
@@ -166,7 +190,14 @@ const round = async (
     moved = true;
   }
 
-  for (const key of new Set(pending.map(file => `${file.partition}|${file.revision}`))) {
+  /**
+   * **And the partitions a run before this one left a step short**: every file
+   * stored, and the run stopped before the partition was written down as whole.
+   * None of their files is pending, so nothing above would ever come back to
+   * them. Only at the revision the ledger has now — an older one is not a
+   * partition to finish, but one to be replaced.
+   */
+  for (const key of new Set([...pending, ...unfinishedOf(db, config)].map(file => `${file.partition}|${file.revision}`))) {
     const [partition, revision] = key.split('|') as [string, string];
     const files = record.vaultFilesOf(db, partition, revision);
 
@@ -184,6 +215,13 @@ const round = async (
   }
 
   return moved;
+};
+
+/** The partitions of the revision the ledger has now whose files are all stored, and that are not written down as whole. */
+const unfinishedOf = (db: DatabaseSync, config: ColdConfig): { partition: string; revision: string }[] => {
+  const current = new Map((stockedIn(config.vaultRoot) ?? []).map(one => [one.partition, one.revision]));
+
+  return record.vaultUnfinished(db).filter(one => current.get(one.partition) === one.revision);
 };
 
 /**

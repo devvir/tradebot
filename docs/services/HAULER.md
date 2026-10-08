@@ -170,7 +170,18 @@ against both before it is called done:
 | already on disk | yes | **touched**, and reported as downloaded |
 | already on disk | no | **moved aside** as `.bak`, then fetched again |
 | just fetched | yes | downloaded |
-| just fetched | no | **reported as a mismatch**, nothing kept |
+| just fetched | no | **reported as a mismatch**, and held in scratch |
+
+**A download that differs is held, not thrown away.** It is usually the venue's newer file: the
+catalog is told, asks the venue, and takes what the venue says, after which the file is owed again at
+its new size and checksum. When it comes round, what was fetched the first time is set against what
+the catalog says now — agreeing, it is given its place and nothing is fetched; not, it is dropped and
+fetched like any other. What is held is a short list in memory, by venue and key, so nothing is
+looked for on disk. It is dropped for a venue that owes nothing, and with the rest of scratch as the
+service starts.
+
+**Nothing, where the catalog says there is something, is not a difference**: an empty body is a
+transfer that failed, tried again like any other, and never reported.
 
 **Nothing appears at its final path until it has been checked.** A download
 lands in `.hauler-tmp` at the archives' root, under a name that is a digest of

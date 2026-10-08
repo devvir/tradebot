@@ -83,13 +83,13 @@ const settleReport = async (db: DatabaseSync, report: Settling): Promise<Settled
     const asked   = adapter ? await confirm(db, adapter, file.path) : UNKNOWN;
 
     if (asked.file) {
-      logger.warn({ path: file.path }, 'Reported as undownloadable, but the venue still serves it');
+      logger.warn({ venue: adapter?.name, path: file.path }, 'Reported as undownloadable, but the venue still serves it');
 
       continue;
     }
 
     if (! asked.absent) {
-      logger.warn({ path: file.path, ...(asked.status === undefined ? {} : { status: asked.status }) },
+      logger.warn({ venue: adapter?.name, path: file.path, ...(asked.status === undefined ? {} : { status: asked.status }) },
         'Reported as undownloadable, and the venue did not say whether it has it; left owed');
 
       continue;
@@ -145,7 +145,7 @@ const reconcile = async (
   const seen = (await confirm(db, adapter, file.path)).file;
 
   if (! seen) {
-    logger.warn({ path: file.path, claimed }, 'Could not confirm a reported change');
+    logger.warn({ venue: adapter.name, path: file.path, claimed }, 'Could not confirm a reported change');
 
     return false;
   }
@@ -157,7 +157,7 @@ const reconcile = async (
     && (claimed.etag == null || claimed.etag.toLowerCase() === seen.etag?.toLowerCase());
 
   if (! agrees)
-    logger.error({ path: file.path, claimed, seen },
+    logger.error({ venue: adapter.name, path: file.path, claimed, seen },
       'Reported file differs from the venue; keeping what the venue has');
 
   return correctFile(
@@ -205,7 +205,7 @@ const confirm = async (
   try {
     said = await adapter.scanner.confirm(await adapter.getContext(db, 'lookup'), path);
   } catch (err) {
-    logger.warn({ path, error: (err as Error).message }, 'Could not ask the venue about a file');
+    logger.warn({ venue: adapter.name, path, error: (err as Error).message }, 'Could not ask the venue about a file');
 
     return UNKNOWN;
   }

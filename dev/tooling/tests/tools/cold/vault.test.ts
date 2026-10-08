@@ -190,6 +190,20 @@ describe('storing the vault', () => {
     ]);
   });
 
+  /** Every file stored and the run stopped before saying the partition was: nothing of it is pending, and it still has to be finished. */
+  it('finishes a partition a run before this one left a step short', async () => {
+    await storeAll();
+
+    db.prepare('DELETE FROM vault_partition WHERE partition = ?').run(`${SMALL}/202001`);
+
+    expect(record.vaultStored(db).has(`${SMALL}/202001`)).toBe(false);
+    expect(record.vaultFilesPending(db)).toEqual([]);
+
+    await round(db, config(), [], mega(), () => {});
+
+    expect(record.vaultStored(db).has(`${SMALL}/202001`)).toBe(true);
+  });
+
   /** Confirmed from Mega's own listing, at the size the file has on disk. */
   it('takes a partition as stored only once every file of it is in Mega at its size', async () => {
     const remote = mega();

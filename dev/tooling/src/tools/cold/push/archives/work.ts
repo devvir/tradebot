@@ -1,4 +1,5 @@
 import { GB, POLL_MS, WATCH_MS } from '../../config';
+import { confirmTars } from '../confirm';
 import { recordOf, save } from '../../shared/backup';
 import { onExit } from '../../cleanup';
 import { Archives } from '../../shared/disk';
@@ -45,7 +46,20 @@ export const work = async (
   let scanAt  = Date.now() + WATCH_MS;
   let waiting = false;
 
+  /** From when what was stored has not had its second look — see `confirm.ts`. */
+  let unconfirmed = new Date().toISOString();
+
+  const confirm = async (): Promise<void> => {
+    const from = unconfirmed;
+
+    unconfirmed = new Date().toISOString();
+
+    await confirmTars(db, config, origin, from, line => progress.log(line));
+  };
+
   for (;;) {
+    await mega.dropDuplicateUploads([`${config.coldRoot}/${origin}`]);
+
     let todo = outstanding(db, origin, venues).filter(tar => ! failed.has(tar.id));
 
     if (watch && Date.now() >= scanAt) {
@@ -61,6 +75,13 @@ export const work = async (
     }
 
     if (todo.length === 0) {
+      // Everything found has been sent: what was stored is looked at once more, and what that undoes is sent again.
+      if (! waiting) {
+        await confirm();
+
+        if (outstanding(db, origin, venues).some(tar => ! failed.has(tar.id))) continue;
+      }
+
       if (! watch) break;
 
       if (! waiting) progress.log('Watch mode - Waiting for new partitions to push');

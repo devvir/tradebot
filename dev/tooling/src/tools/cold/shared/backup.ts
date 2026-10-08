@@ -19,9 +19,9 @@ import type { Kept, Remote, Sent } from './types';
  * So each is copied there whenever it has changed: the record as every command
  * ends, the ledgers as a command that works on the vault does.
  *
- *     <MEGA_ROOT>/cold/cold.sqlite
- *     <MEGA_ROOT>/cold/vault/ledger.csv
- *     <MEGA_ROOT>/cold/vault/backedup.csv
+ *     <MEGA_ROOT>/@cold/cold.sqlite
+ *     <MEGA_ROOT>/@cold/vault/ledger.csv
+ *     <MEGA_ROOT>/@cold/vault/backedup.csv
  *
  * **Sent as a copy, never as the file itself.** The record is being written
  * while it is read, and the ledger is appended to by whoever stocks the vault:
@@ -32,17 +32,22 @@ import type { Kept, Remote, Sent } from './types';
  * that one, and at no other time — sending is asked of Mega's queue and costs
  * nothing where nothing changed.
  *
- * **These files only ever grow.** The record is inserted into and the ledgers
- * appended to, so one that is smaller than the copy last sent is not a change
- * to pass on: something has gone wrong with it here, and the copy in Mega may
- * be the only good one. It is never sent without a person saying so, and the
- * question's own answer is no.
+ * **These files grow.** The ledgers are only ever appended to, so one that is
+ * smaller than its copy by a single byte has lost something. The record grows
+ * over time and dips a little along the way — a plan is redrawn, a revision
+ * that was replaced is forgotten, and a copy of the same rows does not always
+ * pack into the same pages — so for it the sign is losing more than
+ * `MAY_SHRINK` of what its copy weighs. Either is not a change to pass on:
+ * something has gone wrong here, and the copy in Mega may be the only good one.
+ * It is never sent without a person saying so, and the question's own answer
+ * is no.
  */
 
 /** The record, as a file kept in Mega. */
 export const recordOf = (config: ColdConfig): Kept => ({
   name:   'cold.sqlite',
   remote: '',
+  shrink: MAY_SHRINK,
   copy:   (to) => {
     if (! fs.existsSync(config.dbPath)) return false;
 
@@ -91,7 +96,7 @@ export const check = async (config: ColdConfig, orphaned: boolean, remote: Remot
   try {
     await checked(config, orphaned, remote);
   } catch (err) {
-    warn(`The record's copy in Mega could not be looked at (${(err as Error).message.split('\n')[0]}) — carrying on without`);
+    warn(`Could not check the backup of the cold database (${(err as Error).message.split('\n')[0]})`);
   }
 };
 
@@ -118,29 +123,24 @@ const settle = async (
   remote:   Remote,
 ): Promise<void> => {
 
-  const said = `The record's copy in Mega is not the record as it is now (${fmtBytes(state.bytes)} here`
-    + (state.there === null ? ', none there' : `, ${fmtBytes(state.there)} there`) + ')';
-
   if (state.shrunk) {
-    warn(`${said} — and the record here is the SMALLER of the two.`);
-    warn('The record only ever grows: a smaller one means something happened to it here, and the copy in Mega may be the good one.');
+    warn(`The cold database is much SMALLER than its backup: ${lessThan(state.bytes, state.there ?? 0)}.`);
+    warn('It does not shrink like that by itself, so something happened to it here — the backup may be the good one.');
 
-    if (await agreed('Replace the copy in Mega with the smaller record that is here?', false)) await send(config, kept, state, remote);
+    if (await agreed('Replace the backup with the smaller database?', false)) await send(config, kept, state, remote);
 
     return;
   }
 
   if (orphaned) {
-    info(`${said} — a run before this one stopped without sending it. Sending it now.`);
+    info('Backing up the cold database — an earlier run stopped before it could');
 
     await send(config, kept, state, remote);
 
     return;
   }
 
-  warn(said);
-
-  if (await agreed('Update the copy in Mega?', true)) await send(config, kept, state, remote);
+  if (await agreed('The backup of the cold database is out of date. Update it?', true)) await send(config, kept, state, remote);
 };
 
 /**
@@ -158,8 +158,7 @@ export const save = async (config: ColdConfig, kept: readonly Kept[], remote: Re
       if (state.shrunk) {
         fs.rmSync(state.copy, { force: true });
 
-        warn(`${one.name} is smaller than the copy of it last sent to Mega (${fmtBytes(state.bytes)} against ${fmtBytes(state.there ?? 0)}) — not sent. `
-          + 'It only ever grows: look at it before anything else is done with it.');
+        warn(`${one.name} is SMALLER than its backup: ${lessThan(state.bytes, state.there ?? 0)} — not backed up. It does not shrink by itself: look at it first.`);
 
         continue;
       }
@@ -167,7 +166,7 @@ export const save = async (config: ColdConfig, kept: readonly Kept[], remote: Re
       await send(config, one, state, remote);
     } catch (err) {
       // What a command was run to do is done: its copy not going is said, and is sent the next time.
-      warn(`${one.name} could not be copied to Mega (${(err as Error).message.split('\n')[0]}) — it is sent the next time a command runs`);
+      warn(`Could not back up ${one.name} (${(err as Error).message.split('\n')[0]}) — the next command tries again`);
     }
   }
 };
@@ -208,7 +207,7 @@ const stateOf = async (
     }));
 
     if (! asked) {
-      warn('Mega did not answer when asked for the copy of the record — going by what was last sent');
+      warn('Mega did not answer about the backup of the cold database — going by what was last sent');
     } else if (! asked.queued.has(path.join(config.coldRoot, DIR, kept.remote, kept.name))) {
       const found = asked.listed.get(path.posix.join(kept.remote, kept.name));
 
@@ -222,7 +221,7 @@ const stateOf = async (
   // Not going anywhere: the copy has said what it had to.
   if (same) fs.rmSync(copy, { force: true });
 
-  return { copy, digest, bytes, there, same, shrunk: there !== null && bytes < there };
+  return { copy, digest, bytes, there, same, shrunk: there !== null && bytes < there * (1 - (kept.shrink ?? 0)) };
 };
 
 /** Hand a copy to Mega's queue, and write down what was sent. */
@@ -240,7 +239,7 @@ const send = async (
   try {
     await remote.queueUpload(local, path.posix.join(config.backupRoot, kept.remote));
   } catch (err) {
-    warn(`${kept.name} could not be handed to Mega (${(err as Error).message.split('\n')[0]}) — it is sent the next time a command runs`);
+    warn(`Could not back up ${kept.name} (${(err as Error).message.split('\n')[0]}) — the next command tries again`);
 
     return;
   }
@@ -275,6 +274,13 @@ const within = async <T>(ms: number, ask: () => Promise<T>): Promise<T | null> =
     clearTimeout(timer);
   }
 };
+
+/** Two sizes and what lies between them, the difference in the unit that shows it. */
+const lessThan = (here: number, there: number): string =>
+  `${fmtBytes(here)} here, ${fmtBytes(there)} in Mega, ${fmtBytes(there - here)} less`;
+
+/** How much smaller than its copy the record may be before that is taken for a loss, as a share of the copy. */
+const MAY_SHRINK = 0.1;
 
 /** Below cold's own directory: the copies, and the note of what was sent. */
 const DIR  = 'backup';

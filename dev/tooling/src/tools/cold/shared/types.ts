@@ -161,6 +161,9 @@ export interface Remote {
   listing:     (root: string) => Promise<Map<string, { bytes: number; handle: string | null }>>;
   queueUpload: (local: string, remoteDir: string) => Promise<void>;
   remove:      (remotePath: string) => Promise<void>;
+
+  /** Take second transfers of the same file out of the queue, below these directories. Not every stand-in has one. */
+  dropDuplicateUploads?: (under: readonly string[]) => Promise<number>;
 }
 
 /** One of the files cold storage cannot be read without, as it was last sent to Mega. */
@@ -180,4 +183,7 @@ export interface Kept {
 
   /** Below `backupRoot`. */
   remote: string;
+
+  /** How much smaller than its copy it may be without that being a loss, as a share of the copy. Nothing, unless said. */
+  shrink?: number;
 }

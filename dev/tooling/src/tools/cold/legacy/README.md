@@ -8,7 +8,7 @@ It is here for what it knows, and for nothing else:
 
 | | |
 |---|---|
-| `audit.ts` | `cold audit`, the one command not rebuilt — [docs/tooling/COLD-AUDIT.md](../../../../../../docs/tooling/COLD-AUDIT.md). The ways it found the record and Mega can disagree: objects the record does not know, tars left in staging, months with a gap, a tar that does not weigh what the record says. |
+| `audit.ts` | `cold audit` as it was. What it looked for that the rebuilt one ([docs/tooling/COLD-AUDIT.md](../../../../../../docs/tooling/COLD-AUDIT.md)) does not yet: tars left in staging, months with a gap, what a tar holds against what the record says it holds, and its one-page report. |
 | `evict/reclaim.ts` | taking back tars left in staging by a run that stopped, which nothing does now |
 | `types.ts`, `config.ts` | the vocabulary the two above are written in |
 

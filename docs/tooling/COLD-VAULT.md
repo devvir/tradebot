@@ -69,6 +69,23 @@ store, and `ERROR.log` in the vault says it was found wrong. That holds for `evi
 
 With `--watch` it looks at the ledger again every 30 minutes for what has been stocked since.
 
+### A second look at what was just stored
+
+**A file is written down as stored the moment Mega shows it**, with the identifier Mega gave it
+then. That can be overtaken. Mega is slow to show a transfer it has accepted, and for a moment after
+one finishes it is in neither the queue nor the listing — so a file can be handed over twice, and
+is then stored twice, the second replacing the first under another identifier.
+
+Handing over twice is harmless: Mega recognises the same bytes and sends nothing again. What it
+leaves is a record naming an identifier that is no longer the current one. So:
+
+- **Each round begins by taking second transfers of the same file out of the queue.** The one being
+  sent is kept, else the first asked for. Only what this command queued is looked at: the queue is
+  shared with whatever else is uploading.
+- **Once everything found has been sent, what was stored since the last such look is asked of Mega
+  again.** Another identifier at the size sent is written down. Another size, or nothing there, is
+  written down as not stored, and the run sends it again before it rests.
+
 ### `backedup.csv`
 
 **The one thing cold writes into the vault.** A line when a partition is stored — partition,

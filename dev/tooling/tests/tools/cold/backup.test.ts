@@ -117,7 +117,7 @@ describe('the record\'s copy, as a command starts', () => {
     asked.answer = true;
     await check(config(), false, remote);
 
-    expect(asked.questions).toEqual(['Update the copy in Mega?']);
+    expect(asked.questions).toEqual(['The backup of the cold database is out of date. Update it?']);
     expect(remote.sent).toHaveLength(2);
   });
 
@@ -145,7 +145,31 @@ describe('the record\'s copy, as a command starts', () => {
     expect(remote.sent).toHaveLength(2);
   });
 
-  /** It only ever grows: a smaller one is not a change to pass on. */
+  /** A page or two either way is the record's ordinary life, and no reason to ask anything. */
+  it('is sent as usual where the record is a little smaller than it was', async () => {
+    const remote = mega();
+    const db     = record.open(config().dbPath);
+
+    const id = record.planTar(db, 'archives', 'gate', '202002', seq => ({ remote: `r${seq}`, local: `l${seq}` }),
+      Array.from({ length: 2000 }, (_, at) => ({ ...partition('202002'), variant: `v${at}` })));
+
+    record.close(db);
+
+    await save(config(), [recordOf(config())], remote);
+
+    // A handful of rows gone, as a redrawn plan leaves it.
+    const again = record.open(config().dbPath);
+
+    again.prepare('DELETE FROM held WHERE tar_id = ? AND variant IN (SELECT variant FROM held WHERE tar_id = ? LIMIT 100)').run(id, id);
+    record.close(again);
+
+    await check(config(), true, remote);
+
+    expect(asked.questions).toEqual([]);
+    expect(remote.sent).toHaveLength(2);
+  });
+
+  /** It does not lose a tenth of itself in the ordinary way: that is not a change to pass on. */
   it('is never replaced by a smaller record unless a person says so', async () => {
     const remote = mega();
 
@@ -174,7 +198,7 @@ describe('the record\'s copy, as a command starts', () => {
     asked.answer = true;
     await check(config(), false, remote);
 
-    expect(asked.questions).toEqual(['Replace the copy in Mega with the smaller record that is here?']);
+    expect(asked.questions).toEqual(['Replace the backup with the smaller database?']);
     expect(remote.sent).toHaveLength(2);
   });
 });

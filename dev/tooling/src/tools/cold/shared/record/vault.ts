@@ -62,6 +62,42 @@ export const storeVaultPartition = (db: DatabaseSync, partition: string, revisio
   ).run(new Date().toISOString(), partition, revision);
 };
 
+/** Mega's own identifier for a stored vault file, where it is no longer the one written down. */
+export const reHandleVaultFile = (
+  db:     DatabaseSync,
+  file:   Pick<VaultFile, 'partition' | 'revision' | 'instrument' | 'side'>,
+  handle: string | null,
+): void => {
+  db.prepare('UPDATE vault_file SET handle = ? WHERE partition = ? AND revision = ? AND instrument = ? AND side = ?')
+    .run(handle, file.partition, file.revision, file.instrument, file.side);
+};
+
+/** A partition is not whole in cold storage after all: its files keep what each says of itself. */
+export const dropVaultPartition = (db: DatabaseSync, partition: string, revision: string): void => {
+  db.prepare('DELETE FROM vault_partition WHERE partition = ? AND revision = ?').run(partition, revision);
+};
+
+/** Every partition written down as whole in cold storage, with how many files that was. */
+export const vaultPartitions = (db: DatabaseSync): { partition: string; revision: string; files: number }[] =>
+  db.prepare('SELECT partition, revision, files FROM vault_partition ORDER BY partition').all() as unknown as { partition: string; revision: string; files: number }[];
+
+/**
+ * The partitions every file of which is stored, that are not written down as
+ * whole: a run stored the last of their files and stopped before saying so.
+ */
+export const vaultUnfinished = (db: DatabaseSync): { partition: string; revision: string }[] =>
+  db.prepare(
+    `SELECT partition, revision FROM vault_file f
+      GROUP BY partition, revision
+     HAVING SUM(state <> 'stored') = 0
+        AND NOT EXISTS (SELECT 1 FROM vault_partition p WHERE p.partition = f.partition AND p.revision = f.revision)`,
+  ).all() as unknown as { partition: string; revision: string }[];
+
+/** The vault files written down as stored since a moment, an ISO timestamp. */
+export const vaultFilesStoredSince = (db: DatabaseSync, since: string): StoredFile[] =>
+  db.prepare(`SELECT ${VAULT_FILE} FROM vault_file WHERE state = 'stored' AND stored_at >= ? ORDER BY partition, instrument, side`)
+    .all(since) as unknown as StoredFile[];
+
 /** The vault partitions in cold storage, each by the revisions that are. */
 export const vaultStored = (db: DatabaseSync): Map<string, Set<string>> => {
   const stored = new Map<string, Set<string>>();

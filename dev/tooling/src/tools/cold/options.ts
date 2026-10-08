@@ -1,3 +1,4 @@
+import inquirer from 'inquirer';
 import { confirm } from '../../shared/ui/prompts';
 
 export const setWatch = (value: boolean): void => { watching = value; };
@@ -35,3 +36,15 @@ export const agreed = async (message: string, fallback: boolean): Promise<boolea
 let watching = false;
 
 let yes      = false;
+
+/**
+ * Ask which of several things to do, unless the answer was given on the command
+ * line: then it is the one that would be chosen by pressing return.
+ */
+export const picked = async <T>(message: string, choices: readonly { name: string; value: T }[], fallback: T): Promise<T> => {
+  if (yes) return fallback;
+
+  const { answer } = await inquirer.prompt<{ answer: T }>([{ type: 'list', name: 'answer', message, choices: [...choices], default: fallback }]);
+
+  return answer;
+};

@@ -110,6 +110,23 @@ one; the run ends by saying how many were left behind.
 
 ---
 
+### A second look at what was just stored
+
+**A tar is written down as stored the moment Mega shows it**, with the identifier Mega gave it
+then. That can be overtaken. Mega is slow to show a transfer it has accepted, and for a moment after
+one finishes it is in neither the queue nor the listing — so a tar can be handed over twice, and
+is then stored twice, the second replacing the first under another identifier.
+
+Handing over twice is harmless: Mega recognises the same bytes and sends nothing again. What it
+leaves is a record naming an identifier that is no longer the current one. So:
+
+- **Each round begins by taking second transfers of the same tar out of the queue.** The one being
+  sent is kept, else the first asked for. Only what this command queued is looked at: the queue is
+  shared with whatever else is uploading.
+- **Once everything found has been sent, what was stored since the last such look is asked of Mega
+  again.** Another identifier at the size sent is written down. Another size, or nothing there, is
+  written down as not stored, and the run sends it again before it rests.
+
 ## A partition that changed
 
 A stored partition whose version in the catalog is no longer the one recorded has to be stored

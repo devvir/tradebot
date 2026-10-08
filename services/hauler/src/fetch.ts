@@ -3,6 +3,7 @@ import { logger } from '@devvir/service-kit';
 import { sizeOf } from '@tradebot/utils';
 import { backup, commit, discard, etagAgrees, isDigest, md5, measure, partialOf, touch, writePartial } from './store';
 import { backAt, delivered, faltered, hostFor, mainOf, refused } from './hosts';
+import { hold, taken } from './held';
 import config from './config';
 import type { Haulable, Hauled, Host } from './types';
 
@@ -18,13 +19,15 @@ import type { Haulable, Hauled, Host } from './types';
  * | already there | yes | **touched**, and reported as downloaded |
  * | already there | no  | **moved aside** as `.bak`, then fetched again |
  * | just fetched  | yes | downloaded |
- * | just fetched  | no  | **reported as a mismatch**, nothing kept |
+ * | just fetched  | no  | **reported as a mismatch**, and held in scratch |
  *
  * **The first row is what adopts an archive already on disk** with no seeding:
  * a file present and correct is confirmed whatever the catalog believed, and
  * its new date says this pass accounted for it — see `touch`. The second keeps
  * whatever disagreed for somebody to read; see `backup`. The last never settles
- * itself: the catalog asks the venue and rules.
+ * itself: the catalog asks the venue and rules — and where it rules for what
+ * was fetched, that download is the file, and is not fetched twice. See
+ * `held.ts`.
  *
  * **Only the venue's own answer makes a file `failed`** — `404` or `410` at once,
  * and a `403` that persists through every attempt: a `403` is as often a venue
@@ -58,6 +61,24 @@ export const haul = async (file: Haulable): Promise<Hauled> => {
 
     logger.warn({ key: file.key, size: held, expected: file.size, aside: basename(aside) },
       'Differs from the catalog — moved aside, fetching again');
+  }
+
+  /**
+   * Fetched before, when the catalog said something else of it: if what the
+   * catalog says now is what was fetched then, that is the file.
+   */
+  const kept = taken(file);
+
+  if (kept) {
+    if (settles(file, kept.bytes, kept.digest)) {
+      await commit(path);
+
+      logger.info({ key: file.key, size: sizeOf(kept.bytes) }, 'Downloaded — fetched earlier, and the catalog agrees now');
+
+      return { outcome: 'downloaded' };
+    }
+
+    await discard(path);
   }
 
   return await retrieve(file, path);
@@ -165,12 +186,46 @@ const retrieve = async (file: Haulable, path: string): Promise<Hauled> => {
 
       const bytes = await writePartial(path, res.body);
 
-      delivered(host, bytes, Date.now() - began);
-
-      if (! await agrees(file, partialOf(path), bytes)) {
+      /**
+       * **Nothing, where the catalog says there is something, is a transfer
+       * that failed** and not a file that differs: an address now and then
+       * answers `200` with an empty body, several requests at the same instant,
+       * for files it serves whole a moment later. So it is handled as any reply
+       * that is not the file — the address marked down, the file asked for
+       * again, and left owed where every attempt comes back empty. It is never
+       * reported: there is nothing to tell the catalog about the file.
+       */
+      if (bytes === 0 && (file.size ?? 0) > 0) {
         await discard(path);
 
-        logger.error({ key: file.key, size: bytes, expected: file.size, url }, 'Served differs from the catalog');
+        faltered(host);
+
+        if (! host.main) {
+          tried.add(host);
+
+          continue;
+        }
+
+        if (attempt === ATTEMPTS) {
+          logger.warn({ key: file.key, expected: file.size, url }, 'Served empty — stays owed');
+
+          return { outcome: 'unreached' };
+        }
+
+        await sleep(delayFor(attempt));
+
+        continue;
+      }
+
+      delivered(host, bytes, Date.now() - began);
+
+      const digest = isDigest(file.etag) || file.size !== bytes ? await md5(partialOf(path)) : '';
+
+      if (! settles(file, bytes, digest)) {
+        // Likely the venue's newer file: kept until the catalog has asked, and not fetched again if so.
+        hold(file, path, bytes, digest);
+
+        logger.error({ key: file.key, size: bytes, expected: file.size, url }, 'Served differs from the catalog — held until it has asked the venue');
 
         return { outcome: 'mismatched', size: bytes };
       }
@@ -251,6 +306,10 @@ const agrees = async (file: Haulable, path: string, bytes: number): Promise<bool
 
   return etagAgrees(file.etag, await md5(path));
 };
+
+/** The same, of a file whose size and MD5 are already known. */
+const settles = (file: Haulable, bytes: number, digest: string): boolean =>
+  (file.size === undefined || file.size === bytes) && (! isDigest(file.etag) || etagAgrees(file.etag, digest));
 
 /** Exponential with full jitter, so retries across files do not synchronise. */
 const delayFor = (attempt: number): number =>

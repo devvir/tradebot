@@ -22,7 +22,7 @@ stored as they are — see [COLD-VAULT.md](COLD-VAULT.md).
 | `cold evict` | Remove from local disk what is safely in cold storage — [archives](COLD-EVICT.md), [vault](COLD-VAULT.md#cold-evict-vault) |
 | [`cold pull`](COLD-PULL.md) | Bring back a venue's dataset, or a partition of it — [archives](COLD-PULL.md#the-archives), [vault](COLD-VAULT.md#cold-pull-vault) |
 | `cold stats` | What the record holds, venue by venue |
-| [`cold audit`](COLD-AUDIT.md) | Check cold storage against the record — **not running**, see its page |
+| [`cold audit`](COLD-AUDIT.md) | Check Mega, the disk and the record against each other, and offer to put right what disagrees |
 
 Each takes an **origin**: `archives`, `vault`, or `all` for every tree the command is built for, one
 after the other. With none given it asks, and `all` is the first answer.
@@ -81,6 +81,20 @@ caller that reasons about Mega without going through the record of what is in it
 
 ---
 
+## When Mega does not answer
+
+**A command sent to Mega that fails is one of two things: Mega said no, or Mega said nothing.** They
+are told apart by asking it who is logged in, which changes nothing and is answered at once by a
+Mega that is there.
+
+- **It answers**: the failure is the command's own — a path that is not there, a refusal — and the
+  run deals with it as such. A tree that is not there is an empty one; no other failure is.
+- **It does not**: the run waits. It asks again after 5 seconds, then twice as long each time up to
+  a minute, and sends the command again once Mega is back. Nothing moves on meanwhile, so a run left
+  going rides out an outage of any length — and silence is never mistaken for Mega holding nothing.
+
+---
+
 ## Where things live
 
 | | |
@@ -119,8 +133,8 @@ in Mega that nothing can name. So each has a copy there:
 
 | | |
 |---|---|
-| `<MEGA_ROOT>/cold/cold.sqlite` | the record |
-| `<MEGA_ROOT>/cold/vault/ledger.csv`, `backedup.csv` | the vault's ledgers |
+| `<MEGA_ROOT>/@cold/cold.sqlite` | the record |
+| `<MEGA_ROOT>/@cold/vault/ledger.csv`, `backedup.csv` | the vault's ledgers |
 
 - **As any command starts**, the record is set against its copy. Nothing is said where they agree.
   Where they do not, a run before this one changed the record and did not get to send it: it is
@@ -134,9 +148,12 @@ in Mega that nothing can name. So each has a copy there:
 - **Sent as a copy taken whole**, in `<cold>/backup`, since both are written while they are read.
   What was last sent — a digest and a size for each — is noted in `<cold>/backup/sent.json`, and a
   file goes again only when its digest is no longer that one.
-- **These files only ever grow.** One that is smaller than its copy is not a change to pass on:
-  something happened to it here, and the copy may be the only good one. It is never sent by itself.
-  As a command starts it is asked about, and the answer is no unless told otherwise.
+- **These files grow, and one that has shrunk is not a change to pass on**: something happened to
+  it here, and the copy may be the only good one. A ledger is only ever appended to, so for it any
+  shrinking counts. The record dips a little in the ordinary way — a plan redrawn, a replaced
+  revision forgotten — so for it the sign is losing more than a tenth of what its copy weighs. Such
+  a file is never sent by itself. As a command starts it is asked about, and the answer is no
+  unless told otherwise.
 - **Mega is given twenty seconds to say what it holds.** Where it does not answer, the command
   carries on by what was last sent.
 
@@ -146,10 +163,10 @@ in Mega that nothing can name. So each has a copy there:
 
 | | |
 |---|---|
-| `push/`, `evict/`, `pull/`, `stats/` | everything that is one subcommand's alone: `command.ts` is its place on the command line, and `archives` and `vault` are the two trees it works on |
+| `push/`, `evict/`, `pull/`, `audit/`, `stats/` | everything that is one subcommand's alone: `command.ts` is its place on the command line, and `archives` and `vault` are the two trees it works on |
 | `shared/` | what two subcommands or more use: the record, Mega, the catalog, the archives on disk, the vault's ledger and layout, the progress display |
 | the directory itself | what every command is run with: configuration, the options given at the `cold` level, the lock, and how a line is read into trees and venues |
-| `legacy/` | the commands not yet rebuilt on partitions — see [COLD-AUDIT.md](COLD-AUDIT.md) |
+| `legacy/` | what is left of the commands as they were before partitions, kept for what it knows |
 
 Types sit in a `types.ts` at the level that uses them: a subcommand's own in its directory, shared
 ones in `shared/`, and those the whole command is built on at the top.

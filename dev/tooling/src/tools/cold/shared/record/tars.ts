@@ -136,6 +136,11 @@ export const stored = (db: DatabaseSync, id: number, handle: string | null): voi
     .run(handle, new Date().toISOString(), id);
 };
 
+/** Mega's own identifier for a stored tar, where it is no longer the one written down. */
+export const reHandle = (db: DatabaseSync, id: number, handle: string | null): void => {
+  db.prepare('UPDATE tar SET handle = ? WHERE id = ?').run(handle, id);
+};
+
 /**
  * The partitions cold storage holds as the record wants them: in a tar that is
  * stored, with nothing noted as having changed since. By partition, each with

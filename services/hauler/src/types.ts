@@ -124,6 +124,16 @@ export interface Host {
 }
 
 /** What happened to one file. */
+/** A download that did not agree with the catalog, kept in scratch until the catalog has asked the venue. */
+export interface Withheld {
+  /** Where the file belongs: its partial in scratch is named after it. */
+  path:   string;
+  bytes:  number;
+
+  /** The MD5 of what was fetched, in hex. */
+  digest: string;
+}
+
 export type Outcome = 'downloaded' | 'present' | 'failed' | 'mismatched' | 'unreached';
 
 /** What one fetch came to, with what was seen where it disagreed. */

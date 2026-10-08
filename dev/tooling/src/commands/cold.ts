@@ -1,10 +1,9 @@
 import { Command } from 'commander';
-import { gracefully } from '../tools/cold/cli';
+import { register as audit } from '../tools/cold/audit/command';
 import { register as evict } from '../tools/cold/evict/command';
 import { register as pull } from '../tools/cold/pull/command';
 import { register as push } from '../tools/cold/push/command';
 import { register as stats } from '../tools/cold/stats/command';
-import { error } from '../shared/ui/logger';
 
 /**
  * The cold tools are loaded when a cold command runs, not when it is
@@ -45,10 +44,6 @@ export function register(program: Command): void {
   evict(cold);
   pull(cold);
 
-  cold
-    .command('audit [origin]')
-    .description('Check cold storage against the record (not built on partitions yet)')
-    .action(gracefully(async () => { error('cold audit is not built on partitions yet'); }));
-
+  audit(cold);
   stats(cold);
 }

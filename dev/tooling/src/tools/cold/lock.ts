@@ -99,22 +99,25 @@ export const acquire = async (
 };
 
 /** Whether a lock is lying in cold's directory whose holder is gone: a run that stopped without tidying up. */
-export const orphaned = (coldRoot: string): boolean => holders(coldRoot).some(pid => ! alive(pid));
+export const orphaned = (coldRoot: string): boolean => orphans(coldRoot).length > 0;
+
+/** The locks in cold's directory whose holder is gone, by file name. */
+export const orphans = (coldRoot: string): string[] => holders(coldRoot).filter(one => ! alive(one.pid)).map(one => one.name);
 
 /** Whether another cold command is running: a lock whose holder is there. */
-export const busy = (coldRoot: string): boolean => holders(coldRoot).some(pid => pid !== process.pid && alive(pid));
+export const busy = (coldRoot: string): boolean => holders(coldRoot).some(one => one.pid !== process.pid && alive(one.pid));
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
 /** Who holds each lock in cold's directory, by pid. */
-const holders = (coldRoot: string): number[] => {
+const holders = (coldRoot: string): { name: string; pid: number }[] => {
   const locks = fs.existsSync(coldRoot) ? fs.readdirSync(coldRoot).filter(name => /^cold\..+\.lock$/.test(name)) : [];
 
   return locks.flatMap((name) => {
     try {
       const owner = /pid (\d+)/.exec(fs.readFileSync(path.join(coldRoot, name), 'utf8'))?.[1];
 
-      return owner ? [Number(owner)] : [];
+      return owner ? [{ name, pid: Number(owner) }] : [];
     } catch {
       // Given back between being listed and being read.
       return [];

@@ -22,6 +22,13 @@ export const evictedOf = (db: DatabaseSync, origin: Origin, venue: string): Map<
   return new Map(rows.map(row => [idOf(row), row.version]));
 };
 
+/** Every partition taken off the local disk and not brought back since. */
+export const evictionsOf = (db: DatabaseSync, origin: Origin): (PartitionKey & { version: string })[] =>
+  db.prepare(
+    `SELECT DISTINCT venue, market, dataset, variant, grain, bundle, month, version FROM eviction
+      WHERE origin = ? AND returned_at IS NULL ORDER BY venue, market, dataset, variant, month`,
+  ).all(origin) as unknown as (PartitionKey & { version: string })[];
+
 /** A partition was taken off the local disk. */
 export const noteEviction = (
   db:      DatabaseSync,

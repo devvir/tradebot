@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { _test_with as standIns, megaCmd, notThere } from '../../../src/tools/cold/shared/mega/exec';
+import { listing } from '../../../src/tools/cold/shared/mega/listing';
 import { _test_parseListing as parseListing } from '../../../src/tools/cold/shared/mega/listing';
 import { _test_parseSummary as parseSummary } from '../../../src/tools/cold/shared/mega/transfers';
 import * as mega from '../../../src/tools/cold/shared/mega';
@@ -91,5 +93,67 @@ describe('what the commands reach Mega and the record through', () => {
 
     for (const name of ['open', 'close', 'tarsOf', 'storedOf', 'evictedOf', 'vaultFiles', 'totals'] as const)
       expect(typeof record[name], name).toBe('function');
+  });
+});
+
+describe('a command sent while Mega is not answering', () => {
+  afterEach(() => standIns(null, null));
+
+  /** What is asked, in order, and what each attempt is answered with. */
+  const mega = (answers: Record<string, (Error | string)[]>) => {
+    const asked: string[] = [];
+    const waits: number[] = [];
+
+    standIns(async (command) => {
+      asked.push(command);
+
+      const next = answers[command]?.shift() ?? '';
+
+      if (next instanceof Error) throw next;
+
+      return { stdout: next, stderr: '' };
+    }, async (ms) => { waits.push(ms); });
+
+    return { asked, waits };
+  };
+
+  const down = new Error('mega-cmd server not running');
+
+  /** Nothing is concluded from silence: it waits, longer each time, and sends the command again. */
+  it('waits until Mega is back, then sends it again', async () => {
+    const { asked, waits } = mega({
+      'mega-ls':     [down, 'listed'],
+      'mega-whoami': [down, down, down, down, down, down, 'me'],
+    });
+
+    expect((await megaCmd('mega-ls', [], { timeout: 1 })).stdout).toBe('listed');
+
+    expect(waits).toEqual([5_000, 10_000, 20_000, 40_000, 60_000, 60_000]);
+    expect(asked.filter(one => one === 'mega-ls')).toHaveLength(2);
+  });
+
+  /** Mega is there and said no: that is the command's own failure, and nothing to wait out. */
+  it('fails at once where Mega is answering', async () => {
+    const refused = new Error('Couldn\'t find /x');
+    const { waits } = mega({ 'mega-ls': [refused], 'mega-whoami': ['me'] });
+
+    await expect(megaCmd('mega-ls', [], { timeout: 1 })).rejects.toBe(refused);
+
+    expect(waits).toEqual([]);
+  });
+
+  it('takes a tree that is not there for an empty one, and no other failure for it', async () => {
+    mega({ 'mega-ls': [Object.assign(new Error('exit 53'), { stderr: 'cmd ERR  Couldn\'t find /x/none' })], 'mega-whoami': ['me'] });
+
+    expect((await listing('/x/none')).size).toBe(0);
+
+    mega({ 'mega-ls': [new Error('timed out')], 'mega-whoami': ['me'] });
+
+    await expect(listing('/x')).rejects.toThrow(/timed out/);
+  });
+
+  it('tells a path that is not there from any other failure', () => {
+    expect(notThere({ stderr: '[cmd ERR  Couldn\'t find "/a/b"]' })).toBe(true);
+    expect(notThere(new Error('ETIMEDOUT'))).toBe(false);
   });
 });

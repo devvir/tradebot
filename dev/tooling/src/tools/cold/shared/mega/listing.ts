@@ -1,4 +1,4 @@
-import { execFileAsync } from './exec';
+import { megaCmd, notThere } from './exec';
 
 /**
  * Remove one object.
@@ -8,7 +8,7 @@ import { execFileAsync } from './exec';
  * mega-cmd would otherwise ask for on its own terms, not the one that matters.
  */
 export const remove = async (remotePath: string): Promise<void> => {
-  await execFileAsync('mega-rm', ['-f', remotePath], { timeout: 120_000 });
+  await megaCmd('mega-rm', ['-f', remotePath], { timeout: 120_000 });
 };
 
 /**
@@ -34,7 +34,7 @@ export const listing = async (
   const found = new Map<string, { bytes: number; handle: string | null }>();
 
   try {
-    const { stdout } = await execFileAsync(
+    const { stdout } = await megaCmd(
       'mega-ls', ['-lR', '--show-handles', root],
       { timeout: 300_000, maxBuffer: 256 * 1024 * 1024 });
 
@@ -62,9 +62,9 @@ export const listing = async (
 
       if (size) found.set(relativeTo(`${dir}/${name}`, root), { bytes: Number(size[1]), handle: handle?.[1] ?? null });
     }
-  } catch {
-    // An unreadable listing is not an empty one, but every caller treats a miss
-    // as "ask Mega directly", which is the safe direction.
+  } catch (err) {
+    // A tree that is not there holds nothing. Anything else is not an answer, and is not taken for one.
+    if (! notThere(err)) throw err;
   }
 
   return found;
@@ -85,11 +85,14 @@ export const remote = async (
   remotePath: string,
 ): Promise<{ bytes: number; handle: string | null } | null> => {
   try {
-    const { stdout } = await execFileAsync(
+    const { stdout } = await megaCmd(
       'mega-ls', ['-l', '--show-handles', remotePath], { timeout: 60_000 });
 
     return parseListing(stdout, remotePath.slice(remotePath.lastIndexOf('/') + 1));
-  } catch {
+  } catch (err) {
+    // Not there is an answer. Anything else is not, and is not taken for one.
+    if (! notThere(err)) throw err;
+
     return null;
   }
 };
