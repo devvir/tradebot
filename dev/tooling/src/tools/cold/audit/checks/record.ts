@@ -14,7 +14,7 @@ import type { Check, Finding, Looking } from '../types';
  */
 export const withinItself: Check = async looking => [
   ...locks(looking),
-  ...(looking.origin === 'vault' ? [...partitions(looking), ...backedUp(looking)] : []),
+  ...(looking.origin === 'vault' ? [...partitions(looking), ...unfinished(looking), ...backedUp(looking)] : []),
 ];
 
 // ── Internals ─────────────────────────────────────────────────────────────────
@@ -42,6 +42,33 @@ const partitions = ({ db }: Looking): Finding[] => {
       label: 'Write them down as not whole, so the next push completes them',
       apply: () => { for (const one of short) record.dropVaultPartition(db, one.partition, one.revision); },
     }]);
+};
+
+/**
+ * Vault partitions every file of which is stored, that are not written down as
+ * whole: a push stored the last file and stopped before saying so. Only at the
+ * revision the ledger has now — an older one is to be replaced, not finished.
+ */
+const unfinished = ({ db, config }: Looking): Finding[] => {
+  const current = new Map((stockedIn(config.vaultRoot) ?? []).map(one => [one.partition, one.revision]));
+  const short   = record.vaultUnfinished(db).filter(one => current.get(one.partition) === one.revision);
+
+  return found(`${count(short.length, 'vault partition')} ${short.length === 1 ? 'has' : 'have'} every file stored and ${are(short)} not written down as whole`,
+    short.map(one => labelOf(one.partition)), [{
+      label: 'Write them down as whole, and tell the vault they have a copy',
+      apply: () => {
+        const all = record.vaultFiles(db);
+
+        for (const one of short) {
+          record.storeVaultPartition(db, one.partition, one.revision);
+          noteBackedUp(config.vaultRoot, one.partition, one.revision);
+
+          // The revisions it replaces are forgotten: every path they share with it holds this one now.
+          for (const older of new Set(all.filter(file => file.partition === one.partition && file.revision !== one.revision).map(file => file.revision)))
+            record.dropVaultRevision(db, one.partition, older);
+        }
+      },
+    }], 'The revisions they replace are forgotten with it. A file one of those had and this one has not is then in Mega and not in the record, and the next audit says so.');
 };
 
 /** Partitions cold storage holds at the revision the ledger has now, that the vault has not been told about. */

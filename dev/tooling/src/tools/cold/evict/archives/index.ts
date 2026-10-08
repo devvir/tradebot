@@ -6,15 +6,19 @@ import { onExit } from '../../cleanup';
 import { Archives } from '../../shared/disk';
 import { acquire } from '../../lock';
 import { agreed, isWatch } from '../../options';
+import * as mega from '../../shared/mega';
 import * as record from '../../shared/record';
+import { fetch } from '../../shared/vault/fetch';
+import { completable } from '../../shared/vault/spill';
 import { ERRORS, errorsIn, LEDGER, stockedIn } from '../../shared/vault/ledger';
 import { fmtBytes } from '../../../../shared/utils/format';
-import { error, info, spacer, success } from '../../../../shared/ui/logger';
+import { error, info, spacer, success, warn } from '../../../../shared/ui/logger';
 import { survey } from './survey';
 import { remove } from './remove';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Evictable, EvictOptions, Run } from '../types';
 import type { Origin } from '../../types';
+import type { Stocked } from '../../shared/types';
 
 /**
  * Take off the local disk what no longer has to be there.
@@ -148,6 +152,9 @@ const pass = async (db: DatabaseSync, run: Run, first: boolean): Promise<boolean
 
     for (const line of lost.slice(0, 5)) info(`  ${line}`);
 
+    // Left watching, it looks again later: the file is somebody's to deal with, and nothing is evicted until they have.
+    if (isWatch()) return true;
+
     process.exitCode = 1;
 
     return false;
@@ -158,10 +165,14 @@ const pass = async (db: DatabaseSync, run: Run, first: boolean): Promise<boolean
   if (! stocked) {
     error(`No ${LEDGER} in ${config.vaultRoot} — without the vault's ledger nothing can be said to be stocked. Is DATA_VAULT_DIR right?`);
 
+    if (isWatch()) return true;
+
     process.exitCode = 1;
 
     return false;
   }
+
+  await bringBack(db, run, stocked);
 
   const found: Evictable[] = [];
 
@@ -254,4 +265,40 @@ const loadOf = (ready: Evictable['ready']): string => {
 
   return `${ready.length.toLocaleString('en-US')} partition${ready.length === 1 ? '' : 's'} evictable `
     + `(${files.toLocaleString('en-US')} file${files === 1 ? '' : 's'} · ${fmtBytes(bytes)})`;
+};
+
+/**
+ * Bring back the main files of partitions that can be completed now, where
+ * they have been moved off the disk.
+ *
+ * **A partition stocked without a neighbouring month's hours gets them once
+ * that month's archives are here** — but whoever stocks the vault adds them
+ * beside the partition's own files, and those may have gone to cold storage
+ * since. Until they are back the neighbour's archives cannot be evicted either:
+ * something still needs them. So the files are brought back here, unasked, and
+ * said: it is what lets both be finished with.
+ *
+ * Whatever goes wrong with it is said and left for the next look: evicting what
+ * can be evicted does not wait on it.
+ */
+const bringBack = async (db: DatabaseSync, run: Run, stocked: readonly Stocked[]): Promise<void> => {
+  try {
+    const vault   = loadConfig('vault');
+    const waiting = new Map((await catalog.once(() => completable(vault, run.archives, stocked))).map(one => [one.partition, one.revision]));
+    const away    = record.vaultFiles(db).filter(file =>
+      file.state === 'stored' && file.evictedAt !== null && waiting.get(file.partition) === file.revision);
+
+    if (away.length === 0) return;
+
+    const partitions = new Set(away.map(file => file.partition)).size;
+
+    info(`Bringing back ${away.length.toLocaleString('en-US')} vault file${away.length === 1 ? '' : 's'} of ${partitions.toLocaleString('en-US')} `
+      + `partition${partitions === 1 ? '' : 's'}: the month beside ${partitions === 1 ? 'it' : 'each'} is on disk now, and stocker needs the main file to add the spill`);
+
+    const failed = await fetch(db, vault, away, mega);
+
+    if (failed > 0) warn(`${failed} of them did not come back — asked for again on the next look`);
+  } catch (err) {
+    warn(`Could not bring back the vault files that are waited for (${(err as Error).message.split('\n')[0]}) — tried again on the next look`);
+  }
 };

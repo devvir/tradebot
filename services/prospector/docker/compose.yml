@@ -72,4 +72,8 @@ services:
       retries: 3
       start_period: 10s
 
+    # Closing the catalog folds its write-ahead log into it, which is more than
+    # the ten seconds a container is given by default.
+    stop_grace_period: 30s
+
     restart: unless-stopped

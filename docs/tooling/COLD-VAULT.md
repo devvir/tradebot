@@ -111,6 +111,11 @@ say which revision it is of: one stocked again in the meantime is left where it 
 Files go to the host's trash by default and `--purge` deletes outright, as for the archives
 ([COLD-EVICT.md](COLD-EVICT.md#files-go-to-the-trash)). `--dry-run` says what would go.
 
+**A partition that is about to be completed stays on disk.** One stocked without the hours a
+neighbouring month holds of it, whose neighbour's archives are on disk now, is not evicted whatever
+the selection says, and the run says how many it kept: whoever stocks the vault adds those hours
+beside the partition's own files, and needs them here to do it.
+
 ## `cold pull vault`
 
 Brings files back, each to the place in the vault it was taken from. It is `evict`'s other half,

@@ -12,7 +12,7 @@ import { stockedIn } from '../../shared/vault/ledger';
 import { fmtBytes } from '../../../../shared/utils/format';
 import { error, info, spacer, success, warn } from '../../../../shared/ui/logger';
 import { byKey } from '../../order';
-import { fetch } from './fetch';
+import { fetch } from '../../shared/vault/fetch';
 import type { DatabaseSync } from 'node:sqlite';
 import type { ColdConfig, Selection } from '../../types';
 import type { StoredFile, VaultOptions } from '../../shared/types';

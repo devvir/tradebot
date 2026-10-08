@@ -39,7 +39,8 @@ const shared = (command: Command): { allSources: boolean } => {
  */
 export const each = async (origins: readonly Origin[], run: (origin: Origin) => Promise<void>): Promise<void> => {
   const several  = origins.length > 1;
-  const watching = several && isWatch();
+  const staying  = isWatch();
+  const watching = several && staying;
 
   if (watching) setWatch(false);
 
@@ -67,7 +68,7 @@ export const each = async (origins: readonly Origin[], run: (origin: Origin) => 
       // A line of its own first: not everything a command prints is a line that can carry the name.
       if (several) info('');
 
-      await run(origin);
+      await (staying ? endured(() => run(origin)) : run(origin));
 
       await backup.save(config, [backup.recordOf(config), ...(origin === 'vault' ? backup.ledgersOf(config) : [])]);
     }
@@ -84,6 +85,51 @@ export const each = async (origins: readonly Origin[], run: (origin: Origin) => 
     await new Promise(done => setTimeout(done, WATCH_MS));
   }
 };
+
+/**
+ * Run something that was asked to keep running, through whatever goes wrong.
+ *
+ * **A command left watching is left for days, with nobody there.** Whatever
+ * stops it — a service that would not answer, a file that would not move — is
+ * very likely gone a minute later, and a run that ended on it is days of
+ * nothing done and a disk filling meanwhile. So what goes wrong is said, and
+ * the command is run again: after 5 seconds, then twice as long each time up to
+ * a minute, for as long as it takes. Every command picks up where it was, so
+ * running one again repeats nothing.
+ *
+ * What it asked the first time is not asked again: nobody is there to answer,
+ * and each question has its own answer.
+ *
+ * **Not as it starts.** A command that fails in its first minute fails in front
+ * of whoever ran it, still there for its questions and its summary: a lock
+ * somebody holds, a setting that is wrong. That ends it, as it would without
+ * `--watch`, and is theirs to put right.
+ */
+const endured = async (run: () => Promise<void>): Promise<void> => {
+  const began = Date.now();
+
+  for (let wait = FIRST_MS; ; wait = Math.min(wait * 2, LONGEST_MS)) {
+    try {
+      return await run();
+    } catch (err) {
+      if (cancelled(err) || Date.now() - began < STARTING_MS) throw err;
+
+      error((err as Error).message);
+      info(`Watch mode - Trying again in ${wait / 1000}s`);
+
+      setYes(true);
+
+      await new Promise(done => setTimeout(done, wait));
+    }
+  }
+};
+
+/** How long a command is taken to be starting: what goes wrong in that time ends it. */
+const STARTING_MS = 60_000;
+
+/** The first wait after something went wrong, and the longest: doubled each time between the two. */
+const FIRST_MS   = 5_000;
+const LONGEST_MS = 60_000;
 
 /**
  * End on a sentence rather than a stack trace.
@@ -134,6 +180,13 @@ const ORIGINS: { value: Origin; name: string }[] = [
 ];
 
 /** What narrows a command to part of the vault, as it is written on the line. */
+/** What the command line said becomes of the catalog's snapshot on disk: kept, dropped, or nothing said. */
+export const snapshotOf = (options: { keepSnapshot?: boolean; dropSnapshot?: boolean }): { snapshot?: 'keep' | 'drop' } => {
+  if (options.keepSnapshot && options.dropSnapshot) throw new Error('--keep-snapshot and --drop-snapshot say opposite things — give one');
+
+  return options.keepSnapshot ? { snapshot: 'keep' } : options.dropSnapshot ? { snapshot: 'drop' } : {};
+};
+
 export const selectionOf = (venues: readonly string[], options: Chosen): Selection => ({
   venues:      venues.map(venue => venue.toLowerCase()),
   instruments: (options.instruments ?? '').split(',').map(one => one.trim()).filter(Boolean),

@@ -41,6 +41,7 @@ export const requestOf = (query: Record<string, unknown>): ListingRequest | stri
     after:   (v2 ? token ?? start : text(query['marker'])) ?? null,
     prefix:  text(query['prefix']) ?? '',
     pending: ['true', '1'].includes(text(query['pending']) ?? ''),
+    ...(text(query['partition']) === undefined ? {} : { partition: text(query['partition'])! }),
   };
 };
 

@@ -1,11 +1,5 @@
 import type { Bundle, Held } from '../shared/types';
 
-/** What bringing vault files back asks of Mega. */
-export interface Fetching {
-  downloadingPaths: () => Promise<Set<string>>;
-  queueDownload:    (remotePath: string, localDir: string) => Promise<void>;
-}
-
 /** What narrows a pull, as the catalog names things: a market, a dataset and its variant, and months. */
 export interface PullFilter {
   market?:  string;

@@ -21,6 +21,15 @@ export const queueUpload = async (local: string, remoteDir: string): Promise<voi
     { timeout: 120_000 });
 };
 
+/** Hand several files to Mega's queue for one remote directory, in as few commands as their number allows. */
+export const queueUploads = async (locals: readonly string[], remoteDir: string): Promise<void> => {
+  for (let at = 0; at < locals.length; at += MANY)
+    await megaCmd('mega-put', ['-q', '-c', ...locals.slice(at, at + MANY), `${remoteDir.replace(/\/$/, '')}/`], { timeout: 600_000 });
+};
+
+/** Files handed over in one command: far under any argument limit, far over one command a file. */
+const MANY = 200;
+
 /**
  * Ask Mega to bring a stored tar back, and return without waiting.
  *

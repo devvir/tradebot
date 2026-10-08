@@ -1,7 +1,7 @@
 import * as catalog from '../../shared/catalog';
 import { SETTLE_DAYS } from '../../config';
 import { Archives } from '../../shared/disk';
-import { idOf, partitionOf } from '../../shared/keys';
+import { idOf, partitionOf, shiftMonth } from '../../shared/keys';
 import * as record from '../../shared/record';
 import { MISSING } from '../../shared/vault/ledger';
 import { filesOf } from '../../shared/vault/layout';
@@ -73,7 +73,7 @@ export const survey = async (
 
   /** Whether a side a line names is as the catalog has it: not named, not there to be read, or the neighbour's version still. */
   const sideHolds = (one: Stocked, side: string, by: number): boolean =>
-    ! side || side === MISSING || versions.get(idOf({ ...one.source, month: shift(one.source.month, by) })) === side;
+    ! side || side === MISSING || versions.get(idOf({ ...one.source, month: shiftMonth(one.source.month, by) })) === side;
 
   /** Whether the versions a line was stocked from are still the catalog's, and what was stocked is still held. */
   const current = (one: Stocked): boolean =>
@@ -149,14 +149,14 @@ const heldBack = (
 
   // Its last hours are in the next month's files — so its own hold the last hours of the month before.
   if (own.postVersion) {
-    const before = shift(one.month, -1);
+    const before = shiftMonth(one.month, -1);
 
     if (months.has(before) && ! given(lineOf(data, before)?.postVersion)) return 'a neighbouring month still needs it';
   }
 
   // Its first hours are in the files of the month before — so its own hold the first hours of the month after.
   if (own.preVersion) {
-    const after = shift(one.month, 1);
+    const after = shiftMonth(one.month, 1);
 
     // Not in the catalog, and it has not had its time yet: not published is not ended.
     if (months.has(after) ? ! given(lineOf(data, after)?.preVersion) : after > settlable) return 'a neighbouring month still needs it';
@@ -169,18 +169,11 @@ const heldBack = (
 const settlable = (now: number): string => {
   const at = new Date(now - SETTLE_DAYS * 86_400_000);
 
-  return shift(`${at.getUTCFullYear()}${String(at.getUTCMonth() + 1).padStart(2, '0')}`, -1);
+  return shiftMonth(`${at.getUTCFullYear()}${String(at.getUTCMonth() + 1).padStart(2, '0')}`, -1);
 };
 
 /** The data a partition holds, whatever the rendering: its venue, market, dataset and variant. */
 const dataOf = (key: PartitionKey): string => [key.venue, key.market, key.dataset, key.variant].join('|');
-
-/** A `YYYYMM` shifted by whole months. */
-const shift = (month: string, by: number): string => {
-  const at = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(4, 6)) - 1 + by, 1));
-
-  return `${at.getUTCFullYear()}${String(at.getUTCMonth() + 1).padStart(2, '0')}`;
-};
 
 // ── Test access ───────────────────────────────────────────────────────────────
 

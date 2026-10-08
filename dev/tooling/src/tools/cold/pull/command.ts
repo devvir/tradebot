@@ -1,4 +1,5 @@
-import { each, gracefully, resolve, selectionOf } from '../cli';
+import { each, gracefully, resolve, selectionOf, snapshotOf } from '../cli';
+import { setYes } from '../options';
 import type { Command } from 'commander';
 import type { Chosen } from '../types';
 
@@ -17,11 +18,27 @@ export const register = (cold: Command): void => {
     .option('--partition <market[/dataset[,variant][/YYYY[MM]]]>', 'this market, or as much of a partition of it as is given')
     .option('--date <YYYY|YYYYMM>', 'only this year, or this month')
     .option('--instruments <list>', 'vault: only these instruments, comma-separated')
+    .option('-o, --output <path>', 'catalog: where the database is left — a directory, or the file itself; refused where it is already there')
+    .option('--keep-snapshot', 'catalog: leave the snapshot on disk afterwards, even where it had to be brought back')
+    .option('--drop-snapshot', 'catalog: leave no snapshot on disk afterwards — the one there becomes the database')
     .option('--prefer-monthly', 'archives: where a month is stored at more than one grain, the monthly files')
     .option('--prefer-daily', 'archives: where a month is stored at more than one grain, the daily files')
     .option('--prefer-bundled', 'archives: where a month is stored both ways, the files holding a whole market')
     .option('--prefer-not-bundled', 'archives: where a month is stored both ways, the files of one instrument each')
     .action(gracefully(async (origin: string | undefined, venues: string[] = [], options: Chosen = {}, command: Command) => {
+      // The catalog is not a tree of data: it is asked for by name, and takes none of what narrows a tree.
+      if (origin === 'catalog') {
+        setYes(command.optsWithGlobals<{ yes?: boolean }>().yes ?? false);
+
+        await (await import('./catalog')).runPullCatalog({
+          ...(options.output ? { output: options.output } : {}),
+          ...(options.dryRun ? { dryRun: true } : {}),
+          ...snapshotOf(options),
+        });
+
+        return;
+      }
+
       const asked = await resolve(command, origin, venues, ['archives', 'vault']);
 
       if (! asked) return;

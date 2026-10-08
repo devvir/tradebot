@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { _test_byVenue as byVenue, _test_evictable as evictable, _test_remove as remove } from '../../../src/tools/cold/evict/vault';
-import { _test_fetch as fetch } from '../../../src/tools/cold/pull/vault/fetch';
+import { _test_fetch as fetch } from '../../../src/tools/cold/shared/vault/fetch';
 import { _test_pullable as pullable } from '../../../src/tools/cold/pull/vault';
 import { _test_plan as plan } from '../../../src/tools/cold/push/vault/plan';
 import { _test_round as round } from '../../../src/tools/cold/push/vault/work';

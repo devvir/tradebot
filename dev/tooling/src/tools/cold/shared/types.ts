@@ -164,6 +164,15 @@ export interface Remote {
 
   /** Take second transfers of the same file out of the queue, below these directories. Not every stand-in has one. */
   dropDuplicateUploads?: (under: readonly string[]) => Promise<number>;
+
+  /** Hand several files over for one remote directory at once. */
+  queueUploads?: (locals: readonly string[], remoteDir: string) => Promise<void>;
+
+  /** Whether Mega answers at all. */
+  available?:    () => Promise<boolean>;
+
+  /** Remove a directory and everything in it. */
+  removeTree?:   (remotePath: string) => Promise<void>;
 }
 
 /** One of the files cold storage cannot be read without, as it was last sent to Mega. */
@@ -186,4 +195,42 @@ export interface Kept {
 
   /** How much smaller than its copy it may be without that being a loss, as a share of the copy. Nothing, unless said. */
   shrink?: number;
+}
+
+/** What bringing vault files back asks of Mega. */
+export interface Fetching {
+  downloadingPaths: () => Promise<Set<string>>;
+  queueDownload:    (remotePath: string, localDir: string) => Promise<void>;
+}
+
+/** One file of the catalog's copy in cold storage, as the record holds it. */
+export interface CatalogCopy {
+  /** The partition it holds the files of, or the database's own name for the base. */
+  name:     string;
+  kind:     'base' | 'partition';
+
+  /** Below the catalog's place in Mega; empty where it is as the base has it, and has no file of its own. */
+  remote:   string;
+
+  /** The catalog's version of the partition, or what the base weighed and when it was last written. */
+  version:  string;
+  bytes:    number;
+  state:    'queued' | 'stored';
+  handle:   string | null;
+  storedAt: string | null;
+
+  /** The base: how the catalog's table of files was declared as it was taken. Null for anything else. */
+  schema:   string | null;
+}
+
+/** What a pull of the catalog is told on the command line. */
+export interface CatalogPull {
+  /** Where the database is left: a directory, or the file itself. Cold's own directory where nothing is said. */
+  output?: string;
+
+  /** Say what would be brought back and where to, and bring nothing. */
+  dryRun?: boolean;
+
+  /** What becomes of the snapshot on disk afterwards. As it was before the run where nothing is said: there if it was. */
+  snapshot?: 'keep' | 'drop';
 }

@@ -11,6 +11,15 @@ export const remove = async (remotePath: string): Promise<void> => {
   await megaCmd('mega-rm', ['-f', remotePath], { timeout: 120_000 });
 };
 
+/** Remove a directory and everything in it. Nothing, where it is not there. */
+export const removeTree = async (remotePath: string): Promise<void> => {
+  try {
+    await megaCmd('mega-rm', ['-rf', remotePath], { timeout: 600_000 });
+  } catch (err) {
+    if (! notThere(err)) throw err;
+  }
+};
+
 /**
  * Every object under a path, in one call.
  *

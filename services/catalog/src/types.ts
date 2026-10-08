@@ -248,6 +248,9 @@ export interface ListingPage {
 }
 
 /** What a bucket listing is asked for. */
+/** What a listing is narrowed to before it is walked: nothing, a lens's partitions, or one partition. */
+export type Within = 'all' | 'lens' | 'partition';
+
 export interface ListingQuery {
   /** List only keys after this one; null from the start. */
   after:   string | null;
@@ -261,6 +264,9 @@ export interface ListingQuery {
 
   /** The lens it is read through, or null for every file. */
   lens:    Lens | null;
+
+  /** The one partition whose files are listed — its id — or null for every partition. */
+  partition?: number | null;
 }
 
 
@@ -413,6 +419,9 @@ export interface ListingRequest {
 
   /** Only files not yet downloaded. */
   pending: boolean;
+
+  /** Only the files of this partition, by name — see `partitionNamed`. */
+  partition?: string;
 }
 
 /** A body in S3's field names, before it is written as XML or JSON. */

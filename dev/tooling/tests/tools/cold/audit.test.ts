@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,6 +7,8 @@ import { _test_choiceOf as choiceOf } from '../../../src/tools/cold/audit';
 import { againstDisk } from '../../../src/tools/cold/audit/checks/disk';
 import { againstMega } from '../../../src/tools/cold/audit/checks/mega';
 import { withinItself } from '../../../src/tools/cold/audit/checks/record';
+import { inStaging } from '../../../src/tools/cold/audit/checks/staging';
+import { byWeight } from '../../../src/tools/cold/audit/checks/tars';
 import { setYes } from '../../../src/tools/cold/options';
 import { Archives } from '../../../src/tools/cold/shared/disk';
 import * as record from '../../../src/tools/cold/shared/record';
@@ -304,6 +307,164 @@ describe('the record, against itself', () => {
     await fix(finding);
 
     expect(fs.existsSync(lock)).toBe(false);
+  });
+});
+
+describe('a vault partition a push left a step short', () => {
+  it('is found, written down as whole, and the vault told', async () => {
+    const file = vaultFile('202001');
+
+    db.prepare('DELETE FROM vault_partition').run();
+
+    const finding = (await withinItself(looking('vault'))).find(one => /every file stored and is not written down as whole/.test(one.problem));
+
+    expect(finding!.examples).toEqual(['gate: spot/trades/202001']);
+
+    await fix(finding);
+
+    expect(record.vaultStored(db).get(file.partition)?.has('r1')).toBe(true);
+    expect(backedUpIn(path.join(dir, 'vault')).get(file.partition)?.has('r1')).toBe(true);
+    expect(await withinItself(looking('vault'))).toEqual([]);
+  });
+});
+
+describe('what is left in staging', () => {
+  const staged = (name: string, members: Record<string, string> = {}): string => {
+    const file = path.join(dir, 'cold', 'archives', 'gate', name);
+    const from = path.join(dir, 'src');
+
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+
+    for (const [member, text] of Object.entries(members)) {
+      fs.mkdirSync(path.dirname(path.join(from, member)), { recursive: true });
+      fs.writeFileSync(path.join(from, member), text);
+    }
+
+    fs.mkdirSync(from, { recursive: true });
+    execFileSync('tar', ['-cf', file, '-C', from, ...Object.keys(members)].concat(Object.keys(members).length ? [] : ['-T', '/dev/null']));
+
+    return file;
+  };
+
+  const member = (month: string): string => `gate/spot/trades/B/BTC_USDT/${month}/gate|spot|trades|BTC_USDT|${month}01.csv.gz`;
+
+  /** A packed tar, in the record and in staging under the path the record gives it. */
+  const packed = (month: string, members: Record<string, string>): { id: number; file: string } => {
+    const id = record.planTar(db, 'archives', 'gate', month, seq => ({ remote: `gate/${month}.${seq}.tar`, local: `gate/${month}.${seq}.tar` }), [partition(month)]);
+
+    record.packed(db, id, 100);
+
+    return { id, file: staged(`${month}.1.tar`, members) };
+  };
+
+  it('finds nothing where a tar on its way holds what the record says', async () => {
+    packed('202001', { [member('202001')]: 'aa' });
+
+    expect(await inStaging(looking('archives'))).toEqual([]);
+  });
+
+  /** The one place a tar can be opened without bringing it back. */
+  it('finds a tar that does not hold what the record says, and has it packed again', async () => {
+    const { id, file } = packed('202001', { [member('202001')]: 'aaaa' });
+
+    const [finding] = await inStaging(looking('archives'));
+
+    expect(finding!.problem).toMatch(/does not hold what the record says/);
+
+    await fix(finding);
+
+    expect(fs.existsSync(file)).toBe(false);
+    expect(record.tarById(db, id).state).toBe('planned');
+  });
+
+  it('finds a tar still in staging after it was stored, and one the record has never heard of', async () => {
+    const { id, file } = packed('202001', { [member('202001')]: 'aa' });
+
+    record.stored(db, id, 'H');
+
+    const stray = staged('stray.tar');
+    const [stored, unknown] = await inStaging(looking('archives'));
+
+    expect(stored!.problem).toMatch(/already stored in Mega/);
+    expect(stored!.solutions[0]!.destructive).toBeFalsy();
+    expect(unknown!.problem).toMatch(/not in the record/);
+    expect(unknown!.solutions[0]!.destructive).toBe(true);
+
+    await fix(stored);
+
+    expect(fs.existsSync(file)).toBe(false);
+    expect(fs.existsSync(stray)).toBe(true);
+  });
+
+  it('finds what a pull that stopped left behind', async () => {
+    const left = path.join(dir, 'cold', 'pulling', 'archives', 'gate', 'half.tar');
+
+    fs.mkdirSync(path.dirname(left), { recursive: true });
+    fs.writeFileSync(left, 'x');
+
+    const [finding] = await inStaging(looking('archives'));
+
+    await fix(finding);
+
+    expect(fs.existsSync(left)).toBe(false);
+  });
+
+  /** What is there then is that command's, half way through. */
+  it('looks at nothing while another command is running', async () => {
+    staged('stray.tar');
+    fs.writeFileSync(path.join(dir, 'cold', 'cold.archives.push.lock'), `pid ${process.ppid} since T\n`);
+
+    expect(await inStaging(looking('archives'))).toEqual([]);
+  });
+});
+
+describe('what each stored tar weighs', () => {
+  const file = (month: string): string => path.join(dir, 'archives', `gate/spot/trades/B/BTC_USDT/${month}`, `gate|spot|trades|BTC_USDT|${month}01.csv.gz`);
+
+  /** A stored tar of one partition whose file is on disk, written down at the size given. */
+  const weighed = (month: string, bytes: number): number => {
+    const id = record.planTar(db, 'archives', 'gate', month, seq => ({ remote: `gate/${month}.${seq}.tar`, local: `gate/${month}.${seq}.tar` }), [partition(month)]);
+
+    fs.mkdirSync(path.dirname(file(month)), { recursive: true });
+    fs.writeFileSync(file(month), 'aa');
+
+    record.packed(db, id, bytes);
+    record.stored(db, id, 'H');
+
+    return id;
+  };
+
+  /** One member of two bytes: a header, a block of content, the end, and all of it rounded up to a tar's blocking. */
+  it('finds nothing where a tar is the size its files make', async () => {
+    weighed('202001', 10_240);
+
+    expect(await byWeight(looking('archives'))).toEqual([]);
+  });
+
+  it('finds a tar that is not, to the byte, where its partitions are on disk — and has it sent again', async () => {
+    const id = weighed('202001', 20_480);
+    const [finding] = await byWeight(looking('archives'));
+
+    expect(finding!.problem).toMatch(/not the size the files of its partitions make/);
+
+    await fix(finding);
+
+    expect(record.tarById(db, id).state).toBe('planned');
+  });
+
+  /** Its files are gone, so only how many there were and what they weighed is known: a range, and nothing to pack again from. */
+  it('holds a tar whose partitions have left the disk to what they allow, and offers nothing', async () => {
+    weighed('202001', 10_240);
+    weighed('202002', 5_000_000);
+
+    fs.rmSync(path.join(dir, 'archives'), { recursive: true });
+
+    const [finding, ...rest] = await byWeight(looking('archives'));
+
+    expect(rest).toEqual([]);
+    expect(finding!.examples).toHaveLength(1);
+    expect(finding!.examples[0]).toMatch(/^gate\/202002\.1\.tar/);
+    expect(finding!.solutions).toEqual([]);
   });
 });
 

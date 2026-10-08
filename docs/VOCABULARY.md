@@ -99,3 +99,6 @@ partition's version does, or anything about how it is stocked.
 
 **Cold storage.** The remote store that is the system of record for raw and vault data. Local disk
 holds only what the work in hand needs.
+
+**Snapshot (of the catalog).** The catalog's database as it was at one moment, whole: the copy of it
+that cold storage holds, to which what has changed since is added.

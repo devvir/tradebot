@@ -21,6 +21,7 @@ stored as they are — see [COLD-VAULT.md](COLD-VAULT.md).
 | `cold push` | Upload what is ready and not backed up yet — [archives](COLD-PUSH.md), [vault](COLD-VAULT.md#cold-push-vault) |
 | `cold evict` | Remove from local disk what is safely in cold storage — [archives](COLD-EVICT.md), [vault](COLD-VAULT.md#cold-evict-vault) |
 | [`cold pull`](COLD-PULL.md) | Bring back a venue's dataset, or a partition of it — [archives](COLD-PULL.md#the-archives), [vault](COLD-VAULT.md#cold-pull-vault) |
+| [`cold push catalog`, `cold pull catalog`](COLD-CATALOG.md) | A copy of the catalog's database — the database itself, then what changed since — and the way back from it |
 | `cold stats` | What the record holds, venue by venue |
 | [`cold audit`](COLD-AUDIT.md) | Check Mega, the disk and the record against each other, and offer to put right what disagrees |
 
@@ -81,7 +82,23 @@ caller that reasons about Mega without going through the record of what is in it
 
 ---
 
-## When Mega does not answer
+## A command left watching keeps going
+
+**`--watch` is for a run left alone for days.** Whatever goes wrong during one is very likely gone
+a minute later, and a run that ended on it is days of nothing done. So:
+
+- **A service that is not answering is waited for** — Mega and the catalog both: asked again after
+  5 seconds, then twice as long each time up to a minute, for as long as it takes. This is so
+  without `--watch` too. A look at the catalog taken in the middle of other work is the exception:
+  that look is skipped, and the work goes on.
+- **Anything else that goes wrong under `--watch` is said, and the command is run again**, after the
+  same waits. Every command picks up where it was, so running one again repeats nothing. What it
+  asked the first time is not asked again: each question takes its own answer.
+- **Not as it starts.** What goes wrong in a command's first minute ends it, as it would without
+  `--watch`: whoever ran it is still there for its questions and its summary, and a lock somebody
+  holds or a setting that is wrong is theirs to put right.
+- **After that, only being told to stop ends it.**
+
 
 **A command sent to Mega that fails is one of two things: Mega said no, or Mega said nothing.** They
 are told apart by asking it who is logged in, which changes nothing and is answered at once by a
@@ -124,6 +141,11 @@ Everything a run holds sits in **one directory**, `<cold>`: the staging tars, th
 record. It is `SOURCES_COLD_DIR` if set and `<DATA_DIR>/@cold` otherwise.
 
 Configuration is read from `dev/tooling/.env`; see [COLD-PUSH.md](COLD-PUSH.md) for the variables.
+
+**What Mega brings back is readable by its owner only.** A file downloaded by `mega-get` lands with
+mode `600`, whatever it had when it was sent — where a file written into the vault or the archives
+in the ordinary way is `644`. Nothing here depends on it, since everything runs as one user; a reader
+running as another would be refused the pulled files and not the rest.
 
 ### Cold's own files are kept in Mega too
 

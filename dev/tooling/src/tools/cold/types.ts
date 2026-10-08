@@ -26,6 +26,10 @@ export interface ColdConfig {
 
   /** Where cold's own files are kept in Mega: its record, and the vault's ledgers. */
   backupRoot:    string;
+
+  /** The catalog's database, and where its copy is kept in Mega. */
+  catalogDb:     string;
+  catalogRoot:   string;
   dbPath:        string;
 
   /** What a tar is filled to before another is started. */
@@ -84,6 +88,11 @@ export interface Chosen {
   partition?:   string;
   date?:        string;
   force?:       boolean;
+
+  /** `pull catalog`: where the database is left, and whether the snapshot stays on disk. */
+  output?:      string;
+  keepSnapshot?: boolean;
+  dropSnapshot?: boolean;
 
   /** `pull`, archives: which rendering of the same data — see `Preference`. */
   preferMonthly?:    boolean;

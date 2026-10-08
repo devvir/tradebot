@@ -157,4 +157,21 @@ CREATE TABLE IF NOT EXISTS vault_move (
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS vault_move_file ON vault_move (partition, instrument);
+
+-- What of the catalog has a copy in cold storage, and at which version. The
+-- base is the database itself, whole. Every partition has a row from then on:
+-- with no file of its own while it is as the base has it, and with one once
+-- it has changed since. A partition's file is sent when the catalog's version
+-- of it is no longer the one written here.
+CREATE TABLE IF NOT EXISTS catalog_copy (
+  name      TEXT    PRIMARY KEY,         -- the partition, or the table
+  kind      TEXT    NOT NULL,            -- base, partition
+  remote    TEXT    NOT NULL,            -- below the catalog's place in Mega; '' while it is as the base has it
+  version   TEXT    NOT NULL,
+  bytes     INTEGER NOT NULL,            -- what the file sent weighs
+  state     TEXT    NOT NULL,            -- queued, stored
+  handle    TEXT,                        -- Mega's own identifier for the stored object
+  stored_at TEXT,
+  schema    TEXT                         -- the base: how the files' table was declared as it was taken
+) STRICT;
 `;

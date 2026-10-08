@@ -1,13 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { POLL_MS } from '../../config';
-import { meter } from '../../shared/meter';
-import * as record from '../../shared/record';
-import { remoteOf } from '../../shared/vault/layout';
+import { meter } from '../meter';
+import * as record from '../record';
+import { remoteOf } from './layout';
 import type { DatabaseSync } from 'node:sqlite';
 import type { ColdConfig } from '../../types';
 import type { Fetching } from '../types';
-import type { StoredFile } from '../../shared/types';
+import type { StoredFile } from '../types';
 
 /**
  * Ask Mega for every file and wait until each is back. Returns how many never

@@ -10,7 +10,8 @@ import { info, warn } from '../../../../shared/ui/logger';
 import { asideRoot, count, freeBytes } from '.';
 import type { DatabaseSync } from 'node:sqlite';
 import type { ColdConfig, Origin, Tar } from '../../types';
-import type { Fetching, Pullable } from '../types';
+import type { Pullable } from '../types';
+import type { Fetching } from '../../shared/types';
 import type { SourceFile } from '../../shared/types';
 
 /**

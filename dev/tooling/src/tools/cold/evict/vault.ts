@@ -1,4 +1,6 @@
 import fs from 'node:fs';
+import { Archives } from '../shared/disk';
+import { completable } from '../shared/vault/spill';
 import path from 'node:path';
 import { loadConfig } from '../config';
 import { onExit } from '../cleanup';
@@ -55,7 +57,20 @@ export const runEvictVault = async (selection: Selection, options: VaultOptions)
     onExit(() => record.close(db));
 
     try {
-      const going = evictable(db, config, selection);
+      /**
+       * **A partition that is about to be completed stays.** It was stocked
+       * without the hours a neighbouring month holds of it, and that month's
+       * archives are on disk now: whoever stocks the vault adds those hours
+       * beside the partition's own files, and needs them here to do it.
+       */
+      const waiting = new Set((await completable(config, new Archives(loadConfig('archives').sourceRoot), stockedIn(config.vaultRoot) ?? []))
+        .map(one => one.partition));
+
+      const going = evictable(db, config, selection, waiting);
+      const kept  = new Set(evictable(db, config, selection).filter(file => waiting.has(file.partition)).map(file => file.partition)).size;
+
+      if (kept > 0)
+        info(`${kept.toLocaleString('en-US')} partition${kept === 1 ? ' stays' : 's stay'}: the month beside ${kept === 1 ? 'it' : 'them'} is on disk, and stocker needs ${kept === 1 ? 'its' : 'their'} main file to add the spill`);
 
       if (going.length === 0) {
         success('Nothing of that is on disk and in cold storage — nothing to evict');
@@ -103,7 +118,7 @@ export const runEvictVault = async (selection: Selection, options: VaultOptions)
  *
  * Decided from the ledger and the record. The disk is not asked.
  */
-const evictable = (db: DatabaseSync, config: ColdConfig, selection: Selection): StoredFile[] => {
+const evictable = (db: DatabaseSync, config: ColdConfig, selection: Selection, keep: ReadonlySet<string> = new Set()): StoredFile[] => {
   const current = new Map((stockedIn(config.vaultRoot) ?? []).map(one => [one.partition, one.revision]));
   const stored  = record.vaultStored(db);
 
@@ -111,6 +126,7 @@ const evictable = (db: DatabaseSync, config: ColdConfig, selection: Selection): 
     current.get(file.partition) === file.revision
     && (stored.get(file.partition)?.has(file.revision) ?? false)
     && file.evictedAt === null
+    && ! keep.has(file.partition)
     && meansToEvict(selection, file.partition, file.instrument));
 };
 

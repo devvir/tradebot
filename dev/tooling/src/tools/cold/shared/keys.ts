@@ -43,6 +43,13 @@ export const idOf = (key: PartitionKey): string =>
 export const descriptorOf = (key: Pick<PartitionKey, 'dataset' | 'variant'>): string =>
   (key.variant ? `${key.dataset},${key.variant}` : key.dataset);
 
+/** A month, `YYYYMM`, so many months on — or back, where negative. */
+export const shiftMonth = (month: string, by: number): string => {
+  const at = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(4, 6)) - 1 + by, 1));
+
+  return `${at.getUTCFullYear()}${String(at.getUTCMonth() + 1).padStart(2, '0')}`;
+};
+
 // ── Internals ─────────────────────────────────────────────────────────────────
 
 /**

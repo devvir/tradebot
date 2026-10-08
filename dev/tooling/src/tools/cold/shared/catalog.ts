@@ -1,3 +1,4 @@
+import { info, warn } from '../../../shared/ui/logger';
 import type { CatalogPartition, ListedLens, ListedSlice } from './types';
 import type { ColdConfig } from '../types';
 
@@ -61,25 +62,90 @@ export const partitions = async (
     })));
 };
 
-// ── Internals ─────────────────────────────────────────────────────────────────
-
-const ask = async <T>(config: ColdConfig, path: string, lens: string | null = null): Promise<T> => {
-  let res: Response;
+/**
+ * Ask the catalog something that is not worth waiting for: where it does not
+ * answer, this fails at once.
+ *
+ * For a look taken in the middle of other work — a push that asks again while
+ * its tars are uploading. That work goes on with what it already knows, and the
+ * look is taken again later; waiting here would stop it for as long as the
+ * catalog is away.
+ */
+export const once = async <T>(look: () => Promise<T>): Promise<T> => {
+  patient = false;
 
   try {
-    res = await fetch(`${config.catalogUrl}${path}`, {
-      headers: {
-        accept: 'application/json',
-        ...(config.catalogToken ? { 'x-catalog-token': config.catalogToken } : {}),
-        ...(lens ? { 'x-catalog-lens': lens } : {}),
-      },
-    });
-  } catch (err) {
-    throw new Error(`The catalog is not answering at ${config.catalogUrl} — is it running? (${(err as Error).message})`);
+    return await look();
+  } finally {
+    patient = true;
   }
+};
 
-  if (! res.ok)
-    throw new Error(`The catalog answered ${res.status} for ${path}: ${(await res.text()).slice(0, 200)}`);
+// ── Internals ─────────────────────────────────────────────────────────────────
 
-  return await res.json() as T;
+/** Whether a catalog that does not answer is waited for. */
+let patient = true;
+
+/**
+ * One question to the catalog — waited for, for as long as it is not there.
+ *
+ * **A catalog that does not answer is restarting, or busy, and will be back.**
+ * A command left running for days is not ended by that: it waits, asking again
+ * after 5 seconds and then twice as long each time up to a minute, and says so
+ * once as the wait begins and once as it ends. A connection that fails and a
+ * `5xx` are both that. Any other answer is the catalog's own, and is not asked
+ * for twice.
+ */
+const ask = async <T>(config: ColdConfig, path: string, lens: string | null = null): Promise<T> => {
+  let waited = false;
+
+  for (let wait = FIRST_MS; ; wait = Math.min(wait * 2, LONGEST_MS)) {
+    let why: string;
+
+    try {
+      const res = await fetch(`${config.catalogUrl}${path}`, {
+        headers: {
+          accept: 'application/json',
+          ...(config.catalogToken ? { 'x-catalog-token': config.catalogToken } : {}),
+          ...(lens ? { 'x-catalog-lens': lens } : {}),
+        },
+      });
+
+      if (res.ok) {
+        if (waited) info('The catalog is answering again');
+
+        return await res.json() as T;
+      }
+
+      if (res.status < 500)
+        throw Object.assign(new Error(`The catalog answered ${res.status} for ${path}: ${(await res.text()).slice(0, 200)}`), { final: true });
+
+      why = `it answered ${res.status}`;
+    } catch (err) {
+      if ((err as { final?: boolean }).final) throw err;
+
+      why = (err as Error).message;
+    }
+
+    if (! patient) throw new Error(`The catalog is not answering at ${config.catalogUrl} (${why})`);
+
+    if (! waited) warn(`The catalog is not answering at ${config.catalogUrl} (${why}) — waiting for it`);
+
+    waited = true;
+
+    await pause(wait);
+  }
+};
+
+/** The first wait, and the longest: doubled each time between the two. */
+const FIRST_MS   = 5_000;
+const LONGEST_MS = 60_000;
+
+let pause = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
+
+// ── Test access ───────────────────────────────────────────────────────────────
+
+/** A stand-in for waiting; null puts the real one back. */
+export const _test_pause = (sleeper: ((ms: number) => Promise<void>) | null): void => {
+  pause = sleeper ?? (ms => new Promise(resolve => setTimeout(resolve, ms)));
 };

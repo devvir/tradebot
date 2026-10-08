@@ -106,35 +106,6 @@ export const verifyPart = async (
 };
 
 /**
- * The exact byte size a tar of these members will have.
- *
- * **Exact, not an estimate.** A tar is a 512-byte header per member, its content
- * padded to 512, a GNU long-name header and payload for any path past 100 bytes,
- * two zero blocks to end, and the whole thing padded to the 10,240-byte blocking
- * factor. All of that follows from the names and sizes going in.
- *
- * Which makes it a way to check a tar that is **only** in cold storage: its size
- * in Mega's listing can be compared against what its `member` rows imply,
- * without downloading a byte. Verified against five real tars — 744, 1,677,
- * 9,883, 405,422 and 12 members — every one predicted to the byte.
- */
-export const tarSize = (members: { path: string; bytes: number }[]): number => {
-  const pad = (value: number, to: number): number => Math.ceil(value / to) * to;
-
-  let size = 0;
-
-  for (const member of members) {
-    const length = Buffer.byteLength(member.path);
-
-    if (length > 100) size += 512 + pad(length + 1, 512);
-
-    size += 512 + pad(member.bytes, 512);
-  }
-
-  return pad(size + 1024, 10240);
-};
-
-/**
  * Clear the debris an interrupted run leaves behind.
  *
  * A `.tar.tmp` is by definition unfinished — it existed because a rename had

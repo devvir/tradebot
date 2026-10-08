@@ -1,7 +1,7 @@
 import { logger } from '@devvir/service-kit';
 import { depthOf, keyOf } from './keys';
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
-import type { ListingObject, ListingPage, ListingQuery, ListingRow } from '../types';
+import type { ListingObject, ListingPage, ListingQuery, ListingRow, Within } from '../types';
 
 /**
  * The catalog as one storage bucket: every venue's files, keyed by what each
@@ -20,6 +20,9 @@ import type { ListingObject, ListingPage, ListingQuery, ListingRow } from '../ty
  * monthly and a daily rendering of one instrument, two eras of it — and their
  * files are one stream by date.
  *
+ * **One partition is a filter like a lens of one**: only the series of its slice
+ * are walked, and each one's files read only within its month.
+ *
  * **Two files with one key is a catalog bug**, not something to settle here:
  * `accepts` and transforms exist so prospector chooses between two versions of
  * a file. Should one get through, it is logged and listed once, so paging still
@@ -30,9 +33,10 @@ export const listingPage = (db: DatabaseSync, query: ListingQuery): ListingPage 
   const from    = startOf(start);
   const until   = query.prefix === '' ? LAST : ceiling(seriesPart(query.prefix));
   const objects: ListingObject[] = [];
-  const read    = statements(db)[`${query.lens ? 'lens' : 'all'}:${query.pending ? 'pending' : 'any'}`]!;
-  // The lens, where there is one, then where the page starts, where the prefix ends, and the date to start from.
-  const asked   = [query.lens?.id ?? null, from.prefix, until, from.date];
+  const within  = query.partition != null ? 'partition' : query.lens ? 'lens' : 'all';
+  const read    = statements(db)[`${within}:${query.pending ? 'pending' : 'any'}`]!;
+  // The partition or the lens, where there is one, then where the page starts, where the prefix ends, and the date to start from.
+  const asked   = [query.partition ?? query.lens?.id ?? null, from.prefix, until, from.date];
 
   for (const row of read.iterate(...asked) as Iterable<ListingRow>) {
     const key = keyOf(row.prefix, row.pattern, row);
@@ -121,23 +125,25 @@ const statements = (db: DatabaseSync): Record<string, StatementSync> => {
   let held = PREPARED.get(db);
 
   if (! held) {
-    const query = (lens: boolean, pending: boolean) => db.prepare(
+    const query = (within: Within, pending: boolean) => db.prepare(
       `SELECT s.prefix, p.pattern, f.rowid AS id, f.venue_id AS venueId, f.path, f.date, f.size, f.etag,
               f.modified, f.series_id AS seriesId
          FROM series s
          CROSS JOIN pattern p ON p.id = s.pattern_id
-         ${members(lens, pending)}
-         CROSS JOIN file f ON f.series_id = s.id${lens || pending ? " AND f.date >= q.month AND f.date <= q.month || '99'" : ''}
+         ${members(within, pending)}
+         CROSS JOIN file f ON f.series_id = s.id${within !== 'all' || pending ? " AND f.date >= q.month AND f.date <= q.month || '99'" : ''}
         WHERE s.prefix >= ?2 AND s.prefix < ?3
-          AND (s.prefix, f.date) >= (?2, ?4)${touched(lens, pending)}
+          AND (s.prefix, f.date) >= (?2, ?4)${touched(within, pending)}
           AND f.existence = 'confirmed'${pending ? ' AND f.downloaded_at IS NULL' : ''}
         ORDER BY s.prefix, f.date, f.path`);
 
     held = {
-      'all:any':      query(false, false),
-      'all:pending':  query(false, true),
-      'lens:any':     query(true, false),
-      'lens:pending': query(true, true),
+      'all:any':           query('all', false),
+      'all:pending':       query('all', true),
+      'lens:any':          query('lens', false),
+      'lens:pending':      query('lens', true),
+      'partition:any':     query('partition', false),
+      'partition:pending': query('partition', true),
     };
 
     PREPARED.set(db, held);
@@ -149,12 +155,12 @@ const statements = (db: DatabaseSync): Record<string, StatementSync> => {
 /**
  * The partitions of a series' slice that a walk reads: all of them where there
  * is neither a lens nor a question of what is owed — then there is no join at
- * all — and otherwise those the lens lets through, those still owing a file,
- * or both.
+ * all — and otherwise those the lens lets through or the one partition named,
+ * those still owing a file, or both.
  */
-const members = (lens: boolean, pending: boolean): string =>
-  (! lens && ! pending ? '' : `
-         CROSS JOIN partition q ON q.slice_id = p.slice_id${pending ? ' AND q.pending > 0' : ''}${lens ? `
+const members = (within: Within, pending: boolean): string =>
+  (within === 'all' && ! pending ? '' : `
+         CROSS JOIN partition q ON q.slice_id = p.slice_id${within === 'partition' ? ' AND q.id = ?1' : ''}${pending ? ' AND q.pending > 0' : ''}${within === 'lens' ? `
          CROSS JOIN lens_member l ON l.lens_id = ?1 AND l.partition_id = q.id` : ''}`);
 
 /**
@@ -162,8 +168,10 @@ const members = (lens: boolean, pending: boolean): string =>
  * still owing a file where that is what is asked. Worked out once per page, so
  * a series of any other slice costs one lookup rather than one per month.
  */
-const touched = (lens: boolean, pending: boolean): string =>
-  (lens ? `
+const touched = (within: Within, pending: boolean): string =>
+  (within === 'partition' ? `
+          AND p.slice_id = (SELECT slice_id FROM partition WHERE id = ?1)`
+    : within === 'lens' ? `
           AND p.slice_id IN (SELECT o.slice_id FROM lens_member m JOIN partition o ON o.id = m.partition_id
                               WHERE m.lens_id = ?1${pending ? ' AND o.pending > 0' : ''})`
     : pending ? `

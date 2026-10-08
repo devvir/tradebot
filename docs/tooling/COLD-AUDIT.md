@@ -68,7 +68,37 @@ vault's to have replaced.
 |---|---|
 | a lock held by a run that is gone | remove it |
 | a vault partition written down as whole in cold storage without every file stored | write it down as not whole, so the next push completes it |
+| a vault partition with every file stored that is not written down as whole — a push stored its last file and stopped | write it down as whole, tell the vault it has a copy, and forget the revisions it replaces |
 | a vault partition in cold storage that the vault's `backedup.csv` does not list | add it — until then whoever stocks the vault takes a missing file of it for a loss |
+
+### What is left in staging
+
+The archives' tars wait in cold's own directory between being packed and being stored, and leave it
+the moment Mega has them. Nothing here is looked at while another command is running: what is there
+then is that command's, half way through.
+
+| Found | Offered |
+|---|---|
+| a tar on its way that does not hold what the record says — a partition's files or bytes differ, or it holds one the record does not name | remove it and write it down as not packed, so the next push packs it again |
+| a tar still there after it was stored | remove it from staging |
+| a tar the record has never heard of | remove it from staging — **never unasked** |
+| files a pull that stopped left behind | remove them |
+
+**This is the one place a tar is opened.** A stored tar cannot be read without bringing it back, so
+what it holds is checked while it is still here. After that it can only be weighed.
+
+### What each stored tar weighs
+
+**A tar's size follows exactly from the names and sizes of its members**: a header a file, its
+content padded to a block, a second header where the name is long, and the whole rounded up. So a
+stored tar is weighed against the partitions the record says it holds.
+
+| Found | Offered |
+|---|---|
+| a tar that is not, to the byte, the size its files make — every partition of it on disk as it was stored | write it down as not stored, so the next push packs and sends it again |
+| a tar outside the size its partitions allow — some of them taken off the disk since, so only how many files they were and what they weighed is known | nothing: there is nothing to pack it again from. Bring it back and look |
+
+The second is a range and not a figure, so a tar inside it is not proved right.
 
 ### The record's copy in Mega
 
@@ -81,6 +111,5 @@ A check takes what there is to look at — the record, the configuration, the tr
 answers — and returns findings. It lives in `audit/checks/` and is listed in `audit/index.ts`.
 Whatever is thought of later that does not belong in another command's own checks goes here.
 
-What the command it replaces looked for, and has not been rebuilt — months with a gap between them,
-tars left in staging, what a tar holds against what the record says it holds — is in
-`dev/tooling/src/tools/cold/legacy/audit.ts`.
+What the command it replaces looked for, and has not been rebuilt — months with a gap between them
+— is in `dev/tooling/src/tools/cold/legacy/audit.ts`.

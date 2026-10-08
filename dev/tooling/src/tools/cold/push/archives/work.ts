@@ -1,4 +1,5 @@
 import { GB, POLL_MS, WATCH_MS } from '../../config';
+import { once } from '../../shared/catalog';
 import { confirmTars } from '../confirm';
 import { recordOf, save } from '../../shared/backup';
 import { onExit } from '../../cleanup';
@@ -168,7 +169,8 @@ const scan = async (
   say(`Asking the catalog what is ready to push${lens ? `, through ${lens}` : ''}`);
 
   try {
-    const planned = await plan(db, config, origin, venues, lens, say);
+    // Asked while tars are uploading: a catalog that is away costs this look, and not the run.
+    const planned = await once(() => plan(db, config, origin, venues, lens, say));
     const fresh   = waitingFor().filter(id => ! before.has(id)).length;
 
     if (busy && fresh > 0)

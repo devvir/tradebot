@@ -52,6 +52,8 @@ export const WATCH_MS = 30 * 60_000;
  *   - `DATA_VAULT_DIR`            — the vault (`<DATA_DIR>/vault`)
  *   - `COLD_QUEUE_TARGET_GB` — GB still queued before packing pauses (10)
  *   - `COLD_SETTLED_HOURS`   — hours a settled partition must also have gone unchanged (none)
+ *   - `CATALOG_DIR`          — where the catalog's database is (`<DATA_DIR>/catalog`)
+ *   - `CATALOG_DB`           — the database itself, where it is not `catalog.db` in there
  *   - `CATALOG_URL`          — where the catalog answers from this host
  *   - `CATALOG_TOKEN`        — sent to it on every request
  */
@@ -74,6 +76,8 @@ export const loadConfig = (origin: Origin): ColdConfig => {
     coldRoot,
     megaRoot:      `${requiredEnv('MEGA_ROOT').replace(/\/$/, '')}/${REMOTE[origin]}`,
     backupRoot:    `${requiredEnv('MEGA_ROOT').replace(/\/$/, '')}/@cold`,
+    catalogDb:     getEnv('CATALOG_DB', '') || path.join(under('CATALOG_DIR', 'catalog'), 'catalog.db'),
+    catalogRoot:   `${requiredEnv('MEGA_ROOT').replace(/\/$/, '')}/@cold/catalog`,
     dbPath:        path.join(coldRoot, 'cold.sqlite'),
     capBytes:      CAPS[origin] * GB,
     queueTargetGb: Number(getEnv('COLD_QUEUE_TARGET_GB', '') || QUEUE_TARGET_GB),

@@ -313,6 +313,42 @@ describe('a lens', () => {
   });
 });
 
+describe('one partition of the bucket', () => {
+  /** The keys of a month of a rendering, as the unfiltered walk has them. */
+  const of = (venue: string, market: string, descriptor: string, month: string, daily: boolean): string[] =>
+    EXPECTED.filter((one) => {
+      const [v, m, d] = one.split('/');
+      const date = one.split('|').at(-1)!.split('.')[0]!;
+
+      return v === venue && m === market && d === descriptor && date.startsWith(month) && (date.length === 8) === daily;
+    });
+
+  it('is listed by name, whole, and nothing else with it', async () => {
+    const daily = of('binance', 'perp', 'trades', '202001', true);
+
+    expect(daily.length).toBeGreaterThan(0);
+    expect(await walk(`&partition=${encodeURIComponent('binance|perp|trades|*|daily|202001')}`)).toEqual(daily);
+  });
+
+  /** Two renderings of one month are two partitions: asking for one is not given the other. */
+  it('is one rendering of its month and not the other', async () => {
+    const monthly = of('binance', 'perp', 'trades', '202001', false);
+
+    expect(await walk(`&partition=${encodeURIComponent('binance|perp|trades|*|monthly|202001')}`)).toEqual(monthly);
+  });
+
+  it('is nothing through a lens that does not let it through', async () => {
+    await storeLens(db, 'none-of-binance', '', '', { format: 1, venues: { gate: [{ effect: 'include' }] } } as LensDefinition);
+
+    expect(await walk(`&partition=${encodeURIComponent('binance|perp|trades|*|daily|202001')}`, { 'x-catalog-lens': 'none-of-binance' })).toEqual([]);
+  });
+
+  it('is a 422 where the name is not one, or names none', async () => {
+    expect((await call('/listings?partition=binance')).status).toBe(422);
+    expect((await call(`/listings?partition=${encodeURIComponent('binance|perp|trades|*|daily|199901')}`)).status).toBe(422);
+  });
+});
+
 describe('a report', () => {
   /** A stand-in prospector, recording what it was asked to settle; it can drop the first connections it gets. */
   const prospector = async (status = 200, drops = 0) => {

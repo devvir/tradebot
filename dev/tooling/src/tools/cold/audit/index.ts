@@ -9,6 +9,8 @@ import * as record from '../shared/record';
 import { againstDisk } from './checks/disk';
 import { againstMega } from './checks/mega';
 import { withinItself } from './checks/record';
+import { inStaging } from './checks/staging';
+import { byWeight } from './checks/tars';
 import { info, spacer, success, warn } from '../../../shared/ui/logger';
 import type { Origin } from '../types';
 import type { AuditOptions, Check, Finding, Looking, Solution } from './types';
@@ -79,6 +81,8 @@ const CHECKS: [string, Check][] = [
   ['the record against Mega',      againstMega],
   ['the record against the disk',  againstDisk],
   ['the record against itself',    withinItself],
+  ['what is left in staging',      inStaging],
+  ['what each stored tar weighs',  byWeight],
 ];
 
 /** Say one finding, and do about it what is chosen. */

@@ -264,6 +264,7 @@ reached at several, which `/venues` lists, and a file's URL is any of them follo
 | | |
 |---|---|
 | `pending=true` | only files not yet downloaded |
+| `partition=<name>` | only the files of one partition, named `venue\|market\|dataset[,variant]\|*\|grain\|YYYYMM` — `@` in place of `*` for the partition of a market's own file. Through a lens that does not let the partition through, nothing. A name that is not one, or names none, is a `422 NoSuchPartition` |
 | `x-catalog-lens: <slug>`, or `lens=<slug>` | only what that lens lets through; the header wins where both are sent. An unknown lens is a `422 NoSuchLens` |
 
 A walk is a cursor over keys, so a file catalogued behind the cursor is listed by the next walk, as on
