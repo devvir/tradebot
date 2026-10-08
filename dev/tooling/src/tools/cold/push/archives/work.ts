@@ -1,4 +1,5 @@
 import { GB, POLL_MS, WATCH_MS } from '../../config';
+import { recordOf, save } from '../../shared/backup';
 import { onExit } from '../../cleanup';
 import { Archives } from '../../shared/disk';
 import { idOf } from '../../shared/keys';
@@ -63,6 +64,9 @@ export const work = async (
       if (! watch) break;
 
       if (! waiting) progress.log('Watch mode - Waiting for new partitions to push');
+
+      // Everything found has been sent: what that changed is kept too, before the wait.
+      if (! waiting) await save(config, [recordOf(config)]);
 
       waiting = true;
 

@@ -75,7 +75,7 @@ export const runPushVault = async (options: PushOptions): Promise<void> => {
       const pending = pendingOf(db, options.venues);
 
       if (pending.length === 0 && ! isWatch()) {
-        success('Everything the vault holds is in cold storage — nothing to push');
+        success('There is currently nothing to push');
 
         return;
       }

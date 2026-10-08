@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { ledgersOf, recordOf, save } from '../../shared/backup';
 import path from 'node:path';
 import { GB, POLL_MS, WATCH_MS } from '../../config';
 import { onExit } from '../../cleanup';
@@ -13,7 +14,7 @@ import { pendingOf, plan } from './plan';
 import { trusted } from '../../shared/vault/trusted';
 import type { DatabaseSync } from 'node:sqlite';
 import type { ColdConfig } from '../../types';
-import type { Remote } from '../types';
+import type { Remote } from '../../shared/types';
 import type { StoredFile } from '../../shared/types';
 
 /**
@@ -54,6 +55,9 @@ export const work = async (db: DatabaseSync, config: ColdConfig, venues: readonl
       if (! isWatch()) break;
 
       if (! waiting) progress.log('Watch mode - Waiting for new partitions to push');
+
+      // Everything found has been sent: what that changed is kept too, before the wait.
+      if (! waiting) await save(config, [recordOf(config), ...ledgersOf(config)]);
 
       waiting = true;
 

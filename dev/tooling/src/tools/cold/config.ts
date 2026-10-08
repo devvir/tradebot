@@ -73,6 +73,7 @@ export const loadConfig = (origin: Origin): ColdConfig => {
     vaultRoot:     under(SOURCES.vault.env, SOURCES.vault.under),
     coldRoot,
     megaRoot:      `${requiredEnv('MEGA_ROOT').replace(/\/$/, '')}/${REMOTE[origin]}`,
+    backupRoot:    `${requiredEnv('MEGA_ROOT').replace(/\/$/, '')}/cold`,
     dbPath:        path.join(coldRoot, 'cold.sqlite'),
     capBytes:      CAPS[origin] * GB,
     queueTargetGb: Number(getEnv('COLD_QUEUE_TARGET_GB', '') || QUEUE_TARGET_GB),

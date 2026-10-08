@@ -1,13 +1,4 @@
-import type { CatalogPartition, QueueState } from '../shared/types';
-
-/** What storing the vault asks of Mega: the part of it a run can be given a stand-in for. */
-export interface Remote {
-  queuedPaths: () => Promise<Set<string>>;
-  queue:       () => Promise<QueueState>;
-  listing:     (root: string) => Promise<Map<string, { bytes: number; handle: string | null }>>;
-  queueUpload: (local: string, remoteDir: string) => Promise<void>;
-  remove:      (remotePath: string) => Promise<void>;
-}
+import type { CatalogPartition } from '../shared/types';
 
 /** What a look at the vault's ledger found still to store, venue by venue. */
 export interface VaultPlan {

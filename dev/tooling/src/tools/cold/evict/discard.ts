@@ -29,6 +29,14 @@ export const discard = async (paths: readonly string[], purge: boolean): Promise
       breathed = Date.now();
     }
   }
+
+  /**
+   * And once more as it ends, however little it removed. A caller removes a
+   * partition at a time, each a call of its own that is over in less than a
+   * breath — and awaiting something already done hands nothing back, so a run
+   * of thousands of them would otherwise hold the thread from first to last.
+   */
+  await new Promise(resolve => setImmediate(resolve));
 };
 
 // ── Internals ─────────────────────────────────────────────────────────────────

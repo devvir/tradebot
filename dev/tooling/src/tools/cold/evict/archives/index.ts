@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { recordOf, save } from '../../shared/backup';
 import * as catalog from '../../shared/catalog';
 import { loadConfig, WATCH_MS } from '../../config';
 import { onExit } from '../../cleanup';
@@ -112,6 +113,8 @@ export const runEvict = async (origin: Origin, options: EvictOptions): Promise<v
         if (! await pass(db, run, first)) return;
 
         if (! isWatch()) return;
+
+        await save(config, [recordOf(config)]);
 
         await new Promise(resolve => setTimeout(resolve, WATCH_MS));
       }

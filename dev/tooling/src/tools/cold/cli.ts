@@ -1,6 +1,7 @@
 import inquirer from 'inquirer';
 import { release } from './cleanup';
-import { WATCH_MS } from './config';
+import { WATCH_MS, loadConfig } from './config';
+import { busy, orphaned } from './lock';
 import { isWatch, setWatch, setYes } from './options';
 import { error, info, setPrefix, spacer } from '../../shared/ui/logger';
 import type { Command } from 'commander';
@@ -42,6 +43,23 @@ export const each = async (origins: readonly Origin[], run: (origin: Origin) => 
 
   if (watching) setWatch(false);
 
+  /**
+   * **Cold's own files are looked after around every command** — see
+   * `shared/backup.ts`. The record's copy in Mega is checked before the first
+   * tree, since a run that died before this one may have left it behind; and
+   * after each tree the record is sent if it changed, with the vault's ledgers
+   * where the tree was the vault. A command that keeps running by itself sends
+   * them as it goes.
+   *
+   * **Not checked while another command is running.** That one is changing the
+   * record as this one starts, so the two differ as a matter of course, and it
+   * sends the record itself as it goes and as it ends.
+   */
+  const backup = await import('./shared/backup');
+  const config = loadConfig(origins[0] ?? 'archives');
+
+  if (! busy(config.coldRoot)) await backup.check(config, orphaned(config.coldRoot));
+
   for (;;) {
     for (const origin of origins) {
       setPrefix(several ? origin : null);
@@ -50,6 +68,8 @@ export const each = async (origins: readonly Origin[], run: (origin: Origin) => 
       if (several) info('');
 
       await run(origin);
+
+      await backup.save(config, [backup.recordOf(config), ...(origin === 'vault' ? backup.ledgersOf(config) : [])]);
     }
 
     setPrefix(null);

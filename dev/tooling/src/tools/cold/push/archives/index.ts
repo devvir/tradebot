@@ -80,7 +80,7 @@ export const runPush = async (origin: Origin, options: PushOptions): Promise<voi
       const todo    = outstanding(db, origin, venues);
 
       if (todo.length === 0 && ! isWatch()) {
-        success(`Everything that is ready from ${venues.join(', ')} is in cold storage — nothing to push`);
+        success('There is currently nothing to push');
 
         return;
       }

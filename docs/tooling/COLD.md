@@ -111,6 +111,35 @@ record. It is `SOURCES_COLD_DIR` if set and `<DATA_DIR>/@cold` otherwise.
 
 Configuration is read from `dev/tooling/.env`; see [COLD-PUSH.md](COLD-PUSH.md) for the variables.
 
+### Cold's own files are kept in Mega too
+
+**The record is the only thing that knows what a tar holds, and the vault's ledgers the only thing
+that knows what its files are.** Neither is versioned anywhere, and losing either leaves terabytes
+in Mega that nothing can name. So each has a copy there:
+
+| | |
+|---|---|
+| `<MEGA_ROOT>/cold/cold.sqlite` | the record |
+| `<MEGA_ROOT>/cold/vault/ledger.csv`, `backedup.csv` | the vault's ledgers |
+
+- **As any command starts**, the record is set against its copy. Nothing is said where they agree.
+  Where they do not, a run before this one changed the record and did not get to send it: it is
+  sent without asking where that run died and left its lock behind, and asked about otherwise — yes
+  unless told otherwise.
+- **Not while another command is running.** That one is changing the record as this one starts, so
+  the two differ as a matter of course; it sends the record itself as it goes and as it ends.
+- **As any command ends**, the record is sent if it changed. A command that works on the vault sends
+  the ledgers too. One that keeps running under `--watch` does both each time it has sent everything
+  it found.
+- **Sent as a copy taken whole**, in `<cold>/backup`, since both are written while they are read.
+  What was last sent — a digest and a size for each — is noted in `<cold>/backup/sent.json`, and a
+  file goes again only when its digest is no longer that one.
+- **These files only ever grow.** One that is smaller than its copy is not a change to pass on:
+  something happened to it here, and the copy may be the only good one. It is never sent by itself.
+  As a command starts it is asked about, and the answer is no unless told otherwise.
+- **Mega is given twenty seconds to say what it holds.** Where it does not answer, the command
+  carries on by what was last sent.
+
 ### The code
 
 `dev/tooling/src/tools/cold/`, a directory for each subcommand and one for what they share:

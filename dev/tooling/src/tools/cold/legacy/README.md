@@ -1,28 +1,16 @@
 # cold, before partitions
 
-The cold commands as they were before `cold push archives` moved onto partitions: `evict`,
-`audit`, the vault origin, and the push they were built around. **Kept, not running.** They read a
-per-file record (`db.ts`), the facts store (`ledger.ts`) and tree layouts that no longer exist, so
-this folder is left out of the build and its tests (`tests/tools/cold/legacy/`) out of the test run.
+What is left of the cold commands as they were before they moved onto partitions. **Kept, not
+running**: it reads a per-file record and a facts store that no longer exist, so this folder is left
+out of the build and its tests (`tests/tools/cold/legacy/`) out of the test run.
 
-`docs/` holds how they were described: the push they shared, and `evict` as it was designed.
-
-It is here because of what it knows. The checks `evict` makes before it deletes anything, the ways
-`audit` found the record and Mega can disagree, how a replaced tar is told from the one it
-replaces — each was a decision taken for a reason, and each command is rebuilt on partitions from
-this code and its docs rather than from nothing.
+It is here for what it knows, and for nothing else:
 
 | | |
 |---|---|
-| `audit.ts` | `cold audit` — [docs/tooling/COLD-AUDIT.md](../../../../../../docs/tooling/COLD-AUDIT.md) |
-| `evict/` | `cold evict` — [docs/tooling/COLD-EVICT.md](../../../../../../docs/tooling/COLD-EVICT.md) |
-| `push.ts`, `plan.ts`, `planners/` | the push both origins shared, and how each planned its tars |
-| `db.ts`, `types.ts`, `config.ts` | the per-file record and what went with it |
-| `presence.ts`, `ledger.ts`, `scan.ts` | what the vault holds, what the facts store says, what is on disk |
-| `stats.ts` | `cold stats` over the per-file record |
-| `docs/` | `COLD.md` and `COLD-PUSH.md` as they described that push |
+| `audit.ts` | `cold audit`, the one command not rebuilt — [docs/tooling/COLD-AUDIT.md](../../../../../../docs/tooling/COLD-AUDIT.md). The ways it found the record and Mega can disagree: objects the record does not know, tars left in staging, months with a gap, a tar that does not weigh what the record says. |
+| `evict/reclaim.ts` | taking back tars left in staging by a run that stopped, which nothing does now |
+| `types.ts`, `config.ts` | the vocabulary the two above are written in |
 
-Files these import that are not here — `mega.ts`, `tar.ts`, `lock.ts`, `cleanup.ts`,
-`progress.ts` — are the live ones, one folder up.
-
-A command leaves this folder when it is rebuilt: its code, its tests and its row above go together.
+The modules these import that are not here are gone with the record they read; the code is to be
+read, not run. A file leaves this folder when what it knows has been rebuilt.

@@ -23,6 +23,9 @@ export interface ColdConfig {
 
   /** Where the origin's tars live in Mega. */
   megaRoot:      string;
+
+  /** Where cold's own files are kept in Mega: its record, and the vault's ledgers. */
+  backupRoot:    string;
   dbPath:        string;
 
   /** What a tar is filled to before another is started. */

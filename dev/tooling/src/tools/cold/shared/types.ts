@@ -153,3 +153,31 @@ export interface HeldRow extends Omit<Held, 'next'> {
   nextFiles:   number | null;
   nextBytes:   number | null;
 }
+
+/** What storing the vault asks of Mega: the part of it a run can be given a stand-in for. */
+export interface Remote {
+  queuedPaths: () => Promise<Set<string>>;
+  queue:       () => Promise<QueueState>;
+  listing:     (root: string) => Promise<Map<string, { bytes: number; handle: string | null }>>;
+  queueUpload: (local: string, remoteDir: string) => Promise<void>;
+  remove:      (remotePath: string) => Promise<void>;
+}
+
+/** One of the files cold storage cannot be read without, as it was last sent to Mega. */
+export interface Sent {
+  /** A digest of what was sent. */
+  digest: string;
+  bytes:  number;
+  at:     string;
+}
+
+/** A file kept beside what it describes: what it is called, where it is, and where its copy goes in Mega. */
+export interface Kept {
+  name:   string;
+
+  /** A consistent copy of it as it is now, written to this path — or false where there is nothing to copy. */
+  copy:   (to: string) => boolean;
+
+  /** Below `backupRoot`. */
+  remote: string;
+}

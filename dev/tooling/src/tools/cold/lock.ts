@@ -98,7 +98,29 @@ export const acquire = async (
   return give;
 };
 
+/** Whether a lock is lying in cold's directory whose holder is gone: a run that stopped without tidying up. */
+export const orphaned = (coldRoot: string): boolean => holders(coldRoot).some(pid => ! alive(pid));
+
+/** Whether another cold command is running: a lock whose holder is there. */
+export const busy = (coldRoot: string): boolean => holders(coldRoot).some(pid => pid !== process.pid && alive(pid));
+
 // ── Internals ─────────────────────────────────────────────────────────────────
+
+/** Who holds each lock in cold's directory, by pid. */
+const holders = (coldRoot: string): number[] => {
+  const locks = fs.existsSync(coldRoot) ? fs.readdirSync(coldRoot).filter(name => /^cold\..+\.lock$/.test(name)) : [];
+
+  return locks.flatMap((name) => {
+    try {
+      const owner = /pid (\d+)/.exec(fs.readFileSync(path.join(coldRoot, name), 'utf8'))?.[1];
+
+      return owner ? [Number(owner)] : [];
+    } catch {
+      // Given back between being listed and being read.
+      return [];
+    }
+  });
+};
 
 /** Whether a process exists. Signal 0 delivers nothing and only asks. */
 const alive = (pid: number): boolean => {
