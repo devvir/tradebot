@@ -9,6 +9,7 @@ import { error, info, spacer, success, warn } from '../../../../shared/ui/logger
 import { trusted } from '../../shared/vault/trusted';
 import { pendingOf, plan } from './plan';
 import { work } from './work';
+import { notice } from '../../shared/vault/needed';
 import type { PushOptions, VaultPlan } from '../types';
 
 /**
@@ -63,6 +64,8 @@ export const runPushVault = async (options: PushOptions): Promise<void> => {
     onExit(() => record.close(db));
 
     try {
+      await notice(db);
+
       info('Reading the vault\'s ledger for what is not in cold storage');
 
       const planned = plan(db, config, options.venues);

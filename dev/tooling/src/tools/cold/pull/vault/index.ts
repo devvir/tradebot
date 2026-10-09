@@ -13,6 +13,7 @@ import { fmtBytes } from '../../../../shared/utils/format';
 import { error, info, spacer, success, warn } from '../../../../shared/ui/logger';
 import { byKey } from '../../order';
 import { fetch } from '../../shared/vault/fetch';
+import { notice } from '../../shared/vault/needed';
 import type { DatabaseSync } from 'node:sqlite';
 import type { ColdConfig, Selection } from '../../types';
 import type { StoredFile, VaultOptions } from '../../shared/types';
@@ -50,6 +51,8 @@ export const runPullVault = async (selection: Selection, options: VaultOptions):
     onExit(() => record.close(db));
 
     try {
+      await notice(db);
+
       const wanted = pullable(db, config, selection);
 
       if (wanted.length === 0) {

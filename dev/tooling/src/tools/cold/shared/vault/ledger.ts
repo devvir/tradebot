@@ -41,26 +41,24 @@ export const stockedIn = (vaultRoot: string): Stocked[] | null => {
   const last = new Map<string, Stocked>();
 
   for (const row of rows) {
-    if (row['revision'] === UPDATING || row['revision'] === OUTDATED) {
-      last.delete(row['partition']!);
+    if (row['revision'] === UPDATING || row['revision'] === OUTDATED) last.delete(row['partition']!);
+    else last.set(row['partition']!, lineOf(row));
+  }
 
-      continue;
-    }
+  return [...last.values()];
+};
 
-    last.set(row['partition']!, {
-      partition: row['partition']!,
-      source: {
-        venue: row['venue']!, market: row['market']!, dataset: row['dataset']!, variant: row['variant'] ?? '',
-        grain: row['grain'] as Grain, bundle: row['bundle'] as Bundle, month: row['month']!,
-      },
-      version:     row['version']!,
-      preVersion:  row['preVersion'] ?? '',
-      postVersion: row['postVersion'] ?? '',
-      revision:    row['revision']!,
-      mode:        row['mode'] === 'split' ? 'split' : 'bundle',
-      size:        Number(row['size'] ?? 0),
-      count:       Number(row['count'] ?? 0),
-    });
+/**
+ * Every partition whose last line says `outdated`: stocked, at a revision that
+ * is no longer what would be stocked, and waiting to be stocked again. What
+ * each was stocked from is what its line says; its revision is not one.
+ */
+export const outdatedIn = (vaultRoot: string): Stocked[] => {
+  const last = new Map<string, Stocked>();
+
+  for (const row of rowsOf(path.join(vaultRoot, LEDGER)) ?? []) {
+    if (row['revision'] === OUTDATED) last.set(row['partition']!, lineOf(row));
+    else last.delete(row['partition']!);
   }
 
   return [...last.values()];
@@ -113,6 +111,22 @@ export const ERRORS  = 'ERROR.log';
 const UPDATING = 'updating';
 
 const OUTDATED = 'outdated';
+
+/** A ledger line, as what it says of a partition. */
+const lineOf = (row: Record<string, string>): Stocked => ({
+  partition: row['partition']!,
+  source: {
+    venue: row['venue']!, market: row['market']!, dataset: row['dataset']!, variant: row['variant'] ?? '',
+    grain: row['grain'] as Grain, bundle: row['bundle'] as Bundle, month: row['month']!,
+  },
+  version:     row['version']!,
+  preVersion:  row['preVersion'] ?? '',
+  postVersion: row['postVersion'] ?? '',
+  revision:    row['revision']!,
+  mode:        row['mode'] === 'split' ? 'split' : 'bundle',
+  size:        Number(row['size'] ?? 0),
+  count:       Number(row['count'] ?? 0),
+});
 
 /** A file's lines as records keyed by its heading; null where there is no file. */
 const rowsOf = (file: string): Record<string, string>[] | null => {

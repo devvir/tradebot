@@ -1,7 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { POLL_MS } from '../../config';
-import { meter } from '../meter';
+import { transferName } from '../mega';
+import { Progress } from '../progress';
+import { follow } from '../progress-mega';
 import * as record from '../record';
 import { remoteOf } from './layout';
 import type { DatabaseSync } from 'node:sqlite';
@@ -38,13 +40,15 @@ export const fetch = async (
   let   pending = [...wanted];
   let   failed  = 0;
 
-  const show = (): void => {
-    if (! process.stdout.isTTY) return;
+  // Two lines: every file together, counted as each is found back, and the one on its way.
+  const progress = new Progress();
+  const paths    = new Set(wanted.map(local));
 
-    const done = wanted.length - pending.length - failed;
+  const show = (): void =>
+    progress.set(ALL, { label: 'vault files back', done: wanted.length - pending.length - failed, total: wanted.length, unit: 'count', of: 'files' });
 
-    process.stdout.write(`\r\x1b[K  ${meter((done / wanted.length) * 100)} ${done}/${wanted.length} files back`);
-  };
+  if (remote.transfers)
+    follow(progress, { id: ONE, queue: 'downloads', mine: to => paths.has(to), label: coming => transferName(coming.path), mark: '↓', rank: 1, read: remote.transfers });
 
   for (;;) {
     const coming = await remote.downloadingPaths();
@@ -94,10 +98,14 @@ export const fetch = async (
     await new Promise(resolve => setTimeout(resolve, pollMs));
   }
 
-  if (process.stdout.isTTY) process.stdout.write('\r\x1b[K');
+  progress.stop();
 
   return failed;
 };
+
+/** The block's two lines: every file together, and the one on its way. */
+const ALL = 'all';
+const ONE = 'one';
 
 /** Times a file is asked for before it is given up on for this run. */
 const ATTEMPTS = 3;

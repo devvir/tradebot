@@ -88,7 +88,7 @@ describe('confirming a file landed', () => {
 /** Commands reach both through one name each: a function missing there is a command that fails as it starts. */
 describe('what the commands reach Mega and the record through', () => {
   it('holds every function they call', () => {
-    for (const name of ['available', 'queueUpload', 'queueDownload', 'downloadingPaths', 'queue', 'queuedPaths', 'active', 'remove', 'listing', 'remote'] as const)
+    for (const name of ['available', 'queueUpload', 'queueDownload', 'downloadingPaths', 'queue', 'queuedPaths', 'transfers', 'transferName', 'remove', 'listing', 'remote'] as const)
       expect(typeof mega[name], name).toBe('function');
 
     for (const name of ['open', 'close', 'tarsOf', 'storedOf', 'evictedOf', 'vaultFiles', 'totals'] as const)
@@ -150,6 +150,29 @@ describe('a command sent while Mega is not answering', () => {
     mega({ 'mega-ls': [new Error('timed out')], 'mega-whoami': ['me'] });
 
     await expect(listing('/x')).rejects.toThrow(/timed out/);
+  });
+
+  /** Mega works through one thing at a time: a command behind something long was not refused, it was not reached. */
+  it('waits and asks again where a command got no answer in its time, however long that goes on', async () => {
+    const late = Object.assign(new Error('Command failed: mega-get'), { killed: true, signal: 'SIGTERM' });
+    const { asked, waits } = mega({ 'mega-get': [late, late, late, 'queued'] });
+
+    expect((await megaCmd('mega-get', [], { timeout: 1 })).stdout).toBe('queued');
+
+    expect(waits).toEqual([5_000, 10_000, 20_000]);
+    expect(asked).toEqual(['mega-get', 'mega-get', 'mega-get', 'mega-get']);
+  });
+
+  /** It was only the answer that never came: what was asked for is under way, and is not asked for twice. */
+  it('does not send it again where what it was for has come about meanwhile', async () => {
+    const late = Object.assign(new Error('Command failed: mega-get'), { killed: true, signal: 'SIGTERM' });
+    const { asked } = mega({ 'mega-get': [late, late] });
+
+    let looked = 0;
+
+    await megaCmd('mega-get', [], { timeout: 1, settled: async () => ++looked === 2 });
+
+    expect(asked).toEqual(['mega-get', 'mega-get']);
   });
 
   it('tells a path that is not there from any other failure', () => {

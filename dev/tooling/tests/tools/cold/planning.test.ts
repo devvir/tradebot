@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { _test_plan as plan } from '../../../src/tools/cold/push/archives/plan';
 import { _test_scan as scan } from '../../../src/tools/cold/push/archives/work';
-import type { Progress } from '../../../src/tools/cold/shared/progress';
+import type { PushProgress } from '../../../src/tools/cold/push/progress';
 import * as record from '../../../src/tools/cold/shared/record';
 import type { DatabaseSync } from 'node:sqlite';
 import type { ColdConfig } from '../../../src/tools/cold/types';
@@ -189,10 +189,10 @@ describe('asking again in the middle of a run', () => {
   let said:  string[];
   let sized: [number, number][];
 
-  const progress = (): Progress => ({
+  const progress = (): PushProgress => ({
     log:    (line: string) => { said.push(line); },
     resize: (total: number, done: number) => { sized.push([total, done]); },
-  }) as unknown as Progress;
+  }) as unknown as PushProgress;
 
   const again = (busy: boolean) => scan(db, config(), 'archives', ['gate'], null, progress(), busy);
 

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { discard } from '../discard';
 import { Archives } from '../../shared/disk';
 import { idOf, partitionOf } from '../../shared/keys';
-import { meter } from '../../shared/meter';
+import { Progress } from '../../shared/progress';
 import * as record from '../../shared/record';
 import type { DatabaseSync } from 'node:sqlite';
 import type { ColdConfig, Origin } from '../../types';
@@ -51,12 +51,11 @@ export const remove = async (
    * hundreds of partitions and a million files, and minutes of nothing said
    * reads as nothing happening.
    */
-  const show = (): void => {
-    if (! process.stdout.isTTY) return;
+  const progress = new Progress();
 
-    process.stdout.write(`\r\x1b[K  ${found.venue.padEnd(8)} ${meter((done / found.ready.length) * 100)} `
-      + `${done}/${found.ready.length} partitions · ${total.files.toLocaleString('en-US')} files`);
-  };
+  const show = (): void => progress.set(found.venue, {
+    label: found.venue.padEnd(8), done, total: found.ready.length, unit: 'count', of: `partitions · ${total.files.toLocaleString('en-US')} files`,
+  });
 
   show();
 
@@ -102,7 +101,7 @@ export const remove = async (
   }
 
   // The line is the caller's to finish: it says what the venue came to.
-  if (process.stdout.isTTY) process.stdout.write('\r\x1b[K');
+  progress.stop();
 
   return total;
 };

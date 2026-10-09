@@ -80,6 +80,24 @@ export interface StoredFile extends VaultFile {
   evictedAt: string | null;
 }
 
+/**
+ * What the vault waits for that cold storage holds: files without which a
+ * partition cannot be finished with.
+ */
+export interface Needed {
+  /** Vault partitions that wait, however many files each waits for. */
+  partitions: number;
+
+  /** Partitions of the archives to stock an outdated partition again from, that are not on disk as the catalog has them. */
+  archives:   import('../pull/types').Pullable[];
+
+  /** Vault files a neighbouring month's hours are added beside, that have been taken off the disk. */
+  vault:      StoredFile[];
+
+  /** Partitions of the archives that are needed and are not in cold storage at the catalog's version: not this tool's to bring. */
+  unstored:   string[];
+}
+
 export interface VaultOptions {
   /** Say what would be done, and do nothing. */
   dryRun?: boolean;
@@ -131,11 +149,69 @@ export interface QueueState {
   transfers: number;
 }
 
-/** The one upload Mega is working on, since it sends them one at a time. */
-export interface ActiveTransfer {
-  name:    string;
+/** Which of Mega's two queues: what is on its way there, or on its way back. */
+export type Queue = 'uploads' | 'downloads';
+
+/** One file in a queue of Mega's: where it is on disk, how far it has come, and whether it is the one moving. */
+export interface Transfer {
+  /** Where it is read from, for an upload; where it is written to, for a download. */
+  path:    string;
   percent: number;
   bytes:   number;
+  active:  boolean;
+}
+
+/** One line of the progress block: something under way, and how far along it is. */
+export interface Bar {
+  label: string;
+  done:  number;
+  total: number;
+
+  /** What `done` and `total` count: bytes, or things — named by `of` (`files`, `partitions`). */
+  unit:  'bytes' | 'count';
+  of?:   string;
+
+  /** Said after the label in place of the bar: something under way that cannot be measured. */
+  note?: string;
+
+  /** What the line opens with; a small square where nothing is said. */
+  mark?: string;
+
+  /** Written faint, bar and all: a line that says nothing is happening. */
+  quiet?: boolean;
+
+  /** Where in the block: a line of a lower rank is above one of a higher. Lines of one rank stay in the order they came. */
+  rank?:  number;
+}
+
+/** What following a queue of Mega's is told — see `progress-mega.ts`. */
+export interface Following {
+  /** The line of the block it keeps. */
+  id:     string;
+  queue:  Queue;
+
+  /** Which transfers are meant, by their path on disk; every one where nothing is said. */
+  mine?:  (path: string) => boolean;
+
+  /**
+   * What all of them come to. Given, the line is of all of them together;
+   * left out, it is of the one Mega is moving right now.
+   */
+  total?: { files: number; bytes: number };
+
+  /** With `total`: what is counted. Bytes where nothing is said. */
+  count?: 'bytes' | 'files';
+
+  /** What the line is called: one name, or one made from the transfer being moved. */
+  label:  string | ((transfer: Transfer) => string);
+
+  /** What the line says while nothing of it is moving; no line where nothing is said. */
+  idle?:  string;
+  mark?:  string;
+  rank?:  number;
+
+  /** How the queue is read; Mega's own where nothing is said. */
+  read?:  (queue: Queue) => Promise<Transfer[]>;
 }
 
 /** What the record holds of one origin, added up. */
@@ -201,6 +277,9 @@ export interface Kept {
 export interface Fetching {
   downloadingPaths: () => Promise<Set<string>>;
   queueDownload:    (remotePath: string, localDir: string) => Promise<void>;
+
+  /** What is in a queue of Mega's, for a line of progress. Not every stand-in has one. */
+  transfers?: (queue: Queue) => Promise<Transfer[]>;
 }
 
 /** One file of the catalog's copy in cold storage, as the record holds it. */

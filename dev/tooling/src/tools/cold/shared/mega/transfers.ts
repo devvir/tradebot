@@ -1,6 +1,6 @@
 import { fileLabelOf } from '../vault/layout';
 import { answering, megaCmd } from './exec';
-import type { ActiveTransfer, QueueState } from '../types';
+import type { Queue, QueueState, Transfer } from '../types';
 
 /** Whether mega-cmd will answer at all. */
 export const available = answering;
@@ -38,7 +38,11 @@ const MANY = 200;
  * side stays busy with other tars meanwhile.
  */
 export const queueDownload = async (remotePath: string, localDir: string): Promise<void> => {
-  await megaCmd('mega-get', ['-q', remotePath, `${localDir.replace(/\/$/, '')}/`], { timeout: 120_000 });
+  const dir = localDir.replace(/\/$/, '');
+  const to  = `${dir}/${remotePath.slice(remotePath.lastIndexOf('/') + 1)}`;
+
+  // Asked for and never answered, it may be on its way all the same: it is not asked for twice.
+  await megaCmd('mega-get', ['-q', remotePath, `${dir}/`], { timeout: 120_000, settled: async () => (await downloadingPaths()).has(to) });
 };
 
 /**
@@ -171,62 +175,56 @@ const duplicatesIn = (stdout: string, under: readonly string[]): string[] => {
 };
 
 /**
- * The transfer Mega is working on right now, or null when it is idle.
+ * Every file in one of Mega's queues: where it is on disk, how far it has
+ * come, and whether it is the one moving. Nothing where Mega does not answer.
  *
- * Mega sends one file at a time, so there is only ever one of these — which is
- * why the display is a single bar rather than one per worker.
+ * For a line of progress and nothing else: what is decided from a queue —
+ * whether a file still has to be asked for — is asked of `queuedPaths` and
+ * `downloadingPaths`, which fail loudly.
  */
-export const active = async (): Promise<ActiveTransfer | null> => {
+export const transfers = async (queue: Queue): Promise<Transfer[]> => {
   try {
     const { stdout } = await megaCmd(
       'mega-transfers',
-      ['--only-uploads', '--limit=100000', '--col-separator=|',
-        '--output-cols=SOURCEPATH,PROGRESS,STATE'],
-      { timeout: 60_000, maxBuffer: 64 * 1024 * 1024 },
+      [`--only-${queue}`, '--limit=100000', '--col-separator=|', `--output-cols=${queue === 'uploads' ? 'SOURCEPATH' : 'DESTINYPATH'},PROGRESS,STATE`],
+      // A look for a line of progress, taken again in a moment: never waited for.
+      { timeout: 20_000, maxBuffer: 64 * 1024 * 1024, once: true },
     );
 
-    for (const line of stdout.split('\n')) {
-      const [source, progress, state] = line.split('|');
+    const found: Transfer[] = [];
 
-      if (state?.trim() !== 'ACTIVE' || ! source?.startsWith('/')) continue;
+    for (const line of stdout.split('\n')) {
+      const [at, progress, state] = line.split('|');
 
       // `24.85% of    2.00 GB`
       const parsed = /([\d.]+)%\s+of\s+([\d.]+)\s*([KMGT]?B)/.exec(progress ?? '');
 
-      if (! parsed) continue;
+      if (! at?.trim().startsWith('/') || ! parsed) continue;
 
-      return {
-        /**
-         * The venue and the name, matching how the log names a part.
-         *
-         * A tar is called `202202.p01.tar` and every venue produces one, so the
-         * basename alone identifies nothing — and the block sits directly under
-         * log lines that *do* say which venue, which made the two look like
-         * different things.
-         *
-         * A vault file is called `<month>.parquet` and every slice has one, so
-         * it is named by the partition it is of.
-         */
-        name:    nameOf(source.trim()),
-        percent: Number(parsed[1]),
-        bytes:   bytesOf(parsed[2]!, parsed[3]!),
-      };
+      found.push({ path: at.trim(), percent: Number(parsed[1]), bytes: bytesOf(parsed[2]!, parsed[3]!), active: state?.trim() === 'ACTIVE' });
     }
 
-    return null;
+    return found;
   } catch {
-    return null;
+    return [];
   }
 };
 
-// ── Internals ─────────────────────────────────────────────────────────────────
+/**
+ * What a file being moved is called on a line of progress: enough of its path
+ * to say which it is.
+ *
+ * A tar is called `202202.p01.tar` and every venue produces one, so the
+ * basename alone identifies nothing. A vault file is called `<month>.parquet`
+ * and every slice has one, so it is named by the partition it is of.
+ */
+export const transferName = (at: string): string => {
+  const vault = at.indexOf('/venue=');
 
-/** What a file being sent is called on the progress line: enough of its path to say which it is. */
-const nameOf = (source: string): string => {
-  const vault = source.indexOf('/venue=');
-
-  return vault < 0 ? source.split('/').slice(-2).join('/') : fileLabelOf(source.slice(vault + 1));
+  return vault < 0 ? at.split('/').slice(-2).join('/') : fileLabelOf(at.slice(vault + 1));
 };
+
+// ── Internals ─────────────────────────────────────────────────────────────────
 
 /**
  * The summary is a fixed-width table whose values contain spaces (`0.00   B`,

@@ -82,3 +82,42 @@ weighs the partition again like any other.
 as a warning and no more — most of a tar is usually dropped, so the sum is the worst case and rarely
 the truth. No tar is asked for while less than 25 GB is free: the run waits there until there is
 room.
+
+---
+
+## `cold pull needed`
+
+Brings back whatever the vault waits for. No venue, no dataset: what comes back is what a partition
+is stuck without.
+
+**Everything is meant to leave the disk in the end, and it leaves once it is stocked.** A partition
+that cannot be stocked because what it is built from has left already is stuck, and holds its
+neighbours on disk with it. Two things leave a partition so:
+
+| the partition | what it waits for |
+|---|---|
+| is **outdated**: stocked, at a revision that is no longer what would be stocked | the archives it is stocked again from — its own, and those of a neighbouring month it read the edge of |
+| **can be completed**: stocked without a neighbouring month's hours, whose archives are on disk now | its own vault files, which those hours are added beside |
+
+Both are read off the vault's ledger, set against the disk, the catalog and the record. Whoever
+stocks the vault does the rest by itself, as it finds the files there.
+
+- **Any rendering of a month will do to stock from**, so a month is needed only where none of its
+  renderings is on disk as the catalog has it. What is asked for then is the rendering it was
+  stocked from, or failing that any that is stored.
+- **Only what cold storage holds at the catalog's version.** A month it does not hold so is said,
+  and left: it is to be downloaded from the venue, not brought back.
+- **What it would bring is said first, with what it weighs, and then asked**; yes is the answer. A
+  tar comes back whole, so the archives weigh what their tars do.
+- **No more than there is room for.** Tars are taken oldest first for as long as each, and what
+  comes out of it, leaves 25 GB free. The rest is said and left for a later run, when what was
+  brought has been stocked and has gone again.
+
+| | |
+|---|---|
+| `-n`, `--dry-run` | say what the vault waits for and what it weighs, and bring nothing |
+| `-w`, `--watch` | look again at intervals, and bring what has come to be waited for since; asked before the first time and not again |
+
+**Nothing else brings these files back.** Every command that reads the vault's ledger — pushing,
+evicting or pulling the vault, evicting the archives — says where the vault waits for files in cold
+storage, and names this command.

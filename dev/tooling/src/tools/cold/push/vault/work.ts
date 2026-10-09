@@ -5,7 +5,7 @@ import path from 'node:path';
 import { GB, POLL_MS, WATCH_MS } from '../../config';
 import { onExit } from '../../cleanup';
 import { isWatch } from '../../options';
-import { Progress } from '../../shared/progress';
+import { PushProgress } from '../progress';
 import * as record from '../../shared/record';
 import { labelOf, remoteOf } from '../../shared/vault/layout';
 import { noteBackedUp, stockedIn } from '../../shared/vault/ledger';
@@ -29,7 +29,7 @@ export const work = async (db: DatabaseSync, config: ColdConfig, venues: readonl
     new Set([...pendingOf(db, venues), ...unfinishedOf(db, config)].map(one => `${one.partition}|${one.revision}`)).size;
 
   const done     = record.vaultStored(db).size;
-  const progress = new Progress(done + partitions(), done);
+  const progress = new PushProgress(done + partitions(), done);
 
   onExit(() => progress.stop());
   progress.start();

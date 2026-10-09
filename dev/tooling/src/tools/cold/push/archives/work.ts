@@ -6,7 +6,7 @@ import { onExit } from '../../cleanup';
 import { Archives } from '../../shared/disk';
 import { idOf } from '../../shared/keys';
 import * as mega from '../../shared/mega';
-import { Progress } from '../../shared/progress';
+import { PushProgress } from '../progress';
 import * as record from '../../shared/record';
 import { fmtBytes } from '../../../../shared/utils/format';
 import { info, spacer, success, warn } from '../../../../shared/ui/logger';
@@ -38,7 +38,7 @@ export const work = async (
   const archives = new Archives(config.sourceRoot);
   const failed   = new Set<number>();
   const all      = record.tarsOf(db, origin).filter(tar => venues.includes(tar.venue));
-  const progress = new Progress(all.length, all.filter(tar => tar.state === 'stored').length);
+  const progress = new PushProgress(all.length, all.filter(tar => tar.state === 'stored').length);
 
   onExit(() => progress.stop());
   progress.start();
@@ -156,7 +156,7 @@ const scan = async (
   origin:   Origin,
   venues:   readonly string[],
   lens:     string | null,
-  progress: Progress,
+  progress: PushProgress,
   busy:     boolean,
 ): Promise<void> => {
   // By partition and not by tar: a plan is redrawn, and a tar of the same name may hold more than it did.

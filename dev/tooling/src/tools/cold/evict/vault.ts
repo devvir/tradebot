@@ -6,7 +6,7 @@ import { loadConfig } from '../config';
 import { onExit } from '../cleanup';
 import { discard } from './discard';
 import { acquire } from '../lock';
-import { meter } from '../shared/meter';
+import { Progress } from '../shared/progress';
 import { trusted } from '../shared/vault/trusted';
 import { agreed } from '../options';
 import * as record from '../shared/record';
@@ -16,6 +16,7 @@ import { stockedIn } from '../shared/vault/ledger';
 import { fmtBytes } from '../../../shared/utils/format';
 import { info, spacer, success } from '../../../shared/ui/logger';
 import { byKey } from '../order';
+import { notice } from '../shared/vault/needed';
 import type { DatabaseSync } from 'node:sqlite';
 import type { ColdConfig, Selection } from '../types';
 import type { StoredFile, VaultOptions } from '../shared/types';
@@ -57,6 +58,8 @@ export const runEvictVault = async (selection: Selection, options: VaultOptions)
     onExit(() => record.close(db));
 
     try {
+      await notice(db);
+
       /**
        * **A partition that is about to be completed stays.** It was stocked
        * without the hours a neighbouring month holds of it, and that month's
@@ -142,11 +145,9 @@ const remove = async (
 
   let done = 0;
 
-  const show = (): void => {
-    if (! process.stdout.isTTY) return;
+  const progress = new Progress();
 
-    process.stdout.write(`\r\x1b[K  ${venue.padEnd(8)} ${meter((done / partitions.length) * 100)} ${done}/${partitions.length} partitions`);
-  };
+  const show = (): void => progress.set(venue, { label: venue.padEnd(8), done, total: partitions.length, unit: 'count', of: 'partitions' });
 
   show();
 
@@ -181,7 +182,7 @@ const remove = async (
     show();
   }
 
-  if (process.stdout.isTTY) process.stdout.write('\r\x1b[K');
+  progress.stop();
 };
 
 const byVenue = (files: readonly StoredFile[]): Map<string, StoredFile[]> => {

@@ -1,5 +1,5 @@
 import { each, gracefully, resolve, selectionOf, snapshotOf } from '../cli';
-import { setYes } from '../options';
+import { setWatch, setYes } from '../options';
 import type { Command } from 'commander';
 import type { Chosen } from '../types';
 
@@ -11,7 +11,7 @@ export const register = (cold: Command): void => {
    */
   cold
     .command('pull [origin] [venues...]')
-    .description('Bring back from cold storage: a venue\'s dataset, or a partition of it')
+    .description('Bring back from cold storage: a venue\'s dataset, or a partition of it — or `needed`, whatever the vault waits for')
     .option('-n, --dry-run', 'say what would be brought back, and bring nothing')
     .option('-f, --force', 'archives: bring back what is on disk already too, over it, without asking')
     .option('--dataset <dataset[,variant]>', 'this dataset, in every market — every variant of it, or the one named')
@@ -35,6 +35,22 @@ export const register = (cold: Command): void => {
           ...(options.dryRun ? { dryRun: true } : {}),
           ...snapshotOf(options),
         });
+
+        return;
+      }
+
+      /**
+       * **What the vault waits for is not a tree either**: it is whatever of the
+       * archives and of the vault a partition is stuck without, and is asked
+       * for by that name alone.
+       */
+      if (origin === NEEDED) {
+        const given = command.optsWithGlobals<{ yes?: boolean; watch?: boolean }>();
+
+        setYes(given.yes ?? false);
+        setWatch(given.watch ?? false);
+
+        await each(['archives'], async () => (await import('./needed')).runPullNeeded(options.dryRun ? { dryRun: true } : {}));
 
         return;
       }
@@ -63,3 +79,6 @@ export const register = (cold: Command): void => {
       });
     }));
 };
+
+/** What is asked for in an origin's place to bring back whatever the vault waits for. */
+const NEEDED = 'needed';

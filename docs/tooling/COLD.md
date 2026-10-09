@@ -21,6 +21,7 @@ stored as they are — see [COLD-VAULT.md](COLD-VAULT.md).
 | `cold push` | Upload what is ready and not backed up yet — [archives](COLD-PUSH.md), [vault](COLD-VAULT.md#cold-push-vault) |
 | `cold evict` | Remove from local disk what is safely in cold storage — [archives](COLD-EVICT.md), [vault](COLD-VAULT.md#cold-evict-vault) |
 | [`cold pull`](COLD-PULL.md) | Bring back a venue's dataset, or a partition of it — [archives](COLD-PULL.md#the-archives), [vault](COLD-VAULT.md#cold-pull-vault) |
+| [`cold pull needed`](COLD-PULL.md#cold-pull-needed) | Bring back whatever the vault waits for: what a partition cannot be finished with while it is in cold storage |
 | [`cold push catalog`, `cold pull catalog`](COLD-CATALOG.md) | A copy of the catalog's database — the database itself, then what changed since — and the way back from it |
 | `cold stats` | What the record holds, venue by venue |
 | [`cold audit`](COLD-AUDIT.md) | Check Mega, the disk and the record against each other, and offer to put right what disagrees |
@@ -37,7 +38,7 @@ or after it, and each command that has a use for one reads it:
 
 | | |
 |---|---|
-| `-w`, `--watch` | keep running once the work is done, and look again every 30 minutes — `push` and `evict` |
+| `-w`, `--watch` | keep running once the work is done, and look again every 30 minutes — `push`, `evict` and `pull needed` |
 | `-a`, `--all-sources` | every tree, without asking which. With it there is no origin on the line, so every argument is a venue |
 | `-y`, `--yes` | answer what a command asks before it acts: each question's own default |
 
@@ -109,6 +110,12 @@ Mega that is there.
 - **It does not**: the run waits. It asks again after 5 seconds, then twice as long each time up to
   a minute, and sends the command again once Mega is back. Nothing moves on meanwhile, so a run left
   going rides out an outage of any length — and silence is never mistaken for Mega holding nothing.
+
+**A command Mega did not get to in time has not failed.** Mega works through what it is asked one
+thing at a time, so something long — a tree being moved — holds everything behind it. A command
+that got no answer in the time it was given is sent again after the same widening wait, for as long
+as that goes on, with or without `--watch`. A download asked for that way is first looked for among
+those on their way, and is not asked for twice.
 
 ---
 
@@ -192,6 +199,15 @@ in Mega that nothing can name. So each has a copy there:
 
 Types sit in a `types.ts` at the level that uses them: a subcommand's own in its directory, shared
 ones in `shared/`, and those the whole command is built on at the top.
+
+**Progress is drawn in one place and read in another.** `shared/progress.ts` is the block at the
+foot of the terminal — its lines, the log above them, and what is logged instead where there is no
+terminal — and knows nothing of what it shows: it is handed a name, how much of how much, and what
+that counts. `shared/progress-mega.ts` is Mega's queues as a source for it: which queue, which
+files, by bytes or by how many, and whether the line is of all of them together or of the one moving
+now are what a command tells it. A command that counts its own work — partitions removed, a tar
+growing on disk — hands its numbers to the block directly. How progress looks is changed in the
+first; how Mega is watched in the second; another storage is another source beside it.
 
 ---
 

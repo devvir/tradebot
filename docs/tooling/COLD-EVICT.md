@@ -56,9 +56,10 @@ stocked again from these very archives, and is not stocked either.
 
 **A partition that can be completed is helped to it.** A month stocked without the hours a
 neighbouring month holds of it gets them once that month's archives are on disk — built beside the
-month's own files in the vault. Where those files have been moved to cold storage since, each look
-brings them back, unasked, and says so: until they are here the hours cannot be added, and until
-they are added the neighbour's archives cannot be evicted either.
+month's own files in the vault. Where those files have been moved to cold storage since, the hours cannot be added until they are
+back, and until they are added the neighbour's archives cannot be evicted either. Eviction brings
+nothing back itself: it says that the vault waits for files in cold storage, and
+[`cold pull needed`](COLD-PULL.md#cold-pull-needed) is what brings them.
 
 **Any rendering will do.** The same data is often published at more than one grain, or per
 instrument and as a market's bundle, and the vault is built from one of them. Which one is the

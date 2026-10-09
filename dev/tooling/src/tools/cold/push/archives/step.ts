@@ -4,7 +4,7 @@ import { localPath, remotePath } from '../../config';
 import { Archives, matches } from '../../shared/disk';
 import { idOf, partitionOf } from '../../shared/keys';
 import * as mega from '../../shared/mega';
-import { Progress } from '../../shared/progress';
+import { PushProgress } from '../progress';
 import * as record from '../../shared/record';
 import { correctionOf, replaceMembers } from './correct';
 import { sizedMembersOf } from '../../shared/tar';
@@ -26,7 +26,7 @@ export const step = async (
   origin:   Origin,
   archives: Archives,
   tar:      Tar,
-  progress: Progress,
+  progress: PushProgress,
   round:    Round,
 ): Promise<boolean> => {
   const local = localPath(config, origin, tar);

@@ -4,9 +4,11 @@ import { GB, POLL_MS, remotePath } from '../../config';
 import { matches } from '../../shared/disk';
 import { idOf, partitionOf } from '../../shared/keys';
 import * as record from '../../shared/record';
+import { Progress } from '../../shared/progress';
+import { follow } from '../../shared/progress-mega';
 import { extractMembers, sizedMembersOf } from '../../shared/tar';
 import { fmtBytes } from '../../../../shared/utils/format';
-import { info, warn } from '../../../../shared/ui/logger';
+import { warn } from '../../../../shared/ui/logger';
 import { asideRoot, count, freeBytes } from '.';
 import type { DatabaseSync } from 'node:sqlite';
 import type { ColdConfig, Origin, Tar } from '../../types';
@@ -29,32 +31,51 @@ export const bring = async (
   pollMs  = POLL_MS,
   reserve = RESERVE_GB * GB,
 ): Promise<number> => {
+  const progress = new Progress();
+  const heavy    = tars.reduce((sum, tar) => sum + (tar.bytes ?? 0), 0);
+
   let failed = 0;
+  let back   = 0;
 
-  for (const [at, tar] of tars.entries()) {
-    const local = path.join(config.coldRoot, PULLING, origin, tar.local);
-    const mine  = wanted.filter(one => one.held.tarId === tar.id);
-    const label = `${path.basename(tar.local)} (${at + 1}/${tars.length})`;
+  try {
+    for (const [at, tar] of tars.entries()) {
+      const local = path.join(config.coldRoot, PULLING, origin, tar.local);
+      const mine  = wanted.filter(one => one.held.tarId === tar.id);
+      const label = `${path.basename(tar.local)} (${at + 1}/${tars.length})`;
 
-    await room(config, pollMs, reserve);
+      await room(config, pollMs, reserve);
 
-    info(`Downloading ${label} · ${fmtBytes(tar.bytes ?? 0)}`);
+      // Two lines: all of the tars together, and the one on its way.
+      if (tars.length > 1) progress.set(ALL, { label: `${count(tars.length, 'tar')}`, done: back, total: heavy, unit: 'bytes' });
 
-    if (! await fetched(config, tar, local, remote, pollMs)) {
-      failed++;
+      const unfollow = remote.transfers
+        ? follow(progress, { id: ONE, queue: 'downloads', mine: to => to === local, label: () => label, idle: `${label} · waiting for Mega`, mark: '↓', rank: 1, read: remote.transfers })
+        : null;
 
-      warn(`${label} did not come back`);
+      const came = await fetched(config, tar, local, remote, pollMs);
 
-      continue;
+      unfollow?.();
+
+      if (! came) {
+        failed++;
+
+        progress.log(`${label} did not come back`, warn);
+
+        continue;
+      }
+
+      const files = await unpack(config, origin, local, mine);
+
+      for (const one of mine) if (one.state !== 'old') record.noteReturn(db, origin, one.held);
+
+      await fs.promises.rm(local, { force: true });
+
+      back += tar.bytes ?? 0;
+
+      progress.log(`Pulled ${label} · ${fmtBytes(tar.bytes ?? 0)} · ${count(mine.length, 'partition')} taken out of it · ${count(files, 'file')}`);
     }
-
-    const files = await unpack(config, origin, local, mine);
-
-    for (const one of mine) if (one.state !== 'old') record.noteReturn(db, origin, one.held);
-
-    await fs.promises.rm(local, { force: true });
-
-    info(`  ${count(mine.length, 'partition')} taken out of it · ${count(files, 'file')}`);
+  } finally {
+    progress.stop();
   }
 
   return failed;
@@ -157,6 +178,10 @@ const unpack = async (config: ColdConfig, origin: Origin, local: string, wanted:
 
 /** Below cold's own directory: tars on their way back, and what an older version is taken out to. */
 const PULLING = 'pulling';
+
+/** The block's two lines: every tar together, and the one on its way. */
+const ALL = 'all';
+const ONE = 'one';
 
 /** Times a tar is asked for before it is given up on for this run. */
 const ATTEMPTS = 3;

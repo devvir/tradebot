@@ -163,7 +163,7 @@ const chosen = async (found: readonly Pullable[], force: boolean): Promise<Pulla
 };
 
 /** The tars these partitions are in, oldest month first. */
-const tarsOf = (db: DatabaseSync, wanted: readonly Pullable[]): Tar[] =>
+export const tarsOf = (db: DatabaseSync, wanted: readonly Pullable[]): Tar[] =>
   [...new Set(wanted.map(one => one.held.tarId))]
     .map(id => record.tarById(db, id))
     .sort((a, b) => (a.local < b.local ? -1 : a.local > b.local ? 1 : 0));
