@@ -205,7 +205,26 @@ export const above = (line: string, say: (line: string) => void = info): void =>
   else say(line);
 };
 
+/**
+ * Say what is being waited for, on a line that is written over each time — or,
+ * with nothing, take that line away.
+ *
+ * A line of the block where one is up. Where none is, a line of the terminal
+ * written over in place; where there is no terminal either, nothing: a
+ * countdown is of no use in a log.
+ */
+export const waitingFor = (what: string | null): void => {
+  if (shown) return shown.set(WAITING, what === null ? null : { label: what, done: 0, total: 0, unit: 'count', mark: '⏳', rank: 9 });
+
+  if (! process.stdout.isTTY) return;
+
+  process.stdout.write(what === null ? `\r${CLEAR}` : `\r${CLEAR}${fit(`⏳ ${what}`)}`);
+};
+
 // ── Internals ─────────────────────────────────────────────────────────────────
+
+/** The line of a block that says what is being waited for. */
+const WAITING = 'waiting';
 
 /** The block that is up, where one is. */
 let shown: Progress | null = null;

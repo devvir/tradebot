@@ -1,4 +1,6 @@
+import fs from 'node:fs';
 import { megaCmd, notThere } from './exec';
+import type { Listed } from '../types';
 
 /**
  * Remove one object.
@@ -39,12 +41,12 @@ export const removeTree = async (remotePath: string): Promise<void> => {
  */
 export const listing = async (
   root: string,
-): Promise<Map<string, { bytes: number; handle: string | null }>> => {
-  const found = new Map<string, { bytes: number; handle: string | null }>();
+): Promise<Map<string, Listed>> => {
+  const found = new Map<string, Listed>();
 
   try {
     const { stdout } = await megaCmd(
-      'mega-ls', ['-lR', '--show-handles', root],
+      'mega-ls', ['-lR', '--show-handles', TIMES, root],
       { timeout: 300_000, maxBuffer: 256 * 1024 * 1024 });
 
     let dir = root.replace(/\/$/, '');
@@ -66,10 +68,10 @@ export const listing = async (
 
       if (! name || line.startsWith('FLAGS') || line.startsWith('d')) continue;
 
-      const size   = /^\S+\s+\d+\s+(\d+)\s/.exec(line);
+      const size   = /^\S+\s+\d+\s+(\d+)\s+(\S+)/.exec(line);
       const handle = /\s(H:\S+)\s/.exec(line);
 
-      if (size) found.set(relativeTo(`${dir}/${name}`, root), { bytes: Number(size[1]), handle: handle?.[1] ?? null });
+      if (size) found.set(relativeTo(`${dir}/${name}`, root), { bytes: Number(size[1]), handle: handle?.[1] ?? null, modified: size[2]! });
     }
   } catch (err) {
     // A tree that is not there holds nothing. Anything else is not an answer, and is not taken for one.
@@ -92,10 +94,10 @@ export const listing = async (
  */
 export const remote = async (
   remotePath: string,
-): Promise<{ bytes: number; handle: string | null } | null> => {
+): Promise<Listed | null> => {
   try {
     const { stdout } = await megaCmd(
-      'mega-ls', ['-l', '--show-handles', remotePath], { timeout: 60_000 });
+      'mega-ls', ['-l', '--show-handles', TIMES, remotePath], { timeout: 60_000 });
 
     return parseListing(stdout, remotePath.slice(remotePath.lastIndexOf('/') + 1));
   } catch (err) {
@@ -106,7 +108,63 @@ export const remote = async (
   }
 };
 
+/**
+ * Whether what Mega lists at a path is the file that was sent there: what it
+ * weighs, and when it was last written.
+ *
+ * **Mega keeps a file's own modification time**, to the second, and says it in
+ * a listing — so a file there at the size and the time of the one on disk is
+ * that file, and one left at the same path by an earlier upload is not, even
+ * where the two weigh the same. It is the nearest thing to the file's identity
+ * that a listing gives.
+ *
+ * **This is what says a file has arrived, and nothing else does**: not having
+ * been handed over, and not having left a queue.
+ */
+export const landed = (local: string, there: Listed | null | undefined): boolean => {
+  if (! there) return false;
+
+  let stats: fs.Stats;
+
+  try {
+    stats = fs.statSync(local);
+  } catch {
+    return false;
+  }
+
+  if (there.bytes !== stats.size) return false;
+
+  // A stand-in that says no time is taken at its weight.
+  return there.modified === undefined || there.modified === null || sameMoment(there.modified, stats.mtimeMs);
+};
+
 // ── Internals ─────────────────────────────────────────────────────────────────
+
+/** How times are asked for in a listing: one field, to the second. */
+const TIMES = '--time-format=ISO6081_WITH_TIME';
+
+/**
+ * Whether a time as a listing writes it is this moment, to the second.
+ *
+ * **A listing writes a time with no zone**, in whichever one Mega's own program
+ * runs in — which need not be the one this runs in. So the two are held to be
+ * the same moment where they differ by a zone and nothing else: a whole number
+ * of quarter hours, no more than a day's worth of zones apart. The minute and
+ * the second have to be the file's.
+ */
+const sameMoment = (listed: string, ms: number): boolean => {
+  const said = Date.parse(`${listed}Z`);
+
+  if (Number.isNaN(said)) return false;
+
+  const apart = said - Math.floor(ms / 1000) * 1000;
+
+  return apart % ZONE_STEP_MS === 0 && Math.abs(apart) <= ZONES_MS;
+};
+
+/** What zones differ by, and how far apart two of them can be. */
+const ZONE_STEP_MS = 15 * 60_000;
+const ZONES_MS     = 14 * 3_600_000;
 
 /** Drop the root the listing was taken of; anything outside it keeps its path. */
 const relativeTo = (full: string, root: string): string => {
@@ -116,9 +174,9 @@ const relativeTo = (full: string, root: string): string => {
 };
 
 /**
- * `----    1   4780000000 05Aug2026 22:09:10 H:7BtQjCAL 202405.p01.tar`
+ * `----    1   4780000000 2026-08-05T22:09:10 H:7BtQjCAL 202405.p01.tar`
  *
- * Columns are `FLAGS VERS SIZE DATE TIME HANDLE NAME`, so the size is the
+ * Columns are `FLAGS VERS SIZE DATE HANDLE NAME`, so the size is the
  * *second* number and not the first — `VERS` sits in front of it and is also
  * digits. The name is compared as a whole field rather than as a suffix, since
  * `x202405.p01.tar` ends with `202405.p01.tar`.
@@ -126,16 +184,16 @@ const relativeTo = (full: string, root: string): string => {
 const parseListing = (
   stdout: string,
   name:   string,
-): { bytes: number; handle: string | null } | null => {
+): Listed | null => {
   for (const line of stdout.split('\n')) {
     const fields = line.trimEnd().split(/\s+/);
 
     if (fields[fields.length - 1] !== name) continue;
 
-    const size   = /^\S+\s+\d+\s+(\d+)\s/.exec(line);
+    const size   = /^\S+\s+\d+\s+(\d+)\s+(\S+)/.exec(line);
     const handle = /\s(H:\S+)\s/.exec(line);
 
-    if (size) return { bytes: Number(size[1]), handle: handle?.[1] ?? null };
+    if (size) return { bytes: Number(size[1]), handle: handle?.[1] ?? null, modified: size[2]! };
   }
 
   return null;

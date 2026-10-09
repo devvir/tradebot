@@ -290,6 +290,33 @@ describe('the catalog\'s copy', () => {
     expect(sent.sort()).toEqual(['tables.db']);
   });
 
+  /** Having left the queue is as true of a file Mega dropped: it is there when Mega lists it, and is handed over again until then. */
+  it('is not taken as sent until Mega lists its tables, and hands them over again where they were dropped', async () => {
+    await push();
+
+    const catalog = openCatalog(config().catalogDb);
+    const staging = path.join(dir, 'cold', 'catalog');
+    const real    = remote();
+
+    writeTables(catalog, path.join(staging, 'tables.db'));
+    catalog.close();
+
+    fs.rmSync(inMega('tables.db'));
+
+    let handed = 0;
+
+    // The first time it is handed over, Mega takes it and loses it.
+    await deliver(db, config(), staging, {
+      ...real,
+      queueUploads: async () => { handed++; },
+      queueUpload:  async (local, to) => { handed++; await real.queueUpload(local, to); },
+    }, 1);
+
+    expect(handed).toBe(2);
+    expect(fs.existsSync(inMega('tables.db'))).toBe(true);
+    expect(fs.existsSync(path.join(staging, 'tables.db'))).toBe(false);
+  });
+
   /** A partition goes when the catalog's version of it moves — and is one file however often that is. */
   it('is the partition that changed, at the one place it has', async () => {
     await push();

@@ -111,11 +111,12 @@ Mega that is there.
   a minute, and sends the command again once Mega is back. Nothing moves on meanwhile, so a run left
   going rides out an outage of any length — and silence is never mistaken for Mega holding nothing.
 
-**A command Mega did not get to in time has not failed.** Mega works through what it is asked one
-thing at a time, so something long — a tree being moved — holds everything behind it. A command
-that got no answer in the time it was given is sent again after the same widening wait, for as long
-as that goes on, with or without `--watch`. A download asked for that way is first looked for among
-those on their way, and is not asked for twice.
+**A command Mega did not get to in time has not failed, and is not sent again on a guess.** Mega
+works through what it is asked one thing at a time, so something long — a tree being moved — holds
+everything behind it. A command that got no answer in the time it was given is ended, and then Mega
+is asked who is logged in, after the same widening wait, until it answers. Only then is the command
+sent again, with or without `--watch`. A download is first looked for among those on their way, and
+is not asked for twice.
 
 ---
 

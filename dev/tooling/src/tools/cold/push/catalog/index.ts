@@ -287,8 +287,10 @@ const storeSnapshot = async (db: DatabaseSync, config: ColdConfig, staging: stri
     const there  = (await remote.listing(config.catalogRoot)).get(SNAPSHOT);
     const queued = (await remote.queuedPaths()).has(local);
 
-    if (there && there.bytes === bytes && ! queued && asked) {
-      record.storeCatalogCopy(db, SNAPSHOT, there.handle);
+    // Stored where Mega lists this very file: its size and its own modification time — see `landed`.
+    // And never before it was handed over by this run: what is there beforehand may be the snapshot this one replaces.
+    if (asked && mega.landed(local, there)) {
+      record.storeCatalogCopy(db, SNAPSHOT, there!.handle);
 
       break;
     }
@@ -370,14 +372,32 @@ const deliver = async (db: DatabaseSync, config: ColdConfig, staging: string, re
     const queued = await remote.queuedPaths();
     const held   = pending().length > 0 ? await remote.listing(`${config.catalogRoot}/${PARTITIONS}`) : new Map<string, { bytes: number; handle: string | null }>();
 
-    let left = tables.filter(file => queued.has(file)).length;
+    /**
+     * **A file is there when Mega lists it — that very file, by its size and
+     * its own modification time** — and not before: having left the queue says
+     * only that it is no longer on its way, which is as true of one that was
+     * dropped. The queue is asked only whether to hand a file over again.
+     */
+    const top = tables.length > 0 ? await remote.listing(config.catalogRoot) : new Map<string, { bytes: number; handle: string | null }>();
+
+    let left = 0;
+
+    for (const file of tables) {
+      const there = top.get(path.basename(file));
+
+      if (mega.landed(file, there)) continue;
+
+      left++;
+
+      if (round > 0 && ! queued.has(file)) await remote.queueUpload(file, config.catalogRoot);
+    }
 
     for (const one of pending()) {
       const there = held.get(one.remote.slice(PARTITIONS.length + 1));
       const local = path.join(staging, one.remote);
 
-      if (there && there.bytes === one.bytes && ! queued.has(local)) {
-        record.storeCatalogCopy(db, one.name, there.handle);
+      if (mega.landed(local, there)) {
+        record.storeCatalogCopy(db, one.name, there!.handle);
 
         fs.rmSync(local, { force: true });
 

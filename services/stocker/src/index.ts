@@ -68,7 +68,7 @@ SK.run(async () => {
 
   const pass = async (): Promise<void> => {
     if (sweeping) {
-      logger.info('Sweep still running — skipping this scan');
+      logger.debug('Sweep still running — skipping this scan');
 
       return;
     }

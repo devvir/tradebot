@@ -149,6 +149,15 @@ export interface QueueState {
   transfers: number;
 }
 
+/** A file as Mega lists it: what it weighs, Mega's own identifier for it, and when it was last written. */
+export interface Listed {
+  bytes:     number;
+  handle:    string | null;
+
+  /** Its own modification time as the listing writes it, to the second. Left out by a stand-in that has none. */
+  modified?: string | null;
+}
+
 /** Which of Mega's two queues: what is on its way there, or on its way back. */
 export type Queue = 'uploads' | 'downloads';
 

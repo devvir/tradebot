@@ -49,9 +49,10 @@ Stores every partition the vault's ledger holds that cold storage does not have 
    counted.
 3. **Hand them to Mega.** Files go to Mega's own queue, which sends them one at a time and outlives
    the command. No more is handed over than `COLD_QUEUE_TARGET_GB` waiting.
-4. **Confirm from Mega's listing.** A file is stored when it has been handed over, has left Mega's
-   queue, and Mega lists it at the size it has on disk — never on an exit code. One that left the
-   queue without arriving is handed over again. A file is never taken as stored before it is handed
+4. **Confirm from Mega's listing.** A file is stored when Mega lists it at the size and the
+   modification time of the file on disk — which Mega keeps to the second, so it is that very file
+   — and for no other reason: not an exit code, not having left the queue. One that left the queue
+   without arriving is handed over again. A file is never taken as stored before it is handed
    over: every revision of it sits at one path, so what Mega holds there beforehand may be the
    month this one replaces.
 5. **A partition is stored when its last file is**, and is then written into the vault's

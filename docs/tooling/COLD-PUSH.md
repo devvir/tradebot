@@ -97,9 +97,12 @@ An `.unverified` tar is kept only where it lists exactly the members its plan no
 redrawn every run, so one written for other partitions is written again. One that fails the
 comparison is removed.
 
-**Confirmed from Mega, never from an exit code.** Mega publishes a file only once it is complete, so
-the right size at the tar's path is the proof an upload finished. The handle Mega gives the object
-is recorded with it, and the staging tar is deleted.
+**Confirmed by finding it in Mega, and by nothing else** — not an exit code, and not having left
+Mega's queue, which is as true of a file that was dropped. Mega lists a file only once it is
+complete, and keeps the file's own modification time to the second: the tar found at its path, at
+the size and the modification time of the one on disk, is the tar that was sent. The handle Mega
+gives the object is recorded with it, and the staging tar is deleted. The queue is asked only
+whether a tar is still on its way, to know whether to hand it over again.
 
 **Packing waits on the queue, not on any one upload.** No tar is made while Mega's upload queue
 holds more than `COLD_QUEUE_TARGET_GB`. The queue is read whole, not filtered to this run's

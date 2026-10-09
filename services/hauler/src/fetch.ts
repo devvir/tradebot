@@ -88,7 +88,11 @@ export const haul = async (file: Haulable): Promise<Hauled> => {
  * Give up every download in flight, now. Each is left owed and its partial
  * removed: for a stop that has waited as long as it is going to.
  */
-export const abandon = (): void => given.abort();
+export const abandon = (): void => {
+  given.abort();
+
+  for (const one of flying) one.abort();
+};
 
 /** Take downloads up again after they were given up. For tests: a service that gave up is one that is ending. */
 export const _test_resume = (): void => { given = new AbortController(); };
@@ -114,8 +118,16 @@ const GONE = new Set([404, 410]);
  */
 const HIDDEN = 403;
 
-/** What every download is tied to, so all of them can be given up at once. */
+/** Whether downloads have been given up: nothing is begun once they have. */
 let given = new AbortController();
+
+/**
+ * What each request in flight is tied to, so all of them can be given up at
+ * once. One of its own for each, held only while it is in flight: a signal
+ * shared by every request keeps something of each for as long as it lives,
+ * which for a service is for ever.
+ */
+const flying = new Set<AbortController>();
 
 const retrieve = async (file: Haulable, path: string): Promise<Hauled> => {
   const tried = new Set<Host>();
@@ -139,8 +151,12 @@ const retrieve = async (file: Haulable, path: string): Promise<Hauled> => {
     if (attempt === 1 && (file.size ?? 0) >= LARGE_BYTES)
       logger.info({ key: file.key, size: sizeOf(file.size!), host: host.base }, 'Downloading a large file');
 
+    const own = new AbortController();
+
+    flying.add(own);
+
     try {
-      const res = await fetch(url, { signal: given.signal });
+      const res = await fetch(url, { signal: own.signal });
 
       if (! res.ok || ! res.body) {
         await res.body?.cancel().catch(() => undefined);
@@ -267,6 +283,8 @@ const retrieve = async (file: Haulable, path: string): Promise<Hauled> => {
       }
 
       await sleep(delayFor(attempt));
+    } finally {
+      flying.delete(own);
     }
   }
 

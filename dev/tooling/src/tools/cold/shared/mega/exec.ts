@@ -2,7 +2,7 @@ import { execFile, spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { promisify } from 'node:util';
 import { onExit } from '../../cleanup';
-import { above } from '../progress';
+import { above, waitingFor } from '../progress';
 import { info, warn } from '../../../../shared/ui/logger';
 
 export const execFileAsync = promisify(execFile);
@@ -13,7 +13,11 @@ export const execFileAsync = promisify(execFile);
  * **A command that got no answer in the time it was given has not failed.**
  * Mega works through what it is asked one thing at a time, and something long —
  * a tree being moved — holds everything behind it for as long as it takes. So
- * the run waits and sends the command again, for as long as that goes on.
+ * the command is ended, and nothing is sent in its place until Mega is seen to
+ * be there: it is asked who is logged in — which costs nothing and changes
+ * nothing — after a wait that widens, until it answers. Only then is the
+ * command sent again. A command that moves a file is never sent on the chance
+ * that it might get through.
  * `settled` is asked before it is sent again: where what the command was for
  * has come about meanwhile — it was only the answer that never came — it is
  * not sent twice. With `once`, it is not sent again at all and the command
@@ -54,13 +58,18 @@ export const megaCmd = async (
       if (unanswered(err)) {
         if (options.once) throw err;
 
-        if (! said) above(`Mega is busy: ${command} got no answer in ${Math.round(options.timeout / 1000)}s — waiting, and asking again until it does`, warn);
+        if (! said) above(`Mega is busy: ${command} got no answer in ${Math.round(options.timeout / 1000)}s — it is sent again once Mega answers`, warn);
 
         said = true;
 
-        await hold(wait);
+        // Nothing is sent again until Mega says it is there: asked after a wait, and again after a longer one.
+        do {
+          await counted(wait);
 
-        wait = Math.min(wait * 2, LONGEST_MS);
+          wait = Math.min(wait * 2, LONGEST_MS);
+        } while (! await answering());
+
+        waitingFor(null);
 
         if (await options.settled?.().catch(() => false)) return { stdout: '', stderr: '' };
 
@@ -193,6 +202,23 @@ let run: (command: string, args: string[], options: { timeout: number; maxBuffer
  * asked to do.
  */
 let hold = (ms: number): Promise<void> => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+/**
+ * Wait, saying how long is left: said once that Mega is busy, what follows is
+ * one line that counts down and is written over, never a line for each try.
+ */
+const counted = async (ms: number): Promise<void> => {
+  for (let left = ms; left > 0; left -= TICK_MS) {
+    waitingFor(`Retrying in ${Math.ceil(left / 1000)} seconds…`);
+
+    await hold(Math.min(TICK_MS, left));
+  }
+
+  waitingFor('Asking Mega whether it is there…');
+};
+
+/** How often the countdown is written again. */
+const TICK_MS = 1_000;
 
 /** Not held against the process ending: a run with nothing left to do but wait for Mega is one that may go. */
 let pause = (ms: number): Promise<void> => new Promise((resolve) => { setTimeout(resolve, ms).unref(); });

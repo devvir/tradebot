@@ -52,17 +52,14 @@ export const queueDownload = async (remotePath: string, localDir: string): Promi
  * is not asked for a second time.
  */
 export const downloadingPaths = async (): Promise<Set<string>> => {
-  try {
-    const { stdout } = await megaCmd(
-      'mega-transfers',
-      ['--only-downloads', '--limit=100000', '--col-separator=|', '--output-cols=DESTINYPATH'],
-      { timeout: 60_000, maxBuffer: 64 * 1024 * 1024 },
-    );
+  // Unknown is not empty — see `queuedPaths`: a file not on its way is asked for again.
+  const { stdout } = await megaCmd(
+    'mega-transfers',
+    ['--only-downloads', '--limit=100000', '--col-separator=|', '--output-cols=DESTINYPATH'],
+    { timeout: 60_000, maxBuffer: 64 * 1024 * 1024 },
+  );
 
-    return new Set(stdout.split('\n').map(line => line.trim()).filter(line => line.startsWith('/')));
-  } catch {
-    return new Set();
-  }
+  return new Set(stdout.split('\n').map(line => line.trim()).filter(line => line.startsWith('/')));
 };
 
 /**
@@ -106,23 +103,22 @@ export const queue = async (): Promise<QueueState> => {
  * by default, and a short read here would look like an empty queue.
  */
 export const queuedPaths = async (): Promise<Set<string>> => {
-  try {
-    const { stdout } = await megaCmd(
-      'mega-transfers',
-      ['--only-uploads', '--limit=100000', '--col-separator=|', '--output-cols=SOURCEPATH'],
-      { timeout: 60_000, maxBuffer: 64 * 1024 * 1024 },
-    );
+  /**
+   * **Unknown is not empty.** A file that is not in the queue is taken to have
+   * left it — arrived, or dropped — so a queue that could not be read must
+   * never read as an empty one. A failure here is the caller's to stop on.
+   */
+  const { stdout } = await megaCmd(
+    'mega-transfers',
+    ['--only-uploads', '--limit=100000', '--col-separator=|', '--output-cols=SOURCEPATH'],
+    { timeout: 60_000, maxBuffer: 64 * 1024 * 1024 },
+  );
 
-    return new Set(
-      stdout.split('\n')
-        .map(line => line.trim())
-        .filter(line => line.startsWith('/')),
-    );
-  } catch {
-    // Unknown is not the same as empty, but the only thing this guards is a
-    // duplicate upload, and Mega collapses those on its own.
-    return new Set();
-  }
+  return new Set(
+    stdout.split('\n')
+      .map(line => line.trim())
+      .filter(line => line.startsWith('/')),
+  );
 };
 
 /**

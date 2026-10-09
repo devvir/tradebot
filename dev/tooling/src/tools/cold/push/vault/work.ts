@@ -13,6 +13,8 @@ import { fmtBytes } from '../../../../shared/utils/format';
 import { spacer, success } from '../../../../shared/ui/logger';
 import { pendingOf, plan } from './plan';
 import { trusted } from '../../shared/vault/trusted';
+import { landed } from '../../shared/mega';
+import type { Listed } from '../../shared/types';
 import type { DatabaseSync } from 'node:sqlite';
 import type { ColdConfig } from '../../types';
 import type { Remote } from '../../shared/types';
@@ -136,7 +138,7 @@ const round = async (
   /** What Mega holds below each venue of the vault, asked once a round. */
   const held = new Map<string, Awaited<ReturnType<Remote['listing']>>>();
 
-  const inMega = async (file: StoredFile): Promise<{ bytes: number; handle: string | null } | null> => {
+  const inMega = async (file: StoredFile): Promise<Listed | null> => {
     const [venue, ...rest] = remoteOf(file).split('/');
 
     if (! held.has(venue!)) held.set(venue!, await remote.listing(`${config.megaRoot}/${venue}`));
@@ -156,8 +158,9 @@ const round = async (
     if (file.state === 'queued') {
       const there = await inMega(file);
 
-      if (there && there.bytes === file.bytes) {
-        record.moveVaultFile(db, file, 'stored', there.handle);
+      // Stored where Mega lists the file that is on disk: its size and its own modification time — see `landed`.
+      if (landed(local, there)) {
+        record.moveVaultFile(db, file, 'stored', there!.handle);
 
         moved = true;
 

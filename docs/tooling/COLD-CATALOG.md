@@ -103,6 +103,8 @@ itself, and nothing is copied.
    3, then sent, which takes as long as it weighs. As Mega confirms it, its identifier and the
    partitions' versions are written into the record. Every other file leaves cold's working
    directory as Mega confirms it.
+   **A file is there when Mega lists it, and for no other reason**: that very file, by its
+   size and its own modification time — never because it is no longer in Mega's queue.
 
 A run that stops while the snapshot is being sent is taken up by the next, which sends the same copy
 and reads nothing again.

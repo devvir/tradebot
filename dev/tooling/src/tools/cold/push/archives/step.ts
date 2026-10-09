@@ -108,12 +108,13 @@ export const step = async (
       const found = await mega.remote(remotePath(config, tar));
 
       /**
-       * **Confirmed from Mega, never from an exit code.** Mega publishes a file
-       * only once it is complete, so the right size at the path is the proof —
-       * and where a tar replaces an older one, a handle that is no longer the
-       * older one's, since the two can weigh the same.
+       * **Confirmed by finding it in Mega, and by nothing else** — not an exit
+       * code, not having left the queue. Mega lists a file only once it is
+       * complete, so the tar on disk found there, at its size and its own
+       * modification time, is the proof — see `landed`. Where it replaces an
+       * older one, its handle is no longer the older one's either.
        */
-      if (found && found.bytes === tar.bytes && (tar.handle === null || found.handle !== tar.handle)) {
+      if (found && mega.landed(local, found) && (tar.handle === null || found.handle !== tar.handle)) {
         record.applyChanges(db, tar.id);
         record.stored(db, tar.id, found.handle);
 

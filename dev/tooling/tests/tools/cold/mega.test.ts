@@ -1,6 +1,9 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { _test_with as standIns, megaCmd, notThere } from '../../../src/tools/cold/shared/mega/exec';
-import { listing } from '../../../src/tools/cold/shared/mega/listing';
+import { landed, listing } from '../../../src/tools/cold/shared/mega/listing';
 import { _test_parseListing as parseListing } from '../../../src/tools/cold/shared/mega/listing';
 import { _test_parseSummary as parseSummary } from '../../../src/tools/cold/shared/mega/transfers';
 import * as mega from '../../../src/tools/cold/shared/mega';
@@ -70,13 +73,39 @@ describe('confirming a file landed', () => {
   const LISTING = [
     '/Tradebot/sources/vault/bybit/2024:',
     'FLAGS VERS      SIZE            DATE          HANDLE NAME',
-    '----    1   1998765432 05Aug2026 22:09:10 H:7BtQjCAL 202405.p01.tar',
-    '----    1    998765432 05Aug2026 22:11:02 H:7AkyiIDQ 202405.p02.tar',
+    '----    1   1998765432 2026-08-05T22:09:10 H:7BtQjCAL 202405.p01.tar',
+    '----    1    998765432 2026-08-05T22:11:02 H:7AkyiIDQ 202405.p02.tar',
   ].join('\n');
 
-  it('reads the size and the handle of the file asked for', () => {
+  it('reads the size, the handle and the modification time of the file asked for', () => {
     expect(parseListing(LISTING, '202405.p02.tar'))
-      .toEqual({ bytes: 998765432, handle: 'H:7AkyiIDQ' });
+      .toEqual({ bytes: 998765432, handle: 'H:7AkyiIDQ', modified: '2026-08-05T22:11:02' });
+  });
+
+  /** What says a file has arrived: Mega lists that very file — its size and its own modification time. */
+  it('takes a file as landed only where Mega lists it at its size and its own time, whatever zone either is in', () => {
+    const file = path.join(os.tmpdir(), `landed-${process.pid}.bin`);
+
+    fs.writeFileSync(file, 'abcd');
+    fs.utimesSync(file, new Date('2026-08-05T20:11:02.700Z'), new Date('2026-08-05T20:11:02.700Z'));
+
+    try {
+      expect(landed(file, { bytes: 4, handle: 'H', modified: '2026-08-05T20:11:02' })).toBe(true);
+
+      // Written in another zone: the same moment.
+      expect(landed(file, { bytes: 4, handle: 'H', modified: '2026-08-05T22:11:02' })).toBe(true);
+      expect(landed(file, { bytes: 4, handle: 'H', modified: '2026-08-06T01:41:02' })).toBe(true);
+
+      // The same size, left there by an earlier upload.
+      expect(landed(file, { bytes: 4, handle: 'H', modified: '2026-08-05T20:11:03' })).toBe(false);
+      expect(landed(file, { bytes: 4, handle: 'H', modified: '2026-08-04T20:11:02' })).toBe(false);
+
+      expect(landed(file, { bytes: 5, handle: 'H', modified: '2026-08-05T20:11:02' })).toBe(false);
+      expect(landed(file, null)).toBe(false);
+      expect(landed(`${file}.gone`, { bytes: 4, handle: 'H', modified: '2026-08-05T20:11:02' })).toBe(false);
+    } finally {
+      fs.rmSync(file, { force: true });
+    }
   });
 
   /** A file Mega does not hold is how "not uploaded yet" is expressed. */
@@ -153,14 +182,18 @@ describe('a command sent while Mega is not answering', () => {
   });
 
   /** Mega works through one thing at a time: a command behind something long was not refused, it was not reached. */
-  it('waits and asks again where a command got no answer in its time, however long that goes on', async () => {
+  it('sends a command that got no answer again only once Mega says it is there', async () => {
     const late = Object.assign(new Error('Command failed: mega-get'), { killed: true, signal: 'SIGTERM' });
-    const { asked, waits } = mega({ 'mega-get': [late, late, late, 'queued'] });
+    const down = new Error('no answer');
+    const { asked, waits } = mega({ 'mega-get': [late, late, 'queued'], 'mega-whoami': [down, down, 'me', 'me'] });
 
     expect((await megaCmd('mega-get', [], { timeout: 1 })).stdout).toBe('queued');
 
-    expect(waits).toEqual([5_000, 10_000, 20_000]);
-    expect(asked).toEqual(['mega-get', 'mega-get', 'mega-get', 'mega-get']);
+    // Asked who is logged in after each wait; the command goes again only after an answer.
+    expect(asked).toEqual(['mega-get', 'mega-whoami', 'mega-whoami', 'mega-whoami', 'mega-get', 'mega-whoami', 'mega-get']);
+    // 5, 10, 20 and 40 seconds, each waited a second at a time so that what is left can be said.
+    expect(waits.every(wait => wait === 1_000)).toBe(true);
+    expect(waits.reduce((sum, wait) => sum + wait, 0)).toBe(75_000);
   });
 
   /** It was only the answer that never came: what was asked for is under way, and is not asked for twice. */
@@ -172,7 +205,7 @@ describe('a command sent while Mega is not answering', () => {
 
     await megaCmd('mega-get', [], { timeout: 1, settled: async () => ++looked === 2 });
 
-    expect(asked).toEqual(['mega-get', 'mega-get']);
+    expect(asked.filter(one => one === 'mega-get')).toHaveLength(2);
   });
 
   it('tells a path that is not there from any other failure', () => {
