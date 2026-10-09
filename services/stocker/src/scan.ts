@@ -3,7 +3,9 @@ import { join } from 'node:path';
 import { logger } from '@devvir/service-kit';
 import { sizeOf } from '@tradebot/utils';
 import type { DuckDBConnection } from '@duckdb/node-api';
-import { PIECES, buildBatch, buildGroup, bundleStaged, dropOverlap, joinPieces, wrappedFor } from './build';
+import {
+  PIECES, buildBatch, buildGroup, bundleStaged, dropOverlap, finishPiece, finishedPiece, joinPieces, keepPieces, wrappedFor,
+} from './build';
 import { listPartitions } from './catalog';
 import config from './config';
 import { weightsOf } from './containers';
@@ -17,7 +19,7 @@ import { NoRoom, shortOf } from './room';
 import { reachOf } from './spill';
 import {
   BUNDLE, STAGED, Slices, bundleOf, clear, fileOf, freeGb, isWhole, labelOf, monthOf, publishBundle, publishSplit, revisionOf, sliceDirOf,
-  stagingOf,
+  staleStagingOf, stagingOf,
 } from './vault';
 import type {
   DiskFile, Edge, Entry, Grain, Group, InstrumentDirs, Job, Partition, Pass, Series, Short, Side, Spent, Stocked, Summary, Sweeping, Target, Task,
@@ -465,12 +467,14 @@ const decide = async (
       const built   = await Promise.all(arrived.map(edge => piecedOf(tasksOf(sideGroupsOf(donated.get(edge.end) ?? [], symbols)))));
       const tasks   = built.flat();
 
-      if (! await fits(key, tasks)) continue;
+      const passes = built.flatMap((own, at) => own.map((): Pass => arrived[at]!.end));
+      const had = await builtOf(key, one.revision, tasks, passes);
+
+      if (! await fits(key, tasks.filter((_, at) => ! had[at]))) continue;
 
       return {
-        key, partition: one.candidate, revision: one.revision, edges: one.edges, missing: one.missing, tasks,
-        passes: built.flatMap((own, at) => own.map(() => arrived[at]!.end)),
-        files: [...donated.values()].flat().length, prefetch: new Prefetch(tasks, wrapOf),
+        key, partition: one.candidate, revision: one.revision, edges: one.edges, missing: one.missing, tasks, passes, built: had,
+        files: [...donated.values()].flat().length, prefetch: new Prefetch(tasks, toBuild(tasks, had)),
         completes: { revision: entry.revision, sides: arrived.map(edge => edge.end) },
       };
     }
@@ -491,12 +495,14 @@ const decide = async (
     const sides   = await Promise.all(one.edges.map(edge => piecedOf(tasksOf(sideGroupsOf(donated.get(edge.end) ?? [], symbols)))));
     const tasks   = [...own, ...sides.flat()];
 
-    if (! await fits(key, tasks)) continue;
+    const passes = [...own.map((): Pass => 'own'), ...sides.flatMap((side, at) => side.map((): Pass => one.edges[at]!.end))];
+    const had = await builtOf(key, one.revision, tasks, passes);
+
+    if (! await fits(key, tasks.filter((_, at) => ! had[at]))) continue;
 
     return {
-      key, partition: one.candidate, revision: one.revision, edges: one.edges, missing: one.missing, tasks,
-      passes: [...own.map((): Pass => 'own'), ...sides.flatMap((side, at) => side.map(() => one.edges[at]!.end))],
-      files: files.length, prefetch: new Prefetch(tasks, wrapOf), completes: null,
+      key, partition: one.candidate, revision: one.revision, edges: one.edges, missing: one.missing, tasks, passes, built: had,
+      files: files.length, prefetch: new Prefetch(tasks, toBuild(tasks, had)), completes: null,
     };
   }
 
@@ -618,7 +624,7 @@ const stock = async (
   sweeping: Sweeping,
   summary:  Summary,
 ): Promise<void> => {
-  const { key, partition, revision, edges, missing, tasks, passes, prefetch, completes } = job;
+  const { key, partition, revision, edges, missing, tasks, passes, built: finished, prefetch, completes } = job;
   const { ledger, slices } = sweeping;
 
   const staging = stagingOf(key, revision);
@@ -636,7 +642,10 @@ const stock = async (
     ...(missing.length > 0 ? { without: missing } : {}) },
   completes ? 'Completing partition' : 'Stocking partition');
 
-  await rm(staging, { recursive: true, force: true });
+  // Whatever is there of the partition goes, but the pieces a build before this one finished — and those of any other revision of it.
+  await keepPieces(staging);
+
+  for (const stale of await staleStagingOf(key, revision)) await rm(stale, { recursive: true, force: true });
 
   /**
    * Whether a batch is written as one file and not a file per instrument: where
@@ -657,7 +666,18 @@ const stock = async (
       const piece = next[0]!.piece;
 
       // A piece of a symbol is built where its other pieces are, apart from what is built whole.
-      const into = piece ? join(dirOf(passes[at]!), PIECES, String(piece.of), String(piece.at)) : dirOf(passes[at]!);
+      const into = piece ? pieceDirOf(dirOf(passes[at]!), piece) : dirOf(passes[at]!);
+
+      // A piece a build before this one finished is not built again.
+      const had = finished[at];
+
+      if (had) {
+        rows += had.rows;
+
+        if (passes[at] === 'own') written += had.files;
+
+        continue;
+      }
 
       try {
         // Extracted ahead where there was time; the build removes it when it has read it.
@@ -669,6 +689,8 @@ const stock = async (
         const done = direct(next)
           ? await buildGroup(conn, key, next[0]!.symbol, next[0]!.inputs, into, prepared, spent)
           : await buildBatch(conn, key, next, into, prepared, asOne, spent);
+
+        if (piece) await finishPiece(into, next[0]!.inputs, done);
 
         rows += done.rows;
 
@@ -811,6 +833,8 @@ const stock = async (
 
       ledger.set(entry.partition, entry);
     } catch (err) {
+      failure ??= err as Error;
+
       // Not a failure: nothing was written, and it is stocked when there is room.
       if (err instanceof NoRoom) logger.warn({ partition: labelOf(key), ...roomIn(err.short) }, NO_ROOM);
       else {
@@ -826,7 +850,9 @@ const stock = async (
     } finally {
       slices.forget(key);
 
-      await rm(staging, { recursive: true, force: true });
+      // In the vault, nothing of the build is kept; stopped short of it, the pieces that are built are.
+      if (failure) await keepPieces(staging);
+      else await rm(staging, { recursive: true, force: true });
 
       spent.place = Date.now() - entered - spent.join;
     }
@@ -1000,6 +1026,22 @@ const piecedOf = async (tasks: Task[]): Promise<Task[]> => {
 
   return pieced;
 };
+
+/** Where a piece of a symbol is built, under the staging directory of what it is part of. */
+const pieceDirOf = (dir: string, piece: NonNullable<Group['piece']>): string =>
+  join(dir, PIECES, String(piece.of), String(piece.at));
+
+/** For each task, what came of it where it is a piece a build before this one finished — see `finishPiece`. */
+const builtOf = (key: VaultKey, revision: string, tasks: Task[], passes: Pass[]): Promise<Job['built']> =>
+  Promise.all(tasks.map((task, at) => {
+    const group = task[0]!;
+
+    return group.piece ? finishedPiece(pieceDirOf(join(stagingOf(key, revision), passes[at]!), group.piece), group.inputs) : null;
+  }));
+
+/** A task's archives as extraction is asked for them — none, where it is a piece that is built already. */
+const toBuild = (tasks: Task[], built: Job['built']): ((task: Task) => ReturnType<typeof wrappedFor>) =>
+  task => (built[tasks.indexOf(task)] ? { inputs: [], shapes: [], series: [] } : wrapOf(task));
 
 /**
  * Whether there is room to extract each of a partition's tasks, said where

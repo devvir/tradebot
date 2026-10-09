@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DuckDBInstance } from '@duckdb/node-api';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { PIECES, buildBatch, buildGroup, bundleStaged, joinPieces } from '../src/build';
+import { PIECES, buildBatch, buildGroup, bundleStaged, finishPiece, finishedPiece, joinPieces, keepPieces } from '../src/build';
 import { parseKey } from '../src/keys';
 import { _test_pieceAt as pieceAt, _test_piecedOf as piecedOf, _test_tasksOf as tasksOf } from '../src/scan';
 import type { DiskFile, VaultKey } from '../src/types';
@@ -334,11 +334,45 @@ describe('a big instrument built a piece at a time', () => {
 
     await joinPieces(conn, gate, pieced, () => false);
 
-    expect(await written(pieced)).toEqual(['BTC_USDT.parquet']);
+    // The pieces stay beside what they were joined into, until the partition is in the vault.
+    expect((await written(pieced)).filter(name => ! name.startsWith(PIECES))).toEqual(['BTC_USDT.parquet']);
     expect(await rowsOf(join(pieced, 'BTC_USDT.parquet'))).toBe(await rowsOf(join(whole, 'BTC_USDT.parquet')));
 
     const times = (await conn.runAndReadAll(`SELECT ts FROM read_parquet('${join(pieced, 'BTC_USDT.parquet')}')`)).getRows().map(row => BigInt(row[0] as bigint));
 
     expect(times).toEqual([...times].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
+  });
+
+  /** Hours of a partition built a piece at a time are not built again because the service was restarted. */
+  it('keeps the pieces that are built, and only those, for the build that takes it up', async () => {
+    const one = await input('gate.futures_usdt-trades.csv', 'gate/perp/trades/B/BTC_USDT/202606/gate|perp|trades|BTC_USDT|202606.csv.gz');
+    const two = await input('gate.futures_btc-trades.csv', 'gate/perp/trades/B/BTC_USDT/202606/gate|perp|trades|BTC_USDT|202606.csv.gz');
+
+    const staging  = join(dir, 'resumed');
+    const built    = join(staging, 'own', PIECES, '0', '0');
+    const stopped  = join(staging, 'own', PIECES, '0', '1');
+
+    const done = await buildGroup(conn, gate, 'BTC_USDT', [one], built);
+
+    await finishPiece(built, [one], done);
+
+    // Stopped half way: its files are there and nothing says it is built. And what is not a piece at all.
+    await buildGroup(conn, gate, 'BTC_USDT', [two], stopped);
+    await buildGroup(conn, gate, 'BTC_USD', [two], join(staging, 'own'));
+
+    await keepPieces(staging);
+
+    expect(await written(staging)).toEqual([join('own', PIECES, '0', '0', 'BTC_USDT.parquet')]);
+
+    // Taken up only for the very files it was built from.
+    expect(await finishedPiece(built, [one])).toEqual(done);
+    expect(await finishedPiece(built, [one, two])).toBeNull();
+    expect(await finishedPiece(stopped, [two])).toBeNull();
+
+    // Nothing built in it: the directory itself goes.
+    await rm(built, { recursive: true });
+    await keepPieces(staging);
+
+    expect(await stat(staging).catch(() => null)).toBeNull();
   });
 });

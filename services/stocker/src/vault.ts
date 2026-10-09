@@ -108,6 +108,16 @@ export const revisionOf = (
 export const stagingOf = (key: VaultKey, revision: string): string =>
   join(config.vaultDir, SCRATCH, 'stage', `${labelOf(key).replace(/[|/]/g, '_')}.${revision}`);
 
+/** Where the same partition was being built at another revision: what nothing will take up now. */
+export const staleStagingOf = async (key: VaultKey, revision: string): Promise<string[]> => {
+  const stage = join(config.vaultDir, SCRATCH, 'stage');
+  const label = `${labelOf(key).replace(/[|/]/g, '_')}.`;
+
+  return (await readdir(stage).catch(() => [] as string[]))
+    .filter(name => name.startsWith(label) && name !== `${label}${revision}` && /^[0-9a-f]+$/.test(name.slice(label.length)))
+    .map(name => join(stage, name));
+};
+
 /**
  * What the vault holds of each slice, read once per sweep.
  *

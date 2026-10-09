@@ -311,6 +311,12 @@ export interface Job {
 
   tasks:     Task[];
 
+  /**
+   * For each task, what came of it where it is a piece built by a build before
+   * this one — see `finishPiece` — and null where it is still to build.
+   */
+  built:     ({ rows: number; files: number } | null)[];
+
   /** What each task builds: the month's own rows, or what a neighbour holds of it. */
   passes:    Pass[];
 

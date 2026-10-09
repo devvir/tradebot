@@ -1,4 +1,4 @@
-import { mkdir, readdir, rename, rm } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, rm, rmdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { logger } from '@devvir/service-kit';
 import type { DuckDBConnection } from '@duckdb/node-api';
@@ -452,6 +452,10 @@ export const bundleStaged = async (conn: DuckDBConnection, key: VaultKey, stagin
  * directory a symbol and a directory a piece within it. A piece is in time
  * order and the pieces need not follow one another, so this join sorts.
  *
+ * The pieces are left where they are: they go with the staging directory once
+ * the partition is in the vault, and until then a build that stops is taken up
+ * from them — see `finishPiece`.
+ *
  * `repeats` says whether a symbol's files repeat whole rows: a row repeated
  * across two pieces is then written once, as it is within one.
  */
@@ -482,8 +486,64 @@ export const joinPieces = async (
       await settleFile(conn, temp, out, key, name.slice(0, -STAGED.length));
     }
   }
+};
 
-  await rm(root, { recursive: true, force: true });
+/**
+ * Say that a piece is built: what it was built from, and what came of it.
+ *
+ * **A partition built a piece at a time takes hours, and a piece that is built
+ * is not built again.** Each leaves a note beside its files as it finishes, and
+ * a build that starts over — the service restarted, a piece failed — skips the
+ * pieces whose note names the very files it would build them from. A piece
+ * that was stopped half way has no note, and is built again from nothing.
+ *
+ * The staging directory is named for the partition's revision, so pieces built
+ * from other archives, or under versions that write otherwise, are never found.
+ * What the note adds is which files the piece held: how a symbol's files are
+ * cut into pieces is not part of the revision.
+ */
+export const finishPiece = async (dir: string, inputs: readonly DiskFile[], done: { rows: number; files: number }): Promise<void> => {
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, FINISHED), JSON.stringify({ inputs: inputs.map(input => input.file.key), ...done }));
+};
+
+/** What came of a piece built before from these very files, or null where it is still to build. */
+export const finishedPiece = async (dir: string, inputs: readonly DiskFile[]): Promise<{ rows: number; files: number } | null> => {
+  try {
+    const note = JSON.parse(await readFile(join(dir, FINISHED), 'utf8')) as { inputs: string[]; rows: number; files: number };
+
+    return note.inputs.join('\n') === inputs.map(input => input.file.key).join('\n') ? { rows: note.rows, files: note.files } : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Clear a staging directory of everything but the pieces that are built, and
+ * the directory itself where that leaves nothing in it.
+ */
+export const keepPieces = async (staging: string): Promise<void> => {
+  for (const pass of await readdir(staging).catch(() => [] as string[])) {
+    const pieces = join(staging, pass, PIECES);
+
+    for (const name of await readdir(join(staging, pass)).catch(() => [] as string[]))
+      if (name !== PIECES) await rm(join(staging, pass, name), { recursive: true, force: true });
+
+    for (const of of await readdir(pieces).catch(() => [] as string[])) {
+      for (const at of await readdir(join(pieces, of)).catch(() => [] as string[])) {
+        const built = await readFile(join(pieces, of, at, FINISHED)).then(() => true, () => false);
+
+        if (! built) await rm(join(pieces, of, at), { recursive: true, force: true });
+      }
+
+      await rmdir(join(pieces, of)).catch(() => {});
+    }
+
+    await rmdir(pieces).catch(() => {});
+    await rmdir(join(staging, pass)).catch(() => {});
+  }
+
+  await rmdir(staging).catch(() => {});
 };
 
 /**
@@ -555,14 +615,36 @@ export const dropOverlap = async (
 /** Under a staging directory: what is built a piece at a time, until it is joined. */
 export const PIECES = '.pieces';
 
+/** In a piece's directory: the note that it is built. */
+const FINISHED = '.built';
+
+/** Under scratch: where partitions are built before they are put in the vault. */
+const STAGE = 'stage';
+
 /**
  * Clear what a hard kill leaves behind: extractions, part-built partitions, the
- * engine's spill. Everything transient lives in one directory, so it is one
- * delete rather than a walk over the vault.
+ * engine's spill. Everything transient lives in one directory.
+ *
+ * **All of it goes but the pieces that are built** — see `finishPiece`: hours
+ * of a partition that was being built a piece at a time, which the next build
+ * of it takes up.
  */
 export const sweepScratch = async (): Promise<void> => {
-  await rm(join(config.vaultDir, SCRATCH), { recursive: true, force: true }).catch(() => {});
-  logger.info('Scratch cleared');
+  const scratch = join(config.vaultDir, SCRATCH);
+
+  for (const name of await readdir(scratch).catch(() => [] as string[]))
+    if (name !== STAGE) await rm(join(scratch, name), { recursive: true, force: true }).catch(() => {});
+
+  const kept = [];
+
+  for (const name of await readdir(join(scratch, STAGE)).catch(() => [] as string[])) {
+    await keepPieces(join(scratch, STAGE, name));
+
+    if (await readdir(join(scratch, STAGE, name)).then(() => true, () => false)) kept.push(name);
+  }
+
+  if (kept.length > 0) logger.info({ partitions: kept }, 'Scratch cleared — pieces built before are kept, to be taken up');
+  else logger.info('Scratch cleared');
 };
 
 // ── Internals ─────────────────────────────────────────────────────────────────

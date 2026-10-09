@@ -454,6 +454,14 @@ then joined, sorted, into the files the instrument would have been built as whol
 the vault is the same either way. A month of one market-wide file a day, each inflating to tens of
 gigabytes, is built this way and never held extracted at once.
 
+**A piece that is built is not built again.** Such a partition takes hours, so each piece leaves a
+note beside its files as it finishes, naming the files it was built from. Clearing scratch — as the
+service starts, and when a build fails — keeps the pieces that carry a note and removes everything
+else; the next build of the partition skips those pieces, builds the rest and joins them all. The
+staging directory is named for the partition's revision, so pieces built from other archives or
+under other versions are never taken up, and are removed when the partition is next built. A piece
+stopped half way has no note and is built again.
+
 ### Extraction runs ahead of the builds, on threads of its own
 
 A month of small files is nearly all extraction: the engine has a few megabytes of rows to read and
