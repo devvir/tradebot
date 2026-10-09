@@ -27,6 +27,16 @@ export const mountLenses = (app: Application, db: DatabaseSync): void => {
     res.json({ items: lenses(db) });
   });
 
+  /**
+   * **What the venues publish**, each combination with the venue it is of, so an
+   * editor offers only combinations that exist rather than every string the
+   * catalog has ever seen. Registered before a lens is asked for by its slug,
+   * which this path would otherwise be taken for.
+   */
+  app.get('/lenses/options', (_req, res) => {
+    res.json({ items: lensOptions(db) });
+  });
+
   app.get('/lenses/:slug', (req, res) => {
     const found = lensNamed(db, String(req.params['slug']));
 
@@ -37,14 +47,6 @@ export const mountLenses = (app: Application, db: DatabaseSync): void => {
     }
 
     res.json(found);
-  });
-
-  /**
-   * **What a venue publishes**, so an editor offers only combinations that exist
-   * rather than every string the catalog has ever seen.
-   */
-  app.get('/lenses/options/:venue', (req, res) => {
-    res.json({ items: lensOptions(db, String(req.params['venue'])) });
   });
 
   app.post('/lenses', async (req, res) => {

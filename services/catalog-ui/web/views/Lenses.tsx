@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert, Button, Card, Group, Loader, Modal, MultiSelect, Progress,
-  Select, Stack, Text, TextInput, Title,
+  Alert, Button, Card, CloseButton, Combobox, Group, Loader, Modal, Pill, PillsInput, Progress,
+  Select, Stack, Text, TextInput, Title, Tooltip, useCombobox,
 } from '@mantine/core';
+import type { ReactNode } from 'react';
 import { catalog, poll, remove, send } from '../api';
 import { linkTo, rememberLens } from '../App';
 import { bytes, count } from './Table';
@@ -534,16 +535,11 @@ const ForVenue = ({ venue, entries, problems, storing, onAdd, onClear, onEdit, o
   onDrop:    (entry: RuleEntry) => void;
   onDiscard: (entry: RuleEntry) => void;
 }) => {
-  const [offered, setOffered] = useState<LensOption[]>([]);
+  const published = usePublished();
 
-  useEffect(() => {
-    const asked = new AbortController();
-
-    catalog<{ items: LensOption[] }>(`/lenses/options/${encodeURIComponent(venue)}`, asked.signal)
-      .then(({ items }) => setOffered(items)).catch(() => undefined);
-
-    return () => asked.abort();
-  }, [venue]);
+  // A venue's rules are written against what it publishes; the rules for every venue, against what any of them does.
+  const offered = useMemo(
+    () => (venue === GLOBAL ? published : published.filter(one => one.venue === venue)), [published, venue]);
 
   return (
     <Card withBorder padding="md" radius="sm">
@@ -570,7 +566,7 @@ const ForVenue = ({ venue, entries, problems, storing, onAdd, onClear, onEdit, o
 
         {entries.map(entry => (
           <Rule
-            key={entry.key} rule={entry.now} offered={offered}
+            key={entry.key} rule={entry.now} offered={offered} published={published}
             state={stateOf(entry)} busy={storing === entry.key} locked={storing !== null}
             problems={problems[entry.key] ?? []}
             onChanged={to => onEdit(entry.key, to)}
@@ -585,6 +581,161 @@ const ForVenue = ({ venue, entries, problems, storing, onAdd, onClear, onEdit, o
 };
 
 /**
+ * What the venues publish, asked for once however many cards read it.
+ *
+ * One list holds every venue's combinations, so each card takes its own rows
+ * from it and none asks again.
+ */
+const usePublished = (): LensOption[] => {
+  const [published, setPublished] = useState<LensOption[]>([]);
+
+  useEffect(() => {
+    let wanted = true;
+
+    asked ??= catalog<{ items: LensOption[] }>('/lenses/options').then(({ items }) => items);
+
+    asked.then(items => { if (wanted) setPublished(items); }).catch(() => { asked = null; });
+
+    return () => { wanted = false; };
+  }, []);
+
+  return published;
+};
+
+let asked: Promise<LensOption[]> | null = null;
+
+/** Where a market is found: the venues that publish anything in it. */
+const marketIn = (published: LensOption[], market: string): ReactNode => {
+  const venues = [...new Set(published.filter(one => one.market === market).map(one => one.venue))].sort();
+
+  return venues.length === 0 ? null : (
+    <Text size="xs">This market is found in: {venues.map(capital).join(', ')}</Text>
+  );
+};
+
+/**
+ * Where a dataset is found — one variant of it, or any — as the markets of each
+ * venue that publishes it. `value` is as the picker holds it: the dataset, or
+ * the dataset and a variant.
+ */
+const datasetIn = (published: LensOption[], value: string, label: string): ReactNode => {
+  const [dataset, variant] = value.split('\u0000');
+  const byVenue = new Map<string, Set<string>>();
+
+  for (const one of published) {
+    if (one.dataset !== dataset || (variant !== undefined && one.variant !== variant)) continue;
+
+    byVenue.set(one.venue, (byVenue.get(one.venue) ?? new Set()).add(one.market));
+  }
+
+  if (byVenue.size === 0) return null;
+
+  // `klines (any)` is the dataset whatever its variant: said as the dataset alone.
+  const named = variant === undefined ? dataset : label;
+
+  return (
+    <Stack gap={0}>
+      <Text size="xs">{named} is found in:</Text>
+      {[...byVenue.entries()].sort().map(([venue, markets]) => (
+        <Text size="xs" key={venue}>{capital(venue)}: {[...markets].sort().join(', ')}</Text>
+      ))}
+    </Stack>
+  );
+};
+
+/**
+ * Several of a list, chosen by name: typed to narrow the list, each choice a
+ * pill that can be taken away.
+ *
+ * **Built from the parts rather than taken whole**, for one thing the ready-made
+ * control does not allow: a pill, and a row of the list, each say something
+ * more when pointed at — `tip` — which is where a market or a dataset is found.
+ */
+const Picker = ({ label, w, placeholder, data, value, error, onChange, tip }: {
+  label:        string;
+  w:            number;
+  placeholder?: string;
+  data:         { value: string; label: string }[];
+  value:        string[];
+  error?:       string;
+  onChange:     (values: string[]) => void;
+  tip:          (value: string) => ReactNode;
+}) => {
+  const combobox = useCombobox({
+    onDropdownClose: () => combobox.resetSelectedOption(),
+    onDropdownOpen:  () => combobox.updateSelectedOptionIndex('active'),
+  });
+
+  const [search, setSearch] = useState('');
+
+  const labelOf = (one: string): string => data.find(option => option.value === one)?.label ?? one;
+  const toggle  = (one: string): void => onChange(value.includes(one) ? value.filter(other => other !== one) : [...value, one]);
+
+  /** Something said when a thing is pointed at, where there is anything to say. */
+  const tipped = (one: string, child: ReactNode, position: 'top' | 'right'): ReactNode => {
+    const said = tip(one);
+
+    return said === null
+      ? child
+      : <Tooltip key={one} label={said} position={position} withArrow openDelay={250} multiline>{child}</Tooltip>;
+  };
+
+  const wanted  = search.trim().toLowerCase();
+  const options = data.filter(option => option.label.toLowerCase().includes(wanted));
+
+  return (
+    <Combobox store={combobox} withinPortal onOptionSubmit={(one) => { toggle(one); setSearch(''); }}>
+      <Combobox.DropdownTarget>
+        <PillsInput
+          label={label} w={w} error={error} onClick={() => combobox.openDropdown()}
+          rightSection={value.length > 0
+            ? <CloseButton size="sm" aria-label={`Clear ${label.toLowerCase()}`} onMouseDown={event => event.preventDefault()} onClick={() => onChange([])} />
+            : <Combobox.Chevron />}
+        >
+          <Pill.Group>
+            {value.map(one => tipped(one, (
+              <Pill key={one} withRemoveButton onRemove={() => toggle(one)}>{labelOf(one)}</Pill>
+            ), 'top'))}
+
+            <Combobox.EventsTarget>
+              <PillsInput.Field
+                value={search} placeholder={placeholder}
+                onFocus={() => combobox.openDropdown()} onBlur={() => combobox.closeDropdown()}
+                onChange={(event) => {
+                  combobox.updateSelectedOptionIndex();
+                  setSearch(event.currentTarget.value);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Backspace' || search.length > 0 || value.length === 0) return;
+
+                  event.preventDefault();
+                  onChange(value.slice(0, -1));
+                }}
+              />
+            </Combobox.EventsTarget>
+          </Pill.Group>
+        </PillsInput>
+      </Combobox.DropdownTarget>
+
+      <Combobox.Dropdown>
+        <Combobox.Options mah={240} style={{ overflowY: 'auto' }}>
+          {options.length === 0 && <Combobox.Empty>Nothing found</Combobox.Empty>}
+
+          {options.map(option => tipped(option.value, (
+            <Combobox.Option key={option.value} value={option.value} active={value.includes(option.value)}>
+              <Group gap="xs" wrap="nowrap">
+                <Text size="sm" w={12}>{value.includes(option.value) ? '✓' : ''}</Text>
+                <Text size="sm">{option.label}</Text>
+              </Group>
+            </Combobox.Option>
+          ), 'right'))}
+        </Combobox.Options>
+      </Combobox.Dropdown>
+    </Combobox>
+  );
+};
+
+/**
  * One rule, in two rows.
  *
  * **What it does, then what it is about.** The first row is the sentence — this
@@ -595,7 +746,9 @@ const ForVenue = ({ venue, entries, problems, storing, onAdd, onClear, onEdit, o
  * **Every list left empty is shown as `every`**, because a rule that constrains
  * nothing is the common case and an empty box reads as unfinished.
  */
-const Rule = ({ rule, offered, problems, state, busy, locked, onChanged, onConfirm, onDrop, onDiscard }: {
+const Rule = ({ rule, offered, published, problems, state, busy, locked, onChanged, onConfirm, onDrop, onDiscard }: {
+  /** What every venue publishes: what a market or a dataset is found in is read off it. */
+  published: LensOption[];
   rule:      LensRule;
   offered:   LensOption[];
   problems:  LensProblem[];
@@ -611,7 +764,8 @@ const Rule = ({ rule, offered, problems, state, busy, locked, onChanged, onConfi
   onDrop:    () => void;
   onDiscard: () => void;
 }) => {
-  const markets = useMemo(() => [...new Set(offered.map(one => one.market))].sort(), [offered]);
+  const markets = useMemo(
+    () => [...new Set(offered.map(one => one.market))].sort().map(market => ({ value: market, label: market })), [offered]);
 
   /**
    * **One choice, not a list.** Only a grain, or any grain with one preferred:
@@ -716,15 +870,15 @@ const Rule = ({ rule, offered, problems, state, busy, locked, onChanged, onConfi
         </Group>
 
         <Group align="flex-start" gap="sm" grow wrap="nowrap">
-          <MultiSelect
+          <Picker
             w={230} label="Markets" placeholder={(rule.markets ?? []).length === 0 ? 'All' : ''}
             data={markets} value={rule.markets ?? []} error={wrong('markets')}
-            searchable clearable onChange={markets_set}
+            onChange={markets_set} tip={market => marketIn(published, market)}
           />
-          <MultiSelect
+          <Picker
             w={260} label="Datasets" placeholder={chosen.length === 0 ? 'All' : ''}
             data={datasets} value={chosen} error={wrong('datasets')}
-            searchable clearable onChange={pick}
+            onChange={pick} tip={value => datasetIn(published, value, datasets.find(one => one.value === value)?.label ?? value)}
           />
           <Select
             w={200} label="Grain" allowDeselect={false} error={wrong('grain')}

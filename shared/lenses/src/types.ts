@@ -222,21 +222,18 @@ export interface LensSlice {
 }
 
 /**
- * One combination a venue publishes, as a rule is written against.
+ * One combination a venue publishes, as a rule is written against, and the venue it is of.
  *
  * **The strings a filter matches**, not the shape a reader is shown: `Shape`
  * reports a variant taken apart into its levels, and a rule stores the variant
  * whole. Two projections of the same rows, for two different jobs.
  */
 export interface LensOption {
+  venue:   string;
   market:  string;
   dataset: string;
   variant: string;
   grain:   Grain;
-  series:  number;
-
-  /** Of those, the venue-wide files — the series the `market` bundle selects. */
-  buckets: number;
 }
 
 /**

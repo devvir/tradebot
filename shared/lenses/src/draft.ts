@@ -83,38 +83,26 @@ export const resolvedSummary = (db: DatabaseSync, definition: LensDefinition): R
 };
 
 /**
- * What a venue publishes, as a rule is written against.
+ * What the venues publish, as a rule is written against: every combination
+ * that has a series, and the venue it is of.
  *
- * Every combination that has a series, with how many — which is what lets an
- * editor offer only the datasets a venue actually has, and say how much sits
- * behind each choice.
+ * All of them at once, since an editor needs them together: a venue's own
+ * rules are written against its rows, the rules for every venue against all of
+ * them, and which venues hold a market or a dataset is read off the same list.
  */
-export const lensOptions = (db: DatabaseSync, venue: string): LensOption[] => {
-  const held = OPTIONS.get(db) ?? new Map<string, { at: number; options: LensOption[] }>();
-  const had  = held.get(venue);
-
-  OPTIONS.set(db, held);
+export const lensOptions = (db: DatabaseSync): LensOption[] => {
+  const had = OPTIONS.get(db);
 
   if (had && Date.now() - had.at < OPTIONS_MS) return had.options;
 
-  /**
-   * **`*` is offered what every venue publishes between them.** A rule under it
-   * is about all of them, so a dataset one venue has is a dataset the rule may
-   * name — it simply matches nothing at the venues without it.
-   */
   const options = db.prepare(
-    `SELECT c.market, c.dataset, c.variant, c.grain,
-            COUNT(s.id)                                         AS series,
-            SUM(CASE WHEN c.bundle = 'market' THEN 1 ELSE 0 END) AS buckets
+    `SELECT DISTINCT c.venue, c.market, c.dataset, c.variant, c.grain
        FROM slice c
-       JOIN pattern p ON p.slice_id = c.id
-       JOIN series s  ON s.pattern_id = p.id
-      WHERE ? = '${GLOBAL}' OR c.venue = ?
-      GROUP BY c.market, c.dataset, c.variant, c.grain
-      ORDER BY c.market, c.dataset, c.variant, c.grain`,
-  ).all(venue, venue) as unknown as LensOption[];
+      WHERE EXISTS (SELECT 1 FROM pattern p JOIN series s ON s.pattern_id = p.id WHERE p.slice_id = c.id)
+      ORDER BY c.venue, c.market, c.dataset, c.variant, c.grain`,
+  ).all() as unknown as LensOption[];
 
-  held.set(venue, { at: Date.now(), options });
+  OPTIONS.set(db, { at: Date.now(), options });
 
   return options;
 };
@@ -226,7 +214,7 @@ const BUNDLES = ['instrument', 'market'] as const;
  * something that changes when a venue starts publishing a
  * dataset, which is not often. So an answer is kept for `OPTIONS_MS`.
  */
-const OPTIONS = new WeakMap<DatabaseSync, Map<string, { at: number; options: LensOption[] }>>();
+const OPTIONS = new WeakMap<DatabaseSync, { at: number; options: LensOption[] }>();
 
 const OPTIONS_MS = 5 * 60_000;
 

@@ -358,14 +358,14 @@ describe('why a lens is refused', () => {
   });
 });
 
-describe('what a venue offers a rule', () => {
-  it('lists every combination that has a series, with how many', () => {
-    const offered = lensOptions(db, 'binance');
+describe('what the venues offer a rule', () => {
+  it('lists every combination that has a series, once, with the venue it is of', () => {
+    const offered = lensOptions(db);
+    const binance = offered.filter(one => one.venue === 'binance');
 
-    expect(offered).toHaveLength(6);
-    expect(offered.find(one => one.dataset === 'trades' && one.market === 'perp')?.series).toBe(2);
-    expect(offered.find(one => one.dataset === 'trades' && one.market === 'perp')?.buckets).toBe(1);
-    expect(offered.find(one => one.dataset === 'trades' && one.market === 'spot')?.buckets).toBe(0);
+    expect(binance).toHaveLength(6);
+    expect(new Set(offered.map(one => [one.venue, one.market, one.dataset, one.variant, one.grain].join('|'))).size).toBe(offered.length);
+    expect(Object.keys(binance[0]!).sort()).toEqual(['dataset', 'grain', 'market', 'variant', 'venue']);
   });
 });
 

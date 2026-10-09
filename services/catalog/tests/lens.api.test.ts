@@ -198,10 +198,10 @@ describe('what a definition would select', () => {
     expect(body.venues['binance']).toEqual({ slices: 2, partitions: 1, spans: ['..202012'] });
   });
 
-  it('offers what a venue publishes', async () => {
-    const { body } = await ask<{ items: { dataset: string }[] }>('GET', '/lenses/options/binance');
+  it('offers what the venues publish, each combination with the venue it is of', async () => {
+    const { body } = await ask<{ items: { venue: string; dataset: string }[] }>('GET', '/lenses/options');
 
-    expect(body.items.map(one => one.dataset).sort()).toEqual(['books', 'trades']);
+    expect([...new Set(body.items.filter(one => one.venue === 'binance').map(one => one.dataset))].sort()).toEqual(['books', 'trades']);
   });
 });
 

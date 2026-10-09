@@ -300,8 +300,15 @@ was.
 **A rule states only what it constrains**, and every dimension left alone is shown
 as `every` rather than as a blank — because the difference between "all datasets"
 and "no datasets chosen yet" is the whole meaning of the rule. Each list offers
-what the venue actually publishes, from `GET /lenses/options/:venue`, so a dataset
-that venue has never had cannot be picked.
+what the venue actually publishes, so a dataset that venue has never had cannot be
+picked. What every venue publishes is asked for once, from `GET /lenses/options`,
+and each block takes its own rows from that one list.
+
+**A market or a dataset says where it is found when it is pointed at** — chosen
+already, or still in the list. A market names the venues that publish anything in
+it; a dataset, the markets of each venue that publishes it, for the variant chosen
+or for any. It is read off the same list, in every block, so the answer does not
+need a rule under *All venues* to be had.
 
 **A rule is stored on its own.** Writing one sends nothing: *Add rule* puts a draft
 on the page, outlined in yellow until it is confirmed, and editing it costs the catalog nothing.

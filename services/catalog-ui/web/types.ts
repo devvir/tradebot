@@ -289,16 +289,13 @@ export interface LensDataset {
   variant?: string;
 }
 
-/** One combination a venue publishes, as a rule is written against. */
+/** One combination a venue publishes, as a rule is written against, and the venue it is of. */
 export interface LensOption {
+  venue:   string;
   market:  string;
   dataset: string;
   variant: string;
   grain:   string;
-  series:  number;
-
-  /** Of those, the venue-wide files — what Buckets selects. */
-  buckets: number;
 }
 
 /** Why a lens cannot be stored, located at the rule it belongs to. */

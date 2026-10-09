@@ -319,7 +319,7 @@ A **lens** is a named way of looking at the catalog. See [CATALOG-LENSES.md](CAT
 | `POST /lenses` | Create one. `slug` required; `name`, `note` and `definition` optional. Answers once it is stored, with `updating: true`: what it lets through is worked out afterwards. |
 | `PUT /lenses/:slug` | Replace it whole: `slug`, `name`, `note`, `definition`, or any of them. Answers once it is stored; `updating` is true where the rules changed. |
 | `DELETE /lenses/:slug` | Delete it. |
-| `GET /lenses/options/:venue` | The combinations that venue publishes (`market`, `dataset`, `variant`, `grain`), how many series each holds, and how many of those are venue-wide files (`buckets`). What a rule is written against. |
+| `GET /lenses/options` | Every combination the venues publish that has a series — `venue`, `market`, `dataset`, `variant`, `grain` — all venues in one list. What a rule is written against. |
 | `POST /lenses/check` | What is wrong with a definition, without storing it. |
 | `POST /lenses/size` | What a definition would put on a disk: `partitions`, `files`, `bytes`, and of those `pending` and `pendingBytes`, not yet downloaded. Exact, summed over the partitions it lets through. |
 | `GET /lenses/:slug/size` | The same, for one that exists, and `updating`: whether it is still being worked out, so the figures are of a part of it. |
