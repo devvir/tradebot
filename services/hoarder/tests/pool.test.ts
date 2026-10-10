@@ -43,19 +43,19 @@ afterEach(() => vi.clearAllMocks());
 
 describe('poolKey', () => {
   it('keys on exchange and endpoint, with an empty socket segment by default', () => {
-    expect(poolKey('bitmex', 'realtime')).toBe('bitmex:realtime:');
-    expect(poolKey('bitmex', 'platform')).toBe('bitmex:platform:');
+    expect(poolKey('twin', 'realtime')).toBe('twin:realtime:');
+    expect(poolKey('twin', 'platform')).toBe('twin:platform:');
   });
 
   it('separates venues sharing an endpoint name', () => {
     expect(poolKey('binance', 'public')).not.toBe(poolKey('okx', 'public'));
   });
 
-  // A venue splits one endpoint across sockets via socketKey — BitMEX uses it
-  // for liquidity pools, since a pool is a property of the subscription.
+  // A venue splits one endpoint across sockets via socketKey, where what tells
+  // them apart is a property of the subscription.
   it('adds the socket segment so each socket key gets its own connection', () => {
-    expect(poolKey('bitmex', 'realtime', 'Primary')).toBe('bitmex:realtime:Primary');
-    expect(poolKey('bitmex', 'realtime', 'Secondary')).toBe('bitmex:realtime:Secondary');
+    expect(poolKey('twin', 'realtime', 'Primary')).toBe('twin:realtime:Primary');
+    expect(poolKey('twin', 'realtime', 'Secondary')).toBe('twin:realtime:Secondary');
   });
 });
 
@@ -66,8 +66,8 @@ describe('pauseAll and resumeAll', () => {
     const ws1 = makeMockWs(1);
     const ws2 = makeMockWs(1);
 
-    set('bitmex:realtime:', { ws: ws1, channels: new Set() });
-    set('bitmex:platform:', { ws: ws2, channels: new Set() });
+    set('twin:realtime:', { ws: ws1, channels: new Set() });
+    set('twin:platform:', { ws: ws2, channels: new Set() });
 
     pauseAll();
 
@@ -78,7 +78,7 @@ describe('pauseAll and resumeAll', () => {
   it('resumes all OPEN connections', () => {
     const ws1 = makeMockWs(1);
 
-    set('bitmex:realtime:', { ws: ws1, channels: new Set() });
+    set('twin:realtime:', { ws: ws1, channels: new Set() });
 
     resumeAll();
 
@@ -88,7 +88,7 @@ describe('pauseAll and resumeAll', () => {
   it('skips connections that are not open', () => {
     const ws1 = makeMockWs(3); // CLOSED
 
-    set('bitmex:realtime:', { ws: ws1, channels: new Set() });
+    set('twin:realtime:', { ws: ws1, channels: new Set() });
 
     pauseAll();
 
@@ -98,15 +98,15 @@ describe('pauseAll and resumeAll', () => {
   // Backpressure is global: one paused publisher must stall every venue's
   // socket, or the unstalled ones keep filling the queue.
   it('pauses across venues', () => {
-    const bitmexWs  = makeMockWs(1);
+    const twinWs  = makeMockWs(1);
     const binanceWs = makeMockWs(1);
 
-    set('bitmex:realtime:', { ws: bitmexWs,  channels: new Set() });
+    set('twin:realtime:', { ws: twinWs,  channels: new Set() });
     set('binance:public:',  { ws: binanceWs, channels: new Set() });
 
     pauseAll();
 
-    expect(bitmexWs.pause).toHaveBeenCalledOnce();
+    expect(twinWs.pause).toHaveBeenCalledOnce();
     expect(binanceWs.pause).toHaveBeenCalledOnce();
   });
 });

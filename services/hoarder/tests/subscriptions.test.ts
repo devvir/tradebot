@@ -11,6 +11,9 @@ vi.mock('../src/websocket', () => ({
   connect: vi.fn(),
 }));
 
+// The subscriber is tried against a venue of the tests' own — see ./twin.
+vi.mock('../src/venues', async importOriginal => (await import('./twin')).withTwin(importOriginal as never));
+
 // ── Mock WS factory ───────────────────────────────────────────────────────────
 
 type MockWs = EventEmitter & {
@@ -40,7 +43,7 @@ const makeMockWs = (url = ''): MockWs => {
  * subscription confirmation on the next tick (process.nextTick is not faked by
  * vi.useFakeTimers).
  *
- * Faithful to BitMEX: the ack drops the `::Pool` suffix, acking the bare table
+ * As the twin acks: the ack drops the `::Pool` suffix, acking the bare table
  * with the pool carried separately in `ack.pool`.
  */
 const autoConfirm = (ws: MockWs): void => {
@@ -65,7 +68,7 @@ const makeService = () => {
   const config = {
     workerUuid:  'test-uuid',
     rabbitmqUrl: 'amqp://localhost',
-    venues:      ['bitmex'],
+    venues:      ['twin'],
   };
 
   return {
@@ -111,7 +114,7 @@ describe('subscribe', () => {
     autoConfirm(realtimeWs);
     mockConnect.mockReturnValue(realtimeWs);
 
-    await subscribe('bitmex', 'trade', service as any, vi.fn());
+    await subscribe('twin', 'trade', service as any, vi.fn());
 
     expect(realtimeWs.send).toHaveBeenCalledWith(
       JSON.stringify({ op: 'subscribe', args: ['trade'] }),
@@ -125,7 +128,7 @@ describe('subscribe', () => {
     autoConfirm(ws);
     mockConnect.mockReturnValue(ws);
 
-    await subscribe('bitmex', 'announcement', service as any, vi.fn());
+    await subscribe('twin', 'announcement', service as any, vi.fn());
 
     const [endpoint] = mockConnect.mock.calls[0];
 
@@ -139,9 +142,9 @@ describe('subscribe', () => {
     autoConfirm(ws);
     mockConnect.mockReturnValue(ws);
 
-    await subscribe('bitmex', 'trade', service as any, vi.fn());
+    await subscribe('twin', 'trade', service as any, vi.fn());
 
-    expect(mockConnect.mock.calls[0][1]).toBe('bitmex');
+    expect(mockConnect.mock.calls[0][1]).toBe('twin');
   });
 
   it('reuses the same connection for a second channel on the same endpoint', async () => {
@@ -151,8 +154,8 @@ describe('subscribe', () => {
     autoConfirm(ws);
     mockConnect.mockReturnValue(ws);
 
-    await subscribe('bitmex', 'trade', service as any, vi.fn());
-    await subscribe('bitmex', 'quote', service as any, vi.fn());
+    await subscribe('twin', 'trade', service as any, vi.fn());
+    await subscribe('twin', 'quote', service as any, vi.fn());
 
     expect(mockConnect).toHaveBeenCalledTimes(1);
     expect(ws.send).toHaveBeenCalledTimes(2);
@@ -178,11 +181,11 @@ describe('subscribe: pooled channels', () => {
     autoConfirm(secondaryWs);
     mockConnect.mockReturnValueOnce(primaryWs).mockReturnValueOnce(secondaryWs);
 
-    await subscribe('bitmex', 'orderBookL2::Primary',   service as any, vi.fn());
-    await subscribe('bitmex', 'orderBookL2::Secondary', service as any, vi.fn());
+    await subscribe('twin', 'orderBookL2::Primary',   service as any, vi.fn());
+    await subscribe('twin', 'orderBookL2::Secondary', service as any, vi.fn());
 
-    // Same table, two pools — BitMEX forbids that on one client, so each pool
-    // gets its own connection (this is the whole point of the socket key).
+    // Same table, two pools: each is a socket key of its own, so each gets its
+    // own connection (this is the whole point of the socket key).
     expect(mockConnect).toHaveBeenCalledTimes(2);
 
     expect(primaryWs.send).toHaveBeenCalledWith(
@@ -200,8 +203,8 @@ describe('subscribe: pooled channels', () => {
     autoConfirm(ws);
     mockConnect.mockReturnValue(ws);
 
-    await subscribe('bitmex', 'orderBookL2::Primary', service as any, vi.fn());
-    await subscribe('bitmex', 'trade::Primary',       service as any, vi.fn());
+    await subscribe('twin', 'orderBookL2::Primary', service as any, vi.fn());
+    await subscribe('twin', 'trade::Primary',       service as any, vi.fn());
 
     expect(mockConnect).toHaveBeenCalledTimes(1);
     expect(ws.send).toHaveBeenCalledTimes(2);
@@ -211,7 +214,7 @@ describe('subscribe: pooled channels', () => {
     const { service } = makeService();
     const ws = makeMockWs();
 
-    // BitMEX acks `orderBookL2::Primary` as { subscribe: 'orderBookL2', pool: 'Primary' }.
+    // The twin acks `orderBookL2::Primary` as { subscribe: 'orderBookL2', pool: 'Primary' }.
     ws.send.mockImplementation((raw: string) => {
       const msg = JSON.parse(raw);
 
@@ -226,7 +229,7 @@ describe('subscribe: pooled channels', () => {
     mockConnect.mockReturnValue(ws);
 
     await expect(
-      subscribe('bitmex', 'orderBookL2::Primary', service as any, vi.fn()),
+      subscribe('twin', 'orderBookL2::Primary', service as any, vi.fn()),
     ).resolves.toBeUndefined();
   });
 
@@ -248,7 +251,7 @@ describe('subscribe: pooled channels', () => {
 
     mockConnect.mockReturnValue(ws);
 
-    const pending = subscribe('bitmex', 'orderBookL2::Primary', service as any, vi.fn());
+    const pending = subscribe('twin', 'orderBookL2::Primary', service as any, vi.fn());
     const settled = vi.fn();
 
     pending.then(settled, settled);
@@ -272,7 +275,7 @@ describe('subscribe: timeout', () => {
     // send() is a no-op: no confirmation arrives
     mockConnect.mockReturnValue(ws);
 
-    const pending = subscribe('bitmex', 'trade', service as any, vi.fn());
+    const pending = subscribe('twin', 'trade', service as any, vi.fn());
 
     pending.catch(() => { /** asserted below */ });
 
@@ -296,7 +299,7 @@ describe('subscribe: timeout', () => {
 
     mockConnect.mockReturnValue(ws);
 
-    await expect(subscribe('bitmex', 'trade', service as any, vi.fn()))
+    await expect(subscribe('twin', 'trade', service as any, vi.fn()))
       .rejects.toThrow(/failed/);
   });
 });

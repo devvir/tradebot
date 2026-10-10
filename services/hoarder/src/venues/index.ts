@@ -1,5 +1,4 @@
 import { binance } from './binance';
-import { bitmex } from './bitmex';
 import { bybit } from './bybit';
 import { kraken } from './kraken';
 import { okx } from './okx';
@@ -8,12 +7,11 @@ import type { Venue } from './types';
 
 /**
  * Every venue hoarder knows how to speak to. Adding a venue is adding one
- * file next to `bitmex.ts`, its channels in `channels.ts`, and one line here —
+ * file beside the others, its channels in `channels.ts`, and one line here —
  * the core never learns its name.
  */
 const VENUES: readonly Venue[] = [
   binance,
-  bitmex,
   bybit,
   kraken,
   okx,

@@ -38,7 +38,7 @@ export const connect = (
   const { socketKey, onReconnect } = options;
 
   // Sockets sharing an endpoint are told apart in the logs by their socketKey
-  // (a BitMEX pool, a stream shard); the plain one is just the venue name.
+  // (a stream shard); the plain one is just the venue name.
   const label = [venue, socketKey].filter(Boolean).join('/');
 
   const reconnect: ReconnectState = { delayMs: RECONNECT_DELAY_MS, timer: null };

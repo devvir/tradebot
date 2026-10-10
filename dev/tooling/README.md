@@ -9,12 +9,8 @@ Comprehensive CLI tooling for development, debugging, and monitoring of the Trad
 ./tools
 
 # Run a specific tool
-./tools ws                    # WebSocket tool
 ./tools rabbit --list         # RabbitMQ queue list
-./tools bouncer               # View accounts
-./tools broadcast             # Monitor broadcast
 ./tools remote sync-env       # Push .env files to remote
-./tools remote pull           # Pull vault files from remote
 ```
 
 ## Global Options
@@ -31,82 +27,8 @@ All tools support these global flags:
 Example:
 
 ```bash
-./tools -e .env.local bouncer
+./tools -e .env.local rabbit --list
 ```
-
----
-
-## WebSocket Tool (`ws`, `websocket`)
-
-Connect to BitMEX WebSocket with authentication or as a guest. Provides an interactive shell for subscribing/unsubscribing from data streams and executing common operations.
-
-### Usage
-
-```bash
-./tools ws [account] [options]
-```
-
-### Options
-
-- `[account]` - Optional account ID to auto-select (otherwise prompts you)
-- `-t, --testnet` - Connect to testnet instead of live. Only valid with `--guest` (authenticated accounts have their environment fixed in Bouncer)
-- `--guest` - Connect as guest without authentication
-- `-p, --platform` - Connect to `/realtimePlatform` instead of `/realtime`. Use this for platform-level topics: `announcement`, `chat`, `connected`, `publicNotifications`, `privateNotifications` (the last one requires auth)
-
-### Endpoints
-
-| Endpoint | Flag | Topics |
-|----------|------|--------|
-| `/realtime` | _(default)_ | All trading topics: `trade`, `quote`, `order`, `position`, `orderBookL2`, etc. |
-| `/realtimePlatform` | `-p` | `announcement`, `chat`, `connected`, `publicNotifications`, `privateNotifications` |
-
-### Examples
-
-```bash
-# Interactive menu - prompts to select account
-./tools ws
-
-# Connect to specific account by ID
-./tools ws bitmex-live
-
-# Connect to testnet as guest
-./tools ws --testnet --guest
-
-# Connect to /realtimePlatform as guest (public topics)
-./tools ws --guest --platform
-
-# Connect to /realtimePlatform authenticated (for privateNotifications)
-./tools ws bitmex-live --platform
-```
-
-### Interactive Commands
-
-Once connected, you can use these commands in the shell:
-
-| Command | Example | Description |
-|---------|---------|-------------|
-| `sub <channel> [<symbol>]` | `sub trade XBTUSD` | Subscribe to a channel (with optional symbol filter) |
-| `unsub <channel> [<symbol>]` | `unsub trade XBTUSD` | Unsubscribe from a channel |
-| `quotes <symbol>` | `quotes XBTUSD` | Subscribe to quote data for a symbol |
-| `trades <symbol>` | `trades XBTUSD` | Subscribe to trade data for a symbol |
-| `orders` | `orders` | Subscribe to order updates (requires auth) |
-| `positions` | `positions` | Subscribe to position updates (requires auth) |
-| `list` | `list` | Print locally-tracked active subscriptions |
-| `ping` | `ping` | Send a ping |
-| `help` | `help` | Show this command list |
-| `exit` | `exit` | Disconnect and exit |
-
-### Account Selection
-
-- If no account is specified, you'll be prompted to select from available accounts in Bouncer
-- Accounts are auto-discovered via Docker or read from `BOUNCER_URL`
-- Requires `BOUNCER_TOKEN` for Bouncer authentication
-
-### Authentication
-
-- WS auth is delegated to Bouncer: `POST /sign/ws` returns the HMAC-SHA256 signature
-- The raw API secret never leaves Bouncer
-- Guest mode connects without authentication (no access to private data)
 
 ---
 
@@ -174,115 +96,6 @@ Messages are displayed as:
 
 - **RabbitMQ URL**: `QUEUE_URL` environment variable (default: `amqp://guest:guest@localhost:5672`)
 - **Management API**: `RABBITMQ_MGMT_URL` (default: `http://localhost:15672/api`)
-
----
-
-## Bouncer Tool (`bouncer`)
-
-View accounts and authentication information from the Bouncer service.
-
-### Usage
-
-```bash
-./tools bouncer [options]
-```
-
-### Options
-
-- `-a, --all` - Show full details for each account (including keys and tokens)
-- `--account <name>` - Show detailed JSON for specific account
-
-### Examples
-
-```bash
-# List all accounts (summary)
-./tools bouncer
-
-# Show all details
-./tools bouncer --all
-
-# Show specific account details
-./tools bouncer --account "Trading Bot"
-
-# Combined
-./tools bouncer -a --account "My Account"
-```
-
-### Account Summary (default)
-
-Table showing:
-- **#** - Account number
-- **Name** - Account name/identifier
-- **Exchange** - Exchange name (BitMEX, etc.)
-- **Testnet** - Whether it's testnet or live
-- **AuthKey** - Whether API key is present
-
-### Account Details (with `--all`)
-
-- Account name/account ID
-- Exchange
-- API Key (first 8 chars shown, rest masked)
-- Token status (shown as masked for security)
-- Testnet flag
-
-### Configuration
-
-Connects to Bouncer service at `BOUNCER_URL` environment variable.
-
----
-
-## Broadcast Monitoring Tool (`broadcast`)
-
-Monitor messages from the Broadcast service in real-time. Useful for debugging broadcast activity and message patterns.
-
-### Usage
-
-```bash
-./tools broadcast [options]
-```
-
-### Options
-
-- `--type <type>` - Filter messages by type (only print messages matching this type)
-
-### Examples
-
-```bash
-# Monitor all broadcast messages
-./tools broadcast
-
-# Monitor and filter by type
-./tools broadcast --type OrderUpdate
-```
-
-### Message Display
-
-For each message:
-- **Message number** - Sequential counter
-- **Timestamp** - When message was published
-- **Type** - Message type/action
-- **Content** - Full JSON payload
-
-### Message Types
-
-Common message types (service-specific):
-- `OrderUpdate` - Order changes
-- `TradeExecuted` - Trade execution
-- `PositionChange` - Position updates
-- Custom types from your broadcast service
-
-### Real-Time Monitoring
-
-- Connects to RabbitMQ's broadcast exchange
-- Each message is acknowledged after display
-- Press Ctrl+C to stop monitoring
-- No messages are lost
-
-### Configuration
-
-Uses RabbitMQ with:
-- **Exchange**: `broadcast` (fanout type)
-- **URL**: `QUEUE_URL` environment variable
 
 ---
 
@@ -356,14 +169,13 @@ Override per-project with `-e` if credentials differ.
 
 ## Remote Tool (`remote`)
 
-Remote server operations. Two subcommands: `sync-env` pushes local `.env` files to a remote host; `pull` downloads vault files from a remote host, skipping any that are already identical locally.
+Remote server operations. One subcommand: `sync-env` pushes local `.env` files to a remote host. `remote` alone runs it.
 
 ### Usage
 
 ```bash
 ./tools remote sync-env
-./tools remote pull
-./tools remote          # interactive menu
+./tools remote          # the same
 ```
 
 ---
@@ -384,32 +196,6 @@ For each file, the equivalent remote path is created with `ssh mkdir -p` before 
 
 ---
 
-### `remote pull`
-
-Downloads files from a remote path to a local directory. Before transferring each file, it computes the remote `md5sum` via SSH and compares it with the local copy. Only files that are missing or have a different checksum are pulled.
-
-```bash
-# Pull vault files from a remote host
-./tools remote pull
-# Prompt: Remote source (user@host:/remote/path): deploy@10.0.0.1:/data/vault
-# Prompt: Local destination path: ${BITMEX_DATA_DIR}/remote
-```
-
-Output labels each file as `missing` or `changed` before pulling it. Files that are already up to date are silently skipped.
-
----
-
-### Interactive menu
-
-Running `./tools remote` with no subcommand launches a menu:
-
-```
-Sync Env  — SCP all .env files to a remote server
-Pull      — Pull vault files from remote (skips unchanged files)
-```
-
----
-
 ## Environment Configuration
 
 The tooling package loads environment variables in this order (later overrides earlier):
@@ -426,158 +212,20 @@ The tooling package loads environment variables in this order (later overrides e
 ./tools -e .env.dev rabbit --list
 
 # Use staging config
-./tools -e .env.staging bouncer
+./tools -e .env.staging monitor
 
 # Multiple layers
-./tools -e .env.local data status
+./tools -e .env.local cold audit
 ```
 
 ### Required Environment Variables
 
 | Variable | Example | Tools | Default |
 |----------|---------|-------|---------|
-| `BOUNCER_URL` | `http://localhost:3010` | ws, bouncer | Required |
-| `QUEUE_URL` | `amqp://guest:guest@localhost:5672` | rabbit, broadcast | `amqp://guest:guest@localhost:5672` |
+| `QUEUE_URL` | `amqp://guest:guest@localhost:5672` | rabbit | `amqp://guest:guest@localhost:5672` |
 | `RABBITMQ_MGMT_URL` | `http://localhost:15672/api` | rabbit | `http://localhost:15672/api` |
-| `VAULT_DATA_DIR` | `${BITMEX_DATA_DIR}/vault` | data | Required |
 
 ---
-
----
-
-## Data Tool (`data`)
-
-Manage vault data: prepare raw WS source files, sync with remotes and Mega, inspect vault state, and recover corrupt files.
-
-### Usage
-
-```bash
-./tools data prepare [path] [-D] [--log <dir>] [--from <date>] [-C <n>]
-./tools data recover [path] [-D]
-./tools data resort  [path] [-D] [--from <date>]
-./tools data status
-./tools data sync   [--from <date>] [--log <dir>] [-C <n>] [-y]
-./tools data                        # interactive menu
-```
-
-### Path argument (`prepare` and `recover`)
-
-| Input | Resolves to |
-|-------|-------------|
-| _(omitted / enter)_ | `${VAULT_DATA_DIR}` |
-| `instrument` | `${VAULT_DATA_DIR}/instrument` |
-| `instrument/2026` | `${VAULT_DATA_DIR}/instrument/2026` |
-| `/tmp/alt-vault` | `/tmp/alt-vault` (absolute path, used as-is) |
-
-### Shared options
-
-| Flag | Subcommands | Effect |
-|------|-------------|--------|
-| `-D, --dry-run` | prepare, recover | Report only — no writes |
-| `--from <date>` | prepare, sync | Skip days before this date (`YYYYMMDD` or `YYYY-MM-DD`) |
-| `--log [dir]` | prepare, recover, sync | Write a log file into `<dir>` (default: cwd) |
-| `-C, --concurrency <n>` | prepare, sync | Parallel workers for prepare (default: 1) |
-| `-y, --yes` | sync | Auto-accept all tasks except abnormal ones |
-
----
-
-### `data prepare`
-
-Processes raw WS source files into clean, sorted, deduped daily buckets. Files are grouped by `YYYYMMDD` prefix; the pipeline reads, sorts by canonical timestamp, deduplicates, and writes the output. Each day is written to `<day>.csv.gz.tmp` first and renamed on success.
-
-```bash
-./tools data prepare instrument -D           # dry-run
-./tools data prepare instrument
-./tools data prepare instrument/2026 --from 2026-01-01
-./tools data prepare instrument --log /tmp/prepare-logs
-./tools data prepare -C 4                    # parallel workers
-```
-
-See [DATA-PREPARE.md](../../docs/tooling/DATA-PREPARE.md) for full pipeline details.
-
----
-
-### `data recover`
-
-Tests every `.csv.gz` under the scoped path with `gzip -t`. Without `--dry-run`, corrupt files are recovered with `gzrecover` and written alongside the original as `<name>.recovered.csv` (plain CSV, not gzip). The scrambled tail is pruned at the last valid timestamp row.
-
-```bash
-./tools data recover instrument -D           # dry-run: report only
-./tools data recover                         # recover all under vault root
-./tools data recover instrument/2026
-```
-
-See [DATA-RECOVER.md](../../docs/tooling/DATA-RECOVER.md) for recovery details.
-
----
-
-### `data resort`
-
-Re-sorts collected (non-WS) flat buckets from symbol-major to timestamp-major,
-normalizing timestamps to canonical ISO (`YYYY-MM-DDTHH:MM:SS.mmmZ`). Targets
-BitMEX S3 daily buckets and scribe REST buckets (`trade`, `quote`, `tick`,
-`compositeIndex`). Never touches the source: writes a `<name>.resorted.csv.gz`
-sibling (`.tmp` while in progress), verified by row count before the rename.
-Files already sorted and canonical are clean-copied; files with a `.resorted`
-sibling are skipped, so re-runs resume cleanly. WS-structured files (`_date_`
-first column) are skipped — they are message-shaped and must go through
-`data prepare` instead.
-
-```bash
-./tools data resort quote -D                 # dry-run: verdicts only
-./tools data resort quote/2026
-./tools data resort trade --from 2026-04-01
-```
-
-See [DATA-RESORT.md](../../docs/tooling/DATA-RESORT.md) for design and rationale.
-
----
-
-### `data status`
-
-Read-only audit. Scans local disk, all configured remotes, and Mega cold storage; prints a wide per-table grid showing what's where. Nothing is written or prompted.
-
-```bash
-./tools data status
-```
-
-See [DATA-STATUS.md](../../docs/tooling/DATA-STATUS.md) for grid layout and vocabulary.
-
----
-
-### `data sync`
-
-Scans the vault, identifies files that exist but haven't completed their pipeline journey, and offers to move them along. Tasks in order: clean rsync temps → pull from remotes → back up sources to Mega → prepare → resort (suffixed trade/quote sources → ts-major buckets) → back up buckets to Mega → cleanup. Each task is previewed before execution with a `[Y/n/a]` prompt.
-
-```bash
-./tools data sync
-./tools data sync -y                         # unattended (skips abnormal tasks)
-./tools data sync --from 2026-01-01
-./tools data sync -C 4                       # parallel prepare workers
-```
-
-See [DATA-SYNC.md](../../docs/tooling/DATA-SYNC.md) for task derivation and execution details.
-
----
-
-### Interactive menu
-
-Running `./tools data` with no subcommand prompts for a subcommand then a path:
-
-```
-Prepare — sort, dedup, gap-fill (merge) WS source files
-Recover — verify .csv.gz integrity; recover corrupt files
-Status  — read-only audit of local, remotes, and Mega
-Sync    — audit + sync local, remotes, and Mega
-```
-
----
-
-### Configuration
-
-- `VAULT_DATA_DIR` — Root directory of vault files (required; defined in `.env`)
-- `VAULT_REMOTES` — Comma-separated `name=user@host:/path` pairs for rsync remotes
-- `SOURCES_MEGA_VAULT` — Mega path for prepared bucket backups
 
 ---
 
@@ -606,35 +254,16 @@ dev/tooling/
 ├── src/
 │   ├── index.ts              # Main CLI entry point
 │   ├── commands/             # Thin routing layer
-│   │   ├── ws.ts
 │   │   ├── rabbit.ts
-│   │   ├── bouncer.ts
-│   │   ├── broadcast.ts
 │   │   ├── monitor.ts
 │   │   ├── remote.ts
-│   │   ├── data.ts
 │   ├── tools/                # Tool implementations (isolated)
-│   │   ├── websocket/
 │   │   ├── rabbitmq/
-│   │   ├── bouncer/
-│   │   ├── broadcast/
 │   │   ├── monitor/
 │   │   ├── remote/
-│   │   │   ├── index.ts      # Entry point, interactive submenu
+│   │   │   ├── index.ts      # Entry point
 │   │   │   ├── types.ts      # RemoteDest, parseRemoteDest
-│   │   │   ├── sync-env.ts   # Push .env files via scp
-│   │   │   └── pull.ts       # Pull files by md5 comparison
-│   │   └── data/
-│   │       ├── index.ts      # Entry point, interactive submenu
-│   │       ├── discover.ts   # Shared: resolveCsvGzFiles, parseFromDay, SUFFIX_PATTERN
-│   │       ├── options.ts    # Shared state: dryRun, fromDay, logPath, concurrency
-│   │       ├── tables.ts     # Shared: KNOWN_TABLES, per-table config
-│   │       ├── types.ts      # Shared types
-│   │       ├── scan/         # Scanner (shared by status and sync)
-│   │       ├── prepare/      # `data prepare` subcommand
-│   │       ├── recover/      # `data recover` subcommand
-│   │       ├── status/       # `data status` subcommand
-│   │       └── sync/         # `data sync` subcommand
+│   │   │   └── sync-env.ts   # Push .env files via scp
 │   └── shared/               # Shared utilities
 │       ├── ui/
 │       │   ├── logger.ts     # Colored output, formatting
@@ -650,12 +279,6 @@ dev/tooling/
 │   └── tools/
 │       ├── remote.test.ts    # parseRemoteDest, findEnvFiles, listRemoteFiles, localMd5, run()
 │       ├── monitor.test.ts
-│       ├── bouncer.test.ts
-│       └── data/
-│           ├── prepare/
-│           ├── recover/
-│           ├── scan/
-│           └── status/
 ├── .env                      # Dev tooling overrides (loaded after root .env)
 ├── package.json
 ├── tsconfig.json
@@ -722,20 +345,6 @@ export function register(program: Command): void {
 
 ## Troubleshooting
 
-### "BOUNCER_URL not configured"
-
-Make sure `BOUNCER_URL` is set in your `.env` files:
-
-```bash
-BOUNCER_URL=http://localhost:3010
-```
-
-Or use the `-e` flag:
-
-```bash
-./tools -e ./env.local ws
-```
-
 ### RabbitMQ queue not found
 
 Make sure queue name is exact. List available queues first:
@@ -743,14 +352,6 @@ Make sure queue name is exact. List available queues first:
 ```bash
 ./tools rabbit --list
 ```
-
-### WebSocket auth failed
-
-- Verify Bouncer service is running and accessible
-- Check account is configured in Bouncer
-- Try guest mode to rule out auth issues: `./tools ws --guest`
-
----
 
 ## Development
 

@@ -35,7 +35,7 @@ All credentials are configured via environment variables:
 Services connect using the `QUEUE_URL` environment variable, which automatically includes the credentials:
 
 ```typescript
-// Example: services/broadcast/docker/compose.yml
+// Example: services/hoarder/docker/compose.yml
 QUEUE_URL: amqp://${QUEUE_USER}:${QUEUE_PASS}@rabbitmq:${RABBITMQ_AMQP_PORT}
 ```
 

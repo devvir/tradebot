@@ -156,7 +156,7 @@ describe('kraken', () => {
 // ── Cross-venue invariants ────────────────────────────────────────────────────
 
 describe('all venues', () => {
-  const names = ['binance', 'bitmex', 'bybit', 'kraken', 'okx'];
+  const names = ['binance', 'bybit', 'kraken', 'okx'];
 
   it('registers every implemented venue', () => {
     for (const n of names) expect(venueFor(n).name).toBe(n);

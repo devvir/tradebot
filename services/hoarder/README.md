@@ -4,13 +4,13 @@ Connects to trading venues' market-data WebSockets and publishes every message t
 
 One instance can collect one venue, several, or all of them — selected with `HOARDER_VENUES`, so deployments can be split per venue or consolidated without code changes.
 
-"Venue" means a trading exchange (BitMEX, Binance, …) everywhere in this service. "Exchange" unqualified means the AMQP exchange, and nothing else.
+"Venue" means a trading exchange (Binance, OKX, …) everywhere in this service. "Exchange" unqualified means the AMQP exchange, and nothing else.
 
 ## Core Functionality
 
 - **Multi-venue WebSocket connections** — one socket per (venue, endpoint, socket key), created on demand
 - **Verbatim relay** — payloads are published exactly as received; normalising across venues is a downstream concern, and a byte-faithful archive is what makes it possible later
-- **Venue routing keys** — the routing key is the venue name (`bitmex`). Anything finer is venue-local vocabulary a binding cannot express portably, and it is already in the payload
+- **Venue routing keys** — the routing key is the venue name (`okx`). Anything finer is venue-local vocabulary a binding cannot express portably, and it is already in the payload
 - **Automatic reconnection** with exponential backoff, and resubscription of tracked channels
 - **Backpressure** — a paused publisher pauses every socket across every venue
 - **Health monitoring** and graceful shutdown
@@ -25,7 +25,6 @@ Currently implemented:
 
 | Venue | Endpoint | Channel syntax | Ack correlates on |
 |---|---|---|---|
-| `bitmex` | realtime + platform | `table` / `table::Pool` | echoed channel (+ pool) |
 | `binance` | spot | raw stream name — `btcusdt@aggTrade` | request id only |
 | `bybit` | v5 linear | raw topic — `publicTrade.BTCUSDT` | `req_id` only |
 | `okx` | v5 public | `channel:instId` — `trades:BTC-USDT` | echoed arg |
@@ -54,7 +53,7 @@ Requires RabbitMQ — see [infra packs](../../modules/infra/README.md).
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `HOARDER_VENUES` | No | _(all known)_ | Comma-separated venues to collect — `bitmex`, `binance`, `bybit`, `kraken`, `okx`. Unknown names fail at startup |
+| `HOARDER_VENUES` | No | _(all known)_ | Comma-separated venues to collect — `binance`, `bybit`, `kraken`, `okx`. Unknown names fail at startup |
 | `QUEUE_URL` | Yes | — | RabbitMQ connection URL |
 
 **What each venue subscribes to is not configurable** — the lists live in [src/venues/channels.ts](src/venues/channels.ts). They change rarely and never per host, so a rebuild is the right cost for changing them, and the collected set stays legible in one file instead of spread across deployment envs.

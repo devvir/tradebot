@@ -10,34 +10,13 @@
  * Nothing is templated or derived, so what a venue collects is legible here
  * without tracing preset expansion through another package.
  *
- * ⚠ **The four non-BitMEX lists below are provisional.** They were written before the
+ * ⚠ **The lists below are provisional.** They were written before the
  * venues were surveyed — see the *WebSocket* section of each venue doc under `docs/venues/`.
  * Trade feeds turned out largely redundant with each venue's archive, and book feeds — the
  * thing actually worth streaming — are diff streams needing interleaved REST snapshots that
  * this service cannot yet take. Symbol coverage is a two-symbol placeholder.
  */
 export const VENUE_CHANNELS: Readonly<Record<string, readonly string[]>> = {
-  /**
-   * Mirrors what BitMEX collection has been running: the archive set, with the
-   * book taken per-pool. `orderBookL2` is fanned because its bare subscription
-   * streams the fused `Aggregated` book — the per-pool data exists only behind
-   * an explicit `::Pool` filter, and BitMEX rejects two pools of one table on a
-   * single socket, so each lands on its own connection.
-   *
-   * `chat`, `announcement`, `connected` and `publicNotifications` ride the
-   * platform endpoint; the rest are realtime.
-   */
-  bitmex: [
-    'announcement',
-    'chat',
-    'connected',
-    'instrument',
-    'liquidation',
-    'orderBookL2::Primary',
-    'orderBookL2::Secondary',
-    'publicNotifications',
-  ],
-
   /**
    * Raw Binance stream names. Per-symbol: Binance has no all-symbol book or
    * trade stream, so every symbol collected is listed here.

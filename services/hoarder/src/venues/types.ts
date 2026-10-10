@@ -10,9 +10,9 @@ export interface Venue {
   name: string;
 
   /**
-   * The venue's websocket endpoints, keyed by a venue-chosen logical name (e.g.
-   * BitMEX's `realtime` / `platform`, or a single `public`). A separate socket
-   * is opened per endpoint, per socket key.
+   * The venue's websocket endpoints, keyed by a venue-chosen logical name (a
+   * single `public`, or one for each of its markets). A separate socket is
+   * opened per endpoint, per socket key.
    */
   endpoints(): EndpointDefinition[];
 
@@ -47,20 +47,9 @@ export interface Venue {
 
   /**
    * Sub-socket key for a channel, when one endpoint needs several sockets (a
-   * BitMEX pool, a venue's stream shard). Empty string keeps a single socket.
+   * venue's stream shard). Empty string keeps a single socket.
    */
   socketKey?(channel: string): string;
 }
 
 export type AckResult = 'ok' | 'failed' | null;
-
-// ── BitMEX ────────────────────────────────────────────────────────────────────
-
-/** The three BitMEX liquidity pools selectable on a market-data subscription. */
-export type Pool = 'Primary' | 'Secondary' | 'Aggregated';
-
-/** A BitMEX subscription arg split into its base channel and (optional) pool suffix. */
-export interface ParsedChannel {
-  base:  string;
-  pool?: Pool;
-}

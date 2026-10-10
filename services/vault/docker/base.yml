@@ -1,7 +1,9 @@
 # Vault base service definition.
-# Extend this to create vault instances — the writer (compose.yml) or the farm
-# module's read-only harvester replicas. Holds everything that extends cleanly;
+# Extend this to create a vault instance. Holds everything that extends cleanly;
 # compose.yml is the "last stop" for what does not (container_name, ports).
+#
+# The store is not mounted here: whoever wires the service in mounts a writable
+# volume at /data/vault, and without one what it writes goes with the container.
 
 services:
   vault:
@@ -23,7 +25,6 @@ services:
 
     volumes:
       - ../../../:/live
-      - ${VAULT_DATA_DIR:?VAULT_DATA_DIR is not defined}:/data/vault
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]

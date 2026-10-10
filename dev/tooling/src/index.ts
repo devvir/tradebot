@@ -30,15 +30,10 @@ import { loadEnv } from './shared/utils/env';
 import { selectTool } from './shared/ui/prompts';
 import { heading, spacer } from './shared/ui/logger';
 
-import { register as registerWs } from './commands/ws';
 import { register as registerRabbit } from './commands/rabbit';
-import { register as registerBouncer } from './commands/bouncer';
-import { register as registerBroadcast } from './commands/broadcast';
 import { register as registerMonitor } from './commands/monitor';
-import { register as registerData } from './commands/data';
 import { register as registerCold } from './commands/cold';
 import { register as registerRemote } from './commands/remote';
-import { register as registerSynth } from './commands/synth';
 
 interface Tool {
   id: string;
@@ -47,15 +42,10 @@ interface Tool {
 }
 
 const tools: Tool[] = [
-  { id: 'ws', name: 'WebSocket', description: 'Connect to BitMEX WebSocket with authentication' },
   { id: 'rabbit', name: 'RabbitMQ', description: 'Monitor RabbitMQ queues and streams' },
-  { id: 'bouncer', name: 'Bouncer', description: 'View accounts and auth tokens from Bouncer' },
-  { id: 'broadcast', name: 'Broadcast', description: 'Monitor broadcast exchange messages' },
   { id: 'monitor', name: 'Monitor', description: 'Live dashboard: Docker containers and RabbitMQ queues' },
-  { id: 'data', name: 'Data', description: 'Prepare, sync, and recover vault data' },
   { id: 'cold', name: 'Cold', description: 'Cold storage: pack, upload, and account for backups' },
-  { id: 'remote', name: 'Remote', description: 'Remote server operations (sync-env, pull)' },
-  { id: 'synth', name: 'Synth', description: 'Synthetic data tools (index, generate)' },
+  { id: 'remote', name: 'Remote', description: 'Remote server operations (sync-env)' },
 ];
 
 async function main(): Promise<void> {
@@ -78,15 +68,10 @@ async function main(): Promise<void> {
       }
     });
 
-  registerWs(program);
   registerRabbit(program);
-  registerBouncer(program);
-  registerBroadcast(program);
   registerMonitor(program);
-  registerData(program);
   registerCold(program);
   registerRemote(program);
-  registerSynth(program);
 
   // Show interactive menu when no subcommand is given.
   // Preserve any global flags (-e, --env, -v, --verbose) so they survive the

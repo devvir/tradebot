@@ -11,7 +11,7 @@ services:
         SERVICE_NAME: hoarder
 
     environment:
-      # Which venues this instance collects: bitmex, binance, bybit, kraken, okx
+      # Which venues this instance collects: binance, bybit, kraken, okx
       # (default: all of them)
       HOARDER_VENUES: ${HOARDER_VENUES:-}
 

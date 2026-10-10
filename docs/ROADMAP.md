@@ -123,6 +123,11 @@ Not started. What each venue's archive lacks — and so what REST is for — is 
 every channel it subscribes to has to be justified by a gap the other two origins cannot fill, because
 a stream missed is gone for ever and a stream duplicated costs storage no one wanted.
 
+**A dev tool to try any venue's WebSocket by hand comes with it.** A `tools` command that connects
+to a venue, subscribes to a channel and shows what comes back: what the venue acknowledges, what a
+message looks like, what it sends unasked. Low priority — it is built when WebSocket collection is,
+not before.
+
 ## Part 2 · Normalise
 
 One service, [stocker](services/STOCKER.md), turning every origin into the same Parquet vault.
@@ -265,11 +270,6 @@ is an input to what it considers reclaimable.
 **okx's day-major layout cannot be grouped.** `trades/daily/<YYYYMMDD>/` spreads one symbol-month
 across 29 directories, and `scattered` cannot fix it because it requires a symbol-major walk. A
 `scattered: 'symbol' | 'period'` distinction is the shape that fits — [BUGS.md](planning/BUGS.md).
-
-**Three deferred optimisations in the facts store**, all measured, none a correctness gap: a digest of
-the input set so stocker stops reading 2.4M member rows per sweep, a narrower query for
-`cold evict archives`, and one home for the partition id currently built from columns in two places
-([shared/pipeline/README.md](../shared/pipeline/README.md)).
 
 **`subject` carrying every path extra** is latent until the order-book series land — the first with
 more than one.

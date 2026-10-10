@@ -73,12 +73,9 @@ normalised product, whatever it was made from — sits beside `sources/`, not in
 
 ## Mega is `cold`'s alone
 
-Every Mega call in the repo will end up behind this command. `data sync` still shells out to
-`mega-*` itself and keeps its own copy of that code until it migrates — at which point that copy is
-deleted.
+Every Mega call in the repo is behind this command.
 
-**The duplication is resolved by deletion, not by hoisting.** Nothing Mega-shaped goes into
-`shared/`: cold storage is one concern with one owner, and a shared helper would invite a second
+**Nothing Mega-shaped goes into `shared/`.** Cold storage is one concern with one owner, and a shared helper would invite a second
 caller that reasons about Mega without going through the record of what is in it.
 
 ---
@@ -221,5 +218,4 @@ earlier revision had and the revision that replaces it has not, once that one is
 **And it does not decide what is worth keeping.** What is stored is what the catalog says is
 finished — through a lens, where one is asked for.
 
-Related: [COLD-PUSH.md](COLD-PUSH.md), [COLD-EVICT.md](COLD-EVICT.md), [COLD-VAULT.md](COLD-VAULT.md), and [DATA-SYNC.md](DATA-SYNC.md) for the Mega steps that have
-not moved here yet.
+Related: [COLD-PUSH.md](COLD-PUSH.md), [COLD-EVICT.md](COLD-EVICT.md), [COLD-VAULT.md](COLD-VAULT.md).

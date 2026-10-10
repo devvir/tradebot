@@ -1,5 +1,4 @@
 # Vault Service — the writer instance. Owns raw dump file storage.
-# Read-only replicas extend base.yml directly (see the farm module's harvester).
 
 services:
   vault:

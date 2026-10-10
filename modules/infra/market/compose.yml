@@ -4,12 +4,10 @@
 #
 # Abstract service names:
 #   queue      — trading signals / order message broker
-#   queue-rt   — real-time live BitMEX feed message broker
-#   bouncer    — API credential signing
+#   queue-rt   — real-time live feed message broker
 #   redis      — fast cache for order/position data
 
 include:
-  - path: ../../../services/bouncer/docker/compose.yml
   - path: ../../../services/redis/docker/compose.yml
 
 services:

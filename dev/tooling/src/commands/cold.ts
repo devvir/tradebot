@@ -9,8 +9,8 @@ import { register as stats } from '../tools/cold/stats/command';
  * The cold tools are loaded when a cold command runs, not when it is
  * registered.
  *
- * **Registration happens for every invocation.** `tools data sync` builds this
- * command's parser like any other, and a static import would pull in
+ * **Registration happens for every invocation.** Any other command builds this
+ * one's parser beside its own, and a static import would pull in
  * `node:sqlite` behind it — which Node then announces with an experimental
  * warning on a command that has no database. Nothing was wrong, but a warning
  * that appears where it does not belong is a warning people learn to ignore.
@@ -23,9 +23,8 @@ import { register as stats } from '../tools/cold/stats/command';
  * `tools cold` — everything to do with cold storage.
  *
  * Cold storage is a DX concern, not a service's job: nothing running in a
- * container reads or writes it, so it lives here and owns its own state. In
- * time every Mega call in the repo moves behind this command, and `data sync`
- * and `db dump` will ask it rather than shelling out themselves.
+ * container reads or writes it, so it lives here and owns its own state.
+ * Every Mega call in the repo is behind this command.
  */
 export function register(program: Command): void {
   /**

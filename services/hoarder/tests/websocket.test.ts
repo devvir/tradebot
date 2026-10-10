@@ -51,7 +51,7 @@ const makeService = (stateOverrides: Partial<State> = {}) => {
 
 const endpoint = (overrides: Partial<EndpointDefinition> = {}): EndpointDefinition => ({
   name: 'realtime',
-  url:  'wss://www.bitmex.com/realtime',
+  url:  'wss://twin.test/realtime',
   ...overrides,
 });
 
@@ -66,9 +66,9 @@ describe('URL construction', () => {
   it('uses the plain endpoint URL when no credentials are provided', () => {
     const { service } = makeService();
 
-    const result = connect(endpoint(), 'bitmex', service as any, vi.fn());
+    const result = connect(endpoint(), 'twin', service as any, vi.fn());
 
-    expect(result.url).toBe('wss://www.bitmex.com/realtime');
+    expect(result.url).toBe('wss://twin.test/realtime');
   });
 
   // Hoarder collects public market data only, so a URL is never decorated with
@@ -76,15 +76,15 @@ describe('URL construction', () => {
   it('uses the endpoint URL verbatim for every socket', () => {
     const { service } = makeService();
 
-    const result = connect(endpoint(), 'bitmex', service as any, vi.fn(), { socketKey: 'Primary' });
+    const result = connect(endpoint(), 'twin', service as any, vi.fn(), { socketKey: 'Primary' });
 
-    expect(result.url).toBe('wss://www.bitmex.com/realtime');
+    expect(result.url).toBe('wss://twin.test/realtime');
   });
 
   it('does not create a connection when the service is shutting down', () => {
     const { service } = makeService({ isShuttingDown: true });
 
-    const result = connect(endpoint(), 'bitmex', service as any, vi.fn());
+    const result = connect(endpoint(), 'twin', service as any, vi.fn());
 
     expect(result).toBeNull();
   });
@@ -99,7 +99,7 @@ describe('open event', () => {
   it('starts a heartbeat interval on open', () => {
     const { service } = makeService();
 
-    const result = connect(endpoint(), 'bitmex', service as any, vi.fn());
+    const result = connect(endpoint(), 'twin', service as any, vi.fn());
 
     result.emit('open');
 
@@ -111,7 +111,7 @@ describe('open event', () => {
     const { service, state } = makeService();
     const before = Date.now();
 
-    const result = connect(endpoint(), 'bitmex', service as any, vi.fn());
+    const result = connect(endpoint(), 'twin', service as any, vi.fn());
 
     result.emit('open');
 
@@ -128,7 +128,7 @@ describe('ping and message events', () => {
   it('responds to ping with pong', () => {
     const { service } = makeService();
 
-    const result = connect(endpoint(), 'bitmex', service as any, vi.fn());
+    const result = connect(endpoint(), 'twin', service as any, vi.fn());
 
     result.emit('ping');
 
@@ -139,13 +139,13 @@ describe('ping and message events', () => {
     const { service } = makeService();
     const onMessage = vi.fn();
 
-    const result = connect(endpoint(), 'bitmex', service as any, onMessage);
+    const result = connect(endpoint(), 'twin', service as any, onMessage);
 
     const payload = Buffer.from('{"table":"trade","action":"insert","data":[]}');
 
     result.emit('message', payload);
 
-    expect(onMessage).toHaveBeenCalledWith(payload, 'bitmex');
+    expect(onMessage).toHaveBeenCalledWith(payload, 'twin');
   });
 
   // The relay looks the venue up by this tag to route the frame, so every
@@ -173,7 +173,7 @@ describe('heartbeat', () => {
   it('pings the server every 30 seconds while the connection is open', () => {
     const { service } = makeService();
 
-    const result = connect(endpoint(), 'bitmex', service as any, vi.fn());
+    const result = connect(endpoint(), 'twin', service as any, vi.fn());
 
     result.emit('open');
 
@@ -195,7 +195,7 @@ describe('reconnection', () => {
     const { service } = makeService();
     const onReconnect = vi.fn();
 
-    const original = connect(endpoint(), 'bitmex', service as any, vi.fn(), { onReconnect });
+    const original = connect(endpoint(), 'twin', service as any, vi.fn(), { onReconnect });
 
     original.emit('error', new Error('ECONNREFUSED'));
 
@@ -209,7 +209,7 @@ describe('reconnection', () => {
     const { service } = makeService();
     const onReconnect = vi.fn();
 
-    const original = connect(endpoint(), 'bitmex', service as any, vi.fn(), { onReconnect });
+    const original = connect(endpoint(), 'twin', service as any, vi.fn(), { onReconnect });
 
     original.emit('close', 1006, Buffer.from('abnormal'));
 
@@ -223,7 +223,7 @@ describe('reconnection', () => {
     const { service, state } = makeService();
     const onReconnect = vi.fn();
 
-    const original = connect(endpoint(), 'bitmex', service as any, vi.fn(), { onReconnect });
+    const original = connect(endpoint(), 'twin', service as any, vi.fn(), { onReconnect });
 
     (state as any).isShuttingDown = true;
 
@@ -237,7 +237,7 @@ describe('reconnection', () => {
   it('clears the heartbeat interval when the connection closes', () => {
     const { service } = makeService();
 
-    const result = connect(endpoint(), 'bitmex', service as any, vi.fn());
+    const result = connect(endpoint(), 'twin', service as any, vi.fn());
 
     result.emit('open');
 
@@ -256,7 +256,7 @@ describe('reconnection', () => {
     const { service } = makeService();
     const onReconnect = vi.fn();
 
-    const original = connect(endpoint(), 'bitmex', service as any, vi.fn(), { onReconnect });
+    const original = connect(endpoint(), 'twin', service as any, vi.fn(), { onReconnect });
 
     // A real connection failure emits both events — they must collapse into one attempt.
     original.emit('error', new Error('ECONNREFUSED'));
@@ -271,7 +271,7 @@ describe('reconnection', () => {
     const { service } = makeService();
     const onReconnect = vi.fn();
 
-    const original = connect(endpoint(), 'bitmex', service as any, vi.fn(), { onReconnect });
+    const original = connect(endpoint(), 'twin', service as any, vi.fn(), { onReconnect });
 
     original.emit('error', new Error('Unexpected server response: 429'));
 

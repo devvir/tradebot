@@ -22,4 +22,4 @@ tb logs gui/bitmex
 
 ## Technical reference
 
-[docs/services/UI.md](../../docs/services/UI.md)
+[docs/services/UI.md](../../../docs/services/UI.md)

@@ -711,7 +711,7 @@ newest first.
 
 ### What a dataset's description has to say
 
-Beyond what `services/scribe` needed for BitMEX — a path, a page size, static parameters, a symbol
+Beyond what scribe (`services/.deprecated/scribe`) needed for BitMEX — a path, a page size, static parameters, a symbol
 resolver, a floor, the clock it is ordered by:
 
 - **its scheme**, of the five, and the names and units of its bounds — seconds at gate, htx and

@@ -2,6 +2,9 @@ import { describe, it, expect, vi } from 'vitest';
 import { createMessageHandler } from '../src/messages';
 import type { State, Config } from '../src/types';
 
+// The relay is tried against a venue of the tests' own — see ./twin.
+vi.mock('../src/venues', async importOriginal => (await import('./twin')).withTwin(importOriginal as never));
+
 // ── Service mock ──────────────────────────────────────────────────────────────
 
 const makeService = (stateOverrides: Partial<State> = {}) => {
@@ -15,7 +18,7 @@ const makeService = (stateOverrides: Partial<State> = {}) => {
   const config: Config = {
     workerUuid:  'test-uuid-1234',
     rabbitmqUrl: 'amqp://localhost',
-    venues:      ['bitmex'],
+    venues:      ['twin'],
   };
 
   const exchange = { publish: vi.fn().mockResolvedValue(undefined) };
@@ -42,10 +45,10 @@ const dataMsg = (table = 'trade', action = 'insert') => ({
 });
 
 const infoMsg = (version = '1.0.0') => ({
-  info:      'Welcome to the BitMEX Realtime API.',
+  info:      'Welcome to the Realtime API.',
   version,
   timestamp: '2026-01-01T00:00:00.000Z',
-  docs:      'https://www.bitmex.com/app/wsAPI',
+  docs:      'https://twin.test/docs',
 });
 
 // ── Publishing ────────────────────────────────────────────────────────────────
@@ -55,7 +58,7 @@ describe('data messages: publishing', () => {
     const { service, exchange } = makeService();
     const handler = createMessageHandler(service as any, vi.fn());
 
-    await handler(buf(dataMsg()), 'bitmex');
+    await handler(buf(dataMsg()), 'twin');
 
     expect(exchange.publish).toHaveBeenCalledOnce();
   });
@@ -74,9 +77,9 @@ describe('data messages: publishing', () => {
       const { service, exchange } = makeService();
       const handler = createMessageHandler(service as any, vi.fn());
 
-      await handler(buf(dataMsg(table, action)), 'bitmex');
+      await handler(buf(dataMsg(table, action)), 'twin');
 
-      expect(exchange.publish.mock.calls[0][1]).toBe('bitmex');
+      expect(exchange.publish.mock.calls[0][1]).toBe('twin');
     }
   });
 
@@ -85,7 +88,7 @@ describe('data messages: publishing', () => {
     const handler = createMessageHandler(service as any, vi.fn());
     const msg = dataMsg('quote', 'update');
 
-    await handler(buf(msg), 'bitmex');
+    await handler(buf(msg), 'twin');
 
     const content = exchange.publish.mock.calls[0][0] as Buffer;
 
@@ -97,16 +100,16 @@ describe('data messages: publishing', () => {
     const { service, exchange } = makeService();
     const handler = createMessageHandler(service as any, vi.fn());
 
-    await handler(buf(dataMsg()), 'bitmex');
+    await handler(buf(dataMsg()), 'twin');
 
-    expect((exchange.publish.mock.calls[0][2] as any).headers['x-venue']).toBe('bitmex');
+    expect((exchange.publish.mock.calls[0][2] as any).headers['x-venue']).toBe('twin');
   });
 
   it('includes x-hoarder-uuid from config', async () => {
     const { service, config, exchange } = makeService();
     const handler = createMessageHandler(service as any, vi.fn());
 
-    await handler(buf(dataMsg()), 'bitmex');
+    await handler(buf(dataMsg()), 'twin');
 
     const headers = (exchange.publish.mock.calls[0][2] as any).headers;
 
@@ -117,7 +120,7 @@ describe('data messages: publishing', () => {
     const { service, exchange } = makeService();
     const handler = createMessageHandler(service as any, vi.fn());
 
-    await handler(buf(dataMsg()), 'bitmex');
+    await handler(buf(dataMsg()), 'twin');
 
     const ts = (exchange.publish.mock.calls[0][2] as any).headers['x-collected-at'];
 
@@ -131,7 +134,7 @@ describe('data messages: publishing', () => {
     const { service, exchange } = makeService();
     const handler = createMessageHandler(service as any, vi.fn());
 
-    await handler(buf(dataMsg()), 'bitmex');
+    await handler(buf(dataMsg()), 'twin');
 
     const headers = (exchange.publish.mock.calls[0][2] as any).headers;
 
@@ -143,8 +146,8 @@ describe('data messages: publishing', () => {
     const onMessage = vi.fn();
     const handler = createMessageHandler(service as any, onMessage);
 
-    await handler(buf(dataMsg()), 'bitmex');
-    await handler(buf(dataMsg()), 'bitmex');
+    await handler(buf(dataMsg()), 'twin');
+    await handler(buf(dataMsg()), 'twin');
 
     expect(onMessage).toHaveBeenCalledTimes(2);
   });
@@ -154,7 +157,7 @@ describe('data messages: publishing', () => {
     const handler = createMessageHandler(service as any, vi.fn());
     const before = Date.now();
 
-    await handler(buf(dataMsg()), 'bitmex');
+    await handler(buf(dataMsg()), 'twin');
 
     expect(state.lastMessageTime).toBeGreaterThanOrEqual(before);
   });
@@ -168,7 +171,7 @@ describe('control messages: no publish', () => {
     const onMessage = vi.fn();
     const handler = createMessageHandler(service as any, onMessage);
 
-    await handler(buf({ subscribe: 'trade', success: true }), 'bitmex');
+    await handler(buf({ subscribe: 'trade', success: true }), 'twin');
 
     expect(exchange.publish).not.toHaveBeenCalled();
     expect(onMessage).not.toHaveBeenCalled();
@@ -179,7 +182,7 @@ describe('control messages: no publish', () => {
     const onMessage = vi.fn();
     const handler = createMessageHandler(service as any, onMessage);
 
-    await handler(buf({ unsubscribe: 'trade', success: true }), 'bitmex');
+    await handler(buf({ unsubscribe: 'trade', success: true }), 'twin');
 
     expect(exchange.publish).not.toHaveBeenCalled();
     expect(onMessage).not.toHaveBeenCalled();
@@ -190,7 +193,7 @@ describe('control messages: no publish', () => {
     const onMessage = vi.fn();
     const handler = createMessageHandler(service as any, onMessage);
 
-    await handler(buf(infoMsg()), 'bitmex');
+    await handler(buf(infoMsg()), 'twin');
 
     expect(exchange.publish).not.toHaveBeenCalled();
     expect(onMessage).not.toHaveBeenCalled();
@@ -201,7 +204,7 @@ describe('control messages: no publish', () => {
     const onMessage = vi.fn();
     const handler = createMessageHandler(service as any, onMessage);
 
-    await handler(buf({ unexpected: true, whatever: 123 }), 'bitmex');
+    await handler(buf({ unexpected: true, whatever: 123 }), 'twin');
 
     expect(exchange.publish).not.toHaveBeenCalled();
     expect(onMessage).not.toHaveBeenCalled();
@@ -215,7 +218,7 @@ describe('failure handling', () => {
     const { service, exchange } = makeService();
     const handler = createMessageHandler(service as any, vi.fn());
 
-    await handler(Buffer.from('not json at all'), 'bitmex');
+    await handler(Buffer.from('not json at all'), 'twin');
 
     expect(exchange.publish).not.toHaveBeenCalled();
   });
@@ -235,6 +238,6 @@ describe('failure handling', () => {
 
     exchange.publish.mockRejectedValueOnce(new Error('Channel closed'));
 
-    await expect(handler(buf(dataMsg()), 'bitmex')).rejects.toThrow('Channel closed');
+    await expect(handler(buf(dataMsg()), 'twin')).rejects.toThrow('Channel closed');
   });
 });

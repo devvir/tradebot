@@ -128,4 +128,4 @@ Mock data is intentionally isolated in `mockData.ts` so that replacing it with r
 
 ## Build
 
-Vite SPA, no SSR. `VITE_*` env vars are baked at build time. The service is containerized using the shared `docker/dev.node.Dockerfile`; the module `modules/gui/bitmex` wires it into a runnable compose stack.
+Vite SPA, no SSR. `VITE_*` env vars are baked at build time. The service is containerized using the shared `docker/dev.node.Dockerfile`.

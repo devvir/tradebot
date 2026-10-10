@@ -10,8 +10,8 @@ const pool = new Map<string, PoolEntry>();
 
 /**
  * One socket per (venue, endpoint, socketKey). The socketKey lets a venue
- * split an endpoint across several sockets — BitMEX uses it for liquidity
- * pools, since the pool is a property of the subscription, not the frame.
+ * split an endpoint across several sockets, where what tells them apart is a
+ * property of the subscription and not of the frame.
  */
 export const poolKey = (venue: string, endpointName: string, socketKey = ''): string =>
   `${venue}:${endpointName}:${socketKey}`;

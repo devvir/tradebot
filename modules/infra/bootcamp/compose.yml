@@ -4,12 +4,8 @@
 #
 # Abstract service names:
 #   queue-rt   — replay data pipeline message broker
-#   bouncer    — API credential signing
 
 name: infrastructure
-
-include:
-  - path: ../../../services/bouncer/docker/compose.yml
 
 services:
   queue-rt:

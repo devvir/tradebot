@@ -1,7 +1,7 @@
 {
   "name": "tradebot-monorepo",
   "version": "0.1.0",
-  "description": "BitMEX Trading Bot",
+  "description": "TradeBot: collect market data, normalise it, replay it",
   "private": true,
   "type": "module",
   "engines": {

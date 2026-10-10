@@ -13,7 +13,7 @@ export function register(program: Command): void {
     .description('Remote server operations')
     .action(async () => {
       try {
-        await run(null);
+        await run();
       } catch (err) {
         handleError(err);
       }
@@ -24,19 +24,7 @@ export function register(program: Command): void {
     .description('SCP all .env files to a remote server')
     .action(async () => {
       try {
-        await run('sync-env');
-      } catch (err) {
-        handleError(err);
-      }
-    });
-
-  remote
-    .command('pull')
-    .description('Pull vault files from remote (skips unchanged files)')
-    .argument('[source]', 'Remote source (user@host:/remote/path)')
-    .action(async (source?: string) => {
-      try {
-        await run('pull', source);
+        await run();
       } catch (err) {
         handleError(err);
       }

@@ -7,12 +7,6 @@ interface ToolOption {
   description: string;
 }
 
-interface SelectableItem {
-  name: string | undefined;
-  account?: string;
-  [key: string]: any;
-}
-
 export async function selectTool(tools: ToolOption[]): Promise<string> {
   const choices = tools.map(tool => ({
     name: `${tool.name} - ${tool.description}`,
@@ -125,33 +119,6 @@ export async function multiSelect(message: string, choices: string[]): Promise<s
   ]);
 
   return answer.values;
-}
-
-export async function selectAccount<T extends Partial<SelectableItem>>(
-  accounts: T[],
-  label: string = 'Select account:'
-): Promise<T | null> {
-  if (accounts.length === 0) {
-    info('No accounts available');
-    return null;
-  }
-
-  const choices = accounts.map(acc => ({
-    name: (acc.name || acc.account || String(acc)) as string,
-    value: acc,
-  }));
-
-  const answer = await inquirer.prompt([
-    {
-      type: 'list',
-      name: 'account',
-      message: label,
-      choices,
-      pageSize: 10,
-    },
-  ]);
-
-  return answer.account as T;
 }
 
 export async function selectFromList<T>(

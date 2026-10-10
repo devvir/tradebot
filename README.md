@@ -53,9 +53,10 @@ Each module directory carries a `.env.example` listing its variables and their d
 | `docs/modules/` | How services are wired into a deployable pipeline |
 | `docs/planning/` | Designs and open questions for work not finished |
 | `docs/tooling/` | The `tb` command-line tools |
-| `docs/venues/<venue>/` | One venue's own quirks: table semantics, API bugs, data anomalies |
+| `docs/venues/` | One document a venue: its archives, its APIs, its quirks |
+| `docs/bitmex/` | The data collected from BitMEX before it closed, and how to read it |
 
-Venue-specific findings live under `docs/venues/`, one directory per venue — `BitMEX/` today.
+Venue-specific findings live under `docs/venues/`, one document per venue.
 Everything outside it is venue-agnostic; a doc that names a venue while claiming to describe the
 platform is a bug in the documentation.
 

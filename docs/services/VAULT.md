@@ -1,6 +1,6 @@
 # Vault
 
-Vault is a date-partitioned HTTP file store for BitMEX CSV data. It accepts rows from upstream services (journalist, tardy, scribe), buffers them in memory, and flushes to disk as concatenated gzip members. Courier stores complete pre-built files directly via PUT. Downstream consumers read back sealed files as NDJSON.
+Vault is a date-partitioned HTTP file store for BitMEX CSV data. It accepts rows over HTTP, buffers them in memory, and flushes to disk as concatenated gzip members. A complete pre-built file is stored directly via PUT. Sealed files are read back as NDJSON.
 
 Vault is not a database. It has no query capability. It is a write-optimised append store.
 
@@ -71,7 +71,7 @@ Buffers rows for async disk write. Returns `202` immediately.
 
 ### `PUT /files/:table/:date`
 
-Stores a complete pre-built gzip file (courier). Streams directly to `.csv.gz.tmp`, then renames to `.csv.gz` atomically. All-or-nothing: a failed upload leaves an open file, which is silently discarded on the next PUT for the same date.
+Stores a complete pre-built gzip file. Streams directly to `.csv.gz.tmp`, then renames to `.csv.gz` atomically. All-or-nothing: a failed upload leaves an open file, which is silently discarded on the next PUT for the same date.
 
 - `204` — stored.
 - `409` — a sealed `.csv.gz` already exists. Sealed files are permanent.
@@ -187,7 +187,7 @@ Vault never assumes it created the current open file. On restart, `isInitialized
 
 Vault goes unhealthy when 5 batches exhaust all retries within 60 seconds — a signal of a systemic problem (disk full, filesystem read-only), not a transient blip. While unhealthy, vault probes every 5 seconds with a canary write to `/data/vault/.health-canary`. On success it returns to healthy.
 
-Clients on `503`: journalist holds data in memory and stops consuming from RabbitMQ; tardy backs off. Neither drops data.
+A `503` refuses the write and loses nothing by itself: the rows are still the client's to send again.
 
 ---
 

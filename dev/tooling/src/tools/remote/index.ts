@@ -1,20 +1,6 @@
-import { selectTool } from '../../shared/ui/prompts';
 import { run as runSyncEnv } from './sync-env';
-import { run as runPull } from './pull';
 
-type SubCommand = 'sync-env' | 'pull';
-
-const subcommands = [
-  { id: 'sync-env', name: 'Sync Env', description: 'SCP all .env files to a remote server' },
-  { id: 'pull', name: 'Pull', description: 'Pull vault files from remote (skips unchanged files)' },
-];
-
-export async function run(subcommand: SubCommand | null, source?: string): Promise<void> {
-  const cmd = subcommand ?? (await selectTool(subcommands) as SubCommand);
-
-  if (cmd === 'sync-env') {
-    await runSyncEnv();
-  } else if (cmd === 'pull') {
-    await runPull(source);
-  }
+/** `sync-env` is the one remote operation there is, so `remote` alone runs it. */
+export async function run(): Promise<void> {
+  await runSyncEnv();
 }

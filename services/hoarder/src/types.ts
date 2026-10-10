@@ -23,7 +23,7 @@ export interface PoolEntry {
 }
 
 export interface ConnectOptions {
-  /** Distinguishes sockets sharing an endpoint (a BitMEX pool, a stream shard). */
+  /** Distinguishes sockets sharing an endpoint (a stream shard). */
   socketKey?:   string;
   onReconnect?: (ws: WebSocket) => void;
 }

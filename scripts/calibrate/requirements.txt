@@ -1,7 +1,0 @@
-click
-polars
-pyarrow
-lifelines
-scipy
-matplotlib
-seaborn

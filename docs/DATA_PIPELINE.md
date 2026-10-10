@@ -51,32 +51,24 @@ documentation.
 | Service | Venues | Source | Writes to |
 |---|---|---|---|
 | [hauler](services/HAULER.md) | every venue the [catalog](services/CATALOG.md) holds | published archives | host disk, under canonical keys |
-| [courier](services/COURIER.md) | BitMEX | S3 daily dumps (`trade`, `quote`) | vault service |
-| [scribe](services/SCRIBE.md) | BitMEX | REST endpoints | vault service |
-| [tardy](services/TARDY.md) | BitMEX | Tardis monthly samples of the seven WS-only tables | vault service |
-| [broadcast](services/BROADCAST.md) → [journalist](services/JOURNALIST.md) | BitMEX | live WebSocket | vault service |
-| hoarder | every venue except BitMEX | live WebSocket | RabbitMQ |
+| hoarder | every venue it has an adapter for | live WebSocket | RabbitMQ |
 
-Each is a stage, not a pipeline; the modules that wire them into running deployments are
-[archives](modules/ARCHIVES.md) (venue archives), [depot](modules/DEPOT.md) (BitMEX bulk and REST collection) and [journal](modules/JOURNAL.md) (live
-WebSocket capture).
+Each is a stage, not a pipeline; the module that wires the first into a running deployment is
+[archives](modules/ARCHIVES.md). Nothing collects over REST: what the venues' APIs offer of
+history is surveyed in [REST.md](REST.md).
 
-Live capture is split by venue rather than unified. `hoarder` handles the venues that have a
-future: one instance collects one of them, several, or all, publishing every payload verbatim.
-BitMEX stays on `broadcast`/`journalist` for as long as its market runs, because rebuilding a
-working capture path for a venue that is closing buys nothing.
+`hoarder` is the live capture: one instance collects one venue, several, or all, publishing every
+payload verbatim.
 
 WebSocket collection is currently **parked**: hoarder's channel lists are provisional pending
 the payload comparisons that decide what a socket must carry, and the bulk and REST sources have
 years of backfill to work through first.
 
-### BitMEX is a data source with an end date
+### BitMEX is closed, and its data is kept
 
-BitMEX's market closes on 2026-09-23. Collection ends with it — nothing about it is worth
-extending — but the history already collected is real market data and stays in the pipeline:
-normalised by stocker like any other venue's, and used by the simulator. What stops is the
-forward-looking half: no new BitMEX collection, and no replay surface reproducing its API,
-because there will be no BitMEX to trade against and so no bot to train for it.
+BitMEX's market closed on 2026-09-23 and nothing collects from it. What was collected is real
+market data and stays: [bitmex/](bitmex/README.md) describes it. It is not in the Parquet vault,
+and no replay surface reproduces BitMEX's API, there being no BitMEX to trade against.
 
 ### What a collector owns
 
@@ -91,8 +83,8 @@ Two stores, both historically called "vault", holding different things:
 
 **The vault service** — a date-partitioned HTTP file store for CSV, one sealed gzip per
 `(table, date)`. Upstream services POST rows and vault serialises, buffers and seals them;
-courier PUTs complete S3 gzips as-is. It is write-optimised and has no query capability. All
-BitMEX collection lands here. → [services/VAULT.md](services/VAULT.md)
+a complete gzip can be PUT as it is. It is write-optimised and has no query capability. What was
+collected from BitMEX is in its layout. → [services/VAULT.md](services/VAULT.md)
 
 **The archives** — plain directories on the host, every file at its canonical key. No service in
 front of it, because its inputs are already files. → [services/HAULER.md](services/HAULER.md#the-layout-on-disk)
@@ -161,6 +153,7 @@ Those services and the database itself are gone, along with `teller`, the privat
 that kept its state there, and the replay chain built on the same database — `librarian`,
 `provider` and `digger`.
 
-The BitMEX venue documentation went with them. BitMEX shuts down on 2026-09-23, taking its API,
-its references and everything written about them; what survives is the collected data, kept as
-real trading history from a real exchange rather than as a venue we integrate with.
+BitMEX's collectors went when it closed on 2026-09-23 — the S3 downloader, the websocket relay and
+its writer. Two are kept unbuilt for what they know, under `services/.deprecated/`: the REST
+collector and the Tardis downloader. What survives of the venue is its data
+([bitmex/](bitmex/README.md)), kept as real trading history from a real exchange.
