@@ -1,5 +1,9 @@
 # Bybit
 
+Bybit as a source of market data: what it publishes, where, and how it behaves when asked.
+
+## Archives
+
 What bybit's published archive contains, and why it is surveyed at the bucket rather than at the
 address bybit publishes.
 
@@ -8,7 +12,7 @@ address bybit publishes.
 tree, a different format and a limiter of its own. The catalog models that as two rows sharing a
 name — see [A second host: the order books](#a-second-host-the-order-books).
 
-## The CDN answers no listing API; the bucket does
+### The CDN answers no listing API; the bucket does
 
 `public.bybit.com` is CloudFront, and **every query parameter is ignored**: `?prefix=`,
 `?list-type=2`, `?marker=` all return the same thing as `/` — the browsable HTML index a plain file
@@ -43,7 +47,7 @@ This is bybit's setting and it could be revoked. The HTML scanner it used to nee
 codebase for that reason and for the next venue that publishes indexes — it is infrastructure for a
 platform, not a property of one venue.
 
-## What is in the bucket but is not archive
+### What is in the bucket but is not archive
 
 - `backup/` is a copy: one symbol's `trading/` files, served correctly under `trading/` as well.
 - Keys with no `/` in them sit at the bucket root and serve the browsing UI. `index.html` also
@@ -56,7 +60,7 @@ because bybit's `dateOf` takes the first date wherever it falls in a filename �
 `premium_index` puts a suffix after the date — so unlike the other S3 venues it would not decline a
 name that continued past one.
 
-## Four shapes, and none of them is the obvious one
+### Four shapes, and none of them is the obvious one
 
 Every tree names its instrument and its date differently, which is why bybit needs four expressions
 where other venues need one:
@@ -95,7 +99,7 @@ Checked on `BTCUSDT` only, on 2026-10-04.
 both and the depth stays literal in the pattern — different depth, different series, exactly as an
 interval is treated elsewhere. The host carries `linear/` and `inverse/` and no third market.
 
-## The 2021 expiries are abandoned, and are refused
+### The 2021 expiries are abandoned, and are refused
 
 `trading/` holds 44 dated futures directories. Forty of them — every expiry from 2022 on — carry
 197 to 205 daily files each, a contiguous history. **The four 2021 ones do not**, and bybit's own
@@ -116,7 +120,7 @@ says which.
 
 All four directories are refused in the adapter's `accepts`, so descent never enters them.
 
-### Eight empty files, all written on one day
+#### Eight empty files, all written on one day
 
 Across all 7,424 files in those 44 directories, exactly eight are under 100 bytes. Every one is 44
 bytes, is a gzip of **nothing**, and is stamped **2022-12-12** — one per contract live or recent
@@ -126,7 +130,7 @@ cleaned up.
 Two of them fall inside the refused 2021 directories. Note the size: 44 bytes rather than zero, so
 no size rule finds them — only the file itself says it is empty.
 
-## A directory can be renamed out from under its files
+### A directory can be renamed out from under its files
 
 `trading/DATAOLD01USDT/` holds files named `DATAUSDT2024-08-23.csv.gz` — 527 of them, from
 2023-12-20 to 2025-05-29 — and there is no `trading/DATAUSDT/` at all. Bybit renamed the instrument,
@@ -135,7 +139,7 @@ moved the directory and left every filename as it was.
 So **the directory is not evidence of the instrument's name**, and a reader that anchored on the two
 agreeing read none of these. The date is the anchor instead.
 
-## It bans an address that asks too fast
+### It bans an address that asks too fast
 
 Bybit's API documents **600 requests per 5 seconds per IP**, answers `403, access too frequent` past
 that, and lifts the ban on its own after "at least 10 minutes". Those numbers are published for
@@ -204,7 +208,7 @@ inside the fetch every caller shares, so a refusal naming no key latches the who
 walk, mapping and probe together, including requests already queued — and it is not retried, because
 a ban lapses only while nothing is asking.
 
-## Eight trees
+### Eight trees
 
 ```
 trading/<SYMBOL>/<SYMBOL><yyyy-mm-dd>.csv.gz                    derivatives trades
@@ -228,7 +232,7 @@ across twelve files of each. Option mark bars are a uniform 60,000 ms between `o
 
 Everything below the root is discovered rather than declared, so the adapter names none of it.
 
-## A second host: the order books
+### A second host: the order books
 
 Order books are not in the eight trees above and are not on that host at all:
 
@@ -273,7 +277,7 @@ without a single throttling answer.
 by closing the connection. The host speaks HTTP/2, where a probe is a stream and the question does
 not arise — prospector probes it that way.
 
-### What a book file holds
+#### What a book file holds
 
 The `.data.zip` holds one file of a JSON record a line:
 
@@ -286,7 +290,7 @@ The `.data.zip` holds one file of a JSON record a line:
 `b` and `a` are `[price, size]` levels, and a size of `0` removes the level. `ts` is in milliseconds,
 unique and rising through a file. `seq` rises through a file; `u` starts over at each snapshot.
 
-### Its origin bucket is not findable
+#### Its origin bucket is not findable
 
 Repeating the search that worked for the primary is a waste of time:
 
@@ -301,7 +305,7 @@ Repeating the search that worked for the primary is a waste of time:
 The cost of staying on the CDN here is a HEAD per file, which the probe supplies. It is not the cost
 the primary faced, where listings saved roughly 1.5 M of them.
 
-## The venue that makes `tag` necessary
+### The venue that makes `tag` necessary
 
 Two separate cases, and neither can be expressed as a prefix.
 
@@ -319,7 +323,7 @@ it by dataset name; here the tag comes from whether the name carries a day at al
 which MetaTrader counts in minutes — all in the same year directory. There the interval is what tells
 two files for one period apart, so it is the tag.
 
-## Dates are not at the end of a name
+### Dates are not at the end of a name
 
 Every other venue puts the date last. Bybit puts a suffix after it (`_premium_index`,
 `_index_price`), runs the symbol straight into it (`BTCUSDT2020-03-25`), and gives MetaTrader files
@@ -327,21 +331,7 @@ two dates. So the **first** date in the filename is the one that counts, and a r
 where it starts. A month with no day is stamped at the first of that month, as everywhere else, so a
 query for a month catches it alongside that month's days.
 
-## The instrument listing
-
-`api.bybit.com/v5/market/instruments-info`, asked a category at a time: `spot`; `linear` and
-`inverse`, which are both perpetual swaps, settled in stablecoin and in the base coin; and `option`,
-answered one underlying at a time. Option defaults to `baseCoin=BTC` and there is no public way to
-enumerate the underlyings — there are eight.
-
-**Names are the archive's.** All 549 live spot symbols and 859 of 862 live perpetuals are in the
-archive under exactly the name the API returns; the three that were not had been listed that day.
-
-**Derivatives state an ending; spot does not.** Asked for `status=Closed`, a derivative category
-answers 955 contracts that share nothing with its 836 live ones. Spot answers the live list again,
-byte for byte, so there an ending is only ever an absence.
-
-## The misfiled file
+### The misfiled file
 
 `trading/DOTUSD/DOTUSDT2021-12-06.csv.gz` is genuinely served: a file named for `DOTUSDT`, in
 `DOTUSD`'s folder. It holds DOTUSDT rows and is a shorter copy of the day served whole at
@@ -354,6 +344,155 @@ byte for byte, so there an ending is only ever an absence.
 
 Every trade id of the shorter one is in the whole one (2026-10-07). One misfiled artifact, not a
 pattern.
+
+## REST
+
+**How to read this section.** A statement with no mark is what the API answered when it was asked,
+in October 2026. *(documented)* marks what bybit's documentation states and was not tried.
+*(not known)* marks what neither settled. Nothing here is inferred from another venue.
+
+### The API
+
+**One API on one host**: `https://api.bybit.com/v5/market/<endpoint>`, asked a `category` at a time —
+`spot`, `linear` (USDT and USDC contracts), `inverse` (coin-margined), `option`.
+
+- **`api.bytick.com` answers the same**, and both are behind CloudFront. Regional hosts exist
+  *(documented)*: `api.bybit.tr`, `.kz`, `.ae`, `.eu`, `.id`, `api.bybitgeorgia.ge`.
+- **Times are milliseconds**, in requests and answers; in answers they are strings.
+- **Every answer is HTTP 200** with `{retCode, retMsg, result, retExtInfo, time}`. `retCode` 0 is
+  success; anything else is the error, and the header `ret_code` repeats it. Seen: `10001` with
+  `params error: Time Is Invalid`, `Symbol Invalid`, `status invalid`.
+- **Records are in `result.list`**, except historical volatility, where `result` is the list.
+- **Lists come newest first.**
+
+### Its limits
+
+- **600 calls per 5 seconds for the whole host, by address** *(documented)*.
+- **Beyond it: HTTP 403**, `text/plain`, "Access too frequent. Please try again later." — met after
+  some 290 calls a second over 96 connections. **It did not last**: another call to the same host
+  right after it answered, and so did one 30 seconds later. A wait of at least 10 minutes is what
+  is stated *(documented)*.
+- **Public calls carry no limit header.** Their headers are `traceid`, `timenow`, `ret_code`,
+  `x-cld-src`. The `X-Bapi-Limit`, `X-Bapi-Limit-Status` and `X-Bapi-Limit-Reset-Timestamp` headers,
+  and the `retCode` 10006 "Too many visits!", belong to signed calls, limited per account
+  *(documented)*.
+- **Kept without complaint**: 23 calls a second over 8 connections, for 400 calls.
+
+### How it is paged
+
+- **A `limit` over the maximum is capped, silently**: 1,001 bars return 1,000, 201 fundings 200.
+- **Bars, by `start`**: with `start` alone the answer is the first `limit` bars at or after it —
+  still newest first inside the page. So the walk is forward, and the next `start` is the newest
+  bar's time plus one interval. With `end` alone it is the `limit` bars up to `end`.
+- **`start=1` is not honoured** on `linear` and `inverse` bars: the newest page comes back. A real
+  past time (`1500000000000`) returns the instrument's first bars. On `spot`, `start=1` does.
+- **Funding, by `endTime`**: the `limit` records up to it; the walk is backward, and the next
+  `endTime` is the oldest record's time minus one. `startTime` alone is refused; both together
+  work.
+- **Open interest and ratios, by cursor**: `result.nextPageCursor` (for example
+  `lastid%3D3548695%26lasttime%3D1791525300`) passed back as `cursor` gives the next older page.
+  A `startTime`/`endTime` window works as well.
+
+### Endpoints that serve the past
+
+**Bars — `GET /v5/market/kline`**
+- **Ask**: `category` (`spot`, `linear`, `inverse`), `symbol`, `interval` (`1 3 5 15 30 60 120 240
+  360 720 D W M`), `start`, `end`, `limit` ≤ 1,000.
+- **Answer**: rows of strings `[startTime, open, high, low, close, volume, turnover]`.
+- **Reaches the instrument's first bar**: `linear` BTCUSDT 2020-03-25T10:36Z, `inverse` BTCUSD
+  2018-11-14T16:00Z, `spot` BTCUSDT 2021-07-05T12:00Z.
+- **A delisted contract still answers** (a perpetual closed in 2025, a dated future delivered in
+  2026), **and so does a delisted spot pair**.
+
+**Mark, index and premium bars — `GET /v5/market/mark-price-kline`, `index-price-kline`,
+`premium-index-price-kline`**
+- **Ask**: as bars. Mark takes `linear`, `inverse`, `option` (500 a page for options); index takes
+  `linear`, `inverse`; premium takes `linear`.
+- **An option's mark bars exist while it is listed**: an expired option is `10001 PARAMS_ERROR`.
+- **Answer**: rows `[startTime, open, high, low, close]`.
+- **Reaches**: BTCUSDT mark 2020-03-25T08:41Z, index 07:57Z, premium 08:41Z.
+- **A delisted contract still answers** mark and index; its premium bars came back all `"0"`.
+
+**Funding — `GET /v5/market/funding/history`**
+- **Ask**: `category` (`linear`, `inverse`), `symbol` — required — `startTime`, `endTime`, `limit`
+  ≤ 200.
+- **Answer**: `{symbol, fundingRate, fundingRateTimestamp}`.
+- **Reaches the first funding**: BTCUSD 2018-11-15T00:00Z, BTCUSDT 2020-03-25T16:00Z.
+- **A delisted contract still answers.**
+
+**Open interest — `GET /v5/market/open-interest`**
+- **Ask**: `category` (`linear`, `inverse`), `symbol`, `intervalTime` (`5min 15min 30min 1h 4h
+  1d`), `startTime`, `endTime`, `limit` ≤ 200, `cursor`.
+- **Answer**: `{openInterest, singleOpenInterest, timestamp}`, and `result.nextPageCursor`.
+- **Reaches 2020-08-05** at 5 minutes for BTCUSDT (a window in 2020-05 is empty); `inverse` BTCUSD
+  daily from 2020-08-04.
+- **A delisted contract answers an empty list.**
+
+**Long/short ratio — `GET /v5/market/account-ratio`**
+- **Ask**: `category` (`linear`, `inverse`), `symbol`, `period` (`5min 15min 30min 1h 4h 1d`),
+  `startTime`, `endTime`, `limit` ≤ 500, `cursor`.
+- **Answer**: `{symbol, buyRatio, sellRatio, timestamp}`.
+- **Reaches 2020-08-05** (daily, BTCUSDT); 5-minute windows of 2021 and 2023 answer.
+- **A delisted contract answers an empty list.**
+
+**Historical volatility — `GET /v5/market/historical-volatility`**
+- **Ask**: `category=option`, `baseCoin`, `period` (days), `startTime`, `endTime` — a window of 30
+  days at most *(documented)*.
+- **Answer**: `result` is `[{period, value, time}]`, one an hour.
+- **Without a window it returned nothing**; with one, 480 rows for 20 days.
+- **Reaches**: 2,200 days back at least (2020-10); 2 years is what is stated.
+
+**Delivery prices — `GET /v5/market/delivery-price`**
+- **Ask**: `category` (`linear`, `inverse`, `option`), `symbol`, `limit` ≤ 200, `cursor`.
+- **Answer**: `{symbol, deliveryPrice, deliveryTime}`.
+- **Reaches**: `inverse` 2021-06-25, all 44 in one page; `linear` 2023-03-24, 258 over two pages.
+  `option` returns only contracts being delivered *(documented)*; it was empty.
+- **Options have their own — `GET /v5/market/new-delivery-price`**: `category=option`, `baseCoin`;
+  `{deliveryPrice, deliveryTime}`, the most recent 50, one a day.
+
+**The listing — `GET /v5/market/instruments-info`**
+- **Ask**: `category`, `status`, `baseCoin`, `limit` ≤ 1,000, `cursor`.
+- **`status=Closed` lists delisted contracts** of `linear` and `inverse`, with `launchTime` and
+  `deliveryTime`. `Trading` and `PreLaunch` are the other values that answered; `Settling` is
+  refused, `Delivering` empty.
+- **Spot lists what trades only**, with no launch time.
+
+**Announcements — `GET /v5/announcements/index`**: `locale`, `type` (`delistings`, `new_crypto`,
+…), `page`, `limit`; `result.list[]` of `{title, description, type, tags, url, dateTimestamp, …}`
+and `result.total` — 483 delistings when asked. Where a delisted spot pair's name can be found.
+
+### Endpoints that do not
+
+- **`recent-trade`**: the newest 1,000, or 60 on spot, and nothing older.
+  `{execId, symbol, price, size, side, time, isBlockTrade, isRPITrade, seq}`.
+- **`insurance`**: the pools' balances now, `{coin, symbols, balance, value}`.
+- **`index-price-components?indexName=`**: an index's exchanges, prices and weights now.
+- **`tickers`, `orderbook`, `risk-limit`, `adlAlert`, `fee-group-info`, `order-price-limit`**: of
+  now *(documented)*.
+- **Liquidations**: the market endpoints listed in the documentation hold none.
+- **`/v5/spot-margin-trade/interest-rate-history`** wants a key ("apiKey is missing").
+- **`/v5/spread/market/*`** — spread instruments, their book, recent trades and tickers
+  *(documented)*; no history among them.
+
+### Against bybit's own archive
+
+**REST bars are the archive's bars.** Of the first 600 rows of the archive's `BTCUSDT` 1-minute file
+for 2020-05, all 600 are in REST with the same open, high, low, close and volume, three hours
+earlier: the archive stamps UTC+3. REST adds turnover.
+
+### The instrument listing
+
+`api.bybit.com/v5/market/instruments-info`, asked a category at a time: `spot`; `linear` and
+`inverse`, which are both perpetual swaps, settled in stablecoin and in the base coin; and `option`,
+answered one underlying at a time. Option defaults to `baseCoin=BTC` and there is no public way to
+enumerate the underlyings — there are eight.
+
+**Names are the archive's.** All 549 live spot symbols and 859 of 862 live perpetuals are in the
+archive under exactly the name the API returns; the three that were not had been listed that day.
+
+**Derivatives state an ending; spot does not.** Asked for `status=Closed`, a derivative category
+answers 955 contracts that share nothing with its 836 live ones. Spot answers the live list again,
+byte for byte, so there an ending is only ever an absence.
 
 ## WebSocket
 

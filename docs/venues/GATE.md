@@ -1,9 +1,13 @@
 # Gate
 
+Gate as a source of market data: what it publishes, where, and how it behaves when asked.
+
+## Archives
+
 What gate's published archives contain, established from the files themselves. Anything not
 established is marked as such.
 
-## The bucket is listable, but only at its origin
+### The bucket is listable, but only at its origin
 
 `gateio-public-data` is an ordinary S3 bucket. It honours `prefix`, `delimiter`, `max-keys` and
 `continuation-token`, and carries `Size`, `ETag` and `LastModified` on every key.
@@ -40,7 +44,7 @@ Symbols need not be enumerated: they fall out of the walk. Gate's public API car
 (`/cdn/fe/_next/static/chunks/pages/developer/historical_quotes-*.js`) — noted only so it is not
 rediscovered as an option.
 
-## The trees, and which are dead
+### The trees, and which are dead
 
 Thirteen top-level trees. Seven are live; the rest are not market data, not gate's, or stopped.
 
@@ -61,7 +65,7 @@ Thirteen top-level trees. Seven are live; the rest are not market data, not gate
 ever wanted it is a venue of its own, never a prefix of this one. Gate OTC Malta launched 2024-11
 and is not what `malta/` held — that tree had stopped nine months earlier.
 
-### Keys filed at the wrong depth
+#### Keys filed at the wrong depth
 
 ```
 spot/201905/            419 keys      a bare month where a dataset name belongs
@@ -85,7 +89,7 @@ misfiling.
 **Unverified:** whether the symbols in `futures_usdt/202107/` overlap those of the
 [2021-07 substitution](#2021-07-spot-data-at-the-futures-url).
 
-## The portal understates the archive
+### The portal understates the archive
 
 The download form ([announcement](https://www.gate.com/announcements/article/21688)) offers one
 floor per business type, not per symbol: filled orders and candlesticks from **2023-01**, market
@@ -105,7 +109,7 @@ business type where the two agree.
 A download form is evidence that data exists from a date, never evidence that nothing older is
 served.
 
-## The two depth products are different data
+### The two depth products are different data
 
 "Market depth" and "Depth snapshot" are not two names for one thing:
 
@@ -144,7 +148,7 @@ coin-margined file can hold nothing but records with empty sides.
 it. If gate widens the pair list that is the thing to re-check; the snapshot's value does not
 change, its coverage would.
 
-## Candlesticks: intervals and cadence differ per market
+### Candlesticks: intervals and cadence differ per market
 
 Documented at `gate.com/developer/historical_quotes`:
 
@@ -169,7 +173,7 @@ $(biz)/$(type)/$(year)$(month)/$(market)-$(year)$(month).csv.gz
 freshly turned month is incomplete for weekly bars. K-lines are derived from trades, so a period
 with no trade has no row rather than an empty one.
 
-## TradFi is candlesticks only
+### TradFi is candlesticks only
 
 `tradfi/candlesticks_1h/202605/XAUUSD-202605.csv.gz` serves 200. It is the one market with no
 trades, no depth and no funding.
@@ -178,7 +182,7 @@ It is one flat namespace: 508 equities and leveraged ETFs, 80 FX pairs, 54 indic
 metals and commodities, so `AAPL`, `AUDCAD` and `GER40` are siblings. `tradfi/symbols` lists all
 680, and every one matches the archive.
 
-### Its `status` is a market session, not a listing
+#### Its `status` is a market session, not a listing
 
 `/api/v4/tradfi/symbols` reports `status: open | closed` per symbol, meaning **the exchange
 session**. These are tokenised equities and ETFs on US market hours; the payload carries
@@ -196,7 +200,7 @@ probing starts"* for symbols that are not new.
 Gate's other three markets do carry listing state and are read as such: spot's `trade_status` is
 2,232 tradable against 2 untradable, and `in_delisting` is false for all 981 contracts.
 
-## Layout
+### Layout
 
 ```
 gate/spot/deals/<YYYYMM>/<SYMBOL>-<YYYYMM>.csv.gz              spot trades
@@ -208,7 +212,7 @@ gate/<market>/orderbooks/…                                     books — hourl
 
 Files are headerless, so every series is read positionally.
 
-### What the catalog places
+#### What the catalog places
 
 Prospector reads a series pattern out of the path. The calendar slots — `{YYYY}` `{MM}` `{DD}` — give
 the grain, and `{PART}` is where a period's own files are told apart. **Gate publishes two grains and
@@ -240,7 +244,7 @@ Files are `.csv.gz`, or plain `.gz` for depth snapshots. Uncompressed `.csv` app
 months — 99 beside 482 compressed in `spot/candlesticks_1m/201802` — and is a stray copy of the file
 next to it, excluded at every venue.
 
-### What is refused, and where
+#### What is refused, and where
 
 Nothing is skipped for being hard to parse. Refusals are deliberate, each in the tier that fits it.
 
@@ -260,13 +264,13 @@ The `exclusion` table — two specific files, with no shape to describe:
 
 Both zero bytes, uploaded four minutes apart on 2021-08-11.
 
-## A dated future's file carries two dates
+### A dated future's file carries two dates
 
 `delivery_usdt` names a contract by its expiry, so a file there has a date inside the symbol and
 another after it: `ADA_USDT_20260605-2026060100.csv.gz` is the 2026-06-05 expiry, hour 00 of
 2026-06-01. The period is whatever follows the last `-`.
 
-## The files named by an instant hold a line an instrument
+### The files named by an instant hold a line an instrument
 
 `spot_index/` and `options_ticker/` files are plain text with no header and no extension. Each line is
 one instrument, its values parted by single blanks with one trailing; some lines begin with a blank
@@ -288,7 +292,7 @@ first, and the fifth and eighth bracket the second. The ninth is negative on put
 calls, and the eleventh is negative on both. Gate documents none of this for the files; its API
 names the same quantities.
 
-## 2022-11-30 23:00: one hour filed under the wrong month
+### 2022-11-30 23:00: one hour filed under the wrong month
 
 **Gate wrote the last hour of November 2022 into December's directory.** In all three book trees,
 `<tree>/orderbooks/202212/` holds keys stamped `20221130` — and nothing else out of place:
@@ -320,7 +324,7 @@ on the generic pattern, alongside every other month.
 
 A one-off. No other month in any tree has it.
 
-## Misfiled months, beyond the 2022 books hour
+### Misfiled months, beyond the 2022 books hour
 
 **Gate files a period into the wrong month's directory more than once, and everywhere it does the
 directory and the filename disagree.** `{YYYY}{MM}` cannot be one month in the path and another in
@@ -352,7 +356,7 @@ them. It is a closed list: the misfiling stopped in December 2024 and has not re
 Their 18 shapes are **seeded retired**, each at the single day it holds (`20240630` … `20241130`),
 for the same reason the 2022 book shapes are: a literal month can hold nothing else.
 
-## Files under the BTC tree that are not its own
+### Files under the BTC tree that are not its own
 
 **`futures_btc/` is BTC-settled, and its instruments are all `*_USD`.** Every other file under it is
 refused by `accepts`, whatever dataset it is filed as. Checked file by file against the archive on
@@ -366,7 +370,7 @@ refused by `accepts`, whatever dataset it is filed as. Checked file by file agai
 | `funding_updates/`, `mark_prices/` of `201911`, 4 | the first minutes of 2019-11-20 for EOS and ETH | missing from the properly filed month; refused all the same, since a month split across two files is not one a consumer is asked to stitch |
 | `funding_applies/` from `202410`, `dummy` | an instrument named `dummy`, applying a funding rate of exactly zero about hourly | a placeholder |
 
-## Two trade shapes, not interchangeable
+### Two trade shapes, not interchangeable
 
 ```
 futures   ts, id, price, size            4 columns; size is SIGNED — the sign is the side
@@ -386,7 +390,7 @@ the declared width — a loud repeating failure by design. Without that rule thi
 silently wrong partitions, and 20 failures that tripped only by luck, on a truncated timestamp
 rather than on the column mismatch.
 
-## 2021-07: spot data at the futures URL
+### 2021-07: spot data at the futures URL
 
 **For 85 symbols, `futures_usdt/trades/202107/` holds truncated copies of the corresponding spot
 file.** The futures file is byte-identical to the first 3,544 lines of the spot file for the same
@@ -410,7 +414,7 @@ of nothing. `SUN_USDT` is the only real gap.
 Only 78 of that month's futures trade files are genuine 4-column files. Gate still serves the 85
 copies, so they are there to be fetched for as long as it keeps them.
 
-## Known gap: `SUN_USDT`, 2021-07 to 2021-09
+### Known gap: `SUN_USDT`, 2021-07 to 2021-09
 
 The archive cannot supply it. Asked of gate directly:
 
@@ -431,7 +435,7 @@ because the 2021-07 substitution led to it. A sweep comparing each symbol's mont
 its first and last file would find the rest, and is worth doing before the REST backfill is designed
 so it is sized against the real list.
 
-## Smaller facts
+### Smaller facts
 
 **Truncated final lines.** The 2021-07 files are cut mid-row, ending inside a field (`1`, `16275`,
 `1627570`, or a complete timestamp with the rest missing). Where the cut lands decides whether the
@@ -454,3 +458,150 @@ Spot and futures share the shape exactly.
 **Candlestick `volume` is the base leg**, on spot as well as futures. Settled by summing
 `spot/deals` per hour and reproducing the candle to six decimal places on every hour of BTS_USDT
 201812; the quote sum misses by a factor of the price.
+
+## REST
+
+**How to read this section.** A statement with no mark is what the API answered when it was asked,
+in October 2026. *(documented)* marks what gate's documentation or its SDK's reference states and
+was not tried. *(not known)* marks what neither settled. Nothing here is inferred from another
+venue.
+
+### The API
+
+**One API**: `https://api.gateio.ws/api/v4`, a family per path — `/spot`, `/futures/{settle}`
+(`usdt`, `btc`), `/delivery/{settle}`, `/options`.
+
+- **`fx-api.gateio.ws` answers the futures too** *(documented)*.
+- **No edge in front of it**: the host resolves to addresses in AWS `ap-northeast-1`, 27 of them
+  seen.
+- **Times are seconds** in requests and in most answers; trades also carry milliseconds
+  (`create_time_ms`).
+- **A successful answer is the data itself**, a bare JSON array or object.
+- **An error is HTTP 400 with `{label, message}`.** Seen: `INVALID_PARAM_VALUE` (a `limit` over the
+  maximum, a window too old), `MISSING_REQUIRED_HEADER` (an endpoint that wants a signature),
+  and on 429 `TOO_MANY_REQUESTS`.
+- **Futures answers are not compressed**, whatever `Accept-Encoding` asks; spot's are gzip. A page
+  of 2,000 statistics is 1.24 MB on the wire.
+
+### Its limits
+
+- **200 calls per 10 seconds for each endpoint, by address** *(documented: "All public endpoints —
+  200r/10s per endpoint — IP")*.
+- **Every answer counts it down**: `x-gate-ratelimit-limit: 200`,
+  `x-gate-ratelimit-requests-remain`, `x-gate-ratelimit-reset-timestamp` (seconds). Also
+  `x-in-time` and `x-out-time`, in microseconds.
+- **Beyond it**: the 200th call to an endpoint inside ten seconds is the last; the next is HTTP 429,
+  `{"label":"TOO_MANY_REQUESTS","message":"Request Rate Limit Exceeded (003)"}`, with zero remaining.
+  Two seconds later it answered again.
+- **The budget is the endpoint's, whatever is asked of it**: with `/spot/candlesticks` refused for
+  one pair it was refused for another, while `/spot/trades` and `/futures/usdt/candlesticks` answered
+  with 199 remaining.
+
+### How it is paged
+
+- **By a window**: `from` and `to`, in seconds. Bars and statistics come oldest first; trades and
+  liquidations newest first.
+- **`limit` and a window exclude each other on bars** *(documented)*: `limit` alone gives the newest
+  bars.
+- **A `limit` over the maximum is refused**, 400 — 1,001 on spot bars and on funding.
+- **Listings page by `limit` and `offset`**; `limit` is at most 100 on `contracts` ("invalid limit,
+  must in (0, 100]").
+
+### Endpoints, and how far back each goes
+
+**Nearly every one of them is a window.** The index bars of the option underlyings and the option
+settlements are the exceptions.
+
+**Index bars of the option underlyings — `GET /options/underlying/candlesticks`**
+- **Ask**: `underlying` (`BTC_USDT`; the twelve there are come from `GET /options/underlyings`),
+  `interval`, `from`, `to`, or `limit`.
+- **Answer**: `{t, o, h, l, c}`, oldest first.
+- **No 10,000-point limit here**: `1m` bars of BTC_USDT answer 1,600 days back (2022-05) and not
+  1,700; ETH_USDT has none in 2022-08. A window of 2,001 minutes returned 2,001 bars.
+- **With `limit` alone it returned 31 daily bars** for a `limit` of 1,000.
+
+**Bars — `GET /spot/candlesticks`**
+- **Ask**: `currency_pair`, `interval` (`1s 10s 30s 1m 5m 15m 30m 1h 4h 8h 1d 7d 30d`), `from`, `to`,
+  or `limit` ≤ 1,000.
+- **Answer**: rows of strings `[time, quoteVolume, close, high, low, open, baseVolume, closed]`.
+- **Reaches 10,000 points of the interval asked**: older is 400 "Candlestick too long ago. Maximum
+  10000 points ago are allowed". At `1m` that is a week; at `1d` it is everything — BTC_USDT's
+  daily bars start on 2014-05-13.
+
+**Bars — `GET /futures/{settle}/candlesticks`, `GET /delivery/{settle}/candlesticks`**
+- **Ask**: `contract`, `interval`, `from`, `to`, or `limit` ≤ 2,000. `contract=mark_BTC_USDT` gives
+  mark price bars, `index_BTC_USDT` index bars.
+- **Answer**: `{t, o, h, l, c, v, sum}`.
+- **Reaches 10,000 points**, the same refusal, for trade, mark and index bars alike.
+
+**Premium index — `GET /futures/{settle}/premium_index`**: `contract`, `interval`, `from`, `to`, or
+`limit` ≤ 1,000; `{t, o, h, l, c}`. A window answered 100 bars, `limit=1000` alone 1,000. **Reaches
+180 days**: older is 400 "from time exceeds 180-day limit".
+
+**Trades — `GET /spot/trades`**
+- **Ask**: `currency_pair`, `from`, `to`, `limit` ≤ 1,000; also `last_id` with `reverse`, and `page`
+  *(documented)*.
+- **Answer**: `{id, create_time, create_time_ms, currency_pair, side, amount, price, sequence_id}`.
+- **Reaches 30 days**: older is 400 "for public trades older than 30 days, download from historical
+  data instead". The other ways of paging reach no further: `last_id=1` returned trades of seven
+  days before, and `page=100` stays inside the month.
+
+**Trades — `GET /futures/{settle}/trades`**
+- **Ask**: `contract`, `from`, `to`, `limit` ≤ 1,000.
+- **Answer**: `{id, contract, create_time, create_time_ms, size, price}`; `size` is signed.
+- **Reaches 180 days**: 179 answers, 185 is 400 "from time exceeds 180-day limit".
+
+**Funding — `GET /futures/{settle}/funding_rate`**
+- **Ask**: `contract`, `from`, `to`, `limit` ≤ 1,000.
+- **Answer**: `{t, r}`, newest first.
+- **An answer holds 30 days at most**, whatever `limit` says: 90 records at 8 hours, starting at
+  `from`.
+- **Reaches 180 days**: `from` 179 days back answers, 181 is refused.
+
+**Contract statistics — `GET /futures/{settle}/contract_stats`**
+- **Ask**: `contract`, `interval` (`5m` … `1d`), `from`, `limit` ≤ 2,000.
+- **Answer**, oldest first: `{time, open_interest, open_interest_usd, mark_price, last_funding_rate,
+  lsr_taker, lsr_account, long_users, short_users, long_taker_size, short_taker_size, top_lsr_account,
+  top_lsr_size, top_long_account, top_short_account, top_long_size, top_short_size, long_liq_size,
+  short_liq_size, long_liq_amount, short_liq_amount, long_liq_usd, short_liq_usd, long_liq_usd_new,
+  short_liq_usd_new}` — about 620 bytes.
+- **Reaches 180 days**: `from` 179 days back answers, 181 is refused.
+
+**Liquidation orders — `GET /futures/{settle}/liq_orders`**
+- **Ask**: `contract` (optional), `from`, `to` — at most 3,600 seconds apart *(documented)* —
+  `limit` ≤ 1,000.
+- **Answer**, newest first: `{contract, size, order_size, fill_price, order_price, left, time}`.
+- **Without `contract` it returns the venue's**, every contract together.
+- **A window returns 1,000 at most**, and an hour can hold more: one did.
+- **Reaches about 11 months**: 330 days back answers, 350 is empty.
+
+**Insurance — `GET /futures/{settle}/insurance`, `/delivery/{settle}/insurance`,
+`/spot/insurance_history`**: a balance a day — `{t, b}`; 31 came back on futures for a `limit` of
+1,000, 100 on delivery. Spot's takes `business`, `currency`, `from`, `to`, `limit` ≤ 30 and answers
+`{currency, balance, time}`.
+
+**Option settlements — `GET /options/settlements`**: `underlying`, `from`, `to`, `limit` ≤ 1,000;
+`{time, contract, strike_price, settle_price, profit, fee, …}`, newest first. **Reaches 2022-09**:
+1,500 days back answers, 1,800 does not.
+
+**Loan rates — `GET /unified/history_loan_rate`**: `currency`, `tier`, `page`, `limit` ≤ 100;
+`{currency, tier, tier_up_rate, rates: [{time, rate}]}`, one an hour, `time` in milliseconds. Page
+200 answers (2024-06).
+
+**The listings**
+- `GET /futures/{settle}/contracts`: `{name, type, create_time, launch_time, funding_interval,
+  in_delisting, status, delisting_time, delisted_time, …}`. Listed contracts only; none carried a
+  delisting time when asked.
+- `GET /spot/currency_pairs`: `{id, base, quote, trade_status, buy_start, sell_start, …}`, all in
+  one answer.
+- `GET /delivery/{settle}/contracts`: `{name, expire_time, cycle, …}`.
+
+### Endpoints that do not, or could not be read
+
+- **`/futures/{settle}/index_constituents/{index}`**: an index's exchanges, prices and weights now.
+- **`/delivery/{settle}/settlements`**: asks for a signature ("Missing required header:
+  Timestamp").
+- **`/options/candlesticks`, `/options/trades`**: empty for the one listed contract tried; how far
+  back they go *(not known)*.
+- **What needs no signature**, by the SDK's reference: 10 endpoints on spot, 14 on futures, 8 on
+  delivery, 12 on options, and the lists and rates of the lending products.

@@ -1,15 +1,19 @@
 # Bitget
 
+Bitget as a source of market data: what it publishes, where, and how it behaves when asked.
+
+## Archives
+
 What bitget's published archives contain, and how its several catalogues name the same instrument.
 Everything here is measured against the venue unless marked **Unverified** or **Assumption**.
 
-## The archive
+### The archive
 
 Files sit under `https://img.bitgetimg.com/online/`, always `.zip`, never with a query string. The
 first path segment is the dataset — `kline`, `trades` or `depth` — and the date appears exactly once,
 in the last segment, never in a directory.
 
-### A missing key answers 403, and that is the venue's defining fact
+#### A missing key answers 403, and that is the venue's defining fact
 
 The bucket grants `GetObject` and not `ListBucket`, so S3 answers an object it never held exactly as
 it answers one it refuses:
@@ -30,7 +34,7 @@ available on a `HEAD`, and prospector's `refusesUs` and `ruleOnFailure` hooks re
 
 No other venue here behaves this way — okx and bybit's book server both answer a missing key 404.
 
-### Its edge limits the rate, near 2,900 a second
+#### Its edge limits the rate, near 2,900 a second
 
 Keys known to exist answer from CloudFront's cache: **597,000 `HEAD`s in one afternoon, not a single
 non-200**, at up to ~3,500/s.
@@ -62,13 +66,13 @@ behind Cloudflare: roughly one request a second sustained, 429 above that, and a
 instead of JSON without a browser `User-Agent` and a `cf_clearance` cookie. A client that treats a
 challenge or a 429 as "no results" records silence as fact.
 
-### Files land two days late, at 03:00 UTC
+#### Files land two days late, at 03:00 UTC
 
 Day `D` is published at `D+2` 03:00 UTC to the minute, measured across eight consecutive days of
 `BTCUSDT` spot klines and the same for trades and depth. So the newest day the archive can hold is
 always two behind. The cadence slips: on 2026-08-21 the 18th was still absent, 21 hours past due.
 
-### Buckets cut at 16:00 UTC, not midnight
+#### Buckets cut at 16:00 UTC, not midnight
 
 A file named `20250101` covers **2024-12-31 16:00 → 2025-01-01 16:00 UTC** — midnight in UTC+8.
 Verified across 120 files spanning all 514 spot symbols and the whole range on disk: zero rows
@@ -78,7 +82,7 @@ row* is shifted. Stocker handles it with the declarative `spill: 'back'` trait.
 **Unverified:** only spot trades were checked. Futures products and the kline/depth datasets deserve
 their own check.
 
-### Trade timestamps carry only second resolution
+#### Trade timestamps carry only second resolution
 
 The `timestamp` column is epoch milliseconds with the millisecond part **always zero**. Measured over
 133,260 rows across 32 consecutive `SNXUSDT` files: zero exceptions. Confirmed on a built partition —
@@ -87,7 +91,7 @@ of ~9.6 M rows in `BTCUSDT` 2024-06, `count(DISTINCT ts % 1000000)` is 1.
 So `ts` cannot order trades within a second; sequence lives in `trade_id` and file order. Sub-second
 bins are not derivable from this source, where binance and bybit publish finer stamps.
 
-### Multi-part days are independent zips
+#### Multi-part days are independent zips
 
 A busy day splits as `20250117_001.zip`, `_002.zip`, and so on. Each opens standalone with its own
 end-of-central-directory record and one CSV **with its own header row** — not a spanned archive.
@@ -101,12 +105,12 @@ era, and the full and terminal distributions overlap — full parts run from 215
 terminal parts have a median of 135,981. Stopping on a small part would save one `HEAD`
 per day-series and cost a silently truncated day whenever the bet was wrong.
 
-### Sentinel value in depth
+#### Sentinel value in depth
 
 Depth publishes a missing quote as **`-999999`**, not an empty field. It must become NULL or every
 spread computed from this venue is wrong. Handled in the series map.
 
-### A day's klines and depth are a sheet, a month's are text
+#### A day's klines and depth are a sheet, a month's are text
 
 The `.zip` of a day holds an Excel file (`20260910.xlsx`, or `<name>.xlsx` in the older naming); the
 `.zip` of a month, under `kline_month/` and `depth_month/`, holds a CSV named after the file
@@ -126,7 +130,7 @@ are CSV at either grain, `trade_id, timestamp, price, side, volume(quote), size(
 (`BTCCMZ26`, 2026-09-10: every one of 3,658 rows a whole number, median 10,417) — see
 [the two product lines](#coin-margined-futures-are-two-live-product-lines).
 
-### Depth is two datasets, and one of them is invisible without a parameter
+#### Depth is two datasets, and one of them is invisible without a parameter
 
 `deptType: 2` on the download index returns a different tree from the one every earlier sweep saw:
 
@@ -157,7 +161,7 @@ The perp quirk holds here too: the directory says `2` where the filename says `3
 lists with an offset rather than a naming convention. Every one is served, 200. No pattern generates
 them and neither name can be trusted for them, so they belong with the unreadables.
 
-## The three naming eras
+### The three naming eras
 
 The same series is published under different shapes over time. Both boundaries are exact and apply
 across the archive, not per symbol.
@@ -221,7 +225,7 @@ The other three are isolated files with no series around them, and are not catal
 any era-2 series that only ever held pre-era files (one kline series, nine trades series that exist
 only for 2024-04-18).
 
-### Every shape, and the token rules
+#### Every shape, and the token rules
 
 Twenty-six shapes cover the archive, counting the monthly trees. **Every one of 5,055,779 indexed URLs matches exactly one of
 them, with no ambiguity and nothing unmatched** — measured by anchoring each shape as a regular
@@ -245,7 +249,7 @@ answers 403 while `kline/BTCUSD/UMCBL/…` answers 200. Every probe missed by on
 placeholder `[^/_]+` rather than `[^/]+`, which is what stops era-1 and era-3 trade shapes matching
 the same URL (`{S}_{DATE}_001` would otherwise swallow the `_SPBL` of `{S}_SPBL_{DATE}_001`).
 
-### Per-dataset floors
+#### Per-dataset floors
 
 | market | dataset | first file |
 |---|---|---|
@@ -263,7 +267,7 @@ enables dates from 2018-01-02, which is a UI constant with nothing behind it.
 Availability is patchy in the early years and must be read, not assumed: for `BTC/USDT` spot trades,
 2018-07-25 present, 2018-07-26 absent, 2019-06-01 absent, 2021-01-01 onward present.
 
-## Bitget names one instrument four different ways
+### Bitget names one instrument four different ways
 
 This is the venue's central difficulty. Four catalogues, four spellings, none authoritative alone.
 
@@ -285,7 +289,7 @@ archive path            BTCUSDU26
 web UI URL              BTCUSD_DMCBL_260925
 ```
 
-### The four endpoints
+#### The four endpoints
 
 **The dropdown list.** `POST /v1/statistics/public/download/getSymbolList` with
 `{displaySymbol, businessLine, businessType, languageType}`. Substring search, matching anywhere in
@@ -339,7 +343,7 @@ Its `businessLine` is finer than the download form's: `1` spot and margin, `10` 
 
 **It covers classic instruments only** — no UTA instrument appears in it at all.
 
-## Which market an instrument belongs to
+### Which market an instrument belongs to
 
 Three canonical markets, from fields the venue states outright:
 
@@ -353,140 +357,7 @@ Three canonical markets, from fields the venue states outright:
 Both fields are present on every instrument of every category, so nothing is decided by a missing
 value.
 
-## The two REST APIs are two account systems
-
-v3 is the **UTA** (Unified Trading Account) API; v2 is the classic one. They are not versions of one
-listing, and neither contains the other.
-
-```
-v2  /api/v2/spot/public/symbols                              1,306 spot
-    /api/v2/margin/currencies                                  589 margin
-    /api/v2/mix/market/contracts?productType=USDT-FUTURES      776 perpetual
-    /api/v2/mix/market/contracts?productType=COIN-FUTURES       11 = 9 perpetual + 2 delivery
-    /api/v2/mix/market/contracts?productType=USDC-FUTURES       49 perpetual
-    /api/v2/mix/market/contracts?productType=SUSDT-FUTURES       3 demo
-    /api/v2/mix/market/contracts?productType=SCOIN-FUTURES       4 = 2 demo + 2 demo delivery
-    /api/v2/mix/market/contracts?productType=SUSDC-FUTURES       2 demo
-
-v3  /api/v3/market/instruments?category=SPOT                 1,306
-    /api/v3/market/instruments?category=MARGIN                 326
-    /api/v3/market/instruments?category=USDT-FUTURES           776
-    /api/v3/market/instruments?category=USDC-FUTURES            49
-    /api/v3/market/instruments?category=COIN-FUTURES            20
-```
-
-`productType` is required on the v2 mix endpoint; without it, `400172 Parameter verification failed`.
-v3 accepts only those five category values; anything else returns `40034`.
-
-Where both list the same market they agree name for name — SPOT, USDT-FUTURES and USDC-FUTURES are
-identical sets. Two places they do not:
-
-- **MARGIN**: v2 has 589, v3 has 326, and v3's are a strict subset. (`tickers?category=MARGIN` on v3
-  returns the whole 1,306 spot list instead, so the two v3 endpoints do not agree with each other
-  either.)
-- **COIN-FUTURES**: **zero overlap, because these are two product lines rather than two spellings.**
-  v2's is `BTCUSD`, v3's is `BTCUSD_CM`, and they publish under different keys — see *Coin-margined
-  futures are two live product lines* below. Reconciling them by dropping `_CM` would splice a line
-  that began in 2026 onto one running since 2019.
-
-**`symbolType` means different things in the two.** v2 uses it for contract style — `perpetual` or
-`delivery`. v3 uses it for asset class — `crypto`, `stock`, `metal` — and carries contract style in
-`type` instead. So the field that separates a perp from a dated contract is only meaningful in v2.
-
-### Delivery contracts, and how each API names its own
-
-Both account systems run them, and each names only its own. v2 has `BTCUSDU26` and `ETHUSDU26` under
-`COIN-FUTURES` plus `SBTCSUSDU26`/`SETHSUSDU26` under `SCOIN-FUTURES`; v3 has `BTCCMZ26` and
-`ETHCMZ26`, following the UTA key shape. They carry `symbolType: delivery` in v2 and `type: delivery`
-in v3, with `deliveryPeriod: this_quarter` and explicit `deliveryStartTime`/`deliveryTime` —
-`BTCUSDU26` runs 2026-03-27 to 2026-09-25, beginning exactly where the previous quarter's `BTCUSDH26`
-delivered.
-
-The naming is the standard futures month code: `H` March, `M` June, `U` September, `Z` December, plus
-a two-digit year. The download form labels them by expiry date instead (`BTCUSD0925`), and that label
-is **wrong by a day or two** against the actual delivery date, and changes as the series rolls.
-
-The archive files each under the name its own account system uses: `BTCUSDU26` for the classic line,
-`APTCMU26` for UTA's.
-
-**The flag is what identifies these, not the category and not the name.** Since each API names only
-its own contracts, a discovery pass reading one alone sees part of the delivery universe — and since
-an **expired** contract appears in no listing at all, its own name is then the only thing left to
-read: the month code, or bitget's `_D1`/`_D2`.
-
-### Demo instruments are published too
-
-The `S`-prefixed product types (`SUSDT-`, `SCOIN-`, `SUSDC-FUTURES`) are bitget's simulated trading
-instruments, and the archive carries them: `SBTCSUSDT` has 4,323 files across three datasets from
-2019-07-22, `SETHSUSDT` 2,439, `SXRPSUSDT` 1,508.
-
-They are identifiable by product type, **not** by the `S` prefix — `SANTOSUSDT`, `SYSUSDT`,
-`SATSUSDT` and `SAROSUSDT` are real tokens whose names begin with S.
-
-### Coin-margined futures are two live product lines
-
-`BTCUSD` (v2) and `BTCUSD_CM` (v3) are not one instrument named twice. The API fields differ in kind:
-
-| | v3 `BTCUSD_CM` | v2 `BTCUSD` |
-|---|---|---|
-| minimum order | `1`, precision `0` | `0.0001`, `volumePlace 4` |
-| size multiplier | `quantityMultiplier 1` | `sizeMultiplier 0.0001` |
-| margin collateral | not exposed | `["BTC","STETH","XRP","ETH","USDE","USDC","BGB"]` |
-
-v3's is quoted in whole contracts (an inverse contract); v2's is sized in the base coin with
-multi-asset collateral. The archive keeps them apart too: `BTCUSD` files under `BTCUSD`,
-`BTCUSD_CM` under `BTCCM`.
-
-**Timing supports the UTA reading.** `BTCUSD_CM` carries `launchTime` 2026-01-21 12:09 UTC and
-`BTCCM`'s first archive file is 2026-01-22, with the rest rolling out in waves — `DOGECM`/`ETHCM`/
-`SOLCM` 01-29, `LINKCM`/`XRPCM` 02-05, `ADACM`/`AVAXCM` 03-12, `NEARCM` 03-18. That is a staged
-product launch, not a rename.
-
-**On 2026-08-17 eleven of the twenty classic streams stopped**, exactly at the era-3 boundary, and
-their `CM` counterparts continue. The nine still in v2 publish under both names concurrently. The
-correlation is perfect across all twenty: in v2 ⟺ the `XUSD` stream still publishes.
-
-**The `CM` line publishes klines only.** `kline/AAVECM/UMCBL/…` answers 200 for current dates while
-`depth/AAVECM/2/…` and `trades/DMCBL/AAVECM/…` answer 403. So those eleven instruments lost trades
-and depth entirely in the move — under either name.
-
-**Assumption:** that `XUSD` and `XCM` are the classic and UTA views of one economic instrument. The
-sizing and collateral differences are measured; the interpretation is not. It does not matter for
-generating URLs — they are separate series either way — but it would matter for presenting one
-history.
-
-### Two fifths of what bitget lists is not crypto
-
-From v3's `symbolType`: **700 stock, 604 crypto, 2 metal** in SPOT alone, with 698 flagged
-`isReality: yes`. These are Bitget's tokenised US equities ("Reality"), displayed with a lowercase
-`r` prefix — `rAAPL`, `rPBR` — and two `pre` ones, `preOPAI` and `preSPCX`.
-
-**Assumption:** that `pre` denotes pre-IPO exposure. The names fit (OpenAI, SpaceX) and neither
-carries `isReality`, but bitget's docs do not say so.
-
-The lowercase appears **only in the portal display name**. Symbols and archive paths are uppercase
-throughout, so a canonical name derived from either is uppercase without needing a rule.
-
-Asset class cuts across bitget's own categories: `TSLAUSDT` is a USDT-FUTURES perpetual, and the
-futures listings carry `isRwa` for the same purpose that `isReality` serves on spot. These map to the
-catalog's refusal: neither a spot rToken nor a stock perpetual is catalogued at all — see
-[what this catalog refuses](#what-this-catalog-refuses-bitgets-non-crypto-listings).
-
-**`isRwa`/`isReality` are the flags to read, not `symbolType`.** `KUAISHOUUSDT` and `HPQUSDT` are
-equities carrying `symbolType: crypto`, so the type field is unreliable for the crypto/RWA question.
-It is worth reading only for `stock`, which catches the pre-IPO names the reality flag does not cover.
-
-**Known limitation: a delisted equity is only recoverable on the spot side.** Once an instrument
-leaves the listings, no flag can speak for it, and the name is all that remains — which works for spot,
-where bitget prefixes Reality tokens with a lowercase `r` and does so exclusively. A delisted stock
-perpetual is named `AAPLUSDT`, indistinguishable from a crypto perpetual, so it classifies as `perp`.
-There is no signal that would fix this, and the consequence is small: a handful of dead equities sit
-in the wrong market.
-
-**Spot equities publish almost nothing.** Of the ~700, exactly one appears among the indexed files.
-Futures equities are published normally.
-
-## Naming: what can be derived, and what must be looked up
+### Naming: what can be derived, and what must be looked up
 
 Measured over the distinct (market, portal name, archive path) triples in the index:
 
@@ -501,7 +372,7 @@ Measured over the distinct (market, portal name, archive path) triples in the in
 The 881 are relistings, stock wrappers (`APPUSDT` → `APPSTOCKUSDT`), `OLD`/`NEW` infixes between base
 and quote (`EDENOLD/USDT` → `EDENUSDT`), and dated expiries.
 
-### That residue is mostly derivable after all
+#### That residue is mostly derivable after all
 
 Asked the other way round — per API category, over the 6,942 instruments whose archive spelling is
 known — **99.8% derive and 17 do not**:
@@ -534,7 +405,7 @@ tickers — `BOOMUP/USDT` → `BOOMUSDT`, `GDXGOLD/USDT` → `GDXUSDT`, `MAJORPO
 unrelated renames, `KAON` → `AKRO` and `SLTC` → `SBCHS`. These must be read from the venue, which
 is what the trading platform search is for, since `symbolCode` gives the archive name directly.
 
-### The index answers with its own label, so read `displayName`
+#### The index answers with its own label, so read `displayName`
 
 Every row the download index returns carries the `displayName` that produced it, which is the exact
 symbol-to-URL mapping a bulk request otherwise loses — asking 2,000 names at once returns one flat
@@ -554,7 +425,7 @@ Where a pairing is not obvious, the fix is not a cleverer inference: **ask the i
 symbol**. The batch is a speed strategy, not a requirement, and a single-symbol request is
 categorical about what that instrument has.
 
-### A path names whoever held the ticker when the file was written
+#### A path names whoever held the ticker when the file was written
 
 Bitget reuses tickers and a path cannot be renamed after the fact, so the plain spelling belongs to
 the *first* holder and every later one gets a fresh path:
@@ -587,7 +458,7 @@ Getting it wrong is not cosmetic: recording the second case as two series produc
 is full of data". The trading platform search settles it — if `symbolCode(A) = B` then `B` is a
 spelling; if `A` and `B` each appear as their own record, they are two instruments.
 
-### Depth can be spelled differently from the rest of an instrument
+#### Depth can be spelled differently from the rest of an instrument
 
 Asking the download index for every spot instrument under its *slashless* canonical — rather than
 the dropdown spelling the form accepts — turned up ten instruments whose depth is filed under the
@@ -614,7 +485,7 @@ For seven of them that is the ordinary case — one stream, handed over at a ren
 for its whole life. **The first three overlap for months**, so for that period bitget wrote two depth
 streams for one listed instrument, and only the canonical one is catalogued.
 
-### An instrument is a market plus a symbol, and a path belongs to nobody
+#### An instrument is a market plus a symbol, and a path belongs to nobody
 
 **This is the question that keeps being re-asked, so it is settled here.**
 
@@ -649,7 +520,7 @@ tells you nothing; checking generated keys is the check.
 canonical `(market, symbol)`, however many series it takes and wherever bitget moved the files. The
 series are the mechanism; the canonical is the identity.
 
-### Two keys name one instrument inside another's directory
+#### Two keys name one instrument inside another's directory
 
 ```
 kline/TRXUSDT/TRXETH_SP_1min_20220508.zip
@@ -664,7 +535,7 @@ Neither can be *read* — no single-`{SYMBOL}` shape parses them — but one of 
 because it is the only copy and the day would otherwise be a permanent hole. `TRXETH`'s needs no such
 row: a byte-identical copy sits at its proper key.
 
-## What the download form does not know
+### What the download form does not know
 
 The dropdown enumeration is the only listing that remembers delisted instruments, and it is still
 incomplete in two measured ways.
@@ -690,7 +561,7 @@ Those files are also not a copy of the futures ones. Measured on matched timesta
 a consistent 0.4–0.5 and the `/1/` file carries two rows per timestamp with different books, so
 whatever the venue is filing there, it is not the `/2/` stream under another name.
 
-## Building the seed
+### Building the seed
 
 The archive cannot be listed, so the seed is built by asking, in three stages. This is in progress;
 the description will change as it does.
@@ -751,7 +622,7 @@ The tips, per era and dataset:
 Candlesticks reach furthest back in the middle era because that era's keys carry dates from 2019 —
 see below.
 
-### Why the seed states shapes rather than sightings
+#### Why the seed states shapes rather than sightings
 
 The index omits files that exist. Measured on the era-boundary candlesticks: of six days it listed
 under the era-2 key only, five have an era-1 file too, serving the same candles — see *The three
@@ -765,7 +636,7 @@ Nothing in the file list has been fetched, so it bounds nothing in either direct
 from it would inherit that silence permanently, because nothing walks this venue: a key the seed does
 not name is never probed, and never found.
 
-## It publishes a day two days later
+### It publishes a day two days later
 
 **Bitget is the slowest of the eight venues by a factor of two**, and it is a
 wall rather than a tendency. Measured from its own `Last-Modified` over 28,992
@@ -782,7 +653,7 @@ closer spends one probe per series per night on a file that cannot exist, and th
 patience window then spends it again the following night: two thirds of what its
 update asked, before this was measured.
 
-## Discovering instruments added later
+### Discovering instruments added later
 
 The seed covers what exists today. Keeping up needs a listing that names new instruments *before*
 any file exists, which rules out the archive and the download index.
@@ -809,7 +680,7 @@ today, and the search endpoint returns nothing for a retired symbol. Those exist
 dropdown enumeration and in the archive itself, which is why the sweep's output is a historical record
 worth keeping rather than something to regenerate on demand.
 
-## What this catalog refuses: bitget's non-crypto listings
+### What this catalog refuses: bitget's non-crypto listings
 
 **Roughly 1,500 of the instruments bitget lists are not crypto**, and none of them is catalogued.
 Tokenised equities and ETFs on the spot line, spelled `rTSLA/USDT`, `rAAPL/USDT`, `rARKK/USDT`;
@@ -841,7 +712,7 @@ market itself. And `categoryOf` is gone from the adapter: it existed to stop a m
 archive lines being given the wrong line's shapes, and with the non-crypto instruments refused, no
 market spans both.
 
-## Open questions
+### Open questions
 
 - Why 809 depth streams stop on 2026-08-17, the last day of era 2, with nothing taking over — probing
   every filename digit on later dates answers `403` for all of them.
@@ -854,3 +725,249 @@ market spans both.
 - Whether the bucket cut holds for futures products and for klines and depth.
 - Whether `pre`-prefixed equities are pre-IPO instruments.
 - Whether `XUSD` and `XCM` are one economic instrument under two account systems.
+
+## REST
+
+**How to read this section.** A statement with no mark is what the API answered when it was asked,
+in October 2026. *(documented)* marks what bitget's documentation states and was not tried.
+*(not known)* marks what neither settled. Nothing here is inferred from another venue.
+
+**Where the documentation is.** The site at `www.bitget.com/docs` is rendered by a script and serves
+one page at every address to anything that does not run it. Its content is an OpenAPI document for
+each group of endpoints, bundled as a script: `/docs-static/assets/docs-catalog-<group>-<name>.en.json-<hash>.js`,
+the names being in `/docs-static/assets/entry.client-<hash>.js`. The groups that matter here are
+`classic-contract-market`, `classic-spot-market`, `classic-common-apidata` and `market` (v3).
+
+### The API
+
+**One host, `https://api.bitget.com`, behind Cloudflare, serving two generations at once.**
+
+| generation | base | markets by |
+|---|---|---|
+| v2 | `/api/v2/spot/market/*`, `/api/v2/mix/market/*` | `productType`: `USDT-FUTURES`, `COIN-FUTURES`, `USDC-FUTURES` |
+| v3 | `/api/v3/market/*` | `category`: `SPOT`, `USDT-FUTURES`, `COIN-FUTURES`, `USDC-FUTURES` |
+
+- **Mark and index history are v2's alone**: on v3's `history-candles`, `type=MARK` returns the
+  trade bars.
+- **Times are milliseconds**, strings in answers.
+- **Every answer is `{code, msg, requestTime, data}`**; `"00000"` is success.
+- **A bad request is HTTP 400** with a code. Seen: `40053` (`limit` out of range), `40020`
+  (parameter `limit`), `40808` (`pageNo` beyond 100), `40934` (`startTime` earlier than 90 days),
+  `40309` (the symbol has been removed).
+
+### Its limits
+
+- **A budget for each endpoint, per second, by address.** The header `x-mbx-used-remain-limit` is
+  what is left of the current second.
+- **What the header starts at**, after one call: 19 on `candles`, `fills-history` (futures),
+  `history-fund-rate`, `history-mark-candles`, `history-index-candles`, `open-interest`, the v3
+  endpoints; 9 on spot's `fills-history`; **4 on `history-candles`**, futures and spot; 0 on
+  `long-short`, `account-long-short`, `position-long-short`, `taker-buy-sell`.
+- **The documentation states each endpoint's**: "20 times/1s (IP)" for most market endpoints, 10
+  for trade history, 1 for the ratio endpoints, 5 for v3's liquidations.
+- **`history-candles` is 5 a second, not the 20 stated**: the header starts at 4, and the sixth
+  call inside a second is refused.
+- **Beyond it**: HTTP 429, `{"code":"429","msg":"Too Many Requests","requestTime":…,"data":null}`,
+  with no header. The next second answers.
+- **An endpoint's budget is its own**: with mark bars refused after 20 calls, index bars and
+  `history-candles` answered at once.
+
+### How it is paged
+
+- **Bars, backward by `endTime`**: the `limit` bars up to it, oldest first within the page; the
+  next `endTime` is the oldest time received.
+- **`startTime` alone** returns the last `limit` bars of a window beginning there — for a start of
+  2021-01-01, bars of 2021-03-31.
+- **Funding by page**: `pageNo` (≤ 100) and `pageSize` (≤ 100; 101 returns 100) on v2; `cursor` and
+  `limit` (≤ 100; 200 is refused) on v3, where `cursor` behaves as a page number.
+- **A `limit` over the maximum is refused** on `history-candles` (`40053`).
+
+### Endpoints that serve the past
+
+**Bars — `GET /api/v2/mix/market/history-candles`, `GET /api/v2/spot/market/history-candles`**
+- **Ask**: `symbol`, `productType` (futures), `granularity` (`1m 5m 15m 30m 1H 4H 1D 1W 1M` on
+  futures; `1min … 1week` on spot), `startTime`, `endTime`, `limit` ≤ 200.
+- **Answer**: futures `[ts, open, high, low, close, baseVolume, quoteVolume]`; spot
+  `[ts, open, high, low, close, baseVolume, usdtVolume, quoteVolume]`.
+- **Reaches the first trade**: futures BTCUSDT's first week is 2020-06-07, and its `1m` bars of
+  2020-12 answer; spot BTCUSDT's first week is 2018-07-22, and its `1min` bars of 2019-06 answer.
+- **Budget**: 5 a second.
+
+**Mark and index bars — `GET /api/v2/mix/market/history-mark-candles`, `history-index-candles`**
+- **Ask**: as futures bars; `limit` ≤ 200.
+- **Answer**: `[ts, open, high, low, close, "0", "0"]`.
+- **Reach the contract's first month**: BTCUSDT's mark bars start 2019-07, and `1m` bars of 2020-12
+  answer for both. Of 820 listed USDT contracts, 811 have mark history.
+- **Budget**: 20 a second.
+
+### Endpoints that hold only the newest
+
+- **Funding — `GET /api/v2/mix/market/history-fund-rate`**, and v3's `history-fund-rate`:
+  `{symbol, fundingRate, fundingTime}`. **Only the last 270 records** — pages 1 to 3 of 100; every
+  later page is empty. At 8 hours that is 90 days.
+- **Trades — `GET /api/v2/mix/market/fills-history`, `/api/v2/spot/market/fills-history`**:
+  `symbol`, `startTime`, `endTime` — 7 days apart at most *(documented)* — `limit` ≤ 1,000;
+  `{tradeId, price, size, side, ts, symbol}`. **90 days**: older is `40934`. `fills` is the newest
+  100.
+- **Ratios — `GET /api/v2/mix/market/long-short`, `account-long-short`, `position-long-short`,
+  `taker-buy-sell`**: `symbol`, `period`; 30 points — `{longRatio, shortRatio, longShortRatio, ts}`
+  and the like; 1 call a second.
+- **Risk reserve — `GET /api/v3/market/risk-reserve`, `risk-reserve-hour`**: 30 daily and 30 hourly
+  `{ts, amount, balance}`.
+- **Open interest — `GET /api/v2/mix/market/open-interest`, `/api/v3/market/open-interest`**: the
+  value now.
+- **`GET /api/v2/mix/market/candles`**: 1,000 a page; `kLineType` gives `market`, `mark` or `index`
+  bars. **Recent bars only**: at `1m`, 20 days back answers and 40 does not. One month for `1m`,
+  `3m` and `5m`, 52 days for `15m`, 62 for `30m`, 83 for `1H`, 240 for `4H`, 360 for `6H`
+  *(documented)*.
+- **Liquidations — `GET /api/v3/market/liquidations`**: `category`, `symbol` (optional), `limit` ≤
+  100, `cursor`; `data.list[]` of `{symbol, side, price, amount, ts}`. The last 3 days
+  *(documented)*.
+- **Interest rate — `GET /api/v2/mix/market/union-interest-rate-history?coin=USDT`**:
+  `data.historyInterestRateList[]` of `{ts, annualInterestRate, dailyInterestRate}`, 720 of them,
+  one an hour: 30 days.
+- **Announcements — `GET /api/v2/public/annoucements`**: `annType`, `language`; ten of the last
+  month *(documented)*.
+- **Margin and spot flows** — `margin/market/long-short-ratio`, `loan-growth`,
+  `isolated-borrow-rate`, `spot/market/whale-net-flow`, `fund-flow`: 30 points or fewer.
+- **`/api/v3/market/index-components`**: an index's exchanges and weights now.
+
+### The listings, and what a delisted contract answers
+
+- `GET /api/v2/mix/market/contracts?productType=`: `{symbol, symbolStatus, fundInterval, launchTime,
+  offTime, deliveryTime, …}`. `launchTime` was empty on every contract; listed contracts only.
+- **A delisted contract does not exist**: bars and mark bars answer `40309` "The symbol has been
+  removed".
+
+### The two REST APIs are two account systems
+
+v3 is the **UTA** (Unified Trading Account) API; v2 is the classic one. They are not versions of one
+listing, and neither contains the other.
+
+```
+v2  /api/v2/spot/public/symbols                              1,306 spot
+    /api/v2/margin/currencies                                  589 margin
+    /api/v2/mix/market/contracts?productType=USDT-FUTURES      776 perpetual
+    /api/v2/mix/market/contracts?productType=COIN-FUTURES       11 = 9 perpetual + 2 delivery
+    /api/v2/mix/market/contracts?productType=USDC-FUTURES       49 perpetual
+    /api/v2/mix/market/contracts?productType=SUSDT-FUTURES       3 demo
+    /api/v2/mix/market/contracts?productType=SCOIN-FUTURES       4 = 2 demo + 2 demo delivery
+    /api/v2/mix/market/contracts?productType=SUSDC-FUTURES       2 demo
+
+v3  /api/v3/market/instruments?category=SPOT                 1,306
+    /api/v3/market/instruments?category=MARGIN                 326
+    /api/v3/market/instruments?category=USDT-FUTURES           776
+    /api/v3/market/instruments?category=USDC-FUTURES            49
+    /api/v3/market/instruments?category=COIN-FUTURES            20
+```
+
+`productType` is required on the v2 mix endpoint; without it, `400172 Parameter verification failed`.
+v3 accepts only those five category values; anything else returns `40034`.
+
+Where both list the same market they agree name for name — SPOT, USDT-FUTURES and USDC-FUTURES are
+identical sets. Two places they do not:
+
+- **MARGIN**: v2 has 589, v3 has 326, and v3's are a strict subset. (`tickers?category=MARGIN` on v3
+  returns the whole 1,306 spot list instead, so the two v3 endpoints do not agree with each other
+  either.)
+- **COIN-FUTURES**: **zero overlap, because these are two product lines rather than two spellings.**
+  v2's is `BTCUSD`, v3's is `BTCUSD_CM`, and they publish under different keys — see *Coin-margined
+  futures are two live product lines* below. Reconciling them by dropping `_CM` would splice a line
+  that began in 2026 onto one running since 2019.
+
+**`symbolType` means different things in the two.** v2 uses it for contract style — `perpetual` or
+`delivery`. v3 uses it for asset class — `crypto`, `stock`, `metal` — and carries contract style in
+`type` instead. So the field that separates a perp from a dated contract is only meaningful in v2.
+
+#### Delivery contracts, and how each API names its own
+
+Both account systems run them, and each names only its own. v2 has `BTCUSDU26` and `ETHUSDU26` under
+`COIN-FUTURES` plus `SBTCSUSDU26`/`SETHSUSDU26` under `SCOIN-FUTURES`; v3 has `BTCCMZ26` and
+`ETHCMZ26`, following the UTA key shape. They carry `symbolType: delivery` in v2 and `type: delivery`
+in v3, with `deliveryPeriod: this_quarter` and explicit `deliveryStartTime`/`deliveryTime` —
+`BTCUSDU26` runs 2026-03-27 to 2026-09-25, beginning exactly where the previous quarter's `BTCUSDH26`
+delivered.
+
+The naming is the standard futures month code: `H` March, `M` June, `U` September, `Z` December, plus
+a two-digit year. The download form labels them by expiry date instead (`BTCUSD0925`), and that label
+is **wrong by a day or two** against the actual delivery date, and changes as the series rolls.
+
+The archive files each under the name its own account system uses: `BTCUSDU26` for the classic line,
+`APTCMU26` for UTA's.
+
+**The flag is what identifies these, not the category and not the name.** Since each API names only
+its own contracts, a discovery pass reading one alone sees part of the delivery universe — and since
+an **expired** contract appears in no listing at all, its own name is then the only thing left to
+read: the month code, or bitget's `_D1`/`_D2`.
+
+#### Demo instruments are published too
+
+The `S`-prefixed product types (`SUSDT-`, `SCOIN-`, `SUSDC-FUTURES`) are bitget's simulated trading
+instruments, and the archive carries them: `SBTCSUSDT` has 4,323 files across three datasets from
+2019-07-22, `SETHSUSDT` 2,439, `SXRPSUSDT` 1,508.
+
+They are identifiable by product type, **not** by the `S` prefix — `SANTOSUSDT`, `SYSUSDT`,
+`SATSUSDT` and `SAROSUSDT` are real tokens whose names begin with S.
+
+#### Coin-margined futures are two live product lines
+
+`BTCUSD` (v2) and `BTCUSD_CM` (v3) are not one instrument named twice. The API fields differ in kind:
+
+| | v3 `BTCUSD_CM` | v2 `BTCUSD` |
+|---|---|---|
+| minimum order | `1`, precision `0` | `0.0001`, `volumePlace 4` |
+| size multiplier | `quantityMultiplier 1` | `sizeMultiplier 0.0001` |
+| margin collateral | not exposed | `["BTC","STETH","XRP","ETH","USDE","USDC","BGB"]` |
+
+v3's is quoted in whole contracts (an inverse contract); v2's is sized in the base coin with
+multi-asset collateral. The archive keeps them apart too: `BTCUSD` files under `BTCUSD`,
+`BTCUSD_CM` under `BTCCM`.
+
+**Timing supports the UTA reading.** `BTCUSD_CM` carries `launchTime` 2026-01-21 12:09 UTC and
+`BTCCM`'s first archive file is 2026-01-22, with the rest rolling out in waves — `DOGECM`/`ETHCM`/
+`SOLCM` 01-29, `LINKCM`/`XRPCM` 02-05, `ADACM`/`AVAXCM` 03-12, `NEARCM` 03-18. That is a staged
+product launch, not a rename.
+
+**On 2026-08-17 eleven of the twenty classic streams stopped**, exactly at the era-3 boundary, and
+their `CM` counterparts continue. The nine still in v2 publish under both names concurrently. The
+correlation is perfect across all twenty: in v2 ⟺ the `XUSD` stream still publishes.
+
+**The `CM` line publishes klines only.** `kline/AAVECM/UMCBL/…` answers 200 for current dates while
+`depth/AAVECM/2/…` and `trades/DMCBL/AAVECM/…` answer 403. So those eleven instruments lost trades
+and depth entirely in the move — under either name.
+
+**Assumption:** that `XUSD` and `XCM` are the classic and UTA views of one economic instrument. The
+sizing and collateral differences are measured; the interpretation is not. It does not matter for
+generating URLs — they are separate series either way — but it would matter for presenting one
+history.
+
+#### Two fifths of what bitget lists is not crypto
+
+From v3's `symbolType`: **700 stock, 604 crypto, 2 metal** in SPOT alone, with 698 flagged
+`isReality: yes`. These are Bitget's tokenised US equities ("Reality"), displayed with a lowercase
+`r` prefix — `rAAPL`, `rPBR` — and two `pre` ones, `preOPAI` and `preSPCX`.
+
+**Assumption:** that `pre` denotes pre-IPO exposure. The names fit (OpenAI, SpaceX) and neither
+carries `isReality`, but bitget's docs do not say so.
+
+The lowercase appears **only in the portal display name**. Symbols and archive paths are uppercase
+throughout, so a canonical name derived from either is uppercase without needing a rule.
+
+Asset class cuts across bitget's own categories: `TSLAUSDT` is a USDT-FUTURES perpetual, and the
+futures listings carry `isRwa` for the same purpose that `isReality` serves on spot. These map to the
+catalog's refusal: neither a spot rToken nor a stock perpetual is catalogued at all — see
+[what this catalog refuses](#what-this-catalog-refuses-bitgets-non-crypto-listings).
+
+**`isRwa`/`isReality` are the flags to read, not `symbolType`.** `KUAISHOUUSDT` and `HPQUSDT` are
+equities carrying `symbolType: crypto`, so the type field is unreliable for the crypto/RWA question.
+It is worth reading only for `stock`, which catches the pre-IPO names the reality flag does not cover.
+
+**Known limitation: a delisted equity is only recoverable on the spot side.** Once an instrument
+leaves the listings, no flag can speak for it, and the name is all that remains — which works for spot,
+where bitget prefixes Reality tokens with a lowercase `r` and does so exclusively. A delisted stock
+perpetual is named `AAPLUSDT`, indistinguishable from a crypto perpetual, so it classifies as `perp`.
+There is no signal that would fix this, and the consequence is small: a handful of dead equities sit
+in the wrong market.
+
+**Spot equities publish almost nothing.** Of the ~700, exactly one appears among the indexed files.
+Futures equities are published normally.

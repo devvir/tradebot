@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { follow } from '../../../src/tools/cold/shared/progress-mega';
+import { waitingFor } from '../../../src/tools/cold/shared/progress';
 import type { Progress } from '../../../src/tools/cold/shared/progress';
 import type { Bar, Following, Transfer } from '../../../src/tools/cold/shared/types';
 
@@ -90,5 +91,39 @@ describe('following a queue of Mega\'s', () => {
 
     expect(stopped()).toBe(true);
     expect(bars.size).toBe(0);
+  });
+});
+
+describe('a line written over in place', () => {
+  const tty = process.stdout.isTTY;
+
+  afterEach(() => {
+    process.stdout.isTTY = tty;
+
+    vi.restoreAllMocks();
+  });
+
+  it('opens with an hourglass unless told otherwise, and is taken away with nothing', () => {
+    process.stdout.isTTY = true;
+
+    const written: string[] = [];
+
+    vi.spyOn(process.stdout, 'write').mockImplementation((text: unknown) => (written.push(String(text)), true));
+
+    waitingFor('Retrying in 5 seconds…');
+    waitingFor('nothing to bring', '✓');
+    waitingFor(null);
+
+    expect(written).toEqual(['\r\x1b[K⏳ Retrying in 5 seconds…', '\r\x1b[K✓ nothing to bring', '\r\x1b[K']);
+  });
+
+  it('writes nothing where there is no terminal to write over', () => {
+    process.stdout.isTTY = false;
+
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+
+    waitingFor('nothing to bring', '✓');
+
+    expect(write).not.toHaveBeenCalled();
   });
 });

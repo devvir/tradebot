@@ -4,11 +4,13 @@ import { GB, WATCH_MS, loadConfig } from '../../config';
 import { acquire } from '../../lock';
 import * as mega from '../../shared/mega';
 import { agreed, isWatch } from '../../options';
+import { waitingFor } from '../../shared/progress';
 import * as record from '../../shared/record';
 import { fetch } from '../../shared/vault/fetch';
 import { neededOf } from '../../shared/vault/needed';
 import { RESERVE_GB, bring } from '../archives/bring';
 import { count, freeBytes, tarsOf } from '../archives';
+import { C } from '../../../../shared/utils/colors';
 import { fmtBytes } from '../../../../shared/utils/format';
 import { error, info, spacer, success, warn } from '../../../../shared/ui/logger';
 import type { DatabaseSync } from 'node:sqlite';
@@ -35,6 +37,11 @@ import type { Tar } from '../../types';
  *
  * **Watching, it looks again at intervals** and brings what has come to be
  * waited for since. It asks before the first time and not again.
+ *
+ * **That there is nothing to bring is said once, however often it is looked.**
+ * Between looks one line says so and when it was last looked, written over
+ * each time; where there is no terminal to write over, it is said when it
+ * comes to be so and not again while it stays so.
  */
 export const runPullNeeded = async (options: { dryRun?: boolean }): Promise<void> => {
   const config   = loadConfig('archives');
@@ -46,11 +53,17 @@ export const runPullNeeded = async (options: { dryRun?: boolean }): Promise<void
     onExit(() => record.close(db));
 
     try {
-      for (let asked = false; ; ) {
-        const needed = await neededOf(db);
-        const tars   = tarsOf(db, needed.archives);
+      const standing = isWatch() && ! options.dryRun && Boolean(process.stdout.isTTY);
 
-        say(needed, tars);
+      for (let asked = false, idle = false; ; ) {
+        const needed  = await neededOf(db);
+        const tars    = tarsOf(db, needed.archives);
+        const nothing = needed.archives.length + needed.vault.length + needed.unstored.length === 0;
+
+        if (! nothing) say(needed, tars);
+        else if (! idle && ! standing) success(NOTHING);
+
+        idle = nothing;
 
         const wanted = fitting(needed, tars, freeBytes(config.coldRoot));
 
@@ -75,7 +88,12 @@ export const runPullNeeded = async (options: { dryRun?: boolean }): Promise<void
 
         await save(config, [recordOf(config)]);
 
+        if (nothing) waitingFor(lastChecked(new Date()), `${C.green}✓${C.reset}`);
+
         await new Promise(resolve => setTimeout(resolve, WATCH_MS));
+
+        // Taken away before the next look, whose own lines would otherwise be written onto it.
+        waitingFor(null);
       }
     } finally {
       record.close(db);
@@ -120,6 +138,12 @@ export const fitting = (
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
+const NOTHING = 'The vault waits for nothing that is in cold storage';
+
+/** The line that stands between two looks which found nothing: that it is so, and when it was last looked. */
+const lastChecked = (at: Date): string =>
+  `${NOTHING} (last checked: ${at.toISOString().slice(0, 16).replace('T', ' ')} UTC)`;
+
 /** Bring the vault's files, then each tar, and say how it went. */
 const brought = async (db: DatabaseSync, files: readonly StoredFile[], tars: readonly Tar[], needed: Needed): Promise<void> => {
   spacer();
@@ -138,12 +162,6 @@ const brought = async (db: DatabaseSync, files: readonly StoredFile[], tars: rea
 
 /** What the vault waits for, in a few lines. */
 const say = (needed: Needed, tars: readonly Tar[]): void => {
-  if (needed.archives.length + needed.vault.length + needed.unstored.length === 0) {
-    success('The vault waits for nothing that is in cold storage');
-
-    return;
-  }
-
   info(`${count(needed.partitions, 'vault partition')} cannot be completed without files that are not on disk`);
 
   if (needed.archives.length > 0)
@@ -162,3 +180,7 @@ const say = (needed: Needed, tars: readonly Tar[]): void => {
 
   spacer();
 };
+
+// ── Test access ───────────────────────────────────────────────────────────────
+
+export const _test_lastChecked = lastChecked;

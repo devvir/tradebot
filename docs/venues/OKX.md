@@ -1,9 +1,13 @@
 # OKX
 
+OKX as a source of market data: what it publishes, where, and how it behaves when asked.
+
+## Archives
+
 What okx's published archives actually contain, established by asking okx rather than by reading
 its documentation.
 
-## The shape of the archive
+### The shape of the archive
 
 **Read this before designing any probe, sweep or bound.** Every wrong conclusion recorded here so
 far came from testing one cell of this table and generalising from it.
@@ -30,7 +34,7 @@ Five datasets, and the markets each applies to — okx's *expiry* is `FUTURES`, 
   real, but no endpoint enumerates okx's currencies, so the bucket is the only rendering that can be
   generated. It begins **2021-12-14** — the 13th answers 404 and the 14th 200.
 
-### The buckets are the dataset, not an instrument in it
+#### The buckets are the dataset, not an instrument in it
 
 `allspot`, `allswap`, `allfutures`, `alloption` and `allmargin` have no listing, no lifetime and
 nothing to measure: each exists for as long as its dataset has. So they are **never given a series** —
@@ -40,7 +44,7 @@ complete day, and no gap is assumed or hunted for. A day the venue did not publi
 Their floors differ by market for the same dataset, which is why each bucket takes its own market's
 earliest: spot candlesticks reach back to 2019-12 while futures begin in 2021-09.
 
-### A chain is not spelled the way the venue names it
+#### A chain is not spelled the way the venue names it
 
 The archive is **one directory per dataset per period, holding every market at once**, so the
 instrument token in a filename is the only thing separating them. Dated chains carry what kind of
@@ -62,7 +66,7 @@ That is what recorded 174 futures families as publishing nothing and gave the ot
 under a futures label, and it is why an absence on this venue is a claim about our spelling until
 proved otherwise.
 
-### `preopen` instruments do not exist here
+#### `preopen` instruments do not exist here
 
 okx's instruments API carries a `state`, and `preopen` means **announced, not yet trading** —
 `JP225-USDT-SWAP` sat in the portal's list on 2026-08-16 with a listing date of 2026-09-09. It has no
@@ -76,7 +80,7 @@ ordinary new symbol and is discovered like any other.
 The portal's list cannot say this — it is names only — which is the one thing the public API is
 needed for.
 
-### The rules that follow from all of this
+#### The rules that follow from all of this
 
 - **A symbol that is listed and shows no data means the URL is wrong**, not that the venue publishes
   nothing — the more so for an *active* instrument. Absence is the last conclusion to reach, not the
@@ -86,7 +90,7 @@ needed for.
 - **Never record an absence from an answer that is not a 404.** A 403 here is CloudFront blocking
   the address, and it looks identical to "not published" once written down.
 
-## The archive has an index, and it is public
+### The archive has an index, and it is public
 
 OKX publishes no bucket listing, so its URLs are constructed from a date and probed. That is
 avoidable: the download portal's own form calls a list endpoint that needs no cookies and no
@@ -124,7 +128,7 @@ Two things this is worth beyond enumeration:
 The endpoint rate-limits: a handful of rapid calls returns `{"msg":"Too Many Requests",
 "code":"50011"}`, so it needs the same pacing as any other okx call.
 
-## What the parameters select
+### What the parameters select
 
 | `module` | dataset | instrument types | periods | scope |
 |---|---|---|---|---|
@@ -181,7 +185,7 @@ daily,   all at once    …/borrowrates/daily/20260813/allmargin-borrowrates-202
 So `module: 5` takes `instQueryParam.ccyList` rather than `instIdList`, and there is no per-currency
 daily file to ask for.
 
-## The floors, measured rather than read off the portal
+### The floors, measured rather than read off the portal
 
 **Each dataset has its own floor.** The form's date pickers, read with no symbol selected, claim
 "nothing exists before this date" about the archive as a whole. Measured against it, **the form is
@@ -214,7 +218,7 @@ this table put candlesticks at 202001 because `BTC-USDT` was the symbol asked, a
 201911. **A floor measured from one symbol is that symbol's floor**, and here it was twenty months
 off.
 
-### Candles reach twenty months further back than trades
+#### Candles reach twenty months further back than trades
 
 This is the finding that governs how a symbol's range can be established: **a dataset's history is
 not bounded by its symbol's trade history.** `BTC-USDT` serves candlesticks for 202001 through
@@ -232,7 +236,7 @@ datasets, which is the half of the assumption that survives.
 in their `listTime` month exactly, with nothing before. The divergence above is a property of the
 *archive's* floors, not of instruments.
 
-### `listTime` is not a lower bound
+#### `listTime` is not a lower bound
 
 For anything predating the floors it is wrong in both directions at once. Five symbols stamped
 `listTime` 202101:
@@ -253,7 +257,7 @@ It stays useful for genuinely recent instruments — 369 symbols carry 202603, a
 real — but a bound that has to be trusted selectively is not a bound. **Probing a dataset's own
 range is what establishes a start; `listTime` at most suggests where to look first.**
 
-### Funding is per symbol monthly, venue-wide daily — and has a three-month hole
+#### Funding is per symbol monthly, venue-wide daily — and has a three-month hole
 
 The directory and the filename disagree about the name, and the instrument keeps its `-SWAP`
 suffix:
@@ -273,7 +277,7 @@ begins at the trades floor, skips three months, and resumes — which means **th
 is not proof of a contiguous start**, and a bisect over a funding range would land in the hole and
 report 202201.
 
-### Swap trades for 2021-10 list every trade twice
+#### Swap trades for 2021-10 list every trade twice
 
 **The first month of swap trades is not usable as published.** Every swap instrument's trades for
 October 2021 carry each trade on two rows, one after the other: the same `trade_id`, price, size and
@@ -305,7 +309,7 @@ so the month's sides are not known, and taken as published its rows and its volu
 
 **Swap trades are therefore usable from 2021-11.**
 
-### Candlestick volumes are three columns, filled by era
+#### Candlestick volumes are three columns, filled by era
 
 A candlestick row is `instrument_name, open, high, low, close, vol, vol_ccy, vol_quote, open_time,
 confirm`. `vol` is always filled. The other two are not, and a column okx did not fill holds the text
@@ -328,7 +332,7 @@ What they measure depends on the market:
 Read from the monthly files of `BTC-USDT`, `ETH-BTC`, `BTC-USDT-SWAP` and `BTC-USD-SWAP`, one row a
 month.
 
-### What a book file holds
+#### What a book file holds
 
 The `.tar.gz` holds one `.data` file of a JSON record a line:
 
@@ -346,7 +350,7 @@ family, each record naming its own.
 **Book files are UTC days.** A day's file runs 00:00 to 24:00 UTC (2023-03-01, 2023-12-18,
 2026-06-01; spot, swap and futures), where a day of trades or candlesticks is a UTC+8 day.
 
-### The book holes are real, and two methods agree
+#### The book holes are real, and two methods agree
 
 `BTC-USDT` 400lv, asked of the index and probed directly on the same days:
 
@@ -371,13 +375,13 @@ Funding and borrowing are published venue-wide, one file a day for every instrum
 2021-12-14, against a `RATES_START` of 2021-12-01 — so its true floor is a fortnight later than
 the constant, which costs probes rather than data.
 
-## What a walk of the whole universe found
+### What a walk of the whole universe found
 
 The first such walk — every pair probed a month at a time from a uniform floor of 201901 — is where
 most of the shape below was learned. **Its bounds were wrong** and have since been rebuilt at the
 right spellings; what survives it is the shape, which the rebuild confirmed.
 
-### A dataset's floor is a launch, not a gradual filling
+#### A dataset's floor is a launch, not a gradual filling
 
 Each dataset appears all at once, backfilled across everything listed at the time:
 
@@ -396,14 +400,14 @@ dataset launched has a `first` that says nothing about when it started trading �
 Only candlesticks reach 201912. Everything else floors at its own launch, so **candles are the only
 way to see okx before 2021-09** at all.
 
-### Two mass listings dominate everything after
+#### Two mass listings dominate everything after
 
 202511 (1,239 pairs) and 202603 (1,240) each add as much as a dataset launch, but spread
 proportionally across all five datasets rather than concentrated in one — the signature of new
 instruments rather than new history. 202604 through 202606 stay elevated. Any capacity estimate
 that extrapolates from the archive's early years will be wrong by a wide margin.
 
-### An end is a property of the symbol, not of one dataset
+#### An end is a property of the symbol, not of one dataset
 
 Delisting takes everything down together, and the counts make that visible: 202603 closes 22 series
 in each of the five datasets, 202602 closes 7 of each. **2,360 series have a measured end across 56
@@ -414,7 +418,7 @@ at 202606 while their candlesticks ran on; re-asking that one month reopened 262
 `PANW-USDT-SWAP` was genuinely dead there. See [the two prefixes](#the-books-sit-on-two-clouds-at-two-prefixes)
 for what caused it.
 
-### A third of the probe space returned nothing, and most of that was our fault
+#### A third of the probe space returned nothing, and most of that was our fault
 
 The first walk asked about 12,968 pairs and **2,945 of them — 23% — had no file anywhere in the
 range**. That number is the loudest thing the walk produced and it decomposes into three very
@@ -445,7 +449,7 @@ absences that justified it were one mistake seen from two sides.
 `AAVE-USD`; the archive holds `AAVE-USD_UM_XPERP`; the portal returns what the download form is
 populated from, which is what the index answers for.
 
-### What the universe actually is
+#### What the universe actually is
 
 Rebuilt from scratch on 2026-08-16/17, at the spellings above, and every pair walked until it
 answered or the archive ran out. **12,430 instrument-dataset pairs**, and not one of them is a guess:
@@ -463,15 +467,14 @@ symbols, and they have an ordinary explanation: candlesticks reach back to 2019-
 dataset begins in 2021-09, so a pair that stopped trading before then can only ever have
 candlesticks — which okx then keeps writing, zero-volume, for ever.
 
-### What this costs to collect
+#### What this costs to collect
 
 Generating every path inside these bounds, in every rendering, is dominated by the books and by the
 daily files — the monthly ones are a rounding error beside them. The exact figure moves as the
 bounds are narrowed to days, which is the point of narrowing them: a bound stated as a month asks
 about the days before the archive began, every survey, for ever.
 
-
-## The origin is Alibaba OSS, and it serves files directly
+### The origin is Alibaba OSS, and it serves files directly
 
 `static.okx.com` is three layers deep — **Alibaba Cloud OSS behind Alibaba's ENS/Swift CDN behind
 CloudFront** — which the response headers give away: `server: Tengine`, a full set of `x-oss-*`
@@ -515,7 +518,7 @@ and never a `BucketName`.
 > The AWS bucket `s3.eu-central-1.amazonaws.com/okx-public-data` exists and refuses everything —
 > listing and `GetObject` alike, under every key layout tried. It is not this archive's origin.
 
-## The limits, measured
+### The limits, measured
 
 | | |
 |---|---|
@@ -542,7 +545,7 @@ parsed out of a path.
 query with `monthly` returns nothing. This is the same shape `SWAP` answers with whatever it is
 given.
 
-### The dated markets are selected by family, and asking wrongly answers anyway
+#### The dated markets are selected by family, and asking wrongly answers anyway
 
 **`FUTURES` and `OPTION` take `instFamilyList`, not `instIdList`.** A chain is a family, not an
 instrument, so naming it under the wrong key selects *nothing* — and the endpoint does not say so.
@@ -569,7 +572,7 @@ offer for a selection, which is a different question and has more ways to be sil
 `cdn/okx/match/orderbook/L2/400lv/daily/…`, so nothing needs to know in advance that the books live
 somewhere other than `traderecords`.
 
-## `module: 6` — a 50-level book with order counts
+### `module: 6` — a 50-level book with order counts
 
 **`module` is not one per card on the download page.** A card carries its own selectors, and the
 order book card's depths turned out to be modules `4` and `5` — so cards and modules do not
@@ -578,7 +581,7 @@ correspond, and a module without a card is not by itself proof of anything hidde
 What can be said about `6` is narrower and still worth having: it returns a file matching **neither
 depth the order book card offers**, from a different bucket, in a different shape.
 
-## The books sit on two clouds, at two prefixes
+### The books sit on two clouds, at two prefixes
 
 Both depths are served under `L2/` for older dates and `pro/L2/` for recent ones, and the two are
 **different origins behind the same hostname**:
@@ -605,7 +608,7 @@ construct, so the overlap is a choice rather than a duplicate: pick a cut date a
 or the other on either side of it. A listing venue would have no such option — it would see both
 keys and have to decide afterwards which to keep.
 
-### `pro/` is a different host, not just a different prefix
+#### `pro/` is a different host, not just a different prefix
 
 **"Behind the same hostname" means `static.okx.com`, and only `static.okx.com`.** The Alibaba OSS
 bucket is one of the two origins, so asking it for a `pro/` key is asking a bucket for something it
@@ -689,7 +692,7 @@ around it.
 Confirmed on `BTC-USDT` and `ETH-USDT` spot, same shape and path both times. The same query for
 `ETH-USDT-SWAP` returns no files, so it may be spot-only — unestablished.
 
-## Where the symbols come from, and what each source knows
+### Where the symbols come from, and what each source knows
 
 Three sources, none sufficient alone:
 
@@ -718,7 +721,7 @@ Spot/Perpetual/Expiry/Options. Two traps in the answers:
   `XAU`: tokenised equity and commodity perpetuals. **They publish, under
   `<name>-futureschain-<dataset>-…`** — see [the shape of the archive](#the-shape-of-the-archive).
 
-### The instrument is the family; the market is a suffix
+#### The instrument is the family; the market is a suffix
 
 `instFamily` is okx's canonical name and `instId` is that name with the market composed onto it.
 Read straight off `api/v5/public/instruments`:
@@ -756,7 +759,7 @@ BTC-USD-260925-futureschain-trades-2026-08-25.zip      404
 So a new expiry listing under a family the catalog already holds creates no series and needs no
 discovery: it simply keeps that chain's file publishing.
 
-### Ranges, and why the monthly sweep is how to get them
+#### Ranges, and why the monthly sweep is how to get them
 
 Two costs, and they are nothing alike. Sixty months of archive, four instruments a call:
 
@@ -806,7 +809,7 @@ So the ranges come from two places, split by whether the symbol still trades:
 Roughly **3,800 requests to bound the whole spot universe**, after which every daily pass asks only
 about months that can hold something.
 
-## What the CDN tolerates, and how it refuses
+### What the CDN tolerates, and how it refuses
 
 Measured with sustained `HEAD` against `static.okx.com`:
 
@@ -829,7 +832,7 @@ headers read because its bucket spells both answers as 403.
 overshooting is minutes rather than one request, and why 120 rather than 199: an edge figure measured
 on one night at one edge location is not a constant of the venue.
 
-## Where the instrument lists disagree, and which to believe
+### Where the instrument lists disagree, and which to believe
 
 Refreshed 2026-08-28, one call per market to
 `priapi/v5/broker/public/trade-data/instruments` — note the response is `data.instList`, not `data`,
@@ -863,7 +866,7 @@ spot and margin, and `TEST002-*` among the futures families.
 archive has exactly one margin-specific series — the venue-wide `allmargin` borrowing rates, filed
 under spot. There is no per-instrument margin file.
 
-## Nobody else has a listing either
+### Nobody else has a listing either
 
 The published tools all construct URLs and probe, which is worth recording so it is not
 re-investigated as a possible shortcut:
@@ -875,7 +878,7 @@ re-investigated as a possible shortcut:
 So the portal index is already better than any of them: it enumerates, and it answers for
 instruments and prefixes a constructed URL has to guess at.
 
-## A 404 is reliable, as far as anyone has checked
+### A 404 is reliable, as far as anyone has checked
 
 The claim is that the same URL has answered 404 and then 200 seconds later. **The evidence does not
 support it.** Of 46,847 recorded okx absences, 219 were re-probed at the origin, sampled across all
@@ -884,7 +887,7 @@ hits is a real result rather than an inconclusive one.
 
 Not disproven — 219 is a sample, and nobody has caught the alternating behaviour in the act.
 
-## Periods are UTC+8
+### Periods are UTC+8
 
 **A day or a month in the archive is a UTC+8 one.** The candlestick file dated 2020-06-15 holds
 2020-06-14 16:00 → 2020-06-15 15:59 UTC, and the June 2020 monthly file 2020-05-31 16:00 →
@@ -899,7 +902,7 @@ for 43,200 bars — and 104 carry each once; 2021 perpetual files, 0 of 40; 2023
 40, and those repeat a handful of rows rather than all (`KSM-USDT` 2023-10: 44,651 rows, 44,640
 bars). Which way a file goes varies by instrument, by day and by year.
 
-## Not yet established
+### Not yet established
 - Where exactly the monthly window boundary falls: three months is accepted and a span of exactly
   six is refused, so the limit is inclusive of fewer months than the message implies.
 - Whether anything sits below 2023-01 for the 400-level books. The seed experiment found one on the
@@ -917,7 +920,7 @@ bars). Which way a file goes varies by instrument, by day and by year.
   measured absences, which is what keeps them from being re-walked — so an instrument that starts
   publishing after being probed would stay invisible until something revisits it.
 
-## Layout
+### Layout
 
 Everything is served from `static.okx.com`, across **three prefixes and two buckets**:
 
@@ -943,6 +946,175 @@ the `traderecords` layout, the `pro/` segment does not follow from the books' ow
 the tick-by-tick tree is on a different bucket entirely. Every one of them was found by asking the
 index what it would serve — which is the argument for the index over constructed URLs, stated as a
 layout fact rather than as a preference.
+
+## REST
+
+**How to read this section.** A statement with no mark is what the API answered when it was asked,
+in October 2026. *(documented)* marks what okx's documentation states and was not tried.
+*(not known)* marks what neither settled. Nothing here is inferred from another venue.
+
+### The API
+
+**One API**: `https://www.okx.com/api/v5`, in three families — `market/*` (bars, trades),
+`public/*` (funding, instruments, funds, deliveries) and `rubik/stat/*` (statistics).
+
+- **It is behind Cloudflare and says where it answered from**: the header `x-routed-to: TKY`.
+- **An instrument is an `instId`**: `BTC-USDT` (spot, and the index of that name), `BTC-USDT-SWAP`,
+  `BTC-USD-261225` (a dated future), `BTC-USD-261011-82750-C` (an option). A family is
+  `instFamily`: `BTC-USDT`, `BTC-USD`.
+- **Times are milliseconds**, strings in answers.
+- **Every answer is `{code, msg, data}`** with HTTP 200; `code` `"0"` is success and anything else
+  the error. Seen: `51001` "Instrument ID, Instrument ID code, or Spread ID doesn't exist".
+- **A refusal for pace is the exception**: HTTP 429 with `{"msg":"Too Many Requests","code":"50011"}`.
+- **Records are in `data`**, newest first. Three endpoints nest them: `data[0].details` on
+  `insurance-fund` and `liquidation-orders`, `data[].details` on deliveries and settlements.
+
+### Its limits
+
+- **A budget for each endpoint, per 2 seconds, by address** *(documented, endpoint by endpoint)*;
+  for some, by address and instrument, or by address and family. The figures are in the tables
+  below.
+- **No header reports it.** Only `public/market-data-history` carries `ratelimit-limit`,
+  `ratelimit-remaining`, `ratelimit-reset`.
+- **Beyond it**: HTTP 429, code `50011`, no `Retry-After`. One or two seconds later the endpoint
+  answers, and nothing longer follows.
+- **The figures hold to the call**: 20 calls to `history-candles` pass and the 21st is refused; the
+  same for mark bars; 10 pass on `funding-rate-history` and on `open-interest-history`.
+- **An endpoint's budget is its own**: with `history-candles` refused, mark bars and `candles`
+  still answered.
+- **A budget "by address" covers every instrument of the endpoint**: with `history-candles` refused
+  for one pair, it was refused for another.
+- **A budget "by address and instrument" is one per instrument**: with `funding-rate-history`
+  refused for one swap, it answered for another; the same on `open-interest-history`.
+- **One stated figure is not the real one**: `history-index-candles` is documented at 10 per
+  2 seconds, and 20 calls passed in 1.5 seconds before the first refusal.
+
+### How it is paged
+
+- **Backward only.** `after=<time>` returns the records older than it, newest first; the next call
+  passes the oldest time just received.
+- **`before=<time>` alone returns the newest page**, whatever the time — it does not walk forward.
+  With both, the answer is the newest page inside the window.
+- **The statistics family says `end` and `begin`** for the same two.
+- **A `limit` over the maximum is capped, silently**: 301 bars return 300, 500 statistics 100.
+- **The end of a history is an empty `data`**, with `code` `"0"`.
+
+### Endpoints that serve the past
+
+**Bars — `GET /api/v5/market/history-candles`**
+- **Ask**: `instId`, `bar` (`1s 1m 3m 5m 15m 30m 1H 2H 4H`; `6H 12H 1D 2D 3D 1W 1M 3M` opening at
+  UTC+8, or the same with `utc` appended opening at UTC), `after`, `before`, `limit` ≤ 300.
+- **Answer**: rows of strings `[ts, open, high, low, close, vol, volCcy, volCcyQuote, confirm]`.
+- **Reaches**: BTC-USDT 2018-01-11; ETH-BTC and the three swaps tried, 2020-01-01. Of the listed
+  spot pairs only four start before 2020. `1s` bars answered 120 days back; 3 months is what is
+  stated.
+- **Budget**: 20 per 2 seconds, by address.
+- **`GET /api/v5/market/candles` is another endpoint**: the recent bars only; `after` in 2020 is
+  empty.
+
+**Mark price bars — `GET /api/v5/market/history-mark-price-candles`**
+- **Ask**: `instId` (a swap or future), `bar` (without `1s`), `after`, `before`, `limit` — 300
+  returned 300; 100 is the stated maximum.
+- **Answer**: `[ts, open, high, low, close, confirm]`.
+- **Reaches**: 2020-01-01 for BTC-USDT-SWAP and BTC-USD-SWAP. **Budget**: 20 per 2 seconds.
+
+**Index bars — `GET /api/v5/market/history-index-candles`**
+- **Ask**: `instId` — the index, `BTC-USDT` — `bar`, `after`, `before`, `limit` (300 returned 300).
+- **Answer**: `[ts, open, high, low, close, confirm]`.
+- **Reaches**: BTC-USD 2018-06; BTC-USDT and ETH-USDT 2021-07.
+- **Budget**: 10 per 2 seconds as stated, 20 as seen.
+
+**Funding — `GET /api/v5/public/funding-rate-history`**
+- **Ask**: `instId`, `after`, `before`, `limit` ≤ 400.
+- **Answer**: `{instId, instType, fundingRate, realizedRate, fundingTime, formulaType, method}`.
+- **Reaches 3 months**: 308 records came back for a `limit` of 400, the oldest 102 days old, and
+  `after` a year back is empty. **Budget**: 10 per 2 seconds, by address and instrument.
+
+**Premium — `GET /api/v5/public/premium-history`**
+- **Ask**: `instId`, `after`, `before`, `limit` ≤ 100. **Answer**: `{instId, premium, ts}`, about one
+  a minute.
+- **Reaches 6 months**: 150 days back answers, 240 does not. **Budget**: 20 per 2 seconds.
+
+**Trades — `GET /api/v5/market/history-trades`**
+- **Ask**: `instId`, `type` (`1` pages by `tradeId`, `2` by time), `after`, `limit` ≤ 100.
+- **Answer**: `{instId, tradeId, px, sz, side, ts, source}`.
+- **Reaches 3 months**: 100 days back is empty. **Budget**: 20 per 2 seconds.
+
+**Open interest and ratios — `GET /api/v5/rubik/stat/contracts/open-interest-history`,
+`long-short-account-ratio-contract`, `long-short-account-ratio-contract-top-trader`,
+`long-short-position-ratio-contract-top-trader`, `GET /api/v5/rubik/stat/taker-volume-contract`**
+- **Ask**: `instId` (a swap or future), `period` (`5m 15m 30m 1H 2H 4H`, and the daily and longer
+  with or without `utc`), `end`, `begin`, `limit` ≤ 100.
+- **Answer**: rows — open interest `[ts, oi, oiCcy, oiUsd]`; each ratio `[ts, ratio]`; taker volume
+  `[ts, sellVol, buyVol]`.
+- **Reaches the last 1,440 points of the period asked**: at `5m`, 2 days back answers and 7 does
+  not; at `1H`, 30 days answers and 60 does not; at `1D`, back to 2024-02-04. The top-trader
+  account ratio at `5m`: 2 days answers, 5 does not.
+- **Taker volume fills the past with zeros**: 600 days back it returns 100 rows, each `"0","0"`.
+- **Budget**: 10 per 2 seconds for open interest, 5 for the others, by address and instrument.
+
+**Insurance fund — `GET /api/v5/public/insurance-fund`**
+- **Ask**: `instType`, `instFamily` (or `uly`), `type`, `after`, `before`, `limit` ≤ 100.
+- **Answer**: `data[0].details[]` of `{ts, balance, amt, ccy, type, adlType, decRate, maxBal,
+  maxBalTs}`; a `regular_update` a minute.
+- **Reaches 3 months**: 90 days back answers, 120 does not. **Budget**: 10 per 2 seconds.
+
+**Deliveries and settlements — `GET /api/v5/public/delivery-exercise-history`,
+`settlement-history`**
+- **Ask**: `instType` and `instFamily`; `after`, `before`, `limit` ≤ 100.
+- **Answer**: `{ts, details: [{insId, px, type}]}` and `{ts, details: [{instId, settlePx}]}`.
+- **Reach 3 months**: 11 deliveries of BTC-USD, none 200 days back; 100 daily settlements.
+- **Budget**: 40 per 2 seconds, by address and family.
+
+**Liquidations — `GET /api/v5/public/liquidation-orders`**
+- **Ask**: `instType`, `instFamily`, `state=filled`, `after`, `limit` ≤ 100.
+- **Answer**: `data[0].details[]` of `{ts, side, posSide, sz, bkPx, bkLoss, ccy}`.
+- **Reaches under a day**: `after` the last time received gives the next 100; `after` one day back
+  is empty.
+- **The documentation lists it as a websocket channel only.**
+
+**The archive's index — `GET /api/v5/public/market-data-history`**: `module` (1 trades, 2 one-minute
+bars, 3 funding, 4, 5 and 6 order books, 11 borrowing rates), `instType`, `instIdList` or
+`instFamilyList`, `dateAggrType` (`daily`, `monthly`), `begin`, `end`. It answers the addresses of
+the archive's files. Budget 5 per 2 seconds *(documented)*; its headers say 60 a second.
+
+**The listing — `GET /api/v5/public/instruments?instType=`**: `SPOT`, `SWAP`, `FUTURES`, `OPTION`
+(with `instFamily`); `{instId, instFamily, state, listTime, expTime, ctVal, …}`. **Listed
+instruments only** — `live`, and on spot `preopen`. `listTime` is not the first bar: spot's
+earliest `listTime` is in 2021 where bars start in 2018.
+
+### Endpoints that do not
+
+- **`public/open-interest?instType=SWAP`**: every swap's open interest now, in one answer —
+  `{instId, oi, oiCcy, oiUsd, ts}`.
+- **`public/option-trades`, `market/option/instrument-family-trades`**: the newest 100.
+- **`public/block-trades`**: recent; empty for BTC-USDT-SWAP when asked.
+- **`market/index-components?index=`**: an index's exchanges, prices and weights now.
+- **`market/trades`, `market/tickers`, `market/books*`, `public/mark-price`, `public/funding-rate`,
+  `public/opt-summary`, `public/price-limit`**: of now *(documented)*.
+- **The currency-wide statistics** — `rubik/stat/taker-volume`, `margin/loan-ratio`,
+  `contracts/long-short-account-ratio`, `contracts/open-interest-volume`, and the option ones — take
+  `ccy`, `begin`, `end`, `period` (`5m`, `1H`, `1D`). **They hold the last two days at `5m` and the
+  last 180 at `1D`**: without a window, 576 and 180 rows; a window in 2021 is `50030 Illegal time
+  range`. 30 days at `1H` *(documented)*.
+- **Lending rates — `GET /api/v5/finance/savings/lending-rate-history`**: `ccy`, `after`, `limit` ≤
+  100; `{ccy, lendingRate, rate, amt, ts}`, one an hour. 1,500 days back answers (2022-08), 1,800
+  does not.
+
+### What a delisted instrument answers
+
+**Nothing.** Bars, mark bars and funding all answer `51001` for a delisted swap or pair, as for a
+name that never was.
+
+**A dated future answers for a short while after it is delivered.** One delivered two weeks before
+still gave its bars. Older ones are `50047`: "BTC-USD-260626 has already settled. To check the
+relevant candlestick data, please use BTC-USD-260904" — the name is given to another contract.
+
+### Against okx's own archive
+
+**REST bars are the archive's bars**, number for number: the archive's `BTC-USDT` one-minute file
+for 2026-01-01 and `history-candles` agree on every row checked. The file's day runs 16:00 to 16:00
+UTC.
 
 ## WebSocket
 

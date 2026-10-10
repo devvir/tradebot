@@ -212,13 +212,16 @@ export const above = (line: string, say: (line: string) => void = info): void =>
  * A line of the block where one is up. Where none is, a line of the terminal
  * written over in place; where there is no terminal either, nothing: a
  * countdown is of no use in a log.
+ *
+ * `mark` opens the line: an hourglass for a wait that will end, and whatever
+ * says it better where the line is how things stand.
  */
-export const waitingFor = (what: string | null): void => {
-  if (shown) return shown.set(WAITING, what === null ? null : { label: what, done: 0, total: 0, unit: 'count', mark: '⏳', rank: 9 });
+export const waitingFor = (what: string | null, mark = '⏳'): void => {
+  if (shown) return shown.set(WAITING, what === null ? null : { label: what, done: 0, total: 0, unit: 'count', mark, rank: 9 });
 
   if (! process.stdout.isTTY) return;
 
-  process.stdout.write(what === null ? `\r${CLEAR}` : `\r${CLEAR}${fit(`⏳ ${what}`)}`);
+  process.stdout.write(what === null ? `\r${CLEAR}` : `\r${CLEAR}${fit(`${mark} ${what}`)}`);
 };
 
 // ── Internals ─────────────────────────────────────────────────────────────────

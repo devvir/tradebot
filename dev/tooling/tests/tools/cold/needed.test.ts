@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fitting } from '../../../src/tools/cold/pull/needed';
+import { _test_lastChecked, fitting } from '../../../src/tools/cold/pull/needed';
 import * as record from '../../../src/tools/cold/shared/record';
 import { outdatedIn, stockedIn } from '../../../src/tools/cold/shared/vault/ledger';
 import { neededOf } from '../../../src/tools/cold/shared/vault/needed';
@@ -193,5 +193,12 @@ describe('what there is room to bring back', () => {
     expect(fitting(wanted, [tar(1, 40), tar(2, 40), tar(3, 40)], 130, 10)).toMatchObject({ tars: [{ id: 1 }, { id: 2 }], left: 1 });
     expect(fitting(wanted, [tar(1, 40), tar(2, 40), tar(3, 40)], 1_000, 10)).toMatchObject({ left: 0 });
     expect(fitting(wanted, [tar(1, 40)], 50, 10)).toMatchObject({ tars: [], left: 1 });
+  });
+});
+
+describe('the line that stands while there is nothing to bring', () => {
+  it('says that nothing is waited for, and when that was last looked at', () => {
+    expect(_test_lastChecked(new Date('2026-10-10T02:14:37.512Z')))
+      .toBe('The vault waits for nothing that is in cold storage (last checked: 2026-10-10 02:14 UTC)');
   });
 });

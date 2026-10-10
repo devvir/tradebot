@@ -1,10 +1,14 @@
 # Binance
 
+Binance as a source of market data: what it publishes, where, and how it behaves when asked.
+
+## Archives
+
 What Binance's published archive actually contains, established by asking Binance rather than by
 reading its documentation — except where the documentation says something that cannot be measured,
 which is noted as such.
 
-## Publication cadence
+### Publication cadence
 
 From [Binance Academy](https://www.binance.com/en/academy/articles/how-to-get-trading-data-via-the-binance-api):
 
@@ -21,7 +25,7 @@ Both halves matter for anything deciding when a period is safe to treat as final
 
 Neither is verified here; both are Binance's own claim.
 
-## Two renderings of the same period
+### Two renderings of the same period
 
 Most datasets are published **both** as monthly files and as that month's days, for the same
 history. They are the same trades in two shapes, so taking both stores everything twice.
@@ -32,7 +36,7 @@ policy; the catalog records both and takes no view.
 
 Not every dataset has both: `metrics` and `bookDepth` publish days only.
 
-## Files carry checksums, and half of every listing is one
+### Files carry checksums, and half of every listing is one
 
 Every `.zip` has a `.zip.CHECKSUM` beside it, SHA-256. Consequences:
 
@@ -41,7 +45,7 @@ Every `.zip` has a `.zip.CHECKSUM` beside it, SHA-256. Consequences:
 - The sidecars are never catalogued: `.CHECKSUM` is excluded at every venue, before any venue's
   `inspectUrl` sees the path.
 
-## Binance announces its own corrections
+### Binance announces its own corrections
 
 The [binance-public-data](https://github.com/binance/binance-public-data/) repository keeps an
 **Updates** section:
@@ -58,7 +62,7 @@ key stays and the bytes move. Worth using when in-place changes start mattering 
 rather than truth, like every venue-published index we have examined, and kept behind a generic
 "does this venue announce changes" seam rather than a branch in shared code.
 
-## Layout
+### Layout
 
 ```
 data/spot/{daily,monthly}/{aggTrades,klines,trades}/<SYMBOL>/[<INTERVAL>/]<SYMBOL>-…-<date>.zip
@@ -66,7 +70,7 @@ data/futures/{um,cm}/{daily,monthly}/<dataset>/<SYMBOL>/[<INTERVAL>/]…
 data/option/daily/{BVOLIndex,EOHSummary}/<SYMBOL>/…
 ```
 
-### `um` and `cm` are one market and two archives
+#### `um` and `cm` are one market and two archives
 
 **UM is USDⓈ-margined futures, CM is coin-margined** — binance's own words — and they are two
 products, not two folders for one. UM answers at `fapi`, CM at `dapi`, and **every contract is
@@ -127,7 +131,7 @@ Dates trail the filename — `…-2025-03-31.zip` for a day, `…-2025-03.zip` f
 by symbol first and date last, and a month's files are scattered across a walk rather than
 contiguous.
 
-### Prefixes outside `data/` — one of them holds data that exists nowhere else
+#### Prefixes outside `data/` — one of them holds data that exists nowhere else
 
 The bucket root holds more than `data/`: `data2/`, `data3/`, a `/`-prefixed variant, and the web
 assets serving the browsing UI (`index.html`, `bootstrap.min.css`, …).
@@ -157,7 +161,7 @@ which 860 repeat the one before, `BTCUSD_PERP` 2024-10-14 100 and 50.
 So the USDT-margined liquidation snapshots live *only* in `data3/`. This also corrects an earlier
 note that "liquidationSnapshot exists only under `cm`" — true of `data/`, false of the bucket.
 
-## Shapes that stopped, and shapes that never started
+### Shapes that stopped, and shapes that never started
 
 **`bookTicker` and `liquidationSnapshot` ended, cleanly and per service.** Every USDⓈ-margined
 symbol's last file is 2024-03-30 for quotes and 2024-03-31 for liquidations; every coin-margined
@@ -206,7 +210,7 @@ prevent. Binance now surveys from the bucket root and filters, which is why `dat
 all. HTX was checked the same way and was hiding a second archive six years deep, so it surveys from
 its root too. KuCoin was checked and is clean — its bucket root holds `data/` and nothing else.
 
-### The `/`-prefixed tree — a frozen snapshot, refused
+#### The `/`-prefixed tree — a frozen snapshot, refused
 
 **There are no directories in S3.** Keys are flat strings and `/` is a convention that
 `delimiter=/` renders as folders, so a key whose first character is a slash is perfectly legal. All
@@ -224,7 +228,7 @@ What is under it, measured:
 Both trees fetch with `200`. The reconstructed URL keeps the double slash —
 `data.binance.vision//data/spot/…` — and resolves, because the key genuinely starts with one.
 
-#### Every filename is duplicated, and so is every value inside
+##### Every filename is duplicated, and so is every value inside
 
 Compared across the whole tree, mapping `/data/spot/X` to `data/spot/monthly/X`:
 
@@ -266,7 +270,7 @@ series. This is the rare exclusion of something that *is* historical data — ea
 `etag` comparison, which says only that the bytes differ, but by reading both renderings and finding
 one to be the other with less of it.
 
-## Discovery
+### Discovery
 
 A standard S3 listing: `prefix`, `marker` and `delimiter` all honoured. `max-keys` caps at **1000** —
 larger values are echoed back in `<MaxKeys>` and never applied, so a response looks like it worked.
@@ -277,30 +281,7 @@ Ten `delimiter=/` requests map the whole archive, and doing it that way rather t
 in code is what surfaced `option/`, `BVOLIndex`, `EOHSummary` and `aggTrades` — none of which were
 being collected.
 
-## The instrument listings
-
-Four hosts, because binance runs a service per margin:
-
-| | endpoint |
-|---|---|
-| spot | `api.binance.com/api/v3/exchangeInfo` |
-| USDⓈ-margined futures | `fapi.binance.com/fapi/v1/exchangeInfo` |
-| coin-margined futures | `dapi.binance.com/dapi/v1/exchangeInfo` |
-| options | `eapi.binance.com/eapi/v1/exchangeInfo` |
-
-**Names pass through.** The archive files an instrument under the name the API returns — `0GBNB`,
-`DOGSUSDT`, `BTCUSDT_230630`.
-
-**A contract's type decides its market, and the service that listed it decides its archive.** Both
-futures services mix perpetuals and dated contracts in one answer, told apart by `contractType`;
-and every contract is domiciled in exactly one of the two, which is the `um` or `cm` of its path.
-Whether it is trading is `status` on one service and `contractStatus` on the other — the same field
-under two names.
-
-**Options are listed by contract and filed by underlying**: the 1,862 contracts listed collapse to
-the handful of underlyings the archive holds.
-
-## Rate limits
+### Rate limits
 
 **None documented, and none signalled in responses.** No `x-ratelimit-*`, no `retry-after`, and
 notably no `x-mbx-used-weight` — that header and the documented 429 → 418 ban ladder belong to
@@ -334,13 +315,13 @@ A limit that exists and was never reached is still possible. Transport errors an
 retried with jittered exponential backoff, so throttling would degrade into slowness rather than
 lost data.
 
-## Scale
+### Scale
 
 Order 10⁸ keys across the whole bucket, of which about half are checksum sidecars. At 1000 keys a
 listing page, that is order 10⁵ pages to walk the bucket whole — which is why it is catalogued by
 prefix walks rather than by asking each of ~3,700 symbols what it holds for each month.
 
-## Its raw cannot be reclaimed yet
+### Its raw cannot be reclaimed yet
 
 Binance was downloaded **symbol-first rather than month-first**, so it holds symbols complete from
 their start through 2026-07 and **no closed months at all**. Month-completeness is the unit cold
@@ -349,6 +330,238 @@ storage works in, so none of it is packable and none of it is evictable.
 The files are the right files in the right paths — nothing about them is wrong and nothing about
 them should be deleted. It becomes evictable as the month-first flow closes those months one at a
 time.
+
+## REST
+
+**How to read this section.** A statement with no mark is what the API answered when it was asked,
+in October 2026. *(documented)* marks what binance's documentation states and was not tried.
+*(not known)* marks what neither settled. Nothing here is inferred from another venue.
+
+### The API
+
+**A service per margin, each with its own host, base path and budget.**
+
+| service | host and base | also |
+|---|---|---|
+| spot | `https://api.binance.com/api/v3` | `data-api.binance.vision` answers the same public calls |
+| USDⓈ-margined futures | `https://fapi.binance.com/fapi/v1` | statistics under `https://fapi.binance.com/futures/data` |
+| coin-margined futures | `https://dapi.binance.com/dapi/v1` | statistics under `https://dapi.binance.com/futures/data` |
+| options | `https://eapi.binance.com/eapi/v1` | |
+
+- **Spot has more hosts** *(documented)*: `api-gcp.binance.com`, `api1`–`api4.binance.com`.
+- **Where they answer from.** `api`, `fapi` and `eapi` are behind CloudFront. `dapi` and
+  `data-api.binance.vision` are not: they resolve to AWS `ap-northeast-1`.
+- **Times are milliseconds**, in requests and answers.
+- **A successful answer is the data itself** — a bare JSON array or object, no envelope.
+- **An error is an HTTP status with `{"code": <negative>, "msg": "…"}`.** Seen: 400 `-1130` (a
+  parameter out of range), 400 `-1120` (invalid interval), 400 `-1121` (no such symbol), 400 `-4166`
+  (window too old), 401 `-2014` (key wanted), 404 with an HTML page (endpoint gone).
+- **One endpoint breaks that**: `fundingRate` answers an over-limit `limit` with HTTP 200 and
+  `{"status":"ERROR","type":"GENERAL","code":"99099990","errorData":"illegal params."}`.
+
+### Its limits
+
+**Weight per minute, by address**, as `exchangeInfo.rateLimits` states for each service:
+
+| service | `REQUEST_WEIGHT` a minute | header reporting it |
+|---|---|---|
+| spot | 6,000 (and 300,000 raw requests per 5 minutes) | `x-mbx-used-weight`, `x-mbx-used-weight-1m` |
+| USDⓈ-margined | 2,400 | `x-mbx-used-weight-1m` |
+| coin-margined | 2,400 | `x-mbx-used-weight-1m` |
+| options | 400 | `x-mbx-used-weight-1m` |
+
+- **The header is the weight used so far in the current minute**, and the minute is the clock's:
+  mid-run the figure fell from 62 to 24 as a minute turned.
+- **`fapi` and `dapi` count into one budget.** A run that left `fapi` at 790 was answered 800 by the
+  next call, to `dapi`.
+- **`data-api.binance.vision` counts into spot's**: 58 on `api`, then 60.
+- **A refused call costs its weight**: a `limit` of 1,501 added 10, a refused `aggTrades` 20, a
+  keyless `historicalTrades` 200.
+- **Some endpoints report no weight and are outside the budget**: everything under `/futures/data`,
+  and `fundingRate` and `fundingInfo`. With `fapi` refused, both still answered.
+  - `/futures/data/openInterestHist` took 1,300 calls in 44 seconds without a refusal. What limits
+    it *(not known)*.
+  - `fundingRate` took 700 calls in 31 seconds without a refusal; 500 per 5 minutes, shared with
+    `fundingInfo`, is what is stated *(documented)*.
+- **Beyond the budget, the next call is HTTP 429** with `{"code":-1003,"msg":"Too many requests;
+  current limit of IP(<address>) is 2400 requests per minute. …"}` — on spot, "Too much request
+  weight used; current limit is 6000 request weight per 1 MINUTE". Seen on spot at 6,250, on futures
+  at 2,410, on options at 405.
+- **`Retry-After` is the seconds left in the clock's minute**, and the service answers again when
+  the minute turns. A refused call keeps adding to the header's figure.
+- **Going on after a 429** earns 418 and a ban by address, growing from 2 minutes to 3 days
+  *(documented)*; not met. 403 is the firewall *(documented)*. Limits are by address, not by key
+  *(documented)*.
+
+### How it is paged
+
+- **By time, forward.** `startTime` with `limit` returns the oldest rows from `startTime`; the next
+  call starts after the last row. `endTime` alone returns the newest rows up to it. With neither,
+  the newest.
+- **`startTime=0`** is honoured on bars and taken as absent on `fundingRate`, where `1` gives the
+  oldest.
+- **By id**, for trades: `fromId` is inclusive, and the next call is the last id plus one.
+- **`/futures/data/*` ignores where a window starts**: it returns the newest `limit` rows of
+  whatever is asked, so it is walked backward by `endTime`.
+- **A `limit` over the maximum** is refused on futures (400 `-1130`) and silently capped on spot and
+  options.
+
+### Spot — `https://api.binance.com`
+
+**Bars — `GET /api/v3/klines`**
+- **Ask**: `symbol`, `interval` (`1s 1m 3m 5m 15m 30m 1h 2h 4h 6h 8h 12h 1d 3d 1w 1M`), `startTime`,
+  `endTime`, `limit` ≤ 1,000 (1,001 returns 1,000).
+- **Answer**: rows `[openTime, open, high, low, close, volume, closeTime, quoteVolume, trades,
+  takerBuyBase, takerBuyQuote, "0"]`, oldest first — the archive's twelve columns.
+- **Reaches**: the pair's first bar; BTCUSDT `1s` from 2017-08-17T04:00:28Z. **Costs** 2.
+
+**Trades — `GET /api/v3/historicalTrades`, `GET /api/v3/aggTrades`**
+- **Ask**: `symbol`, `fromId`, `limit` ≤ 1,000; `aggTrades` also takes `startTime`, `endTime`.
+- **Answer**: `{id, price, qty, quoteQty, time, isBuyerMaker, isBestMatch}`; aggregated
+  `{a, p, q, f, l, T, m, M}` — aggregate id, price, quantity, first and last trade id, time, buyer
+  is maker, best match.
+- **Reaches 2022-09-02T00:00:00Z and no further**, for a pair older than that: `fromId=0` and
+  `fromId=1000` both return BTCUSDT's trade 1,741,118,880 of that instant, ETHBTC's first is of the
+  same midnight, and `aggTrades` windows in 2017 and 2020 are empty. A pair listed later starts at
+  id 0 (PEPEUSDT, 2023-05-05).
+- **No key is asked for.** **Costs** 25, and 4 aggregated.
+
+**Block trades — `GET /api/v3/historicalBlockTrades`**: `symbol`, `fromId`, `limit` ≤ 1,000;
+`{id, price, qty, quoteQty, time, isBuyerMaker}`; from id 0 (BTCUSDT has four, the first of
+2026-06-04). Costs 25.
+
+**The listing — `GET /api/v3/exchangeInfo`**: `symbols[]` with `status`; no listing date. Costs 20.
+
+### USDⓈ-margined futures — `https://fapi.binance.com`
+
+**Bars — `GET /fapi/v1/klines`**
+- **Ask**: `symbol`, `interval` (as spot, without `1s`), `startTime`, `endTime`, `limit` ≤ 1,500.
+- **Answer**: the same twelve-column rows, oldest first.
+- **Reaches**: the first bar; BTCUSDT 2019-09-08T17:57Z.
+- **Costs** 10 at 1,500 and 5 at 1,000; 2 from 100 and 1 below *(documented)*.
+
+**Bars of a pair's contract type — `GET /fapi/v1/continuousKlines`**: `pair`, `contractType`
+(`PERPETUAL`, `CURRENT_QUARTER`, `NEXT_QUARTER`), otherwise as bars. `CURRENT_QUARTER` of BTCUSDT
+from 2021-02-03T08:20Z; `PERPETUAL` equals the perpetual's own bars.
+
+**Index, mark and premium bars — `GET /fapi/v1/indexPriceKlines`, `markPriceKlines`,
+`premiumIndexKlines`**
+- **Ask**: `pair` for the index, `symbol` for the other two; otherwise as bars; `limit` ≤ 1,500.
+- **Answer**: twelve-column rows whose volume columns are `"0"`; the ninth is the count of samples.
+- **Reaches**: BTCUSDT index and mark 2019-12-23T11:58Z, premium 2019-12-24T03:26Z. **Costs** 10.
+
+**Funding — `GET /fapi/v1/fundingRate`**
+- **Ask**: `symbol` (optional), `startTime`, `endTime`, `limit` ≤ 1,000.
+- **Answer**: `{symbol, fundingTime, fundingRate, markPrice, rateType}`, oldest first. `markPrice`
+  is `""` on records of 2019 and 2020 and filled on recent ones; `rateType` was `"Regular"` on
+  every record seen.
+- **Without `symbol` it returns every symbol's funding in time order.** One instant now holds over
+  500 records, and their `fundingTime` is spread over two or three milliseconds (`…000`, `…001`).
+- **Without `startTime` at most 500 come back**, whatever `limit` says.
+- **Reaches**: the first funding; BTCUSDT 2019-09-10T08:00Z. No weight header.
+
+**Delivery prices — `GET /futures/data/delivery-price`**: `pair`; `{deliveryTime, deliveryPrice}`,
+newest first, all in one answer (18 for BTCUSDT, from 2022-12-30).
+
+**Statistics — `GET /futures/data/openInterestHist`, `globalLongShortAccountRatio`,
+`topLongShortAccountRatio`, `topLongShortPositionRatio`, `takerlongshortRatio`, `basis`**
+- **Ask**: `symbol` (`basis`: `pair` and `contractType`), `period` (`5m 15m 30m 1h 2h 4h 6h 12h
+  1d`), `limit`, `startTime`, `endTime`.
+- **Answer**, oldest first within the page:
+  - open interest `{symbol, sumOpenInterest, sumOpenInterestValue, CMCCirculatingSupply, timestamp}`;
+  - the three ratios `{symbol, longAccount, shortAccount, longShortRatio, timestamp}`;
+  - taker `{buySellRatio, buyVol, sellVol, timestamp}`;
+  - basis `{pair, contractType, futuresPrice, indexPrice, basis, basisRate, annualizedBasisRate,
+    timestamp}`.
+- **Page**: 500 *(documented)*; `openInterestHist` returned 501 and 1,000 when asked.
+- **Reaches 30 days.** A `startTime` or `endTime` older is 400 `-1130`. No weight header.
+
+**Trades — `GET /fapi/v1/aggTrades`**: `{a, p, q, nq, f, l, T, m}`, 1,000 a page. **Two days and no
+more**: an older window, or `fromId=1`, is 400 `-4166` "Search window is restricted to recent 2
+days only". Costs 20. `GET /fapi/v1/trades` is the newest 1,000. `GET /fapi/v1/historicalTrades`
+wants a key (401 `-2014`).
+
+**Liquidations — `GET /fapi/v1/allForceOrders`**: gone; 404 with an HTML page.
+
+**The listing — `GET /fapi/v1/exchangeInfo`**: `symbols[]` with `contractType`, `onboardDate`,
+`deliveryDate`, `status`. Costs 1.
+
+**Answers that are only of now**: `fundingInfo` (cap, floor and interval of each symbol),
+`insuranceBalance` (a balance for each group of symbols), `constituents?symbol=` (an index's
+exchanges, prices and weights), `indexInfo`, `assetIndex`, `premiumIndex`, `openInterest`.
+
+### Coin-margined futures — `https://dapi.binance.com`
+
+- **Bars — `GET /dapi/v1/klines`**: as the USDⓈ service; `limit` ≤ 1,500; BTCUSD_PERP from
+  2020-08-11T07:02Z with `startTime=1`. A window of 200 days at most is what is stated; a window of
+  1,157 days answered in full.
+- **Index, mark and premium bars — `GET /dapi/v1/indexPriceKlines` (`pair`), `markPriceKlines`,
+  `premiumIndexKlines`**: BTCUSD index from 2020-06-09T09:32Z, BTCUSD_PERP mark from
+  2020-08-11T07:30Z, premium from 2020-11-04T09:23Z. `continuousKlines` `CURRENT_QUARTER` of BTCUSD
+  from 2020-06-11T02:06Z. 1,500 a page, weight 10.
+- **Funding — `GET /dapi/v1/fundingRate`**: `symbol`, `startTime`, `limit` ≤ 1,000; the same
+  record; BTCUSD_PERP from 2020-08-10T16:00Z. It reports weight, 1 a call.
+- **Statistics — `GET /futures/data/*`** on this host take `pair` (and `contractType` where the
+  USDⓈ ones take none): `openInterestHist` `{pair, contractType, sumOpenInterest,
+  sumOpenInterestValue, timestamp}`; `globalLongShortAccountRatio` `{pair, longAccount,
+  shortAccount, longShortRatio, timestamp}`; `takerBuySellVol` `{pair, contractType, takerBuyVol,
+  takerSellVol, takerBuyVolValue, takerSellVolValue, timestamp}`; `basis`. 30 days, as seen for
+  `openInterestHist`.
+- **Delivery prices — `GET /futures/data/delivery-price?pair=BTCUSD`**: 18, from 2022-12-30.
+- **`aggTrades`**: two days, as above. **`allForceOrders`**: 404.
+
+### Options — `https://eapi.binance.com`
+
+- **Exercises — `GET /eapi/v1/exerciseHistory`**: `underlying`, `startTime`, `endTime`, `limit` (100
+  *(documented)*; 101 returned 101); `{symbol, strikePrice, realStrikePrice, expiryDate,
+  strikeResult}`, newest first. A window 180 days back answers; one 270 days back is empty. Costs 3.
+- **Bars — `GET /eapi/v1/klines`**: `symbol`, `interval`, `limit` (1,500 asked, 1,000 returned);
+  twelve-column rows. **Only for a listed contract**: an expired one is 400 `-1121`. Costs 1.
+- **Trades — `GET /eapi/v1/trades`**: the newest 100 of a listed contract; an expired one returns
+  `[]`. `{id, tradeId, symbol, price, qty, quoteQty, side, time}`. Costs 5.
+- **Block trades — `GET /eapi/v1/blockTrades`**: the newest 100, across contracts. Costs 5.
+- **Of now only**: `mark` (mark price, implied volatilities and greeks of every contract),
+  `openInterest?underlyingAsset=&expiration=`, `exchangeInfo` (`optionSymbols[]`).
+
+### Alpha — `https://www.binance.com/bapi/defi/v1/public`
+
+A separate market, of tokens not listed on spot, with its own public endpoints.
+
+- **Bars — `GET /alpha-trade/klines`**: `symbol` (`ALPHA_<id>USDT`), `interval`, `startTime`,
+  `limit` ≤ 1,000. The answer is `{code: "000000", data: [...]}` with the twelve-column rows as
+  strings. 1-minute bars from the token's listing, with `startTime=1`.
+- **The listing — `GET /wallet-direct/buw/wallet/cex/alpha/all/token/list`**: `{alphaId, symbol,
+  name, listingTime, …}` for each token.
+- **Also** `alpha-trade/agg-trades`, `ticker`, `fullDepth`, `get-exchange-info` *(documented)*.
+- **Its limits** *(not known)*.
+
+### What wants a key
+
+`/sapi/v1/margin/*` (pairs, delist and list schedules, price index) and `/sapi/v1/equity/market/*`
+are marked `MARKET_DATA`: an API key, no signature *(documented)*. Not tried.
+
+### The instrument listings
+
+Four hosts, because binance runs a service per margin:
+
+| | endpoint |
+|---|---|
+| spot | `api.binance.com/api/v3/exchangeInfo` |
+| USDⓈ-margined futures | `fapi.binance.com/fapi/v1/exchangeInfo` |
+| coin-margined futures | `dapi.binance.com/dapi/v1/exchangeInfo` |
+| options | `eapi.binance.com/eapi/v1/exchangeInfo` |
+
+**Names pass through.** The archive files an instrument under the name the API returns — `0GBNB`,
+`DOGSUSDT`, `BTCUSDT_230630`.
+
+**A contract's type decides its market, and the service that listed it decides its archive.** Both
+futures services mix perpetuals and dated contracts in one answer, told apart by `contractType`;
+and every contract is domiciled in exactly one of the two, which is the `um` or `cm` of its path.
+Whether it is trading is `status` on one service and `contractStatus` on the other — the same field
+under two names.
+
+**Options are listed by contract and filed by underlying**: the 1,862 contracts listed collapse to
+the handful of underlyings the archive holds.
 
 ## WebSocket
 

@@ -118,6 +118,10 @@ stocks the vault does the rest by itself, as it finds the files there.
 | `-n`, `--dry-run` | say what the vault waits for and what it weighs, and bring nothing |
 | `-w`, `--watch` | look again at intervals, and bring what has come to be waited for since; asked before the first time and not again |
 
+**While there is nothing to bring, a watch says so on one line**, with when it last looked, and
+writes over that line at each look. Where its output is not a terminal it says so once, when it
+comes to be so.
+
 **Nothing else brings these files back.** Every command that reads the vault's ledger — pushing,
 evicting or pulling the vault, evicting the archives — says where the vault waits for files in cold
 storage, and names this command.

@@ -1,5 +1,9 @@
 # HTX
 
+HTX as a source of market data: what it publishes, where, and how it behaves when asked.
+
+## Archives
+
 What htx's published archive actually contains — measured against the bucket, and checked against
 what htx says about it. Two announcements cover the archive change and both are worth reading before
 inferring anything:
@@ -14,7 +18,7 @@ Neither says anything about which instruments made the move, which is the part t
 measured. Where the two disagree, the bucket wins: the shutdown notice says legacy data "dated August
 3, 2026, and earlier" is retained, while klines and trades are in fact present for `2026-08-04`.
 
-## Two archives in one bucket: the current one and the one it replaced
+### Two archives in one bucket: the current one and the one it replaced
 
 HTX publishes **two trees**, and both are official — the data portal
 ([`/futures/data/landing_page/`](https://www.htx.com/futures/data/landing_page/), which carries a
@@ -89,7 +93,7 @@ prefix rather than trusting a floor written down months earlier.
 unchanged nearly seven months on; a floor is a launch date here, as it is at every other venue. The
 books floor of `2026-05-28` is a second, later launch rather than a shorter window.
 
-### Where they ran together: `2026-02-01` to `2026-08-04`
+#### Where they ran together: `2026-02-01` to `2026-08-04`
 
 **Both ends of the span are declared by HTX, not merely inferred.** The data portal states
 *"Historical data from February 1, 2026 is supported. For older data, please visit the old version"*
@@ -153,7 +157,7 @@ schema" to write a reader against — only one per era.
 appeared; its columns did not change, and a 2021 row parses with the same seven fields as a 2026
 one. Anything counting rows has to account for that or be off by one on the earlier files.
 
-### What only exists in one of them
+#### What only exists in one of them
 
 - **Only in `data/`: everything before `2026-02-01`.**
 - **Only in `historical_data/`: order books and funding rates.** Not a gap in `data/` — HTX did not
@@ -199,7 +203,7 @@ land in one market or the branches will not join on what they have in common. Th
 symbols carry the expiry, `BTC-USDT-230407`, where the new tree's perpetuals carry a `-PERP` suffix
 — two spellings of the same question, and the adapter asks it of both.
 
-### Addressed at the bucket, not at the CDN in front of it
+#### Addressed at the bucket, not at the CDN in front of it
 
 `www.htx.com/data/` is the same bucket through Akamai, unchanged in content — the portal's download
 buttons go through `/vision/?prefix=…`, a browser over the same keys. The edge enforces a limit far
@@ -225,30 +229,7 @@ the omission that discovering prefixes exists to prevent — and it applies iden
 field descriptions that the new portal shows in a dialog instead. They are documentation rather than
 data.
 
-## The instrument listings
-
-Four endpoints on two hosts, because htx files its markets separately: spot on the exchange API,
-and each derivative family on its own service of `api.hbdm.com`.
-
-| market | endpoint | htx answers | the archive spells | checked |
-|---|---|---|---|---|
-| spot | `api.huobi.pro/v2/settings/common/symbols` | `btcusdt`, with `bc` and `qc` | `BTC-USDT` | 609 of 609 |
-| dated futures | `api.hbdm.com/api/v1/contract_contract_info` | `BTC` and `20260828` | `BTC-USD-260828` | 8 of 8 |
-| coin swap | `api.hbdm.com/swap-api/v1/swap_contract_info` | `BTC-USD` | `BTC-USD` | |
-| linear swap | `api.hbdm.com/linear-swap-api/v1/swap_contract_info` | `BTC-USDT` | `BTC-USDT` | 301 of 303, the two missing listed that day |
-
-**Spot's base and quote are read, not parsed.** `btcusdt` does not say where the base ends; `bc` and
-`qc` do. A dated contract's delivery day likewise comes from its own field.
-
-**Only spot states an ending.** It returns 1,547 `offline` symbols beside 609 `online`. The
-derivative endpoints answer with what is trading and nothing else, so there a symbol leaving the
-list is the only ending stated. A `suspend` is a halt, not an ending.
-
-**Under `linear-swap` a dated contract is told by its expiry.** Every symbol there ending in six
-digits is dash-separated and parses as a `YYMMDD` expiry, and no perpetual ends in digits at all.
-Options are another matter: their symbols end in a strike, and a six-figure one reads as a date.
-
-## Daily files are UTC+8 days, not UTC days
+### Daily files are UTC+8 days, not UTC days
 
 A file named `<yyyy-mm-dd>` holds `16:00:00` UTC the previous day through `15:59:5x` UTC that day —
 a Beijing day, cut at midnight UTC+8. Read off real trade timestamps in `BTC-USDT` spot, `BTCUSDT`
@@ -263,7 +244,7 @@ This is the same trait as bitget's `16:00` UTC cut, so it belongs in the declara
 rather than anywhere venue-specific. The date parsed out of a path is a **UTC+8 day label**, and
 anything that treats it as a UTC day misplaces eight hours of every file.
 
-## Books are the richest published anywhere bar OKX
+### Books are the richest published anywhere bar OKX
 
 400 levels on spot, 150 on futures, shipped as `.tar.gz` rather than the `.zip` everything else
 uses. Records carry the same `instId`/`action`/`ts` shape as OKX's, which is why the two venues'
@@ -274,7 +255,7 @@ A file is one JSON record a line: `{"instId", "action", "ts", "asks", "bids"}`. 
 `[price, size]` and a size of `0.0` removing it. `ts` is in microseconds and rises through the file.
 A day's file runs 16:00 UTC to 16:00 UTC, like every other daily file here.
 
-## Layout
+### Layout
 
 ```
 historical_data/<market>/daily/<dataset>/<SYMBOL>/<SYMBOL>-<stem>-<yyyy-mm-dd>.zip
@@ -291,7 +272,7 @@ from and reconstructs as `base` + `/` + `path`.
 Only a daily shape exists in both — no monthly files — so the granularity cutover never applies
 here.
 
-## A contract's kline volume counts both sides of every trade
+### A contract's kline volume counts both sides of every trade
 
 **On perpetuals, dated futures and options a kline's volume is twice what was traded.** A trade of
 ten contracts is ten bought and ten sold, and the kline reports twenty. That is the venue's
@@ -321,7 +302,7 @@ same text for spot, where `vol` is the quote leg.
 
 Measured on 1m klines; the contract count (`vol`) throughout, and the base amount beside it in 2020.
 
-## `markPrice` and `indexPrice` may be mislabelled
+### `markPrice` and `indexPrice` may be mislabelled
 
 Unresolved, and worth settling before anything downstream reads them.
 
@@ -334,7 +315,7 @@ property of their pipeline rather than of the datum.
 So these are klines *of* mark and index price rather than the snapshot series their dataset names
 suggest, and either the names are misleading or the modelling is.
 
-## Where to stop reading `data/`
+### Where to stop reading `data/`
 
 During the six-month overlap both trees carry the same instrument-day under two different schemas.
 Catalogue both and the same unit arrives twice from two shapes with no canonical answer to which is
@@ -415,7 +396,7 @@ That is what makes a single cut possible at all. For every series, the latest da
 falls before the earliest day only `historical_data/` has, so a valid cut exists everywhere — and
 `2026-02-01` is inside every one of those intervals bar the `2026-06-03` index exception above.
 
-### Only one dimension is in play
+#### Only one dimension is in play
 
 **A cut is one date, and nothing else is a dimension of it.** That is what lets it be a date rather
 than a table, and each of these is why:
@@ -449,7 +430,7 @@ above. So a missing `data/` trades file in that span is not evidence the instrum
 64 dead symbols above rest on more than that: their klines repeat a final price at zero volume, and
 their index and mark series stop dead.
 
-### The rule
+#### The rule
 
 **`historical_data/` from `2026-02-01`, `data/` before it**, decided from the path alone and with no
 exceptions:
@@ -470,3 +451,151 @@ be a rule consulted a million times a pass. Instead the preamble states the tree
 catalog state: its patterns retired, so no newly listed instrument is created on them, and each of
 its series given its own last day, so generation drops them entirely. Neither is discoverable, which
 is why the adapter declares it rather than the service inferring it.
+
+## REST
+
+**How to read this section.** A statement with no mark is what the API answered when it was asked,
+in October 2026. *(documented)* marks what htx's documentation states and was not tried — the
+pages read are those at `huobiapi.github.io/docs`, the newer portal being a script. *(not known)*
+marks what neither settled. Nothing here is inferred from another venue.
+
+### The API
+
+**Two hosts, and on the second a path tree for each family.**
+
+| family | host | reference data | market data |
+|---|---|---|---|
+| spot | `https://api.huobi.pro` | `/v1/common/*`, `/v2/settings/common/*` | `/market/*` |
+| USDT-margined swaps and futures | `https://api.hbdm.com` | `/linear-swap-api/v1/*`, `/v3/*` | `/linear-swap-ex/market/*` |
+| coin-margined swaps | `https://api.hbdm.com` | `/swap-api/v1/*` | `/swap-ex/market/*` |
+| coin-margined futures | `https://api.hbdm.com` | `/api/v1/contract_*` | `/market/*` |
+| derived bars, any family | `https://api.hbdm.com` | | `/index/market/history/*` |
+
+- **Spot is behind CloudFront, derivatives behind Tencent EdgeOne** (`eo-log-uuid` in the headers).
+  `api-aws.huobi.pro` is the spot host for clients inside AWS *(documented)*.
+- **Names**: `btcusdt` on spot, lower case; `BTC-USDT` a USDT-margined swap; `BTC-USD` a
+  coin-margined swap; `BTC_CQ` the current quarter's coin-margined future, `BTC261016` a dated one.
+- **Times**: bars are keyed by `id`, the bar's start in **seconds**; windows are in seconds;
+  everything else is milliseconds.
+- **Every answer is HTTP 200.** The older endpoints say `{status: "ok", ch, ts, data}` or
+  `{status: "error", "err-code", "err-msg"}` — `err_code` and `err_msg` on the `-api` trees. The v3
+  endpoints say `{code: 200, msg, data, ts}`.
+- **A path that does not exist is HTTP 404** with the text `404 Not Found`.
+
+### Its limits
+
+- **Derivatives, by address** *(documented)*: 240 calls per 3 seconds across everything that is not
+  market data — index, limits, settlement, open interest and the like — and 800 a second for market
+  data: bars, depth, trades, premium, estimated rate and basis bars.
+- **The first is reported**: `ratelimit-limit: 240`, `ratelimit-interval: 3000`,
+  `ratelimit-remaining`, `ratelimit-reset`. `/api/v1/timestamp` alone reports 100 per 1,000.
+- **Beyond the 240**: HTTP 200 with `{"status":"error","err_code":1032,"err_msg":"Maximum number
+  of access attempts exceeded."}` and `ratelimit-remaining: 0`. The next 3-second window answers.
+- **The coin-margined tree has a budget of its own, and a smaller one**: `/swap-api` reports
+  `ratelimit-limit: 120` per 3,000.
+- **Market-data answers carry no limit header**, and 132 calls a second for 1,500 calls were not
+  refused.
+- **Spot** states no figure for its public market calls and reports none; 126 calls a second for
+  1,500 calls were not refused.
+
+### How it is paged
+
+An endpoint has one of three ways, and no other:
+
+- **A window** — `from` and `to` in seconds, at most 2,000 bars between them, oldest first. One bar
+  more is `history kline query with invalid from to`.
+- **A page number** — `page_index` from 1 and `page_size`, newest first, with `total_page`,
+  `current_page` and `total_size` in the answer. A `page_size` over the maximum is capped.
+- **`size` alone** — the newest that many, and no way to ask for older.
+
+### Endpoints that serve the past
+
+**Bars, derivatives — `GET /linear-swap-ex/market/history/kline`, `/swap-ex/market/history/kline`,
+`/market/history/kline` (on `api.hbdm.com`)**
+- **Ask**: `contract_code` (`symbol` for the futures), `period` (`1min 5min 15min 30min 60min 4hour
+  1day 1week 1mon`), and either `size` ≤ 2,000 or `from` and `to`.
+- **Answer**: `data[]` of `{id, open, close, high, low, amount, vol, trade_turnover, count}`;
+  coin-margined without `trade_turnover`.
+- **Reaches the contract's first bar**: BTC-USDT's first month is 2020-10 and its 1-minute bars of
+  2020-12 answer; BTC-USD 2020-03; BTC_CQ 2018-11.
+
+**Funding — `GET /linear-swap-api/v1/swap_historical_funding_rate`,
+`/swap-api/v1/swap_historical_funding_rate`**
+- **Ask**: `contract_code`, `page_index`, `page_size` ≤ 100 (101 returns 100).
+- **Answer**: `data.data[]` of `{contract_code, symbol, funding_time, funding_rate, realized_rate,
+  avg_premium_index, fee_asset, …}`; `realized_rate` was `null` on every record seen.
+- **Reaches the first funding**: BTC-USDT has 6,538 records, the oldest of 2020-10-21T16:00Z;
+  BTC-USD has 7,168.
+- **Budget**: the 240 per 3 seconds.
+
+**Liquidation orders — `GET /linear-swap-api/v3/swap_liquidation_orders`**
+- **Ask**: `contract`, `trade_type` (0 for all), `start_time`, `end_time` in milliseconds — a
+  window of 2 hours at most, within the past 90 days *(documented)* — `direct`, `from_id`.
+- **Answer**: `data[]` of `{query_id, contract_code, symbol, direction, offset, volume, price,
+  amount, trade_turnover, created_at, business_type, pair}`.
+- **Reaches 90 days**: a window 91.7 days back still answered. 50 records came back for a busy
+  window; whether that is a cap *(not known)*.
+- **The v1 endpoint of the same name is switched off**: "The interface is offline".
+
+**Settlements — `GET /linear-swap-api/v1/swap_settlement_records`**: `contract_code`, `page_index`,
+`page_size`; `data.settlement_record[]` of `{contract_code, settlement_time, settlement_price,
+clawback_ratio, settlement_type, …}`. **Reaches 90 days**: 270 records for BTC-USDT.
+
+### Endpoints that hold only the newest
+
+- **Spot bars — `GET /market/history/kline`** on `api.huobi.pro`: `symbol`, `period`, `size` ≤ 2,000
+  (2,001 is refused); `{id, open, close, low, high, amount, vol, count}`, newest first. **`from` and
+  `to` are ignored**: the newest bars come back. So 33 hours of `1min`, 83 days of `60min`, and
+  daily bars back to 2021-04.
+- **Spot trades — `GET /market/history/trade`**: `size` ≤ 2,000 batches, each
+  `{id, ts, data: [{id, ts, trade-id, amount, price, direction, is-rpi-trade}]}` — hours.
+- **Mark, premium, estimated rate and basis bars —
+  `GET /index/market/history/linear_swap_mark_price_kline`, `linear_swap_premium_index_kline`,
+  `linear_swap_estimated_rate_kline`, `linear_swap_basis`**: `contract_code`, `period`, `size` ≤
+  2,000 (`basis` also `basis_price_type`). Bars as above with volumes `"0"`; basis is
+  `{id, index_price, contract_price, basis, basis_rate}`. **A window without `size` is refused**
+  ("size required"), **and with `size` it is ignored**: the newest bars come back.
+- **Index bars — `GET /index/market/history/index`**: `symbol` (`BTC-USDT`, `BTC-USD`), `period`,
+  `size` ≤ 2,000; `{id, open, close, high, low, amount, vol, count}`. The newest only, a window
+  ignored. The coin-margined `swap_mark_price_kline` likewise.
+- **Swap trades — `GET /linear-swap-ex/market/history/trade`**: `contract_code`, `size` ≤ 2,000
+  batches, each `{id, ts, data: [{id, ts, price, amount, quantity, trade_turnover, direction}]}` —
+  under five hours of BTC-USDT.
+- **Open interest — `GET /linear-swap-api/v1/swap_his_open_interest`**: `contract_code`, `period`
+  (`60min 4hour 12hour 1day`), `size` ≤ 200, `amount_type`; `data.tick[]` of `{ts, volume, value,
+  amount_type}`. 200 hours, or 185 days at `1day`.
+- **Elite ratios — `GET /linear-swap-api/v1/swap_elite_account_ratio`,
+  `swap_elite_position_ratio`**: `contract_code`, `period`; `data.list[]` of `{ts, buy_ratio,
+  sell_ratio, locked_ratio}`. 30 points.
+- **Insurance fund — `swap_insurance_fund`**: switched off, "Function suspended".
+
+### The listings, and what a delisted contract answers
+
+- `GET /linear-swap-api/v1/swap_contract_info`, `/swap-api/v1/swap_contract_info`,
+  `/api/v1/contract_contract_info`: `data[]` with `contract_code`, `create_date` (`yyyymmdd`),
+  `contract_status`, `settlement_period`, and for dated contracts `delivery_time`.
+- **A delisted contract does not exist**: `LUNA-USDT` is `invalid symbol` for bars and "The
+  perpetual contract does not exist" for funding.
+
+### The instrument listings
+
+Four endpoints on two hosts, because htx files its markets separately: spot on the exchange API,
+and each derivative family on its own service of `api.hbdm.com`.
+
+| market | endpoint | htx answers | the archive spells | checked |
+|---|---|---|---|---|
+| spot | `api.huobi.pro/v2/settings/common/symbols` | `btcusdt`, with `bc` and `qc` | `BTC-USDT` | 609 of 609 |
+| dated futures | `api.hbdm.com/api/v1/contract_contract_info` | `BTC` and `20260828` | `BTC-USD-260828` | 8 of 8 |
+| coin swap | `api.hbdm.com/swap-api/v1/swap_contract_info` | `BTC-USD` | `BTC-USD` | |
+| linear swap | `api.hbdm.com/linear-swap-api/v1/swap_contract_info` | `BTC-USDT` | `BTC-USDT` | 301 of 303, the two missing listed that day |
+
+**Spot's base and quote are read, not parsed.** `btcusdt` does not say where the base ends; `bc` and
+`qc` do. A dated contract's delivery day likewise comes from its own field.
+
+**Only spot states an ending.** It returns 1,547 `offline` symbols beside 609 `online`. The
+derivative endpoints answer with what is trading and nothing else, so there a symbol leaving the
+list is the only ending stated. A `suspend` is a halt, not an ending.
+
+**Under `linear-swap` a dated contract is told by its expiry.** Every symbol there ending in six
+digits is dash-separated and parses as a `YYMMDD` expiry, and no perpetual ends in digits at all.
+Options are another matter: their symbols end in a strike, and a six-figure one reads as a date.
