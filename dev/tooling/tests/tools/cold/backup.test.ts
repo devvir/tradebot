@@ -203,6 +203,44 @@ describe('the record\'s copy, as a command starts', () => {
   });
 });
 
+describe('Mega\'s queue', () => {
+  /** Sent once: what is still queued of it goes before it is queued again. */
+  it('holds each file once, the newest', async () => {
+    const remote = mega();
+    const order: string[] = [];
+
+    remote.dropUploadsOf = async (local) => {
+      order.push(`drop ${path.basename(local)}`);
+
+      return 1;
+    };
+
+    const queueUpload = remote.queueUpload;
+
+    remote.queueUpload = async (local, remoteDir) => {
+      order.push(`queue ${path.basename(local)}`);
+      await queueUpload(local, remoteDir);
+    };
+
+    await save(config(), [recordOf(config())], remote);
+    change('202002');
+    await save(config(), [recordOf(config())], remote);
+
+    expect(order).toEqual(['drop cold.sqlite', 'queue cold.sqlite', 'drop cold.sqlite', 'queue cold.sqlite']);
+  });
+
+  /** A queue that cannot be read is no reason to leave the copy out of date. */
+  it('is sent to all the same where the queue cannot be cleared', async () => {
+    const remote = mega();
+
+    remote.dropUploadsOf = async () => { throw new Error('mega-cmd is not answering'); };
+
+    await save(config(), [recordOf(config())], remote);
+
+    expect(remote.sent).toEqual(['cold.sqlite']);
+  });
+});
+
 describe('the vault\'s ledgers', () => {
   it('are sent when they have grown, and not again until they grow', async () => {
     const remote = mega();

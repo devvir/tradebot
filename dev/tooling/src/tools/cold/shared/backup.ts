@@ -27,6 +27,10 @@ import type { Kept, Remote, Sent } from './types';
  * while it is read, and the ledger is appended to by whoever stocks the vault:
  * what goes to Mega is a copy taken whole, in `<cold>/backup`.
  *
+ * **Each is in Mega's queue once at most.** Sending one cancels whatever of it
+ * is still queued — waiting or moving, it is an older state of the file — and
+ * queues it again.
+ *
  * **What was last sent is written down here**, in `<cold>/backup/sent.json`: a
  * digest and a size for each. A file is sent again when its digest is no longer
  * that one, and at no other time — sending is asked of Mega's queue and costs
@@ -232,6 +236,12 @@ const send = async (
   remote: Remote,
 ): Promise<void> => {
   const local = path.join(config.coldRoot, DIR, kept.remote, kept.name);
+
+  try {
+    await remote.dropUploadsOf?.(local);
+  } catch (err) {
+    warn(`Could not clear the earlier upload of ${kept.name} from Mega's queue (${(err as Error).message.split('\n')[0]}) — it may be sent twice`);
+  }
 
   // Renamed into place: a transfer still reading the copy before this one keeps the file it opened.
   fs.renameSync(state.copy, local);

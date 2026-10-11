@@ -1,6 +1,6 @@
 import { recordOf, save } from '../../shared/backup';
 import { onExit } from '../../cleanup';
-import { GB, WATCH_MS, loadConfig } from '../../config';
+import { GB, POLL_MS, WATCH_MS, loadConfig } from '../../config';
 import { acquire } from '../../lock';
 import * as mega from '../../shared/mega';
 import { agreed, isWatch } from '../../options';
@@ -27,6 +27,10 @@ import type { Tar } from '../../types';
  * no dataset to name: what comes back is what a partition is stuck without,
  * and whoever stocks the vault does the rest as it finds the files there.
  *
+ * **A run of its own.** Its own lock and its own folder under `<cold>/pulling`,
+ * so a pull of the archives or the vault asked for by hand runs beside it.
+ * Should both want one tar, it is downloaded twice — rare, and harmless.
+ *
  * **What it would bring is said first, with what it weighs, and then asked.**
  * A tar comes back whole, so the archives weigh what their tars do.
  *
@@ -44,8 +48,8 @@ import type { Tar } from '../../types';
  * comes to be so and not again while it stays so.
  */
 export const runPullNeeded = async (options: { dryRun?: boolean }): Promise<void> => {
-  const config   = loadConfig('archives');
-  const releases = [await acquire(config.coldRoot, 'archives', 'pull'), await acquire(config.coldRoot, 'vault', 'pull')];
+  const config  = loadConfig('archives');
+  const release = await acquire(config.coldRoot, 'needed', 'pull');
 
   try {
     const db = record.open(config.dbPath);
@@ -99,7 +103,7 @@ export const runPullNeeded = async (options: { dryRun?: boolean }): Promise<void
       record.close(db);
     }
   } finally {
-    for (const release of releases) release();
+    release();
   }
 };
 
@@ -138,11 +142,14 @@ export const fitting = (
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
-const NOTHING = 'The vault waits for nothing that is in cold storage';
+const NOTHING = 'Nothing needs to be pulled from cold storage at the moment';
+
+/** Its own folder under `<cold>/pulling`: an explicit pull of the archives can run beside it. */
+const SCRATCH = 'needed';
 
 /** The line that stands between two looks which found nothing: that it is so, and when it was last looked. */
 const lastChecked = (at: Date): string =>
-  `${NOTHING} (last checked: ${at.toISOString().slice(0, 16).replace('T', ' ')} UTC)`;
+  `${NOTHING} (last checked: ${at.toISOString().slice(11, 16)} UTC)`;
 
 /** Bring the vault's files, then each tar, and say how it went. */
 const brought = async (db: DatabaseSync, files: readonly StoredFile[], tars: readonly Tar[], needed: Needed): Promise<void> => {
@@ -151,7 +158,7 @@ const brought = async (db: DatabaseSync, files: readonly StoredFile[], tars: rea
   const lost    = files.length > 0 ? await fetch(db, loadConfig('vault'), files, mega) : 0;
   const mine    = new Set(tars.map(tar => tar.id));
   const missing = tars.length > 0
-    ? await bring(db, loadConfig('archives'), 'archives', tars, needed.archives.filter(one => mine.has(one.held.tarId)), mega)
+    ? await bring(db, loadConfig('archives'), 'archives', tars, needed.archives.filter(one => mine.has(one.held.tarId)), mega, POLL_MS, RESERVE_GB * GB, SCRATCH)
     : 0;
 
   spacer();

@@ -1,6 +1,6 @@
 import { logger } from '@devvir/service-kit';
 import type { Service } from '@devvir/service-kit';
-import { venues } from './catalog';
+import { halt, venues } from './catalog';
 import { sweepPartials } from './store';
 import { dropHeld } from './held';
 import { setHosts } from './hosts';
@@ -62,7 +62,7 @@ const loop = async (venue: string): Promise<void> => {
         logger.warn({ venue, ...walked, minFreeGb: config.minFreeGb, nextInMinutes: QUIET_MS / 60_000 },
           'The archives volume is low on space — nothing more is fetched until there is room');
       else
-        logger.info({ venue, ...walked, nextInMinutes: (found ? FOUND_MS : QUIET_MS) / 60_000 }, 'Walk finished');
+        logger.info({ venue, ...walked, nextInMinutes: (found ? FOUND_MS : QUIET_MS) / 60_000 }, 'Round finished');
 
       // Nothing owed is nothing left to settle: what was held for the catalog to rule on was not what it ruled for.
       if (walked.listed === 0) await dropHeld(venue);
@@ -80,13 +80,17 @@ const FOUND_MS = 5 * 60_000;
 /** After a walk that found nothing to do. */
 const QUIET_MS = 30 * 60_000;
 
-/** Ask until the catalog answers, a minute apart — hauler has nothing to do without it. */
+/**
+ * Ask until the catalog gives the venues, a minute apart — hauler has nothing to
+ * do without them. A catalog that is away is waited for by the request itself;
+ * what reaches here is a refusal, which a fixed token or lens puts right.
+ */
 const untilAnswered = async <T>(ask: () => Promise<T>): Promise<T> => {
   for (;;) {
     try {
       return await ask();
     } catch (err) {
-      logger.warn({ err }, 'The catalog is not answering yet — asking again in a minute');
+      logger.warn({ err: (err as Error).message }, 'The catalog refused the list of venues — asking again in a minute');
 
       await rest(60_000);
     }
@@ -118,6 +122,7 @@ let hauling: Promise<unknown> = Promise.resolve();
  */
 const stopAfterFlight = async (): Promise<void> => {
   stopping = true;
+  halt();
 
   logger.info({ seconds: FLIGHT_MS / 1000 }, 'Stopping — the files in flight are given a moment to finish');
 

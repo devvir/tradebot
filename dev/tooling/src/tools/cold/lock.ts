@@ -65,7 +65,7 @@ export const acquire = async (
      * Signal 0 delivers nothing and only reports whether the process exists.
      */
     if (owner && ! alive(Number(owner))) {
-      info(`Clearing a lock left by ${held} — that process is gone`);
+      info(`Clearing the ${origin} ${command} lock left by ${held} — that process is gone`);
 
       fs.rmSync(file, { force: true });
     } else {

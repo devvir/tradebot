@@ -20,6 +20,9 @@ import type { SourceFile } from '../../shared/types';
  * Bring each tar back, take out of it what was asked for, and drop it. One at
  * a time, so no more than one tar and what comes out of it is ever on disk
  * beside the archives. Returns how many tars never came.
+ *
+ * `scratch` names the run's own folder under `<cold>/pulling`, where its tars
+ * come and are taken apart: the origin's, unless the run keeps its own.
  */
 export const bring = async (
   db:      DatabaseSync,
@@ -30,6 +33,7 @@ export const bring = async (
   remote:  Fetching,
   pollMs  = POLL_MS,
   reserve = RESERVE_GB * GB,
+  scratch: string = origin,
 ): Promise<number> => {
   const progress = new Progress();
   const heavy    = tars.reduce((sum, tar) => sum + (tar.bytes ?? 0), 0);
@@ -39,7 +43,7 @@ export const bring = async (
 
   try {
     for (const [at, tar] of tars.entries()) {
-      const local = path.join(config.coldRoot, PULLING, origin, tar.local);
+      const local = path.join(config.coldRoot, PULLING, scratch, tar.local);
       const mine  = wanted.filter(one => one.held.tarId === tar.id);
       const label = `${path.basename(tar.local)} (${at + 1}/${tars.length})`;
 

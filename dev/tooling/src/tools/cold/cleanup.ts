@@ -39,6 +39,8 @@ const tasks: (() => void)[] = [];
 
 let installed = false;
 
+let stopping = false;
+
 const install = (): void => {
   if (installed) return;
 
@@ -56,14 +58,23 @@ const install = (): void => {
    *
    * 128 + the signal number, which is what a shell reports for an interrupted
    * process and what a script checking `$?` expects.
+   *
+   * **Listened to for as long as the process lives, and answered once.** A
+   * Ctrl-C arrives twice: from the terminal, to every process of the group, and
+   * again from `tools`, which forwards what it receives. A handler that stopped
+   * listening after the first would leave the second to the default action —
+   * killed on the spot, often before the locks were given back.
    */
   const stop = (code: number) => (): void => {
+    if (stopping) return;
+
+    stopping = true;
     release();
     process.stdout.write('\n');
     info('Stopped - will resume on next restart');
     process.exit(code);
   };
 
-  process.once('SIGINT',  stop(130));
-  process.once('SIGTERM', stop(143));
+  process.on('SIGINT',  stop(130));
+  process.on('SIGTERM', stop(143));
 };

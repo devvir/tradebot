@@ -238,6 +238,29 @@ describe('a tar brought back', () => {
     expect(fs.readdirSync(path.join(dir, 'cold', 'pulling', 'archives', 'gate'))).toEqual([]);
   });
 
+  /** A run that keeps its own folder brings its tars there, and so never shares them with another pull. */
+  it('comes into the run\'s own folder where it keeps one', async () => {
+    const wanted = partition('202001');
+
+    store(wanted);
+    publish(wanted);
+
+    const into: string[] = [];
+    const mega = remote();
+    const queue = mega.queueDownload;
+
+    mega.queueDownload = async (from, to) => {
+      into.push(path.relative(path.join(dir, 'cold'), to));
+      await queue(from, to);
+    };
+
+    const found = await look({ dataset: 'trades' });
+
+    expect(await bring(db, config(), 'archives', [record.tarById(db, found[0]!.held.tarId)], found, mega, 1, 0, 'needed')).toBe(0);
+    expect(into).toEqual([path.join('pulling', 'needed', 'gate')]);
+    expect(fs.readFileSync(path.join(dir, 'archives', fileOf(wanted)), 'utf8')).toBe('aa');
+  });
+
   /** Over what is there, and nothing removed: a file the tar does not hold stays. */
   it('writes over a file that differs, and leaves alone one it does not hold', async () => {
     const one = partition('202001');

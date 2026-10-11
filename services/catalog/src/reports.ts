@@ -1,5 +1,5 @@
 import config from './config';
-import { fileOfKey } from './listings/keys';
+import { filesOfKeys } from './listings/keys';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Lens, ReportError, ReportedById, ReportedByKey } from './types';
 
@@ -30,8 +30,11 @@ export const resolveReport = (
   const settle: ReportedById = { downloaded: [], failed: [], mismatched: [] };
   const errors: ReportError[] = [];
 
+  // Every key at once: a report names a page, and a page's keys share their series' days.
+  const files = filesOfKeys(db, [...asked.downloaded, ...asked.failed, ...asked.mismatched.map(one => one.Key)], lens);
+
   const idOf = (key: string): number | null => {
-    const found = fileOfKey(db, key, lens);
+    const found = files.get(key)!;
 
     if (typeof found !== 'string') return found.id;
 

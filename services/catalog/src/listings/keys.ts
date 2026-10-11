@@ -1,7 +1,7 @@
 import { logger } from '@devvir/service-kit';
 import { extensionOf } from './shape';
 import type { DatabaseSync } from 'node:sqlite';
-import type { KeyedFile, Lens } from '../types';
+import type { Keyed, KeyedFile, Lens } from '../types';
 
 /**
  * A file's key: what the file *is*, and where it sits in the listing.
@@ -31,51 +31,90 @@ export const keyOf = (prefix: string, pattern: string, file: { date: string; pat
 };
 
 /**
- * The file a key names, or why there is none: `NoSuchKey` where it names no file,
- * `AccessDenied` where the lens a request reads through does not let it through.
+ * The file each key names, or why there is none: `NoSuchKey` where it names no
+ * file, `AccessDenied` where the lens a request reads through does not let it
+ * through.
  *
- * **Found by building, not by parsing.** The key's prefix and date narrow it to a
+ * **Found by building, not by parsing.** A key's prefix and date narrow it to a
  * series' files of one day — one file, or a day's parts — and each is given its
  * key the way the listing gives it; the one that matches is the file. Nothing
  * here has to understand a filename, so nothing here can misread one.
+ *
+ * **Each series' day is read and keyed once, however many of its keys are
+ * asked.** A day can hold tens of thousands of parts — a month of minutes, as
+ * one file each — and keying them all again for every key asked is minutes on
+ * the one thread every request waits for.
  */
-export const fileOfKey = (db: DatabaseSync, key: string, lens: Lens | null): KeyedFile | 'NoSuchKey' | 'AccessDenied' => {
-  const parts = key.split('/');
-  const depth = depthOf(parts);
+export const filesOfKeys = (db: DatabaseSync, keys: readonly string[], lens: Lens | null): Map<string, Keyed> => {
+  const found = new Map<string, Keyed>();
+  const days  = new Map<string, { prefix: string; date: string; keys: string[] }>();
 
-  if (parts.length !== depth + 2) return 'NoSuchKey';
+  for (const key of keys) {
+    const parts = key.split('/');
+    const depth = depthOf(parts);
+    const date  = parts.length === depth + 2 ? parts[depth + 1]!.split('|')[4]?.split('.')[0] : undefined;
 
-  const prefix = `${parts.slice(0, depth).join('/')}/`;
-  const date   = parts[depth + 1]!.split('|')[4]?.split('.')[0];
+    if (! date) {
+      found.set(key, 'NoSuchKey');
+      continue;
+    }
 
-  if (! date) return 'NoSuchKey';
+    const prefix = `${parts.slice(0, depth).join('/')}/`;
+    const day    = days.get(`${prefix}|${date}`) ?? { prefix, date, keys: [] };
 
-  const found = (db.prepare(
+    day.keys.push(key);
+    days.set(`${prefix}|${date}`, day);
+  }
+
+  const files = db.prepare(
     `SELECT f.rowid AS id, f.series_id AS seriesId, f.date, f.path, p.pattern
        FROM series s
        JOIN pattern p ON p.id = s.pattern_id
        JOIN file f    ON f.series_id = s.id
       WHERE s.prefix = ? AND f.date = ? AND f.existence = 'confirmed'`,
-  ).all(prefix, date) as unknown as (KeyedFile & { pattern: string })[])
-    .filter(one => keyOf(prefix, one.pattern, one) === key);
-
-  if (found.length === 0) return 'NoSuchKey';
-
-  if (found.length > 1)
-    logger.error({ key, paths: found.map(one => one.path) }, 'Two catalogued files share one key — settling the first');
-
-  const file = found[0]!;
+  );
 
   // The file's partition: its series' slice, at the month of its date.
-  if (lens && ! db.prepare(
+  const through = db.prepare(
     `SELECT 1 FROM series s
        JOIN pattern p     ON p.id = s.pattern_id
        JOIN partition q   ON q.slice_id = p.slice_id AND q.month = ?
        JOIN lens_member l ON l.lens_id = ? AND l.partition_id = q.id
       WHERE s.id = ?`,
-  ).get(file.date.slice(0, 6), lens.id!, file.seriesId)) return 'AccessDenied';
+  );
 
-  return { id: file.id, seriesId: file.seriesId, date: file.date, path: file.path };
+  const allowed = new Map<string, boolean>();
+
+  for (const { prefix, date, keys: asked } of days.values()) {
+    const keyed = new Map<string, KeyedFile[]>();
+
+    for (const one of files.all(prefix, date) as unknown as (KeyedFile & { pattern: string })[]) {
+      const key = keyOf(prefix, one.pattern, one);
+
+      keyed.set(key, [...keyed.get(key) ?? [], { id: one.id, seriesId: one.seriesId, date: one.date, path: one.path }]);
+    }
+
+    for (const key of asked) {
+      const same = keyed.get(key) ?? [];
+
+      if (same.length === 0) {
+        found.set(key, 'NoSuchKey');
+        continue;
+      }
+
+      if (same.length > 1)
+        logger.error({ key, paths: same.map(one => one.path) }, 'Two catalogued files share one key — settling the first');
+
+      const file  = same[0]!;
+      const month = `${file.seriesId}|${file.date.slice(0, 6)}`;
+
+      if (lens && ! allowed.has(month)) allowed.set(month, Boolean(through.get(file.date.slice(0, 6), lens.id!, file.seriesId)));
+
+      found.set(key, lens && ! allowed.get(month) ? 'AccessDenied' : file);
+    }
+  }
+
+  return found;
 };
 
 /**

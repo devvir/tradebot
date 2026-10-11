@@ -250,6 +250,9 @@ export interface Remote {
   /** Take second transfers of the same file out of the queue, below these directories. Not every stand-in has one. */
   dropDuplicateUploads?: (under: readonly string[]) => Promise<number>;
 
+  /** Take every upload of this local file out of the queue. Not every stand-in has one. */
+  dropUploadsOf?: (local: string) => Promise<number>;
+
   /** Hand several files over for one remote directory at once. */
   queueUploads?: (locals: readonly string[], remoteDir: string) => Promise<void>;
 

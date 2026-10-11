@@ -24,6 +24,7 @@ let reports: unknown[];
 let served:  number;
 let drops:   number;
 let refused: boolean;
+let failing: number;
 let flying:  number;
 let most:    number;
 
@@ -36,6 +37,7 @@ beforeEach(async () => {
   served  = 0;
   drops   = 0;
   refused = false;
+  failing = 0;
   flying  = 0;
   most    = 0;
 
@@ -64,6 +66,9 @@ beforeEach(async () => {
     }
 
     if (drops > 0) { drops--; req.socket.destroy(); return; }
+
+    // A catalog that cannot answer: a server error, as while it is stuck or restarting.
+    if (failing > 0) { failing--; res.writeHead(503); res.end('busy'); return; }
 
     asked.push({ url: req.url!, lens: req.headers['x-catalog-lens'] as string, token: req.headers['x-catalog-token'] as string });
 
@@ -160,6 +165,14 @@ describe('a walk', () => {
     drops = 1;
 
     expect(await walkVenue('binance', () => false)).toEqual({ listed: 3, progressed: 3, failed: 0, mismatched: 0, unreached: 0, full: false });
+  });
+
+  /** A 5xx is the catalog away, not a verdict: waited for, and the walk carries on. */
+  it('waits for a catalog that cannot answer, and loses nothing', async () => {
+    failing = 2;
+
+    expect(await walkVenue('binance', () => false)).toEqual({ listed: 3, progressed: 3, failed: 0, mismatched: 0, unreached: 0, full: false });
+    expect(reports).toHaveLength(2);
   });
 
   /** A stop finishes what is in flight and reports it, and takes nothing new. */

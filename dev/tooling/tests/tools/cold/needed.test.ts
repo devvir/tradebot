@@ -199,6 +199,6 @@ describe('what there is room to bring back', () => {
 describe('the line that stands while there is nothing to bring', () => {
   it('says that nothing is waited for, and when that was last looked at', () => {
     expect(_test_lastChecked(new Date('2026-10-10T02:14:37.512Z')))
-      .toBe('The vault waits for nothing that is in cold storage (last checked: 2026-10-10 02:14 UTC)');
+      .toBe('Nothing needs to be pulled from cold storage at the moment (last checked: 02:14 UTC)');
   });
 });

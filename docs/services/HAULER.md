@@ -277,11 +277,19 @@ is confirmed the same way, and what the venue says is what gets recorded.
 fetched but never reported is listed again on the next walk, found on disk, and
 reported then.
 
-**A connection that fails is tried again**, three times with a short wait
-between: the catalog closes idle keep-alive connections, and is gone for a few
-seconds while it restarts. An answer is never retried — a `4xx` or `5xx` is the
-catalog's verdict. Both requests are safe to repeat: a listing is a read, and a
-file reported twice is recorded once.
+**A catalog that is away is waited for.** A connection that fails — refused,
+dropped, the name not found while the container restarts, no answer in time —
+and a `5xx` are the catalog not able to answer, and nothing about the request.
+Every request is asked again, a second apart and doubling up to thirty seconds,
+until the catalog answers: a walk pauses where it is, the files already in hand
+keep downloading, and reports are delivered late rather than dropped. Both
+requests are safe to repeat: a listing is a read, and a file reported twice is
+recorded once. A `4xx` is the catalog's answer, and is not asked again.
+
+**Said once for the service**: one line as the catalog goes, with the cause in a
+word, and one as it comes back, with how long it was away — however many venues
+were waiting on it. Once hauler is stopping it no longer waits, and a request
+gets three attempts.
 
 ## Stopping
 

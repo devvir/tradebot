@@ -123,8 +123,8 @@ is not asked for twice.
 |---|---|
 | the record | `<cold>/cold.sqlite` — every tar and the partitions each holds, and every vault file |
 | local tars | `<cold>/<origin>/<venue>/<venue>-<YYYYMM>.<NNN>.tar` — staging only, deleted once stored |
-| lock | `<cold>/cold.<origin>.<command>.lock` — one run of a command per origin |
-| tars coming back | `<cold>/pulling/<origin>/…` — a pull's download and what it takes out of it, deleted as each tar is done |
+| lock | `<cold>/cold.<origin>.<command>.lock` — one run of a command per origin; `pull needed` has its own, `cold.needed.pull.lock` |
+| tars coming back | `<cold>/pulling/<origin>/…` — a pull's download and what it takes out of it, deleted as each tar is done; `pull needed` uses `<cold>/pulling/needed/` |
 | older versions pulled | `<cold>/pulled/<origin>/…` — partitions of a version the catalog has moved on from, for looking at |
 | remote, archives | `<MEGA_ROOT>/sources/archives/<venue>/<YYYY>/<venue>-<YYYYMM>.<NNN>.tar` |
 | remote, vault | `<MEGA_ROOT>/vault/<venue>/<market>/<dataset>[,<variant>…]/<@ or instrument>/<YYYYMM>[.pre|.post].parquet` |
@@ -175,6 +175,9 @@ in Mega that nothing can name. So each has a copy there:
 - **Sent as a copy taken whole**, in `<cold>/backup`, since both are written while they are read.
   What was last sent — a digest and a size for each — is noted in `<cold>/backup/sent.json`, and a
   file goes again only when its digest is no longer that one.
+- **Each is in Mega's queue once at most.** Sending one first cancels whatever of it is still
+  queued, waiting or moving, since that is an older state of the same file. Where the queue cannot
+  be read, it is sent all the same.
 - **These files grow, and one that has shrunk is not a change to pass on**: something happened to
   it here, and the copy may be the only good one. A ledger is only ever appended to, so for it any
   shrinking counts. The record dips a little in the ordinary way — a plan redrawn, a replaced

@@ -214,6 +214,9 @@ export interface KeyedFile {
   path:     string;
 }
 
+/** The file a key names, or why there is none. */
+export type Keyed = KeyedFile | 'NoSuchKey' | 'AccessDenied';
+
 /** A report as a downloader sends it, by Key. */
 export interface ReportedByKey {
   downloaded: string[];

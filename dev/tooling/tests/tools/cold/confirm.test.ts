@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { confirmTars, confirmVault } from '../../../src/tools/cold/push/confirm';
-import { _test_duplicatesIn as duplicatesIn } from '../../../src/tools/cold/shared/mega/transfers';
+import { _test_duplicatesIn as duplicatesIn, _test_uploadsOf as uploadsOf } from '../../../src/tools/cold/shared/mega/transfers';
 import * as record from '../../../src/tools/cold/shared/record';
 import type { DatabaseSync } from 'node:sqlite';
 import type { CatalogPartition, Remote, VaultFile } from '../../../src/tools/cold/shared/types';
@@ -142,5 +142,24 @@ describe('second transfers of the same file in the queue', () => {
   /** The queue is shared with whatever else is uploading. */
   it('are never somebody else\'s', () => {
     expect(duplicatesIn(queue, ['/data/other'])).toEqual([]);
+  });
+});
+
+describe('the uploads of one file', () => {
+  const queue = [
+    'TAG|SOURCEPATH',
+    '803|/cold/backup/cold.sqlite',
+    '7328|/cold/backup/cold.sqlite',
+    '7400|/cold/backup/cold.sqlite.old',
+    '66|/cold/archives/binance-201708.010.tar',
+  ].join('\n');
+
+  /** Waiting or moving alike: each is an older state of the file. */
+  it('are every transfer of that file, and of no other', () => {
+    expect(uploadsOf(queue, '/cold/backup/cold.sqlite')).toEqual(['803', '7328']);
+  });
+
+  it('are none where it is not queued', () => {
+    expect(uploadsOf(queue, '/cold/backup/ledger.csv')).toEqual([]);
   });
 });

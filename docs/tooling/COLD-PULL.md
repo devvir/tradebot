@@ -118,6 +118,10 @@ stocks the vault does the rest by itself, as it finds the files there.
 | `-n`, `--dry-run` | say what the vault waits for and what it weighs, and bring nothing |
 | `-w`, `--watch` | look again at intervals, and bring what has come to be waited for since; asked before the first time and not again |
 
+**It runs beside a pull asked for by hand.** It has its own lock and its own folder for the tars
+it brings, `<cold>/pulling/needed/`, so `pull archives` and `pull vault` neither wait for it nor
+share its files. Should both want the same tar, it is downloaded twice.
+
 **While there is nothing to bring, a watch says so on one line**, with when it last looked, and
 writes over that line at each look. Where its output is not a terminal it says so once, when it
 comes to be so.

@@ -151,6 +151,36 @@ export const dropDuplicateUploads = async (under: readonly string[]): Promise<nu
   }
 };
 
+/**
+ * Take out of the upload queue every transfer of this local file, waiting or
+ * already moving. Returns how many went.
+ *
+ * For a file that is sent again each time it changes, where only the newest
+ * matters: whatever of it is still queued is an older state of the same file.
+ *
+ * A queue that could not be read throws, as `queuedPaths` does.
+ */
+export const dropUploadsOf = async (local: string): Promise<number> => {
+  const { stdout } = await megaCmd(
+    'mega-transfers',
+    ['--only-uploads', '--limit=100000', '--col-separator=|', '--output-cols=TAG,SOURCEPATH'],
+    { timeout: 60_000, maxBuffer: 64 * 1024 * 1024 },
+  );
+
+  const tags = uploadsOf(stdout, local);
+
+  for (const tag of tags) await megaCmd('mega-transfers', ['-c', tag], { timeout: 60_000 });
+
+  return tags.length;
+};
+
+/** The tags of the transfers of one local file, read off the queue as `TAG|SOURCEPATH` lines. */
+const uploadsOf = (stdout: string, local: string): string[] =>
+  stdout.split('\n')
+    .map(line => line.split('|').map(part => part.trim()))
+    .filter(([tag, source]) => tag !== undefined && /^\d+$/.test(tag) && source === local)
+    .map(([tag]) => tag!);
+
 /** The tags of the transfers to cancel, read off the queue as `TAG|STATE|SOURCEPATH|DESTINYPATH` lines. */
 const duplicatesIn = (stdout: string, under: readonly string[]): string[] => {
   const same = new Map<string, { tag: string; active: boolean }[]>();
@@ -267,3 +297,4 @@ const bytesOf = (value: string, unit: string): number => Number(value) * (UNITS[
 
 export const _test_parseSummary = parseSummary;
 export const _test_duplicatesIn = duplicatesIn;
+export const _test_uploadsOf    = uploadsOf;

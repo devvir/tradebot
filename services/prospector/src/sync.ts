@@ -117,12 +117,7 @@ export const syncVenue = async (
 
     const wait = Math.max(0, began + everyMs() - Date.now());
 
-    logger.info({
-      venue:  labelOf(adapter),
-      hours:  Math.round(wait / 3_600_000),
-      nextRun: new Date(Date.now() + wait).toISOString(),
-    }, wait > 0 ? `Survey finished; next update ${describeWait(wait)}`
-      : 'Survey finished; updating again now');
+    logger.info({ venue: labelOf(adapter), nextRun: new Date(Date.now() + wait).toISOString() }, 'Survey finished');
 
     await waiting(wait, paused);
 

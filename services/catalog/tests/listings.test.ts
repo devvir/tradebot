@@ -429,6 +429,24 @@ describe('a report', () => {
     }
   });
 
+  /** The parts of one day are read once for all of them, and each key still names its own part. */
+  it('settles every part of a day it names, each to its own file', async () => {
+    const stand = await prospector();
+
+    try {
+      const parts = EXPECTED.filter(one => one.includes('|20210726.part'));
+
+      expect(parts).toHaveLength(2);
+      expect((await report({ downloaded: [...parts].reverse(), failed: [parts[0]] })).status).toBe(200);
+      expect(stand.got).toMatchObject([{ body: {
+        downloaded: [idOf('spot/orderbooks/202107/BTC_USDT-2021072604.csv.gz'), idOf('spot/orderbooks/202107/BTC_USDT-2021072603.csv.gz')],
+        failed:     [idOf('spot/orderbooks/202107/BTC_USDT-2021072603.csv.gz')],
+      } }]);
+    } finally {
+      await stand.close();
+    }
+  });
+
   it('settles the bucket by its key', async () => {
     const stand = await prospector();
 

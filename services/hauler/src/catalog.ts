@@ -37,8 +37,10 @@ export const page = async (venue: string, marker: string | null): Promise<Bucket
 /**
  * What became of a page.
  *
- * **A report that fails is only logged**: the files it named are listed again on
- * the next walk, found on disk, and reported then. **Keys the catalog would not
+ * **Waits for a catalog that is away**, as every request does. **A report that
+ * fails all the same** — refused, or not delivered as hauler stops — is only
+ * logged: the files it named are listed again on the next walk, found on disk,
+ * and reported then. **Keys the catalog would not
  * settle** — a `207` naming them — are logged as errors: each is a key the
  * catalog listed and then did not know, or a lens that does not let it through,
  * and neither mends itself by asking again.
@@ -52,7 +54,7 @@ export const report = async (venue: string, done: Report): Promise<void> => {
     for (const one of answer.Error ?? [])
       logger.error({ key: one.Key, code: one.Code, reason: one.Message }, 'Report refused');
   } catch (err) {
-    logger.warn({ venue, err, downloaded: done.downloaded.length, failed: done.failed.length,
+    logger.warn({ venue, err: (err as Error).message, downloaded: done.downloaded.length, failed: done.failed.length,
       mismatched: done.mismatched.length }, 'Report failed — comes round again');
   }
 };
@@ -62,32 +64,86 @@ export const report = async (venue: string, done: Report): Promise<void> => {
 /** The catalog's largest page. Fetching is what takes the time, never listing. */
 const PAGE_KEYS = 1_000;
 
-/** Attempts at reaching the catalog before a request counts as failed. */
-const ATTEMPTS = 3;
-
-/** The wait before trying again, doubled each time. */
+/** The first wait before asking again, doubled each time up to `MAX_WAIT_MS`. */
 const RETRY_MS = 1_000;
 
+const MAX_WAIT_MS = 30_000;
+
+/** Attempts a request is given once hauler is stopping, rather than waiting on. */
+const ATTEMPTS = 3;
+
 /**
- * One request to the catalog, tried again where the connection failed.
+ * Stop waiting for the catalog: hauler is stopping. A request still gets
+ * `ATTEMPTS`, so a report sent on the way out survives a dropped connection.
+ */
+export const halt = (): void => {
+  halted = true;
+};
+
+let halted = false;
+
+/** Since when, and why, the catalog has not answered — null while it does. */
+let away: { since: number; cause: string } | null = null;
+
+/**
+ * One request to the catalog, asked again for as long as the catalog is away.
  *
- * **Only a connection that failed is retried** — reset, refused, dropped. The
- * catalog closes idle keep-alive connections, so a request now and then lands on
- * one just as it goes; and a catalog restarting is gone for a few seconds. An
- * answer, any answer, is not retried: a `4xx` or `5xx` is the catalog's verdict.
- * Both kinds of request are safe to repeat — a listing is a read, and reporting
- * a file twice records it once.
+ * **Away is not a verdict.** A connection that failed — refused, dropped, the
+ * name not found while its container restarts, no answer in time — and a `5xx`
+ * are the catalog not able to answer, and nothing about the request. It is
+ * waited for, a walk pausing where it is, and asked again: both kinds of
+ * request are safe to repeat — a listing is a read, and reporting a file twice
+ * records it once. A `4xx` is the catalog's answer, and is thrown.
+ *
+ * **Said once for the whole service**, as the catalog goes and as it comes
+ * back, however many venues were waiting on it.
  */
 const ask = async <T>(path: string, init: RequestInit = {}, lensed = true): Promise<T> => {
   for (let attempt = 1; ; attempt++) {
     try {
-      return await once<T>(path, init, lensed);
-    } catch (err) {
-      if (! (err instanceof TypeError) || attempt >= ATTEMPTS) throw err;
+      const answer = await once<T>(path, init, lensed);
 
-      await new Promise(done => setTimeout(done, RETRY_MS * 2 ** (attempt - 1)));
+      if (away) {
+        logger.info({ afterSeconds: Math.round((Date.now() - away.since) / 1000) }, 'The catalog answers again');
+
+        away = null;
+      }
+
+      return answer;
+    } catch (err) {
+      if (! (err instanceof TypeError || err instanceof Unavailable) || (halted && attempt >= ATTEMPTS)) throw err;
+
+      if (! away) {
+        away = { since: Date.now(), cause: causeOf(err) };
+
+        logger.warn({ cause: away.cause }, 'The catalog is not answering — waiting for it');
+      }
+
+      await new Promise(done => setTimeout(done, Math.min(MAX_WAIT_MS, RETRY_MS * 2 ** (attempt - 1))));
     }
   }
+};
+
+/** A `5xx`: the catalog could not answer, as when it is not there at all. */
+class Unavailable extends Error {}
+
+/** Why the catalog did not answer, in a word. */
+const causeOf = (err: unknown): string => {
+  if (err instanceof Unavailable) return err.message;
+
+  const code = (err as { cause?: { code?: string } }).cause?.code ?? '';
+
+  return CAUSES[code] ?? (code || (err as Error).message);
+};
+
+const CAUSES: Record<string, string> = {
+  ECONNREFUSED:            'refused',
+  ECONNRESET:              'dropped',
+  UND_ERR_SOCKET:          'dropped',
+  EAI_AGAIN:               'not found',
+  ENOTFOUND:               'not found',
+  UND_ERR_CONNECT_TIMEOUT: 'no connection in time',
+  UND_ERR_HEADERS_TIMEOUT: 'no answer in time',
 };
 
 const once = async <T>(path: string, init: RequestInit, lensed: boolean): Promise<T> => {
@@ -101,6 +157,8 @@ const once = async <T>(path: string, init: RequestInit, lensed: boolean): Promis
       ...init.headers,
     },
   });
+
+  if (res.status >= 500) throw new Unavailable(`answered ${res.status}`);
 
   if (! res.ok)
     throw new Error(`Catalog answered ${res.status} for ${path}: ${(await res.text()).slice(0, 200)}`);
