@@ -176,7 +176,8 @@ export const Surveys = () => {
                  */
                 head: 'Runs',
                 width: '31%',
-                cell: v => <Detail of={v} order={orders[v.venue]} />,
+                // Sentences, not data: in the page's Sans, where the cells around them are Mono.
+                cell: v => <Box ff="text"><Detail of={v} order={orders[v.venue]} /></Box>,
               },
               {
                 /**

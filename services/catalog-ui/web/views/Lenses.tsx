@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert, Button, Card, CloseButton, Combobox, Group, Loader, Modal, Pill, PillsInput, Progress,
+  Alert, Button, Card, CloseButton, Combobox, Group, Loader, Modal, Pill, PillsInput, Paper, Progress,
   Select, Stack, Text, TextInput, Title, Tooltip, useCombobox,
 } from '@mantine/core';
 import type { ReactNode } from 'react';
@@ -119,20 +119,29 @@ export const Lenses = ({ slug }: { slug?: string | undefined }) => {
         </Alert>
       )}
 
-      <Group align="flex-end" gap="sm">
-        <Select
-          label="Lens"
-          placeholder={choices.length ? 'Choose a lens' : 'No lenses yet'}
-          data={choices.map(one => ({
-            value: one.slug,
-            label: `${one.name || one.slug}${one.id === undefined ? ' (not saved)' : ''}`,
-          }))}
-          value={lens?.slug ?? null} onChange={to => { if (to) open(to); }} w={260}
-          allowDeselect={false}
-        />
-        <Button size="sm" variant="light" onClick={() => setNaming(true)}>New Lens</Button>
-        {lenses === null && <Loader size="sm" type="dots" />}
-      </Group>
+      {/*
+        Which lens, and a new one: the whole page's business, in a bar of its own
+        so it does not read as part of the lens below it.
+      */}
+      <Paper radius="md" px="md" py="md" bg="var(--tint-sky)">
+        <Group justify="space-between" align="center" gap="sm">
+          <Group align="center" gap="sm">
+            <Text fw={700} size="sm">Lens</Text>
+            <Select
+              aria-label="Lens"
+              placeholder={choices.length ? 'Choose a lens' : 'No lenses yet'}
+              data={choices.map(one => ({
+                value: one.slug,
+                label: `${one.name || one.slug}${one.id === undefined ? ' (not saved)' : ''}`,
+              }))}
+              value={lens?.slug ?? null} onChange={to => { if (to) open(to); }} w={260}
+              allowDeselect={false}
+            />
+            {lenses === null && <Loader size="sm" type="dots" />}
+          </Group>
+          <Button size="sm" onClick={() => setNaming(true)}>New Lens</Button>
+        </Group>
+      </Paper>
 
       {lens && (
         <Editing
@@ -181,19 +190,18 @@ const keepSize = (lens: Lens, size: LensSize): void => {
  * vary from kilobytes to gigabytes, so a count would say little about the wait.
  */
 const Downloaded = ({ size }: { size: LensSize }) => {
-  const done  = size.bytes - size.pendingBytes;
-  const share = size.bytes > 0 ? (done / size.bytes) * 100 : 0;
+  const share = size.bytes > 0 ? ((size.bytes - size.pendingBytes) / size.bytes) * 100 : 0;
 
   return (
     <Group gap="xs" wrap="nowrap">
-      <Progress value={share} w={180} size="sm" color={size.pending === 0 ? 'green' : 'cyan'} />
-      <Text size="xs" c="dimmed"
-        title={`${count(size.files - size.pending)} of ${count(size.files)} files downloaded`}>
-        {bytes(done)} of {bytes(size.bytes)} downloaded · {share.toFixed(1)}%
-      </Text>
+      <Progress value={share} size="sm" color={size.pending === 0 ? 'rise' : 'sky'} style={{ flex: 1 }} />
+      <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }}>{share.toFixed(1)}%</Text>
     </Group>
   );
 };
+
+/** Whether a size says how much of it is downloaded: one with no files, or none counted, does not. */
+const known = (size: LensSize): boolean => size.files > 0 && typeof size.pendingBytes === 'number';
 
 /** One lens, whole: what it is called, what it is for, and what it lets through. */
 const Editing = ({ lens, onStored, onFailed, onGone }: {
@@ -381,38 +389,96 @@ const Editing = ({ lens, onStored, onFailed, onGone }: {
 
   return (
     <Stack gap="md">
-      <Group align="flex-end" gap="sm" wrap="nowrap">
-        <TextInput
-          label="Name" value={name} w={240} placeholder={lens.slug}
-          onChange={event => setName(event.currentTarget.value)}
-        />
-        <TextInput
-          label="What it is for" value={note} w={420}
-          onChange={event => setNote(event.currentTarget.value)}
-        />
-        {/*
-          When it was last saved belongs to the button that saves it: it is the
-          answer to "have I saved this?", which is asked of the control.
-        */}
-        <Button
-          size="sm" color="green" disabled={(! general_dirty && ! unsaved) || storing !== null} onClick={save}
-          title={unsaved ? 'Not saved yet' : `Last saved: ${lens.updatedAt.slice(0, 16).replace('T', ' ')}`}
-        >Save</Button>
+      {/*
+        The lens that is open: what it is called and for, saving and deleting it,
+        and what it lets through — one card, apart from the bar that picks it.
+      */}
+      <Card withBorder radius="md" padding="md" bg="var(--tint-signal)">
+        <Stack gap="sm">
+          {/*
+            Two sides: on the left what a person edits; on the right what the lens
+            is — what it lets through at the top, and at the bottom its address and
+            the way to delete it, level with Save.
+          */}
+          <Group justify="space-between" align="stretch" gap="xl" wrap="nowrap">
+            <Stack gap="sm" style={{ flex: 1, maxWidth: 720 }}>
+              <TextInput
+                label="Name" value={name} placeholder={lens.slug} maw={360}
+                onChange={event => setName(event.currentTarget.value)}
+              />
+              <TextInput
+                label="What it is for" value={note} placeholder="Nothing said yet"
+                onChange={event => setNote(event.currentTarget.value)}
+              />
+              <Group gap="sm" align="center">
+                {/*
+                  When it was last saved belongs to the button that saves it: it is the
+                  answer to "have I saved this?", which is asked of the control.
+                */}
+                <Button
+                  size="sm" color="rise" disabled={(! general_dirty && ! unsaved) || storing !== null} onClick={save}
+                  title={unsaved ? 'Not saved yet' : `Last saved: ${lens.updatedAt.slice(0, 16).replace('T', ' ')}`}
+                >Save</Button>
 
-        {/*
-          Back to what is stored, discarding every draft — of the name, the note
-          and the rules. Shown only where there is something to discard, and never
-          on a lens not stored yet: there is nothing to reload it from.
-        */}
-        {! unsaved && (general_dirty || drafting) && (
-          <Button
-            size="compact-xs" variant="subtle" color="gray" mb={6} disabled={storing !== null}
-            title="Discard every unsaved change: name, note and rules"
-            onClick={() => { setName(lens.name); setNote(lens.note); setRules(entriesOf(lens.definition)); keep(lens, null); }}
-          >Reload as saved</Button>
-        )}
-        <Removing lens={lens} onGone={onGone} onFailed={onFailed} />
-      </Group>
+                {/*
+                  Back to what is stored, discarding every draft — of the name, the note
+                  and the rules. Shown only where there is something to discard, and never
+                  on a lens not stored yet: there is nothing to reload it from.
+                */}
+                {! unsaved && (general_dirty || drafting) && (
+                  <Button
+                    size="compact-sm" variant="subtle" color="gray" disabled={storing !== null}
+                    title="Discard every unsaved change: name, note and rules"
+                    onClick={() => { setName(lens.name); setNote(lens.note); setRules(entriesOf(lens.definition)); keep(lens, null); }}
+                  >Reload as saved</Button>
+                )}
+              </Group>
+            </Stack>
+
+            <Stack justify="space-between" align="flex-end" gap="md">
+              {/*
+                What the lens comes to, as one figure: centred in the room above the
+                address and Delete, so it reads as the card's summary and stays apart
+                from the one control that destroys the lens.
+              */}
+              <Stack justify="center" align="flex-end" style={{ flex: 1 }}>
+                {! unsaved && (
+                  <Stack gap={6} align="stretch" w="fit-content">
+                    {/* As wide as its first line, and the bar under it as wide again. */}
+                    <Group gap="sm" align="baseline" justify="flex-end" wrap="nowrap">
+                      {size?.updating && (
+                        <Group gap={4} wrap="nowrap" title="The rules are saved; what they let through is still being worked out">
+                          <Loader size="xs" />
+                          <Text size="xs" c="dimmed">Updating…</Text>
+                        </Group>
+                      )}
+                      {size !== undefined && known(size) && (
+                        <Text size="xs" c="dimmed" title={`${count(size.files - size.pending)} of ${count(size.files)} files`}>
+                          {bytes(size.bytes - size.pendingBytes)} downloaded, out of
+                        </Text>
+                      )}
+                      {size === undefined ? <Loader size="sm" type="dots" /> : (
+                        <Text fz={30} fw={700} lh={1}
+                          title={`Everything this lens lets through: ${count(size.files)} files over ${count(size.partitions)} partitions`}>
+                          {bytes(size.bytes)}
+                        </Text>
+                      )}
+                    </Group>
+                    {size !== undefined && known(size) && <Downloaded size={size} />}
+                  </Stack>
+                )}
+              </Stack>
+
+              <Group gap="md" align="center" wrap="nowrap">
+                <Text size="xs" c="dimmed" title="What a consumer is configured with to read through this lens">
+                  Address <Text span ff="monospace" size="xs" c="bright">{lens.slug}</Text>
+                </Text>
+                <Removing lens={lens} onGone={onGone} onFailed={onFailed} />
+              </Group>
+            </Stack>
+          </Group>
+        </Stack>
+      </Card>
 
       {general.length > 0 && (
         <Alert color="orange" variant="light" title="The catalog would not store that">
@@ -420,29 +486,6 @@ const Editing = ({ lens, onStored, onFailed, onGone }: {
             {general.map((one, at) => <Text size="sm" key={at}>{one.venue} — {one.message}</Text>)}
           </Stack>
         </Alert>
-      )}
-
-      {! unsaved && (
-        <Group justify="flex-end" align="flex-end">
-          <Stack gap={4} align="flex-end">
-            <Group gap="xs">
-              <Text size="sm" c="dimmed">Everything this lens lets through:</Text>
-              {size === undefined ? <Loader size="xs" type="dots" /> : (
-                <Text size="sm" fw={600}
-                  title={`${count(size.files)} files over ${count(size.partitions)} partitions`}>
-                  {bytes(size.bytes)}
-                </Text>
-              )}
-              {size?.updating && (
-                <Group gap={4} wrap="nowrap" title="The rules are saved; what they let through is still being worked out">
-                  <Loader size="xs" />
-                  <Text size="xs" c="dimmed">Updating…</Text>
-                </Group>
-              )}
-            </Group>
-            {size !== undefined && size.files > 0 && typeof size.pendingBytes === 'number' && <Downloaded size={size} />}
-          </Stack>
-        </Group>
       )}
 
       {[GLOBAL, ...blocks].map(venue => (
@@ -681,6 +724,7 @@ const Picker = ({ label, w, placeholder, data, value, error, onChange, tip }: {
   };
 
   const wanted  = search.trim().toLowerCase();
+  const fieldWidth = search.length > 0 ? `${search.length + 2}ch` : placeholder ? '4ch' : 0;
   const options = data.filter(option => option.label.toLowerCase().includes(wanted));
 
   return (
@@ -698,8 +742,16 @@ const Picker = ({ label, w, placeholder, data, value, error, onChange, tip }: {
             ), 'top'))}
 
             <Combobox.EventsTarget>
+              {/*
+                No wider than what is typed, and nothing at all beside pills with
+                nothing typed — clicking the box still focuses it. A line wraps by
+                where each item starts, and an input starts at its natural width,
+                so at that, or at Mantine's minimum, it drops to a line of its own
+                long before the pills fill theirs. It still grows into what is left.
+              */}
               <PillsInput.Field
                 value={search} placeholder={placeholder}
+                style={{ width: fieldWidth, minWidth: fieldWidth }}
                 onFocus={() => combobox.openDropdown()} onBlur={() => combobox.closeDropdown()}
                 onChange={(event) => {
                   combobox.updateSelectedOptionIndex();
@@ -839,70 +891,115 @@ const Rule = ({ rule, offered, published, problems, state, busy, locked, onChang
 
   const wrong = (field: keyof LensRule) => problems.find(one => one.field === field)?.message;
 
+  /**
+   * **What an exclude gave up, given back.** An exclude has nothing to prefer, so
+   * turning a rule into one drops the forms it preferred; turning it back finds
+   * them again, where grain and bundle were left as the exclude had them — so
+   * flipping the action there and back is no change at all.
+   */
+  const gaveUp = useRef<{ grain: LensRule['grain']; bundle: LensRule['bundle'] } | null>(null);
+
+  const actOn = (effect: LensRule['effect']): void => {
+    if (effect === rule.effect) return;
+
+    if (effect === 'exclude') {
+      const kept = { grain: onlyOf(rule.grain), bundle: onlyOf(rule.bundle) };
+
+      gaveUp.current = { grain: rule.grain, bundle: rule.bundle };
+      onChanged({ ...rule, effect, ...kept });
+
+      return;
+    }
+
+    const back = gaveUp.current;
+    const untouched = back !== null
+      && JSON.stringify(rule.grain) === JSON.stringify(onlyOf(back.grain))
+      && JSON.stringify(rule.bundle) === JSON.stringify(onlyOf(back.bundle));
+
+    gaveUp.current = null;
+    onChanged(untouched ? { ...rule, effect, grain: back.grain, bundle: back.bundle } : { ...rule, effect });
+  };
+
   const markets_set = (values: string[]) =>
     onChanged({ ...rule, markets: values.length === 0 ? undefined : values });
 
   return (
-    <Card withBorder padding="sm" radius="sm" bg="var(--mantine-color-default)"
-      style={state === 'saved' ? undefined : { borderColor: 'var(--mantine-color-yellow-6)' }}>
+    <Card withBorder padding="sm" radius="sm" bg={EFFECT_TINT[rule.effect]}
+      style={{
+        ...(state === 'saved' ? {} : { borderColor: 'var(--mantine-color-yellow-6)' }),
+        // What kind of rule it is, seen before anything in it is read.
+        borderLeft: `4px solid ${EFFECT_COLOR[rule.effect]}`,
+      }}>
       <Stack gap="xs">
-        <Group justify="space-between" align="flex-end" wrap="nowrap">
-          <Select
-            label="Action" w={130} allowDeselect={false}
-            data={[{ value: 'include', label: 'Include' }, { value: 'exclude', label: 'Exclude' }]}
-            value={rule.effect}
-            onChange={effect => onChanged({
-              ...rule, effect: effect as LensRule['effect'],
-              // An exclude has nothing to prefer: a form it preferred is any form again.
-              ...(effect === 'exclude' ? { grain: onlyOf(rule.grain), bundle: onlyOf(rule.bundle) } : {}),
-            })}
-          />
-          <Group gap="xs" align="flex-end" wrap="nowrap">
-            <Month
-              label="From" value={rule.from} error={wrong('from')}
-              onChanged={from => onChanged({ ...rule, from })}
-            />
-            <Month
-              label="To" value={rule.to} error={wrong('to')}
-              onChanged={to => onChanged({ ...rule, to })}
-            />
-          </Group>
-        </Group>
-
-        <Group align="flex-start" gap="sm" grow wrap="nowrap">
-          <Picker
-            w={230} label="Markets" placeholder={(rule.markets ?? []).length === 0 ? 'All' : ''}
-            data={markets} value={rule.markets ?? []} error={wrong('markets')}
-            onChange={markets_set} tip={market => marketIn(published, market)}
-          />
-          <Picker
-            w={260} label="Datasets" placeholder={chosen.length === 0 ? 'All' : ''}
-            data={datasets} value={chosen} error={wrong('datasets')}
-            onChange={pick} tip={value => datasetIn(published, value, datasets.find(one => one.value === value)?.label ?? value)}
-          />
-          <Select
-            w={200} label="Grain" allowDeselect={false} error={wrong('grain')}
-            data={grains} value={chosenOf(rule.grain)}
-            onChange={picked => onChanged({ ...rule, grain: choiceOf(picked) })}
-          />
-        </Group>
-
         {/*
-          Which files, by how many instruments each holds. A rule never names an
-          instrument, so what it selects is always every one of them or none.
+          Two rows of what a rule selects — the action alone, then grain and
+          bundle; markets and datasets — and beside them, as one quiet box, the
+          months it is bounded to. From sits level with the first row and To with
+          the second.
         */}
-        <Select
-          label="Bundle" w={230} allowDeselect={false} error={wrong('bundle')}
-          data={bundles} value={chosenOf(rule.bundle)}
-          onChange={picked => onChanged({ ...rule, bundle: choiceOf(picked) as LensRule['bundle'] })}
-        />
+        <Group align="flex-start" gap="sm" wrap="nowrap">
+          {/* Down by the box's padding, so the rows line up with what is in it. */}
+          <Stack gap="xs" pt="xs" style={{ flex: 1, minWidth: 0 }}>
+            <Group justify="space-between" align="flex-start" gap="sm" wrap="nowrap">
+              <Select
+                label="Action" w={130} allowDeselect={false} style={{ flexShrink: 0 }}
+                styles={{ input: { color: EFFECT_COLOR[rule.effect], fontWeight: 700, borderColor: EFFECT_COLOR[rule.effect] } }}
+                data={[{ value: 'include', label: 'Include' }, { value: 'exclude', label: 'Exclude' }]}
+                value={rule.effect}
+                onChange={effect => actOn(effect as LensRule['effect'])}
+              />
+              <Group align="flex-start" gap="sm" wrap="nowrap">
+                <Select
+                  label="Grain" w={220} allowDeselect={false} error={wrong('grain')}
+                  data={grains} value={chosenOf(rule.grain)}
+                  onChange={picked => onChanged({ ...rule, grain: choiceOf(picked) })}
+                />
+                {/*
+                  Which files, by how many instruments each holds. A rule never names an
+                  instrument, so what it selects is always every one of them or none.
+                */}
+                <Select
+                  label="Bundle" w={240} allowDeselect={false} error={wrong('bundle')}
+                  data={bundles} value={chosenOf(rule.bundle)}
+                  onChange={picked => onChanged({ ...rule, bundle: choiceOf(picked) as LensRule['bundle'] })}
+                />
+              </Group>
+            </Group>
+
+            <Group align="flex-start" gap="sm" grow wrap="nowrap">
+              <Picker
+                w={230} label="Markets" placeholder={(rule.markets ?? []).length === 0 ? 'All' : ''}
+                data={markets} value={rule.markets ?? []} error={wrong('markets')}
+                onChange={markets_set} tip={market => marketIn(published, market)}
+              />
+              <Picker
+                w={260} label="Datasets" placeholder={chosen.length === 0 ? 'All' : ''}
+                data={datasets} value={chosen} error={wrong('datasets')}
+                onChange={pick} tip={value => datasetIn(published, value, datasets.find(one => one.value === value)?.label ?? value)}
+              />
+            </Group>
+          </Stack>
+
+          <Paper radius="md" p="xs" bg="var(--tint-sky)">
+            <Stack gap="xs">
+              <Month
+                label="From" value={rule.from} error={wrong('from')}
+                onChanged={from => onChanged({ ...rule, from })}
+              />
+              <Month
+                label="To" value={rule.to} error={wrong('to')}
+                onChanged={to => onChanged({ ...rule, to })}
+              />
+            </Stack>
+          </Paper>
+        </Group>
 
         {/*
           A rule is stored on its own: Confirm stores the lens with it, Drop
           without it. A draft can be discarded, or an edit reverted, at no cost.
           The yellow border is what marks a draft; Confirm's title says which kind.
         */}
-        <Group justify="flex-end" gap="xs">
+        <Group justify="flex-end" gap="xs" mt="sm">
           {state === 'saved' && (
             <Button size="compact-xs" variant="subtle" color="red" loading={busy} disabled={locked && ! busy}
               title="Store the lens without this rule" onClick={onDrop}>Drop Rule</Button>
@@ -912,7 +1009,7 @@ const Rule = ({ rule, offered, published, problems, state, busy, locked, onChang
               <Button size="compact-xs" variant="subtle" color="gray" disabled={locked}
                 title={state === 'new' ? 'Throw this draft away' : 'Back to the rule as it is stored'}
                 onClick={onDiscard}>{state === 'new' ? 'Discard' : 'Revert'}</Button>
-              <Button size="compact-xs" color="green" loading={busy} disabled={locked && ! busy}
+              <Button size="compact-xs" color="rise" loading={busy} disabled={locked && ! busy}
                 title={state === 'new' ? 'Not confirmed yet — store the lens with this rule'
                   : 'Changed since it was confirmed — store the lens with this edit'}
                 onClick={onConfirm}>Confirm</Button>
@@ -1007,6 +1104,18 @@ const capital = (word: string): string => word.charAt(0).toUpperCase() + word.sl
  * It speaks `yyyy-mm` and the catalog stores `yyyymm`, which is the whole of the
  * translation.
  */
+/** Behind a rule, the same colour a breath of it. */
+const EFFECT_TINT: Record<LensRule['effect'], string> = {
+  include: 'var(--tint-rise)',
+  exclude: 'var(--tint-red)',
+};
+
+/** Include and exclude, each in its colour wherever a rule says which it is. */
+const EFFECT_COLOR: Record<LensRule['effect'], string> = {
+  include: 'var(--mantine-color-rise-5)',
+  exclude: 'var(--mantine-color-red-5)',
+};
+
 const Month = ({ label, value, error, onChanged }: {
   label:     string;
   value?:    string;
@@ -1059,7 +1168,9 @@ const Removing = ({ lens, onGone, onFailed }: {
   return (
     <>
       <Button
-        size="sm" variant="light" color="red" ml="auto" leftSection={<Trash />}
+        size="xs" variant="light" color="red" leftSection={<Trash />}
+        // Quieter at rest than the light red: a lens is not deleted often. Hovered, it is Mantine's own.
+        vars={() => ({ root: { '--button-bg': 'color-mix(in srgb, var(--mantine-color-red-filled) 12%, transparent)' } })}
         title={`Delete the lens "${lens.name || lens.slug}"`} onClick={() => setAsking(true)}
       >Delete</Button>
       <Modal opened={asking} onClose={() => setAsking(false)} centered

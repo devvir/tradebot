@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "@devvir/service-kit": "workspace:*",
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/ibm-plex-sans": "^5.3.0",
     "@mantine/core": "^9.5.2",
     "@mantine/hooks": "^9.5.2",
     "@tradebot/utils": "workspace:*",

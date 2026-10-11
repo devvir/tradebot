@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Anchor, AppShell, Breadcrumbs, Container, Group, Select, Tabs, Text, Title } from '@mantine/core';
+import { Anchor, AppShell, Breadcrumbs, Container, Group, Select, Stack, Tabs, Text, Title } from '@mantine/core';
 import { Venues } from './views/Venues';
 import { VenueView } from './views/Venue';
 import { MarketView } from './views/Market';
@@ -55,28 +55,34 @@ export const App = () => {
     () => fetch('/api/where').then(res => res.json() as Promise<Where>));
 
   return (
-    <AppShell header={{ height: 92 }} padding="md">
+    <AppShell header={{ height: 64 }} padding="md">
+      {/*
+        One row: where to go on the left, what this is on the right — the
+        catalog's name beside its mark, and the address it answers from.
+      */}
       <AppShell.Header>
-        <Group px="md" py="xs" gap="md" align="baseline">
-          <Title order={1} size="h5" style={{ letterSpacing: '.04em' }}>
-            Catalog
-          </Title>
-          <Text size="xs" c="dimmed">
-            {where.data?.catalog}
-          </Text>
-        </Group>
+        <Group justify="space-between" align="flex-end" px="md" h="100%" wrap="nowrap">
+          <Tabs
+            value={route.section}
+            onChange={value => { location.hash = linkTo(tabTo(value as Section)).slice(1); }}
+          >
+            <Tabs.List style={{ borderBottom: 0 }}>
+              <Tabs.Tab value="surveys">Surveys</Tabs.Tab>
+              <Tabs.Tab value="contents">Contents</Tabs.Tab>
+              <Tabs.Tab value="lenses">Lenses</Tabs.Tab>
+            </Tabs.List>
+          </Tabs>
 
-        <Tabs
-          value={route.section}
-          onChange={value => { location.hash = linkTo(tabTo(value as Section)).slice(1); }}
-          px="md"
-        >
-          <Tabs.List>
-            <Tabs.Tab value="surveys">Surveys</Tabs.Tab>
-            <Tabs.Tab value="contents">Contents</Tabs.Tab>
-            <Tabs.Tab value="lenses">Lenses</Tabs.Tab>
-          </Tabs.List>
-        </Tabs>
+          <Group gap="sm" align="center" wrap="nowrap" style={{ alignSelf: 'center' }}>
+            <Stack gap={0} align="flex-end">
+              <Title order={1} size="h5" c="signal" style={{ letterSpacing: '.04em' }}>
+                Tradebot Archives Catalog
+              </Title>
+              <Text size="xs" c="dimmed" ff="monospace">{where.data?.catalog}</Text>
+            </Stack>
+            <img src="/favicon.svg" alt="" width={36} height={36} />
+          </Group>
+        </Group>
       </AppShell.Header>
 
       <AppShell.Main>

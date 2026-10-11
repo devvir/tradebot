@@ -25,6 +25,29 @@
 
 body { margin: 0; }
 
+/**
+ * **Sections are told apart by a breath of colour, not by more grey.** Each is
+ * a brand colour at a few percent over the dark page, so it reads as a shade
+ * of that page with a lean, never as a coloured box.
+ *
+ * - `--tint-sky` — the page's own controls: choosing, the bounds of a rule.
+ * - `--tint-signal` — the thing that is open: a lens, its name and size.
+ * - `--tint-rise`, `--tint-red` — what a rule lets in, or keeps out.
+ */
+:root {
+  --tint-sky:    rgba(56, 189, 248, 0.07);
+  --tint-signal: rgba(245, 184, 61, 0.05);
+  --tint-rise:   rgba(46, 189, 133, 0.06);
+  --tint-red:    rgba(250, 82, 82, 0.06);
+}
+
+/**
+ * **A table's cells are data, so they are set in Mono** — identifiers, months
+ * and counts, read down a column. The headings above them stay in the page's
+ * Sans, with the rest of the interface.
+ */
+.mantine-Table-td { font-family: var(--mantine-font-family-monospace); }
+
 /** Figures are read down a column, so they line up rather than wander. */
 td[style*="tabular-nums"] { font-variant-numeric: tabular-nums; }
 
@@ -82,6 +105,13 @@ button[data-disabled] { border-color: var(--mantine-color-disabled-border); }
 .mantine-Button-label {
   display: block;
   height: auto;
+
+  /*
+   * Room for what hangs below the line. Trimmed to cap height and baseline, the
+   * label's box ends where a y or a p only begins, and Mantine hides whatever
+   * leaves it. Padded the same above and below, the letters stay centred.
+   */
+  padding-block: 0.3em;
 }
 
 /*
