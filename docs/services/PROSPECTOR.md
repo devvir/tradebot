@@ -868,12 +868,12 @@ Three suffixes, in `excludedAnywhere`. None of them is one venue's quirk:
 | htx | any `data/` key dated `2026-02-01` or later | **the whole overlap between its two trees.** Both published the same instrument-day for six months under different schemas; the offered tree is taken from the day it opens and the old one below it, so each unit is catalogued once — [HTX.md](../venues/HTX.md#where-to-stop-reading-data) |
 | kucoin | `futures/daily/klines/<SYMBOL>/1d/` | **published broken**: the header declares six fields and every row writes five, so the bar has no volume. A fresh fetch matches KuCoin's own MD5, so it is theirs, and it is the interval rather than the venue — every other interval is six and six. Nothing is lost: a day is an aggregate, and the 1m series is complete over the same range |
 | gate | any tree but `spot`, `futures_usdt`, `futures_btc`, `tradfi`, `delivery_usdt`, `spot_index`, `options_ticker` | dead, or not gate's — see below |
-| gate | a bare month where a dataset name belongs, in the three trees that have a dataset level | 571 keys, each the size of its canonical twin **to the byte** with a different ETag and an earlier mtime: the same content under an abandoned layout, re-uploaded correctly hours later — [GATE.md](../venues/GATE.md#571-keys-are-filed-one-level-too-high) |
+| gate | a bare month where a dataset name belongs, in the three trees that have a dataset level | 571 keys, each the size of its canonical twin **to the byte** with a different ETag and an earlier mtime: the same content under an abandoned layout, re-uploaded correctly hours later — [GATE.md](../venues/GATE.md#keys-filed-at-the-wrong-depth) |
 | gate | an `s3deals/` directory inside a dataset month | spot deals misfiled inside another dataset's tree |
 | gate | any file under `futures_btc/` whose instrument is not a `*_USD` | not the BTC-settled tree's own: copies, fragments and a placeholder — [GATE.md](../venues/GATE.md#files-under-the-btc-tree-that-are-not-its-own) |
 
 Gate's refused trees, each of which is a decision rather than an oversight —
-[GATE.md](../venues/GATE.md#what-is-in-the-bucket-and-what-is-dead) has the spans and the evidence:
+[GATE.md](../venues/GATE.md#the-trees-and-which-are-dead) has the spans and the evidence:
 
 - **`hk/`, `malta/`** — separate Gate entities with their **own order books**, so their `BTC_USDT`
   is not gate.com's. If either is ever wanted it is a venue row of its own, never a prefix of this
@@ -888,7 +888,7 @@ Gate's refused trees, each of which is a decision rather than an oversight —
 
 | venue | files | why |
 |---|---|---|
-| gate | 85 × `futures_usdt/trades/202107/<SYMBOL>-202107.csv.gz` | **spot data served at the futures URL** for that one month. Gate publishes those bytes — five columns where futures has four, and a re-fetch returns the same md5 — so read as futures the file "works" and every trade appears to be a buy. [GATE.md](../venues/GATE.md#2021-07-spot-data-served-at-the-futures-url) |
+| gate | 85 × `futures_usdt/trades/202107/<SYMBOL>-202107.csv.gz` | **spot data served at the futures URL** for that one month. Gate publishes those bytes — five columns where futures has four, and a re-fetch returns the same md5 — so read as futures the file "works" and every trade appears to be a buy. [GATE.md](../venues/GATE.md#2021-07-spot-data-at-the-futures-url) |
 | gate | `futures_usdt/candlesticks_10s/202107/123`, `futures_btc/mark_prices/202107/hello/123` | zero bytes, uploaded four minutes apart on 2021-08-11 |
 | bybit | `trading/DOTUSD/DOTUSDT2021-12-06.csv.gz` | **a `DOTUSDT` file in `DOTUSD`'s folder**, and a shorter copy of the day served whole under `trading/DOTUSDT/`. Read by its name it is a second file for a day that has one, landing on the same path in the archives. [BYBIT.md](../venues/BYBIT.md#the-misfiled-file) |
 
@@ -917,6 +917,11 @@ run(venue_id, kind, scope, cursor, requests, found, started, completed, asked, s
 `wip` is its work list. The kinds keep separate rows because a job is opened and resumed per kind
 (`openJob`, `openPartitions`), and an update's scopes say nothing about the keyspace a walk covers.
 
+**A host has at most one open job of each kind**, and a scope at most one open row: `run_open` is a
+unique index over the rows not yet completed. Ordinarily only one job is open on a host at all; an
+update forced over an unfinished walk (see [Surveying](#surveying)) leaves both open, and what goes
+out from then on is counted to the update.
+
 **`requests` counts pages; `asked` and `sent` count requests.** A page is a listing page on a walk
 and a thousand generated keys on an update, so `requests` measures progress and says nothing about
 what the venue saw.
@@ -927,9 +932,9 @@ retry included. **Two numbers because only the first is a property of this servi
 costs against what an update costs is `asked`, which a bad link on the day cannot move, while what a
 pass cost the venue that day is `sent`, and the gap between them is how much of it the network wasted.
 
-Both are held per host, counted in `send` where every request passes, and written onto that host's
-newest open job by whatever is already writing a run: a page of a sweep, a batch of probes, the end of
-a pass however it ended, and shutdown. Nothing schedules a write of its own.
+Both are held per host, counted in `send`, which every archive request passes, and written onto that
+host's newest open job by whatever is already writing a run: a page of a sweep, a batch of probes,
+the end of a pass however it ended, and shutdown. Nothing schedules a write of its own.
 
 A count with no open job waits for the next one, which is where the requests that map an archive
 belong: they are sent before the walk they plan has a row. What an HTTP handler sends to confirm one
@@ -1399,51 +1404,83 @@ walk of that very prefix from an hour ago.
 
 **A venue counts our requests to one address, so the limit is counted per venue per address.** The
 walk, the archive mapping and the probe are three callers of one host, and a limiter belonging to any
-one of them caps a fraction of the traffic while the host meters all of it. So there is exactly one
-`Pace` per venue per hostname, held for the life of the process, and every request passes it.
-
-**Per venue as well as per host**, because two venues behind one endpoint are two budgets. binance and
-gate sit on `s3-ap-northeast-1.amazonaws.com`, one bucket each, and measured 2026-09-29 each bucket
-took LIST and HEAD at up to ~1,700 a second from one machine without a single throttling answer — the
-ceiling was the machine. **Per host within a venue**, because a venue's own API — its instrument
-listing — is a different machine from its archive, and a block on one should not stop the other.
+one of them caps a fraction of the traffic while the host meters all of it. So every request to a
+venue's archive passes one `Pace`, held for the life of the process and keyed by the adapter's label
+(the venue, plus its `host` where one venue has two adapters, as bybit has) and the URL's host —
+`paceFor` in `pace.ts`. **Two venues behind one endpoint are two budgets**: binance and gate are both
+listed at `s3-ap-northeast-1.amazonaws.com`, one bucket each, and a limiter keyed by the host alone
+would pace both by whichever reached it first. Calls to a venue's own API are not paced here at all —
+see *[asking a venue about itself](#asking-a-venue-about-itself)*.
 
 **A venue is listed and probed at one address.** `base` in the `venue` table is that address, with
 `key_root` the prefix every key shares, and every lookup of a venue's gate asks at `base`. Where a
-venue's bucket answers directly, that is the bucket and not a CDN in front of it: on binance and gate
-the bucket served everything the CDN did, byte for byte, at a higher ceiling. Other addresses that
-serve the same files under the same keys are recorded beside it, in `alternative_hosts`, a JSON array
-of bases; nothing here asks them.
+venue's bucket answers directly, `base` is the bucket and not a CDN in front of it. Other addresses
+that serve the same files under the same keys are recorded beside it, in `alternative_hosts`, a JSON
+array of bases; nothing here asks them.
 
-**The gate is inside the fetch.** `send` in `http.ts` is the single function every request goes
-through, which makes it the only place a limit can be complete. Putting it there also brings the
-retry ladder inside the count: a call that retries five times is five requests the venue sees, and a
-gate wrapped around the call instead of inside it would let those go out at five times the cap — at
-exactly the moment a venue is already unhappy.
+**The gate is inside the fetch.** `send` in `http.ts` is the one function every archive request goes
+through — `fetchPage` for a listing page, `fetchHead` for a probe — which makes it the only place a
+limit can be complete. It waits first for the [network gate](#the-network-gate-is-tuned-for-this-service-not-taken-as-it-comes),
+then for the venue's slot. Putting it there also brings the retry ladder inside the count: a call
+that retries five times is five requests the venue sees, and a gate wrapped around the call instead
+of inside it would let those go out at five times the cap — at exactly the moment a venue is already
+unhappy.
 
 **The rate is the part that matters.** A venue budgets requests per second; concurrency sets a rate
 only by accident, multiplied by whatever latency happens to be that day. So the rate is capped
-directly, and the pool widths above merely bound how many requests may be queued behind it.
+directly, and `concurrency` only bounds how many requests may be in flight to reach it — see
+*[on pace and parallelism](#on-pace-and-parallelism)*.
 
 The counter is a **sliding second**: the times requests went out, with anything older dropped. A
 request goes when fewer than `perSecond` of them fall inside the last second, and otherwise waits
 exactly as long as it takes the oldest to fall out. The check and the claim happen in the same tick,
 so two lanes cannot both see one free slot and both take it.
 
-**A refusal aimed at us stops the venue; a refusal aimed at a key does not.** S3 declines one object
-and says so — an `x-amz-error-code`, and `AmazonS3` as the server. A CDN turning us away serves its
-own error page naming no key. The second means the address is blocked, and such a ban lapses only
-while nothing is asking, so slowing down is not a remedy. `send` latches the venue's gate the moment
-it sees one, which stops every caller at once, including the ones already waiting for a slot —
-nobody has to be told, and nobody gets to keep asking. It is also not retried: the ladder would spend
-four more requests confirming what the first established. Anything refusing without naming a key is
-read as a block, because that is the direction where being wrong is cheap — a stood-down venue costs
-minutes, a banned address costs the venue.
+**Cadence layers**: a built-in default (`STEADY` in `pace.ts`, 100 a second with 100 in flight), and
+over it the venue's adapter, which declares its own `pacing` beside a pointer to the venue doc that
+holds the evidence for it. Every venue surveyed today declares one. A venue still on the default is
+one nobody has had a reason to measure, not one that was measured and found generous.
 
-The first stand-down is the venue's `standDownMs` and each repeat doubles it up to `ceilingMs`, one
-pause per round rather than one per refusal: every lane in flight fails at roughly the same instant,
-so counting each of them would reach the ceiling in milliseconds before the venue had any chance to
-answer differently.
+**The rate is not configurable, deliberately.** What a venue tolerates is a fact about that venue and
+does not change because the client moved to a host with more bandwidth, so it belongs beside the
+evidence for it rather than in an environment file. What *is* local is how many requests this machine
+will hold open at once — and that cannot outrun the venue's rate, only fail to reach it.
+
+**bybit is listed at its bucket, never at its edge.** The CDN in front of bybit's archive,
+`public.bybit.com`, bans an address at rates the bucket behind it takes without a refusal, and its ban
+covers the CDN alone (see [BYBIT.md](../venues/BYBIT.md#limits)). So the primary host's `base` is the
+bucket, `s3.ap-southeast-1.amazonaws.com/public.bybit.com`, walked at the 2,000 a second its adapter
+declares; the edge is not among its `alternative_hosts`, and nothing here asks it.
+
+### A refusal aimed at us stops the venue
+
+**A refusal aimed at a key does not.** S3 declines one object and says so, with an `x-amz-error-code`;
+a CDN turning us away serves its own error page naming no key. So `blocked` in `http.ts` reads a
+reply as a refusal aimed at us when the adapter's `refusesUs(status, headers)` says so, and, where the
+adapter has no such rule, when it is a `403` or `429` without `x-amz-error-code`. The default leans
+that way because that is the direction where being wrong is cheap: a stood-down venue costs minutes,
+a banned address costs the venue. A venue whose bucket answers `403` for every key it does not hold
+says otherwise in `refusesUs` — bitget's counts any reply not served by `AmazonS3`, whatever its
+status.
+
+**A refusal is an answer, and is never retried.** A ban lapses only while nothing is asking, so
+slowing down is not a remedy, and the ladder would spend four more requests confirming what the first
+established.
+
+**Five in a row stand the venue down.** After `REFUSALS_BEFORE_BLOCK` (5) refusals with no other
+answer between them, the venue's gate stops every caller at once, including the lanes already waiting
+for a slot — nobody has to be told, and nobody gets to keep asking. Any other answer resets the count,
+and a refusal below five is logged and nothing more: one bad reply is far more often an edge having a
+bad second than a venue objecting, while a real block fails every lane in flight within a fraction of
+a second and reaches five at once. A pause does not reset the count either, so a refusal after it,
+before any other answer, stands the venue down again at once.
+
+**The pause doubles while the venue keeps refusing.** The first is the venue's `standDownMs` (two
+minutes in `STEADY`, which no adapter overrides), each further one twice the last, up to `ceilingMs`
+(thirty minutes). It is one pause per round rather than one per refusal: a refusal that arrives while
+a pause is in force belongs to that round, because every lane in flight fails at roughly the same
+instant and counting each of them would reach the ceiling in milliseconds. The doubling is forgotten
+at the first answer that comes 30 minutes or more after the last stand-down began (`EASE_AFTER_MS`).
 
 **The rate at the moment of a block is logged, because nothing else measures it.** No venue publishes
 a rate-limit header, so the only evidence about where a limit sits is what was going out when it was
@@ -1452,11 +1489,11 @@ second spent paused. The gate reports the last second, the last five and ten, th
 far, what is in flight and the lifetime total, and those go into the block warning and the walk's
 refusal line.
 
-**A steady pass is read on different numbers, so the probe heartbeat carries different ones.** Ten
-seconds says where the window landed rather than how the survey is going: on a venue that stands
-down, it reads as a collapse whenever a pause falls inside the window and as full speed whenever one
-does not. A survey running for days is judged over a minute and an hour instead — counted in a ring
-of per-second and per-minute buckets, because an hour of timestamps at these rates is millions of
+**A steady pass is read on different numbers, so the heartbeats carry different ones.** Ten seconds
+says where the window landed rather than how the survey is going: on a venue that stands down, it
+reads as a collapse whenever a pause falls inside the window and as full speed whenever one does not.
+A survey running for days is judged over a minute and an hour instead — counted in a ring of
+per-second and per-minute buckets, because an hour of timestamps at these rates is millions of
 numbers held to answer one log line, and averaged over the time actually elapsed so that a process
 two minutes old does not report an hourly rate a thirtieth of the truth.
 
@@ -1466,41 +1503,45 @@ ladder turns rather than inferred by subtracting answered from sent — those tw
 different scopes, one per pass and one per host since the process started, so their difference is
 mostly in-flight requests rather than retries.
 
-**Cadence layers**: a built-in default of 100 per second, then the venue's adapter, where the
-evidence for a real number is written down. Every venue surveyed today declares its own, measured:
-most found no limit at all and are capped where the machine stops rather than the venue; bitget's is
-set under a limit its CDN enforces; okx's under one its CDN enforced at 200. A server still on the
-default is one nobody has had a reason to measure, not one that was measured and found generous.
+### The retry ladder
 
-**The rate is not configurable, deliberately.** What a venue tolerates is a fact about that venue and
-does not change because the client moved to a host with more bandwidth, so it belongs beside the
-evidence for it rather than in an environment file. What *is* local is how many sockets this machine
-will hold open — and that cannot outrun the venue's rate, only fail to reach it.
+`fetchPage` and `fetchHead` make up to five attempts. A transport error, a deadline, a `5xx`, a `429`
+that is not a refusal aimed at us, and — for a listing — a success whose body is not a listing are
+tried again, after a full-jitter exponential wait (500 ms doubling, capped at 30 s) so that lanes
+backing off together do not come back together. A `Retry-After` is obeyed exactly as sent instead,
+never shortened, with a log line every minute it lasts. Every other status is an answer and is not
+retried: a `404` or a `403`, and a refusal aimed at us least of all.
 
 ## Carrying requests
 
-**Every request is sent from a worker thread.** One thread decides what to ask and writes what
-comes back to the catalog, and SQLite has to stay on it: a transaction belongs to one connection, and
-one connection to one thread. A request is a question in and an answer out with nothing shared, so it
-is the part that moves. Measured 2026-09-30 with every venue backfilling, the main thread ran at 96%
-or more with a fifth of it on sockets, TLS and reading listings; with requests carried elsewhere it
-ran at 70–80%.
+**Archive requests are sent from worker threads.** One thread decides what to ask and writes
+what comes back to the catalog, and SQLite has to stay on it: a transaction belongs to one connection,
+and one connection to one thread. A request is a question in and an answer out with nothing shared,
+so it is the part that moves. Measured 2026-09-30 with every venue backfilling, the main thread ran at
+96% or more with a fifth of it on sockets, TLS and reading listings.
 
 **One worker per 1,000 requests the machine may have in flight**, so raising
 `PROSPECTOR_CONCURRENCY` brings the workers to carry it. What loads a worker is requests a second: a
 probe takes ~0.25–0.3 s, so 1,000 in flight is ~3,300–4,000 a second, and one worker carried ~2,300 a
 second alongside every other venue's walk on under half a core (2026-09-30). Requests are dealt to
-the workers in turn; each keeps its own connections.
+the workers in turn; each keeps its own connections. A worker that exits fails what it held, as a
+transport error the ladder retries, and is replaced after a wait that doubles from a second to a
+minute while replacements keep dying young; after five such exits in a row its slot is left empty. A
+request with no worker to take it is carried on the main thread, as it is wherever the worker file
+is not built.
 
-**Open files are not a limit; opening connections is.** Node raises its own file limit to the
-container's hard one at start — 524,288 here. What fails is opening HTTP/1.1 connections in bulk:
-measured 2026-10-01, past ~1,250 opened at once from this machine connects timed out and the open
-ones were lost with them, and on loopback, with no network involved, 3,000 lanes opening at once
-missed their deadlines by the hundred and reopened by the thousand — every one a TLS handshake on
-one thread. Over HTTP/1.1 every request in flight is a connection, so two things keep that from
-happening: `PROSPECTOR_CONCURRENCY` stays below that figure, and the pool opens gradually — see the
-ramp below — so nothing ever asks for its whole width at once. Idle connections are kept rather than
-destroyed — Node's default keeps 256 per host — so a connection is opened once and reused.
+**Open files are not a limit; opening connections is.** What fails is opening HTTP/1.1 connections in
+bulk: measured 2026-10-01, past ~1,250 opened at once from this machine connects timed out and the
+open ones were lost with them, and on loopback, with no network involved, 3,000 lanes opening at once
+missed their deadlines by the hundred and reopened by the thousand — every one a TLS handshake on one
+thread. Over HTTP/1.1 every request in flight is a connection, so `PROSPECTOR_CONCURRENCY` has to be
+set below that figure (nothing enforces it), and the pool opens gradually — see *[on pace and
+parallelism](#on-pace-and-parallelism)* — so nothing ever asks for its whole width at once.
+
+**Idle connections are kept, all of them.** HTTP/1.1 `HEAD`s go through agents that keep every idle
+connection (`maxFreeSockets: Infinity`). Node's default keeps 256 per host, and a host with more lanes
+than that would close and reopen connections between requests, each costing a TLS handshake. The
+venue closes a connection it no longer wants.
 
 **Names are looked up once per host, not once per connection.** Node keeps no answers of its own, and
 inside the container every lookup goes to Docker's resolver on a pool of four threads: measured
@@ -1515,31 +1556,38 @@ and whether a venue is refusing us are decided on the main thread, because they 
 every venue shares — see *[Pacing](#pacing-one-gate-per-venue-per-host)*. The worker opens
 connections, sends, and reads a body to its end or drops it; a slot is held until it has. **A listing
 page is read there too**, into its keys and directories, so what crosses back is the reading and not
-the megabytes it came from — parsing listing XML was a tenth of the main thread on its own. Requests
-cross in batches, sent the moment the task that decided them ends rather than on the next turn of the
-loop — on a thread this busy a turn is long, and a request waiting for it waits that long before it
-has left.
+the megabytes it came from. Requests cross in batches, sent the moment the task that decided them ends
+rather than on the next turn of the loop — on a thread this busy a turn is long, and a request waiting
+for it waits that long before it has left.
 
 **A `HEAD` goes over HTTP/2 wherever the host speaks it.** Node's HTTP/1.1 client does not keep a
 connection after a `HEAD` reply that states neither a length nor chunking, and that is how three hosts
-answer a key they do not have — bitget, kucoin and bybit's books host, all behind CloudFront. A probe
-for a missing file therefore cost a connection and a TLS handshake: at 250 in flight on bitget, 9,000
-sockets were closing at once and a probe took 285–907 ms at the median. Over HTTP/2 a probe is a
-stream on a connection that stays, and the same probes took ~235 ms, the venue's own time to say no.
-Whether a host speaks it is asked once, by the TLS handshake. A server caps the streams one
-connection carries — CloudFront at 128 — so each takes at most 100, and more are opened as needed. A
-stream the server refuses was never processed, which HTTP/2 guarantees, so it is asked again at once
-on another connection rather than through the retry ladder.
+answer a key they do not have — bitget, kucoin and bybit's order-book host. A probe for a missing file
+therefore costs a connection and a TLS handshake: measured on bitget at 250 in flight, 9,000 sockets
+were closing at once and a probe took 285–907 ms at the median. Over HTTP/2 a probe is a stream on a
+connection that stays, and the same probes took ~235 ms, the venue's own time to say no. Whether a
+host speaks it is asked once, by the TLS handshake. A server caps the streams one connection carries
+— CloudFront at 128 — so each takes at most 100, and more are opened as needed. A stream the server
+refuses was never processed, which HTTP/2 guarantees, so it is asked again at once on another
+connection rather than through the retry ladder. A stream nobody answers in time takes its connection
+out of use, since a connection can die without either end being told.
 
 **Everything else is HTTP/1.1.** S3's own endpoints do not offer HTTP/2; a `HEAD` there goes over a
 kept connection, never through `fetch`, which opens a new one after every `HEAD` — measured
 2026-09-29, ~800 ms a probe against one round trip's ~270. A listing is a `GET` through `fetch`,
-whose deadline is on the answer and whose body may take as long as it takes, so long as it does not
-go silent.
+whose 15-second deadline is on the answer and whose body may take as long as it takes, so long as it
+does not go silent for 10 seconds.
 
-**Happy eyeballs is off in both threads.** Node abandons each connection attempt after 250 ms and
-tries the next address; S3 in Tokyo is ~260 ms away, so every new connection lost about two seconds
-walking all eight. The default is per thread, so the worker sets it too.
+**Happy eyeballs is off in both threads.** Node's default gives each resolved address 250 ms before
+trying the next. The endpoint binance and gate are listed at, `s3-ap-northeast-1.amazonaws.com`, is
+~260 ms away and answers with eight addresses, so every new connection there abandoned seven attempts just short of
+their reply and took ~2 s; with it off, a new connection takes one round trip. The default is per
+thread, so the worker sets it too.
+
+**A limit binance's bucket has and nobody has reached would show as slowness.** No throttling answer
+has been seen from it (see [BINANCE.md](../venues/BINANCE.md#rate-limits)). S3 asks for a slower pace
+with a `503`, which the ladder retries with backoff, so a pass would slow down rather than lose
+anything; a refusal naming no key would stand the venue down like any other.
 
 ## What it deliberately does not do
 
@@ -1630,9 +1678,9 @@ reads whatever the venue now serves and catalogues the new shape as a new patter
 recovers on its own. It is the venues that only ever update, and the long stretches between full
 runs, where a moved template is invisible.
 
-Encoding *when a file is expected* would pay twice — nothing asked for before it is due, and silence
-that becomes suspicious on a schedule — but it needs a per-venue leniency (bybit publishes monthly
-files on the first Monday) and none of it exists yet.
+Nothing models *when a file is expected*, so nothing can tell a file that is merely late from one that
+will never come except `OVERDUE_DAYS` — see
+[below](#overdue_days-is-a-decision-not-a-measurement).
 
 ### A derived archive spelling can be wrong, and only a log says so
 
@@ -1647,27 +1695,21 @@ pass**, with no file ever recorded for it — visible as steady preamble `create
 has published nothing yet, and it resolves itself; a cohort of them that never resolves is a spelling
 nobody serves. It surfaces as counts in log lines and nothing else reads them.
 
-### okx's limit is known only from below
-
-okx is paced at 100 a second with 100 in flight, which it has taken without refusal. At 200 of each
-its CloudFront edge answered `403`s and the venue was stood down (2026-09-29). Where between the two
-the line sits has not been measured.
-
 ### `OVERDUE_DAYS` is a decision, not a measurement
 
 Nothing established 15 days. It is where we decided to stop believing a file is merely late.
 
-The longest wait any venue here documents is gate's — a month's files on the first Monday of the
-next — and the lags actually measured are hours for dailies and days for monthlies. Fifteen is twice
+The longest wait any venue here documents is a week: binance publishes a month's files on the first
+Monday of the next, which can be as late as the 7th, and gate generates a month of 7-day candles on
+the 7th of the next (see [BINANCE.md](../venues/BINANCE.md#publication) and
+[GATE.md](../venues/GATE.md#candlesticks-intervals-and-cadence-differ-per-market)). Fifteen is twice
 the worst promise and still short enough that ordinary lateness is never read as absence.
 
-**It fails cheaply in the direction it fails.** A file arriving on the sixteenth day is found by the
-next full refresh, which re-reads the keyspace and owes nothing to any tip. Waiting longer instead
-costs a probe per gap per pass, on every series that has one, for as long as the wait lasts.
+**It fails cheaply in the direction it fails.** A file arriving on the sixteenth day of a listable
+venue is found by its next walk, which reads the keyspace and owes nothing to any tip. Waiting longer
+instead costs a probe per gap per pass, on every series that has one, for as long as the wait lasts.
 
-The evidence to replace it accumulates on its own — a `file` row records when the catalog first saw
-a file and its key records the period it covers, and the difference is that venue's publishing lag,
-measured. With a few months of it the constant becomes a per-venue, per-dataset distribution.
+Nothing models when a file is expected: the one number stands for every venue and every dataset.
 
 ### A hole older than the window is walked past, not filled
 
@@ -1694,17 +1736,15 @@ this state between its series being created and the archive's first file.
 
 ## Configuration
 
-Everything is fixed inside the container; the host directory behind it is the compose mount's
-business.
+The environment variables, their defaults and what each accepts are in the
+[service README](../../services/prospector/README.md#environment). Everything else is fixed inside
+the container: the catalog lives at `/data/catalog`, where the compose file mounts the host's
+`CATALOG_DIR`, and the API listens on `8080`.
 
-| variable | default | |
-|---|---|---|
-| `PROSPECTOR_VENUES` | all | comma-separated subset: `binance,bybit,htx,kucoin` |
-| `PROSPECTOR_CONCURRENCY` | `200` | requests in flight at once **across every venue** |
-| `CATALOG_TOKEN` | — | the shared secret every API request carries. **Empty turns the check off**, which is what makes the read endpoints reachable from a browser — a convenience for a machine nobody else can reach, warned about at startup |
-
-`CATALOG_DIR` on the host is mounted at `/data/catalog`. There is no environment variable to move
-it inside the container.
+`PROSPECTOR_VENUES` limits which venues this process will survey or resume, and starts nothing on its
+own: whether a venue is surveyed is a request to the API, never a setting. `PROSPECTOR_CONCURRENCY`
+is the machine's ceiling on requests in flight, and why it is the one pacing figure an environment
+sets is below.
 
 ### On pace and parallelism
 
@@ -1715,30 +1755,25 @@ and they cut the keyspace exactly — disjoint, and together covering everything
 **Cadence and concurrency are different things, and only one of them is a limit.**
 
 `perSecond` is the cadence — the figure a venue would object to. It lives in the adapter beside the
-evidence for it, and nothing in the environment can raise it. Bybit's 30 was earned by being turned
-away.
+evidence for it, and nothing in the environment can raise it.
 
 `concurrency` is not a limit at all. It is how many requests may be in flight so that the cadence
 can actually be reached: at one at a time, 100/s is unreachable whatever the gate allows, because a
 request spends most of its life waiting. It cannot breach the cadence either, since every request
-passes that gate regardless — which is why `CONCURRENCY` is a ceiling rather than a target, and a
-venue yielding fewer partitions simply uses fewer workers.
+passes that gate regardless — which is why a venue's `concurrency` is a ceiling rather than a target,
+and a venue yielding fewer partitions simply uses fewer lanes.
 
 **So the figure that reaches a cadence is the cadence times how long one request takes**, and below
 it the venue is held by concurrency rather than by its limit. The time that matters is a *missing*
 key's, because that is most of what an update asks and it is the slow one wherever a CDN fronts the
-bucket: a cached file answers from the edge in ~15–30 ms, a missing one goes to the origin and takes
-~220–700 ms. Measured 2026-09-30: every S3 venue answered in ~300 ms either way, so 2,000/s needs
-~600 in flight — 250 held them near 900/s — and bitget's missing keys take ~235 ms, so its 2,500/s
-needs the same 600.
+bucket: a cached file answers from the edge, a missing one goes to the origin.
 
 **A limit opens gradually rather than all at once.** `concurrency` is for keeping the pipe full
 while answers are outstanding, not for arriving in a single instant: a host that serves 100/s
-sustained can still refuse to be met with 100 sockets in the same millisecond, and htx did exactly
-that — a hundred connections from a standing start, none answered, every one dying on its own
-deadline having never been replied to. So a fresh limiter allows a tenth of its figure in the first
-second and a further tenth each second after, reaching the full number at nine. Below a handful of
-connections there is no burst to guard against and the limit opens whole.
+sustained can still refuse to be met with 100 sockets in the same millisecond, leaving every one
+unanswered until it dies on its own deadline. So a fresh limiter allows a tenth of its figure in the
+first second and a further tenth each second after, reaching the full number at nine. A limit of four
+or fewer has no burst to guard against and opens whole.
 
 The ramp starts again when a stand-down lifts, which is the moment it matters most: every lane held
 by a pause wakes within an instant of the same moment, and the venue that just refused us is the
@@ -1746,32 +1781,31 @@ last one to meet with everything at once. While the limit is still opening, a wa
 by the clock rather than by a departure — a rising limit moves on its own, and a lane parked on the
 queue would otherwise sleep through every step until something happened to finish.
 
-**Probing is not paced separately, and no longer can be.** A probe and a listing are the same thing
-to a host — one request, one socket, one ticket — and both pass the same gate, which is why the
-count a venue sees has always included them. The concern a separate probe figure used to serve, that
-this link is shared and something else may need it, is exactly what the machine-wide pool answers
-now, for every caller at once.
+**Probing is not paced separately.** A probe and a listing are the same thing to a host — one
+request, one socket, one ticket — and both pass the same gate, so the count a venue sees includes
+both. That the link is shared and something else may need it is what the machine-wide pool below
+answers, for every caller at once.
 
-**How many workers a venue gets follows from the same figure.** A worker holds one request at a
-time, so more of them than the venue's own `concurrency` is not parallelism but queueing, with a
-partition held open behind each one. The count is therefore the adapter's number, capped by the
-machine's — and it is also what the archive is split for, so a venue is partitioned for the workers
-it will actually have rather than for a figure someone typed.
+**How many lanes a venue gets follows from the same figure.** A lane holds one request at a time, so
+more of them than the venue's own `concurrency` is not parallelism but queueing, with a partition
+held open behind each one. The count is therefore the adapter's number, capped by
+`PROSPECTOR_CONCURRENCY` (`lanesFor` in `pace.ts`) — and it is also what the archive is split for, so
+a venue is partitioned for the lanes it will actually have.
 
 **Imbalance sets the wall clock, not the total.** If one partition holds most of the keys, its chain
-decides when the survey ends however quickly the others finish, and more workers do not help because
-the work is not divisible. That is no longer something to tune around: a partition carrying too much
-is split while the survey runs — see *[Partitions split themselves](#partitions-split-themselves)*.
+decides when the survey ends however quickly the others finish, and more lanes do not help because
+the work is not divisible. A partition carrying too much is split while the survey runs — see
+*[Partitions split themselves](#partitions-split-themselves)*.
 
 The limit on concurrency is therefore our own resources rather than the venue's: S3 documents 5,500
 GET/HEAD per second per prefix, which nothing here approaches.
 
 **But our own resources are shared, and no adapter can see that.** Every venue's figure can be
-individually right while their sum is wrong: the eight servers surveyed today permit **4,300**
-requests in flight between them — 600 each, and 100 for okx — and not one of those figures is
-unreasonable on its own. Summed figures once came back as connect timeouts, on venues that had done
-nothing unusual, at the moment the others were busiest. A limit that lives in an adapter cannot catch
-this, because the number that is wrong is one no adapter knows.
+individually right while their sum is wrong: each adapter declares its cadence and concurrency beside
+its evidence, and the sum of those concurrencies is more than one machine can hold open at once.
+Summed, they come back as connect timeouts on venues doing nothing unusual, at the moment the others
+are busiest. A limit that lives in an adapter cannot catch this, because the number that is wrong is
+one no adapter knows.
 
 `PROSPECTOR_CONCURRENCY` is that number. It is a **pool of tickets**, not an allocation: a
 request takes one before going out and returns it when it is answered, and the pool neither knows
@@ -1800,28 +1834,27 @@ sake of the looser one. A ticket is held across the cadence wait rather than sur
 lanes released together would otherwise fire together — which is the burst `perSecond` exists to
 prevent.
 
-None of that is a reason to trade correctness or politeness for speed. Listings are retried on 5xx
-and 429 with full-jitter exponential backoff, `Retry-After` is obeyed exactly where a venue sends
-one, and a 403 or 404 is an answer rather than a hiccup, so it is not retried.
+None of that trades correctness or politeness for speed: what is retried, and what is an answer, is
+*[the retry ladder](#the-retry-ladder)*.
 
 ### The network gate is tuned for this service, not taken as it comes
 
-`@devvir/netgate` watches the network on its own and holds every request while it is unusable, so
-that an outage is established once instead of being rediscovered by each of hundreds of lanes
-through its own retry budget. Its defaults assume a probe answers quickly because the caller's own
-requests do.
+`@devvir/netgate` watches the network on its own and holds every archive request while it is
+unusable, so that an outage is established once instead of being rediscovered by each of hundreds of
+lanes through its own retry budget. `send` waits on it before the venue's own gate; a request held there
+spends no attempt. Its defaults assume a probe answers quickly because the caller's own requests do.
 
-**That assumption does not hold here, and taking the defaults made the gate measure this service
+**That assumption does not hold here, and the defaults would make the gate measure this service
 rather than the network.** A venue is walked on hundreds of lanes at once; at a thousand in flight,
 throughput settles near 300 a second, which is a mean above three seconds per request — for the
-requests that *succeed*. Against the library's three-second deadline the gate was timing out its own
-probes and reporting a link that was carrying video and browsing without a stutter. It is the same
-effect described above, where individually reasonable per-venue limits summed to connect timeouts on
-venues that had done nothing unusual: the number that is wrong is one no component can see alone.
+requests that *succeed*. Against the library's three-second deadline the gate's own probes time out
+while the link is carrying everything else without a stutter: what it measures then is the contention
+this service creates. It is the same effect as the summed per-venue limits above: the number that is
+wrong is one no component can see alone.
 
 So the deadline is set past what this service's own traffic costs, and the evidence widened to
 match — a probe here has to answer whether the network is *unusable*, and slower than a browser is
-not that:
+not that (`configure` in `index.ts`):
 
 | setting | here | library default |
 |---|---|---|
@@ -1830,33 +1863,38 @@ not that:
 | `degradeAt` | `3` | `2` |
 | `closeAt` | `6` | `4` |
 
-Two failures in thirty seconds is a blip; three in a minute is a pattern. The higher deadline costs
-nothing in detection speed because the probes are asked together rather than in turn — a sample is
-one round trip however long the list is.
+The gate samples every five seconds, so twelve samples are a minute: two failures in thirty seconds,
+which the defaults act on, is a blip here, and three in a minute is a pattern. The higher deadline costs nothing in detection speed because the probes are asked
+together rather than in turn — a sample is one round trip however long the list is. When the gate
+lets go of what it held, the ticket pool opens gradually again.
 
 ## The API
 
-**Private to the archives module.** Prospector publishes no API port; on the module's network the
-[catalog](../../services/catalog/README.md) reaches it to settle download reports, and catalog-ui
-reaches it to start and pause surveys and to show where each venue stands. Everything a consumer asks
-about what exists goes to the catalog instead — see [CATALOG-API.md](../modules/CATALOG-API.md). So
-how collection works can change without any consumer noticing.
+**Private to the archives module.** Prospector publishes no port: it is reachable only on the
+module's network, on `8080`. It starts, pauses and reports on surveys, settles reports of what became
+of listed files, and stores lenses. What the catalog holds is served by the catalog service — see
+[CATALOG-API.md](../modules/CATALOG-API.md).
 
-**Authenticated with the same shared secret** the catalog checks, in `x-catalog-token`, and an empty
-`CATALOG_TOKEN` takes the door off in the same way: config warns at startup, because "nobody set it"
-and "anyone is welcome" must not look alike. The server is service-kit's, so body parsing, request
-logging, `/ping` and rate limiting come with it.
+**Authenticated with one shared secret**, `CATALOG_TOKEN`, carried in `x-catalog-token`; a wrong or
+missing token is a `401`, the two answered alike. An empty `CATALOG_TOKEN` turns the check off, and
+config warns at startup, because "nobody set it" and "anyone is welcome" must not look alike. The
+server is service-kit's, so body parsing, request logging, `/ping` and rate limiting come with it. A
+handler that throws is a `500` that says nothing about the request, while the log keeps the whole of
+it.
 
 | | |
 |---|---|
 | `POST /surveys` | Start or continue. `venue` optional: a name, several, or absent for all. |
 | `POST /venues/:venue/surveys` | The same, for one venue named in the path. |
 | `POST /surveys/pause` | Stop where it is, keeping every cursor. Same `venue` argument. |
-| `GET /status` | Where every venue stands, with its totals. `venue` narrows it. |
-| `POST /reports` | What became of the files a downloader was listed, by file id. |
+| `GET /status` | Where every venue stands, with its totals, as `{ items: [...] }`. `venue` narrows it. |
+| `POST /reports` | What became of listed files, by file id. |
+| `POST /lenses` | Store a new lens. |
+| `PUT /lenses/:slug` | Change a stored lens. |
+| `DELETE /lenses/:slug` | Remove a lens. |
 
-Routes are thin: `api/collector.ts` and `api/reports.ts` validate and answer, and the work is in
-`collector.ts` and `reports.ts`.
+Routes are thin: `api/collector.ts`, `api/reports.ts` and `api/lenses.ts` validate and answer, and
+the work is in `collector.ts`, `reports.ts`, `lenses.ts` and `@tradebot/lenses`.
 
 ### Surveying
 
@@ -1866,9 +1904,9 @@ appeared since. And it does not stop: a surveyed venue keeps itself current, wal
 updating daily, **across restarts**, until it is paused or refreshed — see
 [enrolment](#enrolment-and-what-a-restart-means).
 
-**A named venue is checked against the registry**, never against the `venue` table: that table is
-written by a survey, so on a fresh database no first survey could otherwise start. An unknown name is a
-`404` naming it and listing the venues there are.
+**A named venue is checked against the registry** — the venues with an adapter and a scanner,
+narrowed by `PROSPECTOR_VENUES` — never against the `venue` table, whose rows are shipped data a database built
+without it does not have. An unknown name is a `404` naming it and listing the venues there are.
 
 | modifier | |
 |---|---|
@@ -1877,11 +1915,12 @@ written by a survey, so on a fresh database no first survey could otherwise star
 
 `refresh` is opt-in precisely so an ordinary request can never silently discard a backfill in flight.
 
-`update` acts in one state and a half. It is **refused where no pass has ever completed** (a venue
-mid-walk or one never run is owed the walk it is already doing) and does **nothing where an update is
-already running**. What is left is a venue waiting out its interval, and one **paused partway through
-an update**, which it resumes: that case comes back in `resumed` rather than `started`, because carrying
-on from cursors that already exist is not the same thing as planning fresh scopes.
+`update` is **refused where no pass has ever completed** on any of the venue's hosts (a venue in its
+first walk, or never run, is owed the walk it is already doing) and does **nothing where an update is
+open and running**. An update open with nothing working it — what a pause or a killed container
+leaves — is resumed, and comes back in `resumed` rather than `started`, because carrying on from
+cursors that already exist is not the same thing as planning fresh scopes. Anywhere else a new update
+starts, a venue part-way through a later walk included.
 
 The two are mutually exclusive, since one discards the progress the other builds on: asking for both is
 a `400`. A forced update that started and resumed nothing is a `409` carrying the reason.
@@ -1900,8 +1939,8 @@ The answer says what happened to each venue rather than failing the whole call b
 ```
 
 `phases` is read off whichever kind of run a venue actually does: okx and bitget never walk, so theirs
-is read off their `update` rows, and `not run` means a venue that has genuinely never been surveyed. It
-answers as soon as the work is under way; a survey runs for hours.
+is read off their `update` rows, and `not run` means a venue that has never been surveyed, or one
+being refreshed. It answers as soon as the work is under way; a survey runs for hours.
 
 `POST /venues/:venue/surveys` is a **shortcut, not a second endpoint**: the venue moves from the path
 into the same argument the body form fills, so phases, modifiers and refusals are identical by
@@ -1909,12 +1948,13 @@ construction. Where both name a venue, the path wins.
 
 A pause keeps every cursor, which is why there is no matching resume verb: starting a paused venue *is*
 resuming it, to what the pause interrupted. It is **permanent until then** and survives a restart,
-because the pause is a row rather than a flag in memory.
+because the pause is a row rather than a flag in memory. A venue with nothing running is answered
+`not running`.
 
 ### Status
 
 A venue's row carries its totals (`firstMonth`, `lastMonth`, `files`, `bytes`, `pending`,
-`pendingBytes`, `withdrawn`, and `series`: `withFiles` out of `total`), `established`, `lastRun`, and
+`pendingBytes`, `withdrawn`, and `series`: `withFiles` out of `total`), summed over its hosts, and
 where it stands:
 
 | | |
@@ -1924,12 +1964,14 @@ where it stands:
 | `since` | when the open job began, or, where paused, when it was stopped |
 | `during` | what a pause interrupted, so a reader knows what resuming returns to |
 | `nextRun` | when the next update falls due, where the venue is waiting for one |
-| `surveying` | whether **this process** has a loop alive |
+| `surveying` | whether **this process** has a loop alive for the venue |
 | `stopping` | asked to stop, still finishing the page it was on |
-| `completedEver` | whether a pass has ever finished here |
+| `established` | the earliest of its hosts' [established](#asking-what-is-established) times at the root. `null` where none has one |
+| `lastRun` | its most recent pass, below |
+| `completedEver` | whether a pass has ever finished on every one of the venue's hosts |
 | `listable` | whether there is a keyspace to walk. `false` where the bucket refuses a listing |
-| `probing` | whether the venue parks candidate keys at all |
-| `wip` | rows discovered but not yet established |
+| `probing` | whether the venue parks candidate keys: its adapter probes, or its newest pass is an update |
+| `wip` | keys parked in `wip`, waiting for an answer |
 
 `lastRun` is the venue's **most recent pass**, whether or not it ended: `{ kind, at, startedAt,
 ongoing, first, previous }`. It answers what `established` cannot: that is a completion time, so a venue three
@@ -1942,6 +1984,11 @@ the backfill.
 **`state` and `surveying` are deliberately side by side**, because they are different facts: the first
 is work the catalog has outstanding, the second is whether anything is doing it. Walking with
 `surveying: false` is what a killed container leaves behind, and the one worth acting on.
+
+**`completedEver` is every host, not any.** A venue whose second host has never finished a pass is
+half read, whatever the first has done. It is stated rather than left to be inferred: `listable`
+misleads on the venues whose first pass is an update, and the newest run's `kind` on any venue that
+re-reads itself by walking.
 
 **`paused` and `waiting` are not the same idle.** One is a person's decision that survives restarts; the
 other is a schedule.
@@ -1961,15 +2008,12 @@ series declared, and every pass is an update over them, so dropping its run rows
   "mismatched": [{ "FileId": 4815164, "Size": 506, "ETag": "…" }] }
 ```
 
-A downloader reports to the catalog by Key; the catalog resolves each key to its file, checks it against
-the downloader's lens, and forwards the ids here. **A file id is the file's rowid**, which is how this
-service names a file: the Key and the lens are the catalog's business. The answer counts what was
+**A file id is the file's rowid**, which is how this service names a file. The answer counts what was
 `recorded`, `withdrawn` and `corrected`, and `unknown` for ids that name no confirmed file. A report
 holds at most 10,000 files; more is a `400`.
 
-**The caller reports problems; this service rules on them.** Nothing a caller sends is taken as fact
-about a venue: a file reported as undownloadable is asked of the venue, and one of three things
-follows.
+**The reporter reports problems; this service rules on them.** Nothing a caller sends is taken as fact
+about a venue: a file reported as `failed` is asked of the venue, and one of three things follows.
 
 | The venue | The file |
 |---|---|
@@ -1987,29 +2031,28 @@ A request that fails or times out is never absence.
 One answer is enough. An adapter that wants a venue asked more than once before a file is given up
 has the rule to say so. A reported mismatch is confirmed the same way, below.
 
-**Reporting is not transactional with the download, on purpose.** A file fetched but never reported is
-listed again, found on disk by the downloader, and reported then, which is also what lets a machine
-whose archive is already there be adopted with no seeding step.
+**Settling is idempotent.** A file reported `downloaded` again is already held, and nothing moves; one
+reported `failed` or `mismatched` again is asked of the venue again. A report may be repeated any
+number of times.
 
 ### When a download does not match
 
-A downloader that fetches a file and finds different bytes has not hit an error — it has found that
-the archive changed, and it is holding the new version. Discarding it would be absurd, and reporting
-plain success would leave the catalog stating something untrue. So the report carries what was seen,
-as `mismatched`.
+`mismatched` says that the bytes fetched for a file are not the ones the catalog records: a reporter
+holding a different size or ETag has found that the archive changed, not hit an error. So the report
+carries what was seen.
 
 **Prospector confirms before recording**, through the adapter — a listing venue asks for the one key
 and reads the row back, an index venue sends a `HEAD`. It costs one request and fires almost never,
 since an archive is insert-only unless somebody's engineering team erred. What it protects against is
-a bug in a consumer writing nonsense into the catalog, which nothing would notice until the next full
+a reporter's bug writing nonsense into the catalog, which nothing would notice until the next full
 survey.
 
 **ETags are compared case-blind, because the case belongs to the server and not to the file.** OKX
 serves the same order-book file from Alibaba OSS and from S3 — byte-identical, same length, the same
-md5 in opposite cases. Kept as sent, that reads as a new version: a revision is appended and
-`downloaded_at` cleared, so a file already on disk becomes one that is owed. Sightings are normalised
-on the way in and both comparisons normalise again, which covers rows stored before that was true.
-Nothing about a hex digest is case-bearing, so this cannot lose a distinction.
+md5 in opposite cases. Kept as sent, that reads as a new version: the file's previous version is
+appended to `revision` and `downloaded_at` cleared, so a file already on disk becomes one that is
+owed. Sightings are stored lower-cased (`etagOf`) and both comparisons lower-case again. Nothing
+about a hex digest is case-bearing, so this cannot lose a distinction.
 
 What prospector confirms is what gets written, not what it was told. Agreement makes the observed
 version current, moves the displaced one into `revision` with the download state it had, and marks
@@ -2017,35 +2060,50 @@ the file held. Disagreement records what the venue says and leaves the file owed
 caller holds, it is demonstrably not what is being served — and logs loudly, because that means
 either a client bug or a file that changed twice in a minute.
 
+### Lenses
+
+A lens is a named selection of the catalog, stored here because storing it is a write. What a lens is
+and how its members are decided is the `@tradebot/lenses` package, which this service calls and does
+not own; how lenses are read is the catalog's (see [CATALOG-LENSES.md](../modules/CATALOG-LENSES.md)).
+
+| | |
+|---|---|
+| `POST /lenses` | `{ slug, name, note, definition }`. `400` without a slug, `409` when the slug is taken, otherwise `201` with the lens |
+| `PUT /lenses/:slug` | The fields given replace the lens's own; those left out keep their values. `404` where there is no such lens, `409` when the new slug is taken, otherwise `200` with the lens |
+| `DELETE /lenses/:slug` | The lens and its members. `204`, or `404` |
+
+**A write answers as soon as the row is stored**, and nothing about the lens is validated here beyond
+the slug it is addressed by. The row is written where the request is handled, not in the serial write
+queue the survey's writes wait in: every write here is synchronous from `BEGIN` to `COMMIT`, so a
+handler finds nothing half done, and that queue can be seconds deep while a venue is walked.
+
+**What a lens lets through is worked out afterwards.** A lens whose definition is new or changed
+carries `updating: true` until then. `src/lenses.ts` works it out in one pass, five seconds after the last
+save of a run of saves, and a round every thirty seconds brings every lens up to date with whatever
+partitions it has not looked at; a lens that cannot be brought up to date is logged and tried again
+the next round. A partition is taken into its lenses in the transaction that creates it
+(`catalog/cache/partitions.ts`), so a lens never meets a partition it has not looked at.
+
 ## Storage
 
 SQLite, in WAL mode, with `STRICT` tables — SQLite is otherwise dynamically typed, and a declared
 `INTEGER` column will happily hold a string, which surfaces later as a query that silently matches
 nothing.
 
-The schema is `src/database/schema.ts`; the queries are in `src/catalog/`. **Prospector creates and migrates the
-file, and is the only thing that writes it — every row of every table.** Two writers on one SQLite
-file wait on each other's locks, and the one that waits longest fails; with one writer, every write
-takes its turn in one queue (`slice`) and nothing waits on a lock at all.
+The schema lives in `src/database/schema.ts`, with the migrations beside it in
+`src/database/migrations/`; the queries are in `src/catalog/`. **Prospector creates and migrates the
+file, and is the only thing that writes it — every row of every table, lenses included.** Two writers
+on one SQLite file wait on each other's locks, and the one that waits longest fails; with one writer,
+the survey's writes take their turn in one queue, the serial write queue (`slice` in
+`catalog/serial.ts`), and nothing waits on a lock at all.
 
-**That includes lenses**, which collection neither reads nor acts on. A lens is stored here because
-storing is a write: the private API makes, replaces and removes one (`src/api/lenses.ts`) and answers
-as soon as the row is written. What a lens lets through is kept in two places. A partition is taken
-into its lenses in the transaction that creates it (`catalog/cache/partitions.ts`) — about a
-millisecond, a few thousand times in a venue's history. And `src/lenses.ts` works a lens out whole
-after its rules are saved, in one pass a few seconds long, five seconds after the last save of a run;
-its round every thirty seconds settles whatever a lens has not looked at. None of it waits in the
-queue the survey's writes use: every write here is synchronous from `BEGIN` to `COMMIT`, so a step run
-between two turns of the loop finds nothing half done. What a lens is and how its rows are decided is
-the `@tradebot/lenses` package, which this service calls and does not own.
-
-Seventeen tables. `venue`, `file`, `wip` and `revision` are what a venue serves and what became of
-it; `instrument` is what it trades; `slice` and `partition` are what it publishes, cut the way it is
-handled; `pattern`, `series` and `transform` are where it publishes it, and how it spells an
-instrument the pattern cannot; `run` is how far each pass has read and `survey` whether this
-deployment reads it at all; `exclusion` and `unreadable` are the two lists of things ruled out and
-not yet read; and `lens` and `lens_member` are the one thing here nobody measured, and the two
-tables the catalog writes.
+Sixteen tables. `venue`, `file`, `wip` and `revision` are what a venue serves and what became of
+it, `revision` holding each file's previous versions; `instrument` is what it trades; `slice` and
+`partition` are what it publishes, cut the way it is handled; `pattern`, `series` and `transform` are
+where it publishes it, and how it spells an instrument the pattern cannot; `run` is how far each pass
+has read and `survey` whether this deployment reads it at all; `exclusion` and `unreadable` are the
+two lists of things ruled out and not yet read; and `lens` and `lens_member` are the lenses stored
+through the private API, and what each lets through.
 
 **A slice is one lengthwise cut of a venue's data, and a partition is one month of it.** A slice is
 a dataset of a market narrowed by its variant, its grain and its bundle, under the venue's *name* —
@@ -2067,9 +2125,10 @@ and written as sixteen hex digits. A file arriving adds its number, one withdraw
 that changed does both — so no file is read to state it, the order files arrived in does not matter,
 and the same files give the same version in a catalog rebuilt from nothing. **A file's path is no
 part of its number**: the version says what a partition holds, not where the venue keeps it, so a
-venue that moves or renames files without changing their bytes leaves every version where it was. The sum is done in this
-service, since SQLite turns an overflowing integer sum into a float. `updated_at` moves when the
-version does and at no other time: a download changes what is pending and nothing else.
+venue that moves or renames files without changing their bytes leaves every version where it was. The
+sum is done in this service, since SQLite turns an overflowing integer sum into a float. `updated_at`
+moves when the version does and at no other time: a download changes what is pending and nothing
+else.
 
 **An instrument is a row of its own**, `(venue, market, symbol)`, and a series is one shape it is
 published in. What is true of the instrument is stated once, there, and every series of it reads it:
@@ -2104,20 +2163,18 @@ Versioning uses SQLite's own `user_version`, so a database that has never heard 
 so a failure leaves the file where it was rather than half-migrated, and a catalog from a *newer*
 build is refused rather than written to by an older one.
 
-The chain is six steps: the schema together with the venue rows and two lists of gate files that
-are not what their URLs say, then htx's retirement dates, then okx's series, then bitget's, then the
-shapes gate used for one hour, then the shapes binance stopped writing. **A seed is a migration and not a startup hook**, because a fresh catalog is
-exactly the database that would otherwise pay for rediscovering it — which is what an earlier
-arrangement got backwards, jumping new files straight to the head version and running the chain only
-on old ones. A caller that wants the shape without the findings — a test fixture, mostly — declines
-them with `seedData: false`, which still advances the version so nothing is retried behind its back.
+The chain is six steps: the schema with the venue rows and the shipped exclusions (gate's two
+zero-byte upload tests, gate's 85 spot files at futures URLs, bybit's one misfiled `DOTUSDT` day),
+then htx's retirement dates, then okx's series, then bitget's, then the shapes gate filed under a
+month they do not belong to, retired at the one day each holds, then the shapes binance stopped
+writing. **A seed is a migration and not a startup hook**, because a fresh catalog is exactly the
+database that would otherwise pay for rediscovering it. A caller that wants the shape without the
+findings — a test fixture, mostly — declines them with `seedData: false`, which still advances the
+version so nothing is retried behind its back.
 
 **One file per migration**, in `database/migrations/`, named for the version it produces and listed in
 order by that directory's `index.ts`. **The chain describes the catalog as it is, not how it got
-there.** No catalog is shared or deployed yet, so a change edits the migration it belongs to rather
-than adding one on top, and the one live catalog is brought to match by running the same statements by
-hand, `user_version` included. That holds until the project has a second developer or a production
-deployment; from then on a migration that has shipped is frozen and the chain only grows.
+there**; how a change to it is made is in the `index.ts` docblock.
 
 That is the only thing startup does to an existing file: no repair, no rebuild, no inference about
 what it ought to contain.
@@ -2126,9 +2183,9 @@ One setting cannot be fixed retroactively — `auto_vacuum = INCREMENTAL` is app
 and enabling it later requires a full rebuild of the file.
 
 WAL gives many concurrent readers alongside one writer; readers never block the writer and the
-writer never blocks readers. Note that a WAL *reader* still writes the `-shm` sidecar, so mounting
-the catalog read-only does not make it safe to share — it makes even a `SELECT` fail. Ownership
-between services is a code boundary and cannot be delegated to the filesystem.
+writer never blocks readers. A WAL *reader* still writes the `-shm` sidecar, so mounting the catalog
+read-only does not make it safe to share — it makes even a `SELECT` fail. Who writes is a code
+boundary, and cannot be delegated to the filesystem.
 
 Startup therefore **proves it can write** before a survey begins, by setting `user_version` to the
 value it already holds: a write transaction that changes nothing. Nothing cheaper answers the
@@ -2575,8 +2632,14 @@ reconciliation, not a count and not a clock.
 So **every row in `wip` is outstanding**, which is what makes the backlog a `count(*)` rather than a
 filtered scan of tens of millions of rows per venue.
 
-**Nothing is settled by a clock.** `OVERDUE_DAYS` acts exactly once, in reconciliation, over a pass
-that finished — see [what a completed pass is worth](#what-a-completed-pass-is-worth).
+**Probing settles nothing by the clock.** Where a clock does decide — *is this late, or is it
+never?* — it is `OVERDUE_DAYS`, read through `lastSettled` in `dates.ts` by every reader alike:
+reconciliation lifts each tip to that edge over a pass that finished (see
+[what a completed pass is worth](#what-a-completed-pass-is-worth)); a walk starts the tip of a series
+it creates there; the preamble and the backfill start a new or relisted series that far below the
+newest date the last completed update covered; a first pass over a seeded venue skips the span its
+seed proved empty up to that far below the day the seed was built; and `open` keeps a delisted series,
+or one of a retired shape, generating while its `last` is within that distance of its tip.
 
 ### Asking a venue about itself
 
@@ -2590,7 +2653,11 @@ megabyte of instruments is welcome to take its time while a stopped download fai
 retries transport faults, reads the body inside the retry so a truncated one is retried rather than
 thrown, and lets a venue say what a refusal-inside-a-success looks like.
 
-It is `fetchJson` in `metadata.ts`, and every venue's `instruments` hook goes through it.
+It is `fetchJson` in `metadata.ts`, and every adapter's instrument listing goes through it.
+`metadataGap`, a second and a half, is there for an adapter to space consecutive calls with. bitget's archive-name
+search is a `POST`, which `fetchJson` does not speak, and is a bare `fetch` with a timeout. None of
+these passes the pace gate, a ticket or a transport worker: they run on the main thread, and they are
+not counted in a job's `asked` or `sent`.
 
 ### The preamble: asking the venue what it lists
 
