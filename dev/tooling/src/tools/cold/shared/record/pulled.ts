@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { idOf } from '../keys';
+import { noteReturn } from './evictions';
 import type { Origin } from '../../types';
 import type { PartitionKey } from '../types';
 
@@ -12,6 +13,26 @@ export const notePulled = (db: DatabaseSync, origin: Origin, key: PartitionKey &
        DO UPDATE SET version = excluded.version, pulled_at = excluded.pulled_at`,
   ).run(origin, key.venue, key.market, key.dataset, key.variant, key.grain, key.bundle, key.month, key.version,
     new Date().toISOString());
+};
+
+/**
+ * A partition is back in the archives because a pull brought it: no longer
+ * away, and pulled, at this version. Both in one transaction, so no reader
+ * ever sees it back on disk and not yet pulled.
+ */
+export const noteBack = (db: DatabaseSync, origin: Origin, key: PartitionKey & { version: string }): void => {
+  db.exec('BEGIN IMMEDIATE');
+
+  try {
+    noteReturn(db, origin, key);
+    notePulled(db, origin, key);
+
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+
+    throw err;
+  }
 };
 
 /** The partitions of a venue brought back by a pull and not taken off the disk since, by partition. */

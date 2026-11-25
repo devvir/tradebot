@@ -23,7 +23,7 @@ import type { SourceFile } from '../../shared/types';
  * beside the archives. Returns how many tars never came.
  *
  * Each partition that comes back into the archives is written down as back on
- * disk, and as pulled — see `record.notePulled`.
+ * disk, and as pulled, in one write — see `record.noteBack`.
  *
  * `scratch` names the run's own folder under `<cold>/pulling`, where its tars
  * come and are taken apart: the origin's, unless the run keeps its own.
@@ -74,10 +74,7 @@ export const bring = async (
 
       const files = await unpack(config, origin, local, mine);
 
-      for (const one of mine.filter(one => one.state !== 'old')) {
-        record.noteReturn(db, origin, one.held);
-        record.notePulled(db, origin, one.held);
-      }
+      for (const one of mine.filter(one => one.state !== 'old')) record.noteBack(db, origin, one.held);
 
       await fs.promises.rm(local, { force: true });
 

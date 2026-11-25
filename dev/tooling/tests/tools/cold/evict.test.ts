@@ -471,10 +471,7 @@ describe('what was evicted and is on disk again', () => {
 
 /** A partition `cold pull archives` brought back: written down as returned, and as pulled. */
 describe('what a pull brought back', () => {
-  const pulled = (month: string): void => {
-    record.noteReturn(db, 'archives', partition(month));
-    record.notePulled(db, 'archives', partition(month));
-  };
+  const pulled = (month: string): void => record.noteBack(db, 'archives', partition(month));
 
   const including = () =>
     survey(db, config(), 'archives', 'gate', stockedIn(config().vaultRoot) ?? [], undefined, { includePulled: true });

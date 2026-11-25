@@ -223,3 +223,24 @@ describe('what the record holds', () => {
     expect(record.totals(db, 'archives')).toEqual({ tars: 2, stored: 1, bytes: 500, storedBytes: 500, partitions: 3 });
   });
 });
+
+describe('a partition a pull brought back', () => {
+  const key = { ...partition('trades'), version: 'v1' };
+
+  it('is written down as back on disk and as pulled', () => {
+    record.noteEviction(db, 'archives', key, { files: 3, bytes: 30 });
+    record.noteBack(db, 'archives', key);
+
+    expect(record.evictedOf(db, 'archives', 'gate').size).toBe(0);
+    expect([...record.pulledOf(db, 'archives', 'gate')]).toHaveLength(1);
+  });
+
+  it('is never written down as back without being written down as pulled', () => {
+    record.noteEviction(db, 'archives', key, { files: 3, bytes: 30 });
+    db.exec(`CREATE TRIGGER refuse BEFORE INSERT ON pulled BEGIN SELECT RAISE(ABORT, 'refused'); END`);
+
+    expect(() => record.noteBack(db, 'archives', key)).toThrow(/refused/);
+    expect(record.evictedOf(db, 'archives', 'gate').size).toBe(1);
+    expect(record.pulledOf(db, 'archives', 'gate').size).toBe(0);
+  });
+});

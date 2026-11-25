@@ -33,8 +33,8 @@ services:
 
     environment:
       # Where the catalog answers. Inside the shared network that is the
-      # catalog container by name. Prospector's collector is always reached at
-      # http://prospector:8080, inside the module.
+      # catalog container by name. Prospector's collector is reached at
+      # http://prospector:8080 by default, inside the module.
       CATALOG_API:   ${CATALOG_API:-http://catalog:8080}
 
       # The secret the catalog and prospector both check, added to every

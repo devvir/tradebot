@@ -34,7 +34,8 @@ How it works, the proxy and what every column means: [docs/services/CATALOG-UI.m
 
 | variable | default | |
 |---|---|---|
-| `CATALOG_API` | `http://catalog:8080` | where the catalog answers. Prospector is always reached at `http://prospector:8080`, inside the module |
+| `CATALOG_API` | `http://catalog:8080` | where the catalog answers. A trailing `/` is dropped; blank means the default |
+| `PROSPECTOR_API` | `http://prospector:8080` | where prospector's collector API answers. A trailing `/` is dropped; blank means the default |
 | `CATALOG_TOKEN` | empty | the secret the catalog and prospector both check, added as `x-catalog-token` to every forwarded request. Empty forwards without the header |
 | `CATALOG_UI_HOSTS` | empty: any `Host` | comma-separated `Host` names (or `host:port`) the API routes answer for, set in the archives module's `.env`. Empty serves any `Host` |
 | `CATALOG_UI_PORT` | `9020` | host port, set in the archives module's `.env` |
@@ -54,8 +55,9 @@ pnpm --filter @tradebot/catalog-ui test
 
 `dev` serves the page with Vite and proxies `/api` to a catalog-ui server on `localhost:8080`, which
 you start yourself after a build, e.g.
-`CATALOG_API=http://localhost:<catalog port> pnpm --filter @tradebot/catalog-ui start`. Prospector's
-address is fixed to `http://prospector:8080`, so the Surveys tab answers `502` unless that name
-resolves where the server runs.
+`CATALOG_API=http://localhost:<catalog port> pnpm --filter @tradebot/catalog-ui start`. Add
+`PROSPECTOR_API=http://localhost:<prospector port>` for the Surveys tab to reach prospector; without it
+the server asks `http://prospector:8080`, and the tab answers `502` unless that name resolves where the
+server runs.
 
 `web/` is the page, built into `dist/web`; `src/` is the server that serves it and forwards `/api`.
