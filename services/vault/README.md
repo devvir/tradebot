@@ -37,8 +37,8 @@ pnpm test
   fails startup.
 - **`LOG_LEVEL`**: log level; default `info`.
 - **Data directory**: fixed at `/data/vault`. Mount a writable volume there; the container runs as
-  uid 1000, so the volume must be writable by it. `docker/base.yml` mounts no volume, so without
-  one the data goes with the container.
+  uid 1000, so the volume must be writable by it. `docker/base.yml` mounts nothing at
+  `/data/vault`, so without a volume the data goes with the container.
 
 `docker/compose.yml` publishes port 8000 on `${VAULT_BIND:-127.0.0.1}:${VAULT_PORT}`; with
 `VAULT_PORT` unset, Docker picks the host port.

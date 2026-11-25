@@ -97,7 +97,8 @@ The router runs one consumer per source queue. Each message goes to every distin
 the rules on that queue; rules that share the queue and name the same destination publish once.
 
 - The body is forwarded as the bytes received. AMQP properties are kept, except the user id, which
-  is dropped; the message stays persistent exactly when it arrived persistent.
+  is dropped; a message that arrived without a content type is published with `application/json`.
+  The message stays persistent exactly when it arrived persistent.
 - Destinations are published in order. The message is acked once every destination has it.
 - When a publish fails, the message is requeued, so destinations that already had it receive it
   again: delivery is at least once per destination. The requeue waits 500 ms while the publishing
@@ -113,12 +114,12 @@ The router opens two connections to `QUEUE_URL`. The consumer connection declare
 and exchanges and consumes from them; the publisher connection declares the destinations and
 publishes to them.
 
-At startup the consumer connection is retried a few times before the router gives up and shuts
-down; the publisher connection is retried until it opens. Once running, the consumer connection is
-not re-established: when it is lost, the router exits with code 1. The publisher connection
-reconnects without limit and declares its topology again. The router also exits with code 1 when
-the broker cancels one of its consumers, as it does when a source queue is deleted. Restarting is
-left to the container's restart policy (`unless-stopped` in the compose file).
+At startup the consumer connection is tried up to 10 times, with exponential backoff, before the
+router gives up and shuts down; the publisher connection is retried until it opens. Once running,
+the consumer connection is not re-established: when it is lost, the router exits with code 1. The
+publisher connection reconnects without limit and declares its topology again. The router also exits
+with code 1 when the broker cancels one of its consumers, as it does when a source queue is deleted.
+Restarting is left to the container's restart policy (`unless-stopped` in the compose file).
 
 ## Backpressure
 
@@ -149,8 +150,7 @@ RabbitMQ comes from an infra pack (see [modules/infra/README.md](../../modules/i
 | `ROUTER_MAX_READY` | No | `0` (off) | Ready messages in a watched queue at which publishing pauses; a non-negative integer |
 | `ROUTER_WATCH_QUEUES` | With `ROUTER_MAX_READY` | - | Comma-separated queues to watch; set exactly when `ROUTER_MAX_READY` is above 0 |
 
-`services/router/docker/compose.yml` passes all of them except `ROUTER_PREFETCH`, which therefore
-takes its default there.
+`services/router/docker/compose.yml` passes all of them, with the same defaults.
 
 ## Health
 

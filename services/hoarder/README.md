@@ -38,7 +38,7 @@ Currently implemented:
 | `okx` | v5 public, `wss://ws.okx.com:8443/ws/v5/public` | `channel:instId` — `trades:BTC-USDT` | echoed arg (`channel` + `instId`) |
 | `kraken` | v2 public, `wss://ws.kraken.com/v2` | `channel:symbol` — `trade:BTC/USD` | echoed `channel` + `symbol` |
 
-Binance futures is not collected; for its endpoint, see [BINANCE.md](../../docs/venues/BINANCE.md).
+Binance futures is not collected; for its endpoint, see [BINANCE.md](../../docs/venues/BINANCE.md#websocket).
 
 Where an ack does not name the channel (Binance, Bybit), the adapter derives the request id from the channel and recomputes it when matching, so nothing is held between send and ack. Where a rejection names no channel (OKX, Kraken), it is taken as the refusal of the channel being awaited, which is unambiguous because a socket has one ack awaited at a time. Binance acknowledges a stream that does not exist exactly as a real one, so a Binance channel counts as confirmed once its request is acknowledged, whether or not data follows.
 

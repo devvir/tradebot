@@ -68,8 +68,9 @@ An item takes at most one modifier group, in parentheses at its end.
 | `key:value:replace` | `routingKey: { value, replace }`; `replace` may be empty and may hold `:` |
 | `header:name=value` | `headers[name] = value`; `name` is not empty, `value` may be; inner spaces of the value are kept |
 
-Values and names are trimmed. An item has at most one `key:` modifier and sets each header name
-at most once. Every modifier is accepted on either side of a rule.
+Values and names are trimmed, and none can hold `|`, `>`, `&`, `(`, `)` or `,`, which the parser
+splits on. An item has at most one `key:` modifier and sets each header name at most once. Every
+modifier is accepted on either side of a rule.
 
 ### Parse errors
 
@@ -80,7 +81,8 @@ at most once. Every modifier is accepted on either side of a rule.
 - an item that is only a modifier group, or a bare name with a character outside the name set
 - an invalid queue or exchange name, including an empty one (`q@`, `@topic:`)
 - a `type:` prefix that is not one of the five types
-- an unclosed parenthesis, a second modifier group, or anything after the group
+- an unclosed parenthesis, a `)` without its `(`, a second modifier group, or anything after the
+  group
 - more than one `key:` modifier, or a `key:` with no value
 - a `header:` without `=`, with an empty name, or naming a header twice
 - any other modifier

@@ -137,13 +137,14 @@ bucket answers `409`. A bucket with neither an open file nor buffered rows is le
 
 ### `PUT /files/:table/:date`
 
-Stores a complete gzip file as the bucket's closed file. The bucket's buffered rows and open
-`.csv.gz.tmp` are discarded first, whatever the outcome of the upload. The body is streamed to a
-temp file of its own, `<filename>.csv.gz.upload-<uuid>`, which is never visible as open. Once the
-body has fully arrived it must be non-empty and decompress as gzip to its end (several members are
-allowed); it is then fsynced and published as `<filename>.csv.gz` without replacing anything. A
-failed upload removes its temp file; one left by a process that died mid-upload is removed at the
-next start. An upload that sends nothing for 90 s is cut off.
+Stores a complete gzip file as the bucket's closed file. Unless the request is refused with `409` up
+front, the bucket's buffered rows and open `.csv.gz.tmp` are discarded first, whatever the outcome
+of the upload. The body is streamed to a temp file of its own, `<filename>.csv.gz.upload-<uuid>`,
+which is never visible as open. Once the body has fully arrived it must be non-empty and decompress
+as gzip to its end (several members are allowed); it is then fsynced and published as
+`<filename>.csv.gz` without replacing anything. A failed upload removes its temp file; one left by a
+process that died mid-upload is removed at the next start. An upload that sends nothing for 90 s is
+cut off.
 
 - `204`: stored.
 - `400`: the body is empty or not a complete gzip stream.
@@ -367,5 +368,5 @@ code 1.
 | `RECOVERY_INTERVAL_MS` | `src/fs/health.ts` | 5,000 ms |
 | `CANARY_BYTES` | `src/fs/health.ts` | 4,096 bytes |
 | `UPLOAD_IDLE_TIMEOUT_MS` | `src/server/routes.ts` | 90,000 ms |
-| `READ_CHUNK_CHARS` | `src/server/routes.ts` | 65,536 characters per NDJSON chunk |
+| `READ_CHUNK_CHARS` | `src/server/routes.ts` | 65,536 characters, the least an NDJSON chunk holds before the last |
 | `CLOSE_DEADLINE_MS` | `src/server/index.ts` | 7,000 ms |

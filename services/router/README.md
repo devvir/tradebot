@@ -33,6 +33,7 @@ Requires RabbitMQ — see [infra packs](../../modules/infra/README.md).
 - `QUEUE_URL` — AMQP URL of the broker
 - `ROUTER_RULES` — routing rules
 
-The optional prefetch and backpressure settings, and what the router does with each rule, are in
-the Configuration table and the rest of [docs/services/ROUTER.md](../../docs/services/ROUTER.md).
+The optional prefetch and backpressure settings are in the
+[Configuration table](../../docs/services/ROUTER.md#configuration) of ROUTER.md, and what the router
+does with each rule in the rest of [ROUTER.md](../../docs/services/ROUTER.md).
 The rule syntax is the [rule grammar](../../shared/utils/README.md#rule-grammar) of `@tradebot/utils`.
