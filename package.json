@@ -10,7 +10,8 @@
   "scripts": {
     "build": "pnpm --color -r build",
     "test": "vitest run && pnpm --color -r --no-bail test",
-    "check": "pnpm --color -r --if-present typecheck && knip",
+    "check": "pnpm --color -r --if-present run typecheck && pnpm knip",
+    "knip": "knip",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

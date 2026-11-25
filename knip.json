@@ -13,8 +13,17 @@
     "services/**": {
       "project": ["src/**/*.{ts,tsx}", "tests/**/*.{ts,tsx}"]
     },
-    "shared/**": {
+    "services/stocker": {
+      "entry": ["src/index.ts", "src/containers/worker.ts"],
       "project": ["src/**/*.{ts,tsx}", "tests/**/*.{ts,tsx}"]
+    },
+    "services/catalog-ui": {
+      "entry": ["src/index.ts", "web/main.tsx", "vite.config.ts"],
+      "project": ["src/**/*.ts", "web/**/*.{ts,tsx}", "tests/**/*.{ts,tsx}"]
+    },
+    "shared/**": {
+      "project": ["src/**/*.{ts,tsx}", "tests/**/*.{ts,tsx}"],
+      "includeEntryExports": true
     },
     "dev/tooling": {
       "project": ["src/**/*.{ts,tsx}", "tests/**/*.{ts,tsx}"]
