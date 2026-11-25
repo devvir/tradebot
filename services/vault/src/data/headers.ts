@@ -1,13 +1,8 @@
 // Authoritative column lists per BitMEX table.
 //
-// Used by vault when initialising new CSV files (header row) and by the
-// encoder when serialising rows into CSV — vault never infers columns from
-// incoming data because WS updates only include changed fields.
-//
-// Sources:
-//   - Vault files on disk             (observed, authoritative)
-//   - journalist CHAT_SCHEMA             (chat has extra fields missing from the partial WS message)
-//   - BitMEX OpenAPI + TABLE_SPECS       (tables not yet observed in vault)
+// Each list is the header row of a new file of its table and the column order
+// every row of that table is encoded in. Columns are never inferred from
+// incoming data, because WS updates only include changed fields.
 
 import { baseTable } from '@tradebot/utils';
 
@@ -28,7 +23,8 @@ export const TABLE_HEADERS: Record<string, string[]> = {
   // trade/quote: columns match the BitMEX S3 daily buckets, plus a trailing
   // `pool` column that every live row carries (Primary/Secondary — never
   // Aggregated for these tables). Pool is a plain column, not a table split.
-  // S3 historical files predate the field and read back with no pool value.
+  // A file without the column, such as a BitMEX S3 daily bucket, reads back
+  // with no pool value.
   trade:               ['timestamp', 'symbol', 'side', 'size', 'price', 'tickDirection', 'trdMatchID', 'grossValue', 'homeNotional', 'foreignNotional', 'trdType', 'pool'],
   quote:               ['timestamp', 'symbol', 'bidSize', 'bidPrice', 'askPrice', 'askSize', 'pool'],
 

@@ -1,7 +1,7 @@
 {
   "name": "@tradebot/vault",
   "version": "1.0.0",
-  "description": "Vault service — sole owner of raw dump file storage; exposes an HTTP API for insert, store, close, drop, read, and list",
+  "description": "Date-partitioned CSV.gz file store with an HTTP API for row ingestion, upload, seal, delete, read, list and stats",
   "main": "dist/src/index.js",
   "private": true,
   "scripts": {

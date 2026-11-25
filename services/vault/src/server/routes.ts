@@ -490,7 +490,7 @@ export const registerRoutes = (app: Application): void => {
     res.json(result);
   });
 
-  // ── GET /tables — list all tables that have data in vault ────────────────────
+  // ── GET /tables — list every table directory ─────────────────────────────────
 
   app.get('/tables', (_req: Request, res: Response) => {
     res.json(listTables());

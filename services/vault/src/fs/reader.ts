@@ -92,7 +92,7 @@ export const listFiles = (table: string, suffix?: string): FileListing | null =>
   return result;
 };
 
-/** Lists all table names that have at least one file in vault. */
+/** Lists the table directories under the data directory, files or not. */
 export const listTables = (): string[] => {
   if (! existsSync(DATA_DIR)) return [];
 

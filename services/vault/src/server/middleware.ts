@@ -17,9 +17,8 @@ export const errorMiddleware = (
   if (err && typeof err === 'object') {
     const e = err as { type?: string; status?: number };
 
-    // Clients occasionally drop connections mid-request when they time out
-    // and retry. Express surfaces this as a BadRequestError with
-    // type 'request.aborted' — not a server error.
+    // A client that drops the connection mid-request surfaces as an error of
+    // type 'request.aborted': answered 499, not counted as a server error.
     if (e.type === 'request.aborted') {
       if (! res.headersSent) res.status(499).end();
       return;

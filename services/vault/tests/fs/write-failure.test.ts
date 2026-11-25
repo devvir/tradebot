@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, readFileSync, existsSync, rmSync } from 'fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import type { WriterOptions, WriteFailure } from '@devvir/zipper';
@@ -76,22 +76,63 @@ describe('a member dropped after every retry', () => {
 });
 
 describe('a member whose truncate-back also failed', () => {
-  it('logs it and writes an .error sidecar naming the quarantined file, without counting toward storage health', async () => {
-    const quarantinePath = `${closedPath('trade', '20240101')}.tmp.failed.1`;
+  const quarantinePath = (): string => `${closedPath('trade', '20240101')}.tmp.failed.1`;
 
+  it('logs at error level, counts toward storage health and writes an .error sidecar naming the quarantined file', async () => {
     (await reportFailure())(failure({
-      recovery:      'safe',
-      truncateError: new Error('EIO: i/o error, ftruncate'),
-      quarantinePath,
+      recovery:       'safe',
+      truncateError:  new Error('EIO: i/o error, ftruncate'),
+      quarantinePath: quarantinePath(),
     }));
 
     const sidecar = JSON.parse(readFileSync(`${closedPath('trade', '20240101')}.error`, 'utf8'));
 
-    expect(sidecar).toMatchObject({ lastGoodOffset: 1024, quarantinePath });
+    expect(sidecar).toMatchObject({ lastGoodOffset: 1024, quarantinePath: quarantinePath(), reappendError: null });
     expect(sidecar.writeError).toMatch(/write/);
     expect(sidecar.truncateError).toMatch(/ftruncate/);
-    expect(sidecar.note).toContain(quarantinePath);
-    expect(recordFailure).not.toHaveBeenCalled();
-    expect(logger.error).toHaveBeenCalledWith(expect.objectContaining({ quarantinePath }), expect.stringMatching(/quarantined/));
+    expect(sidecar.note).toContain(quarantinePath());
+
+    expect(recordFailure).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(recordFailure).mock.calls[0]![0]).toMatch(/trade\/20240101/);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ table: 'trade', filename: '20240101', quarantinePath: quarantinePath(), lastGoodOffset: 1024 }),
+      expect.stringMatching(/quarantined/),
+    );
+  });
+
+  it('records a failed re-append in the log and the sidecar', async () => {
+    const reappendError = new Error('EIO: i/o error, reappend');
+
+    (await reportFailure())(failure({
+      recovery:       'safe',
+      truncateError:  new Error('EIO: i/o error, ftruncate'),
+      quarantinePath: quarantinePath(),
+      reappendError,
+    }));
+
+    const sidecar = JSON.parse(readFileSync(`${closedPath('trade', '20240101')}.error`, 'utf8'));
+
+    expect(sidecar.reappendError).toMatch(/reappend/);
+    expect(logger.error).toHaveBeenCalledWith(expect.objectContaining({ reappendError }), expect.stringMatching(/quarantined/));
+  });
+
+  it('logs a sidecar that cannot be written, and still counts toward storage health', async () => {
+    const report = await reportFailure();
+
+    // The sidecar's directory is a file, so the sidecar cannot be created.
+    rmSync(path.dirname(closedPath('trade', '20240101')), { recursive: true, force: true });
+    writeFileSync(path.dirname(closedPath('trade', '20240101')), '');
+
+    report(failure({
+      recovery:       'safe',
+      truncateError:  new Error('EIO: i/o error, ftruncate'),
+      quarantinePath: quarantinePath(),
+    }));
+
+    expect(recordFailure).toHaveBeenCalledTimes(1);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ errPath: `${closedPath('trade', '20240101')}.error` }),
+      expect.stringMatching(/sidecar/),
+    );
   });
 });

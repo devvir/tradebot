@@ -393,20 +393,32 @@ const syncPathSync = (p: string): void => {
 };
 
 /**
- * Invoked by the zipper writer when a member fails every retry. A plain drop
- * (truncate succeeded) counts toward storage health; a truncate failure is
- * logged and writes an `.error` sidecar describing the unrecoverable
- * corruption — zipper has quarantined the file and started a fresh one, so
- * writes continue regardless.
+ * Invoked by the zipper writer when a member fails every retry. Every report is
+ * logged at error level and counts toward storage health.
+ *
+ * When the truncate back to the last good offset also failed, zipper has
+ * quarantined the file (`quarantinePath`) and continues in a fresh open file,
+ * re-appending the member there; `reappendError` says that re-append failed
+ * too, leaving the member only as the corrupt tail of the quarantined file.
+ * Such a report also writes an `.error` sidecar next to the closed path.
  */
 const onWriteFailure = (table: string, filename: string, info: WriteFailure): void => {
   if (info.truncateError) {
     logger.error(
-      { table, filename, err: info.error, truncateError: info.truncateError, quarantinePath: info.quarantinePath },
-      'Append failed and the file could not be truncated back — file quarantined',
+      {
+        table, filename,
+        err:            info.error,
+        truncateError:  info.truncateError,
+        reappendError:  info.reappendError,
+        quarantinePath: info.quarantinePath,
+        lastGoodOffset: info.lastGoodOffset,
+      },
+      'Append failed and truncate failed; file quarantined',
     );
 
-    writeErrorSidecar(table, filename, info.lastGoodOffset, info.error, info.truncateError, info.quarantinePath);
+    recordFailure(`append and truncate failed for ${table}/${filename}; file quarantined`);
+
+    writeErrorSidecar(table, filename, info);
 
     return;
   }
@@ -417,35 +429,30 @@ const onWriteFailure = (table: string, filename: string, info: WriteFailure): vo
 };
 
 /**
- * Writes a sidecar `.csv.gz.error` next to the data file describing the
- * unrecoverable corruption. Best-effort — if even this write fails, nothing
- * further is done.
+ * Appends one JSON line to `<closed path>.error` describing a failure whose
+ * truncate also failed: the offsets, the errors and where the file was
+ * quarantined. Best effort: a sidecar that cannot be written is logged.
  */
-const writeErrorSidecar = (
-  table:          string,
-  filename:       string,
-  lastGoodOffset: number,
-  writeErr:       Error,
-  truncErr:       Error,
-  quarantinePath: string | undefined,
-): void => {
-  try {
-    const errPath = `${closedPath(table, filename)}.error`;
+const writeErrorSidecar = (table: string, filename: string, info: WriteFailure): void => {
+  const errPath = `${closedPath(table, filename)}.error`;
+  const stack   = (err: Error | undefined): string | null => err ? (err.stack ?? err.message) : null;
 
+  try {
     const content = JSON.stringify({
       timestamp:      new Date().toISOString(),
-      lastGoodOffset,
-      writeError:     writeErr.stack ?? writeErr.message,
-      truncateError:  truncErr.stack ?? truncErr.message,
-      quarantinePath: quarantinePath ?? null,
-      note: quarantinePath
-        ? `Corrupt file quarantined to ${quarantinePath} — run gzrecover on it to extract recoverable members. A fresh open file continues from here.`
+      lastGoodOffset: info.lastGoodOffset,
+      writeError:     stack(info.error),
+      truncateError:  stack(info.truncateError),
+      reappendError:  stack(info.reappendError),
+      quarantinePath: info.quarantinePath ?? null,
+      note: info.quarantinePath
+        ? `Corrupt file quarantined to ${info.quarantinePath}; run gzrecover on it to extract recoverable members. A fresh open file continues from here.`
         : 'Run gzrecover on the open file to extract recoverable members.',
     }) + '\n';
 
     appendFileSync(errPath, content);
-  } catch {
-    // Best effort; nothing more to do.
+  } catch (err) {
+    logger.error({ err, table, filename, errPath }, 'Could not write the .error sidecar');
   }
 };
 

@@ -80,10 +80,7 @@ const flushReady = (): FlushResult[] => {
   return results;
 };
 
-/**
- * Flushes every non-empty buffer unconditionally. Used at shutdown to drain
- * everything before the process exits.
- */
+/** Flushes every non-empty buffer unconditionally, regardless of age or size. */
 const flushAll = (): FlushResult[] => {
   const results: FlushResult[] = [];
 
