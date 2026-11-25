@@ -685,6 +685,41 @@ describe('a pass of a run left watching', () => {
   });
 });
 
+/** The catalog stops answering between the question and the removal: a watching run leaves the venue for the next look. */
+describe('a later pass of a run left watching, whose catalog fails on the look again', () => {
+  it('removes nothing of the venue, says so, and goes on', async () => {
+    setWatch(true);
+    vi.mocked(confirm).mockImplementation(async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('refused', { status: 400 })));
+
+      return true;
+    });
+
+    const shared: Run = {
+      config: config(), origin: 'archives', venues: ['gate'], options: { venues: ['gate'], purge: true }, agreed: false, waiting: false,
+    };
+
+    expect(await pass(db, shared, false)).toBe(true);
+
+    expect(MONTHS.every(month => fs.existsSync(path.join(dir, 'archives', 'gate/spot/trades/B/BTC_USDT', month)))).toBe(true);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM eviction').get()).toEqual({ n: 0 });
+  });
+
+  it('ends a run that is not watching', async () => {
+    vi.mocked(confirm).mockImplementation(async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('refused', { status: 400 })));
+
+      return true;
+    });
+
+    const single: Run = {
+      config: config(), origin: 'archives', venues: ['gate'], options: { venues: ['gate'], purge: true }, agreed: false, waiting: false,
+    };
+
+    await expect(pass(db, single, true)).rejects.toThrow(/answered 400/);
+  });
+});
+
 describe('the vault\'s account of itself', () => {
   it('is nothing where the vault has no ledger', () => {
     fs.rmSync(path.join(dir, 'vault', 'ledger.csv'));

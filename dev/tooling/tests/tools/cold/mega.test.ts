@@ -5,13 +5,19 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { _test_with as standIns, megaCmd, notThere } from '../../../src/tools/cold/shared/mega/exec';
 import { landed, listing } from '../../../src/tools/cold/shared/mega/listing';
 import { _test_parseListing as parseListing } from '../../../src/tools/cold/shared/mega/listing';
-import { _test_parseSummary as parseSummary, queue, queuedPaths, transferName } from '../../../src/tools/cold/shared/mega/transfers';
+import { _test_parseSummary as parseSummary, _test_unsay as unsay, queue, queuedPaths, transferName } from '../../../src/tools/cold/shared/mega/transfers';
+import { warn } from '../../../src/shared/ui/logger';
 import { _test_roundOf as roundOf } from '../../../src/tools/cold/push/archives/work';
 import { runPush } from '../../../src/tools/cold/push/archives';
 import { runPushVault } from '../../../src/tools/cold/push/vault';
 import type { ColdConfig } from '../../../src/tools/cold/types';
 import * as mega from '../../../src/tools/cold/shared/mega';
 import * as record from '../../../src/tools/cold/shared/record';
+
+vi.mock('../../../src/shared/ui/logger', async actual => ({
+  ...await actual<object>(),
+  warn: vi.fn(),
+}));
 
 /**
  * Both of these read mega-cmd's human output, so they are the parts most likely
@@ -327,6 +333,26 @@ describe('how much the upload queue holds', () => {
 
     answering(SUMMARY);
     expect(await queue()).toMatchObject({ transfers: 1, remaining: 1024 ** 3 });
+  });
+
+  /** A queue that cannot be read holds packing back, so it is never held back without a word. */
+  it('says once that Mega did not say, and once that what it said does not read', async () => {
+    unsay();
+    vi.mocked(warn).mockClear();
+
+    answering(new Error('Command failed: mega-transfers --summary\nunknown option'), new Error('Command failed: mega-transfers --summary'));
+    await queue();
+    await queue();
+
+    answering('a summary of some new shape', 'a summary of some new shape');
+    await queue();
+    await queue();
+
+    const said = vi.mocked(warn).mock.calls.map(([line]) => String(line));
+
+    expect(said).toHaveLength(2);
+    expect(said[0]).toMatch(/did not say what its upload queue holds.*Command failed: mega-transfers --summary$/);
+    expect(said[1]).toMatch(/does not read.*a summary of some new shape$/);
   });
 
   it('leaves room for a tar only where it is known to have room', async () => {

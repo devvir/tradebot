@@ -1,6 +1,8 @@
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import * as record from '../../../src/tools/cold/shared/record';
 import { DatabaseSync } from 'node:sqlite';
@@ -176,6 +178,38 @@ describe('a record whose held table has no columns for what a tar was packed wit
       record.close(opened);
     }
   });
+
+  /** Commands run side by side: every one that opens the record at once finds it as it should be. */
+  it('gains them once where several commands open it at the same moment', async () => {
+    const file = path.join(dir, 'old.sqlite');
+    const old  = new DatabaseSync(file);
+
+    old.exec('PRAGMA journal_mode = WAL');
+    old.exec(`CREATE TABLE held (
+      tar_id INTEGER NOT NULL, origin TEXT NOT NULL, venue TEXT NOT NULL, market TEXT NOT NULL, dataset TEXT NOT NULL,
+      variant TEXT NOT NULL, grain TEXT NOT NULL, bundle TEXT NOT NULL, month TEXT NOT NULL, version TEXT NOT NULL,
+      files INTEGER NOT NULL, bytes INTEGER NOT NULL, next_version TEXT, next_files INTEGER, next_bytes INTEGER,
+      PRIMARY KEY (origin, venue, market, dataset, variant, grain, bundle, month)) STRICT`);
+    old.close();
+
+    const schema = pathToFileURL(path.resolve(__dirname, '../../../src/tools/cold/shared/record/schema.ts')).href;
+    const start  = Date.now() + 1_500;
+
+    // Each waits for the same moment, then opens the record.
+    const code = `import { open, close } from ${JSON.stringify(schema)};
+      while (Date.now() < ${start});
+      close(open(${JSON.stringify(file)}));`;
+
+    const exits = await Promise.all(Array.from({ length: 6 }, () => new Promise<{ code: number | null; stderr: string }>((resolve) => {
+      const child = spawn(process.execPath, ['--experimental-strip-types', '--no-warnings', '--input-type=module', '-e', code]);
+      let stderr  = '';
+
+      child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+      child.on('close', exit => resolve({ code: exit, stderr }));
+    })));
+
+    expect(exits).toEqual(Array.from({ length: 6 }, () => ({ code: 0, stderr: '' })));
+  }, 20_000);
 });
 
 describe('what the record holds', () => {

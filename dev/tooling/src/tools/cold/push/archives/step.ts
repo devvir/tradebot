@@ -140,13 +140,21 @@ export const step = async (
     }
 
     case 'stale': {
+      /**
+       * **At the size Mega lists it at.** What the record says the tar weighs
+       * can be a correction of it that was made and lost before Mega had it, so
+       * what comes back is known to be all here by Mega's own size of it.
+       */
+      const there = await mega.remote(remotePath(config, tar));
+      const bytes = there?.bytes ?? tar.bytes ?? 0;
+
       await fs.promises.mkdir(path.dirname(local), { recursive: true });
       await fs.promises.rm(local, { force: true });
       await mega.queueDownload(remotePath(config, tar), path.dirname(local));
 
-      record.move(db, tar.id, 'fetching');
+      record.fetching(db, tar.id, bytes);
 
-      progress.log(`Bringing ${labelOf(tar)} back to correct it · ${fmtBytes(tar.bytes ?? 0)}`);
+      progress.log(`Bringing ${labelOf(tar)} back to correct it · ${fmtBytes(bytes)}`);
 
       return true;
     }

@@ -185,6 +185,14 @@ export const packed = (
   }
 };
 
+/**
+ * A tar is on its way back from Mega, at the size Mega holds it at: what it
+ * weighs once it is all here.
+ */
+export const fetching = (db: DatabaseSync, id: number, bytes: number): void => {
+  db.prepare(`UPDATE tar SET state = 'fetching', bytes = ? WHERE id = ?`).run(bytes, id);
+};
+
 /** Mega holds a tar: where it is, under which handle. */
 export const stored = (db: DatabaseSync, id: number, handle: string | null): void => {
   db.prepare(`UPDATE tar SET state = 'stored', handle = ?, stored_at = ? WHERE id = ?`)

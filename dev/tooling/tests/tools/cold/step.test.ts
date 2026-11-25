@@ -68,6 +68,8 @@ const VERSIONS: Record<string, Record<string, string>> = {
   v1: { '01': 'aa' },
   v2: { '01': 'bbb', '02': 'cc' },
   v3: { '01': 'bbb', '02': 'cc', '03': 'dddd' },
+  // Past a tar's 10 KiB record, so a tar of it weighs more than one of the others.
+  v4: { '01': 'e'.repeat(20_000) },
 };
 
 const nameOf = (day: string): string => path.join(MONTH_DIR, `gate|spot|trades|BTC_USDT|202001${day}.csv.gz`);
@@ -241,6 +243,29 @@ describe('a tar that changes on its way to Mega', () => {
     await until(id, 'stored');
 
     expect(heldNow(id)).toMatchObject({ version: 'v2', next: null });
+  });
+
+  /** What comes back is the tar Mega holds, at its own size, not the size of the correction that was lost. */
+  it('is fetched once where the lost correction weighs other than the tar Mega holds', async () => {
+    const id = await storedAtV1();
+    const was = tarOf(id).bytes;
+
+    changeTo('v4', id);
+    await until(id, 'packed');
+
+    expect(tarOf(id).bytes).not.toBe(was);
+
+    fs.rmSync(path.join(config().coldRoot, 'archives', tarOf(id).local));
+
+    expect(await go(id)).toBe('stale');
+    expect(await go(id)).toBe('fetching');
+    expect(tarOf(id).bytes).toBe(was);
+    expect(await go(id)).toBe('fetched');
+
+    await until(id, 'stored');
+
+    expect(heldNow(id)).toMatchObject({ version: 'v4', next: null });
+    expect(await inMega(id)).toEqual(['01:20000']);
   });
 });
 

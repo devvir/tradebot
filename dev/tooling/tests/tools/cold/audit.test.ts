@@ -422,6 +422,23 @@ describe('the archives, against the disk', () => {
     expect(finding!.solutions.map(solution => solution.label)).toEqual(['Write them down as back']);
   });
 
+  /** As `evict --cleanup`: nothing is taken off the disk while the vault reports a loss. */
+  it('offers only to write down as back while the vault reports a problem', async () => {
+    const one = partition('202001');
+
+    catalog = [one];
+    tar('202001');
+    vaultFile('202001');
+    record.noteEviction(db, 'archives', one, { files: 1, bytes: 2 });
+    onDisk('202001');
+    fs.writeFileSync(path.join(config('archives').vaultRoot, 'ERROR.log'), 'a file went missing\n');
+
+    const [finding, ...rest] = await againstDisk(looking('archives'));
+
+    expect(rest).toEqual([]);
+    expect(finding!.solutions.map(solution => solution.label)).toEqual(['Write them down as back']);
+  });
+
   it('offers only to write down as back where the catalog cannot be asked', async () => {
     const one = partition('202001');
 

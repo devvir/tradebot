@@ -223,7 +223,19 @@ const pass = async (db: DatabaseSync, run: Run, first: boolean): Promise<boolean
   for (const one of found) {
     if (one.ready.length === 0) continue;
 
-    const still   = await again(db, run, one, archives);
+    let still: Evictable;
+
+    try {
+      still = await again(db, run, one, archives);
+    } catch (err) {
+      // As on the first look: a catalog that does not answer costs a watching run only this venue, this pass.
+      if (first || ! isWatch()) throw err;
+
+      info(`  ${one.venue.padEnd(8)} Could not ask the catalog again: ${(err as Error).message} · left for the next look`);
+
+      continue;
+    }
+
     const removed = still.ready.length > 0 ? await remove(db, config, origin, still, archives, purge) : { files: 0, bytes: 0 };
     const stayed  = one.ready.length - still.ready.length;
 

@@ -21,8 +21,9 @@ export const open = (file: string): DatabaseSync => {
 
   const db = new DatabaseSync(file);
 
-  db.exec('PRAGMA journal_mode = WAL');
+  // First: a command opening the record beside another waits for it, from the first statement on.
   db.exec('PRAGMA busy_timeout = 5000');
+  db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA foreign_keys = ON');
   db.exec(SCHEMA);
   addColumns(db);
@@ -44,6 +45,10 @@ export const close = (db: DatabaseSync): void => {
  * The columns `SCHEMA` declares that a table already there may not have.
  * `CREATE TABLE IF NOT EXISTS` leaves a table that exists as it is, so each of
  * these is added to it here, empty.
+ *
+ * **Looked for and added in one transaction.** Commands run side by side, and
+ * two that open the same record at once would otherwise both find a column
+ * missing, and the second fail adding it.
  */
 const ADDED: readonly { table: string; column: string; type: string }[] = [
   { table: 'held', column: 'packed_version', type: 'TEXT' },
@@ -52,10 +57,22 @@ const ADDED: readonly { table: string; column: string; type: string }[] = [
 ];
 
 const addColumns = (db: DatabaseSync): void => {
-  for (const { table, column, type } of ADDED) {
-    const has = (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some(one => one.name === column);
+  const missing = (): typeof ADDED => ADDED.filter(({ table, column }) =>
+    ! (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some(one => one.name === column));
 
-    if (! has) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  // Nothing to add, nothing to wait for: the record is not locked on every open.
+  if (missing().length === 0) return;
+
+  db.exec('BEGIN IMMEDIATE');
+
+  try {
+    for (const { table, column, type } of missing()) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+
+    throw err;
   }
 };
 

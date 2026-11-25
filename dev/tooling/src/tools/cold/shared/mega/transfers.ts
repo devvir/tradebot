@@ -78,15 +78,21 @@ export const downloadingPaths = async (): Promise<Set<string>> => {
  *
  * **Unknown is not empty.** Null where Mega did not answer, or answered with a
  * summary that does not read: a drained queue still says so in a line that
- * reads, so a summary that does not is no news of the queue at all. A summary
- * that does not read is said once, with its first line.
+ * reads, so a summary that does not is no news of the queue at all. Each of
+ * the two is said once, with the first line of what came back.
  */
 export const queue = async (): Promise<QueueState | null> => {
   let stdout: string;
 
   try {
     ({ stdout } = await megaCmd('mega-transfers', ['--summary', '--only-uploads'], { timeout: 60_000 }));
-  } catch {
+  } catch (err) {
+    if (! failedSaid) {
+      failedSaid = true;
+
+      above(`Mega did not say what its upload queue holds — its size is taken as unknown: ${firstLineOf(err instanceof Error ? err.message : String(err))}`, warn);
+    }
+
     return null;
   }
 
@@ -95,14 +101,17 @@ export const queue = async (): Promise<QueueState | null> => {
   if (state === null && ! unreadSaid) {
     unreadSaid = true;
 
-    above(`Mega's upload queue summary does not read — its size is taken as unknown: ${stdout.split('\n').find(line => line.trim()) ?? '(nothing)'}`, warn);
+    above(`Mega's upload queue summary does not read — its size is taken as unknown: ${firstLineOf(stdout)}`, warn);
   }
 
   return state;
 };
 
-/** Whether a summary that does not read has been said already. */
+/** Whether a summary that does not read, and a summary that was not given, have been said already. */
 let unreadSaid = false;
+let failedSaid = false;
+
+const firstLineOf = (text: string): string => text.split('\n').find(line => line.trim())?.trim() ?? '(nothing)';
 
 /**
  * The local paths Mega is already carrying, active or waiting.
@@ -318,3 +327,9 @@ const bytesOf = (value: string, unit: string): number => Number(value) * (UNITS[
 export const _test_parseSummary = parseSummary;
 export const _test_duplicatesIn = duplicatesIn;
 export const _test_uploadsOf    = uploadsOf;
+
+/** Each warning of `queue` said again, as on a fresh run. */
+export const _test_unsay = (): void => {
+  unreadSaid = false;
+  failedSaid = false;
+};

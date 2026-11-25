@@ -6,7 +6,7 @@ import * as catalog from '../../shared/catalog';
 import { idOf } from '../../shared/keys';
 import * as record from '../../shared/record';
 import { fileLabelOf } from '../../shared/vault/layout';
-import { stockedIn } from '../../shared/vault/ledger';
+import { ERRORS, errorsIn, stockedIn } from '../../shared/vault/ledger';
 import { are, found } from '../finding';
 import { count } from '../../shared/count';
 import { warn } from '../../../../shared/ui/logger';
@@ -101,12 +101,20 @@ const archives = async (looking: Looking): Promise<Finding[]> => {
 /**
  * Of the partitions written down as taken off the disk, the ones `evict
  * --cleanup` would take off it again: by partition. Null where that could not
- * be asked — a catalog that is not answering is not waited for here.
+ * be asked — a catalog that is not answering is not waited for here — and
+ * where `evict` would take nothing off at all: while the vault reports a
+ * problem, or has no ledger to read.
  */
 const asStored = async (looking: Looking, venues: ReadonlySet<string>): Promise<Set<string> | null> => {
   const { db, config, origin } = looking;
-  const stocked = stockedIn(config.vaultRoot) ?? [];
+  const stocked = stockedIn(config.vaultRoot);
   const out     = new Set<string>();
+
+  if (errorsIn(config.vaultRoot).length > 0 || ! stocked) {
+    warn(`Whether cold storage holds what is on disk again is not asked: ${stocked ? `the vault reports a problem in ${ERRORS}` : 'the vault has no ledger to read'}, and nothing is taken off the disk until that is dealt with`);
+
+    return null;
+  }
 
   try {
     for (const venue of venues) {
