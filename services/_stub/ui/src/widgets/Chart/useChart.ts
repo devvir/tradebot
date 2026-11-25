@@ -48,9 +48,11 @@ export function useChart(timeframe: Timeframe): UseChartResult {
     [closed, vp.state, running],
   );
 
+  const { pan } = vp;
+
   const onPan = useCallback((deltaCandles: number) => {
-    vp.pan(deltaCandles, binMs, latestTimeRef.current);
-  }, [vp, binMs]);
+    pan(deltaCandles, binMs, latestTimeRef.current);
+  }, [pan, binMs]);
 
   return {
     candles:  visibleCandles,

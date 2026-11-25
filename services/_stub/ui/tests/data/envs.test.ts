@@ -29,6 +29,12 @@ describe('ENV_CONFIGS.replay', () => {
     expect(ENV_CONFIGS.replay.headers).toEqual({});
   });
 
+  it('is the only env with a replay control API, at /replay-control', () => {
+    expect(ENV_CONFIGS.replay.controlPath).toBe('/replay-control');
+    expect(ENV_CONFIGS.live.controlPath).toBeUndefined();
+    expect(ENV_CONFIGS.testnet.controlPath).toBeUndefined();
+  });
+
   it('generates a same-origin replay WS URL from window.location', () => {
     /** jsdom defaults to `http://localhost:3000` → expect `ws://...` scheme. */
     expect(ENV_CONFIGS.replay.wsUrl).toMatch(/^ws:\/\/[^/]+\/replay-ws\/realtime$/);

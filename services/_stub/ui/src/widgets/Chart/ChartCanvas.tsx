@@ -12,6 +12,8 @@ const WHEEL_DELTA_PX     = [1, 16, 400];
 interface ChartCanvasProps {
   candles:        Candle[];
   candlesPerView: number;
+  /** Bin duration of the candles, in ms (labels show bin open times). */
+  binMs:          number;
   onZoom:         (factor: number) => void;
   onPan:          (deltaCandles: number) => void;
   /** Index into `candles` of the column under the pointer, or null when none is. */
@@ -32,7 +34,7 @@ interface ChartCanvasProps {
  * of plotW / candlesPerView); gestures and hover use the same geometry, so a
  * drag moves the candles exactly as far as the pointer.
  *
- * Pattern: size, candles, candlesPerView, and hover state are stored in refs so
+ * Pattern: size, candles, candlesPerView, binMs, and hover state are stored in refs so
  * draw() and gesture handlers always see fresh values. Hover changes redraw
  * imperatively (no React re-render per pixel of mouse movement). When the
  * candles or the zoom change under a resting pointer, the hovered index is
@@ -40,12 +42,13 @@ interface ChartCanvasProps {
  * under the crosshair.
  */
 export function ChartCanvas({
-  candles, candlesPerView, onZoom, onPan, onHover,
+  candles, candlesPerView, binMs, onZoom, onPan, onHover,
 }: ChartCanvasProps) {
   const canvasRef         = useRef<HTMLCanvasElement>(null);
   const candlesRef        = useRef(candles);
   const sizeRef           = useRef({ w: 0, h: 0, dpr: 1 });
   const candlesPerViewRef = useRef(candlesPerView);
+  const binMsRef          = useRef(binMs);
   const hoverIdxRef       = useRef<number | null>(null);
   /** Canvas-local x of the hovering pointer, or null when it is not over the canvas. */
   const hoverXRef         = useRef<number | null>(null);
@@ -55,6 +58,7 @@ export function ChartCanvas({
   const onHoverRef        = useRef(onHover);
 
   candlesPerViewRef.current = candlesPerView;
+  binMsRef.current          = binMs;
   onZoomRef.current         = onZoom;
   onPanRef.current          = onPan;
   onHoverRef.current        = onHover;
@@ -79,7 +83,10 @@ export function ChartCanvas({
     }
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    renderChart(ctx, candlesRef.current, { width: w, height: h }, candlesPerViewRef.current, hoverIdxRef.current);
+    renderChart(
+      ctx, candlesRef.current, { width: w, height: h },
+      candlesPerViewRef.current, binMsRef.current, hoverIdxRef.current,
+    );
   }
 
   function getColumns() {

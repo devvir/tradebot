@@ -1,14 +1,12 @@
-import { useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useMemo, useState } from 'react';
 import { useChart } from './useChart';
 import { ChartCanvas } from './ChartCanvas';
+import { BIN_MS } from './types';
 import type { Timeframe, Candle } from './types';
+import { fmtPrice, priceDecimals } from '../../utils/format';
+import { useSymbol } from '../../utils/useSymbol';
 
 const TIMEFRAMES: Timeframe[] = ['1m', '5m', '1h', '1d'];
-
-function fmtPrice(n: number): string {
-  return n.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-}
 
 function fmtVolume(n: number): string {
   if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
@@ -18,8 +16,12 @@ function fmtVolume(n: number): string {
   return n.toLocaleString();
 }
 
+/**
+ * Label for a candle: its bin's open time. A candle's `timestamp` is the bin's
+ * close time, so the daily candle covering Nov 23 reads "Nov 23", not "Nov 24".
+ */
 function fmtTimestamp(ts: string, timeframe: Timeframe): string {
-  const d = new Date(ts);
+  const d = new Date(new Date(ts).getTime() - BIN_MS[timeframe]);
 
   if (timeframe === '1d') {
     return d.toLocaleDateString('en-US', {
@@ -33,7 +35,14 @@ function fmtTimestamp(ts: string, timeframe: Timeframe): string {
   });
 }
 
-function OhlcBar({ candle, timeframe }: { candle: Candle | null; timeframe: Timeframe }) {
+interface OhlcBarProps {
+  candle:    Candle | null;
+  timeframe: Timeframe;
+  /** Fraction digits for the O/H/L/C prices. */
+  decimals:  number;
+}
+
+function OhlcBar({ candle, timeframe, decimals }: OhlcBarProps) {
   if (! candle) {
     return <div className="chart__ohlc" />;
   }
@@ -46,16 +55,16 @@ function OhlcBar({ candle, timeframe }: { candle: Candle | null; timeframe: Time
         {fmtTimestamp(candle.timestamp, timeframe)}
       </span>
       <span className="chart__ohlc-item">
-        O <span className={up ? 'chart__ohlc-up' : 'chart__ohlc-down'}>{fmtPrice(candle.open)}</span>
+        O <span className={up ? 'chart__ohlc-up' : 'chart__ohlc-down'}>{fmtPrice(candle.open, decimals)}</span>
       </span>
       <span className="chart__ohlc-item">
-        H <span className={up ? 'chart__ohlc-up' : 'chart__ohlc-down'}>{fmtPrice(candle.high)}</span>
+        H <span className={up ? 'chart__ohlc-up' : 'chart__ohlc-down'}>{fmtPrice(candle.high, decimals)}</span>
       </span>
       <span className="chart__ohlc-item">
-        L <span className={up ? 'chart__ohlc-up' : 'chart__ohlc-down'}>{fmtPrice(candle.low)}</span>
+        L <span className={up ? 'chart__ohlc-up' : 'chart__ohlc-down'}>{fmtPrice(candle.low, decimals)}</span>
       </span>
       <span className="chart__ohlc-item">
-        C <span className={up ? 'chart__ohlc-up' : 'chart__ohlc-down'}>{fmtPrice(candle.close)}</span>
+        C <span className={up ? 'chart__ohlc-up' : 'chart__ohlc-down'}>{fmtPrice(candle.close, decimals)}</span>
       </span>
       <span className="chart__ohlc-item chart__ohlc-vol">
         Vol <span>{fmtVolume(candle.volume)}</span>
@@ -65,7 +74,7 @@ function OhlcBar({ candle, timeframe }: { candle: Candle | null; timeframe: Time
 }
 
 export function ChartWidget() {
-  const { symbol = 'XBTUSD' } = useParams<{ symbol: string }>();
+  const symbol = useSymbol();
   const [timeframe, setTimeframe] = useState<Timeframe>('1m');
   const [hoverIdx,  setHoverIdx]  = useState<number | null>(null);
 
@@ -78,6 +87,12 @@ export function ChartWidget() {
   const infoCandle = (hoverIdx !== null ? candles[hoverIdx] : undefined)
     ?? candles[candles.length - 1]
     ?? null;
+
+  /** One decimal count for every candle on screen, so the readout does not jitter between candles. */
+  const decimals = useMemo(
+    () => priceDecimals(candles.flatMap(c => [c.open, c.high, c.low, c.close])),
+    [candles],
+  );
 
   return (
     <section className="widget">
@@ -97,11 +112,12 @@ export function ChartWidget() {
           ))}
         </div>
       </div>
-      <OhlcBar candle={infoCandle} timeframe={timeframe} />
+      <OhlcBar candle={infoCandle} timeframe={timeframe} decimals={decimals} />
       <div className="widget__body chart__body">
         <ChartCanvas
           candles={candles}
           candlesPerView={viewport.candlesPerView}
+          binMs={BIN_MS[timeframe]}
           onZoom={onZoom}
           onPan={onPan}
           onHover={setHoverIdx}

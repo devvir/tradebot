@@ -11,8 +11,11 @@ import { OrdersWidget }       from '../widgets/Orders/OrdersWidget';
 import { PositionsWidget }    from '../widgets/Positions/PositionsWidget';
 import { RecentTradesWidget } from '../widgets/RecentTrades/RecentTradesWidget';
 import { TradeHistoryWidget } from '../widgets/TradeHistory/TradeHistoryWidget';
+import { get, set } from '../utils/storage';
 
-const COLS       = 12;
+const COLS        = 12;
+/** Grid rows that fill the container's height; the row height is derived from it. */
+const ROWS        = 12;
 const STORAGE_KEY = 'bitmex-widget-layout';
 
 const DEFAULT_LAYOUT: Layout = [
@@ -27,18 +30,22 @@ const DEFAULT_LAYOUT: Layout = [
   { i: 'tradehistory', x: 10, y: 8, w: 2, h: 4,  minW: 2, minH: 2 },
 ];
 
+/** True when `v` is a list of grid items: a string key and finite x/y/w/h each. */
+function isLayout(v: unknown): v is Layout {
+  return Array.isArray(v) && v.every(item => {
+    const it = item as Record<string, unknown> | null;
+
+    return typeof it === 'object' && it !== null
+      && typeof it.i === 'string'
+      && [it.x, it.y, it.w, it.h].every(Number.isFinite);
+  });
+}
+
+/** The saved layout, or DEFAULT_LAYOUT when none is saved or the saved value is not a layout. */
 function loadLayout(): Layout {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+  const stored = get<unknown>(STORAGE_KEY, null);
 
-    if (raw) {
-      return JSON.parse(raw) as Layout;
-    }
-  } catch {
-    // ignore corrupt storage
-  }
-
-  return DEFAULT_LAYOUT;
+  return isLayout(stored) ? stored : DEFAULT_LAYOUT;
 }
 
 export function WidgetGrid() {
@@ -54,7 +61,7 @@ export function WidgetGrid() {
     const observer = new ResizeObserver(([entry]) => {
       const h = entry.contentRect.height;
 
-      setRowHeight(Math.max(30, Math.floor(h / COLS)));
+      setRowHeight(Math.max(30, Math.floor(h / ROWS)));
     });
 
     observer.observe(containerRef.current);
@@ -64,7 +71,7 @@ export function WidgetGrid() {
 
   const onLayoutChange = useCallback((next: Layout) => {
     setLayout(next);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    set(STORAGE_KEY, next);
   }, []);
 
   return (

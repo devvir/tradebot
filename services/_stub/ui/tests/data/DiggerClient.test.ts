@@ -14,17 +14,17 @@ describe('DiggerClient.setClock', () => {
     const f = vi.fn().mockResolvedValueOnce({ ok: true } as Response);
     vi.stubGlobal('fetch', f);
 
-    const client = new DiggerClient('/replay');
+    const client = new DiggerClient('/replay-control');
 
     await client.setClock(1_700_000_000_000);
 
-    expect(f).toHaveBeenCalledWith('/replay/set-clock?timestamp=1700000000000', { method: 'POST' });
+    expect(f).toHaveBeenCalledWith('/replay-control/set-clock?timestamp=1700000000000', { method: 'POST' });
   });
 
   it('resolves on a 2xx response', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({ ok: true } as Response));
 
-    const client = new DiggerClient('/replay');
+    const client = new DiggerClient('/replay-control');
 
     await expect(client.setClock(1)).resolves.toBeUndefined();
   });
@@ -36,7 +36,7 @@ describe('DiggerClient.setClock', () => {
       text:   () => Promise.resolve(''),
     } as Response));
 
-    const client = new DiggerClient('/replay');
+    const client = new DiggerClient('/replay-control');
 
     await expect(client.setClock(1)).rejects.toThrow(/503/);
   });
@@ -48,7 +48,7 @@ describe('DiggerClient.setClock', () => {
       text:   () => Promise.resolve('clock too far in the future'),
     } as Response));
 
-    const client = new DiggerClient('/replay');
+    const client = new DiggerClient('/replay-control');
 
     await expect(client.setClock(1)).rejects.toThrow(/clock too far in the future/);
   });
@@ -60,7 +60,7 @@ describe('DiggerClient.setClock', () => {
       text:   () => Promise.reject(new Error('stream closed')),
     } as Response));
 
-    const client = new DiggerClient('/replay');
+    const client = new DiggerClient('/replay-control');
 
     await expect(client.setClock(1)).rejects.toThrow(/502/);
   });

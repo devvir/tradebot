@@ -36,7 +36,7 @@ function mount(list: Candle[] = [], candlesPerView = 80) {
 
   const ui = (l: Candle[], cpv: number) => (
     <div>
-      <ChartCanvas candles={l} candlesPerView={cpv} onZoom={onZoom} onPan={onPan} onHover={onHover} />
+      <ChartCanvas candles={l} candlesPerView={cpv} binMs={60_000} onZoom={onZoom} onPan={onPan} onHover={onHover} />
     </div>
   );
 

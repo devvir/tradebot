@@ -1,8 +1,9 @@
 /**
  * Per-environment wiring table. WS URLs for live/testnet are public BitMEX
  * endpoints (CORS-friendly, the browser can open them directly). REST goes
- * through the Vite dev-server proxy (`/api/v1` → `UI_REST_PROXY`, `/replay`
- * → `UI_REPLAY_HOST`) — same-origin to the browser, no CORS dance.
+ * through the Vite dev-server proxy (`/api/v1` → `UI_REST_PROXY`; `/replay`
+ * and the replay control API at `/replay-control` → the digger at
+ * `UI_DIGGER_HOST`) — same-origin to the browser, no CORS dance.
  *
  * The replay WS comes back through the same dev-server proxy (`ws: true`
  * forwarder) so it stays same-origin too; the actual scheme follows the page
@@ -32,9 +33,10 @@ export const ENV_CONFIGS: Record<Env, EnvConfig> = {
     headers:  { 'x-testnet': 'true' },
   },
   replay: {
-    restPath: '/replay',
+    restPath:    '/replay',
     /** Lazy so SSR / non-browser contexts don't blow up loading this module. */
     get wsUrl(): string { return replayWsUrl(); },
-    headers:  {},
+    headers:     {},
+    controlPath: '/replay-control',
   },
 };

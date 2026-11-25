@@ -25,10 +25,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
     return new BitmexClient(cfg.restPath, cfg.wsUrl, cfg.headers);
   }, [env]);
 
-  const digger = useMemo(
-    () => __REPLAY_ENABLED__ && env === 'replay' ? new DiggerClient('/replay-control') : null,
-    [env],
-  );
+  /** A replay control client for an env that has a control API, when the build enables replay. */
+  const digger = useMemo(() => {
+    const controlPath = ENV_CONFIGS[env].controlPath;
+
+    return __REPLAY_ENABLED__ && controlPath ? new DiggerClient(controlPath) : null;
+  }, [env]);
 
   /** Close the client's WS when this provider unmounts (e.g. env-switch via
    *  `key`). `destroy()` leaves the client usable — a later subscribe opens a

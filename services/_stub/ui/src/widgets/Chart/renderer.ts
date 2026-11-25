@@ -1,4 +1,5 @@
 import type { Candle, ChartDimensions } from './types';
+import { fmtPrice, MAX_PRICE_DECIMALS } from '../../utils/format';
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 
@@ -78,6 +79,9 @@ export function columnAt(g: ColumnGeometry, x: number): number | null {
  * ctx.setTransform() must have already been applied for DPR scaling before
  * this is called — this function always works in logical (CSS) pixels.
  *
+ * Candle timestamps are bin close times; `binMs` is the bin duration, used to
+ * label the time axis with bin open times.
+ *
  * Sections (easy to split into separate renderers as the chart grows):
  *   1. Clear
  *   2. Compute scales
@@ -92,6 +96,7 @@ export function renderChart(
   candles:        Candle[],
   dim:            ChartDimensions,
   candlesPerView: number,
+  binMs:          number,
   hoverIndex:     number | null = null,
 ): void {
   const { width, height } = dim;
@@ -163,7 +168,7 @@ export function renderChart(
 
   for (let p = firstPrice; p <= yMax; p += priceStep) {
     ctx.fillText(
-      formatPrice(p),
+      formatPrice(p, priceStep),
       width - MARGIN.right + 4,
       priceToY(p),
     );
@@ -214,7 +219,7 @@ export function renderChart(
 
   // ── 7. Time axis labels ───────────────────────────────────────────────────────
 
-  drawTimeAxis(ctx, candles, width, height, centerX);
+  drawTimeAxis(ctx, candles, binMs, width, height, centerX);
 
   // ── 8. Hover crosshair ────────────────────────────────────────────────────────
 
@@ -236,12 +241,13 @@ export function renderChart(
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
- * Draws time labels at the bottom. Labels are placed at candles where the
- * hour or day boundary changes, spaced at least 60px apart.
+ * Draws time labels at the bottom, at most one per 60px. Each label is its
+ * candle's bin open time: the date for a bin opening at midnight UTC, else HH:MM.
  */
 function drawTimeAxis(
   ctx:     CanvasRenderingContext2D,
   candles: Candle[],
+  binMs:   number,
   _width:  number,
   height:  number,
   centerX: (i: number) => number,
@@ -262,7 +268,7 @@ function drawTimeAxis(
       continue;
     }
 
-    const d    = new Date(candles[i].timestamp);
+    const d    = new Date(new Date(candles[i].timestamp).getTime() - binMs);
     const mins = d.getUTCMinutes();
     const hrs  = d.getUTCHours();
 
@@ -286,11 +292,17 @@ function niceStep(range: number, ticks: number): number {
   return nice * mag;
 }
 
-function formatPrice(p: number): string {
-  const decimals = p < 10 ? 4 : p < 100 ? 2 : 0;
+/**
+ * Axis label for price `p` on an axis whose labels are `step` apart, with just
+ * enough fraction digits to tell neighbours apart (step 0.2 → 1, step 5 → 0).
+ */
+function formatPrice(p: number, step: number): string {
+  const decimals = Math.min(MAX_PRICE_DECIMALS, Math.max(0, -Math.floor(Math.log10(step))));
 
-  return p.toLocaleString('en-US', {
-    minimumFractionDigits:  decimals,
-    maximumFractionDigits:  decimals,
-  });
+  return fmtPrice(p, decimals);
 }
+
+// ── Test-only exports ─────────────────────────────────────────────────────────
+
+export const _test_niceStep    = niceStep;
+export const _test_formatPrice = formatPrice;

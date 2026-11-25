@@ -5,9 +5,11 @@ export type Env = 'live' | 'testnet' | 'replay';
 
 /** Per-environment wiring — where REST/WS go and what headers REST needs. */
 export interface EnvConfig {
-  restPath: string;
-  wsUrl:    string;
-  headers:  Record<string, string>;
+  restPath:     string;
+  wsUrl:        string;
+  headers:      Record<string, string>;
+  /** Base path of the replay control API; set only for an env that replays. */
+  controlPath?: string;
 }
 
 export interface EnvContextValue {

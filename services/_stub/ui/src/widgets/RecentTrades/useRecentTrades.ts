@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
 import { useBitmex } from '../../data/DataProvider';
 import type { Trade } from '../../types';
+import { useSymbol } from '../../utils/useSymbol';
 
 export interface TaggedTrade {
   uid:   number;
@@ -21,7 +21,7 @@ const DEFAULT_LIMIT = 100;
  * Each entry carries a locally-assigned uid used as its React key.
  */
 export function useRecentTrades(limit = DEFAULT_LIMIT): TaggedTrade[] {
-  const { symbol = 'XBTUSD' } = useParams<{ symbol: string }>();
+  const symbol = useSymbol();
   const bitmex  = useBitmex();
   const counter = useRef(0);
   const [trades, setTrades] = useState<TaggedTrade[]>([]);

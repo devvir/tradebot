@@ -1,5 +1,6 @@
-import { useParams } from 'react-router-dom';
 import { useRecentTrades } from './useRecentTrades';
+import { fmtPrice, priceDecimals, quoteCurrency } from '../../utils/format';
+import { useSymbol } from '../../utils/useSymbol';
 
 // Paths from BitMEX's own SVG markup (viewBox 0 0 32 32)
 const PATH_UP   = 'M16 4L6 14 7.41 15.41 15 7.83 15 28 17 28 17 7.83 24.59 15.41 26 14 16 4z';
@@ -37,16 +38,11 @@ function formatTime(timestamp: string): string {
   return new Date(timestamp).toLocaleTimeString('en-US', { hour12: false });
 }
 
-function quoteCurrency(symbol: string): string {
-  if (symbol.endsWith('USDT')) return 'USDT';
-  if (symbol.endsWith('USD'))  return 'USD';
-  if (symbol.endsWith('XBT'))  return 'XBT';
-  return symbol.slice(-3);
-}
-
+/** Prices share one decimal count: the most any listed trade's price needs. */
 export function RecentTradesWidget() {
-  const { symbol = 'XBTUSD' } = useParams<{ symbol: string }>();
-  const trades = useRecentTrades();
+  const symbol   = useSymbol();
+  const trades   = useRecentTrades();
+  const decimals = priceDecimals(trades.map(({ trade }) => trade.price));
 
   return (
     <section className="widget">
@@ -76,7 +72,7 @@ export function RecentTradesWidget() {
                     <span className="recenttrades__tick-slot">
                       <TickArrow direction={trade.tickDirection} />
                     </span>
-                    {trade.price.toLocaleString('en-US', { minimumFractionDigits: 1 })}
+                    {fmtPrice(trade.price, decimals)}
                   </td>
                   <td className="recenttrades__col--size">{trade.size.toLocaleString()}</td>
                   <td className="recenttrades__time">{formatTime(trade.timestamp)}</td>

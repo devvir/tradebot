@@ -6,6 +6,7 @@ import { Header }       from './components/Header';
 import { ContractBar }  from './components/ContractBar';
 import { Sidebar }      from './components/Sidebar';
 import { WidgetGrid }   from './components/WidgetGrid';
+import { DEFAULT_SYMBOL } from './utils/useSymbol';
 
 function BottomBar() {
   return (
@@ -59,7 +60,7 @@ function MarketView() {
 export default function App() {
   return (
     <Routes>
-      <Route path="/"         element={<Navigate to="/XBTUSD" replace />} />
+      <Route path="/"         element={<Navigate to={`/${DEFAULT_SYMBOL}`} replace />} />
       <Route path="/:symbol"  element={<MarketView />} />
     </Routes>
   );

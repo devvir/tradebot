@@ -40,6 +40,26 @@ describe('OrderbookWidget renders book data', () => {
     expect(bar?.textContent).toMatch(/0\.5/);
   });
 
+  it('prints sub-unit prices and the spread with the digits the book quotes', () => {
+    const Wrapper = makeBitmexWrapper(fake);
+    const { container } = render(<Wrapper><OrderbookWidget /></Wrapper>);
+
+    act(() => {
+      fake.emit<OrderBookLevel>('orderBookL2_25:XBTUSD', 'partial', [
+        { symbol: 'XBTUSD', id: 1, side: 'Sell', size: 1, price: 0.5124 },
+        { symbol: 'XBTUSD', id: 2, side: 'Sell', size: 1, price: 0.5123 },
+        { symbol: 'XBTUSD', id: 3, side: 'Buy',  size: 1, price: 0.5121 },
+        { symbol: 'XBTUSD', id: 4, side: 'Buy',  size: 1, price: 0.512  },
+      ]);
+    });
+
+    const bar    = container.querySelectorAll('.orderbook__price-bar span');
+    const prices = [...container.querySelectorAll('td.orderbook__col--price')].map(td => td.textContent);
+
+    expect([...bar].map(el => el.textContent)).toEqual(['0.5123', '0.0002 (0.039%)', '0.5121']);
+    expect(prices.sort()).toEqual(['0.5120', '0.5121', '0.5123', '0.5124']);
+  });
+
   it('renders quote currency derived from symbol', () => {
     const Wrapper = makeBitmexWrapper(fake);
     const { container } = render(<Wrapper><OrderbookWidget /></Wrapper>);
@@ -92,28 +112,59 @@ describe('RecentTradesWidget renders trade rows', () => {
     const ticks = container.querySelectorAll('.recenttrades__tick');
     expect(ticks).toHaveLength(2);
 
-    /** Prices appear in the rendered output. */
-    expect(container.textContent).toMatch(/68,940/);
+    /** Prices share the decimals the listed trades need (whole numbers here). */
+    const prices = [...container.querySelectorAll('.recenttrades__price')].map(td => td.textContent);
+
+    expect(prices.sort()).toEqual(['68,939', '68,939', '68,940']);
   });
 });
 
-// ── ChartWidget — OHLC bar reflects latest candle ─────────────────────────────
+// ── ChartWidget — OHLC bar reflects the running candle ────────────────────────
+
+const ohlcText = (container: HTMLElement) => container.querySelector('.chart__ohlc')?.textContent;
+
+const trade = (timestamp: string, price: number, size = 1): Trade => ({
+  timestamp, symbol: 'XBTUSD', side: 'Buy', size, price, tickDirection: 'PlusTick',
+  trdMatchID: `m-${timestamp}-${price}`, grossValue: 1, homeNotional: 1, foreignNotional: 1,
+});
 
 describe('ChartWidget renders the OHLC bar from data', () => {
-  it('shows O/H/L/C values once a tradeBin frame arrives', async () => {
-    const Wrapper = makeBitmexWrapper(fake);
-
-    /** Pre-stage the REST fetch with one closed candle. */
+  beforeEach(() => {
+    /** One closed candle, the 00:00–00:01 bin (stamped with its close time). */
     fake.fetchMock.mockResolvedValue([
       {
         timestamp: '2024-01-01T00:01:00Z', symbol: 'XBTUSD',
-        open: 100, high: 110, low: 95, close: 105, volume: 1_000,
+        open: 100, high: 110, low: 95, close: 105.5, volume: 1_000,
       } satisfies TradeBin,
     ]);
+  });
 
+  it('shows the running candle seeded from the REST close', async () => {
+    const Wrapper = makeBitmexWrapper(fake);
     const { container } = render(<Wrapper><ChartWidget /></Wrapper>);
 
-    /** Allow the REST promise + state updates to flush. */
-    await waitFor(() => expect(container.textContent).toMatch(/100|110|95|105/));
+    /** The running bin opens at 00:01 at the closed candle's close; one decimal, as 105.5 needs. */
+    await waitFor(() => expect(ohlcText(container)).toBe(
+      'Jan 1, 00:01O 105.5H 105.5L 105.5C 105.5Vol 0',
+    ));
+  });
+
+  it('updates close, high, low and volume as trades arrive in the running bin', async () => {
+    const Wrapper = makeBitmexWrapper(fake);
+    const { container } = render(<Wrapper><ChartWidget /></Wrapper>);
+
+    await waitFor(() => expect(ohlcText(container)).toMatch(/C 105\.5/));
+
+    act(() => { fake.emit<Trade>('trade:XBTUSD', 'insert', [trade('2024-01-01T00:01:10Z', 107, 3)]); });
+
+    await waitFor(() => expect(ohlcText(container)).toBe(
+      'Jan 1, 00:01O 105.5H 107.0L 105.5C 107.0Vol 3',
+    ));
+
+    act(() => { fake.emit<Trade>('trade:XBTUSD', 'insert', [trade('2024-01-01T00:01:20Z', 104, 2)]); });
+
+    await waitFor(() => expect(ohlcText(container)).toBe(
+      'Jan 1, 00:01O 105.5H 107.0L 104.0C 104.0Vol 5',
+    ));
   });
 });

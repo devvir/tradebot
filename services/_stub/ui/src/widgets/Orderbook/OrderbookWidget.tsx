@@ -1,17 +1,7 @@
-import { useParams } from 'react-router-dom';
 import { useOrderbook } from './useOrderbook';
 import type { OrderbookRow } from './useOrderbook';
-
-function quoteCurrency(symbol: string): string {
-  if (symbol.endsWith('USDT')) return 'USDT';
-  if (symbol.endsWith('USD'))  return 'USD';
-  if (symbol.endsWith('XBT'))  return 'XBT';
-  return symbol.slice(-3);
-}
-
-function fmtPrice(price: number): string {
-  return price.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-}
+import { fmtPrice, priceDecimals, quoteCurrency } from '../../utils/format';
+import { useSymbol } from '../../utils/useSymbol';
 
 function fmtSize(size: number): string {
   return size.toLocaleString();
@@ -26,7 +16,12 @@ interface SideBySideProps {
   currency: string;
 }
 
+/**
+ * Prices and the spread share one decimal count: the most any visible level's
+ * price needs, so the columns line up and sub-unit instruments keep their digits.
+ */
 function SideBySideLayout({ asks, bids, bestAsk, bestBid, spread, currency }: SideBySideProps) {
+  const decimals  = priceDecimals([...asks, ...bids].map(row => row.price));
   const spreadPct = bestAsk && bestBid
     ? ((spread / bestAsk) * 100).toFixed(3)
     : '—';
@@ -35,13 +30,13 @@ function SideBySideLayout({ asks, bids, bestAsk, bestBid, spread, currency }: Si
     <>
       <div className="orderbook__price-bar">
         <span className="orderbook__price-bar__ask">
-          {bestAsk ? fmtPrice(bestAsk) : '—'}
+          {bestAsk ? fmtPrice(bestAsk, decimals) : '—'}
         </span>
         <span className="orderbook__price-bar__spread">
-          {spread > 0 ? `${spread.toFixed(1)} (${spreadPct}%)` : '—'}
+          {spread > 0 ? `${fmtPrice(spread, decimals)} (${spreadPct}%)` : '—'}
         </span>
         <span className="orderbook__price-bar__bid">
-          {bestBid ? fmtPrice(bestBid) : '—'}
+          {bestBid ? fmtPrice(bestBid, decimals) : '—'}
         </span>
       </div>
 
@@ -60,7 +55,7 @@ function SideBySideLayout({ asks, bids, bestAsk, bestBid, spread, currency }: Si
                 <tr key={row.price} className="orderbook__row--ask">
                   <td className="orderbook__col--total">{fmtSize(row.total)}</td>
                   <td className="orderbook__col--size">{fmtSize(row.size)}</td>
-                  <td className="orderbook__col--price orderbook__price--ask">{fmtPrice(row.price)}</td>
+                  <td className="orderbook__col--price orderbook__price--ask">{fmtPrice(row.price, decimals)}</td>
                 </tr>
               ))}
             </tbody>
@@ -79,7 +74,7 @@ function SideBySideLayout({ asks, bids, bestAsk, bestBid, spread, currency }: Si
             <tbody>
               {bids.map(row => (
                 <tr key={row.price} className="orderbook__row--bid">
-                  <td className="orderbook__col--price orderbook__price--bid">{fmtPrice(row.price)}</td>
+                  <td className="orderbook__col--price orderbook__price--bid">{fmtPrice(row.price, decimals)}</td>
                   <td className="orderbook__col--size">{fmtSize(row.size)}</td>
                   <td className="orderbook__col--total">{fmtSize(row.total)}</td>
                 </tr>
@@ -93,7 +88,7 @@ function SideBySideLayout({ asks, bids, bestAsk, bestBid, spread, currency }: Si
 }
 
 export function OrderbookWidget() {
-  const { symbol = 'XBTUSD' } = useParams<{ symbol: string }>();
+  const symbol = useSymbol();
   const { asks, bids, bestAsk, bestBid, spread } = useOrderbook();
   const currency = quoteCurrency(symbol);
   const loading  = asks.length === 0 && bids.length === 0;

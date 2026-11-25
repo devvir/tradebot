@@ -1,8 +1,8 @@
-import { useParams } from 'react-router-dom';
 import type { Candle, Timeframe, ViewportState } from './types';
 import { BIN_MS } from './types';
 import { useClosedCandles } from './useClosedCandles';
 import { useRunningCandle } from './useRunningCandle';
+import { useSymbol } from '../../utils/useSymbol';
 
 /**
  * Combines the closed-candle buffer with the running candle.
@@ -19,7 +19,7 @@ export function useChartCandles(
   timeframe: Timeframe,
   viewport:  ViewportState,
 ): { closed: Candle[]; running: Candle | null; liveTailMs: number | null } {
-  const { symbol = 'XBTUSD' } = useParams<{ symbol: string }>();
+  const symbol = useSymbol();
 
   const { candles: closed, liveTailMs } = useClosedCandles(symbol, timeframe, viewport);
   const seed    = closed.length > 0 ? closed[closed.length - 1] : null;

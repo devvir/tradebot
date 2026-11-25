@@ -86,12 +86,13 @@ describe('DataProvider — digger is gated on env + __REPLAY_ENABLED__', () => {
     expect(result.current).toBeNull();
   });
 
-  it('returns a DiggerClient when env is replay and replay is enabled', () => {
+  it('returns a DiggerClient on the env\'s control path when env is replay and replay is enabled', () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify('replay'));
 
     const { result } = renderHook(() => useDigger(), { wrapper });
 
     expect(result.current).not.toBeNull();
+    expect((result.current as unknown as { baseUrl: string }).baseUrl).toBe('/replay-control');
   });
 
   it('returns null when env is replay but __REPLAY_ENABLED__ is false', () => {

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
 import { useBitmex } from '../../data/DataProvider';
 import type { OrderBookLevel } from '../../types';
+import { useSymbol } from '../../utils/useSymbol';
 
 export interface OrderbookRow {
   price: number;
@@ -91,7 +91,7 @@ function derive(book: Map<string, OrderBookLevel>): Orderbook {
  * triggers re-renders. derive() is called at render time (no intermediate copy).
  */
 export function useOrderbook(): Orderbook {
-  const { symbol = 'XBTUSD' } = useParams<{ symbol: string }>();
+  const symbol = useSymbol();
   const bitmex = useBitmex();
   const book   = useRef(new Map<string, OrderBookLevel>());
   const [, setVersion] = useState(0);
