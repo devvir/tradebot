@@ -1,9 +1,11 @@
 # Patterns match from the context root: anything meant to match at any depth
 # needs a `**/` prefix.
 
-# Version control
+# Version control. The prod image copies each workspace package as it would be
+# published, without what an ignore file of the package names (a .gitignore
+# naming dist/ among them), so no .gitignore enters the context
 **/.git
-.gitignore
+**/.gitignore
 .gitattributes
 
 # Environment & secrets

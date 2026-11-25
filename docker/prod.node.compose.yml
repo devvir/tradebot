@@ -1,0 +1,12 @@
+# What a Node.js service's compose file takes on under APP_ENV=prod (and with
+# APP_ENV unset), through
+#
+#   extends:
+#     file: ../../../docker/${APP_ENV:-prod}.node.compose.yml
+#     service: node
+#
+# Nothing: the prod image (prod.node.Dockerfile) carries the built service, and
+# no part of the checkout is mounted into it.
+
+services:
+  node: {}

@@ -17,6 +17,13 @@
 
 services:
   stocker:
+    # APP_ENV (default prod) picks the image below and what the service mounts
+    # for it: under dev, the repository root at /live, where the dev image runs
+    # the host's own build; under prod, nothing, as the image carries the service.
+    extends:
+      file: ../../../docker/${APP_ENV:-prod}.node.compose.yml
+      service: node
+
     build:
       context: ../../..
       dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
@@ -67,7 +74,6 @@ services:
     user: "1000:1000"
 
     volumes:
-      - ../../../:/live
       - ${DATA_ARCHIVES_DIR:-${DATA_DIR:?DATA_DIR is not defined}/archives}:/data/archives:ro
       - ${DATA_VAULT_DIR:-${DATA_DIR:?DATA_DIR is not defined}/vault}:/data/vault
 

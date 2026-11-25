@@ -1,0 +1,14 @@
+# What a Node.js service's compose file takes on under APP_ENV=dev, through
+#
+#   extends:
+#     file: ../../../docker/${APP_ENV:-prod}.node.compose.yml
+#     service: node
+#
+# The dev image (dev.node.Dockerfile) holds no code of the workspace: it runs
+# what the host's last build produced, from the repository root mounted at
+# /live. Paths here resolve from this directory, so `..` is that root.
+
+services:
+  node:
+    volumes:
+      - ..:/live

@@ -3,38 +3,53 @@
 ARG NODE_VERSION=22.23-alpine3.24
 
 # ============================================================================
-# Builder Stage - Compile TypeScript
+# Builder Stage - Compile TypeScript, then deploy one service
 # ============================================================================
 FROM node:${NODE_VERSION} AS builder
-
-WORKDIR /app
-
-# Copy entire monorepo (respects .dockerignore)
-COPY . .
 
 # Enable corepack and install pnpm
 RUN corepack enable
 
-# Install all dependencies (including dev dependencies for build), exactly as
-# the lockfile pins them: a lockfile out of step with package.json fails here
-RUN CI=true pnpm install --frozen-lockfile
+ENV CI=true
+
+WORKDIR /app
+
+# Dependencies first, from the lockfile alone: every package it pins is fetched
+# into the store here, and this layer is reused until the lockfile, the
+# workspace settings or the root manifest change
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm fetch
+
+# Copy entire monorepo (respects .dockerignore)
+COPY . .
+
+# Install all dependencies (including dev dependencies for build) from the
+# store, exactly as the lockfile pins them: a lockfile out of step with
+# package.json fails here
+RUN pnpm install --frozen-lockfile --offline
 
 # Build argument to specify which service to build
 ARG SERVICE_NAME
 RUN test -n "$SERVICE_NAME" || (echo "SERVICE_NAME build arg is required" && exit 1)
 
-# Build all packages and services from root
-RUN pnpm run build
+# Build the service and every workspace package it depends on
+RUN pnpm --filter "{./services/${SERVICE_NAME}}..." run build
 
 # Fail the build, rather than the container, when the entrypoint was not produced
 RUN test -f services/${SERVICE_NAME}/dist/src/index.js \
   || (echo "missing dist/src/index.js for ${SERVICE_NAME}" && exit 1)
 
+# The service on its own: its files, its production dependencies, and a copy of
+# each workspace package it depends on, built, in its own node_modules. Each
+# copy holds what the package would publish, which leaves out whatever an ignore
+# file of its own names: .dockerignore keeps every .gitignore out of the context
+RUN pnpm --filter "{./services/${SERVICE_NAME}}" deploy --prod /deploy
+
 # Everything the runtime user reads must be readable whatever the host's umask
-RUN chmod -R a+rX /app
+RUN chmod -R a+rX /deploy
 
 # ============================================================================
-# Runtime Stage - the built workspace on a plain node image
+# Runtime Stage - the deployed service on a plain node image
 # ============================================================================
 FROM node:${NODE_VERSION}
 
@@ -51,11 +66,8 @@ RUN apk add --no-cache dumb-init curl
 
 WORKDIR /app
 
-# Copy the pre-built workspace (preserves structure needed for relative imports)
-COPY --from=builder /app .
-
-# Set working directory to service
-WORKDIR /app/services/${SERVICE_NAME}
+# Copy the deployed service
+COPY --from=builder /deploy .
 
 # Expose health check port (standard across all services)
 EXPOSE 3000

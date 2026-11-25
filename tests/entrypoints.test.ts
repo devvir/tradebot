@@ -1,8 +1,8 @@
 /**
  * Every way a service is started must name the file the compiler emits for
  * `src/index.ts`: the package's `main`, its `start` script, the prod image's
- * CMD (run from the service directory) and the dev image's entrypoint (run from
- * the workspace root).
+ * CMD (run from the directory the service is deployed into) and the dev image's
+ * entrypoint (run from the workspace root, which the dev compose mounts).
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, posix } from 'node:path';
@@ -28,6 +28,31 @@ const emittedEntry = (service: string): string => {
   const rootDir = posix.normalize(compilerOptions.rootDir ?? '.');
   return posix.join(outDir, posix.relative(rootDir, 'src/index.ts')).replace(/\.ts$/, '.js');
 };
+
+/** The last `WORKDIR` of a Dockerfile's final stage. */
+const finalWorkdir = (dockerfile: string): string | undefined =>
+  dockerfile.split(/^FROM /m).at(-1)?.match(/^WORKDIR (\S+)$/gm)?.at(-1)?.slice('WORKDIR '.length);
+
+describe('the images\' working directories', () => {
+  it('runs the prod image from the directory the service is deployed into', () => {
+    const dockerfile = readFileSync(join(root, 'docker', 'prod.node.Dockerfile'), 'utf8');
+    const deployed = dockerfile.match(/^RUN pnpm .* deploy --prod (\S+)$/m)?.[1];
+    const copied = dockerfile.split(/^FROM /m).at(-1)?.match(/^COPY --from=builder (\S+) \.$/m)?.[1];
+
+    expect(deployed).toBeDefined();
+    expect(copied).toBe(deployed);
+    expect(finalWorkdir(dockerfile)).toBe('/app');
+  });
+
+  it('runs the dev image from where the dev compose mounts the workspace root', () => {
+    const dockerfile = readFileSync(join(root, 'docker', 'dev.node.Dockerfile'), 'utf8');
+    const compose = readFileSync(join(root, 'docker', 'dev.node.compose.yml'), 'utf8');
+    const mounted = compose.match(/^\s*- \.\.:(\S+)$/m)?.[1];
+
+    expect(mounted).toBeDefined();
+    expect(finalWorkdir(dockerfile)).toBe(mounted);
+  });
+});
 
 describe('service entrypoints', () => {
   it('finds the node services', () => {

@@ -41,7 +41,7 @@ const required = {
 interface Port { host_ip?: string; target: number; published?: string }
 interface Service {
   image?: string;
-  build?: { args?: Record<string, string> };
+  build?: { dockerfile?: string; args?: Record<string, string> };
   ports?: Port[];
   command?: string[];
   environment?: Record<string, string>;
@@ -134,6 +134,38 @@ describe.skipIf(!hasCompose)('compose files', () => {
         .map(([name]) => name);
 
       expect(unrotated).toEqual([]);
+    });
+  });
+
+  describe('the checkout', () => {
+    /** `service: target` for every mount of the repository root, or at /live. */
+    const checkoutMounts = (env: Record<string, string | undefined>) => (file: string): string[] =>
+      Object.entries(services(file, { ...required, ...env }))
+        .flatMap(([name, service]) => (service.volumes ?? [])
+          .filter((volume) => volume.source === root || volume.target === '/live')
+          .map((volume) => `${name}: ${volume.target}`));
+
+    /** Every mount but the checkout's, by service. */
+    const otherMounts = (file: string, env: Record<string, string | undefined>): Record<string, Array<[string, string]>> =>
+      Object.fromEntries(Object.entries(services(file, { ...required, ...env })).map(([name, service]) => [name,
+        (service.volumes ?? []).filter((volume) => volume.target !== '/live').map((volume) => [volume.source ?? '', volume.target])]));
+
+    it.each([['unset', undefined], ['prod', 'prod']])('is mounted nowhere with APP_ENV %s', (_label, value) => {
+      expect(files.flatMap(checkoutMounts({ APP_ENV: value }))).toEqual([]);
+    });
+
+    it('is mounted at /live into every service the dev node image runs, with APP_ENV dev', () => {
+      const dev = files.flatMap((file) => Object.entries(services(file, { ...required, APP_ENV: 'dev' }))
+        .filter(([, service]) => service.build?.dockerfile === 'docker/dev.node.Dockerfile')
+        .map(([name, service]) => [name, (service.volumes ?? [])
+          .filter((volume) => volume.source === root).map((volume) => volume.target)]));
+
+      expect(dev.length).toBeGreaterThan(0);
+      expect(dev).toEqual(dev.map(([name]) => [name, ['/live']]));
+    });
+
+    it.each(files)('leaves every other mount of %s the same in dev and prod', (file) => {
+      expect(otherMounts(file, { APP_ENV: 'dev' })).toEqual(otherMounts(file, { APP_ENV: 'prod' }));
     });
   });
 

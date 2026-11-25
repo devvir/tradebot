@@ -16,6 +16,13 @@
 
 services:
   catalog-ui:
+    # APP_ENV (default prod) picks the image below and what the service mounts
+    # for it: under dev, the repository root at /live, where the dev image runs
+    # the host's own build; under prod, nothing, as the image carries the service.
+    extends:
+      file: ../../../docker/${APP_ENV:-prod}.node.compose.yml
+      service: node
+
     build:
       context: ../../..
       dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
@@ -48,9 +55,6 @@ services:
       TZ:        ${TZ:-UTC}
 
     user: "1000:1000"
-
-    volumes:
-      - ../../../:/live
 
     ports:
       # The page, on a known port: this is the service in the module a person
