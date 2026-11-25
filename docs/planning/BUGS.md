@@ -205,3 +205,27 @@ has it or because its destination exchange routes it to no queue, is not retried
 by then. The same holds for a retry copy and a dead letter. Delivery is at most once on those faults.
 
 **How to check:** `grep -rn createConfirmChannel packages/rabbitmq/src` finds nothing.
+
+### Prospector: a preamble backfill cut short loses what it found, and its series is not walked again
+
+Seen:
+
+- The backfill asks each period with `fetchHead(adapter, url(...))` and no stop signal (`backfill`,
+  `services/prospector/src/backfill.ts:72`), and `preamble` itself takes none
+  (`services/prospector/src/preamble.ts:31`). A `Retry-After` within the venue's ceiling is waited
+  out with that signal (`obey` and `waitOut`, `services/prospector/src/http.ts:391-408` and `:425`),
+  so a pause does not end the wait; the backfill goes on once it is over.
+- Every file the backfill finds is kept in `found` and written by one `putFiles` after its loop
+  (`backfill.ts:113`). A `fetchHead` that throws (a `StoodDown` for a `Retry-After` past the ceiling,
+  or its 5 attempts spent, `http.ts:224-258`) leaves the loop before that, and none of what was
+  found is written.
+- The series row and its tip are written before the backfill runs (`floor` and `recordSeries`,
+  `preamble.ts:178-180`), so the series is `active` from then. A later preamble skips an instrument
+  with an `active` series (`preamble.ts:116`) and walks only the series this pass opened
+  (`walking`, `preamble.ts:247`), and generation does not ask below a tip.
+
+So a backfill that ends early leaves its series' history below the floor uncatalogued, and nothing
+seen here asks for it again. Not checked: whether a later walk of the venue reaches those files.
+
+**How to check:** read `backfill` in `services/prospector/src/backfill.ts`: the only write is the
+`putFiles` after the loop, and `fetchHead` is called with two arguments.

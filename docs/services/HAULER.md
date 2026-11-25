@@ -113,7 +113,7 @@ plain MD5 (a multipart ETag, or none) is not evidence either way, and the size a
 | already on disk | yes | **touched**, and reported as downloaded |
 | already on disk | no | **fetched again**; the file on disk stays until a verified replacement is in hand |
 | just fetched | yes | downloaded; whatever was at its path is **moved aside** as `.bak` |
-| just fetched | no | **reported as a mismatch**, with the size and MD5 it came as, and held in scratch |
+| just fetched | no | **reported as a mismatch**, with the size and MD5 it came as, held in scratch, and **fetched less often** while listed the same |
 
 **What is stored is the bytes as served.** Hauler asks with `accept-encoding: identity` and decodes
 nothing; redirects are followed, five at most. A connection silent for five minutes fails.
@@ -129,6 +129,16 @@ nothing is fetched; not, it is dropped and the file fetched like any other. What
 memory, by venue and key. Everything held of a venue is dropped after a walk that found nothing owed,
 and a download held two walks ago or earlier, its file not listed since, after any walk not cut short
 by a stop or a low volume.
+
+**A file the venue keeps serving unlike its own listing is asked for less often.** The first walk a
+file is fetched and does not match, hauler notes the size and ETag it is listed at. While it is
+listed at that same size and ETag it is fetched again on each of the next 3 walks of its venue, and
+after that only on every 10th walk since the first, whether or not a copy is on disk. On the walks
+between it is not asked for at all: it stays owed, is left out of the report, and the walk's log
+counts it as `unreached`. A listing at another size or ETag starts it afresh, fetched at once; a file
+downloaded, found on disk agreeing, or whose held download is given its place is forgotten. What is noted is in memory only, by
+venue and key, and starts empty with the process. Nothing about what is stored changes: a fetch on a
+due walk is checked, held and reported like any other.
 
 **Nothing appears at its final path until it has been checked.** A download lands in `.hauler-tmp`
 at the archives' root, under a name that is a digest of its destination, and is renamed into place

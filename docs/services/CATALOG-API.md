@@ -342,8 +342,9 @@ any bucket.
 
 Files are named by Key: `downloaded` and `failed` are lists of keys, and `mismatched` a list of a
 `Key` with the `Size` (a whole number) and `ETag` the client found, each optional. A list left out is
-empty. A report holds at most 10,000 keys, and its body at most 5 MB. It is read through the lens the
-files were listed through, sent as `x-catalog-lens`.
+empty. A report holds at most 10,000 keys, of which at most 1,000 failed and mismatched together, and
+its body at most 5 MB. It is read through the lens the files were listed through, sent as
+`x-catalog-lens`.
 
 **`200` where every key was settled, `207 Multi-Status` where some were not**, with only those in the
 body, as S3's quiet `DeleteObjects` answers:
@@ -364,13 +365,17 @@ of its own, in S3's `Error` shape:
 | `400 MalformedReport` | the body is not a report |
 | `400 InvalidArgument` | it names more than 10,000 keys |
 | `400 ReportRefused` | prospector refused the report as it stands, with what it said; sending it again is refused again |
+| `413 TooManyToConfirm` | it names more than 1,000 failed and mismatched keys, together; nothing of it is settled, and the same keys sent as smaller reports are |
 | `422 NoSuchLens` | the lens it reads through does not exist |
 | `502 CollectorError` | prospector failed settling it |
 | `502 ServiceUnavailable` | prospector did not answer, or not in time |
 
 **A report is prospector's to settle.** The catalog resolves each key to its file, checks it against
 the lens, and hands the rest to prospector; the answer comes once prospector has settled them.
-Settling is idempotent: a file reported downloaded twice is recorded once.
+Settling is idempotent: a file reported downloaded twice is recorded once. Each failed or mismatched
+file is one prospector confirms with its venue before it answers, so those are what settling spends
+its time on; how long the catalog waits is sized for 1,000 of them, a listing's largest page, so the
+report of any page fits under the cap.
 
 **A report that is not settled changes nothing.** Its files stay pending, are listed again, and can be
 reported again. Nothing ties a report to a download made from a listing, so a file is reported
@@ -410,6 +415,11 @@ rule's position and what is wrong — see
 **Writes are stored by prospector.** A write that passes the catalog's checks is handed on, and the
 answer is prospector's own status and body: the lens, or its refusal (`404`, `409`) as it is. Where
 prospector does not answer, the write is a `502`.
+
+**A create is never sent twice**, so where its answer is lost prospector may have stored the lens all
+the same. Where prospector gives no answer, or answers `409`, the catalog reads the lens it holds under
+that slug: where that is, in name, note and definition, the lens the create sent, the create is
+answered `201` with it. Otherwise the answer is the `502` or the `409` as above.
 
 ### What a lens costs
 
@@ -474,7 +484,7 @@ holds is the same whatever lenses exist.
 | `401` | the token is wrong or absent |
 | `404` | no such venue, no such lens addressed in the path, or a path no route answers |
 | `409` | a lens address already taken |
-| `413` | a body over 256 KB, or over 5 MB for a report |
+| `413` | a body over 256 KB, or over 5 MB for a report; a report of more than 1,000 failed and mismatched keys (`TooManyToConfirm`) |
 | `422` | a lens named in `x-catalog-lens` or `lens=` that does not exist, or a `lens` parameter given twice (`NoSuchLens`); a `partition=` that names no partition (`NoSuchPartition`) |
 | `501` | a listing asked with a `delimiter` |
 | `502` | prospector did not answer a lens write, or answered it with a `5xx` that is not JSON; did not answer, or failed, a report |
