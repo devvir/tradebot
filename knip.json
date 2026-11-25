@@ -6,6 +6,7 @@
   ],
   "ignoreWorkspaces": ["packages/*", "dx"],
   "ignoreBinaries": ["truncate"],
+  "ignoreDependencies": ["nx"],
   "workspaces": {
     ".": {
       "entry": ["tsconfig.json"]
@@ -14,11 +15,14 @@
       "project": ["src/**/*.{ts,tsx}", "tests/**/*.{ts,tsx}"]
     },
     "services/stocker": {
-      "entry": ["src/index.ts", "src/containers/worker.ts"],
+      "entry": ["src/containers/worker.ts"],
+      "project": ["src/**/*.{ts,tsx}", "tests/**/*.{ts,tsx}"]
+    },
+    "services/prospector": {
+      "entry": ["src/transport.worker.ts"],
       "project": ["src/**/*.{ts,tsx}", "tests/**/*.{ts,tsx}"]
     },
     "services/catalog-ui": {
-      "entry": ["src/index.ts", "web/main.tsx", "vite.config.ts"],
       "project": ["src/**/*.ts", "web/**/*.{ts,tsx}", "tests/**/*.{ts,tsx}"]
     },
     "shared/**": {

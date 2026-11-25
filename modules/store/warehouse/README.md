@@ -24,11 +24,14 @@ line in the vault's own ledger.
 Pre-create the vault owned by uid 1000:
 
 ```bash
-sudo mkdir -p "$DATA_VAULT_DIR" && sudo chown 1000:1000 "$DATA_VAULT_DIR"
+dir="${DATA_VAULT_DIR:-$DATA_DIR/vault}"
+sudo mkdir -p "$dir" && sudo chown 1000:1000 "$dir"
 ```
 
-Both are set once, in the monorepo's root `.env`, so hauler and stocker cannot disagree about where
-the archives are. Set either in this module's `.env` only to move it for this module alone: the
+Both default under `DATA_DIR`, to `${DATA_DIR}/archives` and `${DATA_DIR}/vault`. `DATA_DIR` is set
+once, in the monorepo's root `.env`, so hauler and stocker cannot disagree about where the archives
+are. Compose refuses to start stocker while `DATA_DIR` is unset and either variable is too. Set either in the root
+`.env` to move it for every module, or in this module's `.env` to move it for this module alone: the
 module's `.env` is read after the root one. What the vault root holds is in the
 [service README](../../../services/stocker/README.md#storage).
 

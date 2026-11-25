@@ -28,21 +28,23 @@ Consumers outside the module reach the catalog on `CATALOG_PORT`; every endpoint
 
 ## Configuration
 
-Copy `.env.example` to `.env` and adjust. The module also reads the root `.env`; the root
-`.env.example` derives `DATA_ARCHIVES_DIR` and `CATALOG_DIR` from `DATA_DIR`, so set that first.
+Copy `.env.example` to `.env` and adjust. The module also reads the root `.env`, where `DATA_DIR` is
+set. The compose files default `DATA_ARCHIVES_DIR` and `CATALOG_DIR` under `DATA_DIR`; set either only
+to put it elsewhere.
 
 | variable | default | |
 |---|---|---|
-| `CATALOG_DIR` | `${DATA_DIR}/catalog` (root `.env`) | host directory holding `catalog.db`, mounted at `/data/catalog` in prospector and catalog. Compose refuses to start without it |
+| `CATALOG_DIR` | `${DATA_DIR}/catalog` | host directory holding `catalog.db`, mounted at `/data/catalog` in prospector and catalog. Compose refuses to start while neither it nor `DATA_DIR` is set |
 | `CATALOG_TOKEN` | empty | sent as `x-catalog-token` by hauler and catalog-ui, checked by catalog and prospector. **Empty turns the check off** |
 | `CATALOG_PORT` | empty | host port the catalog API is published on. Empty lets docker pick a free one, so set it wherever something on the host must reach the catalog |
 | `CATALOG_BIND` | `127.0.0.1` | host address the catalog API is published on |
 | `CATALOG_UI_PORT` | `9020` | host port the page is served on |
 | `CATALOG_UI_BIND` | `127.0.0.1` | host address the page is served on |
+| `CATALOG_UI_HOSTS` | empty (any `Host`) | comma-separated names the page may be opened as; requests catalog-ui forwards under any other `Host` are refused |
 | `CATALOG_API` | `http://catalog:8080` | where hauler and catalog-ui reach the catalog |
 | `PROSPECTOR_VENUES` | empty (every venue) | comma-separated subset of `binance`, `bitget`, `bybit`, `gate`, `htx`, `kucoin`, `okx` this prospector surveys and resumes; an unknown name fails startup |
 | `PROSPECTOR_CONCURRENCY` | `200` | requests prospector keeps in flight, across every venue |
-| `DATA_ARCHIVES_DIR` | `${DATA_DIR}/archives` (root `.env`) | host directory hauler writes the archives into, mounted at `/data/archives`. Compose refuses to start without it |
+| `DATA_ARCHIVES_DIR` | `${DATA_DIR}/archives` | host directory hauler writes the archives into, mounted at `/data/archives`. Compose refuses to start while neither it nor `DATA_DIR` is set |
 | `HAULER_LENS` | empty (every catalogued file) | slug of the catalog lens hauler fetches through |
 | `HAULER_VENUES` | empty (every venue the catalog knows) | comma-separated venues hauler fetches |
 | `HAULER_CONCURRENCY` | `100` | fetches in flight, across every venue |
@@ -66,7 +68,8 @@ Prospector and catalog both mount `CATALOG_DIR`, so they run on the same host. P
 uid 1000, as with the other volumes:
 
 ```sh
-sudo mkdir -p /storage/tradebot/catalog && sudo chown 1000:1000 /storage/tradebot/catalog
+dir="${CATALOG_DIR:-$DATA_DIR/catalog}"
+sudo mkdir -p "$dir" && sudo chown 1000:1000 "$dir"
 ```
 
 **Point `CATALOG_DIR` at an empty directory and prospector builds a fresh catalog on first start**, by

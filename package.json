@@ -9,7 +9,7 @@
   },
   "scripts": {
     "build": "pnpm --color -r build",
-    "test": "vitest run && pnpm --color -r --no-bail test",
+    "test": "vitest run && pnpm --color -r --no-bail --workspace-concurrency=1 test",
     "typecheck": "pnpm --color -r --if-present run typecheck",
     "check": "pnpm typecheck && pnpm knip",
     "knip": "knip",
@@ -18,7 +18,6 @@
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
-    "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^4.1.6",
     "knip": "^6.14.1",
     "nx": "22.6.3",
