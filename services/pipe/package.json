@@ -2,7 +2,7 @@
   "name": "@tradebot/pipe",
   "version": "1.0.0",
   "description": "Pipe service - native exchange-to-exchange bindings between RabbitMQ exchanges",
-  "main": "dist/index.js",
+  "main": "dist/src/index.js",
   "private": true,
   "scripts": {
     "build": "tsc -b",

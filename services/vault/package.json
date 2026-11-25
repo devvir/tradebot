@@ -2,7 +2,7 @@
   "name": "@tradebot/vault",
   "version": "1.0.0",
   "description": "Vault service — sole owner of raw dump file storage; exposes an HTTP API for insert, store, close, drop, read, and list",
-  "main": "dist/index.js",
+  "main": "dist/src/index.js",
   "private": true,
   "scripts": {
     "build": "tsc -b",

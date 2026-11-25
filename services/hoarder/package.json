@@ -2,7 +2,7 @@
   "name": "@tradebot/hoarder",
   "version": "1.0.0",
   "description": "Multi-venue WebSocket collection service",
-  "main": "dist/index.js",
+  "main": "dist/src/index.js",
   "private": true,
   "scripts": {
     "build": "tsc -b",

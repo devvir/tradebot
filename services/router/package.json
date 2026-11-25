@@ -2,7 +2,7 @@
   "name": "@tradebot/router",
   "version": "1.0.0",
   "description": "Router service - configurable message routing between RabbitMQ queues and exchanges",
-  "main": "dist/index.js",
+  "main": "dist/src/index.js",
   "private": true,
   "scripts": {
     "build": "tsc -b",

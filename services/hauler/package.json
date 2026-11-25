@@ -2,7 +2,7 @@
   "name": "@tradebot/hauler",
   "version": "1.0.0",
   "description": "Hauler service \u2014 fetches catalogued venue files onto disk under canonical names",
-  "main": "dist/index.js",
+  "main": "dist/src/index.js",
   "private": true,
   "scripts": {
     "build": "tsc -b",

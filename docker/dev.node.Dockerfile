@@ -1,6 +1,6 @@
 # Base Dockerfile for all Node.js services in the TradeBot monorepo
 
-ARG NODE_VERSION=22-alpine
+ARG NODE_VERSION=22.23-alpine3.24
 
 FROM node:${NODE_VERSION}
 

@@ -2,7 +2,7 @@
   "name": "@tradebot/catalog-ui",
   "version": "1.0.0",
   "description": "Catalog UI service — a browser for what the catalog holds",
-  "main": "dist/index.js",
+  "main": "dist/src/index.js",
   "private": true,
   "scripts": {
     "build": "tsc -p web && vite build && tsc -b",

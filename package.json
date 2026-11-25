@@ -10,7 +10,7 @@
   "scripts": {
     "build": "pnpm --color -r build",
     "lint": "pnpm --color -r lint",
-    "test": "pnpm --color -r test",
+    "test": "vitest run && pnpm --color -r test",
     "dev": "pnpm --color -r dev",
     "format": "pnpm --color -r format",
     "check": "pnpm --color -r check"
