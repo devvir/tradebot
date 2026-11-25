@@ -2,7 +2,7 @@ import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import * as cache from './cache/partitions';
 import * as wip from './wip';
 import { BREATH_MS, slice } from './serial';
-import { ceiling } from '../paths';
+import { byteOrder, ceiling } from '../paths';
 import { sawFile } from './series';
 import { noteWithdrawals } from './withdrawals';
 import { inTransaction } from './tx';
@@ -1417,10 +1417,16 @@ export const establishedAt = (
   venueId: number,
   prefix:  string,
 ): string | null => {
+  const kind: RunKind = ranAny(db, venueId, 'walk') ? 'walk' : 'update';
   const chain = ancestorsOf(prefix);
   const holes = chain.map(() => '?').join(', ');
 
   /**
+   * **Only the kind that establishes a venue counts.** A venue that has ever
+   * been walked is established by walks; an update reads only the newest
+   * stretch of each series, so its completed run says nothing about the rest
+   * of the tree. A venue that is never walked is established by its updates.
+   *
    * **A completed ancestor does not count while anything below it is still
    * being walked.**
    *
@@ -1435,14 +1441,14 @@ export const establishedAt = (
    */
   const row = db.prepare(
     `SELECT MAX(r.started) AS started FROM run r
-      WHERE r.venue_id = ? AND r.scope IN (${holes}) AND r.completed IS NOT NULL
+      WHERE r.venue_id = ? AND r.kind = ? AND r.scope IN (${holes}) AND r.completed IS NOT NULL
         AND NOT EXISTS (
           SELECT 1 FROM run o
            WHERE o.venue_id = r.venue_id AND o.kind = r.kind
              AND o.completed IS NULL AND o.scope != ''
              AND substr(o.scope, 1, length(r.scope)) = r.scope
         )`,
-  ).get(venueId, ...chain) as { started: string | null };
+  ).get(venueId, kind, ...chain) as { started: string | null };
 
   return row.started;
 };
@@ -1527,42 +1533,6 @@ const REVISE = `INSERT INTO revision (venue_id, path, seen_at, size, etag, modif
                   ON CONFLICT (venue_id, path, seen_at) DO NOTHING`;
 
 const isRange = (span: Span): span is RangeSpan => 'low' in span;
-
-/**
- * **The bytes' order, which is SQLite's.** `path` compares as `BINARY`, so a
- * stretch is judged here the same way the database reads it — not by UTF-16
- * code units, which disagree past the Basic Multilingual Plane, and gate
- * publishes symbols written in Chinese.
- *
- * **Compared in place, without encoding either string.** UTF-8 sorts as code
- * points do, and UTF-16 units sort the same way but for one stretch: a
- * surrogate, which spells a code point past the plane, has a lower unit than
- * the top of the plane it sorts above. So the first unit that differs decides,
- * with those two ranges swapped. Encoding both strings to compare them cost
- * two buffers a comparison, on a sort of every page and twice more per key —
- * 1.1 s of a 6,000-key page's writes when it was measured.
- */
-const byteOrder = (a: string, b: string): number => {
-  const shared = Math.min(a.length, b.length);
-
-  for (let at = 0; at < shared; at++) {
-    let one = a.charCodeAt(at);
-    let two = b.charCodeAt(at);
-
-    if (one === two) continue;
-
-    if (one >= SURROGATES) one = one >= ABOVE_SURROGATES ? one - 0x800 : one + 0x2000;
-    if (two >= SURROGATES) two = two >= ABOVE_SURROGATES ? two - 0x800 : two + 0x2000;
-
-    return one < two ? -1 : 1;
-  }
-
-  return a.length === b.length ? 0 : a.length < b.length ? -1 : 1;
-};
-
-/** Where the units that spell a code point past the plane begin, and where they end. */
-const SURROGATES       = 0xd800;
-const ABOVE_SURROGATES = 0xe000;
 
 /** Whether a path sorts before an upper edge. */
 const below = (path: string, upto: Edge): boolean => {
@@ -1876,6 +1846,10 @@ export const refinePartition = (
  * A prefix covers everything from itself up to its `ceiling` — the prefix with
  * its last character incremented — so a cursor at or past that ceiling means the
  * whole child has been walked. Below the child's own start, nothing of it has.
+ *
+ * **Judged in byte order**, the order the walk reads in: compared by UTF-16
+ * units, a child past the Basic Multilingual Plane would sort below a sibling
+ * it follows, and be taken for read when nothing of it has been.
  */
 const progress = (
   cursor:   string | null,
@@ -1886,9 +1860,9 @@ const progress = (
   const out: [string, string | null][] = [];
 
   for (const scope of children) {
-    if (cursor >= ceiling(scope)) continue;               // wholly read
+    if (byteOrder(cursor, ceiling(scope)) >= 0) continue;              // wholly read
 
-    out.push([scope, cursor >= scope ? cursor : null]);   // resumes, or fresh
+    out.push([scope, byteOrder(cursor, scope) >= 0 ? cursor : null]);  // resumes, or fresh
   }
 
   return out;
@@ -1902,4 +1876,3 @@ const progress = (
  * drift.
  */
 export const _test_BREATH_MS = BREATH_MS;
-export const _test_byteOrder = byteOrder;

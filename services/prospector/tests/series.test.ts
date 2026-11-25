@@ -4,8 +4,9 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   flushTips, loadSeries, open, parkKeys, putFiles, putVenue, recordSeries, reconcile,
-  retirePattern, retireSeries, seriesFor, updateSeries, walkSeries, withdrawFile,
+  retirePattern, retireSeries, seriesCounts, seriesFor, seriesOf, updateSeries, walkSeries, withdrawFile,
 } from '../src/catalog';
+import { sawFile } from '../src/catalog/series';
 import { openCatalog } from '../src/database';
 import { okx } from '../src/adapters/okx';
 import type { Found, Publishing } from '../src/types';
@@ -254,6 +255,71 @@ describe('tips', () => {
     loadSeries(db);
 
     expect(seriesFor(db, id)[0]!.tip).toBe(EDGE);
+  });
+});
+
+describe('bounds owed to disk', () => {
+  const written = (): number =>
+    (db.prepare(`SELECT count(*) AS n FROM series WHERE first = '20250101'`).get() as { n: number }).n;
+
+  /**
+   * **Written once enough have moved, without waiting for the timer.** A walk
+   * moves thousands of bounds a minute; holding them all until the interval
+   * would put that many at the mercy of a crash.
+   */
+  it('writes them out as the thousandth series moves', () => {
+    const rows = Array.from({ length: 1_000 }, (_, n) => record({ symbol: `S${n}` }, { first: null }));
+
+    for (const row of rows.slice(0, -1)) sawFile(db, row.id!, '20250101');
+
+    expect(written()).toBe(0);
+
+    sawFile(db, rows.at(-1)!.id!, '20250101');
+
+    expect(written()).toBe(1_000);
+    expect(flushTips(db)).toBe(0);
+  });
+
+  /** A file inside what is already known moves nothing, and owes nothing. */
+  it('owes nothing for a file inside the bounds already held', () => {
+    const row = record({}, { first: null });
+
+    sawFile(db, row.id!, '20250101');
+    flushTips(db);
+    sawFile(db, row.id!, '20250101');
+
+    expect(flushTips(db)).toBe(0);
+  });
+});
+
+describe('finding a series', () => {
+  it('answers the series a shape belongs to, and creates none', () => {
+    const row = record();
+
+    expect(seriesOf(db, id, at())).toBe(row);
+    expect(seriesOf(db, id, at({ symbol: 'ETH-USDT' }))).toBeUndefined();
+    expect(seriesOf(db, putVenue(db, 'other', 'https://y', ''), at())).toBeUndefined();
+    expect(seriesFor(db, id)).toHaveLength(1);
+  });
+});
+
+describe('counting series', () => {
+  /** A series has files once it holds both a start and a newest date, which is what a file writes. */
+  it('counts every series of each venue, and those that hold files', () => {
+    const other = putVenue(db, 'other', 'https://y', '');
+
+    const full = record({ symbol: 'FULL' }, { first: null });
+
+    record({ symbol: 'SEEDED' }, { first: '20240101' });
+    record({ symbol: 'NONE' }, { first: null });
+    recordSeries(db, other, at(), { first: null });
+
+    sawFile(db, full.id!, '20250101');
+
+    const counts = seriesCounts(db);
+
+    expect(counts.get(id)).toEqual({ withFiles: 1, total: 3 });
+    expect(counts.get(other)).toEqual({ withFiles: 0, total: 1 });
   });
 });
 
@@ -732,6 +798,29 @@ describe('removing what holds nothing', () => {
     expect(await reconcile(db, id, NOW)).toMatchObject({ removed: 2_500 });
     expect(seriesFor(db, id)).toEqual([]);
     expect(stored()).toBe(0);
+  });
+
+  /**
+   * **The loop is handed back between stretches.** A venue is up to a few
+   * hundred thousand series, and nothing else in the process runs while one
+   * stretch is reconciled — so another task waiting for a turn gets one before
+   * the venue is done, not after.
+   */
+  it('lets the loop turn over between stretches', async () => {
+    for (let n = 0; n < 2_500; n++) record({ symbol: `E${n}` });
+
+    let turns    = 0;
+    let finished = false;
+
+    const tick = () => { turns++; if (! finished) setImmediate(tick); };
+
+    setImmediate(tick);
+
+    await reconcile(db, id, NOW);
+
+    finished = true;
+
+    expect(turns).toBeGreaterThanOrEqual(2);
   });
 
   /** A stretch that fails takes back every deletion in it, and memory follows the table. */

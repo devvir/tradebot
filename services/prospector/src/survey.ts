@@ -21,7 +21,7 @@ import { surveying } from './context';
 import { loadExclusions, isExcluded } from './exclusions';
 import { Refused, blocked } from './http';
 import { describeWait, labelOf, lanesFor, paceFor, ticketing } from './pace';
-import { ceiling, excludedAnywhere, relative } from './paths';
+import { byteOrder, ceiling, excludedAnywhere, relative } from './paths';
 import { seriesSeededAt } from './database/migrations/seeds/seed';
 import { flushCounts } from './counts';
 import { timed, timingsOf } from './timings';
@@ -107,7 +107,7 @@ export const surveyVenue = async (
    *
    * They are kept in separate rows so that neither can be mistaken for the
    * other: an update's scopes say nothing about the keyspace a walk covers, and
-   * `establishedAt` asks only about walks.
+   * `establishedAt` asks only about walks on a venue that has ever walked.
    */
   const kind: RunKind = occasion === 'partial' ? 'update' : 'walk';
   const open = openJob(db, venueId, kind);
@@ -662,7 +662,7 @@ type StopReason = 'blocked' | 'splitting' | 'paused' | null;
 
 /** Whether splitting here would actually produce work, rather than closing a run for nothing. */
 const divisible = (cursor: string | null, children: readonly string[]): boolean =>
-  cursor === null || children.some(child => cursor < ceiling(child));
+  cursor === null || children.some(child => byteOrder(cursor, ceiling(child)) < 0);
 
 /**
  * A page's coverage as catalog paths, inside the partition being walked.

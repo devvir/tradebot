@@ -56,6 +56,42 @@ export const ceiling = (prefix: string): string =>
   prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1);
 
 /**
+ * **The bytes' order**, which is how SQLite compares a `BINARY` column and how
+ * an S3 listing is sorted — not the order of UTF-16 code units, which `<` and
+ * a default `sort` compare, and which disagrees with it past the Basic
+ * Multilingual Plane. Paths and cursors that may hold such characters are
+ * compared with this, so code judges them the way the database and the
+ * listing read them.
+ *
+ * **Compared in place, without encoding either string.** UTF-8 sorts as code
+ * points do, and UTF-16 units sort the same way but for one stretch: a
+ * surrogate, which spells a code point past the plane, has a lower unit than
+ * the top of the plane it sorts above. So the first unit that differs decides,
+ * with those two ranges swapped, and no buffer is allocated per comparison.
+ */
+export const byteOrder = (a: string, b: string): number => {
+  const shared = Math.min(a.length, b.length);
+
+  for (let at = 0; at < shared; at++) {
+    let one = a.charCodeAt(at);
+    let two = b.charCodeAt(at);
+
+    if (one === two) continue;
+
+    if (one >= SURROGATES) one = one >= ABOVE_SURROGATES ? one - 0x800 : one + 0x2000;
+    if (two >= SURROGATES) two = two >= ABOVE_SURROGATES ? two - 0x800 : two + 0x2000;
+
+    return one < two ? -1 : 1;
+  }
+
+  return a.length === b.length ? 0 : a.length < b.length ? -1 : 1;
+};
+
+/** Where the units that spell a code point past the plane begin, and where they end. */
+const SURROGATES       = 0xd800;
+const ABOVE_SURROGATES = 0xe000;
+
+/**
  * Whether a path is excluded at **every** venue, whoever served it.
  *
  * The narrowest of three exclusion tiers, and the only one that needs no venue:

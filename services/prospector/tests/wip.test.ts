@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   anyUnsettled, countUnsettled, dropWip, parkKeys, putFiles, putVenue,
   recordSeries, settleFiles, unsettled,
@@ -204,6 +204,36 @@ describe('arriving', () => {
   });
 
   /**
+   * **A batch arrives whole or not at all.** A settlement that fails part way
+   * takes back the arrivals before it in the same batch, so the backlog, the
+   * catalog and the figures that sum it all stay as they were.
+   */
+  it('leaves backlog, catalog and counts as they were where a settlement fails', async () => {
+    await putFiles(db, [bare('orderbook/a.zip'), bare('orderbook/b.zip')]);
+
+    expect(countUnsettled(db, 1)).toBe(2);
+
+    expect(() => settleFiles(db, [
+      { venueId: 1, path: 'orderbook/a.zip', size: 10, etag: 'e', modified: null, seenAt: 'T2' },
+      { venueId: 1, path: 'orderbook/b.zip', size: 'big' as unknown as number, etag: 'e', modified: null, seenAt: 'T2' },
+    ])).toThrow(/INTEGER/);
+
+    expect(db.isTransaction).toBe(false);
+    expect(count('file')).toBe(0);
+    expect(count('wip')).toBe(2);
+    expect(countUnsettled(db, 1)).toBe(2);
+    expect(rollup()).toEqual([]);
+
+    expect(settleFiles(db, [
+      { venueId: 1, path: 'orderbook/a.zip', size: 10, etag: 'e', modified: null, seenAt: 'T2' },
+      { venueId: 1, path: 'orderbook/b.zip', size: 20, etag: 'e', modified: null, seenAt: 'T2' },
+    ])).toBe(2);
+
+    expect(countUnsettled(db, 1)).toBe(0);
+    expect(rollup()).toMatchObject([{ files: 2, bytes: 30 }]);
+  });
+
+  /**
    * **What fails after the commit fails as itself.** Each arrival moves its
    * series' bounds, and enough of them write the bounds out there and then; a
    * failure in that write is reported as it is, with the arrivals it followed
@@ -237,6 +267,22 @@ describe('arriving', () => {
  * queue for ever, asking about a key that is no longer served.
  */
 describe('withdrawal', () => {
+  /**
+   * **A directory index states its own files and nothing below them.** A parked
+   * key directly inside it that the page did not offer has gone; one inside a
+   * subdirectory it still links is that subdirectory's page to judge.
+   */
+  it('drops a directory\'s own parked keys the page left out, and not its children\'s', async () => {
+    await putFiles(db, [bare('d/own.zip'), bare('d/kept.zip'), bare('d/A/deep.zip')]);
+
+    expect(countUnsettled(db, 1)).toBe(3);
+
+    await putFiles(db, [bare('d/kept.zip')], { venueId: 1, directory: 'd/', children: ['d/A/'] });
+
+    expect(unsettled(db, 1, 0, 10).map(row => row.path).sort()).toEqual(['d/A/deep.zip', 'd/kept.zip']);
+    expect(countUnsettled(db, 1)).toBe(count('wip'));
+  });
+
   it('reaches what was never catalogued', async () => {
     await putFiles(db, [bare('orderbook/a.zip', { seenAt: 'T1' })]);
     await putFiles(db, [bare('orderbook/b.zip', { seenAt: 'T2' })], { venueId: 1, low: 'orderbook/', lowOpen: false, high: 'orderbook0', highOpen: true });
@@ -488,6 +534,79 @@ describe('parking in batches', () => {
     await wip.parkSoon(db, keys(2));
 
     expect(wip.flushParked(db)).toBe(0);
+  });
+
+  /**
+   * **Enough rows are a batch of their own**, written without waiting for the
+   * timer; fewer wait for company until it fires. The timers are the test's,
+   * so only the row count can have sent the first batch down.
+   */
+  it('writes a full batch at once, and a short one when its wait is up', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+
+    try {
+      await wip.parkSoon(db, keys(2_000));
+
+      expect(count('wip')).toBe(2_000);
+
+      let done = false;
+      const short = wip.parkSoon(db, keys(5, 10_000)).then(n => { done = true; return n; });
+
+      for (let turn = 0; turn < 5; turn++) await new Promise(resolve => setImmediate(resolve));
+
+      expect(done).toBe(false);
+      expect(count('wip')).toBe(2_000);
+
+      vi.advanceTimersByTime(25);
+
+      expect(await short).toBe(5);
+      expect(count('wip')).toBe(2_005);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * **A failed batch fails every caller in it**, since each was promised that
+   * its rows were written — and none of them were. The next batch starts clean.
+   */
+  it('rejects every caller sharing a batch that failed', async () => {
+    expect(countUnsettled(db, 1)).toBe(0);
+
+    const orphan = keys(1, 50).map(row => ({ ...row, seriesId: 999_999 }));
+
+    const outcomes = await Promise.allSettled([wip.parkSoon(db, orphan), wip.parkSoon(db, keys(2))]);
+
+    expect(outcomes.map(one => one.status)).toEqual(['rejected', 'rejected']);
+    expect(count('wip')).toBe(0);
+    expect(countUnsettled(db, 1)).toBe(0);
+    expect(db.isTransaction).toBe(false);
+
+    expect(await wip.parkSoon(db, keys(2))).toBe(2);
+    expect(countUnsettled(db, 1)).toBe(2);
+  });
+
+  /** At the exit a slice may be mid-write, so the flush joins it and commits or rolls back with it. */
+  it('writes inside a transaction already open, leaving the outcome to its owner', async () => {
+    const waiting = wip.parkSoon(db, keys(3));
+
+    db.exec('BEGIN');
+
+    expect(wip.flushParked(db)).toBe(3);
+    expect(db.isTransaction).toBe(true);
+
+    db.exec('ROLLBACK');
+
+    expect(await waiting).toBe(3);
+    expect(count('wip')).toBe(0);
+
+    void wip.parkSoon(db, keys(3));
+
+    db.exec('BEGIN');
+    wip.flushParked(db);
+    db.exec('COMMIT');
+
+    expect(count('wip')).toBe(3);
   });
 });
 

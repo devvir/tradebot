@@ -69,6 +69,22 @@ describe('refining a partition', () => {
     ]);
   });
 
+  /**
+   * The walk reads in byte order, so that is the order the cursor is judged by.
+   * A character past the Basic Multilingual Plane sorts above `\uFF35` in bytes
+   * but below it in UTF-16 units — judged the second way, the emoji child would
+   * count as read and its keyspace would belong to nothing.
+   */
+  it('divides the cursor in byte order, past the Basic Multilingual Plane too', () => {
+    const made = refinePartition(db, parent('klines/\uFF35/x-2025-01.zip'),
+      ['klines/A/', 'klines/\u{1F600}/', 'klines/\uFF35/']);
+
+    expect(made.map(one => [one.scope, one.cursor]).sort()).toEqual([
+      ['klines/\u{1F600}/', null],
+      ['klines/\uFF35/', 'klines/\uFF35/x-2025-01.zip'],
+    ].sort());
+  });
+
   /** A cursor sitting exactly at a child's start has read nothing of it yet. */
   it('does not treat a child as read when the cursor is its first key', () => {
     const made = refinePartition(db, parent('klines/B/'), ['klines/A/', 'klines/B/']);

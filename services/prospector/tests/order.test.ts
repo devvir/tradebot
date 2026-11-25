@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { _test_byteOrder as byteOrder } from '../src/catalog/queries';
+import { byteOrder } from '../src/paths';
 
 /**
  * Paths are ordered here the way the database orders them — by their UTF-8

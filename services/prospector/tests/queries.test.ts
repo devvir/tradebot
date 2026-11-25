@@ -2,7 +2,10 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { correctFile, lastRun, markDownloaded, putFiles, putVenue, recordSeries, venueIds, venueTotals } from '../src/catalog';
+import {
+  advanceRun, beginJob, closeRun, closeWalk, correctFile, enrol, lastRun, markDownloaded, openJob, openPartitions,
+  pauseSurvey, producedSoFar, putFiles, putVenue, recordSeries, resetRuns, standingOf, venueIds, venueTotals,
+} from '../src/catalog';
 import { openCatalog } from '../src/database';
 import type { CatalogFile } from '../src/types';
 import type { DatabaseSync } from 'node:sqlite';
@@ -228,5 +231,145 @@ describe('whether a pass is the venue\'s first', () => {
     ran(one, 'T3', null);
 
     expect(lastRun(db, venueIds(db, 'solo')).first).toBe(false);
+  });
+});
+
+/** Where a venue stands, read off its enrolment and its runs. */
+describe('a venue\'s standing', () => {
+  const DAY = 86_400_000;
+
+  const standing = (venue: string) => standingOf(db, venue, venueIds(db, venue), DAY);
+
+  it('has not started where nobody enrolled it, whatever its runs say', () => {
+    const id = putVenue(db, 'solo', 'https://x', '');
+
+    beginJob(db, id, 'walk', ['a/']);
+
+    expect(standing('solo')).toEqual({ state: 'not started', enrolledAt: null, since: null, during: null, nextRun: null });
+  });
+
+  it('is walking from the start of an open walk', () => {
+    const id = putVenue(db, 'solo', 'https://x', '');
+
+    enrol(db, 'solo', 'T0');
+
+    const job = beginJob(db, id, 'walk', ['a/']);
+
+    expect(standing('solo')).toEqual({ state: 'walking', enrolledAt: 'T0', since: job.started, during: null, nextRun: null });
+  });
+
+  /** One host still walking makes the venue walking, even beside a host that is updating. */
+  it('walks while any host walks', () => {
+    const [a, b] = [putVenue(db, 'bybit', 'https://a', '', 'one'), putVenue(db, 'bybit', 'https://b', '', 'two')];
+
+    enrol(db, 'bybit', 'T0');
+    beginJob(db, a!, 'update', ['1']);
+    beginJob(db, b!, 'walk', ['a/']);
+
+    expect(standing('bybit').state).toBe('walking');
+  });
+
+  it('is updating while only an update is open', () => {
+    const id = putVenue(db, 'solo', 'https://x', '');
+
+    enrol(db, 'solo', 'T0');
+    beginJob(db, id, 'update', ['1']);
+
+    expect(standing('solo').state).toBe('updating');
+  });
+
+  /** The interval runs from the start of the last pass, not its end. */
+  it('waits between passes, due an interval after the last one began', () => {
+    const id = putVenue(db, 'solo', 'https://x', '');
+
+    enrol(db, 'solo', 'T0');
+
+    const job = beginJob(db, id, 'walk', ['a/']);
+
+    closeRun(db, openPartitions(db, id, 'walk')[0]!.id);
+    closeWalk(db, id);
+
+    expect(standing('solo')).toEqual({
+      state: 'waiting', enrolledAt: 'T0', since: null, during: null,
+      nextRun: new Date(Date.parse(job.started) + DAY).toISOString(),
+    });
+  });
+
+  it('is paused since the pause, naming what it would go back to', () => {
+    const id = putVenue(db, 'solo', 'https://x', '');
+
+    enrol(db, 'solo', 'T0');
+    beginJob(db, id, 'walk', ['a/']);
+    pauseSurvey(db, 'solo', 'T5');
+
+    expect(standing('solo')).toMatchObject({ state: 'paused', since: 'T5', during: 'walking', nextRun: null });
+  });
+});
+
+/** What the open job has produced, which a probe's progress is read against. */
+describe('what a job has produced so far', () => {
+  it('is nothing to report where no job is open', () => {
+    const id = putVenue(db, 'solo', 'https://x', '');
+
+    expect(producedSoFar(db, id, 'update')).toBeNull();
+  });
+
+  it('sums what every partition of the open job found', () => {
+    const id = putVenue(db, 'solo', 'https://x', '');
+
+    beginJob(db, id, 'update', ['1', '2']);
+
+    const [one, two] = openPartitions(db, id, 'update');
+
+    advanceRun(db, one!.id, 'c', 1, 30);
+    advanceRun(db, two!.id, 'c', 1, 12);
+    closeRun(db, two!.id);
+
+    expect(producedSoFar(db, id, 'update')).toBe(42);
+    expect(producedSoFar(db, id, 'walk')).toBeNull();
+  });
+
+  /** A finished job's partitions stay on record, and are not what is being watched. */
+  it('counts only the open job, not one before it', async () => {
+    const id = putVenue(db, 'solo', 'https://x', '');
+
+    beginJob(db, id, 'update', ['1']);
+    advanceRun(db, openPartitions(db, id, 'update')[0]!.id, 'c', 1, 99);
+    closeRun(db, openPartitions(db, id, 'update')[0]!.id);
+    closeRun(db, openJob(db, id, 'update')!.id);
+
+    await new Promise(r => setTimeout(r, 5));
+
+    beginJob(db, id, 'update', ['1']);
+    advanceRun(db, openPartitions(db, id, 'update')[0]!.id, 'c', 1, 7);
+
+    expect(producedSoFar(db, id, 'update')).toBe(7);
+  });
+});
+
+/** Throwing a venue's progress away, which is the step before a survey that starts from nothing. */
+describe('resetting a venue\'s runs', () => {
+  it('drops every run of the venue and no other, and says how many', () => {
+    const id    = putVenue(db, 'solo', 'https://x', '');
+    const other = putVenue(db, 'other', 'https://y', '');
+
+    beginJob(db, id, 'walk', ['a/', 'b/']);
+    beginJob(db, other, 'walk', ['a/']);
+
+    expect(resetRuns(db, id)).toBe(3);
+    expect(openJob(db, id, 'walk')).toBeNull();
+    expect(openJob(db, other, 'walk')).not.toBeNull();
+  });
+
+  /** What a venue published is a measurement and stays true; only how far it was read goes. */
+  it('leaves series and files where they are', async () => {
+    const id = putVenue(db, 'binance', 'https://x', '');
+
+    await putFiles(db, [file('p/a.zip', { venueId: id })]);
+    beginJob(db, id, 'walk', ['p/']);
+    resetRuns(db, id);
+
+    expect(db.prepare('SELECT count(*) n FROM file').get()).toMatchObject({ n: 1 });
+    expect(db.prepare('SELECT count(*) n FROM series').get()).toMatchObject({ n: 1 });
   });
 });

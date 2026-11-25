@@ -1,13 +1,12 @@
-import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { advanceRun, ancestorsOf, beginJob, closeRun, establishedAt, exclusionsFor, markDownloaded, openJob, openPartitions, putFiles, putVenue, recordSeries, venueIds, settleFiles, unsettled, withdrawFile } from '../src/catalog';
+import { WITHDRAWALS_LOG, advanceRun, ancestorsOf, beginJob, clearUpdate, closeRun, closeWalk, countUnsettled, establishedAt, exclusionsFor, markDownloaded, openJob, openPartitions, putFiles, putVenue, recordSeries, venueIds, settleFiles, unsettled, withdrawFile } from '../src/catalog';
 import { assertWritable, migrate, openCatalog, SCHEMA_VERSION, version } from '../src/database';
 import { MIGRATIONS } from '../src/database/migrations';
 import { _test_BREATH_MS as BREATH_MS } from '../src/catalog/queries';
-import type { CatalogFile, Run } from '../src/catalog';
-import type { Migration, Span } from '../src/types';
+import type { CatalogFile, Migration, Run, Span } from '../src/types';
 import { DatabaseSync } from 'node:sqlite';
 
 let dir: string;
@@ -373,6 +372,38 @@ const SPOT: Span = { venueId: 1, low: 'spot/', lowOpen: false, high: 'spot0', hi
 /** Rows written by the connection so far — what a write that did nothing leaves unchanged. */
 const changes = (): number => (db.prepare('SELECT total_changes() AS n').get() as { n: number }).n;
 
+/** Every withdrawn path, in order. */
+const absent = (): string[] =>
+  (db.prepare(`SELECT path FROM file WHERE existence = 'absent' ORDER BY path`).all() as { path: string }[])
+    .map(row => row.path);
+
+/** Every path the withdrawals log names as withdrawn, in order. */
+const logged = (): string[] => {
+  const log = join(dir, WITHDRAWALS_LOG);
+
+  if (! existsSync(log)) return [];
+
+  return readFileSync(log, 'utf8').trim().split('\n')
+    .map(line => JSON.parse(line) as { event: string; path: string })
+    .filter(line => line.event === 'withdrawn')
+    .map(line => line.path)
+    .sort();
+};
+
+/** What the partitions say they hold, summed. */
+const figures = () => db.prepare(
+  `SELECT SUM(files) files, SUM(bytes) bytes, SUM(pending) pending, SUM(withdrawn) withdrawn FROM partition`,
+).get();
+
+/** What the files themselves add up to, in the same terms. */
+const aggregates = () => db.prepare(
+  `SELECT SUM(existence = 'confirmed') files,
+          SUM(CASE WHEN existence = 'confirmed' THEN size ELSE 0 END) bytes,
+          SUM(existence = 'confirmed' AND downloaded_at IS NULL) pending,
+          SUM(existence = 'absent') withdrawn
+     FROM file`,
+).get();
+
 /** Each `spot/` file's existence, by its leading letter. */
 const existence = (): Record<string, string> => Object.fromEntries(
   (db.prepare(`SELECT path, existence FROM file WHERE path LIKE 'spot/%' ORDER BY path`).all() as { path: string; existence: string }[])
@@ -674,6 +705,50 @@ describe('completion', () => {
 
     expect(db.prepare(`SELECT count(*) n FROM run WHERE scope = 'spot/'`).get())
       .toMatchObject({ n: 2 });
+  });
+
+  /**
+   * An update reads only the newest stretch of each series, so on a venue that
+   * walks, a finished update establishes nothing — least of all while the walk
+   * still has keyspace open.
+   */
+  it('does not let a finished update stand in for an open walk', () => {
+    const id = putVenue(db, 'binance', 'https://x', 'data/');
+
+    partitionsFor(id, ['a/']);
+    beginJob(db, id, 'update', ['1']);
+    clearUpdate(db, id);
+
+    expect(establishedAt(db, id, '')).toBeNull();
+    expect(establishedAt(db, id, 'a/')).toBeNull();
+  });
+
+  /** Nor does a later update move a walked venue's date forward. */
+  it('dates a walked venue by its walk, whatever updates came after', async () => {
+    const id   = putVenue(db, 'binance', 'https://x', 'data/');
+    const walk = partitionsFor(id, ['spot/'])[0]!;
+
+    closeRun(db, walk.id);
+    closeWalk(db, id);
+
+    await new Promise(r => setTimeout(r, 5));
+
+    beginJob(db, id, 'update', ['1']);
+    clearUpdate(db, id);
+
+    expect(establishedAt(db, id, '')).toBe(walk.started);
+  });
+
+  /** A venue that is never walked is established by its updates. */
+  it('dates a venue that is never walked by its update', () => {
+    const id     = putVenue(db, 'binance', 'https://x', 'data/');
+    const update = beginJob(db, id, 'update', ['1']);
+
+    expect(establishedAt(db, id, '')).toBeNull();
+
+    clearUpdate(db, id);
+
+    expect(establishedAt(db, id, '')).toBe(update.started);
   });
 });
 
@@ -1096,6 +1171,66 @@ describe('holding the thread', () => {
     for (const venueId of venues)
       expect(db.prepare('SELECT COUNT(*) n FROM file WHERE venue_id = ?').get(venueId))
         .toMatchObject({ n: 40 });
+  });
+
+  /**
+   * **A slice that fails takes back only itself.** The slices before it have
+   * committed and stay so; the one that threw leaves nothing behind it — no
+   * row, no partition figure, no backlog count, and no line in the withdrawals
+   * log for what it would have withdrawn. Written again, the page finishes
+   * what it started and logs each withdrawal once.
+   */
+  it('keeps the slices that committed and nothing of the one that failed', async () => {
+    putVenue(db, 'binance', 'https://x', 'data/');
+
+    const all  = many(1, 60);
+    const span: Span = { venueId: 1, low: 'p/', lowOpen: false, high: 'p0', highOpen: true };
+
+    await putFiles(db, all);
+
+    // Held from here on, so a slice that moved it without committing would show.
+    expect(countUnsettled(db, 1)).toBe(0);
+
+    /**
+     * Every tenth file left out, every kept one restated, and a bare name to
+     * park beside every fifth — with, when asked, a file part way through on a
+     * series that does not exist.
+     */
+    const page = (seriesId?: number) => all.flatMap((one, at) => at % 10 === 0 ? [] : [
+      { ...one, etag: 'restated', ...(at === 31 && seriesId !== undefined ? { seriesId } : {}) },
+      ...(at % 5 === 0 ? [{ ...one, path: `${one.path}.part`, size: null, etag: null }] : []),
+    ]);
+
+    const slices = sliced();
+
+    await expect(putFiles(db, page(999_999), span)).rejects.toThrow();
+
+    expect(slices.count()).toBeGreaterThan(5);
+    expect(db.isTransaction).toBe(false);
+
+    const restated = (db.prepare(`SELECT count(*) n FROM file WHERE etag = 'restated'`).get() as { n: number }).n;
+
+    expect(restated).toBeGreaterThan(0);
+    expect(restated).toBeLessThan(28);
+    expect(db.prepare(`SELECT etag FROM file WHERE path = 'p/000031.zip'`).get()).toMatchObject({ etag: 'e' });
+    expect(absent()).not.toContain('p/000040.zip');
+    expect(countUnsettled(db, 1)).toBeLessThan(4);
+
+    const consistent = () => {
+      expect(logged()).toEqual(absent());
+      expect(countUnsettled(db, 1)).toBe((db.prepare('SELECT count(*) n FROM wip').get() as { n: number }).n);
+      expect(figures()).toEqual(aggregates());
+    };
+
+    consistent();
+
+    const left = 6 - absent().length;
+
+    expect(await putFiles(db, page(), span)).toBe(left);
+
+    consistent();
+    expect(absent()).toEqual([0, 10, 20, 30, 40, 50].map(at => `p/${String(at).padStart(6, '0')}.zip`));
+    expect(countUnsettled(db, 1)).toBe(6);
   });
 
   /** Every row still lands, and a page written twice says what writing it once said. */
