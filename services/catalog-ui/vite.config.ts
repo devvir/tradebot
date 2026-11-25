@@ -4,9 +4,9 @@ import react from '@vitejs/plugin-react';
 /**
  * The page is built into `dist/web`, which express serves as static files.
  *
- * `/api` is proxied in development so `pnpm dev` behaves like the container
- * does: the page always talks to its own origin and never to the catalog, which
- * is what keeps the token out of the browser.
+ * In development `/api` is proxied to a catalog-ui server on `localhost:8080`,
+ * started separately, so the page talks to its own origin there as it does in
+ * the container, and never to the catalog or to prospector.
  */
 export default defineConfig({
   root:    'web',

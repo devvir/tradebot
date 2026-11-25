@@ -1,64 +1,108 @@
 # Catalog UI
 
-Catalog UI is a browser for what the catalog holds and a set of controls for
-surveying it. Prospector establishes what every venue publishes, and the catalog
-serves that over HTTP; this renders it, and sends back the requests that change
-anything.
+Catalog UI is a page for reading what the catalog holds, editing lenses, and starting and pausing
+surveys. The catalog and prospector answer; this renders what they say, and sends back the requests
+that change anything.
 
-Everything it does follows from one rule: **it renders what the API said, and
-adds nothing.** No reshaping, no defaults, no computed fields, no second opinion.
-A question this cannot answer is one the catalog cannot answer.
+**Every fact on the page comes from an API answer**: what a venue publishes, what a lens costs, what a
+survey is doing. The page groups and filters what it was given, and derives only presentation from it:
+shares and percentages, durations, *N of M*, and the words it reads off `GET /status` fields
+(`stalled`, `backfilling`, `updating`). A question this page cannot answer is one the APIs cannot
+answer.
 
 ## What it is not
 
-- **It does not hold state.** No database, no cache, no session. Reloading asks
-  everything again, and two browsers open on it cannot disagree.
-- **It does not compute.** Counts, spans, states and totals arrive finished. The
-  page groups and filters what it was given — it never derives a figure the API
-  did not state.
-- **It does not know the venues.** Markets, datasets, variants and instruments
-  are strings that arrive from the catalog, and adding a venue to prospector adds
-  nothing here.
-- **It does not decide.** Every button is one API call, and what that call means
-  for a venue is worked out at the other end.
+- **It holds no server-side state.** The server has no database, no cache and no session; reloading
+  asks the services again. What persists is per browser, in `localStorage`: each lens's unconfirmed
+  rule drafts, tagged with the version of the lens they were written from; a new lens not stored yet;
+  each saved lens's last known size, shown until the next one arrives; and the lens last opened in the
+  lenses section. One reading of `GET /lenses/options` is shared by the page for a minute before it is
+  asked for again.
+- **It does not know the venues.** Markets, datasets, variants and instruments are strings that arrive
+  from the catalog; a venue prospector adds appears here with nothing changed.
+- **It does not decide.** Every button is one API call, and what that call means for a venue is worked
+  out by the service that answers it.
 
-## Why there is a server at all
+## The server and its proxy
 
-The page is static and could have been served from anywhere. It is served from a
-small express process that also proxies, for two reasons that outlive the page.
+The page is static. It is served by a small express process that also forwards the page's requests, for
+two reasons:
 
-**Neither service is the browser's to reach.** Prospector's collector API is
-private to the module network and publishes no port, and the catalog may run on
-another machine. A page calling either directly works only while it happens to
-be reachable from whichever browser is open.
+**Neither service need be reachable from the browser.** Prospector's private API publishes no port
+outside the module network, and the catalog's port need not be reachable from wherever the browser is
+open. The page talks only to its own origin.
 
-**And the token would otherwise travel with the browser.** Where `CATALOG_TOKEN`
-is set, a page calling the catalog itself has to carry it — which means shipping
-the secret in the bundle and sending it from wherever the page is open. Here it
-stays on the server, added to each forwarded request, and the page never sees it.
+**The token stays on the server.** Where `CATALOG_TOKEN` is set, the server adds it as
+`x-catalog-token` to every request it forwards, and the bundle never holds it. The server checks
+nothing about who is asking: whoever reaches its port acts with the token, within the routes below —
+starting and pausing surveys, and creating, editing and deleting lenses.
 
 ```
-browser ── /api/catalog/*    ──▶ catalog-ui ── x-catalog-token ──▶ catalog     (CATALOG_API)
-        ── /api/prospector/* ──▶            ── x-catalog-token ──▶ prospector  (http://prospector:8080)
-        ── /api/where        ──▶            (answers from its own config)
+browser ── /api/catalog/<route>    ──▶ catalog-ui ── x-catalog-token ──▶ catalog     (CATALOG_API)
+        ── /api/prospector/<route> ──▶            ── x-catalog-token ──▶ prospector  (http://prospector:8080)
+        ── /api/where              ──▶            (answers from its own config)
+        ── any other path          ──▶            (the page's static files)
 ```
 
-Contents and lenses go to the catalog; the Surveys section goes to prospector,
-the only service that starts, pauses or reports on a survey. Both check the same
-token.
+`/api/where` answers `{ "catalog": <CATALOG_API> }`, which the page shows in its header, so nothing
+about the deployment is baked into the bundle.
 
-**The answer is handed back unchanged** — status, body and all. These services
-answer a refusal with a sentence saying what was wrong with the request, and that
-sentence is the most useful thing on the page when something is wrong, so it is
-shown whole rather than replaced with "could not load".
+### What is forwarded
 
-**An unreachable service is a `502` naming the URL it tried.** Whether it
-is unreachable, and at what address, is the first thing anybody wants and the
-thing a bare failure hides.
+Only the requests the page makes. Each `:param` is one path segment, anything but `/`, so an encoded
+`%2F` stays inside it; `GET` also admits `HEAD`.
 
-`/api/where` exists so nothing about the deployment is baked into the bundle: the
-page asks where it is pointed and puts it in the header, so the same image serves
-any arrangement of these services.
+| to | method | `<route>` |
+|---|---|---|
+| catalog | `GET` | `/venues`, `/venues/:venue`, `/venues/:venue/symbols`, `/venues/:venue/markets/:market`, `/venues/:venue/markets/:market/symbols` |
+| catalog | `GET` | `/lenses`, `/lenses/options`, `/lenses/:slug/size` |
+| catalog | `POST` | `/lenses` |
+| catalog | `PUT`, `DELETE` | `/lenses/:slug` |
+| prospector | `GET` | `/status` |
+| prospector | `POST` | `/surveys`, `/surveys/pause`, `/venues/:venue/surveys` |
+
+Any other method or path under `/api/catalog` or `/api/prospector` answers `404`
+`{"error":"Not forwarded"}` without leaving the process, and so does a path whose dot segments (`..`,
+`%2e%2e`) would resolve outside what was matched. What each route does is the service's own: see
+[CATALOG-API.md](../modules/CATALOG-API.md) and [PROSPECTOR.md](PROSPECTOR.md#the-api).
+
+### What is refused first
+
+Ahead of forwarding, a request under either prefix is refused where another site, or another name,
+could have made a browser send it:
+
+- `403` where `CATALOG_UI_HOSTS` lists names and `Host` is none of them (as `host` or `host:port`);
+  empty, any `Host` is served.
+- `403` where `Sec-Fetch-Site` is present and is neither `same-origin` nor `none`.
+- `403` where `Origin` names a host other than `Host`.
+- `415` for a write other than `DELETE` whose body is not `application/json`. A browser sends such a
+  body cross-origin only after a preflight, and no CORS header is ever sent.
+
+### What passes, each way
+
+Upstream goes the path below the prefix and the query string as sent, the token, `x-catalog-lens`
+where the page sent one, `Accept` (`application/json` where the client sent none), and the JSON body
+where there is one, with `content-type: application/json`. Nothing else of the client's request is
+passed on, and an upstream redirect is not followed.
+
+Back comes the upstream answer's **status, content type and body bytes**, as they came; no other
+header is relayed. The services answer a refusal with a body saying what was wrong, and the page shows
+that whole rather than a generic failure.
+
+Where there is no answer to relay:
+
+- **`502`** `{"error":"Could not reach <service>"}` where the service cannot be reached; the URL it
+  tried is in this server's log.
+- **`504`** `{"error":"No answer from <service> within 120 s"}` where nothing has come back within two
+  minutes (`UPSTREAM_TIMEOUT_MS`, above the catalog's slowest answers).
+
+### When the page stops waiting
+
+The page aborts a request it no longer wants: leaving a view, a newer request for the same thing, a
+poll that stops. When the browser's connection closes before the answer, the server aborts its
+upstream request and answers and logs nothing. The catalog then sees its own connection close and
+drops the request if its work has not started; a request already running completes, because its work
+is synchronous ([CATALOG.md](CATALOG.md#requests-nobody-waits-for)).
 
 ## The three sections
 
@@ -352,22 +396,15 @@ written from — so a lens saved somewhere else replaces them rather than silent
 reviving edits to a document that has moved on. A new lens not stored yet is kept
 the same way.
 
-**A request the page no longer wants is cancelled.** Leaving a view, or a newer
-request for the same thing, aborts the one in flight, and the catalog does not
-start work for a client that has gone.
-
 ## How it is built
 
-`web/` is the page — React and Mantine, built by Vite into `dist/web`, which
-express serves as static files. `src/` is the server: config, the proxy, and
-nothing else.
+`web/` is the page: React and Mantine, built by Vite into `dist/web`, which express serves as static
+files. `src/` is the server: config, the proxy, and nothing else. Building and running it in
+development are in the [service README](../../services/catalog-ui/README.md#development).
 
-The types in `web/types.ts` are **mirrors of the catalog's and prospector's
-own**, not a model of its own. A field added upstream appears here by being added to one of them, never
-by this service learning to compute it.
-
-`pnpm --filter @tradebot/catalog-ui dev` runs Vite against the built server on
-`:8080`, so the page behaves in development exactly as it does in the container.
+The types in `web/types.ts` are **mirrors of the catalog's and prospector's own**, not a model of its
+own. A field added upstream appears here by being added to one of them, never by this service learning
+to compute it.
 
 **Layout lives in the components, not here.** Column widths, badge treatment,
 what is disabled when, why a rule beats Mantine's — those change with the design
