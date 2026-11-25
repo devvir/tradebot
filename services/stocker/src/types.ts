@@ -468,9 +468,13 @@ export interface Summary {
   /** Downloaded per the catalog, but not on disk as it says. */
   missing:    number;
 
+  /** On disk, but there was no room to extract it this sweep. */
+  noRoom:     number;
+
   /** A dataset or format stocker cannot read. */
   unmapped:   number;
 
+  /** Partitions that could not be decided or stocked, and venues the catalog did not list, this sweep. */
   failed:     number;
   rows:       number;
   files:      number;

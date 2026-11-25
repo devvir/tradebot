@@ -5,7 +5,7 @@ import type { Summary } from '../src/types';
 
 const summary = (over: Partial<Summary> = {}): Summary => ({
   considered: 0, current: 0, outdated: 0, built: 0, empty: 0, waiting: 0, partial: 0, completed: 0, missing: 0,
-  unmapped: 0, failed: 0, rows: 0, files: 0, stopped: false, ...over,
+  noRoom: 0, unmapped: 0, failed: 0, rows: 0, files: 0, stopped: false, ...over,
 });
 
 const said = (fn: typeof logger.info): string =>
@@ -31,6 +31,14 @@ describe('the end-of-sweep report', () => {
 
     expect(said(logger.info)).toContain('15 partitions without a neighbouring month\'s hours');
     expect(said(logger.info)).toContain('5 not on disk as catalogued');
+  });
+
+  /** On disk and not extracted for want of room: what to do about it is free space, not look for archives. */
+  it('says how many partitions are waiting for room to extract, apart from those not on disk', () => {
+    report(summary({ considered: 10, current: 7, noRoom: 2, missing: 1 }), 30);
+
+    expect(said(logger.warn)).toContain('2 partitions waiting for room to extract');
+    expect(said(logger.info)).toBe('');
   });
 
   it('reports what it stocked when it stocked something', () => {

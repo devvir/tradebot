@@ -57,6 +57,11 @@ import type {
  * bundle and per-instrument files — are several partitions of the archives
  * that land in one partition of the vault. Whichever of them the vault already
  * holds is current; otherwise one is chosen, by `PREFERENCE`.
+ *
+ * **A failure is the partition's, or the venue's, and not the sweep's.** A
+ * venue the catalog cannot list, or a partition that cannot be decided or
+ * stocked, is logged and counted as failed, and the sweep goes on with the
+ * rest. Only the vault's volume falling below its floor stops it.
  */
 export const sweep = async (conns: DuckDBConnection[]): Promise<Summary> => {
   // A partition the last sweep was stopped half way through putting in place is put right before anything is read.
@@ -64,7 +69,7 @@ export const sweep = async (conns: DuckDBConnection[]): Promise<Summary> => {
 
   const summary: Summary = {
     considered: 0, current: 0, outdated: 0, built: 0, empty: 0, waiting: 0, partial: 0, completed: 0, missing: 0,
-    unmapped: 0, failed: 0, rows: 0, files: 0, stopped: false,
+    noRoom: 0, unmapped: 0, failed: 0, rows: 0, files: 0, stopped: false,
   };
 
   const instruments = new Instruments();
@@ -149,10 +154,24 @@ export const sweep = async (conns: DuckDBConnection[]): Promise<Summary> => {
     for (let job = await following(); job; job = await following()) {
       const mine = await freed(job.partition.bytes >= ALONE_BYTES ? conns.length : 1);
 
-      const run: Promise<void> = stock(mine, job, sweeping, summary).finally(() => {
-        idle.push(...mine);
-        running.delete(run);
-      });
+      const { key, partition, prefetch } = job;
+
+      /**
+       * What `stock` does not catch itself fails this partition alone, as it
+       * happens; and whatever was extracted for it and never read is given up,
+       * however it ended.
+       */
+      const run: Promise<void> = stock(mine, job, sweeping, summary)
+        .catch((err: unknown) => {
+          summary.failed++;
+
+          logger.error({ err, partition: labelOf(key), from: partition.id }, 'Stocking failed');
+        })
+        .finally(() => {
+          prefetch.release();
+          idle.push(...mine);
+          running.delete(run);
+        });
 
       running.add(run);
     }
@@ -193,6 +212,13 @@ export const report = (summary: Summary, scanMinutes: number): void => {
 
   if (summary.failed > 0) {
     logger.warn(counts, `${summary.failed} partition${summary.failed === 1 ? '' : 's'} failed — rescanning in ${scanMinutes} minutes`);
+
+    return;
+  }
+
+  if (summary.noRoom > 0) {
+    logger.warn(counts, `${summary.noRoom} partition${summary.noRoom === 1 ? '' : 's'} waiting for room to extract — ` +
+      `rescanning in ${scanMinutes} minutes`);
 
     return;
   }
@@ -345,6 +371,9 @@ const targetsOf = (partitions: Map<string, Partition>): Target[] => {
 /**
  * The partitions to stock, in the order they are stocked, each decided only
  * when it is asked for: venue by venue, the catalog asked once for each.
+ *
+ * A venue the catalog does not list, and a partition that cannot be decided,
+ * are counted as failed and passed over. Only `LowSpace` ends this early.
  */
 const jobsOf = async function* (
   sweeping: Sweeping,
@@ -360,12 +389,34 @@ const jobsOf = async function* (
 
     if (free < config.minFreeGb) throw new LowSpace(free);
 
-    const partitions = await listPartitions(venue, datasets);
+    let partitions: Map<string, Partition>;
+
+    try {
+      partitions = await listPartitions(venue, datasets);
+    } catch (err) {
+      summary.failed++;
+
+      logger.error({ err, venue }, 'Catalog listing failed — venue skipped this sweep');
+
+      continue;
+    }
 
     for (const target of targetsOf(partitions)) {
       summary.considered++;
 
-      const job = await decide(target, partitions, sweeping, summary);
+      let job: Job | null;
+
+      try {
+        job = await decide(target, partitions, sweeping, summary);
+      } catch (err) {
+        if (err instanceof LowSpace) throw err;
+
+        summary.failed++;
+
+        logger.error({ err, partition: labelOf(target.key) }, 'Deciding failed — partition skipped');
+
+        continue;
+      }
 
       if (job) yield job;
     }
@@ -438,6 +489,9 @@ const decide = async (
   /** The sides a neighbour has arrived with that could not be built, and what of what they need is on disk. */
   let unbuilt: { sides: Side[]; main: boolean; sources: boolean } | null = null;
 
+  /** Whether a rendering on disk was passed over for want of room to extract it. */
+  let noRoom = false;
+
   for (const one of ready.sort((x, y) => rank(x.candidate) - rank(y.candidate))) {
     /**
      * **A month already stocked, whose neighbour has arrived, is not stocked
@@ -470,7 +524,11 @@ const decide = async (
       const passes = built.flatMap((own, at) => own.map((): Pass => arrived[at]!.end));
       const had = await builtOf(key, one.revision, tasks, passes);
 
-      if (! await fits(key, tasks.filter((_, at) => ! had[at]))) continue;
+      if (! await fits(key, tasks.filter((_, at) => ! had[at]))) {
+        noRoom = true;
+
+        continue;
+      }
 
       return {
         key, partition: one.candidate, revision: one.revision, edges: one.edges, missing: one.missing, tasks, passes, built: had,
@@ -498,7 +556,11 @@ const decide = async (
     const passes = [...own.map((): Pass => 'own'), ...sides.flatMap((side, at) => side.map((): Pass => one.edges[at]!.end))];
     const had = await builtOf(key, one.revision, tasks, passes);
 
-    if (! await fits(key, tasks.filter((_, at) => ! had[at]))) continue;
+    if (! await fits(key, tasks.filter((_, at) => ! had[at]))) {
+      noRoom = true;
+
+      continue;
+    }
 
     return {
       key, partition: one.candidate, revision: one.revision, edges: one.edges, missing: one.missing, tasks, passes, built: had,
@@ -529,6 +591,13 @@ const decide = async (
       ...Object.fromEntries(unbuilt.sides.map(side => [side, `pending, needs ${needs}`])),
       sources:        `${unbuilt.sides.join(' and ')} sources ${unbuilt.sources ? 'on disk' : 'missing on disk'}`,
     }, 'Spill pending');
+
+    return null;
+  }
+
+  // On disk, and stocked when there is room: `fits` has said where there was none.
+  if (noRoom) {
+    summary.noRoom++;
 
     return null;
   }
@@ -836,7 +905,11 @@ const stock = async (
       failure ??= err as Error;
 
       // Not a failure: nothing was written, and it is stocked when there is room.
-      if (err instanceof NoRoom) logger.warn({ partition: labelOf(key), ...roomIn(err.short) }, NO_ROOM);
+      if (err instanceof NoRoom) {
+        summary.noRoom++;
+
+        logger.warn({ partition: labelOf(key), ...roomIn(err.short) }, NO_ROOM);
+      }
       else {
         summary.failed++;
 

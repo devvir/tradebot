@@ -8,6 +8,9 @@ import config from '../src/config';
 import { open } from '../src/db';
 import { parseKey } from '../src/keys';
 import { BACKEDUP, ERRORS, LEDGER, validate } from '../src/ledger';
+import * as build from '../src/build';
+import { _test_held as held } from '../src/prepare';
+import * as room from '../src/room';
 import { _test_splitAt as splitAt, sweep } from '../src/scan';
 import type { DuckDBConnection } from '@duckdb/node-api';
 import type { ListedSlice } from '../src/types';
@@ -36,6 +39,9 @@ let updatedAt: string;
 let queries: URLSearchParams[];
 let venuesAsked: string[];
 
+/** Venues the catalog answers 404 for. */
+let refused: string[];
+
 const key = (symbol: string, date = MONTH) =>
   `gate/perp/trades/B/${symbol}/${date.slice(0, 6)}/gate|perp|trades|${symbol}|${date}.csv.gz`;
 
@@ -60,6 +66,8 @@ const catalog = async (url: string | URL): Promise<Response> => {
 
   queries.push(asked);
   venuesAsked.push(venue ?? '');
+
+  if (refused.includes(venue ?? '')) return new Response(JSON.stringify({ error: 'No such venue' }), { status: 404 });
 
   const slices = new Map<string, ListedSlice>();
   const tags   = new Map<string, string[]>();
@@ -154,6 +162,7 @@ beforeEach(async () => {
   pending   = [];
   queries   = [];
   venuesAsked = [];
+  refused   = [];
   updatedAt = '2020-01-01T00:00:00.000Z';
 
 
@@ -806,5 +815,100 @@ describe('a sweep below the space floor', () => {
     } finally {
       config.minFreeGb = floor;
     }
+  });
+});
+
+/** One partition, or one venue, going wrong is no reason to stock nothing else. */
+describe('a sweep that meets a failure', () => {
+  const binance = (symbol: string, date: string) =>
+    `binance/spot/trades/B/${symbol}/${date.slice(0, 6)}/binance|spot|trades|${symbol}|${date}.zip`;
+
+  /** Put a fixture in the archives under a key, zipped, and catalogue it. */
+  const zipped = async (fixture: string, at: string): Promise<void> => {
+    const path = join(config.archivesDir, at);
+    const dir  = join(config.archivesDir, '.zipping');
+
+    await mkdir(dirname(path), { recursive: true });
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'BTCUSDT-trades.csv'), await readFile(join(FIXTURES, fixture)));
+    execFileSync('zip', ['-jq', path, join(dir, 'BTCUSDT-trades.csv')]);
+    await rm(dir, { recursive: true, force: true });
+
+    listed.push({ Key: at, ETag: '"z1"', Size: (await stat(path)).size });
+  };
+
+  /** A file the size of a busy day that is no zip at all, catalogued as it is. */
+  const unreadable = async (at: string): Promise<void> => {
+    const path = join(config.archivesDir, at);
+
+    await mkdir(dirname(path), { recursive: true });
+    execFileSync('truncate', ['-s', '17M', path]);
+
+    listed.push({ Key: at, ETag: '"u1"', Size: (await stat(path)).size });
+  };
+
+  const logged = (fn: typeof logger.error): string[] => vi.mocked(fn).mock.calls.map(call => String(call[1]));
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it('goes on to the next venue where the catalog refuses to list one', async () => {
+    refused = ['binance'];
+
+    await place('gate.futures_usdt-trades.csv', key('BTC_USDT'));
+
+    expect(await sweep(conns)).toMatchObject({ built: 1, failed: 1 });
+    expect(await stocked()).toEqual(['@/202606.parquet']);
+    expect(logged(logger.error)).toContain('Catalog listing failed — venue skipped this sweep');
+  });
+
+  /** A big instrument's archives are opened to be weighed before anything is stocked; one that cannot be opened fails there. */
+  it('goes on to the next partition where one cannot be decided', async () => {
+    await unreadable(binance('BTCUSDT', '20200101'));
+    await unreadable(binance('BTCUSDT', '20200102'));
+    await place('gate.futures_usdt-trades.csv', key('BTC_USDT'));
+
+    const summary = await sweep(conns);
+
+    expect(summary.failed).toBeGreaterThanOrEqual(1);
+    expect(summary.built).toBe(1);
+    expect(await stocked()).toEqual(['@/202606.parquet']);
+    expect(vi.mocked(logger.error).mock.calls.find(call => call[1] === 'Deciding failed — partition skipped')?.[0])
+      .toMatchObject({ partition: expect.stringContaining('binance') });
+  });
+
+  /** Outside its own handling, as in clearing staging before the build: the partition fails, and what was extracted for it goes. */
+  it('fails a partition that stops where stocking it does not expect, and gives up what was extracted for it', async () => {
+    const baseline = held();
+
+    await zipped('binance.spot-trades.csv', binance('BTCUSDT', '202001'));
+    await place('gate.futures_usdt-trades.csv', key('BTC_USDT'));
+
+    const kept = vi.spyOn(build, 'keepPieces').mockRejectedValueOnce(Object.assign(new Error('EIO'), { code: 'EIO' }));
+
+    try {
+      expect(await sweep(conns)).toMatchObject({ built: 1, failed: 1 });
+    } finally {
+      kept.mockRestore();
+    }
+
+    expect(await stocked()).toEqual(['@/202606.parquet']);
+    expect(logged(logger.error)).toContain('Stocking failed');
+    await vi.waitFor(() => expect(held()).toBe(baseline));
+  });
+
+  /** On disk as catalogued, so not missing: the warning that there is no room is the one thing said of it. */
+  it('counts a partition there is no room to extract as waiting for room, not as missing', async () => {
+    await place('gate.futures_usdt-trades.csv', key('BTC_USDT'));
+
+    const short = vi.spyOn(room, 'shortOf').mockResolvedValue({ needs: 10 * 1024 ** 3, free: 1024 ** 3 });
+
+    try {
+      expect(await sweep(conns)).toMatchObject({ built: 0, missing: 0, noRoom: 1, failed: 0 });
+    } finally {
+      short.mockRestore();
+    }
+
+    expect(logged(logger.warn).filter(said => said === 'Not enough space to extract — partition skipped')).toHaveLength(1);
+    expect([...logged(logger.info), ...logged(logger.warn)].filter(said => said.includes('not on disk'))).toEqual([]);
   });
 });
