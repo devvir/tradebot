@@ -1,5 +1,5 @@
 import { logger } from '@devvir/service-kit';
-import { sanitizeUrl, redactUrl } from '@tradebot/utils';
+import { redactUrl } from '@tradebot/utils';
 import parseBindings, { buildTopology, withDefaults } from './bindings';
 import type { Config } from './types';
 
@@ -7,7 +7,7 @@ export const loadConfig = (): Config => {
   const bindings = withDefaults(parseBindings(process.env.PIPE_BINDINGS || ''));
 
   const config: Config = {
-    rabbitmqUrl: sanitizeUrl(process.env.QUEUE_URL || ''),
+    rabbitmqUrl: process.env.QUEUE_URL ?? '',
     topology: buildTopology(bindings),
     bindings,
   };

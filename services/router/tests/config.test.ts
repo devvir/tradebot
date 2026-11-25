@@ -142,6 +142,14 @@ describe('Router Config', () => {
       expect(() => load('broadcast(key:trade.*) > writer')).toThrow('A bare source queue takes no (key:...)');
     });
 
+    it('rejects (header:) on a bare source queue', () => {
+      expect(() => load('broadcast(header:x-db=tradebot) > writer')).toThrow('(header:...) is only valid on destinations');
+    });
+
+    it('rejects (header:) on a source bound to an exchange', () => {
+      expect(() => load('q@headers:h(header:x-db=tradebot) > writer')).toThrow('(header:...) is only valid on destinations');
+    });
+
     it('accepts type:name shorthand as exchange-only destination', () => {
       process.env.QUEUE_URL    = 'amqp://localhost';
       process.env.ROUTER_RULES = 'broadcast > fanout:output';

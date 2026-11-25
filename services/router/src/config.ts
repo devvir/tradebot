@@ -1,5 +1,5 @@
 import { logger } from '@devvir/service-kit';
-import { sanitizeUrl, redactUrl, parseRules } from '@tradebot/utils';
+import { redactUrl, parseRules } from '@tradebot/utils';
 import type { ParsedItem, ParsedRule } from '@tradebot/utils';
 import type { Config, Route, RouteSource, RouteDestination, Exchange } from './types';
 import type { ExchangeMap } from './routes';
@@ -12,7 +12,7 @@ export const loadConfig = (): Config => {
   const typeOf = resolveTypes(rules);
 
   const config: Config = {
-    rabbitmqUrl: sanitizeUrl(process.env.QUEUE_URL || ''),
+    rabbitmqUrl: process.env.QUEUE_URL ?? '',
     routes: rules.map((p) => ({
       source:      toSource(p.source, typeOf),
       destination: toDestination(p.destination, typeOf),
@@ -194,10 +194,17 @@ const resolveTypes = (rules: ParsedRule[]): ((name: string) => NonNullable<Excha
   return (name) => declared[name]?.type ?? 'fanout';
 };
 
+/**
+ * A source is a queue, optionally bound to an exchange with a key. Header modifiers and
+ * (key:match:replace) belong to destinations, so a source carrying either throws. A key on a
+ * bare source queue is kept, so validation reports it alongside the configuration's other problems.
+ */
 const toSource = (item: ParsedItem, typeOf: (name: string) => Exchange['type']): RouteSource => {
   if (! item.queue) throw new Error('Source must have a queue name');
   if (item.routingKey?.replace !== undefined)
     throw new Error('(key:match:replace) is only valid on destinations');
+  if (item.headers)
+    throw new Error(`(header:...) is only valid on destinations: "${item.queue}"`);
   if (item.exchange?.type === 'default')
     throw new Error(`The default exchange cannot be bound; use a bare queue name: "${item.queue}@default:${item.exchange.name}"`);
 
