@@ -1,15 +1,21 @@
-# cold push catalog · cold pull catalog
+# cold and the catalog
 
 A copy of the catalog's database in cold storage, and the way back from it. What every cold command
-shares — configuration (`CATALOG_DIR`, `CATALOG_DB`), where things live, locks and the record — is in
-[COLD.md](COLD.md).
+shares — the command shape, configuration (`CATALOG_DIR`, `CATALOG_DB`), where things live, locks and
+the record — is in [COLD.md](COLD.md).
 
 **The catalog can be rebuilt from the venues, given days — and not at all where a venue has since
 withdrawn what it published.** The copy is there so that losing the catalog costs a restore and not
 a survey.
 
 **The catalog is not a tree of data.** Both commands are asked for by name, `catalog` in the
-origin's place; `all` and `--all-sources` never include them, and they take no venues.
+origin's place; `all` and `--all-sources` never include them, and they take no venues. Each holds a
+lock of its own, `cold.catalog.push.lock` and `cold.catalog.pull.lock`, and neither reads `-w`.
+
+**Around either, the record is looked after as around any other command**
+([COLD.md](COLD.md#colds-own-files-are-kept-in-mega-too)): set against its copy in Mega as the command
+starts, and sent as it ends where it changed, so what `push catalog` writes into the record reaches
+the record's copy with it.
 
 ---
 
@@ -84,6 +90,11 @@ itself, and nothing is copied.
 | `--rebase` | take a new snapshot: send the whole database again, and remove from Mega the partitions' files sent since the last |
 | `--keep-snapshot`, `--drop-snapshot` | see [above](#the-snapshot-on-disk) |
 | `-n`, `--dry-run` | say what would be sent, and send nothing |
+| `-l`, `--lens` | refused: the copy is always of the whole catalog |
+| `-y` | see [COLD.md](COLD.md#options-given-at-the-cold-level) |
+
+`-n`, `--rebase` and the snapshot options are this command's alone: `cold push archives` and
+`cold push vault` refuse them.
 
 It reads the database file at `CATALOG_DB`, never the catalog's API, and refuses to run where there
 is no file there.
@@ -127,9 +138,6 @@ and reads nothing of the catalog again.
 no other time: the copy is whole without it. It is worth doing now and then all the same, since it
 leaves a copy with nothing to put into its snapshot.
 
-What `push catalog` writes to the record reaches the record's copy in Mega with the next other
-command; see [COLD.md](COLD.md#colds-own-files-are-kept-in-mega-too).
-
 ## `cold pull catalog`
 
 | | |
@@ -137,6 +145,10 @@ command; see [COLD.md](COLD.md#colds-own-files-are-kept-in-mega-too).
 | `-o`, `--output <path>` | where the database is left: a directory, or the file itself. `catalog.db` in that directory unless a file is named |
 | `--keep-snapshot`, `--drop-snapshot` | see [above](#the-snapshot-on-disk) |
 | `-n`, `--dry-run` | say what would be brought back and where to, and bring nothing |
+| `-y` | see [COLD.md](COLD.md#options-given-at-the-cold-level) |
+
+What narrows a pull of a tree — `--dataset`, `--partition`, `--date`, `--instruments`, `-f` and the
+preferences — is not read.
 
 **Never over the catalog in use.** What comes back is put together at
 `<cold>/pulled/catalog/catalog.db`, or where `--output` says, and its path is said. Whether and when

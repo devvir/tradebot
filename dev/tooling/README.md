@@ -53,7 +53,8 @@ Each command's own variables are listed with the command below; `cold`'s are in
 
 ## `rabbit` (alias `amqp`)
 
-Inspects RabbitMQ queues without taking anything from them.
+Inspects RabbitMQ queues: lists them, fetches the messages at a queue's head, or watches what is
+published to it.
 
 ```bash
 ./tools rabbit --list                 # every queue: messages, ready, consumers
@@ -64,8 +65,9 @@ Inspects RabbitMQ queues without taking anything from them.
 ```
 
 - **Fetch** (the default) takes up to `--messages` (default 10) messages from the head of the queue,
-  prints them, and requeues all of them. The queue keeps them, marked redelivered. A stream queue
-  cannot be fetched from and is refused.
+  prints them, and requeues all of them. **It is not a read-only look**: while it holds them no
+  consumer receives them, and the queue gets them back marked redelivered. A stream queue cannot be
+  fetched from and is refused.
 - **`--watch`** prints messages as they are published. For a classic or quorum queue it binds a
   private, auto-deleted queue to the same exchanges with the same routing keys and reads that copy,
   so the queue and its consumers are not touched. Messages published straight to the queue through
@@ -112,8 +114,10 @@ A live dashboard of the running Docker containers and the RabbitMQ queues, redra
 
 ## `cold`
 
-Cold storage of the archives and the vault in Mega: `push`, `evict`, `pull`, `audit` and `stats`.
-See [docs/tooling/COLD.md](../../docs/tooling/COLD.md).
+Cold storage of the archives, the vault and the catalog's database in Mega: `push`, `evict`, `pull`,
+`audit` and `stats`. See [docs/tooling/COLD.md](../../docs/tooling/COLD.md) for what the commands
+share, and [docs/tooling/README.md](../../docs/tooling/README.md#tools-cold) for the page of each
+tree.
 
 ## `remote`
 

@@ -10,47 +10,43 @@ its own state. It reads the vault's ledger, and writes one file into the vault, 
 **It stores partitions.** A partition is one month of one slice of a venue's data. For the archives,
 which partitions exist, which are finished and what each holds is the catalog's to say; `cold` asks
 it, and records which tar each partition went into and at which version. For the vault, the vault's
-own ledger says, and the files are stored as they are (see [COLD-VAULT.md](COLD-VAULT.md)).
+own ledger says, and the files are stored as they are.
+
+This page is what every cold command shares. Each tree has a page of its own, covering every command
+on it:
+
+| page | what it covers |
+|---|---|
+| [COLD-ARCHIVES.md](COLD-ARCHIVES.md) | `push`, `evict`, `pull` and `stats` of the archives: tars of whole partitions |
+| [COLD-VAULT.md](COLD-VAULT.md) | `push`, `evict`, `pull` and `stats` of the vault, file by file, and `pull needed` |
+| [COLD-CATALOG.md](COLD-CATALOG.md) | `push catalog` and `pull catalog`: a copy of the catalog's database |
+| [COLD-AUDIT.md](COLD-AUDIT.md) | `audit`: Mega, the disk and the record set against each other |
 
 ---
 
-## Subcommands
+## The command shape
 
-| | |
-|---|---|
-| `cold push` | Upload what is ready and not backed up yet: [archives](COLD-PUSH.md), [vault](COLD-VAULT.md#cold-push-vault) |
-| `cold evict` | Remove from the local disk what is safely in cold storage: [archives](COLD-EVICT.md), [vault](COLD-VAULT.md#cold-evict-vault) |
-| `cold pull` | Bring back part of a venue's data: [archives](COLD-PULL.md#the-archives), [vault](COLD-VAULT.md#cold-pull-vault) |
-| [`cold pull needed`](COLD-PULL.md#cold-pull-needed) | Bring back whatever the vault cannot finish a partition without while it is in cold storage |
-| [`cold push catalog`, `cold pull catalog`](COLD-CATALOG.md) | A copy of the catalog's database, and the way back from it |
-| `cold stats` | What the record holds, venue by venue |
-| [`cold audit`](COLD-AUDIT.md) | Check Mega, the disk and the record against each other, and offer to put right what disagrees |
+```
+./tools cold <command> [origin] [venues…] [options]
+```
 
-Every subcommand but the catalog's takes an [origin](#origins), then venues where it takes any:
-`cold push archives binance bybit`. With no origin it asks, and `all` is the first answer.
+| command | origins | |
+|---|---|---|
+| `push` | `archives`, `vault`, `all`; `catalog` | upload what is ready and not stored yet |
+| `evict` | `archives`, `vault`, `all` | remove from the local disk what is safely in cold storage |
+| `pull` | `archives`, `vault`, `all`; `catalog`, `needed` | bring back part of a venue's data, the catalog's copy, or what the vault waits for |
+| `audit` | `archives`, `vault`, `all` | check Mega, the disk and the record against each other |
+| `stats` | `archives`, `vault`, `all` | what the record holds, venue by venue |
 
-**Options given at the `cold` level are every command's.** They are written once, before the command
-or after it, and each command that has a use for one reads it:
+**The origin comes first, then the venues**: `cold push archives binance bybit`. One argument is
+always read as the origin, so `cold push binance` is an unknown origin, not a guess at a tree. With
+no origin, the command asks which tree, and `all` is the first answer. `audit` and `stats` take no
+venues. `catalog` and `needed` take none either: what follows them is not read.
 
-| | |
-|---|---|
-| `-w`, `--watch` | keep running and look again every 30 minutes; see [Watching](#watching) |
-| `-a`, `--all-sources` | every tree, without asking which. There is then no origin on the line, so every argument is a venue |
-| `-y`, `--yes` | answer every question a command asks with its own default |
+### Origins
 
-**`--yes` gives each question the answer pressing return would give**: yes where a command asks
-whether to do what it was run to do, no where doing it would change nothing or could lose something.
-It does not answer for a lock another run is holding: that still stops the run. `--all-sources` and
-`--yes` together are what a script or a crontab runs.
-
-**Short options are lower case**, here and on every command.
-
----
-
-## Origins
-
-`origin` is the argument that names the tree a command acts on. Trees are named for what they hold,
-not for whatever writes them; `stocker` is accepted for `vault`.
+`origin` names the tree a command acts on. Trees are named for what they hold, not for whatever
+writes them; `stocker` is accepted for `vault`.
 
 | origin | tree | in Mega |
 |---|---|---|
@@ -62,8 +58,56 @@ not for whatever writes them; `stocker` is accepted for `vault`.
 
 **With more than one tree, each line says which it is about**, as `(archives)` or `(vault)`.
 
-`push` and `pull` also take `catalog` in the origin's place, and `pull` takes `needed`. Neither is a
-tree: `all` and `--all-sources` never include them.
+**`catalog` and `needed` are not trees.** They are named in the origin's place and nowhere else:
+`all` and `--all-sources` never include them.
+
+### Options given at the `cold` level
+
+Written once, before the command or after it. Each command that has a use for one reads it; the
+others ignore it.
+
+| | read by | |
+|---|---|---|
+| `-w`, `--watch` | `push archives`, `push vault`, `evict archives`, `evict vault`, `pull needed` | keep running and look again every 30 minutes; see [Watching](#watching) |
+| `-a`, `--all-sources` | `push`, `evict`, `pull`, `audit`, `stats` over the trees | every tree, without asking which. There is then no origin on the line, so every argument is a venue |
+| `-y`, `--yes` | every command | answer every question a command asks with its own default |
+
+**`--yes` gives each question the answer pressing return would give**: yes where a command asks
+whether to do what it was run to do, no where doing it would change nothing or could lose something.
+It does not answer for a lock another run is holding: that still stops the run. `--all-sources` and
+`--yes` together are what a script or a crontab runs.
+
+**Short options are lower case**, here and on every command.
+
+**Each command's own options are on its tree's page**, with what each tree does with an option that
+is not its own. Most are ignored where they mean nothing. `push` refuses outright the options only
+the catalog's copy takes (`-n`, `--rebase`, `--keep-snapshot`, `--drop-snapshot`) on a tree, before
+it asks or sends anything.
+
+### What a pull is asked for
+
+`pull archives` and `pull vault` are asked for the same way: **a venue, and a dataset or a partition
+of it.** A venue alone is everything it ever published, and is refused, as is a pull with no venue.
+
+| | |
+|---|---|
+| `<venues…>` | after the origin; at least one |
+| `--dataset <dataset[,variant]>` | a dataset in every market: every variant of it, or the one named |
+| `--partition <market[/dataset[,variant][/YYYY[MM]]]>` | a market, or as much of a partition of it as is given from the left |
+| `--date <YYYY\|YYYYMM>` | only that year, or that month; refused where the partition already names one |
+| `-n`, `--dry-run` | say how what is asked for stands, and bring nothing |
+
+One of `--dataset` and `--partition` is required, and only one. A month may also be written
+`YYYY-MM`.
+
+```
+./tools cold pull archives bybit --dataset trades --date 2021
+./tools cold pull archives okx --partition perp/books,incremental,400/202309
+./tools cold pull vault bybit --partition perp/klines,1m/2023
+```
+
+What each tree takes besides: [COLD-ARCHIVES.md](COLD-ARCHIVES.md#cold-pull-archives) and
+[COLD-VAULT.md](COLD-VAULT.md#cold-pull-vault).
 
 ---
 
@@ -82,21 +126,23 @@ module's, `dev/tooling/.env`, the `-e` file, then the shell. An empty value coun
 | `DATA_VAULT_DIR` | `<DATA_DIR>/vault` | the vault tree |
 | `COLD_QUEUE_TARGET_GB` | `10` | GB: while Mega's upload queue holds more, `push` packs and hands over nothing more |
 | `COLD_SETTLED_HOURS` | none | hours a settled partition must also have gone unchanged in the catalog before `push archives` stores it |
-| `CATALOG_DIR` | `<DATA_DIR>/catalog` | the directory holding the catalog's database |
+| `CATALOG_DIR` | the archives module's `CATALOG_DIR`, else `<DATA_DIR>/catalog` | the directory holding the catalog's database |
 | `CATALOG_DB` | `<CATALOG_DIR>/catalog.db` | the catalog's database, which `push catalog` copies |
 | `CATALOG_URL` | `http://localhost:<CATALOG_PORT>`, else `http://localhost:9010` | where the catalog's API answers from this host |
 | `CATALOG_TOKEN` | the archives module's `CATALOG_TOKEN`, else none | sent to the catalog as `x-catalog-token` |
 
-**The catalog's port and token come from the module that deploys it.** Where `CATALOG_URL` or
-`CATALOG_TOKEN` is not set, `cold` reads `CATALOG_PORT` and `CATALOG_TOKEN` from
-`modules/collect/archives/.env` directly, as written, whether or not `-m` names that module.
-`CATALOG_DIR` is not read from there: it comes from the environment, where the root `.env` sets it,
-and the module's own value counts only under `-m archives`.
+**The catalog's directory, port and token come from the module that deploys it.** Where the
+environment leaves `CATALOG_DIR`, `CATALOG_URL` or `CATALOG_TOKEN` unset, `cold` reads `CATALOG_DIR`,
+`CATALOG_PORT` and `CATALOG_TOKEN` from `modules/collect/archives/.env` directly, whether or not `-m`
+names that module. `${NAME}` references in its `CATALOG_DIR` are expanded against the environment;
+`CATALOG_PORT` and `CATALOG_TOKEN` are taken as written.
 
-**`cold` runs on the host, so it needs the catalog on a known host port.** An empty `CATALOG_PORT`
-in the archives module still publishes the catalog, on a port docker picks, and `cold` then asks
-`http://localhost:9010` and [waits](#a-service-that-does-not-answer) for a catalog that is not
-there. On a host where `cold` runs, set `CATALOG_PORT` in the archives module, or set `CATALOG_URL`.
+**`cold` runs on the host, so it needs the catalog on a known host port.** Where the archives module
+does not set `CATALOG_PORT`, the catalog is asked at `http://localhost:9010`. Where it sets it empty,
+the catalog is published on a port docker picks, and where it sets anything but a port, nothing says
+where the catalog is: every question to the catalog then fails at once, with an error naming the
+variable and the file. Set `CATALOG_PORT` in the archives module, or set `CATALOG_URL`.
+
 `push`, `evict`, `pull` and `audit` ask the catalog's API; `push catalog` reads the database file.
 
 ---
@@ -111,6 +157,7 @@ there. On a host where `cold` runs, set `CATALOG_PORT` in the archives module, o
 | older versions pulled | `<cold>/pulled/archives/…`: partitions of a version the catalog has moved on from, for looking at |
 | the catalog's copy | `<cold>/catalog/` while it is sent, and the snapshot kept there with `--keep-snapshot`; `<cold>/pulling/catalog/` while it comes back; `<cold>/pulled/catalog/catalog.db` unless `--output` says otherwise |
 | copies of cold's own files | `<cold>/backup/`, with `sent.json`; see [below](#colds-own-files-are-kept-in-mega-too) |
+| locks | `<cold>/cold.<origin>.<command>.lock`; see [Locks](#locks) |
 | remote, archives | `<MEGA_ROOT>/sources/archives/<venue>/<YYYY>/<venue>-<YYYYMM>.<NNN>.tar` |
 | remote, vault | `<MEGA_ROOT>/vault/<venue>/<market>/<dataset>[,<variant>…]/<@ or instrument>/<YYYYMM>[.pre\|.post].parquet` |
 | remote, catalog | `<MEGA_ROOT>/@cold/catalog/`: `catalog.db`, `tables.db`, `partitions/<venue>/<YYYY>/…` |
@@ -118,16 +165,13 @@ there. On a host where `cold` runs, set `CATALOG_PORT` in the archives module, o
 
 Vault files come back straight to their place in the vault.
 
-**A tar's name says which venue-month it belongs to and nothing about what is inside.** Only the
-record knows which partitions a tar holds.
-
 **The record holds no roots.** A tar's path is stored relative to the tree's place in Mega and to its
 staging directory, and the roots come from the environment on every use, so moving to another Mega
 account or another disk is an `.env` edit.
 
 ### Locks
 
-**One run of each command per tree at a time**, held by a file `<cold>/cold.<origin>.<command>.lock`,
+**One run of each command per origin at a time**, held by a file `<cold>/cold.<origin>.<command>.lock`,
 with `catalog` and `needed` in the origin's place where they are asked for:
 
 | | |
@@ -151,22 +195,25 @@ moved since it was found.
 
 ## The record
 
-`<cold>/cold.sqlite`, SQLite. It records partitions, not files: the catalog's version of a partition
-stands for every file in it, so a tar is recorded as the partitions it holds, the version of each, and
-Mega's handle for the stored object.
+`<cold>/cold.sqlite`, SQLite. For the archives it records partitions, not files: the catalog's
+version of a partition stands for every file in it, so a tar is recorded as the partitions it holds,
+the version of each, and Mega's handle for the stored object. For the vault it records files, since
+the vault is stored as it is.
 
 | table | one row per |
 |---|---|
 | `tar` | tar of the archives, planned, on its way or stored: venue, month, sequence number, its path below the tree's place in Mega and below its staging directory, size, state, Mega's handle |
 | `held` | partition in a tar, at the version cold storage holds of it; the version the catalog has now where it is newer, and what the tar on disk holds until Mega confirms it |
 | `eviction` | time a partition of the archives was taken off the local disk: the version stored, what was removed, and when it was brought back, if it was |
+| `pulled` | partition of the archives a pull brought back into the archives and not taken off the disk since: the version brought, and when |
 | `vault_file` | file of the vault in cold storage or on its way: partition, revision, instrument, side, path, size, state, Mega's handle, and since when it is away from the disk |
 | `vault_partition` | vault partition every file of which is stored, at that revision |
 | `vault_move` | time a vault file was taken off the disk or brought back |
 | `catalog_copy` | piece of the catalog's copy: the base snapshot, and every partition of the catalog at the version the copy holds, with a file of its own once it has changed since the base; Mega's handle for what was sent |
 
-`tar.state` is one of `planned`, `packed`, `queued`, `stored`, and, for a tar being corrected,
-`stale`, `fetching`, `fetched`.
+**A tar's name says which venue-month it belongs to and nothing about what is inside.** Only the
+record knows which partitions a tar holds. What each state of a tar means is in
+[COLD-ARCHIVES.md](COLD-ARCHIVES.md#a-tars-way-into-cold-storage).
 
 ### Cold's own files are kept in Mega too
 
@@ -183,10 +230,10 @@ that knows what its files are.** Neither is versioned anywhere else, so each has
   `audit` is the exception: where another command is running it sets the record against its copy
   anyway, unless `--dry-run`.
 - **After each tree a command works on**, the record is sent if it changed, and after the vault the
-  ledgers too. A command that keeps running under `--watch` also sends them each time it has done
-  everything it found.
-- **`push catalog` and `pull catalog` do neither.** What `push catalog` writes to the record reaches
-  Mega's copy with the next other command.
+  ledgers too. `push catalog`, `pull catalog` and `pull needed` count as one tree of the archives:
+  the record is checked before them and sent after them, the ledgers are not. A command that keeps
+  running under `--watch` also sends the record each time it has done everything it found, and
+  `push vault` the ledgers with it.
 - **Sent as a copy taken whole**, in `<cold>/backup`, since both are written while they are read.
   What was last sent, a digest and a size for each, is in `<cold>/backup/sent.json`, and a file goes
   again only when its digest has changed, or, as a command starts, when Mega no longer holds the
@@ -217,8 +264,9 @@ snapshot of the catalog does, it is not taken as stored before this run has hand
 Mega holds there beforehand may be the one it replaces.
 
 **The queue is asked only whether a transfer is still on its way**, to know whether to hand a file
-over again. It is read whole, not filtered to one run's transfers, since there is one link. A queue
-that could not be read is never taken for an empty one.
+over again, and how much is waiting to upload. It is read whole, not filtered to one run's
+transfers, since there is one link. A queue that could not be read is never taken for an empty one,
+and is warned about once.
 
 **A file can be handed over twice.** Mega is slow to show a transfer it has accepted, and for a moment
 after one finishes the file is in neither the queue nor the listing. Sent twice, it is stored twice,
@@ -241,7 +289,8 @@ not ended by a service restarting.
   asked again after 5 seconds, then twice as long each time up to a minute, for as long as it takes.
   The wait is said once, with the address asked. Any other answer is the catalog's own. A look taken
   in the middle of other work, such as a push asking again while its tars upload, is given 15
-  seconds and then skipped, and the work goes on.
+  seconds and then skipped, and the work goes on. A catalog whose address is not known (see
+  [Configuration](#configuration)) is not waited for.
 - **Mega, when a command fails**: Mega is asked who is logged in, which changes nothing. Where it
   answers, the failure is the command's own: a path that is not there is an empty one, and anything
   else is a failure. Where it does not, the run waits, with the same widening wait, and sends the
@@ -257,16 +306,13 @@ cold's own files, are not waited for: they fail as they are.
 
 ## Watching
 
-**`-w` is read by `push` (both trees), `evict archives` and `pull needed`.** Each keeps running once
-its work is done, and looks again every 30 minutes. `evict --cleanup` refuses to run with it.
-`push catalog` and `pull catalog` ignore it.
-
-**Watching one tree, any other command runs once**, as it would without `-w`.
+**`-w` is read by `push archives`, `push vault`, `evict archives`, `evict vault` and `pull needed`.**
+Each keeps running once its work is done, and looks again every 30 minutes. `evict --cleanup`
+refuses to run with it. Every other command runs once, whatever is given.
 
 **Watching several trees** (`all` or `--all-sources`), each tree is seen through before the next
-begins, and the whole round comes again after 30 minutes. This holds for every command, including
-those that do not watch on their own: `audit`, `stats`, `pull` and `evict vault` repeat too. What a
-command asks, it asks in the first round only.
+begins, and the whole round comes again after 30 minutes. What a command asks, it asks in the first
+round only.
 
 **A command left watching keeps going through what goes wrong.** A command run with `-w` that fails
 says why and is run again, after 5 seconds, then twice as long each time up to a minute. Every
@@ -294,15 +340,14 @@ through a lens where one is asked for, and what the vault's ledger says is stock
 ## The code
 
 `dev/tooling/src/tools/cold/`, registered on the command line by `dev/tooling/src/commands/cold.ts`.
-Each subcommand's directory holds its `command.ts`, its place on the command line, and the code
-behind it:
+Each subcommand's directory holds its `command.ts`, its place on the command line, and what it needs:
 
 | | |
 |---|---|
-| `push/` | `archives/`, `vault/`, `catalog/`; `confirm.ts`, the second look at what was stored |
+| `push/` | `archives/`, `vault/`, `catalog/`; `confirm.ts`, the second look at what was stored; `progress.ts` |
 | `evict/` | `archives/`, `vault.ts`; `discard.ts`, removal to the trash or outright, which `audit` uses too |
 | `pull/` | `archives/`, `vault/`, `catalog/`, `needed/`; `filter.ts`, what a pull is narrowed to |
-| `audit/` | `checks/`, one module per check; `again.ts`, what a fix looks at again |
+| `audit/` | `checks/`, one module per check; `again.ts`, what a fix looks at again; `finding.ts` |
 | `stats/` | one module |
 | `shared/` | what two subcommands or more use: `record/`, `mega/`, `vault/` (ledger, layout, what the vault waits for), the catalog's API, the archives on disk, tars, the backup of cold's own files, the progress display |
 | the directory itself | `config.ts`, `options.ts` (the options given at the `cold` level), `cli.ts` (how a line is read into trees and venues, and running a command over each), `lock.ts`, `cleanup.ts` (what is given back however the process ends), `order.ts` (sorting by key) |
@@ -313,6 +358,3 @@ Types sit in a `types.ts` at the level that uses them.
 of the terminal, and what is logged instead where there is no terminal; it knows nothing of what it
 shows. `shared/progress-mega.ts` feeds it from Mega's queues. A command that counts its own work hands
 its numbers to the block directly.
-
-Related: [COLD-PUSH.md](COLD-PUSH.md), [COLD-EVICT.md](COLD-EVICT.md), [COLD-PULL.md](COLD-PULL.md),
-[COLD-VAULT.md](COLD-VAULT.md), [COLD-CATALOG.md](COLD-CATALOG.md), [COLD-AUDIT.md](COLD-AUDIT.md).

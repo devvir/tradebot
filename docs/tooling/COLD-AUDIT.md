@@ -1,7 +1,8 @@
 # cold audit
 
 `cold audit [origin]` checks that Mega, the local disk and the record all say the same thing, and
-offers to put right what does not. See [COLD.md](COLD.md) for the namespace, origins and the record.
+offers to put right what does not. What every cold command shares — the command shape, origins, the
+record — is in [COLD.md](COLD.md).
 
 **Everything else in the family trusts the record.** `push` decides what to send from it, `evict`
 what may be removed, `pull` what can come back, and none of them looks at the world again on every
@@ -9,8 +10,9 @@ run. This is where that trust is earned back: run now and then, or whenever some
 
 | | |
 |---|---|
-| `[origin]` | `archives`, `vault`, or `all` |
+| `[origin]` | `archives`, `vault`, or `all`; no venues |
 | `-n`, `--dry-run` | say what was found, and do nothing about it |
+| `-y`, `-a` | see [COLD.md](COLD.md#options-given-at-the-cold-level); `-w` is not read |
 
 `audit` takes no lock, and runs beside any other command ([COLD.md](COLD.md#locks)).
 
@@ -41,7 +43,7 @@ and a fix in staging or of what a pull left behind does nothing once another com
 ### What is removed, and where it goes
 
 - **Files of the trees** — a vault file or an archives partition taken off the disk again — go to
-  the host's trash, as `evict`'s do ([COLD-EVICT.md](COLD-EVICT.md#files-go-to-the-trash)).
+  the host's trash, as `evict`'s do ([COLD-ARCHIVES.md](COLD-ARCHIVES.md#files-go-to-the-trash)).
 - **Cold's own files** — tars in staging, what a pull left behind, a lock whose holder is gone — are
   deleted outright.
 - **Objects in Mega** the record has never heard of are removed from Mega.
@@ -89,10 +91,11 @@ holds it as it is.**
 
 **`evict --cleanup`'s rule** is that the partition is stored at the version the catalog has now,
 with no change noted, stocked, needed by no neighbouring month, and was evicted at that same
-version ([COLD-EVICT.md](COLD-EVICT.md#what-was-evicted-and-is-on-disk-again)). A partition outside
-it may have files newer than cold storage's copy, which the next push needs, so it is only written
-down as back. Where the catalog does not answer within 15 seconds, every such partition is taken as
-outside it.
+version ([COLD-ARCHIVES.md](COLD-ARCHIVES.md#what-was-evicted-and-is-on-disk-again)). A partition
+outside it may have files newer than cold storage's copy, which the next push needs, so it is only
+written down as back. Every such partition is taken as outside it where the catalog does not answer
+within 15 seconds, and where `evict` would take nothing off the disk at all: while the vault's
+`ERROR.log` has anything in it, or there is no ledger. The run says why.
 
 Only vault files of the revision the ledger has now are looked at: one of an older revision is the
 vault's to have replaced.
