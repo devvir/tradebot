@@ -275,6 +275,32 @@ describe('paging a partition', () => {
     expect(second.covers).toEqual({ directory: 'spot/AAAUSDT/', children: [] });
   });
 
+  /**
+   * **A refused child is still linked.** The walk never enters it, and it is not
+   * withdrawn either: covering only the accepted children would read everything
+   * catalogued under it as gone.
+   */
+  it('covers a child it refuses to enter, and does not enter it', async () => {
+    serving(tree);
+
+    const picky   = listing({ ...indexed, accepts: path => ! path.startsWith('spot/BBBUSDT/') });
+    const visited: string[] = [];
+
+    let cursor: string | null = null;
+    let first:  Awaited<ReturnType<typeof html.page>> | undefined;
+
+    do {
+      const page: Awaited<ReturnType<typeof html.page>> = await html.page(picky, 'spot/', cursor);
+
+      first ??= page;
+      if (page.covers && 'directory' in page.covers) visited.push(page.covers.directory);
+      cursor = page.cursor;
+    } while (cursor);
+
+    expect(first!.covers).toEqual({ directory: 'spot/', children: ['spot/AAAUSDT/', 'spot/BBBUSDT/'] });
+    expect(visited).toEqual(['spot/', 'spot/AAAUSDT/']);
+  });
+
   /** The walk ends on the last directory rather than on an empty page after it. */
   it('ends without a page nobody needed', async () => {
     serving(tree);

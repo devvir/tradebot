@@ -64,7 +64,7 @@ export const html: Scanner<ListingContext> = {
 
     if (! at) return { listed: [], cursor: null };
 
-    const { keys, children, gone } = await read(context, at, scope);
+    const { keys, linked, gone } = await read(context, at, scope);
     const after                    = await next(context, scope, at);
 
     if (gone) {
@@ -77,8 +77,11 @@ export const html: Scanner<ListingContext> = {
      * **A directory states its own files and its children in full**, and every
      * directory of the scope gets a page, files or not — so what this one no
      * longer offers, file or subdirectory, has been withdrawn. See `Coverage`.
+     *
+     * **What it links, not what the walk enters.** A refused child is still
+     * served, so it is covered as linked even though nothing descends into it.
      */
-    return { listed: keys.map(listed), cursor: after ? at : null, covers: { directory: at, children } };
+    return { listed: keys.map(listed), cursor: after ? at : null, covers: { directory: at, children: linked } };
   },
 
   /**
@@ -174,8 +177,11 @@ const next = async (
 const children = async (context: ListingContext, dir: string, scope: string): Promise<string[]> =>
   known.get(remembered(context, dir)) ?? (await read(context, dir, scope)).children;
 
-/** One directory, read; `gone` where it answered `404` instead. */
-type Reading = Entries & { gone?: true };
+/**
+ * One directory, read: `children` to descend into, and `linked`, every child it
+ * links whether accepted or not. `gone` where it answered `404` instead.
+ */
+type Reading = Entries & { linked: string[]; gone?: true };
 
 /**
  * Read one directory: the child directories worth descending into, and the keys
@@ -202,32 +208,34 @@ const read = async (
 
     known.set(remembered(context, prefix), []);
 
-    return { children: [], keys: [], gone: true };
+    return { children: [], linked: [], keys: [], gone: true };
   }
 
+  /**
+   * **Sorted here, because a server's order is not ours.** The walk moves
+   * forward through paths in byte order and never looks back, so a child
+   * arriving out of that order is skipped for good — silently, and while the
+   * job still closes as established.
+   *
+   * Nothing exotic is needed to hit it. Bybit sorts by the bare name, while a
+   * child is compared as a path with its trailing slash, and `-` sorts before
+   * `/`: served, `BTCUSDT/` precedes `BTCUSDT-01AUG25/`, and as paths the two
+   * are the other way round. Nine such inversions in `trading/` stranded 401
+   * of its 1,882 symbols.
+   *
+   * So the order is imposed rather than assumed, and no index has to promise
+   * anything.
+   */
+  const linked = [...entries.children].sort();
+
   const found: Entries = {
-    /**
-     * **Sorted here, because a server's order is not ours.** The walk moves
-     * forward through paths in byte order and never looks back, so a child
-     * arriving out of that order is skipped for good — silently, and while the
-     * job still closes as established.
-     *
-     * Nothing exotic is needed to hit it. Bybit sorts by the bare name, while a
-     * child is compared as a path with its trailing slash, and `-` sorts before
-     * `/`: served, `BTCUSDT/` precedes `BTCUSDT-01AUG25/`, and as paths the two
-     * are the other way round. Nine such inversions in `trading/` stranded 401
-     * of its 1,882 symbols.
-     *
-     * So the order is imposed rather than assumed, and no index has to promise
-     * anything.
-     */
-    children: entries.children.filter(child => accepted(context, child)).sort(),
+    children: linked.filter(child => accepted(context, child)),
     keys:     entries.keys,
   };
 
   known.set(remembered(context, prefix), found.children);
 
-  return found;
+  return { ...found, linked };
 };
 
 const level: ReadLevel = async (context, prefix) => {

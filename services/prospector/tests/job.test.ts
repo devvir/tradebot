@@ -1,11 +1,14 @@
 import { asSeries } from '../src/paths';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { closeWalk, establishedAt, openJob, openPartitions, putVenue } from '../src/catalog';
+import {
+  WITHDRAWALS_LOG, closeWalk, establishedAt, openJob, openPartitions, putVenue, unreadable,
+} from '../src/catalog';
 import { openCatalog } from '../src/database';
 import { Refused } from '../src/http';
+import { REFUSALS_BEFORE_BLOCK, _test_paces, paceFor } from '../src/pace';
 import { _test_retryWait as retryWait, surveyVenue } from '../src/survey';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Adapter, Config, Page, Scanner } from '../src/types';
@@ -274,12 +277,41 @@ describe('the exclusion list', () => {
     await surveyVenue(db, venue({ 'spot/': 2 }), config);
 
     /**
-     * The row already catalogued is not deleted — nothing here ever deletes. It
-     * simply stops being offered, so the re-walk marks it withdrawn like any
-     * file the venue stopped serving.
+     * The row already catalogued is left as it is. The venue still lists the
+     * file, so the re-walk has no grounds to call it withdrawn — excluding it
+     * keeps it from being written, not from being served.
      */
     expect(db.prepare(`SELECT existence FROM file WHERE path = 'spot/A/A-2025-01-01.zip'`).get())
-      .toMatchObject({ existence: 'absent' });
+      .toMatchObject({ existence: 'confirmed' });
+    expect(existsSync(join(dir, WITHDRAWALS_LOG))).toBe(false);
+  });
+});
+
+/**
+ * **Withdrawal is judged against what the venue listed.** A file the catalog
+ * can no longer place is still served, so a re-walk lists it as unreadable and
+ * leaves its row alone rather than calling it withdrawn.
+ */
+describe('a catalogued file that can no longer be read', () => {
+  it('stays catalogued and is listed as unreadable', async () => {
+    const id = putVenue(db, 'fake', 'https://x', '');
+
+    await surveyVenue(db, venue({ 'spot/': 2 }), config);
+
+    const strange = 'spot/A/A-2025-01-01.zip';
+    const before  = venue({ 'spot/': 2 });
+    const after: Adapter = {
+      ...before,
+      inspectUrl: path => (path === strange ? { of: 'unknown', date: null } : before.inspectUrl!(path)),
+    };
+
+    await new Promise(r => setTimeout(r, 5));
+    await surveyVenue(db, after, config);
+
+    expect(db.prepare('SELECT existence FROM file WHERE path = ?').get(strange))
+      .toMatchObject({ existence: 'confirmed' });
+    expect(unreadable(db, id).map(one => one.path)).toEqual([strange]);
+    expect(existsSync(join(dir, WITHDRAWALS_LOG))).toBe(false);
   });
 });
 
@@ -324,6 +356,20 @@ describe('a second job over the same venue', () => {
  * one. The job still stays open and the cursors are still kept.
  */
 describe('a venue that blocks us mid-walk', () => {
+  /**
+   * **What the venue's gate concluded before these pages were asked.** A block
+   * is latched by the request layer after a run of refusals (see `Pace.block`);
+   * these scanners throw without going through it, so the latch is set here.
+   */
+  beforeEach(() => {
+    const gate = paceFor(venue({}), 'https://public.bybit.com/');
+
+    for (let i = 0; i < REFUSALS_BEFORE_BLOCK; i++)
+      gate.block(403, 'https://public.bybit.com/spot/', new Headers({ server: 'CloudFront' }));
+  });
+
+  afterEach(() => _test_paces.clear());
+
   const refusing = (): Adapter => ({
     ...venue({ 'spot/': 1, 'trading/': 1 }),
     scanner: {
@@ -343,7 +389,7 @@ describe('a venue that blocks us mid-walk', () => {
     expect(summary.failed).toBeGreaterThan(0);
   });
 
-  /** One refusal is the venue's answer for all of them, so the rest are not asked. */
+  /** Once the gate has latched, one refusal is the venue's answer for all of them, so the rest are not asked. */
   it('stops asking the moment it is refused', async () => {
     const asked: string[] = [];
     const adapter = refusing();
@@ -386,5 +432,35 @@ describe('a venue that blocks us mid-walk', () => {
 
     expect(openJob(db, id, 'walk')).not.toBeNull();
     expect(openPartitions(db, id, 'walk').length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * **One refusal that reads as a block is not one yet.** The gate stands a venue
+ * down only after a run of them, so a lone CDN 403 fails the partition it was
+ * asked for and the rest of the pass goes on.
+ */
+describe('a venue that refuses once', () => {
+  afterEach(() => _test_paces.clear());
+
+  it('fails that partition and walks the others', async () => {
+    const asked: string[] = [];
+    const adapter = venue({ 'spot/': 1, 'trading/': 1 });
+    const scanner = {
+      ...adapter.scanner,
+      page: async (context: unknown, scope: string, cursor: string | null) => {
+        asked.push(scope);
+
+        if (scope === 'spot/')
+          throw new Refused(403, new Headers({ server: 'CloudFront' }), 'https://public.bybit.com/spot/');
+
+        return adapter.scanner.page(context, scope, cursor);
+      },
+    };
+
+    const summary = await surveyVenue(db, { ...adapter, scanner }, { ...config, concurrency: 1 });
+
+    expect(summary).toMatchObject({ blocked: false, failed: 1 });
+    expect(asked).toEqual(['spot/', 'trading/']);
   });
 });

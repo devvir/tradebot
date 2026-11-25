@@ -19,7 +19,7 @@ import {
 } from './catalog';
 import { surveying } from './context';
 import { loadExclusions, isExcluded } from './exclusions';
-import { Refused, blocked } from './http';
+import { Refused, answered, blocked } from './http';
 import { describeWait, labelOf, lanesFor, paceFor, ticketing } from './pace';
 import { byteOrder, ceiling, excludedAnywhere, relative } from './paths';
 import { seriesSeededAt } from './database/migrations/seeds/seed';
@@ -130,20 +130,20 @@ export const surveyVenue = async (
 
   /**
    * **Mapping can be refused too, and it is the first thing a new venue does.**
-   * Left to throw, it leaves the loop above with nothing to say the venue is
-   * blocking us, so the generic failure path retries in thirty seconds — against
-   * a ban, forever. It reports the same way a walk does instead.
+   * A block the venue's gate has latched is reported the way a walk reports
+   * one, so the caller waits it out rather than asking again. Anything else —
+   * a lone refusal included — is thrown, and retried like any failure.
    */
   let job: Run;
 
   try {
     job = open ?? await partition(db, adapter, lanes, venueId, context, kind);
   } catch (err) {
-    if (! (err instanceof Refused) || ! blocked(adapter, err.status, err.headers)) throw err;
+    if (! latched(adapter, err)) throw err;
 
     logger.error({
-      err, venue: labelOf(adapter), status: err.status, ...err.detail, ...paceFor(adapter, adapter.base).rates(),
-    }, `Venue refused the listing; retrying ${describeWait(paceFor(adapter, adapter.base).blockedFor())}`);
+      err, venue: labelOf(adapter), status: err.status, ...err.detail, ...paceFor(adapter, err.url).rates(),
+    }, `Venue refused the listing; retrying ${describeWait(paceFor(adapter, err.url).blockedFor())}`);
 
     return {
       venue: labelOf(adapter), partitions: 0, requests: 0, found: 0, failed: 1,
@@ -197,6 +197,14 @@ export const surveyVenue = async (
   /** One refinement at a time, so lanes cannot pick the same victim twice. */
   let refining: Promise<void> | null = null;
 
+  /**
+   * **Set once a lane has failed, and read by every other.** A lane fails only
+   * on something outside a partition's own failure, which `walkOne` absorbs —
+   * so the pass is ending, and every walk still running stops between pages
+   * rather than carrying on behind a survey that has already answered.
+   */
+  let aborting = false;
+
   const walkOne = async (partition: Run, runner: Runner) => {
     /**
      * Once a venue is refusing this address, every remaining partition will be
@@ -204,7 +212,7 @@ export const surveyVenue = async (
      * lapses while nothing is asking. So the rest of the venue is left for the
      * next turn of the loop, which by then will have waited.
      */
-    if (summary.blocked || paused()) return;
+    if (summary.blocked || aborting || paused()) return;
 
     try {
       /**
@@ -216,11 +224,15 @@ export const surveyVenue = async (
        */
       const done = await sweep(db, adapter, partition, context, kind, live,
         () => (summary.blocked ? 'blocked'
-          : paused() ? 'paused'
-            : runner.stopping ? 'splitting' : null));
+          : aborting ? 'aborting'
+            : paused() ? 'paused'
+              : runner.stopping ? 'splitting' : null));
 
       summary.requests += done.requests;
       summary.found    += done.found;
+
+      /** Stopped between pages, it is still open and still owed: not settled, and nothing to report. */
+      if (! done.closed) return;
     } catch (err) {
       /**
        * The partition keeps its row and its cursor, so this is a pause rather
@@ -231,7 +243,12 @@ export const surveyVenue = async (
       summary.failed++;
       failed.add(partition.scope);
 
-      if (err instanceof Refused && blocked(adapter, err.status, err.headers)) summary.blocked = true;
+      /**
+       * **A block is what the venue's gate says it is.** One refusal that reads
+       * as one fails its partition and nothing else; the pass stops only once
+       * the gate has latched, which takes a run of them — see `Pace.block`.
+       */
+      if (latched(adapter, err)) summary.blocked = true;
 
       /**
        * The refusal's headers are spread out flat because a `Headers` has no
@@ -251,9 +268,10 @@ export const surveyVenue = async (
 
     settled++;
 
+    /** This partition is still in `running` until its lane takes the next, and is counted as settled. */
     logger.info({
       venue:    labelOf(adapter),
-      progress: `${settled}/${settled + queue.length + running.size}`,
+      progress: `${settled}/${settled + queue.length + running.size - 1}`,
       found:    summary.found,
       minutes:  Math.round(elapsed(started) / 60),
     }, words(kind).all);
@@ -319,13 +337,11 @@ export const surveyVenue = async (
     const giveBack = () => { queue.push(at); };
 
     /**
-     * **Whatever this throws, the partition is owed back.** It was stopped to be
-     * split and `sweep` honoured that by returning without closing it, so right
-     * now it is open, holding a cursor and running nowhere. Reading its children
-     * is a request like any other and can fail like any other — and a failure
-     * here without giving it back would leave it in neither the queue nor the
-     * running set, invisible until somebody noticed the venue could never be
-     * established.
+     * **A level that cannot be read leaves the partition whole.** Reading its
+     * children is a request like any other and can fail like any other; the
+     * partition goes back on the queue holding its cursor, is not offered for
+     * splitting again this pass, and the pass carries on. A refusal the venue's
+     * gate has latched stops the pass, exactly as it does on a page.
      */
     let children: string[];
     let files:    boolean;
@@ -355,9 +371,17 @@ export const surveyVenue = async (
 
       ({ children, files } = read);
     } catch (err) {
+      terminal.add(at.scope);
       giveBack();
 
-      throw err;
+      if (latched(adapter, err)) summary.blocked = true;
+
+      logger.warn({ ...fault(err), venue: labelOf(adapter), scope: at.scope,
+        ...(err instanceof Refused ? { status: err.status, ...err.detail } : {}),
+        ...(summary.blocked ? { blocked: true } : {}) },
+      'Could not split a partition; continuing without splitting');
+
+      return;
     }
 
     /**
@@ -414,51 +438,59 @@ export const surveyVenue = async (
    */
   const topUp = async (): Promise<boolean> => {
     for (;;) {
-      if (summary.blocked || paused()) return false;
+      if (summary.blocked || aborting || paused()) return false;
       if (queue.length > 0) return true;
       if (running.size === 0) return false;
       if (terminal.has('')) return false;
 
-      if (refining) {
-        await refining;
+      /**
+       * **Started once, awaited by every lane alike.** The lane that starts a
+       * refinement is no different from one that finds it under way: each goes
+       * round again and takes whatever it left on the queue. `refine` gives a
+       * partition back on every path of its own; something failing outside
+       * those ends refinement for the pass, since nothing says it would not
+       * fail again.
+       */
+      refining ??= refine()
+        .catch((err: unknown) => {
+          terminal.add('');
 
-        continue;
-      }
+          logger.error({ ...fault(err), venue: labelOf(adapter) }, 'Could not split a partition');
+        })
+        .finally(() => { refining = null; });
 
-      refining = refine();
-
-      try {
-        await refining;
-      } catch (err) {
-        logger.error({ ...fault(err), venue: labelOf(adapter) }, 'Could not split a partition');
-
-        return false;
-      } finally {
-        refining = null;
-      }
+      await refining;
     }
   };
 
   const lane = async (): Promise<void> => {
-    for (;;) {
-      const next = queue.shift();
+    try {
+      for (;;) {
+        const next = queue.shift();
 
-      if (! next) {
-        if (! await topUp()) return;
+        if (! next) {
+          if (! await topUp()) return;
 
-        continue;
+          continue;
+        }
+
+        const runner: Runner = { stopping: false, finished: Promise.resolve() };
+
+        running.set(next.id, runner);
+        runner.finished = walkOne(next, runner);
+
+        try {
+          await runner.finished;
+        } finally {
+          running.delete(next.id);
+        }
       }
+    } catch (err) {
+      aborting = true;
 
-      const runner: Runner = { stopping: false, finished: Promise.resolve() };
+      for (const runner of running.values()) runner.stopping = true;
 
-      running.set(next.id, runner);
-      runner.finished = walkOne(next, runner);
-
-      try {
-        await runner.finished;
-      } finally {
-        running.delete(next.id);
-      }
+      throw err;
     }
   };
 
@@ -502,7 +534,6 @@ export const surveyVenue = async (
       queued:   queue.length,
       running:  running.size,
       refining: refining !== null,
-      scopes:   [...running.keys()].length,
 
       /**
        * **Which wait it is, when nothing is moving.** A request that is not
@@ -523,11 +554,26 @@ export const surveyVenue = async (
     }, kind === 'walk' ? 'Walking' : 'Generating');
   }, HEARTBEAT_MS).unref();
 
+  /**
+   * **Every lane settles before the survey answers, whatever one of them did.**
+   * A lane that throws stops the others between pages (see `aborting`), and
+   * the failure is passed on only once nothing is walking — so a caller that
+   * retries never starts a second set of lanes over partitions the first is
+   * still reading.
+   */
+  let lost: { reason: unknown } | undefined;
+
   try {
-    await Promise.all(Array.from({ length: lanes }, () => lane()));
+    const ended = await Promise.allSettled(Array.from({ length: lanes }, () => lane()));
+
+    await Promise.allSettled([...running.values()].map(runner => runner.finished));
+
+    lost = ended.find((one): one is PromiseRejectedResult => one.status === 'rejected');
   } finally {
     clearInterval(alive);
   }
+
+  if (lost) throw lost.reason;
 
   advanceRun(db, job.id, null, summary.requests, summary.found);
   flushCounts(db, adapter);
@@ -539,10 +585,16 @@ export const surveyVenue = async (
    * invisible to `summary`. Left unchecked the job closes over it, the venue
    * reads as established, and a prefix with a live cursor is never walked again
    * by anything.
+   *
+   * **A blocked pass explains its own.** Every partition it did not reach was
+   * left on purpose, so they are counted as left for the next pass rather than
+   * named as though something had lost them.
    */
-  const unexplained = openPartitions(db, venueId, kind)
+  const left = openPartitions(db, venueId, kind)
     .filter(one => one.scope !== '' && ! failed.has(one.scope))
     .map(one => one.scope);
+
+  const unexplained = summary.blocked ? [] : left;
 
   summary.paused = paused();
 
@@ -553,7 +605,7 @@ export const surveyVenue = async (
     return summary;
   }
 
-  if (summary.failed === 0 && unexplained.length === 0) {
+  if (! summary.blocked && summary.failed === 0 && unexplained.length === 0) {
     summary.generated = true;
 
     /**
@@ -598,6 +650,7 @@ export const surveyVenue = async (
      */
     logger.warn({ ...summary, job: job.started,
       ...(summary.failed > 0 ? { failed: `${summary.failed} ${summary.failed === 1 ? 'scope' : 'scopes'} (will be retried)` } : {}),
+      ...(summary.blocked && left.length > 0 ? { leftForNextPass: left.length } : {}),
       ...(unexplained.length > 0 ? { openWithoutAFailure: unexplained } : {}) },
     'Survey incomplete; the next pass resumes it');
   }
@@ -653,12 +706,22 @@ interface Runner {
 /**
  * Why a walk is stopping between pages, or null to carry on.
  *
- * All three read identically from inside `sweep` — cursor committed, run left
+ * All four read identically from inside `sweep` — cursor committed, run left
  * open — and mean quite different things to whoever is watching: a venue turning
- * us away, this service reorganising its own work, or somebody asking for the
- * survey to stop.
+ * us away, this service reorganising its own work, somebody asking for the
+ * survey to stop, or the pass ending because another lane failed.
  */
-type StopReason = 'blocked' | 'splitting' | 'paused' | null;
+type StopReason = 'blocked' | 'splitting' | 'paused' | 'aborting' | null;
+
+/**
+ * Whether a failure is a venue turning us away, as its gate has concluded.
+ *
+ * A refusal that reads as a block (see `blocked`) counts only once the gate has
+ * latched, which takes a run of them — see `Pace.block`. A lone one is a failure
+ * of whatever asked, and nothing more.
+ */
+const latched = (adapter: Adapter, err: unknown): err is Refused =>
+  err instanceof Refused && blocked(adapter, err.status, err.headers) && paceFor(adapter, err.url).blockedFor() > 0;
 
 /** Whether splitting here would actually produce work, rather than closing a run for nothing. */
 const divisible = (cursor: string | null, children: readonly string[]): boolean =>
@@ -817,7 +880,7 @@ const sweep = async (
   kind:    RunKind,
   live:    { pages: number; found: number },
   stopped: () => StopReason,
-): Promise<{ requests: number; found: number }> => {
+): Promise<{ requests: number; found: number; closed: boolean }> => {
   const short   = run.scope;
   const venueId = run.venueId;
 
@@ -867,7 +930,9 @@ const sweep = async (
      * same cursor after a wait that grows, which is what resuming it later would
      * do anyway: nothing of a page counts until its cursor is written.
      *
-     * A refusal is an answer, not a failure, and is never repeated here. Past
+     * A refusal that is the venue's final answer (see `answered`) is never
+     * repeated here. A retryable status that outlasted the fetch's own attempts
+     * — a 5xx, a throttling 429 — is retried like a transport error. Past
      * `PAGE_ATTEMPTS` the page is taken to be wrong in a way waiting does not
      * mend, and the prefix is left for the next pass.
      */
@@ -929,8 +994,14 @@ const sweep = async (
            * here, with nothing written for the keys that did not change. Only a walk
            * can say it: an update generates the dates a series is missing and claims
            * nothing about what is no longer offered.
+           *
+           * **Judged against what the page listed, not against what it
+           * catalogued.** A key this catalog declines — excluded, refused by the
+           * adapter, unplaceable — is still a key the venue serves, and its row,
+           * where one exists, is not withdrawn for it.
            */
-          withdrawn += await putFiles(db, files, page.covers && spanOf(adapter, venueId, short, page.covers));
+          withdrawn += await putFiles(db, files, page.covers && spanOf(adapter, venueId, short, page.covers),
+            new Set(page.listed.map(entry => relative(adapter, entry.key))));
 
         /**
          * **Before the cursor, always.** The bounds this page derived are held in
@@ -958,7 +1029,8 @@ const sweep = async (
 
         break;
       } catch (err) {
-        if (err instanceof Refused || attempt >= PAGE_ATTEMPTS) throw err;
+        if ((err instanceof Refused && answered(adapter, err.status, err.headers)) || attempt >= PAGE_ATTEMPTS)
+          throw err;
 
         // Said once it is clearly more than a blip, and not again for the same page.
         if (attempt === PAGE_ATTEMPTS_QUIET)
@@ -968,7 +1040,7 @@ const sweep = async (
         await retryWait(Math.min(RETRY_MAX_MS, RETRY_MS * 2 ** (attempt - 1)));
 
         // Told to stop while it waited: where it stands is on disk, so it simply leaves.
-        if (stopped()) return { requests, found };
+        if (stopped()) return { requests, found, closed: false };
       }
     }
 
@@ -1014,9 +1086,11 @@ const sweep = async (
       if (why !== 'paused')
         logger.info({ venue: labelOf(adapter), [said.unit]: named(db, kind, short),
           pages: requests, found, at: cursor },
-        why === 'blocked' ? 'Partition paused: venue blocking us' : 'Partition paused for splitting');
+        why === 'blocked' ? 'Partition paused: venue blocking us'
+          : why === 'aborting' ? 'Partition paused: the pass is ending'
+            : 'Partition paused for splitting');
 
-      return { requests, found };
+      return { requests, found, closed: false };
     }
   } while (cursor);
 
@@ -1029,7 +1103,7 @@ const sweep = async (
     said.done,
   );
 
-  return { requests, found };
+  return { requests, found, closed: true };
 };
 
 /**
@@ -1227,6 +1301,8 @@ const elapsed = (since: number): number => Math.round((Date.now() - since) / 100
 // ── Test access ───────────────────────────────────────────────────────────────
 
 export const _test_catalogued = catalogued;
+
+export const _test_SPLIT_MS = SPLIT_MS;
 
 /** Wait between attempts at a page as this says, or as the service does again. */
 export const _test_retryWait = (wait: ((ms: number) => Promise<void>) | null): void => {

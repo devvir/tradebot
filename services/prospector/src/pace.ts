@@ -587,7 +587,7 @@ export class Pace {
       logger.warn({
         venue: this.venue, status, url, inARow: this.refusals,
         server: headers.get('server'), cache: headers.get('x-cache'),
-      }, 'Venue refused a request; retrying');
+      }, 'Venue refused a request; not yet treated as a block');
 
       return;
     }

@@ -87,6 +87,11 @@ export const venueIds = (db: DatabaseSync, name: string): number[] =>
  * its row, its history and its `seen_at`, and only its `existence` changes.
  * Without a span — keys that did not come from a listing — nothing is withdrawn.
  *
+ * **What the page listed is not always what it catalogues.** `listed` is every
+ * path the page named, rows or not; a path in it is never withdrawn, so a key
+ * the caller chose not to write still counts as offered. Without it, the files
+ * written are all the page offered.
+ *
  * **A file ready to be catalogued is `confirmed` or `absent`**, the two states
  * `file` holds; `assumed` describes a key nobody has seen, which is parked and
  * never catalogued. A page offering a ready file in any other state is refused
@@ -95,9 +100,10 @@ export const venueIds = (db: DatabaseSync, name: string): number[] =>
  * Returns how many files were withdrawn.
  */
 export const putFiles = async (
-  db:     DatabaseSync,
-  files:  readonly CatalogFile[],
-  span?:  Span,
+  db:      DatabaseSync,
+  files:   readonly CatalogFile[],
+  span?:   Span,
+  listed?: ReadonlySet<string>,
 ): Promise<number> => {
   if (files.length === 0 && ! span) return 0;
 
@@ -138,7 +144,7 @@ export const putFiles = async (
   const backlog = wip.writer(db);
 
   /** Every path the page offered, so what it did not offer can be told apart. */
-  const offered = new Set(files.map(file => file.path));
+  const offered = listed ?? new Set(files.map(file => file.path));
 
   /**
    * **In the order the span is read**, which is the bytes' order rather than

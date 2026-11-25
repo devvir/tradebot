@@ -117,6 +117,23 @@ describe('a page that fails', () => {
     expect(open()).toEqual([]);
   });
 
+  /**
+   * **A status that may go differently next time is not an answer**, even once
+   * the fetch has spent its own attempts on it. S3 throttling for a few seconds
+   * is retried like a dropped connection, not left for the next pass.
+   */
+  it('asks again for a page the venue was too busy to answer', async () => {
+    const slowDown = () => new Refused(503, new Headers({ 'x-amz-error-code': 'SlowDown' }), 'https://x/deep/');
+
+    const summary = await surveyVenue(db, venue((page, attempt) =>
+      (page === 1 && attempt <= 2 ? slowDown() : null)), config, 'full');
+
+    expect(summary).toMatchObject({ failed: 0, requests: 5 });
+    expect(asked.get(1)).toBe(3);
+    expect(waits).toEqual([2_000, 4_000]);
+    expect(open()).toEqual([]);
+  });
+
   /** A refusal is the venue's answer, and asking again is another request against it. */
   it('does not ask again for a page the venue refused', async () => {
     const summary = await surveyVenue(db, venue(page =>

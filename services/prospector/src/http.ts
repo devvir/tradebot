@@ -207,11 +207,13 @@ const MAX_MS   = 30_000;
  * Whether a status settles the question, leaving nothing for another attempt.
  *
  * A 5xx or a 429 may go differently next time. A 403 or 404 will not — and a
- * block least of all: `send` has already paused the venue, so a retry would wait
- * out that pause and then spend a request confirming what this one established,
- * against the one venue where an extra request is the thing being avoided.
+ * block least of all: `send` has already counted it towards the venue's
+ * stand-down, so a retry would spend a request confirming what this one
+ * established, against the one venue where an extra request is the thing being
+ * avoided. A `Refused` this does not call an answer is a retryable status that
+ * ran out of attempts.
  */
-const answered = (adapter: Adapter, status: number, headers: Headers): boolean =>
+export const answered = (adapter: Adapter, status: number, headers: Headers): boolean =>
   blocked(adapter, status, headers) || (status < 500 && status !== 429);
 
 /**

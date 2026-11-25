@@ -563,11 +563,12 @@ const tend = async (
        * The wait is whatever the venue's gate still has to run, not a second
        * stand-down on top of it: the gate was latched the moment the block was
        * seen and is already holding every request, so counting the same pause
-       * twice would double it.
+       * twice would double it. A gate with nothing left to run has no wait to
+       * offer, so that pass takes the floor like any other that did not finish.
        */
-      if (pass.blocked) {
-        const held = paceFor(adapter, adapter.base).blockedFor();
+      const held = pass.blocked ? paceFor(adapter, adapter.base).blockedFor() : 0;
 
+      if (held > 0) {
         logger.warn({ venue: labelOf(adapter), minutes: Math.round(held / 60_000) },
           `Blocked by venue; walking again ${describeWait(held)}`);
 
@@ -915,4 +916,6 @@ export const _test_probing  = probing;
 export const _test_passFor  = passFor;
 export const _test_EVERY_HOURS = EVERY_HOURS;
 export const _test_onePass  = onePass;
+export const _test_tend     = tend;
+export const _test_FLOOR_MS = FLOOR_MS;
 export const _test_PROBE_EMPTY_MS = PROBE_EMPTY_MS;
