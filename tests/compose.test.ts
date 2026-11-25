@@ -3,8 +3,9 @@
  * published, which credentials the broker and the cache refuse to start
  * without, where the data directories are mounted from, which project each
  * module and pack is, how logs rotate, which Host names catalog-ui is told to
- * serve, and which DuckDB extensions stocker's image is built with. Skipped
- * where docker compose is not installed.
+ * serve, which settings the stub UI and router are given, and which DuckDB
+ * extensions stocker's image is built with. Skipped where docker compose is
+ * not installed.
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -168,6 +169,46 @@ describe.skipIf(!hasCompose)('compose files', () => {
 
     it('takes CATALOG_UI_HOSTS as given', () => {
       expect(hosts({ ...required, CATALOG_UI_HOSTS: 'localhost,catalog.lan' })).toBe('localhost,catalog.lan');
+    });
+  });
+
+  describe('the stub UI', () => {
+    const file = 'services/_stub/ui/docker/compose.yml';
+    const ui = (env: Record<string, string | undefined>): Service => services(file, env).ui;
+
+    it('publishes its port on 127.0.0.1 unless UI_BIND names another address', () => {
+      expect(ui({}).ports?.map((port) => [port.host_ip, port.published])).toEqual([['127.0.0.1', '3000']]);
+      expect(ui({ UI_BIND: '0.0.0.0', UI_PORT: '3300' }).ports?.map((port) => [port.host_ip, port.published]))
+        .toEqual([['0.0.0.0', '3300']]);
+    });
+
+    it('gives the dev server its proxy targets, with the dev server\'s own defaults', () => {
+      expect(ui({}).environment).toMatchObject({
+        UI_REST_PROXY:          'http://proxy',
+        UI_DIGGER_HOST:         '',
+        UI_DIGGER_REST_PORT:    '3101',
+        UI_DIGGER_WS_PORT:      '8180',
+        UI_DIGGER_CONTROL_PORT: '8280',
+      });
+    });
+
+    it('takes each replay port as given', () => {
+      const given = { UI_DIGGER_HOST: 'localhost', UI_DIGGER_REST_PORT: '4101', UI_DIGGER_WS_PORT: '4180', UI_DIGGER_CONTROL_PORT: '4280' };
+
+      expect(ui(given).environment).toMatchObject(given);
+    });
+  });
+
+  describe('the router\'s prefetch', () => {
+    const prefetch = (env: Record<string, string | undefined>): string | undefined =>
+      services('services/router/docker/compose.yml', { QUEUE_URL: 'amqp://queue', ...env }).router.environment?.ROUTER_PREFETCH;
+
+    it('is 500 unless set', () => {
+      expect(prefetch({})).toBe('500');
+    });
+
+    it('takes ROUTER_PREFETCH as given', () => {
+      expect(prefetch({ ROUTER_PREFETCH: '50' })).toBe('50');
     });
   });
 

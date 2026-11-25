@@ -10,6 +10,10 @@ services:
       QUEUE_URL: ${QUEUE_URL}
       ROUTER_RULES: ${ROUTER_RULES:-}
 
+      # How many unacknowledged messages the router holds per source queue; at
+      # least 1.
+      ROUTER_PREFETCH: ${ROUTER_PREFETCH:-500}
+
       # Backpressure: publishing pauses while any of ROUTER_WATCH_QUEUES (CSV)
       # holds ROUTER_MAX_READY messages or more. 0 turns it off; a positive
       # value needs at least one queue to watch.
