@@ -11,8 +11,12 @@ import { parseKey } from '../src/keys';
 import { BACKEDUP, ERRORS, LEDGER, outdate, read, reinstate, validate } from '../src/ledger';
 import * as build from '../src/build';
 import { _test_held as held } from '../src/prepare';
+import * as disk from '../src/disk';
 import * as room from '../src/room';
-import { _test_splitAt as splitAt, sweep } from '../src/scan';
+import * as vault from '../src/vault';
+import {
+  _test_aloneAt as aloneAt, _test_directAt as directAt, _test_pieceAt as pieceAt, _test_splitAt as splitAt, sweep,
+} from '../src/scan';
 import type { DuckDBConnection } from '@duckdb/node-api';
 import type { ListedSlice } from '../src/types';
 
@@ -1065,5 +1069,251 @@ describe('a sweep that meets a failure', () => {
 
     expect(logged(logger.warn).filter(said => said === 'Not enough space to extract — partition skipped')).toHaveLength(1);
     expect([...logged(logger.info), ...logged(logger.warn)].filter(said => said.includes('not on disk'))).toEqual([]);
+  });
+
+  /** Room when it was decided, and none by the time its build asks: it waits for room, and nothing of it is touched. */
+  it('counts a partition that finds no room as it is built as waiting for room, not as failed', async () => {
+    await place('gate.futures_usdt-trades.csv', key('BTC_USDT'));
+
+    const short = vi.spyOn(room, 'shortOf')
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ needs: 10 * 1024 ** 3, free: 1024 ** 3 });
+
+    try {
+      expect(await sweep(conns)).toMatchObject({ built: 0, noRoom: 1, failed: 0 });
+    } finally {
+      short.mockRestore();
+    }
+
+    expect(await stocked()).toEqual([]);
+    expect(await readFile(join(config.vaultDir, LEDGER), 'utf8').catch(() => '')).not.toContain(`${SLICE}/${MONTH}`);
+    expect(logged(logger.warn)).toContain('Not enough space to extract — partition skipped');
+    expect(logged(logger.error)).toEqual([]);
+
+    expect(await sweep(conns)).toMatchObject({ built: 1, noRoom: 0 });
+  });
+
+  /** Nothing in the vault is touched until everything is built: a build that fails leaves the month as it was. */
+  it('leaves a stocked month as it was where stocking it again fails', async () => {
+    await place('gate.futures_usdt-trades.csv', key('BTC_USDT'));
+    await sweep(conns);
+
+    const [file]  = await stocked();
+    const path    = join(config.vaultDir, SLICE, file!);
+    const before  = await readFile(path);
+    const [was]   = await linesOf(LEDGER);
+    const archive = join(config.archivesDir, key('BTC_USDT'));
+    const good    = await readFile(archive);
+
+    // Changed in the catalog, and no gzip at all on disk.
+    await writeFile(archive, Buffer.alloc(good.length));
+    listed[0]!.ETag = '"e2"';
+
+    expect(await sweep(conns)).toMatchObject({ built: 0, failed: 1 });
+    expect(logged(logger.error)).toContain('Stocking failed');
+
+    expect(await stocked()).toEqual([file]);
+    expect((await readFile(path)).equals(before)).toBe(true);
+
+    // Said to be outdated before anything was done about it, and nothing since: it was never said to be changing.
+    const lines = await linesOf(LEDGER);
+
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toEqual(was);
+    expect(lines[1]!['revision']).toBe('outdated');
+    expect(await validate()).toBe(0);
+
+    await writeFile(archive, good);
+
+    expect(await sweep(conns)).toMatchObject({ built: 1, failed: 0 });
+  });
+
+  /** Stopped with some of a month's files moved in and the rest not: the month is put right at once, and stocked again. */
+  it('puts right a month that fails half way into place', async () => {
+    splitAt(1);
+
+    try {
+      await place('gate.futures_usdt-trades.csv', key('BTC_USDT'));
+      await place('gate.futures_btc-trades.csv', key('BTC_USD'));
+      await sweep(conns);
+
+      listed[0]!.ETag = '"e2"';
+
+      // The first instrument's file moves in, and the disk fails before the second.
+      const placing = vi.spyOn(vault, 'publishSplit').mockImplementationOnce(async () => {
+        await mkdir(join(config.vaultDir, SLICE, 'BTC_USD'), { recursive: true });
+        await writeFile(join(config.vaultDir, SLICE, 'BTC_USD', '202606.parquet'), 'half');
+
+        throw Object.assign(new Error('EIO'), { code: 'EIO' });
+      });
+
+      try {
+        expect(await sweep(conns)).toMatchObject({ built: 0, failed: 1 });
+      } finally {
+        placing.mockRestore();
+      }
+
+      // Nothing of it is left half in place, and the ledger still says it was changing — so it is not taken for stocked.
+      expect(await stocked()).toEqual([]);
+      expect((await linesOf(LEDGER)).at(-1)!['revision']).toBe('updating');
+      expect(logged(logger.warn)).toContain(
+        'A partition was stopped while its files were replaced — what was left of it is removed, and it will be stocked again');
+
+      expect(await sweep(conns)).toMatchObject({ built: 1, failed: 0, files: 2 });
+      expect(await stocked()).toEqual(['BTC_USD/202606.parquet', 'BTC_USDT/202606.parquet']);
+    } finally {
+      splitAt(null);
+    }
+  });
+
+  /** A big instrument built a piece at a time: what was built before a failure is not built again. */
+  it('keeps the pieces built before a failure, and takes them up the next time', async () => {
+    directAt(1);
+    pieceAt(1);
+
+    const real = build.buildGroup;
+
+    try {
+      await zipped('binance.spot-trades.csv', binance('BTCUSDT', '20200101'));
+      await zipped('binance.spot-trades.csv', binance('BTCUSDT', '20200102'));
+
+      // The first piece is built, and the second fails.
+      let calls = 0;
+      const failing = vi.spyOn(build, 'buildGroup').mockImplementation(async (...args) => {
+        if (++calls === 2) throw Object.assign(new Error('EIO'), { code: 'EIO' });
+
+        return real(...args);
+      });
+
+      try {
+        expect(await sweep(conns)).toMatchObject({ built: 0, failed: 1 });
+      } finally {
+        failing.mockRestore();
+      }
+
+      const stage = join(config.vaultDir, SCRATCH, 'stage');
+      const notes = ((await readdir(stage, { recursive: true })) as string[]).filter(name => name.endsWith(`${build.PIECES}/0/0/.built`));
+
+      expect(notes).toHaveLength(1);
+      expect(((await readdir(stage, { recursive: true })) as string[]).filter(name => name.includes(`${build.PIECES}/0/1`))).toEqual([]);
+
+      const piece   = join(stage, dirname(notes[0]!), 'BTCUSDT.parquet');
+      const stamped = await stat(piece);
+
+      // Taken up: only the piece that failed is built, and the one kept is read as it is.
+      const join_    = build.joinPieces;
+      const building = vi.spyOn(build, 'buildGroup');
+      const joining  = vi.spyOn(build, 'joinPieces').mockImplementation(async (...args) => {
+        const now = await stat(piece);
+
+        expect([now.ino, now.mtimeMs]).toEqual([stamped.ino, stamped.mtimeMs]);
+
+        return join_(...args);
+      });
+
+      try {
+        expect(await sweep(conns)).toMatchObject({ built: 1, failed: 0 });
+        expect(building).toHaveBeenCalledTimes(1);
+        expect(building.mock.calls[0]![3].map(one => one.file.key)).toEqual([parseKey(binance('BTCUSDT', '20200102'))!.key]);
+        expect(joining).toHaveBeenCalled();
+      } finally {
+        building.mockRestore();
+        joining.mockRestore();
+      }
+
+      const rows = await conns[0]!.runAndReadAll(
+        `SELECT count(*)::INT FROM read_parquet('${join(config.vaultDir, 'venue=binance', '**', '*.parquet')}')`);
+
+      expect(rows.getRows()[0]![0]).toBe(2 * (await readFile(join(FIXTURES, 'binance.spot-trades.csv'), 'utf8')).trim().split('\n').length);
+    } finally {
+      directAt(null);
+      pieceAt(null);
+    }
+  });
+
+  /** The volume falling below its floor stops the sweep where it is: what was decided is stocked, and nothing after it. */
+  it('stops part way where the volume falls below its floor', async () => {
+    await place('gate.futures_usdt-trades.csv', key('BTC_USDT', '202604'));
+    await place('gate.futures_usdt-trades.csv', key('BTC_USDT', '202605'));
+    await place('gate.futures_usdt-trades.csv', key('BTC_USDT', '202606'));
+
+    const floor = config.minFreeGb;
+    const real  = disk.filesOf;
+
+    // The volume fills once the first month is in the vault, as the second is looked at.
+    const looking = vi.spyOn(disk, 'filesOf').mockImplementation(async (at, instruments) => {
+      if (at.month === '2026-05') {
+        await vi.waitFor(async () => expect(await readFile(join(config.vaultDir, LEDGER), 'utf8')).toContain(`${SLICE}/202604`),
+          { timeout: 5_000 });
+
+        config.minFreeGb = 1e9;
+      }
+
+      return real(at, instruments);
+    });
+
+    try {
+      expect(await sweep(conns)).toMatchObject({ stopped: true, built: 1, failed: 0 });
+    } finally {
+      looking.mockRestore();
+      config.minFreeGb = floor;
+    }
+
+    expect(await stocked()).toEqual(['@/202604.parquet']);
+    expect((await linesOf(LEDGER)).map(line => line['partition'])).toEqual([`${SLICE}/202604`]);
+    expect(logged(logger.warn)).toContain('Vault volume is low on space — stopping this sweep');
+  });
+});
+
+/**
+ * A heavy partition has every connection to itself, and its tasks are built
+ * side by side on them; light ones share the connections, a partition each.
+ */
+describe('partitions sharing the engine', () => {
+  afterEach(() => { aloneAt(null); directAt(null); });
+
+  it('builds a heavy partition alone', async () => {
+    await place('gate.futures_usdt-trades.csv', key('BTC_USDT', '202605'));
+    await place('gate.futures_usdt-trades.csv', key('BTC_USDT', '202606'));
+    await place('gate.futures_btc-trades.csv', key('BTC_USD', '202606'));
+
+    // June's two files make it heavy, and each of its instruments is a task of its own; May's one file is light.
+    aloneAt(listed[1]!.Size + listed[2]!.Size);
+    directAt(1);
+
+    expect(listed[0]!.Size).toBeLessThan(listed[1]!.Size + listed[2]!.Size);
+
+    const spans: { month: string; from: number; to: number }[] = [];
+    const real = build.buildGroup;
+    const building = vi.spyOn(build, 'buildGroup').mockImplementation(async (...args) => {
+      const from = performance.now();
+
+      // Long enough that two builds running at once are seen to.
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      try {
+        return await real(...args);
+      } finally {
+        spans.push({ month: args[1].month, from, to: performance.now() });
+      }
+    });
+
+    try {
+      expect(await sweep(conns)).toMatchObject({ built: 2, failed: 0 });
+    } finally {
+      building.mockRestore();
+    }
+
+    const heavy = spans.filter(span => span.month === '2026-06');
+    const light = spans.filter(span => span.month === '2026-05');
+    const meet  = (a: { from: number; to: number }, b: { from: number; to: number }): boolean => a.from < b.to && b.from < a.to;
+
+    expect(heavy).toHaveLength(2);
+    expect(light).toHaveLength(1);
+
+    // Never beside the other partition, and its own two side by side.
+    for (const one of heavy) expect(meet(one, light[0]!)).toBe(false);
+
+    expect(meet(heavy[0]!, heavy[1]!)).toBe(true);
   });
 });

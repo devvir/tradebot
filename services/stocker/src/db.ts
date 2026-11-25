@@ -41,9 +41,8 @@ export const open = async (): Promise<{ conns: DuckDBConnection[]; close: () => 
   await capSpill(first);
 
   /**
-   * Without this a month of a busy symbol runs out of memory rather than
-   * spilling — 0GUSDT perpetuals are ~300 MB gzipped per month, and the build
-   * died at DuckDB's own memory ceiling with the spill directory still empty.
+   * Without this, a busy symbol's month (0GUSDT perpetuals, ~300 MB gzipped)
+   * reaches DuckDB's memory limit instead of spilling.
    *
    * The setting governs only the order of results that carry **no** `ORDER BY`.
    * Every partition is written by one, so the sortedness the layout depends on
@@ -75,14 +74,6 @@ export const capSpill = async (conn: DuckDBConnection): Promise<void> => {
 
 /** Under scratch: where the engine spills. */
 const SPILL = 'engine';
-
-/** Row count straight from the Parquet footers — no data scan. */
-export const countRows = async (conn: DuckDBConnection, glob: string): Promise<number> => {
-  const reader = await conn.runAndReadAll(
-    `SELECT count(*) AS n FROM read_parquet('${glob}')`);
-
-  return Number(reader.getRows()[0]![0]);
-};
 
 /**
  * Load the DuckDB extensions a format is read with, on the connection about to

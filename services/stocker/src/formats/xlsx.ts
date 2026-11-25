@@ -19,11 +19,7 @@ export const xlsx: Format = {
    *
    * **It accepts a glob and then reads only one of the matches**, with no error:
    * two sheets of 4,663 and 8,893 rows glob to 8,893, not 13,556. That is a
-   * silent loss of a month's data, so a glob is not an alternative here even
-   * where the files could be gathered into one directory — which they cannot
-   * be anyway, since each zip extracts to its own scratch directory and a glob
-   * wide enough to span them would also catch whatever another build is
-   * extracting at that moment.
+   * silent loss of a month's data, so a glob is not an alternative here.
    *
    * `BY NAME` rather than positionally, because the sheets carry headers and a
    * union by position would silently transpose two columns if a venue ever

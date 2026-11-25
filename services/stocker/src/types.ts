@@ -424,7 +424,6 @@ export interface Sweeping {
   backedUp?:     Map<string, Set<string>>;
 }
 
-/** One sweep's outcome. */
 /**
  * Where a partition's time went, in milliseconds: waiting for its archives to
  * be extracted, looking at what was extracted, the engine reading it, the
@@ -441,6 +440,7 @@ export interface Spent {
   place:   number;
 }
 
+/** One sweep's outcome. */
 export interface Summary {
   /** Vault partitions the catalog had something ready for, inside the configured scope. */
   considered: number;
@@ -471,9 +471,6 @@ export interface Summary {
 
   /** On disk, but there was no room to extract it this sweep. */
   noRoom:     number;
-
-  /** A dataset or format stocker cannot read. */
-  unmapped:   number;
 
   /** Partitions that could not be decided or stocked, and venues the catalog did not list, this sweep. */
   failed:     number;

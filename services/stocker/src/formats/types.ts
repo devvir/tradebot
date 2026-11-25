@@ -4,8 +4,7 @@ import type { Series } from '../types';
  * A format turns decoded files into a SQL relation the engine can select from.
  *
  * Keeping this behind an interface is what lets a new shape — a JSON book
- * stream, a spreadsheet, whatever a future REST collector writes — arrive
- * without touching the build pipeline.
+ * stream, a spreadsheet — arrive without touching the build pipeline.
  */
 export interface Format {
   /** DuckDB extensions this format needs loaded before it can be read. */

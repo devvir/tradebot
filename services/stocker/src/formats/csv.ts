@@ -3,6 +3,34 @@ import { q } from '../db';
 import type { Format } from './types';
 
 /**
+ * The column a positional read must never find anything in.
+ *
+ * One more name than the series declares, so a file wider than the map fills it
+ * instead of being silently truncated to the declared width.
+ */
+const OVERFLOW = '_overflow_';
+
+/**
+ * A positional read, every column named and typed up front rather than
+ * sniffed.
+ *
+ * **Declared, because a sniffed read drops the overflow column across files.**
+ * Over a list of files DuckDB takes the column count from what it sniffs and
+ * silently leaves off a declared name beyond it, so a wider file could no longer
+ * be told apart. With the columns stated and detection off, every file is read
+ * as declared: a short row is padded, a row one wider fills the overflow column,
+ * and a row wider still fails the read, naming the file. Every positional series
+ * is comma-separated, which is all detection would find.
+ */
+const positional = (paths: string[], names: string[], named = false): string =>
+  `read_csv([${paths.map(q).join(', ')}], header = false, auto_detect = false, ` +
+  `delim = ',', quote = '"', null_padding = true${named ? ', filename = true' : ''}, ` +
+  `columns = {${names.map(name => `${q(name)}: 'VARCHAR'`).join(', ')}})`;
+
+const declared = (series: { columns?: { as: string | null }[] }): string[] =>
+  series.columns!.map((c, i) => c.as ?? `_drop_${i}`);
+
+/**
  * Two ways to read a CSV, chosen per series by whether a header can be relied
  * on across the whole of its history.
  *
@@ -28,34 +56,6 @@ import type { Format } from './types';
  * rows, and a column that is integral for a thousand rows and fractional later
  * would be typed wrong and silently truncated.
  */
-/**
- * The column a positional read must never find anything in.
- *
- * One more name than the series declares, so a file wider than the map fills it
- * instead of being silently truncated to the declared width.
- */
-const OVERFLOW = '_overflow_';
-
-/**
- * A positional read, every column named and typed up front rather than
- * sniffed.
- *
- * **Declared, because a sniffed read drops the overflow column across files.**
- * Over a list of files DuckDB takes the column count from what it sniffs and
- * silently leaves off a declared name beyond it, so a wider file could no longer
- * be told apart. With the columns stated and detection off, every file is read
- * as declared: a short row is padded, a row one wider fills the overflow column,
- * and a row wider still fails the read, naming the file. Every positional series
- * is comma-separated, which is the one thing detection was finding.
- */
-const positional = (paths: string[], names: string[], named = false): string =>
-  `read_csv([${paths.map(q).join(', ')}], header = false, auto_detect = false, ` +
-  `delim = ',', quote = '"', null_padding = true${named ? ', filename = true' : ''}, ` +
-  `columns = {${names.map(name => `${q(name)}: 'VARCHAR'`).join(', ')}})`;
-
-const declared = (series: { columns?: { as: string | null }[] }): string[] =>
-  series.columns!.map((c, i) => c.as ?? `_drop_${i}`);
-
 export const csv: Format = {
   relation: (paths, series, named) => {
     if (series.header)

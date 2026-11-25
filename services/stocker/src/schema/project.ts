@@ -94,11 +94,11 @@ const integralCols = (column: string): string => {
  *
  * **Integers, never DOUBLE and never DECIMAL.** An epoch in microseconds is a
  * 16-digit integer, at the edge of what a double holds exactly, so a DOUBLE
- * multiply would silently round the last digit. DECIMAL(38,9) is exact and was
- * the parse here, and it is ruinous: on one day of bybit perpetual trades
- * (71k rows) it took 5.5 s where this split takes 0.23 s, with identical
- * results on every row (measured 2026-10-04). Every venue stamping fractional
- * seconds — bybit's perpetuals, all of gate — was paying it on every row.
+ * multiply would silently round the last digit. Not DECIMAL(38,9) either: it is
+ * exact, but on one day of bybit perpetual trades (71k rows) it took 5.5 s
+ * against 0.23 s for this split, with identical results on every row (measured
+ * 2026-10-04) — a cost every venue stamping fractional seconds would pay on
+ * every row.
  *
  * Exactly one dot, and digits after it, or this is not a fractional epoch:
  * `2024.11.01 00:00` has two and falls through to the datetime parse.

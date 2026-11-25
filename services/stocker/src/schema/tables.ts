@@ -76,10 +76,10 @@ export const TABLES: Record<Table, Field[]> = {
      * before Binance's 2025-01 precision change, 1 µs after, which is a venue
      * quirk rather than information.
      *
-     * It fails both halves of the rule above, and carrying it cost more than
-     * nothing: it was the one column in the schema whose unit was the venue's
-     * rather than microseconds, so within one dataset early partitions held
-     * milliseconds and later ones microseconds with nothing marking the line.
+     * It fails both halves of the rule above, and carrying it would cost more
+     * than nothing: its unit would be the venue's tick, not microseconds, so
+     * one dataset would mix milliseconds and microseconds with nothing marking
+     * the line.
      */
     { name: 'quoteVolume',    type: 'DOUBLE' },
     { name: 'trades',         type: 'BIGINT' },

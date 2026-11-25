@@ -73,7 +73,7 @@ export const sweep = async (conns: DuckDBConnection[]): Promise<Summary> => {
 
   const summary: Summary = {
     considered: 0, current: 0, outdated: 0, built: 0, empty: 0, waiting: 0, partial: 0, completed: 0, missing: 0,
-    noRoom: 0, unmapped: 0, failed: 0, rows: 0, files: 0, stopped: false,
+    noRoom: 0, failed: 0, rows: 0, files: 0, stopped: false,
   };
 
   const instruments = new Instruments();
@@ -139,11 +139,11 @@ export const sweep = async (conns: DuckDBConnection[]): Promise<Summary> => {
    * **One pool of connections, shared by partitions.** A light partition takes
    * one connection and works through its tasks on it, so as many of those are
    * stocked side by side as there are connections; a heavy one takes them all,
-   * and is stocked alone with its tasks side by side as they always were. Most
-   * months are the first kind, and built one after another they left every
-   * connection but one idle. Weight, not the number of tasks, is what tells
-   * them apart: a month of a few hundred kilobytes over five hundred
-   * instruments is two tasks and still nothing.
+   * and is stocked alone with its tasks side by side. Most months are the
+   * first kind, and built one after another they would leave every connection
+   * but one idle. Weight, not the number of tasks, is what tells them apart: a
+   * month of a few hundred kilobytes over five hundred instruments is two
+   * tasks and still nothing.
    */
   const idle    = [...conns];
   const running = new Set<Promise<void>>();
@@ -156,7 +156,7 @@ export const sweep = async (conns: DuckDBConnection[]): Promise<Summary> => {
 
   try {
     for (let job = await following(); job; job = await following()) {
-      const mine = await freed(job.partition.bytes >= ALONE_BYTES ? conns.length : 1);
+      const mine = await freed(job.partition.bytes >= aloneBytes ? conns.length : 1);
 
       const { key, partition, prefetch } = job;
 
@@ -291,6 +291,8 @@ const PREFERENCE: Grain[] = ['monthly', 'daily', 'hourly', 'minutely'];
  */
 const DIRECT_BYTES = 32 * 1024 ** 2;
 
+let directBytes = DIRECT_BYTES;
+
 /**
  * A month whose archive files weigh more than this is stored as a file per
  * instrument, and a lighter one as one file for all of them.
@@ -315,6 +317,8 @@ const AHEAD_BYTES = 2 * 1024 ** 3;
  * connection.
  */
 const ALONE_BYTES = 64 * 1024 ** 2;
+
+let aloneBytes = ALONE_BYTES;
 
 /** What a piece of a big instrument's archives inflates to, at most — unless one file is more. */
 const PIECE_BYTES = 8 * 1024 ** 3;
@@ -485,17 +489,17 @@ const decide = async (
 
   if (entry && stale && ! entry.outdated) sweeping.ledger.set(partition, await outdate(entry));
 
-  /**
-   * The preferred rendering that is on disk as the catalog says — the next one
-   * if it is not, so a month whose monthly files are gone but whose dailies are
-   * here still stocks.
-   */
   /** The sides a neighbour has arrived with that could not be built, and what of what they need is on disk. */
   let unbuilt: { sides: Side[]; main: boolean; sources: boolean } | null = null;
 
   /** Whether a rendering on disk was passed over for want of room to extract it. */
   let noRoom = false;
 
+  /**
+   * The preferred rendering that is on disk as the catalog says — the next one
+   * if it is not, so a month whose monthly files are gone but whose dailies are
+   * here still stocks.
+   */
   for (const one of ready.sort((x, y) => rank(x.candidate) - rank(y.candidate))) {
     /**
      * **A month already stocked, whose neighbour has arrived, is not stocked
@@ -1066,7 +1070,7 @@ const tasksOf = (groups: Group[]): Task[] => {
   for (const group of groups) {
     const size = bytesOf(group);
 
-    if (size >= DIRECT_BYTES) {
+    if (size >= directBytes) {
       tasks.push([group]);
 
       continue;
@@ -1175,7 +1179,7 @@ const NO_ROOM = 'Not enough space to extract — partition skipped';
 const bytesOf = (group: Group): number => group.inputs.reduce((total, one) => total + one.size, 0);
 
 /** Whether a task is one big instrument — or a piece of one — read on its own straight into its file, and not a batch. */
-const direct = (task: Task): boolean => task.length === 1 && (!! task[0]!.piece || bytesOf(task[0]!) >= DIRECT_BYTES);
+const direct = (task: Task): boolean => task.length === 1 && (!! task[0]!.piece || bytesOf(task[0]!) >= directBytes);
 
 /** A task's archives as extraction is asked for them: a batch's small files gathered, a big instrument's as they are. */
 const wrapOf = (task: Task): ReturnType<typeof wrappedFor> => wrappedFor(task, ! direct(task));
@@ -1198,15 +1202,18 @@ const lastClosedMonth = (): string => {
 
 // ── Test access ───────────────────────────────────────────────────────────────
 
-export const _test_wantedMonth = wantedMonth;
-
 /** Stock as if a month split at this weight, or at the real one again. */
 export const _test_splitAt = (bytes: number | null): void => { splitBytes = bytes ?? SPLIT_GB * 1024 ** 3; };
 export const _test_groupsOf    = groupsOf;
 export const _test_sideGroupsOf = sideGroupsOf;
-export const _test_rank        = rank;
 export const _test_tasksOf     = tasksOf;
 export const _test_piecedOf    = piecedOf;
 
 /** Build in pieces as if a piece held this much, or what it really does again. */
 export const _test_pieceAt = (bytes: number | null): void => { pieceBytes = bytes ?? PIECE_BYTES; };
+
+/** Read an instrument on its own from this weight, or from the real one again. */
+export const _test_directAt = (bytes: number | null): void => { directBytes = bytes ?? DIRECT_BYTES; };
+
+/** Give a partition the engine to itself from this weight, or from the real one again. */
+export const _test_aloneAt = (bytes: number | null): void => { aloneBytes = bytes ?? ALONE_BYTES; };

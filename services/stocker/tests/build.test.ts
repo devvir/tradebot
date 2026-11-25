@@ -1,11 +1,13 @@
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DuckDBInstance } from '@duckdb/node-api';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { PIECES, buildBatch, buildGroup, bundleStaged, finishPiece, finishedPiece, joinPieces, keepPieces } from '../src/build';
+import { PIECES, buildBatch, buildGroup, bundleStaged, finishPiece, finishedPiece, joinPieces, keepPieces, sweepScratch } from '../src/build';
+import config from '../src/config';
+import { SCRATCH } from '../src/containers';
 import { parseKey } from '../src/keys';
 import { _test_pieceAt as pieceAt, _test_piecedOf as piecedOf, _test_tasksOf as tasksOf } from '../src/scan';
 import type { DiskFile, VaultKey } from '../src/types';
@@ -494,5 +496,117 @@ describe('a big instrument built a piece at a time', () => {
     await keepPieces(staging);
 
     expect(await stat(staging).catch(() => null)).toBeNull();
+  });
+});
+
+/**
+ * What a build refuses, and what it says of it: each fails the instrument with
+ * an account of why, and leaves nothing staged.
+ */
+describe('a build that cannot be trusted', () => {
+  /** A file of gate's trades written as `body`, catalogued under the month's key. */
+  const gateFile = (name: string, body: string): DiskFile => {
+    const path = join(dir, name);
+
+    writeFileSync(path, body);
+
+    return {
+      absolute: path,
+      file:     { ...parseKey('gate/perp/trades/B/BTC_USDT/202606/gate|perp|trades|BTC_USDT|202606.csv.gz')!, container: 'plain' },
+      size:     body.length,
+      mtimeMs:  0,
+    };
+  };
+
+  /** Timestamps that parse, and are nowhere near now: the series' `ts` names some other column. */
+  it('refuses timestamps outside any plausible time, writing nothing', async () => {
+    const file = gateFile('implausible.csv', '100.5,1,73648.8,21\n200.5,2,73648.8,4\n');
+    const here = join(dir, 'implausible');
+
+    await expect(buildGroup(conn, gate, 'BTC_USDT', [file], here)).rejects.toThrow(/Implausible timestamps in gate\|perp\|BTC_USDT/);
+    await expect(buildBatch(conn, gate, [{ symbol: 'BTC_USDT', inputs: [file] }], `${here}-batch`)).rejects.toThrow(/Implausible timestamps/);
+
+    expect(await readdir(here).catch(() => [])).toEqual([]);
+    expect(await readdir(`${here}-batch`).catch(() => [])).toEqual([]);
+  });
+
+  /** A file whose rows are short of its own header is named as what is wrong, not the column the read could not find. */
+  it('names a file that does not parse into the columns its header states', async () => {
+    const key: VaultKey = { table: 'trades', venue: 'bybit', market: 'perp', month: '2026-07' };
+    const path = join(dir, 'narrow.csv');
+    const [header] = (await readFile(join(FIXTURES, 'bybit.perp-trades.csv'), 'utf8')).split('\n');
+
+    await writeFile(path, `${header}\n1785283200.0635,BTCUSDT,Sell\n1785283200.0636,BTCUSDT,Buy\n`);
+
+    const file = { ...await input('bybit.perp-trades.csv', 'bybit/perp/trades/B/BTCUSDT/202607/bybit|perp|trades|BTCUSDT|20260729.csv.gz'), absolute: path };
+    const here = join(dir, 'narrow');
+
+    const refused = buildGroup(conn, key, 'BTCUSDT', [file], here);
+
+    await expect(refused).rejects.toThrow(/do not parse into columns/);
+    await expect(refused).rejects.toThrow(path);
+
+    expect(await readdir(here).catch(() => [])).toEqual([]);
+  });
+
+  /** Read alone as in a batch: a file wider than the series declares is refused before anything is written. */
+  it('refuses a file wider than the series, read alone', async () => {
+    const file = gateFile('wide-alone.csv', '1780272000.183011,757316631,73648.8,21,2\n');
+    const here = join(dir, 'wide-alone');
+
+    await expect(buildGroup(conn, gate, 'BTC_USDT', [file], here)).rejects.toThrow(/more columns than the series declares/);
+
+    expect(await readdir(here).catch(() => [])).toEqual([]);
+  });
+
+  /** A build of one instrument reads none of a gathered file, so archives gathered for a batch are refused, not left out. */
+  it('refuses archives gathered for a batch', async () => {
+    const file     = gateFile('gathered.csv', '1780272000.183011,757316631,73648.8,21\n');
+    const disposed: string[] = [];
+    const prepared = {
+      paths: [[file.absolute]], packs: [join(dir, 'gathered.pack')], bytes: 0,
+      dispose: async (): Promise<void> => { disposed.push('done'); },
+    };
+
+    await expect(buildGroup(conn, gate, 'BTC_USDT', [file], join(dir, 'gathered'), prepared)).rejects.toThrow(/gathered for a batch/);
+
+    // What was extracted for it goes all the same.
+    expect(disposed).toEqual(['done']);
+  });
+});
+
+/**
+ * As the service starts, scratch holds whatever a hard kill left: all of it
+ * goes but the pieces that are built, which the next build takes up.
+ */
+describe('scratch as the service starts', () => {
+  it('keeps a finished piece and its note, and nothing else', async () => {
+    const one     = await input('gate.futures_usdt-trades.csv', 'gate/perp/trades/B/BTC_USDT/202606/gate|perp|trades|BTC_USDT|202606.csv.gz');
+    const scratch = join(config.vaultDir, SCRATCH);
+    const staging = join(scratch, 'stage', 'gate_perp.abc');
+    const built   = join(staging, 'own', PIECES, '0', '0');
+    const stopped = join(staging, 'own', PIECES, '0', '1');
+
+    const done = await buildGroup(conn, gate, 'BTC_USDT', [one], built);
+
+    await finishPiece(built, [one], done);
+    await buildGroup(conn, gate, 'BTC_USDT', [one], stopped);
+    await buildGroup(conn, gate, 'BTC_USD', [one], join(staging, 'own'));
+    await mkdir(join(scratch, 'unpack-x', 'tag'), { recursive: true });
+    await writeFile(join(scratch, 'unpack-x', 'tag', 'k.csv'), 'rows');
+
+    // A partition whose staging holds no finished piece goes as a whole.
+    await buildGroup(conn, gate, 'BTC_USDT', [one], join(scratch, 'stage', 'gate_perp.def', 'own'));
+
+    try {
+      await sweepScratch();
+
+      expect(await readdir(scratch)).toEqual(['stage']);
+      expect(await readdir(join(scratch, 'stage'))).toEqual(['gate_perp.abc']);
+      expect(await written(staging)).toEqual([join('own', PIECES, '0', '0', 'BTC_USDT.parquet')]);
+      expect(await finishedPiece(built, [one])).toEqual(done);
+    } finally {
+      await rm(scratch, { recursive: true, force: true });
+    }
   });
 });

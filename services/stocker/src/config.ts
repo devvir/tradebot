@@ -82,5 +82,4 @@ export default loadConfig();
 
 // ── Test access ───────────────────────────────────────────────────────────────
 
-export const _test_parseList  = parseList;
 export const _test_parseKnown = parseKnown;

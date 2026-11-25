@@ -24,7 +24,7 @@ export const syncFile = async (path: string): Promise<void> => {
 };
 
 /** Flush a directory's entries — the names made, renamed or removed in it — to the disk. */
-export const syncDir = syncFile;
+export const syncDir = (dir: string): Promise<void> => syncFile(dir);
 
 /**
  * Make a directory where there is none, and add to `touched` every directory

@@ -3,11 +3,9 @@ import type { Margin, Market } from '../types';
 /**
  * Whether an instrument is linear or inverse, from the venue's symbol.
  *
- * **A stopgap, written down as one.** Margining belongs in instrument metadata —
- * each venue's own listing says what a contract settles in — and that metadata
- * does not exist yet. Until it does, each venue's spelling is read here, and
- * only here: one rule per venue, written from every perpetual and future symbol
- * the catalog held on 2026-10-04.
+ * **Read off each venue's spelling, here and only here**: one rule per venue,
+ * written from every perpetual and future symbol the catalog held on
+ * 2026-10-04.
  *
  * A symbol no rule calls inverse is linear: every venue's default contract is
  * USDT- or USDC-margined, and the coin-margined ones are the spelled-out

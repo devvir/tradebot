@@ -82,10 +82,9 @@ export const hasContent = async (path: string): Promise<boolean> => {
  * has to. The raw files are never modified or moved.
  *
  * **One directory for all of them, removed at once.** A build reads thousands
- * of archives at a time, and a directory made and removed per archive was a
- * measurable share of what stocking a month of small files cost. Each archive
- * writes under a tag of its own, so two holding a member of the same name do
- * not meet.
+ * of archives at a time, and making and removing a directory per archive is a
+ * measurable share of stocking a month of small files. Each archive writes
+ * under a tag of its own, so two holding a member of the same name do not meet.
  *
  * **A few at a time, and the loop is handed back as they go.** A small zip is
  * extracted without waiting on anything — see `zip` — so thousands in a row
@@ -121,7 +120,6 @@ export const unpackAll = async (inputs: readonly Wrapped[], shapes: readonly Pac
 /** The threads extraction runs on — see `Pool`. */
 export const pool = new Pool(UNPACK_WORKERS);
 
-export { containerFor } from './registry';
 export { needsExtracting } from './extract';
 export { EXPANSION, MOST, weightsOf } from './weigh';
-export type { Container, Pack, UnpackedAll, Wrapped } from './types';
+export type { Pack, UnpackedAll, Wrapped } from './types';

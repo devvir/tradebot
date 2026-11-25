@@ -4,7 +4,8 @@ import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { containerFor, unpackAll, weightsOf } from '../src/containers';
+import { unpackAll, weightsOf } from '../src/containers';
+import { containerFor } from '../src/containers/registry';
 import { extractInto } from '../src/containers/extract';
 
 /**

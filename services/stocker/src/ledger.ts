@@ -297,9 +297,6 @@ export const validate = async (): Promise<number> => {
   return wrong.length;
 };
 
-/** Whether the vault was found not to hold what the ledger says of a partition; it is then stocked again, never taken on trust. */
-export const distrusts = (partition: string): boolean => distrusted.has(partition);
-
 /** What a side's version says where the neighbour holding that side was not there to be read. */
 export const MISSING = 'missing';
 

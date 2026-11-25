@@ -3,7 +3,7 @@ import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import config from '../src/config';
 import { Prefetch, _test_held as held } from '../src/prepare';
 import { NoRoom } from '../src/room';
@@ -38,8 +38,8 @@ const native = (name: string): Task => {
   return [{ symbol: name, inputs: [{ absolute: path, size: 2, mtimeMs: 0, file: { container: 'plain' } } as unknown as DiskFile] }];
 };
 
-/** Long enough for whatever was started to finish; nothing here waits on a clock otherwise. */
-const settled = async (): Promise<void> => { await new Promise(resolve => setTimeout(resolve, 150)); };
+/** Wait until what is extracted and not yet removed is back to `before`: whatever was started has ended. */
+const back = async (before: number): Promise<void> => { await vi.waitFor(() => expect(held()).toBe(before), { timeout: 5_000 }); };
 
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), 'prepare-'));
@@ -65,11 +65,10 @@ describe('extracting ahead of the builds', () => {
   });
 
   it('has a task extracted before a build asks for it', async () => {
-    const ahead = new Prefetch([zipped('early-a', 'x'), zipped('early-b', 'y')]);
+    const before = held();
+    const ahead  = new Prefetch([zipped('early-a', 'x'), zipped('early-b', 'y')]);
 
-    await settled();
-
-    expect(held()).toBeGreaterThan(0);
+    await vi.waitFor(() => expect(held()).toBeGreaterThan(before), { timeout: 5_000 });
 
     const taken = await ahead.take(1);
 
@@ -79,7 +78,7 @@ describe('extracting ahead of the builds', () => {
 
     ahead.release();
 
-    await settled();
+    await back(before);
   });
 
   it('counts what is extracted until the build removes it', async () => {
@@ -104,19 +103,17 @@ describe('extracting ahead of the builds', () => {
     const where  = dirname(dirname(peek.paths[0]![0]!));
 
     await peek.dispose();
-    await settled();
 
     // Scratch is shared with whatever else is running, so the orphan is found by what it holds.
-    const orphan = execFileSync('grep', ['-rl', 'only the orphan holds this', where]).toString().trim();
+    const found  = (): string => execFileSync('grep', ['-rl', 'only the orphan holds this', where]).toString().trim();
+    const orphan = await vi.waitFor(() => found(), { timeout: 5_000 });
 
     expect(orphan).not.toBe('');
 
     ahead.release();
 
-    await settled();
-
-    expect(held()).toBe(before);
-    expect(existsSync(dirname(orphan))).toBe(false);
+    await back(before);
+    await vi.waitFor(() => expect(existsSync(dirname(orphan))).toBe(false), { timeout: 5_000 });
   });
 
   /** Nothing here knows a venue or a format: what needs no extracting passes straight through. */
@@ -156,10 +153,8 @@ describe('extracting ahead of the builds', () => {
     try {
       const ahead = new Prefetch([zipped('roomless-a', 'x'), zipped('roomless-b', 'y')]);
 
-      await settled();
-
-      // Not extracted ahead, and not to the build that asks either.
-      expect(held()).toBe(before);
+      // Asked for room as it starts, and refused: what it was charged at is given back, and nothing is extracted ahead.
+      await back(before);
 
       await expect(ahead.take(0)).rejects.toBeInstanceOf(NoRoom);
 
