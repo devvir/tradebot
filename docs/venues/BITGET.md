@@ -24,15 +24,11 @@ server: AmazonS3
 <Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>
 ```
 
-By status alone that is indistinguishable from being turned away. Reading it as a block stands the
-venue down on its first missing file — which, for an archive whose keys are constructed and whose
-ranges have real gaps, is immediately and permanently.
+By status alone a missing key is indistinguishable from a forbidden one.
 
-**Who answered separates them.** S3 replying is a statement about the object; the CDN replying under
-its own `server` never reached the origin and is a statement about us. That is the only distinction
-available on a `HEAD`, and prospector's `refusesUs` and `ruleOnFailure` hooks rest on it.
-
-No other venue here behaves this way — okx and bybit's book server both answer a missing key 404.
+**Who answered separates them.** A `403` with `server: AmazonS3` means no such key. A `403` or `503`
+from the CloudFront edge under its own `server` never reached the origin, and is a refusal of the
+client. That is the only distinction available on a `HEAD`.
 
 #### Its edge limits the rate, near 2,900 a second
 
@@ -40,26 +36,24 @@ Keys known to exist answer from CloudFront's cache: **597,000 `HEAD`s in one aft
 non-200**, at up to ~3,500/s.
 
 ```
- workers       rate        n     p50      p95   our CPU
+ workers       rate        n     p50      p95   client CPU
       40     977.2/s    29318     37ms      51ms     4.3%
       80    2005.1/s    60177     37ms      47ms     8.5%
      400    3506.5/s   140325     55ms     313ms    27.8%
 ```
 
 **A missing key is a different request.** The edge has nothing cached for it and asks the origin, so
-it takes ~235 ms rather than ~15 — and an update asks mostly for keys that do not exist yet. Measured
-2026-09-30 from here, over HTTP/2: 539/s at 250 in flight, 732/s at 500.
+it takes ~235 ms rather than ~15. Measured 2026-09-30 over HTTP/2: 539/s at 250 in flight, 732/s at
+500.
 
-**The limit is CloudFront's own.** Measured 2026-09-30 by prospector itself: at 500 in flight it
-reached ~2,900/s over ten seconds, with one second at 3,940, and the edge answered
-`503 — x-cache: LimitExceeded from cloudfront` until the venue was stood down. Capped at 2,500/s with
-600 in flight it held ~2,300/s without a single refusal for as long as it was watched. That is what
-the adapter declares.
+**The limit is CloudFront's own.** Measured 2026-09-30: at 500 in flight, `HEAD`s reached ~2,900/s
+over ten seconds, with one second at 3,940, and the edge answered
+`503 — x-cache: LimitExceeded from cloudfront` until the requests stopped. Capped at 2,500/s, they
+held ~2,300/s without a single refusal for as long as they were watched.
 
 **A missing key's `403` carries neither a length nor chunking**, which Node's HTTP/1.1 client answers
 by closing the connection: 1,000 such probes opened 1,000 connections, and each paid a TLS handshake.
-The host speaks HTTP/2, where a probe is a stream and the question does not arise — prospector
-probes it that way.
+The host speaks HTTP/2, where a probe is a stream and the question does not arise.
 
 **The web endpoints are the opposite.** Everything on `www.bitget.com` is rate limited and sits
 behind Cloudflare: roughly one request a second sustained, 429 above that, and a challenge page
@@ -75,9 +69,9 @@ always two behind. The cadence slips: on 2026-08-21 the 18th was still absent, 2
 #### Buckets cut at 16:00 UTC, not midnight
 
 A file named `20250101` covers **2024-12-31 16:00 → 2025-01-01 16:00 UTC** — midnight in UTC+8.
-Verified across 120 files spanning all 514 spot symbols and the whole range on disk: zero rows
+Verified across 120 files spanning all 514 spot symbols and the whole range: zero rows
 outside the shifted window. Timestamps themselves are correct UTC instants; only *which file holds a
-row* is shifted. Stocker handles it with the declarative `spill: 'back'` trait.
+row* is shifted.
 
 **Unverified:** only spot trades were checked. Futures products and the kline/depth datasets deserve
 their own check.
@@ -85,11 +79,11 @@ their own check.
 #### Trade timestamps carry only second resolution
 
 The `timestamp` column is epoch milliseconds with the millisecond part **always zero**. Measured over
-133,260 rows across 32 consecutive `SNXUSDT` files: zero exceptions. Confirmed on a built partition —
-of ~9.6 M rows in `BTCUSDT` 2024-06, `count(DISTINCT ts % 1000000)` is 1.
+133,260 rows across 32 consecutive `SNXUSDT` files: zero exceptions. Confirmed over the ~9.6 M
+`BTCUSDT` spot trades of 2024-06: every timestamp falls on a whole second.
 
-So `ts` cannot order trades within a second; sequence lives in `trade_id` and file order. Sub-second
-bins are not derivable from this source, where binance and bybit publish finer stamps.
+So `timestamp` cannot order trades within a second; sequence lives in `trade_id` and file order.
+Sub-second bins are not derivable from this source.
 
 #### Multi-part days are independent zips
 
@@ -100,15 +94,13 @@ end-of-central-directory record and one CSV **with its own header row** — not 
 says how many parts a day has, so the only way to learn is that the next answers 403. Parts reach
 `_101`; 98% of day-series are `_001` alone.
 
-A size short-circuit was considered and rejected: compressed size varies with symbol, precision and
-era, and the full and terminal distributions overlap — full parts run from 215,212 bytes upward while
-terminal parts have a median of 135,981. Stopping on a small part would save one `HEAD`
-per day-series and cost a silently truncated day whenever the bet was wrong.
+A part's compressed size does not say whether it is the last: it varies with symbol, precision and
+era, and full parts (215,212 bytes upward) overlap terminal ones (median 135,981).
 
 #### Sentinel value in depth
 
-Depth publishes a missing quote as **`-999999`**, not an empty field. It must become NULL or every
-spread computed from this venue is wrong. Handled in the series map.
+Depth publishes a missing quote as **`-999999`**, not an empty field: the value means no quote, not a
+price.
 
 #### A day's klines and depth are a sheet, a month's are text
 
@@ -132,7 +124,7 @@ are CSV at either grain, `trade_id, timestamp, price, side, volume(quote), size(
 
 #### Depth is two datasets, and one of them is invisible without a parameter
 
-`deptType: 2` on the download index returns a different tree from the one every earlier sweep saw:
+`deptType: 2` on the download index returns a different tree from the default, `deptType: 1`:
 
 ```
 quotes  depth/BTCUSDT/1/BTCUSDT_1_20260901.zip
@@ -140,7 +132,7 @@ books   depth_500/BTCUSDT/1/BTCUSDT_1_20260901.zip
 ```
 
 A level-1 depth file is quotes; `depth_500` is a real 500-level book. The two are separate
-datasets with separate keys, and nothing that omits `deptType` will ever see the second.
+datasets with separate keys, and a request that omits `deptType` never sees the second.
 
 A `depth_500` file is `timestamp, asks, bids`: an image of the book every twenty seconds, `timestamp`
 in whole seconds, each side JSON text in one cell — `[[1.0082,0.7161],[1.0173,0.7161],…]`, a level
@@ -149,17 +141,16 @@ in whole seconds, each side JSON text in one cell — `[[1.0082,0.7161],[1.0173,
 **Books carry one shape and no eras.** Measured over 794 windows across both business lines, the
 whole range, with no window failing: 324,979 files under `depth_500/{S}/1/{S}_1_{DATE}.zip` for
 1,704 spot-line symbols, and 262,808 under `depth_500/{S}/2/{S}_3_{DATE}.zip` for 1,099 on the
-futures line. Both begin **2025-08-01** and neither has a second spelling — so this dataset launched
-on the convention the others only adopted at the 2026-08-18 boundary, and an era-3-shaped books key
-before that boundary is not evidence of anything.
+futures line. Both begin **2025-08-01** and neither has a second spelling: this dataset launched on
+the era-3 convention, which the other datasets adopted only at the 2026-08-18 boundary.
 
 The perp quirk holds here too: the directory says `2` where the filename says `3`.
 
 **374 keys name one instrument in another's directory**, on exactly four dates — 2026-07-01, and
 2026-09-03 through 05, the last three carrying 105 each. Both sides run alphabetically in step
 (`ADAPERP` → `ALPINEUSDT`, `ALGOUSDT` → `AMDONUSDT`), which is the venue zipping two sorted
-lists with an offset rather than a naming convention. Every one is served, 200. No pattern generates
-them and neither name can be trusted for them, so they belong with the unreadables.
+lists with an offset rather than a naming convention. Every one is served, 200. Neither name can be
+trusted for them, and no single-symbol shape reads them.
 
 ### The three naming eras
 
@@ -195,12 +186,11 @@ zip containers differ. The download index consistently attributes that day to th
 
 **Klines do not cut cleanly at all**: era-2 candlestick keys exist for scattered days years before
 that era began. It is the same arrangement as the trades overlap — a day served under both eras'
-names, holding one export twice — and the boundary is a change of shape, not of content. See *The
-index under-reports, measured*.
+names, holding one export twice — and the boundary is a change of shape, not of content.
 
-**Era 2 is read from its first day, 2024-04-19, and never before.** Every era-2 series has that
-floor in the seed, so no earlier era-2 key is ever generated. What era 2 published before its own
-start, measured on 2026-10-02 against the catalog and the sweep's index (klines `1m`, both lines):
+**440 era-2 kline keys are dated before 2024-04-19** (237 perp, 203 spot): 417 duplicate an era-1
+key for the same day, and 23 are that day's only copy. Measured on 2026-10-02 (klines `1m`, both
+lines):
 
 | | perp | spot |
 |---|---|---|
@@ -212,18 +202,13 @@ The days are scattered — 2019-08-01 to 2023-02-21, mostly `BTCUSDT` and `XRPUS
 lists the era-2 key for every one of them. Where both are served the content is the same: the era-2
 export writes lowercase headers (`basevolume`) and the shortest float, the era-1 one camelCase and the
 full binary expansion. The trades day is the other way round: for 2024-04-18 the index lists the
-era-1 key of every instrument, and era 2's copy is the duplicate the floor drops.
+era-1 key of every instrument, and era 2's copy is the duplicate.
 
 **Twenty of the only-copy days are holes in a continuous era-1 series**, with the days either side
 held in era 1 — 2020-02-29 (`BTCUSDT`, `XRPUSDT` perp, `XRPUSDT` spot), 2023-01-05 and 2023-02-21.
-The era-1 kline patterns name their file through an `eraName` transform whose default is era 1's own
-spelling, and those twenty days carry a row that spells era 2's instead — `UMCBL/{YYYY}{MM}{DD}` on
-the futures line, `SP/{YYYY}{MM}{DD}` on spot — so the series reads that one day from where bitget
-put it and stays one series.
-
-The other three are isolated files with no series around them, and are not catalogued: neither is
-any era-2 series that only ever held pre-era files (one kline series, nine trades series that exist
-only for 2024-04-18).
+For those days the file sits only at the era-2 key: `kline/{S}/UMCBL/{YYYYMMDD}.zip` on the futures
+line, `kline/{S}/SP/{YYYYMMDD}.zip` on spot. The other three are isolated files, with no era-1 days
+around them.
 
 #### Every shape, and the token rules
 
@@ -242,12 +227,14 @@ takes depends on the *series*, not only the market:
 | futures klines | **`UMCBL` for every margin type**, coin-margined included |
 | depth | market digit — `1` spot, `2` futures |
 
-That last row is why coin-margined klines once read as publishing nothing: `kline/BTCUSD/DMCBL/…`
-answers 403 while `kline/BTCUSD/UMCBL/…` answers 200. Every probe missed by one path segment.
+So coin-margined klines sit under `UMCBL`: `kline/BTCUSD/DMCBL/…` answers 403 while
+`kline/BTCUSD/UMCBL/…` answers 200.
 
-**The symbol placeholder never contains an underscore** — 0 of 5,055,779 URLs. That makes the
-placeholder `[^/_]+` rather than `[^/]+`, which is what stops era-1 and era-3 trade shapes matching
-the same URL (`{S}_{DATE}_001` would otherwise swallow the `_SPBL` of `{S}_SPBL_{DATE}_001`).
+**Nothing in a futures symbol says which margin token its trades take.** It is the margin type of the
+API category the contract is listed under — `USDT-FUTURES`, `COIN-FUTURES` or `USDC-FUTURES` — and a
+contract asked for under the wrong token answers the same `403` as a missing key.
+
+**The symbol in a path never contains an underscore** — 0 of 5,055,779 URLs.
 
 #### Per-dataset floors
 
@@ -316,12 +303,32 @@ per published file: `dateTimeStr`, `fileName`, `fileUrl`, `displayName`.
 in `fileUrl`. From 2026-08-19 some rows carry `<displayName>-<real basename>` instead.
 **Unverified:** whether that carries meaning or is more inconsistency.
 
+**The index is a claim about the archive, not a listing of it**, and it is wrong in both directions:
+
+- **It omits files that exist.** Measured against 1.46 million files fetched from the archive, it is
+  complete for candlesticks and misses 0.27% of trades and 1.30% of depth, every one of which the CDN
+  serves. Per instrument and dataset its first date is not the archive's: on one sweep, 1,424 series
+  had files earlier than the index's first for them, by as much as 680 days, and 41 had files it
+  never listed. On the era-boundary candlesticks, of six days it listed under the era-2 key only,
+  five have an era-1 file too, serving the same candles — see
+  [the three naming eras](#the-three-naming-eras).
+- **It leaves instruments out altogether.** 585 series known from the venue's instrument listings
+  appear nowhere in it.
+- **It lists keys that do not exist.** Two spot kline series on the naming retired 2024-04-18,
+  `BLZ/USDT` and `WAVES/USDT`, had 1,113 files listed and none served: every one answers `403`
+  from the origin, which serves those symbols' other shapes with `200`.
+- **It goes quiet about recent days long before the archive does.** Days it withheld for over a week
+  were in the archive all along, at full strength and under the shapes already known. The newest
+  date it returns is a lower bound on what exists, never the archive's end.
+
 **The REST APIs — two of them, and they are different systems.** See below.
 
 **The trading platform search.** `POST /v1/mix/index/search/trade/coin` with
 `{searchContent, showOpenTime, languageType}`, returning `spot`, `margin` and `contract` buckets.
 This is the only place bitget states the correspondence between its own names. It answers about
-two requests a second, and it does not list the coin-margined family at all.
+two requests a second, and it does not list the coin-margined family at all. It returns `symbolCode`
+for an instrument that has not yet published a file, so the archive name is known before the first
+file lands; for a retired symbol it returns nothing.
 
 Measured by asking it for every name both REST versions list — 1,957 queries, 2,104 distinct records
 — and checking each field against the archive paths and REST names held independently:
@@ -345,17 +352,18 @@ Its `businessLine` is finer than the download form's: `1` spot and margin, `10` 
 
 ### Which market an instrument belongs to
 
-Three canonical markets, from fields the venue states outright:
+The v3 listing states it outright:
 
-| the venue says | market |
+| the venue says | instrument |
 |---|---|
-| spot, `symbolType = crypto` | `spot` |
-| futures, `type = delivery` | `future` |
-| futures, anything else | `perp` |
-| **anything not crypto** | **refused** — see [what this catalog refuses](#what-this-catalog-refuses-bitgets-non-crypto-listings) |
+| category `SPOT`, `symbolType = crypto` | spot |
+| a futures category, `type = delivery` | dated future |
+| a futures category, any other `type` | perpetual |
+| `isRwa = YES` (futures), `isReality = yes` or a `symbolType` other than `crypto` (spot) | not crypto — see [two fifths of what bitget lists is not crypto](#two-fifths-of-what-bitget-lists-is-not-crypto) |
 
-Both fields are present on every instrument of every category, so nothing is decided by a missing
-value.
+`symbolType` and `type` are present on every instrument of every category, so nothing is decided by a
+missing value. `symbolType` alone does not separate crypto from the rest on futures, where some
+equities are typed `crypto`.
 
 ### Naming: what can be derived, and what must be looked up
 
@@ -391,13 +399,13 @@ Two smaller families cut across categories, about 59 instruments: the **portal**
 archive never had — `OLD`, `ERC20`, `SOL` — because the plain path was that holder's all along; or
 the **archive** adds one the portal does not, `NEW`, `TOKEN`, `BITCOIN`, `1`.
 
-Two more are visible only in the books tree, where no earlier sweep looked:
+Two more are visible only in the books tree:
 
 - **the multiplier contracts.** The portal carries it and the archive drops it —
   `1000XECUSDT` → `XECUSDT`, `1000BONKUSDC` → `BONKPERP` (with `USDC` → `PERP` on top).
 - **`USD_CM` → `USDCM` for books**, where klines take `USD_CM` → `CM`. `BTCUSD_CM` files its
-  klines under `BTCCM` and its books under `BTCUSDCM`. The same instrument, two datasets, two
-  spellings — which is why `url_symbol` is a field of the series and not of the instrument.
+  klines under `BTCCM` and its books under `BTCUSDCM`: the same instrument, two datasets, two
+  spellings.
 
 The 17 that no rule reaches are relistings where the portal describes what the archive merely
 tickers — `BOOMUP/USDT` → `BOOMUSDT`, `GDXGOLD/USDT` → `GDXUSDT`, `MAJORPOINTS/USDT` →
@@ -421,9 +429,8 @@ instrument.
 Friday of their month, so `BTCUSD0327` is the one expiring on 27 March — and only 2026 has its last
 Friday on that date, which makes it `BTCUSDH26`. It reads either way.
 
-Where a pairing is not obvious, the fix is not a cleverer inference: **ask the index again with one
-symbol**. The batch is a speed strategy, not a requirement, and a single-symbol request is
-categorical about what that instrument has.
+Where a pairing is not obvious, **a request naming one symbol settles it**: it is categorical about
+what that instrument has.
 
 #### A path names whoever held the ticker when the file was written
 
@@ -437,34 +444,33 @@ spot, ticker "AI"
   AIGENSYNUSDT    2026-04-29 .. open           the third, and what the API calls AIUSDT today
 ```
 
-Handovers are exact rather than overlapping, so these read as separate series with adjacent ranges.
+Handovers are exact rather than overlapping, so these are separate histories with adjacent ranges.
 
-**This is why an archive path is never derived from a live API symbol.** Ask the CDN for today's `AI`
-at `kline/AIUSDT/…` and it answers — with a different project's 2023 candles.
+**So a live API symbol does not give the archive path.** Ask the CDN for today's `AI` at
+`kline/AIUSDT/…` and it answers — with a different project's 2023 candles.
 
 The disambiguated spelling is not derivable either, and the portal's own labels for retired holders
 are inconsistent between markets: the futures listing calls the first `AI` `AISLEEPLESSUSDT` while
 the spot listing calls it `AIOLD/USDT`.
 
 **Distinguishing a rename from a spelling.** When a lookup for symbol `A` yields a URL under symbol
-`B`, there are two possibilities and they call for opposite records:
+`B`, there are two possibilities:
 
-| | meaning | record |
-|---|---|---|
-| `B` is itself a bitget symbol | renamed, or the ticker was reused | **two series**, `A` and `B`, adjacent ranges |
-| `B` was never a symbol | `B` is how the archive spells `A` | **one series**, `symbol = A`, `url_symbol = B` |
+| | meaning |
+|---|---|
+| `B` is itself a bitget symbol | renamed, or the ticker was reused: two instruments, adjacent ranges |
+| `B` was never a symbol | `B` is how the archive spells `A`: one instrument |
 
-Getting it wrong is not cosmetic: recording the second case as two series produces "`A` is void, `B`
-is full of data". The trading platform search settles it — if `symbolCode(A) = B` then `B` is a
-spelling; if `A` and `B` each appear as their own record, they are two instruments.
+The trading platform search settles it — if `symbolCode(A) = B` then `B` is a spelling; if `A` and
+`B` each appear as their own record, they are two instruments.
 
 #### Depth can be spelled differently from the rest of an instrument
 
-Asking the download index for every spot instrument under its *slashless* canonical — rather than
-the dropdown spelling the form accepts — turned up ten instruments whose depth is filed under the
-bare canonical while their candlesticks, trades and quotes use another spelling:
+Asking the download index for every spot instrument under its *slashless* name — rather than the
+dropdown spelling the form accepts — turned up ten instruments whose depth is filed under the bare
+name while their candlesticks, trades and quotes use another spelling:
 
-| canonical | spelling of its other datasets | depth under that spelling | depth under the canonical |
+| name | spelling of its other datasets | depth under that spelling | depth under the name |
 |---|---|---|---|
 | LIQUIDIUMUSDT | LIQUIDIUMTOKENUSDT | 2024-07-22..2025-01-27 | 2024-07-27..2026-08-17 |
 | MRSOONUSDT | SOONUSDT | 2024-07-27..2026-08-31 | 2025-04-25..2026-08-14 |
@@ -477,30 +483,22 @@ bare canonical while their candlesticks, trades and quotes use another spelling:
 | SOPHUSDC | SOPHNEWUSDC | none | 2025-05-28..2026-08-17 |
 | SPACEUSD1 | SPACENEWUSD1 | none | 2026-01-23..2026-08-17 |
 
-**The seed carries the canonical depth of all ten**, and the instrument's other datasets under their
-own spelling as a `url_symbol`. The depth filed under the *other* spelling is not seeded for the
-first four.
-
 For seven of them that is the ordinary case — one stream, handed over at a rename or spelled one way
-for its whole life. **The first three overlap for months**, so for that period bitget wrote two depth
-streams for one listed instrument, and only the canonical one is catalogued.
+for its whole life. **The first three overlap**, by two weeks (`VELOUSDC`) to more than a year
+(`MRSOONUSDT`): for that period bitget wrote two depth streams for one listed instrument.
 
 #### An instrument is a market plus a symbol, and a path belongs to nobody
 
-**This is the question that keeps being re-asked, so it is settled here.**
-
-A canonical symbol is unique **per market**, never globally. `BTCUSD` may exist as spot, as a
-perpetual and as a dated future at the same time, and those are three instruments. What must never
-happen is two instruments sharing one market *and* one canonical symbol.
+A symbol is unique **per market**, never globally. `BTCUSD` may exist as spot, as a perpetual and as
+a dated future at the same time, and those are three instruments.
 
 **A path, by contrast, is owned by nobody.** Bitget reassigns directories and filenames: it re-issues
 a ticker, shortens a name into one that collides with a different instrument, moves a stream from one
 folder to another, and files an instrument under a name it dropped years ago. So the same archive
 spelling can carry one holder's files up to some date and another's from the next day on.
 
-It follows that **two series may legitimately share an archive spelling**, and the seed is full of
-them - 51 spellings across 413 series. That is not a fault and does not need investigating. The
-worked example:
+It follows that **one archive spelling can hold more than one instrument's files**. The worked
+example:
 
 ```
 futures  AISLEEPLESSUSDT -> AIUSDT          the first holder, under the plain name
@@ -508,17 +506,8 @@ futures  AIUSDT          -> AIGENSYNUSDT    what the API calls AI today
 futures  AIUSDT          -> AIUSDT          the plain name again, on a later shape
 ```
 
-All three can be right. They sit on different datasets and different eras, so they describe different
+All three are right. They sit on different datasets and different eras, so they name different
 keys; and where they do share a shape, they cover different date ranges.
-
-**The only thing that is ever wrong is two series generating the same URL for the same date.** One
-key is one file, `file` is unique on `(venue_id, path)`, and whichever series settles it first keeps
-it - so the other silently gets nothing and its instrument reads as having a hole. Checking spellings
-tells you nothing; checking generated keys is the check.
-
-**What the catalog must guarantee** is that an instrument's whole history is reachable under its one
-canonical `(market, symbol)`, however many series it takes and wherever bitget moved the files. The
-series are the mechanism; the canonical is the identity.
 
 #### Two keys name one instrument inside another's directory
 
@@ -530,10 +519,8 @@ kline/TRXUSDT/RUNEUSDT_UMCBL_1min_20221117.zip
 Both are served. In era-1 naming the symbol appears twice — directory and filename — and in these two
 keys they disagree. They are the only two in 5,055,779 paths.
 
-Neither can be *read* — no single-`{SYMBOL}` shape parses them — but one of them is **generated**: an
-`archiveDir` transform bounded to `20221117..20221117` puts `RUNEUSDT`'s day back under `TRXUSDT/`,
-because it is the only copy and the day would otherwise be a permanent hole. `TRXETH`'s needs no such
-row: a byte-identical copy sits at its proper key.
+No single-symbol shape reads them. `RUNEUSDT`'s day exists only at this key; `TRXETH`'s has a
+byte-identical copy at its proper key.
 
 ### What the download form does not know
 
@@ -548,93 +535,15 @@ other. Both are in the REST listing, which is how they were found.
 
 **The line token is the market**, and it is a property of the key: `/1/`, `SP` and `SPBL` are spot,
 the margin tokens and `/2/` are futures. It is fixed when the file is written and cannot be revised
-afterwards, which is why a record's market is read off its path rather than inferred from the name.
+afterwards.
 
 **A name asked of the wrong line still answers.** Asking the spot line about a futures name returns
-spot-line depth keys for it, and they are served: a sweep in September 2026 that sent one name list to
-both lines came back with hundreds of thousands of such keys. They are real files and they are not
-this catalog's — the instrument is offered on one line, so it is asked of that line only, and a key
-from the other line belongs to whatever the venue files there. The sweep now sends a list per line for
-exactly this reason.
+spot-line depth keys for it, and they are served: in September 2026 one name list sent to both lines
+came back with hundreds of thousands of such keys.
 
 Those files are also not a copy of the futures ones. Measured on matched timestamps, prices differ by
 a consistent 0.4–0.5 and the `/1/` file carries two rows per timestamp with different books, so
 whatever the venue is filing there, it is not the `/2/` stream under another name.
-
-### Building the seed
-
-The archive cannot be listed, so the seed is built by asking, in three stages. This is in progress;
-the description will change as it does.
-
-**1. Enumerate the instruments.** The dropdown crawl over all six market/dataset combinations, then
-the REST listings of both API versions. Each name is recorded with the source that produced it, so
-the sources can be compared rather than merged — the dropdown remembers the dead, the REST APIs know
-the live, and only together do they approach complete.
-
-**2. Enumerate the files.** The download index, asked for every known name at once over consecutive
-8-day windows from 2018-01-01 to yesterday, across all six combinations. The full name list is sent
-to every combination rather than one market's names to its own market, because which market a name
-belongs to is part of what is being measured. Every returned URL is then matched against the known
-shapes, which yields its pattern and the string filling the symbol placeholder.
-
-Two hazards this stage has already surfaced, both worth guarding on any re-run:
-
-- The reply carries a `displayName` that is **not always the name asked for** — for dated futures the
-  venue answers with its own label. Since one request carries thousands of names, the mapping back to
-  the request is lost for exactly those rows. It is recoverable only because the archive path is
-  itself one of the names asked for. Measured: 29 such names, all dated futures, none else.
-- A query that fails is a subtree never explored, and the output looks identical to a complete one.
-  Rate limiting, a challenge page and an empty result must be told apart, or the result is silently
-  short.
-
-**3. Resolve the names.** Each instrument's archive path comes from the files it was found under;
-where the portal name and the REST name differ, the trading platform search's `symbolCode` and
-`symbolCodeDisplayName` supply the correspondence directly rather than by inference. What no source
-resolves is left unresolved rather than guessed.
-
-A canonical name is then assigned per instrument, so that an instrument whose archive spelling
-changes remains one history rather than becoming two. For live instruments it is the REST name; for
-delisted ones nothing depends on the choice, except that it must not collide with a live instrument's
-canonical — which is the failure the whole exercise exists to prevent.
-
-**4. Enumerate the series.** Every instrument against every shape that can carry it: its market's
-patterns, and for futures trades only the token its own margin type files under. Not the combinations
-the index happened to return — those are a subset of what exists, and seeding them would inherit the
-index's blind spots for good, since nothing walks this venue and a key absent from the seed is never
-probed.
-
-So the seed states a **search space**, and a run establishes what is in it:
-
-| | |
-|---|---|
-| `first` | never set. The run finds it |
-| `last` | the newest date the index claimed, so a hook can jump there rather than probe the years between. A hint, not a bound — no file in the index has been fetched, and the index both omits files that exist and lists files that do not |
-| `tip` | under anything the shape could hold, so nothing is settled by assumption |
-
-The tips, per era and dataset:
-
-| era | klines | trades | depth |
-|---|---|---|---|
-| ends 2024-04-18 | 20180601 | 20180601 | — |
-| ends 2026-08-17 | 20180601 | 20240301 | 20240601 |
-| current | 20260601 | 20260601 | 20260601 |
-
-Candlesticks reach furthest back in the middle era because that era's keys carry dates from 2019 —
-see below.
-
-#### Why the seed states shapes rather than sightings
-
-The index omits files that exist. Measured on the era-boundary candlesticks: of six days it listed
-under the era-2 key only, five have an era-1 file too, serving the same candles — see *The three
-naming eras*. On those six keys it under-reported by five files.
-
-Measured against 1.46 million files held locally, the index is complete for candlesticks and misses
-0.27% of trades and 1.30% of depth — every one of which the CDN serves. It also leaves instruments
-out altogether: 585 series came from the venue's instrument listing and from nowhere in the index.
-
-Nothing in the file list has been fetched, so it bounds nothing in either direction. A seed built
-from it would inherit that silence permanently, because nothing walks this venue: a key the seed does
-not name is never probed, and never found.
 
 ### It publishes a day two days later
 
@@ -653,65 +562,6 @@ closer spends one probe per series per night on a file that cannot exist, and th
 patience window then spends it again the following night: two thirds of what its
 update asked, before this was measured.
 
-### Discovering instruments added later
-
-The seed covers what exists today. Keeping up needs a listing that names new instruments *before*
-any file exists, which rules out the archive and the download index.
-
-**The REST APIs are that listing**, and both are needed: v2 for delivery contracts, demo product
-types and the classic coin-margined line; v3 for the eleven coin-margined perpetuals v2 omits. Eight
-v2 requests plus five v3 ones cover every category.
-
-For a newly listed instrument the archive path is unknown, and the transformation rules above cover
-about three quarters of cases. The remainder is what the trading platform search answers — it returns
-`symbolCode` for an instrument that has never published a file, so the URL can be constructed before
-the first file lands.
-
-**The margin token has to be carried from the listing too, and it is the half that is easy to
-forget.** A futures contract's trades sit under `UMCBL`, `DMCBL` or `CMCBL`, and which one is a
-property of the API category it was read from — nothing in the symbol, the market or the path says
-it. So the category is read into a `marginToken` transform against the instrument at the moment the
-listing is parsed, and the transform is written before the contract's series are. A coin-margined
-contract asked for under `UMCBL` answers `403`, which here means "not there", so the whole
-instrument reads as one that publishes nothing and no error is raised anywhere.
-
-What no listing provides is a **delisted** instrument's name: the REST APIs carry only what trades
-today, and the search endpoint returns nothing for a retired symbol. Those exist solely in the
-dropdown enumeration and in the archive itself, which is why the sweep's output is a historical record
-worth keeping rather than something to regenerate on demand.
-
-### What this catalog refuses: bitget's non-crypto listings
-
-**Roughly 1,500 of the instruments bitget lists are not crypto**, and none of them is catalogued.
-Tokenised equities and ETFs on the spot line, spelled `rTSLA/USDT`, `rAAPL/USDT`, `rARKK/USDT`;
-equity perpetuals on the futures line, spelled `AAPLUSDT`, `ASMLUSDT`, `ANTHROPICUSDT`; plus a
-handful of metals, commodities and currency pairs.
-
-They are refused at discovery, in `bitgetInstruments`. **The predicate is `marketOf`, not
-`symbolType`** — measured over 2,941 listed instruments, `symbolType = 'stock'` alone misses 2 spot
-metals, 7 futures metals, 3 futures commodities and 11 futures contracts the venue types `crypto`
-while flagging `isRwa: YES` (`HPQ`, `BHP`, `RIO`, `VALE`, `EURUSD`, `USDJPY` and the like). Both
-fields `marketOf` reads are present on every instrument of every category, so nothing defaults.
-
-| line | rule | what it catches |
-|---|---|---|
-| spot | `symbolType !== 'crypto'` | stock and metal — and anything bitget invents later, since it refuses by default |
-| futures | `isRwa === 'YES'` | stock, metal, commodity, and the crypto-typed RWAs |
-
-**Why refuse rather than catalogue.** This family carries the venue's naming pathology at its worst —
-it is where most of the reused tickers, shortened names colliding with real instruments, and
-directory reassignments were found — and nothing downstream wants tokenised equities. Bitget's
-archive is a mess throughout; this corner of it is the messiest, and none of that mess has to be
-modelled if the instruments are never admitted.
-
-Two families of series went with them. The **`unknown` market** held depth streams that surfaced only
-when `getPublicDataV2` was asked with a name from the other line — a slashless symbol on
-`businessLine=1`, or the reverse — returning files whose provenance nothing establishes, sometimes
-with a market digit contradicting the line that answered them. Those are gone too, along with the
-market itself. And `categoryOf` is gone from the adapter: it existed to stop a market that spans both
-archive lines being given the wrong line's shapes, and with the non-crypto instruments refused, no
-market spans both.
-
 ### Open questions
 
 - Why 809 depth streams stop on 2026-08-17, the last day of era 2, with nothing taking over — probing
@@ -719,8 +569,7 @@ market spans both.
 
 - What the two rows per timestamp in a depth file are.
 - Which depth stream is the instrument's while two are written: LIQUIDIUMUSDT, MRSOONUSDT and
-  VELOUSDC each have depth under two spellings for an overlapping period, and only the canonical one
-  is catalogued.
+  VELOUSDC each have depth under two spellings for an overlapping period.
 - Whether the era-3 `fileName` variant (`<displayName>-<real basename>`) means anything.
 - Whether the bucket cut holds for futures products and for klines and depth.
 - Whether `pre`-prefixed equities are pre-IPO instruments.
@@ -895,10 +744,10 @@ is **wrong by a day or two** against the actual delivery date, and changes as th
 The archive files each under the name its own account system uses: `BTCUSDU26` for the classic line,
 `APTCMU26` for UTA's.
 
-**The flag is what identifies these, not the category and not the name.** Since each API names only
-its own contracts, a discovery pass reading one alone sees part of the delivery universe — and since
-an **expired** contract appears in no listing at all, its own name is then the only thing left to
-read: the month code, or bitget's `_D1`/`_D2`.
+**The flag is what identifies these, not the category and not the name.** Each API lists only its
+own contracts, so one API alone shows part of the delivery universe; and an **expired** contract
+appears in no listing at all, so its name is then the only thing left to read: the month code, or
+bitget's `_D1`/`_D2`.
 
 #### Demo instruments are published too
 
@@ -937,9 +786,8 @@ correlation is perfect across all twenty: in v2 ⟺ the `XUSD` stream still publ
 and depth entirely in the move — under either name.
 
 **Assumption:** that `XUSD` and `XCM` are the classic and UTA views of one economic instrument. The
-sizing and collateral differences are measured; the interpretation is not. It does not matter for
-generating URLs — they are separate series either way — but it would matter for presenting one
-history.
+sizing and collateral differences are measured; the interpretation is not. Their files are separate
+keys either way.
 
 #### Two fifths of what bitget lists is not crypto
 
@@ -951,23 +799,25 @@ From v3's `symbolType`: **700 stock, 604 crypto, 2 metal** in SPOT alone, with 6
 carries `isReality`, but bitget's docs do not say so.
 
 The lowercase appears **only in the portal display name**. Symbols and archive paths are uppercase
-throughout, so a canonical name derived from either is uppercase without needing a rule.
+throughout.
 
 Asset class cuts across bitget's own categories: `TSLAUSDT` is a USDT-FUTURES perpetual, and the
-futures listings carry `isRwa` for the same purpose that `isReality` serves on spot. These map to the
-catalog's refusal: neither a spot rToken nor a stock perpetual is catalogued at all — see
-[what this catalog refuses](#what-this-catalog-refuses-bitgets-non-crypto-listings).
+futures listings carry `isRwa` for the same purpose that `isReality` serves on spot. Together they
+cover roughly 1,500 instruments: tokenised equities and ETFs on spot (`rTSLA/USDT`, `rARKK/USDT`),
+equity perpetuals on futures (`AAPLUSDT`, `ASMLUSDT`, `ANTHROPICUSDT`), and a handful of metals,
+commodities and currency pairs.
 
 **`isRwa`/`isReality` are the flags to read, not `symbolType`.** `KUAISHOUUSDT` and `HPQUSDT` are
 equities carrying `symbolType: crypto`, so the type field is unreliable for the crypto/RWA question.
-It is worth reading only for `stock`, which catches the pre-IPO names the reality flag does not cover.
+Measured over 2,941 listed instruments, `symbolType = 'stock'` alone misses 2 spot metals, 7 futures
+metals, 3 futures commodities and 11 futures contracts typed `crypto` but flagged `isRwa: YES`
+(`HPQ`, `BHP`, `RIO`, `VALE`, `EURUSD`, `USDJPY` and the like). `symbolType` is worth reading only
+for `stock`, which catches the pre-IPO names the reality flag does not cover.
 
-**Known limitation: a delisted equity is only recoverable on the spot side.** Once an instrument
-leaves the listings, no flag can speak for it, and the name is all that remains — which works for spot,
-where bitget prefixes Reality tokens with a lowercase `r` and does so exclusively. A delisted stock
-perpetual is named `AAPLUSDT`, indistinguishable from a crypto perpetual, so it classifies as `perp`.
-There is no signal that would fix this, and the consequence is small: a handful of dead equities sit
-in the wrong market.
+**A delisted equity is recognisable only on the spot side.** Once an instrument leaves the listings,
+no flag speaks for it, and the name is all that remains. On spot that is enough: bitget prefixes
+Reality tokens with a lowercase `r`, and only them. A delisted stock perpetual is named like a crypto
+one, `AAPLUSDT`.
 
 **Spot equities publish almost nothing.** Of the ~700, exactly one appears among the indexed files.
 Futures equities are published normally.
