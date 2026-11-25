@@ -250,13 +250,13 @@ export interface OrderBookL2Data {
   price: number;
   timestamp: string;
   transactTime: string;
-  pool?: string; // Only in Rest API?
+  pool?: string;
 }
 
 interface QuoteDataBase {
   timestamp: string;
   symbol: string;
-  pool?: string; // Only in Rest API?
+  pool?: string;
 }
 
 export interface QuoteDataAsk {
@@ -284,7 +284,7 @@ export interface TradeData {
   grossValue?: number;
   homeNotional?: number;
   foreignNotional?: number;
-  pool?: string; // Only in Rest API?
+  pool?: string;
 }
 
 export interface QuoteBinData {
@@ -478,10 +478,10 @@ export const isBitmexDataMessage = (data: unknown): data is BitmexDataMessage =>
 };
 
 /**
- * Type guard for subscription messages
+ * Whether every item carries a symbol; false for an empty array.
  */
 export const isBitmexDataWithSymbol = (data: BitmexDataItem[]): data is BitmexDataItemWithSymbol[] => {
-  return data.length > 0 && 'symbol' in data[0];
+  return data.length > 0 && data.every(one => 'symbol' in one);
 };
 
 /**
@@ -501,12 +501,12 @@ export type ISO8601Timestamp = string & { readonly __iso8601: true };
  * - Day: 01-31 (accepts some invalid combos like Feb 31, but that's okay)
  * - Hour: 00-23
  * - Minute/Second: 00-59
- * - Milliseconds: exactly 4 digits
+ * - Milliseconds: exactly 3 digits
  *
  * Cost: Single regex test, very cheap
  */
 const ISO8601_REGEX =
-  /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T([01]\d|2[0-3]):[0-5]\d:[0-5]\d\.\d{4}Z$/;
+  /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T([01]\d|2[0-3]):[0-5]\d:[0-5]\d\.\d{3}Z$/;
 
 export function isISO8601Timestamp(value: string): value is ISO8601Timestamp {
   return ISO8601_REGEX.test(value);

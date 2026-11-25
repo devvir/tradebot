@@ -1,11 +1,12 @@
 import type { BitmexFieldType, BitmexTable } from '@tradebot/types';
 
 /**
- * Static per-table specs derived from live BitMEX WebSocket partial messages.
+ * Static per-table specs: the key fields, field types and filter that each
+ * table's BitMEX WebSocket `partial` message declares.
  *
- * Tables that don't appear in a `partial` (csastate, isolation, leverage,
- * mamAllocation, voucher, privateNotifications) are approximated from the
- * type definitions in bitmex-database/src/types.ts.
+ * Tables that never appear in a `partial` (csastate, isolation, leverage,
+ * mamAllocation, voucher, privateNotifications) carry approximated specs that
+ * no live partial confirms.
  */
 
 export interface TableSpec {
@@ -272,30 +273,19 @@ export const TABLE_SPECS: Record<BitmexTable, TableSpec> = {
 };
 
 /**
- * The base name of a possibly-qualified vault table: `orderBookL2.secondary` →
- * `orderBookL2`. A `.qualifier` suffix scopes *storage* (e.g. per-pool buckets)
- * and carries no schema meaning, so every knowledge lookup (specs, templates,
- * WS/REST origin) keys on the base name and never needs to know which
+ * The base name of a possibly-qualified table name: `orderBookL2.secondary` →
+ * `orderBookL2`. A `.qualifier` suffix scopes storage (e.g. per-pool buckets)
+ * and carries no schema meaning, so every per-table lookup (specs, WS/REST
+ * origin, free text) keys on the base name and never needs to know which
  * qualifiers exist.
  */
 export const baseTable = (table: string): string => table.split('.')[0]!;
 
 /**
- * Tables whose rows carry a `pool` field, derived from `TABLE_SPECS` so the
- * specs stay the single source of truth. Consumers that route or filter by
- * liquidity pool consult this set instead of maintaining their own list.
- */
-export const POOLED_TABLES: ReadonlySet<string> = new Set(
-  Object.entries(TABLE_SPECS)
-    .filter(([ , spec ]) => 'pool' in spec.types)
-    .map(([ table ]) => table),
-);
-
-/**
- * Tables whose vault files store reconstructed WS message envelopes
- * (`{ action, date, data[] }`) rather than per-row REST records. Used to
- * decide, at task creation time, whether a bucket flows through the
- * assembler stage or straight to the writer queue.
+ * Tables recorded as WebSocket message envelopes (`{ action, date, data[] }`)
+ * rather than as per-row REST records. In tabular form each row carries
+ * `_date_` and `_action_` columns, and one message spans consecutive rows: its
+ * first row has a non-empty `_date_`, its continuation rows leave it empty.
  */
 export const WS_TABLES = new Set<string>([
   'announcement',
@@ -308,16 +298,15 @@ export const WS_TABLES = new Set<string>([
 ]);
 
 /**
- * Tables whose fields can contain commas, double quotes, or embedded newlines —
- * free-text content such as announcement bodies, chat messages, and notification
- * text. Reading these requires a full RFC 4180 CSV parser; a line-based reader
- * would fragment a quoted field at its embedded `\n` before any consumer saw it
- * as a single field.
+ * Tables whose fields can contain commas, double quotes or line breaks —
+ * free-text content such as announcement bodies, chat messages and
+ * notification text — and so need RFC 4180 quoting. Reading them takes a full
+ * CSV parser: a line-based reader would split a quoted field at its embedded
+ * line break.
  *
- * Every other table holds only numbers, symbols, and ISO timestamps — no
- * quoting — so each physical line is exactly one record and a plain comma split
- * (several times faster) is correct. This is the single source of truth both
- * vault and the data-prepare tool read from.
+ * Every other table holds only numbers, symbols and ISO timestamps, which
+ * never need quoting, so each physical line of such a table is exactly one
+ * record and a plain comma split reads it correctly.
  */
 export const FREE_TEXT_TABLES: ReadonlySet<string> = new Set([
   'announcement',

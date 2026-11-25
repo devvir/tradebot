@@ -1,20 +1,19 @@
 import { parse, type Parser } from 'csv-parse';
 
 /**
- * Canonical CSV format used by the vault and every tool that reads or writes
- * vault files.
+ * Canonical CSV format for tabular market data.
  *
  * Writing:  use `rowToCsv` on every record. Fields are quoted only when they
- *           contain `,`, `"`, or `\n`; embedded quotes are doubled per RFC 4180.
+ *           contain `,`, `"`, `\n` or `\r`; embedded quotes are doubled per
+ *           RFC 4180. Objects and arrays are written as JSON.
  *
- * Reading:  use `createCsvParser()` — a `csv-parse` stream configured with the
- *           exact options the vault uses to read its own files. Any tool that
- *           round-trips vault data MUST use this rather than a hand-rolled
- *           splitter, otherwise multi-line quoted fields are mis-parsed.
+ * Reading:  use `createCsvParser()` — a `csv-parse` stream configured to read
+ *           exactly what `rowToCsv` writes, multi-line quoted fields included.
+ *           A hand-rolled splitter mis-parses those fields.
  *
  * The asymmetry is intentional: parsing quoted multi-line CSV correctly is
- * non-trivial and worth a library; emitting it for our schema is trivial and
- * worth owning so the on-disk bytes stay stable.
+ * non-trivial and worth a library; emitting it is trivial and worth owning so
+ * the bytes written stay stable.
  */
 
 /** Serialize a row into a single CSV line (no trailing newline). */
@@ -26,7 +25,7 @@ const csvValue = (val: unknown): string => {
 
   const s = typeof val === 'object' ? JSON.stringify(val) : String(val);
 
-  return s.includes(',') || s.includes('"') || s.includes('\n')
+  return /[,"\n\r]/.test(s)
     ? `"${s.replace(/"/g, '""')}"`
     : s;
 };
