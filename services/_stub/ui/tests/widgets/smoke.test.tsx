@@ -1,11 +1,12 @@
 /**
  * Smoke renders for every widget — verifies they mount without throwing and
- * surface a recognisable title. Data-bound widgets get a fake BitmexClient
- * with an empty stream; static widgets render straight from `mockData`.
+ * surface a recognisable title. Static widgets render straight from
+ * `mockData`; market-data widgets say they have no data source.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 import { ChartWidget }        from '../../src/widgets/Chart/ChartWidget';
 import { DepthChartWidget }   from '../../src/widgets/DepthChart/DepthChartWidget';
@@ -16,14 +17,6 @@ import { OrdersWidget }       from '../../src/widgets/Orders/OrdersWidget';
 import { PositionsWidget }    from '../../src/widgets/Positions/PositionsWidget';
 import { RecentTradesWidget } from '../../src/widgets/RecentTrades/RecentTradesWidget';
 import { TradeHistoryWidget } from '../../src/widgets/TradeHistory/TradeHistoryWidget';
-
-import { makeFakeBitmex, makeBitmexWrapper, type FakeBitmex } from '../helpers/fakeBitmex';
-
-let fake: FakeBitmex;
-
-beforeEach(() => {
-  fake = makeFakeBitmex();
-});
 
 // ── Static widgets (mock-data, no context required) ───────────────────────────
 
@@ -61,34 +54,33 @@ describe('Static widgets render', () => {
   });
 });
 
-// ── Data-bound widgets (BitmexContext + router) ───────────────────────────────
+// ── Market-data widgets ───────────────────────────────────────────────────────
 
-describe('Data-bound widgets render', () => {
-  it('OrderbookWidget mounts and renders without crashing', () => {
-    const Wrapper = makeBitmexWrapper(fake);
+describe('Market-data widgets', () => {
+  it('ChartWidget names the route symbol and has no data source', () => {
+    render(
+      <MemoryRouter initialEntries={['/ETHUSD']}>
+        <Routes>
+          <Route path=":symbol" element={<ChartWidget />} />
+        </Routes>
+      </MemoryRouter>,
+    );
 
-    render(<Wrapper><OrderbookWidget /></Wrapper>);
-
-    /** subscribes on mount. */
-    expect(fake.subscriberCount('orderBookL2_25:XBTUSD')).toBeGreaterThan(0);
+    expect(screen.getByText('ETHUSD')).toBeInTheDocument();
+    expect(screen.getByText('No data source configured')).toBeInTheDocument();
   });
 
-  it('RecentTradesWidget mounts, fetches and subscribes', () => {
-    const Wrapper = makeBitmexWrapper(fake);
+  it('OrderbookWidget has no data source', () => {
+    render(<OrderbookWidget />);
 
-    render(<Wrapper><RecentTradesWidget /></Wrapper>);
-
-    expect(fake.fetchMock).toHaveBeenCalledWith('trade', expect.any(Number), { symbol: 'XBTUSD' });
-    expect(fake.subscriberCount('trade:XBTUSD')).toBeGreaterThan(0);
+    expect(screen.getByText('Orderbook')).toBeInTheDocument();
+    expect(screen.getByText('No data source configured')).toBeInTheDocument();
   });
 
-  it('ChartWidget mounts and subscribes to a tradeBin channel', () => {
-    const Wrapper = makeBitmexWrapper(fake);
+  it('RecentTradesWidget has no data source', () => {
+    render(<RecentTradesWidget />);
 
-    render(<Wrapper><ChartWidget /></Wrapper>);
-
-    /** Default timeframe (per `TIMEFRAMES[0]`) is 1m → subscribes to tradeBin1m + trade for running candle. */
-    expect(fake.subscriberCount('tradeBin1m:XBTUSD')).toBeGreaterThan(0);
-    expect(fake.subscriberCount('trade:XBTUSD')).toBeGreaterThan(0);
+    expect(screen.getByText('Recent Trades')).toBeInTheDocument();
+    expect(screen.getByText('No data source configured')).toBeInTheDocument();
   });
 });

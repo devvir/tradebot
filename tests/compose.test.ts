@@ -3,7 +3,7 @@
  * published, which credentials the broker and the cache refuse to start
  * without, where the data directories are mounted from, which project each
  * module and pack is, how logs rotate, which Host names catalog-ui is told to
- * serve, which settings the stub UI and router are given, and which DuckDB
+ * serve, which settings the router is given, and which DuckDB
  * extensions stocker's image is built with. Skipped where docker compose is
  * not installed.
  */
@@ -180,22 +180,6 @@ describe.skipIf(!hasCompose)('compose files', () => {
       expect(ui({}).ports?.map((port) => [port.host_ip, port.published])).toEqual([['127.0.0.1', '3000']]);
       expect(ui({ UI_BIND: '0.0.0.0', UI_PORT: '3300' }).ports?.map((port) => [port.host_ip, port.published]))
         .toEqual([['0.0.0.0', '3300']]);
-    });
-
-    it('gives the dev server its proxy targets, with the dev server\'s own defaults', () => {
-      expect(ui({}).environment).toMatchObject({
-        UI_REST_PROXY:          'http://proxy',
-        UI_DIGGER_HOST:         '',
-        UI_DIGGER_REST_PORT:    '3101',
-        UI_DIGGER_WS_PORT:      '8180',
-        UI_DIGGER_CONTROL_PORT: '8280',
-      });
-    });
-
-    it('takes each replay port as given', () => {
-      const given = { UI_DIGGER_HOST: 'localhost', UI_DIGGER_REST_PORT: '4101', UI_DIGGER_WS_PORT: '4180', UI_DIGGER_CONTROL_PORT: '4280' };
-
-      expect(ui(given).environment).toMatchObject(given);
     });
   });
 

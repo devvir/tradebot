@@ -16,7 +16,7 @@ import { get, set } from '../utils/storage';
 const COLS        = 12;
 /** Grid rows that fill the container's height; the row height is derived from it. */
 const ROWS        = 12;
-const STORAGE_KEY = 'bitmex-widget-layout';
+const STORAGE_KEY = 'tradebot.ui.layout';
 
 const DEFAULT_LAYOUT: Layout = [
   { i: 'chart',        x: 0,  y: 0, w: 5, h: 8,  minW: 2, minH: 3 },

@@ -10,20 +10,14 @@ import type { ReactNode } from 'react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 
 import { WidgetGrid } from '../../src/components/WidgetGrid';
-import { _test_BitmexContext as BitmexContext } from '../../src/data/DataProvider';
-import { makeFakeBitmex } from '../helpers/fakeBitmex';
 
-const STORAGE_KEY = 'bitmex-widget-layout';
+const STORAGE_KEY = 'tradebot.ui.layout';
 
 function Providers({ children }: { children: ReactNode }) {
-  const fake = makeFakeBitmex();
-
   return (
     <MemoryRouter initialEntries={['/XBTUSD']}>
       <Routes>
-        <Route path=":symbol" element={
-          <BitmexContext.Provider value={fake.client}>{children}</BitmexContext.Provider>
-        } />
+        <Route path=":symbol" element={children} />
       </Routes>
     </MemoryRouter>
   );
