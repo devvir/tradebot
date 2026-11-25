@@ -111,7 +111,6 @@ beforeEach(async () => {
   [['spot/trades/202107/ADA_USDT-202107.csv.gz', '202107']]);
 
   app = express();
-  app.use(express.json({ limit: '5mb' }));
   mount(app, db, '');
 });
 
@@ -249,6 +248,22 @@ describe('the bucket', () => {
     expect(first.body['KeyCount']).toBe(4);
     expect([...first.body.Contents, ...second.body.Contents].map(one => one.Key)).toEqual(EXPECTED.slice(0, 8));
   });
+
+  it('starts a V2 listing after start-after, and says so', async () => {
+    const { body } = await call(`/listings?list-type=2&max-keys=2&start-after=${encodeURIComponent(EXPECTED[2]!)}`);
+
+    expect(body['StartAfter']).toBe(EXPECTED[2]);
+    expect(body).not.toHaveProperty('ContinuationToken');
+    expect(body.Contents.map(one => one.Key)).toEqual(EXPECTED.slice(3, 5));
+  });
+
+  it('resumes after the continuation token where start-after is given beside it', async () => {
+    const { body } = await call('/listings?list-type=2&max-keys=2'
+      + `&start-after=${encodeURIComponent(EXPECTED[0]!)}&continuation-token=${encodeURIComponent(EXPECTED[5]!)}`);
+
+    expect(body).toMatchObject({ StartAfter: EXPECTED[0], ContinuationToken: EXPECTED[5] });
+    expect(body.Contents.map(one => one.Key)).toEqual(EXPECTED.slice(6, 8));
+  });
 });
 
 describe('a request it cannot answer', () => {
@@ -309,6 +324,18 @@ describe('a request it cannot answer', () => {
     expect(status).toBe(422);
     expect(XMLValidator.validate(text)).toBe(true);
     expect(text).toContain('<Message>No such lens</Message>');
+  });
+
+  it('escapes a key that holds what XML must escape', async () => {
+    await publish(gate, { market: 'spot', dataset: 'trades', variant: '', symbol: 'A&B<C', urlSymbol: 'A&B<C',
+      pattern: 'spot/trades/{YYYY}{MM}/{SYMBOL}-{YYYY}{MM}.csv.gz' },
+    [['spot/trades/202107/A&B<C-202107.csv.gz', '202107']]);
+
+    const { status, text } = await xmlOf(`/listings?prefix=${encodeURIComponent('gate/spot/trades/A/')}`);
+
+    expect(status).toBe(200);
+    expect(XMLValidator.validate(text)).toBe(true);
+    expect(text).toContain('<Key>gate/spot/trades/A/A&amp;B&lt;C/202107/gate|spot|trades|A&amp;B&lt;C|202107.csv.gz</Key>');
   });
 
   it('escapes what XML can carry', async () => {

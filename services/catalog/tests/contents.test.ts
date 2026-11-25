@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import express from 'express';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { putFiles, putVenue, recordSeries, storeLens } from './fixture';
+import { putFiles, putVenue, recordSeries, storeLens, venueIdOf } from './fixture';
 import { openScratch } from './fixture';
 import { lensScope, throughLens } from '../src/lenses/scope';
 import { seriesFor, venueIds } from '../src/queries';
@@ -47,7 +47,6 @@ beforeEach(async () => {
 
 
   app = express();
-  app.use(express.json());
   mount(app, db, '');
 });
 
@@ -95,6 +94,41 @@ describe('where a venue\'s files are served from', () => {
     expect(venue!.hosts).toEqual({
       '': ['https://data.binance.vision/data/'], secondary: ['https://books.example/orderbook/'],
     });
+  });
+});
+
+describe('a venue\'s markets', () => {
+  beforeEach(async () => {
+    const id = venueIdOf(db, 'binance');
+
+    // The same instrument at another bar length, filed by month; and a market whose venue-wide file sits beside an instrument.
+    await publish(id, { variant: '1h', pattern: 'k/1h/{YYYY}{MM}/{SYMBOL}.zip' }, ['202001', '202002']);
+    await publish(id, { market: 'spot', dataset: 'trades', variant: '', symbol: '@', urlSymbol: '@',
+      pattern: 't/{YYYY}{MM}/all-{YYYY}{MM}.zip' }, ['202107']);
+    await publish(id, { market: 'spot', dataset: 'trades', variant: '', symbol: 'ADAUSDT', urlSymbol: 'ADAUSDT',
+      pattern: 't/{YYYY}{MM}/{SYMBOL}-{YYYY}{MM}.zip' }, ['202107']);
+  });
+
+  /**
+   * BTCUSDT is in two shapes of perp, and counted once; the venue-wide file is
+   * in spot's one shape, and is not an instrument.
+   */
+  it('names each market\'s datasets, with their variants, grains and instruments', async () => {
+    const { status, body } = await call('/venues/binance');
+
+    expect(status).toBe(200);
+    expect(body.items).toEqual([
+      { market: 'perp', symbols: 2, datasets: [
+        { dataset: 'klines', shapes: 2, variants: ['1h', '1m'], grains: ['daily', 'monthly'], symbols: 2 },
+      ] },
+      { market: 'spot', symbols: 1, datasets: [
+        { dataset: 'trades', shapes: 1, variants: ['default'], grains: ['monthly'], symbols: 1 },
+      ] },
+    ]);
+  });
+
+  it('is a 404 for a venue the catalog does not hold', async () => {
+    expect((await call('/venues/nowhere')).status).toBe(404);
   });
 });
 

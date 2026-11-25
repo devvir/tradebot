@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import express from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dropLens, lensNamed } from '@tradebot/lenses';
+import { dropLens, editLens, lensNamed } from '@tradebot/lenses';
 import { changeLens, putFiles, putVenue, recordSeries, storeLens } from './fixture';
 import { openScratch } from './fixture';
 import { mountLenses } from '../src/api/lenses';
@@ -325,6 +325,43 @@ describe('what a definition would select', () => {
     const { body } = await ask<{ items: { venue: string; dataset: string }[] }>('GET', '/lenses/options');
 
     expect([...new Set(body.items.filter(one => one.venue === 'binance').map(one => one.dataset))].sort()).toEqual(['books', 'trades']);
+  });
+});
+
+describe('what a saved lens holds', () => {
+  it('sums its partitions, and says it is settled once worked out', async () => {
+    const definition = lens({ binance: [{ effect: 'include' }] });
+
+    storeLens(db, 'everything', '', '', definition);
+
+    const saved = await ask<Record<string, unknown>>('GET', '/lenses/everything/size');
+    const asked = await ask<Record<string, unknown>>('POST', '/lenses/size', definition);
+
+    expect(saved.status).toBe(200);
+    expect(saved.body).toMatchObject({ partitions: 2, files: 2, updating: false });
+    expect(saved.body).toMatchObject(asked.body);
+  });
+
+  it('says it is updating while its partitions are still being worked out', async () => {
+    storeLens(db, 'everything', '', '', lens({ binance: [{ effect: 'include' }] }));
+    editLens(db, 'everything', { definition: lens({ binance: [{ effect: 'include', to: '202012' }] }) });
+
+    expect((await ask<{ updating: boolean }>('GET', '/lenses/everything/size')).body.updating).toBe(true);
+  });
+
+  it('is a 404 for a lens nobody made', async () => {
+    expect((await ask('GET', '/lenses/nothing/size')).status).toBe(404);
+  });
+});
+
+describe('renaming a lens', () => {
+  it('refuses a new slug that is not sound, asking prospector nothing', async () => {
+    storeLens(db, 'cold-store');
+
+    for (const slug of ['Not Sound', 'size', ''])
+      expect((await ask('PUT', '/lenses/cold-store', { slug })).status).toBe(400);
+
+    expect(forwarded).toEqual([]);
   });
 });
 
