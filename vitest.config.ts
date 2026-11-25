@@ -10,15 +10,19 @@ const source = (path: string) => resolve(__dirname, path);
 
 export default defineConfig({
   /**
-   * The shared packages resolve to their source, not their built `dist`, so every
-   * suite tests the code as it is in the tree, built or not. The patterns are
-   * anchored so `@tradebot/utils/testing` gets its own entry.
+   * The workspace entries suites import resolve to their source, not their built
+   * `dist`, so every suite tests the code as it is in the tree, built or not. The
+   * patterns are anchored so each subpath (`@tradebot/utils/env`, ...) gets its
+   * own entry; every workspace entry a suite imports needs one here.
    */
   resolve: {
     alias: [
       { find: /^@tradebot\/lenses$/, replacement: source('shared/lenses/src/index.ts') },
       { find: /^@tradebot\/utils$/, replacement: source('shared/utils/src/index.ts') },
+      { find: /^@tradebot\/utils\/env$/, replacement: source('shared/utils/src/env.ts') },
+      { find: /^@tradebot\/utils\/retry$/, replacement: source('shared/utils/src/retry.ts') },
       { find: /^@tradebot\/utils\/testing$/, replacement: source('shared/utils/src/testing/index.ts') },
+      { find: /^@tradebot\/prospector\/testing$/, replacement: source('services/prospector/src/testing/index.ts') },
     ],
   },
   test: {

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import type { ViteUserConfig } from 'vitest/config';
 import * as root from '../src';
 import * as env from '../src/env';
 import * as retry from '../src/retry';
@@ -44,6 +45,30 @@ describe('package surface', () => {
     expect(sourceOf(entry.default)).toBe(join(PKG, source));
     expect(sourceOf(entry.types)).toBe(join(PKG, source));
     expect(existsSync(join(PKG, source))).toBe(true);
+  });
+
+  it('resolves every entry to its source in the suites, so none runs against a stale or missing build', async () => {
+    // Loaded by path: the repository's config sits outside this package's sources.
+    const configPath = join(PKG, '..', '..', 'vitest.config.ts');
+    const { default: config } = (await import(configPath)) as { default: ViteUserConfig };
+    const aliases = config.resolve?.alias;
+    if (! Array.isArray(aliases)) throw new Error('the root vitest config has no alias list');
+
+    const subpaths = Object.keys(manifest.exports).filter(subpath => subpath !== './package.json');
+
+    expect(subpaths.length).toBeGreaterThan(0);
+
+    for (const subpath of subpaths) {
+      const entry = manifest.exports[subpath];
+      if (typeof entry === 'string') throw new Error(`${subpath} has no types condition`);
+
+      const specifier = '@tradebot/utils' + subpath.slice(1);
+      const matches = aliases.filter(({ find }) =>
+        typeof find === 'string' ? find === specifier : find.test(specifier));
+
+      expect(matches, specifier).toHaveLength(1);
+      expect(matches[0].replacement, specifier).toBe(sourceOf(entry.default));
+    }
   });
 
   it.each([
