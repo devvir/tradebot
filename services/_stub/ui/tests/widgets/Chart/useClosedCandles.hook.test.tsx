@@ -184,6 +184,81 @@ describe('useClosedCandles — tradeBin inserts while the buffer reaches the liv
   });
 });
 
+// ── tradeBin gap while anchored at the live edge ──────────────────────────────
+
+describe('useClosedCandles — gap insert while anchored near the live edge', () => {
+  /** Live load, then anchor a few bins back: nothing is trimmed, so the tail is still the live tail. */
+  async function anchoredUntrimmed() {
+    const hook = renderClosed();
+    await waitFor(() => expect(hook.result.current.candles).toHaveLength(PAGE));
+
+    hook.rerender({ vp: anchoredAt(3), tf: '1m' });
+    await settle();
+
+    const { candles } = hook.result.current;
+    expect(msOf(candles[candles.length - 1])).toBe(LIVE);
+    expect(hook.result.current.liveTailMs).toBe(LIVE);
+
+    return hook;
+  }
+
+  it('keeps the live edge the gap insert reports across the anchored reload', async () => {
+    const { result } = await anchoredUntrimmed();
+
+    latestMs = LIVE + 3 * BIN;
+    vi.setSystemTime(NOW + 3 * BIN);
+    act(() => fake.emit(CHANNEL, 'insert', [bin(LIVE + 3 * BIN)]));
+
+    expect(result.current.liveTailMs).toBe(LIVE + 3 * BIN);
+
+    await settle();
+
+    expect(result.current.liveTailMs).toBe(LIVE + 3 * BIN);
+    expect(result.current.candles.length).toBeGreaterThan(0);
+    expectContiguous(result.current.candles);
+  });
+
+  it('an out-of-order older bin keeps the newer live tail', async () => {
+    const { result } = await anchoredUntrimmed();
+
+    act(() => fake.emit(CHANNEL, 'insert', [bin(LIVE - 10 * BIN)]));
+    await settle();
+
+    expect(result.current.liveTailMs).toBe(LIVE);
+  });
+
+  it('reloads after a wipe even when the page in flight at the wipe fails', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { result, rerender } = renderClosed();
+    await waitFor(() => expect(result.current.candles).toHaveLength(PAGE));
+    await settle();
+
+    const held = deferred<TradeBin[]>();
+    fake.fetchMock.mockImplementationOnce(() => held.promise);
+
+    /** Window [LIVE-220, LIVE-60] starts left of the buffer: a page ending at its head goes in flight. */
+    rerender({ vp: anchoredAt(100), tf: '1m' });
+    await settle();
+
+    const fetches = fake.fetchMock.mock.calls.length;
+
+    latestMs = LIVE + 3 * BIN;
+    vi.setSystemTime(NOW + 3 * BIN);
+    act(() => fake.emit(CHANNEL, 'insert', [bin(LIVE + 3 * BIN)]));
+
+    expect(result.current.candles).toEqual([]);
+    expect(fake.fetchMock).toHaveBeenCalledTimes(fetches);
+
+    await act(async () => held.reject(new Error('boom')));
+    await settle();
+
+    expect(warn).toHaveBeenCalledWith('useClosedCandles: fetch failed', expect.any(Error));
+    expect(fake.fetchMock.mock.calls.length).toBeGreaterThan(fetches);
+    expect(result.current.candles.length).toBeGreaterThan(0);
+    expectContiguous(result.current.candles);
+  });
+});
+
 // ── tradeBin inserts while browsing history ───────────────────────────────────
 
 describe('useClosedCandles — tradeBin inserts while the buffer holds history', () => {
@@ -419,6 +494,29 @@ describe('useChart — panning over a trimmed buffer', () => {
 
     act(() => result.current.onPan(-30));
     act(() => result.current.onPan(30));
+
+    expect(result.current.viewport.rightAnchor).toBeNull();
+  });
+});
+
+describe('useChart — panning after a gap insert', () => {
+  it('after a gap insert while anchored near the live edge, panning forward past it goes live', async () => {
+    const { result } = renderHook(() => useChart('1m'), { wrapper: makeBitmexWrapper(fake) });
+    await waitFor(() => expect(result.current.candles.length).toBeGreaterThan(0));
+    await settle();
+
+    act(() => result.current.onPan(-5));
+    await settle();
+
+    expect(result.current.viewport.rightAnchor?.getTime()).toBe(LIVE + BIN - 5 * BIN);
+
+    latestMs = LIVE + 3 * BIN;
+    vi.setSystemTime(NOW + 3 * BIN);
+    act(() => fake.emit(CHANNEL, 'insert', [bin(LIVE + 3 * BIN)]));
+    await settle();
+
+    /** The live edge is now LIVE + 4 bins; the anchor at LIVE - 4 bins reaches it after 8. */
+    act(() => result.current.onPan(10));
 
     expect(result.current.viewport.rightAnchor).toBeNull();
   });

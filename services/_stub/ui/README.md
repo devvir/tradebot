@@ -54,15 +54,15 @@ The order-entry sidebar, the contract bar and the footer show static values.
 
 | Variable | Read by | Default | Meaning |
 |---|---|---|---|
-| `UI_PORT` | `docker/compose.yml` | `3000` | Host port published for the dev server (on every host address) |
+| `UI_BIND` | `docker/compose.yml` | `127.0.0.1` | Host address the dev server's port is published on |
+| `UI_PORT` | `docker/compose.yml` | `3000` | Host port published for the dev server |
 | `UI_REST_PROXY` | `vite.config.ts`, passed by compose | `http://proxy` | Target of `/api/v1/*`, headers included |
 | `UI_DIGGER_HOST` | `vite.config.ts`, passed by compose | empty | Replay backend host. Set, the dev server proxies `/replay`, `/replay-ws` and `/replay-control` to it and the build has replay on; empty, the Replay option is disabled |
-| `UI_DIGGER_REST_PORT` | `vite.config.ts` | `3101` | Target port of `/replay`, rewritten to `/api/v1` |
-| `UI_DIGGER_WS_PORT` | `vite.config.ts` | `8180` | Target port of `/replay-ws` (WebSocket), prefix stripped |
-| `UI_DIGGER_CONTROL_PORT` | `vite.config.ts` | `8280` | Target port of `/replay-control`, prefix stripped |
+| `UI_DIGGER_REST_PORT` | `vite.config.ts`, passed by compose | `3101` | Target port of `/replay`, rewritten to `/api/v1` |
+| `UI_DIGGER_WS_PORT` | `vite.config.ts`, passed by compose | `8180` | Target port of `/replay-ws` (WebSocket), prefix stripped |
+| `UI_DIGGER_CONTROL_PORT` | `vite.config.ts`, passed by compose | `8280` | Target port of `/replay-control`, prefix stripped |
 
-The dev server listens on port 3000 on all interfaces. Compose does not pass the three `UI_DIGGER_*_PORT`
-variables, so in the container they keep their defaults.
+The dev server listens on port 3000 on all interfaces.
 
 ## Running
 

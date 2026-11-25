@@ -36,7 +36,7 @@ export interface ClosedCandles {
 interface Loader {
   /** Issue the next needed page unless one is already in flight. */
   pump: () => void;
-  /** Drop the buffer and the live tail, discard any in-flight page, reload. */
+  /** Drop the buffer, discard any in-flight page, reload. The live tail is kept. */
   wipe: () => void;
 }
 
@@ -52,8 +52,9 @@ interface Loader {
  *      or timeframe (or unmount) abandons the in-flight page.
  *   2. tradeBin WS `insert` — while the buffer's tail is the live tail, each
  *      newly closed bin is validated against it (duplicate → drop, contiguous
- *      → append, gap → wipe + reload). While the buffer holds history that does
- *      not reach the live edge, inserts only advance the live tail.
+ *      → append, gap → advance the live tail, wipe + reload). While the buffer
+ *      holds history that does not reach the live edge, inserts only advance
+ *      the live tail.
  *
  * Has no notion of a running/live candle. Partial tradeBin snapshots are
  * ignored; anything not fully closed is someone else's responsibility.
@@ -169,6 +170,11 @@ export function useClosedCandles(
 
           inFlight = false;
           console.warn('useClosedCandles: fetch failed', err);
+
+          /** A wipe while this page was in flight left its reload to this page's completion. */
+          if (requestEpoch !== epoch) {
+            pump();
+          }
         });
     };
 
@@ -176,7 +182,6 @@ export function useClosedCandles(
       epoch++;
       served = null;
       commitCandles([]);
-      commitLiveTail(null);
       pump();
     };
 
@@ -239,7 +244,8 @@ export function useClosedCandles(
           }
 
           if (actualMs !== lastMs + binMs) {
-            // Gap — buffer is stale, wipe and force full reload
+            // Gap — buffer is stale. Keep the live edge this insert reports, wipe and reload.
+            commitLiveTail(Math.max(liveTail, toMs(incoming[incoming.length - 1])));
             loaderRef.current?.wipe();
 
             return;
