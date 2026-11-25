@@ -36,12 +36,12 @@ export class Refused extends Error {
 /**
  * Whether a refusal is aimed at **us** rather than at one key.
  *
- * S3 answers for a single object and says so — an `x-amz-error-code`, and
- * `AmazonS3` as the server. A CDN turning us away serves its own error page with
- * none of that, which is what bybit's block looked like, down to
- * `x-cache: Error from cloudfront`. So anything refusing without naming a key is
- * treated as the second kind, because that is the direction where being wrong is
- * cheap: a stood-down venue costs minutes, a banned address costs the venue.
+ * S3 answers for a single object and says so, with an `x-amz-error-code`. A CDN
+ * turning us away serves its own error page without one — bybit's, for one,
+ * down to `x-cache: Error from cloudfront`. So anything refusing without naming
+ * a key is treated as the second kind, because that is the direction where
+ * being wrong is cheap: a stood-down venue costs minutes, a banned address costs
+ * the venue.
  *
  * **Except where the venue has told us otherwise.** That reading assumes a
  * bucket willing to admit an object is missing, and bitget's is not: its S3
@@ -49,8 +49,8 @@ export class Refused extends Error {
  * back `403 AccessDenied` — indistinguishable, by status alone, from being
  * turned away. Reading those as a block would stand the venue down on its first
  * missing file and never probe it again. So an adapter that can tell the two
- * apart says so in `refusesUs`, and the guess below is what applies where none
- * does.
+ * apart says so in `refusesUs` — bitget's reads the `server` header — and the
+ * guess below is what applies where none does.
  */
 export const blocked = (adapter: Adapter, status: number, headers: Headers): boolean =>
   adapter.refusesUs?.(status, headers) ?? standard(status, headers);
@@ -217,13 +217,17 @@ export const answered = (adapter: Adapter, status: number, headers: Headers): bo
   blocked(adapter, status, headers) || (status < 500 && status !== 429);
 
 /**
- * Every request this service makes to a venue, and the only one.
+ * Every request this service makes to a venue's archive host.
  *
- * **The gate is here because this is the single place all of it passes.** A
- * limiter anywhere else limits one caller: the walk, the archive mapping and the
- * probe are three callers of one host, and a venue counts the host. Retries pass
- * through too, which is what stops five attempts from going out as one request's
- * worth of budget at exactly the moment a venue is already unhappy.
+ * Not a venue's own API: its instrument listings and searches are asked through
+ * `fetchJson` in `metadata.ts`, or by the adapter itself, and do not pass here.
+ *
+ * **The gate is here because this is the single place the archive's traffic
+ * passes.** A limiter anywhere else limits one caller: the walk, the archive
+ * mapping and the probe are three callers of one host, and a venue counts the
+ * host. Retries pass through too, which is what stops five attempts from going
+ * out as one request's worth of budget at exactly the moment a venue is already
+ * unhappy.
  *
  * A block is latched here rather than by whoever happens to read the status,
  * so every other caller — including ones already waiting for a slot — stops

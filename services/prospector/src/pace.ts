@@ -86,9 +86,9 @@ export const describeWait = (ms: number): string => {
  * **Per host**, because a venue's traffic to one address is what that address
  * counts: the walk, the archive mapping and the probe are three callers of one
  * host, so all three draw on the same counter, and a stand-down declared by any
- * of them stops all of them. A venue that also calls its own API elsewhere — an
- * instrument listing — keeps that on a limiter of its own, so a block there does
- * not stop the archive.
+ * of them stops all of them. Only the archive's traffic passes this gate: a
+ * venue's own API — an instrument listing — is asked through no pace at all, so
+ * nothing here budgets it, and a block there does not stop the archive.
  *
  * **And per venue**, because two venues behind one endpoint are not one budget:
  * two buckets on one S3 host are budgeted per bucket, and a limiter keyed by

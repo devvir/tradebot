@@ -9,9 +9,9 @@ import { logger, guardBody } from '@devvir/service-kit';
  * refusal inside a `200`. It also sits outside the pace gate the archive's host
  * is held to, because it is not that host.
  *
- * Shared because every venue needs it. This began as okx's, was copied to bitget
- * in a thinner form that had none of the hardening, and would have been copied
- * five more times by the preamble.
+ * Shared because every venue needs it, and needs all of the hardening below:
+ * one copy per venue is one more place for a timeout or a stalled body to go
+ * unguarded.
  */
 
 /** Whether a body that arrived with a `200` is actually a refusal. */
@@ -20,11 +20,11 @@ export type Refusal = (body: unknown) => boolean;
 export const fetchJson = async <T>(url: string, of: string, refused?: Refusal): Promise<T> => {
   for (let attempt = 0; ; attempt++) {
     /**
-     * **A refused connection is retried like a refused request.** This asked for
-     * a status and let anything else through: `fetch` throws on a transport
-     * fault, so one `ETIMEDOUT` reaching okx's website — a different host from
-     * the archive, and a flakier one — took down the whole venue's survey from
-     * inside its bootstrap.
+     * **A refused connection is retried like a refused request.** `fetch`
+     * throws on a transport fault rather than returning a status, and a
+     * metadata host is often a venue's website — a different host from the
+     * archive, and a flakier one — so one `ETIMEDOUT` let through would take
+     * down the whole venue's survey from inside its bootstrap.
      *
      * **Two clocks, because there are two questions.** `ANSWER_MS` bounds the
      * wait for a reply and is dropped the moment the headers arrive; measuring
@@ -69,9 +69,9 @@ export const fetchJson = async <T>(url: string, of: string, refused?: Refusal): 
 
       /**
        * **Read inside the loop, so a body that fails is retried rather than
-       * thrown.** It used to sit outside every guard: a stalled read had no
-       * deadline to end it and no catch to record it, so the whole venue stopped
-       * on it in silence.
+       * thrown.** Outside every guard, a stalled read would have no deadline to
+       * end it and no catch to record it, and the whole venue would stop on it
+       * in silence.
        */
       try {
         body = await answered.json() as T;
