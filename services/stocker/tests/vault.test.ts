@@ -67,7 +67,7 @@ describe('the revision', () => {
   /** Whatever changed in the catalog changes the revision. */
   it('changes with the partition\'s version and a neighbour\'s', () => {
     const base      = revisionOf(key(), partition('a'), series, []);
-    const neighbour = (version: string) => [{ partition: partition(version, '2020-02'), side: 'first' as const }];
+    const neighbour = (version: string) => [{ partition: partition(version, '2020-02'), side: 'first' as const, end: 'post' as const }];
 
     expect(revisionOf(key(), partition('b'), series, [])).not.toBe(base);
     expect(revisionOf(key(), partition('a'), series, neighbour('n'))).not.toBe(base);

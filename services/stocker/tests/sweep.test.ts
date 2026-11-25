@@ -142,7 +142,7 @@ const interrupt = async (change: Record<string, string> = {}): Promise<void> => 
   const [head, ...rest] = text.trim().split('\n');
   const columns = head!.split('|');
   const last    = rest.at(-1)!.split('|');
-  const line    = { ...Object.fromEntries(columns.map((name, at) => [name, last[at]!])), revision: 'updating', ...change };
+  const line: Record<string, string> = { ...Object.fromEntries(columns.map((name, at) => [name, last[at]!])), revision: 'updating', ...change };
 
   await appendFile(join(config.vaultDir, LEDGER), `${columns.map(name => line[name]).join('|')}\n`);
 };
