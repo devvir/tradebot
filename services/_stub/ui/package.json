@@ -6,7 +6,7 @@
   "scripts": {
     "dev":        "vite",
     "build":      "vite build",
-    "typecheck":  "tsc",
+    "typecheck":  "tsc -p tsconfig.test.json",
     "preview":    "vite preview",
     "test":       "vitest run",
     "test:watch": "vitest"
