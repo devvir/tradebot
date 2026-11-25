@@ -67,12 +67,17 @@ function OhlcBar({ candle, timeframe }: { candle: Candle | null; timeframe: Time
 export function ChartWidget() {
   const { symbol = 'XBTUSD' } = useParams<{ symbol: string }>();
   const [timeframe, setTimeframe] = useState<Timeframe>('1m');
-  const [hovered,   setHovered]   = useState<Candle | null>(null);
+  const [hoverIdx,  setHoverIdx]  = useState<number | null>(null);
 
   const { candles, viewport, onZoom, onPan } = useChart(timeframe);
 
-  /** Hover takes priority; else show the rightmost visible candle (running in live mode). */
-  const infoCandle = hovered ?? candles[candles.length - 1] ?? null;
+  /**
+   * Hover takes priority; else show the rightmost visible candle (running in live mode).
+   * Read from the current candles so the readout follows updates under the cursor.
+   */
+  const infoCandle = (hoverIdx !== null ? candles[hoverIdx] : undefined)
+    ?? candles[candles.length - 1]
+    ?? null;
 
   return (
     <section className="widget">
@@ -99,7 +104,7 @@ export function ChartWidget() {
           candlesPerView={viewport.candlesPerView}
           onZoom={onZoom}
           onPan={onPan}
-          onHover={setHovered}
+          onHover={setHoverIdx}
         />
       </div>
     </section>

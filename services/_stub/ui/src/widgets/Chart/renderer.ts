@@ -2,10 +2,7 @@ import type { Candle, ChartDimensions } from './types';
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 
-/**
- * Exported so gesture handlers (ChartCanvas) can compute the plot width for
- * converting pixel deltas to candle deltas.
- */
+/** Space around the plot area, in logical pixels. The right margin holds the price axis. */
 export const MARGIN = { top: 8, right: 66, bottom: 22, left: 0 };
 
 /** Volume pane as a fraction of the total plot height. */
@@ -30,6 +27,50 @@ const C = {
   cross:   'rgba(166,173,186,0.55)',
 } as const;
 
+// ── Horizontal geometry ───────────────────────────────────────────────────────
+
+/**
+ * Horizontal layout of the candle slots: the plot is divided into
+ * max(candlesPerView, count) equal slots and candles fill them from the
+ * right edge, so the newest candle is always rightmost and a candle's width
+ * depends only on the zoom level, not on how many candles are loaded.
+ */
+export interface ColumnGeometry {
+  /** Logical x of the plot's right edge. */
+  plotRight: number;
+  /** Logical width of one candle slot. */
+  step:      number;
+  /** Number of candles laid out. */
+  count:     number;
+}
+
+/** Slot layout for `count` candles at a zoom of `candlesPerView`, in a canvas `width` wide. */
+export function columnGeometry(width: number, count: number, candlesPerView: number): ColumnGeometry {
+  const plotW = Math.max(1, width - MARGIN.left - MARGIN.right);
+
+  return {
+    plotRight: MARGIN.left + plotW,
+    step:      plotW / Math.max(1, candlesPerView, count),
+    count,
+  };
+}
+
+/** Logical x of the centre of candle `i`. */
+export function columnCenterX(g: ColumnGeometry, i: number): number {
+  return g.plotRight - (g.count - i) * g.step + g.step / 2;
+}
+
+/** Index of the candle whose slot contains logical x, or null if no candle is there. */
+export function columnAt(g: ColumnGeometry, x: number): number | null {
+  if (x >= g.plotRight) {
+    return null;
+  }
+
+  const idx = g.count - 1 - Math.floor((g.plotRight - x) / g.step);
+
+  return idx >= 0 && idx < g.count ? idx : null;
+}
+
 // ── Public entry point ────────────────────────────────────────────────────────
 
 /**
@@ -47,10 +88,11 @@ const C = {
  *   7. Time axis labels
  */
 export function renderChart(
-  ctx:        CanvasRenderingContext2D,
-  candles:    Candle[],
-  dim:        ChartDimensions,
-  hoverIndex: number | null = null,
+  ctx:            CanvasRenderingContext2D,
+  candles:        Candle[],
+  dim:            ChartDimensions,
+  candlesPerView: number,
+  hoverIndex:     number | null = null,
 ): void {
   const { width, height } = dim;
 
@@ -63,7 +105,6 @@ export function renderChart(
 
   // ── Geometry ────────────────────────────────────────────────────────────────
 
-  const plotW  = width  - MARGIN.left - MARGIN.right;
   const plotH  = height - MARGIN.top  - MARGIN.bottom;
   const chartH = Math.round(plotH * (1 - VOL_RATIO));
   const volH   = plotH - chartH - VOL_GAP;
@@ -89,12 +130,12 @@ export function renderChart(
     return priceTop + (1 - (price - yMin) / (yMax - yMin)) * chartH;
   }
 
-  const step  = plotW / candles.length;
-  const bodyW = Math.max(2, step - 1);
-  const halfW = Math.max(1, Math.floor(bodyW / 2));
+  const columns = columnGeometry(width, candles.length, candlesPerView);
+  const bodyW   = Math.max(2, columns.step - 1);
+  const halfW   = Math.max(1, Math.floor(bodyW / 2));
 
   function centerX(i: number): number {
-    return MARGIN.left + i * step + step / 2;
+    return columnCenterX(columns, i);
   }
 
   // ── 3. Horizontal price grid ─────────────────────────────────────────────────

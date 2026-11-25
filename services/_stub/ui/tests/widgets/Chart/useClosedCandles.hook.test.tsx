@@ -404,10 +404,13 @@ describe('useChart — panning over a trimmed buffer', () => {
     act(() => result.current.onPan(-150));
     await settle();
 
+    /** Leaving live anchors at the live edge (LIVE + one bin) minus the pan. */
+    expect(result.current.viewport.rightAnchor?.getTime()).toBe(LIVE + BIN - 250 * BIN);
+
     /** Buffer is trimmed around LIVE-250: its tail is ~40 bins after the anchor. */
     act(() => result.current.onPan(50));
 
-    expect(result.current.viewport.rightAnchor?.getTime()).toBe(LIVE - 200 * BIN);
+    expect(result.current.viewport.rightAnchor?.getTime()).toBe(LIVE + BIN - 200 * BIN);
   });
 
   it('panning forward past the live tail goes live', async () => {

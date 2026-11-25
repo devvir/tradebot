@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { renderChart, MARGIN } from '../../../src/widgets/Chart/renderer';
+import { renderChart, MARGIN, columnGeometry, columnCenterX, columnAt } from '../../../src/widgets/Chart/renderer';
 import type { Candle } from '../../../src/widgets/Chart/types';
 
 const BIN_1M = 60_000;
@@ -53,7 +53,7 @@ describe('renderChart', () => {
   it('paints the background and exits early when there are no candles', () => {
     const ctx = mkCtx();
 
-    renderChart(ctx, [], { width: 800, height: 400 });
+    renderChart(ctx, [], { width: 800, height: 400 }, 80);
 
     expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, 800, 400);
     /** With no candles, no wicks or bodies are drawn — beginPath stays untouched. */
@@ -64,7 +64,7 @@ describe('renderChart', () => {
     const ctx = mkCtx();
     const candles = Array.from({ length: 5 }, (_, i) => candle(i, 100 + i, 99 + i));
 
-    renderChart(ctx, candles, { width: 800, height: 400 });
+    renderChart(ctx, candles, { width: 800, height: 400 }, 80);
 
     /** Wicks: at least one beginPath per candle. Bodies: fillRect called for each candle (+ background, + volume bars). */
     expect((ctx.beginPath as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(candles.length);
@@ -75,7 +75,7 @@ describe('renderChart', () => {
     const ctx = mkCtx();
     const candles = Array.from({ length: 10 }, (_, i) => candle(i, 100 + i));
 
-    renderChart(ctx, candles, { width: 800, height: 400 }, 4);
+    renderChart(ctx, candles, { width: 800, height: 400 }, 80, 4);
 
     /** Crosshair adds extra lineTo calls beyond the baseline (wicks + grid + axis). */
     const lineTos = (ctx.lineTo as ReturnType<typeof vi.fn>).mock.calls.length;
@@ -88,8 +88,8 @@ describe('renderChart', () => {
     const candles = Array.from({ length: 3 }, (_, i) => candle(i, 100 + i));
 
     /** Should not throw / no out-of-bounds access. */
-    expect(() => renderChart(ctx, candles, { width: 800, height: 400 }, 99)).not.toThrow();
-    expect(() => renderChart(ctx, candles, { width: 800, height: 400 }, -1)).not.toThrow();
+    expect(() => renderChart(ctx, candles, { width: 800, height: 400 }, 80, 99)).not.toThrow();
+    expect(() => renderChart(ctx, candles, { width: 800, height: 400 }, 80, -1)).not.toThrow();
   });
 
   it('does not divide by zero when all candles have the same price', () => {
@@ -101,6 +101,52 @@ describe('renderChart', () => {
       open: 100, high: 100, low: 100, close: 100, volume: 0,
     }));
 
-    expect(() => renderChart(ctx, candles, { width: 800, height: 400 })).not.toThrow();
+    expect(() => renderChart(ctx, candles, { width: 800, height: 400 }, 80)).not.toThrow();
+  });
+});
+
+describe('column geometry', () => {
+  /** 866 px canvas → 800 px plot. */
+  const WIDTH = 800 + MARGIN.left + MARGIN.right;
+  const PLOT_RIGHT = MARGIN.left + 800;
+
+  it('sizes slots by candlesPerView and anchors the newest candle at the right edge', () => {
+    const g    = columnGeometry(WIDTH, 20, 80);
+    const step = 800 / 80;
+
+    expect(g.step).toBe(step);
+    expect(columnCenterX(g, 19)).toBe(PLOT_RIGHT - step / 2);
+    expect(columnCenterX(g, 0)).toBe(PLOT_RIGHT - 20 * step + step / 2);
+  });
+
+  it('never lays out more candles than fit in the plot', () => {
+    const g = columnGeometry(WIDTH, 100, 80);
+
+    expect(g.step).toBe(8);
+    expect(columnCenterX(g, 0)).toBe(MARGIN.left + 4);
+  });
+
+  it('maps x back to the candle whose slot contains it', () => {
+    const g = columnGeometry(WIDTH, 20, 80);
+
+    expect(columnAt(g, PLOT_RIGHT - 1)).toBe(19);
+    expect(columnAt(g, columnCenterX(g, 3))).toBe(3);
+    /** Empty slots left of the oldest candle, and the price axis, hold no candle. */
+    expect(columnAt(g, PLOT_RIGHT - 20 * 10 - 1)).toBeNull();
+    expect(columnAt(g, PLOT_RIGHT)).toBeNull();
+    expect(columnAt(g, PLOT_RIGHT + 30)).toBeNull();
+  });
+
+  it('draws the last of 20 candles at 80 per view one half-slot left of the plot edge', () => {
+    const ctx     = mkCtx();
+    const candles = Array.from({ length: 20 }, (_, i) => candle(i, 100 + i));
+
+    renderChart(ctx, candles, { width: WIDTH, height: 400 }, 80);
+
+    /** Wicks are drawn moveTo(cx, yHigh) → lineTo(cx, yLow); the last wick is at the rightmost centre. */
+    const xs = (ctx.moveTo as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0] as number);
+
+    expect(xs).toContain(PLOT_RIGHT - 5);
+    expect(Math.max(...xs.filter(x => x < PLOT_RIGHT))).toBe(PLOT_RIGHT - 5);
   });
 });

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { MARGIN, renderChart } from './renderer';
+import { columnAt, columnGeometry, renderChart } from './renderer';
 import type { Candle } from './types';
 
 /** Zoom factor per wheel pixel: factor = exp(deltaY * ZOOM_PER_PIXEL). */
@@ -14,7 +14,8 @@ interface ChartCanvasProps {
   candlesPerView: number;
   onZoom:         (factor: number) => void;
   onPan:          (deltaCandles: number) => void;
-  onHover:        (candle: Candle | null) => void;
+  /** Index into `candles` of the column under the pointer, or null when none is. */
+  onHover:        (index: number | null) => void;
 }
 
 /**
@@ -25,11 +26,18 @@ interface ChartCanvasProps {
  *   wheel vertical          → zoom  (onZoom)      — scaled by the wheel delta
  *   wheel horizontal        → pan   (onPan)       — trackpad two-finger swipe
  *   pointer drag (primary)  → pan   (onPan)       — mouse/touch drag
- *   pointer move            → hover (onHover)     — reports candle under cursor
+ *   pointer move            → hover (onHover)     — reports the index of the candle under the cursor
  *
- * Pattern: size, candles, candlesPerView, and hover index are stored in refs so
+ * Candles are laid out by renderer.ts's column geometry (right-anchored slots
+ * of plotW / candlesPerView); gestures and hover use the same geometry, so a
+ * drag moves the candles exactly as far as the pointer.
+ *
+ * Pattern: size, candles, candlesPerView, and hover state are stored in refs so
  * draw() and gesture handlers always see fresh values. Hover changes redraw
- * imperatively (no React re-render per pixel of mouse movement).
+ * imperatively (no React re-render per pixel of mouse movement). When the
+ * candles or the zoom change under a resting pointer, the hovered index is
+ * re-resolved from the pointer's last x, so it always names the candle drawn
+ * under the crosshair.
  */
 export function ChartCanvas({
   candles, candlesPerView, onZoom, onPan, onHover,
@@ -39,6 +47,8 @@ export function ChartCanvas({
   const sizeRef           = useRef({ w: 0, h: 0, dpr: 1 });
   const candlesPerViewRef = useRef(candlesPerView);
   const hoverIdxRef       = useRef<number | null>(null);
+  /** Canvas-local x of the hovering pointer, or null when it is not over the canvas. */
+  const hoverXRef         = useRef<number | null>(null);
   const zoomAccRef        = useRef(1);
   const onZoomRef         = useRef(onZoom);
   const onPanRef          = useRef(onPan);
@@ -69,42 +79,45 @@ export function ChartCanvas({
     }
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    renderChart(ctx, candlesRef.current, { width: w, height: h }, hoverIdxRef.current);
+    renderChart(ctx, candlesRef.current, { width: w, height: h }, candlesPerViewRef.current, hoverIdxRef.current);
+  }
+
+  function getColumns() {
+    return columnGeometry(sizeRef.current.w, candlesRef.current.length, candlesPerViewRef.current);
   }
 
   /** Pixel width of one candle slot — used to convert gesture pixel deltas to candles. */
   function getStep(): number {
-    const plotW = Math.max(1, sizeRef.current.w - MARGIN.left - MARGIN.right);
-
-    return plotW / Math.max(1, candlesPerViewRef.current);
+    return getColumns().step;
   }
 
-  /** Candle index under a canvas-local x pixel, or null if outside the plot area. */
+  /** Candle index under a canvas-local x pixel, or null if no candle is there. */
   function getColumnIdx(xInCanvas: number): number | null {
-    const count = candlesRef.current.length;
+    return columnAt(getColumns(), xInCanvas);
+  }
 
-    if (count === 0) {
-      return null;
+  /** Point the hover at the candle under canvas-local x; reports and redraws on change. */
+  function setHover(x: number | null) {
+    hoverXRef.current = x;
+
+    const idx = x !== null ? getColumnIdx(x) : null;
+
+    if (idx === hoverIdxRef.current) {
+      return false;
     }
 
-    const plotW = Math.max(1, sizeRef.current.w - MARGIN.left - MARGIN.right);
-    const step  = plotW / count;
-    const idx   = Math.floor((xInCanvas - MARGIN.left) / step);
+    hoverIdxRef.current = idx;
+    onHoverRef.current(idx);
 
-    if (idx < 0 || idx >= count) {
-      return null;
-    }
-
-    return idx;
+    return true;
   }
 
   useEffect(() => {
     candlesRef.current = candles;
 
-    /** Candle list changed; re-validate hover index against the new length. */
-    if (hoverIdxRef.current !== null && hoverIdxRef.current >= candles.length) {
-      hoverIdxRef.current = null;
-      onHoverRef.current(null);
+    /** Candles or zoom changed; re-resolve the hovered column under the resting pointer. */
+    if (hoverXRef.current !== null) {
+      setHover(hoverXRef.current);
     }
 
     draw();
@@ -220,25 +233,16 @@ export function ChartCanvas({
       }
 
       const rect = canvas!.getBoundingClientRect();
-      const idx  = getColumnIdx(e.clientX - rect.left);
 
-      if (idx === hoverIdxRef.current) {
-        return;
+      if (setHover(e.clientX - rect.left)) {
+        draw();
       }
-
-      hoverIdxRef.current = idx;
-      onHoverRef.current(idx !== null ? candlesRef.current[idx] ?? null : null);
-      draw();
     }
 
     function onPointerLeave() {
-      if (hoverIdxRef.current === null) {
-        return;
+      if (setHover(null)) {
+        draw();
       }
-
-      hoverIdxRef.current = null;
-      onHoverRef.current(null);
-      draw();
     }
 
     canvas.addEventListener('wheel',        onWheel, { passive: false });

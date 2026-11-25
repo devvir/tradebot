@@ -114,17 +114,15 @@ describe('useRunningCandle — trade absorption', () => {
     expect(result.current?.open).toBe(95);   /** unchanged from seed */
   });
 
-  it('skips trades outside the bin window (older than start, or after end)', async () => {
+  it('skips trades at or before the running bin start', async () => {
     const { result } = renderHook(() => useRunningCandle('XBTUSD', seed, BIN_1M), { wrapper: makeBitmexWrapper(fake) });
 
     await waitFor(() => expect(fake.subscriberCount('trade:XBTUSD')).toBeGreaterThan(0));
 
     act(() => {
       fake.emit<Trade>('trade:XBTUSD', 'insert', [
-        /** Before bin start (= seedEndMs). */
         trade({ timestamp: new Date(seedEndMs - 1).toISOString(), price: 200 }),
-        /** After bin end. */
-        trade({ timestamp: new Date(seedNextEnd + 1).toISOString(), price: 300 }),
+        trade({ timestamp: new Date(seedEndMs).toISOString(),     price: 300 }),
       ]);
     });
 
@@ -147,6 +145,114 @@ describe('useRunningCandle — trade absorption', () => {
     act(() => { flushFrame(); });
 
     expect(result.current?.volume).toBe(0);
+  });
+});
+
+// ── rollover into the next bin ────────────────────────────────────────────────
+
+describe('useRunningCandle — rollover', () => {
+  function mountWithSeed() {
+    return renderHook(
+      ({ s }: { s: Candle | null }) => useRunningCandle('XBTUSD', s, BIN_1M),
+      {
+        wrapper:      makeBitmexWrapper(fake),
+        initialProps: { s: seed as Candle | null },
+      },
+    );
+  }
+
+  it('a trade after the running bin closes opens the next bin at the last price, with that trade', async () => {
+    const { result } = mountWithSeed();
+
+    await waitFor(() => expect(fake.subscriberCount('trade:XBTUSD')).toBeGreaterThan(0));
+
+    act(() => {
+      fake.emit<Trade>('trade:XBTUSD', 'insert', [
+        trade({ price: 98, size: 4 }),
+        trade({ timestamp: new Date(seedNextEnd + 1_000).toISOString(), price: 101, size: 2 }),
+      ]);
+    });
+
+    act(() => { flushFrame(); });
+
+    expect(result.current).toEqual({
+      timestamp: new Date(seedNextEnd + BIN_1M).toISOString(),
+      open:      98, close: 101, high: 101, low: 98, volume: 2,
+    });
+  });
+
+  it('skips bins without trades: a trade several bins later lands in its own bin', async () => {
+    const { result } = mountWithSeed();
+
+    await waitFor(() => expect(fake.subscriberCount('trade:XBTUSD')).toBeGreaterThan(0));
+
+    act(() => {
+      fake.emit<Trade>('trade:XBTUSD', 'insert', [
+        trade({ timestamp: new Date(seedNextEnd + 2 * BIN_1M + 5_000).toISOString(), price: 90, size: 3 }),
+      ]);
+    });
+
+    act(() => { flushFrame(); });
+
+    expect(result.current?.timestamp).toBe(new Date(seedNextEnd + 3 * BIN_1M).toISOString());
+    expect(result.current?.volume).toBe(3);
+  });
+
+  it('keeps the rolled-over bin\'s trades when the just-closed bin arrives as the new seed', async () => {
+    const { result, rerender } = mountWithSeed();
+
+    await waitFor(() => expect(fake.subscriberCount('trade:XBTUSD')).toBeGreaterThan(0));
+
+    act(() => {
+      fake.emit<Trade>('trade:XBTUSD', 'insert', [
+        trade({ timestamp: new Date(seedNextEnd + 1_000).toISOString(), price: 101, size: 2 }),
+      ]);
+    });
+
+    act(() => { flushFrame(); });
+
+    /** The venue publishes the bin that closed at seedNextEnd. */
+    rerender({ s: { timestamp: new Date(seedNextEnd).toISOString(), open: 95, high: 99, low: 94, close: 97, volume: 8 } });
+
+    expect(result.current).toEqual({
+      timestamp: new Date(seedNextEnd + BIN_1M).toISOString(),
+      open:      97, close: 101, high: 101, low: 97, volume: 2,
+    });
+
+    /** A seed older than the running bin (e.g. a late re-publish) changes nothing. */
+    rerender({ s: seed });
+
+    expect(result.current?.timestamp).toBe(new Date(seedNextEnd + BIN_1M).toISOString());
+    expect(result.current?.volume).toBe(2);
+  });
+
+  it('starts a fresh bin when the seed moves past the running bin', async () => {
+    const { result, rerender } = mountWithSeed();
+
+    await waitFor(() => expect(fake.subscriberCount('trade:XBTUSD')).toBeGreaterThan(0));
+
+    act(() => { fake.emit<Trade>('trade:XBTUSD', 'insert', [trade({ price: 110, size: 5 })]); });
+    act(() => { flushFrame(); });
+
+    rerender({ s: { timestamp: new Date(seedNextEnd).toISOString(), open: 95, high: 110, low: 95, close: 110, volume: 5 } });
+
+    expect(result.current).toEqual({
+      timestamp: new Date(seedNextEnd + BIN_1M).toISOString(),
+      open:      110, close: 110, high: 110, low: 110, volume: 0,
+    });
+  });
+
+  it('reseeds on a bin-size change even when the new seed is older than the running bin', async () => {
+    const { result, rerender } = renderHook(
+      ({ binMs }: { binMs: number }) => useRunningCandle('XBTUSD', seed, binMs),
+      { wrapper: makeBitmexWrapper(fake), initialProps: { binMs: 5 * BIN_1M } },
+    );
+
+    expect(result.current?.timestamp).toBe(new Date(seedEndMs + 5 * BIN_1M).toISOString());
+
+    rerender({ binMs: BIN_1M });
+
+    expect(result.current?.timestamp).toBe(new Date(seedNextEnd).toISOString());
   });
 });
 

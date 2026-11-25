@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useChartViewport } from '../../../src/widgets/Chart/useChartViewport';
+import { _test_computeVisible as computeVisible } from '../../../src/widgets/Chart/useChart';
+import type { Candle } from '../../../src/widgets/Chart/types';
 
 const BIN_1M = 60_000;
 
@@ -51,13 +53,33 @@ describe('useChartViewport.pan (live mode)', () => {
     expect(result.current.state).toBe(before);
   });
 
-  it('backward pan in live pins an anchor relative to latestTime', () => {
+  it('backward pan in live pins an anchor relative to the live edge (latestTime + one bin)', () => {
     const { result } = renderHook(() => useChartViewport());
     const latest = new Date(2_000_000_000_000);
 
     act(() => result.current.pan(-3, BIN_1M, latest));
 
-    expect(result.current.state.rightAnchor?.getTime()).toBe(latest.getTime() + (-3) * BIN_1M);
+    expect(result.current.state.rightAnchor?.getTime()).toBe(latest.getTime() + BIN_1M - 3 * BIN_1M);
+  });
+
+  it('a sub-candle backward pan keeps the latest closed candle at the right edge, and undoing it returns to live', () => {
+    const { result } = renderHook(() => useChartViewport());
+    const latestMs = 2_000_000_000_000;
+    const closed: Candle[] = Array.from({ length: 20 }, (_, i) => ({
+      timestamp: new Date(latestMs - (19 - i) * BIN_1M).toISOString(),
+      open: 1, high: 1, low: 1, close: 1, volume: 1,
+    }));
+
+    act(() => result.current.pan(-0.3, BIN_1M, new Date(latestMs)));
+
+    const visible = computeVisible(closed, result.current.state, null);
+
+    expect(result.current.state.rightAnchor).not.toBeNull();
+    expect(new Date(visible[visible.length - 1].timestamp).getTime()).toBe(latestMs);
+
+    act(() => result.current.pan(0.3, BIN_1M, new Date(latestMs)));
+
+    expect(result.current.state.rightAnchor).toBeNull();
   });
 
   it('does nothing when latestTime is null', () => {
@@ -97,6 +119,16 @@ describe('useChartViewport.pan (anchored mode)', () => {
     act(() => result.current.pan(100, BIN_1M, latest));
 
     expect(result.current.state.rightAnchor).toBeNull();
+  });
+
+  it('stays anchored while the anchor is on the latest closed bin, short of the live edge', () => {
+    const { result } = renderHook(() => useChartViewport());
+    const latest = new Date(2_000_000_000_000);
+
+    act(() => result.current.pan(-5, BIN_1M, latest));
+    act(() => result.current.pan(4, BIN_1M, latest));
+
+    expect(result.current.state.rightAnchor?.getTime()).toBe(latest.getTime());
   });
 });
 

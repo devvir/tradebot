@@ -38,23 +38,29 @@ export function useChartViewport(): ChartViewport {
     }));
   }, []);
 
+  /**
+   * Shift the view by deltaCandles bins. `latestTime` is the newest closed bin.
+   * Live mode shows the running bin one slot after it, so the live edge sits at
+   * latestTime + binMs: leaving live pins the anchor relative to that edge, and
+   * an anchor that reaches it again returns to live.
+   */
   const pan = useCallback((deltaCandles: number, binMs: number, latestTime: Date | null) => {
     setState(s => {
-      const latestMs = latestTime?.getTime() ?? null;
+      const liveEdgeMs = latestTime !== null ? latestTime.getTime() + binMs : null;
 
       if (s.rightAnchor === null) {
         /** In live mode: forward pan is a no-op, backward pan pins an anchor. */
-        if (deltaCandles >= 0 || latestMs === null) {
+        if (deltaCandles >= 0 || liveEdgeMs === null) {
           return s;
         }
 
-        return { ...s, rightAnchor: new Date(latestMs + deltaCandles * binMs) };
+        return { ...s, rightAnchor: new Date(liveEdgeMs + deltaCandles * binMs) };
       }
 
       const next = s.rightAnchor.getTime() + deltaCandles * binMs;
 
-      /** Panning forward past live snaps back to live mode. */
-      if (latestMs !== null && next >= latestMs) {
+      /** Panning forward to the live edge snaps back to live mode. */
+      if (liveEdgeMs !== null && next >= liveEdgeMs) {
         return { ...s, rightAnchor: null };
       }
 
