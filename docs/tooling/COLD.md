@@ -333,7 +333,8 @@ had and the revision replacing it has not, once that revision is stored; and, wi
 **It does not decide what is worth keeping.** What is stored is what the catalog says is finished,
 through a lens where one is asked for, and what the vault's ledger says is stocked.
 
-**Mega is `cold`'s alone.** Every Mega call in the repo is in `dev/tooling/src/tools/cold`.
+**Mega is `cold`'s alone.** Every Mega call that `./tools` or a service makes is in
+`dev/tooling/src/tools/cold`.
 
 ---
 
@@ -348,7 +349,7 @@ Each subcommand's directory holds its `command.ts`, its place on the command lin
 | `evict/` | `archives/`, `vault.ts`; `discard.ts`, removal to the trash or outright, which `audit` uses too |
 | `pull/` | `archives/`, `vault/`, `catalog/`, `needed/`; `filter.ts`, what a pull is narrowed to |
 | `audit/` | `checks/`, one module per check; `again.ts`, what a fix looks at again; `finding.ts` |
-| `stats/` | one module |
+| `stats/` | `index.ts`, both trees |
 | `shared/` | what two subcommands or more use: `record/`, `mega/`, `vault/` (ledger, layout, what the vault waits for), the catalog's API, the archives on disk, tars, the backup of cold's own files, the progress display |
 | the directory itself | `config.ts`, `options.ts` (the options given at the `cold` level), `cli.ts` (how a line is read into trees and venues, and running a command over each), `lock.ts`, `cleanup.ts` (what is given back however the process ends), `order.ts` (sorting by key) |
 

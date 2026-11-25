@@ -497,5 +497,5 @@ room for what comes out of the next tar, and 25 GB more.
 ## `cold stats archives`
 
 Venue by venue, from the record alone: the months its tars span, how many of its tars are stored
-of how many the record has, how many partitions they hold, and what the stored tars weigh; then the same summed
-over every venue.
+of how many the record has, how many partitions they hold, and what the stored tars weigh; then the
+same summed over every venue.
