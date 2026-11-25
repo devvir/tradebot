@@ -40,49 +40,6 @@ export async function confirm(message: string, defaultAnswer = false): Promise<b
   return answer.confirmed;
 }
 
-/** Y/n/a prompt. Returns 'yes', 'no', or 'all'. Default answer is Y. */
-export async function confirmYNA(
-  message:       string,
-  defaultAnswer: 'yes' | 'no' = 'yes',
-): Promise<'yes' | 'no' | 'all'> {
-  const hint  = defaultAnswer === 'no' ? '[y/N/a]' : '[Y/n/a]';
-  const answer = await inquirer.prompt([
-    {
-      type:    'input',
-      name:    'choice',
-      message: `${message} ${hint}`,
-      default: '',
-    },
-  ]);
-
-  const raw = (answer.choice as string).trim().toLowerCase();
-
-  if (raw === 'n') { return 'no'; }
-  if (raw === 'a') { return 'all'; }
-  if (raw === 'y') { return 'yes'; }
-
-  return defaultAnswer === 'no' ? 'no' : 'yes';
-}
-
-/** y/N/q prompt. Returns 'yes', 'no', or 'quit'. Default is N. */
-export async function confirmYNQ(message: string): Promise<'yes' | 'no' | 'quit'> {
-  const answer = await inquirer.prompt([
-    {
-      type:    'input',
-      name:    'choice',
-      message: `${message} [y/N/q]`,
-      default: '',
-    },
-  ]);
-
-  const raw = (answer.choice as string).trim().toLowerCase();
-
-  if (raw === 'y') return 'yes';
-  if (raw === 'q') return 'quit';
-
-  return 'no';
-}
-
 export async function input(message: string, defaultValue: string | null = null): Promise<string> {
   const answer = await inquirer.prompt({
     type: 'input',
@@ -92,33 +49,6 @@ export async function input(message: string, defaultValue: string | null = null)
   });
 
   return answer.value;
-}
-
-export async function password(message: string): Promise<string> {
-  const answer = await inquirer.prompt([
-    {
-      type: 'password',
-      name: 'value',
-      message,
-      mask: '•',
-    },
-  ]);
-
-  return answer.value;
-}
-
-export async function multiSelect(message: string, choices: string[]): Promise<string[]> {
-  const answer = await inquirer.prompt([
-    {
-      type: 'checkbox',
-      name: 'values',
-      message,
-      choices,
-      pageSize: 15,
-    },
-  ]);
-
-  return answer.values;
 }
 
 export async function selectFromList<T>(

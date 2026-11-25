@@ -1,5 +1,6 @@
-import { connectRabbit } from '../../shared/connections/rabbitmq';
-import { info, success, error, section, table, spacer, warn } from '../../shared/ui/logger';
+import type { ConsumeMessage, GetMessage } from 'amqplib';
+import { connectRabbit, type RabbitConnection } from '../../shared/connections/rabbitmq';
+import { info, success, section, table, spacer, warn, error } from '../../shared/ui/logger';
 
 interface RabbitOptions {
   list?: boolean;
@@ -8,59 +9,54 @@ interface RabbitOptions {
   url?: string;
 }
 
+const DEFAULT_FETCH_COUNT = 10;
+
+/** How many unacknowledged stream messages the broker sends ahead of the watcher. */
+const STREAM_PREFETCH = 100;
+
+/** A binding as the management API lists it for a queue. */
+interface Binding {
+  source: string;
+  routing_key: string;
+  arguments?: Record<string, unknown>;
+}
+
+/**
+ * Inspect a queue without taking anything from it.
+ *
+ * - `--list` lists the broker's queues through the management API.
+ * - Fetch (the default) reads up to `--messages` (10) messages from the head of the queue — its
+ *   oldest — and hands them all back with `nackAll(true)`, so the queue keeps them, marked
+ *   redelivered. Stream queues cannot be read this way and are refused.
+ * - `--watch` prints messages as they are published, until Ctrl+C or until `--messages` have been
+ *   printed. For a classic or quorum queue it binds a private, auto-deleted queue to the same
+ *   exchanges with the same keys and reads that, so the queue itself and its consumers are never
+ *   touched; messages published straight to the queue through the default exchange are not seen.
+ *   A stream queue is read from its next offset, which leaves the stream as it is.
+ *
+ * Errors are thrown, not printed; the connection is closed whatever happens.
+ */
 export async function run(queueArg?: string, options: RabbitOptions = {}): Promise<void> {
   section('RabbitMQ Monitoring Tool');
   spacer();
 
-  const { connection, channel, mgmtUrl, mgmtUnavailable, mgmtAuth } = await connectRabbit({ url: options.url });
+  const rabbit = await connectRabbit({ url: options.url });
+  const disconnect = disconnector(rabbit);
 
   try {
     spacer();
 
     if (options.list) {
-      section('Available Queues');
-
-      if (! mgmtUrl) {
-        error(`Cannot list queues without the management API: ${mgmtUnavailable}`);
-      } else {
-        try {
-          const response = await fetch(`${mgmtUrl}/queues`, {
-            headers: { Authorization: `Basic ${mgmtAuth}` },
-          });
-
-          if (response.ok) {
-            const queues = (await response.json()) as any[];
-
-            table(
-              queues.map((q: any) => ({
-                Name: q.name,
-                Messages: q.messages || 0,
-                Ready: q.messages_ready || 0,
-                Consumers: q.consumers || 0,
-              })),
-              ['Name', 'Messages', 'Ready', 'Consumers'],
-            );
-          } else {
-            warn('Could not fetch queue list from management API');
-          }
-        } catch (err) {
-          warn(`Could not connect to RabbitMQ management API: ${(err as Error).message}`);
-        }
-      }
-
-      await channel.close();
-      await connection.close();
+      await listQueues(rabbit);
       return;
     }
 
     if (! queueArg) {
       warn('Specify a queue name or use --list to see available queues');
-      await channel.close();
-      await connection.close();
       return;
     }
 
-    const queueInfo = await channel.checkQueue(queueArg);
+    const queueInfo = await checkQueue(rabbit, queueArg);
 
     section(`Queue: ${queueArg}`);
     console.log(`Messages: ${queueInfo.messageCount}`);
@@ -68,75 +64,282 @@ export async function run(queueArg?: string, options: RabbitOptions = {}): Promi
     spacer();
 
     if (options.watch) {
-      info(`Watching ${queueArg} for new messages...`);
-      info('Press Ctrl+C to stop');
-      spacer();
+      const limit = options.messages === undefined ? null : parseCount(options.messages);
 
-      let messageCount = 0;
-
-      await channel.prefetch(1);
-      channel.consume(
-        queueArg,
-        (msg: any) => {
-          if (! msg) return;
-
-          messageCount++;
-          const content = msg.content.toString();
-
-          section(`Message #${messageCount} [${new Date().toISOString()}]`);
-
-          try {
-            console.log(JSON.stringify(JSON.parse(content), null, 2));
-          } catch {
-            console.log(content);
-          }
-
-          channel.nack(msg, false, true);
-        },
-        { noAck: false },
-      );
-
-      process.on('SIGINT', async () => {
-        info('Stopping watch...');
-        await channel.close();
-        await connection.close();
-        success('Disconnected');
-        process.exit(0);
-      });
+      await watch(rabbit, queueArg, limit, disconnect);
     } else {
-      const count = parseInt(options.messages || '10') || 10;
-
-      section(`Fetching up to ${count} messages from ${queueArg}...`);
-
-      const messages: any[] = [];
-
-      for (let i = 0; i < count; i++) {
-        const msg = await channel.get(queueArg, { noAck: true });
-        if (! msg) break;
-
-        try {
-          messages.push(JSON.parse(msg.content.toString()));
-        } catch {
-          messages.push({ raw: msg.content.toString() });
-        }
-      }
-
-      if (messages.length === 0) {
-        info('Queue is empty');
-      } else {
-        spacer();
-        messages.forEach((msg, idx) => {
-          section(`Message ${idx + 1}`);
-          console.log(JSON.stringify(msg, null, 2));
-        });
-      }
-
+      await fetchHead(rabbit, queueArg, parseCount(options.messages ?? String(DEFAULT_FETCH_COUNT)));
       spacer();
-      await channel.close();
-      await connection.close();
     }
+  } finally {
+    await disconnect();
+  }
+}
+
+async function listQueues(rabbit: RabbitConnection): Promise<void> {
+  section('Available Queues');
+
+  if (! rabbit.mgmtUrl) {
+    error(`Cannot list queues without the management API: ${rabbit.mgmtUnavailable}`);
+    return;
+  }
+
+  let queues: any[];
+
+  try {
+    queues = await mgmtGet(rabbit, '/queues');
   } catch (err) {
-    error(`Connection failed: ${(err as Error).message}`);
+    warn(`Could not fetch the queue list from the management API: ${(err as Error).message}`);
+    return;
+  }
+
+  table(
+    queues.map((q: any) => ({
+      Name: q.name,
+      Messages: q.messages || 0,
+      Ready: q.messages_ready || 0,
+      Consumers: q.consumers || 0,
+    })),
+    ['Name', 'Messages', 'Ready', 'Consumers'],
+  );
+}
+
+async function checkQueue(rabbit: RabbitConnection, queue: string) {
+  try {
+    return await rabbit.channel.checkQueue(queue);
+  } catch (err) {
+    if ((err as { code?: number }).code === 404) {
+      throw new Error(`Queue '${queue}' not found - run with --list`);
+    }
+
     throw err;
   }
+}
+
+/** Print up to `count` messages from the head of the queue, then requeue every one of them. */
+async function fetchHead(rabbit: RabbitConnection, queue: string, count: number): Promise<void> {
+  const { channel } = rabbit;
+
+  if (await queueType(rabbit, queue) === 'stream') {
+    throw new Error(`Queue '${queue}' is a stream, which cannot be fetched from - use --watch`);
+  }
+
+  section(`Fetching up to ${count} messages from the head of ${queue} (requeued afterwards)...`);
+
+  const held: GetMessage[] = [];
+
+  try {
+    for (let i = 0; i < count; i++) {
+      const msg = await channel.get(queue, { noAck: false });
+      if (! msg) break;
+      held.push(msg);
+    }
+
+    if (held.length === 0) {
+      info('Queue is empty');
+      return;
+    }
+
+    spacer();
+    held.forEach((msg, idx) => {
+      section(`Message ${idx + 1}`);
+      printContent(msg.content);
+    });
+  } finally {
+    if (held.length > 0) {
+      try {
+        channel.nackAll(true);
+      } catch {
+        // The channel is gone; the broker requeues the messages it had delivered on it.
+      }
+    }
+  }
+}
+
+/** Resolves once the watch has stopped and the connection is closed. */
+async function watch(
+  rabbit: RabbitConnection,
+  queue: string,
+  limit: number | null,
+  disconnect: () => Promise<void>,
+): Promise<void> {
+  const { channel } = rabbit;
+
+  if (! rabbit.mgmtUrl) {
+    throw new Error(`Cannot watch without the management API: ${rabbit.mgmtUnavailable}`);
+  }
+
+  const vhost = encodeURIComponent(vhostOf(rabbit.url));
+  const details = await mgmtGet(rabbit, `/queues/${vhost}/${encodeURIComponent(queue)}`);
+  const isStream = details?.type === 'stream';
+
+  let source: string;
+  let bindings: Binding[] = [];
+
+  if (isStream) {
+    source = queue;
+  } else {
+    const all: Binding[] = await mgmtGet(rabbit, `/queues/${vhost}/${encodeURIComponent(queue)}/bindings`);
+    bindings = all.filter(b => b.source !== '');
+
+    if (bindings.length === 0) {
+      warn(`Queue '${queue}' is bound to no exchange but the default one, so there is nothing to watch: `
+        + 'watch shows what is published to the exchanges a queue is bound to');
+      return;
+    }
+
+    const tap = await channel.assertQueue('', { exclusive: true, autoDelete: true });
+
+    for (const b of bindings) {
+      await channel.bindQueue(tap.queue, b.source, b.routing_key, b.arguments);
+    }
+
+    source = tap.queue;
+  }
+
+  info(isStream
+    ? `Watching stream ${queue} from its next offset...`
+    : `Watching what is published to ${queue} through ${bindings.map(b => `${b.source} (${b.routing_key || '*'})`).join(', ')}...`);
+  info(limit === null ? 'Press Ctrl+C to stop' : `Stopping after ${limit} messages, or on Ctrl+C`);
+  spacer();
+
+  await new Promise<void>((resolve, reject) => {
+    let seen = 0;
+    let stopping = false;
+
+    const stop = async (): Promise<boolean> => {
+      if (stopping) return false;
+      stopping = true;
+      info('Stopping watch...');
+      await disconnect();
+      success('Disconnected');
+      resolve();
+      return true;
+    };
+
+    const onSignal = async () => {
+      if (await stop()) process.exit(0);
+    };
+
+    const stopQuietly = () => {
+      void stop().then(() => {
+        process.off('SIGINT', onSignal);
+        process.off('SIGTERM', onSignal);
+      });
+    };
+
+    process.on('SIGINT', onSignal);
+    process.on('SIGTERM', onSignal);
+
+    const onMessage = (msg: ConsumeMessage | null) => {
+      if (! msg) {
+        warn('The broker cancelled the watch');
+        stopQuietly();
+        return;
+      }
+
+      if (stopping) return;
+
+      seen++;
+
+      const route = msg.fields?.exchange ? ` ${msg.fields.exchange} ${msg.fields.routingKey}` : '';
+      section(`Message #${seen} [${new Date().toISOString()}]${route}`);
+      printContent(msg.content);
+
+      if (isStream) channel.ack(msg);
+
+      if (limit !== null && seen >= limit) stopQuietly();
+    };
+
+    const consuming = isStream
+      ? channel.prefetch(STREAM_PREFETCH).then(() => channel.consume(source, onMessage, {
+        noAck: false,
+        arguments: { 'x-stream-offset': 'next' },
+      }))
+      : channel.consume(source, onMessage, { noAck: true });
+
+    consuming.catch(err => {
+      stopping = true;
+      process.off('SIGINT', onSignal);
+      process.off('SIGTERM', onSignal);
+      reject(err);
+    });
+  });
+}
+
+function printContent(content: Buffer): void {
+  const text = content.toString();
+
+  try {
+    console.log(JSON.stringify(JSON.parse(text), null, 2));
+  } catch {
+    console.log(text);
+  }
+}
+
+/** The queue's type from the management API, or undefined when that cannot be read. */
+async function queueType(rabbit: RabbitConnection, queue: string): Promise<string | undefined> {
+  if (! rabbit.mgmtUrl) return undefined;
+
+  try {
+    const vhost = encodeURIComponent(vhostOf(rabbit.url));
+    const details = await mgmtGet(rabbit, `/queues/${vhost}/${encodeURIComponent(queue)}`);
+
+    return details?.type;
+  } catch {
+    return undefined;
+  }
+}
+
+async function mgmtGet(rabbit: RabbitConnection, path: string): Promise<any> {
+  let response: Response;
+
+  try {
+    response = await fetch(`${rabbit.mgmtUrl}${path}`, {
+      headers: { Authorization: `Basic ${rabbit.mgmtAuth}` },
+    });
+  } catch (err) {
+    throw new Error(`Could not reach the management API: ${(err as Error).message}`);
+  }
+
+  if (! response.ok) {
+    throw new Error(`The management API answered ${response.status} for ${path}`);
+  }
+
+  return response.json();
+}
+
+/** The virtual host an AMQP URL names: its path without the leading slash, `/` when empty. */
+function vhostOf(url: string): string {
+  try {
+    const path = new URL(url).pathname;
+
+    return path.length > 1 ? decodeURIComponent(path.slice(1)) : '/';
+  } catch {
+    return '/';
+  }
+}
+
+function parseCount(raw: string): number {
+  const count = Number(raw);
+
+  if (! Number.isInteger(count) || count < 1) {
+    throw new Error(`--messages must be a positive whole number, not '${raw}'`);
+  }
+
+  return count;
+}
+
+/** Closes the channel and then the connection once, however many times it is called, never throwing. */
+function disconnector(rabbit: RabbitConnection): () => Promise<void> {
+  let closing: Promise<void> | null = null;
+
+  return () => {
+    closing ??= (async () => {
+      await Promise.resolve().then(() => rabbit.channel.close()).catch(() => {});
+      await Promise.resolve().then(() => rabbit.connection.close()).catch(() => {});
+    })();
+
+    return closing;
+  };
 }

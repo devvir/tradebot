@@ -38,11 +38,11 @@ export function success(message: string): void {
 }
 
 export function warn(message: string): void {
-  console.log(`${C.yellow}⚠${C.reset} ${prefix}${message}`);
+  console.error(`${C.yellow}⚠${C.reset} ${prefix}${message}`);
 }
 
 export function error(message: string): void {
-  console.log(`${C.red}✗${C.reset} ${prefix}${message}`);
+  console.error(`${C.red}✗${C.reset} ${prefix}${message}`);
 }
 
 export function debug(message: string): void {

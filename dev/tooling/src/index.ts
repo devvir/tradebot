@@ -30,7 +30,7 @@ import { loadEnv } from './shared/utils/env';
 import { selectTool } from './shared/ui/prompts';
 import { heading, spacer } from './shared/ui/logger';
 
-import { register as registerRabbit } from './commands/rabbit';
+import { register as registerRabbit, DESCRIPTION as RABBIT_DESCRIPTION } from './commands/rabbit';
 import { register as registerMonitor } from './commands/monitor';
 import { register as registerCold } from './commands/cold';
 import { register as registerRemote } from './commands/remote';
@@ -42,7 +42,7 @@ interface Tool {
 }
 
 const tools: Tool[] = [
-  { id: 'rabbit', name: 'RabbitMQ', description: 'Monitor RabbitMQ queues and streams' },
+  { id: 'rabbit', name: 'RabbitMQ', description: RABBIT_DESCRIPTION },
   { id: 'monitor', name: 'Monitor', description: 'Live dashboard: Docker containers and RabbitMQ queues' },
   { id: 'cold', name: 'Cold', description: 'Cold storage: pack, upload, and account for backups' },
   { id: 'remote', name: 'Remote', description: 'Remote server operations (sync-env)' },

@@ -28,21 +28,29 @@ describe('success', () => {
   });
 });
 
+function capturedErr(): string {
+  return vi.mocked(console.error).mock.calls.map(c => String(c[0])).join('\n');
+}
+
 describe('warn', () => {
-  it('prints ⚠ icon', () => {
+  it('prints ⚠ icon to stderr, keeping stdout for output', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
     warn('careful');
-    expect(captured()).toContain('⚠');
-    expect(captured()).toContain('careful');
+    expect(capturedErr()).toContain('⚠');
+    expect(capturedErr()).toContain('careful');
+    expect(vi.mocked(console.log)).not.toHaveBeenCalled();
   });
 });
 
 describe('error', () => {
-  it('prints ✗ icon', () => {
+  it('prints ✗ icon to stderr, keeping stdout for output', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
     error('broken');
-    expect(captured()).toContain('✗');
-    expect(captured()).toContain('broken');
+    expect(capturedErr()).toContain('✗');
+    expect(capturedErr()).toContain('broken');
+    expect(vi.mocked(console.log)).not.toHaveBeenCalled();
   });
 });
 
