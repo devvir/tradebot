@@ -1,13 +1,14 @@
-import { defineConfig } from 'vitest/config';
+import { defineConfig, mergeConfig } from 'vitest/config';
+import baseConfig from '../../vitest.config';
 
-export default defineConfig({
-  test: {
-    globals: true,
-    environment: 'node',
-    testTimeout: 10000,
+export default mergeConfig(
+  baseConfig,
+  defineConfig({
+    test: {
+      testTimeout: 10000,
 
-    // Two kinds of code that is kept and not run: the cold commands that have not moved onto
-    // partitions yet (src/tools/cold/legacy), and the tools kept for reference (.deprecated).
-    exclude: ['**/node_modules/**', '**/dist/**', 'tests/tools/cold/legacy/**', '.deprecated/**'],
-  },
-});
+      // The tools kept for reference (.deprecated) are not run.
+      exclude: ['**/node_modules/**', '**/dist/**', '.deprecated/**'],
+    },
+  })
+);
