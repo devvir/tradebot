@@ -197,6 +197,16 @@ describe('subscribe', () => {
     await expect(subscribe('nasdaq', 'trade', service as any, vi.fn()))
       .rejects.toThrow(/Unknown venue 'nasdaq'/);
   });
+
+  // connect makes no socket once the service is shutting down.
+  it('rejects when the service is shutting down and no socket was made', async () => {
+    const { service } = makeService();
+
+    mockConnect.mockReturnValue(null);
+
+    await expect(subscribe('twin', 'trade', service as any, vi.fn()))
+      .rejects.toThrow('Cannot subscribe twin/trade: the service is shutting down');
+  });
 });
 
 // ── subscribe (pooled) ────────────────────────────────────────────────────────

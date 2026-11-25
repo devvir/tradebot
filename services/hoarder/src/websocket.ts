@@ -29,7 +29,7 @@ interface ReconnectState {
  * Venue-agnostic: lifecycle only (handshake timeout, heartbeat, reconnect with
  * backoff). The caller receives the WebSocket and is responsible for tracking
  * it. On reconnect, the `onReconnect` callback provides the replacement
- * instance.
+ * instance. Returns null, and connects nothing, when already stopping.
  *
  * Liveness: a handshake that does not complete within 10 s fails the socket.
  * An open socket is pinged every 30 s, and one that has not answered the
@@ -43,6 +43,14 @@ interface ReconnectState {
  * once instead of after the closing handshake. A replacement is made only after
  * its predecessor is closed, so the endpoint has at most one socket.
  *
+ * Stopping: once the service is shutting down or `signal` is aborted, no
+ * socket is made or replaced; aborting cancels a pending reconnect. A socket
+ * closing then is expected, so its close is not logged and its error only at
+ * debug.
+ *
+ * Inbound frames go to `onMessage`; a rejection from it is logged and the
+ * socket carries on.
+ *
  * Backoff: the delay starts at 200 ms and doubles on every reconnect, up to
  * 15 s, with ±20% jitter (never above 15 s). It returns to 200 ms only once a
  * socket has stayed open for 30 s, so a venue that accepts connections and
@@ -55,8 +63,8 @@ export const connect = (
   service:   Service,
   onMessage: MessageHandler,
   options:   ConnectOptions = {},
-): WebSocket => {
-  const { socketKey, onReconnect } = options;
+): WebSocket | null => {
+  const { socketKey, onReconnect, signal } = options;
 
   // Sockets sharing an endpoint are told apart in the logs by their socketKey
   // (a stream shard); the plain one is just the venue name.
@@ -66,8 +74,14 @@ export const connect = (
 
   let current: WebSocket | null = null;
 
-  const doConnect = (): WebSocket => {
-    if (service.state('isShuttingDown')) return null!;
+  const stopping = (): boolean => Boolean(service.state('isShuttingDown')) || signal?.aborted === true;
+
+  signal?.addEventListener('abort', () => {
+    if (reconnect.timer) { clearTimeout(reconnect.timer); reconnect.timer = null; }
+  }, { once: true });
+
+  const doConnect = (): WebSocket | null => {
+    if (stopping()) return null;
 
     if (current && current.readyState !== WebSocket.CLOSED) current.terminate();
 
@@ -112,7 +126,7 @@ export const connect = (
     ws.on('pong', alive);
     ws.on('message', (msg: Buffer) => {
       alive();
-      onMessage(msg, venue);
+      onMessage(msg, venue).catch(err => logger.error({ err, venue }, 'Relay failed'));
     });
 
     ws.on('error', (err: Error) => {
@@ -120,7 +134,9 @@ export const connect = (
 
       const known = describeError(err);
 
-      if (known)
+      if (stopping())
+        logger.debug({ err }, `${endpoint.name} WebSocket error while stopping (${label})`);
+      else if (known)
         logger.warn(`${endpoint.name} WebSocket (${label}): ${known}`);
       else
         logger.error({ err }, `${endpoint.name} WebSocket error (${label})`);
@@ -142,6 +158,8 @@ export const connect = (
 
       replaced = true;
 
+      if (stopping()) return;
+
       // A close following an error is expected — the error line already covered it.
       if (! errorLogged)
         logger.warn({ code, reason: reason.toString() }, `${endpoint.name} closed (${label})`);
@@ -155,7 +173,7 @@ export const connect = (
   /** Schedule the replacement of the current socket, after the backoff delay. */
   const scheduleReconnect = (): void => {
     if (reconnect.timer) return;
-    if (service.state('isShuttingDown')) return;
+    if (stopping()) return;
 
     const delay = withJitter(reconnect.delayMs);
 

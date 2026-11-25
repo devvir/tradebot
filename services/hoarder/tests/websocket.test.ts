@@ -147,7 +147,7 @@ describe('ping and message events', () => {
 
   it('forwards received messages to the handler', () => {
     const { service } = makeService();
-    const onMessage = vi.fn();
+    const onMessage = vi.fn().mockResolvedValue(undefined);
 
     const result = connect(endpoint(), 'twin', service as any, onMessage);
 
@@ -162,7 +162,7 @@ describe('ping and message events', () => {
   // message must carry the exchange it arrived on — not the socket key.
   it('tags every frame with its venue', () => {
     const { service } = makeService();
-    const onMessage = vi.fn();
+    const onMessage = vi.fn().mockResolvedValue(undefined);
 
     const result = connect(endpoint(), 'binance', service as any, onMessage, { socketKey: 'shard-1' });
 
@@ -171,6 +171,28 @@ describe('ping and message events', () => {
     result.emit('message', payload);
 
     expect(onMessage).toHaveBeenCalledWith(payload, 'binance')
+  });
+
+  // A handler's rejection must not escape as an unhandled rejection, which
+  // would end the process; vitest fails the run on one.
+  it('logs a frame the handler fails on and keeps relaying', async () => {
+    const { service } = makeService();
+    const onMessage = vi.fn()
+      .mockRejectedValueOnce(new Error('relay broke'))
+      .mockResolvedValue(undefined);
+
+    const result = connect(endpoint(), 'twin', service as any, onMessage) as any;
+
+    result.emit('message', Buffer.from('{"a":1}'));
+    result.emit('message', Buffer.from('{"a":2}'));
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(onMessage).toHaveBeenCalledTimes(2);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.objectContaining({ message: 'relay broke' }), venue: 'twin' }),
+      'Relay failed',
+    );
   });
 });
 
@@ -246,7 +268,7 @@ describe('liveness', () => {
   it('counts any inbound frame as an answer', () => {
     const { service } = makeService();
 
-    const result = connect(endpoint(), 'twin', service as any, vi.fn()) as any;
+    const result = connect(endpoint(), 'twin', service as any, vi.fn().mockResolvedValue(undefined)) as any;
 
     result.emit('open');
 
@@ -329,6 +351,54 @@ describe('reconnection', () => {
 
     expect(onReconnect).toHaveBeenCalledOnce();
     expect(onReconnect).not.toHaveBeenCalledWith(original);
+  });
+
+  it('makes no socket once its signal is aborted', () => {
+    const { service } = makeService();
+    const stop = new AbortController();
+
+    stop.abort();
+
+    expect(connect(endpoint(), 'twin', service as any, vi.fn(), { signal: stop.signal })).toBeNull();
+  });
+
+  it('cancels a pending reconnect when its signal is aborted', () => {
+    const { service } = makeService();
+    const onReconnect = vi.fn();
+    const stop = new AbortController();
+
+    const original = connect(endpoint(), 'twin', service as any, vi.fn(), { onReconnect, signal: stop.signal })!;
+    const count    = (WebSocket as any).instances.length;
+
+    original.emit('close', 1006, Buffer.alloc(0));
+    expect(vi.getTimerCount()).toBe(1);
+
+    stop.abort();
+    expect(vi.getTimerCount()).toBe(0);
+
+    vi.runAllTimers();
+
+    expect(onReconnect).not.toHaveBeenCalled();
+    expect((WebSocket as any).instances.length).toBe(count);
+  });
+
+  // Sockets closed by a shutdown are expected to close: no warning, no reconnect.
+  it('neither warns about nor replaces a socket that closes after its signal is aborted', () => {
+    const { service } = makeService();
+    const onReconnect = vi.fn();
+    const stop = new AbortController();
+
+    const original = connect(endpoint(), 'twin', service as any, vi.fn(), { onReconnect, signal: stop.signal }) as any;
+
+    original.emit('open');
+    stop.abort();
+    vi.mocked(logger.warn).mockClear();
+    original.terminate();
+
+    vi.runAllTimers();
+
+    expect(onReconnect).not.toHaveBeenCalled();
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 
   it('does not reconnect after close when shutting down', () => {

@@ -19,10 +19,20 @@ const makeMockWs = (readyState = 1) => {
   const ws = new EventEmitter() as any;
 
   ws.readyState = readyState;
-  ws.pause  = vi.fn();
-  ws.resume = vi.fn();
+  ws.isPaused   = false;
+
+  // Like ws: pausing and resuming act only on an open socket.
+  ws.pause     = vi.fn(() => { if (ws.readyState === 1) ws.isPaused = true; });
+  ws.resume    = vi.fn(() => { if (ws.readyState === 1) ws.isPaused = false; });
+  ws.terminate = vi.fn(() => { ws.readyState = 3; });
 
   return ws;
+};
+
+/** Open a mock socket, as ws does when its handshake completes. */
+const open = (ws: any): void => {
+  ws.readyState = 1;
+  ws.emit('open');
 };
 
 // ── Fresh module per test (singleton pool) ────────────────────────────────────
@@ -50,6 +60,17 @@ beforeEach(async () => {
 });
 
 const service = { on: vi.fn() } as any;
+
+/** A service that runs its 'shutdown' listeners the way service-kit does: all at once, synchronously. */
+const makeService = () => {
+  const state: Record<string, unknown> = { isShuttingDown: false };
+  const svc = new EventEmitter() as any;
+
+  svc.state    = (key: string) => state[key];
+  svc.setState = (key: string, value: unknown) => { state[key] = value; return value; };
+
+  return svc;
+};
 
 afterEach(() => vi.clearAllMocks());
 
@@ -133,14 +154,20 @@ describe('pauseAll and resumeAll', () => {
     expect(ws2.pause).toHaveBeenCalledOnce();
   });
 
-  it('resumes all OPEN connections', () => {
+  it('resumes every paused connection', () => {
     const ws1 = makeMockWs(1);
+    const ws2 = makeMockWs(1);
 
     set('twin:realtime:', { ws: ws1, channels: new Set() });
+    set('twin:platform:', { ws: ws2, channels: new Set() });
 
+    pauseAll();
     resumeAll();
 
     expect(ws1.resume).toHaveBeenCalledOnce();
+    expect(ws2.resume).toHaveBeenCalledOnce();
+    expect(ws1.isPaused).toBe(false);
+    expect(ws2.isPaused).toBe(false);
   });
 
   it('skips connections that are not open', () => {
@@ -166,5 +193,165 @@ describe('pauseAll and resumeAll', () => {
 
     expect(twinWs.pause).toHaveBeenCalledOnce();
     expect(binanceWs.pause).toHaveBeenCalledOnce();
+  });
+
+  // A socket still connecting cannot be paused; it must stop reading as soon
+  // as it opens, before its subscriptions are sent.
+  it('pauses a socket that opens during a pause, before onOpen runs', () => {
+    const ws     = makeMockWs(0);
+    const onOpen = vi.fn(() => expect(ws.isPaused).toBe(true));
+
+    mockConnect.mockReturnValue(ws);
+    getOrConnect('twin', 'realtime', service, vi.fn(), { onOpen });
+
+    pauseAll();
+    expect(ws.isPaused).toBe(false);
+
+    open(ws);
+
+    expect(ws.isPaused).toBe(true);
+    expect(onOpen).toHaveBeenCalledOnce();
+
+    resumeAll();
+    expect(ws.isPaused).toBe(false);
+  });
+
+  it('pauses a reconnected socket that opens during a pause, and resumes it', () => {
+    const first  = makeMockWs(0);
+    const second = makeMockWs(0);
+
+    mockConnect.mockReturnValue(first);
+    getOrConnect('twin', 'realtime', service, vi.fn());
+
+    const { onReconnect } = mockConnect.mock.calls[0]![4];
+
+    open(first);
+    pauseAll();
+    expect(first.isPaused).toBe(true);
+
+    first.readyState = 3;
+    onReconnect(second);
+    open(second);
+
+    expect(second.isPaused).toBe(true);
+
+    resumeAll();
+    expect(second.isPaused).toBe(false);
+  });
+
+  it('leaves a socket that opens after the resume reading', () => {
+    const ws = makeMockWs(0);
+
+    mockConnect.mockReturnValue(ws);
+    getOrConnect('twin', 'realtime', service, vi.fn());
+
+    pauseAll();
+    resumeAll();
+    open(ws);
+
+    expect(ws.pause).not.toHaveBeenCalled();
+  });
+
+  describe('a long pause', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it('is warned about once it passes 30 s', async () => {
+      const { logger } = await import('@devvir/service-kit');
+
+      pauseAll();
+      pauseAll();
+
+      vi.advanceTimersByTime(29_999);
+      expect(logger.warn).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(1);
+      expect(logger.warn).toHaveBeenCalledOnce();
+    });
+
+    it('is not warned about when resumed in time', async () => {
+      const { logger } = await import('@devvir/service-kit');
+
+      pauseAll();
+      vi.advanceTimersByTime(10_000);
+      resumeAll();
+      vi.advanceTimersByTime(60_000);
+
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
+  });
+});
+
+// ── Shutdown ──────────────────────────────────────────────────────────────────
+
+describe('shutdown', () => {
+  it('marks the service as shutting down and stops every current socket, a reconnected one included', () => {
+    const svc    = makeService();
+    const first  = makeMockWs(0);
+    const second = makeMockWs(0);
+    const other  = makeMockWs(0);
+
+    mockConnect.mockReturnValueOnce(first).mockReturnValueOnce(other);
+
+    const entry = getOrConnect('twin', 'realtime', svc, vi.fn());
+    getOrConnect('twin', 'platform', svc, vi.fn());
+
+    const { onReconnect } = mockConnect.mock.calls[0]![4];
+
+    open(first);
+    first.readyState = 3;
+    onReconnect(second);
+    open(second);
+    open(other);
+
+    svc.emit('shutdown', svc, 'SIGTERM');
+
+    expect(svc.state('isShuttingDown')).toBe(true);
+    expect(entry.ws).toBe(second);
+    expect(second.pause).toHaveBeenCalled();
+    expect(second.terminate).toHaveBeenCalledOnce();
+    expect(other.terminate).toHaveBeenCalledOnce();
+  });
+
+  // Aborting the signal is what cancels a pending reconnect and refuses any
+  // later one (see websocket.test.ts).
+  it('aborts the signal every connection was made with', () => {
+    const svc = makeService();
+
+    mockConnect.mockImplementation(() => makeMockWs(0));
+
+    getOrConnect('twin', 'realtime', svc, vi.fn());
+    getOrConnect('twin', 'platform', svc, vi.fn());
+
+    const signals = mockConnect.mock.calls.map(call => call[4].signal as AbortSignal);
+
+    expect(signals.every(s => ! s.aborted)).toBe(true);
+
+    svc.emit('shutdown', svc, 'SIGTERM');
+
+    expect(signals.every(s => s.aborted)).toBe(true);
+  });
+
+  it('listens for the shutdown once, however many sockets the pool has', () => {
+    const svc = makeService();
+
+    mockConnect.mockImplementation(() => makeMockWs(0));
+
+    getOrConnect('twin', 'realtime', svc, vi.fn());
+    getOrConnect('twin', 'platform', svc, vi.fn());
+    getOrConnect('twin', 'realtime', svc, vi.fn(), { socketKey: 'Secondary' });
+
+    expect(svc.listenerCount('shutdown')).toBe(1);
+  });
+
+  it('keeps an entry whose socket was never made, with no socket', () => {
+    const svc = makeService();
+
+    mockConnect.mockReturnValue(null);
+
+    const entry = getOrConnect('twin', 'realtime', svc, vi.fn());
+
+    expect(entry.ws).toBeNull();
+    expect(() => svc.emit('shutdown', svc, 'SIGTERM')).not.toThrow();
   });
 });

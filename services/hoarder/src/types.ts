@@ -17,8 +17,11 @@ export interface State {
 }
 
 export interface PoolEntry {
-  /** The entry's current socket; replaced on every reconnect. */
-  ws:       WebSocket;
+  /**
+   * The entry's current socket; replaced on every reconnect. Null when the
+   * service was already shutting down as the entry was created.
+   */
+  ws:       WebSocket | null;
 
   /**
    * The channels this socket is meant to carry: a channel joins when it is
@@ -32,6 +35,9 @@ export interface ConnectOptions {
   /** Distinguishes sockets sharing an endpoint (a stream shard). */
   socketKey?:   string;
   onReconnect?: (ws: WebSocket) => void;
+
+  /** Aborting it stops the endpoint for good: no socket is made or replaced after that. */
+  signal?:      AbortSignal;
 }
 
 export interface EndpointDefinition {
@@ -40,4 +46,4 @@ export interface EndpointDefinition {
 }
 
 /** A venue-tagged inbound frame, on its way to the relay. */
-export type MessageHandler = (msg: Buffer, venue: string) => void;
+export type MessageHandler = (msg: Buffer, venue: string) => Promise<void>;

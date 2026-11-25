@@ -29,6 +29,7 @@ const makeService = (stateOverrides: Partial<State> = {}) => {
     setState:  (key: string, value: unknown) => { (state as Record<string, unknown>)[key] = value; return value; },
     config:    () => config,
     providers: { get: vi.fn(() => broker) },
+    shutdown:  vi.fn().mockResolvedValue(undefined),
   };
 
   return { service, state, config, exchange };
@@ -50,6 +51,9 @@ const infoMsg = (version = '1.0.0') => ({
   timestamp: '2026-01-01T00:00:00.000Z',
   docs:      'https://twin.test/docs',
 });
+
+/** amqplib's error for a publish on a closed channel. */
+const channelClosed = (): Error => Object.assign(new Error('Channel closed'), { name: 'IllegalOperationError' });
 
 // ── Publishing ────────────────────────────────────────────────────────────────
 
@@ -208,6 +212,8 @@ describe('control messages: no publish', () => {
 // ── Failure handling ──────────────────────────────────────────────────────────
 
 describe('failure handling', () => {
+  beforeEach(() => vi.clearAllMocks());
+
   it('does not publish on malformed JSON', async () => {
     const { service, exchange } = makeService();
     const handler = createMessageHandler(service as any, vi.fn());
@@ -226,13 +232,47 @@ describe('failure handling', () => {
     expect(exchange.publish).not.toHaveBeenCalled();
   });
 
-  it('rethrows a closed channel so the broker can recover', async () => {
+  it('logs a failed publish and goes on relaying', async () => {
+    const { service, exchange } = makeService();
+    const onMessage = vi.fn();
+    const handler = createMessageHandler(service as any, onMessage);
+
+    exchange.publish.mockRejectedValueOnce(new Error('boom'));
+
+    await expect(handler(buf(dataMsg()), 'twin')).resolves.toBeUndefined();
+    await handler(buf(dataMsg()), 'twin');
+
+    expect(logger.error).toHaveBeenCalledWith(expect.objectContaining({ venue: 'twin' }), 'Error processing WebSocket message');
+    expect(onMessage).toHaveBeenCalledOnce();
+    expect(service.shutdown).not.toHaveBeenCalled();
+  });
+
+  // Nothing reconnects the broker's channel, so a lost one ends the process and
+  // the container restart connects again.
+  it('shuts the service down once when the broker channel is lost', async () => {
     const { service, exchange } = makeService();
     const handler = createMessageHandler(service as any, vi.fn());
 
-    exchange.publish.mockRejectedValueOnce(new Error('Channel closed'));
+    exchange.publish.mockRejectedValue(channelClosed());
 
-    await expect(handler(buf(dataMsg()), 'twin')).rejects.toThrow('Channel closed');
+    for (let i = 0; i < 3; i++)
+      await expect(handler(buf(dataMsg()), 'twin')).resolves.toBeUndefined();
+
+    expect(service.shutdown).toHaveBeenCalledOnce();
+    expect(service.shutdown).toHaveBeenCalledWith('RABBITMQ_LOST');
+    expect(logger.error).toHaveBeenCalledOnce();
+  });
+
+  it('drops frames silently while shutting down', async () => {
+    const { service, exchange } = makeService({ isShuttingDown: true });
+    const handler = createMessageHandler(service as any, vi.fn());
+
+    exchange.publish.mockRejectedValue(channelClosed());
+
+    await expect(handler(buf(dataMsg()), 'twin')).resolves.toBeUndefined();
+
+    expect(service.shutdown).not.toHaveBeenCalled();
+    expect(logger.error).not.toHaveBeenCalled();
   });
 });
 

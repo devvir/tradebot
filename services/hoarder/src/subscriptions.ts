@@ -46,7 +46,8 @@ const waiters = new WeakMap<PoolEntry, Map<string, Waiter[]>>();
  * before the ack, is retried: on the same socket with a backoff while it stays
  * open, and on the replacement socket otherwise. The returned promise resolves
  * the first time the venue confirms the channel and rejects when the venue
- * refuses it; a refused channel is not subscribed again.
+ * refuses it; a refused channel is not subscribed again. It rejects at once
+ * when the service is shutting down and the socket was never made.
  */
 export const subscribe = async (
   venue:     string,
@@ -63,16 +64,18 @@ export const subscribe = async (
     onOpen: (e, ws) => subscribeAll(venue, e, ws),
   });
 
-  entry.channels.add(channel);
-
   const ws = entry.ws;
 
-  if (ws && turns.get(ws)?.confirmed.has(channel)) return;
+  if (! ws) throw new Error(`Cannot subscribe ${venue}/${channel}: the service is shutting down`);
+
+  entry.channels.add(channel);
+
+  if (turns.get(ws)?.confirmed.has(channel)) return;
 
   const settled = new Promise<void>((resolve, reject) => addWaiter(entry, channel, { resolve, reject }));
 
   // A socket still connecting picks the channel up when it opens.
-  if (ws?.readyState === WebSocket.OPEN) request(venue, entry, ws, channel);
+  if (ws.readyState === WebSocket.OPEN) request(venue, entry, ws, channel);
 
   return settled;
 };
