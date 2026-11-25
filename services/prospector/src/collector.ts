@@ -320,8 +320,8 @@ const STATE: Record<string, string> = {
  * **Only where the rows would say `waiting`**, which is the one word that is
  * wrong while a pass is preparing: it is what a venue asleep between passes
  * says, and an update somebody has just ordered would read as ignored for the
- * whole of the preamble — four minutes, on binance. A paused venue stays paused, and
- * one whose job is open already says what it is doing.
+ * whole of the preamble — four minutes, on binance. A paused venue stays
+ * paused, and one whose job is open already says what it is doing.
  */
 const starting = <T extends { state: SurveyState; nextRun: string | null }>(standing: T, passing: boolean): T =>
   (passing && standing.state === 'waiting' ? { ...standing, state: 'starting', nextRun: null } : standing);
