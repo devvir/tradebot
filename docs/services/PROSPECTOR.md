@@ -1,69 +1,44 @@
 # Prospector
 
-## The goal
+## What it is
 
-**Every venue publishes its history as files, and no two of them agree about anything else.**
+**Prospector establishes what each venue publishes as files, and keeps that current.** It writes
+what it establishes to the catalog database, and it is that database's only writer. It is not its
+only reader: the catalog service opens the same file read-only and serves the listings (see
+[CATALOG.md](CATALOG.md)). Prospector serves no listing. Its own API, private to the archives
+module, starts and pauses surveys, reports where each venue stands, settles reports of what became
+of listed files and stores lenses — see [the API](#the-api).
 
-The trees differ, and so do the names inside them. One venue exposes a complete index; another
-indexes part of its bucket and leaves the rest reachable but unlisted; another has no index at all
-and expects a human at a download form, or a third-party service that already knows where to look.
-The vocabulary differs too: one writes `candlesticks_1m` where another writes `klines/1h`, one calls
-a perpetual `futures_usdt` and another `SWAP` and another `linear`, one files a month and another
-files each day of it, and the date sits wherever that venue happened to put it.
+**Every venue publishes its history as files, and no two of them agree about anything else.** The
+trees differ, and so do the names inside them. One venue exposes a complete index; another indexes
+part of its bucket and leaves the rest reachable but unlisted; another has no index at all and
+expects a human at a download form. The vocabulary differs too: one writes `candlesticks_1m` where
+another writes `klines/1h`, one calls a perpetual `futures_usdt` and another `SWAP` and another
+`linear`, one files a month and another files each day of it, and the date sits wherever that venue
+happened to put it.
 
-**The catalog exists so that nothing else in the monorepo ever learns any of that.**
-
-It is the one place that knows where a venue's files are and what each one is. Everything downstream
-asks in one vocabulary and is answered with URLs that work:
-
-> *1h klines for this venue, monthly files, in this range, for these instruments.*
-
-Markets, datasets, bar lengths, book depths and dates are canonical — `perp`, `klines`, `1h`,
-`202406` — whatever the venue calls them. The consumer never learns which tree, which spelling, or
-which of the venue's two renderings of a month it is holding, because it asked for the one it wanted
-and got that.
-
-**Prospector is the service that builds the catalog.** It establishes what each venue publishes and
-keeps that current, and it is the only writer of the catalog database. Answering consumers from that
-database is not part of it; for the service that does, see [CATALOG.md](CATALOG.md).
+**Prospector reads each venue in its own terms and records it in one vocabulary.** Markets,
+datasets, bar lengths, book depths and dates are canonical — `perp`, `klines`, `1h`, `202406` —
+whatever the venue calls them. Each file keeps the venue's own path beside them, so a URL that works
+is rebuilt from any row, and which tree a file sits in, how the venue spells its instrument and the
+grain it was published at are recorded with it rather than left to be worked out again.
 
 ## What it produces
 
-A SQLite database — one row per file a venue publishes, carrying the path, the date it covers, its
-size, its checksum, and the **series** it belongs to: which market, which dataset, which variant,
-which instrument. Alongside it, a record of which parts of each archive have been established and
-how far each series has been read.
+A SQLite database: one row per file a venue publishes, carrying its path, the period it covers, its
+size, its ETag, and the **series** it belongs to — which market, which dataset, which variant, which
+instrument. Beside the files, a record of which parts of each archive have been established, how far
+each series has been read, and what became of each file a download was reported for.
 
-That turns questions which otherwise cost network requests — or a consumer that knew how to read
-every venue's paths — into questions that cost a query: what does this venue publish, over what
-period, how many files, how large, where is a given file, what is that file *of*, and has this part
-of the archive been established or not.
+That makes a query of what would otherwise take network requests and a reader for every venue's
+paths: what does this venue publish, over what period, how many files, how large, where is a given
+file, what is that file *of*, and has this part of the archive been established or not. **A survey
+answers how much there is before anything is fetched**: this many files, taking this much space,
+over these periods.
 
-## Why it is a service of its own
-
-**Discovery and downloading are separate problems.** Both are full of per-venue nuance and the
-nuances have nothing to do with each other. Discovery is about how a venue exposes its keyspace —
-what can be listed, how it paginates, which trees it hides, where a date sits in a path. Downloading
-is about reading a response — whether a 403 means "never published" or "you are blocked", whether a
-404 can be trusted, when to back off. Held in one service, every venue's quirks in either half land
-in the same place and it has to know both. Held apart, the surveyor never learns how to fetch,
-unpack or normalise anything, and the downloader never learns how to enumerate: it reads a table.
-
-**The pipeline stages decouple, in space as well as in time.** The catalog is a file, so surveying
-need not happen where downloading happens. A machine with bandwidth and little disk can survey a
-venue; a machine with storage downloads from the resulting catalog, imported whenever it suits.
-Refreshing decouples the same way — a newer catalog can be built on one host while a downloader
-keeps working from the one it already has.
-
-**The whole picture arrives in hours instead of months.** A survey answers *how much is there* before
-anything is fetched: this venue publishes this many files, taking this much space, over these
-periods. Provisioning becomes a decision made up front rather than a wall hit two months into a
-download, and "1w or 1mo klines", "this symbol or that one", "is this dataset worth collecting at
-all" each carry a real number before anything is committed to.
-
-The catalog is worth persisting because **an archive is stable**: historical files do not change and
-new ones only ever appear at one end, so what a survey establishes stays true and there is no reason
-to re-derive it on demand.
+The catalog is worth persisting because **an archive is stable**: published files rarely change, and
+new ones almost always appear at the newest end, so what a survey establishes stays true and there
+is no reason to re-derive it on demand.
 
 ## The model
 
@@ -208,35 +183,8 @@ period and pattern, and which of those a given venue can answer at all.
 
 `dateOf` says what a path *is*; `accepts` says what we have *decided about it*.
 
-### What gets excluded, and from where
-
-Only things that are **not proper historical data**: a bucket's web assets, a venue's staging area,
-temporary files, and files served with corrupt or wrong contents. Not data that is merely
-unannounced, unreliable or superseded — an abandoned earlier generation of a month is still that
-month, and whether it is worth using is the consumer's call. A catalog that has already decided
-cannot be asked.
-
-The split is whether the thing can be *described* or only *listed*:
-
-| | where it lives | who maintains it |
-|---|---|---|
-| **A pattern**, holding for keys not yet published | the adapter's `accepts` | prospector — it is code |
-| **An enumeration** of specific known-bad files, growing as more are found | the `exclusion` table | anyone, by hand |
-
-The second exists so that finding a bad file costs a row rather than a rebuild and a redeploy. Gate's
-2021-07 futures trades — 85 symbols whose files are truncated copies of *spot* data, and re-fetching
-returns the same bytes — are the case in hand.
-
-**A walk only reads the table.** Its rows are loaded into memory when a job starts and checked before
-the adapter is asked; nothing in the survey path writes them or reasons about where they came from.
-They are maintained by hand: a row added to the migration that ships the list, so a catalog rebuilt
-from scratch has it, and the same `INSERT` run on the live catalog. Ruling against a file costs a row
-rather than a change to an adapter, which is the whole reason this is a table and not a list in code.
-
-An exclusion applies to **every server of the venue**, so a caller never learns that one of them is
-served from two machines: a path that exists on only one is harmless on the other, since these match
-exactly. And nothing already catalogued is removed — this says what must not be *fetched* again,
-while what a venue once published stays on record.
+What is refused, at which of three tiers, and why, is
+[what is excluded, and why](#what-is-excluded-and-why).
 
 ## The lifecycle, end to end
 
@@ -348,20 +296,19 @@ A newly listed instrument arrives through [the preamble](#where-new-instruments-
 shape is found by walking or not at all.
 
 What makes probing safe is that **published files rarely change**. Venues do occasionally publish
-something invalid, corrupt or incomplete, but it is rare and never urgent. So the losses a probing
-update accepts are all small:
+something invalid, corrupt or incomplete, but it is rare and never urgent. So what a probing update
+does not see is small, and each case is corrected later:
 
-| what it misses | consequence |
+| what a probing update does not see | what the catalog holds until it is corrected |
 |---|---|
-| a file changed that we had downloaded | corrected by the next walk |
-| a file changed that we had not downloaded | we fetch the new one and tell the catalog; it heals itself |
-| a file was deleted | pure bookkeeping. Downloaded or not, there is nothing to be done now |
+| a file changed in place | the old size and ETag, until a walk reads the key again or a reported mismatch is confirmed |
+| a file was deleted | the file as `confirmed`, until a walk covers where it was or a reported failure is confirmed as absence |
 
-**One loss is not purely bookkeeping.** A file that arrives *late* is a **new** file *below* the tip,
-so no generated range asks for it and only a walk finds it. A catalog partition (a month of a slice,
-a row of `partition`) whose `pending` is zero has downloaded every file the catalog knows of; that is
-a statement about known files, not a guarantee that the month is whole. What *settled* means for a partition is defined in
-[VOCABULARY.md](../VOCABULARY.md).
+**A late file is the one case only a walk corrects.** A file that arrives *late* is a **new** file
+*below* the tip, so no generated range asks for it. A catalog partition (a month of a slice, a row of
+`partition`) with nothing `pending` has had every file the catalog knows of reported downloaded; that
+is a statement about known files, not a guarantee that the month is whole. What *settled* means for a
+partition is defined in [VOCABULARY.md](../VOCABULARY.md).
 
 ### How each venue updates
 
@@ -823,78 +770,61 @@ its keys as guesses — a distinction the pass kind alone gets wrong after a res
 
 ## What is excluded, and why
 
-**Everything a venue publishes is catalogued except what is listed here.** Nothing is skipped for
-being hard to parse: a path that survives these rules and cannot be parsed is written to
-**`unreadable`** rather than passed over, because a file nobody parses is a series nobody tracks.
+**Everything a venue publishes is catalogued except what is refused here**, and only what is **not
+proper historical data** is refused: a bucket's web assets, a venue's staging area, temporary files,
+and files served with corrupt or wrong contents. Not data that is merely unannounced, unreliable or
+superseded — an abandoned earlier generation of a month is still that month, and a catalog that has
+already decided against it cannot be asked for it. Nothing is skipped for being hard to parse either:
+a path that survives these rules and cannot be placed is written to **`unreadable`** rather than
+passed over, because a file nobody parses is a series nobody tracks.
 
-Each rule below was established from the venue's own files, and the venue docs carry the evidence.
-**Before removing one, read the linked section** — and before adding one, pick the tier by what the
-rule *is*, not by what is convenient:
+Each rule was established from the venue's own files, and the venue docs carry the evidence.
+**Before removing one, read the evidence** — and before adding one, pick the tier by what the rule
+*is*, not by what is convenient:
 
 | tier | for | lives in | changing it costs |
 |---|---|---|---|
 | `excludedAnywhere` | files no venue should ever catalogue | `src/paths.ts` | a deploy |
 | an adapter's `accepts` | one venue's shapes, trees and prefixes — a **rule**, holding for keys nobody has published yet | that adapter | a deploy |
-| the `exclusion` table | **specific** known-bad files, by exact path, where there is no shape to describe | a row, plus a migration | nothing; the row applies on the next job |
+| the `exclusion` table | **specific** known-bad files, by exact path, where there is no shape to describe | a row, plus a migration | nothing; the row applies from the next job |
 
-`accepts` is asked about **prefixes as well as keys**, so a refused directory is never descended
-into — that is where the saving is, and why a rule that can be described belongs there rather than
-as five hundred rows. The `exclusion` table is the opposite case: a handful of files a venue serves
-wrongly, which no expression predicts. A row added by hand applies at once; the same row ships as a
-migration so a rebuilt catalog still has it.
+**Every key a survey turns into a file passes all three**, whether a walk listed it or an update
+generated it: the `exclusion` table first, then `accepts`, then `excludedAnywhere`. Descent asks the
+first two about **prefixes as well as keys**, so a refused directory is never descended into — that is
+where the saving is, and why a rule that can be described belongs in `accepts` rather than as five
+hundred rows. The `exclusion` table is the opposite case: a handful of files a venue serves wrongly,
+which no expression predicts.
+
+**A survey only reads the table.** Its rows for the venue are loaded into memory when a job starts
+(`exclusions.ts`), so a row added to the live catalog applies from the next job, and a job keeps one
+list for its whole run. Nothing in the survey path writes them. A row is added twice, by hand: the
+`INSERT` on the live catalog, and the same row in the migration that ships the list, because a
+catalog rebuilt from scratch walks the same files again — a walk of gate's 2021-07 lists its 85
+spot files at futures URLs again unless something refuses them. The shipped rows are written for
+every server of their venue.
+
+**Nothing already catalogued is removed.** A rule stops a path being catalogued; a row already in
+`file` stays, with its history.
 
 ### Excluded at every venue
 
-Three suffixes, in `excludedAnywhere`. None of them is one venue's quirk:
+Four suffixes, in `excludedAnywhere`. None of them is one venue's quirk:
 
 | suffix | what it is |
 |---|---|
-| `.CHECKSUM` | a checksum beside an archive — half of every page [binance](../venues/BINANCE.md) and KuCoin serve |
-| `index.html` | a directory listing page; [bybit](../venues/BYBIT.md) writes one into every folder it has |
+| `.CHECKSUM` | a checksum file beside an archive file, as [binance](../venues/BINANCE.md#files-carry-checksums) and [KuCoin](../venues/KUCOIN.md) publish |
+| `index.html` | a directory listing page; [bybit](../venues/BYBIT.md#what-is-in-the-bucket-but-is-not-archive) writes one into its folders |
+| `.csv` | an **uncompressed** stray. Archival data is published compressed, so a bare `.csv` is a copy left beside or before the compressed file, as in gate's early months ([GATE.md](../venues/GATE.md#archives)) |
 | a trailing `/` | a directory marker — S3 lists a zero-byte key for a folder created rather than implied, so `data3/` arrives beside the keys beneath it |
-| `.csv` | an **uncompressed** stray. Archival data is published compressed, and none of the 6.37 M files ever collected is a bare CSV. Gate's are the case that settles it: a `.csv` covering **one day of a month**, for pairs its own download form does not offer, sitting in a directory whose real series is monthly |
 
-### Refused by a venue's `accepts`
+### Refused by a venue's `accepts`, or named in the `exclusion` table
 
-| venue | refused | why |
-|---|---|---|
-| binance | `data2/` | staging, not archive — [BINANCE.md](../venues/BINANCE.md#prefixes-outside-data--one-of-them-holds-data-that-exists-nowhere-else) |
-| binance | a bare key directly under `data3/` | only that tree's subdirectories hold data, and `data3/liquidationSnapshot/` is real and unique |
-| bybit | `backup/` | a copy of one symbol's `trading/` files, served correctly under `trading/` too — [BYBIT.md](../venues/BYBIT.md) |
-| bybit | any key with no `/` | the bucket root, which serves the browsing UI |
-| bybit | `trading/(BTC\|ETH)USD[UZ]21/` | the four 2021 expiries: abandoned rather than archived, absent from bybit's own download form, and two of them hold a single day — [BYBIT.md](../venues/BYBIT.md#the-2021-expiries-are-abandoned-and-are-refused) |
-| htx | `assets/`, `test/` | the browsing UI's own files, and a scratch directory — [HTX.md](../venues/HTX.md) |
-| htx | `remark.txt` at the root of each `data/` dataset and market | thirteen of them, the field descriptions the newer tree shows in a dialog instead. Documentation, and dateless, so nothing would place it in a series |
-| htx | any `data/` key dated `2026-02-01` or later | **the whole overlap between its two trees.** Both published the same instrument-day for six months under different schemas; the offered tree is taken from the day it opens and the old one below it, so each unit is catalogued once — [HTX.md](../venues/HTX.md#where-to-stop-reading-data) |
-| kucoin | `futures/daily/klines/<SYMBOL>/1d/` | **published broken**: the header declares six fields and every row writes five, so the bar has no volume. A fresh fetch matches KuCoin's own MD5, so it is theirs, and it is the interval rather than the venue — every other interval is six and six. Nothing is lost: a day is an aggregate, and the 1m series is complete over the same range |
-| gate | any tree but `spot`, `futures_usdt`, `futures_btc`, `tradfi`, `delivery_usdt`, `spot_index`, `options_ticker` | dead, or not gate's — see below |
-| gate | a bare month where a dataset name belongs, in the three trees that have a dataset level | 571 keys, each the size of its canonical twin **to the byte** with a different ETag and an earlier mtime: the same content under an abandoned layout, re-uploaded correctly hours later — [GATE.md](../venues/GATE.md#keys-filed-at-the-wrong-depth) |
-| gate | an `s3deals/` directory inside a dataset month | spot deals misfiled inside another dataset's tree |
-| gate | any file under `futures_btc/` whose instrument is not a `*_USD` | not the BTC-settled tree's own: copies, fragments and a placeholder — [GATE.md](../venues/GATE.md#files-under-the-btc-tree-that-are-not-its-own) |
-
-Gate's refused trees, each of which is a decision rather than an oversight —
-[GATE.md](../venues/GATE.md#the-trees-and-which-are-dead) has the spans and the evidence:
-
-- **`hk/`, `malta/`** — separate Gate entities with their **own order books**, so their `BTC_USDT`
-  is not gate.com's. If either is ever wanted it is a venue row of its own, never a prefix of this
-  one, or two unrelated books merge under one symbol with nothing said.
-- **`v2/`** — two months, 202211–202212, then abandoned.
-- **`future_usdt/`** — the misspelling of the live `futures_usdt/`: 16 files, three symbols, all
-  written on one afternoon in 2022-11 and never touched again.
-- **`futures_usd/`** — five months to 202212.
-- **`gatepay/`** — two spreadsheet templates.
-
-### Named in the `exclusion` table
-
-| venue | files | why |
-|---|---|---|
-| gate | 85 × `futures_usdt/trades/202107/<SYMBOL>-202107.csv.gz` | **spot data served at the futures URL** for that one month. Gate publishes those bytes — five columns where futures has four, and a re-fetch returns the same md5 — so read as futures the file "works" and every trade appears to be a buy. [GATE.md](../venues/GATE.md#2021-07-spot-data-at-the-futures-url) |
-| gate | `futures_usdt/candlesticks_10s/202107/123`, `futures_btc/mark_prices/202107/hello/123` | zero bytes, uploaded four minutes apart on 2021-08-11 |
-| bybit | `trading/DOTUSD/DOTUSDT2021-12-06.csv.gz` | **a `DOTUSDT` file in `DOTUSD`'s folder**, and a shorter copy of the day served whole under `trading/DOTUSDT/`. Read by its name it is a second file for a day that has one, landing on the same path in the archives. [BYBIT.md](../venues/BYBIT.md#the-misfiled-file) |
-
-All ship as migrations, so a catalog rebuilt from scratch has them. **A walk of that month
-re-fetches the 85 unless something refuses them**, which is why they cannot live only in collection
-bookkeeping — that is disposable by design.
+**Each adapter's `accepts` docblock names what it refuses**, in `src/adapters/`, and the
+venue's doc under [docs/venues/](../venues/) holds the evidence. **The shipped `exclusion` rows are in
+`src/database/migrations/001-core.ts`**, each list with its reason in the docblock above it: gate's
+two zero-byte uploads and 85 spot files served at futures URLs, and bybit's one misfiled day. How each
+venue's refusals were chosen, where that is this service's decision rather than the venue's fact, is
+under [venue by venue](#venue-by-venue).
 
 ### Not an exclusion: the venue's key root
 
@@ -2194,9 +2124,10 @@ it — and finding out hours into a walk instead is the alternative.
 
 ## Venues
 
-The registry is `src/venues.ts` and each adapter is one file beside it. **What is special about a
-venue belongs in [docs/venues/](../venues/)**, one document each; what belongs here is the shape of
-the problem those adapters exist to solve, and the hooks the core grew to let them solve it.
+The registry is `src/venues.ts` and each adapter is one file beside it. **What a venue publishes
+belongs in [docs/venues/](../venues/)**, one document each, and how this service handles each venue is
+[venue by venue](#venue-by-venue); what belongs here is the shape of the problem those adapters exist
+to solve, and the hooks the core grew to let them solve it.
 
 | | |
 |---|---|
@@ -2934,3 +2865,230 @@ unrelated case of an archive whose published key is not the file:
 | `action: 'accept'` | settle the file as usual |
 | `action: 'replace'` | discard it — it never reaches `file`. For an archive whose key names a manifest rather than the data |
 | `next` | keys to park in `wip`, inheriting this row's series and period |
+
+## Venue by venue
+
+How this service handles each venue: which adapters it has, what they refuse and why, how the
+venue's instruments are read, and where a general mechanism above is this venue's case. **What the
+venue publishes, and the evidence for every figure, is its doc** under [docs/venues/](../venues/).
+Each adapter's `pacing` and `probingLag` are declared beside it in `src/adapters/`; the lags are
+tabled in [how far behind today](#how-far-behind-today-a-probing-update-asks).
+
+### binance
+
+One adapter, listed at the bucket (`s3-ap-northeast-1.amazonaws.com/data.binance.vision`) with an
+empty key root. The CDN in front of it, `data.binance.vision`, is recorded in `alternative_hosts` and
+never asked. Facts: [BINANCE.md](../venues/BINANCE.md).
+
+**Surveyed from the bucket root, so nothing is stripped.** `data3/liquidationSnapshot/`, the only
+USDⓈ-margined liquidation snapshots, sits beside `data/` rather than under it, and descent finds
+nothing above where it starts. Paths therefore keep their leading `data/` or `data3/`, and a URL is
+`base` + `/` + path.
+
+**`accepts` refuses four things the root also reaches**, and each refusal is a cost avoided:
+
+- `data2/`, a staging area of copies.
+- A bare key directly under `data3/`: only that tree's subdirectories hold data.
+- The tree whose keys begin with `/`: a frozen snapshot of the spot archive holding strictly less
+  than `data/spot/monthly/`, file for file. It is historical data, and the one refusal of that kind:
+  earned by reading both renderings and finding one to be the other with less in it.
+- The `1w`, `3d` and `1mo` intervals, as a path segment, on every interval dataset and both trees.
+  Each is an aggregate of the `1m` variant the catalog holds, and they publish irregularly, so their
+  series' tips sit behind the frontier and re-ask every open day. On a catalog that holds them they
+  are 51 patterns and 22,155 series, and some 55% of binance's nightly update.
+
+**`um` and `cm` are one canonical market and two keyspaces.** The instruments hook records which
+futures service listed a contract (`um` from `fapi`, `cm` from `dapi`) as its `category`, and
+`categoryOf` reads the same segment out of a pattern, so a newly listed contract is given only its own
+service's shapes — see [one market can be more than one archive](#one-market-can-be-more-than-one-archive).
+Unfiltered, a newly listed perpetual would get a series under both trees, half of them describing
+keys the venue never writes, each a request a day.
+
+**Dated contracts and options are read from the same listings.** A contract whose type is not
+perpetual is a `future`; options are listed by underlying, one instrument each, from `eapi`.
+
+**Shapes binance stopped writing are seeded retired**, by migration `006-binance`: `bookTicker` and
+`liquidationSnapshot` of both futures services and the options `EOHSummary`, eight shapes, each at
+the date it stopped. The files stay catalogued; only generation stops, since an instrument binance still
+lists would otherwise keep its dead shapes open.
+
+No throttling answer has been seen from the bucket; how the client reaches it, and what a limit
+nobody has reached would look like, is in [carrying requests](#carrying-requests).
+
+### bitget
+
+One adapter, on the `probed` scanner: the bucket grants no listing, so `listable` is false and every
+pass is an update over series declared by migration `004-bitget` from `seeds/bitget/` (see the
+[seeds README](../../services/prospector/src/database/migrations/seeds/README.md#the-bitget-seed)).
+Facts: [BITGET.md](../venues/BITGET.md).
+
+**Discovery reads the v3 instruments listing, for `SPOT`, `USDT-FUTURES`, `COIN-FUTURES` and
+`USDC-FUTURES` only**, one request a category (`bitgetInstruments`). Everything it names is live. What
+only the v2 listings name — the classic coin-margined line, v2 delivery contracts, the demo product
+types — is not discovered, and neither is an instrument bitget no longer lists: those are reached only
+where the seed holds them. The two APIs list different instruments
+([BITGET.md](../venues/BITGET.md#the-two-rest-apis-are-two-account-systems)).
+
+**Non-crypto instruments are refused at discovery**, before anything else is asked about them.
+`marketOf` (`adapters/bitget/shapes.ts`) calls them `tradfi`, and `tradfi` is dropped: on spot,
+anything whose `symbolType` is not `crypto`; on futures, anything flagged `isRwa: YES`. Those are the
+flags that separate the two ([BITGET.md](../venues/BITGET.md#two-fifths-of-what-bitget-lists-is-not-crypto)).
+They are refused rather than catalogued because the venue's naming is at its most irregular there —
+reused tickers, shortened names colliding with other instruments, directories reassigned — and none
+of it has to be modelled for instruments that are never admitted.
+
+**A new instrument's archive spelling is asked of the venue.** For each name the catalog has never
+met, the trading platform's search is asked once (`archiveNamesOf`), and its `symbolCode` is the
+spelling the files use; where it does not answer, the rules in `adapters/bitget/symbols.ts` give one.
+`urlSymbolFor` hands the spelling to the preamble per pattern.
+
+**The margin token comes with the listing.** A futures contract's trades are filed under `UMCBL`,
+`DMCBL` or `CMCBL`, and nothing in the symbol says which. The token is the one the search's
+`symbolId` carries, or else the one the listing category maps to (`tokenOf`), and it is written as a
+`marginToken` transform before the contract's series are — none where it is the patterns' default,
+`UMCBL`. A wrong token builds keys the bucket answers with its `403`, which here is absence, so the
+contract would read as one that publishes nothing.
+
+**A `403` from the bucket is absence; anything not served by `AmazonS3` is a refusal aimed at us.**
+`ruleOnFailure` answers `'drop'` for the first and `refusesUs` names the second — see
+[what ends a key](#what-ends-a-key-absence-confirmed). A day's trades are numbered parts, followed to
+the first miss ([a period published in parts](#a-period-published-in-parts)).
+
+Paced at 2,500 requests a second with 500 in flight, under the edge's measured limit. Its bucket
+answers a missing key in a way that makes a probe over HTTP/1.1 cost a connection, which is why
+probes go over HTTP/2 ([carrying requests](#carrying-requests)).
+
+### bybit
+
+Two adapters sharing the name, one per server. Facts: [BYBIT.md](../venues/BYBIT.md).
+
+**`bybit/primary` is the main archive, listed at its bucket** (`s3.ap-southeast-1.amazonaws.com/public.bybit.com`)
+and never at the CDN in front of it, which bans at rates the bucket takes without a refusal — the
+pacing reasoning is in [pacing](#pacing-one-gate-per-venue-per-host). Its listing carries size, ETag
+and last-modified, so a walk probes nothing. `accepts` refuses `backup/` (a copy of files served
+under `trading/` too), every key at the bucket root (the browsing UI), and the four 2021 expiries
+under `trading/` — fragments of contracts rather than series of them, absent from bybit's own
+download form. One misfiled `DOTUSDT` day is a row in the `exclusion` table. `slotsFor` renders
+`{MONTH_LAST_DAY}` for the MetaTrader klines (see [the slot table](#a-constructed-key-venue-is-still-a-scanner-and-must-behave-like-one)).
+
+**`bybit/secondary` is the order books**, on `quote-saver.bycsi.com` under the key root `orderbook/`,
+read from browsable indexes with `html.ts`. The index names files and says nothing else, so every
+key is probed. A key an index named is kept through up to 100 `404`s while a walk is running; on an
+update it is the core's ordinary guess — see [what ends a key](#what-ends-a-key-absence-confirmed).
+
+**Both read the same listing**: spot, `linear` and `inverse` (both perpetuals), and options by
+underlying. bybit lists no underlyings, so the ones asked about are those the catalog already holds,
+and an underlying is live while any of its contracts trades.
+
+### gate
+
+One adapter, listed at the bucket (`s3-ap-northeast-1.amazonaws.com/gateio-public-data`); the CDN,
+`download.gatedata.org`, is recorded in `alternative_hosts` and never asked, since its own listing
+ignores what it is asked. Facts: [GATE.md](../venues/GATE.md).
+
+**`accepts` keeps seven trees and refuses the rest**: `spot`, `futures_usdt`, `futures_btc`,
+`tradfi`, `delivery_usdt`, `spot_index` and `options_ticker`. The others are dead, not market data,
+or not gate's: `hk/` and `malta/` are separate order books, so their `BTC_USDT` is not gate.com's,
+and were either wanted it would be a venue row of its own rather than a prefix of this one. Within
+the seven, `accepts` also refuses:
+
+- a key at the wrong depth: what sits directly below a tree is a month for the two snapshot trees and
+  a dataset name for every other;
+- an `s3deals/` directory directly inside a dataset month;
+- a file whose directory and filename name different months (`gateMisfiled`), except hourly books,
+  whose misfiled hour is the only copy, and the closed list of klines with no correctly filed twin
+  (`adapters/gate/misfiled.ts`);
+- a file under `futures_btc/` whose instrument is not a `*_USD` (`gateWrongTree`).
+
+The two zero-byte uploads and the 85 spot files served at futures URLs for 2021-07 are rows in the
+`exclusion` table: there is no shape to describe.
+
+**The misfiled files that are kept sit on literal-month shapes, seeded retired** by migration
+`005-gate` — see [a directory that names another period stays literal](#a-constructed-key-venue-is-still-a-scanner-and-must-behave-like-one),
+which also has what those shapes cost while live. Its books and snapshot trees are periods published
+in parts: [a period published in parts](#a-period-published-in-parts) has how gate names them.
+
+**Tradfi's `status` is not read.** `/api/v4/tradfi/symbols` reports the exchange session, which is
+closed for every symbol outside US market hours, so read as listing state it would delist the whole
+market on any pass that ran out of hours and revive it on the next. Every symbol the list names is
+live, and a symbol leaving the list is a delisting. Spot reads `trade_status` (`untradable` is not
+live) and contracts read `in_delisting`, which do carry listing state.
+
+gate declares no `probingLag`, so it takes the default of one day.
+
+### htx
+
+One adapter, listed at the bucket (`huobi-service-data.s3.amazonaws.com`) with an empty key root, so
+both of its trees, `historical_data/` and `data/`, are walked; the CDN, `www.htx.com/data`, is never
+asked. Facts: [HTX.md](../venues/HTX.md).
+
+**`accepts` refuses** the browsing UI's `assets/`, the scratch directory `test/`, each dataset's
+`remark.txt` (field descriptions with no date, which nothing would place in a series), and every
+`data/` key dated 2026-02-01 or later.
+
+**The two trees overlap, and each instrument-day is catalogued once.** From 2026-02-01 to 2026-08-04
+both publish the same instrument-days under different schemas. Catalogued twice, one unit would
+arrive from two shapes with nothing to say which is the data, and a day would read as covered or
+missing depending on the tree asked. So the cut is one date, decided from the path alone and holding
+for keys nobody has listed yet: `historical_data/` throughout, and `data/` before **2026-02-01**
+(`MIGRATED` in `adapters/htx.ts`). That date is where `historical_data/` begins, and every day
+`data/` holds from it on is also in `historical_data/`, with the two exceptions below — so an earlier
+cut would lose `data/` days the new tree lacks, and a later one would catalogue days twice. It is the better branch on its merits too: `data/` is the tree with holes in it
+during the overlap.
+
+**Two things are knowingly given up, and are refused with everything else**: the nine perpetuals
+`historical_data/` never carried, all stopped by 2026-08-03, and one day of `indexPrice` for nine
+coin-margined perpetuals. Both are sparse tails on near-dead instruments, `data/` still serves them,
+and a rule carrying symbol-level exceptions costs more than they are worth.
+
+**The end of `data/` is catalog state.** Migration `002-htx` seeds the 90 `data/` patterns with
+`retired_at` 2026-08-04, the day the tree was last written, so no newly listed instrument gets a
+series on them and generation stops at that day; `accepts` refuses the overlap wherever a key
+arrives, listed by a walk or generated by an update. Neither date can be found by reading the
+archive, which is why both are declared.
+
+**One instrument, two spellings.** The catalog names an instrument the way `historical_data/` does,
+dashed, without the `-PERP` its perpetual shapes carry in the pattern, and a `data/` series carries
+the old tree's spelling as its `url_symbol`.
+
+### kucoin
+
+One adapter, listed where the files are served (`historical-data.kucoin.com`) under the key root
+`data/`. Facts: [KUCOIN.md](../venues/KUCOIN.md).
+
+**`accepts` refuses futures klines at `1d`**, published with five fields under a six-field header, so
+the bar has no volume ([KUCOIN.md](../venues/KUCOIN.md#futures-klines-at-1d-are-published-broken)).
+Nothing is lost: a day is an aggregate, and the `1m` series covers the same range.
+
+**The catalog names an instrument as kucoin's API does**, and a series carries the archive's spelling
+as its `url_symbol` where it differs: spot klines and trades drop the dash (the dash is put back from
+the quote currency when a path is read), and bitcoin contracts the API names `XBT` are filed `BTC`
+(perpetuals everywhere, dated contracts only under books). `inspectUrl` reads a path into the API's
+name, and `urlSymbolFor` is its inverse.
+
+**Every futures instrument is a `perp`**, the few quarterly contracts among them included. Spot is
+read from `/api/v2/symbols` (`enableTrading`) and futures from `/api/v1/contracts/active`
+(`status: Open`).
+
+### okx
+
+One adapter, on the `probed` scanner: nothing can be listed, so `listable` is false and every pass is
+an update over series declared by migration `003-okx` from `seeds/okx/`. Facts:
+[OKX.md](../venues/OKX.md).
+
+**The venue-wide files are `@` series, seeded one per bucket pattern.** `allspot`, `allswap`,
+`allfutures`, `alloption` and `allmargin` name no instrument, so their ten patterns carry no
+`{SYMBOL}`; the preamble never gives such a pattern to an instrument and never delists it — see
+[a shape with no symbol](#a-shape-with-no-symbol-cannot-be-branched-by-symbol). A dated chain's
+`futureschain` or `optionchain` belongs to its pattern, so an instrument is named by its family.
+
+**Instruments are read from the v5 instruments listing**, a market at a time and options an
+underlying at a time. A family is the instrument, live while any of its contracts is. **A `preopen`
+instrument is listed as not live**, so no series is created for it, though it counts in `listed`.
+**Test pairs are refused** by their base (`isTestPair` in `adapters/okx/shapes.ts`), since okx's
+`state` does not mark them.
+
+**A `404` settles a key, and a `403` is a refusal aimed at us.** okx never answers one for the other,
+so `ruleOnFailure` answers `'drop'` on the first `404` — see
+[what ends a key](#what-ends-a-key-absence-confirmed). Paced at 100 requests a second with 100 in
+flight: its CDN is clean at 100 and refuses at 200.
