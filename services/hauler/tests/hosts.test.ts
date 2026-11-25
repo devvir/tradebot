@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../src/config', () => ({ default: {} }));
 
-const { setHosts, hostFor, mainOf, delivered, faltered, refused, backAt, _test_reweigh, _test_hostsOf, _test_forget } =
+const { setHosts, hostFor, mainOf, delivered, faltered, refused, backAt, readyAt, _test_reweigh, _test_hostsOf, _test_forget } =
   await import('../src/hosts');
 
 const BUCKET = 'https://bucket.example/';
@@ -110,6 +110,15 @@ describe('an address that turns us away', () => {
     expect(backAt(cdn) - Date.now()).toBe(45_000);
   });
 
+  /** A Retry-After of a day, or a date far ahead, is more often a venue's mistake than its meaning. */
+  it('is out for an hour at most, whatever it says', () => {
+    const cdn = hosts()[1]!;
+
+    refused(cdn, 429, 86_400_000);
+
+    expect(backAt(cdn) - Date.now()).toBe(3_600_000);
+  });
+
   /** One 403 can be a file an edge will not serve; five running, nothing delivered between, is a block. */
   it('is out on the fifth 403 running, and not before', () => {
     const cdn = hosts()[1]!;
@@ -163,6 +172,26 @@ describe('an address that turns us away', () => {
     vi.advanceTimersByTime(180_000);
 
     expect(hostFor('okx', '')).toBe(only);
+  });
+});
+
+describe('a server', () => {
+  it('is ready now while any of its addresses is in rotation', () => {
+    refused(hosts()[1]!, 429, null);
+
+    expect(readyAt('gate', '')).toBe(Date.now());
+  });
+
+  it('is ready once the first of its addresses is back, where every one is out', () => {
+    refused(hosts()[0]!, 429, 60_000);
+    refused(hosts()[1]!, 429, 45_000);
+
+    expect(readyAt('gate', '') - Date.now()).toBe(45_000);
+  });
+
+  /** Waiting would not make an address known. */
+  it('is ready now where no address of it is known', () => {
+    expect(readyAt('nobody', '')).toBe(Date.now());
   });
 });
 

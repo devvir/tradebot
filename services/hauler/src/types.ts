@@ -84,6 +84,19 @@ export interface Haulable {
   etag?: string;
 }
 
+/** How whoever asked for a haul has it wait, and when it is to begin nothing more. */
+export interface Pacing {
+  /**
+   * Runs one of the haul's waits — for an address to come back, or between
+   * attempts — and settles once the haul may ask again. Nothing is asked of the
+   * venue while it runs.
+   */
+  pause?:   (wait: () => Promise<void>) => Promise<void>;
+
+  /** Whether to ask nothing more: a file waiting is then left owed rather than asked for again. */
+  stopped?: () => boolean;
+}
+
 /** One address a venue's server answers at, and how it has been doing. */
 export interface Host {
   venue:  string;

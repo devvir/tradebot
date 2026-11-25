@@ -29,6 +29,19 @@ let failing: number;
 let flying:  number;
 let most:    number;
 
+/** A server turning every request away for so many seconds, how often it was asked, and requests at once of either server. */
+let outFor:   string;
+let outAsked: number;
+let inFlight: number;
+let peak:     number;
+
+/** Large files begun and in flight at once, small files served, and how many of those when the seventh large one began. */
+let heavyBegun:  number;
+let heavyFlying: number;
+let heavyMost:   number;
+let lightServed: number;
+let lightBefore: number | null;
+
 const KEYS = ['binance/a/1.zip', 'binance/a/2.zip', 'binance/b/3.zip'];
 const SIZED = ['sized/a/0.zip', 'sized/a/1.zip', 'sized/a/2.zip', 'sized/a/3.zip'];
 
@@ -42,6 +55,10 @@ beforeEach(async () => {
   failing = 0;
   flying  = 0;
   most    = 0;
+  outFor  = '3';
+  outAsked = inFlight = peak = 0;
+  heavyBegun = heavyFlying = heavyMost = lightServed = 0;
+  lightBefore = null;
 
   server = createServer((req, res) => {
     const url = new URL(req.url!, 'http://x');
@@ -53,6 +70,31 @@ beforeEach(async () => {
       setTimeout(() => { flying--; res.writeHead(200); res.end('x'); }, 25);
       return;
     }
+
+    if (url.pathname.startsWith('/files/out/')) {
+      outAsked++;
+      peak = Math.max(peak, inFlight + 1);
+      res.writeHead(429, { 'retry-after': outFor });
+      res.end();
+      return;
+    }
+
+    // Each held a moment, so that what runs at once is seen.
+    if (url.pathname.startsWith('/files/quick/')) {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      setTimeout(() => { inFlight--; res.writeHead(200); res.end(url.pathname); }, 50);
+      return;
+    }
+
+    if (url.pathname.startsWith('/files/heavy/')) {
+      if (++heavyBegun === 7) lightBefore = lightServed;
+      heavyMost = Math.max(heavyMost, ++heavyFlying);
+      setTimeout(() => { heavyFlying--; res.writeHead(200); res.end('x'); }, 200);
+      return;
+    }
+
+    if (url.pathname.startsWith('/files/light/')) { lightServed++; res.writeHead(200); res.end(url.pathname); return; }
 
     if (url.pathname.startsWith('/files/')) { served++; res.writeHead(200); res.end(url.pathname); return; }
 
@@ -90,6 +132,30 @@ beforeEach(async () => {
         Contents: Array.from({ length: 30 }, (_, at) => `big/spot/trades/B/BTC/202001/f-${at}`)
           .map(Key => ({ Key, Path: `files/${Key}`, Host: '', Size: 60 * 1024 ** 2 })),
       }));
+      return;
+    }
+
+    // Two venues of four files each: one whose server turns everything away, one that serves.
+    for (const venue of ['out', 'quick']) if (url.searchParams.get('prefix') === `${venue}/`) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        Name: 'catalog', Prefix: `${venue}/`, Marker: '', MaxKeys: 1000, IsTruncated: false,
+        Contents: [0, 1, 2, 3].map(at => ({ Key: `${venue}/spot/trades/B/BTC/202001/f-${at}`, Path: `files/${venue}/f-${at}`, Host: '' })),
+      }));
+      return;
+    }
+
+    // Twenty large files listed ahead of twenty small ones.
+    if (url.searchParams.get('prefix') === 'mixed/') {
+      const heavy = Array.from({ length: 20 }, (_, at) => ({
+        Key: `mixed/spot/trades/B/BTC/202001/h-${at}`, Path: `files/heavy/h-${at}`, Host: '', Size: 60 * 1024 ** 2,
+      }));
+      const light = Array.from({ length: 20 }, (_, at) => ({
+        Key: `mixed/spot/trades/B/ETH/202001/l-${at}`, Path: `files/light/l-${at}`, Host: '', Size: `/files/light/l-${at}`.length,
+      }));
+
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ Name: 'catalog', Prefix: 'mixed/', Marker: '', MaxKeys: 1000, IsTruncated: false, Contents: [...heavy, ...light] }));
       return;
     }
 
@@ -245,6 +311,24 @@ describe('a walk', () => {
     }
   });
 
+  /** Files waiting six at a time hold up nobody: the small ones behind them are taken meanwhile. */
+  it('takes the small files behind a run of large ones while the large wait their turn', async () => {
+    cfg.concurrency = 10;
+    setHosts('mixed', { '': [`${cfg.catalogApi}/`] });
+
+    try {
+      const walked = await walkVenue('mixed', () => false);
+
+      expect(walked.listed).toBe(40);
+      expect(lightServed).toBe(20);
+      expect(lightBefore).toBe(20);
+      expect(heavyBegun).toBe(20);
+      expect(heavyMost).toBe(6);
+    } finally {
+      cfg.concurrency = 2;
+    }
+  });
+
   it('asks only for what is owed, through the lens, with the token, resuming after the last key', async () => {
     await walkVenue('binance', () => false);
 
@@ -316,6 +400,60 @@ describe('a file that cannot be hauled', () => {
     expect(after).toBeLessThan(44);
     await pause(300);
     expect(served).toBe(after);
+  });
+});
+
+describe('a venue whose server turns every request away', () => {
+  const pause = (ms: number) => new Promise(done => setTimeout(done, ms));
+
+  beforeEach(() => {
+    setHosts('out', { '': [`${cfg.catalogApi}/`] });
+    setHosts('quick', { '': [`${cfg.catalogApi}/`] });
+  });
+
+  /** The budget is the machine's: a venue waiting holds none of it, and the rest share it as ever. */
+  it('holds up no other venue while it waits, and the budget holds', async () => {
+    let stop = false;
+    let over = false;
+
+    const out = walkVenue('out', () => stop).finally(() => { over = true; });
+
+    await pause(200);
+
+    const since = Date.now();
+
+    expect(await walkVenue('quick', () => false)).toMatchObject({ listed: 4, progressed: 4 });
+    expect(Date.now() - since).toBeLessThan(1_500);
+    expect(outAsked).toBeGreaterThan(0);
+    expect(over).toBe(false);
+
+    stop = true;
+
+    expect(await out).toMatchObject({ progressed: 0, failed: 0, mismatched: 0 });
+    expect(peak).toBeLessThanOrEqual(2);
+  });
+
+  /** A stop is not held up by a refusal it would take a minute to wait out. */
+  it('ends promptly when stopped while it waits, its files left owed', async () => {
+    outFor = '60';
+
+    let stop = false;
+
+    const walking = walkVenue('out', () => stop);
+
+    while (outAsked === 0) await pause(10);
+
+    await pause(100);
+
+    stop = true;
+
+    const since  = Date.now();
+    const walked = await walking;
+
+    expect(Date.now() - since).toBeLessThan(1_500);
+    expect(walked).toMatchObject({ progressed: 0, failed: 0, mismatched: 0 });
+    expect(walked.unreached).toBeGreaterThan(0);
+    expect(reports).toEqual([]);
   });
 });
 

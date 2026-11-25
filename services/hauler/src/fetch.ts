@@ -1,11 +1,12 @@
 import { basename, join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { logger } from '@devvir/service-kit';
 import { sizeOf } from '@tradebot/utils';
 import { backup, commit, discard, etagAgrees, isDigest, md5, measure, partialOf, touch, writePartial } from './store';
 import { backAt, delivered, faltered, hostFor, mainOf, refused } from './hosts';
 import { hold, taken } from './held';
 import config from './config';
-import type { Haulable, Hauled, Host } from './types';
+import type { Haulable, Hauled, Host, Pacing } from './types';
 
 /**
  * Bring one file to `<archives>/<key>` — the key starts with the venue — and say
@@ -49,8 +50,15 @@ import type { Haulable, Hauled, Host } from './types';
  * one present and correct whose date cannot be set is present all the same.
  * **A key is hauled once at a time**: asked for again while it is in hand, it is
  * `unreached` at once.
+ *
+ * **Its waits are the caller's to pace.** Waiting for an address to come back,
+ * or between attempts, it asks nothing of the venue, and runs each wait through
+ * `pacing.pause` so that whoever asked can lend out what the file holds
+ * meanwhile. A wait wakes within a second of `pacing.stopped`, or at once when
+ * downloads are given up, and the file is then `unreached`: nothing more is
+ * asked for it.
  */
-export const haul = async (file: Haulable): Promise<Hauled> => {
+export const haul = async (file: Haulable, pacing: Pacing = {}): Promise<Hauled> => {
   // The same key twice at once would write one partial from two downloads.
   if (inHand.has(file.key)) {
     logger.warn({ key: file.key }, 'Already being hauled — stays owed');
@@ -73,15 +81,16 @@ export const haul = async (file: Haulable): Promise<Hauled> => {
       return { outcome: 'unreached' };
     }
 
-    return settled ?? await retrieve(file, path);
+    return settled ?? await retrieve(file, path, pacing);
   } finally {
     inHand.delete(file.key);
   }
 };
 
 /**
- * Give up every download in flight, now. Each is left owed and its partial
- * removed: for a stop that has waited as long as it is going to.
+ * Give up every download in flight, now, and every wait for an address or
+ * between attempts. Each is left owed and its partial removed: for a stop that
+ * has waited as long as it is going to.
  */
 export const abandon = (): void => {
   given.abort();
@@ -173,20 +182,37 @@ const fromDisk = async (file: Haulable, path: string): Promise<Hauled | null> =>
   return null;
 };
 
-const retrieve = async (file: Haulable, path: string): Promise<Hauled> => {
-  const tried = new Set<Host>();
+const retrieve = async (file: Haulable, path: string, pacing: Pacing): Promise<Hauled> => {
+  const { pause = wait => wait(), stopped = () => false } = pacing;
+
+  const tried  = new Set<Host>();
+  const halted = (): boolean => given.signal.aborted || stopped();
+
+  /**
+   * Wait so long through `pause`, waking within a second once halted — at once
+   * where downloads are given up. Whether the file may be asked for again.
+   */
+  const waited = async (ms: number): Promise<boolean> => {
+    if (ms > 0) await pause(async () => {
+      const until = Date.now() + ms;
+
+      while (! halted() && Date.now() < until) await sleep(Math.min(until - Date.now(), WAKE_MS));
+    });
+
+    return ! halted();
+  };
+
+  if (! mainOf(file.venue, file.server)) {
+    logger.error({ key: file.key, venue: file.venue, server: file.server }, 'No address is known for this file\'s server');
+
+    return { outcome: 'unreached' };
+  }
 
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
-    const host = await hostToAsk(file, tried);
+    const host = await hostToAsk(file, tried, waited);
 
-    // Given up while waiting its turn: not begun, and left owed.
-    if (given.signal.aborted) return { outcome: 'unreached' };
-
-    if (! host) {
-      logger.error({ key: file.key, venue: file.venue, server: file.server }, 'No address is known for this file\'s server');
-
-      return { outcome: 'unreached' };
-    }
+    // Given up, or stopped while waiting for an address: not asked, and left owed.
+    if (! host) return { outcome: 'unreached' };
 
     const url   = `${host.base}${file.path}`;
     const began = Date.now();
@@ -254,7 +280,7 @@ const retrieve = async (file: Haulable, path: string): Promise<Hauled> => {
           return { outcome: 'unreached' };
         }
 
-        await sleep(delayFor(attempt));
+        if (! await waited(delayFor(attempt))) return { outcome: 'unreached' };
 
         continue;
       }
@@ -287,7 +313,7 @@ const retrieve = async (file: Haulable, path: string): Promise<Hauled> => {
           return { outcome: 'unreached' };
         }
 
-        await sleep(delayFor(attempt));
+        if (! await waited(delayFor(attempt))) return { outcome: 'unreached' };
 
         continue;
       }
@@ -326,7 +352,7 @@ const retrieve = async (file: Haulable, path: string): Promise<Hauled> => {
         return { outcome: 'unreached' };
       }
 
-      await sleep(delayFor(attempt));
+      if (! await waited(delayFor(attempt))) return { outcome: 'unreached' };
     } finally {
       flying.delete(own);
     }
@@ -339,20 +365,23 @@ const retrieve = async (file: Haulable, path: string): Promise<Hauled> => {
  * The address to ask next for a file: any in rotation not yet tried for it, by
  * weight — and where none is, the listed one, once it is back. An address that
  * turned us away is left alone until it said, or for the default, and a server
- * whose every address did is waited for: every request sent meanwhile would be
- * turned away too.
+ * whose every address did is waited for, with `waited`: every request sent
+ * meanwhile would be turned away too. Null where the file is to be asked of
+ * none: downloads were given up, or the wait was cut short.
  */
-const hostToAsk = async (file: Haulable, tried: ReadonlySet<Host>): Promise<Host | null> => {
+const hostToAsk = async (
+  file: Haulable, tried: ReadonlySet<Host>, waited: (ms: number) => Promise<boolean>,
+): Promise<Host | null> => {
   for (;;) {
+    if (given.signal.aborted) return null;
+
     const host = hostFor(file.venue, file.server, tried) ?? hostFor(file.venue, file.server);
 
     if (host) return host;
 
     const main = mainOf(file.venue, file.server);
 
-    if (! main) return null;
-
-    await sleep(Math.max(backAt(main) - Date.now(), 100));
+    if (! main || ! await waited(Math.max(backAt(main) - Date.now(), 100))) return null;
   }
 };
 
@@ -395,7 +424,11 @@ const settles = (file: Haulable, bytes: number, digest: string): boolean =>
 const delayFor = (attempt: number): number =>
   Math.floor(Math.random() * Math.min(BASE_MS * 2 ** (attempt - 1), MAX_MS));
 
-const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
+/** How long a wait sleeps at most before it looks again at whether it is to stop. */
+const WAKE_MS = 1_000;
+
+/** Sleep so long, or until downloads are given up: whichever `given` is current when it begins. */
+const sleep = (ms: number): Promise<void> => delay(ms, undefined, { signal: given.signal }).catch(() => undefined);
 
 /** What undici says went wrong, without its stack: `fetch failed` alone names nothing. */
 const reason = (err: unknown): string => {

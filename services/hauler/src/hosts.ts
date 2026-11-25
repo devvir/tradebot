@@ -85,9 +85,10 @@ export const faltered = (host: Host): void => {
 
 /**
  * A request turned away. Told to wait (`429`, or any answer naming how long),
- * the address is out at once for that long, or for `OUT_MS`. Turned away with
- * no more said, it is counted, and out once it has happened `RECURRING` times
- * running — one `403` is as often a file an edge will not serve as a block.
+ * the address is out at once for that long, up to `LONGEST_RETRY_AFTER_MS`, or
+ * for `OUT_MS`. Turned away with no more said, it is counted, and out once it
+ * has happened `RECURRING` times running — one `403` is as often a file an edge
+ * will not serve as a block.
  */
 export const refused = (host: Host, status: number, wait: number | null): void => {
   host.errors++;
@@ -95,7 +96,13 @@ export const refused = (host: Host, status: number, wait: number | null): void =
 
   if (status !== 429 && wait === null && host.refusals < RECURRING) return;
 
-  const until = Date.now() + (wait ?? Math.min(OUT_MS * 2 ** host.strikes, LONGEST_OUT_MS));
+  if (wait !== null && wait > LONGEST_RETRY_AFTER_MS)
+    logger.warn({ venue: host.venue, host: host.base, status, saidSeconds: Math.round(wait / 1000) },
+      'Told to wait longer than an hour — out for an hour');
+
+  const until = Date.now() + (wait === null
+    ? Math.min(OUT_MS * 2 ** host.strikes, LONGEST_OUT_MS)
+    : Math.min(wait, LONGEST_RETRY_AFTER_MS));
 
   if (until <= host.outUntil) return;
 
@@ -119,6 +126,20 @@ export const refused = (host: Host, status: number, wait: number | null): void =
 /** When an address is back in rotation, in epoch milliseconds: now or earlier where it is in it. */
 export const backAt = (host: Host): number => host.outUntil;
 
+/**
+ * When a server has an address in rotation again, in epoch milliseconds: the
+ * soonest any of its addresses is back, or now where one is in rotation — or
+ * where none is known, which no wait would change.
+ */
+export const readyAt = (venue: string, server: string): number => {
+  const now   = Date.now();
+  const hosts = known.get(keyOf(venue, server)) ?? [];
+
+  if (hosts.length === 0 || hosts.some(host => host.outUntil <= now)) return now;
+
+  return Math.min(...hosts.map(host => host.outUntil));
+};
+
 // ── Internals ─────────────────────────────────────────────────────────────────
 
 /** How often the weights are looked at again. */
@@ -141,6 +162,12 @@ const TRIAL_MS = 5 * 60_000;
 /** How long an address that turned us away is left alone where it does not say, doubling while it keeps on, to a limit. */
 const OUT_MS         = 3 * 60_000;
 const LONGEST_OUT_MS = 30 * 60_000;
+
+/**
+ * The longest an address is left alone for saying so: a `Retry-After` of a day,
+ * or a date far ahead, is a venue's mistake more often than its meaning.
+ */
+const LONGEST_RETRY_AFTER_MS = 60 * 60_000;
 
 /** Refusals in a row, nothing delivered between them, that make a block of what could have been a file. */
 const RECURRING = 5;

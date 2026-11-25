@@ -63,6 +63,7 @@ beforeEach(async () => {
     // Refusals say how long to wait, so a test is never held for the default.
     if (req.url === '/forbidden.zip') { asked++; res.writeHead(403, { 'retry-after': '0' }); res.end(); return; }
     if (req.url === '/refused.zip') { asked++; res.writeHead(429, { 'retry-after': '1' }); res.end(); return; }
+    if (req.url === '/refused-long.zip') { asked++; res.writeHead(429, { 'retry-after': '3600' }); res.end(); return; }
     if (req.url === '/gone.zip') asked++;
 
     res.writeHead(404);
@@ -205,6 +206,45 @@ describe('a file not yet on disk', () => {
     expect(asked).toBe(1);
     expect(existsSync(at(one))).toBe(false);
     expect(readdirSync(join(cfg.archivesDir, '.hauler-tmp'))).toEqual([]);
+  });
+
+  /** A stop that has waited long enough does not wait out an hour's refusal either. */
+  it('is unreached, at once, where downloads are given up while it waits for its server', async () => {
+    const hauling = haul(file({ path: 'refused-long.zip' }));
+
+    while (asked === 0) await new Promise(done => setTimeout(done, 10));
+
+    await new Promise(done => setTimeout(done, 100));
+
+    const since = Date.now();
+
+    abandon();
+
+    expect(await hauling).toEqual({ outcome: 'unreached' });
+    expect(Date.now() - since).toBeLessThan(200);
+    expect(asked).toBe(1);
+  });
+
+  /** Whoever asked paces the waits: each is run through its pause, and a stop ends it with nothing more asked. */
+  it('waits through the pause it is given, and asks nothing more once stopped', async () => {
+    let paused = 0;
+    let stop   = false;
+
+    const hauling = haul(file({ path: 'refused-long.zip' }), {
+      pause: async (wait) => { paused++; await wait(); },
+      stopped: () => stop,
+    });
+
+    while (paused === 0) await new Promise(done => setTimeout(done, 10));
+
+    stop = true;
+
+    const since = Date.now();
+
+    expect(await hauling).toEqual({ outcome: 'unreached' });
+    expect(Date.now() - since).toBeLessThan(1_500);
+    expect(paused).toBe(1);
+    expect(asked).toBe(1);
   });
 
   /** A `403` may be aimed at us, so it is tried again — and reported only where it holds. */

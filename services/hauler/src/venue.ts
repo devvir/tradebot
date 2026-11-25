@@ -1,9 +1,10 @@
 import { logger } from '@devvir/service-kit';
 import { page, report } from './catalog';
 import { LARGE_BYTES, haul } from './fetch';
+import { readyAt } from './hosts';
 import { freeGb } from './store';
 import config from './config';
-import type { BucketObject, BucketPage, Haulable, Hauled, Leaf, Walked } from './types';
+import type { BucketObject, BucketPage, Haulable, Hauled, Leaf, Pacing, Walked } from './types';
 
 /**
  * Walk a venue's bucket once, end to end, fetching every object it lists.
@@ -20,9 +21,20 @@ import type { BucketObject, BucketPage, Haulable, Hauled, Leaf, Walked } from '.
  * already. A page is reported the moment its last file settles, whichever
  * page that is.
  *
+ * **Large files are taken as their turns allow, and the rest meanwhile.** A
+ * large file listed when every turn for large files is taken is set aside, and
+ * the files behind it are taken; the ones set aside go first once a turn for
+ * them is free, and are waited for only where nothing else is ready.
+ *
+ * **A server turning every request away is waited out holding no turn.** Its
+ * files wait for one of its addresses to be back, and a file that must wait
+ * once begun gives its turns back while it waits: the budget goes to whoever
+ * can use it, of this venue or any other.
+ *
  * **Stopping takes no new file**: the files in flight finish, for as long as
  * the process is given, and every page reports what it got through, so nothing
- * done goes unreported.
+ * done goes unreported. A file waiting — for its server, or between attempts —
+ * asks nothing more, and is left owed.
  *
  * **So does a volume running low.** Below `minFreeGb` no new file is taken, the
  * ones in flight finish, and the walk ends saying so — rather than filling the
@@ -36,7 +48,11 @@ export const walkVenue = async (venue: string, stopped: () => boolean): Promise<
   const walked: Walked = {
     listed: 0, progressed: 0, failed: 0, mismatched: 0, unreached: 0, full: false, nothingOwed: false,
   };
-  const queue: { object: BucketObject; leaf: Leaf }[] = [];
+  const queue: Queued[] = [];
+
+  /** Large files taken from the queue while every turn for one was taken: first to go once one is free. */
+  const parked: Queued[] = [];
+
   const open  = new Set<Leaf>();
   const waiting: (() => void)[] = [];
 
@@ -64,7 +80,9 @@ export const walkVenue = async (venue: string, stopped: () => boolean): Promise<
     walked.unreached  += leaf.unreached;
 
     if (leaf.size > 0)
-      logger.info({ venue, page: ++pages, ...walked, more: (listing || queue.length > 0) && ! walked.full }, 'Page done');
+      logger.info({
+        venue, page: ++pages, ...walked, more: (listing || queue.length + parked.length > 0) && ! walked.full,
+      }, 'Page done');
   };
 
   /** List page after page, never holding more than `AHEAD` of them unfetched. */
@@ -97,12 +115,47 @@ export const walkVenue = async (venue: string, stopped: () => boolean): Promise<
 
         if (! after) return;
 
-        while (queue.length > AHEAD * current.MaxKeys && ! done()) await rest();
+        while (queue.length + parked.length > AHEAD * current.MaxKeys && ! done()) await rest();
       }
     } finally {
       listing = false;
       stir();
     }
+  };
+
+  /**
+   * The next file to take: one set aside, where a turn for a large file is
+   * free, and otherwise the next listed — a large one setting itself aside
+   * where no such turn is free. A large file taken holds its turn for one.
+   */
+  const take = (): Queued | null => {
+    if (parked.length > 0 && tryLargeTurn()) return parked.shift()!;
+
+    for (let next = queue.shift(); next; next = queue.shift()) {
+      if (! isLarge(next) || tryLargeTurn()) return next;
+
+      parked.push(next);
+    }
+
+    return null;
+  };
+
+  /** A file taken and not begun, put back first in line, with its turn for a large file. */
+  const putBack = (next: Queued): void => {
+    if (isLarge(next)) {
+      handBackLarge();
+      parked.unshift(next);
+    } else {
+      queue.unshift(next);
+    }
+
+    stir();
+  };
+
+  /** Wait while every address of a server is out of rotation, waking within a second once the walk is done. */
+  const whileOut = async (server: string): Promise<void> => {
+    for (let left = readyAt(venue, server) - Date.now(); left > 0 && ! done(); left = readyAt(venue, server) - Date.now())
+      await new Promise(wake => setTimeout(wake, Math.min(left, WAKE_MS)));
   };
 
   const worker = async (): Promise<void> => {
@@ -114,7 +167,19 @@ export const walkVenue = async (venue: string, stopped: () => boolean): Promise<
         return;
       }
 
-      const next = queue.shift();
+      let next = take();
+
+      // Nothing else to take meanwhile: a large file set aside waits for its turn.
+      if (! next && parked.length > 0) {
+        await largeTurn();
+
+        next = parked.shift() ?? null;
+
+        if (! next) {
+          handBackLarge();
+          continue;
+        }
+      }
 
       if (! next) {
         if (! listing) return;
@@ -127,29 +192,60 @@ export const walkVenue = async (venue: string, stopped: () => boolean): Promise<
 
       if (await low()) {
         walked.full = true;
-        queue.unshift(next);
-        stir();
+        putBack(next);
 
         return;
       }
 
       const { object, leaf } = next;
 
-      const large = (object.Size ?? 0) >= LARGE_BYTES;
+      const large  = isLarge(next);
+      const server = object.Host ?? '';
 
-      if (large) await largeTurn();
+      if (readyAt(venue, server) > Date.now()) {
+        putBack(next);
+
+        await whileOut(server);
+        continue;
+      }
 
       await turn();
+
+      /** Whether this worker holds its turns: given back while the file waits, taken again before it goes on. */
+      let held = true;
+
+      const pacing: Pacing = {
+        pause: async (wait) => {
+          handBack();
+
+          if (large) handBackLarge();
+
+          held = false;
+
+          try {
+            await wait();
+          } finally {
+            if (large) await largeTurn();
+
+            await turn();
+
+            held = true;
+          }
+        },
+        stopped: done,
+      };
 
       try {
         // Stopped while waiting for a turn: the file is not begun, and its page reports without it.
         if (done()) continue;
 
-        await fetchOne(venue, object, leaf);
+        await fetchOne(venue, object, leaf, pacing);
       } finally {
-        handBack();
+        if (held) {
+          handBack();
 
-        if (large) handBackLarge();
+          if (large) handBackLarge();
+        }
       }
 
       if (--leaf.left === 0) await settle(leaf);
@@ -195,6 +291,17 @@ export const walkVenue = async (venue: string, stopped: () => boolean): Promise<
 
 // ── Internals ──────────────────────────────────────────────────
 
+/** One listed file waiting to be taken, and the page it belongs to. */
+interface Queued {
+  object: BucketObject;
+  leaf:   Leaf;
+}
+
+const isLarge = (one: Queued): boolean => (one.object.Size ?? 0) >= LARGE_BYTES;
+
+/** How long a wait for a server sleeps at most before it looks again at whether the walk is done. */
+const WAKE_MS = 1_000;
+
 /**
  * Fetches in flight across every venue, and who is waiting for a turn.
  *
@@ -203,7 +310,8 @@ export const walkVenue = async (venue: string, stopped: () => boolean): Promise<
  * venue they go to, and seven venues walking at once at a hundred each is seven
  * hundred, which is where connections start timing out before they open. A
  * venue walking alone has the whole budget; several share it in the order they
- * asked.
+ * asked. A turn is held only while a file is being fetched: a file waiting to
+ * ask again holds none.
  */
 let flying = 0;
 
@@ -235,13 +343,18 @@ let flyingLarge = 0;
 const queuedLarge: (() => void)[] = [];
 
 const largeTurn = async (): Promise<void> => {
-  if (flyingLarge < LARGE_AT_ONCE) {
-    flyingLarge++;
-
-    return;
-  }
+  if (tryLargeTurn()) return;
 
   await new Promise<void>(next => queuedLarge.push(next));
+};
+
+/** A turn for a large file where one is free now, without waiting: whether there was one. */
+const tryLargeTurn = (): boolean => {
+  if (flyingLarge >= LARGE_AT_ONCE) return false;
+
+  flyingLarge++;
+
+  return true;
 };
 
 const handBackLarge = (): void => {
@@ -266,8 +379,8 @@ const handBack = (): void => {
  */
 const AHEAD = 3;
 
-/** Bring one listed object to disk and note on its page what came of it. */
-const fetchOne = async (venue: string, object: BucketObject, leaf: Leaf): Promise<void> => {
+/** Bring one listed object to disk, waiting as `pacing` has it, and note on its page what came of it. */
+const fetchOne = async (venue: string, object: BucketObject, leaf: Leaf, pacing: Pacing): Promise<void> => {
   if (! safe(venue, object.Key)) {
     logger.error({ venue, key: object.Key }, 'Key outside the venue — skipped');
 
@@ -286,7 +399,7 @@ const fetchOne = async (venue: string, object: BucketObject, leaf: Leaf): Promis
   let hauled: Hauled;
 
   try {
-    hauled = await haul(file);
+    hauled = await haul(file, pacing);
   } catch (err) {
     logger.error({ venue, key: object.Key, err }, 'Could not haul — stays owed');
 
