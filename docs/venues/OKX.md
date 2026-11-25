@@ -95,13 +95,26 @@ BTC-USDT-trades-2025-07-02.zip   3.8 MB
 Beyond enumeration:
 
 - **Sizes are an integrity check**: the index reports each file's size in MB.
-- **It answers absence directly**, which a probe can only ever infer from a 404. That is worth
-  having as a second opinion when a file is expected and missing — see
-  [the unsupported claim](#a-404-is-reliable-as-far-as-anyone-has-checked) that okx's 404s are
-  unreliable.
+- **An empty answer is a second opinion on absence, not the last word.** Where both were asked, it
+  agreed with a direct `404` ([the book holes](#the-book-holes-are-real-and-two-methods-agree)), but
+  a selection that names nothing answers too, with no error
+  ([the dated markets](#the-dated-markets-are-selected-by-family-and-asking-wrongly-answers-anyway)).
 
 The endpoint rate-limits: a handful of rapid calls returns `{"msg":"Too Many Requests",
 "code":"50011"}`.
+
+#### The same index on the public API
+
+The v5 API carries an endpoint of the same shape, `GET https://www.okx.com/api/v5/public/market-data-history`,
+which answers the addresses of the archive's files. It takes `module` (`1` trades, `2` one-minute
+bars, `3` funding, `4`, `5` and `6` order books, `11` borrowing rates), `instType`, `instIdList` or
+`instFamilyList`, `dateAggrType` (`daily`, `monthly`), `begin` and `end`.
+
+- **Its budget is 5 calls per 2 seconds** *(documented)*; its own `ratelimit-limit`,
+  `ratelimit-remaining` and `ratelimit-reset` headers state 60 a second.
+- **Whether it is the portal's endpoint under another address is not established** — that it
+  answers the same files, with the same limits and the same quirks as everything measured in this
+  section, has not been checked. Everything below was measured on the portal's `POST`.
 
 ### What the parameters select
 
@@ -109,7 +122,7 @@ The endpoint rate-limits: a handful of rapid calls returns `{"msg":"Too Many Req
 |---|---|---|---|---|
 | `1` | trades | all four | daily + monthly | per instrument |
 | `2` | candlesticks | all four | daily + monthly | per instrument |
-| `3` | funding rates | **Perpetual only** | daily + monthly | per instrument |
+| `3` | funding rates | **Perpetual only** | **daily only** | **venue-wide**, whatever `instIdList` holds — see [funding](#funding-is-per-symbol-monthly-venue-wide-daily--and-has-a-three-month-hole) |
 | `4` | L2 order book, **400lv** | all four | **daily only** | per instrument |
 | `5` | L2 order book, **5000lv** | all four | **daily only** | per instrument |
 | `6` | [50-level book with order counts](#module-6--a-50-level-book-with-order-counts) | spot confirmed | daily | per instrument |
@@ -432,7 +445,7 @@ and never a `BucketName`.
 |---|---|
 | instruments per call | **4**. Five answers `51000 Parameter instIdList error` |
 | window, `dateAggrType: daily` | **7 days** — `50076` past it |
-| window, `dateAggrType: monthly` | **6 months** — `50077` past it |
+| window, `dateAggrType: monthly` | a **3-month** span accepted, an exact **6-month** span refused with `50077`; the boundary between them is not measured |
 
 **`monthly` is accepted, and it is the difference between an affordable enumeration and an
 impractical one.** It returns the monthly files rather than the same days grouped:
@@ -442,8 +455,8 @@ BTC-USDT-trades-2024-09.zip   101.54 MB
   …/traderecords/trades/monthly/202409/BTC-USDT-trades-2024-09.zip
 ```
 
-Roughly a twentieth of the calls: five years of one symbol's history is about a dozen monthly
-requests against some 260 daily ones. Each mode enumerates only its own rendering, so **the mode
+Five years of one symbol's history is some 260 daily calls, and 20 monthly ones at three months a
+call. Each mode enumerates only its own rendering, so **the mode
 asked for is what says which rendering came back**.
 
 **An empty `instIdList` returns the venue-wide files** rather than an error —
@@ -578,13 +591,14 @@ Three sources, none sufficient alone:
 
 | source | covers | ranges |
 |---|---|---|
-| `api/v5/public/instruments?instType=` | **live only** — 1,354 spot | `listTime`, `expTime`, `state` |
-| `priapi/v5/broker/public/trade-data/instruments?instType=` | **everything, dead included** — 2,170 spot | names only |
-| `download-link` with `monthly` | everything | **exact months, definitive** |
+| `api/v5/public/instruments?instType=` | **listed only** — `live` and `preopen` | `listTime`, `expTime`, `state` |
+| `priapi/v5/broker/public/trade-data/instruments?instType=` | **everything, dead included** | names only |
+| `download-link` with `monthly` | everything | **the months that hold files** |
 
-**818 of 2,170 spot symbols are dead** — 38% — and the public API does not serve them at all:
-asking for `AAC-USDT` by `instId` answers `51001 … doesn't exist`. So `listTime` is unavailable for
-more than a third of the universe.
+**More than a third of spot symbols are dead** — the full listing held 2,202 spot symbols and v5
+1,383 on 2026-08-28 ([the counts](#where-the-instrument-lists-disagree-and-which-to-believe)) — and
+the public API does not serve them at all: asking for `AAC-USDT` by `instId` answers `51001 …
+doesn't exist`. So `listTime` is unavailable for more than a third of the universe.
 
 **But the index answers for dead symbols.** `AAC-USDT` returns four monthly files for 2022, which
 makes the index the only complete source.
@@ -595,10 +609,14 @@ Spot/Perpetual/Expiry/Options. Two traps in the answers:
 - **The portal spells swaps without the suffix**, and it is the portal that is right. It returns
   `LAYER-USDT` where the public API says `LAYER-USDT-SWAP`, and the archive takes the portal's
   spelling with `-SWAP` appended by the *path*, not by the name — see below.
-- **`FUTURES` and `OPTION` return underlyings, not contracts** — 129 and 6 — because files are
-  published per chain. 121 of the 129 are `*-USD_UM_XPERP` on names like `MU`, `MRVL`, `SOXL` and
-  `XAU`: tokenised equity and commodity perpetuals. **They publish, under
+- **The portal lists `FUTURES` and `OPTION` by family, not by contract**, because files are
+  published per chain. Most futures families are `*-USD_UM_XPERP` on names like `MU`, `MRVL`, `SOXL`
+  and `XAU`: tokenised equity and commodity perpetuals. **They publish, under
   `<name>-futureschain-<dataset>-…`** — see [the shape of the archive](#the-shape-of-the-archive).
+- **v5 lists `FUTURES` as contracts**, each carrying its `instFamily` (187 contracts in 161 families
+  on 2026-08-28), and **`OPTION` only one underlying at a time** — `uly` answers for all four
+  underlyings, `instFamily` only for `BTC-USD` and `ETH-USD` (see
+  [the counts](#where-the-instrument-lists-disagree-and-which-to-believe)).
 
 #### The instrument is the family; the market is a suffix
 
@@ -643,8 +661,9 @@ Measured with sustained `HEAD` against `static.okx.com`:
 
 | | |
 |---|---|
-| clean | **100/s** |
-| refuses | **200/s** — 35 `403`s inside one pass |
+| clean | **100/s**, with up to 100 requests in flight |
+| refuses | **200/s** — 35 `403`s inside one pass; refused again at 200/s with 200 in flight on 2026-09-29 |
+| in between | **not measured** — the limit is known only from below: where between 100/s and 200/s refusals begin has not been established |
 
 **A refusal is a `403` and a missing key is a `404`, and they are never confused.** An invented
 symbol and an impossible date both answer 404; 403 only ever means the cadence was exceeded. The
@@ -708,9 +727,18 @@ plain epoch milliseconds; only which file holds a row is shifted — a UTC day's
 are in the next day's file. It is also why a download window ending `2021-09-05T23:59:59.999Z`
 returned a 2021-09-06 file.
 
+### Publication
+
+**A day's files appear about a day after the day they are dated begins.** Measured from the files'
+own `Last-Modified` on 2026-09-25, over the 61,018 files dated 2026-09-15 to 21, in hours from the
+start of the dated day to publication:
+
+| p50 | p99 |
+|---|---|
+| 24.0 h | 24.5 h |
+
 ### Not yet established
-- Where exactly the monthly window boundary falls: three months is accepted and a span of exactly
-  six is refused, so the limit is inclusive of fewer months than the message implies.
+- Where between three and six months the monthly window of the index ends.
 - How far below 2023-04-03 the 400-level books of the futures chains reach.
 - Where borrowing rates get their universe. They key on a currency rather than an instrument, so
   none of the instrument lists above enumerates them.
@@ -874,14 +902,14 @@ in October 2026. *(documented)* marks what okx's documentation states and was no
   is empty.
 - **The documentation lists it as a websocket channel only.**
 
-**The archive's index — `GET /api/v5/public/market-data-history`**: `module` (1 trades, 2 one-minute
-bars, 3 funding, 4, 5 and 6 order books, 11 borrowing rates), `instType`, `instIdList` or
-`instFamilyList`, `dateAggrType` (`daily`, `monthly`), `begin`, `end`. It answers the addresses of
-the archive's files. Budget 5 per 2 seconds *(documented)*; its headers say 60 a second.
+**The archive's index — `GET /api/v5/public/market-data-history`**: see
+[the same index on the public API](#the-same-index-on-the-public-api).
 
 **The listing — `GET /api/v5/public/instruments?instType=`**: `SPOT`, `SWAP`, `FUTURES`, `OPTION`
-(with `instFamily`); `{instId, instFamily, state, listTime, expTime, ctVal, …}`. **Listed
-instruments only** — `live`, and on spot `preopen`. `listTime` is not the first bar: spot's
+(with `uly`, or `instFamily` for some underlyings — see
+[where the instrument lists disagree](#where-the-instrument-lists-disagree-and-which-to-believe));
+`{instId, instFamily, state, listTime, expTime, ctVal, …}`. **Listed instruments only** — `live`,
+and `preopen` for those announced and not yet trading. `listTime` is not the first bar: spot's
 earliest `listTime` is in 2021 where bars start in 2018.
 
 ### Endpoints that do not
