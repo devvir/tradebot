@@ -256,15 +256,10 @@ So a seed on disk is in one of two states, and they read almost alike:
 A venue holding a permanent seed finds its whole history as surely as a listed venue walks to its
 own, which is the point of paying for the research once.
 
-**`first` is a measurement, and any sighting makes it.** It is the earliest file the catalog has
-seen, so it is written by the first one that answers and lowered by any earlier one — whether that
-answer came from an index or from a probe. `sawFile` is the only thing that moves it, from the file
-in front of it, which is why a venue with no index arrives at the same bound as a walked one.
-
-**`last` is not maintained at all.** It says nothing more will ever be published, which no sighting
-can establish — it is a measurement something made deliberately, or it is nothing. Detecting it is an open
-question rather than a gap. Neither has a generator of its own — generating dates inside known bounds is what every
-venue's update does, in `update.ts`.
+**`first` and `last` are the oldest and newest file the catalog holds for the series.** A sighting
+widens them (`sawFile`), and a finished pass resets both to what `file` holds (`reconcile`), which is
+how a withdrawal narrows them; `last` is never a ceiling on generation. See [the three bounds a series
+carries](#the-three-bounds-a-series-carries).
 
 **Bootstrapping is the adapter's, not the scanner's.** A venue with no listing has to know its own
 bounds before it can build a single key, and finding them is hours of probing. That is not scanning,
@@ -521,29 +516,18 @@ listed this morning arrives some other way — see [where new instruments come f
 listing a new symbol needs new **series** rows — one against each pattern of its market — and no new
 pattern at all. A new *pattern* means something else entirely: the venue changed the shape of a URL.
 
-Those series arrive two ways, and which one a venue uses follows from whether it can be listed:
+Those series arrive three ways.
 
-**A venue with no listing reconciles, on every pass.** It has to — nothing else could ever tell okx
-or bitget that an instrument exists, since probing can only ask about series already known. So
-before its context is built it fetches the venue's active instruments, inserts what is new as
-`active` with no bounds, flips departed ones to `delisted`, and probes for the bounds that are still
-missing. See [a series has a life](#a-series-has-a-life-and-the-preamble-is-what-moves-it-along).
+**A walk** creates a series from the first file it reads under a new name, and **a seed** declares
+series for a venue that cannot be listed. **The preamble** asks the venue what it lists, at the start
+of every update pass that is not a resume, on every venue with an `instruments` hook — walked or not
+— and creates series for what is new; see [the preamble](#the-preamble-asking-the-venue-what-it-lists).
+Probing can only ask about series already known, so for okx and bitget the preamble is the only way a
+new instrument arrives after the seed.
 
-**A venue with a listing discovers by walking, and only by walking.** It has no reconciliation step,
-so once its walk is behind it, a symbol listed since is not found until the next full refresh.
-
-**That is a decision, not an omission.** Giving the listing venues a reconciliation step would mean
-inventing series from an instrument listing rather than reading them out of the archive — which is
-exactly where it can be wrong: guessing the archive's spelling of a symbol where it differs from the
-venue's own, or attaching a new instrument to a pattern the venue has since retired. A walk cannot
-make either mistake, because it reads what is actually served. Since a refresh corrects both for
-free, the trade is a new instrument arriving late against a class of quietly wrong rows, and late is
-much cheaper.
-
-So a listing venue's eventual consistency comes from being re-walked periodically — a full refresh
-every month or so — rather than from a discovery path of its own. What that costs is stated in
-[walking and probing](#walking-and-probing); what it buys is that no series of a listing venue is
-ever invented.
+A walk remains the authority on what an archive holds. The preamble creates series from a listing;
+the files then decide which of them stay, since reconciliation deletes a series that publishes
+nothing.
 
 ### The patterns are read out of the paths
 
@@ -1678,8 +1662,8 @@ hold.
 
 The excess is not waste in the record, only in the asking. A series the archive answers for keeps
 what it measured; one it never answers for is deleted by the reconciliation after the first completed
-pass, and nothing recreates it. What the catalog ends up holding is what the venue turned out to
-serve.
+pass, and recreated by the next preamble only while the venue lists the symbol on a live shape. What
+the catalog ends up holding is what the venue turned out to serve.
 
 ### `pattern.retired_at` governs creation *and* bounds generation
 
@@ -1743,10 +1727,11 @@ the archive's spelling — derived by rule, or asked of the venue. A spelling th
 not an error anything can catch: the keys it builds are well-formed and the venue answers that they
 are not there, which is what a quiet instrument looks like too.
 
-The symptom is a **series that never finds a start** — listed as active, generated for every pass,
-and never answered. One of those is ordinarily an instrument that launched days ago and has
-published nothing yet, and it resolves itself; a cohort of them that never resolves is a spelling
-nobody serves. It surfaces as a count in a log line and nothing else reads it.
+The symptom is the same series **created by the preamble and removed by reconciliation on every
+pass**, with no file ever recorded for it — visible as steady preamble `created` and reconciliation
+`removed` counts for the venue. One of those is ordinarily an instrument that launched days ago and
+has published nothing yet, and it resolves itself; a cohort of them that never resolves is a spelling
+nobody serves. It surfaces as counts in log lines and nothing else reads them.
 
 ### okx's limit is known only from below
 
@@ -1772,36 +1757,26 @@ measured. With a few months of it the constant becomes a per-venue, per-dataset 
 
 ### A hole older than the window is walked past, not filled
 
-Reconciliation lifts every tip to the floor — or to the series' newest file, where that is higher —
-and does so **without knowing what it is stepping over**: a real hole in the archive, a miss that
-would have settled on the next pass, and the dead range below a newly listed instrument's true start
-are indistinguishable from here, so all three are treated the same way. Anything unanswered below the
-tip is therefore never asked about again.
+Reconciliation lifts every tip without knowing what it steps over — a real hole, a miss that would
+have settled on the next pass, and the dead range below a newly listed instrument's true start go the
+same way ([what a completed pass is worth](#what-a-completed-pass-is-worth)) — so anything unanswered
+below the tip is never asked about again. That is the deliberate half of `OVERDUE_DAYS`, the price of
+not re-probing every gap for ever. What recovers it is a full re-walk, which reads the keyspace and
+owes nothing to any tip. A venue that cannot be walked has no second chance, which is what makes a
+lifted tip the one bound worth being careful with: too low costs requests, too high loses files
+silently.
 
-**A file above the floor is proof, and proof outranks patience.** Waiting `OVERDUE_DAYS` is for
-periods nothing has answered for; below a file that actually arrived there is nothing left to wait
-for. Holding the tip down to the floor there is what had an update re-ask its whole window every
-night for periods it already held.
+### A listed instrument that never publishes is asked about every pass
 
-That is the deliberate half of `OVERDUE_DAYS` — the price of not re-probing every gap for ever. What
-recovers it is a full re-walk, which reads the keyspace and owes nothing to any tip. A venue that
-cannot be walked has no second chance, which is what makes a lifted tip the one bound worth being
-careful with: too low costs requests, too high loses files silently.
-
-### A series that never publishes is never closed
-
-`last` is NULL for a series no file has ever been seen for, and `open` reads that as **open**: there
-is no measurement to call it finished on. It stays in generation, asking for the window between its
-tip and today on every pass.
+A series no file has ever been seen for has a NULL `last`, and `open` reads that as **open**: there is
+no measurement to call it finished on. Each finished pass deletes it, since it holds no file, and the
+next preamble creates it again from the covered floor while the venue still lists the instrument — so
+the venue is asked about that window on every pass until something publishes.
 
 Cheap at the scale of a real run, and the alternative is worse: closing on absence alone would put
 the judgement exactly where the evidence is weakest — an instrument a venue lists but has not
 published for yet is indistinguishable from one that never will. Every newly listed instrument is in
 this state between its series being created and the archive's first file.
-
-The one case that *is* decided without a file is a series with **no files at all**, which
-reconciliation deletes rather than records — see *[an empty series is deleted, not
-flagged](#an-empty-series-is-deleted-not-flagged)*.
 
 ## Configuration
 
@@ -2277,14 +2252,16 @@ Two consequences worth stating, because they are what keep the arrangement hones
 
 #### `getContext` and the occasion
 
-| occasion | what an adapter may do |
+| occasion | what it is for |
 |---|---|
-| `'full'` | reach the venue and re-establish everything, however long it takes |
-| `'partial'` | reach the venue too — reconciling is the only way a new symbol is ever discovered, since probing can only ask about series already known |
+| `'full'` | a walk. The adapter may reach the venue and re-establish everything, however long it takes |
+| `'partial'` | an update: what has appeared since. Discovering new instruments is not the context's job — that is [the preamble](#the-preamble-asking-the-venue-what-it-lists), which runs before the update generates anything |
 | `'lookup'` | **reach nothing.** What an HTTP handler passes to confirm one key inside a request, where fetching would turn a confirmation into an unbounded call |
 
-**Which of the first two applies is read off where the venue has got to**, never off what a caller
-asked for. The scanner never sees a database: it receives what the adapter assembled, as data.
+No adapter's `getContext` reaches its venue: every context is the venue's address and the adapter's
+own functions, assembled in memory. Which kind of pass runs is decided in `sync.ts` (`passFor`) — see
+[when an update is a walk](#when-an-update-is-a-walk). The scanner never sees a database: it receives
+what the adapter assembled, as data.
 
 ### Bounds arrive from outside, and this service does not ask how
 
@@ -2297,67 +2274,33 @@ this service then reads exactly as it reads any others. See
 **Unbounded, construction is hopeless**: every period the archive could hold, for every instrument,
 almost all of them misses. Bounded, it is one request per candidate that could exist.
 
-**A series with no start produces no path, so the scanner never sees it.** Two different rows look
-like that — one the venue publishes nothing for, ever, and one listed but not yet publishing — and
-neither is recorded as an absence: a completed pass deletes the row either way, and the second is
-created again by the next preamble. Which is which is the venue's to decide, not this table's.
+**A series with no tip generates nothing.** It is skipped and logged (`Series with no known start
+skipped`). A series with a tip and no `first` — every one the preamble creates — generates from the
+period after its tip.
 
 **A dataset's venue-wide file is not an instrument.** Where a venue publishes one file a period
 carrying every instrument at once, there is nothing per-instrument to measure and no series to keep
-per symbol: it exists for as long as its dataset has, so it is generated from the earliest start that
-dataset records through to the last complete period. Only where nothing per-instrument is bounded at
-all does it need a floor of its own.
+per symbol. The file is the market bundle (`@`) series, which has no instrument, and it is generated
+from its own tip like any other series.
 
-### A series has a life, and the preamble is what moves it along
+### `state`: what the venue lists
 
-`state` is where the instrument stands, and it is what decides whether either bound can still move:
+`state` belongs to the instrument (`instrument.state`), and every series of that instrument reads it:
 
-| state | what it means | what is still open |
-|---|---|---|
-| `active` | the venue lists it today | the **start**, if it has none — listing and publishing are different events |
-| `delisted` | listed once, not now | the **end**, if it has none — an archive can outlive the listing |
+| state | what it means |
+|---|---|
+| `active` | the venue lists it today |
+| `delisted` | the venue listed it once and does not now |
 
-There is no third state for "never published". Such a row records an absence rather than a
-measurement, so reconciliation **deletes** it — the one place a series row is ever removed. Every
-other row is insert-and-update, because a row that has published something is a measurement and
-measurements do not stop being true.
+Neither says where the files stop: an archive can outlive a listing, and a listed instrument can go
+quiet. [The preamble](#the-preamble-asking-the-venue-what-it-lists) writes `state` from the venue's
+listing; whether a series is still generated for is [`open`](#open-when-keys-are-still-generated)'s
+question, which reads `state` beside the bounds. A venue-wide file has no instrument, so nothing can
+delist it and it is always `active`.
 
-### An empty series is deleted, not flagged
-
-Once a pass has **finished**, every period each of its series covers has been asked about. A series
-the archive answered for none of them holds nothing: no start, therefore no end, and nothing the row
-could say. Keeping it costs `OVERDUE_DAYS` of keys a day, for ever.
-
-**The listing does not enter into it.** An instrument the venue lists today that has never published
-is exactly as empty as one it has forgotten, and a shape that has been retired will never produce a
-first file for either. Deleting is safe because it is reversible *by the venue*: a listed symbol on a
-live shape is created again by the next preamble and backfilled — find files and they stay, find none
-and it goes again, until the day something publishes. A symbol that is gone, or a shape that is
-retired, is not recreated, which is what stops a dead branch being probed for ever.
-
-**It asks the file table, not the `first` column.** `first` is filled in by reconciliation's own
-third step, so reading the column here would delete a series on the very pass that was about to
-measure its start. That was invisible while this flagged rather than deleted, because a flagged row
-fell through and got its `first` anyway.
-
-On every start, before the context is built, a constructed-key adapter reconciles the table against
-the venue's own listing:
-
-1. **fetch the active symbols**, dropping anything the venue calls `preopen` — announced but not
-   trading, so no archive is possible and it is treated as though the venue had not named it
-2. **insert what is new**, as `active` with no bounds
-3. **flip to `delisted`** every `active` row the listing no longer carries
-4. **for every dead row with no end** — from this pass or any earlier one — probe back from
-   yesterday a day at a time until data answers; that day is the end. A row that answers nothing
-   anywhere is deleted by the next reconciliation, having nothing to record
-5. **for every active row with no start**, probe forward from the newest start the table records —
-   snapshotted before the pass, so starts written during it cannot move the bar — and stop at the
-   first hit
-
-**Both probing steps key off the series' own emptiness, never off what changed today.** A symbol that
-listed last week may not be publishing yet, and one delisted yesterday may keep publishing for days
-— an archive can outlive a listing. So "changed state this pass" is the
-wrong trigger in both directions; "has no start" and "has no end" are the right ones.
+There is no third state for "never published": reconciliation deletes such a series — see [what a
+completed pass is worth](#what-a-completed-pass-is-worth). That is the one place a series row is
+removed.
 
 ### A constructed-key venue is still a scanner, and must behave like one
 
@@ -2430,6 +2373,24 @@ have forced a shape on every other venue:
 That is the division throughout: the shared code carries what most venues do, and a venue's oddity
 costs that venue's adapter a function rather than costing everyone a vocabulary.
 
+**A directory that names another period stays literal, and its shape is seeded retired.** A pattern
+is built by replacing the file's own date with slots, so where a directory names a different month
+from the filename, that month stays in the pattern as written and the shape can only ever hold the one
+period it was found with. Left live, such a shape costs far more than its files: every series on it
+asks for every day between its tip and yesterday on every pass, and nothing can ever answer. So it is
+seeded with `retired_at` at the day it holds, generation stops there, and the files stay.
+
+gate is the case. Its 21 literal-month shapes are in `seeds/gate/pattern.csv`, seeded by migration
+`005-gate`: three `orderbooks/202212/` shapes holding 2022-11-30 hour 23, and eighteen
+`candlesticks_{30s,1m,5m}/2024{07..12}/` shapes, each holding the last day of the month before.
+Measured on 2026-09-27 with those shapes live, they held 63,506 series and produced 312,336 of gate's
+323,229 nightly probes. The rest of gate's misfiled files are refused rather than catalogued: its
+`accepts` refuses a path whose directory and filename name different months (`gateMisfiled` in
+`adapters/gate/misfiled.ts`), except the hourly books, whose misfiled hour is the only copy, and 108
+instrument-days of klines with no correctly filed twin. Nothing in a path tells those from the
+duplicates, so `misfiled.ts` keeps them as a closed list. What gate misfiled is in
+[GATE.md](../venues/GATE.md).
+
 ### Every path is parsed, or it goes on the worklist
 
 Reading paths exists to keep series and their tips current, so **a path nobody can parse is a series
@@ -2443,10 +2404,7 @@ path with a count, and the survey carries on:
 unreadable(venue_id, path, reason, seen, first_seen, last_seen)
 ```
 
-`reason` separates the two ways it can happen. **`unread`** is a shape no adapter recognises — the
-common case, and the thing to fix. **`undated`** is one adapter contradicting itself: `inspectUrl`
-placed the path in a series, so it found a date in it, and the same venue's `dateOf` then declined to
-date it.
+`reason` says why; every row is **`unread`**, a shape no adapter recognises — the thing to fix.
 
 The file itself is still catalogued if it carries a date, so nothing is lost while a shape waits to
 be read — it simply has no series against it. Counting rather than repeating is what makes the table
@@ -2482,13 +2440,14 @@ different name partway through its life, or appear under two names at once. A co
 pattern gets it for free. Nullable rather than blank: these rows are held in memory, and a null costs
 nothing where a copy of the symbol costs a string each.
 
-**A series is identified by its pattern and the name its keys actually carry** — `COALESCE(url_symbol,
-symbol)`, not the symbol. Two series of one pattern that resolve to the same name are not two series:
-they generate the same URLs, which is the definition of being one. The symbol alone cannot serve,
-because an instrument whose archive name changes mid-life is two series that agree about everything
-except that name, and both must be able to exist under the symbol a consumer asks for. SQLite
-enforces this directly, as a unique index over the expression, which also settles the NULL convention:
-a spelled-out `url_symbol` and an implicit one collide as they should.
+**A series is one shape and the name its keys carry** — `url_symbol` where there is one, otherwise
+the symbol. Two series of one shape that resolve to the same name would generate the same URLs, so
+the registry (`identity()` in `catalog/series.ts`) refuses the second before it is written. The symbol
+alone cannot serve, because an instrument whose archive name changes mid-life is two series that
+agree about everything except that name, and both must be able to exist under the symbol a consumer
+asks for. The table's own unique index (`series_key`) is narrower: pattern, instrument (none for a
+venue-wide file) and `url_symbol` with NULL as `''`. Writers therefore store NULL, never a copy of the
+symbol, where the archive spells the instrument as the venue does.
 
 Reading a path back is the one place the decoration still matters, and it is evidence rather than
 spelling: okx's flat namespace puts a spot pair and a futures family under names differing by nothing
@@ -2502,28 +2461,37 @@ does.
 
 | | |
 |---|---|
-| **`first`** | the oldest date seen for this series. NULL means *unknown*, not *none*. A **floor** on generation: nothing was published before a series began, so a tip sitting under its start does not license asking about the gap |
-| **`last`** | the **newest** date seen for this series. NULL means *nothing has ever been seen*, and nothing else. Monotonic, like the other two |
+| **`first`** | the date of the oldest file the catalog holds for this series. NULL means no file has been seen. A **floor** on generation: nothing was published before a series began, so a tip sitting under its start does not license asking about the gap |
+| **`last`** | the date of the newest file the catalog holds for this series. NULL means no file has been seen. Never a ceiling on generation |
 | **`tip`** | *nothing at or below this period will ever be asked about again.* Generation starts at the period after it. A one-way ratchet: nothing lowers it |
 
-`first` and `last` are symmetrical and both are **measurements**: the oldest and newest dates anybody
-has actually seen. Neither is a claim about the venue — `first` is "first in the archive", not "first
-ever published", because a rolling-window archive has an early bound that moves; and `last` says
-where the archive has got to, not that it has stopped.
+`first` and `last` are **measurements**. A sighting widens them (`sawFile`), and a finished pass
+resets both to what `file` holds (`reconcile`), which is how a withdrawal narrows them — see [a
+sighting states the bounds](#a-sighting-states-the-bounds-a-finished-pass-checks-them). Neither is a
+claim about the venue — `first` is "first in the archive", not "first ever published", because a
+rolling-window archive has an early bound that moves; and `last` says where the archive has got to,
+not that it has stopped.
 
-So the generation range reads only the calendar and the two ends of the ratchet:
+So the generation range reads only the calendar and the two ends of the ratchet (`update.ts`), with
+`lag` the adapter's `probingLag` (one where it declares none, which is yesterday for a daily shape):
 
 ```
-START := max(tip + 1, first)                 first ignored where NULL
-END   := min(last complete period, retired_at)   yesterday, or last month for a monthly shape
+START := max(tip + 1, first)                              first ignored where NULL
+END   := min(lastClosed(now - (lag - 1) days), retired_at)   retired_at ignored where NULL
 ```
 
-**`last` does not bound generation.** It used to, and that was the only thing stopping a finished
-series asking for ever — at the cost of the measurement itself, because the field then had to be left
-NULL to mean "more is expected". So every shape in the catalog reported no end at all, and a variant
-that stopped beside the one that replaced it was unreadable.
+The lags each venue declares are in [how far behind today a probing update
+asks](#how-far-behind-today-a-probing-update-asks). **`first` clamps `START`**, which matters for a
+seed that states one floor per dataset rather than per series: every series then starts below its own
+start, and without the clamp each would spend the gap asking about days known to hold nothing.
 
-*Whether* to generate is now a separate question with a single answer, `open`.
+**One span may be skipped from the middle.** On a venue that cannot be listed, until a pass has
+completed there, generation leaves out `[last + 1, lastSettled(seededAt)]` for a series with a
+`last`: the pass that built the seed went on looking up to its own date, so that span is measured
+absence (`Rules.seededAt`).
+
+**`last` does not bound generation.** *Whether* to generate is a separate question with a single
+answer, `open`.
 
 **These three are what anything reasons about a series with**, and that is a deliberate property of
 the schema rather than a convenience. `series` holds tens of thousands of rows per venue where `file`
@@ -2533,12 +2501,9 @@ catalog. Querying `file` for a range is a thing to do while *establishing* a ven
 [a seed is research before it is data](#a-seed-is-research-before-it-is-data) — and not something the
 ordinary path should ever need.
 
-**Which is why a seed states a floor and never a `first`.** Nothing raises a `first`: `sawFile`
-lowers it and only lowers it. So a seeded start is uncorrectable the moment it is too low, and it
-becomes too low as soon as a venue withdraws its earliest file — a lie in the one column everything
-downstream trusts, with nothing in the system able to notice. A floor costs the backfill a few
-requests and arrives at whatever is true today, in every case where the stated one would have been
-right and in the one where it would not.
+**A seed states a floor, not a `first`.** The first pass measures where each series starts, and
+reconciliation replaces whatever a seed could have said about it; the seed format is in the [seeds
+README](../../services/prospector/src/database/migrations/seeds/README.md).
 
 ### `open`: when keys are still generated
 
@@ -2550,6 +2515,7 @@ generation decides what to ask about.
 |---|---|
 | **listed, on a live shape** | open. The venue still trades it and still writes this shape, which outweighs any quiet spell |
 | **nothing seen yet** | open. There is no measurement to call it finished on — every newly listed instrument is here between its series being created and the archive's first file |
+| **never asked about** | closed. A row with a `last` and no tip has been asked nothing, so there is no window to judge its silence in |
 | **otherwise** | open while its newest file is inside the patience window, closed once it falls out |
 
 **A gap below `last` is never an ending**, and that is what the last row turns on. A delisted series
@@ -2568,21 +2534,20 @@ finished. Reading the instrument alone would keep every one of them generating t
 **The patience is measured from the tip, so `open` needs no clock.** The tip is how far the venue has
 actually been asked, which is the only thing a silence can be judged against; a wall clock would call
 a series closed over a fortnight nobody spent asking, which is a statement about this service rather
-than about the venue. Reconciliation keeps lifting the tip to `OVERDUE_DAYS` ago, so the window comes
-out at about two of them — a month for a daily shape, a month and a half for a monthly one. That
-figure is arbitrary and deliberately so.
-
-The floor matters for the reverse case: a seed that states one floor per *dataset* rather than per
-series starts every series years below its own start, and without the clamp each spends the gap
-asking about days known to hold nothing.
+than about the venue. Reconciliation lifts the tip to at least `OVERDUE_DAYS` before the pass began,
+so the window comes out at about two of them — a month for a daily shape, a month and a half for a
+monthly one. That figure is arbitrary and deliberately so.
 
 ### A sighting states the bounds; a finished pass checks them
 
 **A walk is the source of truth, so it reads none of the three to decide anything.** It never skips a
 period, stops early, or refuses a file because of a `first`, a `last` or a `tip`. It reads the index
 and states what is there. The file that creates a series is also the first thing known about it, so
-the bounds are written by the same call that writes the row — leaving them null for a later pass to
-fill in is how a series ends up on disk claiming to have no start.
+the bounds are written by the same call that writes the row (`walkSeries`): `first` and `last` at the
+file's date, and a tip at the walk's settled edge, `lastSettled(grain, START)` with `START` the walk's
+own start — or at the file's period where that is newer, though never above the last period closed
+when the walk began. Generation refuses a series with no tip, so a series the walk creates has one
+from its first moment.
 
 Two rules, applied per sighting, with `d` the file's date. A series that does not exist yet is not a
 third case — it is the same rules with nothing to coalesce against:
@@ -2592,80 +2557,28 @@ first := min(first, d)
 last  := max(last, d)
 ```
 
-**Both of those only ever widen, which is why a pass reads them back at the end.** A sighting holds
-one file, and one file can only extend a range — so nothing in the ordinary path can ever narrow a
-bound, and a file the venue *withdraws* lowers none of them when it goes. The row would go on
-claiming a date the catalog itself has marked absent.
+**A probe that found a file is a sighting as good as a listing's**, so `sawFile` applies the same two
+rules for every file a probe or a backfill settles. That is why a venue with no index arrives at the
+same bounds as a walked one. Writing `first` from a probed file strands nothing below it: `first`
+floors *generation*, and the keys below it are already parked in `wip`, on disk, surviving a restart;
+they go on being probed whatever the column says, and anything they find lowers it again.
 
-So reconciliation, over a pass that finished, recomputes every bound from the files that justify it
-and replaces any that cannot be justified — one ordered read of `file_bounds`, reported as
-`corrected` and expected to be zero. It is the last thing a pass does rather than a second writer
-beside the first, so the two never disagree about a series mid-pass.
-
-**The tip is not among them, because it is not a per-file claim.** What a walk proves about a tip it
-proves by reading its index to the end, not by meeting any particular file: every period at or below
-`START - OVERDUE_DAYS` was offered and answered. That is one statement over the whole venue, made
-once the pass is over, by the same reconciliation an update earns by draining its queue. A series the
-walk never mentioned earns it exactly as much as one it mentioned a thousand times, because a period
-the index never named was not published, whoever it would have belonged to.
-
-The one exception is not an update but an initialisation: generation refuses a series with no tip at
-all, so a series the walk *creates* starts at that same edge, or at its own file where that is newer.
+**Both rules only widen.** So nothing depends on meeting a series' files in date order — which an
+index does not guarantee across hours and partitions — and a file the venue *withdraws* narrows
+nothing when it goes. A pass that finished reads both bounds back from `file` and replaces any the
+files do not bear out: see [what a completed pass is worth](#what-a-completed-pass-is-worth).
 
 **`last` is the newest date seen, and it is the whole of what a sighting says.** Nothing concludes an
 ending from it — that judgement lives in `open`, and it needs the instrument's listing and the shape's
 state as well, neither of which a sighting knows.
 
-All three are monotonic, so nothing depends on meeting a series' files in date order — which an index
-does not guarantee across hours and partitions.
+**A tip is not a per-file claim, so no sighting moves it.** It says a whole range was asked about,
+which no single file is evidence of. Once a series has a tip, two things lift it and nothing lowers
+it: reconciliation after a pass that finished, and the preamble reviving a relisted instrument, which
+raises a tip below the floor the venue was covered to.
 
-**A sighting states both edges, because they are the same claim.** A file at a date proves the series
-reached back at least that far and forward at least that far; which of the two it moves is arithmetic,
-not different evidence. So `sawFile` writes `first` down and `last` up, and neither ever goes the
-other way.
-
-The old rule was that only a walk may say where a series begins — an update generated the key it is
-holding, so writing `first` back from what it settled looked circular. What that missed is that a
-start is not a wall. `first` floors *generation*, and the keys below it are already parked in `wip`,
-on disk, surviving a restart; they go on being probed whatever the column says, and anything they find
-lowers it again. What a start bounds is the asking that has not happened yet.
-
-What the rule cost was concrete. A venue with no index has no walk, so `first` could only be filled by
-a reconciliation at the end of a completed pass — and okx and bitget ran with files going back months
-under a NULL start, on series whose `last` had been moving the whole time.
-
-**A tip has one writer, and it is not a file arriving.** `first` and `last` are measurements of a
-file and are written by the sighting that saw it. A tip is a claim that a whole *range* was asked
-about, which no single file is evidence of — so it is stated over every series at once, by the pass
-that earned it, and there is one place that happens: **reconciliation, after a pass that finished**.
-
-How the files arrived changes nothing about it. A walk earns the claim by reading its index to the
-end and an update by draining its queue; both then owe the same three answers — how long to wait for
-what is still missing, which bounds the files disagree with, and which series turned out to hold
-nothing. A walk used to state its own tips separately, which was that rule written a second time, in
-a second place, with a second clock.
-
-Both lift and neither lowers, and both are gated on having finished: a walk that left a partition
-unread offered part of a keyspace, an update that stopped mid-drain has questions outstanding, and
-neither has proved anything about the range it did not reach. A tip does not come back.
-
-**Nothing crawls a tip forward any more, and the machinery for doing it safely went with it.** A
-per-file tip has to be contiguous or it buries gaps — answers arrive in whatever order the venue gave
-them — so it could only advance on the period *immediately* above it, then walk up through whatever
-else was already answered, and it had to stop below any period still holding a row in `wip`, since one
-period can be several keys where a venue splits one into numbered parts, and the first of them
-settling says nothing about the rest.
-
-All of that existed to make a per-file tip safe, and none of it was load-bearing. Generation reads the
-run's own cursor, not the tip, so a tip creeping forward mid-pass changed nothing about what was asked
-for — and the pass that finishes lifts every tip to the settled edge regardless of where it crept to.
-What is left is a `wip` read taken off the settle path entirely.
-
-The reason a tip may not move on a key merely *generated* still stands, and it is why generation may
-never touch one: a generated key is a question, and retiring a period nobody asked the venue about
-loses it permanently. That was a real bug: with the tip advancing at generation, a pass left
-thousands of series tipped at yesterday with a quarter of a million keys still unconfirmed beneath
-them, and a `wip` row dropped without settling is never regenerated.
+**Generation never touches a tip.** A generated key is a question, and a tip moved over it would
+claim an answer nobody has given: nothing at or below a tip is generated again.
 
 ### Bounds are buffered, and flushed before a cursor moves
 
@@ -2678,13 +2591,13 @@ re-reads the page that would have corrected it.
 Within that ordering the buffering is free. A buffer lost between page boundaries costs nothing,
 because the page is re-listed from its cursor and rewritten.
 
-
 ### What ends a key: absence, confirmed
 
-**Absence is the only answer that takes a key off the list**, and only once the venue has given it
-more than once. A single 404 is a moment, not a fact: a key probed the instant before it was published
-answers truthfully and is wrong about the archive, and a pass that took the first miss as final would
-let reconciliation retire the whole period without ever asking again.
+**Absence is the only answer that takes a key off the list**, and the core takes it only once the
+venue has given it more than once — unless the adapter's rule answers `'drop'`, which sets the key
+down on that answer. A single 404 is a moment, not a fact: a key probed the instant before it was
+published answers truthfully and is wrong about the archive, and a pass that took the first miss as
+final would let reconciliation retire the whole period without ever asking again.
 
 **How many attempts depends on who said the key was there** — the `existence` the row was parked
 with, never the pass doing the asking:
@@ -2694,42 +2607,39 @@ with, never the pass doing the asking:
 | `confirmed` | 30 | a listing named it, so absence contradicts evidence. A venue mid-write or having a bad minute looks identical from here, and being slow to write a key off costs requests where being quick costs the file |
 | `assumed` | 2 | built from a pattern and a date. Absence is the ordinary answer to a guess, and confirming it thirty times spends thirty requests proving what the first already said — on keyspaces that are mostly empty |
 
-How a venue *spells* absence is the adapter's to say. `404` is absence everywhere; a venue that
-answers otherwise names its statuses in **`notFoundCodes`** — a bucket granting `GetObject` without
-`ListBucket` says `403` rather than admit what it does not hold, and several CDNs do the same
-deliberately. Where the same status also means *we* are being turned away the two separate by headers
-rather than by code, and that is `refusesUs` and `ruleOnFailure` instead: listing such a status would
-read a refusal as a missing file and record absence while being blocked.
+How a venue *spells* absence is the adapter's to say. In the probe, absence is a `404` or a `'drop'`
+and nothing else. Where a status also means *we* are being turned away, the two separate by headers
+rather than by code, through `refusesUs` and `ruleOnFailure`. An adapter may also name further
+absence statuses in **`notFoundCodes`**, and none does: such a status is counted as a miss rather than
+a refusal, and a report's confirmation of a single file reads it as absence, but the probe sets a key
+down only on a `404` or a `'drop'`.
 
-Beyond that, each non-settling answer is put to the adapter first:
+Each non-settling answer is put to the adapter's `ruleOnFailure` first:
 
 | verdict | meaning |
 |---|---|
-| `null` | as you were — a 404 is absence, anything else is not |
-| `'drop'` | this status means absent at this venue, however it is spelled |
+| `null` | as you were — a `404` is absence, confirmed as the table above says; anything else is not |
+| `'drop'` | absent now: the row is spent on this answer, with no confirmation count |
 | `'keep'` | not absence, whatever the status says |
 
-**A rule can ask which pass it is in**, through `surveying(adapter)`, and bybit/secondary is why. On a
-walk its index has already said the file is there, so a `404` contradicts evidence — far more often a
-CDN having a bad few minutes than a withdrawal — and giving up writes the file off for good, because
-the key sits below the tip and only a full refresh would ever build it again. On an update nothing
-promised anything: the key came from a pattern and a date, absence is the ordinary answer to a guess,
-and confirming it a hundred times spends a hundred requests proving what one said. Same status, same
-hook, opposite meanings, so the rule asks rather than treating them alike.
+**A rule can ask which pass it is in**, through `surveying(adapter)`. bybit/secondary uses it to keep
+a key its index named through up to 100 `404`s while a walk is running — more than the core's 30 for
+confirmed rows, because its CDN has bad minutes (see [BYBIT.md](../venues/BYBIT.md)). Outside a walk
+it defers to the core.
 
 The helper is ambient rather than an argument because the question is: an adapter rule is handed one
 answer about one key and cannot be told which pass it belongs to without threading a parameter through
 every caller in between. It is keyed per venue, since one process surveys all of them at once, and
 scoped so that no ending — a throw, a pause, a venue blocking us — leaves a venue looking like it is
-still walking. What it cannot say is where a *row* came from: an update that inherited a walk's
-undrained backlog judges those rows as an update would, which is the same trade the restart already
-makes.
+still walking. It does not follow a row: walked keys an update inherits from an undrained backlog get
+the core's 30 attempts, not bybit's 100.
 
-**Bitget overrules the meaning of a status**, and it has to: its bucket grants `GetObject` without
-`ListBucket`, so every object it has never held answers `403 AccessDenied` — the same status as being
-turned away, separable only by the headers. `ruleOnFailure` reads an S3-served `403` as this venue's
-404. It still takes its three confirmations, because how many times a venue must repeat itself is not
-a venue's business.
+**Bitget's bucket grants `GetObject` without `ListBucket`**, so every object it has never held answers
+`403 AccessDenied` — the same status as being turned away, separable only by the headers. Its
+`ruleOnFailure` answers `'drop'` for an S3-served `403`, so a missing key is set down on its first
+answer and asked again by the next update while its period is above the tip. okx's rule answers
+`'drop'` on every `404`, so its missing keys are set down on the first answer too (see
+[docs/planning/CATALOG.md](../planning/CATALOG.md)).
 
 **Everything else keeps its row, for as long as the service runs.** A 429, a 5xx, a reaped connection
 say nothing whatever about the file, so there is nothing to conclude and no count to run down. The row
@@ -2749,8 +2659,8 @@ reconciliation, not a count and not a clock.
 So **every row in `wip` is outstanding**, which is what makes the backlog a `count(*)` rather than a
 filtered scan of tens of millions of rows per venue.
 
-**Nothing is settled by a clock any more.** `OVERDUE_DAYS` acts exactly once, in reconciliation, over
-a pass that finished — see below. The `abandoned` table went with the rule that filled it.
+**Nothing is settled by a clock.** `OVERDUE_DAYS` acts exactly once, in reconciliation, over a pass
+that finished — see [what a completed pass is worth](#what-a-completed-pass-is-worth).
 
 ### Asking a venue about itself
 
@@ -2764,8 +2674,7 @@ megabyte of instruments is welcome to take its time while a stopped download fai
 retries transport faults, reads the body inside the retry so a truncated one is retried rather than
 thrown, and lets a venue say what a refusal-inside-a-success looks like.
 
-It began as one venue's and is now shared, which is the point: the preamble would have made
-five more. One implementation, seven callers.
+It is `fetchJson` in `metadata.ts`, and every venue's `instruments` hook goes through it.
 
 ### The preamble: asking the venue what it lists
 
@@ -2774,13 +2683,19 @@ symbol listed since the last full pass. A walk finds one by reading the index an
 been built; between those there is only this. Without it, a venue that lists a hundred pairs a month
 quietly stops being current, one pair at a time, until somebody re-walks it.
 
-**It runs to completion before generation starts**, which is the one ordering that matters: a series
-created after the job opened would not be generated for until the pass after next.
+**It runs at the start of every update pass that is not a resume** (`sync.ts`), for every adapter
+with an `instruments` hook — all eight, listing venues included. A walk does not run it: it discovers
+by reading the index. A resumed update skips it: its scopes are already planned, and asking the venue
+again would spend its API calls to learn nothing.
+
+**It runs to completion before generation starts**, which is the one ordering that matters: the
+update's scopes are built from the series that exist when its job opens, so a series created after
+that would wait for the next pass.
 
 An adapter answers with every instrument it lists, across every market, **already spelled the way the
 archive spells it**. That is the same translation `inspectUrl` does for paths, at the same boundary —
 the catalog's `symbol` is defined by the files, so an API answering `btcusdt` against an archive
-writing `BTC-USDT` is the adapter's to reconcile. How many calls it takes is the adapter's business:
+writing `BTC-USDT` is the adapter's to translate. How many calls it takes is the adapter's business:
 binance needs four hosts, htx four endpoints.
 
 `live` is stated rather than inferred. Some venues publish their dead — listing offline symbols
@@ -2788,28 +2703,48 @@ beside online ones, or answering a closed status on request — and taking "abse
 the only signal would read those as alive. Where a venue lists only what it trades,
 everything omitted is not live, which the step works out for itself.
 
-Then three things happen and nothing else:
+Then, in order:
 
-| | |
-|---|---|
-| **listed, no live series** | a series per *active* pattern of that market **that names a symbol and whose keyspace can carry it**, and a `backfill` to earn its tip |
-| **listed, only dead series** | those series revived — `state` back to active — never duplicated. The venue listing it again is new information, and those are the series that would carry anything it now writes |
-| **listed, only series on retired patterns** | current shapes created; the retired ones stay dead |
-| **not listed, or listed as gone** | its series marked `delisted` |
+1. **Tips first.** Every series of the venue with a `first` and no tip is given the period below its
+   `first`. One with neither is logged (`Series with no known start; they will not be checked`) and
+   left alone.
+2. **The listing is checked before anything is written.** An empty listing, or one that fails [the
+   agreement test](#it-refuses-rather-than-guessing), changes nothing.
+3. **Each live instrument with no active series** has its series revived, or gets new ones. Series on
+   retired patterns count as neither: a retired shape is finished whatever the instrument does.
+   - **It has series**: they are revived — `state` back to `active`, the tip raised to the covered
+     floor where it is below it, `last` untouched. The venue listing it again is new information, and
+     those are the series that would carry anything it now writes.
+   - **It has none**: it gets one series per live pattern of its market that names a symbol and whose
+     keyspace can carry it, with its transforms recorded first, its archive spelling from
+     `urlSymbolFor` where the adapter has one, and a tip at the covered floor.
+4. **`state` is written for what the listing spoke about**: `active` where the instrument is listed
+   live, `delisted` otherwise. Only in markets the venue answered about — a list covering spot and
+   silent on options is not a statement that the options are gone, and most venues split their API
+   across endpoints. Never on a retired pattern, and never for a pattern with no `{SYMBOL}`, which no
+   listing can name.
+5. **Backfill** runs for every created or revived series with no `first`.
+
+**The covered floor** is `lastSettled(grain, covered)`, with `covered` the newest tip the venue held
+before the preamble touched anything (the clock, where it held none). A pass that has not run for
+three weeks covered up to three weeks ago, and a series discovered now starts where that pass stopped
+rather than where today is.
+
+**It records no end.** `state` says whether the venue lists an instrument, not where its files stop:
+whether a quiet or delisted series is still generated for is [`open`](#open-when-keys-are-still-generated)'s
+decision, made from bounds the files wrote.
 
 #### The backfill reaches below the tip without ever moving it
 
-A series created here is given its tip **up front**, at the floor the pass covered to, and `backfill`
-then probes *downward* from there for as long as the venue keeps answering. Each period it finds is
-written straight into `file` as settled — a `HEAD` carries size, checksum and last-modified, which is
-the whole of a file row — so history under the floor is reached without anything below the tip ever
-being generated for.
+A series created here is given its tip **up front**, at the covered floor, and `backfill` then probes
+*downward* from the floor for as long as the venue keeps answering. Each period it finds is written
+straight into `file` as settled — a `HEAD` carries size, checksum and last-modified, which is the
+whole of a file row — so history under the floor is reached without anything below the tip ever
+being generated for. It stops at the first period that does not answer, or, logged as an error, at
+the oldest date the catalog holds for the venue.
 
-**The tip does not reverse, here or anywhere.** It is a one-way ratchet in every path, and the
-backfill returns the floor it started from. Reading it as "the tip moves back for a new instrument"
-is the right intuition about the *effect* and the wrong one about the mechanism, and the difference
-shows up the moment somebody asks what re-reads that range later: nothing does. The files are there
-because they were recorded, not because the range is still open.
+**The tip does not reverse, here or anywhere.** The files below it are there because they were
+recorded, not because the range is still open: nothing re-reads that range later.
 
 It runs only for series with no `first` — one request where the instrument is as new as it looks, and
 the only thing that ever recovers history at a venue with no index. A series that already has a start
@@ -2822,8 +2757,8 @@ This step exists to discover instruments and give each one its series, so a patt
 a symbol has nothing for it to branch on: **every instrument handed one generates the identical
 sequence of keys**, and the series are the same series wearing different names. Venue-wide files are
 the case — one object per period carrying every instrument of a market at once — and there the
-dataset *is* the file. The market's `@` series carries it, made by a walk or a seed. So a pattern
-with no `{SYMBOL}` slot is never offered to an instrument.
+dataset *is* the file. The market bundle (`@`) series carries it, made by a walk or a seed. So a
+pattern with no `{SYMBOL}` slot is never offered to an instrument.
 
 **What allowing it costs is not a duplicate, it is a scramble.** `file` is unique on
 `(venue_id, path)` and settles with `DO NOTHING`, so such series never collide — they *partition* the
@@ -2847,96 +2782,90 @@ a key in the other.
 So an adapter may name the category a pattern's keyspace serves (`categoryOf`), a listing carries the
 category it was found under (`Instrument.category`), and a pattern is offered only where the two
 agree. **Both sides have to say something or nothing is refused** — a venue with one archive per
-market names neither and every pattern is offered, exactly as before.
+market names neither and every pattern is offered.
 
 Nothing is derived from the symbol. The endpoint that listed a contract *is* its domicile, known at
 the moment it is read; re-deriving it from a ticker is guesswork that happens to work until a venue
 names a stablecoin BUSD. See [BINANCE.md](../venues/BINANCE.md) for the measurements behind that.
 
-Without it, every newly listed binance perp got 130 series under a tree that has never held one of
-its keys — and a series that has never published has no end to reach, so nothing ever retires it.
-
-**The preamble is the only place a series is retired**, because it is the only place that knows both
-halves of the question:
-
-| the venue | its files | result |
-|---|---|---|
-| still lists it | anything | `active`, any end **cleared** |
-| no longer lists it | still recent | `delisted`, end **cleared** |
-| no longer lists it | stopped | `delisted`, **end recorded** — never generated for again |
-
-Either half alone says nothing. an archive can outlive a listing, so a
-delisting is not an ending; a listed instrument can go quiet for a fortnight and come back, so silence
-is not one either.
-
-"Stopped" means older than the tip by `OVERDUE_DAYS` — and since reconciliation has just lifted that
-tip to `OVERDUE_DAYS` ago, the patience is two windows, about a month. Arbitrary, deliberate, and paid
-once per instrument rather than every pass.
-
-**Only markets the venue answered about.** A list covering spot and silent on options is not a
-statement that the options are gone, and most venues split their API across endpoints — so silence
-retires nothing.
-
 #### It refuses rather than guessing
 
-Before anything is created or retired, the step compares what the venue lists against what the
+Before anything is created or delisted, the step compares what the venue lists against what the
 catalog holds. **A spelling that disagrees is the one failure that is silent and total**: every
 instrument reads as new, so it would create a parallel set of series *and* mark every real one
 delisted, with nothing to show it had happened.
 
-The test is "most of what the venue lists, we have already seen" — never the reverse, since an archive
-holds thousands of symbols a venue stopped listing years ago and a small overlap in that direction is
-correct. Below half it logs the counts and an example and does nothing at all: a venue does not
-relist itself overnight, so anything near a clean split is drift rather than new listings.
+The test is "most of what the venue lists live, we have already seen" — never the reverse, since an
+archive holds thousands of symbols a venue stopped listing years ago and a small overlap in that
+direction is correct. Below half it logs the counts and an example and does nothing at all: a venue
+does not relist itself overnight, so anything near a clean split is drift rather than new listings.
+A catalog that holds nothing for the venue yet has nothing to disagree with, and passes.
 
-### What a completed update pass is worth
+### What a completed pass is worth
 
-A pass is complete when it **generated every URL it owed and drained `wip`**. That is the update's
-equivalent of a walk having read the whole index: a transient failure would still be in the queue, so
-a drained queue means everything left in the record is an answer.
+A pass is complete when it **generated every URL it owed and, where it probes, drained `wip`**. For an
+update that is the equivalent of a walk having read the whole index: a transient failure would still
+be in the queue, so a drained queue means everything left in the record is an answer.
 
-Only then does reconciliation run, once, per venue — two statements:
+Only then does reconciliation run — `reconcile` in `catalog/series.ts`, once per venue, after a walk
+and after an update alike. It works **as of the pass's start, not the clock**: a pass that ran for two
+days asked about the archive as it stood when it began, and reconciling against `now` would claim the
+days it spent running. The start is read off the pass's own run rows, so a resumed pass reconciles as
+of when it first began. Per series, with `START` that start:
 
 ```
-1.  tip    := max(tip, TODAY - OVERDUE_DAYS)       every series
-2.  DELETE                                         where the file table holds nothing for it
+1.  floor := lastSettled(grain, START)                                 START - OVERDUE_DAYS
+    tip   := max(tip, floor, min(last, lastClosed(grain, START)))      the min left out where last is NULL
+2.  no file other than an absent one:
+        nothing in file or wip refers to the series  →  the series is deleted
+        otherwise                                     →  left as it stands
+3.  otherwise:  first, last := the oldest and newest non-absent file dates
 ```
 
-**Bounds are not among them.** Both are written by the sighting that saw the file, as it arrives, so
-there is nothing here to measure a second time. Reconciliation used to fill a missing `first` from
-`MIN(date)`, which meant `last` moved during a pass while `first` waited for the end of one — the two
-columns meaning different things at any given moment.
+The three are counted as `lifted`, `removed` and `corrected` on the `Update finished` or `Walk
+finished` log line.
 
-**The delete is the only removal reconciliation does**, and it asks the file table rather than the
-`first` column. The two agree now, and the column would be the cheaper read — but they agree only for
-rows written since they did, and a catalog still holding series from before that, files and all, would
-have them deleted wholesale by a reader that trusted the column. Nothing ever published means there is
-no end to look for because there was never a beginning, and no request is needed to know it. An end
-for a series that *did* publish needs to know whether the venue still lists it, which only the
-preamble can ask.
+**Step 1 retires an absence for good**, without anyone having tracked which series had a gap:
+everything at or below the floor was asked and waited for, so a real hole, a transient miss that
+settled later, and the dead range below a newly listed instrument's true start all go the same way.
+**A file is proof, and proof outranks patience**: where a series' newest file is above the floor
+there is nothing left to wait for below it, so the tip goes to that file — but never past a period
+that has not closed, since a file in an open period proves that file and not the period. The tip
+never lowers. Step 1 reads `last` as it stood before step 3, so a newest file withdrawn on this pass
+can still lift the tip. After it, a series that found something has its tip at its newest closed
+file or at the floor, whichever is higher, and one that found nothing sits *exactly* at the floor.
 
-**The first is what retires an absence for good**, and it does so without anyone having tracked which
-series had a gap: a real hole, a transient miss that settled later, and the permanent dead range below
-a newly listed instrument's true start all go the same way.
+**Step 2: a series with no files is not a measurement.** A finished pass asked every period the series
+covers and the archive answered for none of them, so the row has nothing to say, and keeping it costs
+`OVERDUE_DAYS` of keys a day. **The listing has no bearing on it**: an instrument the venue lists
+today that has never published is exactly as empty as one it has forgotten, and a retired shape will
+never produce a first file for either. **Deleting is self-correcting**: a symbol still listed on a
+live shape is created again by the next preamble and backfilled — find files and they stay, find none
+and it goes again, until the day something publishes. A symbol that is gone, or a shape that is
+retired, is not recreated (`patternsOf` offers no retired pattern), which is what stops a dead branch
+being probed for ever.
 
-**It only ever raises.** A series whose keys were all found has already carried its own tip up past
-the floor, and is left exactly where it is — those days are settled by having been answered, not by a
-clock, and nothing re-probes them.
+**The delete asks the file table, not `first`**: the file table is authoritative about whether a
+series holds anything, and the column is not trusted for a removal. A series whose files the venue
+withdrew, or with a key still parked, keeps its row, since deleting it would orphan what refers to it.
 
-After it, a series that found something has a tip near yesterday and one that found nothing sits
-*exactly* at the edge.
+**Step 3: the bounds are set to what the files hold, not widened to it.** Everywhere else a bound only
+moves outward, because the evidence is one file; here it is the whole series, so a bound that
+disagrees with it is replaced — the only way a withdrawal narrows one. Each series costs two ordered
+lookups on the `file_series` index, one at each end. `corrected` is expected to be zero.
+
+**Nothing is delisted here.** A quiet series is not a delisted one, and when to stop asking is
+[`open`](#open-when-keys-are-still-generated)'s question, answered from the row each time.
+
+**It yields to the event loop every 1,000 series** (`YIELD_EVERY`), each stretch between yields one
+transaction, so a venue's few hundred thousand series do not hold the process — `/status` included —
+for the length of the loop.
 
 **A pass that did not finish reconciles nothing.** Blocked, paused, a partition that could not be
 read, a venue answering nonsense — all of them return normally and none has checked anything. Lifting
 their tips would assert the last `OVERDUE_DAYS` were asked about when they were not, permanently,
-since a tip does not come back. The pass says so in the log and the next one generates a wider range.
-
-**Reconciliation is as of the pass's own start, not the clock.** A pass that ran for two days asked
-about the archive as it stood when it began, and reconciling against `now` would claim the days it
-spent running. Given the pass's start, a walk's floor is exactly the edge it would have stated for
-itself — `lastSettled(grain, START)` either way — so unifying the two changed no number, only the
-number of places that produce it.
-
+since a tip does not come back. The pass logs `Pass unfinished` (unless it was paused), stays open,
+and is reconciled by whichever run of it finishes.
 
 ### A period published in parts
 
@@ -2970,8 +2899,14 @@ about the arrangement is a convention the core has to honour.
 
 That covers both shapes with one hook. A venue that cannot know how many parts there are names them
 one at a time and reads each answer — bitget's chain ends where the archive does, at the first miss.
-A venue that *can* name them opens with one part and answers the rest in a single reply: gate probes
-hour 00, and a day whose first hour is absent is a day the instrument was not trading.
+
+gate names a period's parts from the period alone: a day's 24 hours, or a snapshot tree's epoch
+stamps across a month (an hour apart in `spot_index`, a minute apart in `options_ticker`). For a
+series with no `first` it asks about all of them at once, since an instrument's first day begins
+mid-period. Otherwise it asks about the first part and, only if that is there, all the rest in one
+reply — gate publishes a day of books whole or not at all (over 40 hourly series, 753 of 769 middle
+days carried all 24 hours and 767 carried hour 00, while none of forty first days carried hour 00),
+so a quiet day costs one request rather than 24.
 
 **A size threshold was the obvious alternative for bitget and is the wrong shape.** It would guess
 where the venue states: one request saved against a silently truncated day.
@@ -2986,16 +2921,16 @@ seen ends the period — the core cannot read a token, so it cannot tell a cycle
 looking, only refuse to go round twice.
 
 **The probe carries it on from there, on settlement and only on settlement.** A part reports back
-when its fate is final: catalogued, or given up on after however many confirmations its venue wants.
-A `404` that another pass will ask about again is still an open question, and a `503` is not an answer
-at all — put either to the hook and the same period is expanded once per attempt. That is also what
-makes the answer a boolean rather than a status: by the time it is asked, there is nothing left to
-interpret.
+when its fate is final: catalogued, or set down as absent — see [what ends a
+key](#what-ends-a-key-absence-confirmed). A `404` the core will ask about again is still an open
+question, and a `503` is not an answer at all — put either to the hook and the same period is
+expanded once per attempt. That is also what makes the answer a boolean rather than a status: by the
+time it is asked, there is nothing left to interpret.
 
 What the hook names is parked before the row that revealed it settles, so a crash between the two
-costs a repeated probe rather than the keys. And because the parts are keys of the same *period*, the
-tip cannot move over a period whose second part is outstanding: the rule tips already follow, needing
-nothing part-specific.
+costs a repeated probe rather than the keys. And because a pass finishes only once `wip` is drained,
+no tip moves over a period while one of its parts is still outstanding — the rule tips already
+follow, needing nothing part-specific.
 
 **A row with no token is never brought back.** That is how a reply without `next` ends a period, and
 it is stored rather than derived: the token is already inside the key, but taking it back out would
