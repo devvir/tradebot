@@ -20,6 +20,16 @@ export interface Config {
    */
   catalogToken:  string;
 
+  /**
+   * The `Host` names (or `host:port`) this service answers API requests for,
+   * from `CATALOG_UI_HOSTS`. Empty means any: a name a browser was pointed at
+   * by DNS rebinding is then served like any other.
+   */
+  allowedHosts:  string[];
+
+  /** How long a forwarded request waits for the service behind it. */
+  upstreamTimeoutMs: number;
+
   /** Where this service listens inside the container. */
   port:         number;
 

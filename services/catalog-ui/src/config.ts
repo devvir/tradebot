@@ -18,11 +18,24 @@ const CATALOG_API = 'http://catalog:8080';
  */
 const PROSPECTOR_API = 'http://prospector:8080';
 
+/**
+ * How long a forwarded request may wait for its answer. Above the catalog's
+ * slowest answers, which run to tens of seconds; past it the page is told the
+ * service did not answer.
+ */
+const UPSTREAM_TIMEOUT_MS = 120_000;
+
+/** `CATALOG_UI_HOSTS`, comma-separated and lower-cased. Empty means any `Host` is served. */
+const hostsOf = (raw: string | undefined): string[] =>
+  (raw ?? '').split(',').map(one => one.trim().toLowerCase()).filter(Boolean);
+
 const loadConfig = (): Config => {
   const config: Config = {
     catalogApi:    (process.env['CATALOG_API']?.trim() || CATALOG_API).replace(/\/$/, ''),
     prospectorApi: PROSPECTOR_API,
     catalogToken:  (process.env['CATALOG_TOKEN'] ?? '').trim(),
+    allowedHosts:  hostsOf(process.env['CATALOG_UI_HOSTS']),
+    upstreamTimeoutMs: UPSTREAM_TIMEOUT_MS,
     port:         CONTAINER_PORT,
   };
 

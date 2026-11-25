@@ -45,7 +45,7 @@ export const send = async <T>(url: string, method: string, body?: unknown): Prom
   });
   const text = await res.text();
 
-  return { status: res.status, body: (text ? JSON.parse(text) : {}) as T };
+  return { status: res.status, body: parsed(text) as T };
 };
 
 /** Anything that changes something. The body is JSON or nothing. */
@@ -190,6 +190,17 @@ const ask = async <T>(url: string, init?: RequestInit): Promise<T> => {
 
   // Done with nothing to say — a removal answers so — is an answer, and not one to parse.
   return (text ? JSON.parse(text) : undefined) as T;
+};
+
+/** A body as `send` hands it back: its JSON, `{}` when empty, and `{ error }` holding its start when not JSON. */
+const parsed = (text: string): unknown => {
+  if (! text) return {};
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { error: text.slice(0, 300) };
+  }
 };
 
 const detail = (text: string): string => {
