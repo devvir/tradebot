@@ -1,3 +1,4 @@
+import { retry } from '@tradebot/utils';
 import config from './config';
 
 /** What prospector answered: its status and its body. */
@@ -27,8 +28,9 @@ export interface Sending {
  * caller to relay or to read. Throws where no answer came, or none in time.
  *
  * **A connection that fails is tried again, up to three attempts in all**,
- * with a short wait between: prospector closes idle keep-alive connections, so
- * a request now and then lands on one just as it goes. An idempotent request is
+ * with a short wait between, doubled each time: prospector closes idle
+ * keep-alive connections, so a request now and then lands on one just as it
+ * goes. An idempotent request is
  * tried again on a connection refused, reset or closed; any other only on a
  * connection refused, which it certainly never reached prospector over. An answer is never retried
  * — a status is prospector's verdict — and neither is a call that timed out,
@@ -38,27 +40,26 @@ export const send = async (method: string, path: string, body?: unknown, sending
   const timeoutMs  = sending.timeoutMs ?? config.prospectorMs;
   const idempotent = sending.idempotent ?? method !== 'POST';
 
-  for (let attempt = 1; ; attempt++) {
-    try {
-      const answer = await fetch(`${config.prospectorApi}${path}`, {
-        method,
-        headers: {
-          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
-          ...(config.token ? { 'x-catalog-token': config.token } : {}),
-        },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-        signal: AbortSignal.timeout(timeoutMs),
-      });
+  return retry(async () => {
+    const answer = await fetch(`${config.prospectorApi}${path}`, {
+      method,
+      headers: {
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        ...(config.token ? { 'x-catalog-token': config.token } : {}),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
 
-      const text = await answer.text();
+    const text = await answer.text();
 
-      return { status: answer.status, body: text === '' ? null : parsed(text) };
-    } catch (err) {
-      if (attempt >= ATTEMPTS || ! (idempotent ? DROPPED : UNSENT).has(codeOf(err))) throw err;
-
-      await new Promise(done => setTimeout(done, config.retryMs * attempt));
-    }
-  }
+    return { status: answer.status, body: text === '' ? null : parsed(text) };
+  }, {
+    attempts:    ATTEMPTS,
+    baseMs:      config.retryMs,
+    jitter:      'none',
+    shouldRetry: err => (idempotent ? DROPPED : UNSENT).has(codeOf(err)),
+  });
 };
 
 // ── Internals ─────────────────────────────────────────────────────────────────

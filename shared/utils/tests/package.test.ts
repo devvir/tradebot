@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import * as root from '../src';
+import * as env from '../src/env';
+import * as retry from '../src/retry';
 import * as testing from '../src/testing';
 
 const PKG = join(__dirname, '..');
@@ -26,8 +28,14 @@ describe('package surface', () => {
     expect(Object.keys(testing).sort()).toEqual(['loadTestingEnv', 'startRabbitMQ', 'stopRabbitMQ']);
   });
 
+  it('serves the env and retry helpers from the root entry and from entries of their own', () => {
+    for (const [name, value] of Object.entries({ ...env, ...retry })) expect(root).toHaveProperty(name, value);
+  });
+
   it.each([
     ['.', 'src/index.ts'],
+    ['./env', 'src/env.ts'],
+    ['./retry', 'src/retry.ts'],
     ['./testing', 'src/testing/index.ts'],
   ])('maps the %s entry, code and types, to the build of %s', (subpath, source) => {
     const entry = manifest.exports[subpath];
@@ -38,9 +46,13 @@ describe('package surface', () => {
     expect(existsSync(join(PKG, source))).toBe(true);
   });
 
-  it('maps the testing subpath for type resolution without package exports', () => {
-    const [target] = manifest.typesVersions['*'].testing;
+  it.each([
+    ['env', 'src/env.ts'],
+    ['retry', 'src/retry.ts'],
+    ['testing', 'src/testing/index.ts'],
+  ])('maps the %s subpath for type resolution without package exports', (subpath, source) => {
+    const [target] = manifest.typesVersions['*'][subpath];
 
-    expect(sourceOf(target)).toBe(join(PKG, 'src/testing/index.ts'));
+    expect(sourceOf(target)).toBe(join(PKG, source));
   });
 });

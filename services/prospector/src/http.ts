@@ -1,5 +1,6 @@
 import { logger } from '@devvir/service-kit';
 import { pass } from '@devvir/netgate';
+import { backoffDelay } from '@tradebot/utils';
 import { labelOf, paceFor } from './pace';
 import { countAsked, countSent } from './counts';
 import { declined, REDIRECT_REFUSED } from './deliver';
@@ -258,6 +259,11 @@ export const fetchHead = async (adapter: Adapter, url: string, stop: StopSignal 
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
+/**
+ * `fetchPage` and `fetchHead` loop over their attempts themselves rather than
+ * through `retry`: a venue's `Retry-After` takes the place of the back-off, and
+ * `stop` is a question each wait asks, not an `AbortSignal`.
+ */
 const ATTEMPTS = 5;
 const BASE_MS  = 500;
 const MAX_MS   = 30_000;
@@ -458,8 +464,7 @@ const waitFor = async (ms: number, url: string, stop: StopSignal): Promise<void>
 const STOP_POLL_MS = 250;
 
 /** Exponential with full jitter, so retries across scopes do not synchronise. */
-const delayFor = (attempt: number): number =>
-  Math.floor(Math.random() * Math.min(BASE_MS * 2 ** (attempt - 1), MAX_MS));
+const delayFor = (attempt: number): number => backoffDelay(attempt, { baseMs: BASE_MS, maxMs: MAX_MS });
 
 /**
  * How long a venue asked us to wait, in either form the header takes — a count of

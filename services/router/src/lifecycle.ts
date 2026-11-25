@@ -1,5 +1,6 @@
 import type { ServerResponse } from 'node:http';
 import { logger, RabbitMQ } from '@devvir/service-kit';
+import { retry } from '@tradebot/utils';
 import type { Service } from '@devvir/service-kit';
 import type { Routing } from './consumer';
 import type { BackpressureGate } from './backpressure';
@@ -39,20 +40,15 @@ export interface Lifecycles {
 export const connectConsumer = async (url: string): Promise<RabbitMQ.Broker> => {
   const broker = new RabbitMQ.Broker(url, { retries: 0, managed: true });
 
-  for (let attempt = 1; ; attempt++) {
-    try {
-      await broker.ensureConnected();
+  await retry(() => broker.ensureConnected(), {
+    attempts: CONNECT_ATTEMPTS,
+    baseMs:   CONNECT_BASE_DELAY_MS,
+    maxMs:    CONNECT_MAX_DELAY_MS,
+    jitter:   'none',
+    onRetry:  (err, attempt, retryInMs) => logger.warn({ err, attempt, retryInMs }, 'Could not connect the consumer to RabbitMQ; retrying'),
+  });
 
-      return broker;
-    } catch (err) {
-      if (attempt >= CONNECT_ATTEMPTS) throw err;
-
-      const retryInMs = Math.min(CONNECT_BASE_DELAY_MS * 2 ** (attempt - 1), CONNECT_MAX_DELAY_MS);
-
-      logger.warn({ err, attempt, retryInMs }, 'Could not connect the consumer to RabbitMQ; retrying');
-      await delay(retryInMs);
-    }
-  }
+  return broker;
 };
 
 /**
@@ -132,5 +128,3 @@ const closeQuietly = async (name: string, broker: RabbitMQ.Broker): Promise<void
     logger.warn({ err, broker: name }, 'Could not close the broker');
   }
 };
-
-const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));

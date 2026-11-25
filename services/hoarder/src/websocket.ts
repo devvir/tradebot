@@ -19,6 +19,12 @@ const KNOWN_NETWORK_CODES = new Set([
 /** A handshake answered with a rate-limit status; the status is the first group. */
 const RATE_LIMITED = /Unexpected server response: (418|429)\b/;
 
+/**
+ * The back-off is held as the next delay rather than as a count of failures, as
+ * `@tradebot/utils`' `backoffDelay` counts them, because two events set it
+ * outright: a stable socket puts it back to the start, and a rate-limited
+ * handshake puts it at the cap.
+ */
 interface ReconnectState {
   delayMs: number;
   timer:   NodeJS.Timeout | null;

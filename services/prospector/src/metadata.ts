@@ -136,6 +136,12 @@ const METADATA_ANSWER_MS = 20_000;
  * notice by other means.
  */
 const METADATA_STALL_MS = 10_000;
+
+/**
+ * The wait after the n-th failed attempt is n times this: growing linearly
+ * rather than doubling as `backoffDelay` does, so the six waits come to about a
+ * minute where doubling would take three.
+ */
 const METADATA_PAUSE_MS = 3_000;
 
 /** Between metadata calls, because a handful in a row is already too many. */

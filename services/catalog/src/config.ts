@@ -33,7 +33,7 @@ const PROSPECTOR_MS = 15_000;
  */
 const SETTLE_MS = 300_000;
 
-/** The wait before a call to prospector is tried again, longer by as much each time. */
+/** The wait before a call to prospector is tried again, doubled each time. */
 const RETRY_MS = 500;
 
 const loadConfig = (): Config => {

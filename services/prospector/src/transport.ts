@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { logger } from '@devvir/service-kit';
+import { backoffDelay } from '@tradebot/utils';
 import { deliver } from './deliver';
 import { fault } from './faults';
 import type { Carried, Fault, Lane, PageRead, Receipt, Slot } from './types';
@@ -176,7 +177,7 @@ const open = (slot: Slot): void => {
       return;
     }
 
-    const inMs = Math.min(RESPAWN_UP_TO_MS, RESPAWN_FROM_MS * 2 ** (slot.exits - 1));
+    const inMs = backoffDelay(slot.exits, { baseMs: RESPAWN_FROM_MS, maxMs: RESPAWN_UP_TO_MS, jitter: 'none' });
 
     logger.error({ code, lost, inMs }, 'Transport worker exited; starting another');
 

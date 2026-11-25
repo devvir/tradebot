@@ -1,4 +1,5 @@
 import { logger } from '@devvir/service-kit';
+import { backoffDelay } from '@tradebot/utils';
 import config from './config';
 import type { BucketPage, Report, ReportAnswer } from './types';
 
@@ -97,6 +98,9 @@ let away: { since: number; cause: string } | null = null;
  *
  * **Said once for the whole service**, as the catalog goes and as it comes
  * back, however many venues were waiting on it.
+ *
+ * A loop of its own rather than `retry`, which counts a fixed number of
+ * attempts: here the attempts run out only once hauler is halted.
  */
 const ask = async <T>(path: string, init: RequestInit = {}, lensed = true): Promise<T> => {
   for (let attempt = 1; ; attempt++) {
@@ -119,7 +123,7 @@ const ask = async <T>(path: string, init: RequestInit = {}, lensed = true): Prom
         logger.warn({ cause: away.cause }, 'The catalog is not answering — waiting for it');
       }
 
-      await new Promise(done => setTimeout(done, Math.min(MAX_WAIT_MS, RETRY_MS * 2 ** (attempt - 1))));
+      await new Promise(done => setTimeout(done, backoffDelay(attempt, { baseMs: RETRY_MS, maxMs: MAX_WAIT_MS, jitter: 'none' })));
     }
   }
 };

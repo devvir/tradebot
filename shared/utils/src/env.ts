@@ -1,3 +1,5 @@
+// Served by the root entry, and as `@tradebot/utils/env`, which loads this module alone.
+
 import { readFileSync } from 'node:fs';
 
 /** The assignments of one .env file, as written. */

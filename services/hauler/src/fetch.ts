@@ -1,7 +1,7 @@
 import { basename, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { logger } from '@devvir/service-kit';
-import { sizeOf } from '@tradebot/utils';
+import { backoffDelay, sizeOf } from '@tradebot/utils';
 import { DiskError, discard, etagAgrees, isDigest, md5, measure, replace, touch, writePartial } from './store';
 import { backAt, delivered, faltered, hostFor, mainOf, refused } from './hosts';
 import { fetchDue, forgetUnlike, hold, servedUnlike, taken } from './held';
@@ -524,8 +524,7 @@ const settles = (file: Haulable, bytes: number, digest: string): boolean =>
   (file.size === undefined || file.size === bytes) && (! isDigest(file.etag) || etagAgrees(file.etag, digest));
 
 /** Exponential with full jitter, so retries across files do not synchronise. */
-const delayFor = (attempt: number): number =>
-  Math.floor(Math.random() * BASE_MS * 2 ** (attempt - 1));
+const delayFor = (attempt: number): number => backoffDelay(attempt, { baseMs: BASE_MS });
 
 /** How long a wait sleeps at most before it looks again at whether it is to stop. */
 const WAKE_MS = 1_000;

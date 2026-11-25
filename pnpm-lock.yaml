@@ -197,6 +197,9 @@ importers:
 
   dev/tooling:
     dependencies:
+      '@tradebot/utils':
+        specifier: workspace:*
+        version: link:../../shared/utils
       amqplib:
         specifier: ^0.10.9
         version: 0.10.9

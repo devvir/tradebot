@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { parseEnv, type EnvFile } from '@tradebot/utils/env';
 import { warn } from '../ui/logger';
 
 // Paths are identical whether running from src/ or dist/ since both sit at
@@ -7,103 +8,17 @@ import { warn } from '../ui/logger';
 const ROOT_DIR = path.resolve(__dirname, '../../../../..');
 const TOOLING_DIR = path.resolve(__dirname, '../../..');
 
-/** What one .env file sets, and which of its keys hold a single-quoted, never-expanded value. */
-interface EnvFile {
-  values: Record<string, string>;
-  literal: Set<string>;
-}
-
-const ASSIGNMENT = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_.-]*)\s*=(.*)$/;
-
-/** Nothing, or a comment, after a closing quote. */
-const AFTER_QUOTE = /^\s*(?:#.*)?$/;
-
-const ESCAPES: Record<string, string> = { n: '\n', '"': '"', '\\': '\\' };
-
-/**
- * One value as written after `=`, by docker compose's .env rules.
- *
- * - A value in single quotes is taken as written. One in double quotes has `\n`, `\"` and `\\`
- *   unescaped; any other backslash is kept as written, `\t` included. Either may hold `#`, and may
- *   be followed by a `#` comment.
- * - An unquoted value ends at its first ` #` (a value character, a space, then `#`), and is
- *   trimmed. Any other `#` is part of the value: one after a tab, one with no space before it, and
- *   one with nothing before it, so `KEY=   # note` sets KEY to `# note`.
- * - A quote that does not close the value, or is followed by more than a comment, is read as an
- *   unquoted value.
- */
-function parseValue(raw: string): { value: string; quoted: "'" | '"' | null } {
-  const text = raw.trimStart();
-  const quote = text[0];
-
-  if (quote === "'") {
-    const end = text.indexOf("'", 1);
-
-    if (end !== -1 && AFTER_QUOTE.test(text.slice(end + 1))) {
-      return { value: text.slice(1, end), quoted: "'" };
-    }
-  } else if (quote === '"') {
-    let value = '';
-
-    for (let i = 1; i < text.length; i++) {
-      const ch = text[i];
-
-      if (ch === '\\' && i + 1 < text.length) {
-        const next = text[i + 1];
-        value += ESCAPES[next] ?? ch + next;
-        i++;
-      } else if (ch === '"') {
-        if (AFTER_QUOTE.test(text.slice(i + 1))) return { value, quoted: '"' };
-        break;
-      } else {
-        value += ch;
-      }
-    }
-  }
-
-  // Unquoted, or a quote that does not close the value.
-  const comment = text.indexOf(' #');
-
-  return { value: (comment === -1 ? text : text.slice(0, comment)).trimEnd(), quoted: null };
-}
-
+/** What one .env file sets, `parseEnv`'s reading of it; nothing for a file that does not exist. */
 function readEnvFile(filePath: string): EnvFile {
-  const file: EnvFile = { values: {}, literal: new Set() };
+  if (! fs.existsSync(filePath)) return { values: {}, literal: new Set() };
 
-  if (! fs.existsSync(filePath)) return file;
-
-  for (const line of fs.readFileSync(filePath, 'utf-8').split(/\r?\n/)) {
-    if (/^\s*(?:#|$)/.test(line)) continue;
-
-    // Lines without a `KEY=` assignment are skipped.
-    const match = ASSIGNMENT.exec(line);
-
-    if (! match) continue;
-
-    const [, key, raw] = match;
-    const { value, quoted } = parseValue(raw);
-
-    file.values[key] = value;
-
-    if (quoted === "'") file.literal.add(key);
-    else file.literal.delete(key);
-  }
-
-  return file;
+  return parseEnv(fs.readFileSync(filePath, 'utf-8'));
 }
 
 /**
- * The variables a .env file sets, `{}` for a file that does not exist. Lines are read by docker
- * compose's .env grammar for `KEY=value` lines, optionally prefixed with `export`; blank lines,
- * lines whose first non-blank character is `#`, and lines of any other form are skipped. A key set
- * twice takes its last value. `parseValue` gives the rules for quoting and inline comments.
- * `${VAR}` references are left as written.
- *
- * This is a parser of its own rather than `@tradebot/utils`' `parseEnvFile`, because the files it
- * reads are the ones docker compose reads, and a value must come out as compose gives it to the
- * containers. The two grammars differ on inline comments: here only ` #` starts one in an unquoted
- * value (so `KEY=x<tab># c` keeps `x<tab># c`), and a `#` may follow a closing quote directly
- * (`KEY="a"#c` sets `a`).
+ * The variables a .env file sets, `{}` for a file that does not exist, read by docker compose's
+ * .env grammar as `@tradebot/utils`' `parseEnv` gives it, so a value comes out as compose gives it
+ * to the containers. `${VAR}` references are left as written.
  */
 function parseEnvFile(filePath: string): Record<string, string> {
   return readEnvFile(filePath).values;
@@ -181,6 +96,8 @@ export interface EnvDirs {
  * once. Values the shell exported, and single-quoted values, are used as given. A key whose
  * references lead back to itself, directly or through other keys, keeps its value as written, as
  * does every other key on that cycle; a key that only refers to one of them takes that value.
+ * The expansion is done here, over the merged layers, rather than file by file as
+ * `@tradebot/utils`' `parseEnvFile` does, because a reference may name a key another layer sets.
  */
 export function loadEnv(
   additionalEnvPath: string | null = null,

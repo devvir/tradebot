@@ -9,6 +9,14 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./env": {
+      "types": "./dist/env.d.ts",
+      "default": "./dist/env.js"
+    },
+    "./retry": {
+      "types": "./dist/retry.d.ts",
+      "default": "./dist/retry.js"
+    },
     "./testing": {
       "types": "./dist/testing/index.d.ts",
       "default": "./dist/testing/index.js"
@@ -17,6 +25,8 @@
   },
   "typesVersions": {
     "*": {
+      "env": ["dist/env.d.ts"],
+      "retry": ["dist/retry.d.ts"],
       "testing": ["dist/testing/index.d.ts"]
     }
   },

@@ -44,7 +44,8 @@ const startTestServices = (config: TestServicesConfig): void => {
       return;
     } catch (err) {
       if (attempt === maxAttempts) throw err;
-      // Docker's IPAM can fail under concurrent compose starts — brief pause before retry
+      // Docker's IPAM can fail under concurrent compose starts — brief pause before retry.
+      // Blocking, as the whole start is, so the async `retry` does not serve here.
       pause(attempt * 2000);
     }
   }

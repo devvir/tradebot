@@ -1,3 +1,4 @@
+import { retry } from '@tradebot/utils';
 import config from './config';
 import { idOf } from './keys';
 import type { ListedSlice, Partition, PartitionKey } from './types';
@@ -65,17 +66,13 @@ const RETRY_MS = 2_000;
  * One request, tried again where the connection failed. An answer — any
  * status — is the catalog's verdict and is not retried.
  */
-const ask = async <T>(path: string): Promise<T> => {
-  for (let attempt = 1; ; attempt++) {
-    try {
-      return await once<T>(path);
-    } catch (err) {
-      if (! (err instanceof TypeError) || attempt >= ATTEMPTS) throw err;
-
-      await new Promise(done => setTimeout(done, RETRY_MS * 2 ** (attempt - 1)));
-    }
-  }
-};
+const ask = <T>(path: string): Promise<T> =>
+  retry(() => once<T>(path), {
+    attempts:    ATTEMPTS,
+    baseMs:      RETRY_MS,
+    jitter:      'none',
+    shouldRetry: err => err instanceof TypeError,
+  });
 
 const once = async <T>(path: string): Promise<T> => {
   const res = await fetch(`${config.catalogApi}${path}`, {

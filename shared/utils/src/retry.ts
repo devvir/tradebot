@@ -1,3 +1,5 @@
+// Served by the root entry, and as `@tradebot/utils/retry`, which loads this module alone.
+
 /**
  * How a wait is spread around its exponential value `d`:
  *   - `'full'`: anywhere in `[0, d)`, so callers retrying together do not wake together

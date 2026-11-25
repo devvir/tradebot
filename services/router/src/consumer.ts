@@ -1,4 +1,5 @@
 import { logger, RabbitMQ } from '@devvir/service-kit';
+import { backoffDelay } from '@tradebot/utils';
 import type { Route, RouteDestination, RoutingKeyConfig, Config } from './types';
 import type { BackpressureGate } from './backpressure';
 import { formatRoute } from './routes';
@@ -389,7 +390,8 @@ const tracked = () => {
 };
 
 /** The back-off before retrying a message that has failed `failed` times. */
-const retryDelay = (failed: number): number => Math.min(RETRY_BASE_DELAY_MS * 2 ** (failed - 1), RETRY_MAX_DELAY_MS);
+const retryDelay = (failed: number): number =>
+  backoffDelay(failed, { baseMs: RETRY_BASE_DELAY_MS, maxMs: RETRY_MAX_DELAY_MS, jitter: 'none' });
 
 /** How many times routing the message has failed before, by ATTEMPTS_HEADER. */
 const attemptsOf = (msg: RabbitMQ.RawMessage): number => {

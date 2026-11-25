@@ -1,4 +1,5 @@
 import { logger } from '@devvir/service-kit';
+import { backoffDelay } from '@tradebot/utils';
 import { fault } from './faults';
 import {
   advanceRun,
@@ -1034,7 +1035,7 @@ const sweep = async (
           logger.warn({ ...fault(err), venue: labelOf(adapter), scope: short, attempts: attempt },
             'A page keeps failing; still trying');
 
-        await retryWait(Math.min(RETRY_MAX_MS, RETRY_MS * 2 ** (attempt - 1)));
+        await retryWait(backoffDelay(attempt, { baseMs: RETRY_MS, maxMs: RETRY_MAX_MS, jitter: 'none' }));
 
         // Told to stop while it waited: where it stands is on disk, so it simply leaves.
         if (stopped()) return { requests, found, closed: false };

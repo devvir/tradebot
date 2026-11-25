@@ -28,7 +28,7 @@ export type Config = {
   /** How long a report's settlement waits for prospector's answer before it is given up. */
   settleMs:      number;
 
-  /** The wait before a call to prospector is tried again, longer by as much each time. */
+  /** The wait before a call to prospector is tried again, doubled each time. */
   retryMs:       number;
 };
 
