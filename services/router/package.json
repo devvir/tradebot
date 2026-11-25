@@ -15,5 +15,8 @@
   "dependencies": {
     "@devvir/service-kit": "workspace:*",
     "@tradebot/utils": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "~22.20.5"
   }
 }

@@ -6,7 +6,7 @@ export default mergeConfig(
   defineConfig({
     test: {
       setupFiles: ['./tests/setup.ts'],
-      onConsoleLog: () => false,
+      onConsoleLog: (_log, type) => type === 'stderr',
     },
   })
 );

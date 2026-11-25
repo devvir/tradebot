@@ -6,12 +6,14 @@
  *   - pipeBroker  — declares E2E exchange bindings then stays idle
  *
  * Message retrieval uses channel.get() (pull-based) to avoid lingering consumers between tests.
+ * Without a reachable docker daemon there is no broker, and the whole suite skips.
  */
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { RabbitMQ } from '@devvir/service-kit';
 import { loadConfig } from '../src/config';
 import type { Config } from '../src/types';
+import { dockerUnavailable } from './docker';
 
 vi.mock('@devvir/service-kit', async (importOriginal) => ({
   ...await importOriginal<typeof import('@devvir/service-kit')>(),
@@ -101,7 +103,7 @@ const getMessages = async (broker: RabbitMQ.Broker, queueName: string, count: nu
 
 // ── Suites ───────────────────────────────────────────────────────────────────
 
-describe('Pipe integration tests', () => {
+describe.skipIf(!! dockerUnavailable)('Pipe integration tests', () => {
 
   // ── Fanout ─────────────────────────────────────────────────────────────────
 
