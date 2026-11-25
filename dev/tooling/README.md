@@ -1,394 +1,138 @@
-# TradeBot Development Tools
+# TradeBot dev tools
 
-Comprehensive CLI tooling for development, debugging, and monitoring of the TradeBot monorepo. Each tool is designed to improve developer experience by providing quick access to common operations.
+`./tools` is the repo's developer command line. It runs on the host, not in a container, and holds
+four commands: `rabbit`, `monitor`, `cold` and `remote`.
 
-## Quick Start
+## Running it
+
+`./tools` runs the built package, `dev/tooling/dist/index.js`, so build it first and again after
+changing its source:
 
 ```bash
-# Interactive menu (no arguments)
-./tools
-
-# Run a specific tool
-./tools rabbit --list         # RabbitMQ queue list
-./tools remote sync-env       # Push .env files to remote
+pnpm --filter @tradebot/tooling build
+./tools                      # interactive menu
+./tools rabbit --list        # a command directly
+./tools <command> --help     # a command's options
 ```
 
-## Global Options
+Without arguments, and with stdin a terminal, `./tools` opens a menu of the commands; for `cold` it
+then asks which subcommand. Arguments that are only `-e`/`-m` options still open the menu and apply
+to the command picked from it.
 
-All tools support these global flags:
+`./tools` runs with the repository root as its working directory, wherever it is called from.
 
-```bash
--e, --env <path>    Load additional .env file (overrides root and module .env)
--m, --module <name> Also load this module's .env (modules/<name>/.env)
--v, --verbose       Enable verbose/debug output
---help              Show help for specific command
-```
+Inside `dev/tooling`, `pnpm dev <args>` runs the source through ts-node without a build, and
+`pnpm test` runs the tests.
 
-Example:
+## Environment
 
-```bash
-./tools -e .env.local rabbit --list
-```
+Before any command runs, the tools load `.env` files into the environment. From lowest to highest
+precedence:
 
----
+1. `<repo>/.env`
+2. with `-m <name>`: `modules/<name>/.env`, else the one `modules/<group>/<name>/.env`
+   (`-m archives` and `-m collect/archives` both name `modules/collect/archives/.env`)
+3. `dev/tooling/.env` (see `dev/tooling/.env.example`)
+4. with `-e <path>`: that file
+5. what the shell exported
 
-## RabbitMQ Tool (`rabbit`, `amqp`)
+A missing root or tooling `.env` is skipped. A missing `-e` file, or a `-m` name that matches no
+module, several modules, or a module without a `.env`, stops the command with an error. Relative
+`-e` paths are read from the working directory (the repository root under `./tools`).
 
-Monitor RabbitMQ queues, view messages, and stream queue activity in real-time.
-
-### Usage
-
-```bash
-./tools rabbit [queue] [options]
-```
-
-### Options
-
-- `[queue]` - Optional queue name to inspect
-- `-l, --list` - List all queues with message counts and consumer info
-- `-w, --watch` - Watch queue and stream new messages (requires queue name)
-- `--messages <count>` - Number of recent messages to fetch (default: 10)
-
-### Examples
+`${VAR}` references in file values are expanded against the merged result; an unset one becomes
+empty, with a warning. Single-quoted values and values the shell exported are used as written.
 
 ```bash
-# List all queues
-./tools rabbit --list
-
-# Fetch 10 recent messages from queue
-./tools rabbit broadcast
-
-# Fetch custom amount of messages
-./tools rabbit trades --messages 20
-
-# Stream messages in real-time
-./tools rabbit broadcast --watch
-
-# Watch with message limit
-./tools rabbit quotes --watch --messages 5
-```
-
-### Queue Information
-
-When listing queues (`--list`), you'll see:
-
-- **Name** - Queue name
-- **Messages** - Total pending messages
-- **Ready** - Messages ready for consumption
-- **Consumers** - Number of active consumers
-
-### Watching Messages
-
-With `--watch` flag:
-- Messages are streamed in real-time as they arrive
-- Each message shows timestamp and content
-- Messages are not consumed (they remain in the queue)
-- Press Ctrl+C to stop watching
-
-### Message Display
-
-Messages are displayed as:
-- JSON messages are formatted for readability
-- Raw text messages are shown as-is
-- Each message includes a timestamp
-
-### Configuration
-
-- **RabbitMQ URL**: `QUEUE_URL` environment variable (default: `amqp://guest:guest@localhost:5672`)
-- **Management API**: `RABBITMQ_MGMT_URL` (default: `http://localhost:15672/api`)
-
----
-
-## Monitor Tool (`monitor`, `mon`)
-
-Live dashboard showing all running Docker containers and RabbitMQ queue health. Designed to run continuously in a dedicated terminal.
-
-### Usage
-
-```bash
-./tools monitor [options]
-```
-
-### Options
-
-- `-i, --interval <seconds>` - Refresh interval in seconds (default: `3`)
-
-### Examples
-
-```bash
-# Default refresh every 3s
-./tools monitor
-
-# Faster refresh
-./tools monitor -i 1
-
-# Slower refresh to reduce noise
-./tools monitor -i 10
-```
-
-### Container Table
-
-Containers are grouped by Docker Compose project. For each container:
-
-| Column | Description |
-|--------|-------------|
-| **ID** | Short container ID (12 chars) |
-| **NAME** | Container name, prefixed with green ● (running) or red ● (stopped) |
-| **HEALTH** | Health status from Docker healthcheck (healthy / unhealthy / starting) |
-| **UPTIME** | Time since the container last started — a restart resets it |
-| **CPU** | CPU usage percentage |
-| **MEMORY** | Memory used / limit (percentage) |
-| **RESTARTS** | Restart count (yellow if > 0) |
-| **LAST LOG** | Time since last log line was emitted |
-
-### RabbitMQ Section
-
-RabbitMQ instances are **auto-discovered** from running Docker containers — no configuration needed. Each instance with port 15672 mapped to the host gets its own section.
-
-| Column | Description |
-|--------|-------------|
-| **QUEUE** | Queue name |
-| **VHOST** | Virtual host |
-| **READY** | Messages ready (yellow if > 0) |
-| **UNACKED** | Unacknowledged messages (red if > 0) |
-| **TOTAL** | Total messages |
-| **CONSUMERS** | Active consumers |
-| **PUBLISH/s** | Publish rate |
-| **DELIVER/s** | Delivery rate |
-| **STATE** | Queue state |
-
-### Credentials
-
-RabbitMQ management API credentials are read from:
-- `QUEUE_USER` (default: `guest`)
-- `QUEUE_PASS` (default: `guest`)
-
-Override per-project with `-e` if credentials differ.
-
----
-
-## Remote Tool (`remote`)
-
-Remote server operations. One subcommand: `sync-env` pushes local `.env` files to a remote host. `remote` alone runs it.
-
-### Usage
-
-```bash
-./tools remote sync-env
-./tools remote          # the same
-```
-
----
-
-### `remote sync-env`
-
-Finds all `.env` files in the monorepo and copies each to the corresponding path on a remote server via `scp`, preserving directory structure relative to the project root.
-
-Excludes `node_modules/`, `dist/`, and `.git/` directories from the search.
-
-```bash
-# Push all .env files to a remote server
-./tools remote sync-env
-# Prompt: Remote destination (user@host:/remote/path): deploy@10.0.0.1:/srv/tradebot
-```
-
-For each file, the equivalent remote path is created with `ssh mkdir -p` before the transfer.
-
----
-
-## Environment Configuration
-
-The tooling package loads environment variables in this order (later overrides earlier):
-
-1. **Root .env** - `/tradebot/.env` (lowest priority)
-2. **Module .env** - `/dev/tooling/.env`
-3. **Additional .env** - Via `-e` flag
-4. **Process environment** - Already-set env vars (highest priority)
-
-### Example - Using Custom .env
-
-```bash
-# Use development config
-./tools -e .env.dev rabbit --list
-
-# Use staging config
 ./tools -e .env.staging monitor
-
-# Multiple layers
-./tools -e .env.local cold audit
+./tools -m archives cold stats
 ```
 
-### Required Environment Variables
+Each command's own variables are listed with the command below; `cold`'s are in
+[docs/tooling/COLD.md](../../docs/tooling/COLD.md#configuration).
 
-| Variable | Example | Tools | Default |
-|----------|---------|-------|---------|
-| `QUEUE_URL` | `amqp://guest:guest@localhost:5672` | rabbit | `amqp://guest:guest@localhost:5672` |
-| `RABBITMQ_MGMT_URL` | `http://localhost:15672/api` | rabbit | `http://localhost:15672/api` |
+## `rabbit` (alias `amqp`)
 
----
-
----
-
-## Interactive Menu
-
-Run without arguments to get an interactive menu:
+Inspects RabbitMQ queues without taking anything from them.
 
 ```bash
-./tools
+./tools rabbit --list                 # every queue: messages, ready, consumers
+./tools rabbit <queue>                # the 10 oldest messages
+./tools rabbit <queue> --messages 50  # the 50 oldest
+./tools rabbit <queue> --watch        # new messages until Ctrl+C
+./tools rabbit <queue> --watch --messages 5   # stop after 5
 ```
 
-This displays:
-- List of all available tools
-- Tool descriptions
-- Selectable via arrow keys
-- Press Enter to select a tool
+- **Fetch** (the default) takes up to `--messages` (default 10) messages from the head of the queue,
+  prints them, and requeues all of them. The queue keeps them, marked redelivered. A stream queue
+  cannot be fetched from and is refused.
+- **`--watch`** prints messages as they are published. For a classic or quorum queue it binds a
+  private, auto-deleted queue to the same exchanges with the same routing keys and reads that copy,
+  so the queue and its consumers are not touched. Messages published straight to the queue through
+  the default exchange are not seen, and a queue bound to no other exchange has nothing to watch. A
+  stream queue is read from its next offset. `--messages` stops the watch after that many.
+- JSON bodies are pretty-printed; anything else is printed as is.
 
----
+`--list` and `--watch` need the RabbitMQ management API.
 
-## Architecture
+**Which broker.** The first of these that applies:
 
-### Directory Structure
+1. `--url <amqp-url>`
+2. `QUEUE_URL` exported by the shell
+3. a running container whose image or name contains `rabbitmq` and that publishes port 5672 on the
+   host (with several, it asks which); credentials are `QUEUE_USER` and `QUEUE_PASS`, default
+   `guest`
+4. `QUEUE_URL` from the `.env` files
+5. `amqp://QUEUE_USER:QUEUE_PASS@localhost:5672`
 
-```
-dev/tooling/
-├── src/
-│   ├── index.ts              # Main CLI entry point
-│   ├── commands/             # Thin routing layer
-│   │   ├── rabbit.ts
-│   │   ├── monitor.ts
-│   │   ├── remote.ts
-│   ├── tools/                # Tool implementations (isolated)
-│   │   ├── rabbitmq/
-│   │   ├── monitor/
-│   │   ├── remote/
-│   │   │   ├── index.ts      # Entry point
-│   │   │   ├── types.ts      # RemoteDest, parseRemoteDest
-│   │   │   └── sync-env.ts   # Push .env files via scp
-│   └── shared/               # Shared utilities
-│       ├── ui/
-│       │   ├── logger.ts     # Colored output, formatting
-│       │   └── prompts.ts    # Interactive prompts
-│       └── utils/
-│           └── env.ts        # Environment loading
-├── tests/
-│   ├── commands/
-│   │   └── register.test.ts  # Command registration smoke tests
-│   ├── shared/
-│   │   └── utils/
-│   │       └── env.test.ts
-│   └── tools/
-│       ├── remote.test.ts    # parseRemoteDest, findEnvFiles, listRemoteFiles, localMd5, run()
-│       ├── monitor.test.ts
-├── .env                      # Dev tooling overrides (loaded after root .env)
-├── package.json
-├── tsconfig.json
-├── vitest.config.ts
-└── README.md
-```
+A `.env` `QUEUE_URL` comes after discovery because it usually addresses the broker from inside the
+compose network, which the host cannot resolve.
 
-### Design Principles
+**Which management API.** For a discovered container, the host port it publishes 15672 on; a
+container that does not publish 15672 has none. Otherwise `RABBITMQ_MGMT_URL` (ending in `/api`),
+else the AMQP host on `QUEUE_MGMT_PORT` (default 15672). It is called with the AMQP URL's
+credentials.
 
-- **Commands are thin routing layers** - They validate options and delegate to tools
-- **Tools are isolated** - Each tool lives in its own folder with complete logic
-- **Shared utilities are centralized** - UI, environment, logging are shared across tools
-- **TypeScript throughout** - Full type safety and IDE support
-- **Environment management** - Layered env loading for flexibility
-- **Error handling** - Graceful error messages with proper exit codes
+## `monitor` (alias `mon`)
 
----
-
-## Adding New Tools
-
-To add a new tool:
-
-1. Create tool folder: `src/tools/my-tool/`
-2. Create implementation: `src/tools/my-tool/index.ts` with `run()` export
-3. Create command: `src/commands/my-tool.ts` with `register()` export
-4. Register command in `src/index.ts`
-5. Add to tool list in interactive menu
-6. Document in this README
-
-Example tool:
-
-```typescript
-// src/tools/my-tool/index.ts
-import { success } from '../../shared/ui/logger.js';
-
-export async function run(options: Record<string, any> = {}): Promise<void> {
-  success('My tool is running!');
-}
-```
-
-```typescript
-// src/commands/my-tool.ts
-import { Command } from 'commander';
-import { run as runMyTool } from '../tools/my-tool/index.js';
-import { error } from '../shared/ui/logger.js';
-
-export function register(program: Command): void {
-  program
-    .command('my-tool')
-    .description('Description of my tool')
-    .option('--option <value>', 'An option')
-    .action(async (options: any) => {
-      try {
-        await runMyTool(options);
-      } catch (err) {
-        error((err as Error).message);
-        process.exit(1);
-      }
-    });
-}
-```
-
----
-
-## Troubleshooting
-
-### RabbitMQ queue not found
-
-Make sure queue name is exact. List available queues first:
+A live dashboard of the running Docker containers and the RabbitMQ queues, redrawn every
+`-i, --interval <seconds>` (default 3, at least 0.5). Ctrl+C stops it.
 
 ```bash
-./tools rabbit --list
+./tools monitor -i 1
 ```
 
-## Development
+- **Containers**, grouped by compose project: ID, name, health (from the container's healthcheck),
+  uptime since the container last started, CPU, memory used/limit, restart count, and time since
+  its last log line.
+- **RabbitMQ**, one section per running container whose image contains `rabbitmq` and that publishes
+  port 15672 on the host: per queue its vhost, ready, unacked and total messages, consumers,
+  publish and deliver rates, and state. The management API is called with `QUEUE_USER` and
+  `QUEUE_PASS` (default `guest`).
 
-### Build
+## `cold`
+
+Cold storage of the archives and the vault in Mega: `push`, `evict`, `pull`, `audit` and `stats`.
+See [docs/tooling/COLD.md](../../docs/tooling/COLD.md).
+
+## `remote`
+
+`remote sync-env` (or `remote` alone) copies every `.env` file in the repository to the same
+relative path on a remote host.
 
 ```bash
-cd dev/tooling
-pnpm build
+./tools remote sync-env
+# Remote destination (user@host:/remote/path): deploy@10.0.0.1:/srv/tradebot
 ```
 
-### Run from TypeScript (no build needed)
+The destination is `user@host:/path` or `user@host:~/dir`, and `user@[ipv6]:...` for an IPv6 host.
+It lists the files it found (skipping `node_modules`, `dist` and every directory whose name starts
+with a dot) and asks before overwriting. Each file is copied with `ssh` and `scp`: the remote
+directory is created under umask 077 and the file set to mode 600. A failed file does not stop the
+others; the summary names the failures and the exit code is 1.
 
-```bash
-cd dev/tooling
-pnpm dev  # or: node --loader=ts-node/esm src/index.ts
-```
+## Layout
 
-### Test
-
-```bash
-cd dev/tooling
-pnpm test
-pnpm test:watch
-```
-
----
-
-## Future Enhancements
-
-Potential tools and features to add:
-
-- Service health checks and status dashboard
-- Redis monitoring and key inspection
-- Exchange API explorer
-- Log file analyzer
-- Performance profiling
-- Configuration validator
-- Database backup/restore utilities
-- Custom alert definitions
-- Rule testing environment
+`src/commands/` registers each command and its options; `src/tools/<tool>/` implements it;
+`src/shared/` holds what the tools share (terminal UI, env loading, RabbitMQ connection, Docker
+discovery). `tests/` mirrors `src/`.
