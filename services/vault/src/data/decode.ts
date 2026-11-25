@@ -1,7 +1,6 @@
-import { WS_TABLES } from '@tradebot/utils';
+import { baseTable, WS_TABLES } from '@tradebot/utils';
 import { createParser } from './parse';
-import { baseTable } from './headers';
-import { applyCasts } from './casts';
+import { compileCasts } from './casts';
 
 /**
  * Decodes a closed vault file into a stream of NDJSON lines.
@@ -28,15 +27,17 @@ export async function* decodeFile(
 
   // REST files emit one plain row object per record.
   if (! WS_TABLES.has(baseTable(table))) {
+    const toRow = compileCasts(table, cols);
+
     for await (const record of records) {
-      yield JSON.stringify(applyFields(record, cols, table)) + '\n';
+      yield JSON.stringify(toRow(record)) + '\n';
     }
 
     return;
   }
 
   // WS rows carry two metadata columns (_date_, _action_); data starts at 2.
-  const dataCols = cols.slice(2);
+  const toRow = compileCasts(table, cols.slice(2), 2);
 
   // ── Message accumulation ────────────────────────────────────────────────────
   //
@@ -57,7 +58,7 @@ export async function* decodeFile(
   };
 
   for await (const record of records) {
-    const row = applyFields(record.slice(2), dataCols, table);
+    const row = toRow(record);
 
     if (record[0] === '') {
       groupRows.push(row);
@@ -74,20 +75,3 @@ export async function* decodeFile(
 
   if (groupDate) yield emitGroup();
 }
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-/** Zips parsed field values with their column names and applies casts. */
-const applyFields = (
-  fields: string[],
-  cols:   string[],
-  table:  string,
-): Record<string, unknown> => {
-  const raw: Record<string, string> = {};
-
-  for (let i = 0; i < cols.length; i++) {
-    raw[cols[i]!] = fields[i] ?? '';
-  }
-
-  return applyCasts(raw, table);
-};

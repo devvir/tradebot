@@ -232,3 +232,51 @@ describe('RFC 4180 strategy (free-text tables)', () => {
     await expect(collect('chat', '2023-02-01')).rejects.toThrow(NotFoundError);
   });
 });
+
+// ── Unreadable files ──────────────────────────────────────────────────────────
+
+describe('unreadable files', () => {
+  const writeRaw = (table: string, filename: string, bytes: Buffer) => {
+    const dir = path.join(tmpDir, table, filename.slice(0, 4));
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, `${filename}.csv.gz`), bytes);
+  };
+
+  const chatLines = (n: number): string => {
+    const lines = ['_date_,_action_,id,message'];
+
+    for (let i = 0; i < n; i++) lines.push(`2023-02-01T00:00:00Z,insert,${i},"message ${i}"`);
+
+    return lines.join('\n') + '\n';
+  };
+
+  // A gzip whose tail is cut inside the deflate data.
+  const truncated = (text: string): Buffer => {
+    const gz = gzipSync(text);
+    return gz.subarray(0, gz.length - 10);
+  };
+
+  for (const table of ['chat', 'tick']) {
+    it(`${table}: a truncated gzip rejects with Z_BUF_ERROR`, async () => {
+      writeRaw(table, '20230201', truncated(chatLines(100)));
+
+      await expect(collect(table, '20230201')).rejects.toMatchObject({ code: 'Z_BUF_ERROR' });
+    });
+
+    it(`${table}: non-gzip bytes reject with Z_DATA_ERROR`, async () => {
+      writeRaw(table, '20230201', Buffer.from('this is not gzip\n'.repeat(10)));
+
+      await expect(collect(table, '20230201')).rejects.toMatchObject({ code: 'Z_DATA_ERROR' });
+    });
+  }
+
+  it('stopping after the header settles without an error', async () => {
+    makeClosedFile('chat', '20230201', chatLines(10_000).trimEnd().split('\n'));
+
+    const records = createParser('chat').read('20230201');
+    const first   = await records.next();
+
+    expect(first.value).toEqual(['_date_', '_action_', 'id', 'message']);
+    await expect(records.return(undefined)).resolves.toEqual({ done: true, value: undefined });
+  });
+});

@@ -5,15 +5,15 @@
 //   'number'      — numeric fields
 //   'boolean'     — boolean fields
 //   'json'        — object / array fields (JSON.parse on read)
-//   'required'    — string fields BitMEX explicitly sends as empty string (preserved)
-//   'timestamp_D' — BitMEX timestamp format with 'D' separator → 'T'
+//   'timestamp_D' — BitMEX timestamp format with a 'D' date/time separator,
+//                   read as ISO 8601 UTC (see `timestampD`)
 //
 // String / symbol / guid / timestamp / timespan fields are omitted — they pass
-// through as strings and are dropped when empty.
+// through as strings. Empty fields are dropped for every table.
 
-import { baseTable } from './headers';
+import { baseTable } from '@tradebot/utils';
 
-type CastType  = 'number' | 'boolean' | 'json' | 'required' | 'timestamp_D';
+type CastType   = 'number' | 'boolean' | 'json' | 'timestamp_D';
 type TableCasts = Record<string, CastType>;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -30,8 +30,11 @@ const TRADE_CASTS: TableCasts    = { ...num('size', 'price', 'grossValue', 'home
 const TRADEBIN_CASTS: TableCasts = num('open', 'high', 'low', 'close', 'trades', 'volume', 'vwap', 'lastSize', 'turnover', 'homeNotional', 'foreignNotional');
 
 // ── Per-table casts ───────────────────────────────────────────────────────────
+//
+// The map also covers tables with no TABLE_HEADERS entry: a closed file can
+// belong to any table, and it is cast on read all the same.
 
-const TABLE_CASTS: Record<string, TableCasts> = {
+export const TABLE_CASTS: Record<string, TableCasts> = {
 
   orderBook10: { ...json('bids', 'asks') },
 
@@ -53,6 +56,8 @@ const TABLE_CASTS: Record<string, TableCasts> = {
   liquidation: num('price', 'leavesQty'),
 
   tick: num('price'),
+
+  compositeIndex: num('indexMultiplier', 'lastPrice', 'sourcePrice', 'conversionIndexPrice', 'weight'),
 
   instrument: {
     ...num(
@@ -154,36 +159,76 @@ const TABLE_CASTS: Record<string, TableCasts> = {
 
 };
 
+// ── Casting ───────────────────────────────────────────────────────────────────
+
+// A zone designator at the end of an ISO 8601 timestamp: Z, ±hh:mm or ±hhmm.
+const ZONE = /(?:[Zz]|[+-]\d{2}:?\d{2})$/;
+
 /**
- * Applies per-table type casts to a parsed row (field name → raw string value).
+ * `2019-01-01D00:00:03.181913000` → `2019-01-01T00:00:03.181913000Z`. BitMEX
+ * writes these timestamps in UTC, with or without a trailing `Z`; one without a
+ * zone gets `Z`. The fractional digits are kept as they are.
+ */
+const timestampD = (value: string): string => {
+  const iso = value.replace('D', 'T');
+
+  return ZONE.test(iso) ? iso : `${iso}Z`;
+};
+
+const parseJson = (value: string): unknown => {
+  try { return JSON.parse(value); } catch { return value; }
+};
+
+const CASTERS: Record<CastType, (value: string) => unknown> = {
+  number:      value => Number(value),
+  boolean:     value => value === 'true',
+  json:        parseJson,
+  timestamp_D: timestampD,
+};
+
+/** Builds one typed row from a record's raw field values. */
+export type RowCaster = (fields: readonly string[]) => Record<string, unknown>;
+
+/**
+ * Compiles the casts of `table` (or the real table behind a pseudo-table) for a
+ * fixed column list. The returned function reads column `cols[i]` from
+ * `fields[offset + i]` and returns a row holding only the non-empty fields, each
+ * cast per the table's map; fields beyond the columns are ignored.
+ */
+export const compileCasts = (table: string, cols: readonly string[], offset = 0): RowCaster => {
+  const casts   = TABLE_CASTS[baseTable(table)] ?? {};
+  const casters = cols.map(col => {
+    const cast = casts[col];
+
+    return cast ? CASTERS[cast] : undefined;
+  });
+
+  return (fields) => {
+    const row: Record<string, unknown> = {};
+
+    for (let i = 0; i < cols.length; i++) {
+      const value = fields[offset + i];
+
+      if (value === undefined || value === '') continue;
+
+      const cast = casters[i];
+
+      row[cols[i]!] = cast ? cast(value) : value;
+    }
+
+    return row;
+  };
+};
+
+/**
+ * Applies per-table type casts to one row (field name → raw string value).
  * Empty string values are dropped. Returns a typed row with only non-empty fields.
  */
 export const applyCasts = (
   raw:   Record<string, string>,
   table: string,
 ): Record<string, unknown> => {
-  const casts  = TABLE_CASTS[baseTable(table)] ?? {};
-  const result: Record<string, unknown> = {};
+  const cols = Object.keys(raw);
 
-  for (const [key, value] of Object.entries(raw)) {
-    const cast = casts[key];
-
-    if (cast === 'required') {
-      result[key] = value;
-    } else if (value === '') {
-      continue;
-    } else if (cast === 'number') {
-      result[key] = Number(value);
-    } else if (cast === 'boolean') {
-      result[key] = value === 'true';
-    } else if (cast === 'json') {
-      try { result[key] = JSON.parse(value); } catch { result[key] = value; }
-    } else if (cast === 'timestamp_D') {
-      result[key] = value.replace('D', 'T');
-    } else {
-      result[key] = value;
-    }
-  }
-
-  return result;
+  return compileCasts(table, cols)(cols.map(col => raw[col]!));
 };

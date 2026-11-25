@@ -15,16 +15,17 @@ import { Readable } from 'stream';
 import { stat } from 'fs/promises';
 import type { Stats } from 'fs';
 import { logger } from '@devvir/service-kit';
-import { WS_TABLES } from '@tradebot/utils';
+import { baseTable, WS_TABLES } from '@tradebot/utils';
 import { listFiles, listTables, fileState } from '../fs/reader';
 import { isHealthy, getFailureReason, isThrottled } from '../fs/health';
 import { decodeFile } from '../data/decode';
+import { batchLines } from './batch';
 import { createParser } from '../data/parse';
 import { encode } from '../data/encode';
 import { buffers } from '../data/buffers';
 import { closeBucket } from '../data/close';
 import { acceptsRows, bucketState, discardBucket, uploadBucket, BucketBusyError } from '../data/bucket';
-import { baseTable, headersFor } from '../data/headers';
+import { headersFor } from '../data/headers';
 import { isShuttingDown } from '../shutdown';
 import { NotFoundError, AlreadyExistsError, InvalidUploadError } from '../fs/errors';
 import { closedPath, openPath } from '../fs/paths';
@@ -33,6 +34,9 @@ import type { Row, WsMessage } from '../data/types';
 // An upload that sends nothing for this long is cut off. A moving upload is
 // never cut, however long it takes.
 const UPLOAD_IDLE_TIMEOUT_MS = 90_000;
+
+// GET /files streams NDJSON in chunks of at least this many characters.
+const READ_CHUNK_CHARS = 64 * 1024;
 
 // A table name, optionally with one dotted pseudo-table part (`quote.secondary`).
 const TABLE_NAME = /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)?$/;
@@ -291,6 +295,10 @@ export const registerRoutes = (app: Application): void => {
   });
 
   // ── GET /files/:table/:date — stream rows as NDJSON ──────────────────────────
+  //
+  // Lines are written in chunks of whole lines (see READ_CHUNK_CHARS). A file
+  // that fails to read answers 500, or, once part of the body is out, ends the
+  // response incomplete.
 
   app.get('/files/:table/:date', (req: Request, res: Response) => {
     const parsed = parseKey(req, res);
@@ -308,7 +316,7 @@ export const registerRoutes = (app: Application): void => {
       return;
     }
 
-    const stream = Readable.from(decodeFile(table, filename, skip));
+    const stream = Readable.from(batchLines(decodeFile(table, filename, skip), READ_CHUNK_CHARS));
 
     // When the client drops the connection, destroy the source so the generator's
     // finally block runs and the underlying file handle is released.

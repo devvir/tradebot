@@ -120,7 +120,8 @@ const CASES: Record<string, Case> = {
     expected: [{ timestamp: T0, symbol: 'XBTUSD', price: 23000.5, tickDirection: 'PlusTick' }],
   },
 
-  // BitMEX archive timestamps use a `D` date/time separator; they read back with `T`.
+  // BitMEX archive timestamps use a `D` date/time separator and may carry no
+  // zone; they read back as ISO 8601 UTC, every fractional digit kept.
   trade: {
     items: [{
       timestamp: '2024-01-01D00:00:01.123456789', symbol: 'XBTUSD', side: 'Buy', size: 100, price: 42000.5,
@@ -128,7 +129,7 @@ const CASES: Record<string, Case> = {
       homeNotional: 0.00238095, foreignNotional: 100, trdType: 'Regular', pool: 'Primary',
     }],
     expected: [{
-      timestamp: '2024-01-01T00:00:01.123456789', symbol: 'XBTUSD', side: 'Buy', size: 100, price: 42000.5,
+      timestamp: '2024-01-01T00:00:01.123456789Z', symbol: 'XBTUSD', side: 'Buy', size: 100, price: 42000.5,
       tickDirection: 'ZeroPlusTick', trdMatchID: '00000000-0000-0000-0000-000000000001', grossValue: 238095,
       homeNotional: 0.00238095, foreignNotional: 100, trdType: 'Regular', pool: 'Primary',
     }],
@@ -236,19 +237,13 @@ const CASES: Record<string, Case> = {
   },
 };
 
-// compositeIndex has no casts: its numeric fields read back as strings, so its
-// case fails.
-const FAILING = new Set(['compositeIndex']);
-
 describe('encode → file → decode round trip', () => {
   it('has a case for every table with a header definition', () => {
     expect(Object.keys(CASES).sort()).toEqual(Object.keys(TABLE_HEADERS).sort());
   });
 
   for (const [table, { items, expected }] of Object.entries(CASES)) {
-    const test = FAILING.has(table) ? it.fails : it;
-
-    test(table, async () => {
+    it(table, async () => {
       expect(await roundTrip(table, items)).toEqual(expected);
     });
   }

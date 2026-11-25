@@ -21,9 +21,9 @@
 // message boundaries; only surviving lines are split.
 
 import readline from 'node:readline';
-import { createCsvParser, FREE_TEXT_TABLES, WS_TABLES } from '@tradebot/utils';
+import { pipeline } from 'node:stream/promises';
+import { baseTable, createCsvParser, FREE_TEXT_TABLES, WS_TABLES } from '@tradebot/utils';
 import { openClosedFile } from '../fs/reader';
-import { baseTable } from './headers';
 import type { VaultParser } from './types';
 
 /**
@@ -209,11 +209,24 @@ async function* readLines(stream: NodeJS.ReadableStream): AsyncGenerator<string>
   }
 }
 
-/** Yields RFC 4180 records parsed from a decompressed file. */
+/**
+ * Yields RFC 4180 records parsed from a decompressed file. A decompression
+ * error (a truncated or non-gzip file) rejects the iteration with that error.
+ */
 async function* csvRecords(stream: NodeJS.ReadableStream): AsyncGenerator<string[]> {
-  const parser = stream.pipe(createCsvParser(false));
+  const parser = createCsvParser(false);
 
-  for await (const record of parser as AsyncIterable<string[]>) {
-    yield record;
+  // The pipeline destroys the parser with any error of the source, so the
+  // iteration below rejects with it. It also rejects when the iteration stops
+  // early; that is not an error.
+  const piped = pipeline(stream, parser).catch(() => {});
+
+  try {
+    for await (const record of parser as AsyncIterable<string[]>) {
+      yield record;
+    }
+  } finally {
+    parser.destroy();
+    await piped;
   }
 }

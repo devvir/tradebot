@@ -9,6 +9,8 @@
 //   - journalist CHAT_SCHEMA             (chat has extra fields missing from the partial WS message)
 //   - BitMEX OpenAPI + TABLE_SPECS       (tables not yet observed in vault)
 
+import { baseTable } from '@tradebot/utils';
+
 // The four resolutions of each bin table share one column list.
 const TRADE_BIN = ['timestamp', 'symbol', 'open', 'high', 'low', 'close', 'trades', 'volume', 'vwap', 'lastSize', 'turnover', 'homeNotional', 'foreignNotional', 'pool'];
 const QUOTE_BIN = ['timestamp', 'symbol', 'bidSize', 'bidPrice', 'askPrice', 'askSize', 'pool'];
@@ -77,11 +79,8 @@ export const TABLE_HEADERS: Record<string, string[]> = {
 };
 
 /**
- * The real table behind a name: a dotted name is a *pseudo-table* of the undotted
- * real one (`quote.secondary` → `quote`) — a pool/variant slice that shares the
- * real table's columns. Strip the suffix for every header/cast lookup.
+ * Column list for a table or any of its pseudo-tables: a dotted name is a
+ * *pseudo-table* of the undotted real one (`quote.secondary` → `quote`) and
+ * shares its columns.
  */
-export const baseTable = (table: string): string => table.replace(/\..*/, '');
-
-/** Column list for a table or any of its pseudo-tables. */
 export const headersFor = (table: string): string[] | undefined => TABLE_HEADERS[baseTable(table)];

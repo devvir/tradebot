@@ -5,8 +5,8 @@
 // authoritative column ordering for every table — never inferred from data,
 // because WS update messages only include changed fields.
 
-import { rowToCsv, FREE_TEXT_TABLES } from '@tradebot/utils';
-import { baseTable, headersFor } from './headers';
+import { baseTable, rowToCsv, FREE_TEXT_TABLES } from '@tradebot/utils';
+import { headersFor } from './headers';
 import type { Row, WsMessage } from './types';
 
 // Characters that make `rowToCsv` quote a value. Only free-text tables are read
