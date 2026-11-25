@@ -13,10 +13,11 @@ const CONTAINER_PORT = 8080;
 const CATALOG_API = 'http://catalog:8080';
 
 /**
- * Where prospector's collector API answers: inside the module network, at a
- * fixed name, so it is a constant. The requests this service allows are
- * forwarded there with `CATALOG_TOKEN`, so whoever reaches this service acts
- * on prospector with that token.
+ * Where prospector's collector API answers inside the module's network, unless
+ * `PROSPECTOR_API` says otherwise (a trailing `/` is dropped; blank means this
+ * default). The requests this service allows are forwarded there with
+ * `CATALOG_TOKEN`, so whoever reaches this service acts on prospector with
+ * that token.
  */
 const PROSPECTOR_API = 'http://prospector:8080';
 
@@ -34,7 +35,7 @@ const hostsOf = (raw: string | undefined): string[] =>
 const loadConfig = (): Config => {
   const config: Config = {
     catalogApi:    (process.env['CATALOG_API']?.trim() || CATALOG_API).replace(/\/$/, ''),
-    prospectorApi: PROSPECTOR_API,
+    prospectorApi: (process.env['PROSPECTOR_API']?.trim() || PROSPECTOR_API).replace(/\/$/, ''),
     catalogToken:  (process.env['CATALOG_TOKEN'] ?? '').trim(),
     allowedHosts:  hostsOf(process.env['CATALOG_UI_HOSTS']),
     upstreamTimeoutMs: UPSTREAM_TIMEOUT_MS,
