@@ -675,6 +675,35 @@ describe('a report', () => {
     expect((await report({ downloaded: Array.from({ length: 10_001 }, (_, n) => `k${n}`) })).status).toBe(400);
   });
 
+  /** Every failed or mismatched key is asked of the venue before prospector answers: a report of too many is never sent. */
+  it('refuses more failed and mismatched keys than one report may name with a 413, asking prospector nothing', async () => {
+    const stand = await prospector();
+
+    try {
+      const { status, body } = await report({
+        downloaded: Array.from({ length: 2_000 }, () => EXPECTED[0]),
+        failed:     Array.from({ length: 600 }, () => EXPECTED[0]),
+        mismatched: Array.from({ length: 401 }, () => ({ Key: EXPECTED[0] })),
+      });
+
+      expect(status).toBe(413);
+      expect(body).toMatchObject({ Code: 'TooManyToConfirm' });
+      expect(body['Message']).toContain('1000');
+      expect(stand.got).toEqual([]);
+
+      const fits = await report({
+        downloaded: Array.from({ length: 2_000 }, () => EXPECTED[0]),
+        failed:     Array.from({ length: 600 }, () => EXPECTED[0]),
+        mismatched: Array.from({ length: 400 }, () => ({ Key: EXPECTED[0] })),
+      });
+
+      expect(fits.status).toBe(200);
+      expect(stand.got).toHaveLength(1);
+    } finally {
+      await stand.close();
+    }
+  });
+
   it('refuses a body that is not JSON', async () => {
     const { status, body } = await call('/listings/report', {
       method: 'POST', body: 'downloaded', headers: { 'content-type': 'text/plain' },

@@ -1,5 +1,6 @@
 import config from './config';
 import { filesOfKeys } from './listings/keys';
+import { MAX_KEYS } from './listings/s3';
 import { send } from './prospector';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Lens, ReportError, ReportedById, ReportedByKey } from './types';
@@ -17,6 +18,19 @@ import type { Lens, ReportError, ReportedById, ReportedByKey } from './types';
 
 /** Most keys one report may name. */
 export const MAX_REPORT = 10_000;
+
+/**
+ * Most failed and mismatched keys one report may name, together.
+ *
+ * **Each is a file prospector asks its venue about before it answers**, one
+ * after another, where a download is only recorded: they are what a report's
+ * settlement spends its time on, and the whole of it must fit `config.settleMs`
+ * or the report is answered as not settled while prospector may still be
+ * settling it. The cap is a listing's largest page, so the report of any page
+ * a client was listed fits under it, and `config.settleMs` is the wait for that
+ * many files asked about.
+ */
+export const MAX_TO_CONFIRM = MAX_KEYS;
 
 /**
  * The report a body states, or null where it is not one: `downloaded` and
@@ -50,6 +64,10 @@ export const reportOf = (body: unknown): ReportedByKey | null => {
 /** How many keys a report names — what `MAX_REPORT` bounds. */
 export const keysIn = (asked: ReportedByKey): number =>
   asked.downloaded.length + asked.failed.length + asked.mismatched.length;
+
+/** How many failed and mismatched keys a report names — what `MAX_TO_CONFIRM` bounds. */
+export const toConfirmIn = (asked: ReportedByKey): number =>
+  asked.failed.length + asked.mismatched.length;
 
 /** The ids to settle, and the keys that could not be. */
 export const resolveReport = (

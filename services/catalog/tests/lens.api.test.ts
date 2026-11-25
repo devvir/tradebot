@@ -126,10 +126,27 @@ describe('keeping a lens', () => {
     expect((await ask<Lens>('GET', '/lenses/cold-store')).status).toBe(200);
   });
 
-  it('refuses a name already taken', async () => {
+  it('refuses a name already taken by another lens', async () => {
     await ask('POST', '/lenses', { slug: 'cold-store' });
 
-    expect((await ask('POST', '/lenses', { slug: 'cold-store' })).status).toBe(409);
+    expect((await ask('POST', '/lenses', { slug: 'cold-store', note: 'other' })).status).toBe(409);
+    expect((await ask('POST', '/lenses', { slug: 'cold-store', definition: lens({ binance: [{ effect: 'include' }] }) })).status)
+      .toBe(409);
+    expect(lensNamed(db, 'cold-store')).toMatchObject({ note: '', definition: { format: 1, venues: {} } });
+  });
+
+  /** A create sent again, its first answer lost, finds the lens it asked for: that is a lens made, not a name taken. */
+  it('answers a create of the lens already stored under its slug as made', async () => {
+    const asked = { slug: 'cold-store', name: 'Cold store', definition: lens({ binance: [{ effect: 'include', to: '202012' }] }) };
+
+    expect((await ask('POST', '/lenses', asked)).status).toBe(201);
+
+    const again = await ask<Lens>('POST', '/lenses', asked);
+
+    expect(again.status).toBe(201);
+    expect(again.body).toMatchObject({ slug: 'cold-store', name: 'Cold store', note: '', definition: asked.definition });
+    expect((await ask('POST', '/lenses', { slug: 'other' })).status).toBe(201);
+    expect((await ask('POST', '/lenses', { slug: 'other', name: 'other' })).status).toBe(201);
   });
 
   it('refuses a name a consumer would have to quote', async () => {
@@ -438,6 +455,55 @@ describe('a call prospector does not answer', () => {
 
     expect((await ask('POST', '/lenses', { slug: 'cold-store' })).status).toBe(502);
     expect(counted.calls).toBe(1);
+  });
+
+  /**
+   * Prospector stores what it is sent, as the stand-in does, and the answer
+   * never reaches the catalog: the connection fails under it, as `fail` says.
+   */
+  const storedThenLost = (fail: (init?: RequestInit) => Promise<Response>) =>
+    failing(async init => {
+      const body = JSON.parse(String(init?.body)) as LensWrite;
+
+      storeLens(db, body.slug!, body.name ?? '', body.note ?? '', body.definition);
+
+      return fail(init);
+    });
+
+  it('answers a create whose answer was lost as made, where the lens it asked for is stored', async () => {
+    const counted    = storedThenLost(dropped('ECONNRESET'));
+    const definition = lens({ binance: [{ effect: 'include', from: '202001' }] });
+    const made       = await ask<Lens>('POST', '/lenses', { slug: 'cold-store', note: 'old things', definition });
+
+    expect(made.status).toBe(201);
+    expect(made.body).toMatchObject({ slug: 'cold-store', name: 'cold-store', note: 'old things', definition });
+    expect(counted.calls).toBe(1);
+  });
+
+  it('answers a create not answered in time as made, where the lens it asked for is stored', async () => {
+    const waited = config.prospectorMs;
+
+    config.prospectorMs = 20;
+
+    try {
+      const counted = storedThenLost(init => new Promise((_, refuse) =>
+        init?.signal?.addEventListener('abort', () => refuse(init.signal!.reason))));
+
+      expect((await ask('POST', '/lenses', { slug: 'cold-store' })).status).toBe(201);
+      expect(counted.calls).toBe(1);
+    } finally {
+      config.prospectorMs = waited;
+    }
+  });
+
+  it('answers 502 for a create whose answer was lost, where another lens has its slug', async () => {
+    storeLens(db, 'cold-store', '', 'not this one');
+
+    const counted = failing(dropped('ECONNRESET'));
+
+    expect((await ask('POST', '/lenses', { slug: 'cold-store' })).status).toBe(502);
+    expect(counted.calls).toBe(1);
+    expect(lensNamed(db, 'cold-store')).toMatchObject({ note: 'not this one' });
   });
 
   it('tries a create again over a connection refused, which never reached prospector', async () => {

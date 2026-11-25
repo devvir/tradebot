@@ -1,12 +1,14 @@
+import { isDeepStrictEqual } from 'node:util';
 import { logger } from '@devvir/service-kit';
 import {
   lensNameIsSound, lensNamed, lensOptions, lensSize, lenses, problemsWith, resolvedSummary,
 } from '@tradebot/lenses';
 import { savedLensSize } from '../lenses/figures';
 import { send } from '../prospector';
+import type { Answer } from '../prospector';
 import type { Application, Response } from 'express';
 import type { DatabaseSync } from 'node:sqlite';
-import type { LensDefinition, LensProblem, LensWrite } from '../types';
+import type { Lens, LensDefinition, LensProblem, LensWrite } from '../types';
 
 /**
  * The lens endpoints.
@@ -18,7 +20,8 @@ import type { LensDefinition, LensProblem, LensWrite } from '../types';
  * that is not a definition every evaluation can read.
  *
  * **A lens is stored by prospector, never here.** A write that passes is handed
- * to it, and what it answers is what the caller is told — see `stored`.
+ * to it, and what it answers is what the caller is told — see `stored`, and
+ * `created` for the one write whose answer is checked against the catalog.
  *
  * Applying a lens to the rest of the API is a separate thing and lives elsewhere:
  * these endpoints are how one is defined, not how one is used.
@@ -54,7 +57,13 @@ export const mountLenses = (app: Application, db: DatabaseSync): void => {
 
     if (! write) return;
 
-    await stored(res, 'POST', '/lenses', { ...write, name: write.name ?? '', note: write.note ?? '' });
+    // As the store makes one: a lens with no name is named by its slug, and one with no definition lets nothing through.
+    await created(res, db, {
+      slug:       write.slug!,
+      name:       write.name || write.slug!,
+      note:       write.note ?? '',
+      definition: write.definition ?? { format: 1, venues: {} },
+    });
   });
 
   /** Replace a lens, whole — its name, its note, its definition, or all three. */
@@ -125,32 +134,90 @@ export const mountLenses = (app: Application, db: DatabaseSync): void => {
 // ── Internals ─────────────────────────────────────────────────────────────────
 
 /**
- * Have prospector store what was asked, and answer with what it said: its
- * status and its body, as they are. `502` where it does not answer, or not in
- * time — see `send` for what is tried again first.
+ * Have prospector store what was asked, and answer with what it said — see
+ * `relayed`. `502` where it does not answer, or not in time — see `send` for
+ * what is tried again first.
+ */
+const stored = async (res: Response, method: string, path: string, body?: unknown): Promise<void> => {
+  try {
+    relayed(res, await send(method, path, body));
+  } catch (err) {
+    logger.warn({ err }, 'Prospector did not store a lens');
+
+    notAnswering(res);
+  }
+};
+
+/**
+ * Have prospector make a lens, sent whole: its slug, name, note and definition
+ * each as it is to be stored.
+ *
+ * **A create is never sent twice** (see `send`), so where its answer is lost —
+ * the connection fails, or nothing comes in time — prospector may have stored
+ * the lens all the same. Where no answer came, or the answer is `409`, the lens
+ * the catalog holds under that slug is read: where it is the lens asked for, in
+ * every part, the lens asked for is what exists, and the create is answered
+ * `201` with it. Anything else is answered as `stored` answers it.
+ */
+const created = async (res: Response, db: DatabaseSync, lens: LensMade): Promise<void> => {
+  let answer: Answer | null = null;
+
+  try {
+    answer = await send('POST', '/lenses', lens);
+  } catch (err) {
+    logger.warn({ err }, 'Prospector did not answer a lens create; looking for the lens');
+  }
+
+  if (answer === null || answer.status === 409) {
+    const there = lensNamed(db, lens.slug);
+
+    if (there && isLens(there, lens)) {
+      res.status(201).json(there);
+
+      return;
+    }
+  }
+
+  if (answer === null) notAnswering(res);
+  else relayed(res, answer);
+};
+
+/** A create, whole: every part of the lens as it is to be stored. */
+type LensMade = Required<LensWrite>;
+
+/**
+ * Whether a stored lens is, in every part, the one a create asked for. A
+ * definition is read back with its `format` and `venues` whether or not it was
+ * sent with them, so it is compared as it is read.
+ */
+const isLens = (there: Lens, lens: LensMade): boolean => {
+  const { format, venues } = lens.definition as Partial<LensDefinition>;
+
+  return there.name === lens.name && there.note === lens.note
+    && isDeepStrictEqual(there.definition, { format: format ?? 1, venues: venues ?? {} });
+};
+
+/**
+ * Answer with what prospector said: its status and its body, as they are.
  *
  * **What is relayed is always JSON.** An answer that is not — a proxy's or a
  * framework's page — is logged and answered with an error of the same 4xx
  * status, or `502` for any other: a page is never a success.
  */
-const stored = async (res: Response, method: string, path: string, body?: unknown): Promise<void> => {
-  try {
-    const answer = await send(method, path, body);
+const relayed = (res: Response, answer: Answer): void => {
+  if (answer.body === null) {
+    res.status(answer.status).end();
+  } else if (typeof answer.body === 'string') {
+    logger.warn({ status: answer.status, body: answer.body }, 'Prospector answered a lens write with something that is not JSON');
 
-    if (answer.body === null) {
-      res.status(answer.status).end();
-    } else if (typeof answer.body === 'string') {
-      logger.warn({ status: answer.status, body: answer.body }, 'Prospector answered a lens write with something that is not JSON');
-
-      res.status(answer.status >= 400 && answer.status < 500 ? answer.status : 502).json({ error: 'The collector refused the request' });
-    } else {
-      res.status(answer.status).json(answer.body);
-    }
-  } catch (err) {
-    logger.warn({ err }, 'Prospector did not store a lens');
-
-    res.status(502).json({ error: 'The collector is not answering; try again shortly' });
+    res.status(answer.status >= 400 && answer.status < 500 ? answer.status : 502).json({ error: 'The collector refused the request' });
+  } else {
+    res.status(answer.status).json(answer.body);
   }
+};
+
+const notAnswering = (res: Response): void => {
+  res.status(502).json({ error: 'The collector is not answering; try again shortly' });
 };
 
 const SLUG_IS = 'A lens is addressed in lower case, digits and hyphens, two characters or more.';

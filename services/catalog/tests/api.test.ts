@@ -81,7 +81,7 @@ const lensOf = (bytes: number): string => JSON.stringify({ slug: 'big', note: 'x
 const reportOf = (count: number, bytes: number): string => {
   const pad = 'k'.repeat(Math.max(1, Math.floor(bytes / count) - 10));
 
-  return JSON.stringify({ failed: Array.from({ length: count }, (_, n) => `${pad}${n}`) });
+  return JSON.stringify({ downloaded: Array.from({ length: count }, (_, n) => `${pad}${n}`) });
 };
 
 describe('the token', () => {
