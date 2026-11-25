@@ -4,7 +4,6 @@ import config from './config';
 const state = {
   broker: null,
   isShuttingDown: false,
-  lastMessageTime: Date.now(),
 };
 
 export default SKFactory({

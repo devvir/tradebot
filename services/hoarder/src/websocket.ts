@@ -4,6 +4,9 @@ import type { ConnectOptions, EndpointDefinition, MessageHandler } from './types
 
 const RECONNECT_DELAY_MS     = 200;
 const MAX_RECONNECT_DELAY_MS = 15_000;
+const RECONNECT_JITTER       = 0.2;
+const STABLE_AFTER_MS        = 30_000;
+const HANDSHAKE_TIMEOUT_MS   = 10_000;
 const HEARTBEAT_INTERVAL_MS  = 30_000;
 
 /** Node socket error codes that are routine and expected — logged concisely, without a stack trace. */
@@ -11,6 +14,9 @@ const KNOWN_NETWORK_CODES = new Set([
   'ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN',
   'ETIMEDOUT', 'ENETUNREACH', 'EHOSTUNREACH', 'EPIPE',
 ]);
+
+/** A handshake answered with a rate-limit status; the status is the first group. */
+const RATE_LIMITED = /Unexpected server response: (418|429)\b/;
 
 interface ReconnectState {
   delayMs: number;
@@ -20,13 +26,28 @@ interface ReconnectState {
 /**
  * Connect to a venue's WebSocket endpoint.
  *
- * Venue-agnostic: lifecycle only (heartbeat, pong, reconnect with backoff). The
- * caller receives the WebSocket and is responsible for tracking it. On
- * reconnect, the `onReconnect` callback provides the replacement instance.
+ * Venue-agnostic: lifecycle only (handshake timeout, heartbeat, reconnect with
+ * backoff). The caller receives the WebSocket and is responsible for tracking
+ * it. On reconnect, the `onReconnect` callback provides the replacement
+ * instance.
  *
- * Reconnection is single-flight: a failed connection emits both `error` and
- * `close`, and a sustained outage emits those pairs repeatedly — but only one
- * reconnect attempt is ever in flight, so attempts never pile up.
+ * Liveness: a handshake that does not complete within 10 s fails the socket.
+ * An open socket is pinged every 30 s, and one that has not answered the
+ * previous ping (with a pong or any other frame) by the next tick is
+ * terminated. A paused socket reads nothing, so it is neither pinged nor
+ * judged while paused.
+ *
+ * Reconnection: only the `close` of the endpoint's current socket schedules a
+ * replacement, once per socket. An `error` never schedules one itself; on an
+ * open or closing socket it terminates the socket, so its `close` follows at
+ * once instead of after the closing handshake. A replacement is made only after
+ * its predecessor is closed, so the endpoint has at most one socket.
+ *
+ * Backoff: the delay starts at 200 ms and doubles on every reconnect, up to
+ * 15 s, with ±20% jitter (never above 15 s). It returns to 200 ms only once a
+ * socket has stayed open for 30 s, so a venue that accepts connections and
+ * then drops them is retried ever more slowly. A handshake refused with HTTP
+ * 418 or 429 sets the delay to 15 s at once.
  */
 export const connect = (
   endpoint:  EndpointDefinition,
@@ -43,27 +64,56 @@ export const connect = (
 
   const reconnect: ReconnectState = { delayMs: RECONNECT_DELAY_MS, timer: null };
 
+  let current: WebSocket | null = null;
+
   const doConnect = (): WebSocket => {
     if (service.state('isShuttingDown')) return null!;
 
+    if (current && current.readyState !== WebSocket.CLOSED) current.terminate();
+
     logger.info({ endpointName: endpoint.name, socket: label }, 'Connecting to Websocket endpoint');
 
-    const ws = new WebSocket(endpoint.url).setMaxListeners(0);
-    let pingInterval: NodeJS.Timeout | null = null;
-    let errorLogged = false;
+    const ws = new WebSocket(endpoint.url, { handshakeTimeout: HANDSHAKE_TIMEOUT_MS }).setMaxListeners(0);
+
+    current = ws;
+
+    let heartbeat:    NodeJS.Timeout | null = null;
+    let stable:       NodeJS.Timeout | null = null;
+    let awaitingPong = false;
+    let errorLogged  = false;
+    let replaced     = false;
+
+    const alive = (): void => { awaitingPong = false; };
 
     ws.on('open', () => {
       logger.info(`Connected to ${endpoint.name} (${label})`);
 
-      service.setState('lastMessageTime', Date.now());
-      pingInterval = startHeartbeat(ws);
+      stable    = setTimeout(() => { reconnect.delayMs = RECONNECT_DELAY_MS; }, STABLE_AFTER_MS);
+      heartbeat = setInterval(() => {
+        if (ws.readyState !== WebSocket.OPEN) return;
 
-      reconnect.delayMs = RECONNECT_DELAY_MS;
+        // A paused socket reads no frames, its pong included: judging it would
+        // kill a healthy socket, so its deadline starts over once it resumes.
+        if (ws.isPaused) return alive();
+
+        if (awaitingPong) {
+          logger.warn(`${endpoint.name} (${label}) did not answer a ping within ${HEARTBEAT_INTERVAL_MS}ms — terminating`);
+          return ws.terminate();
+        }
+
+        awaitingPong = true;
+        ws.ping();
+      }, HEARTBEAT_INTERVAL_MS);
     });
 
-    ws.on('ping', () => ws.pong());
-    ws.on('pong', () => logger.debug(`Pong from ${endpoint.name} (${label})`));
-    ws.on('message', (msg: Buffer) => onMessage(msg, venue));
+    // ws answers a venue's ping itself (autoPong); any inbound frame proves the
+    // connection is alive.
+    ws.on('ping', alive);
+    ws.on('pong', alive);
+    ws.on('message', (msg: Buffer) => {
+      alive();
+      onMessage(msg, venue);
+    });
 
     ws.on('error', (err: Error) => {
       errorLogged = true;
@@ -75,15 +125,22 @@ export const connect = (
       else
         logger.error({ err }, `${endpoint.name} WebSocket error (${label})`);
 
-      // A 429 means we are already reconnecting too fast — skip the ramp and
-      // back off at the cap immediately.
-      if (isRateLimited(err)) reconnect.delayMs = MAX_RECONNECT_DELAY_MS;
+      // A rate-limit status means we are already reconnecting too fast — skip
+      // the ramp and back off at the cap immediately.
+      if (RATE_LIMITED.test(err.message)) reconnect.delayMs = MAX_RECONNECT_DELAY_MS;
 
-      scheduleReconnect();
+      // An error on an open socket (an invalid or oversized frame) starts a
+      // closing handshake that may take up to 30 s to end; end it now instead.
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CLOSING) ws.terminate();
     });
 
     ws.on('close', (code: number, reason: Buffer) => {
-      if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
+      if (heartbeat) { clearInterval(heartbeat); heartbeat = null; }
+      if (stable)    { clearTimeout(stable); stable = null; }
+
+      if (ws !== current || replaced) return;
+
+      replaced = true;
 
       // A close following an error is expected — the error line already covered it.
       if (! errorLogged)
@@ -95,16 +152,12 @@ export const connect = (
     return ws;
   };
 
-  /**
-   * Schedule a single reconnect attempt. Single-flight: if an attempt is
-   * already pending this is a no-op, so the `error` + `close` pair from one
-   * failure (and any repeats) collapse into exactly one attempt.
-   */
+  /** Schedule the replacement of the current socket, after the backoff delay. */
   const scheduleReconnect = (): void => {
     if (reconnect.timer) return;
     if (service.state('isShuttingDown')) return;
 
-    const delay = reconnect.delayMs;
+    const delay = withJitter(reconnect.delayMs);
 
     logger.info(`Reconnecting to ${endpoint.name} (${label}) in ${delay}ms`);
 
@@ -128,7 +181,8 @@ export const connect = (
  * `null` for an unexpected error (which the caller logs in full, with stack).
  */
 const describeError = (err: Error): string | null => {
-  if (isRateLimited(err)) return 'rate limited (HTTP 429) — backing off';
+  const limited = err.message.match(RATE_LIMITED);
+  if (limited) return `rate limited (HTTP ${limited[1]}) — backing off`;
 
   const code = (err as NodeJS.ErrnoException).code;
   if (code && KNOWN_NETWORK_CODES.has(code)) return `network unavailable (${code})`;
@@ -141,10 +195,6 @@ const describeError = (err: Error): string | null => {
   return null;
 };
 
-const isRateLimited = (err: Error): boolean =>
-  /Unexpected server response: 429\b/.test(err.message);
-
-const startHeartbeat = (ws: WebSocket): NodeJS.Timeout =>
-  setInterval(() => {
-    if (ws.readyState === WebSocket.OPEN) ws.ping();
-  }, HEARTBEAT_INTERVAL_MS);
+/** Spread reconnects of many sockets apart: ±20%, never above the cap. */
+const withJitter = (delayMs: number): number =>
+  Math.min(Math.round(delayMs * (1 - RECONNECT_JITTER + 2 * RECONNECT_JITTER * Math.random())), MAX_RECONNECT_DELAY_MS);

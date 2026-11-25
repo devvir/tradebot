@@ -12,9 +12,8 @@ export interface Config {
 }
 
 export interface State {
-  broker:          RabbitMQ.Broker | null;
-  isShuttingDown:  boolean;
-  lastMessageTime: number;
+  broker:         RabbitMQ.Broker | null;
+  isShuttingDown: boolean;
 }
 
 export interface PoolEntry {

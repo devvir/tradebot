@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import WebSocket from 'ws';
+import { logger } from '@devvir/service-kit';
 import { connect } from '../src/websocket';
 import type { State, Config, EndpointDefinition } from '../src/types';
 
@@ -9,19 +11,36 @@ vi.mock('ws', async () => {
 
   return {
     default: class MockWebSocket extends EventEmitter {
-      static OPEN = 1;
+      static CONNECTING = 0;
+      static OPEN       = 1;
+      static CLOSING    = 2;
+      static CLOSED     = 3;
+
+      /** Every socket constructed, oldest first. */
+      static instances: MockWebSocket[] = [];
 
       readyState = 1;
-      url: string;
-      send  = vi.fn();
-      ping  = vi.fn();
-      pong  = vi.fn();
-      pause = vi.fn();
+      isPaused   = false;
+      url:     string;
+      options: unknown;
+      send   = vi.fn();
+      ping   = vi.fn();
+      pong   = vi.fn();
+      pause  = vi.fn();
       resume = vi.fn();
 
-      constructor(url: string) {
+      /** Like ws: the socket is destroyed and 'close' follows. */
+      terminate = vi.fn(() => {
+        if (this.readyState === 3) return;
+        this.readyState = 3;
+        this.emit('close', 1006, Buffer.alloc(0));
+      });
+
+      constructor(url: string, options?: unknown) {
         super();
-        this.url = url;
+        this.url     = url;
+        this.options = options;
+        MockWebSocket.instances.push(this);
       }
     },
   };
@@ -35,7 +54,6 @@ const makeService = (stateOverrides: Partial<State> = {}) => {
     platform:        null,
     broker:          null,
     isShuttingDown:  false,
-    lastMessageTime: 0,
     apiVersion:      null,
     ...stateOverrides,
   };
@@ -106,17 +124,6 @@ describe('open event', () => {
     vi.advanceTimersByTime(30_000);
     expect((result as any).ping).toHaveBeenCalledTimes(1);
   });
-
-  it('updates lastMessageTime on open', () => {
-    const { service, state } = makeService();
-    const before = Date.now();
-
-    const result = connect(endpoint(), 'twin', service as any, vi.fn());
-
-    result.emit('open');
-
-    expect(state.lastMessageTime).toBeGreaterThanOrEqual(before);
-  });
 });
 
 // ── Ping / message ────────────────────────────────────────────────────────────
@@ -125,14 +132,17 @@ describe('ping and message events', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it('responds to ping with pong', () => {
+  // ws answers every ping itself; a second, manual pong would double the
+  // control frames a venue counts against its per-connection limit.
+  it('leaves answering a ping to ws', () => {
     const { service } = makeService();
 
     const result = connect(endpoint(), 'twin', service as any, vi.fn());
 
-    result.emit('ping');
+    result.emit('open');
+    result.emit('ping', Buffer.from('payload'));
 
-    expect((result as any).pong).toHaveBeenCalledOnce();
+    expect((result as any).pong).not.toHaveBeenCalled();
   });
 
   it('forwards received messages to the handler', () => {
@@ -180,16 +190,118 @@ describe('heartbeat', () => {
     vi.advanceTimersByTime(30_000);
     expect((result as any).ping).toHaveBeenCalledTimes(1);
 
+    result.emit('pong');
+
     vi.advanceTimersByTime(30_000);
     expect((result as any).ping).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ── Liveness ──────────────────────────────────────────────────────────────────
+
+describe('liveness', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
+
+  it('bounds the opening handshake', () => {
+    const { service } = makeService();
+
+    const result = connect(endpoint(), 'twin', service as any, vi.fn());
+
+    expect((result as any).options).toMatchObject({ handshakeTimeout: 10_000 });
+  });
+
+  it('terminates a socket that leaves a ping unanswered until the next one is due', () => {
+    const { service } = makeService();
+
+    const result = connect(endpoint(), 'twin', service as any, vi.fn()) as any;
+
+    result.emit('open');
+
+    vi.advanceTimersByTime(30_000);
+    expect(result.terminate).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(30_000);
+    expect(result.terminate).toHaveBeenCalledOnce();
+    expect(result.ping).toHaveBeenCalledOnce();
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('did not answer a ping'));
+  });
+
+  it('keeps a socket that answers with a pong', () => {
+    const { service } = makeService();
+
+    const result = connect(endpoint(), 'twin', service as any, vi.fn()) as any;
+
+    result.emit('open');
+
+    for (let i = 0; i < 4; i++) {
+      vi.advanceTimersByTime(30_000);
+      result.emit('pong');
+    }
+
+    expect(result.terminate).not.toHaveBeenCalled();
+    expect(result.ping).toHaveBeenCalledTimes(4);
+  });
+
+  it('counts any inbound frame as an answer', () => {
+    const { service } = makeService();
+
+    const result = connect(endpoint(), 'twin', service as any, vi.fn()) as any;
+
+    result.emit('open');
+
+    for (let i = 0; i < 4; i++) {
+      vi.advanceTimersByTime(30_000);
+      result.emit('message', Buffer.from('{}'));
+    }
+
+    expect(result.terminate).not.toHaveBeenCalled();
+  });
+
+  it('neither pings nor judges a paused socket', () => {
+    const { service } = makeService();
+
+    const result = connect(endpoint(), 'twin', service as any, vi.fn()) as any;
+
+    result.emit('open');
+
+    vi.advanceTimersByTime(30_000);   // ping sent, no pong yet
+    result.isPaused = true;
+
+    vi.advanceTimersByTime(90_000);
+    expect(result.ping).toHaveBeenCalledOnce();
+    expect(result.terminate).not.toHaveBeenCalled();
+
+    // Resumed: the deadline starts over, so one silent interval is not enough.
+    result.isPaused = false;
+
+    vi.advanceTimersByTime(30_000);
+    expect(result.ping).toHaveBeenCalledTimes(2);
+    expect(result.terminate).not.toHaveBeenCalled();
+  });
+
+  it('replaces a terminated socket exactly once', () => {
+    const { service } = makeService();
+    const onReconnect = vi.fn();
+
+    const result = connect(endpoint(), 'twin', service as any, vi.fn(), { onReconnect }) as any;
+
+    result.emit('open');
+    vi.advanceTimersByTime(60_000);
+    expect(result.terminate).toHaveBeenCalledOnce();
+
+    vi.advanceTimersByTime(1_000);
+    expect(onReconnect).toHaveBeenCalledOnce();
+    expect(onReconnect).not.toHaveBeenCalledWith(result);
   });
 });
 
 // ── Reconnection ──────────────────────────────────────────────────────────────
 
 describe('reconnection', () => {
-  beforeEach(() => vi.useFakeTimers());
-  afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
+  // Jitter at its midpoint, so every delay is the nominal one.
+  beforeEach(() => { vi.useFakeTimers(); vi.spyOn(Math, 'random').mockReturnValue(0.5); });
+  afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
   it('reconnects after a connection error', () => {
     const { service } = makeService();
@@ -276,6 +388,148 @@ describe('reconnection', () => {
     original.emit('error', new Error('Unexpected server response: 429'));
 
     // Normal first backoff is 200ms — a 429 must skip the ramp to the 15s cap.
+    vi.advanceTimersByTime(14_999);
+    expect(onReconnect).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(1);
+    expect(onReconnect).toHaveBeenCalledOnce();
+  });
+
+  it('opens one replacement when a late close follows an error on an open socket', () => {
+    const { service } = makeService();
+    const onReconnect = vi.fn();
+
+    const original = connect(endpoint(), 'twin', service as any, vi.fn(), { onReconnect }) as any;
+
+    original.emit('open');
+    original.emit('error', new Error('Invalid WebSocket frame: invalid opcode 5'));
+
+    expect(original.terminate).toHaveBeenCalledOnce();
+
+    vi.advanceTimersByTime(200);
+    expect(onReconnect).toHaveBeenCalledOnce();
+
+    // ws delivers the original's close late, after its replacement exists.
+    original.emit('close', 1002, Buffer.from(''));
+
+    vi.advanceTimersByTime(1_000);
+    expect(onReconnect).toHaveBeenCalledOnce();
+  });
+
+  it('waits for the close of a socket that fails while connecting', () => {
+    const { service } = makeService();
+    const onReconnect = vi.fn();
+
+    const original = connect(endpoint(), 'twin', service as any, vi.fn(), { onReconnect }) as any;
+
+    original.readyState = WebSocket.CONNECTING;
+    original.emit('error', new Error('Unexpected server response: 503'));
+
+    vi.advanceTimersByTime(1_000);
+    expect(onReconnect).not.toHaveBeenCalled();
+
+    original.readyState = WebSocket.CLOSED;
+    original.emit('close', 1006, Buffer.from(''));
+
+    vi.advanceTimersByTime(200);
+    expect(onReconnect).toHaveBeenCalledOnce();
+  });
+
+  it('ignores the close of a socket that has been replaced', () => {
+    const { service } = makeService();
+    const onReconnect = vi.fn();
+
+    const original = connect(endpoint(), 'twin', service as any, vi.fn(), { onReconnect }) as any;
+
+    original.emit('close', 1006, Buffer.from(''));
+    vi.advanceTimersByTime(200);
+
+    const replacement = onReconnect.mock.calls[0][0];
+
+    original.emit('close', 1006, Buffer.from(''));
+    vi.advanceTimersByTime(20_000);
+
+    expect(onReconnect).toHaveBeenCalledOnce();
+
+    replacement.emit('close', 1006, Buffer.from(''));
+    vi.advanceTimersByTime(20_000);
+
+    expect(onReconnect).toHaveBeenCalledTimes(2);
+  });
+
+  /** Drive one accept-then-close cycle and return how long its replacement took. */
+  const cycle = (socket: any, onReconnect: ReturnType<typeof vi.fn>, openFor = 0): number => {
+    const calls = onReconnect.mock.calls.length;
+
+    socket.emit('open');
+    vi.advanceTimersByTime(openFor);
+    socket.emit('close', 1008, Buffer.from('policy'));
+
+    let waited = 0;
+    while (onReconnect.mock.calls.length === calls) { vi.advanceTimersByTime(100); waited += 100; }
+
+    return waited;
+  };
+
+  it('keeps backing off while sockets open and close at once', () => {
+    const { service } = makeService();
+    const onReconnect = vi.fn();
+
+    let socket: any = connect(endpoint(), 'twin', service as any, vi.fn(), { onReconnect });
+
+    const delays: number[] = [];
+    for (let i = 0; i < 9; i++) {
+      delays.push(cycle(socket, onReconnect));
+      socket = onReconnect.mock.calls.at(-1)![0];
+    }
+
+    expect(delays).toEqual([200, 400, 800, 1_600, 3_200, 6_400, 12_800, 15_000, 15_000]);
+  });
+
+  it('starts the backoff over once a socket has stayed open for 30 seconds', () => {
+    const { service } = makeService();
+    const onReconnect = vi.fn();
+
+    let socket: any = connect(endpoint(), 'twin', service as any, vi.fn(), { onReconnect });
+
+    for (let i = 0; i < 4; i++) {
+      cycle(socket, onReconnect, 29_000);
+      socket = onReconnect.mock.calls.at(-1)![0];
+    }
+
+    // Open 29 s each time: never stable, so the delay is now 3.2 s.
+    expect(cycle(socket, onReconnect, 30_000)).toBe(200);
+  });
+
+  it('spreads the delay by up to 20 percent, never past the cap', () => {
+    const { service } = makeService();
+    const onReconnect = vi.fn();
+
+    vi.mocked(Math.random).mockReturnValue(0.999);
+
+    const low = connect(endpoint(), 'twin', service as any, vi.fn(), { onReconnect }) as any;
+    low.emit('close', 1006, Buffer.from(''));
+
+    vi.advanceTimersByTime(239);
+    expect(onReconnect).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(onReconnect).toHaveBeenCalledOnce();
+
+    const capped = connect(endpoint(), 'twin', service as any, vi.fn(), { onReconnect }) as any;
+    capped.emit('error', new Error('Unexpected server response: 429'));
+
+    vi.advanceTimersByTime(15_000);
+    expect(onReconnect).toHaveBeenCalledTimes(2);
+  });
+
+  it('treats HTTP 418 as a rate limit too', () => {
+    const { service } = makeService();
+    const onReconnect = vi.fn();
+
+    const original = connect(endpoint(), 'twin', service as any, vi.fn(), { onReconnect });
+
+    original.emit('error', new Error('Unexpected server response: 418'));
+
     vi.advanceTimersByTime(14_999);
     expect(onReconnect).not.toHaveBeenCalled();
 

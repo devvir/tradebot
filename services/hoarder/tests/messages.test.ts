@@ -10,9 +10,8 @@ vi.mock('../src/venues', async importOriginal => (await import('./twin')).withTw
 
 const makeService = (stateOverrides: Partial<State> = {}) => {
   const state: State = {
-    broker:          null,
-    isShuttingDown:  false,
-    lastMessageTime: 0,
+    broker:         null,
+    isShuttingDown: false,
     ...stateOverrides,
   };
 
@@ -155,16 +154,6 @@ describe('data messages: publishing', () => {
     await handler(buf(dataMsg()), 'twin');
 
     expect(onMessage).toHaveBeenCalledTimes(2);
-  });
-
-  it('updates lastMessageTime on every call', async () => {
-    const { service, state } = makeService();
-    const handler = createMessageHandler(service as any, vi.fn());
-    const before = Date.now();
-
-    await handler(buf(dataMsg()), 'twin');
-
-    expect(state.lastMessageTime).toBeGreaterThanOrEqual(before);
   });
 });
 

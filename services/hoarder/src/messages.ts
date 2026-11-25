@@ -24,8 +24,6 @@ export const createMessageHandler = (service: Service, onMessage: () => void): M
   const broker = service.providers.get('rabbitmq') as Broker;
 
   return async (buffer: Buffer, venue: string): Promise<void> => {
-    service.setState('lastMessageTime', Date.now());
-
     try {
       var frame = JSON.parse(buffer.toString()) as unknown;
     } catch (error) {
