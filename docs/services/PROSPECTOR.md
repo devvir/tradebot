@@ -69,7 +69,7 @@ venue, two servers, two scanners, and neither adapter knows the other exists.
 
 **Where descent stops is not a wire format**, so the rule lives in one place (`scanners/descend.ts`)
 and each scanner only supplies a way to read one level. Paging is where the two genuinely differ: an
-S3 partition is a straight line resumed by a marker, while an index directory answers in full and a
+S3 scope is a straight line resumed by a marker, while an index directory answers in full and a
 walk is a tree traversal resumed by the directory it last read.
 
 The source follows the same split: scanners in `src/scanners/`, adapters in `src/adapters/` with
@@ -198,7 +198,7 @@ when the run began, rather than read it.
 **An indexed venue** — S3, HTML — does the heavy lifting with the index it has:
 
 1. one scope, the base;
-2. mapping splits it into children, and a partition that turns out to hold too much is split again
+2. mapping splits it into children, and a scope that turns out to hold too much is split again
    while the survey runs — which is what buys concurrency;
 3. the walk confirms files, and **every confirmed file records its series**, so the venue maps itself
    as a side effect of being read. The tip moves as each row reaches `file`, which is an answer;
@@ -243,10 +243,10 @@ established millions of files is never mistaken for one nobody has surveyed.
 | phase | what it means | how it is recognised |
 |---|---|---|
 | **not run** | nothing has started | no run rows of the venue's kind |
-| **planned** | partitions created, none has progressed — a brief moment | open partitions, none with a page read |
-| **running** | walking or generating | an open partition that has read a page |
-| **complete** | the first pass has covered its keyspace and has not closed yet, while its probe drains | no open partition, and no job has ever closed |
-| **updating** | finding files added since | no open partition, and a job has closed before |
+| **planned** | scopes created, none has progressed — a brief moment | open scopes, none with a page read |
+| **running** | walking or generating | an open scope that has read a page |
+| **complete** | the first pass has covered its keyspace and has not closed yet, while its probe drains | no open scope, and no job has ever closed |
+| **updating** | finding files added since | no open scope, and a job has closed before |
 
 **Having been complete once is permanent**: from then on a venue between passes is `updating`, and
 whether its next pass walks or updates is `passFor`'s answer (see
@@ -308,7 +308,7 @@ does not see is small, and each case is corrected later:
 *below* the tip, so no generated range asks for it. A catalog partition (a month of a slice, a row of
 `partition`) with nothing `pending` has had every file the catalog knows of reported downloaded; that
 is a statement about known files, not a guarantee that the month is whole. What *settled* means for a
-partition is defined in [VOCABULARY.md](../VOCABULARY.md).
+partition is defined in [VOCABULARY.md](../VOCABULARY.md#archives).
 
 ### How each venue updates
 
@@ -499,28 +499,28 @@ infers size from shape breaks on the venue after that. Binance's `data/spot/dail
 *and* branching, 3,694 symbols each holding 13 interval directories; gate's `spot/orderbooks/` is
 wide and terminal, each of its month directories holding about 153,000 files. **Shape is not size.**
 So the mapping expands prefixes — every prefix it has not read yet at once, up to the room left —
-until it holds as many partitions as the walk has lanes, and treats a prefix as terminal when either
+until it holds as many scopes as the walk has lanes, and treats a prefix as terminal when either
 of two things is true:
 
 | condition | why |
 |---|---|
-| **catalogable** files sit directly under it | replacing it with its children would silently drop them. On S3 such a prefix is split by character instead — see [below](#partitions-split-themselves) |
+| **catalogable** files sit directly under it | replacing it with its children would silently drop them. On S3 such a prefix is split by character instead — see [below](#scopes-split-themselves) |
 | it has no children | nothing to split |
 
-**It only has to be roughly right.** A partition that turns out to carry a disproportionate share of
-the archive is split again while the survey runs — see *[Partitions split themselves](#partitions-split-themselves)*
+**It only has to be roughly right.** A scope that turns out to carry a disproportionate share of
+the archive is split again while the survey runs — see *[Scopes split themselves](#scopes-split-themselves)*
 — so a poor first guess costs a few listings rather than the whole pass.
 
 **The key root is always expanded**: it is the venue as a whole, which the job itself covers, so it
-is never a partition. A root holding a catalogable key of its own cannot be partitioned at all — that
+is never a scope of its own. A root holding a catalogable key of its own cannot be divided at all — that
 key would sit inside no child — and the survey refuses it.
 
 **A level is read to `IsTruncated`, not to the first page.** A `delimiter=/` reply is capped like any
 other, with child directories and keys sharing the 1000-entry budget, so a level wider than a page
 arrives cut off. The answer that loses data is whether files sit here: a dated key sorting past the
 cut reads as "no files here", the prefix is replaced by its children, and that key belongs to no
-partition at all. S3 states outright whether it held anything back, so it is asked. Splitting reuses
-this reader, so a truncated child list would equally close a partition over children nobody walked.
+scope at all. S3 states outright whether it held anything back, so it is asked. Splitting reuses
+this reader, so a truncated child list would equally close a scope over children nobody walked.
 
 **Every page until the first file, and no further.** A prefix holding a file is never split by
 directory, so once one is seen nothing later on the level can change the answer. What must be
@@ -538,7 +538,7 @@ adapter already declines loses nothing, because they were never going to be reco
 It also makes the rule hard to trip by accident, in two layers. A stray `.log`, `.tmp` or `README`
 carries no date, so `dateOf` declines it and the prefix stays splittable. And where a venue leaves
 something that *does* look like a dated file, one `exclusion` row settles it — which makes the
-exclusion table a partitioning lever as well as a cataloguing one.
+exclusion table a splitting lever as well as a cataloguing one.
 
 **A refused directory is not descended into at all** — it is ignored as though it were not there.
 Filtering keys at the recording step would keep the catalog correct, but the walk would still happen
@@ -553,13 +553,14 @@ slash to tell a stray key from the directory holding the liquidation snapshots.
 merely tend to: a venue answering with a child equal to its parent — a stray trailing slash, an index
 linking to itself — would otherwise be split into itself for ever.
 
-### 2. Walk each partition
+### 2. Walk each scope
 
-Descent yields **scopes**; committing them to the catalog turns them into **partitions**, which is
-what the rest of a job deals in. The two words name the same prefixes on either side of that line —
-a scope is a proposal, a partition is written down and has a cursor.
+Descent yields **scopes**: key prefixes, disjoint, which between them cover everything under the key
+root. A job writes one `run` row per scope, carrying its cursor, and that row is what the rest of a
+job deals in. A scope is not a [partition](../VOCABULARY.md#archives), one month of a slice and a row
+of the `partition` table; this doc uses *partition* only in that sense.
 
-Each partition is paged to exhaustion, several at a time. What a page *is* depends on the platform,
+Each scope is paged to exhaustion, several at a time. What a page *is* depends on the platform,
 and it is the one place the two scanners genuinely part company.
 
 #### On a listing venue
@@ -587,13 +588,13 @@ success, with everything below silently missing.
 #### On an index venue
 
 There is no marker to page with: a directory answers in full or not at all. So a page is **one
-directory**, and a walk is a depth-first traversal of the partition's tree rather than a straight
+directory**, and a walk is a depth-first traversal of the scope's tree rather than a straight
 line through a keyspace.
 
 That costs nothing in resumability, because depth-first with children in sorted order visits paths in
 exactly the order they sort — a directory, then everything beneath it, then its next sibling. So the
 directory just read is the whole of a walk's state: everything at or below it is done, and the next
-page is the first directory above it, which the tree itself answers. A partition resumes from one
+page is the first directory above it, which the tree itself answers. A scope resumes from one
 short string exactly as a listing venue resumes from a marker, and a subtree that ends before the
 cursor is skipped by comparing two strings rather than opening it.
 
@@ -607,12 +608,12 @@ children, so a symbol added since last month cannot hide behind a stale answer.
 
 | scanner | a page covers |
 |---|---|
-| S3 listing | every key after the marker it was asked with, through the marker it hands back — or from the partition's start on its first page, to its end on its last |
+| S3 listing | every key after the marker it was asked with, through the marker it hands back — or from the scope's start on its first page, to its end on its last |
 | index | its directory's own files, and below it only the subdirectories it links |
 
 Both are checked, not assumed: every S3-protocol venue answered strictly in byte order on
 2026-10-03, which is the order `path` sorts in; and an index walk gives every directory of a
-partition its own page, files or not.
+scope its own page, files or not.
 
 So **a page is compared with what the catalog holds in that stretch, and only the differences are
 written**:
@@ -629,8 +630,8 @@ written**:
 
 On a listing venue the comparison is **one ordered read of the stretch**, not one lookup per key — a
 page's thousand keys answer from a few milliseconds of index rather than five hundred seeks. It is read once
-per page, before the page is cut into write slices; a key that is about to be written, parked or
-withdrawn is looked up again inside the slice that writes it, since another writer may have touched
+per page, before the page is cut into write batches; a key that is about to be written, parked or
+withdrawn is looked up again inside the batch that writes it, since another writer may have touched
 it in between, and a key that said nothing new is skipped on the read's word.
 
 Of everything that discovers files, only a walk withdraws. Keys that reach the catalog any other
@@ -643,7 +644,7 @@ one other way a file is withdrawn is a download report the venue confirms — se
 
 **A file is marked `absent` in two places and no others**: a walked page that covers where it is and
 does not list it, and a download report the venue confirms. Its row stays, with its history; only
-`existence` changes, and the partition's counts and version move with it.
+`existence` changes, and its partition's counts and version move with it.
 
 **A withdrawn file comes back the way any file arrives.** A listing that states it in full writes the
 row again. A listing that only names it sends it to `wip` although the catalog holds a row for it,
@@ -669,16 +670,16 @@ file:
 Each batch is also one warning in the service's log, naming the venue, the cause, how many files and
 the first of them. Nothing reads the file back; it is a record and not state.
 
-### Partitions split themselves
+### Scopes split themselves
 
-The mapping only has to be roughly right, because a partition that turns out to hold too much is
+The mapping only has to be roughly right, because a scope that turns out to hold too much is
 split while the survey runs. **The signal is idle workers** — the very thing a good split exists to
 avoid, measured directly rather than predicted from a directory's shape.
 
 ```
 a lane finds the queue empty
   → nothing running?                 the survey is over
-  → the busiest running partition:   pause it, list its level, replace it with its children
+  → the busiest running scope:       pause it, list its level, replace it with its children
   → nothing left that can be split?  stop asking
 ```
 
@@ -687,7 +688,7 @@ pages, so it identifies itself. Splitting anything else terminates just as surel
 little.
 
 **A walk is paused between pages, never interrupted mid-page.** `sweep` commits its cursor after
-every page and returns without closing the run, so what a pause leaves behind is a partition that
+every page and returns without closing the run, so what a pause leaves behind is a scope that
 knows exactly where it reached. Splitting under a running walk would race that cursor and hand the
 children a position their parent had already passed.
 
@@ -696,14 +697,14 @@ lexical key walk on S3, a sorted depth-first traversal on an index:
 
 ```
 parent at  P/c/key-0400
-  P/a/  P/b/   entirely behind it   → already walked, no partition made
+  P/a/  P/b/   entirely behind it   → already walked, no scope made
   P/c/         contains it          → inherits it, resumes mid-way
-  P/d/  P/e/   ahead of it          → fresh partitions
+  P/d/  P/e/   ahead of it          → fresh scopes
 ```
 
 The swap is **one transaction** — parent closed, children written, one job epoch shared. A crash
 between the two halves would leave a stretch of keyspace belonging to nothing, and the work list is
-the partitions, so nothing would ever notice.
+the scopes' rows, so nothing would ever notice.
 
 Two guards keep a split from destroying what it was meant to divide:
 
@@ -728,9 +729,9 @@ longer ones over a finite tree, and a prefix that cannot be split is remembered 
 examined twice. When everything running is terminal, refinement is over and idle workers become a
 fact to accept rather than a condition to retry.
 
-**A split is bounded, because everything waits on it.** The partition is stopped for it and every
+**A split is bounded, because everything waits on it.** The scope is stopped for it and every
 idle worker is parked on its answer, so a split that does not come back is the whole survey
-standing still. One that takes more than five minutes is abandoned: the partition resumes whole and
+standing still. One that takes more than five minutes is abandoned: the scope resumes whole and
 is not offered for splitting again that pass — the cost of a prefix that could not be split, and no
 more. The walk's 30-second heartbeat (`Walking`) carries its request rates, the host's limiter state and the
 machine's ticket pool, so a request that is not going out says which of the two is holding it.
@@ -836,8 +837,8 @@ a path that only addresses the venue, such as a bucket name or okx's `cdn/`, bel
 
 ## Jobs: resuming and refreshing
 
-One pass over a venue is a **job**, and it is the only unit here. A job is a row at the empty scope
-plus one row per partition, written together:
+One pass over one of a venue's hosts is a **job**, and it is the only unit here. A job is a row at
+the empty scope plus one row per scope, written together:
 
 ```sql
 run(venue_id, kind, scope, cursor, requests, found, started, completed, asked, sent)
@@ -846,6 +847,10 @@ run(venue_id, kind, scope, cursor, requests, found, started, completed, asked, s
 `kind` is `walk` for a listing pass and `update` for a generated one. Probing keeps no run rows:
 `wip` is its work list. The kinds keep separate rows because a job is opened and resumed per kind
 (`openJob`, `openPartitions`), and an update's scopes say nothing about the keyspace a walk covers.
+
+**A job belongs to one host.** `run` rows are keyed by the `venue` row, which is a server, so bybit's
+two hosts keep two jobs for one pass over the venue. VOCABULARY's [run](../VOCABULARY.md#archives),
+one pass over a venue across its hosts, is those jobs together; the `run` table holds their rows.
 
 **A host has at most one open job of each kind**, and a scope at most one open row: `run_open` is a
 unique index over the rows not yet completed. Ordinarily only one job is open on a host at all; an
@@ -873,12 +878,12 @@ key goes the same way, onto whatever job is open next. **Instrument listings are
 of requests a pass.
 
 **A first pass is not a special case.** It is a job with no predecessor: same rows, same walk, same
-code. The only decision anywhere is whether to build a new set of partitions or continue the open
+code. The only decision anywhere is whether to build a new set of scopes or continue the open
 one:
 
 ```
 asked to survey
-  a job is open?   →  walk the partitions it still has open
+  a job is open?   →  walk the scopes it still has open
   no job open?     →  map the archive, open a job over it, walk it
   refresh: true?   →  drop the run rows first, so the second line applies
 ```
@@ -886,65 +891,65 @@ asked to survey
 Nothing below that line asks which kind of survey it is in, because nothing needs to. **Nothing above
 it consults a clock either** — see [nothing starts unasked](#nothing-starts-unasked-and-nothing-stops-on-its-own-either).
 
-### Partitions are read, not re-derived
+### Scopes are read, not re-derived
 
-The work list is `SELECT … FROM run WHERE completed IS NULL` — the partitions that still have
-keyspace nobody has read. A partition leaves that list by being walked to exhaustion, so resuming
+The work list is `SELECT … FROM run WHERE completed IS NULL` — the scopes that still have
+keyspace nobody has read. A scope leaves that list by being walked to exhaustion, so resuming
 needs no record of what an earlier attempt managed and no filter over what descent produced.
 
 The set is committed **in one transaction with the job row**. That atomicity is what makes the rows
 safe to treat as the work list: a half-written set would look exactly like a finished one, and the
-partitions never written would be skipped in silence.
+scopes never written would be skipped in silence.
 
 **A resumed job does not re-map the archive**, so a directory that appeared after the job began
 waits for the next job. That costs nothing. The guarantee is only *present when the job started and
 still there when it finished*, and something that appeared midway was never inside it.
 
-Every row in a job shares one `started`, so a partition walked hours later still claims the archive
+Every row in a job shares one `started`, so a scope walked hours later still claims the archive
 as it was when the job began — the conservative direction, and the one the cascade wants. A job
 begun on Monday and finished on Friday is a Monday snapshot; dating it Friday would claim four days
 it never looked at.
 
-### A job closes only when every partition did
+### A job closes only when every scope did
 
-A partition that cannot be walked keeps its row and its cursor, and the job **stays open**. That is
+A scope that cannot be walked keeps its row and its cursor, and the job **stays open**. That is
 not bookkeeping fussiness: the job sits at the empty scope, which is every prefix's first ancestor,
 so closing it around a failure would answer "established" for the whole venue — including the
 prefix nobody has read.
 
-**A page that fails is asked again where it is, before its partition is given up on.** What fails a
+**A page that fails is asked again where it is, before its scope is given up on.** What fails a
 page is nearly always what would fail any other at that moment — the link, the venue, a write that
 could not get its turn — so moving on to another prefix gains nothing and leaves this one half read.
 The page is read again from the same cursor, up to twelve times, after a wait that doubles from two
 seconds to a minute: a little under seven minutes in all. A refusal is the venue's answer and is not
 repeated. Nothing of a page counts until its cursor is written, so asking again costs one request.
 
-Only a page that outlasts that fails its partition, and the job stays open over it. The next turn of
-the loop finds a job to resume and takes up exactly the partitions that failed, half a minute later,
+Only a page that outlasts that fails its scope, and the job stays open over it. The next turn of
+the loop finds a job to resume and takes up exactly the scopes that failed, half a minute later,
 **for as long as the service runs**. Nothing counts passes and nothing gives up.
 
-That is safe because there is no per-partition failure that stays failed. A prefix that no longer
+That is safe because there is no per-scope failure that stays failed. A prefix that no longer
 exists answers `200` with an empty listing — a successful walk of an empty scope, not an error. A
 given page is a fixed URL, so it cannot deterministically fail while its neighbours succeed. What is
 left is transient (a 5xx, a 429, a reaped connection), venue-wide (a bucket whose policy changed,
 which fails descent first), or local — and every one of those is cured by asking again later.
 
-Resuming is also cheap, because it does not re-map: one listing request per remaining partition.
+Resuming is also cheap, because it does not re-map: one listing request per remaining scope.
 
-**A pass that ends with partitions still open says how many failed, and names none of them**: each
-was said as it happened, kept its cursor, and is resumed. A partition that is open with no failure
+**A pass that ends with scopes still open says how many failed, and names none of them**: each
+was said as it happened, kept its cursor, and is resumed. A scope that is open with no failure
 to explain it — stopped to be split and never queued again — is named, since nothing else would say
 so.
 
 ### An update's rows are its progress, and reconciliation deletes them
 
-A job closes when its pass is over, and every partition finishing is not the end of a pass that
+A job closes when its pass is over, and every scope finishing is not the end of a pass that
 probes.
 
 **A walk over a venue that states everything in its listing ends there**: the keyspace has been read,
 the bounds are on disk, and that closed job is what `phaseOf` and `establishedAt` read.
 
-**Every other pass leaves it open, and that is the whole of resuming one.** Every partition finishing
+**Every other pass leaves it open, and that is the whole of resuming one.** Every scope finishing
 means *generation* is done — the keys are in `wip` and mostly unasked, and probing them is where the
 hours go: on htx, generation finishes with some 185,000 keys still queued. A job closed at that
 moment would leave a restart during the drain nothing open, so it would plan the pass again and
@@ -984,7 +989,7 @@ everything it had already read.
 
 **`run` is a progress table, not a log.** A finished htx pass leaves **one row, not 39,296**: the job
 row, closed, carrying the pass's start, end and totals. It cannot be mistaken for outstanding work,
-because progress is read from the partitions.
+because progress is read from the scopes' rows.
 
 ### Nothing is parked that the catalog already holds
 
@@ -1020,7 +1025,7 @@ a consequence of the writes rather than as a duty laid on every caller. Three ru
 - **Deltas are applied after the commit, never inside it — and immediately after, with nothing
   awaited in between.** A transaction that rolls back did nothing to the table, and a counter moved
   before the commit would keep the change anyway. But a delta held *past* its commit is as wrong: the
-  batched parker commits a slice and then yields, the probe settles those rows in the gap, and their
+  batched parker commits a batch and then yields, the probe settles those rows in the gap, and their
   removal would reach the counter before their arrival did. The counter clamps at zero, so the
   removal would be lost and the arrival land on rows that are already gone. `putFiles` and
   `settleFiles` own their transactions, because a file must not arrive without leaving the backlog;
@@ -1038,7 +1043,7 @@ nobody has.
 
 ### Refreshing
 
-A refresh is a **full re-walk** of every partition. It has to be: new keys are appended within each
+A refresh is a **full re-walk** of every scope. It has to be: new keys are appended within each
 symbol group rather than globally, so a new month for `AAVEUSDT` lands at `A…`, behind any cursor
 already past it. No marker finds it.
 
@@ -1174,7 +1179,7 @@ planned against bounds nothing has established is not a cheaper version of that 
 out its interval, and one **paused partway through an update**, which it resumes.
 
 That last case reports itself as a **resume**, not as a new update. From outside the two are
-identical and they are not the same thing: one carries on from partition cursors that already exist,
+identical and they are not the same thing: one carries on from scope cursors that already exist,
 the other plans fresh scopes, and somebody told "update started" about work that was half done has
 been told the wrong thing. Whether the venue was paused is not the question — *what the pause
 interrupted* is. A pause during the walk fails for the ordinary reason.
@@ -1189,13 +1194,13 @@ on its own, so once a venue has been surveyed it is *always* running — and ref
 would make a refresh impossible for ever after the first survey, and a forced update useless in the
 one state it exists for, since what it skips is a wait this loop is in the middle of. Both therefore
 stop the loop, wait for it to actually stop, and start it again. The waiting is the whole of it:
-interrupting from outside would drop the rows a partition is still committing cursors against.
+interrupting from outside would drop the rows a scope is still committing cursors against.
 
 **An ordinary request adds nothing to a venue already surveying**, and says so. That is not an
 obstacle being reported — it is the work already happening.
 
 **A pause is not a cancellation, and there is no resume verb to go with it.** The flag is read
-between pages, so the page in flight is committed, every partition keeps its cursor and the job stays
+between pages, so the page in flight is committed, every scope keeps its cursor and the job stays
 open — the state a killed container leaves behind, reached deliberately. Starting a paused venue
 therefore *is* resuming it, and puts it back to what the pause interrupted: walking on from its
 cursors if it was stopped mid-pass, waiting if it was waiting. A venue paused while it waited is not
@@ -1244,12 +1249,12 @@ long will it last" is unanswerable from paths alone.
 So a pass that probes — every update, and a walk on a venue whose adapter says `probes` — runs a
 **second loop** beside its generating half, settling files a `HEAD` at a time. Neither waits on the
 other while there is work: a file found in the first minute should not sit unestablished until the
-last partition closes, so during a backfill the probe runs for hours behind the walk.
+last scope closes, so during a backfill the probe runs for hours behind the walk.
 
 **A probe is the second half of a pass, and ends with it.** While indexing is under way an empty
 backlog means *not yet*, so the loop waits and asks again. Once the generating half stops nothing more
 is coming, and the probe is draining: it keeps taking rounds until the backlog is empty and then logs
-*Survey complete* — the same line a pass that does not probe logs when its partitions are done. A pass
+*Survey complete* — the same line a pass that does not probe logs when its scopes are done. A pass
 that finishes generating while a probe still owes logs *Candidates generated; probing them* instead:
 half a million names nobody has established are not a surveyed venue.
 
@@ -1294,7 +1299,7 @@ after every drain and reopen exactly that hole.
 
 The consequence worth knowing: generation walks its series sequentially, so probing completes one
 series at a time rather than advancing every series' date together. A pass cut short has answered
-whole series rather than a slice of all of them.
+whole series rather than a part of every one.
 
 The cursor is a **value**, one integer, rather than an open statement. SQLite will let a query step
 while the same connection rewrites the rows it is walking, and what happens then depends on which
@@ -1318,11 +1323,11 @@ once".
 ### Asking what is established
 
 `establishedAt(prefix)` answers with the latest `started` of the completed runs covering it — job
-row or partition, at the prefix itself or any ancestor, since a walk of `spot/` settles everything
+row or scope, at the prefix itself or any ancestor, since a walk of `spot/` settles everything
 beneath it. **Only the kind that establishes the venue counts**: walks at a venue that has ever been
 walked, updates at one that never has (okx, bitget), since an update reads only the newest stretch of
 each series and says nothing about the rest of a walked tree. **A completed ancestor does not count
-while an open partition of the same kind lies below it**: splitting closes the parent and hands the
+while an open scope of the same kind lies below it**: splitting closes the parent and hands the
 rest of its keyspace to children, so the parent's `completed` says the run stopped, not that the
 prefix is established.
 
@@ -1423,7 +1428,7 @@ refusal line.
 says where the window landed rather than how the survey is going: on a venue that stands down, it
 reads as a collapse whenever a pause falls inside the window and as full speed whenever one does not.
 A survey running for days is judged over a minute and an hour instead — counted in a ring of
-per-second and per-minute buckets, because an hour of timestamps at these rates is millions of
+per-second and per-minute counters, because an hour of timestamps at these rates is millions of
 numbers held to answer one log line, and averaged over the time actually elapsed so that a process
 two minutes old does not report an hourly rate a thirtieth of the truth.
 
@@ -1604,7 +1609,7 @@ branch of a venue can disappear from one day to the next and no alarm fires** �
 generates keys nobody answers, sets them down, and retires them a month later.
 
 **It bites during an update, not a walk.** An indexed venue re-walking from empty, or refreshed,
-reads whatever the venue now serves and catalogues the new shape as a new pattern — so a full run
+reads whatever the venue serves and catalogues the new shape as a new pattern — so a full run
 recovers on its own. It is the venues that only ever update, and the long stretches between full
 runs, where a moved template is invisible.
 
@@ -1678,8 +1683,8 @@ sets is below.
 
 ### On pace and parallelism
 
-**A partition is a serial chain.** Each page's marker is the previous page's last key, so no amount
-of concurrency makes one partition faster. Partitions are therefore the only unit of parallelism,
+**A scope is a serial chain.** Each page's marker is the previous page's last key, so no amount
+of concurrency makes one scope faster. Scopes are therefore the only unit of parallelism,
 and they cut the keyspace exactly — disjoint, and together covering everything under the root.
 
 **Cadence and concurrency are different things, and only one of them is a limit.**
@@ -1691,7 +1696,7 @@ evidence for it, and nothing in the environment can raise it.
 can actually be reached: at one at a time, 100/s is unreachable whatever the gate allows, because a
 request spends most of its life waiting. It cannot breach the cadence either, since every request
 passes that gate regardless — which is why a venue's `concurrency` is a ceiling rather than a target,
-and a venue yielding fewer partitions simply uses fewer lanes.
+and a venue yielding fewer scopes simply uses fewer lanes.
 
 **So the figure that reaches a cadence is the cadence times how long one request takes**, and below
 it the venue is held by concurrency rather than by its limit. The time that matters is a *missing*
@@ -1717,15 +1722,15 @@ both. That the link is shared and something else may need it is what the machine
 answers, for every caller at once.
 
 **How many lanes a venue gets follows from the same figure.** A lane holds one request at a time, so
-more of them than the venue's own `concurrency` is not parallelism but queueing, with a partition
+more of them than the venue's own `concurrency` is not parallelism but queueing, with a scope
 held open behind each one. The count is therefore the adapter's number, capped by
 `PROSPECTOR_CONCURRENCY` (`lanesFor` in `pace.ts`) — and it is also what the archive is split for, so
-a venue is partitioned for the lanes it will actually have.
+a venue is split for the lanes it will actually have.
 
-**Imbalance sets the wall clock, not the total.** If one partition holds most of the keys, its chain
+**Imbalance sets the wall clock, not the total.** If one scope holds most of the keys, its chain
 decides when the survey ends however quickly the others finish, and more lanes do not help because
-the work is not divisible. A partition carrying too much is split while the survey runs — see
-*[Partitions split themselves](#partitions-split-themselves)*.
+the work is not divisible. A scope carrying too much is split while the survey runs — see
+*[Scopes split themselves](#scopes-split-themselves)*.
 
 The limit on concurrency is therefore our own resources rather than the venue's: S3 documents 5,500
 GET/HEAD per second per prefix, which nothing here approaches.
@@ -2024,7 +2029,7 @@ The schema lives in `src/database/schema.ts`, with the migrations beside it in
 `src/database/migrations/`; the queries are in `src/catalog/`. **Prospector creates and migrates the
 file, and is the only thing that writes it — every row of every table, lenses included.** Two writers
 on one SQLite file wait on each other's locks, and the one that waits longest fails; with one writer,
-the survey's writes take their turn in one queue, the serial write queue (`slice` in
+the survey's writes take their turn in one queue, the serial write queue (`slice()` in
 `catalog/serial.ts`), and nothing waits on a lock at all.
 
 Sixteen tables. `venue`, `file`, `wip` and `revision` are what a venue serves and what became of
@@ -2069,7 +2074,7 @@ are servers, and an instrument published from two of them is one instrument.
 **A series holds no symbol: it holds its instrument**, and its name is read from there. Whoever
 creates a series — a survey or a seed — asks for the instrument first, through the one statement
 `INSTRUMENT_OF` in `schema.ts`, which creates it where it is new and reads its venue and market off
-the pattern's slice, and its kind off the pattern. A venue-wide bucket has no instrument: it holds every instrument of a market,
+the pattern's slice, and its kind off the pattern. A market bundle (`@`) has no instrument: it holds every instrument of a market,
 which share nothing, and `@` is how a series without one is spelled wherever a symbol is expected.
 
 **What makes two series one** is the shape, the instrument and the name its keys carry. One
@@ -2127,19 +2132,19 @@ it — and finding out hours into a walk instead is the alternative.
 The registry is `src/venues.ts` and each adapter is one file beside it. **What a venue publishes
 belongs in [docs/venues/](../venues/)**, one document each, and how this service handles each venue is
 [venue by venue](#venue-by-venue); what belongs here is the shape of the problem those adapters exist
-to solve, and the hooks the core grew to let them solve it.
+to solve, and the hooks the core offers them for it.
 
 | | |
 |---|---|
 | **a server, not a venue** | an adapter is one host. A venue serving its books from a second machine is two adapters sharing a name, with two limiters and two sets of run rows |
 | **addressed where it answers, not where it serves** | a CDN in front of a bucket may answer a listing plausibly and wrongly — a cached reply is indistinguishable from a broken venue except by `x-cache` and `age`. Where the bucket itself answers, the venue's one address is the bucket, and the CDN is not used at all |
-| **surveyed from the bucket root** | wherever the venue allows it. Descent guarantees nothing *above* where it starts, so a declared prefix reintroduces one level up exactly the omission that discovering prefixes exists to prevent — and it has hidden real datasets at three of the servers here, each absent from the tree the venue's own site presents |
+| **surveyed from the bucket root** | wherever the venue allows it. Descent guarantees nothing *above* where it starts, so a declared prefix reintroduces one level up exactly the omission that discovering prefixes exists to prevent — and at three of the servers here it would hide real datasets, each absent from the tree the venue's own site presents |
 | **offered against merely reachable** | a tree nobody advertises is still that venue's data, and being unadvertised is a reason to take it *sooner* — it may be withdrawn without notice |
 
 ### The hooks exist because a venue could not be described without them
 
 Every optional hook in [the model](#the-model) is a place where a general mechanism admits a specific
-answer, rather than a place where one venue's behaviour was written into the core. An adapter that
+answer, rather than a place where one venue's behaviour is written into the core. An adapter that
 grows control flow has taken on work that belongs to a scanner; an adapter that needs a hook nobody
 else uses has found something real about its venue, and the hook is how that stays out of everything
 else.
@@ -2208,7 +2213,7 @@ removed.
 
 Nothing is fetched to produce a constructed venue's keys — they come out of arithmetic over the
 bounds. That is an implementation detail and **must not leak into how the survey is structured**: the same scopes, the
-same partitions, the same cursors committed page by page, the same job that stays open until every
+same `run` rows, the same cursors committed page by page, the same job that stays open until every
 scope is exhausted. A generator that ignored all that would still produce the right URLs and would
 lose everything the run table is for.
 
@@ -2231,7 +2236,7 @@ venue's sockets go unserviced — a service running flat out that is indistingui
 one. The walk yields between pages for exactly this reason, at a cost of one turn per thousand keys.
 
 So **a refresh is hours of probing and a resume must never become one**. What keeps them apart is
-exactly the run table: a resume reads the open partitions and continues from their cursors, so it
+exactly the run table: a resume reads the open scopes and continues from their cursors, so it
 emits only what is ahead of them and re-parks nothing. Regenerating the whole keyspace "because it is
 cheap to generate" would be true about the generation and catastrophic about what follows it.
 
@@ -2246,9 +2251,8 @@ data — both stored, never parsed, exactly as `tag` is.
 **Two tables because they change at different rates.** A venue adds symbols weekly and changes the
 shape of a URL once in years, so `pattern` holds the shapes — tens of rows, effectively frozen — and
 `series` holds one row per instrument per shape, with its bounds and its tip, in the tens of
-thousands.
-Holding both in one table made adding a symbol something only code that knew how to build that
-venue's URLs could do, which is knowledge an adapter then carries for ever.
+thousands. Holding both in one table would make adding a symbol something only code that knew how
+to build that venue's URLs could do, which is knowledge an adapter would then carry for ever.
 
 **A pattern's slots are a calendar, an instrument and a part** — `{YYYY}` `{MM}` `{DD}` `{HH}`
 `{MI}`, `{SYMBOL}` and `{PART}` — and everything else in it is literal, because a different value of
@@ -2468,7 +2472,7 @@ floors *generation*, and the keys below it are already parked in `wip`, on disk,
 they go on being probed whatever the column says, and anything they find lowers it again.
 
 **Both rules only widen.** So nothing depends on meeting a series' files in date order — which an
-index does not guarantee across hours and partitions — and a file the venue *withdraws* narrows
+index does not guarantee across hours and scopes — and a file the venue *withdraws* narrows
 nothing when it goes. A pass that finished reads both bounds back from `file` and replaces any the
 files do not bear out: see [what a completed pass is worth](#what-a-completed-pass-is-worth).
 
@@ -2542,8 +2546,7 @@ the core's 30 attempts, not bybit's 100.
 `403 AccessDenied` — the same status as being turned away, separable only by the headers. Its
 `ruleOnFailure` answers `'drop'` for an S3-served `403`, so a missing key is set down on its first
 answer and asked again by the next update while its period is above the tip. okx's rule answers
-`'drop'` on every `404`, so its missing keys are set down on the first answer too (see
-[docs/planning/CATALOG.md](../planning/CATALOG.md)).
+`'drop'` on every `404`, so its missing keys are set down on the first answer too.
 
 **Everything else keeps its row, for as long as the service runs.** A 429, a 5xx, a reaped connection
 say nothing whatever about the file, so there is nothing to conclude and no count to run down. The row
@@ -2675,7 +2678,7 @@ dataset *is* the file. The market bundle (`@`) series carries it, made by a walk
 pattern with no `{SYMBOL}` slot is never offered to an instrument.
 
 **What allowing it costs is not a duplicate, it is a scramble.** `file` is unique on
-`(venue_id, path)` and settles with `DO NOTHING`, so such series never collide — they *partition* the
+`(venue_id, path)` and settles with `DO NOTHING`, so such series never collide — they *divide* the
 dataset, each period landing on whichever asked first, and none of them ever holding all of it. Every
 one of them then re-asks the same key for ever.
 
@@ -2775,7 +2778,7 @@ lookups on the `file_series` index, one at each end. `corrected` is expected to 
 transaction, so a venue's few hundred thousand series do not hold the process — `/status` included —
 for the length of the loop.
 
-**A pass that did not finish reconciles nothing.** Blocked, paused, a partition that could not be
+**A pass that did not finish reconciles nothing.** Blocked, paused, a scope that could not be
 read, a venue answering nonsense — all of them return normally and none has checked anything. Lifting
 their tips would assert the last `OVERDUE_DAYS` were asked about when they were not, permanently,
 since a tip does not come back. The pass logs `Pass unfinished` (unless it was paused), stays open,
@@ -2822,7 +2825,7 @@ reply — gate publishes a day of books whole or not at all (over 40 hourly seri
 days carried all 24 hours and 767 carried hour 00, while none of forty first days carried hour 00),
 so a quiet day costs one request rather than 24.
 
-**A size threshold was the obvious alternative for bitget and is the wrong shape.** It would guess
+**A size threshold is the wrong shape for bitget.** It would guess
 where the venue states: one request saved against a silently truncated day.
 
 #### What the two callers do with it
@@ -2988,9 +2991,9 @@ ignores what it is asked. Facts: [GATE.md](../venues/GATE.md).
 
 **`accepts` keeps seven trees and refuses the rest**: `spot`, `futures_usdt`, `futures_btc`,
 `tradfi`, `delivery_usdt`, `spot_index` and `options_ticker`. The others are dead, not market data,
-or not gate's: `hk/` and `malta/` are separate order books, so their `BTC_USDT` is not gate.com's,
-and were either wanted it would be a venue row of its own rather than a prefix of this one. Within
-the seven, `accepts` also refuses:
+or not gate's: `hk/` and `malta/` are separate Gate entities with their own order books, so their
+`BTC_USDT` is not gate.com's, and they are refused rather than merged under this venue's symbols.
+Within the seven, `accepts` also refuses:
 
 - a key at the wrong depth: what sits directly below a tree is a month for the two snapshot trees and
   a dataset name for every other;
@@ -3033,7 +3036,7 @@ missing depending on the tree asked. So the cut is one date, decided from the pa
 for keys nobody has listed yet: `historical_data/` throughout, and `data/` before **2026-02-01**
 (`MIGRATED` in `adapters/htx.ts`). That date is where `historical_data/` begins, and every day
 `data/` holds from it on is also in `historical_data/`, with the two exceptions below — so an earlier
-cut would lose `data/` days the new tree lacks, and a later one would catalogue days twice. It is the better branch on its merits too: `data/` is the tree with holes in it
+cut would lose `data/` days `historical_data/` lacks, and a later one would catalogue days twice. It is the better branch on its merits too: `data/` is the tree with holes in it
 during the overlap.
 
 **Two things are knowingly given up, and are refused with everything else**: the nine perpetuals
@@ -3049,7 +3052,7 @@ archive, which is why both are declared.
 
 **One instrument, two spellings.** The catalog names an instrument the way `historical_data/` does,
 dashed, without the `-PERP` its perpetual shapes carry in the pattern, and a `data/` series carries
-the old tree's spelling as its `url_symbol`.
+`data/`'s spelling as its `url_symbol`.
 
 ### kucoin
 
@@ -3076,7 +3079,7 @@ One adapter, on the `probed` scanner: nothing can be listed, so `listable` is fa
 an update over series declared by migration `003-okx` from `seeds/okx/`. Facts:
 [OKX.md](../venues/OKX.md).
 
-**The venue-wide files are `@` series, seeded one per bucket pattern.** `allspot`, `allswap`,
+**The venue-wide files are `@` series, seeded one per market-bundle pattern.** `allspot`, `allswap`,
 `allfutures`, `alloption` and `allmargin` name no instrument, so their ten patterns carry no
 `{SYMBOL}`; the preamble never gives such a pattern to an instrument and never delists it — see
 [a shape with no symbol](#a-shape-with-no-symbol-cannot-be-branched-by-symbol). A dated chain's
