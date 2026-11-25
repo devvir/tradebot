@@ -171,7 +171,7 @@ describe('refusing a definition', () => {
     expect(body.problems[0]).toMatchObject({ venue: 'binance', field: 'from' });
   });
 
-  /** The editor asks on every keystroke, so this takes the document rather than a name. */
+  /** It takes the definition in the body rather than a name, so nothing need be stored to check one. */
   it('says what is wrong without storing anything', async () => {
     const { body } = await ask<{ problems: LensProblem[] }>('POST', '/lenses/check',
       lens({ nowhere: [{ effect: 'include' }] }));

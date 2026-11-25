@@ -2,7 +2,7 @@
  * How the catalog presents what it holds.
  *
  * **A convention, not a contract with the collector.** Prospector writes
- * canonical names into the database; how a consumer is shown them — a variant
+ * canonical names into the database; how a caller is shown them — a variant
  * split into the levels it is made of, the venue-wide file named `@` — is this
  * service's own choice.
  */
@@ -26,7 +26,7 @@ export const levelsOf = (dataset: string, variant: string): Record<string, strin
 
   /**
    * **A level with a default is always reported**, even where nothing is stored
-   * against it, so a consumer never has to treat "no variant" and "the ordinary
+   * against it, so a caller never has to treat "no variant" and "the ordinary
    * one" as two cases.
    */
   if (variant === '')
@@ -43,13 +43,6 @@ export const levelsOf = (dataset: string, variant: string): Record<string, strin
   });
 
   return found;
-};
-
-/** The month after a `yyyymm`, in the same form. */
-export const nextMonth = (month: string): string => {
-  const at = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(4)), 1));
-
-  return `${at.getUTCFullYear()}${String(at.getUTCMonth() + 1).padStart(2, '0')}`;
 };
 
 // ── Internals ─────────────────────────────────────────────────────────────────

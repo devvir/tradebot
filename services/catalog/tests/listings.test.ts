@@ -779,7 +779,7 @@ describe('a report', () => {
     }
   });
 
-  /** A report prospector refuses is refused again however often it is sent: the downloader is told so, not to retry. */
+  /** A report prospector refuses is refused again however often it is sent: the client is told so, not to retry. */
   it('relays a report prospector refuses as a 400, with what it said, asked once', async () => {
     const stand = await prospector(400, 0, { error: 'At most 10000 files per report' });
 

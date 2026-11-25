@@ -415,7 +415,7 @@ describe('a venue\'s partitions', () => {
       expect(await months('?settled')).toEqual(['202001']);
     });
 
-    /** What a consumer waiting for a partition to go quiet asks with. */
+    /** A partition that had gone quiet by an instant: settled, and unchanged since before it. */
     it('narrows further to what had gone quiet by an instant', async () => {
       expect(await months('?settled-before=2026-10-02T00:00:00.000Z')).toEqual(['202001']);
       expect(await months('?settled-before=2026-09-01T00:00:00.000Z')).toEqual([]);

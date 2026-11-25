@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
-import type { Lens, Partition, PartitionFilter, PartitionStatements, SettledEdge, Slice, SliceContents } from './types';
+import type { Lens, Partition, PartitionFilter, PartitionStatements, SettledEdge, SliceContents } from './types';
 
 /**
  * Slices and their partitions, as prospector keeps them.
@@ -10,10 +10,6 @@ import type { Lens, Partition, PartitionFilter, PartitionStatements, SettledEdge
  * carries its own counts and a version that moves whenever its files do, so
  * everything here is a read of a few thousand rows and never of a file.
  */
-
-/** A venue's slices, whether or not any holds a file. */
-export const slicesOf = (db: DatabaseSync, venue: string): Slice[] =>
-  statements(db).slices.all(venue) as unknown as Slice[];
 
 /**
  * A venue's partitions with their slices' traits — through a lens, only those
@@ -129,9 +125,6 @@ const statements = (db: DatabaseSync): PartitionStatements => {
     held = {
       all:     read(false),
       through: read(true),
-      slices:  db.prepare(
-        `SELECT id, venue, market, dataset, variant, grain, bundle FROM slice
-          WHERE venue = ? ORDER BY market, dataset, variant, grain, bundle`),
       running: db.prepare(
         `SELECT min(r.started) AS started
            FROM venue v

@@ -1,12 +1,10 @@
 import { lensFigures } from './lenses/figures';
-import { partitionContents } from './partitions';
 import { throughLens } from './lenses/scope';
 import { seriesFor, venueIds, venueTotals } from './queries';
 import { VENUE_WIDE, levelsOf } from './vocabulary';
 import type { DatabaseSync } from 'node:sqlite';
 import type {
-  ContentsAsked, MarketContents, PartitionFilter, RequestedLens, Series, SeriesCount, SeriesCountRow, Shape,
-  SliceContents, VenueContents,
+  ContentsAsked, MarketContents, RequestedLens, Series, SeriesCount, SeriesCountRow, Shape, VenueContents,
 } from './types';
 
 /**
@@ -19,8 +17,9 @@ import type {
  * whether a retired pattern counts, whether a delisted series is an instrument, or
  * what an unstated end means; folds of one result cannot disagree.
  *
- * Nothing here reaches the database, and nothing here filters: the caller has
- * already narrowed the rows to what was asked for.
+ * The projections — `intoShapes`, `intoMarkets`, `intoSymbols` — are pure folds
+ * of rows already narrowed to what was asked for; the entry points read and
+ * narrow the rows they fold.
  */
 
 /**
@@ -95,24 +94,12 @@ export const contentsOf = (
 };
 
 /**
- * One venue's slices and the partitions of each, with their counts and versions
- * — through a lens where one is named, which leaves only the partitions it lets
- * through.
- */
-export const partitionsOfVenue = (
-  db:     DatabaseSync,
-  venue:  string,
-  filter: PartitionFilter,
-  held:   RequestedLens | null,
-): SliceContents[] => partitionContents(db, venue, filter, held?.lens ?? null);
-
-/**
  * One row per distinct thing the venue publishes —
  * `(market, dataset, variant, grain)`.
  *
  * **It says nothing about how the venue arranges its URLs.** Whether a dataset
  * changed its path once or a thousand times is the catalog's business, not a
- * consumer's; where two shapes would be the same data twice, one is offered and
+ * caller's; where two shapes would be the same data twice, one is offered and
  * the other never surfaces. What a shape does distinguish is **variants of a
  * dataset**, never the same data under two names.
  */

@@ -5,10 +5,11 @@ import type { Config } from './types';
  * The container paths are fixed and private; which host directory sits behind
  * the database is the compose mount's business.
  *
- * **The database is prospector's.** It creates it, migrates it and writes every
- * file into it; this service opens the same file to read it and to store lenses,
- * which is why the two must share a host — a SQLite database in WAL mode is
- * shared through memory, never over a network filesystem.
+ * **The database is prospector's.** It creates it, migrates it and writes it;
+ * this service opens the same file read-only, and every write it is sent —
+ * lenses, reports — is forwarded to prospector. The two must share a host: a
+ * SQLite database in WAL mode is shared through memory, never over a network
+ * filesystem.
  */
 const CATALOG_DB = '/data/catalog/catalog.db';
 
@@ -47,7 +48,7 @@ const loadConfig = (): Config => {
   };
 
   // The token is the one value that must not reach a log.
-  logger.info({ ...config, token: config.token ? '<set>' : '<open>' }, 'Configuration loaded and validated!');
+  logger.info({ ...config, token: config.token ? '<set>' : '<open>' }, 'Configuration loaded');
 
   if (! config.token)
     logger.warn('CATALOG_TOKEN is empty — the API is open to anyone who can reach the port');

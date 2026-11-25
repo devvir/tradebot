@@ -6,7 +6,7 @@ import type { Application } from 'express';
 import type { DatabaseSync } from 'node:sqlite';
 
 /**
- * What became of the files a downloader was listed, by Key, through the lens it
+ * What became of the files a client was listed, by Key, through the lens it
  * listed them through — see `reports.ts`.
  *
  * **`200` where every key was settled, `207` where some were not**, with only

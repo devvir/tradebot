@@ -1,28 +1,25 @@
 import type { StatementSync } from 'node:sqlite';
 import type { Bundle, Grain, Lens, LensSpan, Slice } from '@tradebot/lenses';
 
-export type {
-  Bundle, Choice, Grain, Lens, LensDataset, LensDefinition, LensOption, LensPartition, LensProblem, LensResolved, LensRow, LensRule,
-  LensSize, LensSlice, LensSpan, LensWrite, PartitionMember, Slice,
-} from '@tradebot/lenses';
+export type { Bundle, Grain, Lens, LensDefinition, LensProblem, LensSize, LensSpan, LensWrite } from '@tradebot/lenses';
 
 
 /**
  * Everything the catalog serves: what a series is as it reads one, the lens a
- * consumer looks through, and the pages of a venue's listing.
+ * caller looks through, and the pages of a venue's listing.
  */
 
 /** What this deployment serves, and where its collector answers. */
 export type Config = {
   port:          number;
 
-  /** The catalog database prospector keeps, opened here to read and to store lenses. */
+  /** The catalog database prospector keeps, opened here read-only. */
   dbPath:        string;
 
-  /** Sent to the catalog on every request, and checked on this API. Empty turns both off. */
+  /** Checked on every request to this API, and sent to prospector with every forwarded write. Empty turns both off. */
   token:         string;
 
-  /** Where prospector answers, for the reports this service forwards. */
+  /** Where prospector answers: lens writes and reports are forwarded there. */
   prospectorApi: string;
 
   /** How long a call to prospector waits for its answer before it is given up. */
@@ -46,7 +43,6 @@ export interface Series {
   /** The slice its pattern publishes into, which is where a lens looks it up. */
   sliceId:   number;
   symbol:    string;
-  urlSymbol: string | null;
   market:    string;
   dataset:   string;
   variant:   string;
@@ -54,7 +50,6 @@ export interface Series {
   grain:     Grain;
   first:     string | null;
   last:      string | null;
-  retiredAt: string | null;
 }
 
 /** What a partition holds, and the version that says so. */
@@ -126,16 +121,7 @@ export interface SettledEdge {
 export interface PartitionStatements {
   all:     StatementSync;
   through: StatementSync;
-  slices:  StatementSync;
   running: StatementSync;
-}
-
-/** One host of a venue, as the `venue` table holds it. */
-export interface VenueRow {
-  name:    string;
-  host:    string;
-  base:    string;
-  keyRoot: string;
 }
 
 /** The reads prepared once per database. */
@@ -186,12 +172,7 @@ export interface HeldScope {
 
 /** One file of a venue's bucket, as a listing reads it. */
 export interface ListingFile {
-  /**
-   * The row's `rowid`, handed out as `FileId`. Stable because nothing renumbers
-   * it: rows are never moved between tables, and the catalog never runs a full
-   * `VACUUM` — `auto_vacuum = INCREMENTAL` moves pages, never rowids. Running one
-   * would invalidate every id a client holds.
-   */
+  /** The file row's `rowid`, which is how prospector names a file — the `FileId` a report is settled by. */
   id:       number;
   venueId:  number;
   path:     string;
@@ -221,7 +202,7 @@ export interface KeyedFile {
 /** The file a key names, or why there is none. */
 export type Keyed = KeyedFile | 'NoSuchKey' | 'AccessDenied';
 
-/** A report as a downloader sends it, by Key. */
+/** A report as a client sends it, by Key. */
 export interface ReportedByKey {
   downloaded: string[];
   failed:     string[];
@@ -279,11 +260,11 @@ export interface ListingQuery {
 
 /**
  * One shape a venue publishes, in canonical terms — what the catalog holds, said
- * the way a consumer asks for it.
+ * the way a caller asks for it.
  *
  * **The answer to "what is in here?", which nothing else could ask.** Every other
  * listing is about files; this is about what kinds of thing exist at all, so a
- * consumer can decide what to want before fetching anything. What bar lengths
+ * caller can decide what to want before fetching anything. What bar lengths
  * does this venue publish? Does it file trades monthly or daily, or both? Does it
  * have books, at what depths, snapshot or incremental? Is there a venue-wide file
  * or only per-instrument ones?
@@ -310,7 +291,7 @@ export interface Shape {
   /**
    * Venue-wide files carrying every instrument at once, if any.
    *
-   * **The question a consumer asks first**, because one bucket file is cheaper
+   * **The question a caller asks first**, because one bucket file is cheaper
    * than a file per instrument for the same data — see the `@` symbol.
    */
   buckets:  number;
@@ -373,27 +354,11 @@ export interface DatasetContents {
 /**
  * Which series a caller means, in the catalog's own vocabulary.
  *
- * **Every field is optional and absent means "any".** A filter nobody set is not
- * a filter that matched nothing — that distinction only applies to a set handed
- * over explicitly, such as an empty `symbols`, which asks for exactly no
- * instruments and is answered with no files.
- *
- * `market`, `dataset` and `variant` are matched case-blind, because the case is
- * a spelling convention rather than a fact about the data. `symbol` is exact and
- * `symbols` is not: the first is what a reconciliation matches against a venue's
- * own listing, where being exact is the safe side of a destructive decision,
- * while the second is what a person or a downstream service asks with.
+ * **Every field is optional and absent means "any".** `market`, `dataset` and
+ * `variant` are matched case-blind, because the case is a spelling convention
+ * rather than a fact about the data.
  */
 export interface SeriesFilter {
-  /** Narrows to series whose **pattern** is still live — a retired shape is excluded. */
-  live?:    boolean;
-
-  /** One instrument, exactly as the venue's listing spells it. */
-  symbol?:  string;
-
-  /** Any of these instruments, case-blind. Empty asks for none. */
-  symbols?: readonly string[];
-
   market?:  string;
   dataset?: string;
 
@@ -404,9 +369,8 @@ export interface SeriesFilter {
    * How often the shape publishes.
    *
    * **The filter that separates two renderings of the same data.** A venue that
-   * files its trades both monthly and daily offers one caller's month twice, and
-   * a consumer that already knows which it wants should not have to fetch both
-   * and discard one.
+   * files its trades both monthly and daily offers the same month twice, and
+   * this names the one that is meant.
    */
   grain?:   Grain;
 }

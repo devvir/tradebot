@@ -1,5 +1,6 @@
-import { contentsOf, partitionsOfVenue, venueContents } from '../contents';
+import { contentsOf, venueContents } from '../contents';
 import { lensRequested, noSuchLens } from '../lenses/requested';
+import { partitionContents } from '../partitions';
 import { venueIds } from '../queries';
 import { INVALID, flag, grainOf, queryText } from './query';
 import { GRAINS } from '../vocabulary';
@@ -29,9 +30,8 @@ export const mountContents = (app: Application, db: DatabaseSync): void => {
   app.get('/venues/:venue/markets/:market/symbols', (req, res) => venue(db, req, res, 'symbols'));
 
   /**
-   * **A venue's partitions**, slice by slice: what a consumer that handles
-   * partitions whole reads to decide what to do next. Unpaged — a venue is a
-   * few thousand of them.
+   * **A venue's partitions**, slice by slice, with their counts and versions,
+   * narrowed by the query. Unpaged — a venue is a few thousand of them.
    */
   app.get('/venues/:venue/partitions', (req, res) => {
     const name = String(req.params['venue']);
@@ -77,7 +77,7 @@ export const mountContents = (app: Application, db: DatabaseSync): void => {
     const { market, variant } = asked;
     const datasets = asked.datasets?.split(',').map(one => one.trim()).filter(one => one !== '');
 
-    res.json({ items: partitionsOfVenue(db, name, {
+    res.json({ items: partitionContents(db, name, {
       ...(market   ? { market }   : {}),
       ...(datasets ? { datasets } : {}),
       ...(variant  ? { variant }  : {}),
@@ -86,7 +86,7 @@ export const mountContents = (app: Application, db: DatabaseSync): void => {
       ...(downloaded ? { downloaded: true } : {}),
       ...(settled  ? { settled: true } : {}),
       ...(before   ? { settledBefore: before } : {}),
-    }, lens) });
+    }, lens?.lens ?? null) });
   });
 };
 

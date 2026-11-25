@@ -1,39 +1,13 @@
 import { logger } from '@devvir/service-kit';
 /**
- * What a pattern and a path say about a file, beyond which series it belongs to.
+ * What a file's path says about it beyond which series it belongs to: how the
+ * file is wrapped.
  *
- * **Read rather than stored, because it is derived.** A pattern is a constant of
- * the venue's archive and these are pure functions of it; a column holding the
- * same thing would be a second copy free to disagree with the shape it came
- * from. They are computed once per pattern — a few hundred rows across every
- * venue — not once per file.
- *
- * Everything here exists for the downloader, which is deliberately blind to
- * URLs: it decides where a file belongs from what the file *is*, so the listing
- * has to state the parts of that which only the shape knows.
+ * **Read rather than stored, because it is derived.** It is a pure function of
+ * the path the venue wrote; a column holding the same thing would be a second
+ * copy free to disagree with the path it came from. The listing states it in
+ * every key, so a key says what the file is without its URL.
  */
-
-/**
- * The bar length a pattern names, if it names one.
- *
- * **A whole path segment, or bybit's filename token.** Every venue that bins its
- * data puts the length in a directory of its own — `…/{SYMBOL}/15min/…` — except
- * bybit's MetaTrader feed, which writes it between two underscores in the
- * filename and means minutes by it. Gate is the third case and is not handled
- * here at all: it spells the length into the *dataset* name, which the consumer
- * already has.
- *
- * A venue that bins its data and names no length anywhere — okx and bitget —
- * answers nothing, and the length is a measured property of the series that the
- * consumer must declare.
- */
-export const intervalOf = (pattern: string): string | undefined => {
-  const segment = pattern.split('/').find(one => DURATION.test(one));
-
-  if (segment) return segment;
-
-  return pattern.match(BYBIT_MINUTES)?.[1];
-};
 
 /**
  * A file's ending: how it is wrapped, said the same way whatever its venue wrote.
@@ -92,19 +66,3 @@ const assumed = (path: string, ending: string): string => {
 
   return ending;
 };
-
-/**
- * A segment that is a length and nothing else.
- *
- * Anchored at both ends deliberately: `candlesticks_10s` names a length too, but
- * it is a dataset name, and a rule loose enough to find the length inside it
- * would also find one inside a symbol.
- */
-const DURATION = /^\d+(?:s|m|min|h|hour|d|day|w|week|mo|mon|month)$/i;
-
-/**
- * Bybit's MetaTrader klines: `…/{SYMBOL}_15_{YYYY}-{MM}-01_…`. The number is the
- * bar length in minutes and carries no unit, which is why it cannot be matched
- * by the same rule as everything else.
- */
-const BYBIT_MINUTES = /\{SYMBOL\}_(\d+)_\{/;

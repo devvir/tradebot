@@ -5,7 +5,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { Lens, ReportError, ReportedById, ReportedByKey } from './types';
 
 /**
- * What a downloader says became of the files it was listed, by Key — turned into
+ * What a client says became of the files it was listed, by Key — turned into
  * what prospector settles, by file id, and the keys that cannot be.
  *
  * **The catalog owns Keys and lenses; prospector owns a file's state.** So each
@@ -133,7 +133,7 @@ const MESSAGES: Record<'NoSuchKey' | 'AccessDenied', string> = {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && ! Array.isArray(value);
 
-/** A mismatched file as a report states it: its Key, and the Size and ETag the downloader found, where it says. */
+/** A mismatched file as a report states it: its Key, and the Size and ETag the client found, where it says. */
 const isMismatch = (one: unknown): one is ReportedByKey['mismatched'][number] =>
   isRecord(one)
   && typeof one['Key'] === 'string'

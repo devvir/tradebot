@@ -131,10 +131,7 @@ const ceiling = (prefix: string): string =>
  * month.
  *
  * **The slices a lens touches are worked out once per page**, before the walk,
- * so a series of any other slice is passed over at the cost of one lookup. Left to
- * choose, it drove from the lens's rows on the real catalog and sorted the whole
- * result before the first key: 55 seconds for three pages of gate, where the walk
- * answers in a fraction of one.
+ * so a series of any other slice is passed over at the cost of one lookup.
  */
 const statements = (db: DatabaseSync): Record<string, StatementSync> => {
   let held = PREPARED.get(db);

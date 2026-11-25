@@ -9,9 +9,8 @@ import type { Application, NextFunction, Request, Response } from 'express';
 import type { DatabaseSync } from 'node:sqlite';
 
 /**
- * The catalog's public API: the listings a downloader walks, the contents a
- * person browses, the lenses a consumer reads through, and the reports a
- * downloader sends back — forwarded to prospector, which settles them.
+ * The catalog's public API: listings, contents, lenses, and reports —
+ * forwarded to prospector, which settles them.
  *
  * **The token is checked before anything else is done**, a body read included:
  * a request without it costs a header comparison. A JSON body is read after
@@ -75,8 +74,8 @@ const digestOf = (text: string): Buffer => createHash('sha256').update(text).dig
 /**
  * Drop a request whose client has gone before doing any of its work.
  *
- * **One request runs at a time**, so a slow one queues the rest — and an editor
- * that has since moved on cancels the ones it no longer wants. A yield first
+ * **One request runs at a time**, so a slow one queues the rest, and a client
+ * may cancel the ones it no longer wants while they wait. A yield first
  * lets any disconnect already received be noticed; a request whose connection
  * is closed by then is answered by nobody and costs nothing. A request already
  * running cannot be stopped: its work is synchronous.

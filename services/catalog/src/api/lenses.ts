@@ -29,10 +29,9 @@ export const mountLenses = (app: Application, db: DatabaseSync): void => {
   });
 
   /**
-   * **What the venues publish**, each combination with the venue it is of, so an
-   * editor offers only combinations that exist rather than every string the
-   * catalog has ever seen. Registered before a lens is asked for by its slug,
-   * which this path would otherwise be taken for.
+   * **What the venues publish**: every combination that exists, each with the
+   * venue it is of. Registered before a lens is asked for by its slug, which
+   * this path would otherwise be taken for.
    */
   app.get('/lenses/options', (_req, res) => {
     res.json({ items: lensOptions(db) });
@@ -80,9 +79,8 @@ export const mountLenses = (app: Application, db: DatabaseSync): void => {
   });
 
   /**
-   * **What a definition would cost, before it is stored.** The editor asks on
-   * every change, so this takes the document in the body rather than reading a
-   * saved one.
+   * **What a definition would cost, before it is stored.** It takes the
+   * definition in the body, so one not yet stored can be sized.
    */
   app.post('/lenses/size', (req, res) => {
     const definition = definitionOf(db, res, req.body);
