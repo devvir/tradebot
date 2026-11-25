@@ -189,8 +189,9 @@ export const probeFiles = async (
    * once it has been given more than once. A single 404 is not enough: the key
    * may be published moments later, and a pass that took the first miss as
    * final would leave the period to be retired wholesale by reconciliation
-   * without ever being asked again. `CONFIRMATIONS` attempts across the pass'
-   * sweeps is what makes it an answer rather than a moment.
+   * without ever being asked again. Asking again across sweeps, as many times
+   * as the row's `existence` is worth under `CONFIRMATIONS`, is what makes it an
+   * answer rather than a moment.
    *
    * How a venue *spells* absence is the adapter's to say — bitget's bucket
    * grants `GetObject` without `ListBucket`, so a key it does not have comes
@@ -615,7 +616,7 @@ const REPORTED = 3;
  *
  * **How many depends on who said the key exists.** A listing named a confirmed
  * one, so absence contradicts evidence: the venue may be mid-write, or serving a
- * bad minute, and the archive is worth several passes of patience. An assumed
+ * bad minute, and the archive is worth many sweeps of patience. An assumed
  * one was built from a pattern and a date, and absence is the ordinary answer to
  * a guess — asking thirty times would spend thirty requests proving what the
  * first already said, on keyspaces that are mostly empty.

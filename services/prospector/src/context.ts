@@ -34,26 +34,20 @@ export const listing = (adapter: Adapter<Scanner<ListingContext>>): ListingConte
  * caller between here and there. The rule is a property of the venue, so it asks
  * the venue.
  *
- * The distinction it exists for is what a `404` *means*. On a walk of a probing
- * venue the index has already said the file is there, so absence contradicts
- * evidence and is worth confirming hard. On an update the key was constructed
- * from a pattern and a date, so absence is the ordinary answer to a guess and
- * confirming it a hundred times is a hundred requests spent proving what one
- * said. Same status, same hook, opposite meanings.
+ * **What the kind says is who named the keys the pass meets.** A walk reads the
+ * venue's own index, so a key it meets is one the venue said exists; an update
+ * builds its keys from a pattern and a date, so a key it meets is a guess.
  *
  * **Keyed per venue, because passes run concurrently.** One process surveys
  * every venue at once, so a single global would answer for whichever started
  * last.
  *
- * **What it cannot say is where a row came from**, and that is not what it is
- * for. It reports the pass in progress, so an update draining a walk's undrained
- * backlog would judge those rows as an update would. What a candidate's absence
- * is worth therefore comes from the candidate: `existence` records who named it
- * when it is parked, and the probe reads that rather than asking here.
- *
- * This stays for the questions that really are about the pass — an adapter's own
- * rule about how hard to press a status, which is a property of the venue and of
- * the moment rather than of the key.
+ * **It answers for the pass in progress, not for the pass that parked a row.**
+ * An update also drains whatever a walk left in `wip`, so a row being probed may
+ * have been named by either kind. Who named a parked row is the row's own
+ * `existence`, fixed when it was parked; this answers only what is true of the
+ * moment — which pass is parking a key now, and how hard an adapter's rule
+ * presses a status on this pass.
  */
 export const surveying = (adapter: Adapter): RunKind | null =>
   PASSES.get(labelOf(adapter)) ?? null;
