@@ -31,7 +31,7 @@ const csvValue = (val: unknown): string => {
 };
 
 /**
- * Create a CSV parser stream that reads vault-format files.
+ * Create a CSV parser stream that reads what rowToCsv writes.
  *
  * `columns = true`     → first record of the stream is the header (default);
  *                        records are emitted as `Record<string, string>` keyed

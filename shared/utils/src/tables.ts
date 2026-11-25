@@ -304,9 +304,10 @@ export const WS_TABLES = new Set<string>([
  * CSV parser: a line-based reader would split a quoted field at its embedded
  * line break.
  *
- * Every other table holds only numbers, symbols and ISO timestamps, which
- * never need quoting, so each physical line of such a table is exactly one
- * record and a plain comma split reads it correctly.
+ * No other table holds free text, so no field of theirs contains a line break
+ * and each physical line is exactly one record. Fields that are objects or
+ * arrays, such as orderBook10's bids and asks, are written as JSON, so they
+ * contain commas and are quoted: splitting a line at every comma breaks them.
  */
 export const FREE_TEXT_TABLES: ReadonlySet<string> = new Set([
   'announcement',

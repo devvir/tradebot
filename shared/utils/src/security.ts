@@ -23,32 +23,6 @@ export const redactUrl = (url: string): string => {
   return REDACTED;
 };
 
-/**
- * Percent-encode the username and password of a URL the WHATWG URL parser accepts.
- *
- * Handled: a raw '@' in the password (the parser splits userinfo from host at the last '@') and a
- * raw ':' in the password (the parser splits username from password at the first ':'). Sequences
- * that are already percent-encoded are decoded and re-encoded, so encoding is idempotent.
- *
- * Not handled: a raw '/', '?' or '#' in the credentials, which the parser reads as the start of a
- * path, query or fragment, and a ':' in the username, which it reads as the start of the password.
- * Such credentials come out split wrongly, or the URL does not parse. A URL that does not parse, or
- * whose credentials hold a '%' not followed by two hex digits, is returned unchanged. Nothing is
- * logged.
- */
-export const sanitizeUrl = (url: string): string => {
-  try {
-    const urlObj = new URL(url);
-
-    if (urlObj.username) urlObj.username = encodeURIComponent(decodeURIComponent(urlObj.username));
-    if (urlObj.password) urlObj.password = encodeURIComponent(decodeURIComponent(urlObj.password));
-
-    return urlObj.toString();
-  } catch {
-    return url;
-  }
-};
-
 /** The URL with everything between its scheme and its last '@' redacted, or null without a scheme. */
 const withoutCredentials = (url: string): string | null => {
   const at = url.lastIndexOf('@');

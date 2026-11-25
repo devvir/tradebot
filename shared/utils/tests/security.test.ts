@@ -7,7 +7,7 @@ vi.mock('@devvir/service-kit', () => {
   return { logger: { debug: record, info: record, warn: record, error: record } };
 });
 
-import { redactUrl, sanitizeUrl } from '../src/security';
+import { redactUrl } from '../src/security';
 
 const urlWith = (password: string, username = 'user') => `amqp://${username}:${password}@rabbitmq:5672/vhost`;
 
@@ -53,33 +53,5 @@ describe('redactUrl', () => {
 
     expect(logged.length).toBeGreaterThan(0);
     expectNotLogged('secret');
-  });
-});
-
-describe('sanitizeUrl', () => {
-  it.each([...PASSWORDS, 'secret'])('never logs the password %j', (password) => {
-    sanitizeUrl(urlWith(password));
-    sanitizeUrl(`amqp://user:${password}@bad host`);
-
-    expect(logged).toEqual([]);
-  });
-
-  it.each(['p@ss', 'p:ss', 'p@ss:w@rd'])('encodes a raw %j in the password so it parses back', (password) => {
-    const out = sanitizeUrl(urlWith(password));
-
-    expect(decodeURIComponent(new URL(out).password)).toBe(password);
-    expect(new URL(out).host).toBe('rabbitmq:5672');
-  });
-
-  it('is idempotent on credentials that are already encoded', () => {
-    const encoded = urlWith(encodeURIComponent('p@ss:w%rd'));
-
-    expect(sanitizeUrl(encoded)).toBe(encoded);
-    expect(sanitizeUrl(sanitizeUrl(encoded))).toBe(encoded);
-  });
-
-  it('returns a URL it cannot parse unchanged', () => {
-    expect(sanitizeUrl(urlWith('p#ss'))).toBe(urlWith('p#ss'));
-    expect(sanitizeUrl(urlWith('100%'))).toBe(urlWith('100%'));
   });
 });
