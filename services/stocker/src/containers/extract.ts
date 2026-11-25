@@ -44,7 +44,7 @@ export const extractInto = async (
       const members = packer ? handler.members?.(input.absolute) ?? null : null;
 
       if (members && packer) {
-        for (const member of members) {
+        for (const [index, member] of members.entries()) {
           if (packer.add(at, member.data)) continue;
 
           // Not gathered: read where it lies, where the engine can, and written out where it cannot.
@@ -54,7 +54,8 @@ export const extractInto = async (
             continue;
           }
 
-          const out = join(dir, `${at}-${basename(member.name)}`);
+          // Under its place in the archive too, so that two members of one name stay two files.
+          const out = join(dir, `${at}-${index}-${basename(member.name)}`);
 
           writeFileSync(out, member.data);
 

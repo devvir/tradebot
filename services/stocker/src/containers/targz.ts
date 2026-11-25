@@ -1,8 +1,15 @@
 import { mkdir } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { isAbsolute, join, normalize, relative, sep } from 'node:path';
 import type { Container } from './types';
 
-/** Order-book archives ship this way, holding one `.data` file of JSON lines. */
+/**
+ * Order-book archives ship this way, holding one `.data` file of JSON lines.
+ *
+ * **Members keep the folders they were archived under**, inside a directory of
+ * this archive's own, and each is returned at the path it was written to. Only
+ * files are returned — no folders or links — and only those that land inside
+ * that directory.
+ */
 export const targz: Container = {
   native: false,
 
@@ -15,9 +22,23 @@ export const targz: Container = {
 
     await mkdir(own, { recursive: true });
 
-    await list({ file: absolute, onentry: (e: { path: string }) => { names.push(e.path); } });
+    await list({
+      file:        absolute,
+      onReadEntry: (entry) => { if (FILES.has(entry.type)) names.push(entry.path); },
+    });
+
     await x({ file: absolute, cwd: own });
 
-    return names.filter(n => ! n.endsWith('/')).map(n => join(own, basename(n)));
+    return names.map(name => join(own, normalize(name))).filter(path => inside(own, path));
   },
+};
+
+/** The entry types that are a file's contents. */
+const FILES = new Set(['File', 'OldFile']);
+
+/** Whether `path` lies within `dir`. */
+const inside = (dir: string, path: string): boolean => {
+  const from = relative(dir, path);
+
+  return from !== '' && from !== '..' && ! from.startsWith(`..${sep}`) && ! isAbsolute(from);
 };

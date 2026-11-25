@@ -26,7 +26,11 @@ import type { Container, Member } from './types';
  * and 12 ms a file. What this removes is the overhead, not the disk.
  *
  * **A large archive is streamed**, so it is never held in memory, and so is any
- * archive the direct read does not recognise — see `membersOf`.
+ * archive the direct read does not recognise or whose members state more than
+ * it inflates in memory — see `membersOf`.
+ *
+ * **Each member is written under its place in the archive** as well as its own
+ * name, so two members of one name in different folders stay two files.
  */
 export const zip: Container = {
   native: false,
@@ -35,8 +39,8 @@ export const zip: Container = {
     const members = whole(absolute);
 
     if (members)
-      return members.map(({ name, data }) => {
-        const out = join(into, `${tag}${basename(name)}`);
+      return members.map(({ name, data }, index) => {
+        const out = join(into, `${tag}${index}-${basename(name)}`);
 
         writeFileSync(out, data);
 
@@ -56,6 +60,9 @@ export const zip: Container = {
 /** An archive up to this size is read whole; a larger one is streamed. */
 const WHOLE_BYTES = 32 * 1024 ** 2;
 
+/** The most a whole-read archive's members may state they inflate to, together; past it the archive is streamed. */
+const WHOLE_INFLATED = 64 * 1024 ** 2;
+
 /** A small archive's members, read whole; null where it is large, or is not a zip the direct read knows. */
 const whole = (absolute: string): Member[] | null =>
   (statSync(absolute).size <= WHOLE_BYTES ? membersOf(readFileSync(absolute), absolute) : null);
@@ -69,11 +76,63 @@ const whole = (absolute: string): Member[] | null =>
  * method, an archive with no directory to be found — is left to the library
  * that handles every case, which costs time and loses nothing.
  *
+ * **Only what is small inflated.** An archive whose members state more than
+ * `WHOLE_INFLATED` between them is streamed instead, whatever it weighs on
+ * disk, and no member is inflated past the size its entry states.
+ *
  * **What is read is checked.** A member that does not inflate to the size and
  * the CRC its directory entry states is not a member this can vouch for, and
  * that throws: a short or altered file must not reach a table as data.
  */
 const membersOf = (buffer: Buffer, absolute: string): Member[] | null => {
+  const entries = entriesOf(buffer);
+
+  if (! entries) return null;
+  if (entries.reduce((total, entry) => total + entry.size, 0) > WHOLE_INFLATED) return null;
+
+  const members: Member[] = [];
+
+  for (const { name, method, checksum, compressed, size, local } of entries) {
+    if (name.endsWith('/')) continue;
+
+    if (local + 30 > buffer.length || buffer.readUInt32LE(local) !== LOCAL) return null;
+
+    const start = local + 30 + buffer.readUInt16LE(local + 26) + buffer.readUInt16LE(local + 28);
+
+    if (start + compressed > buffer.length) return null;
+
+    const raw = buffer.subarray(start, start + compressed);
+    const corrupt = (cause?: unknown): Error =>
+      new Error(`corrupt zip member ${name} in ${absolute}: it does not inflate to what its entry states`, { cause });
+
+    let data: Buffer;
+
+    try {
+      data = method === DEFLATED ? inflateRawSync(raw, { maxOutputLength: Math.max(1, size) }) : raw;
+    } catch (err) {
+      throw corrupt(err);
+    }
+
+    if (data.length !== size || crc32(data) !== checksum) throw corrupt();
+
+    members.push({ name, data });
+  }
+
+  return members;
+};
+
+/** One entry of a zip's central directory, as far as the direct read needs it. */
+interface Entry {
+  name:       string;
+  method:     number;
+  checksum:   number;
+  compressed: number;
+  size:       number;
+  local:      number;
+}
+
+/** A zip's central directory, read from the archive in memory; null where it is not in the plain form `membersOf` reads. */
+const entriesOf = (buffer: Buffer): Entry[] | null => {
   const directory = endOfDirectory(buffer);
 
   if (directory < 0) return null;
@@ -84,7 +143,7 @@ const membersOf = (buffer: Buffer, absolute: string): Member[] | null => {
 
   if (count === 0xffff || at === 0xffffffff) return null;
 
-  const members: Member[] = [];
+  const entries: Entry[] = [];
 
   for (let entry = 0; entry < count; entry++) {
     if (at + 46 > buffer.length || buffer.readUInt32LE(at) !== ENTRY) return null;
@@ -104,24 +163,10 @@ const membersOf = (buffer: Buffer, absolute: string): Member[] | null => {
     if (method !== STORED && method !== DEFLATED) return null;
     if (compressed === 0xffffffff || size === 0xffffffff || local === 0xffffffff) return null;
 
-    if (name.endsWith('/')) continue;
-
-    if (local + 30 > buffer.length || buffer.readUInt32LE(local) !== LOCAL) return null;
-
-    const start = local + 30 + buffer.readUInt16LE(local + 26) + buffer.readUInt16LE(local + 28);
-
-    if (start + compressed > buffer.length) return null;
-
-    const raw  = buffer.subarray(start, start + compressed);
-    const data = method === DEFLATED ? inflateRawSync(raw) : raw;
-
-    if (data.length !== size || crc32(data) !== checksum)
-      throw new Error(`corrupt zip member ${name} in ${absolute}: it does not inflate to what its entry states`);
-
-    members.push({ name, data });
+    entries.push({ name, method, checksum, compressed, size, local });
   }
 
-  return members;
+  return entries;
 };
 
 /** Where the end-of-directory record starts, searched back from the end past any comment; -1 where there is none. */
@@ -208,6 +253,8 @@ const streamed = (absolute: string, into: string, tag: string): Promise<string[]
   new Promise<string[]>((resolve, reject) => {
     const written: string[] = [];
 
+    let index = 0;
+
     yauzl.open(absolute, { lazyEntries: true }, (err, archive) => {
       if (err || ! archive) return reject(err ?? new Error(`unreadable zip: ${absolute}`));
 
@@ -219,7 +266,7 @@ const streamed = (absolute: string, into: string, tag: string): Promise<string[]
         archive.openReadStream(entry, async (streamErr, stream) => {
           if (streamErr || ! stream) return reject(streamErr ?? new Error('no entry stream'));
 
-          const out = join(into, `${tag}${basename(entry.fileName)}`);
+          const out = join(into, `${tag}${index++}-${basename(entry.fileName)}`);
 
           try {
             await pipeline(stream, createWriteStream(out));

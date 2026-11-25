@@ -20,7 +20,8 @@ import type { ExtractAnswered, Extracted, Pack, PoolWorker, Wrapped } from './ty
  * asked for, on the main thread, and nothing else changes.
  */
 export class Pool {
-  constructor(private readonly width: number) {}
+  /** `worker` is the compiled thread script; the one beside this file unless another is given. */
+  constructor(private readonly width: number, private readonly worker: string = WORKER) {}
 
   private readonly idle:    PoolWorker[] = [];
   private readonly queued:  { inputs: readonly Wrapped[]; dir: string; shapes: readonly Pack[]; settle: PoolWorker['settle'] & {} }[] = [];
@@ -33,7 +34,7 @@ export class Pool {
   }
 
   extract(inputs: readonly Wrapped[], dir: string, shapes: readonly Pack[] = []): Promise<Extracted> {
-    if (this.width <= 0 || ! existsSync(WORKER)) return extractInto(inputs, dir, shapes);
+    if (this.width <= 0 || ! existsSync(this.worker)) return extractInto(inputs, dir, shapes);
 
     return new Promise<Extracted>((resolve, reject) => {
       this.queued.push({ inputs, dir, shapes, settle: { resolve, reject } });
@@ -57,7 +58,7 @@ export class Pool {
   }
 
   private start(): PoolWorker {
-    const worker: PoolWorker = { thread: new Worker(WORKER), settle: null };
+    const worker: PoolWorker = { thread: new Worker(this.worker), settle: null };
 
     this.started++;
 
@@ -76,14 +77,31 @@ export class Pool {
       this.pump();
     });
 
-    /** A thread that died takes its extraction with it, and is replaced by the next one asked for. */
-    worker.thread.on('error', (err) => {
-      worker.settle?.reject(err as Error);
+    /**
+     * A thread that dies takes its extraction with it, and is replaced by the
+     * next one asked for. A thread that fails says so twice — an error, then
+     * its exit — and is counted out once.
+     */
+    let gone = false;
+
+    const lose = (err: Error): void => {
+      if (gone) return;
+
+      gone = true;
+
+      const at = this.idle.indexOf(worker);
+
+      if (at >= 0) this.idle.splice(at, 1);
+
+      worker.settle?.reject(err);
       worker.settle = null;
 
       this.started--;
       this.pump();
-    });
+    };
+
+    worker.thread.on('error', err => lose(err as Error));
+    worker.thread.on('exit', code => lose(new Error(`extraction thread exited (${code})`)));
 
     return worker;
   }
