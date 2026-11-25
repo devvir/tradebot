@@ -1,23 +1,25 @@
 {
-  "$schema": "https://unpkg.com/knip@latest/dist/schema.json",
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "ignore": [
+    "**/.deprecated/**",
+    "dev/tooling/src/tools/cold/legacy/**",
+    "dev/tooling/tests/tools/cold/legacy/**",
+    ".github/skills/**"
+  ],
+  "ignoreWorkspaces": ["packages/*", "dx"],
+  "ignoreBinaries": ["truncate"],
   "workspaces": {
     ".": {
       "entry": ["tsconfig.json"]
     },
-    "packages/**": {},
     "services/**": {
-      "project": ["src/**/*.ts"],
-      "paths": {
-        "@tradebot/*": ["../../../shared/*/src"],
-        "@devvir/*": ["../../../packages/*/src"]
-      }
+      "project": ["src/**/*.{ts,tsx}", "tests/**/*.{ts,tsx}"]
     },
     "shared/**": {
-      "project": ["src/**/*.ts"]
+      "project": ["src/**/*.{ts,tsx}", "tests/**/*.{ts,tsx}"]
     },
-    "dx": {
-      "entry": ["entrypoint", "commands/**/*.js"],
-      "project": ["utils/**/*.js"]
+    "dev/tooling": {
+      "project": ["src/**/*.{ts,tsx}", "tests/**/*.{ts,tsx}"]
     }
   },
   "ignoreExportsUsedInFile": true

@@ -3,7 +3,7 @@
   "targetDefaults": {
     "test": {
       "dependsOn": [
-        "^test"
+        "^build"
       ],
       "cache": true
     },
@@ -15,13 +15,6 @@
         "{projectRoot}/dist"
       ],
       "cache": true
-    },
-    "@nx/vitest:test": {
-      "cache": true,
-      "inputs": [
-        "default",
-        "^default"
-      ]
     }
   }
 }

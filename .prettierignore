@@ -6,3 +6,10 @@ coverage/
 .env
 .env.local
 .env.*.local
+
+# Git submodules, formatted in their own repositories
+packages/
+dx/
+
+**/.deprecated/
+pnpm-lock.yaml

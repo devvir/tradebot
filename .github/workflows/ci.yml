@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm -r build
+      - run: pnpm -r --if-present typecheck
+
+      # A build after dist/ is deleted must emit it again.
+      - name: Rebuild from an empty dist
+        run: |
+          rm -rf shared/*/dist dev/tooling/dist
+          pnpm --filter "./shared/*" --filter ./dev/tooling build
+          for p in shared/types shared/utils shared/lenses dev/tooling; do test -f "$p/dist/index.js"; done
+
+      # The root suite renders every compose file with `docker compose config`
+      # and checks the .env.example files; then every package's own tests run.
+      - run: pnpm test
+
+  knip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: pnpm exec knip
