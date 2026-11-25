@@ -907,6 +907,138 @@ describe('consumeAndRepublish', () => {
     });
   });
 
+  // ── Stopping ────────────────────────────────────────────────────────────────
+
+  describe('stop', () => {
+    const twoSources = [bareRoute('a', 'dst'), bareRoute('b', 'dst')];
+
+    it('cancels every source consumer', async () => {
+      const { consumer, publisher, channel } = makeBrokers();
+
+      const routing = await consumeAndRepublish(consumer as any, publisher as any, config(twoSources), null);
+
+      await routing.stop();
+
+      expect(channel.cancel.mock.calls.map(([tag]) => tag)).toEqual(['a-1', 'b-2']);
+    });
+
+    it('rejects when a consumer cannot be cancelled', async () => {
+      const { consumer, publisher, channel } = makeBrokers();
+
+      const routing = await consumeAndRepublish(consumer as any, publisher as any, config(twoSources), null);
+
+      channel.cancel.mockRejectedValueOnce(new Error('Channel closed'));
+
+      await expect(routing.stop()).rejects.toThrow('Channel closed');
+    });
+
+    it('settles once the delivery being handled is acked', async () => {
+      const { consumer, publisher, channel, deliver } = makeBrokers();
+      let publishDone!: () => void;
+
+      mockRepublish.mockImplementationOnce(() => new Promise<void>((resolve) => { publishDone = resolve; }));
+
+      const routing = await consumeAndRepublish(consumer as any, publisher as any, config([bareRoute('src', 'dst')]), null);
+      const msg     = makeMsg({});
+
+      void deliver('src', msg);
+      await routing.stop();
+
+      let settled = false;
+      const settling = routing.settled().then(() => { settled = true; });
+
+      await tick();
+      expect(settled).toBe(false);
+      expect(channel.ack).not.toHaveBeenCalled();
+
+      publishDone();
+      await settling;
+      expect(channel.ack).toHaveBeenCalledWith(msg);
+    });
+
+    it('settles at once when no delivery is being handled', async () => {
+      const { consumer, publisher, deliver } = makeBrokers();
+
+      const routing = await consumeAndRepublish(consumer as any, publisher as any, config([bareRoute('src', 'dst')]), null);
+
+      await deliver('src', makeMsg({}));
+
+      await expect(routing.settled()).resolves.toBeUndefined();
+    });
+
+    it('waits for a delivery that arrives while it waits', async () => {
+      const { consumer, publisher, channel, deliver } = makeBrokers();
+      const releases: Array<() => void> = [];
+
+      mockRepublish.mockImplementation(() => new Promise<void>((resolve) => { releases.push(resolve); }));
+
+      const routing = await consumeAndRepublish(consumer as any, publisher as any, config([bareRoute('src', 'dst')]), null);
+      const first   = makeMsg({ n: 1 });
+      const second  = makeMsg({ n: 2 });
+
+      void deliver('src', first);
+
+      let settled = false;
+      const settling = routing.settled().then(() => { settled = true; });
+
+      void deliver('src', second);
+      releases[0]();
+      await tick();
+      expect(settled).toBe(false);
+
+      releases[1]();
+      await settling;
+      expect(channel.ack).toHaveBeenCalledWith(first);
+      expect(channel.ack).toHaveBeenCalledWith(second);
+    });
+
+    it('keeps a backpressure pause under way from consuming again', async () => {
+      const { consumer, publisher, channel, deliver } = makeBrokers();
+      const gate = makeGate();
+
+      const routing = await consumeAndRepublish(consumer as any, publisher as any, config(twoSources), gate);
+
+      await deliver('a', makeMsg({}));
+      await tick();
+      await routing.stop();
+
+      gate.open();
+      await tick();
+
+      expect(channel.consume).toHaveBeenCalledTimes(2);
+      expect(channel.cancel).toHaveBeenCalledTimes(2);
+    });
+
+    it('cancels the consumers a pause has just consumed again', async () => {
+      const { consumer, publisher, channel, deliver } = makeBrokers();
+      const gate = makeGate();
+      let consumed!: () => void;
+
+      const routing = await consumeAndRepublish(consumer as any, publisher as any, config(twoSources), gate);
+
+      await deliver('a', makeMsg({}));
+      await tick();
+
+      // The pause consumes 'a' again, and the stop comes while that consume is under way.
+      const consume = channel.consume.getMockImplementation()!;
+      channel.consume.mockImplementationOnce(async (queue: string, handler: any) => {
+        await new Promise<void>((resolve) => { consumed = resolve; });
+        return consume(queue, handler);
+      });
+
+      gate.open();
+      await tick();
+
+      const stopping = routing.stop();
+
+      consumed();
+      await stopping;
+
+      expect(channel.consume.mock.calls.map(([queue]) => queue)).toEqual(['a', 'b', 'a']);
+      expect(channel.cancel.mock.calls.map(([tag]) => tag)).toEqual(['a-1', 'b-2', 'a-3']);
+    });
+  });
+
   // ── Consumer cancel ─────────────────────────────────────────────────────────
 
   it('exits with code 1 when the broker cancels the consumer', async () => {
