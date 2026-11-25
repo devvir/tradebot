@@ -15,7 +15,30 @@ const cfg = vi.hoisted(() => ({ archivesDir: '', catalogApi: '', catalogToken: '
 
 vi.mock('../src/config', () => ({ default: cfg }));
 
+/** A volume that can be made to run out of inodes, or to refuse every download for want of room. */
+const volume = vi.hoisted(() => ({ noInodes: false, noRoom: false }));
+
+vi.mock('node:fs/promises', async (actual) => {
+  const real = await actual<typeof import('node:fs/promises')>();
+
+  return {
+    ...real,
+    statfs: async (path: string) => {
+      const info = await real.statfs(path);
+
+      return volume.noInodes ? { ...info, files: 1_000_000, ffree: 0 } : info;
+    },
+    open: async (path: string, flags?: string) => {
+      if (volume.noRoom && path.endsWith('.part'))
+        throw Object.assign(new Error('ENOSPC: no space left on device, open'), { code: 'ENOSPC' });
+
+      return await real.open(path, flags);
+    },
+  };
+});
+
 const { walkVenue, _test_safe, _test_lookAgain } = await import('../src/venue');
+const { _test_forgetRefusal } = await import('../src/store');
 const { setHosts } = await import('../src/hosts');
 const { venues } = await import('../src/catalog');
 
@@ -244,6 +267,39 @@ describe('a walk', () => {
       expect(reports).toEqual([]);
     } finally {
       cfg.minFreeGb = 0;
+      _test_lookAgain();
+    }
+  });
+
+  /** A volume of small files runs out of inodes long before it runs out of space. */
+  it('takes no file while the volume is out of inodes', async () => {
+    volume.noInodes = true;
+    _test_lookAgain();
+
+    try {
+      expect(await walkVenue('binance', () => false)).toMatchObject({ listed: 0, progressed: 0, full: true });
+      expect(served).toBe(0);
+    } finally {
+      volume.noInodes = false;
+      _test_lookAgain();
+    }
+  });
+
+  /** A quota spent is a volume full that no look at it shows. */
+  it('takes no further file once a download is refused for want of room', async () => {
+    cfg.concurrency = 1;
+    volume.noRoom = true;
+    _test_lookAgain();
+
+    try {
+      expect(await walkVenue('binance', () => false)).toMatchObject({ progressed: 0, unreached: 1, full: true });
+      expect(served).toBe(1);
+      // Nothing came of it to tell the catalog: the file is owed all the same.
+      expect(reports).toEqual([]);
+    } finally {
+      cfg.concurrency = 2;
+      volume.noRoom = false;
+      _test_forgetRefusal();
       _test_lookAgain();
     }
   });

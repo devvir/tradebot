@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { gzipSync } from 'node:zlib';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Server } from 'node:http';
 import type { Haulable } from '../src/types';
@@ -10,7 +11,7 @@ import { dropHeld } from '../src/held';
 
 /**
  * One file brought to disk: fetched, found there already and touched, or found
- * different and moved aside first. See `fetch.ts`.
+ * different and replaced once a file that agrees is in hand. See `fetch.ts`.
  */
 
 const cfg = vi.hoisted(() => ({ archivesDir: '', catalogApi: '', catalogToken: '', venues: [], lens: '', concurrency: 2, minFreeGb: 0 }));
@@ -38,21 +39,38 @@ const { setHosts, _test_forget, _test_hostsOf } = await import('../src/hosts');
 const { sweepPartials } = await import('../src/store');
 
 const BODY = 'the file';
-const md5  = (text: string) => createHash('md5').update(text).digest('hex');
+const md5  = (text: string | Buffer) => createHash('md5').update(text).digest('hex');
 
-let server: Server;
-let base:   string;
-let asked:  number;
+/** A file stored compressed, served as stored: `content-encoding` says what it is, not how it travels. */
+const GZIPPED = gzipSync(Buffer.from('a,b,c\n1,2,3\n'.repeat(100)));
+
+let server:   Server;
+let base:     string;
+let asked:    number;
+let requests: { url: string; encoding: string | undefined }[];
 
 beforeEach(async () => {
   cfg.archivesDir = mkdtempSync(join(tmpdir(), 'haul-'));
   asked = 0;
+  requests = [];
 
   // No waiting between attempts: the jitter draws from zero.
   vi.spyOn(Math, 'random').mockReturnValue(0);
 
   server = createServer((req, res) => {
+    requests.push({ url: req.url!, encoding: req.headers['accept-encoding'] });
+
     if (req.url === '/file.zip') { res.writeHead(200); res.end(BODY); return; }
+    if (req.url === '/gzipped.gz') { res.writeHead(200, { 'content-encoding': 'gzip', 'content-type': 'application/gzip' }); res.end(GZIPPED); return; }
+    if (req.url === '/moved.zip') { res.writeHead(302, { location: '/file.zip' }); res.end(); return; }
+    // Less than it said it would send, the connection then lost: the first time only, or every time.
+    if (req.url === '/truncated.zip' || (req.url === '/truncated-once.zip' && asked === 0)) {
+      asked++;
+      res.writeHead(200, { 'content-length': String(BODY.length) });
+      res.write(BODY.slice(0, 3), () => res.socket?.destroy());
+      return;
+    }
+    if (req.url === '/truncated-once.zip') { res.writeHead(200); res.end(BODY); return; }
     if (req.url === '/short.zip') { res.writeHead(200); res.end('short'); return; }
     if (req.url === '/busy.zip') { asked++; res.writeHead(503); res.end(); return; }
     // Begun and never finished: a download slow enough to outlast a stop.
@@ -292,16 +310,90 @@ describe('a file not yet on disk', () => {
   });
 
   it('reads Retry-After as seconds or as a date', () => {
-    const after = (said: string) => _test_retryAfter(new Headers({ 'retry-after': said }));
-
-    expect(after('120')).toBe(120_000);
-    expect(after(new Date(Date.now() + 60_000).toUTCString())).toBeGreaterThan(55_000);
-    expect(after('soon')).toBeNull();
-    expect(_test_retryAfter(new Headers())).toBeNull();
+    expect(_test_retryAfter('120')).toBe(120_000);
+    expect(_test_retryAfter(new Date(Date.now() + 60_000).toUTCString())).toBeGreaterThan(55_000);
+    expect(_test_retryAfter('soon')).toBeNull();
+    expect(_test_retryAfter(undefined)).toBeNull();
   });
 
   it('is unreached where no connection opens', async () => {
     expect((await haul(file({ venue: 'nowhere' }))).outcome).toBe('unreached');
+  });
+
+  /** The archive is the bytes the venue holds: a file stored compressed is stored compressed. */
+  it('is stored byte for byte, never decoded, and asked for as it is', async () => {
+    const one = file({ path: 'gzipped.gz', size: GZIPPED.length, etag: `"${md5(GZIPPED)}"` });
+
+    expect(await haul(one)).toEqual({ outcome: 'downloaded' });
+
+    const stored = readFileSync(at(one));
+
+    expect(stored.equals(GZIPPED)).toBe(true);
+    expect([stored[0], stored[1]]).toEqual([0x1f, 0x8b]);
+    expect(requests.map(one => one.encoding)).toEqual(['identity']);
+  });
+
+  it('follows a redirect to the file', async () => {
+    const one = file({ path: 'moved.zip' });
+
+    expect(await haul(one)).toEqual({ outcome: 'downloaded' });
+    expect(readFileSync(at(one), 'utf8')).toBe(BODY);
+    expect(requests.map(one => one.url)).toEqual(['/moved.zip', '/file.zip']);
+  });
+
+  /** Fewer bytes than the response promised is a transfer that failed, whatever the catalog knows of the file. */
+  it('is asked for again where the body is shorter than promised, and fetched once it is whole', async () => {
+    const one = file({ path: 'truncated-once.zip', size: undefined, etag: undefined });
+
+    expect(await haul(one)).toEqual({ outcome: 'downloaded' });
+    expect(readFileSync(at(one), 'utf8')).toBe(BODY);
+    expect(requests).toHaveLength(2);
+  });
+
+  it('is unreached, and never in place, where every body is shorter than promised', async () => {
+    const one = file({ path: 'truncated.zip', size: undefined, etag: undefined });
+
+    expect(await haul(one)).toEqual({ outcome: 'unreached' });
+    expect(asked).toBe(3);
+    expect(existsSync(at(one))).toBe(false);
+  });
+});
+
+describe('a file the disk will not take', () => {
+  /** The address served; asking it again would come to the same. */
+  const unreachedAtOnce = async (one: Haulable) => {
+    expect(await haul(one)).toEqual({ outcome: 'unreached' });
+    expect(requests).toHaveLength(1);
+    expect(_test_hostsOf('binance', '').map(host => host.errors)).toEqual([0]);
+    expect(readdirSync(join(cfg.archivesDir, '.hauler-tmp'))).toEqual([]);
+  };
+
+  it('is unreached at once, held against nobody, where a directory stands at its path', async () => {
+    const one = file();
+
+    mkdirSync(join(at(one), 'in the way'), { recursive: true });
+
+    await unreachedAtOnce(one);
+  });
+
+  it('is unreached at once, held against nobody, where a file stands in place of its folder', async () => {
+    const one = file();
+
+    mkdirSync(dirname(dirname(at(one))), { recursive: true });
+    writeFileSync(dirname(at(one)), 'not a folder');
+
+    await unreachedAtOnce(one);
+  });
+
+  it('is unreached at once, held against nobody, where the download cannot be written', async () => {
+    const one = file();
+
+    writeFileSync(join(cfg.archivesDir, '.hauler-tmp'), 'not a folder');
+
+    expect(await haul(one)).toEqual({ outcome: 'unreached' });
+    expect(requests).toHaveLength(1);
+    expect(_test_hostsOf('binance', '').map(host => host.errors)).toEqual([0]);
+    expect(existsSync(at(one))).toBe(false);
   });
 });
 
@@ -316,7 +408,7 @@ describe('a file already on disk', () => {
     expect(statSync(at(one)).mtime.getUTCFullYear()).toBeGreaterThan(2020);
   });
 
-  it('is moved aside as .bak, then .bak.2, and fetched again, where it differs', async () => {
+  it('is fetched again where it differs, and moved aside as .bak, then .bak.2, once the new one agrees', async () => {
     const one = file();
 
     place(one, 'stale one');
@@ -340,16 +432,63 @@ describe('a file already on disk', () => {
     expect(await haul(one)).toEqual({ outcome: 'present' });
   });
 
-  /** What the disk will not do is no answer about the file: it stays owed, and nothing is fetched. */
+  /** What the disk will not do is no answer about the file: it stays owed, and the download is not kept. */
   it('is unreached, and left where it is, where it differs and cannot be moved aside', async () => {
-    const one = file({ path: 'busy.zip' });
+    const one = file();
 
     place(one, 'stale one');
     mkdirSync(join(`${at(one)}.bak`, 'taken'), { recursive: true });
 
     expect(await haul(one)).toEqual({ outcome: 'unreached' });
     expect(readFileSync(at(one), 'utf8')).toBe('stale one');
-    expect(asked).toBe(0);
+    expect(requests).toHaveLength(1);
+    expect(_test_hostsOf('binance', '').map(host => host.errors)).toEqual([0]);
+    expect(readdirSync(join(cfg.archivesDir, '.hauler-tmp'))).toEqual([]);
+  });
+
+  /** Nothing is moved until a file that agrees is in hand to take its place. */
+  it('stays where it is, with nothing moved aside, where it differs and the venue says it is gone', async () => {
+    const one = file({ path: 'gone.zip' });
+
+    place(one, 'stale one');
+
+    expect((await haul(one)).outcome).toBe('failed');
+    expect(readFileSync(at(one), 'utf8')).toBe('stale one');
+    expect(existsSync(`${at(one)}.bak`)).toBe(false);
+  });
+
+  it('stays where it is, with nothing moved aside, where it differs and the venue cannot be reached', async () => {
+    const one = file({ path: 'busy.zip' });
+
+    place(one, 'stale one');
+
+    expect((await haul(one)).outcome).toBe('unreached');
+    expect(readFileSync(at(one), 'utf8')).toBe('stale one');
+    expect(existsSync(`${at(one)}.bak`)).toBe(false);
+  });
+
+  it('stays where it is, with nothing moved aside, where what is fetched does not agree either', async () => {
+    const one = file({ path: 'short.zip' });
+
+    place(one, 'stale one');
+
+    expect(await haul(one)).toEqual({ outcome: 'mismatched', size: 5 });
+    expect(readFileSync(at(one), 'utf8')).toBe('stale one');
+    expect(existsSync(`${at(one)}.bak`)).toBe(false);
+  });
+
+  /** The catalog was what was wrong: once it rules for the file on disk, the download held is dropped and nothing is kept twice. */
+  it('is present, the download held for it dropped, where the catalog comes to agree with it', async () => {
+    const one = file({ size: 5, etag: `"${md5('short')}"` });
+
+    place(one, BODY);
+
+    expect(await haul(one)).toEqual({ outcome: 'mismatched', size: BODY.length });
+
+    expect(await haul({ ...one, size: BODY.length, etag: `"${md5(BODY)}"` })).toEqual({ outcome: 'present' });
+    expect(readFileSync(at(one), 'utf8')).toBe(BODY);
+    expect(existsSync(`${at(one)}.bak`)).toBe(false);
+    expect(readdirSync(join(cfg.archivesDir, '.hauler-tmp'))).toEqual([]);
   });
 });
 

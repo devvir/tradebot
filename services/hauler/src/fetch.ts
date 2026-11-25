@@ -2,10 +2,12 @@ import { basename, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { logger } from '@devvir/service-kit';
 import { sizeOf } from '@tradebot/utils';
-import { backup, commit, discard, etagAgrees, isDigest, md5, measure, partialOf, touch, writePartial } from './store';
+import { DiskError, discard, etagAgrees, isDigest, md5, measure, replace, touch, writePartial } from './store';
 import { backAt, delivered, faltered, hostFor, mainOf, refused } from './hosts';
 import { hold, taken } from './held';
+import { get } from './http';
 import config from './config';
+import type { Written } from './store';
 import type { Haulable, Hauled, Host, Pacing } from './types';
 
 /**
@@ -18,17 +20,24 @@ import type { Haulable, Hauled, Host, Pacing } from './types';
  * | the file | matches | |
  * |---|---|---|
  * | already there | yes | **touched**, and reported as downloaded |
- * | already there | no  | **moved aside** as `.bak`, then fetched again |
- * | just fetched  | yes | downloaded |
+ * | already there | no  | **fetched again**, and left where it is until the new one matches |
+ * | just fetched  | yes | downloaded — whatever was at its path **moved aside** as `.bak` |
  * | just fetched  | no  | **reported as a mismatch**, and held in scratch |
  *
  * **The first row is what adopts an archive already on disk** with no seeding:
  * a file present and correct is confirmed whatever the catalog believed, and
- * its new date says this pass accounted for it — see `touch`. The second keeps
- * whatever disagreed for somebody to read; see `backup`. The last never settles
+ * its new date says this pass accounted for it — see `touch`. The second and
+ * third keep whatever disagreed for somebody to read, and only once a file that
+ * agrees is in hand to take its place: a download that fails, or does not
+ * match either, leaves it where it was. See `replace`. The last never settles
  * itself: the catalog asks the venue and rules — and where it rules for what
- * was fetched, that download is the file, and is not fetched twice. See
- * `held.ts`.
+ * was fetched, that download is the file, and is not fetched twice; where it
+ * rules for the file on disk, the download is dropped. See `held.ts`.
+ *
+ * **What is stored is the bytes as served**, never decoded — see `http.ts` —
+ * and **a body shorter than was promised is a transfer that failed**: shorter
+ * than its own `content-length`, or empty where the catalog says the file is
+ * not.
  *
  * **Only the venue's own answer makes a file `failed`** — `404` or `410` at once,
  * and a `403` that persists through every attempt: a `403` is as often a venue
@@ -45,9 +54,11 @@ import type { Haulable, Hauled, Host, Pacing } from './types';
  * down and the file is asked elsewhere. **A refusal takes the
  * address that refused out of rotation**, not the file's chances.
  *
- * **What the disk will not do leaves the file owed.** A file that cannot be
- * read, moved aside or given its place is `unreached`, and comes round again;
- * one present and correct whose date cannot be set is present all the same.
+ * **What the disk will not do leaves the file owed**, at once, and holds
+ * nothing against the address: a download that cannot be written, a file that
+ * cannot be read, moved aside or given its place is `unreached` without being
+ * asked for a second time, and comes round again. One present and correct
+ * whose date cannot be set is present all the same.
  * **A key is hauled once at a time**: asked for again while it is in hand, it is
  * `unreached` at once.
  *
@@ -152,13 +163,14 @@ const fromDisk = async (file: Haulable, path: string): Promise<Hauled | null> =>
 
       logger.info({ key: file.key, size: sizeOf(held) }, 'Already downloaded and current');
 
+      // A download held for it is not the file: the catalog has ruled for the one on disk.
+      if (taken(file)) await discard(path);
+
       return { outcome: 'present' };
     }
 
-    const aside = await backup(path);
-
-    logger.warn({ key: file.key, size: held, expected: file.size, aside: basename(aside) },
-      'Differs from the catalog — moved aside, fetching again');
+    logger.warn({ key: file.key, size: held, expected: file.size },
+      'Differs from the catalog — fetching again; the file stays until a verified replacement is in hand');
   }
 
   /**
@@ -169,9 +181,10 @@ const fromDisk = async (file: Haulable, path: string): Promise<Hauled | null> =>
 
   if (kept) {
     if (settles(file, kept.bytes, kept.digest)) {
-      await commit(path);
+      const aside = await placed(path, kept.digest);
 
-      logger.info({ key: file.key, size: sizeOf(kept.bytes) }, 'Downloaded — fetched earlier, and the catalog agrees now');
+      logger.info({ key: file.key, size: sizeOf(kept.bytes), ...movedAside(aside) },
+        'Downloaded — fetched earlier, and the catalog agrees now');
 
       return { outcome: 'downloaded' };
     }
@@ -181,6 +194,20 @@ const fromDisk = async (file: Haulable, path: string): Promise<Hauled | null> =>
 
   return null;
 };
+
+/** Give a verified partial its path, with `replace`; a partial that could not be is dropped. */
+const placed = async (path: string, digest: string): Promise<string | null> => {
+  try {
+    return await replace(path, digest);
+  } catch (err) {
+    await discard(path);
+
+    throw err;
+  }
+};
+
+/** What was moved aside for a file, for its log line. */
+const movedAside = (aside: string | null): { aside?: string } => aside === null ? {} : { aside: basename(aside) };
 
 const retrieve = async (file: Haulable, path: string, pacing: Pacing): Promise<Hauled> => {
   const { pause = wait => wait(), stopped = () => false } = pacing;
@@ -225,15 +252,19 @@ const retrieve = async (file: Haulable, path: string, pacing: Pacing): Promise<H
 
     flying.add(own);
 
+    let written: Written;
+
     try {
-      const res = await fetch(url, { signal: own.signal });
+      const res = await get(url, own.signal);
 
-      if (! res.ok || ! res.body) {
-        await res.body?.cancel().catch(() => undefined);
+      const status = res.statusCode ?? 0;
 
-        const wait = retryAfter(res.headers);
+      if (status < 200 || status >= 300) {
+        res.resume();
 
-        if (REFUSED.has(res.status) || wait !== null) refused(host, res.status, wait);
+        const wait = retryAfter(res.headers['retry-after']);
+
+        if (REFUSED.has(status) || wait !== null) refused(host, status, wait);
         else faltered(host);
 
         /**
@@ -242,7 +273,7 @@ const retrieve = async (file: Haulable, path: string, pacing: Pacing): Promise<H
          * at once; a withdrawal is rare, and an edge that has lost a file the
          * bucket still holds is not one.
          */
-        if (GONE.has(res.status)) {
+        if (GONE.has(status)) {
           tried.add(host);
 
           if (hostFor(file.venue, file.server, tried)) {
@@ -251,7 +282,7 @@ const retrieve = async (file: Haulable, path: string, pacing: Pacing): Promise<H
             continue;
           }
 
-          logger.warn({ key: file.key, status: res.status, url }, 'Gone at the venue');
+          logger.warn({ key: file.key, status, url }, 'Gone at the venue');
 
           return { outcome: 'failed' };
         }
@@ -268,14 +299,14 @@ const retrieve = async (file: Haulable, path: string, pacing: Pacing): Promise<H
           continue;
         }
 
-        if (attempt === ATTEMPTS && res.status === HIDDEN) {
-          logger.warn({ key: file.key, status: res.status, url }, 'Refused throughout — reported for the catalog to rule');
+        if (attempt === ATTEMPTS && status === HIDDEN) {
+          logger.warn({ key: file.key, status, url }, 'Refused throughout — reported for the catalog to rule');
 
           return { outcome: 'failed' };
         }
 
         if (attempt === ATTEMPTS) {
-          logger.warn({ key: file.key, status: res.status, url }, 'Unreachable — stays owed');
+          logger.warn({ key: file.key, status, url }, 'Unreachable — stays owed');
 
           return { outcome: 'unreached' };
         }
@@ -285,18 +316,21 @@ const retrieve = async (file: Haulable, path: string, pacing: Pacing): Promise<H
         continue;
       }
 
-      const bytes = await writePartial(path, res.body);
+      written = await writePartial(path, res);
+
+      const promised = Number(res.headers['content-length'] ?? Number.NaN);
 
       /**
-       * **Nothing, where the catalog says there is something, is a transfer
-       * that failed** and not a file that differs: an address now and then
-       * answers `200` with an empty body, several requests at the same instant,
-       * for files it serves whole a moment later. So it is handled as any reply
-       * that is not the file — the address marked down, the file asked for
-       * again, and left owed where every attempt comes back empty. It is never
-       * reported: there is nothing to tell the catalog about the file.
+       * **Less than was promised is a transfer that failed**, and not a file
+       * that differs: fewer bytes than the response's own `content-length`, or
+       * nothing where the catalog says there is something — an address now and
+       * then answers `200` with an empty body, several requests at the same
+       * instant, for files it serves whole a moment later. So it is handled as
+       * any reply that is not the file — the address marked down, the file
+       * asked for again, and left owed where every attempt comes back short. It
+       * is never reported: there is nothing to tell the catalog about the file.
        */
-      if (bytes === 0 && (file.size ?? 0) > 0) {
+      if (written.bytes < promised || (written.bytes === 0 && (file.size ?? 0) > 0)) {
         await discard(path);
 
         faltered(host);
@@ -308,7 +342,8 @@ const retrieve = async (file: Haulable, path: string, pacing: Pacing): Promise<H
         }
 
         if (attempt === ATTEMPTS) {
-          logger.warn({ key: file.key, expected: file.size, url }, 'Served empty — stays owed');
+          logger.warn({ key: file.key, size: written.bytes, ...(Number.isNaN(promised) ? {} : { promised }), expected: file.size, url },
+            'Served short — stays owed');
 
           return { outcome: 'unreached' };
         }
@@ -317,30 +352,18 @@ const retrieve = async (file: Haulable, path: string, pacing: Pacing): Promise<H
 
         continue;
       }
-
-      delivered(host, bytes, Date.now() - began);
-
-      const digest = isDigest(file.etag) || file.size !== bytes ? await md5(partialOf(path)) : '';
-
-      if (! settles(file, bytes, digest)) {
-        // Likely the venue's newer file: kept until the catalog has asked, and not fetched again if so.
-        hold(file, path, bytes, digest);
-
-        logger.error({ key: file.key, size: bytes, expected: file.size, url }, 'Served differs from the catalog — held until it has asked the venue');
-
-        return { outcome: 'mismatched', size: bytes };
-      }
-
-      await commit(path);
-
-      logger.info({ key: file.key, size: sizeOf(bytes) }, 'Downloaded');
-
-      return { outcome: 'downloaded' };
     } catch (err) {
       await discard(path);
 
       // Given up, not failed: nothing is held against the address, and nothing is tried again.
       if (given.signal.aborted) return { outcome: 'unreached' };
+
+      // The disk's doing: the address served, and asking it again would come to the same.
+      if (err instanceof DiskError) {
+        logger.error({ key: file.key, path, code: err.code, err: err.message }, 'The disk would not take the download — stays owed');
+
+        return { outcome: 'unreached' };
+      }
 
       faltered(host);
 
@@ -353,12 +376,47 @@ const retrieve = async (file: Haulable, path: string, pacing: Pacing): Promise<H
       }
 
       if (! await waited(delayFor(attempt))) return { outcome: 'unreached' };
+
+      continue;
     } finally {
       flying.delete(own);
     }
+
+    delivered(host, written.bytes, Date.now() - began);
+
+    return await verified(file, path, written, url);
   }
 
   return { outcome: 'unreached' };
+};
+
+/**
+ * Set a download against the catalog, once it is whole: given its place where
+ * it agrees, and held for the catalog to rule where it does not. Whatever goes
+ * wrong here is the disk's, and leaves the file owed.
+ */
+const verified = async (file: Haulable, path: string, { bytes, digest }: Written, url: string): Promise<Hauled> => {
+  if (! settles(file, bytes, digest)) {
+    // Likely the venue's newer file: kept until the catalog has asked, and not fetched again if so.
+    hold(file, path, bytes, digest);
+
+    logger.error({ key: file.key, size: bytes, expected: file.size, url }, 'Served differs from the catalog — held until it has asked the venue');
+
+    return { outcome: 'mismatched', size: bytes };
+  }
+
+  try {
+    const aside = await placed(path, digest);
+
+    logger.info({ key: file.key, size: sizeOf(bytes), ...movedAside(aside) }, 'Downloaded');
+
+    return { outcome: 'downloaded' };
+  } catch (err) {
+    logger.error({ key: file.key, path, code: (err as { code?: unknown }).code, err },
+      'Downloaded, but could not be given its place — stays owed');
+
+    return { outcome: 'unreached' };
+  }
 };
 
 /**
@@ -393,8 +451,8 @@ const hostToAsk = async (
 const REFUSED = new Set([403, 429]);
 
 /** `Retry-After` in milliseconds, given as seconds or as a date; null where absent or unreadable. */
-const retryAfter = (headers: Headers): number | null => {
-  const said = headers.get('retry-after')?.trim();
+const retryAfter = (header: string | undefined): number | null => {
+  const said = header?.trim();
 
   if (! said) return null;
 
@@ -430,7 +488,7 @@ const WAKE_MS = 1_000;
 /** Sleep so long, or until downloads are given up: whichever `given` is current when it begins. */
 const sleep = (ms: number): Promise<void> => delay(ms, undefined, { signal: given.signal }).catch(() => undefined);
 
-/** What undici says went wrong, without its stack: `fetch failed` alone names nothing. */
+/** What went wrong with a request, without its stack: the cause where one is given, which names more than the error itself. */
 const reason = (err: unknown): string => {
   const cause = (err as { cause?: { message?: string; code?: string } })?.cause;
 

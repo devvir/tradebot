@@ -2,7 +2,7 @@ import { logger } from '@devvir/service-kit';
 import { page, report } from './catalog';
 import { LARGE_BYTES, haul } from './fetch';
 import { readyAt } from './hosts';
-import { freeGb } from './store';
+import { roomOn, roomRefusedAt } from './store';
 import config from './config';
 import type { BucketObject, BucketPage, Haulable, Hauled, Leaf, Pacing, Walked } from './types';
 
@@ -36,9 +36,10 @@ import type { BucketObject, BucketPage, Haulable, Hauled, Leaf, Pacing, Walked }
  * done goes unreported. A file waiting — for its server, or between attempts —
  * asks nothing more, and is left owed.
  *
- * **So does a volume running low.** Below `minFreeGb` no new file is taken, the
- * ones in flight finish, and the walk ends saying so — rather than filling the
- * volume and failing every file after.
+ * **So does a volume running low** — below `minFreeGb`, out of inodes, or
+ * refusing a write for want of room: no new file is taken, the ones in flight
+ * finish, and the walk ends saying so — rather than filling the volume and
+ * failing every file after.
  *
  * **It says what it is doing as it goes**: when it asks the catalog, which can
  * take a while on a large venue, and what each page came to. A walk is hours of
@@ -415,17 +416,30 @@ const fetchOne = async (venue: string, object: BucketObject, leaf: Leaf, pacing:
 };
 
 /**
- * Whether the archives' volume is below the floor. Asked before every file,
- * and answered from the last look where that was under a second ago: files are
+ * Whether the archives' volume is below the floor: under `minFreeGb` free,
+ * under `MIN_FREE_INODES` or half a percent of its inodes free, or a write
+ * refused for want of room within `REFUSED_MS`. Asked before every file, and
+ * answered from the last look where that was under a second ago: files are
  * taken many at a time, and the volume does not move that fast. A look that
  * fails answers what the last one said, and is tried again a second later.
+ *
+ * **A refusal is the volume full whatever a look at it says**: a quota is not
+ * in it, and a volume can fill between two looks. For long enough to end every
+ * walk in flight; the next walk looks afresh.
  */
 const low = async (): Promise<boolean> => {
+  if (Date.now() - roomRefusedAt() < REFUSED_MS) return true;
+
   if (Date.now() - looked.at > LOOK_MS) {
     const at = Date.now();
 
     try {
-      looked = { at, low: await freeGb(config.archivesDir) < config.minFreeGb };
+      const { gb, inodes } = await roomOn(config.archivesDir);
+
+      looked = {
+        at,
+        low: gb < config.minFreeGb || (inodes.all > 0 && inodes.free < Math.max(MIN_FREE_INODES, inodes.all * 0.005)),
+      };
     } catch (err) {
       logger.error({ err, dir: config.archivesDir }, 'Could not look at the archives volume — going by the last look');
 
@@ -438,6 +452,12 @@ const low = async (): Promise<boolean> => {
 
 /** How long one look at the volume answers for. */
 const LOOK_MS = 1_000;
+
+/** Free inodes below which the volume is low, however large it is. */
+const MIN_FREE_INODES = 10_000;
+
+/** How long a write refused for want of room says the volume is full. */
+const REFUSED_MS = 60_000;
 
 let looked = { at: 0, low: false };
 
