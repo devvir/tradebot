@@ -3,10 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  keyFor, open, putFiles, putVenue, recordSeries, retirePattern, seriesFor, updateSeries,
+  keyFor, open, putVenue, recordSeries, retirePattern, seriesFor, updateSeries,
 } from '../src/catalog';
 import { openCatalog } from '../src/database';
 import { preamble } from '../src/preamble';
+import { listing } from '../src/context';
 import { fetchHead } from '../src/http';
 import { s3 } from '../src/scanners/s3';
 import type { DatabaseSync } from 'node:sqlite';
@@ -45,6 +46,7 @@ const venue = (): Adapter => ({
   scanner:     s3,
   base:        'https://demo.example',
   keyRoot:     '',
+  getContext:  async () => listing(venue()),
   dateOf:      (path) => /(\d{8})/.exec(path)?.[1] ?? null,
   instruments: async () => lists,
 });

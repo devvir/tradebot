@@ -65,6 +65,8 @@ const venue = (): Adapter => {
         cursor: next < 20 ? `${scope}#${next}` : null,
       };
     },
+
+    confirm: async () => null,
   };
 
   return {
@@ -157,7 +159,7 @@ describe('a path the adapter cannot place', () => {
     inspectUrl: (): Inspection => (of === 'series'
       ? { of: 'series', date: '20250101',
         found: { market: 'm', dataset: 'd', symbol: 'A', pattern: 'deep/{SYMBOL}-{YYYY}-{MM}-{DD}.zip' } }
-      : { of }),
+      : { of: 'unknown', date: null }),
   });
 
   const recorded = () => {

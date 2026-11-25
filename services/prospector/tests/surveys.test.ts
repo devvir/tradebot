@@ -132,7 +132,7 @@ const finished = (venue: string): number => {
 
   for (const run of [job, ...db.prepare(
     'SELECT id FROM run WHERE venue_id = ? AND scope != \'\'').all(id) as { id: number }[]])
-    closeRun(db, run.id, 'T1');
+    closeRun(db, run.id);
 
   return id;
 };
@@ -237,7 +237,7 @@ describe('starting a survey', () => {
 
     for (const run of [job, ...db.prepare(
       'SELECT id FROM run WHERE venue_id = ? AND scope != \'\'').all(id) as { id: number }[]])
-      closeRun(db, run.id, 'T1');
+      closeRun(db, run.id);
 
     expect((await ask('POST', 'bybit')).phases!['bybit']).toBe('updating');
   });

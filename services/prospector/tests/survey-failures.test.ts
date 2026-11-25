@@ -99,6 +99,8 @@ const venue = (opts: {
         cursor: next < opts.pages[scope]! ? `${scope}#${next}` : null,
       };
     },
+
+    confirm: async () => null,
   };
 
   return {
@@ -157,7 +159,7 @@ describe('a split whose level cannot be read', () => {
       },
     });
 
-    const summary = await surveyVenue(db, adapter, lanes(3));
+    const summary = await surveyVenue(db, adapter, lanes(3), 'full');
     const asked   = asks.length;
 
     await settle();
@@ -184,7 +186,7 @@ describe('a split whose level cannot be read', () => {
       level:   async (scope) => { throw latchedRefusal(adapter, `https://x/${scope}`); },
     });
 
-    const summary = await surveyVenue(db, adapter, lanes(3));
+    const summary = await surveyVenue(db, adapter, lanes(3), 'full');
 
     expect(summary).toMatchObject({ blocked: true });
     expect(summary.generated).toBeUndefined();
@@ -199,7 +201,7 @@ describe('a split that does not answer', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
 
     const adapter = venue({ pages: { 'fat/': 6 }, level: () => new Promise<Level>(() => {}) });
-    const surveying = surveyVenue(db, adapter, lanes(2));
+    const surveying = surveyVenue(db, adapter, lanes(2), 'full');
 
     // The split is only timed once it has been asked for.
     while (levels.length === 0) await new Promise(resolve => setImmediate(resolve));
@@ -224,7 +226,7 @@ describe('a split whose children are all behind the cursor', () => {
       level: async scope => ({ children: scope === 'fat/' ? ['fat/!/'] : [], files: false }),
     });
 
-    const summary = await surveyVenue(db, adapter, lanes(2));
+    const summary = await surveyVenue(db, adapter, lanes(2), 'full');
 
     expect(summary).toMatchObject({ failed: 0, generated: true });
     expect(runs()).toEqual({ 'fat/': { closed: true, cursor: null } });
@@ -266,7 +268,7 @@ describe('a lane that fails outside any partition', () => {
 
     const adapter = venue({ pages: { 'fast/': 1, 'slow/': 500 }, delayMs: 1 });
 
-    await expect(surveyVenue(db, adapter, lanes(2))).rejects.toThrow('lane broke');
+    await expect(surveyVenue(db, adapter, lanes(2), 'full')).rejects.toThrow('lane broke');
 
     const asked = asks.length;
 
@@ -288,7 +290,7 @@ describe('a mapping that is refused', () => {
       scanner: { ...adapter.scanner, scopes: async () => { throw latchedRefusal(adapter, 'https://x/'); } },
     };
 
-    expect(await surveyVenue(db, adapter, lanes(2))).toMatchObject({ blocked: true, failed: 1 });
+    expect(await surveyVenue(db, adapter, lanes(2), 'full')).toMatchObject({ blocked: true, failed: 1 });
     expect(asks).toEqual([]);
   });
 
@@ -303,7 +305,7 @@ describe('a mapping that is refused', () => {
       },
     };
 
-    await expect(surveyVenue(db, adapter, lanes(2))).rejects.toThrow(/Refused 403/);
+    await expect(surveyVenue(db, adapter, lanes(2), 'full')).rejects.toThrow(/Refused 403/);
   });
 });
 
@@ -317,7 +319,7 @@ describe('what a pass reports', () => {
       fails: scope => (scope === 'a/' ? latchedRefusal(adapter, 'https://x/a/') : null),
     });
 
-    const summary = await surveyVenue(db, adapter, lanes(1));
+    const summary = await surveyVenue(db, adapter, lanes(1), 'full');
 
     expect(summary).toMatchObject({ blocked: true, failed: 1 });
     expect(asks).toEqual(['a/@']);
@@ -333,7 +335,7 @@ describe('what a pass reports', () => {
       level: async scope => ({ children: scope === 'fat/' ? ['fat/a/', 'fat/b/'] : [], files: false }),
     });
 
-    await surveyVenue(db, adapter, lanes(3));
+    await surveyVenue(db, adapter, lanes(3), 'full');
 
     const progress = vi.mocked(logger.info).mock.calls
       .filter(call => call[1] === 'Partitions walked')

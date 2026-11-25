@@ -70,6 +70,8 @@ const walked = (): Adapter => {
         cursor: at + 1 < 3 ? `${scope}#${at + 1}` : null,
       };
     },
+
+    confirm: async () => null,
   };
 
   return {

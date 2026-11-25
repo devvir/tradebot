@@ -252,12 +252,12 @@ describe('a listing that hangs', async () => {
     Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
 
   it('gives every request a deadline', async () => {
-    const fetched = vi.fn(async () => new Response(EMPTY_LISTING));
+    const fetched = vi.fn(async (_url: string, _init?: RequestInit) => new Response(EMPTY_LISTING));
 
     vi.stubGlobal('fetch', fetched);
     await fetchPage(quick, 'https://venue/?prefix=spot/', 's3');
 
-    expect(fetched.mock.calls[0]![1].signal).toBeInstanceOf(AbortSignal);
+    expect(fetched.mock.calls[0]![1]?.signal).toBeInstanceOf(AbortSignal);
 
     vi.unstubAllGlobals();
   });

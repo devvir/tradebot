@@ -189,7 +189,7 @@ describe('a running worker', () => {
   /** A worker file that runs `transport.worker.ts` itself. */
   const source = (): string => {
     const boot   = join(here, 'boot.js');
-    const tsNode = createRequire(import.meta.url).resolve('ts-node');
+    const tsNode = createRequire(__filename).resolve('ts-node');
 
     writeFileSync(boot, [
       `require(${JSON.stringify(tsNode)}).register({`,

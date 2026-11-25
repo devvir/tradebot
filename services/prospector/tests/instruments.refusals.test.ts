@@ -6,6 +6,7 @@ import { putVenue, recordSeries, seriesFor } from '../src/catalog';
 import { openCatalog } from '../src/database';
 import { fetchJson } from '../src/metadata';
 import { preamble } from '../src/preamble';
+import { listing } from '../src/context';
 import { s3 } from '../src/scanners/s3';
 import { bybitInstruments } from '../src/adapters/bybit/instruments';
 import { htxInstruments } from '../src/adapters/htx/instruments';
@@ -159,6 +160,7 @@ describe('bybit', () => {
 
     const adapter: Adapter = {
       name: 'demo', scanner: s3, base: 'https://demo.example', keyRoot: '',
+      getContext:  async () => listing(adapter),
       dateOf:      (path) => /(\d{8})/.exec(path)?.[1] ?? null,
       instruments: async () => bybitInstruments(db, HOST),
     };

@@ -209,15 +209,14 @@ describe('which series an update walks', () => {
   it('offers one scope per series that is still worth pursuing', () => {
     const live = recordSeries(db, id, found(), { first: '20260301', tip: '20260301' });
 
-    recordSeries(db, id, found({ symbol: 'DEAD' }),
-      { first: null, found: false, state: 'void' });
+    recordSeries(db, id, found({ symbol: 'DEAD' }), { first: null, tip: null });
 
     expect(updateScopes(db, id)).toEqual([String(live.id)]);
   });
 
   /** A series with no start has never published, so there is nothing to ask for. */
   it('leaves out a series that has never published', () => {
-    recordSeries(db, id, found(), { first: null, found: false });
+    recordSeries(db, id, found(), { first: null, tip: null });
 
     expect(updateScopes(db, id)).toEqual([]);
   });
@@ -360,7 +359,7 @@ describe('what counts as worth generating for', () => {
 
   /** Asked about, and it publishes nothing. */
   it('skips a series that has never been shown to publish', () => {
-    recordSeries(db, id, found(), { first: null, tip: null, found: false });
+    recordSeries(db, id, found(), { first: null, tip: null });
 
     expect(updateScopes(db, id)).toEqual([]);
   });

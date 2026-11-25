@@ -32,9 +32,12 @@ vi.mock('../src/catalog', async (importOriginal) => {
 
 const adapter: Adapter = {
   name:    'gated',
-  scanner: { name: 'fake', scopes: async () => [], page: async () => ({ listed: [], cursor: null }) },
+  scanner: {
+    name: 'fake', scopes: async () => [], page: async () => ({ listed: [], cursor: null }), confirm: async () => null,
+  },
   base:    'https://gated.example',
   keyRoot: '',
+  getContext: async () => null,
   pacing:  { standDownMs: 5_000, ceilingMs: 10_000 },
   dateOf:  () => null,
 };

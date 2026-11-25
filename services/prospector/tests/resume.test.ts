@@ -22,7 +22,7 @@ let dir: string;
 let db:  DatabaseSync;
 let id:  number;
 
-const config: Config = { catalogDir: '', venues: [], concurrency: 4 };
+const config: Config = { catalogDir: '', token: '', port: 0, venues: [], concurrency: 4 };
 
 const venue: Adapter = {
   name:       'fake',

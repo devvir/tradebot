@@ -466,7 +466,7 @@ describe('bitget', () => {
 
   /** The hook takes a whole row, so a rule that reads none of it still needs one. */
   const probed = (path: string): Unsettled =>
-    ({ venueId: 1, path, date: '20260813', tries: 0, existence: 'assumed', seriesId: null });
+    ({ seq: 1, venueId: 1, path, date: '20260813', tries: 0, existence: 'assumed', seriesId: 1 });
 
   /**
    * Only the trades patterns carry `{PART}`, so only they ever reach the hook —
@@ -506,8 +506,8 @@ describe('okx', () => {
    */
   it('probes, because nothing it emits has been seen', () => {
     expect(okx.probes).toBe(true);
-    const key: Unsettled = { venueId: 8, path: 'x/1.zip', date: '20260813',
-      tries: 0, existence: 'assumed', seriesId: null };
+    const key: Unsettled = { seq: 1, venueId: 8, path: 'x/1.zip', date: '20260813',
+      tries: 0, existence: 'assumed', seriesId: 1 };
 
     expect(okx.ruleOnFailure!(key, 404, new Headers(), 1)).toBe('drop');
     expect(okx.ruleOnFailure!(key, 403, new Headers(), 1)).toBe(null);
@@ -585,7 +585,7 @@ describe('bitget instrument naming', () => {
    */
   it('files trades under the margin type the venue lists', () => {
     const at = (market: string, category: string) =>
-      tokenOf({ market, category, symbol: 'X', launchedAt: null }, 'trades');
+      tokenOf({ market, category, symbol: 'X', launchedAt: null, live: true }, 'trades');
 
     expect(at('SPOT',    'SPOT')).toBe('SPBL');
     expect(at('FUTURES', 'USDT-FUTURES')).toBe('UMCBL');
@@ -595,8 +595,8 @@ describe('bitget instrument naming', () => {
 
   /** Candlesticks and depth use one token per market, whatever the margin. */
   it('files candlesticks under one token for both margin types', () => {
-    const coin = { market: 'FUTURES', category: 'COIN-FUTURES', symbol: 'X', launchedAt: null };
-    const spot = { market: 'SPOT', category: 'SPOT', symbol: 'X', launchedAt: null };
+    const coin = { market: 'FUTURES', category: 'COIN-FUTURES', symbol: 'X', launchedAt: null, live: true };
+    const spot = { market: 'SPOT', category: 'SPOT', symbol: 'X', launchedAt: null, live: true };
 
     expect(tokenOf(coin, 'klines')).toBe('UMCBL');
     expect(tokenOf(spot, 'klines')).toBe('SP');
@@ -610,14 +610,14 @@ describe('bitget instrument naming', () => {
    * venue is asked once rather than the instrument being dropped.
    */
   it('carries on for an unknown contract type, and says that it did', () => {
-    const odd = { market: 'FUTURES', category: 'EUR-FUTURES', symbol: 'X', launchedAt: null };
+    const odd = { market: 'FUTURES', category: 'EUR-FUTURES', symbol: 'X', launchedAt: null, live: true };
 
     expect(unknownMargin(odd)).toBe(true);
     expect(tokenOf(odd, 'trades')).toBe('UMCBL');
     expect(tokenOf(odd, 'klines')).toBe('UMCBL');
 
     expect(unknownMargin({ ...odd, category: 'COIN-FUTURES' })).toBe(false);
-    expect(unknownMargin({ market: 'SPOT', category: 'SPOT', symbol: 'X', launchedAt: null }))
+    expect(unknownMargin({ market: 'SPOT', category: 'SPOT', symbol: 'X', launchedAt: null, live: true }))
       .toBe(false);
   });
 

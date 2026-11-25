@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { putVenue, recordSeries, seriesFor } from '../src/catalog';
 import { openCatalog } from '../src/database';
 import { backfill } from '../src/backfill';
+import { listing } from '../src/context';
 import { fetchHead } from '../src/http';
 import { s3 } from '../src/scanners/s3';
 import type { DatabaseSync } from 'node:sqlite';
@@ -28,6 +29,7 @@ const venue: Adapter = {
   scanner: s3,
   base:    'https://demo.example',
   keyRoot: '',
+  getContext: async () => listing(venue),
   dateOf:  (path) => /(\d{4})(\d{2})(\d{2})/.exec(path)?.slice(1).join('') ?? null,
 };
 

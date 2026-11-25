@@ -79,6 +79,8 @@ const venue = (opts: {
         cursor: next < last ? `${scope}#${next}` : null,
       };
     },
+
+    confirm: async () => null,
   };
 
   return {
@@ -110,13 +112,13 @@ describe('splitting a partition that is holding the survey up', () => {
    * nothing to take, so rather than idling they split the one that is running.
    */
   it('splits the only partition when lanes have nothing to do', async () => {
-    await surveyVenue(db, venue(), config);
+    await surveyVenue(db, venue(), config, 'full');
 
     expect(scopesWalked()).toEqual(['fat/', 'fat/a/', 'fat/b/', 'fat/c/']);
   });
 
   it('walks the children it created, so nothing is lost', async () => {
-    const summary = await surveyVenue(db, venue(), config);
+    const summary = await surveyVenue(db, venue(), config, 'full');
 
     // The parent's own pages, plus one page from each child it was split into.
     expect(summary.found).toBeGreaterThan(3);
@@ -129,20 +131,20 @@ describe('splitting a partition that is holding the survey up', () => {
    * files is walked whole rather than split.
    */
   it('refuses to split a prefix that holds files of its own', async () => {
-    await surveyVenue(db, venue({ files: true }), config);
+    await surveyVenue(db, venue({ files: true }), config, 'full');
 
     expect(scopesWalked()).toEqual(['fat/']);
   });
 
   it('refuses to split a prefix with no children', async () => {
-    await surveyVenue(db, venue({ children: [] }), config);
+    await surveyVenue(db, venue({ children: [] }), config, 'full');
 
     expect(scopesWalked()).toEqual(['fat/']);
   });
 
   /** A scanner whose scopes are not prefixes cannot be split, and says so by omission. */
   it('leaves a scanner that cannot read a level alone', async () => {
-    await surveyVenue(db, venue({ level: false }), config);
+    await surveyVenue(db, venue({ level: false }), config, 'full');
 
     expect(scopesWalked()).toEqual(['fat/']);
   });
@@ -163,7 +165,7 @@ describe('splitting a partition that is holding the survey up', () => {
   it('never closes a partition when the split would produce no children', async () => {
     const late = venue({ children: ['fat/a/'], pages: 8 });
 
-    await surveyVenue(db, late, config);
+    await surveyVenue(db, late, config, 'full');
 
     const [id]   = venueIds(db, 'fake');
     const closed = db.prepare(
@@ -178,7 +180,7 @@ describe('splitting a partition that is holding the survey up', () => {
 
   /** Whatever it does, it has to stop — the job closes and the venue is established. */
   it('finishes, rather than splitting for ever', async () => {
-    const summary = await surveyVenue(db, venue(), config);
+    const summary = await surveyVenue(db, venue(), config, 'full');
 
     expect(summary.failed).toBe(0);
     expect(putVenue(db, 'fake', 'https://x', '')).toBeGreaterThan(0);

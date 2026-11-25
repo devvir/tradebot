@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { countUnsettled, putFiles, putVenue, recordSeries } from '../src/catalog';
 import { openCatalog } from '../src/database';
+import { listing } from '../src/context';
 import { fetchHead } from '../src/http';
 import { html } from '../src/scanners/html';
 import {
@@ -12,7 +13,7 @@ import {
 import { probing } from '../src/survey';
 import type { DatabaseSync } from 'node:sqlite';
 import { applySchedule } from '../src/schedule';
-import type { Adapter, Config } from '../src/types';
+import type { Adapter } from '../src/types';
 
 vi.mock('../src/http', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/http')>()),
@@ -37,12 +38,9 @@ const indexed: Adapter = {
   base:    'https://indexes.example',
   keyRoot: '',
   probes:  true,
+  getContext: async () => listing(indexed),
   pacing:  { perSecond: 1000, concurrency: 4, standDownMs: 20, ceilingMs: 40 },
   dateOf:  (path) => /(\d{4})-(\d{2})-(\d{2})/.exec(path)?.slice(1).join('') ?? null,
-};
-
-const config: Config = {
-  catalogDir: '/tmp', token: 'x', port: 0, venues: [], concurrency: 4,
 };
 
 let dir: string;

@@ -120,7 +120,7 @@ describe('the arithmetic', () => {
   });
 
   it('folds a batch into one row per partition', async () => {
-    const many = Array.from({ length: 500 }, (_, at) => ({ was: null, now: state() }));
+    const many = Array.from({ length: 500 }, () => ({ was: null, now: state() }));
 
     expect(deltasOf(many)).toHaveLength(1);
     expect(deltasOf(many)[0]).toMatchObject({ files: 500, bytes: 5_000, pending: 500 });

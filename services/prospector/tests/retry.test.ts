@@ -67,6 +67,8 @@ const venue = (fails: (page: number, attempt: number) => Error | null): Adapter 
         cursor: at + 1 < 5 ? `${scope}#${at + 1}` : null,
       };
     },
+
+    confirm: async () => null,
   };
 
   return {
