@@ -9,7 +9,8 @@ const REDACTED = '*****';
  * raw characters a URL parser would split on ('@', ':', '/', '?', '#', '%') is redacted whole:
  * `amqp://user:p#ss@rabbitmq:5672/vhost` becomes `amqp://*****:*****@rabbitmq:5672/vhost`.
  * A URL without an '@' has no credentials and is returned as given. When the result does not
- * parse as a URL, or there is no scheme before the '@', the whole URL is replaced by asterisks. Neither the URL nor any part of it is ever logged.
+ * parse as a URL, or there is no scheme before the '@', the whole URL is replaced by asterisks and
+ * only the reason is logged: neither the URL nor any part of it is ever logged.
  */
 export const redactUrl = (url: string): string => {
   const redacted = withoutCredentials(url);
