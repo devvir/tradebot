@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'fs';
-import { gunzipSync } from 'zlib';
+import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, readdirSync } from 'fs';
+import { gunzipSync, gzipSync } from 'zlib';
 import * as os from 'os';
 import * as path from 'path';
 import express from 'express';
@@ -30,12 +30,13 @@ vi.mock('../src/fs/health', async (importOriginal) => {
 });
 
 import { buffers, _test_reset as resetBuffers } from '../src/data/buffers';
-import { _test_reset as resetBucket } from '../src/data/bucket';
+import { discardBucket, acceptsRows, _test_reset as resetBucket } from '../src/data/bucket';
 import { _test_tick } from '../src/data/ticker';
 import { drainAll, _test_reset as resetWriter } from '../src/fs/writer';
 import { recordFailure, _test_reset as resetHealth } from '../src/fs/health';
 import { registerRoutes } from '../src/server/routes';
 import { openPath, closedPath } from '../src/fs/paths';
+import { fileState } from '../src/fs/reader';
 import { TABLE_HEADERS } from '../src/data/headers';
 
 const HEADER = TABLE_HEADERS['tick']!.join(',');
@@ -110,5 +111,82 @@ describe('close after a failed seal', () => {
 
     const rejected = await request(app).post('/files/tick/20240101/rows').send(row);
     expect(rejected.status).toBe(409);
+  });
+});
+
+describe('discarding a bucket with members still queued', () => {
+  it('DELETE right after a tick leaves no open file behind', async () => {
+    buffers.get('tick', '20240101').pushMany(rows(10_000));
+    _test_tick();
+
+    expect((await request(app).delete('/files/tick/20240101')).status).toBe(204);
+    await drainAll();
+
+    expect(fileState('tick', '20240101')).toBe('none');
+  });
+
+  it('a bucket written after the discard keeps its new file, header first', async () => {
+    buffers.get('tick', '20240101').pushMany(rows(10_000));
+    _test_tick();
+
+    const discarded = discardBucket('tick', '20240101');
+
+    expect(acceptsRows('tick', '20240101')).toBe(false);
+
+    await discarded;
+
+    buffers.get('tick', '20240101').pushMany(rows(10_000));
+    _test_tick();
+    await drainAll();
+
+    expect(decode(openPath('tick', '20240101'))).toEqual([HEADER, ...rows(10_000)]);
+  });
+});
+
+describe('PUT', () => {
+  const body = gzipSync(`${HEADER}\n2024-01-01T00:00:00.000Z,XBTUSD,1,PlusTick\n`);
+  const put  = (bytes: Buffer) => request(app)
+    .put('/files/tick/20240101')
+    .set('Content-Type', 'application/octet-stream')
+    .send(bytes);
+
+  it('stores a valid gzip body that then reads back', async () => {
+    expect((await put(body)).status).toBe(204);
+
+    const res = await request(app).get('/files/tick/20240101');
+
+    expect(res.status).toBe(200);
+    expect(res.text).toMatch(/XBTUSD/);
+  });
+
+  it.each([
+    ['an empty body',    Buffer.alloc(0)],
+    ['a non-gzip body',  Buffer.from('this is not gzip')],
+  ])('answers 400 for %s and stores nothing', async (_name, bytes) => {
+    expect((await put(bytes)).status).toBe(400);
+
+    expect(fileState('tick', '20240101')).toBe('none');
+    expect(readdirSync(path.join(tmpDir, 'tick', '2024'))).toEqual([]);
+
+    // A correct upload afterwards succeeds.
+    expect((await put(body)).status).toBe(204);
+  });
+
+  it('over an open file with members queued, stores exactly the uploaded bytes', async () => {
+    buffers.get('tick', '20240101').pushMany(rows(10_000));
+    _test_tick();
+
+    expect((await put(body)).status).toBe(204);
+    await drainAll();
+
+    expect(readFileSync(closedPath('tick', '20240101'))).toEqual(body);
+    expect(existsSync(openPath('tick', '20240101'))).toBe(false);
+  });
+
+  it('answers 409 over an existing closed file and leaves it as it was', async () => {
+    expect((await put(body)).status).toBe(204);
+    expect((await put(gzipSync('other\n'))).status).toBe(409);
+
+    expect(readFileSync(closedPath('tick', '20240101'))).toEqual(body);
   });
 });

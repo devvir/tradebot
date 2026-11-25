@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, statSync } from 'fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, statSync, readdirSync } from 'fs';
 import { gunzipSync, gzipSync } from 'zlib';
+import { Readable } from 'stream';
 import * as os from 'os';
 import * as path from 'path';
 
@@ -64,11 +65,15 @@ import {
   appendBatch,
   isInitialized,
   deleteFile,
+  storeFile,
+  removeStaleUploads,
   drainAll,
   _test_reset as resetWriter,
 } from '../../src/fs/writer';
 import { recordFailure } from '../../src/fs/health';
 import { openPath, closedPath } from '../../src/fs/paths';
+import { fileState } from '../../src/fs/reader';
+import { AlreadyExistsError, InvalidUploadError } from '../../src/fs/errors';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -97,6 +102,16 @@ const readMembers = (filePath: string): string => {
 
   return out;
 };
+
+const rows = (n: number): string[] => Array.from({ length: n }, (_, i) => `row-${i}`);
+
+/** A stream of `body` in small chunks, each after a short delay. */
+const slowly = (body: Buffer, chunk = 64): Readable => Readable.from((async function* () {
+  for (let i = 0; i < body.length; i += chunk) {
+    await new Promise(r => setTimeout(r, 1));
+    yield body.subarray(i, i + chunk);
+  }
+})());
 
 beforeEach(() => {
   tmpDir = mkdirSync(path.join(os.tmpdir(), `vault-writer-test-${Date.now()}-${Math.random()}`), { recursive: true }) as string;
@@ -228,15 +243,171 @@ describe('appendBatch — seal', () => {
 
 describe('deleteFile', () => {
   it('unlinks .csv.gz.tmp and drops the handle (idempotent)', async () => {
-    await appendBatch('trade', '2023-02-01', ['header']);
+    await appendBatch('trade', '20230201', ['header']);
 
-    deleteFile('trade', '2023-02-01');
+    await deleteFile('trade', '20230201');
 
-    expect(existsSync(openPath('trade', '2023-02-01'))).toBe(false);
-    expect(isInitialized('trade', '2023-02-01')).toBe(false);
+    expect(existsSync(openPath('trade', '20230201'))).toBe(false);
+    expect(isInitialized('trade', '20230201')).toBe(false);
 
-    // Calling again must not throw.
-    expect(() => deleteFile('trade', '2023-02-01')).not.toThrow();
+    // Calling again (and with no writer, no file) resolves.
+    await expect(deleteFile('trade', '20230201')).resolves.toBeUndefined();
+    await expect(deleteFile('trade', '20991231')).resolves.toBeUndefined();
+  });
+
+  it('removes an open file left on disk with no writer', async () => {
+    const dir = path.join(tmpDir, 'trade', '2023');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(openPath('trade', '20230201'), gzipSync('header\n'));
+
+    await deleteFile('trade', '20230201');
+
+    expect(fileState('trade', '20230201')).toBe('none');
+  });
+
+  it('leaves no open file behind when members are still queued', async () => {
+    void appendBatch('trade', '20230201', ['header']);
+    void appendBatch('trade', '20230201', rows(2_000));
+
+    await deleteFile('trade', '20230201');
+    await drainAll();
+
+    expect(existsSync(openPath('trade', '20230201'))).toBe(false);
+    expect(fileState('trade', '20230201')).toBe('none');
+  });
+
+  it('lets a later upload store exactly its own bytes', async () => {
+    void appendBatch('trade', '20230201', ['header']);
+    void appendBatch('trade', '20230201', rows(2_000));
+
+    await deleteFile('trade', '20230201');
+
+    const body = gzipSync('uploaded-header\nuploaded-row\n');
+    await storeFile('trade', '20230201', slowly(body));
+    await drainAll();
+
+    expect(readFileSync(closedPath('trade', '20230201'))).toEqual(body);
+    expect(existsSync(openPath('trade', '20230201'))).toBe(false);
+  });
+});
+
+// ── storeFile ─────────────────────────────────────────────────────────────────
+
+describe('storeFile', () => {
+  const yearFiles = () => readdirSync(path.join(tmpDir, 'trade', '2023'));
+
+  it('publishes the stream as the closed file and leaves no temp file', async () => {
+    const body = Buffer.concat([gzipSync('header\n'), gzipSync('row\n')]);
+
+    await storeFile('trade', '20230201', Readable.from([body]));
+
+    expect(readFileSync(closedPath('trade', '20230201'))).toEqual(body);
+    expect(yearFiles()).toEqual(['20230201.csv.gz']);
+    expect(fileState('trade', '20230201')).toBe('closed');
+  });
+
+  it('fsyncs the stored file before publishing it and the year directory after', async () => {
+    mkdirSync(path.join(tmpDir, 'trade', '2023'), { recursive: true });
+
+    await storeFile('trade', '20230201', Readable.from([gzipSync('x\n')]));
+
+    expect(synced).toHaveLength(2);
+    expect(synced[0]).toMatch(/20230201\.csv\.gz\.upload-/);
+    expect(synced[1]).toBe(path.join(tmpDir, 'trade', '2023'));
+  });
+
+  it('rejects an empty body and leaves nothing behind', async () => {
+    await expect(storeFile('trade', '20230201', Readable.from([Buffer.alloc(0)])))
+      .rejects.toBeInstanceOf(InvalidUploadError);
+
+    expect(yearFiles()).toEqual([]);
+    expect(fileState('trade', '20230201')).toBe('none');
+  });
+
+  it.each([
+    ['not gzip',         Buffer.from('this is not gzip')],
+    ['truncated',        gzipSync('header\nrow\n').subarray(0, 12)],
+    ['trailing garbage', Buffer.concat([gzipSync('header\n'), Buffer.from('junk')])],
+  ])('rejects a %s body and leaves nothing behind', async (_name, body) => {
+    await expect(storeFile('trade', '20230201', Readable.from([body])))
+      .rejects.toBeInstanceOf(InvalidUploadError);
+
+    expect(yearFiles()).toEqual([]);
+  });
+
+  it('rejects when the source errors mid-stream and leaves neither temp nor closed file', async () => {
+    const body   = gzipSync('header\n');
+    const source = new Readable({ read() {} });
+
+    source.push(body.subarray(0, 5));
+    setTimeout(() => source.destroy(new Error('client went away')), 10);
+
+    await expect(storeFile('trade', '20230201', source)).rejects.toThrow('client went away');
+
+    expect(yearFiles()).toEqual([]);
+    expect(fileState('trade', '20230201')).toBe('none');
+  });
+
+  it('leaves nothing behind when the source fails before any byte arrives', async () => {
+    const source = new Readable({ read() { this.destroy(new Error('reset')); } });
+
+    await expect(storeFile('trade', '20230201', source)).rejects.toThrow('reset');
+
+    expect(yearFiles()).toEqual([]);
+  });
+
+  it('never replaces an existing closed file', async () => {
+    const first = gzipSync('first\n');
+
+    await storeFile('trade', '20230201', Readable.from([first]));
+
+    await expect(storeFile('trade', '20230201', Readable.from([gzipSync('second\n')])))
+      .rejects.toBeInstanceOf(AlreadyExistsError);
+
+    expect(readFileSync(closedPath('trade', '20230201'))).toEqual(first);
+    expect(yearFiles()).toEqual(['20230201.csv.gz']);
+  });
+
+  it('lets exactly one of two concurrent uploads win, with its own bytes', async () => {
+    const a = gzipSync('a-header\n' + 'a\n'.repeat(5_000));
+    const b = gzipSync('b-header\n' + 'b\n'.repeat(5_000));
+
+    const results = await Promise.allSettled([
+      storeFile('trade', '20230201', slowly(a)),
+      storeFile('trade', '20230201', slowly(b)),
+    ]);
+
+    const won = results.map(r => r.status === 'fulfilled');
+
+    expect(won.filter(Boolean)).toHaveLength(1);
+    expect(results.find(r => r.status === 'rejected')).toMatchObject({ reason: expect.any(AlreadyExistsError) });
+    expect(readFileSync(closedPath('trade', '20230201'))).toEqual(won[0] ? a : b);
+    expect(yearFiles()).toEqual(['20230201.csv.gz']);
+  });
+});
+
+// ── removeStaleUploads ────────────────────────────────────────────────────────
+
+describe('removeStaleUploads', () => {
+  it('removes unfinished upload temp files and nothing else', () => {
+    const dir = path.join(tmpDir, 'trade', '2023');
+    mkdirSync(dir, { recursive: true });
+
+    const stale = '20230201.csv.gz.upload-0f8b3c1e-7a2d-4c5e-9b1a-2d3e4f5a6b7c';
+    const kept  = ['20230201.csv.gz', '20230202.csv.gz.tmp', '20230203.csv.gz.error'];
+
+    for (const name of [stale, ...kept]) writeFileSync(path.join(dir, name), 'x');
+    writeFileSync(path.join(tmpDir, 'not-a-table'), 'x');
+
+    removeStaleUploads();
+
+    expect(readdirSync(dir).sort()).toEqual([...kept].sort());
+  });
+
+  it('does nothing when the data directory does not exist', () => {
+    rmSync(tmpDir, { recursive: true, force: true });
+
+    expect(() => removeStaleUploads()).not.toThrow();
   });
 });
 

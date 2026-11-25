@@ -2,8 +2,9 @@
 //
 // Two write paths:
 //
-//   - storeFile()   — full pre-built gzip stream (PUT route).
-//                     Streamed to .csv.gz.tmp, renamed to .csv.gz on success.
+//   - storeFile()   — a complete pre-built gzip stream. Streamed to a temp
+//                     file unique to the call, verified, and published as the
+//                     .csv.gz only if none exists yet.
 //
 //   - appendBatch() — incremental gzip-member append. Each call appends one
 //                     self-contained gzip member to the open file via a
@@ -12,25 +13,29 @@
 //                     .csv.gz.tmp → .csv.gz rename on seal.
 //
 // Durability: a seal fsyncs the open file before the rename and the year
-// directory after it, and every directory this module creates is made durable
-// by syncing its parent. Individual members are not fsynced.
+// directory after it, a stored file is fsynced before it is published and the
+// year directory after, and every directory this module creates is made
+// durable by syncing its parent. Individual members are not fsynced.
 //
 // `fs/` knows nothing about row formats, CSV structure, headers, or buffering —
 // callers in `data/` produce ready-to-write strings.
 
 import {
-  existsSync, mkdirSync, createWriteStream, unlinkSync, renameSync, appendFileSync,
+  existsSync, mkdirSync, createReadStream, createWriteStream, readdirSync, unlinkSync, appendFileSync,
   openSync, fsyncSync, closeSync,
 } from 'fs';
-import { open } from 'fs/promises';
+import { open, link, unlink } from 'fs/promises';
+import { randomUUID } from 'crypto';
 import path from 'path';
 import { pipeline } from 'stream/promises';
-import type { Readable } from 'stream';
+import { Writable, type Readable } from 'stream';
+import { createGunzip } from 'zlib';
 import { logger } from '@devvir/service-kit';
 import { createWriter, type Writer, type WriteFailure } from '@devvir/zipper';
 import config from '../config';
-import { yearDir, openPath, closedPath } from './paths';
+import { DATA_DIR, yearDir, openPath, closedPath } from './paths';
 import { recordFailure, setBackpressure } from './health';
+import { AlreadyExistsError, InvalidUploadError } from './errors';
 
 // Per-file durability tuning handed to the zipper writer:
 //   - retries / backoff: a transient append failure is retried before the
@@ -48,6 +53,10 @@ const INFLIGHT_RESUME  = 5;
 
 // closedPath() + this extension is the open file — i.e. `.csv.gz` + `.tmp`.
 const TMP_EXTENSION = '.tmp';
+
+// closedPath() + this marker + a UUID is the temp file of one storeFile call.
+const UPLOAD_MARKER = '.upload-';
+const UPLOAD_NAME   = /\.csv\.gz\.upload-[0-9a-f-]{36}$/;
 
 const writers = new Map<string, Writer>();
 
@@ -113,34 +122,121 @@ export const appendBatch = async (
 };
 
 /**
- * Stores a complete pre-built gzip stream (e.g. piped directly from S3 by
- * courier). Written atomically: streamed to `.csv.gz.tmp`, then renamed to
- * the final `.csv.gz`. A crashed upload leaves an open file on disk, which
- * courier handles by deleting and re-uploading.
+ * Stores a complete gzip stream as the closed file for table/filename.
+ *
+ * The stream goes to a temp file of its own next to the closed path
+ * (`<filename>.csv.gz.upload-<uuid>`), so concurrent calls never share bytes
+ * and the file is never visible as open. Once the stream ends the temp file
+ * must be non-empty and decompress as gzip to its end (several members
+ * allowed); otherwise the call rejects with InvalidUploadError. It is then
+ * fsynced and published under the closed path without replacing anything: if
+ * a closed file already exists the call rejects with AlreadyExistsError.
+ * Finally the year directory is fsynced.
+ *
+ * Whenever the call rejects, its temp file is removed and no closed or open
+ * file has been created or changed. A temp file left by a process that died
+ * mid-call is removed by removeStaleUploads.
  */
 export const storeFile = async (table: string, filename: string, source: Readable): Promise<void> => {
-  const tmp  = openPath(table, filename);
+  const dir  = yearDir(table, filename);
   const dest = closedPath(table, filename);
+  const part = `${dest}${UPLOAD_MARKER}${randomUUID()}`;
 
-  ensureDir(yearDir(table, filename));
+  ensureDir(dir);
+
+  const out = createWriteStream(part, { flags: 'wx' });
+  let published = false;
 
   try {
-    await pipeline(source, createWriteStream(tmp));
-    renameSync(tmp, dest);
+    await pipeline(source, out);
+
+    if (out.bytesWritten === 0) throw new InvalidUploadError('Upload is empty');
+
+    await verifyGzip(part);
+    await fsyncFile(part);
+
+    try {
+      await link(part, dest);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST')
+        throw new AlreadyExistsError(`A closed file already exists for ${table}/${filename}`);
+
+      throw err;
+    }
+
+    published = true;
+
+    await unlink(part).catch((err: unknown) => {
+      logger.warn({ err, part }, 'Could not remove the upload temp file after publishing');
+    });
+
+    await fsyncDir(dir);
   } catch (err) {
-    if (existsSync(tmp)) unlinkSync(tmp);
+    // A failed pipeline can settle before the stream's open does; wait for the
+    // stream to close so the temp file exists, if at all, before removing it.
+    if (! out.closed) {
+      const closed = new Promise<void>(resolve => out.once('close', () => resolve()));
+
+      out.destroy();
+      await closed;
+    }
+
+    if (! published) await unlink(part).catch(() => undefined);
 
     throw err;
   }
 };
 
-/** Idempotent unlink of the .csv.gz.tmp file. Drops any in-memory writer. */
-export const deleteFile = (table: string, filename: string): void => {
-  const path = openPath(table, filename);
+/**
+ * Discards the open file for table/filename: any writer for it is aborted —
+ * its queued members settle first, so none can land afterwards — and dropped,
+ * then the `.csv.gz.tmp` is removed if it exists. Idempotent.
+ *
+ * Nothing may write the bucket while this runs: a writer created meanwhile
+ * would have its file removed.
+ */
+export const deleteFile = async (table: string, filename: string): Promise<void> => {
+  const key    = `${table}/${filename}`;
+  const writer = writers.get(key);
 
-  if (existsSync(path)) unlinkSync(path);
+  if (writer) {
+    await writer.abort();
 
-  writers.delete(`${table}/${filename}`);
+    if (writers.get(key) === writer) writers.delete(key);
+  }
+
+  await unlink(openPath(table, filename)).catch((err: NodeJS.ErrnoException) => {
+    if (err.code !== 'ENOENT') throw err;
+  });
+};
+
+/**
+ * Removes the temp files of storeFile calls that never finished, under every
+ * table's year directories. Meant to run at startup, before any upload can be
+ * in progress. Best effort: a directory or file that cannot be read or removed
+ * is logged and skipped.
+ */
+export const removeStaleUploads = (): void => {
+  for (const tableName of listDir(DATA_DIR)) {
+    const table = path.join(DATA_DIR, tableName);
+
+    for (const year of listDir(table)) {
+      if (! /^\d{4}$/.test(year)) continue;
+
+      const dir = path.join(table, year);
+
+      for (const name of listDir(dir)) {
+        if (! UPLOAD_NAME.test(name)) continue;
+
+        try {
+          unlinkSync(path.join(dir, name));
+          logger.info({ file: path.join(dir, name) }, 'Removed unfinished upload');
+        } catch (err) {
+          logger.warn({ err, file: path.join(dir, name) }, 'Could not remove unfinished upload');
+        }
+      }
+    }
+  }
 };
 
 /**
@@ -167,6 +263,38 @@ export const fsyncDir = async (dir: string): Promise<void> => {
 };
 
 // ── Internals ─────────────────────────────────────────────────────────────────
+
+/**
+ * Decompresses `file` to its end, discarding the output. Rejects with
+ * InvalidUploadError when the bytes are not a complete gzip stream, and with
+ * the underlying error when the file cannot be read.
+ */
+const verifyGzip = async (file: string): Promise<void> => {
+  const sink = new Writable({ write: (_chunk, _enc, done) => done() });
+
+  try {
+    await pipeline(createReadStream(file), createGunzip(), sink);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+
+    if (typeof code === 'string' && code.startsWith('Z_'))
+      throw new InvalidUploadError(`Upload is not a valid gzip stream: ${(err as Error).message}`);
+
+    throw err;
+  }
+};
+
+/** Names in `dir`, or none when it cannot be read (missing, not a directory). */
+const listDir = (dir: string): string[] => {
+  try {
+    return readdirSync(dir);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT' && (err as NodeJS.ErrnoException).code !== 'ENOTDIR')
+      logger.warn({ err, dir }, 'Could not list directory');
+
+    return [];
+  }
+};
 
 const getOrCreateWriter = (table: string, filename: string): Writer => {
   const key      = `${table}/${filename}`;

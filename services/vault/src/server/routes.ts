@@ -1,37 +1,47 @@
 // Route definitions — one handler per endpoint.
 //
-// Responsible for: parsing path params and request bodies, calling the
-// appropriate module (fs/, data/), and returning the correct HTTP status code.
-// No business logic, no file ops, no data transformation — thin by design.
+// Responsible for: validating path params and query strings, parsing request
+// bodies, calling the appropriate module (fs/, data/), and returning the
+// correct HTTP status code. No writes to disk, no data transformation.
 //
-// Date and suffix only exist at the boundary. Every endpoint accepts a `:date`
-// path param and an optional `?suffix=` query param. The handler immediately
-// composes them into a single `filename` (`<date>` or `<date>.<suffix>`) which
-// is the only identifier the rest of vault sees. Without `?suffix=`, the
-// filename is just the date — the on-disk path and behaviour match what
-// existed before suffixes were introduced.
+// Date and suffix only exist at the boundary. Every endpoint with a `:date`
+// path param also takes an optional `?suffix=` query param; `parseKey`
+// validates both, with `:table`, and composes a single `filename` (`<date>` or
+// `<date>.<suffix>`), which is the only identifier the rest of vault sees.
+// Anything that fails validation is answered 400 before it reaches a path.
 
 import { type Application, type Request, type Response } from 'express';
 import { Readable } from 'stream';
-import { statSync } from 'fs';
+import { stat } from 'fs/promises';
+import type { Stats } from 'fs';
 import { logger } from '@devvir/service-kit';
 import { listFiles, listTables, fileState } from '../fs/reader';
-import { storeFile, deleteFile } from '../fs/writer';
 import { isHealthy, getFailureReason, isThrottled } from '../fs/health';
 import { decodeFile } from '../data/decode';
 import { createParser } from '../data/parse';
 import { encode } from '../data/encode';
 import { buffers } from '../data/buffers';
 import { closeBucket } from '../data/close';
-import { acceptsRows } from '../data/bucket';
+import { acceptsRows, bucketState, discardBucket, uploadBucket, BucketBusyError } from '../data/bucket';
+import { headersFor } from '../data/headers';
 import { isShuttingDown } from '../shutdown';
-import { NotFoundError } from '../fs/errors';
+import { NotFoundError, AlreadyExistsError, InvalidUploadError } from '../fs/errors';
 import { closedPath, openPath } from '../fs/paths';
 import type { Row, WsMessage } from '../data/types';
 
 // An upload that sends nothing for this long is cut off. A moving upload is
 // never cut, however long it takes.
 const UPLOAD_IDLE_TIMEOUT_MS = 90_000;
+
+// A table name, optionally with one dotted pseudo-table part (`quote.secondary`).
+const TABLE_NAME = /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)?$/;
+const DATE       = /^\d{8}$/;
+const SUFFIX     = /^[A-Za-z0-9_-]{1,32}$/;
+
+interface Key {
+  table:    string;
+  filename: string;
+}
 
 /** Answers 503 and returns true once shutdown has started. */
 const refuseWhenShuttingDown = (res: Response): boolean => {
@@ -42,12 +52,101 @@ const refuseWhenShuttingDown = (res: Response): boolean => {
   return true;
 };
 
-/** Reads optional `?suffix=` and returns `<date>` or `<date>.<suffix>`. */
-const filenameOf = (req: Request): string => {
-  const date   = req.params['date'] as string;
-  const suffix = typeof req.query['suffix'] === 'string' ? req.query['suffix'] : '';
+/** Answers 400 with `error`, discarding any unread request body. */
+const badRequest = (req: Request, res: Response, error: string): null => {
+  req.resume();
+  res.status(400).json({ error });
 
-  return suffix ? `${date}.${suffix}` : date;
+  return null;
+};
+
+/** `YYYYMMDD` naming a real calendar day. */
+const isCalendarDate = (date: string): boolean => {
+  if (! DATE.test(date)) return false;
+
+  const y = Number(date.slice(0, 4));
+  const m = Number(date.slice(4, 6)) - 1;
+  const d = Number(date.slice(6, 8));
+  const t = new Date(Date.UTC(y, m, d));
+
+  return t.getUTCFullYear() === y && t.getUTCMonth() === m && t.getUTCDate() === d;
+};
+
+/**
+ * Validates `:table`. With `known`, the table (or the real table behind a
+ * pseudo-table) must also have a header definition. Answers 400 and returns
+ * null when invalid.
+ */
+const parseTable = (req: Request, res: Response, known: boolean): string | null => {
+  const table = req.params['table'] as string;
+
+  if (! TABLE_NAME.test(table)) return badRequest(req, res, `Invalid table name '${table}'`);
+  if (known && ! headersFor(table)) return badRequest(req, res, `Unknown table '${table}'`);
+
+  return table;
+};
+
+/**
+ * Reads optional `?suffix=`: '' when absent or empty, the suffix when valid.
+ * Answers 400 and returns null when invalid.
+ */
+const parseSuffix = (req: Request, res: Response): string | null => {
+  const raw = req.query['suffix'];
+
+  if (raw === undefined || raw === '') return '';
+
+  if (typeof raw !== 'string' || ! SUFFIX.test(raw))
+    return badRequest(req, res, 'Invalid suffix: expected 1-32 characters from A-Z, a-z, 0-9, _ and -');
+
+  return raw;
+};
+
+/**
+ * Validates `:table`, `:date` and `?suffix=` and returns the bucket key.
+ * Answers 400 and returns null when any of them is invalid. `known` is as for
+ * `parseTable`.
+ */
+const parseKey = (req: Request, res: Response, { known = false }: { known?: boolean } = {}): Key | null => {
+  const table = parseTable(req, res, known);
+
+  if (table === null) return null;
+
+  const date = req.params['date'] as string;
+
+  if (! isCalendarDate(date))
+    return badRequest(req, res, `Invalid date '${date}': expected a calendar day as YYYYMMDD`);
+
+  const suffix = parseSuffix(req, res);
+
+  if (suffix === null) return null;
+
+  return { table, filename: suffix ? `${date}.${suffix}` : date };
+};
+
+/**
+ * Stats the bucket's closed or open file, or returns null when it has neither.
+ * A seal renames the open file to the closed path; when that lands between the
+ * state check and the stat, the state is checked once more.
+ */
+const statBucket = async (
+  table:    string,
+  filename: string,
+): Promise<{ state: 'open' | 'closed'; st: Stats } | null> => {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const state = fileState(table, filename);
+
+    if (state === 'none') return null;
+
+    try {
+      const st = await stat(state === 'closed' ? closedPath(table, filename) : openPath(table, filename));
+
+      return { state, st };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    }
+  }
+
+  return null;
 };
 
 export const registerRoutes = (app: Application): void => {
@@ -57,21 +156,29 @@ export const registerRoutes = (app: Application): void => {
   app.post('/files/:table/:date/rows', (req: Request, res: Response) => {
     if (refuseWhenShuttingDown(res)) return;
 
+    const parsed = parseKey(req, res, { known: true });
+
+    if (! parsed) return;
+
     if (! isHealthy()) {
       res.status(503).json({ error: `Storage unhealthy: ${getFailureReason()}` });
       return;
     }
 
-    const table    = req.params['table'] as string;
-    const filename = filenameOf(req);
-    const key      = `${table}/${filename}`;
+    const { table, filename } = parsed;
+    const key = `${table}/${filename}`;
 
     if (isThrottled(table, filename)) {
       res.status(429).json({ error: `Too many inflight writes for ${key}` });
       return;
     }
 
-    if (! acceptsRows(table, filename) || fileState(table, filename) === 'closed') {
+    if (! acceptsRows(table, filename)) {
+      res.status(409).json({ error: `Bucket ${key} is ${bucketState(table, filename)}` });
+      return;
+    }
+
+    if (fileState(table, filename) === 'closed') {
       res.status(409).json({ error: 'File is closed' });
       return;
     }
@@ -116,13 +223,23 @@ export const registerRoutes = (app: Application): void => {
   // Fire-and-forget: returns 202 immediately. The seal happens at the tail of
   // the file's write chain so any in-flight appends complete first. Rows for
   // the bucket get 409 until the seal settles; after a failed seal the bucket
-  // accepts rows again and can be closed again.
+  // accepts rows again and can be closed again. 409 while the bucket is being
+  // discarded or uploaded.
 
   app.post('/files/:table/:date/close', (req: Request, res: Response) => {
     if (refuseWhenShuttingDown(res)) return;
 
-    const table    = req.params['table'] as string;
-    const filename = filenameOf(req);
+    const parsed = parseKey(req, res, { known: true });
+
+    if (! parsed) return;
+
+    const { table, filename } = parsed;
+    const state = bucketState(table, filename);
+
+    if (state === 'discarding' || state === 'uploading') {
+      res.status(409).json({ error: `Bucket ${table}/${filename} is ${state}` });
+      return;
+    }
 
     closeBucket(table, filename).catch((err) => {
       logger.error({ err, table, filename }, 'closeBucket failed');
@@ -134,10 +251,20 @@ export const registerRoutes = (app: Application): void => {
   // ── GET /files/:table/:date — stream rows as NDJSON ──────────────────────────
 
   app.get('/files/:table/:date', (req: Request, res: Response) => {
-    const table    = req.params['table'] as string;
-    const filename = filenameOf(req);
-    const skipRaw  = Number(req.query['skip']);
-    const skip     = Number.isFinite(skipRaw) && skipRaw > 0 ? Math.floor(skipRaw) : 0;
+    const parsed = parseKey(req, res);
+
+    if (! parsed) return;
+
+    const { table, filename } = parsed;
+    const skipRaw = Number(req.query['skip']);
+    const skip    = Number.isFinite(skipRaw) && skipRaw > 0 ? Math.floor(skipRaw) : 0;
+
+    // Only closed files are readable. Checked up front because headers may be
+    // sent before the file is opened; a closed file is never removed.
+    if (fileState(table, filename) !== 'closed') {
+      res.status(404).json({ error: `No closed file for ${table}/${filename}` });
+      return;
+    }
 
     const stream = Readable.from(decodeFile(table, filename, skip));
 
@@ -146,13 +273,17 @@ export const registerRoutes = (app: Application): void => {
     res.on('close', () => stream.destroy());
 
     stream.on('error', (err) => {
-      if (err instanceof NotFoundError) {
-        if (! res.headersSent) res.status(404).json({ error: err.message });
-      } else {
-        logger.error({ err, table, filename }, 'Read stream error');
-        if (! res.headersSent) res.status(500).json({ error: 'Read failed' });
-        else res.destroy();
+      if (! (err instanceof NotFoundError)) logger.error({ err, table, filename }, 'Read stream error');
+
+      // Once headers are out the status cannot change: cut the response so the
+      // client sees it end incomplete.
+      if (res.headersSent) {
+        res.destroy();
+        return;
       }
+
+      if (err instanceof NotFoundError) res.status(404).json({ error: err.message });
+      else res.status(500).json({ error: 'Read failed' });
     });
 
     res.setHeader('Content-Type', 'application/x-ndjson');
@@ -162,12 +293,13 @@ export const registerRoutes = (app: Application): void => {
     stream.pipe(res);
   });
 
-  // ── PUT /files/:table/:date — store a complete gzip file (courier) ───────────
+  // ── PUT /files/:table/:date — store a complete gzip file ─────────────────────
   //
-  // All-or-nothing: streams directly to .csv.gz.tmp, then renames to .csv.gz.
-  // If an open (.csv.gz.tmp) file exists from a prior interrupted upload, it is
-  // discarded and overwritten — partial files are garbage. A sealed (.csv.gz)
-  // file is permanent and returns 409.
+  // All-or-nothing: the body is stored as the closed file only once it has
+  // fully arrived and decompresses as gzip (400 otherwise). Buffered rows and
+  // any open (.csv.gz.tmp) file for the bucket are discarded first. A closed
+  // (.csv.gz) file is permanent and returns 409, as does a bucket that is
+  // closing, being discarded or already being uploaded.
 
   app.put('/files/:table/:date', async (req: Request, res: Response) => {
     if (refuseWhenShuttingDown(res)) {
@@ -175,55 +307,92 @@ export const registerRoutes = (app: Application): void => {
       return;
     }
 
+    const parsed = parseKey(req, res);
+
+    if (! parsed) return;
+
     req.setTimeout(UPLOAD_IDLE_TIMEOUT_MS, () => {
       req.destroy(new Error(`Upload idle for ${UPLOAD_IDLE_TIMEOUT_MS} ms`));
     });
 
-    const table    = req.params['table'] as string;
-    const filename = filenameOf(req);
-    const state    = fileState(table, filename);
+    const { table, filename } = parsed;
+    const state = bucketState(table, filename);
 
-    if (state === 'closed') {
+    if (state !== 'idle') {
+      req.resume();
+      res.status(409).json({ error: `Bucket ${table}/${filename} is ${state}` });
+      return;
+    }
+
+    if (fileState(table, filename) === 'closed') {
       req.resume();
       res.status(409).json({ error: 'File already exists' });
       return;
     }
 
-    if (state === 'open') {
-      buffers.get(table, filename).flush();
-      buffers.remove(table, filename);
-      deleteFile(table, filename);
-    }
-
     try {
-      await storeFile(table, filename, req as unknown as Readable);
+      await uploadBucket(table, filename, req as unknown as Readable);
       res.status(204).end();
     } catch (err) {
-      logger.error({ err, table, filename }, 'Store failed');
-      if (! res.headersSent) res.status(500).json({ error: 'Store failed' });
+      if (res.headersSent) return;
+
+      if (err instanceof InvalidUploadError) {
+        res.status(400).json({ error: err.message });
+      } else if (err instanceof AlreadyExistsError) {
+        res.status(409).json({ error: 'File already exists' });
+      } else if (err instanceof BucketBusyError) {
+        req.resume();
+        res.status(409).json({ error: err.message });
+      } else {
+        logger.error({ err, table, filename }, 'Store failed');
+        res.status(500).json({ error: 'Store failed' });
+      }
     }
   });
 
   // ── DELETE /files/:table/:date — discard an open file ────────────────────────
+  //
+  // Drops the bucket's buffered rows and open file, and answers once both are
+  // gone. A closed file is never touched. 409 while the bucket is closing,
+  // being discarded or being uploaded.
 
-  app.delete('/files/:table/:date', (req: Request, res: Response) => {
+  app.delete('/files/:table/:date', async (req: Request, res: Response) => {
     if (refuseWhenShuttingDown(res)) return;
 
-    const table    = req.params['table'] as string;
-    const filename = filenameOf(req);
+    const parsed = parseKey(req, res, { known: true });
 
-    buffers.get(table, filename).flush();
-    buffers.remove(table, filename);
-    deleteFile(table, filename);
+    if (! parsed) return;
 
-    res.status(204).end();
+    const { table, filename } = parsed;
+    const state = bucketState(table, filename);
+
+    if (state !== 'idle') {
+      res.status(409).json({ error: `Bucket ${table}/${filename} is ${state}` });
+      return;
+    }
+
+    try {
+      await discardBucket(table, filename);
+      res.status(204).end();
+    } catch (err) {
+      if (err instanceof BucketBusyError) {
+        res.status(409).json({ error: err.message });
+        return;
+      }
+
+      logger.error({ err, table, filename }, 'Discard failed');
+      res.status(500).json({ error: 'Discard failed' });
+    }
   });
 
   // ── GET /files/:table/:date/headers — return column names ────────────────────
 
   app.get('/files/:table/:date/headers', async (req: Request, res: Response) => {
-    const table    = req.params['table'] as string;
-    const filename = filenameOf(req);
+    const parsed = parseKey(req, res);
+
+    if (! parsed) return;
+
+    const { table, filename } = parsed;
 
     try {
       const records = createParser(table).read(filename);
@@ -253,12 +422,15 @@ export const registerRoutes = (app: Application): void => {
   // Omitting it (or sending an empty value) returns only bare-date files.
 
   app.get('/files/:table', (req: Request, res: Response) => {
-    const table  = req.params['table'] as string;
-    const suffix = typeof req.query['suffix'] === 'string' && req.query['suffix']
-      ? req.query['suffix']
-      : undefined;
+    const table = parseTable(req, res, false);
 
-    const result = listFiles(table, suffix);
+    if (table === null) return;
+
+    const suffix = parseSuffix(req, res);
+
+    if (suffix === null) return;
+
+    const result = listFiles(table, suffix || undefined);
 
     if (result === null) {
       res.status(404).json({ error: `No data for table '${table}'` });
@@ -277,28 +449,33 @@ export const registerRoutes = (app: Application): void => {
   // ── GET /stats/:table/:date — inode stats for one bucket file ────────────────
   //
   // Returns size, modification time, and creation time straight from the inode.
-  // No streaming, no decoding — single `stat()` syscall. Returns 404 if no
-  // file (open or closed) exists for the given `(table, date)`. `state`
-  // disambiguates which file was statted.
+  // No streaming, no decoding — a single `stat()`. Returns 404 if no file (open
+  // or closed) exists for the bucket. `state` says which file was statted.
 
-  app.get('/stats/:table/:date', (req: Request, res: Response) => {
-    const table    = req.params['table'] as string;
-    const filename = req.params['date']  as string;
-    const state    = fileState(table, filename);
+  app.get('/stats/:table/:date', async (req: Request, res: Response) => {
+    const parsed = parseKey(req, res);
 
-    if (state === 'none') {
-      res.status(404).json({ error: `No file for ${table}/${filename}` });
-      return;
+    if (! parsed) return;
+
+    const { table, filename } = parsed;
+
+    try {
+      const found = await statBucket(table, filename);
+
+      if (! found) {
+        res.status(404).json({ error: `No file for ${table}/${filename}` });
+        return;
+      }
+
+      res.json({
+        state:     found.state,
+        size:      found.st.size,
+        mtime:     found.st.mtimeMs,
+        birthtime: found.st.birthtimeMs,
+      });
+    } catch (err) {
+      logger.error({ err, table, filename }, 'stat failed');
+      res.status(500).json({ error: 'Failed to stat file' });
     }
-
-    const path = state === 'closed' ? closedPath(table, filename) : openPath(table, filename);
-    const st   = statSync(path);
-
-    res.json({
-      state,
-      size:      st.size,
-      mtime:     st.mtimeMs,
-      birthtime: st.birthtimeMs,
-    });
   });
 };

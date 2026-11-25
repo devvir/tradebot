@@ -14,7 +14,8 @@ import { isInitialized } from '../fs/writer';
 /**
  * Seals the bucket. The closing mark, the buffer drain and the hand-off to the
  * writer all happen synchronously in this call; the returned promise settles
- * with the seal.
+ * with the seal. Rejects with BucketBusyError, changing nothing, while the
+ * bucket is discarding or uploading.
  */
 export const closeBucket = async (table: string, filename: string): Promise<void> => {
   const release = markClosing(table, filename);

@@ -3,11 +3,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('../../src/fs/writer', () => ({
   appendBatch:   vi.fn(() => Promise.resolve()),
   isInitialized: vi.fn(() => false),
+  deleteFile:    vi.fn(() => new Promise(() => {})),
 }));
 
 import { closeBucket } from '../../src/data/close';
 import { buffers, _test_reset } from '../../src/data/buffers';
-import { isClosing, _test_reset as resetBucket } from '../../src/data/bucket';
+import { isClosing, discardBucket, BucketBusyError, _test_reset as resetBucket } from '../../src/data/bucket';
 import { appendBatch, isInitialized } from '../../src/fs/writer';
 import { TABLE_HEADERS } from '../../src/data/headers';
 
@@ -87,5 +88,17 @@ describe('closeBucket', () => {
     await expect(closeBucket('unknownTable', '20230201')).rejects.toThrow(/No header definition/);
 
     expect(isClosing('unknownTable', '20230201')).toBe(false);
+  });
+
+  it('rejects without sealing or draining while the bucket is being discarded', async () => {
+    vi.mocked(isInitialized).mockReturnValue(true);
+    void discardBucket('orderBookL2', '20230201');
+    buffers.get('orderBookL2', '20230201').push('row-1');
+
+    await expect(closeBucket('orderBookL2', '20230201')).rejects.toBeInstanceOf(BucketBusyError);
+
+    expect(appendBatch).not.toHaveBeenCalled();
+    expect(buffers.get('orderBookL2', '20230201').count()).toBe(1);
+    expect(isClosing('orderBookL2', '20230201')).toBe(false);
   });
 });

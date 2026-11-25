@@ -1,7 +1,8 @@
 // Express error-handling middleware.
 //
-// Responsible for: catching aborted client connections, malformed JSON from
-// body-parser, and any unhandled errors that bubble up from route handlers.
+// Responsible for: catching aborted client connections, malformed JSON and
+// other client errors from body-parser, and any unhandled errors that bubble
+// up from route handlers.
 // Keeps error-handling noise out of routes.ts and index.ts.
 
 import type { NextFunction, Request, Response } from 'express';
@@ -27,6 +28,17 @@ export const errorMiddleware = (
     // body-parser rejects non-object/array JSON (strict mode) with a 400 SyntaxError.
     if (e.status === 400 && err instanceof SyntaxError) {
       if (! res.headersSent) res.status(400).json({ error: 'Invalid JSON body' });
+      return;
+    }
+
+    // Other client errors raised with a status meant to be shown, such as
+    // body-parser's 413 (body over the size limit) and 415 (unsupported
+    // charset or encoding), keep their status and message.
+    if (
+      typeof e.status === 'number' && e.status >= 400 && e.status < 500 &&
+      (err as { expose?: unknown }).expose === true
+    ) {
+      if (! res.headersSent) res.status(e.status).json({ error: (err as Error).message });
       return;
     }
   }
