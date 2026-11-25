@@ -24,8 +24,8 @@ export interface UseChartResult {
  * Composition:
  *   useChartViewport  →  zoom level + horizontal anchor (pure UI state)
  *   useChartCandles   →  closed buffer + running candle (data only)
- *   this hook         →  derives the visible slice, bridges latestTime
- *                        from the buffer into viewport.pan
+ *   this hook         →  derives the visible slice, bridges the live tail
+ *                        into viewport.pan as its latestTime
  *
  * Each reaction is coupled only to its cause: gestures change viewport →
  * needed range changes → fetches/disposals run → slice recomputes → render.
@@ -34,12 +34,14 @@ export function useChart(timeframe: Timeframe): UseChartResult {
   const binMs = BIN_MS[timeframe];
   const vp    = useChartViewport();
 
-  const { closed, running } = useChartCandles(timeframe, vp.state);
+  const { closed, running, liveTailMs } = useChartCandles(timeframe, vp.state);
 
-  /** Latest loaded timestamp — fed back into pan so live↔anchored transitions work. */
+  /**
+   * Newest bin the venue has closed — fed into pan so live↔anchored transitions
+   * happen at the live edge, not at the tail of a buffer that holds history.
+   */
   const latestTimeRef = useRef<Date | null>(null);
-  const lastCandle    = closed[closed.length - 1];
-  latestTimeRef.current = lastCandle ? new Date(lastCandle.timestamp) : null;
+  latestTimeRef.current = liveTailMs !== null ? new Date(liveTailMs) : null;
 
   const visibleCandles = useMemo(
     () => computeVisible(closed, vp.state, running),

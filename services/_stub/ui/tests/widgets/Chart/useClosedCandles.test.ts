@@ -4,6 +4,7 @@ import {
   _test_mergeCandles       as mergeCandles,
   _test_computeNeededFetch as computeNeededFetch,
   _test_trimBuffer         as trimBuffer,
+  _test_placePage          as placePage,
 } from '../../../src/widgets/Chart/useClosedCandles';
 import type { Candle, ViewportState } from '../../../src/widgets/Chart/types';
 
@@ -86,16 +87,93 @@ describe('computeNeededFetch', () => {
     expect(computeNeededFetch(buf, viewport, BIN_1M)).toBeNull();
   });
 
-  it('asks for the left side when the buffer is short on history', () => {
-    /** Only a tiny recent slice, but viewport is anchored far in the past. */
-    const ms = Date.now();
-    const buf = [candle(0, ms - BIN_1M), candle(1, ms - BIN_1M)];
+  it('asks for the page left of the buffer head when the buffer starts after the window', () => {
+    /** Anchored 100 back: window [now-130, now-90]; buffer covers [now-110, now]. */
+    const ms  = Math.floor(Date.now() / BIN_1M) * BIN_1M;
+    const buf = Array.from({ length: 111 }, (_, i) => candle(i, ms - 110 * BIN_1M));
     const anchored: ViewportState = { candlesPerView: 20, rightAnchor: new Date(ms - 100 * BIN_1M) };
 
     const need = computeNeededFetch(buf, anchored, BIN_1M);
 
-    expect(need).not.toBeNull();
-    expect(need!.endTime).not.toBeNull();
+    expect(need).toEqual({ endTime: new Date(buf[0].timestamp), count: 40 });
+  });
+
+  it('asks for the window right edge when an anchored buffer ends before it', () => {
+    /** Anchored 100 back: window [now-130, now-90]; buffer covers [now-200, now-120]. */
+    const ms  = Math.floor(Date.now() / BIN_1M) * BIN_1M;
+    const buf = Array.from({ length: 81 }, (_, i) => candle(i, ms - 200 * BIN_1M));
+    const anchor = new Date(ms - 100 * BIN_1M);
+
+    const need = computeNeededFetch(buf, { candlesPerView: 20, rightAnchor: anchor }, BIN_1M);
+
+    expect(need).toEqual({ endTime: new Date(anchor.getTime() + 10 * BIN_1M), count: 40 });
+  });
+
+  it('loads the window directly when it does not overlap the buffer', () => {
+    /** Buffer near now, anchored 1000 back: page ending at the window right edge, not at the buffer head. */
+    const ms  = Math.floor(Date.now() / BIN_1M) * BIN_1M;
+    const buf = Array.from({ length: 40 }, (_, i) => candle(i, ms - 39 * BIN_1M));
+    const anchor = new Date(ms - 1000 * BIN_1M);
+
+    const need = computeNeededFetch(buf, { candlesPerView: 20, rightAnchor: anchor }, BIN_1M);
+
+    expect(need).toEqual({ endTime: new Date(anchor.getTime() + 10 * BIN_1M), count: 40 });
+  });
+
+  it('does not ask past the live edge when the anchored window extends into the future', () => {
+    /** Anchored 2 back: the window right edge is 8 bins in the future; the buffer ends at the live tail. */
+    const ms  = Math.floor(Date.now() / BIN_1M) * BIN_1M;
+    const buf = Array.from({ length: 60 }, (_, i) => candle(i, ms - 59 * BIN_1M));
+    const anchored: ViewportState = { candlesPerView: 20, rightAnchor: new Date(ms - 2 * BIN_1M) };
+
+    expect(computeNeededFetch(buf, anchored, BIN_1M, ms)).toBeNull();
+  });
+
+  it('asks for the newest page in live mode when the tail is older than two bins', () => {
+    /** 200 contiguous candles whose newest is 341 bins old. */
+    const ms  = Date.now() - 341 * BIN_1M;
+    const buf = Array.from({ length: 200 }, (_, i) => candle(i, ms - 199 * BIN_1M));
+
+    expect(computeNeededFetch(buf, viewport, BIN_1M)).toEqual({ endTime: null, count: 40 });
+  });
+
+  it('asks for the newest page in live mode when the tail is behind the live tail', () => {
+    const ms  = Math.floor(Date.now() / BIN_1M) * BIN_1M;
+    const buf = Array.from({ length: 60 }, (_, i) => candle(i, ms - 60 * BIN_1M));
+
+    expect(computeNeededFetch(buf, viewport, BIN_1M, ms)).toEqual({ endTime: null, count: 40 });
+  });
+});
+
+// ── placePage ─────────────────────────────────────────────────────────────────
+
+describe('placePage', () => {
+  const buf = Array.from({ length: 10 }, (_, i) => candle(i + 100));
+
+  it('merges a page that touches the buffer', () => {
+    const page = Array.from({ length: 5 }, (_, i) => candle(i + 95));
+
+    const out = placePage(buf, page, BIN_1M);
+
+    expect(out).toHaveLength(15);
+    expect(out[0]).toEqual(page[0]);
+    expect(out[14]).toEqual(buf[9]);
+  });
+
+  it('replaces the buffer with a page that lies more than one bin after it', () => {
+    const page = Array.from({ length: 5 }, (_, i) => candle(i + 200));
+
+    expect(placePage(buf, page, BIN_1M)).toBe(page);
+  });
+
+  it('replaces the buffer with a page that lies more than one bin before it', () => {
+    const page = Array.from({ length: 5 }, (_, i) => candle(i));
+
+    expect(placePage(buf, page, BIN_1M)).toBe(page);
+  });
+
+  it('keeps the buffer when the page is empty', () => {
+    expect(placePage(buf, [], BIN_1M)).toBe(buf);
   });
 });
 
@@ -122,5 +200,16 @@ describe('trimBuffer', () => {
 
     /** The latest candles should always survive trimming (the right edge anchor). */
     expect(out[out.length - 1]).toEqual(buf[buf.length - 1]);
+  });
+
+  it('keeps the window computeNeededFetch asks for, so a trimmed buffer needs no page', () => {
+    /** Anchor between bin boundaries; 300 candles around it. */
+    const viewport: ViewportState = { candlesPerView: 21, rightAnchor: new Date(1_700_000_000_000 + 150.7 * BIN_1M) };
+    const buf = Array.from({ length: 300 }, (_, i) => candle(i));
+
+    const out = trimBuffer(buf, viewport, BIN_1M);
+
+    expect(out.length).toBeLessThan(buf.length);
+    expect(computeNeededFetch(out, viewport, BIN_1M)).toBeNull();
   });
 });

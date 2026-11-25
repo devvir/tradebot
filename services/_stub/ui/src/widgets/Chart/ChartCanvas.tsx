@@ -2,7 +2,12 @@ import { useEffect, useRef } from 'react';
 import { MARGIN, renderChart } from './renderer';
 import type { Candle } from './types';
 
-const ZOOM_STEP = 1.1;
+/** Zoom factor per wheel pixel: factor = exp(deltaY * ZOOM_PER_PIXEL). */
+const ZOOM_PER_PIXEL     = 0.002;
+/** Largest zoom factor a single wheel event may apply (and its inverse). */
+const MAX_ZOOM_PER_EVENT = 1.25;
+/** Pixels per wheel delta unit for DOM_DELTA_PIXEL / LINE / PAGE. */
+const WHEEL_DELTA_PX     = [1, 16, 400];
 
 interface ChartCanvasProps {
   candles:        Candle[];
@@ -17,7 +22,7 @@ interface ChartCanvasProps {
  * a ResizeObserver for layout changes, and delegates all drawing to renderer.ts.
  *
  * Gestures:
- *   wheel vertical          → zoom  (onZoom)
+ *   wheel vertical          → zoom  (onZoom)      — scaled by the wheel delta
  *   wheel horizontal        → pan   (onPan)       — trackpad two-finger swipe
  *   pointer drag (primary)  → pan   (onPan)       — mouse/touch drag
  *   pointer move            → hover (onHover)     — reports candle under cursor
@@ -34,6 +39,7 @@ export function ChartCanvas({
   const sizeRef           = useRef({ w: 0, h: 0, dpr: 1 });
   const candlesPerViewRef = useRef(candlesPerView);
   const hoverIdxRef       = useRef<number | null>(null);
+  const zoomAccRef        = useRef(1);
   const onZoomRef         = useRef(onZoom);
   const onPanRef          = useRef(onPan);
   const onHoverRef        = useRef(onHover);
@@ -154,7 +160,27 @@ export function ChartCanvas({
       if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
         onPanRef.current(-e.deltaX / getStep());
       } else {
-        onZoomRef.current(e.deltaY > 0 ? ZOOM_STEP : 1 / ZOOM_STEP);
+        zoomBy(e.deltaY * (WHEEL_DELTA_PX[e.deltaMode] ?? 1));
+      }
+    }
+
+    /**
+     * Accumulate wheel zoom until it changes candlesPerView by at least one
+     * candle, so a stream of small trackpad deltas still zooms smoothly.
+     */
+    function zoomBy(deltaPx: number) {
+      const factor = Math.min(
+        MAX_ZOOM_PER_EVENT,
+        Math.max(1 / MAX_ZOOM_PER_EVENT, Math.exp(deltaPx * ZOOM_PER_PIXEL)),
+      );
+
+      zoomAccRef.current *= factor;
+
+      const cpv = candlesPerViewRef.current;
+
+      if (Math.round(cpv * zoomAccRef.current) !== cpv) {
+        onZoomRef.current(zoomAccRef.current);
+        zoomAccRef.current = 1;
       }
     }
 
