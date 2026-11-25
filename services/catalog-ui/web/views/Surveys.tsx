@@ -1,30 +1,31 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActionIcon, Anchor, Badge, Box, Button, CloseButton, Group, Loader, Modal, Stack, Text } from '@mantine/core';
 import { poll, post, prospector } from '../api';
-import { Dim, LastSurvey, Table, Waiting, bytes, count, howOf } from './Table';
+import { Dim, Table, Waiting, bytes, count } from './Table';
 import { linkTo } from '../App';
 import type { ReactNode } from 'react';
 import type { Asked } from '../api';
-import type { FinishedRun, Order, Status } from '../types';
+import type { FinishedRun, LastRun, Order, Status } from '../types';
 
 /**
- * What every venue is doing, and the buttons that change it.
+ * What every venue is doing, as prospector's `GET /status` reports it, and the
+ * buttons that change it.
  *
- * **`state` and `Alive` are shown side by side because they are different
- * facts.** `state` is what the catalog has outstanding; `Alive` is whether this
- * process has a loop doing it. Walking with nothing alive is what a killed
- * container leaves behind, and the one row worth acting on — collapsing the pair
- * into a single status would hide exactly that.
+ * **`state` and `surveying` are different facts, and neither hides the other.**
+ * `state` is the work prospector has outstanding for a venue; `surveying` is
+ * whether prospector has a loop doing it. Work outstanding with no loop on it is
+ * the one row worth acting on, so `State` shows it as `stalled` rather than as
+ * the state it claims. What leaves a venue there is set out in
+ * docs/services/CATALOG-UI.md.
  */
 export const Surveys = () => {
   /**
    * **Orders given here and not yet seen to take effect**, by venue.
    *
    * A click is answered in milliseconds and acted on in minutes — a pass lists
-   * instruments and writes series before it opens a job — and the row used to
-   * read exactly as it had before for the whole of that. Held until the status
-   * shows the change, so the row says it heard, and nothing in it can be
-   * clicked again until the first order is answered.
+   * instruments and writes series before it opens a job. Held until the status
+   * shows the change, so for the whole of that the row says it heard, and
+   * nothing in it can be clicked again until the first order is answered.
    */
   const [orders, setOrders] = useState<Record<string, Order>>({});
 
@@ -67,7 +68,7 @@ export const Surveys = () => {
       const done = await post<{ resumed?: string[]; skipped?: { venue: string }[] }>(
         `/api/prospector${what}`, body);
 
-      // Declined by the catalog — already going, nothing to update from — so
+      // Declined by prospector — already going, nothing to update from — so
       // there is nothing coming to wait for.
       const declined = (done.skipped ?? []).map(one => one.venue);
 
@@ -77,7 +78,7 @@ export const Surveys = () => {
        * **A resumed update is said to be one.** The two are indistinguishable
        * from out here and they are not the same thing — one carries on from
        * cursors that already exist, the other plans fresh scopes — so the word
-       * the catalog chose is the word that gets shown.
+       * prospector chose is the word that gets shown.
        */
       said.say(done.resumed?.length ? `${label} — resumed where it stopped` : `${label} — asked`);
       again();
@@ -93,7 +94,7 @@ export const Surveys = () => {
    * **An order leaves when the status shows it done, or when it has plainly
    * not been.** Either way the row is handed back — the first because there is
    * nothing left to wait for, the second because a row held for ever over an
-   * order the catalog never acted on is a worse lie than the one this fixes,
+   * order prospector never acted on would claim a change that is not coming,
    * and it is said out loud rather than dropped.
    */
   useEffect(() => {
@@ -117,7 +118,7 @@ export const Surveys = () => {
 
     if (lapsed.length > 0)
       said.fail(`No sign of ${lapsed.join(', ')} acting on it after ${ORDER_MS / 60_000} minutes — `
-        + 'the catalog log will say why');
+        + "prospector's log will say why");
   }, [asked.data, orders]);
 
   return (
@@ -157,11 +158,9 @@ export const Surveys = () => {
               },
               {
                 /**
-                 * **Wider than it was, out of the column that stopped needing
-                 * it.** The badge carries a word and a mark now — `backfilling`
-                 * with a walker beside it — and the actions beside the row are
-                 * three icons and at most one word, where they used to be three
-                 * words.
+                 * **Room for a word and a mark** — `backfilling` with a walker
+                 * beside it — taken from the actions column, which holds three
+                 * icons and at most one word.
                  */
                 head: 'State', width: '11%', cell: v => <State of={v} order={orders[v.venue]} />,
               },
@@ -234,9 +233,8 @@ export const Surveys = () => {
                    * request in flight, which is over in milliseconds. `stopping`
                    * is the loop being told to stop and not having noticed yet,
                    * which lasts as long as the page it is on — so the request
-                   * finishing is not the venue having settled, and reading only
-                   * `busy` handed the row's buttons back while a pause was still
-                   * taking effect.
+                   * finishing is not the venue having settled, and the row stays
+                   * held until a pause has taken effect.
                    *
                    * Acting there is not merely premature: a second interrupt
                    * arriving before the first is answered asks the venue to stop
@@ -289,10 +287,9 @@ export const Surveys = () => {
 
                     {/*
                       **Nothing to re-read, so nothing to offer.** A refresh
-                      exists to walk an archive again, and a venue whose bucket
-                      refuses a listing has no keyspace to walk: its series are
-                      declared and every pass is an update over them. Clicking
-                      would drop its run rows and walk nothing.
+                      walks an archive again, and where `/status` reports
+                      `listable: false` there is no keyspace to walk: clicking
+                      would drop the venue's run rows and walk nothing.
                     */}
                     <Act
                       colour="orange"
@@ -389,9 +386,9 @@ const ORDER_POLL_MS = 2_000;
 /**
  * How long an order is held before it is let go of and said to have lapsed.
  *
- * A pass's preamble is minutes at the longest measured — four, on binance, with
- * new instruments to write — and the catalog reports `starting` from its first
- * second, so an order reaching this unconfirmed is one the catalog never began.
+ * Prospector reports `starting` from a pass's first second, however long its
+ * preamble, so an order still unconfirmed after this is one prospector never
+ * began.
  */
 const ORDER_MS = 2 * 60_000;
 
@@ -406,7 +403,7 @@ const GOING = new Set(['starting', 'walking', 'updating']);
  * for a state it has already left would hold the row until the order lapsed.
  *
  * **Told by the pass's start changing, not by when it began.** Both starts are
- * the catalog's own report, so whatever this browser's clock says never enters
+ * prospector's own report, so whatever this browser's clock says never enters
  * into it.
  */
 export const tookEffect = (order: Order, now: Status): boolean => {
@@ -415,7 +412,7 @@ export const tookEffect = (order: Order, now: Status): boolean => {
   if (GOING.has(now.state)) return true;
 
   /**
-   * **A pause lifted is done once the venue is no longer paused.** One paused
+   * **A pause lifted is done once the venue has left `paused`.** One paused
    * while waiting goes back to waiting — nothing starts, so waiting for a pass
    * would hold the row until the order lapsed and then report it as ignored.
    */
@@ -460,10 +457,10 @@ const took = (from: string, to: string): string => {
  * **One thing separates the two words, and it is not how the venue is read.**
  * `Start` is a venue no pass has ever finished for; `Update` is one a pass has.
  * Whether that first pass reads a listing or generates keys, and whether the
- * update after it does the same or walks the archive again, is the catalog's
- * business — a word taken from either would call okx and bitget "Update" on
- * their first ever pass, and call gate's next update a walk, which is true and
- * is not what somebody clicking is deciding.
+ * update after it does the same or walks the archive again, is prospector's
+ * business — a word taken from the mechanism would call a first pass that
+ * generates keys "Update", and an update that walks the archive a walk, which is
+ * true and is not what somebody clicking is deciding.
  *
  * **Only where there is something to ask for.** A venue mid-pass is already
  * doing it and a paused one resumes from the play beside this, so both hold the
@@ -562,20 +559,16 @@ const Cycle = () => (
 /**
  * Where the venue stands, in one badge.
  *
- * **Including the one state the catalog cannot report.** A job open with nothing
- * working it is not a survey in progress, and every field that comes back says it
- * is: `state` reads `walking`, the schedule reads `Since …`, the venue's badge
- * reads *in progress*. Only this process knows the difference, because
- * `surveying` is a fact about *it* rather than about the catalog.
+ * **Including the one state `state` alone does not say.** A job open with
+ * nothing working it is not a survey in progress, though `state` reads
+ * `walking`, the run reads *started at* and the venue's badge reads *in
+ * progress*. `surveying: false` beside it is prospector saying no loop of its own
+ * is on the venue, and the pair is shown as **stalled**.
  *
- * It used to be a column of its own answering `Yes` / `Stalled` / `—`, where two
- * of the three said nothing that was not already on the row. The exception is the
- * whole of its value, so it belongs where somebody is already looking, and in
- * **red** — it is a fault rather than a phase, and the one row here that wants
- * acting on.
- *
- * Two things leave it: a loop that threw its way out while its run row stayed
- * open, and a venue whose job no deployment in scope will pick up.
+ * It is the exception, so it goes where somebody is already looking rather than
+ * in a column of its own, and in **red**: a fault rather than a phase, and the
+ * one row here that wants acting on. What leaves a venue stalled is set out in
+ * docs/services/CATALOG-UI.md.
  */
 const State = ({ of, order }: { of: Status; order?: Order }) => {
   const working = of.state === 'walking' || of.state === 'updating';
@@ -584,8 +577,8 @@ const State = ({ of, order }: { of: Status; order?: Order }) => {
     return <Badge color="red" variant="light" size="sm">stalled</Badge>;
 
   /**
-   * **Heard, and on its way.** An order this page gave and the catalog has not
-   * yet shown — or a pass the catalog says has begun and has not opened its job
+   * **Heard, and on its way.** An order this page gave and prospector has not
+   * yet shown — or a pass prospector says has begun and has not opened its job
    * yet. Both are a venue about to change, and the one thing they must not read
    * as is the state it is leaving.
    */
@@ -606,10 +599,10 @@ const State = ({ of, order }: { of: Status; order?: Order }) => {
       : of.state === 'paused' ? 'orange' : 'gray';
 
   /**
-   * **What is happening, not how.** `walking` and `updating` are the two
-   * mechanisms this service has, and naming the state after one of them made the
-   * badge answer a question nobody asked while hiding the one they did: whether
-   * this is the first long read of a venue or the daily top-up. So the word is
+   * **What is happening, not how.** `walking` and `updating` are prospector's
+   * two mechanisms, and a badge named after one of them would answer a question
+   * nobody asked while hiding the one they did: whether this is the first long
+   * read of a venue or the daily top-up. So the word is
    * the occasion — **backfilling** the first time, **updating** every time after
    * — and the mechanism stays, as an icon and a tooltip, for whoever wants it.
    */
@@ -653,6 +646,73 @@ const Probing = () => (
 );
 
 /**
+ * The venue's most recent pass, named and dated.
+ *
+ * **A pass in flight is reported as one, not as an absence.** A pass in flight
+ * has a null completion time, so the badge says it is in progress rather than
+ * `Never surveyed` — which is what a venue with no pass at all reads.
+ *
+ * **The badge names the occasion; the tooltip names the mechanism.** `Backfill`
+ * is the first pass, which reads everything and takes hours or days; `Update` is
+ * every pass after it, which reads the recent edge. Whether a pass walked a
+ * listing or probed files is a different question, and it is in the tooltip,
+ * where somebody who wants it can find it and nobody else has to read it.
+ *
+ * **Every word stands on its own**, because this sits under the venue name with
+ * no column header above it. "Never" needs a heading to mean anything; "Never
+ * surveyed" does not.
+ */
+export const LastSurvey = ({ of }: { of: LastRun }) => {
+  const what = of.first ? 'Backfill' : 'Update';
+
+  const said = of.ongoing ? `${what} in progress`
+    : of.at === null || of.kind === null ? 'Never surveyed'
+      : `${of.first ? 'Backfilled' : 'Updated'} ${of.at.slice(0, 10)}`;
+
+  return (
+    <Badge
+      size="xs"
+      title={of.kind === null ? undefined : howOf(of.kind)}
+
+      /**
+       * **Quiet, because it is not the answer — it is what the answer rests on.**
+       * The state beside it is what somebody reads first, and a pill in full
+       * caps at the same weight would compete with it. Lower case at a normal
+       * weight, on a neutral ground, reads as a caption.
+       *
+       * Only a pass actually running keeps a colour, because that is the one
+       * worth catching an eye.
+       */
+      tt="none"
+      fw={500}
+      {...(of.ongoing
+        ? { color: 'teal', variant: 'light' as const }
+        : { variant: 'default' as const, c: 'dimmed' })}
+
+      /**
+       * **Barely rounded, and pulled left by its own padding.**
+       *
+       * A pill's curve starts before its text does, so under a venue name the
+       * text would sit indented from the name above it while the badge's edge
+       * lined up with it — near-alignment, which reads as a mistake where no
+       * alignment at all would not. Squaring the corner removes most of it and
+       * the offset removes the rest: the negative margin is exactly the padding
+       * Mantine sets for this size, so the words line up whatever size it is
+       * given.
+       */
+      radius="sm"
+      style={{ marginLeft: 'calc(var(--badge-padding-x) * -1)' }}
+    >{said}</Badge>
+  );
+};
+
+/** How a pass reads a venue, for the tooltip under a word that does not say. */
+const howOf = (kind: 'walk' | 'update'): string =>
+  (kind === 'walk'
+    ? 'Walking the listing'
+    : 'Probing files');
+
+/**
  * The venue's last meaningful passage of work: a run that is happening, or the
  * newest one that finished.
  *
@@ -662,17 +722,16 @@ const Probing = () => (
  * venue on the same schedule and answers nothing. The moment is kept, in the
  * tooltip, for the days it matters.
  *
- * **One event, and it is always the same kind of event.** This column used to
- * report whatever the *state* happened to make available — a pause time here, a
- * next-update time there, a job start somewhere else — so no two rows answered
- * the same question and most of them answered none. "was waiting" is the extreme
- * case: it named the phase a pause interrupted, which for a venue between
- * updates is the phase nearly every venue is in nearly all the time.
+ * **One event, and it is always the same kind of event**, whatever the state:
+ * the pass that is happening, or the newest one that finished. What a state
+ * happens to make available — a pause time, a next-update time, the phase a
+ * pause interrupted — would have each row answering a different question.
  *
  * **Paused is deliberately not a case here.** A pause does not close a run or
  * undo one, so it changes nothing about which pass is the newest or when it
  * happened — and the state badge one column to the left already says a person
- * stopped this venue. Two columns saying it left neither saying anything else.
+ * stopped this venue. Two columns saying it would leave neither saying anything
+ * else.
  *
  * Waiting is not a case either: a venue waiting for its next update is one whose
  * update *completed*, which is exactly what it reports.
@@ -694,8 +753,8 @@ const Detail = ({ of, order }: { of: Status; order?: Order }) => {
 
   /**
    * **What was asked, not what last happened.** The finished pass below is
-   * still true, but it is no longer the news — and shown alone while an order
-   * is on its way, it is exactly the row that looked as though nothing was.
+   * still true, but it is not the news — and shown alone while an order is on
+   * its way, it would read as though nothing was.
    */
   if ((of.state === 'starting' || order?.kind === 'go') && ! run.ongoing)
     // The pass about to begin, not the last one: `first` describes that, `completedEver` this.

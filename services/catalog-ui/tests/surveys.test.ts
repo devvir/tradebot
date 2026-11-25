@@ -3,8 +3,8 @@ import { createElement } from 'react';
 import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MantineProvider } from '@mantine/core';
-import { SAID_MS, teller, tookEffect } from '../web/views/Surveys';
-import { LastSurvey, Table, Waiting } from '../web/views/Table';
+import { LastSurvey, SAID_MS, teller, tookEffect } from '../web/views/Surveys';
+import { Table, Waiting } from '../web/views/Table';
 import type { Said } from '../web/views/Surveys';
 import type { LastRun, Order, Status } from '../web/types';
 
@@ -62,7 +62,7 @@ describe('tookEffect', () => {
     expect(tookEffect(order({ kind: 'pause' }), status({ state: 'updating' }))).toBe(false);
   });
 
-  it('counts a pause lifted once the venue is no longer paused, though nothing starts', () => {
+  it('counts a pause lifted once the venue has left paused, though nothing starts', () => {
     expect(tookEffect(order({ from: 'paused' }), status({ state: 'waiting' }))).toBe(true);
     expect(tookEffect(order({ from: 'paused' }), status({ state: 'paused' }))).toBe(false);
   });

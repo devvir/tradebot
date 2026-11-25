@@ -29,7 +29,7 @@ export const MarketView = ({ venue, market, lens }: { venue: string; market: str
 };
 
 /** The canonical variant string, as the archives spell it — `incremental,400`. */
-export const variantOf = (shape: Shape): string => Object.values(shape.variant).join(',');
+const variantOf = (shape: Shape): string => Object.values(shape.variant).join(',');
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 

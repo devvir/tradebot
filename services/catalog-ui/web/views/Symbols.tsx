@@ -1,15 +1,8 @@
-import { useMemo, useState } from 'react';
-import { Badge, Button, Collapse, Group, Stack, Text, TextInput } from '@mantine/core';
+import { memo, useDeferredValue, useMemo, useState } from 'react';
+import { Box, Button, Collapse, Group, Stack, Text, TextInput } from '@mantine/core';
 import { catalogLensed, lensed, useAsk } from '../api';
 import { Waiting, count } from './Table';
 
-/**
- * Every instrument in a venue, or in one of its markets.
- *
- * **Filtered rather than paged.** A few thousand strings is one response and one
- * render; paging would add a cursor to carry and a page to be on, to save
- * nothing anybody would notice.
- */
 /**
  * The symbols, behind a button, fetched only once somebody asks.
  *
@@ -41,6 +34,13 @@ export const SymbolsPanel = ({ venue, market, lens }: { venue: string; market?: 
   );
 };
 
+/**
+ * Every instrument in a venue, or in one of its markets.
+ *
+ * **Filtered rather than paged.** A few thousand strings is one response and one
+ * render; paging would add a cursor to carry and a page to be on, to save
+ * nothing anybody would notice.
+ */
 const SymbolList = ({ venue, market, lens }: { venue: string; market?: string; lens?: string }) => {
   const at = market === undefined
     ? `/venues/${encodeURIComponent(venue)}/symbols`
@@ -57,16 +57,33 @@ const SymbolList = ({ venue, market, lens }: { venue: string; market?: string; l
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
+/** The symbols that contain `query`, ignoring case; every one of them where it is blank. */
+export const matching = (items: readonly string[], query: string): readonly string[] => {
+  const wanted = query.trim().toUpperCase();
+
+  return wanted ? items.filter(one => one.toUpperCase().includes(wanted)) : items;
+};
+
+/**
+ * The list, and the box that narrows it.
+ *
+ * **The box answers every keystroke; the list catches up.** The list is
+ * filtered from a deferred copy of the query, so React renders a few thousand
+ * names at low priority and abandons that render when another key arrives —
+ * typing never waits on it. `Names` is memoised so the urgent render, which
+ * still holds the old query, skips the list entirely. Until the new one lands,
+ * the list is dimmed: what is on screen is the answer to an earlier query.
+ *
+ * **Plain spans, not badges.** A name here is text to read and scan, and a
+ * component per name costs a few thousand of them on every render.
+ */
 const Filtered = ({ venue, market, items }: {
   venue: string; market?: string; items: string[];
 }) => {
   const [query, setQuery] = useState('');
+  const shown = useDeferredValue(query);
 
-  const kept = useMemo(() => {
-    const wanted = query.trim().toUpperCase();
-
-    return wanted ? items.filter(one => one.toUpperCase().includes(wanted)) : items;
-  }, [items, query]);
+  const kept = useMemo(() => matching(items, shown), [items, shown]);
 
   return (
     <Stack gap="sm">
@@ -83,9 +100,12 @@ const Filtered = ({ venue, market, items }: {
         onChange={event => setQuery(event.currentTarget.value)}
       />
 
-      <Group gap={6}>
-        {kept.map(one => <Badge key={one} variant="default" size="sm">{one}</Badge>)}
-      </Group>
+      <Box className="symbols" data-stale={shown !== query || undefined}>
+        <Names names={kept} />
+      </Box>
     </Stack>
   );
 };
+
+const Names = memo(({ names }: { names: readonly string[] }) =>
+  names.map(one => <span key={one} className="symbol">{one}</span>));

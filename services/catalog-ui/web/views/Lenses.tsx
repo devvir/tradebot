@@ -1274,17 +1274,6 @@ const onlyOf = <T extends string>(choice: Choice<T> | undefined): Choice<T> | un
 
 const capital = (word: string): string => word.charAt(0).toUpperCase() + word.slice(1);
 
-/**
- * A bound, which is a month.
- *
- * **A day would be a false precision.** Nobody collects up to the 14th, and a
- * file dated `202006` covers all of June — so a day bound cannot halve it and the
- * two ends of a range would stop meaning the same thing. The browser's own month
- * control says exactly this and costs no dependency.
- *
- * It speaks `yyyy-mm` and the catalog stores `yyyymm`, which is the whole of the
- * translation.
- */
 /** Behind a rule, the same colour a breath of it. */
 const EFFECT_TINT: Record<LensRule['effect'], string> = {
   include: 'var(--tint-rise)',
@@ -1297,6 +1286,17 @@ const EFFECT_COLOR: Record<LensRule['effect'], string> = {
   exclude: 'var(--mantine-color-red-5)',
 };
 
+/**
+ * A bound, which is a month.
+ *
+ * **A day would be a false precision.** Nobody collects up to the 14th, and a
+ * file dated `202006` covers all of June — so a day bound cannot halve it and the
+ * two ends of a range would stop meaning the same thing. The browser's own month
+ * control says exactly this and costs no dependency.
+ *
+ * It speaks `yyyy-mm` and the catalog stores `yyyymm`, which is the whole of the
+ * translation.
+ */
 const Month = ({ label, value, error, onChanged }: {
   label:     string;
   value?:    string;

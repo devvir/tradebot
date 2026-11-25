@@ -56,22 +56,6 @@ export const post = <T>(url: string, body?: unknown): Promise<T> =>
     body:    JSON.stringify(body ?? {}),
   });
 
-/** A change to something that already exists. */
-export const patch = <T>(url: string, body: unknown): Promise<T> =>
-  ask<T>(url, {
-    method:  'PATCH',
-    headers: { 'content-type': 'application/json' },
-    body:    JSON.stringify(body),
-  });
-
-/** A replacement of something whole, which is how a lens is written. */
-export const put = <T>(url: string, body: unknown): Promise<T> =>
-  ask<T>(url, {
-    method:  'PUT',
-    headers: { 'content-type': 'application/json' },
-    body:    JSON.stringify(body),
-  });
-
 /** Taking something away. Answers whatever the service says it removed. */
 export const remove = <T>(url: string): Promise<T> => ask<T>(url, { method: 'DELETE' });
 
@@ -89,12 +73,10 @@ export interface Asked<T> {
  * through three venues quickly fires three requests, and without it whichever
  * lands last wins — which is not necessarily the one being looked at.
  */
-export const useAsk = <T>(path: string | null, ask: (path: string, signal: AbortSignal) => Promise<T>): Asked<T> => {
-  const [state, setState] = useState<Asked<T>>({ loading: path !== null });
+export const useAsk = <T>(path: string, ask: (path: string, signal: AbortSignal) => Promise<T>): Asked<T> => {
+  const [state, setState] = useState<Asked<T>>({ loading: true });
 
   useEffect(() => {
-    if (path === null) return;
-
     /** A view that moves on cancels what it asked, so the service is not left answering nobody. */
     const asked = new AbortController();
 
@@ -115,8 +97,8 @@ export const useAsk = <T>(path: string | null, ask: (path: string, signal: Abort
  *
  * **One request at a time, always.** A timer that fires whether or not the last
  * request came back stacks requests on a service that is already slow, which
- * makes it slower: a 30-second answer under a 5-second timer was six requests
- * queued on a single-threaded catalog. Here the next one is scheduled only once
+ * makes it slower: a 30-second answer under a 5-second timer is six requests
+ * queued on a single-threaded service. Here the next one is scheduled only once
  * the last has settled, answer or failure.
  *
  * **The interval may be a function**, read each time the next wait is set: a

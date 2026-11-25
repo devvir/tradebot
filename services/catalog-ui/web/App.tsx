@@ -10,20 +10,6 @@ import { catalog, useAsk } from './api';
 import type { Lens, Where } from './types';
 
 /**
- * The whole page: a route read out of the hash, and the view that answers it.
- *
- * **The hash rather than a router.** Every view is a link somebody can send, and
- * that is all the routing this needs — a router would be a dependency to
- * reimplement `location.hash`. It reads as a path:
- *
- * ```
- * #surveys                                    (or nothing at all)
- * #contents[/:venue[/:market]][?lens=:slug]
- * #lenses[/:slug]
- * ```
- */
-
-/**
  * Three sections, and where you are inside one of them.
  *
  * `contents` is what the catalog holds; `surveys` is what is being done about
@@ -36,9 +22,9 @@ import type { Lens, Where } from './types';
  * catalog holds is still there tomorrow, while whether anything is collecting it
  * is the question somebody opens this page to answer.
  */
-export type Section = 'contents' | 'surveys' | 'lenses';
+type Section = 'contents' | 'surveys' | 'lenses';
 
-export interface Route {
+interface Route {
   section:  Section;
   venue?:   string;
   market?:  string;
@@ -50,6 +36,19 @@ export interface Route {
   lens?:    string;
 }
 
+/**
+ * The whole page: a route read out of the hash, and the view that answers it.
+ *
+ * **The hash rather than a router.** Every view is a link somebody can send, and
+ * that is all the routing this needs — a router would be a dependency to
+ * reimplement `location.hash`. It reads as a path:
+ *
+ * ```
+ * #surveys                                    (or nothing at all)
+ * #contents[/:venue[/:market]][?lens=:slug]
+ * #lenses[/:slug]
+ * ```
+ */
 export const App = () => {
   const route = useRoute();
   const here  = linkTo(route);
@@ -200,11 +199,11 @@ const decode = (segment: string): string => {
 };
 
 /**
- * Where you are, as links back.
+ * Where you are, as links back, above the view rather than beside the tabs,
+ * where "Venues" would read as a third tab.
  *
  * **Only the last one is plain text**, because a crumb you are already on is not
- * somewhere to go — and the previous version rendered these beside the tabs,
- * where "venues" read as a third tab.
+ * somewhere to go.
  */
 const Crumbs = ({ route }: { route: Route }) => {
   const here: React.ReactNode[] = [

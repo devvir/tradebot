@@ -107,22 +107,16 @@ export interface Shape {
   last:    string | null;
 }
 
-/**
- * Where a venue stands, as `GET /status` reports it.
- *
- * **One word, plus the facts behind it.** `state` is the whole answer; the rest
- * is what a reader needs to act on it — when a pause started, what it
- * interrupted, when the next update is due.
- */
+/** The one word prospector's `GET /status` gives for where a venue stands. */
 export type SurveyState = 'not started' | 'starting' | 'walking' | 'updating' | 'waiting' | 'paused';
 
 /**
- * An order given from this page that the catalog has not yet been seen to act on.
+ * An order given from this page that prospector has not yet been seen to act on.
  *
  * **Held here, not on the server**, because the server has nothing to report
  * until it acts: between the click and the next poll the row would otherwise
- * read exactly as it did before, and a venue that had been told to go looked
- * like one that had been ignored.
+ * read exactly as it did before, and a venue that had been told to go would
+ * look like one that had been ignored.
  */
 export interface Order {
   /** `go` for Start, Update, Resume and Refresh; `pause` for Pause. */
@@ -130,7 +124,7 @@ export interface Order {
 
   /**
    * When it was given, by this browser's clock — so one that never takes effect
-   * is let go of, and said so. Never compared with a time the catalog reports.
+   * is let go of, and said so. Never compared with a time prospector reports.
    */
   at:   number;
 
@@ -138,12 +132,19 @@ export interface Order {
   from: string | null;
 
   /**
-   * When the venue's most recent pass began, as the catalog reported it when the
+   * When the venue's most recent pass began, as prospector reported it when the
    * order was given. A different start later is a pass begun since.
    */
   fromStartedAt: string | null;
 }
 
+/**
+ * Where a venue stands, as prospector's `GET /status` reports it.
+ *
+ * **One word, plus the facts behind it.** `state` is the whole answer; the rest
+ * is what a reader needs to act on it — when a pause started, what it
+ * interrupted, when the next update is due.
+ */
 export interface Status extends Venue {
   state:      SurveyState;
 
@@ -165,7 +166,7 @@ export interface Status extends Venue {
   /** When the next update is due, where the venue is waiting for one. */
   nextRun:    string | null;
 
-  /** Whether the service has a loop alive for it — not the same as work being owed. */
+  /** Whether prospector has a loop alive for it — not the same as work being owed. */
   surveying:  boolean;
 
   /** Asked to stop and still finishing the page it is on. */
@@ -174,7 +175,7 @@ export interface Status extends Venue {
   /**
    * Whether a pass has ever finished here — the whole of what separates starting
    * a venue from updating one. Whether either happens by walking or by
-   * generating keys is the catalog's business and never shown.
+   * generating keys is prospector's business and never shown.
    */
   completedEver: boolean;
 
@@ -200,10 +201,6 @@ export interface Where {
   catalog: string;
 }
 
-/**
- * A named way of looking at the catalog — where one is in force, what it lets
- * through *is* the catalog as far as that consumer is concerned.
- */
 /**
  * One rule as the editor holds it: what is saved of it, if anything, and what
  * is on the page. Saved and unchanged, it can be dropped; new or changed, it is
@@ -232,6 +229,10 @@ export interface LensDraft {
   from:  string;
 }
 
+/**
+ * A named way of looking at the catalog — where one is in force, what it lets
+ * through *is* the catalog as far as that consumer is concerned.
+ */
 export interface Lens {
   id?:        number;
 

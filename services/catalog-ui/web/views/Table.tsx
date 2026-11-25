@@ -1,7 +1,6 @@
-import { Alert, Badge, Loader, Table as MTable, Text, VisuallyHidden } from '@mantine/core';
+import { Alert, Loader, Table as MTable, Text, VisuallyHidden } from '@mantine/core';
 import type { ReactNode } from 'react';
 import type { Asked } from '../api';
-import type { LastRun } from '../types';
 
 /**
  * The shared pieces every view is built from.
@@ -140,80 +139,6 @@ export const Span = ({ first, last }: { first: string | null; last: string | nul
   first === null && last === null
     ? <Text component="span" c="dimmed" fs="italic" size="sm">Nothing yet</Text>
     : <>{first ?? '?'} … {last ?? '?'}</>;
-
-/**
- * The venue's most recent pass, named and dated.
- *
- * **A pass in flight is reported as one, not as an absence.** The catalog's
- * completion time is null while a walk is running, so a venue three hours into
- * its first one used to read `Never` — the same word as a venue nobody had ever
- * surveyed, and the opposite of what was happening.
- *
- * **And the kind is shown, because the two are not interchangeable.** A venue
- * whose last pass was a walk has been read end to end; one whose last pass was
- * an update has been asked what appeared since. Somebody deciding whether to
- * trust a span wants to know which of those they are looking at.
- *
- * **Every word stands on its own**, because in the surveys table this sits under
- * the venue name with no column header above it. "Never" needs a heading to mean
- * anything; "Never surveyed" does not.
- */
-export const LastSurvey = ({ of }: { of: LastRun }) => {
-  /**
-   * **What the pass was for, not how it was done.** A first pass reads
-   * everything and takes hours or days; every pass after it reads the recent
-   * edge. Which mechanism each used is a different question — a venue that
-   * cannot be listed backfills by generating keys, and one that re-reads itself
-   * by walking updates by walking — and it belongs in the tooltip, where
-   * somebody who wants it can find it and nobody else has to read it.
-   */
-  const what = of.first ? 'Backfill' : 'Update';
-
-  const said = of.ongoing ? `${what} in progress`
-    : of.at === null || of.kind === null ? 'Never surveyed'
-      : `${of.first ? 'Backfilled' : 'Updated'} ${of.at.slice(0, 10)}`;
-
-  return (
-    <Badge
-      size="xs"
-      title={of.kind === null ? undefined : howOf(of.kind)}
-
-      /**
-       * **Quiet, because it is not the answer — it is what the answer rests on.**
-       * The state beside it is what somebody reads first, and a pill in full
-       * caps at the same weight competed with it. Lower case at a normal weight,
-       * on a neutral ground, reads as a caption.
-       *
-       * Only a pass actually running keeps a colour, because that is the one
-       * worth catching an eye.
-       */
-      tt="none"
-      fw={500}
-      {...(of.ongoing
-        ? { color: 'teal', variant: 'light' as const }
-        : { variant: 'default' as const, c: 'dimmed' })}
-
-      /**
-       * **Barely rounded, and pulled left by its own padding.**
-       *
-       * A pill's curve starts before its text does, so under a venue name the
-       * text sat indented from the name above it while the badge's edge lined up
-       * with it — near-alignment, which reads as a mistake where no alignment at
-       * all would not. Squaring the corner removes most of it and the offset
-       * removes the rest: the negative margin is exactly the padding Mantine set
-       * for this size, so the words line up whatever size it is given.
-       */
-      radius="sm"
-      style={{ marginLeft: 'calc(var(--badge-padding-x) * -1)' }}
-    >{said}</Badge>
-  );
-};
-
-/** How a pass reads a venue, for the tooltip under a word that does not say. */
-export const howOf = (kind: 'walk' | 'update'): string =>
-  (kind === 'walk'
-    ? 'Walking the listing'
-    : 'Probing files');
 
 export const Dim = ({ children }: { children: ReactNode }) =>
   <Text component="span" c="dimmed" fs="italic" size="sm">{children}</Text>;

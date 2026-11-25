@@ -48,9 +48,6 @@ body { margin: 0; }
  */
 .mantine-Table-td { font-family: var(--mantine-font-family-monospace); }
 
-/** Figures are read down a column, so they line up rather than wander. */
-td[style*="tabular-nums"] { font-variant-numeric: tabular-nums; }
-
 /**
  * **A disabled button keeps its outline**, so it reads as a control that cannot
  * be used rather than as empty space.
@@ -58,8 +55,8 @@ td[style*="tabular-nums"] { font-variant-numeric: tabular-nums; }
  * Mantine fills a disabled button with `--mantine-color-disabled` and gives it a
  * transparent border. In dark mode that fill is `dark-6` — which is exactly
  * `--table-striped-color`, the shade behind every other row of a striped table.
- * Same colour, no border: on those rows the button vanished, and a column of
- * three buttons read as two with a hole in it.
+ * Same colour, no border: on those rows the button would vanish, and a column
+ * of three buttons would read as two with a hole in it.
  *
  * Mantine defines `--mantine-color-disabled-border` for this and does not apply
  * it to buttons, so this does. Only the colour is set — the width stays
@@ -122,8 +119,8 @@ button[data-disabled] { border-color: var(--mantine-color-disabled-border); }
  * the eye reads it. Pushing the mark to the far end leaves every label at the same
  * x, selected or not.
  *
- * A grid was the wrong tool: an unselected option has no icon child at all, so
- * its label landed in the icon's column and wrapped a letter per line.
+ * Flex rather than grid: an unselected option has no icon child at all, so in
+ * a grid its label would land in the icon's column and wrap a letter per line.
  */
 .mantine-Select-option,
 .mantine-MultiSelect-option,
@@ -150,4 +147,29 @@ button[data-disabled] { border-color: var(--mantine-color-disabled-border); }
   caret-color: transparent;
   cursor: pointer;
   user-select: none;
+}
+
+/**
+ * **A symbol is a word in a box, drawn without a component.** The symbol list
+ * holds thousands of them, so each is a plain span styled here in the look of a
+ * default badge: the page's default ground and border, in Mono.
+ */
+.symbols {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  transition: opacity 120ms;
+}
+
+/** Dimmed while it still shows the answer to an earlier filter. */
+.symbols[data-stale] { opacity: 0.5; }
+
+.symbol {
+  padding: 0.1em 0.5em;
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: var(--mantine-radius-sm);
+  background: var(--mantine-color-default);
+  font-family: var(--mantine-font-family-monospace);
+  font-size: var(--mantine-font-size-xs);
+  line-height: 1.5;
 }
