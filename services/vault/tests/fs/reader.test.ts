@@ -105,6 +105,8 @@ describe('listFiles', () => {
 
     const result = listFiles('trade');
 
+    expect(result).not.toBeNull();
+    if (!result) return;
     expect(result['20230201']).toBe('closed');
     expect(result['20230202']).toBe('open');
     expect(result['20230201.snapshot']).toBeUndefined();
@@ -118,6 +120,8 @@ describe('listFiles', () => {
 
     const result = listFiles('trade', 'snapshot');
 
+    expect(result).not.toBeNull();
+    if (!result) return;
     expect(result['20230201.snapshot']).toBe('closed');
     expect(result['20230202.snapshot']).toBe('open');
     expect(result['20230201']).toBeUndefined();
