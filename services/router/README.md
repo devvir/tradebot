@@ -1,16 +1,19 @@
 # Router Service
 
-Routes messages between RabbitMQ queues and exchanges with configurable routing key transforms and header injection. Supports fan-out to multiple destinations and flexible exchange bindings.
+Consumes messages from RabbitMQ queues and republishes them to other queues and exchanges, with
+routing key rewrites and injected headers. One message can go to several destinations.
 
 ## Core Functionality
 
-- **Queue-based routing** — configurable source queue → destination queue/exchange mappings
-- **Flexible exchange binding** — sources/destinations can use the default exchange or bind to explicit exchanges
-- **Routing key transforms** — static routing keys or string replacement on incoming routing keys
-- **Header injection** — inject static AMQP headers into republished messages per destination
-- **Fan-out routing** — single source to multiple destinations
-- **Durable queues** — messages persist across router restarts
-- **Automatic reconnection** — via service-kit provider retry
+- **Rule-based routing** — source queue → destination queues and exchanges, set in `ROUTER_RULES`
+- **Exchange bindings** — sources and destinations use the default exchange or a named exchange,
+  which the router declares along with the queues
+- **Routing key rewrites** — a static key, or a replaced key prefix
+- **Header injection** — static AMQP headers added per destination
+- **Fan-out** — one source to many destinations, each published at least once
+- **Backpressure** — publishing pauses while watched queues are too full
+- **Connection handling** — the publishing connection reconnects; losing the consuming connection
+  ends the process for the container to restart it
 
 ## Development
 
@@ -25,6 +28,9 @@ pnpm test      # Run tests
 Requires RabbitMQ — see [infra packs](../../modules/infra/README.md).
 
 **Required:**
-- `ROUTER_RULES` — Routing rules (see tech docs for syntax)
+- `QUEUE_URL` — AMQP URL of the broker
+- `ROUTER_RULES` — routing rules
 
-For technical details, see [docs/services/ROUTER.md](../../docs/services/ROUTER.md).
+The optional prefetch and backpressure settings, and what the router does with each rule, are in
+the Configuration table and the rest of [docs/services/ROUTER.md](../../docs/services/ROUTER.md).
+The rule syntax is the [rule grammar](../../shared/utils/README.md#rule-grammar) of `@tradebot/utils`.

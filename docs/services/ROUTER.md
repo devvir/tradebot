@@ -1,181 +1,193 @@
-# Router Service - Technical Documentation
+# Router
 
-## Overview
+The router consumes messages from RabbitMQ source queues and republishes each one to the
+destinations its rules give, optionally rewriting the routing key and adding headers. Rules are set
+in `ROUTER_RULES`, written in the shared rule grammar (see
+[shared/utils/README.md](../../shared/utils/README.md#rule-grammar)). This doc covers what the
+router makes of a rule.
 
-The Router service consumes messages from RabbitMQ source queues and republishes them to destination queues or exchanges, applying configurable routing key transforms and header injection. It supports fan-out (one source to many destinations), explicit exchange bindings, and static header injection per destination.
+## Sources
 
-## Rule Syntax
+A source is always a queue; the router consumes it.
 
-Rules are set via the `ROUTER_RULES` environment variable. Each rule has the form:
+| Written | The router declares |
+|---|---|
+| `q` | durable queue `q`, consumed as it is |
+| `q@type:x` or `q@x` | exchange `x` and durable queue `q` bound to it |
 
-```
-sources > destinations
-```
+The binding key of a source queue on an exchange is its `(key:pattern)`. Without one, a `topic`
+exchange binds with `#`, and a `direct` exchange is rejected: it has no wildcard. `fanout` and
+`headers` exchanges ignore the key; a `headers` binding carries no arguments, so it matches every
+message.
 
-**Full source syntax:**
-```
-queue[@type:exchange][(key:bindingKey)]
-```
+A source takes no other modifier: no `(key:...)` on a bare queue, no `(key:match:replace)`, no
+`(header:...)`. A source cannot use the `default` type.
 
-**Full destination syntax:**
-```
-[queue][@type:exchange][(modifier,...)]
-```
+Several rules may read one source queue, since every rule on a queue receives every message the
+queue gets. They must read it from the same exchange, and either bind it with the same key or
+deliver to the same destinations, in which case the queue is bound with all their keys.
 
-Where:
-- `queue` — queue name (required on sources, optional on destinations with `@`)
-- `@type:exchange` — explicit exchange (`@` prefix is mandatory)
-  - `type` — exchange type: `fanout`, `topic`, `direct`, `headers`, `default`
-  - `exchange` — exchange name
-- `(modifier,...)` — comma-separated modifiers: `key:...` and/or `header:name=value`
-- `&` — separator for multiple sources or destinations
-- `>` — separator between sources and destinations
-- `|` — separator between multiple rules
+## Destinations
 
-A colon (`:`) without `@` is treated as an error — write `@fanout:broadcast`, not `fanout:broadcast`.
+| Written | The router declares | Publishes to | Routing key |
+|---|---|---|---|
+| `q` | durable queue `q` | the default exchange | `q` |
+| `@type:x` | exchange `x` | `x` | per the key modifier |
+| `q@type:x` | exchange `x` and durable queue `q` bound to it | `x` | per the key modifier |
 
-## Modifiers
+A bare destination queue is reached through the default exchange, so its routing key is always the
+queue's name and the incoming key is lost; it takes no `(key:...)`. To keep the incoming key,
+publish to an exchange.
 
-Modifiers are comma-separated tokens inside `(...)` on sources or destinations.
+A queue on a destination exchange is bound so that it receives everything the router publishes
+there:
 
-### Routing key — `key:`
+| Exchange type | Binding key of the queue |
+|---|---|
+| `topic` | the static key when the destination has one, otherwise `#`; with `#` the queue also receives whatever else is published to the exchange |
+| `direct` | the static key; a destination without one is rejected |
+| `fanout`, `headers` | empty (the broker ignores it; the `headers` binding matches every message) |
 
-**On sources** — sets the AMQP binding key:
-- `(key:#)` — catch-all (default for topic/direct if omitted)
-- `(key:trade.*)` — specific pattern
+### Routing key
 
-**On destinations** — overrides or transforms the outgoing routing key:
-- `(key:collect)` — always publish with static key `collect`
-- `(key:message:collect)` — replace `message` with `collect` in the incoming routing key
-  - Example: `message.trade` → `collect.trade`
-- Omitted — pass through the incoming routing key unchanged
+On an exchange destination:
 
-`(key:match:replace)` is only valid on destinations.
+| Modifier | Outgoing routing key |
+|---|---|
+| none | the incoming key |
+| `(key:k)` | always `k` |
+| `(key:match:replace)` | an incoming key equal to `match` or starting with `match.` has that part replaced by `replace`, taken literally; any other key passes unchanged |
 
-### Header injection — `header:`
+With `(key:message:collect)`, `message.trade` becomes `collect.trade`, and `messages.trade` passes
+unchanged.
 
-Injects a static AMQP header into every republished message at that destination. Merged non-destructively with any existing headers.
+### Headers
 
-```
-(header:name=value)
-```
+`(header:name=value)` sets a header on every message published to that destination. An injected
+header replaces an incoming header of the same name; the other headers are kept.
 
-- `name` must be non-empty; `value` may be empty
-- Multiple `header:` entries allowed in one modifier group
+### Exchange types
 
-## Examples
+Each exchange name has one type across all rules, sources and destinations alike. A mention without
+a type takes the type the name is given elsewhere; a name that is never typed is `fanout`; two
+different types for one name are rejected. On a destination, `default` is declared as a `direct`
+exchange.
 
-**Simple route (default exchange):**
-```bash
-ROUTER_RULES="broadcast > writer"
-```
+## Validation
 
-**Fan-out to multiple destinations:**
-```bash
-ROUTER_RULES="broadcast > codec.in & writer"
-```
+The router checks its rules and settings at startup and does not start when any is invalid. The
+route checks report every problem they find in one error. Beyond the grammar's own parse errors, it
+rejects:
 
-**With explicit exchange binding:**
-```bash
-ROUTER_RULES="broadcast@fanout:broadcast > codec.in@fanout:codec"
-```
+- an empty `ROUTER_RULES`, or a missing `QUEUE_URL`
+- a source without a queue, and a source modifier listed under [Sources](#sources)
+- a source on a `direct` exchange without `(key:...)`
+- a `(key:...)` on a bare destination queue
+- a queue on a `direct` destination without a static `(key:...)`
+- a rule that delivers into its own source queue, or publishes into its own source exchange
+- one exchange name given two types
+- the same rule given twice
+- rules that share a source queue against the conditions under [Sources](#sources)
+- `ROUTER_MAX_READY` without `ROUTER_WATCH_QUEUES`, or the reverse, and an integer setting that is
+  not a whole number in range
 
-**Exchange-only destination (broadcast pattern):**
-```bash
-ROUTER_RULES="broadcast@topic:broadcast > @fanout:broadcast"
-```
-Consumes from Broadcast's topic exchange, republishes to a fanout. No destination queue is declared — subscribers bind their own queues independently.
+## Message handling
 
-**With routing key replacement:**
-```bash
-ROUTER_RULES="collect@topic:broadcast > collect@topic:writer(key:message:collect)"
-```
-Incoming `message.trade` becomes `collect.trade`.
+The router runs one consumer per source queue. Each message goes to every distinct destination of
+the rules on that queue; rules that share the queue and name the same destination publish once.
 
-**With header injection:**
-```bash
-ROUTER_RULES="src@topic:broadcast > dst@topic:writer(key:message:collect,header:x-writer-database=tradebot_collect)"
-```
-Routing key replacement plus injects `x-writer-database` into every message.
+- The body is forwarded as the bytes received. AMQP properties are kept, except the user id, which
+  is dropped; the message stays persistent exactly when it arrived persistent.
+- Destinations are published in order. The message is acked once every destination has it.
+- When a publish fails, the message is requeued, so destinations that already had it receive it
+  again: delivery is at least once per destination. The requeue waits 500 ms while the publishing
+  connection is up, or until it reconnects. Failures are logged at most once per 10 s per source
+  queue, with the count of those left out.
+- The router publishes without the mandatory flag: a message that a destination exchange routes to
+  no queue is dropped by the broker, and the router still acks it.
+- At most `ROUTER_PREFETCH` messages per source queue are unacknowledged at a time.
 
-**Multiple rules:**
-```bash
-ROUTER_RULES="
-  | broadcast > codec.in & writer
-  | reader > codec.reader & archive
-"
-```
+## Connections
 
-**Multiple sources:**
-```bash
-ROUTER_RULES="broadcast & reader > writer"
-```
+The router opens two connections to `QUEUE_URL`. The consumer connection declares the source queues
+and exchanges and consumes from them; the publisher connection declares the destinations and
+publishes to them.
 
-## Architecture
+At startup the consumer connection is retried a few times before the router gives up and shuts
+down; the publisher connection is retried until it opens. Once running, the consumer connection is
+not re-established: when it is lost, the router exits with code 1. The publisher connection
+reconnects without limit and declares its topology again. The router also exits with code 1 when
+the broker cancels one of its consumers, as it does when a source queue is deleted. Restarting is
+left to the container's restart policy (`unless-stopped` in the compose file).
 
-### Message Flow
+## Backpressure
 
-```
-Source Queue (default or explicit exchange)
-    ↓ (consume)
- Router Service
-    ↓ (optional routing key transform + header merge)
-Destination Queue/Exchange (default or explicit)
-```
+With `ROUTER_MAX_READY` above 0, publishing pauses while any queue in `ROUTER_WATCH_QUEUES` holds
+`ROUTER_MAX_READY` ready messages or more.
 
-### Behaviour
+- Depths are read at startup and then every 2 s, with a passive queue check, so the router does
+  not declare the watched queues. Before each message is published, the latest depths are
+  compared with the limit.
+- While a queue is at or above the limit, every source queue waits. The router reads that queue's
+  depth every 1 s and resumes all of them together once no watched queue is at or above the limit.
+- A watched queue that does not exist counts as empty, with a warning at most once a minute. A depth
+  that cannot be read keeps its last value, and counts as 0 until one is read: the pause fails open.
+- The checks run on a channel of their own on the consumer connection, so a failed check does not
+  close the consuming channel.
 
-1. Router declares topology (exchanges, queues, bindings) at startup.
-2. For each message received:
-   - Preserves message content, all headers, and AMQP properties
-   - Applies routing key transform if configured
-   - Merges injected headers if configured (non-destructive)
-   - Forwards to all destination queues/exchanges (true fan-out)
-   - Uses raw byte forwarding — no parse/serialize round-trip
-3. Acknowledges on successful publish; requeues on error.
-
-### Default Exchange & Routing Keys
-
-When a destination uses the **default exchange** (bare queue name, no `@`), the routing key is always set to the destination queue name — this is how the default exchange works. The original routing key is not preserved.
-
-Use an explicit exchange if routing key preservation matters:
-
-```bash
-# Routing key lost — default exchange overwrites it
-ROUTER_RULES="broadcast@topic:broadcast > writer"
-
-# Routing key preserved — explicit exchange keeps it
-ROUTER_RULES="broadcast@topic:broadcast > writer@topic:writer"
-```
-
-## Rule Validation
-
-Rules are validated at startup. Rejected conditions:
-- Missing `>` separator, or more than one
-- No sources or no destinations
-- Source without a queue name (sources consume from queues)
-- Colon without `@` (likely a missing `@` before an exchange spec)
-- Invalid exchange type
-- `(key:match:replace)` on a source
-- `header:` without `=`, or with an empty name
-- Unknown modifier prefixes
+A paused router still holds up to `ROUTER_PREFETCH` unacknowledged messages per source queue.
 
 ## Configuration
 
-Requires RabbitMQ — see [infra packs](../../modules/infra/README.md).
+RabbitMQ comes from an infra pack (see [modules/infra/README.md](../../modules/infra/README.md)).
 
 | Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `ROUTER_RULES` | Yes | - | Routing rules (see syntax above) |
+|---|---|---|---|
+| `QUEUE_URL` | Yes | - | AMQP URL; both connections use it |
+| `ROUTER_RULES` | Yes | - | Rules, in the [rule grammar](../../shared/utils/README.md#rule-grammar) |
+| `ROUTER_PREFETCH` | No | `500` | Most unacknowledged messages per source queue; a positive integer |
+| `ROUTER_MAX_READY` | No | `0` (off) | Ready messages in a watched queue at which publishing pauses; a non-negative integer |
+| `ROUTER_WATCH_QUEUES` | With `ROUTER_MAX_READY` | - | Comma-separated queues to watch; set exactly when `ROUTER_MAX_READY` is above 0 |
 
-## Health Monitoring
+`services/router/docker/compose.yml` passes all of them except `ROUTER_PREFETCH`, which therefore
+takes its default there.
+
+## Health
+
+The health server answers on port 3000 (`curl http://router:3000/health`):
+
+- `200` `{"healthy":true,"brokers":{"consumer":"connected","publisher":"connected"}}` while both
+  connections are up;
+- `503` with `"healthy":false` and each connection's state otherwise, as while the publisher
+  reconnects.
+
+Until both connections are first up at startup, it answers `200` `{"status":"ok"}`. The compose
+healthcheck requests `/health` every 30 s.
+
+## Examples
 
 ```bash
-curl http://router:3000/health
+# Queue to queue, through the default exchange
+ROUTER_RULES="src > dst"
+
+# Fan-out to two queues
+ROUTER_RULES="src > dst & audit"
+
+# Read a topic exchange, republish to a fanout exchange; subscribers bind their own queues
+ROUTER_RULES="src@topic:events > @fanout:broadcast"
+
+# Rewrite the key prefix: message.trade becomes collect.trade
+ROUTER_RULES="src@topic:events > @topic:collected(key:message:collect)"
+
+# Keep the incoming key, and declare a queue that receives everything on the exchange (bound with #)
+ROUTER_RULES="src@topic:events > dst@topic:out"
+
+# A static key and an injected header; the queue is bound with the key
+ROUTER_RULES="src@topic:events > dst@direct:out(key:trade,header:x-origin=router)"
+
+# Several rules, one per line
+ROUTER_RULES="
+  | src@topic:events(key:trade.#) > trades
+  | audit.in > @fanout:audit
+"
 ```
-
-Returns service status and configured routes. Available only after topology is declared at startup.
-
-**Response (200 - Healthy):** broker connected, topology declared.
-
-**Response (503 - Unhealthy):** broker not connected or startup incomplete.
