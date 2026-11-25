@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
-import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DuckDBInstance } from '@duckdb/node-api';
@@ -258,6 +258,126 @@ describe('a book\'s rows', () => {
       [5_301_531_664, 'set', 'bid'], [5_301_531_665, 'take', 'ask'], [5_301_531_666, 'take', 'bid'],
       [5_301_531_667, 'make', 'ask'], [5_301_531_668, 'make', 'bid'],
     ]);
+  });
+});
+
+/**
+ * A series that names each row's instrument names the file the row goes to.
+ * A name that cannot be one, or a row that names none, fails the partition —
+ * read alone or in a batch — before anything is written.
+ */
+describe('instruments named by the rows', () => {
+  const key: VaultKey = { table: 'funding', venue: 'okx', market: 'perp', kind: 'realised', month: '2026-07' };
+  const CATALOG = 'okx/perp/funding,realised/@/202607/okx|perp|funding,realised|@|20260729.zip';
+
+  /** The okx funding fixture with its first row's instrument cell replaced by `cell`, as written. */
+  const named = async (cell: string, at: string): Promise<DiskFile> => {
+    const path = join(dir, `${at}.csv`);
+    const [header, first, ...rest] = (await readFile(join(FIXTURES, 'okx.all-fundingrates.csv'), 'utf8')).split('\n');
+
+    await writeFile(path, [header, first!.replace(/^[^,]*/, cell), ...rest].join('\n'));
+
+    return { ...await input('okx.all-fundingrates.csv', CATALOG), absolute: path };
+  };
+
+  const cases: [string, string, RegExp][] = [
+    ['a parent directory', '../x', /cannot be a file name: "\.\.\/x"/],
+    ['the bundle', '@', /cannot be a file name: "@"/],
+    ['an empty name', '""', /name no instrument/],
+    ['nothing', '', /name no instrument/],
+  ];
+
+  for (const [at, [what, cell, refusal]] of cases.entries()) {
+    it(`refuses ${what}, alone and in a batch, writing nothing`, async () => {
+      const root = join(dir, `named-${at}`);
+      const file = await named(cell, `named-${at}-input`);
+
+      await expect(buildGroup(conn, key, '@', [file], join(root, 'alone', 'stage'))).rejects.toThrow(refusal);
+      await expect(buildBatch(conn, key, [{ symbol: '@', inputs: [file] }], join(root, 'batch', 'stage'))).rejects.toThrow(refusal);
+      await expect(buildBatch(conn, key, [{ symbol: '@', inputs: [file] }], join(root, 'whole', 'stage'), undefined, true))
+        .rejects.toThrow(refusal);
+
+      expect(await written(root).catch(() => [])).toEqual([]);
+    });
+  }
+
+  it('takes any other name as it is', async () => {
+    const file = await named('BTC_USDT', 'named-underscore');
+    const here = join(dir, 'named-underscore');
+
+    await buildGroup(conn, key, '@', [file], here);
+
+    expect(await written(here)).toContain('BTC_USDT.parquet');
+  });
+});
+
+/**
+ * A partition's join turns on insertion order for its own statement, and
+ * leaves it as the instance has it everywhere else.
+ */
+describe('joining a partition', () => {
+  it('keeps insertion order to its own session, during the join and after it', async () => {
+    const engine = await DuckDBInstance.create(':memory:');
+    const mine   = await engine.connect();
+    const other  = await engine.connect();
+
+    const setting = async (on: typeof mine): Promise<boolean> =>
+      Boolean((await on.runAndReadAll(`SELECT current_setting('preserve_insertion_order')`)).getRows()[0]![0]);
+
+    try {
+      await mine.run('SET preserve_insertion_order=false');
+
+      const usdt = await input('gate.futures_usdt-trades.csv', 'gate/perp/trades/B/BTC_USDT/202606/gate|perp|trades|BTC_USDT|202606.csv.gz');
+      const btc  = await input('gate.futures_btc-trades.csv', 'gate/perp/trades/B/BTC_USD/202606/gate|perp|trades|BTC_USD|202606.csv.gz');
+      const here = join(dir, 'session');
+
+      await buildGroup(mine, gate, 'BTC_USDT', [usdt], here);
+      await buildGroup(mine, gate, 'BTC_USD', [btc], here);
+
+      // What each connection sees as the join is written.
+      const during: { mine?: boolean; other?: boolean } = {};
+      const watched = new Proxy(mine, {
+        get: (target, name) => (name === 'run'
+          ? async (sql: string) => {
+            if (sql.startsWith('COPY')) Object.assign(during, { mine: await setting(target), other: await setting(other) });
+
+            return target.run(sql);
+          }
+          : Reflect.get(target, name, target)),
+      });
+
+      const joined = await bundleStaged(watched, gate, here);
+
+      expect(during).toEqual({ mine: true, other: false });
+      expect({ mine: await setting(mine), other: await setting(other) }).toEqual({ mine: false, other: false });
+
+      const read = await mine.runAndReadAll(`SELECT symbol FROM read_parquet('${joined}')`);
+      const symbols = read.getRows().map(row => String(row[0]));
+
+      expect(symbols).toEqual([...symbols].sort());
+    } finally {
+      mine.closeSync();
+      other.closeSync();
+    }
+  });
+
+  /** One staged file is the month: moved into place, not read back and written again. */
+  it('moves a single instrument\'s file into place as it is', async () => {
+    const usdt = await input('gate.futures_usdt-trades.csv', 'gate/perp/trades/B/BTC_USDT/202606/gate|perp|trades|BTC_USDT|202606.csv.gz');
+    const here = join(dir, 'single');
+
+    await buildGroup(conn, gate, 'BTC_USDT', [usdt], here);
+
+    const staged  = join(here, 'BTC_USDT.parquet');
+    const before  = await stat(staged);
+    const columns = (await conn.runAndReadAll(`SELECT * FROM read_parquet('${staged}') LIMIT 0`)).columnNames();
+    const rows    = await rowsOf(staged);
+
+    const joined = await bundleStaged(conn, gate, here);
+
+    expect((await stat(joined)).ino).toBe(before.ino);
+    expect((await conn.runAndReadAll(`SELECT * FROM read_parquet('${joined}') LIMIT 0`)).columnNames()).toEqual(columns);
+    expect(await rowsOf(joined)).toBe(rows);
   });
 });
 

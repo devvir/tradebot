@@ -111,9 +111,10 @@ export const buildGroup = async (
 
       await assertDeclaredWidth(conn, format, paths, series, key, symbol);
 
-      const extra = series.instrument ? [`CAST(${series.instrument} AS VARCHAR) AS _instrument`] : [];
+      // Rows split by instrument carry their file, so a row that names none can be traced to it.
+      const extra = series.instrument ? [`CAST(${series.instrument} AS VARCHAR) AS _instrument`, 'filename AS _file'] : [];
 
-      selects.push(`SELECT * FROM (${selectFor(series, format.relation(paths, series), extra)})`);
+      selects.push(`SELECT * FROM (${selectFor(series, format.relation(paths, series, !! series.instrument), extra)})`);
     }
 
     /**
@@ -129,7 +130,7 @@ export const buildGroup = async (
 
     try {
       return split[0]
-        ? await writeSplit(conn, key, relation, staging, distinct)
+        ? await writeSplit(conn, key, symbol, relation, staging, distinct)
         : await writeOne(conn, key, symbol, relation, staging, distinct);
     } catch (err) {
       for (const [series, paths] of bySeries)
@@ -156,7 +157,8 @@ export const buildGroup = async (
  * done per instrument.
  *
  * Each row's instrument is its catalog symbol — known from the file it came
- * from — unless the series names an instrument column, which then wins.
+ * from — unless the series names an instrument column, which then wins: a row
+ * of such a series that names none is refused, as it is read alone.
  */
 export const buildBatch = async (
   conn:    DuckDBConnection,
@@ -288,6 +290,7 @@ const batchFrom = async (
       const extra = [
         `${TAG} AS _file`,
         'CAST(NULL AS VARCHAR) AS _instrument',
+        'false AS _named',
         `${format.wide?.(series) ?? 'false'} AS _wide`,
       ];
 
@@ -307,6 +310,7 @@ const batchFrom = async (
         series.instrument
           ? `CAST(${series.instrument} AS VARCHAR) AS _instrument`
           : 'CAST(NULL AS VARCHAR) AS _instrument',
+        `${series.instrument ? 'true' : 'false'} AS _named`,
         `${format.wide?.(series) ?? 'false'} AS _wide`,
       ];
 
@@ -349,6 +353,19 @@ const batchFrom = async (
       );
     }
 
+    /**
+     * A row of a series that names each row's instrument is that instrument's,
+     * and one that names none is refused, as it is read alone — see
+     * `writeSplit`. The catalog symbol stands in only for series that name none.
+     */
+    const unnamed = (await conn.runAndReadAll(
+      `SELECT _file FROM ${table} WHERE _named AND coalesce(_instrument, '') = '' LIMIT 1`)).getRows();
+
+    if (unnamed.length) throw new Error(`${labelFor(key, groups[0]!.symbol)}: ${UNNAMED}: ${String(unnamed[0]![0])}`);
+
+    for (const [name] of (await conn.runAndReadAll(`SELECT DISTINCT _instrument FROM ${table} WHERE _named`)).getRows())
+      assertInstrumentName(key, groups[0]!.symbol, String(name));
+
     lap('read');
 
     if (whole) return await writeWhole(conn, key, table, staging, repeats(reading));
@@ -366,7 +383,7 @@ const batchFrom = async (
       await mkdir(staging, { recursive: true });
 
       await conn.run(
-        `COPY (SELECT ${repeats(reading)}${q(instrument)} AS symbol, * EXCLUDE (_instrument, _wide, _sym, _file)${marginColumn(key, instrument)} FROM ${table}
+        `COPY (SELECT ${repeats(reading)}${q(instrument)} AS symbol, * EXCLUDE (_instrument, _named, _wide, _sym, _file)${marginColumn(key, instrument)} FROM ${table}
                WHERE _sym = ${q(instrument)} ORDER BY ${orderOf(key)})
          TO ${q(temp)} (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE ${ROW_GROUP})`,
       );
@@ -396,9 +413,9 @@ const batchFrom = async (
  * symbol order and writing what is read gives a file ordered by symbol and then
  * by time, one instrument's rows together, which is how the file is read,
  * without holding a month in memory to sort it. A single file is the month
- * already, and is not rewritten. Only where two files hold symbols that
- * interleave — a big instrument read on its own, out of the middle of a batch —
- * is the join a sort.
+ * already, and is moved into place as it is. Only where two files hold symbols
+ * that interleave — a big instrument read on its own, out of the middle of a
+ * batch — is the join a sort.
  *
  * A partition every input of which was empty still becomes a file, with the
  * table's columns and no rows, so it reads as stocked rather than being rebuilt
@@ -410,8 +427,8 @@ export const bundleStaged = async (conn: DuckDBConnection, key: VaultKey, stagin
   const out   = join(staging, '@.bundle');
   const names = (await readdir(staging)).filter(name => name.endsWith(STAGED)).map(name => name.slice(0, -STAGED.length));
 
-  // One batch, written whole: it is the month's file as it stands.
-  if (names.length === 1 && names[0]!.startsWith(WHOLE)) {
+  // One staged file — an instrument's, or a batch written whole — is the month's file as it stands.
+  if (names.length === 1) {
     await rename(stagedOf(staging, names[0]!), out);
 
     return out;
@@ -427,16 +444,17 @@ export const bundleStaged = async (conn: DuckDBConnection, key: VaultKey, stagin
       .map(field => `CAST(NULL AS ${field.type}) AS ${field.name}`).join(', ')} WHERE false`;
 
   /**
-   * Insertion order is what makes appending work, and it is off everywhere else
-   * — see `open`. Nothing else is being built while a partition is joined, so
-   * turning it on for this one statement costs nobody their memory.
+   * Insertion order is what makes appending work, and it is off for the
+   * instance — see `open`. It is turned on for this connection's session alone,
+   * for this one statement, so what other connections build meanwhile keeps
+   * spilling rather than holding its rows in order.
    */
-  await conn.run('SET preserve_insertion_order=true');
+  await conn.run('SET SESSION preserve_insertion_order=true');
 
   try {
     await conn.run(`COPY (${rows}) TO ${q(out)} (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE ${ROW_GROUP})`);
   } finally {
-    await conn.run('SET preserve_insertion_order=false');
+    await conn.run('RESET SESSION preserve_insertion_order');
   }
 
   return out;
@@ -759,7 +777,7 @@ const writeWhole = async (
 
   try {
     await conn.run(
-      `COPY (SELECT ${distinct}_sym AS symbol, * EXCLUDE (_instrument, _wide, _sym, _file${margins ? ', _of' : ''})
+      `COPY (SELECT ${distinct}_sym AS symbol, * EXCLUDE (_instrument, _named, _wide, _sym, _file${margins ? ', _of' : ''})
                FROM ${table}${side} ORDER BY symbol, ${orderOf(key)})
        TO ${q(temp)} (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE ${ROW_GROUP})`,
     );
@@ -828,10 +846,16 @@ const writeOne = async (
  * Rows naming their own instrument: gathered once into a temporary table, then
  * written one instrument at a time — reading the source files once rather than
  * once per instrument.
+ *
+ * **Every row names one**: a row whose instrument is NULL or empty belongs to
+ * no file, and the partition is refused, naming the input it is in. So is an
+ * instrument that cannot be a file name — see `assertInstrumentName`. Both are
+ * found before anything is written.
  */
 const writeSplit = async (
   conn:     DuckDBConnection,
   key:      VaultKey,
+  symbol:   string,
   relation: string,
   staging:  string,
   distinct: string,
@@ -841,9 +865,15 @@ const writeSplit = async (
   await conn.run(`CREATE TEMP TABLE ${table} AS SELECT * FROM ${relation}`);
 
   try {
-    const reader = await conn.runAndReadAll(
-      `SELECT DISTINCT _instrument FROM ${table} WHERE _instrument IS NOT NULL ORDER BY 1`);
+    const unnamed = (await conn.runAndReadAll(
+      `SELECT _file FROM ${table} WHERE coalesce(_instrument, '') = '' LIMIT 1`)).getRows();
+
+    if (unnamed.length) throw new Error(`${labelFor(key, symbol)}: ${UNNAMED}: ${String(unnamed[0]![0])}`);
+
+    const reader      = await conn.runAndReadAll(`SELECT DISTINCT _instrument FROM ${table} ORDER BY 1`);
     const instruments = reader.getRows().map(row => String(row[0]));
+
+    for (const instrument of instruments) assertInstrumentName(key, symbol, instrument);
 
     let rows  = 0;
     let files = 0;
@@ -855,7 +885,7 @@ const writeSplit = async (
       await mkdir(staging, { recursive: true });
 
       await conn.run(
-        `COPY (SELECT ${distinct}${q(instrument)} AS symbol, * EXCLUDE (_instrument)${marginColumn(key, instrument)} FROM ${table}
+        `COPY (SELECT ${distinct}${q(instrument)} AS symbol, * EXCLUDE (_instrument, _file)${marginColumn(key, instrument)} FROM ${table}
                WHERE _instrument = ${q(instrument)} ORDER BY ${orderOf(key)})
          TO ${q(temp)} (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE ${ROW_GROUP})`,
       );
@@ -870,6 +900,23 @@ const writeSplit = async (
   } finally {
     await conn.run(`DROP TABLE IF EXISTS ${table}`);
   }
+};
+
+/** What a partition is refused for when a row of a series that names instruments names none. */
+const UNNAMED = 'an input has rows that name no instrument';
+
+/**
+ * Refuse an instrument, named by a row's own cell, that cannot be a file name.
+ *
+ * Its file is named by it, in staging and then in the vault, beside the other
+ * instruments of the month. Empty, `.` or `..`, or holding a path separator or
+ * NUL, the name would put the file somewhere else; opening with `@`, it would
+ * stand where a month stored as one file does. Anything else a venue names an
+ * instrument with — `_`, `-`, digits, any case — is a file name as it is.
+ */
+const assertInstrumentName = (key: VaultKey, symbol: string, name: string): void => {
+  if (name === '' || name === '.' || name === '..' || /[/\\\0]/.test(name) || name.startsWith('@'))
+    throw new Error(`${labelFor(key, symbol)}: an input names an instrument that cannot be a file name: ${JSON.stringify(name)}`);
 };
 
 /**

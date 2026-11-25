@@ -808,11 +808,10 @@ const stock = async (
 
   /**
    * **Put in place one partition at a time**, whatever else is being built.
-   * Three things here are the vault's as a whole and not this partition's: the
-   * engine's setting that keeps rows in the order they are appended, which is
-   * on for the length of one join and off again; the ledger, whose lines say
-   * which months are mid-change; and the repair that reads them, which would
-   * take another partition's month for abandoned while it was only half moved.
+   * Two things here are the vault's as a whole and not this partition's: the
+   * ledger, whose lines say which months are mid-change; and the repair that
+   * reads them, which would take another partition's month for abandoned while
+   * it was only half moved.
    * It is the short end of a build — joins of small files, and renames.
    */
   const built = Date.now();
