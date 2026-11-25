@@ -4,22 +4,26 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { catchUp, editLens, lensNamed, putLens } from '@tradebot/lenses';
 import type { Lens, LensDefinition, LensWrite } from '@tradebot/lenses';
+import { AT_CREATION, CATALOG_SCHEMA, ON_OPEN } from '../../prospector/src/database/schema';
 import type { FileSpec, Scratch, SeriesSpec } from './types';
 
 /**
- * A scratch catalog for the tests: the tables this service reads, created
- * empty, and the few writes a test needs to fill them — the way prospector
- * writes them, partitions included, since every size and month is read off those.
+ * A scratch catalog for the tests: prospector's own schema, created empty and
+ * opened as prospector opens it — write-ahead log, foreign keys on — and the
+ * few writes a test needs to fill it, the way prospector writes them,
+ * partitions included, since every size and month is read off those.
  *
- * Only the columns and keys the catalog reads are here. The real database is
- * prospector's, and nothing in these tests ever opens it.
+ * The schema is imported rather than copied, so the planner sees the tables,
+ * types and indexes it sees in production. The real database is prospector's,
+ * and nothing in these tests ever opens it.
  */
 
-/** An empty catalog at this path, with the tables the catalog reads. */
+/** An empty catalog at this path, as prospector creates one. */
 export const openScratch = (path: string): DatabaseSync => {
   const db = new DatabaseSync(path);
 
-  db.exec(SCHEMA);
+  for (const pragma of [...AT_CREATION, ...ON_OPEN]) db.exec(pragma);
+  db.exec(CATALOG_SCHEMA);
 
   return db;
 };
@@ -27,9 +31,7 @@ export const openScratch = (path: string): DatabaseSync => {
 /** An empty catalog in a directory of its own, and how to throw it away. */
 export const scratch = (): Scratch => {
   const dir = mkdtempSync(join(tmpdir(), 'catalog-'));
-  const db  = new DatabaseSync(join(dir, 'catalog.db'));
-
-  db.exec(SCHEMA);
+  const db  = openScratch(join(dir, 'catalog.db'));
 
   return { db, close: () => { db.close(); rmSync(dir, { recursive: true, force: true }); } };
 };
@@ -109,20 +111,25 @@ export const recordSeries = (
   ).run(pattern.id, instrument, spec.urlSymbol ?? null, bounds.first ?? null, bounds.last ?? null).lastInsertRowid) };
 };
 
-/** Files, counted into their partitions as prospector counts them; each series' bounds follow. */
+/**
+ * Files, each in its partition — created where it is new — and counted into it
+ * as prospector counts them where confirmed; each series' bounds follow.
+ */
 export const putFiles = async (db: DatabaseSync, files: readonly FileSpec[]): Promise<void> => {
   const insert = db.prepare(
-    `INSERT INTO file (venue_id, path, date, size, etag, modified, series_id, existence, seen_at, downloaded_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'T0', NULL)`,
+    `INSERT INTO file (venue_id, path, date, size, etag, modified, series_id, partition_id, existence, seen_at,
+                       downloaded_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'T0', NULL)`,
   );
 
   for (const one of files) {
     const existence = one.existence ?? 'confirmed';
+    const partition = partitionOf(db, one);
 
     insert.run(one.venueId, one.path, one.date, one.size ?? 10, one.etag ?? 'e', one.modified ?? null,
-      one.seriesId, existence);
+      one.seriesId, partition, existence);
 
-    if (existence === 'confirmed') tally(db, one);
+    if (existence === 'confirmed') tally(db, partition, one);
   }
 
   db.exec(`UPDATE series SET
@@ -154,65 +161,26 @@ export const markDownloaded = (db: DatabaseSync, files: readonly { venueId: numb
 /** The slice a series' pattern publishes into, by the series' id. */
 const SLICE_OF_SERIES = 'SELECT p.slice_id FROM series s JOIN pattern p ON p.id = s.pattern_id WHERE s.id = ?';
 
+/** A file's partition — its series' slice, at the month of its date — created empty where it is new. */
+const partitionOf = (db: DatabaseSync, one: FileSpec): number =>
+  (db.prepare(
+    `INSERT INTO partition (slice_id, month, updated_at) VALUES ((${SLICE_OF_SERIES}), ?, ?)
+         -- A self-assignment, so the row is untouched and RETURNING still yields it.
+         ON CONFLICT (slice_id, month) DO UPDATE SET month = excluded.month
+     RETURNING id`,
+  ).get(one.seriesId, one.date.slice(0, 6), one.seenAt ?? 'T0') as { id: number }).id;
+
 /**
- * One confirmed file into its partition: its series' slice, at the month of its
- * date. The version is not prospector's sum here — only that it moves is read.
+ * One confirmed file counted into its partition. The version is not
+ * prospector's sum here — only that it moves is read.
  */
-const tally = (db: DatabaseSync, one: FileSpec): void => {
+const tally = (db: DatabaseSync, partition: number, one: FileSpec): void => {
   const size = one.size ?? 10;
 
   db.prepare(
-    `INSERT INTO partition (slice_id, month, files, bytes, pending, pending_bytes, version, updated_at)
-          VALUES ((${SLICE_OF_SERIES}), ?, 1, ?, 1, ?, '0000000000000001', ?)
-       ON CONFLICT (slice_id, month) DO UPDATE SET
-         files = files + 1, bytes = bytes + excluded.bytes,
-         pending = pending + 1, pending_bytes = pending_bytes + excluded.pending_bytes,
-         version = printf('%016x', files + 1), updated_at = excluded.updated_at`,
-  ).run(one.seriesId, one.date.slice(0, 6), size, size, one.seenAt ?? 'T0');
+    `UPDATE partition SET
+       files = files + 1, bytes = bytes + ?1, pending = pending + 1, pending_bytes = pending_bytes + ?1,
+       version = printf('%016x', files + 1), updated_at = ?2
+     WHERE id = ?3`,
+  ).run(size, one.seenAt ?? 'T0', partition);
 };
-
-const SCHEMA = `
-  CREATE TABLE venue (id INTEGER PRIMARY KEY, name TEXT NOT NULL, host TEXT NOT NULL DEFAULT '',
-    base TEXT NOT NULL, key_root TEXT NOT NULL,
-    alternative_hosts TEXT NOT NULL DEFAULT '[]', UNIQUE (name, host));
-  CREATE TABLE slice (id INTEGER PRIMARY KEY, venue TEXT NOT NULL, market TEXT NOT NULL, dataset TEXT NOT NULL,
-    variant TEXT NOT NULL DEFAULT '', grain TEXT NOT NULL, bundle TEXT NOT NULL,
-    UNIQUE (venue, market, dataset, variant, grain, bundle));
-  CREATE TABLE partition (id INTEGER PRIMARY KEY, slice_id INTEGER NOT NULL, month TEXT NOT NULL,
-    files INTEGER NOT NULL DEFAULT 0, bytes INTEGER NOT NULL DEFAULT 0, pending INTEGER NOT NULL DEFAULT 0,
-    pending_bytes INTEGER NOT NULL DEFAULT 0, withdrawn INTEGER NOT NULL DEFAULT 0,
-    version TEXT NOT NULL DEFAULT '0000000000000000', updated_at TEXT NOT NULL, UNIQUE (slice_id, month));
-  CREATE TABLE pattern (id INTEGER PRIMARY KEY, venue_id INTEGER NOT NULL, slice_id INTEGER NOT NULL,
-    pattern TEXT NOT NULL, retired_at TEXT, UNIQUE (venue_id, slice_id, pattern));
-  CREATE TABLE instrument (id INTEGER PRIMARY KEY, venue TEXT NOT NULL, market TEXT NOT NULL,
-    symbol TEXT NOT NULL, UNIQUE (venue, market, symbol));
-  CREATE TABLE series (id INTEGER PRIMARY KEY, pattern_id INTEGER NOT NULL, instrument_id INTEGER,
-    url_symbol TEXT, first TEXT, last TEXT, prefix TEXT);
-  CREATE INDEX series_prefix ON series (prefix);
-  CREATE TRIGGER series_prefix AFTER INSERT ON series BEGIN
-    UPDATE series SET prefix = (
-      SELECT CASE WHEN i.symbol = '' OR instr(i.symbol, '/') > 0 THEN NULL ELSE
-               c.venue || '/' || c.market || '/' || c.dataset
-               || CASE WHEN c.variant <> '' THEN ',' || c.variant ELSE '' END
-               || '/' || CASE WHEN i.id IS NULL THEN '@/' ELSE
-                    CASE WHEN upper(substr(i.symbol, 1, 1)) GLOB '[A-Z]'
-                         THEN upper(substr(i.symbol, 1, 1)) ELSE '_' END
-                    || '/' || i.symbol || '/' END END
-        FROM pattern p JOIN slice c ON c.id = p.slice_id
-        LEFT JOIN instrument i ON i.id = NEW.instrument_id WHERE p.id = NEW.pattern_id)
-    WHERE id = NEW.id;
-  END;
-  CREATE TABLE file (venue_id INTEGER NOT NULL, path TEXT NOT NULL, date TEXT NOT NULL, size INTEGER,
-    etag TEXT, modified TEXT, series_id INTEGER NOT NULL, existence TEXT NOT NULL, seen_at TEXT NOT NULL,
-    downloaded_at TEXT, PRIMARY KEY (venue_id, path));
-  CREATE INDEX file_series ON file (series_id, date, existence);
-  CREATE INDEX file_pending ON file (series_id, date) WHERE downloaded_at IS NULL AND existence = 'confirmed';
-  CREATE TABLE lens (id INTEGER PRIMARY KEY, slug TEXT NOT NULL, name TEXT NOT NULL DEFAULT '',
-    note TEXT NOT NULL DEFAULT '', definition TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-    partitions_through INTEGER NOT NULL DEFAULT 0, rebuilding INTEGER NOT NULL DEFAULT 0);
-  CREATE UNIQUE INDEX lens_slug ON lens (slug);
-  CREATE TABLE lens_member (lens_id INTEGER NOT NULL, partition_id INTEGER NOT NULL,
-    PRIMARY KEY (lens_id, partition_id)) WITHOUT ROWID;
-  CREATE TABLE run (id INTEGER PRIMARY KEY, venue_id INTEGER NOT NULL, kind TEXT NOT NULL, scope TEXT NOT NULL,
-    started TEXT NOT NULL, completed TEXT);
-`;

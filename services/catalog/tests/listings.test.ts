@@ -256,6 +256,50 @@ describe('a prefix', () => {
 
     expect(body.Contents.map(one => one.Key)).toEqual(all.slice(3));
   });
+
+  /** S3 takes any string as a marker: what follows it is listed, whatever it names. */
+  it.each([
+    ['a name this listing never writes', 'binance/perp/klines,1m/B/BTCUSDT/202001/a|b|c|d|9'],
+    ['another series\' name, dated inside the month', 'binance/perp/klines,1m/B/BTCUSDT/202001/a|b|c|d|20200102'],
+    ['a name dated past its month folder', 'binance/perp/klines,1m/B/BTCUSDT/202001/binance|perp|klines,1m|BTCUSDT|20210101'],
+    ['a month folder that is not a month', 'binance/perp/klines,1m/B/BTCUSDT/2020/binance|perp|klines,1m|BTCUSDT|20200201'],
+  ])('resumes after a marker of %s', async (_, marker) => {
+    const prefix = 'binance/perp/klines,1m/';
+    const { body } = await call(`/listings?prefix=${prefix}&marker=${encodeURIComponent(marker)}`);
+
+    expect(body.Contents.map(one => one.Key)).toEqual(EXPECTED.filter(one => one.startsWith(prefix) && one > marker));
+  });
+
+  it('lists and reports a series whose symbol holds a |', async () => {
+    await publish(binance, { symbol: 'A|B', urlSymbol: 'A|B' }, days('A|B', 'k/1m', ['20200101', '20200102', '20200103', '20200201']));
+
+    const keys = await walk('&prefix=binance/perp/klines,1m/A/');
+
+    expect(keys).toEqual(['20200101', '20200102', '20200103', '20200201'].map(date =>
+      `binance/perp/klines,1m/A/A|B/${date.slice(0, 6)}/binance|perp|klines,1m|A|B|${date}.zip`));
+
+    const got: unknown[] = [];
+    const stand = createServer((req, res) => {
+      let text = '';
+
+      req.on('data', chunk => { text += chunk; });
+      req.on('end', () => { got.push(JSON.parse(text)); res.writeHead(200).end('{}'); });
+    });
+
+    await new Promise<void>(ready => stand.listen(0, '127.0.0.1', ready));
+    cfg.prospectorApi = `http://127.0.0.1:${(stand.address() as { port: number }).port}`;
+
+    try {
+      const { status } = await call('/listings/report', { method: 'POST', body: JSON.stringify({ downloaded: [keys[1]] }) });
+
+      expect(status).toBe(200);
+      expect(got).toMatchObject([{ downloaded: [
+        (db.prepare('SELECT rowid AS id FROM file WHERE path = ?').get('k/1m/20200102/A|B.zip') as { id: number }).id,
+      ] }]);
+    } finally {
+      await new Promise(done => stand.close(done));
+    }
+  });
 });
 
 describe('a lens', () => {

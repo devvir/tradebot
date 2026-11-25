@@ -35,9 +35,10 @@ export const keyOf = (prefix: string, pattern: string, file: { date: string; pat
  * file, `AccessDenied` where the lens a request reads through does not let it
  * through.
  *
- * **Found by building, not by parsing.** A key's prefix and date narrow it to a
- * series' files of one day — one file, or a day's parts — and each is given its
- * key the way the listing gives it; the one that matches is the file. Nothing
+ * **Found by building, not by parsing.** A key's prefix and date — what follows
+ * the name's start, see `nameStartOf` — narrow it to a series' files of one
+ * day, one file or a day's parts, and each is given its key the way the
+ * listing gives it; the one that matches is the file. Nothing
  * here has to understand a filename, so nothing here can misread one.
  *
  * **Each series' day is read and keyed once, however many of its keys are
@@ -52,7 +53,9 @@ export const filesOfKeys = (db: DatabaseSync, keys: readonly string[], lens: Len
   for (const key of keys) {
     const parts = key.split('/');
     const depth = depthOf(parts);
-    const date  = parts.length === depth + 2 ? parts[depth + 1]!.split('|')[4]?.split('.')[0] : undefined;
+    const name  = parts.length === depth + 2 ? parts[depth + 1]! : '';
+    const start = nameStartOf(parts, depth);
+    const date  = name.startsWith(start) ? name.slice(start.length).split('.')[0] : undefined;
 
     if (! date) {
       found.set(key, 'NoSuchKey');
@@ -116,6 +119,16 @@ export const filesOfKeys = (db: DatabaseSync, keys: readonly string[], lens: Len
 
   return found;
 };
+
+/**
+ * What every file name under a key's series prefix starts with, before the
+ * date: the prefix's parts but the letter, as `keyOf` writes them —
+ * `venue|market|dataset[,variant]|symbol|`, the symbol `@` for the venue-wide
+ * file. A key is a file's only where its name starts with this, and its date is
+ * what follows, whatever the symbol holds.
+ */
+export const nameStartOf = (parts: readonly string[], depth: number): string =>
+  `${parts.slice(0, 3).join('|')}|${depth === 4 ? BUCKET : parts[4]}|`;
 
 /**
  * How many segments of a key are its series prefix: five —

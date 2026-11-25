@@ -15,6 +15,11 @@ import { logger } from '@devvir/service-kit';
  * checkpoints, so the write-ahead log grows for as long as it lasts — which is
  * why every view here pages or answers from the partitions rather than walking a
  * table in one statement.
+ *
+ * **A lock is waited on, briefly.** A reader can meet one for a moment while
+ * prospector recovers or checkpoints the log, and waits up to two seconds for it
+ * rather than failing the request. The wait holds the only thread, so it stays
+ * short.
  */
 export const openCatalog = async (path: string): Promise<DatabaseSync> => {
   while (! existsSync(path)) {
@@ -23,5 +28,5 @@ export const openCatalog = async (path: string): Promise<DatabaseSync> => {
     await new Promise(done => setTimeout(done, 10_000));
   }
 
-  return new DatabaseSync(path, { readOnly: true });
+  return new DatabaseSync(path, { readOnly: true, timeout: 2_000 });
 };

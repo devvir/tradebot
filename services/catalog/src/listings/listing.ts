@@ -1,5 +1,5 @@
 import { logger } from '@devvir/service-kit';
-import { depthOf, keyOf } from './keys';
+import { depthOf, keyOf, nameStartOf } from './keys';
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import type { ListingObject, ListingPage, ListingQuery, ListingRow, Within } from '../types';
 
@@ -13,12 +13,15 @@ import type { ListingObject, ListingPage, ListingQuery, ListingRow, Within } fro
  * and each series' files by `(series_id, date)`. Through a lens, only the series
  * of a slice the lens holds a partition of are walked, and each one's files are
  * read only within the months the lens lets through.
- * The page reads until it is full and stops; nothing behind the cursor, outside
- * the prefix or outside the lens is read.
  *
  * **The only sorting is within one prefix**, where several series meet — a
  * monthly and a daily rendering of one instrument, two eras of it — and their
- * files are one stream by date.
+ * files are one stream by date. So each prefix a page reaches is read whole
+ * before its first key is returned: the cursor's own from the cursor's date on,
+ * every later one from its start, and within the lens's months where there is a
+ * lens. A page costs about the files left in the prefixes it reaches. The files
+ * of the cursor's prefix before its date are skipped through the index, and
+ * nothing in an earlier series, past the prefix or outside the lens is read.
  *
  * **One partition is a filter like a lens of one**: only the series of its slice
  * are walked, and each one's files read only within its month.
@@ -75,6 +78,13 @@ const LAST = '\u{10FFFF}';
  * cursor and is not read; what is left of the cursor's own date is read and
  * dropped key by key. A cursor shorter than a series prefix — a venue, a dataset,
  * a client's own marker — starts at itself.
+ *
+ * **The date is the name's only where the name is one this listing writes**:
+ * it starts as `keyOf` starts a name under that prefix, and its date falls in
+ * the month folder it sits in. Then that date is where the series resumes.
+ * Any other marker — S3 takes any string — resumes at its month folder, which
+ * every key after it in that series sorts at or past, so nothing after the
+ * marker is skipped.
  */
 const startOf = (start: string): { prefix: string; date: string } => {
   const parts = start.split('/');
@@ -82,11 +92,16 @@ const startOf = (start: string): { prefix: string; date: string } => {
 
   if (parts.length < depth + 1) return { prefix: start, date: '' };
 
-  const name = parts[depth + 1];
-  const date = name === undefined ? parts[depth]! : name.split('|')[4]?.split('.')[0] ?? parts[depth]!;
+  const folder = parts[depth]!;
+  const name   = parts[depth + 1] ?? '';
+  const begins = nameStartOf(parts, depth);
+  const date   = name.startsWith(begins) ? /^\d*/.exec(name.slice(begins.length))![0] : '';
 
-  return { prefix: `${parts.slice(0, depth).join('/')}/`, date };
+  return { prefix: `${parts.slice(0, depth).join('/')}/`, date: MONTH.test(folder) && date.startsWith(folder) ? date : folder };
 };
+
+/** A month folder as keys write it. */
+const MONTH = /^\d{6}$/;
 
 /** The series prefix a listing prefix reaches into: the prefix itself, cut at the symbol. */
 const seriesPart = (prefix: string): string => {
@@ -133,7 +148,7 @@ const statements = (db: DatabaseSync): Record<string, StatementSync> => {
          ${members(within, pending)}
          CROSS JOIN file f ON f.series_id = s.id${within !== 'all' || pending ? " AND f.date >= q.month AND f.date <= q.month || '99'" : ''}
         WHERE s.prefix >= ?2 AND s.prefix < ?3
-          AND (s.prefix, f.date) >= (?2, ?4)${touched(within, pending)}
+          AND f.date >= CASE WHEN s.prefix = ?2 THEN ?4 ELSE '' END${touched(within, pending)}
           AND f.existence = 'confirmed'${pending ? ' AND f.downloaded_at IS NULL' : ''}
         ORDER BY s.prefix, f.date, f.path`);
 
@@ -179,3 +194,7 @@ const touched = (within: Within, pending: boolean): string =>
       : '');
 
 const PREPARED = new WeakMap<DatabaseSync, Record<string, StatementSync>>();
+
+// ── Test access ───────────────────────────────────────────────────────────────
+
+export const _test_statements = statements;
