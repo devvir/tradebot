@@ -1,5 +1,6 @@
 import { matches } from '../../shared/disk';
 import * as record from '../../shared/record';
+import { asFound } from '../again';
 import { tarSize } from '../../shared/tar';
 import { count, found } from '../finding';
 import { fmtBytes } from '../../../../shared/utils/format';
@@ -61,7 +62,13 @@ export const byWeight: Check = async ({ db, origin, archives }) => {
     found(`${count(exact.length, 'stored tar')} ${exact.length === 1 ? 'is' : 'are'} not the size the files of ${exact.length === 1 ? 'its' : 'their'} partitions make`,
       exact.map(one => `${one.tar.remote}: ${fmtBytes(one.tar.bytes ?? 0)} stored, ${fmtBytes(one.should)} from what is on disk (${(one.should - (one.tar.bytes ?? 0)).toLocaleString('en-US')} bytes apart)`), [{
         label: 'Write them down as not stored, so the next push packs and sends them again',
-        apply: () => { for (const one of exact) record.move(db, one.tar.id, 'planned'); },
+        apply: () => {
+          const still = asFound(db, exact.map(one => one.tar));
+
+          for (const tar of still) record.move(db, tar.id, 'planned');
+
+          return still.length > 0;
+        },
       }], 'Their partitions are on disk as they were stored, so what they should weigh is known to the byte.'),
     found(`${count(loose.length, 'stored tar')} ${loose.length === 1 ? 'is' : 'are'} outside the size ${loose.length === 1 ? 'its' : 'their'} partitions allow`,
       loose.map(one => `${one.tar.remote}: ${fmtBytes(one.tar.bytes ?? 0)} stored, between ${fmtBytes(one.least)} and ${fmtBytes(one.most)} expected`), [],

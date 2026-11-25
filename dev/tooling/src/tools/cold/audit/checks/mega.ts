@@ -1,4 +1,5 @@
 import * as record from '../../shared/record';
+import { asFound } from '../again';
 import { fileLabelOf, remoteOf } from '../../shared/vault/layout';
 import { fmtBytes } from '../../../../shared/utils/format';
 import type { StoredFile } from '../../shared/types';
@@ -71,7 +72,13 @@ const tars = (looking: Looking, held: Held): Finding[] => {
   const again = (list: readonly Tar[]) => ({
     label:       'Write them down as not stored, so the next push packs and sends them again',
     destructive: gone(list) > 0,
-    apply:       () => { for (const tar of list) record.move(db, tar.id, 'planned'); },
+    apply:       () => {
+      const still = asFound(db, list);
+
+      for (const tar of still) record.move(db, tar.id, 'planned');
+
+      return still.length > 0;
+    },
   });
 
   const lost = (list: readonly Tar[]): string | undefined => {

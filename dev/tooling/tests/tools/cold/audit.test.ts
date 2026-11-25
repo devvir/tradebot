@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { _test_choiceOf as choiceOf } from '../../../src/tools/cold/audit';
 import { againstDisk } from '../../../src/tools/cold/audit/checks/disk';
 import { againstMega } from '../../../src/tools/cold/audit/checks/mega';
@@ -17,6 +17,13 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { Finding, Looking } from '../../../src/tools/cold/audit/types';
 import type { CatalogPartition, Remote, VaultFile } from '../../../src/tools/cold/shared/types';
 import type { ColdConfig, Origin } from '../../../src/tools/cold/types';
+
+/** What was taken off the disk, and whether outright: the trash is the host's, and not a test's to fill. */
+const discarded = vi.hoisted(() => [] as { paths: string[]; purge: boolean }[]);
+
+vi.mock('../../../src/tools/cold/evict/discard', () => ({
+  discard: async (paths: readonly string[], purge: boolean) => { discarded.push({ paths: [...paths], purge }); },
+}));
 
 /**
  * The record held against Mega, the disk and itself: what each check finds, and
@@ -94,12 +101,15 @@ beforeEach(() => {
   held    = new Map();
   removed = [];
 
+  discarded.length = 0;
+
   fs.mkdirSync(path.join(dir, 'cold'), { recursive: true });
 
   db = record.open(path.join(dir, 'cold', 'cold.sqlite'));
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   setYes(false);
   record.close(db);
   fs.rmSync(dir, { recursive: true, force: true });
@@ -179,6 +189,19 @@ describe('the tars of the archives, against Mega', () => {
     expect(record.dropPlanned(db, 'archives', 'gate')).toBe(0);
     expect(record.tarById(db, id)).toMatchObject({ state: 'planned', handle: 'H202001' });
     expect(record.heldIn(db, id)).toHaveLength(1);
+  });
+
+  /** Answered after a push took it on: what the push is doing is not undone. */
+  it('leaves a tar that has moved on since it was found', async () => {
+    tar('202002');
+
+    const id = tar('202001', false);
+    const [finding] = await againstMega(looking('archives'));
+
+    record.move(db, id, 'stale');
+
+    expect(await finding!.solutions[0]!.apply()).toBe(false);
+    expect(record.tarById(db, id).state).toBe('stale');
   });
 
   it('finds a tar that is not the size sent', async () => {
@@ -310,6 +333,18 @@ describe('the vault, against the disk', () => {
     expect(await againstDisk(looking('vault'))).toEqual([]);
   });
 
+  it('removes a file that is back to the trash, not outright', async () => {
+    const file = vaultFile('202001');
+
+    record.noteVaultMoves(db, [file], 'evicted');
+
+    const [finding] = await againstDisk(looking('vault'));
+
+    await finding!.solutions[1]!.apply();
+
+    expect(discarded).toEqual([{ paths: [path.join(dir, 'vault', file.path)], purge: false }]);
+  });
+
   it('finds a file written down as there that is away, and writes it down as taken off', async () => {
     const file = vaultFile('202001', { disk: false });
     const [finding] = await againstDisk(looking('vault'));
@@ -323,6 +358,87 @@ describe('the vault, against the disk', () => {
 });
 
 describe('the archives, against the disk', () => {
+  /** The partitions the catalog holds, every one downloaded and settled. */
+  let catalog: CatalogPartition[];
+
+  const onDisk = (month: string): string => {
+    const file = path.join(dir, 'archives', 'gate/spot/trades/B/BTC_USDT', month, `gate|spot|trades|BTC_USDT|${month}01.csv.gz`);
+
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, 'aa');
+
+    return file;
+  };
+
+  beforeEach(() => {
+    catalog = [];
+
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      items: catalog.length === 0 ? [] : [{
+        market: 'spot', dataset: 'trades', variant: '', grain: 'daily', bundle: 'instrument',
+        partitions: catalog.map(one => ({ month: one.month, files: one.files, bytes: one.bytes, version: one.version })),
+      }],
+    }), { status: 200 })));
+  });
+
+  /** Stored, stocked and evicted at the version the catalog has: what is on disk is what cold storage holds. */
+  it('offers to remove the files of a partition cold storage holds as they are, to the trash', async () => {
+    const one = partition('202001');
+
+    catalog = [one];
+    tar('202001');
+    vaultFile('202001');
+    record.noteEviction(db, 'archives', one, { files: 1, bytes: 2 });
+
+    const file = onDisk('202001');
+    const [finding, ...rest] = await againstDisk(looking('archives'));
+
+    expect(rest).toEqual([]);
+    expect(finding!.solutions.map(solution => !! solution.destructive)).toEqual([false, true]);
+
+    await finding!.solutions[1]!.apply();
+
+    expect(discarded).toEqual([{ paths: [file], purge: false }]);
+  });
+
+  /** Only the files that changed came back: they are newer than cold storage's copy, and the next push needs them. */
+  it('offers only to write down as back a partition that changed since it was evicted', async () => {
+    const one = partition('202001');
+    const id  = tar('202001');
+
+    vaultFile('202001');
+    record.noteEviction(db, 'archives', one, { files: 1, bytes: 2 });
+
+    const now = { ...one, version: 'v2', files: 2, bytes: 4 };
+
+    catalog = [now];
+    record.noteChange(db, record.heldIn(db, id)[0]!, now);
+    onDisk('202001');
+
+    const [finding, ...rest] = await againstDisk(looking('archives'));
+
+    expect(rest).toEqual([]);
+    expect(finding!.problem).toMatch(/cold storage may not hold/);
+    expect(finding!.solutions.map(solution => solution.label)).toEqual(['Write them down as back']);
+  });
+
+  it('offers only to write down as back where the catalog cannot be asked', async () => {
+    const one = partition('202001');
+
+    catalog = [one];
+    tar('202001');
+    vaultFile('202001');
+    record.noteEviction(db, 'archives', one, { files: 1, bytes: 2 });
+    onDisk('202001');
+
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('refused'); }));
+
+    const [finding] = await againstDisk(looking('archives'));
+
+    expect(finding!.solutions).toHaveLength(1);
+    expect(finding!.note).toMatch(/could not be asked/);
+  });
+
   it('finds an evicted partition with files on disk, and writes it down as back', async () => {
     const one  = partition('202001');
     const file = path.join(dir, 'archives', 'gate/spot/trades/B/BTC_USDT/202001', 'gate|spot|trades|BTC_USDT|20200101.csv.gz');
@@ -381,6 +497,20 @@ describe('the record, against itself', () => {
     await fix(finding);
 
     expect(fs.existsSync(lock)).toBe(false);
+  });
+
+  /** A run of the same command took the lock under the same name since: it is that run's now. */
+  it('leaves a lock that is held again by the time it is removed', async () => {
+    const lock = path.join(dir, 'cold', 'cold.archives.push.lock');
+
+    fs.writeFileSync(lock, 'pid 2147483646 since T\n');
+
+    const [finding] = await withinItself(looking('archives'));
+
+    fs.writeFileSync(lock, `pid ${process.ppid} since T\n`);
+
+    expect(await finding!.solutions[0]!.apply()).toBe(false);
+    expect(fs.existsSync(lock)).toBe(true);
   });
 });
 
@@ -445,10 +575,100 @@ describe('what is left in staging', () => {
 
     expect(finding!.problem).toMatch(/does not hold what the record says/);
 
+    expect(finding!.examples[0]).toMatch(/is 1 file of 2 bytes in the record and 1 file of 4 bytes in the tar/);
+    expect(finding!.note).toMatch(/None of them was stored before/);
+
     await fix(finding);
 
     expect(fs.existsSync(file)).toBe(false);
     expect(record.tarById(db, id).state).toBe('planned');
+  });
+
+  /** Stored once, changed, brought back and corrected: what it holds now is the change, not what Mega has. */
+  const corrected = (month: string, members: Record<string, string>): { id: number; file: string } => {
+    const id  = record.planTar(db, 'archives', 'gate', month, seq => ({ remote: `gate/${month}.${seq}.tar`, local: `gate/${month}.${seq}.tar` }), [partition(month)]);
+    const now = { ...partition(month), version: 'v2', files: 2, bytes: 4 };
+
+    record.packed(db, id, 100);
+    record.stored(db, id, 'H');
+    record.noteChange(db, record.heldIn(db, id)[0]!, now);
+    record.packed(db, id, 200, [now]);
+
+    return { id, file: staged(`${month}.1.tar`, members) };
+  };
+
+  const changedMembers = (month: string): Record<string, string> => ({
+    [member(month)]: 'aa',
+    [member(month).replace(`${month}01`, `${month}02`)]: 'aa',
+  });
+
+  it('finds nothing where a corrected tar on its way holds the change', async () => {
+    const { id } = corrected('202001', changedMembers('202001'));
+
+    expect(await inStaging(looking('archives'))).toEqual([]);
+
+    record.move(db, id, 'queued');
+
+    expect(await inStaging(looking('archives'))).toEqual([]);
+  });
+
+  /** Where the record has nothing of what it was packed with, a tar Mega holds was corrected to the change noted. */
+  it('takes a corrected tar to hold the change where what it was packed with is not written down', async () => {
+    const { id } = corrected('202001', changedMembers('202001'));
+
+    db.prepare('UPDATE held SET packed_version = NULL, packed_files = NULL, packed_bytes = NULL WHERE tar_id = ?').run(id);
+
+    expect(await inStaging(looking('archives'))).toEqual([]);
+  });
+
+  /** Mega holds an older one, and the record is the only thing that knows what it holds. */
+  it('sends a corrected tar that is wrong back to be corrected, and keeps what it holds', async () => {
+    const { id, file } = corrected('202001', { [member('202001')]: 'aaaa' });
+    const [finding] = await inStaging(looking('archives'));
+
+    expect(finding!.examples[0]).toMatch(/is 2 files of 4 bytes in the record and 1 file of 4 bytes in the tar/);
+    expect(finding!.note).toMatch(/1 of them replaces a tar Mega holds/);
+    expect(finding!.solutions[0]!.destructive).toBeFalsy();
+
+    await fix(finding);
+
+    expect(fs.existsSync(file)).toBe(false);
+    expect(record.tarById(db, id)).toMatchObject({ state: 'stale', handle: 'H' });
+    expect(record.heldIn(db, id)[0]!.next).toMatchObject({ version: 'v2' });
+    expect(record.dropPlanned(db, 'archives', 'gate')).toBe(0);
+    expect(record.heldIn(db, id)).toHaveLength(1);
+  });
+
+  it('says how many partitions of a wrong tar have left the disk', async () => {
+    corrected('202001', { [member('202001')]: 'aaaa' });
+    record.noteEviction(db, 'archives', partition('202001'), { files: 1, bytes: 2 });
+
+    const [finding] = await inStaging(looking('archives'));
+
+    expect(finding!.note).toMatch(/1 of their partitions has been taken off the disk/);
+  });
+
+  /** A push started between the question and the answer: what is in staging is its own now. */
+  it('removes nothing where another command has started since it was found', async () => {
+    const { id, file } = packed('202001', { [member('202001')]: 'aaaa' });
+    const [finding] = await inStaging(looking('archives'));
+
+    fs.writeFileSync(path.join(dir, 'cold', 'cold.archives.push.lock'), `pid ${process.ppid} since T\n`);
+
+    expect(await finding!.solutions[0]!.apply()).toBe(false);
+    expect(fs.existsSync(file)).toBe(true);
+    expect(record.tarById(db, id).state).toBe('packed');
+  });
+
+  it('leaves a wrong tar whose state has moved on since it was found', async () => {
+    const { id, file } = packed('202001', { [member('202001')]: 'aaaa' });
+    const [finding] = await inStaging(looking('archives'));
+
+    record.move(db, id, 'queued');
+
+    expect(await finding!.solutions[0]!.apply()).toBe(false);
+    expect(fs.existsSync(file)).toBe(true);
+    expect(record.tarById(db, id).state).toBe('queued');
   });
 
   it('finds a tar still in staging after it was stored, and one the record has never heard of', async () => {

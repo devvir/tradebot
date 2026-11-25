@@ -20,7 +20,12 @@ export interface Solution {
 
   /** Whether it removes something that is not written down anywhere else. Never the answer nobody gave. */
   destructive?: boolean;
-  apply:        () => Promise<void> | void;
+
+  /**
+   * Do it, to what is still as it was found: false where nothing is, and it
+   * says why. A finding can be answered long after it was found.
+   */
+  apply:        () => Promise<boolean | void> | boolean | void;
 }
 
 /**

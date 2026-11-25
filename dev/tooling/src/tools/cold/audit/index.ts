@@ -34,6 +34,10 @@ import type { AuditOptions, Check, Finding, Looking, Solution } from './types';
  * **What is put right is nearly always the record.** Mega and the disk are how
  * things are; the record is what was believed, and it is brought round to them.
  *
+ * **A fix is applied to what is still as it was found.** A question can wait
+ * long for its answer, and another command can start meanwhile: a fix looks
+ * again as it is applied, and leaves alone what has moved on — see `again.ts`.
+ *
  * A check that needs Mega is left out where Mega is not answering, and the run
  * says so: the rest is still worth knowing.
  */
@@ -96,11 +100,7 @@ const settle = async (finding: Finding, dryRun: boolean): Promise<void> => {
 
   const chosen = dryRun ? null : await choiceOf(finding.solutions);
 
-  if (chosen) {
-    await chosen.apply();
-
-    success(`Done: ${chosen.label.charAt(0).toLowerCase()}${chosen.label.slice(1)}`);
-  }
+  if (chosen && await chosen.apply() !== false) success(`Done: ${chosen.label.charAt(0).toLowerCase()}${chosen.label.slice(1)}`);
 
   spacer();
 };

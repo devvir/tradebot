@@ -6,9 +6,10 @@ import { matches } from '../../shared/disk';
 import { idOf, partitionOf } from '../../shared/keys';
 import * as record from '../../shared/record';
 import { sizedMembersOf } from '../../shared/tar';
+import { asFound, othersAtWork } from '../again';
 import { are, count, found } from '../finding';
 import { fmtBytes } from '../../../../shared/utils/format';
-import type { SourceFile } from '../../shared/types';
+import type { Content, Held, SourceFile } from '../../shared/types';
 import type { Tar } from '../../types';
 import type { Check, Finding, Looking } from '../types';
 
@@ -23,7 +24,8 @@ import type { Check, Finding, Looking } from '../types';
  * place where what a tar holds is set against what the record says it holds.
  *
  * Nothing is looked at while another command is running: what is there then is
- * that command's, half way through.
+ * that command's, half way through. Nor is anything removed: a fix that finds
+ * one started since it was found leaves it all as it is.
  */
 export const inStaging: Check = async (looking) => {
   if (looking.origin !== 'archives' || busy(looking.config.coldRoot)) return [];
@@ -55,7 +57,7 @@ const tars = async ({ db, config, origin }: Looking): Promise<Finding[]> => {
     if (! tar) unknown.push(file);
     else if (tar.state === 'stored') stored.push(file);
     else if (tar.state === 'packed' || tar.state === 'queued') {
-      const why = await differs(file, record.heldIn(db, tar.id));
+      const why = await differs(file, tar, record.heldIn(db, tar.id));
 
       if (why) wrong.push({ file, tar, why });
     }
@@ -63,19 +65,32 @@ const tars = async ({ db, config, origin }: Looking): Promise<Finding[]> => {
 
   const weight = (files: readonly string[]): string => fmtBytes(files.reduce((sum, file) => sum + fs.statSync(file).size, 0));
   const below  = (file: string): string => path.relative(config.coldRoot, file);
-  const remove = (files: readonly string[]) => (): void => { for (const file of files) fs.rmSync(file, { force: true }); };
+  const remove = (files: readonly string[]) => (): boolean => {
+    if (othersAtWork(config.coldRoot)) return false;
+
+    for (const file of files) fs.rmSync(file, { force: true });
+
+    return true;
+  };
 
   return [
     found(`${count(wrong.length, 'tar')} in staging ${wrong.length === 1 ? 'does' : 'do'} not hold what the record says`,
       wrong.map(one => `${below(one.file)}: ${one.why}`), [{
-        label: 'Remove them and write them down as not packed, so the next push packs them again',
+        label: 'Remove them, so the next push makes them again: packed from the disk, or brought back from Mega and corrected where Mega holds one',
         apply: () => {
-          for (const one of wrong) {
-            fs.rmSync(one.file, { force: true });
-            record.move(db, one.tar.id, 'planned');
+          if (othersAtWork(config.coldRoot)) return false;
+
+          const still = asFound(db, wrong.map(one => one.tar));
+
+          // What Mega holds of a tar is what it is corrected from: one it holds goes back to being corrected, as a lost one does in a push.
+          for (const tar of still) {
+            fs.rmSync(localPath(config, origin, tar), { force: true });
+            record.move(db, tar.id, tar.handle ? 'stale' : 'planned');
           }
+
+          return still.length > 0;
         },
-      }], 'Their partitions are still on disk: a tar is only ever packed from there, and nothing is evicted before its tar is stored.'),
+      }], wrongNote(db, origin, wrong.map(one => one.tar))),
     found(`${count(stored.length, 'tar')} in staging ${are(stored)} already stored in Mega (${weight(stored)})`, stored.map(below), [
       { label: 'Remove them from staging', apply: remove(stored) },
     ], 'A tar leaves staging when it is stored. These stayed: a run stopped between the two.'),
@@ -85,8 +100,36 @@ const tars = async ({ db, config, origin }: Looking): Promise<Finding[]> => {
   ].flat();
 };
 
-/** Why a tar does not hold what the record says of it, or null where it does. */
-const differs = async (file: string, held: readonly ReturnType<typeof record.heldIn>[number][]): Promise<string | null> => {
+/**
+ * What can be said of the partitions of tars that are to be made again: on
+ * disk, where none was ever stored; otherwise how many Mega holds an older tar
+ * of, and how many have been taken off the disk since.
+ */
+const wrongNote = (db: Looking['db'], origin: Looking['origin'], list: readonly Tar[]): string | undefined => {
+  if (list.length === 0) return undefined;
+
+  const evicted = new Set(record.evictionsOf(db, origin).map(idOf));
+  const inMega  = list.filter(tar => tar.handle !== null).length;
+  const away    = list.flatMap(tar => record.heldIn(db, tar.id)).filter(one => evicted.has(idOf(one))).length;
+
+  if (inMega === 0 && away === 0)
+    return 'None of them was stored before, so their partitions are on disk: a tar is packed from there, and nothing is evicted before its tar is stored.';
+
+  return [
+    ...(inMega > 0 ? [`${inMega} of them ${inMega === 1 ? 'replaces a tar' : 'replace tars'} Mega holds: brought back and corrected again.`] : []),
+    ...(away > 0 ? [`${away} of their partitions ${away === 1 ? 'has' : 'have'} been taken off the disk: what Mega holds of ${away === 1 ? 'it' : 'them'} is the copy there is.`] : []),
+  ].join(' ');
+};
+
+/** What a tar was made with of a partition: what was written down as it was packed, or, where nothing was, the change it was corrected to. */
+const madeWith = (tar: Tar, one: Held): Content => one.packed ?? (tar.handle !== null && one.next ? one.next : one);
+
+/** How many files a partition is, and what they weigh. */
+const sizeOf = (files: number, bytes: number): string =>
+  `${count(files, 'file')} of ${bytes.toLocaleString('en-US')} byte${bytes === 1 ? '' : 's'}`;
+
+/** Why a tar does not hold what the record says it was made with, or null where it does. */
+const differs = async (file: string, tar: Tar, held: readonly Held[]): Promise<string | null> => {
   const inside = new Map<string, SourceFile[]>();
 
   for (const member of await sizedMembersOf(file)) {
@@ -98,9 +141,10 @@ const differs = async (file: string, held: readonly ReturnType<typeof record.hel
 
   for (const one of held) {
     const files = inside.get(idOf(one)) ?? [];
+    const made  = madeWith(tar, one);
 
-    if (! matches(files, one))
-      return `${idOf(one)} is ${one.files} file${one.files === 1 ? '' : 's'} in the record and ${files.length} in the tar`;
+    if (! matches(files, made))
+      return `${idOf(one)} is ${sizeOf(made.files, made.bytes)} in the record and ${sizeOf(files.length, files.reduce((sum, member) => sum + member.bytes, 0))} in the tar`;
 
     inside.delete(idOf(one));
   }
@@ -116,6 +160,15 @@ const leftBehind = ({ config, origin }: Looking): Finding[] => {
   const files = filesBelow(dir);
 
   return found(`${count(files.length, 'file')} ${are(files)} left from a pull that stopped`, files.map(file => path.relative(config.coldRoot, file)), [
-    { label: 'Remove them', apply: () => fs.rmSync(dir, { recursive: true, force: true }) },
+    {
+      label: 'Remove them',
+      apply: () => {
+        if (othersAtWork(config.coldRoot)) return false;
+
+        fs.rmSync(dir, { recursive: true, force: true });
+
+        return true;
+      },
+    },
   ], 'A tar on its way back, or what was being taken out of one. A pull asks Mega for it again.');
 };

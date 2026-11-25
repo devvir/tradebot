@@ -5,6 +5,7 @@ import * as record from '../../shared/record';
 import { labelOf } from '../../shared/vault/layout';
 import { backedUpIn, noteBackedUp, stockedIn } from '../../shared/vault/ledger';
 import { are, count, found } from '../finding';
+import { warn } from '../../../../shared/ui/logger';
 import type { Check, Finding, Looking } from '../types';
 
 /**
@@ -24,7 +25,21 @@ const locks = ({ config }: Looking): Finding[] => {
   const left = orphans(config.coldRoot);
 
   return found(`${count(left.length, 'lock')} ${are(left)} held by a run that is gone`, left, [
-    { label: 'Remove them', apply: () => { for (const name of left) fs.rmSync(path.join(config.coldRoot, name), { force: true }); } },
+    {
+      label: 'Remove them',
+      // Asked again: a run of the same command can have taken the lock under the same name since.
+      apply: () => {
+        const still = new Set(orphans(config.coldRoot));
+        const gone  = left.filter(name => still.has(name));
+        const taken = left.length - gone.length;
+
+        if (taken > 0) warn(`${count(taken, 'lock')} ${taken === 1 ? 'is' : 'are'} held again since, or given back: left as ${taken === 1 ? 'it is' : 'they are'}`);
+
+        for (const name of gone) fs.rmSync(path.join(config.coldRoot, name), { force: true });
+
+        return gone.length > 0;
+      },
+    },
   ]);
 };
 
