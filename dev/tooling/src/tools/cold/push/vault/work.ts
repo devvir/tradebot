@@ -59,7 +59,8 @@ export const work = async (db: DatabaseSync, config: ColdConfig, venues: readonl
     if (isWatch() && Date.now() >= scanAt) {
       const before = partitions();
 
-      if (trusted(config).ok) plan(db, config, venues);
+      // Watching, a vault that reports a problem is looked at again at the next scan: it does not fail the run.
+      if (trusted(config, { watching: true }).ok) plan(db, config, venues);
 
       kept.clear();
 

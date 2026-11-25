@@ -30,11 +30,14 @@ export const register = (cold: Command): void => {
       if (origin === 'catalog') {
         setYes(command.optsWithGlobals<{ yes?: boolean }>().yes ?? false);
 
-        await (await import('./catalog')).runPullCatalog({
+        const how = {
           ...(options.output ? { output: options.output } : {}),
           ...(options.dryRun ? { dryRun: true } : {}),
           ...snapshotOf(options),
-        });
+        };
+
+        // Around it, cold's own files are looked after as around any other command.
+        await each(['archives'], async () => (await import('./catalog')).runPullCatalog(how));
 
         return;
       }
