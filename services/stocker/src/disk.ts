@@ -1,7 +1,7 @@
 import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import config from './config';
-import { datasetDirOf, edgesOf, parseKey } from './keys';
+import { datasetDirOf, parseKey } from './keys';
 import type { DiskFile, InstrumentDirs, Partition, PartitionKey } from './types';
 
 /**
@@ -57,14 +57,6 @@ export const filesOf = async (key: PartitionKey, instruments: InstrumentDirs): P
 
   return found.sort((a, b) => (a.file.key < b.file.key ? -1 : a.file.key > b.file.key ? 1 : 0));
 };
-
-/** A partition's files in the first or last period of its month. */
-export const edgeFilesOf = async (
-  key:         PartitionKey,
-  side:        'first' | 'last',
-  instruments: InstrumentDirs,
-): Promise<DiskFile[]> =>
-  (await filesOf(key, instruments)).filter(found => edgesOf(found.file)[side]);
 
 /**
  * Whether what is on disk is what the catalog says the partition holds — by

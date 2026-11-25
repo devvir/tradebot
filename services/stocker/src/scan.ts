@@ -10,15 +10,15 @@ import { listPartitions } from './catalog';
 import config from './config';
 import { weightsOf } from './containers';
 import { q } from './db';
-import { Instruments, edgeFilesOf, filesOf, matches } from './disk';
-import { idOf, neighbourOf } from './keys';
+import { Instruments, filesOf, matches } from './disk';
+import { edgesOf, idOf, neighbourOf } from './keys';
 import { SERIES, extrasOf, seriesFor, seriesOf } from './schema/series';
 import { MISSING, mark, outdate, partitionOf, read as readLedger, readBackedUp, record, reinstate, repair } from './ledger';
 import { Prefetch } from './prepare';
 import { NoRoom, shortOf } from './room';
 import { reachOf } from './spill';
 import {
-  BUNDLE, STAGED, Slices, bundleOf, clear, fileOf, freeGb, isWhole, labelOf, monthOf, publishBundle, publishSplit, revisionOf, sliceDirOf,
+  BUNDLE, STAGED, Slices, bundleOf, clear, countOf, fileOf, freeGb, isWhole, labelOf, monthOf, publishBundle, publishSplit, revisionOf, sliceDirOf,
   staleStagingOf, stagingOf,
 } from './vault';
 import type {
@@ -42,7 +42,8 @@ import type {
  *    the ledger holds at another revision is marked outdated there, and stays
  *    so until it is stocked again.
  * 3. **Only its neighbour new?** — a month stocked without a side, whose
- *    neighbour is here now, has that side built and nothing else.
+ *    neighbour is here now, has that side built and nothing else; it waits
+ *    while any file of its own is out of the vault.
  * 4. **On disk as the catalog says** — the same count and the same bytes.
  * 5. **Stocked**, into staging: its own rows, and each side, apart.
  * 6. **Put in place**, as one file or as a file per instrument with each side
@@ -499,14 +500,24 @@ const decide = async (
      * is the hours the neighbour holds of it. So only those are built, from the
      * neighbour's files, and the month's own archives are not needed — they may
      * have left the disk long ago.
+     *
+     * **They are built beside every file the month has, or not at all.** A side
+     * holds only the instruments the month's own files name, so with some of
+     * those moved out of the vault the moved-out instruments' hours would never
+     * be built. A month whose files in the vault are not every one its ledger
+     * line counts waits until they are.
      */
     const arrived = entry ? arrivedFor(entry, key, one, series) : [];
-    const before  = arrived.length > 0 ? (await sweeping.slices.of(key)).get(monthOf(key)) : undefined;
 
-    if (arrived.length > 0 && ! isWhole(before))
-      unbuilt = { sides: arrived.map(edge => edge.end), main: false, sources: (await edgesOnDisk(arrived, sweeping.instruments)) !== null };
+    if (entry && arrived.length > 0) {
+      const before = (await sweeping.slices.of(key)).get(monthOf(key));
 
-    if (entry && arrived.length > 0 && isWhole(before)) {
+      if (! isWhole(before) || countOf(before) !== entry.count) {
+        unbuilt = { sides: arrived.map(edge => edge.end), main: false, sources: (await edgesOnDisk(arrived, sweeping.instruments)) !== null };
+
+        continue;
+      }
+
       const donated = await edgesOnDisk(arrived, sweeping.instruments);
 
       if (! donated) {
@@ -533,7 +544,7 @@ const decide = async (
       return {
         key, partition: one.candidate, revision: one.revision, edges: one.edges, missing: one.missing, tasks, passes, built: had,
         files: [...donated.values()].flat().length, prefetch: new Prefetch(tasks, toBuild(tasks, had)),
-        completes: { revision: entry.revision, sides: arrived.map(edge => edge.end) },
+        completes: { revision: entry.revision, sides: arrived.map(edge => edge.end), count: entry.count },
       };
     }
 
@@ -662,9 +673,11 @@ const edgesOnDisk = async (edges: readonly Edge[], instruments: InstrumentDirs):
   const donated = new Map<Side, DiskFile[]>();
 
   for (const edge of edges) {
-    if (! matches(await filesOf(edge.partition.key, instruments), edge.partition)) return null;
+    const all = await filesOf(edge.partition.key, instruments);
 
-    donated.set(edge.end, await edgeFilesOf(edge.partition.key, edge.side, instruments));
+    if (! matches(all, edge.partition)) return null;
+
+    donated.set(edge.end, all.filter(found => edgesOf(found.file)[edge.side]));
   }
 
   return donated;
@@ -684,8 +697,8 @@ const edgesOnDisk = async (edges: readonly Edge[], instruments: InstrumentDirs):
  * **Nothing in the vault is touched until everything is built.** Then the
  * ledger is told the month is being changed, what is there of it makes way, the
  * new files move in, and the ledger is told what it holds. Stopped anywhere in
- * between, the month still says `updating` and is put right before it is read
- * again — see `repair`.
+ * between, the month still says `updating` (or `updating-sides`) and is put
+ * right before it is read again — see `repair`.
  */
 const stock = async (
   conns:    DuckDBConnection[],
@@ -701,8 +714,12 @@ const stock = async (
   const started = Date.now();
   const spent: Spent = { extract: 0, inspect: 0, read: 0, write: 0, join: 0, queued: 0, place: 0 };
 
-  /** What the vault holds of the month as this starts: what a completion adds to, and what anything else replaces. */
-  const before  = (await slices.of(key)).get(monthOf(key));
+  /**
+   * What the vault holds of the month: what a completion adds to, and what
+   * anything else replaces. Read as this starts, and for a completion again as
+   * it is put in place.
+   */
+  let before    = (await slices.of(key)).get(monthOf(key));
   const split   = completes ? ! before?.bundle : partition.bytes > splitBytes;
 
   logger.info({ partition: labelOf(key), from: partition.id, revision, files: job.files,
@@ -808,7 +825,18 @@ const stock = async (
     try {
       if (failure) throw failure;
 
-      if (completes && ! isWhole(before)) throw new Error('The month it completes is no longer in the vault');
+      /**
+       * **A side is added only to a month wholly in the vault** — every file its
+       * ledger line counts — for the same reason it is only decided on for one:
+       * the side holds only the instruments the month's own files name. Files
+       * can be moved out while the side is built, so the month is read again.
+       */
+      if (completes) {
+        slices.forget(key);
+        before = (await slices.of(key)).get(monthOf(key));
+
+        if (! isWhole(before) || countOf(before) !== completes.count) throw new Error('The month it completes is not wholly in the vault');
+      }
 
       const sides = [...new Set(passes.filter((pass): pass is Side => pass !== 'own'))];
 
@@ -864,10 +892,11 @@ const stock = async (
        * A month the vault has never held has nothing to be caught half way
        * between: until its line is written it is not stocked, whatever of it is
        * in place. One that is there, or that the ledger holds, says it is
-       * changing before any file of it does.
+       * changing before any file of it does — and whether only sides are
+       * being added to it, which is what `repair` puts right accordingly.
        */
       if (before || ledger.has(partitionOf(key))) {
-        await mark(key, partition, edges, missing, ! bundle);
+        await mark(key, partition, edges, missing, ! bundle, !! completes);
 
         marked = true;
         ledger.delete(partitionOf(key));

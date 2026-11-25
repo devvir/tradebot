@@ -154,6 +154,10 @@ export class Slices {
 export const isWhole = (stocked: Stocked | undefined): boolean =>
   !! stocked && (stocked.bundle || stocked.symbols.length > 0);
 
+/** How many files a month has in the vault: its own, and what its neighbours held of it. */
+export const countOf = (stocked: Stocked | undefined): number =>
+  stocked ? (stocked.bundle ? 1 : stocked.symbols.length) + stocked.sides.length : 0;
+
 /** Every file of a stocked month, absolute: its own, then what its neighbours held of it. */
 export const filesOf = (key: VaultKey, stocked: Stocked): string[] =>
   filesAt(sliceDirOf(key), monthOf(key), stocked);

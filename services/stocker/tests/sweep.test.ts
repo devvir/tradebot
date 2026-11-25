@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { appendFile, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { logger } from '@devvir/service-kit';
@@ -437,19 +437,24 @@ describe('a month whose last hours are in the next month\'s file', () => {
   /** bybit's MT4 klines: a file is a UTC+3 month, so it opens with the last three hours of the UTC month before. */
   const KLINES = join('venue=bybit', 'market=perp', 'dataset=klines', 'interval=1h');
 
-  const month = (at: string): string => `bybit/perp/klines,1h/B/BTCUSDT/${at}/bybit|perp|klines,1h|BTCUSDT|${at}.csv.gz`;
+  const month = (at: string, symbol = 'BTCUSDT'): string =>
+    `bybit/perp/klines,1h/B/${symbol}/${at}/bybit|perp|klines,1h|${symbol}|${at}.csv.gz`;
 
   /** A file of rows written by hand: stamped in UTC+3, as the venue stamps them. */
-  const publish = async (at: string, rows: string[], etag = 'e1'): Promise<void> => {
-    const path = join(config.archivesDir, month(at));
+  const publish = async (at: string, rows: string[], etag = 'e1', symbol = 'BTCUSDT'): Promise<void> => {
+    const path = join(config.archivesDir, month(at, symbol));
 
     await mkdir(dirname(path), { recursive: true });
     await writeFile(`${path}.txt`, rows.join('\n') + '\n');
     execFileSync('bash', ['-c', `gzip -c ${JSON.stringify(`${path}.txt`)} > ${JSON.stringify(path)}`]);
     await rm(`${path}.txt`);
 
-    listed.push({ Key: month(at), ETag: `"${etag}"`, Size: (await stat(path)).size });
+    listed.push({ Key: month(at, symbol), ETag: `"${etag}"`, Size: (await stat(path)).size });
   };
+
+  /** Say the vault has a safe copy of a month at the revision its last line names. */
+  const backUp = async (line: Record<string, string>): Promise<void> =>
+    writeFile(join(config.vaultDir, BACKEDUP), `partition|revision|date\n${line['partition']}|${line['revision']}|T\n`);
 
   const NOVEMBER = [
     '2024.11.01 00:00,1,1,1,1,10',   // 31 October 21:00 UTC: October's, and not kept here
@@ -522,7 +527,7 @@ describe('a month whose last hours are in the next month\'s file', () => {
 
     const ledger = (await lines()).filter(one => one['month'] === '202411');
 
-    expect(ledger.map(one => one['revision'] === 'updating')).toEqual([false, true, false]);
+    expect(ledger.map(one => one['revision'])).toEqual([expect.stringMatching(/^[0-9a-f]{12}$/), 'updating-sides', expect.stringMatching(/^[0-9a-f]{12}$/)]);
     expect(ledger[2]!['postVersion']).toMatch(/^[0-9a-f]{16}$/);
     expect(ledger[2]!['count']).toBe('2');
     expect(await validate()).toBe(0);
@@ -536,7 +541,7 @@ describe('a month whose last hours are in the next month\'s file', () => {
     const own = join(config.vaultDir, KLINES, '@/202411.parquet');
     const [partial] = await lines();
 
-    await interrupt({ postVersion: '0123456789abcdef' });
+    await interrupt({ revision: 'updating-sides', postVersion: '0123456789abcdef' });
     await writeFile(own.replace('.parquet', '.post.parquet'), 'half written');
 
     expect(await sweep(conns)).toMatchObject({ built: 0, current: 1, partial: 1 });
@@ -550,6 +555,96 @@ describe('a month whose last hours are in the next month\'s file', () => {
 
     expect(await sweep(conns)).toMatchObject({ completed: 1, failed: 0 });
     expect(await closes('@/202411.post.parquet')).toEqual([4, 5]);
+  });
+
+  /**
+   * The same two lines, but a month that was being stocked again from its own
+   * archives: its own file may be of the build arriving, so none of it is kept.
+   */
+  it('is no longer stocked where something stopped it while it was stocked again', async () => {
+    await publish('202411', NOVEMBER);
+    await sweep(conns);
+
+    const before = await lines();
+
+    await interrupt({ postVersion: '0123456789abcdef' });
+    await writeFile(join(config.vaultDir, KLINES, '@/202411.post.parquet'), 'half written');
+
+    expect(await validate()).toBe(0);
+    expect(await files()).toEqual([]);
+    expect((await lines()).slice(0, before.length)).toEqual(before);
+    expect((await lines()).at(-1)!['revision']).toBe('updating');
+
+    expect(await sweep(conns)).toMatchObject({ built: 1, current: 0 });
+    expect(await files()).toEqual(['@/202411.parquet']);
+  });
+
+  /** Its own file was moved out of the vault, and its archives are still here: it waits all the same, and is not stocked again. */
+  it('waits for its own file where that is not in the vault, whatever of its archives is on disk', async () => {
+    await publish('202411', NOVEMBER);
+    await sweep(conns);
+
+    const [line] = await lines();
+
+    await backUp(line!);
+    await rm(join(config.vaultDir, KLINES, '@/202411.parquet'));
+    await publish('202412', DECEMBER);
+
+    // December is stocked, itself without its last hours; November waits.
+    expect(await sweep(conns)).toMatchObject({ built: 1, completed: 0, partial: 2, failed: 0 });
+    expect((await files()).filter(name => name.includes('202411'))).toEqual([]);
+    expect((await lines()).filter(one => one['month'] === '202411')).toEqual([line]);
+  });
+
+  /**
+   * Stored a file per instrument, with one instrument's file moved out of the
+   * vault: its hours would be left out of the side, so the month waits for it.
+   */
+  it('waits for every instrument of its own where some are not in the vault', async () => {
+    splitAt(0);
+
+    try {
+      await publish('202411', NOVEMBER, 'e1', 'AAAUSDT');
+      await publish('202411', NOVEMBER, 'e1', 'BBBUSDT');
+      await sweep(conns);
+
+      expect(await files()).toEqual(['AAAUSDT/202411.parquet', 'BBBUSDT/202411.parquet']);
+
+      const [line] = await lines();
+      const own    = join(config.vaultDir, KLINES, 'AAAUSDT/202411.parquet');
+      const away   = join(config.archivesDir, 'away.parquet');
+
+      await backUp(line!);
+      await mkdir(config.archivesDir, { recursive: true });
+      await rename(own, away);
+      await rm(join(config.archivesDir, month('202411', 'AAAUSDT')));
+      await rm(join(config.archivesDir, month('202411', 'BBBUSDT')));
+      await publish('202412', DECEMBER, 'e1', 'AAAUSDT');
+      await publish('202412', DECEMBER, 'e1', 'BBBUSDT');
+
+      const warned = vi.spyOn(logger, 'warn');
+
+      expect(await sweep(conns)).toMatchObject({ built: 1, completed: 0, partial: 2, failed: 0 });
+      expect(warned.mock.calls.some(call => call[1] === 'Spill pending')).toBe(true);
+
+      warned.mockRestore();
+
+      expect((await files()).filter(name => name.includes('202411'))).toEqual(['BBBUSDT/202411.parquet']);
+      expect((await lines()).filter(one => one['month'] === '202411')).toEqual([line]);
+
+      // Back in the vault, the month is given both instruments' hours.
+      await rename(away, own);
+
+      expect(await sweep(conns)).toMatchObject({ completed: 1, failed: 0 });
+      expect((await files()).filter(name => name.includes('202411'))).toEqual([
+        'AAAUSDT/202411.parquet', 'AAAUSDT/202411.post.parquet', 'BBBUSDT/202411.parquet', 'BBBUSDT/202411.post.parquet',
+      ]);
+      expect(await closes('AAAUSDT/202411.post.parquet')).toEqual([4, 5]);
+      expect(await validate()).toBe(0);
+    }
+    finally {
+      splitAt(null);
+    }
   });
 
   /**

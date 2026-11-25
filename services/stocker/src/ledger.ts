@@ -2,7 +2,7 @@ import { appendFile, readFile, stat } from 'node:fs/promises';
 import { basename, dirname, join, relative } from 'node:path';
 import { logger } from '@devvir/service-kit';
 import config from './config';
-import { Slices, clear, filesAt, filesOf, isWhole, monthOf, sliceDirOf } from './vault';
+import { Slices, clear, countOf, filesAt, filesOf, isWhole, monthOf, sliceDirOf } from './vault';
 import type { Edge, Entry, Partition, Side, Stocked, VaultKey } from './types';
 
 /**
@@ -25,9 +25,11 @@ import type { Edge, Entry, Partition, Side, Stocked, VaultKey } from './types';
  * carry no mark of which build wrote them, so the ledger is the only thing that
  * can tell a month whole from one caught half way. Before the first file of a
  * stocked month is touched a line is written for it with `updating` where its
- * revision goes, and the line that says what it now holds follows the last file.
- * A partition whose last line says `updating` is not stocked, to anyone reading:
- * its files are some of one build and some of another. See `repair`.
+ * revision goes — `updating-sides` where only what its neighbours hold of it is
+ * being added, and its own files are left as they are — and the line that says
+ * what it now holds follows the last file. A partition whose last line says
+ * either is not stocked, to anyone reading: its files are some of one build and
+ * some of another. See `repair`.
  *
  * **A partition that is no longer what would be stocked says so too.** Its
  * archives changed, or what is written of them did, and its files are whole and
@@ -68,7 +70,7 @@ export const read = async (): Promise<Map<string, Entry>> => {
   for (const entry of await entriesOf()) {
     const held = entries.get(entry.partition);
 
-    if (entry.revision === UPDATING) entries.delete(entry.partition);
+    if (isUpdating(entry.revision)) entries.delete(entry.partition);
     else if (entry.revision !== OUTDATED) entries.set(entry.partition, entry);
     else if (held) entries.set(entry.partition, { ...held, outdated: true });
   }
@@ -118,19 +120,22 @@ export const record = async (
 };
 
 /**
- * Say that a partition's files are about to be changed, before any of them is.
+ * Say that a partition's files are about to be changed, before any of them is:
+ * all of them, or — `completing` — only the sides its neighbours hold of it,
+ * added beside its own files.
  *
  * The line holds what the partition is being stocked from, so that what was
  * being done to it can be read back: see `repair`.
  */
 export const mark = async (
-  key:     VaultKey,
-  source:  Partition,
-  edges:   readonly Edge[],
-  missing: readonly Side[],
-  split:   boolean,
+  key:        VaultKey,
+  source:     Partition,
+  edges:      readonly Edge[],
+  missing:    readonly Side[],
+  split:      boolean,
+  completing: boolean,
 ): Promise<void> =>
-  append({ ...lineOf(key, source, edges, missing, split), revision: UPDATING, size: 0, count: 0 });
+  append({ ...lineOf(key, source, edges, missing, split), revision: completing ? UPDATING_SIDES : UPDATING, size: 0, count: 0 });
 
 /**
  * Say that a stocked partition is no longer what would be stocked today. Its
@@ -155,14 +160,15 @@ export const reinstate = async (entry: Entry): Promise<Entry> => {
  * Put right every partition that was being changed when something stopped it.
  *
  * Run before anything reads the vault: as the service starts, and before each
- * sweep — nothing else writes here, so a partition still saying `updating` then
- * is one nobody is updating.
+ * sweep — nothing else writes here, so a partition still saying `updating` or
+ * `updating-sides` then is one nobody is updating.
  *
  * **A month that was only being given a neighbour's hours goes back to what it
  * was.** Its own files were never touched, so the sides being added are removed
  * and the line it had before is written again: stocked, and still without them.
- * That is told from the two lines — the same rendering at the same version,
- * with a side that was `missing` and no longer is.
+ * That is what `updating-sides` says, and the two lines bear it out — the same
+ * rendering at the same version, with a side that was `missing` and no longer
+ * is.
  *
  * **Any other is no longer stocked.** Some of its files are of the month that
  * was there and some of the one arriving, and neither can be told from the
@@ -176,7 +182,7 @@ export const repair = async (): Promise<number> => {
   const before = new Map<string, Entry>();
 
   for (const entry of await entriesOf()) {
-    if (entry.revision !== UPDATING && entry.revision !== OUTDATED) before.set(entry.partition, entry);
+    if (! isUpdating(entry.revision) && entry.revision !== OUTDATED) before.set(entry.partition, entry);
 
     last.set(entry.partition, entry);
   }
@@ -185,13 +191,13 @@ export const repair = async (): Promise<number> => {
   let repaired = 0;
 
   for (const entry of last.values()) {
-    if (entry.revision !== UPDATING) continue;
+    if (! isUpdating(entry.revision)) continue;
 
     const dir   = join(config.vaultDir, dirname(entry.partition));
     const month = basename(entry.partition);
     const held  = (await slices.at(dir)).get(month);
     const was   = before.get(entry.partition);
-    const added = was ? sidesAdded(was, entry) : [];
+    const added = was && entry.revision === UPDATING_SIDES ? sidesAdded(was, entry) : [];
 
     if (was && added.length > 0) {
       await clear(dir, month, held, added);
@@ -250,7 +256,7 @@ export const validate = async (): Promise<number> => {
 
     let problem: string | null = null;
 
-    const count = held ? (held.bundle ? 1 : held.symbols.length) + held.sides.length : 0;
+    const count = countOf(held);
 
     if (! isWhole(held)) problem = 'its files are not in the vault';
     else if (count !== entry.count) problem = `it has ${count} files where the ledger says ${entry.count}`;
@@ -293,6 +299,9 @@ export const MISSING = 'missing';
 
 /** What a line says in place of a revision while its partition's files are being changed. */
 export const UPDATING = 'updating';
+
+/** The same, where only the sides its neighbours hold of it are being added and its own files are not touched. */
+export const UPDATING_SIDES = 'updating-sides';
 
 /** What a line says in place of a revision once its partition's files are no longer what would be stocked. */
 export const OUTDATED = 'outdated';
@@ -376,6 +385,9 @@ const sidesAdded = (was: Entry, now: Entry): Side[] => {
 
   return ends.filter(([, then, at]) => then === MISSING && at !== MISSING).map(([side]) => side);
 };
+
+/** Whether a line says its partition's files are being changed, in either way. */
+const isUpdating = (revision: string): boolean => revision === UPDATING || revision === UPDATING_SIDES;
 
 /** A file's lines as fields, without its heading; nothing where there is no file. Short lines are left out. */
 const linesOf = async (name: string, width: number): Promise<string[][]> => {

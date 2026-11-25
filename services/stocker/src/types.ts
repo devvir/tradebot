@@ -325,10 +325,11 @@ export interface Job {
 
   /**
    * Where the month is already in the vault with a side missing, and this is
-   * that side arriving: the revision it is stocked at, and the sides that
-   * arrive. Only they are built; the month's own rows are not read again.
+   * that side arriving: the revision it is stocked at, the sides that arrive,
+   * and how many files its ledger line says it has. Only the sides are built;
+   * the month's own rows are not read again.
    */
-  completes: { revision: string; sides: Side[] } | null;
+  completes: { revision: string; sides: Side[]; count: number } | null;
 }
 
 /** What a build writes: a month's own rows, or one side of what its neighbours hold of it. */
