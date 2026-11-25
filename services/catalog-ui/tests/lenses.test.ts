@@ -1,8 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  addressIsReserved, addressIsSound, byPeriod, choiceOf, chosenOf, filed, forget, isUnsaved, keep, keptFor, lensPlaceholder, namedLens, onlyOf, publishedOptions, unsavedLens, withOne, withoutVenue,
-} from '../web/views/Lenses';
-import type { LensProblem, LensRule, RuleEntry } from '../web/types';
+import { addressIsReserved, addressIsSound } from '../web/lenses/address';
+import { BUNDLES, byPeriod, capital, choiceOf, choices, chosenOf, onlyOf, seconds } from '../web/lenses/choices';
+import { forget, isUnsaved, keep, keepUnsaved, keptFor, namedLens, unsavedLens } from '../web/lenses/kept';
+import { lensPlaceholder } from '../web/lenses/picker';
+import { publishedOptions } from '../web/lenses/published';
+import { entriesOf, filed, freshKey, stateOf, withOne, without, withoutVenue } from '../web/lenses/rules';
+import { keepSize, known, seenSize } from '../web/lenses/size';
+import type { Lens, LensProblem, LensRule, LensSize, RuleEntry } from '../web/types';
 
 /** The lens page's own reads: what the venues publish, and the unsaved lens a browser kept. */
 
@@ -281,5 +285,179 @@ describe('lensPlaceholder', () => {
   it('asks for a choice wherever there is one, read or not', () => {
     expect(lensPlaceholder(1, false)).toBe('Choose a lens');
     expect(lensPlaceholder(1, true)).toBe('Choose a lens');
+  });
+});
+
+describe('where a rule stands', () => {
+  const rule: LensRule = { effect: 'include', markets: ['spot'] };
+
+  it('is new where it was never confirmed', () => {
+    expect(stateOf({ key: 'a', now: rule })).toBe('new');
+  });
+
+  it('is saved where what is written is what is stored, and changed where it is not', () => {
+    expect(stateOf({ key: 'a', saved: rule, now: { ...rule } })).toBe('saved');
+    expect(stateOf({ key: 'a', saved: rule, now: { ...rule, markets: ['futures'] } })).toBe('changed');
+  });
+});
+
+describe('a stored definition, as the editor holds it', () => {
+  it('holds every rule as saved, venue by venue, in order', () => {
+    const one: LensRule = { effect: 'include' };
+    const two: LensRule = { effect: 'exclude', markets: ['spot'] };
+    const held = entriesOf({ format: 1, venues: { binance: [one, two], '*': [one] } });
+
+    expect(Object.keys(held).sort()).toEqual(['*', 'binance']);
+    expect(held.binance!.map(entry => [entry.saved, entry.now])).toEqual([[one, one], [two, two]]);
+    expect(held.binance!.map(stateOf)).toEqual(['saved', 'saved']);
+  });
+
+  it('gives every entry a key of its own', () => {
+    const rule: LensRule = { effect: 'include' };
+    const held = entriesOf({ format: 1, venues: { a: [rule, rule], b: [rule] } });
+    const keys = [...held.a!, ...held.b!].map(entry => entry.key);
+
+    expect(new Set([...keys, freshKey(), freshKey()]).size).toBe(keys.length + 2);
+  });
+
+  it('holds nothing for a definition with no venues', () => {
+    expect(entriesOf({ format: 1, venues: {} })).toEqual({});
+  });
+});
+
+describe('without', () => {
+  it('leaves out the keys named, and leaves the record it was given as it was', () => {
+    const had = { a: 1, b: 2, c: 3 };
+
+    expect(without(had, ['a', 'c', 'missing'])).toEqual({ b: 2 });
+    expect(had).toEqual({ a: 1, b: 2, c: 3 });
+  });
+});
+
+describe('the new lens a browser keeps', () => {
+  let held: Map<string, string>;
+
+  beforeEach(() => {
+    held = new Map();
+    vi.stubGlobal('localStorage', {
+      getItem:    (key: string) => held.get(key) ?? null,
+      setItem:    (key: string, value: string) => { held.set(key, value); },
+      removeItem: (key: string) => { held.delete(key); },
+    });
+  });
+
+  it('hands back the lens kept, and none once it is forgotten', () => {
+    const lens = namedLens('cold', 'Cold', 'for the cold store');
+
+    keepUnsaved(lens);
+    expect(unsavedLens()).toEqual(lens);
+
+    keepUnsaved(null);
+    expect(unsavedLens()).toBeNull();
+  });
+
+  it('carries on where the browser refuses storage', () => {
+    vi.stubGlobal('localStorage', {
+      setItem:    () => { throw new Error('refused'); },
+      removeItem: () => { throw new Error('refused'); },
+    });
+
+    expect(() => keepUnsaved(namedLens('cold', 'Cold', ''))).not.toThrow();
+    expect(() => keepUnsaved(null)).not.toThrow();
+  });
+});
+
+describe('the size a browser last saw', () => {
+  const size: LensSize = { partitions: 2, files: 10, bytes: 1_000, pending: 4, pendingBytes: 400 };
+  const lens: Lens = { ...namedLens('cold', 'Cold', ''), id: 1, updatedAt: '2026-11-25T10:00:00Z' };
+
+  beforeEach(() => {
+    const held = new Map<string, string>();
+
+    vi.stubGlobal('localStorage', {
+      getItem:    (key: string) => held.get(key) ?? null,
+      setItem:    (key: string, value: string) => { held.set(key, value); },
+      removeItem: (key: string) => { held.delete(key); },
+    });
+  });
+
+  it('is the one kept for this version of the lens', () => {
+    keepSize(lens, size);
+    expect(seenSize(lens)).toEqual(size);
+  });
+
+  it('is none for a version saved since, or a lens never sized here', () => {
+    keepSize(lens, size);
+    expect(seenSize({ ...lens, updatedAt: '2026-11-25T11:00:00Z' })).toBeUndefined();
+    expect(seenSize({ ...lens, slug: 'warm' })).toBeUndefined();
+  });
+
+  it('is forgotten with the lens', () => {
+    keepSize(lens, size);
+    forget(lens);
+    expect(seenSize(lens)).toBeUndefined();
+  });
+
+  it('is none where the browser refuses storage, and keeping one does not fail', () => {
+    vi.stubGlobal('localStorage', {
+      getItem: () => { throw new Error('refused'); },
+      setItem: () => { throw new Error('refused'); },
+    });
+
+    expect(() => keepSize(lens, size)).not.toThrow();
+    expect(seenSize(lens)).toBeUndefined();
+  });
+
+  it('says how much is downloaded only where it has files and counts what is pending', () => {
+    expect(known(size)).toBe(true);
+    expect(known({ ...size, files: 0 })).toBe(false);
+    expect(known({ ...size, pendingBytes: undefined as unknown as number })).toBe(false);
+  });
+});
+
+describe('a variant as a duration', () => {
+  it('is its count times its unit, in seconds', () => {
+    expect(seconds('10s')).toBe(10);
+    expect(seconds('15m')).toBe(15 * 60);
+    expect(seconds('12h')).toBe(12 * 3_600);
+    expect(seconds('1d')).toBe(86_400);
+    expect(seconds('1w')).toBe(7 * 86_400);
+    expect(seconds('1mo')).toBe(30 * 86_400);
+    expect(seconds('1y')).toBe(365 * 86_400);
+  });
+
+  it('is none for anything not shaped like a period', () => {
+    for (const other of ['', 'full', '400', 'incremental,500', 'm', '1x', '1 m', '1M'])
+      expect(seconds(other), other).toBeNull();
+  });
+});
+
+describe('what a grain or bundle select offers', () => {
+  const forms = [{ value: 'daily', label: 'Daily' }, { value: 'monthly', label: 'Monthly' }];
+
+  it('offers any, each form alone, and each form preferred', () => {
+    expect(choices(forms, true)).toEqual([
+      { value: 'any',            label: 'Any' },
+      { value: 'only:daily',     label: 'Only Daily' },
+      { value: 'only:monthly',   label: 'Only Monthly' },
+      { value: 'prefer:daily',   label: 'Prefer Daily' },
+      { value: 'prefer:monthly', label: 'Prefer Monthly' },
+    ]);
+  });
+
+  it('offers nothing to prefer where the rule cannot prefer', () => {
+    expect(choices(BUNDLES, false).map(one => one.value)).toEqual(['any', 'only:instrument', 'only:market']);
+  });
+
+  it('reads every value it offers back as the choice it names', () => {
+    for (const { value } of choices(forms, true)) expect(chosenOf(choiceOf(value))).toBe(value);
+  });
+});
+
+describe('capital', () => {
+  it('puts the first letter in upper case and leaves the rest', () => {
+    expect(capital('binance')).toBe('Binance');
+    expect(capital('okX')).toBe('OkX');
+    expect(capital('')).toBe('');
   });
 });

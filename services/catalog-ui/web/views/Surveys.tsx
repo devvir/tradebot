@@ -3,8 +3,12 @@ import { ActionIcon, Anchor, Badge, Box, Button, CloseButton, Group, Loader, Mod
 import { poll, post, prospector } from '../api';
 import { Dim, Table, Waiting, bytes, count } from './Table';
 import { linkTo } from '../App';
+import { GOING, ORDER_MS, ORDER_POLL_MS, POLL_MS, tookEffect, without } from '../surveys/orders';
+import { teller } from '../surveys/teller';
+import { howOf, took, when } from '../surveys/wording';
 import type { ReactNode } from 'react';
 import type { Asked } from '../api';
+import type { Said } from '../surveys/teller';
 import type { FinishedRun, LastRun, Order, Status } from '../types';
 
 /**
@@ -379,78 +383,6 @@ export const Surveys = () => {
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
-/** How often the table is read, and how often while an order is owed an answer. */
-const POLL_MS       = 10_000;
-const ORDER_POLL_MS = 2_000;
-
-/**
- * How long an order is held before it is let go of and said to have lapsed.
- *
- * Prospector reports `starting` from a pass's first second, however long its
- * preamble, so an order still unconfirmed after this is one prospector never
- * began.
- */
-const ORDER_MS = 2 * 60_000;
-
-/** States in which a venue is already going, so asking it to go means nothing. */
-const GOING = new Set(['starting', 'walking', 'updating']);
-
-/**
- * Whether the status shows an order done.
- *
- * **A pass that began after the order counts**, not only one still running: a
- * small venue can open and close a whole update between two polls, and waiting
- * for a state it has already left would hold the row until the order lapsed.
- *
- * **Told by the pass's start changing, not by when it began.** Both starts are
- * prospector's own report, so whatever this browser's clock says never enters
- * into it.
- */
-export const tookEffect = (order: Order, now: Status): boolean => {
-  if (order.kind === 'pause') return now.state === 'paused' || now.state === 'not started';
-
-  if (GOING.has(now.state)) return true;
-
-  /**
-   * **A pause lifted is done once the venue has left `paused`.** One paused
-   * while waiting goes back to waiting — nothing starts, so waiting for a pass
-   * would hold the row until the order lapsed and then report it as ignored.
-   */
-  if (order.from === 'paused' && now.state !== 'paused' && ! now.stopping) return true;
-
-  return now.lastRun.startedAt !== null && now.lastRun.startedAt !== order.fromStartedAt;
-};
-
-const without = (had: Record<string, Order>, venues: readonly string[]): Record<string, Order> =>
-  Object.fromEntries(Object.entries(had).filter(([venue]) => ! venues.includes(venue)));
-
-const when = (at: string): string => at.slice(0, 16).replace('T', ' ');
-
-/**
- * How long a pass took, in one unit.
- *
- * **The largest unit the duration fills at least once**, rounded to a whole
- * number of it: a run is compared against other runs of the same venue, where
- * the question is whether it took minutes or hours, and a second figure never
- * changes that answer. `4h` is the whole fact about a walk; `4h 03m` is the same
- * fact costing twice the width.
- */
-const took = (from: string, to: string): string => {
-  const ms = Date.parse(to) - Date.parse(from);
-
-  const units: [number, string][] = [
-    [86400000, 'd'],
-    [3600000,  'h'],
-    [60000,    'm'],
-    [1000,     's'],
-  ];
-
-  for (const [size, unit] of units)
-    if (ms >= size) return `${Math.round(ms / size)}${unit}`;
-
-  return `${Math.max(ms, 0)}ms`;
-};
-
 /**
  * The word that asks a venue to go, where there is something to ask for.
  *
@@ -706,12 +638,6 @@ export const LastSurvey = ({ of }: { of: LastRun }) => {
   );
 };
 
-/** How a pass reads a venue, for the tooltip under a word that does not say. */
-const howOf = (kind: 'walk' | 'update'): string =>
-  (kind === 'walk'
-    ? 'Walking the listing'
-    : 'Probing files');
-
 /**
  * The venue's last meaningful passage of work: a run that is happening, or the
  * newest one that finished.
@@ -843,45 +769,6 @@ const Due = ({ at }: { at: string | null }) => {
  * word it shows, and it sets the figure.
  */
 const BUTTON = 62;
-
-/** How long an acknowledgement stays on screen before it stops being news. */
-export const SAID_MS = 6_000;
-
-/** What the page has just said: the words, and whether they stay until dismissed. */
-export interface Said {
-  text:   string;
-  sticks: boolean;
-}
-
-/**
- * What the page says about what was just asked for, with `show` told each time
- * it changes.
- *
- * **An acknowledgement fades; a failure stays.** "Asked" describes an instant,
- * and left on the page it reads as a condition — misleading beside a table that
- * is telling you the actual state every ten seconds. A failure is the opposite:
- * nothing else on the page says it, so it stays until it is dismissed or
- * something else is said.
- */
-export const teller = (show: (now: Said | null) => void) => {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-
-  const set = (now: Said | null) => {
-    clearTimeout(timer);
-    timer = undefined;
-    show(now);
-  };
-
-  return {
-    say: (text: string) => {
-      set({ text, sticks: false });
-      timer = setTimeout(() => set(null), SAID_MS);
-    },
-    fail:  (text: string) => set({ text, sticks: true }),
-    clear: () => set(null),
-    stop:  () => clearTimeout(timer),
-  };
-};
 
 /** `teller`, held by a component for as long as it is mounted. */
 const useSaid = () => {

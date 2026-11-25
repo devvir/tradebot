@@ -7,9 +7,15 @@ import type { ReactNode } from 'react';
 import { catalog, poll, remove, send } from '../api';
 import { linkTo, rememberLens } from '../App';
 import { bytes, count } from './Table';
-import type {
-  Choice, Lens, LensDefinition, LensDraft, LensOption, LensProblem, LensRule, LensSize, RuleEntry,
-} from '../types';
+import { addressIsReserved, addressIsSound } from '../lenses/address';
+import { BUNDLES, byPeriod, capital, choiceOf, choices, chosenOf, onlyOf } from '../lenses/choices';
+import { forget, isUnsaved, keep, keepUnsaved, keptFor, namedLens, unsavedLens } from '../lenses/kept';
+import { lensPlaceholder } from '../lenses/picker';
+import { publishedOptions } from '../lenses/published';
+import { entriesOf, filed, freshKey, stateOf, withOne, without, withoutVenue } from '../lenses/rules';
+import { keepSize, known, seenSize } from '../lenses/size';
+import type { Sending } from '../lenses/rules';
+import type { Lens, LensOption, LensProblem, LensRule, LensSize, RuleEntry } from '../types';
 
 /** The key a lens keeps its all-venue rules under — see the catalog's `GLOBAL`. */
 const GLOBAL = '*';
@@ -188,39 +194,11 @@ export const Lenses = ({ slug }: { slug?: string | undefined }) => {
   );
 };
 
-/**
- * What the lens picker says while nothing is chosen. **A list never read is not
- * an empty one**, so it says which of the two it is.
- */
-export const lensPlaceholder = (choices: number, unread: boolean): string =>
-  (choices > 0 ? 'Choose a lens' : unread ? 'Lenses not read' : 'No lenses yet');
-
 /** How often an open lens asks its size again, so progress moves while its files are downloaded. */
 const SIZE_REFRESH_MS = 30_000;
 
 /** The same, while the lens is still being worked out after a save. */
 const UPDATING_REFRESH_MS = 2_000;
-
-/** Where a lens's last known size is kept, one entry per lens. */
-const sizeKey = (slug: string): string => `catalog-ui:lens-size:${slug}`;
-
-/** The size last seen for exactly this saved lens, or undefined where it was never sized here. */
-const seenSize = (lens: Lens): LensSize | undefined => {
-  try {
-    const held = JSON.parse(localStorage.getItem(sizeKey(lens.slug)) ?? 'null') as
-      { updatedAt: string; size: LensSize } | null;
-
-    return held && held.updatedAt === lens.updatedAt ? held.size : undefined;
-  } catch {
-    return undefined;
-  }
-};
-
-const keepSize = (lens: Lens, size: LensSize): void => {
-  try {
-    localStorage.setItem(sizeKey(lens.slug), JSON.stringify({ updatedAt: lens.updatedAt, size }));
-  } catch { /* storage refused: the next visit waits for the answer instead */ }
-};
 
 /**
  * How much of what the lens lets through is already on disk, by weight — files
@@ -236,9 +214,6 @@ const Downloaded = ({ size }: { size: LensSize }) => {
     </Group>
   );
 };
-
-/** Whether a size says how much of it is downloaded: one with no files, or none counted, does not. */
-const known = (size: LensSize): boolean => size.files > 0 && typeof size.pendingBytes === 'number';
 
 /** One lens, whole: what it is called, what it is for, and what it lets through. */
 const Editing = ({ lens, onStored, onFailed, onGone }: {
@@ -569,174 +544,6 @@ const Editing = ({ lens, onStored, onFailed, onGone }: {
   );
 };
 
-/** Where a rule stands: never confirmed, confirmed and edited since, or as stored. */
-const stateOf = (entry: RuleEntry): 'new' | 'changed' | 'saved' =>
-  (! entry.saved ? 'new' : JSON.stringify(entry.saved) === JSON.stringify(entry.now) ? 'saved' : 'changed');
-
-/** A stored definition as the editor holds it: every rule saved, none drafted. */
-const entriesOf = (definition: LensDefinition): Record<string, RuleEntry[]> =>
-  Object.fromEntries(Object.entries(definition.venues ?? {})
-    .map(([venue, list]) => [venue, list.map(rule => ({ key: freshKey(), saved: rule, now: rule }))]));
-
-let keys = 0;
-
-const freshKey = (): string => `r${Date.now().toString(36)}${(keys++).toString(36)}`;
-
-/**
- * A definition to store, and which entry each rule in it is: for each venue,
- * the keys of the entries sent, in the order their rules are — so a problem the
- * catalog places at a venue and a position is placed on the entry it is about.
- */
-export interface Sending {
-  definition: LensDefinition;
-  sent:       Record<string, string[]>;
-}
-
-/**
- * The lens as stored, with one entry's draft in place of — or beside — what it
- * was, or, with `drop`, without it. Drafts of other entries are not sent.
- */
-export const withOne = (
-  rules: Record<string, RuleEntry[]>, venue: string, entry: RuleEntry, drop = false,
-): Sending => {
-  const venues: LensDefinition['venues'] = {};
-  const sent:   Sending['sent'] = {};
-
-  for (const [each, list] of Object.entries({ ...rules, [venue]: rules[venue] ?? [] })) {
-    const kept: LensRule[] = [];
-    const keys: string[]   = [];
-
-    for (const one of list) {
-      const rule = one.key === entry.key ? (drop ? undefined : one.now) : one.saved;
-
-      if (rule === undefined) continue;
-
-      kept.push(rule);
-      keys.push(one.key);
-    }
-
-    if (kept.length > 0) { venues[each] = kept; sent[each] = keys; }
-  }
-
-  return { definition: { format: 1, venues }, sent };
-};
-
-/** The lens as stored, less every rule of one venue. */
-export const withoutVenue = (rules: Record<string, RuleEntry[]>, venue: string): Sending => {
-  const { definition, sent } = withOne(rules, venue, { key: '', now: { effect: 'include' } }, true);
-
-  delete definition.venues[venue];
-  delete sent[venue];
-
-  return { definition, sent };
-};
-
-/**
- * What the catalog found wrong, filed by the entry each problem is about. A
- * problem about no rule, or about one that was not sent, is the lens's own.
- */
-export const filed = (found: LensProblem[], sent: Sending['sent']):
-  { byKey: Record<string, LensProblem[]>; general: LensProblem[] } => {
-  const byKey: Record<string, LensProblem[]> = {};
-  const general: LensProblem[] = [];
-
-  for (const one of found) {
-    const key = one.rule >= 0 ? sent[one.venue]?.[one.rule] : undefined;
-
-    if (key === undefined) general.push(one);
-    else (byKey[key] ??= []).push(one);
-  }
-
-  return { byKey, general };
-};
-
-const without = <T,>(had: Record<string, T>, keys: string[]): Record<string, T> => {
-  const next = { ...had };
-
-  for (const one of keys) delete next[one];
-
-  return next;
-};
-
-const drafted = (slug: string) => `catalog-ui.lens-draft.${slug}`;
-
-/** The draft kept for exactly this version of a lens, or none. */
-export const keptFor = (lens: Lens): LensDraft | null => {
-  try {
-    const had = localStorage.getItem(drafted(lens.slug));
-
-    if (had === null) return null;
-
-    const draft = JSON.parse(had) as LensDraft;
-
-    return draft.from === lens.updatedAt && draft.rules ? draft : null;
-  } catch {
-    return null;
-  }
-};
-
-export const keep = (lens: Lens, draft: LensDraft | null): void => {
-  try {
-    if (draft === null) localStorage.removeItem(drafted(lens.slug));
-    else localStorage.setItem(drafted(lens.slug), JSON.stringify(draft));
-  } catch {
-    // A browser refusing storage is not a reason to stop editing.
-  }
-};
-
-/** Everything this browser keeps of a lens that is gone: its draft and its last known size. */
-export const forget = (lens: Lens): void => {
-  keep(lens, null);
-
-  try {
-    localStorage.removeItem(sizeKey(lens.slug));
-  } catch { /* storage refused: what it holds is never read for a lens that is not there */ }
-};
-
-/**
- * What a lens not saved yet has for `updatedAt`: when it was named. So it is
- * a version of its own, and a draft left at its address by an earlier lens is
- * never taken for its own.
- */
-const UNSAVED_SINCE = 'unsaved:';
-
-/** A new lens, as named: not saved, with no rules. */
-export const namedLens = (slug: string, name: string, note: string): Lens => ({
-  slug, name, note,
-  createdAt: '', updatedAt: `${UNSAVED_SINCE}${Date.now()}`, definition: { format: 1, venues: {} },
-});
-
-/** Whether a lens is only this page's: never stored by the catalog. */
-export const isUnsaved = (lens: Lens): boolean => lens.id === undefined || lens.updatedAt.startsWith(UNSAVED_SINCE);
-
-const UNSAVED = 'catalog-ui.lens-unsaved';
-
-/**
- * The new lens not saved yet, if any, as this browser kept it — or none, where
- * what is kept is not shaped like a lens.
- */
-export const unsavedLens = (): Lens | null => {
-  try {
-    const kept = JSON.parse(localStorage.getItem(UNSAVED) ?? 'null') as
-      { slug?: unknown; definition?: { venues?: unknown } } | null;
-
-    const venues = kept?.definition?.venues;
-
-    return typeof kept?.slug === 'string' && typeof venues === 'object' && venues !== null
-      ? kept as Lens
-      : null;
-  } catch {
-    return null;
-  }
-};
-
-const keepUnsaved = (lens: Lens | null): void => {
-  try {
-    if (lens === null) localStorage.removeItem(UNSAVED);
-    else localStorage.setItem(UNSAVED, JSON.stringify(lens));
-  } catch { /* storage refused: the new lens lasts as long as the page */ }
-};
-
 /** One venue's rules — or every venue's, under `*`. */
 const ForVenue = ({ venue, entries, published, problems, storing, onAdd, onClear, onEdit, onConfirm, onDrop, onDiscard }: {
   venue:     string;
@@ -827,28 +634,6 @@ const usePublished = (): { options: LensOption[]; error: string | null; asking: 
   const retry = useCallback(() => setAsked(had => had + 1), []);
 
   return { ...published, asking, retry };
-};
-
-/** How long one reading of what the venues publish is used before it is asked for again. */
-const PUBLISHED_FOR_MS = 60_000;
-
-let asked: { at: number; options: Promise<LensOption[]> } | null = null;
-
-/**
- * What the venues publish: one request shared by every caller for
- * `PUBLISHED_FOR_MS`. A failed one is forgotten at once, so the next caller
- * asks again rather than being handed the same failure.
- */
-export const publishedOptions = (): Promise<LensOption[]> => {
-  if (asked === null || Date.now() - asked.at > PUBLISHED_FOR_MS) {
-    const held = { at: Date.now(), options: catalog<{ items: LensOption[] }>('/lenses/options').then(({ items }) => items) };
-
-    held.options.catch(() => { if (asked === held) asked = null; });
-
-    asked = held;
-  }
-
-  return asked.options;
 };
 
 /** Where a market is found: the venues that publish anything in it. */
@@ -1225,78 +1010,6 @@ const Rule = ({ rule, offered, published, problems, state, busy, locked, onChang
   );
 };
 
-/**
- * Variants in the order a person reads them.
- *
- * **A bar length is not a word.** Sorted as text, a kline's variants come out
- * `10s, 12h, 15m, 1d, 1h, 1m, 1mo…`, which is nobody's idea of ascending. So
- * anything shaped like a period is ordered by how long it is, and anything else
- * falls back to the alphabet — a book depth has no duration and `400` beside
- * `full` sorts the only way it can.
- *
- * **Recognised by shape rather than by a list of datasets**, because the shape is
- * the fact: four datasets use bar lengths today and the fifth will not need
- * adding anywhere.
- */
-export const byPeriod = (a: string, b: string): number => {
-  const one = seconds(a), two = seconds(b);
-
-  if (one !== null && two !== null) return one - two;
-  if (one !== null) return -1;
-  if (two !== null) return 1;
-
-  return a.localeCompare(b);
-};
-
-/** A variant as a duration, or null where it is not one. */
-const seconds = (variant: string): number | null => {
-  const had = /^(\d+)(s|m|h|d|w|mo|y)$/.exec(variant);
-
-  if (! had) return null;
-
-  return Number(had[1]) * SPANS[had[2] as keyof typeof SPANS];
-};
-
-const SPANS = {
-  s: 1, m: 60, h: 3_600, d: 86_400, w: 604_800, mo: 2_592_000, y: 31_536_000,
-} as const;
-
-/** Leaving a grain or a bundle out of a rule takes any, which a select needs a value for. */
-const ANY = 'any';
-
-const BUNDLES = [
-  { value: 'instrument', label: 'per Instrument' },
-  { value: 'market',     label: 'Market Bundles' },
-];
-
-/**
- * What a grain or a bundle select offers: any form, only one of them, or any
- * with one of them preferred — the last only where the rule can prefer.
- */
-const choices = (forms: { value: string; label: string }[], preferring: boolean): { value: string; label: string }[] => [
-  { value: ANY, label: 'Any' },
-  ...forms.map(one => ({ value: `only:${one.value}`, label: `Only ${one.label}` })),
-  ...(preferring ? forms.map(one => ({ value: `prefer:${one.value}`, label: `Prefer ${one.label}` })) : []),
-];
-
-/** A rule's choice as the select's value, and back. */
-export const chosenOf = (choice: Choice<string> | undefined): string =>
-  (! choice || typeof choice !== 'object' ? ANY : 'only' in choice ? `only:${choice.only}` : `prefer:${choice.prefer}`);
-
-export const choiceOf = (picked: string | null): Choice<string> | undefined => {
-  if (! picked || picked === ANY) return undefined;
-
-  const [how, form] = picked.split(':') as ['only' | 'prefer', string];
-
-  return how === 'only' ? { only: form } : { prefer: form };
-};
-
-/** A choice kept where it takes one form alone, and dropped where it only prefers one. */
-export const onlyOf = <T extends string>(choice: Choice<T> | undefined): Choice<T> | undefined =>
-  (choice && typeof choice === 'object' && 'only' in choice ? choice : undefined);
-
-const capital = (word: string): string => word.charAt(0).toUpperCase() + word.slice(1);
-
 /** Behind a rule, the same colour a breath of it. */
 const EFFECT_TINT: Record<LensRule['effect'], string> = {
   include: 'var(--tint-rise)',
@@ -1466,21 +1179,3 @@ const Naming = ({ opened, taken, onClose, onNamed }: {
     </Modal>
   );
 };
-
-/**
- * Addresses no lens can take: the catalog answers each of these paths under
- * `/lenses` itself, so a lens there could not be reached.
- */
-const RESERVED_ADDRESSES: readonly string[] = ['options', 'size', 'check', 'resolve'];
-
-/** Whether an address is one of the catalog's own paths under `/lenses`, which no lens can take. */
-export const addressIsReserved = (slug: string): boolean => RESERVED_ADDRESSES.includes(slug);
-
-/**
- * Whether an address is one the catalog stores a lens under: lower case, digits
- * and hyphens, 2 to 64 characters, not starting with a hyphen, and not
- * reserved (`addressIsReserved`). A copy of the catalog's own test, since this
- * page does not import the catalog's packages.
- */
-export const addressIsSound = (slug: string): boolean =>
-  /^[a-z0-9][a-z0-9-]{1,63}$/.test(slug) && ! addressIsReserved(slug);

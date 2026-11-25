@@ -3,9 +3,12 @@ import { createElement } from 'react';
 import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MantineProvider } from '@mantine/core';
-import { LastSurvey, SAID_MS, teller, tookEffect } from '../web/views/Surveys';
+import { LastSurvey } from '../web/views/Surveys';
 import { Table, Waiting } from '../web/views/Table';
-import type { Said } from '../web/views/Surveys';
+import { tookEffect, without } from '../web/surveys/orders';
+import { SAID_MS, teller } from '../web/surveys/teller';
+import { howOf, took, when } from '../web/surveys/wording';
+import type { Said } from '../web/surveys/teller';
 import type { LastRun, Order, Status } from '../web/types';
 
 /** The surveys page's own reads: when an order is done, what it says, and what a reader is told. */
@@ -139,5 +142,49 @@ describe('LastSurvey', () => {
     expect(markup(createElement(LastSurvey, { of: run({ first: false }) }))).toContain('Updated 2026-11-24');
     expect(markup(createElement(LastSurvey, { of: run({ first: true, ongoing: true, at: null }) })))
       .toContain('Backfill in progress');
+  });
+});
+
+describe('without', () => {
+  it('lets go of the orders for the venues named, and leaves the rest as they were', () => {
+    const had = { binance: order(), okx: order({ kind: 'pause' }), bybit: order() };
+
+    expect(without(had, ['binance', 'bybit', 'kraken'])).toEqual({ okx: had.okx });
+    expect(Object.keys(had)).toEqual(['binance', 'okx', 'bybit']);
+  });
+});
+
+describe('when', () => {
+  it('says a timestamp to the minute', () => {
+    expect(when('2026-11-25T09:41:27.123Z')).toBe('2026-11-25 09:41');
+  });
+});
+
+describe('took', () => {
+  const from = '2026-11-25T00:00:00.000Z';
+  const after = (ms: number): string => new Date(Date.parse(from) + ms).toISOString();
+
+  it('says a duration in the largest unit it fills, rounded to a whole one', () => {
+    expect(took(from, after(4 * 3_600_000 + 3 * 60_000))).toBe('4h');
+    expect(took(from, after(90 * 60_000))).toBe('2h');
+    expect(took(from, after(89 * 60_000))).toBe('1h');
+    expect(took(from, after(59 * 60_000 + 40_000))).toBe('60m');
+    expect(took(from, after(7 * 60_000))).toBe('7m');
+    expect(took(from, after(2 * 86_400_000 + 11 * 3_600_000))).toBe('2d');
+    expect(took(from, after(59_000))).toBe('59s');
+    expect(took(from, after(1_000))).toBe('1s');
+  });
+
+  it('says less than a second in milliseconds, and an end before the start as none', () => {
+    expect(took(from, after(250))).toBe('250ms');
+    expect(took(from, after(0))).toBe('0ms');
+    expect(took(from, after(-5_000))).toBe('0ms');
+  });
+});
+
+describe('howOf', () => {
+  it('names the mechanism of each kind of pass', () => {
+    expect(howOf('walk')).toBe('Walking the listing');
+    expect(howOf('update')).toBe('Probing files');
   });
 });
