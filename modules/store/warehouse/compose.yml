@@ -5,7 +5,8 @@
 #
 # Turns the archives into the Parquet vault:
 #
-#   archives (read-only) → stocker → Parquet vault, one directory per partition
+#   archives (read-only) → stocker → Parquet vault, a month's file under @ or
+#                                    one per symbol, in each slice's directory
 #
 # The archives are hauler's and are mounted read-only here: this module only
 # reads them, and the mount enforces that rather than trusting the code.

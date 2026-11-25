@@ -34,7 +34,7 @@ RUN test -f services/${SERVICE_NAME}/dist/src/index.js \
 RUN chmod -R a+rX /app
 
 # ============================================================================
-# Production Stage - Minimal runtime image
+# Runtime Stage - the built workspace on a plain node image
 # ============================================================================
 FROM node:${NODE_VERSION}
 
