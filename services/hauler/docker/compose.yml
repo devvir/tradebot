@@ -29,7 +29,8 @@ services:
       # The catalog lens to haul through (default: none — every catalogued file)
       HAULER_LENS:        ${HAULER_LENS:-}
 
-      # Fetches in flight across every venue together
+      # Fetches in flight across every venue together: one budget, not one per
+      # venue. A venue walking alone has all of it.
       HAULER_CONCURRENCY: ${HAULER_CONCURRENCY:-100}
 
       # Free space on the archives' volume, in GB, below which no new file is
@@ -53,10 +54,11 @@ services:
       retries: 3
       start_period: 10s
 
-    # A stop is answered within half a minute, whatever is downloading. Files
-    # still downloading after 15 s are given up and their partials removed. A
-    # container killed before then leaves partials in .hauler-tmp, which the
-    # next start removes. Either way the file stays owed.
+    # A stop gives the files in flight 15 s; whatever is still downloading then
+    # is given up, left owed, and its partial removed. The other 15 s are for
+    # the last reports to reach the catalog. A container killed mid-download
+    # leaves its partials in .hauler-tmp, which the next start deletes; the file
+    # stays owed and is fetched again.
     stop_grace_period: 30s
 
     # Rotated: at most five files of 50 MB each.

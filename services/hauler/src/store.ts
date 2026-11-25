@@ -26,7 +26,7 @@ import type { Readable } from 'node:stream';
  * **Every partial lives in one directory**, `.hauler-tmp` at the archives'
  * root — the same volume, so the rename that makes it a file is still one
  * step. What an interrupted hauler leaves behind is then one directory to
- * delete.
+ * delete, with no search of the archive.
  */
 
 /** What is at a path, or `null` where nothing is. */
