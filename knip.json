@@ -8,7 +8,7 @@
   "ignoreBinaries": ["truncate"],
   "workspaces": {
     ".": {
-      "entry": ["tsconfig.json"]
+      "entry": ["tsconfig.json", "docker/node/check-deploy.mjs"]
     },
     "services/**": {
       "project": ["src/**/*.{ts,tsx}", "tests/**/*.{ts,tsx}"]

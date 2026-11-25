@@ -21,4 +21,10 @@ services:
       # Published on 127.0.0.1 unless UI_BIND names another address.
       - "${UI_BIND:-127.0.0.1}:${UI_PORT:-3000}:3000"
 
+    # The most memory the container may take: the install and the Vite dev
+    # server it runs, heap and native together, with the dev image's heap
+    # (NODE_MEMORY_MB, 2048 MB) and a gigabyte beside it. Reaching it gets the
+    # container killed.
+    mem_limit: ${UI_MEM_LIMIT:-3GiB}
+
     restart: unless-stopped

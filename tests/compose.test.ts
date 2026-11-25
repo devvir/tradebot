@@ -87,11 +87,23 @@ const projectName = (file: string): string => {
 const ports = (rendered: Record<string, Service>): Array<[string, Port]> =>
   Object.entries(rendered).flatMap(([name, service]) => (service.ports ?? []).map((port): [string, Port] => [name, port]));
 
-/** Every compose file and every file one extends: the services' own and the shared node and broker bases. */
-const definitions = [...files, ...readdirSync(join(root, 'services'), { withFileTypes: true })
-  .filter((entry) => entry.isDirectory())
-  .map((entry) => join('services', entry.name, 'docker', 'base.yml'))
-  .filter((file) => existsSync(join(root, file)))];
+/** The stubs' compose files, which run only in development and so are checked on their own. */
+const stubFiles = composeFiles('services/_stub', 'docker');
+
+/**
+ * Every compose file, the stubs' among them, and every file one extends: the
+ * services' own bases (services/<name>/docker/base.yml) and the shared node
+ * fragments (docker/*.node.compose.yml).
+ */
+const definitions = [
+  ...files,
+  ...stubFiles,
+  ...readdirSync(join(root, 'services'), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => join('services', entry.name, 'docker', 'base.yml'))
+    .filter((file) => existsSync(join(root, file))),
+  ...readdirSync(join(root, 'docker')).filter((name) => name.endsWith('.node.compose.yml')).map((name) => join('docker', name)),
+];
 
 /** Every *_MEM_LIMIT variable any of them reads. */
 const memoryVariables = [...new Set(definitions.flatMap((file) =>
@@ -285,9 +297,37 @@ describe.skipIf(!hasCompose)('compose files', () => {
     });
   });
 
+  it('finds the stubs', () => {
+    expect(stubFiles).toEqual(['services/_stub/ui/docker/compose.yml']);
+    expect(definitions).toEqual(expect.arrayContaining([...stubFiles, 'docker/dev.node.compose.yml', 'services/rabbitmq/docker/base.yml']));
+  });
+
   describe('the stub UI', () => {
     const file = 'services/_stub/ui/docker/compose.yml';
     const ui = (env: Record<string, string | undefined>): Service => services(file, env).ui;
+
+    it('is the only service of its file', () => {
+      expect(Object.keys(services(file, {}))).toEqual(['ui']);
+    });
+
+    it('limits its memory to 3 GiB unless UI_MEM_LIMIT says otherwise', () => {
+      expect(memoryVariables).toContain('UI_MEM_LIMIT');
+      expect(Number(ui({}).mem_limit)).toBe(3 * GiB);
+      expect(Number(ui({ UI_MEM_LIMIT: '1536MiB' }).mem_limit)).toBe(1536 * MiB);
+    });
+
+    it('leaves a gigabyte beyond the dev image\'s heap, by default', () => {
+      const dockerfile = ui({}).build?.dockerfile ?? '';
+      const heap = Number(readFileSync(join(root, dockerfile), 'utf8').match(/^ARG NODE_MEMORY_MB=(\d+)$/m)?.[1]) * MiB;
+
+      expect(dockerfile).toBe('docker/dev.node.Dockerfile');
+      expect(Number(ui({}).mem_limit)).toBeGreaterThanOrEqual(heap + GiB);
+    });
+
+    it.each([['unset', undefined], ['prod', 'prod'], ['dev', 'dev']])('mounts the checkout at /live with APP_ENV %s', (_label, value) => {
+      expect((ui({ APP_ENV: value }).volumes ?? []).filter((volume) => volume.source === root).map((volume) => volume.target))
+        .toEqual(['/live']);
+    });
 
     it('publishes its port on 127.0.0.1 unless UI_BIND names another address', () => {
       expect(ui({}).ports?.map((port) => [port.host_ip, port.published])).toEqual([['127.0.0.1', '3000']]);

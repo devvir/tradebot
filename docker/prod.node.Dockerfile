@@ -45,6 +45,10 @@ RUN test -f services/${SERVICE_NAME}/dist/src/index.js \
 # file of its own names: .dockerignore keeps every .gitignore out of the context
 RUN pnpm --filter "{./services/${SERVICE_NAME}}" deploy --prod /deploy
 
+# Fail the build, rather than the container, when the deployed tree is short of
+# a built file of the service or of any workspace package it depends on
+RUN node docker/node/check-deploy.mjs /app /deploy
+
 # Everything the runtime user reads must be readable whatever the host's umask
 RUN chmod -R a+rX /deploy
 
