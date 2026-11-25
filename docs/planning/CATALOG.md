@@ -82,11 +82,12 @@ needs a per-venue leniency (binance publishes a month's files on the first Monda
 file (`seen_at`) and its key the period it covers; the difference is that venue's publishing lag.
 With a few months of it the one constant becomes a per-venue, per-dataset distribution.
 
-**Binance's correction packages as a hint.** Binance publishes dated packages under `/updates` naming
-files it changed in place ([BINANCE.md](../venues/BINANCE.md)): the key stays and the bytes move.
-Reading them would point at exactly those keys. Worth doing once in-place changes matter, treated as
-a hint rather than truth, and behind a generic "this venue announces changes" seam rather than a
-branch for one venue. Not built.
+**Binance's correction changelogs as a hint.** Binance lists the files it corrected in place, in
+dated changelogs in its public-data repository
+([BINANCE.md](../venues/BINANCE.md#binance-announces-its-own-corrections)): the key stays and the
+bytes move. Reading them would point at exactly those keys. Worth doing once in-place changes
+matter, treated as a hint rather than truth, and behind a generic "this venue announces changes"
+seam rather than a branch for one venue. Not built.
 
 **When the migration chain freezes.** While no catalog is shared or deployed, a change edits the
 migration it belongs to and the one live catalog is brought to match by hand. Once the project has a

@@ -6,7 +6,7 @@
 # Cold storage — what is left
 
 `cold push`, `cold evict`, `cold pull` and `cold audit` work on the archives and the vault, and the
-catalog's database has a push and a pull of its own: how is [COLD.md](../tooling/COLD.md). What
+catalog's database has a push and a pull of its own: how is [tooling/COLD.md](../tooling/COLD.md). What
 follows is either not built or has not yet run against Mega itself.
 
 ## Not run against Mega

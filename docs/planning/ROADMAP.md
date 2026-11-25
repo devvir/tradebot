@@ -228,11 +228,11 @@ How cold storage works is [tooling/COLD.md](../tooling/COLD.md); what is left of
 
 Understood well enough to do; none justifies a planning document.
 
-**Where a delisting date lives is a per-venue question nobody has asked yet.** Every venue with an
-instrument listing answers it, and the preamble marks what the listing no longer names as delisted —
-but the catalog records no date an instrument stopped, so an end is inferred from the archive going
-quiet. Some venues publish a date or a state, and some may serve an endpoint that includes the dead;
-taking those would replace the wait with a fact. A survey, not a change.
+**Where a delisting date lives is a per-venue question nobody has asked yet.** Every venue lists its
+instruments, and the preamble marks what the listing no longer names as delisted — but the catalog
+records no date an instrument stopped, so an end is inferred from the archive going quiet. Some
+venues publish a date or a state, and some may serve an endpoint that includes the dead; taking
+those would replace the wait with a fact. A survey, not a change.
 
 ---
 

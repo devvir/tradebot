@@ -455,8 +455,9 @@ until the 200-per-10-seconds wall.
 
 ### Gaps in the archive
 
-**`SUN_USDT` perp trades, 2021-08 and 2021-09.** The archive answers `404` for both months while
-the perp traded either side (`docs/venues/GATE.md`): real trades the archive tier does not hold.
+**`SUN_USDT` perp trades, 2021-07 to 2021-09.** The archive serves the spot file for 2021-07 and
+answers `404` for 2021-08 and 2021-09, while the perp traded throughout
+([GATE.md](../venues/GATE.md)): real trades the archive tier does not hold.
 REST is the only other route, and futures trades reach 180 days back (*Datasets* above), so as
 surveyed gate's API cannot supply them either. What is open is whether any endpoint reaches that far.
 

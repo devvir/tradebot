@@ -52,9 +52,10 @@ bumps the series' version so the month is stocked again.
   perpetual trades of inverse instruments (`quoteSize = size`), bybit perp `premiumIndex` and bybit
   spot `indexPrice`;
 - read the same way as an entry that has one: htx perp `indexPrice` and `markPrice` before 2026-02
-  (as htx future `markPrice` of those years), htx future `trades` and `klines` in both eras, htx
-  spot and future `books`, gate spot `klines`, okx future `trades` and `klines`, okx perp and option
-  `books`, bitget perp `klines`, bitget perp and future `books`, and bitget future `quotes`.
+  (as htx future `markPrice` of those years), htx future `trades` (linear before 2026-02, all from
+  2026-02) and `klines` in both eras, htx spot and future `books`, gate spot `klines`, okx future
+  `trades` and `klines`, okx perp and option `books`, bitget perp `klines`, bitget perp and future
+  `books`, and bitget spot and future `quotes`.
 
 ## Not built
 

@@ -14,7 +14,7 @@ The design is built around the second job. A choice that makes replay awkward is
 
 ## Time
 
-Time is not a clock that only moves forward. The data layer supports four states:
+Time is not a clock that only moves forward. The data layer supports three modes, and a jump:
 
 - **Live**: data comes from the venue in real time, and time moves at 1×.
 - **Replay**: history comes from a replay backend at a chosen speed, from well below 1× to 100× and
