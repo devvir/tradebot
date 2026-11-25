@@ -7,7 +7,7 @@ import { gzipSync } from 'node:zlib';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Server } from 'node:http';
 import type { Haulable } from '../src/types';
-import { dropHeld } from '../src/held';
+import { _test_forgetUnlike, dropHeld, startWalk } from '../src/held';
 
 /**
  * One file brought to disk: fetched, found there already and touched, or found
@@ -124,6 +124,7 @@ afterEach(async () => {
 
   // What a test left held is not the next one's.
   for (const venue of ['binance', 'gate', 'nowhere']) await dropHeld(venue);
+  _test_forgetUnlike();
 
   await new Promise(done => server.close(done));
   rmSync(cfg.archivesDir, { recursive: true, force: true });
@@ -627,6 +628,90 @@ describe('a file already on disk', () => {
     expect(readFileSync(at(one), 'utf8')).toBe(BODY);
     expect(existsSync(`${at(one)}.bak`)).toBe(false);
     expect(readdirSync(join(cfg.archivesDir, '.hauler-tmp'))).toEqual([]);
+  });
+});
+
+describe('a file served unlike its listing walk after walk', () => {
+  /** Listed as `file.zip` is, and served as something else. */
+  const one = file({ path: 'short.zip' });
+
+  /** One walk of binance, the file hauled on it as listed: what came of it, and how many times it was asked for. */
+  const walk = async (listed: Haulable = one): Promise<[string, number]> => {
+    startWalk('binance');
+
+    const before = requests.length;
+    const { outcome } = await haul(listed);
+
+    return [outcome, requests.length - before];
+  };
+
+  it('is fetched on each of the three walks after the first, then only on every tenth while listed the same', async () => {
+    expect(await walk()).toEqual(['mismatched', 1]);
+
+    for (let n = 1; n <= 3; n++) expect(await walk()).toEqual(['mismatched', 1]);
+
+    // Not asked for, and owed still: nothing reported of it, and nothing of it kept.
+    for (let n = 4; n <= 9; n++) expect(await walk()).toEqual(['unreached', 0]);
+
+    expect(existsSync(at(one))).toBe(false);
+    expect(readdirSync(join(cfg.archivesDir, '.hauler-tmp'))).toEqual([]);
+
+    expect(await walk()).toEqual(['mismatched', 1]);
+
+    for (let n = 11; n <= 19; n++) expect(await walk()).toEqual(['unreached', 0]);
+
+    expect(await walk()).toEqual(['mismatched', 1]);
+  });
+
+  it('is fetched at once where its listing changes, and on the walks after that as at first', async () => {
+    for (let n = 0; n <= 4; n++) await walk();
+
+    expect(await walk()).toEqual(['unreached', 0]);
+
+    // Listed anew, and still not what is served.
+    const relisted = { ...one, etag: `"${md5('yet another file')}"` };
+
+    expect(await walk(relisted)).toEqual(['mismatched', 1]);
+
+    for (let n = 1; n <= 3; n++) expect(await walk(relisted)).toEqual(['mismatched', 1]);
+
+    expect(await walk(relisted)).toEqual(['unreached', 0]);
+  });
+
+  it('is fetched at once where it comes to be listed as what is served', async () => {
+    for (let n = 0; n <= 4; n++) await walk();
+
+    expect(await walk({ ...one, size: 5, etag: `"${md5('short')}"` })).toEqual(['downloaded', 1]);
+    expect(readFileSync(at(one), 'utf8')).toBe('short');
+  });
+
+  it('is forgotten once what is fetched settles, and fetched as at first should it be served unlike again', async () => {
+    for (let n = 0; n <= 9; n++) await walk();
+
+    // The tenth walk: the venue serves the listed file.
+    expect(await walk({ ...one, path: 'file.zip' })).toEqual(['downloaded', 1]);
+
+    rmSync(at(one));
+
+    // Served unlike again, listed the same: fetched on the walks after, not held off from the first time.
+    expect(await walk()).toEqual(['mismatched', 1]);
+
+    for (let n = 1; n <= 3; n++) expect(await walk()).toEqual(['mismatched', 1]);
+
+    expect(await walk()).toEqual(['unreached', 0]);
+  });
+
+  it('is forgotten once a copy on disk is found to be the listed file', async () => {
+    for (let n = 0; n <= 4; n++) await walk();
+
+    place(one, BODY);
+
+    expect(await walk()).toEqual(['present', 0]);
+
+    rmSync(at(one));
+
+    expect(await walk()).toEqual(['mismatched', 1]);
+    expect(await walk()).toEqual(['mismatched', 1]);
   });
 });
 

@@ -4,7 +4,7 @@ import { logger } from '@devvir/service-kit';
 import { sizeOf } from '@tradebot/utils';
 import { DiskError, discard, etagAgrees, isDigest, md5, measure, replace, touch, writePartial } from './store';
 import { backAt, delivered, faltered, hostFor, mainOf, refused } from './hosts';
-import { hold, taken } from './held';
+import { fetchDue, forgetUnlike, hold, servedUnlike, taken } from './held';
 import { get } from './http';
 import config from './config';
 import type { Written } from './store';
@@ -22,7 +22,7 @@ import type { Haulable, Hauled, Host, Pacing } from './types';
  * | already there | yes | **touched**, and reported as downloaded |
  * | already there | no  | **fetched again**, and left where it is until the new one matches |
  * | just fetched  | yes | downloaded — whatever was at its path **moved aside** as `.bak` |
- * | just fetched  | no  | **reported as a mismatch**, with the size and MD5 it came as, and held in scratch |
+ * | just fetched  | no  | **reported as a mismatch**, with the size and MD5 it came as, held in scratch, and **fetched less often** while listed the same |
  *
  * **The first row is what adopts an archive already on disk** with no seeding:
  * a file present and correct is confirmed whatever the catalog believed, and
@@ -33,6 +33,12 @@ import type { Haulable, Hauled, Host, Pacing } from './types';
  * itself: the catalog asks the venue and rules — and where it rules for what
  * was fetched, that download is the file, and is not fetched twice; where it
  * rules for the file on disk, the download is dropped. See `held.ts`.
+ *
+ * **A file served unlike its listing is not fetched on every walk.** While its
+ * listing stays the same size and ETag, it is fetched on each of the next few
+ * walks of its venue and then only now and then — whether or not a copy is on
+ * disk; on the walks between it is asked nothing, and is `unreached`. A listing
+ * that changes, or the file settling, ends that at once. See `held.ts`.
  *
  * **What is stored is the bytes as served**, never decoded — see `http.ts` —
  * and **a body shorter than was promised is a transfer that failed**: shorter
@@ -94,7 +100,25 @@ export const haul = async (file: Haulable, pacing: Pacing = {}): Promise<Hauled>
       return { outcome: 'unreached' };
     }
 
-    return settled ?? await retrieve(file, path, pacing);
+    if (settled) {
+      forgetUnlike(file);
+
+      return settled;
+    }
+
+    if (! fetchDue(file)) {
+      logger.info({ key: file.key, size: file.size, etag: file.etag },
+        'Served unlike its listing walk after walk, and listed the same — not asked for on this walk; stays owed');
+
+      return { outcome: 'unreached' };
+    }
+
+    const hauled = await retrieve(file, path, pacing);
+
+    if (hauled.outcome === 'mismatched') servedUnlike(file);
+    else if (hauled.outcome === 'downloaded') forgetUnlike(file);
+
+    return hauled;
   } finally {
     inHand.delete(file.key);
   }
