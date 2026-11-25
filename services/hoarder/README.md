@@ -3,6 +3,8 @@
 Connects to trading venues' public market-data WebSockets and publishes every market-data frame to
 RabbitMQ exactly as it was received.
 
+Deployed by: no module.
+
 One instance can collect one venue, several, or all of them — selected with `HOARDER_VENUES`, so deployments can be split per venue or consolidated without code changes.
 
 "Venue" means a trading exchange (Binance, OKX, …) everywhere in this service. "Exchange" unqualified means the AMQP exchange, and nothing else.

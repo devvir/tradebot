@@ -4,6 +4,8 @@ A one-shot service that declares native RabbitMQ exchange-to-exchange bindings, 
 durable queues inside the destination exchanges. It does not consume or republish messages: it
 declares the bindings and exits, and the broker forwards messages itself.
 
+Deployed by: no module.
+
 ## Core Functionality
 
 - **Exchange-to-exchange bindings** — native RabbitMQ bindings, no consumer loop

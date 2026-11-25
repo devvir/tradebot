@@ -3,6 +3,8 @@
 Consumes messages from RabbitMQ queues and republishes them to other queues and exchanges, with
 routing key rewrites and injected headers. One message can go to several destinations.
 
+Deployed by: no module.
+
 ## Core Functionality
 
 - **Rule-based routing** — source queue → destination queues and exchanges, set in `ROUTER_RULES`
