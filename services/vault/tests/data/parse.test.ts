@@ -120,6 +120,59 @@ describe('comma-split strategy (WS tables)', () => {
   });
 });
 
+// ── Comma-split strategy: quoted fields ───────────────────────────────────────
+
+describe('comma-split strategy (quoted fields)', () => {
+  it('reads a quoted field with a comma and doubled quotes as one field', async () => {
+    makeClosedFile('tick', '20230201', [
+      'timestamp,symbol,price,tickDirection',
+      '2023-02-01T00:00:00.000Z,"XBT,USD",5,PlusTick',
+      '2023-02-01T00:00:01.000Z,"say ""hi""",6,',
+      '"",,7,""',
+    ]);
+
+    expect(await collect('tick', '20230201')).toEqual([
+      ['timestamp', 'symbol', 'price', 'tickDirection'],
+      ['2023-02-01T00:00:00.000Z', 'XBT,USD', '5', 'PlusTick'],
+      ['2023-02-01T00:00:01.000Z', 'say "hi"', '6', ''],
+      ['', '', '7', ''],
+    ]);
+  });
+
+  it('throws on a quoted field broken across lines instead of yielding misaligned fields', async () => {
+    makeClosedFile('liquidation', '20230201', [
+      '_date_,_action_,orderID,symbol,side,price,leavesQty',
+      '2023-02-01T00:00:00.000Z,insert,"a',
+      'b",XBTUSD,Buy,1,2',
+    ]);
+
+    await expect(collect('liquidation', '20230201'))
+      .rejects.toThrow(/Quoted multi-line field in comma-split table liquidation\/20230201/);
+  });
+
+  it('throws on a double quote inside an unquoted field or after a closing quote', async () => {
+    makeClosedFile('tick', '20230201', ['timestamp,symbol', 't,XB"T']);
+    await expect(collect('tick', '20230201')).rejects.toThrow(/Malformed quoted field/);
+
+    makeClosedFile('tick', '20230202', ['timestamp,symbol', 't,"XB"T']);
+    await expect(collect('tick', '20230202')).rejects.toThrow(/Malformed quoted field/);
+  });
+
+  it('skips messages whose lines hold quoted fields', async () => {
+    makeClosedFile('liquidation', '20230201', [
+      '_date_,_action_,orderID',
+      '2023-02-01T00:00:00.000Z,insert,"a,b"',
+      ',,"c,d"',
+      '2023-02-01T00:00:01.000Z,delete,e',
+    ]);
+
+    expect(await collect('liquidation', '20230201', 1)).toEqual([
+      ['_date_', '_action_', 'orderID'],
+      ['2023-02-01T00:00:01.000Z', 'delete', 'e'],
+    ]);
+  });
+});
+
 // ── RFC 4180 strategy: free-text tables ───────────────────────────────────────
 
 describe('RFC 4180 strategy (free-text tables)', () => {

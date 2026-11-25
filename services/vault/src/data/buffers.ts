@@ -20,8 +20,11 @@ const createBuffer = (table: string, filename: string): Buffer => {
     table,
     filename,
 
-    push(line)     { lines.push(line);     },
-    pushMany(many) { lines.push(...many);  },
+    push(line)     { lines.push(line); },
+
+    // A loop, not `push(...many)`: spreading passes every line as an argument
+    // and overflows the call stack for large batches.
+    pushMany(many) { for (const line of many) lines.push(line); },
 
     count()       { return lines.length;  },
     lastFlushed() { return lastFlushedAt; },

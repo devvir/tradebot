@@ -396,6 +396,17 @@ describe('GET /files/:table/:date', () => {
     expect(decodeFile).not.toHaveBeenCalled();
   });
 
+  it('returns 500 when the file cannot be parsed before anything is sent', async () => {
+    async function* failFirst() { throw new Error('Quoted multi-line field in comma-split table liquidation/20230201'); yield ''; }
+
+    vi.mocked(decodeFile).mockReturnValue(failFirst() as ReturnType<typeof decodeFile>);
+
+    const res = await request(app).get('/files/liquidation/20230201');
+
+    expect(res.status).toBe(500);
+    expect(res.text).toContain('Read failed');
+  });
+
   it('cuts the response when reading fails after headers were sent', async () => {
     async function* failMidway() { yield '{"a":1}\n'; throw new Error('corrupt member'); }
 
@@ -457,11 +468,11 @@ describe('POST /files/:table/:date/rows', () => {
 
     const res = await request(app)
       .post('/files/trade/20230201/rows')
-      .send([{ symbol: 'X' }, { action: 'insert', date: 't', data: [{ a: 1 }, { a: 2 }] }]);
+      .send([{ symbol: 'X' }, { symbol: 'Y' }]);
 
     expect(res.status).toBe(202);
     expect(encode).toHaveBeenNthCalledWith(1, 'trade', { symbol: 'X' });
-    expect(encode).toHaveBeenNthCalledWith(2, 'trade', { action: 'insert', date: 't', data: [{ a: 1 }, { a: 2 }] });
+    expect(encode).toHaveBeenNthCalledWith(2, 'trade', { symbol: 'Y' });
     expect(pushMany).toHaveBeenNthCalledWith(1, ['line-a']);
     expect(pushMany).toHaveBeenNthCalledWith(2, ['line-b1', 'line-b2']);
   });
@@ -506,7 +517,7 @@ describe('POST /files/:table/:date/rows', () => {
     );
 
     const res = await request(app)
-      .post('/files/orderBookL2/20230201/rows')
+      .post('/files/quote/20230201/rows')
       .send({ symbol: 'X' });
 
     expect(res.status).toBe(202);
@@ -542,11 +553,118 @@ describe('POST /files/:table/:date/rows', () => {
 
   it('returns 400 when a WS message is missing the data array', async () => {
     const res = await request(app)
-      .post('/files/trade/20230201/rows')
-      .send({ action: 'insert', date: 't' });
+      .post('/files/liquidation/20230201/rows')
+      .send({ action: 'insert', date: '2023-02-01T00:00:00.000Z' });
 
     expect(res.status).toBe(400);
     expect(encode).not.toHaveBeenCalled();
+  });
+
+  it('encodes every item before buffering any; a later failure buffers nothing', async () => {
+    const pushMany = vi.fn();
+    vi.mocked(buffers.get).mockReturnValue({ flush: vi.fn(), pushMany } as never);
+    vi.mocked(encode)
+      .mockReturnValueOnce(['line-a'])
+      .mockImplementationOnce(() => { throw new Error('bad value'); });
+
+    const res = await request(app)
+      .post('/files/trade/20230201/rows')
+      .send([{ symbol: 'X' }, { symbol: 'Y' }]);
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'bad value' });
+    expect(buffers.get).not.toHaveBeenCalled();
+    expect(pushMany).not.toHaveBeenCalled();
+  });
+
+  it('returns 400 for an unknown table without creating a buffer', async () => {
+    const res = await request(app)
+      .post('/files/noSuchTable/20230201/rows')
+      .send({ symbol: 'X' });
+
+    expect(res.status).toBe(400);
+    expect(buffers.get).not.toHaveBeenCalled();
+  });
+
+  describe('WS-table messages', () => {
+    const valid = { action: 'insert', date: '2023-02-01T00:00:00.000Z', data: [{ orderID: 'a', symbol: 'XBTUSD' }] };
+
+    it.each([
+      ['a bare row',                    { orderID: 'a', symbol: 'XBTUSD' }],
+      ['an unknown action',             { ...valid, action: 'upsert' }],
+      ['a non-string action',           { ...valid, action: 1 }],
+      ['an empty date',                 { ...valid, date: '' }],
+      ['a non-ISO date',                { ...valid, date: '2023-02-01 00:00:00' }],
+      ['a date with a comma',           { ...valid, date: '2023-02-01T00:00:00,000Z' }],
+      ['a non-string date',             { ...valid, date: 1675209600000 }],
+      ['a data element that is not an object', { ...valid, data: [{ orderID: 'a' }, 'x'] }],
+      ['a data element that is an array',      { ...valid, data: [[1, 2]] }],
+    ])('returns 400 for %s, buffering nothing from the request', async (_name, bad) => {
+      const res = await request(app)
+        .post('/files/liquidation/20230201/rows')
+        .send([valid, bad]);
+
+      expect(res.status).toBe(400);
+      expect(encode).not.toHaveBeenCalled();
+      expect(buffers.get).not.toHaveBeenCalled();
+    });
+
+    it('accepts a message without a date and one with an empty data array', async () => {
+      const res = await request(app)
+        .post('/files/liquidation.secondary/20230201/rows')
+        .send([{ action: 'partial', data: [] }, valid]);
+
+      expect(res.status).toBe(202);
+      expect(encode).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it.each([
+    ['action', { action: 'insert', symbol: 'X' }],
+    ['data',   { data: [], symbol: 'X' }],
+  ])('returns 400 for a REST-table item carrying %s', async (_name, item) => {
+    const res = await request(app)
+      .post('/files/trade/20230201/rows')
+      .send(item);
+
+    expect(res.status).toBe(400);
+    expect(encode).not.toHaveBeenCalled();
+  });
+
+  describe('with the real encoder', () => {
+    beforeEach(async () => {
+      const actual = await vi.importActual<typeof import('../../src/data/encode')>('../../src/data/encode');
+      vi.mocked(encode).mockImplementation(actual.encode);
+    });
+
+    it('returns 400 for a comma in a non-free-text value, buffering nothing', async () => {
+      const res = await request(app)
+        .post('/files/tick/20230201/rows')
+        .send([{ symbol: 'XBTUSD', price: 5 }, { symbol: 'XBT,USD', price: 5 }]);
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/'symbol'/);
+      expect(buffers.get).not.toHaveBeenCalled();
+    });
+
+    it('buffers a WS message with 200,000 data rows', async () => {
+      const big = express();
+      big.use(express.json({ limit: '50mb' }));
+      registerRoutes(big);
+
+      const pushMany = vi.fn();
+      vi.mocked(buffers.get).mockReturnValue({ flush: vi.fn(), pushMany } as never);
+
+      const data = Array.from({ length: 200_000 }, (_, i) => ({ orderID: `o${i}`, symbol: 'XBTUSD' }));
+
+      const res = await request(big)
+        .post('/files/liquidation/20230201/rows')
+        .send({ action: 'partial', date: '2023-02-01T00:00:00.000Z', data });
+
+      expect(res.status).toBe(202);
+      expect(pushMany).toHaveBeenCalledTimes(1);
+      expect(pushMany.mock.calls[0]![0]).toHaveLength(200_000);
+    });
   });
 
   it('returns 409 while the bucket is closing and accepts rows once the close settles', async () => {

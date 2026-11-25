@@ -54,6 +54,13 @@ describe('buffer.pushMany', () => {
     buf.pushMany(['a', 'b', 'c']);
     expect(buf.count()).toBe(3);
   });
+
+  it('accepts a batch far larger than the call-stack argument limit', () => {
+    const buf = buffers.get('trade', '2023-02-01');
+    buf.pushMany(Array.from({ length: 200_000 }, (_, i) => `line-${i}`));
+    expect(buf.count()).toBe(200_000);
+    expect(buf.flush().at(-1)).toBe('line-199999');
+  });
 });
 
 describe('buffer.flush', () => {

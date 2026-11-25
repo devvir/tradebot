@@ -7,10 +7,13 @@
 //     need a full RFC 4180 parser. A line-based reader would fragment a quoted
 //     field at its embedded `\n` before any consumer saw it as one field.
 //
-//   - Every other table holds only numbers, symbols, and ISO timestamps. Those
-//     files have no quoting, so each physical line is exactly one record and a
-//     plain comma split — several times faster than the RFC 4180 parser — is
-//     correct.
+//   - Every other table holds only numbers, symbols, and ISO timestamps, so
+//     each physical line is exactly one record. A line without a `"` is split
+//     on plain commas — several times faster than the RFC 4180 parser. A line
+//     with a `"` is split by a single-line RFC 4180 splitter, so a quoted
+//     value still reads as one field; a quoted field left open at the end of
+//     the line (its record was broken by an embedded line break) throws rather
+//     than yielding misaligned fields.
 //
 // Skip is part of the strategy, not bolted on after. On comma-split tables a
 // skipped message is never split into fields: its raw line is inspected only
@@ -40,8 +43,8 @@ export const createParser = (table: string): VaultParser => {
 
 /**
  * Comma-split strategy — for every non-free-text table. Reads physical lines
- * and splits each on `,`. Skipped messages are never split: only a leading
- * comma is checked to detect continuation rows on WS tables.
+ * and splits each with `splitLine`. Skipped messages are never split: only a
+ * leading comma is checked to detect continuation rows on WS tables.
  */
 async function* commaSplit(
   table:    string,
@@ -56,7 +59,9 @@ async function* commaSplit(
 
     if (header.done) return;
 
-    yield header.value.split(',');
+    const split = (line: string): string[] => splitLine(line, table, filename);
+
+    yield split(header.value);
 
     // REST tables store one record per line — no continuation rows, so every
     // line opens a new message. WS tables mark continuation rows with an empty
@@ -66,7 +71,7 @@ async function* commaSplit(
       : () => false;
 
     for await (const line of afterSkip(src, skip, isContinuation)) {
-      yield line.split(',');
+      yield split(line);
     }
   } finally {
     await close();
@@ -100,6 +105,67 @@ async function* rfc4180(
     await close();
   }
 }
+
+/**
+ * Splits one physical line into fields. A line without `"` is split on every
+ * comma. Otherwise fields are read per RFC 4180: a field that opens with `"`
+ * runs to the matching closing `"`, with `""` standing for one `"`. Throws when
+ * a quoted field is still open at the end of the line, or when a `"` appears
+ * where RFC 4180 does not allow one.
+ */
+const splitLine = (line: string, table: string, filename: string): string[] => {
+  if (! line.includes('"')) return line.split(',');
+
+  const fields: string[] = [];
+  let i = 0;
+
+  for (;;) {
+    if (line[i] !== '"') {
+      const end   = line.indexOf(',', i);
+      const field = end === -1 ? line.slice(i) : line.slice(i, end);
+
+      if (field.includes('"'))
+        throw new Error(`Malformed quoted field in comma-split table ${table}/${filename}`);
+
+      fields.push(field);
+
+      if (end === -1) return fields;
+
+      i = end + 1;
+      continue;
+    }
+
+    let field = '';
+    let j     = i + 1;
+
+    for (;;) {
+      const quote = line.indexOf('"', j);
+
+      if (quote === -1)
+        throw new Error(`Quoted multi-line field in comma-split table ${table}/${filename}`);
+
+      field += line.slice(j, quote);
+
+      if (line[quote + 1] === '"') {
+        field += '"';
+        j = quote + 2;
+        continue;
+      }
+
+      j = quote + 1;
+      break;
+    }
+
+    fields.push(field);
+
+    if (j === line.length) return fields;
+
+    if (line[j] !== ',')
+      throw new Error(`Malformed quoted field in comma-split table ${table}/${filename}`);
+
+    i = j + 1;
+  }
+};
 
 // ── Skip ──────────────────────────────────────────────────────────────────────
 

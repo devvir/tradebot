@@ -76,6 +76,58 @@ describe('encode — WS message', () => {
   });
 });
 
+describe('encode — values that need quoting', () => {
+  it.each([
+    ['a comma',           'XBT,USD'],
+    ['a double quote',    'XBT"USD'],
+    ['a line feed',       'XBT\nUSD'],
+    ['a carriage return', 'XBT\rUSD'],
+  ])('rejects %s in a non-free-text REST row, naming the column', (_name, symbol) => {
+    expect(() => encode('tick', { symbol, price: 5 })).toThrow(/Column 'symbol' of table 'tick'/);
+  });
+
+  it('rejects an object or array value in a non-free-text table', () => {
+    expect(() => encode('tick', { symbol: { a: 1 } })).toThrow(/Column 'symbol'/);
+    expect(() => encode('liquidation.secondary', {
+      action: 'insert', date: '2024-01-01T00:00:00Z', data: [{ orderID: ['a'] }],
+    })).toThrow(/Column 'orderID' of table 'liquidation.secondary'/);
+  });
+
+  it('rejects a quoting character in a continuation row and in the message date', () => {
+    expect(() => encode('liquidation', {
+      action: 'insert', date: '2024-01-01T00:00:00Z', data: [{ orderID: 'a' }, { orderID: 'b,c' }],
+    })).toThrow(/Column 'orderID'/);
+    expect(() => encode('liquidation', { action: 'insert', date: '2024,01', data: [] })).toThrow(/Column '_date_'/);
+  });
+
+  it('accepts such values on free-text tables, quoted', () => {
+    const lines = encode('chat', {
+      action: 'insert', date: '2024-01-01T00:00:00Z', data: [{ id: 1, message: 'a, "b"\nc' }],
+    });
+    expect(lines[0]).toContain('"a, ""b""\nc"');
+  });
+});
+
+describe('encode — message metadata', () => {
+  it('ignores _date_ and _action_ keys inside data rows', () => {
+    const cols  = TABLE_HEADERS['liquidation']!;
+    const lines = encode('liquidation', {
+      action: 'insert',
+      date:   '2024-01-01T00:00:00Z',
+      data:   [
+        { orderID: 'a', _date_: 'forged', _action_: 'delete' },
+        { orderID: 'b', _date_: '2030-01-01T00:00:00Z', _action_: 'partial' },
+      ],
+    });
+
+    const [first, second] = lines.map(l => l.split(','));
+    expect(first![cols.indexOf('_date_')]).toBe('2024-01-01T00:00:00Z');
+    expect(first![cols.indexOf('_action_')]).toBe('insert');
+    expect(second![cols.indexOf('_date_')]).toBe('');
+    expect(second![cols.indexOf('_action_')]).toBe('');
+  });
+});
+
 describe('encode — dispatch', () => {
   it('treats objects without an action field as REST rows', () => {
     const lines = encode('funding', { timestamp: 't', symbol: 'X' });

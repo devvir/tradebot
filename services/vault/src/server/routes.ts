@@ -15,6 +15,7 @@ import { Readable } from 'stream';
 import { stat } from 'fs/promises';
 import type { Stats } from 'fs';
 import { logger } from '@devvir/service-kit';
+import { WS_TABLES } from '@tradebot/utils';
 import { listFiles, listTables, fileState } from '../fs/reader';
 import { isHealthy, getFailureReason, isThrottled } from '../fs/health';
 import { decodeFile } from '../data/decode';
@@ -23,7 +24,7 @@ import { encode } from '../data/encode';
 import { buffers } from '../data/buffers';
 import { closeBucket } from '../data/close';
 import { acceptsRows, bucketState, discardBucket, uploadBucket, BucketBusyError } from '../data/bucket';
-import { headersFor } from '../data/headers';
+import { baseTable, headersFor } from '../data/headers';
 import { isShuttingDown } from '../shutdown';
 import { NotFoundError, AlreadyExistsError, InvalidUploadError } from '../fs/errors';
 import { closedPath, openPath } from '../fs/paths';
@@ -37,6 +38,9 @@ const UPLOAD_IDLE_TIMEOUT_MS = 90_000;
 const TABLE_NAME = /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)?$/;
 const DATE       = /^\d{8}$/;
 const SUFFIX     = /^[A-Za-z0-9_-]{1,32}$/;
+const ISO_DATE   = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
+
+const WS_ACTIONS: ReadonlySet<string> = new Set(['partial', 'insert', 'update', 'delete']);
 
 interface Key {
   table:    string;
@@ -56,6 +60,38 @@ const refuseWhenShuttingDown = (res: Response): boolean => {
 const badRequest = (req: Request, res: Response, error: string): null => {
   req.resume();
   res.status(400).json({ error });
+
+  return null;
+};
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  v !== null && typeof v === 'object' && ! Array.isArray(v);
+
+/**
+ * Checks one POST /rows body item against the table's kind. A WS-table item
+ * must be a message: `action` one of WS_ACTIONS, `data` an array of objects,
+ * and `date`, when present, an ISO 8601 UTC timestamp. A REST-table item is a
+ * plain row and carries neither `action` nor `data`. Returns the reason an item
+ * is refused, or null.
+ */
+const itemError = (table: string, item: Record<string, unknown>): string | null => {
+  if (! WS_TABLES.has(baseTable(table))) {
+    if ('action' in item || 'data' in item)
+      return `Table '${table}' takes plain rows: 'action' and 'data' belong to WS messages`;
+
+    return null;
+  }
+
+  if (typeof item['action'] !== 'string' || ! WS_ACTIONS.has(item['action']))
+    return `Message action must be one of ${[...WS_ACTIONS].join(', ')}`;
+
+  const data = item['data'];
+
+  if (! Array.isArray(data) || ! data.every(isPlainObject))
+    return 'Message must include a data array of objects';
+
+  if ('date' in item && (typeof item['date'] !== 'string' || ! ISO_DATE.test(item['date'])))
+    return 'Message date must be an ISO 8601 UTC timestamp (YYYY-MM-DDTHH:MM:SS[.sss]Z)';
 
   return null;
 };
@@ -152,6 +188,11 @@ const statBucket = async (
 export const registerRoutes = (app: Application): void => {
 
   // ── POST /files/:table/:date/rows — buffer rows or a WS message ──────────────
+  //
+  // The body is one item or an array of them: WS messages for WS tables, plain
+  // rows for every other table (see `itemError`). The request is all-or-nothing:
+  // any item that is refused or fails to encode answers 400 with nothing from
+  // the request buffered.
 
   app.post('/files/:table/:date/rows', (req: Request, res: Response) => {
     if (refuseWhenShuttingDown(res)) return;
@@ -186,34 +227,35 @@ export const registerRoutes = (app: Application): void => {
     const body  = req.body as unknown;
     const items = Array.isArray(body) ? body : [body];
 
-    if (
-      ! items.length ||
-      ! items.every(i => i !== null && typeof i === 'object' && ! Array.isArray(i))
-    ) {
+    if (! items.length || ! items.every(isPlainObject)) {
       res.status(400).json({ error: 'Body must be a JSON object or array of objects' });
       return;
     }
 
-    // Validate WS messages have a data array up-front so a malformed message
-    // does not result in partial buffering before we error.
-    for (const item of items as (Row | WsMessage)[]) {
-      if ('action' in item && ! Array.isArray((item as WsMessage).data)) {
-        res.status(400).json({ error: 'Message must include a data array' });
+    for (const item of items) {
+      const error = itemError(table, item);
+
+      if (error) {
+        res.status(400).json({ error });
         return;
       }
     }
 
-    const buf = buffers.get(table, filename);
+    // Every item is encoded before any is buffered, so a request answered 400
+    // leaves nothing behind.
+    let encoded: string[][];
 
     try {
-      for (const item of items as (Row | WsMessage)[]) {
-        buf.pushMany(encode(table, item));
-      }
+      encoded = items.map(item => encode(table, item as Row | WsMessage));
     } catch (err) {
-      logger.error({ err, table, filename }, 'Encode failed');
+      logger.warn({ err, table, filename }, 'Encode failed');
       res.status(400).json({ error: (err as Error).message });
       return;
     }
+
+    const buf = buffers.get(table, filename);
+
+    for (const lines of encoded) buf.pushMany(lines);
 
     res.status(202).end();
   });
