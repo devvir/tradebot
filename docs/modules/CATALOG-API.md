@@ -64,7 +64,8 @@ Naming none is the whole catalog. An unknown slug, or a `lens` parameter given m
 S3's `Error` shape, a `Code` and a `Message`; a refusal before any route runs (`401`, a body too large
 or not JSON) and a `500` are `{ "error": … }` everywhere.
 
-**Each query parameter is given once.** One given twice is a `400`.
+**Each query parameter is given once.** One given twice is a `400`; `lens` given twice is the `422`
+above.
 
 ## Contents
 
@@ -422,5 +423,5 @@ prospector does not answer, the write is a `502`.
 | `413` | a body over 256 KB, or over 5 MB for a report |
 | `422` | a lens named in `x-catalog-lens` or `lens=` that does not exist, or a `lens` parameter given twice (`NoSuchLens`); a `partition=` that names no partition (`NoSuchPartition`) |
 | `501` | a listing asked with a `delimiter` |
-| `502` | prospector did not answer a lens write; or did not answer, or failed, a report |
+| `502` | prospector did not answer a lens write, or answered it with a `5xx` that is not JSON; did not answer, or failed, a report |
 | `500` | a fault in this service. The log keeps the whole of it; the response says nothing |

@@ -188,7 +188,7 @@ export const Lenses = ({ slug }: { slug?: string | undefined }) => {
   );
 };
 
-/** How often an open lens asks its size again, so progress moves while hauling. */
+/** How often an open lens asks its size again, so progress moves while its files are downloaded. */
 const SIZE_REFRESH_MS = 30_000;
 
 /** The same, while the lens is still being worked out after a save. */
@@ -969,10 +969,10 @@ const Picker = ({ label, w, placeholder, data, value, error, onChange, tip }: {
 /**
  * One rule, in two rows.
  *
- * **What it does, then what it is about.** The first row is the sentence — this
- * rule includes or excludes, between these dates — and the second is everything
- * it is narrowed by. Six controls in a line read as six equal choices, when one
- * of them decides what the other five mean.
+ * **What it does, then what it is about.** The first row is the action, the
+ * grain and the bundle; the second is what it is narrowed by, markets and
+ * datasets; the months it is bounded to sit beside both. Seven controls in a line
+ * read as seven equal choices, when one of them decides what the others mean.
  *
  * **A list left empty says All**, because a rule that constrains nothing is the
  * common case and an empty box reads as unfinished.

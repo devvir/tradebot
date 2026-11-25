@@ -149,9 +149,9 @@ What each `/status` field means is prospector's: see [PROSPECTOR.md](PROSPECTOR.
 section is about what the page makes of them.
 
 **The state says what is happening, not how.** Prospector's states for a pass, `walking` and
-`updating`, name its mechanism. The badge names the occasion instead — **backfilling** for the first pass,
-**updating** for every one after, from `lastRun.first` — because that is what somebody looking wants
-to know, and the occasion cannot be derived from the mechanism. The mechanism stays as a small icon
+`updating`, name its mechanism. The badge names the occasion instead — **backfilling** for the first
+pass, **updating** for every one after, from `lastRun.first` — because that is what somebody looking
+wants to know, and the occasion cannot be derived from the mechanism. The mechanism stays as a small icon
 (a walker for reading a listing, a magnifier for probing files) and a tooltip.
 
 **`stalled` is this page's word**, shown in red in the state badge, for a venue prospector reports as

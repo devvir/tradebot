@@ -898,8 +898,8 @@ const useSaid = () => {
  *
  * **A survey runs for hours and reports nothing when it starts**, so a view of
  * it that only loaded once would show a state long since left for as long as
- * somebody left it open. Ten seconds is often enough to watch a venue change state and rare
- * enough to be free.
+ * somebody left it open. Ten seconds is often enough to watch a venue change
+ * state and rare enough to be free.
  */
 const usePolled = <T,>(path: string, ask: (path: string, signal: AbortSignal) => Promise<T>, everyMs = POLL_MS) => {
   const [state, setState] = useState<Asked<T>>({ loading: true });

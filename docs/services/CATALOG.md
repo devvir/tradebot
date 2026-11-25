@@ -20,10 +20,11 @@ for up to two seconds.
 What it keeps for itself is everything that only reads: checking a lens's definition, sizing it,
 saying what it selects.
 
-**A lens is checked here and stored there.** A write is validated against what the venues publish,
-answered with what is wrong where it cannot be stored, and only then handed over. Prospector's answer
-is relayed as it is, status and body; an answer that is not JSON is logged and answered with an error
-of the same status, or `502` where prospector failed.
+**A lens is checked here and stored there.** A write's slug, name and note are checked, and its
+definition as [CATALOG-LENSES.md](../modules/CATALOG-LENSES.md#what-is-refused) says; what is wrong is
+answered, and only a write that holds is handed over. Prospector's answer is relayed as it is, status
+and body; an answer that is not JSON is logged and answered with an error of the same status, or `502`
+where prospector failed.
 
 **A report of what was downloaded is settled there too.** A file's state is prospector's, and only
 prospector holds the adapters to ask a venue about a file reported failed or wrong. Keys and lenses
@@ -141,8 +142,7 @@ and its rows are stored) is the `@tradebot/lenses` package (`shared/lenses`). Th
 reads: listing lenses, the options a rule is written against, checking a definition, sizing it, saying
 what it selects. The code here is only how the catalog reads *through* a lens: `lenses/figures.ts` (a
 saved lens's figures), `lenses/scope.ts` (the rows as the contents read them), `lenses/requested.ts`
-(which lens a request names) and `prospector.ts` (handing a write over). `partitions.ts` reads slices
-and partitions for all of them.
+(which lens a request names) and `prospector.ts` (handing a write over).
 
 ## What is held between requests
 
@@ -154,8 +154,8 @@ Most of what the catalog answers is read when it is asked. Three things are held
 - **The lens options, for five minutes**, held by `@tradebot/lenses` (see
   [CATALOG-LENSES.md](../modules/CATALOG-LENSES.md#the-definition)).
 - **A lens's scope**, its slices and the months of each as read off `lens_member`, until the lens is
-  saved again or admits a partition. Each request reads the lens's `updated_at` and
-  `partitions_through` and compares them with what was held, so a held scope is never stale.
+  saved again or its `partitions_through` moves. Each request reads the lens's `updated_at` and
+  `partitions_through` and reads the scope again where either differs from what was held.
 
 Everything else is read per request: the lens a request names, venue totals and series counts,
 partitions, a lens's figures, the open run, every listing page and every report's keys.
