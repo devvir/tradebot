@@ -54,8 +54,8 @@ export const venueContents = (db: DatabaseSync, held: RequestedLens | null): Ven
 
     /**
      * **Counted by their dates, not by reading their files**: a series is in
-     * where its first and last file straddle or fall inside the lens's months
-     * for its slice.
+     * where its first..last range meets one of its slice's spans under the
+     * lens — see `throughLens` for what that cannot see.
      */
     const inside = throughLens(db, ids.flatMap(id => seriesFor(db, id)),
       held.scope.get(row.venue) ?? new Map(), false).length;

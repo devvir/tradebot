@@ -159,12 +159,6 @@ export interface LensVenueFigures {
   last:         string | null;
 }
 
-/** The outermost dates of a slice's spans under a lens — null where open that way. */
-export interface LensWindow {
-  from: string | null;
-  to:   string | null;
-}
-
 /**
  * A lens as the contents apply it: for each venue, the slices it lets through
  * and the months of each, as spans. A slice absent from a venue's map is not in

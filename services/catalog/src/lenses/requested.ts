@@ -1,25 +1,35 @@
 import { lensNamed } from '@tradebot/lenses';
 import { lensScope } from './scope';
+import type { Lens } from '@tradebot/lenses';
 import type { Request } from 'express';
 import type { DatabaseSync } from 'node:sqlite';
 import type { RequestedLens } from '../types';
 
 /**
- * The lens a request names, resolved — see `lensSlug` for where it is named.
+ * The lens a request names — see `lensSlug` for where it is named.
  *
  * Null where it names none — the whole catalog. `undefined` where it names one
  * that does not exist, which every caller answers with a `422`: an unknown lens
  * is never the unfiltered catalog in its place.
  */
-export const lensRequested = (db: DatabaseSync, req: Request): RequestedLens | null | undefined => {
+export const lensOf = (db: DatabaseSync, req: Request): Lens | null | undefined => {
   const slug = lensSlug(req);
 
-  if (slug === null) return null;
+  return slug === null ? null : lensNamed(db, slug) ?? undefined;
+};
 
-  const lens  = lensNamed(db, slug);
-  const scope = lens ? lensScope(db, lens.slug) : null;
+/**
+ * The lens a request names with its scope resolved — see `lensScope` — for
+ * callers that read the contents through it. Null and `undefined` as `lensOf`.
+ */
+export const lensRequested = (db: DatabaseSync, req: Request): RequestedLens | null | undefined => {
+  const lens = lensOf(db, req);
 
-  return lens && scope ? { lens, scope } : undefined;
+  if (! lens) return lens;
+
+  const scope = lensScope(db, lens);
+
+  return scope ? { lens, scope } : undefined;
 };
 
 /**

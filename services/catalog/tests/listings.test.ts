@@ -15,7 +15,15 @@ const cfg = vi.hoisted(() => ({ port: 0, dbPath: '', token: '', prospectorApi: '
 
 vi.mock('../src/config', () => ({ default: cfg }));
 
+// The real scope, watched: a listing reads a lens's members itself and never builds the contents' scope.
+vi.mock('../src/lenses/scope', async original => {
+  const real = await original<typeof import('../src/lenses/scope')>();
+
+  return { ...real, lensScope: vi.fn(real.lensScope) };
+});
+
 const { mount } = await import('../src/api');
+const { lensScope } = await import('../src/lenses/scope');
 
 /**
  * The catalog as one bucket: keys say what each file *is*, sort as bytes, and a
@@ -354,6 +362,18 @@ describe('a lens', () => {
 
   it('is a 422 when it does not exist, never the whole bucket', async () => {
     expect((await call('/listings', { headers: { 'x-catalog-lens': 'nope' } })).status).toBe(422);
+  });
+
+  /** Only the lens itself is read for a listing; the scope the contents read through is not built. */
+  it('is listed through without building the contents\' scope', async () => {
+    await lens('to-2020', { format: 1, venues: { '*': [{ effect: 'include', to: '202012' }] } });
+    vi.mocked(lensScope).mockClear();
+
+    expect((await call('/listings', { headers: { 'x-catalog-lens': 'to-2020' } })).status).toBe(200);
+    expect(lensScope).not.toHaveBeenCalled();
+
+    expect((await call('/venues/binance/symbols', { headers: { 'x-catalog-lens': 'to-2020' } })).status).toBe(200);
+    expect(lensScope).toHaveBeenCalledOnce();
   });
 });
 

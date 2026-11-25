@@ -1,5 +1,5 @@
 import { logger } from '@devvir/service-kit';
-import { lensRequested, lensSlug } from '../lenses/requested';
+import { lensOf, lensSlug } from '../lenses/requested';
 import { MAX_REPORT, keysIn, resolveReport, settle } from '../reports';
 import { answer, failed } from './listings';
 import type { Application } from 'express';
@@ -17,13 +17,13 @@ import type { DatabaseSync } from 'node:sqlite';
  */
 export const mountReports = (app: Application, db: DatabaseSync): void => {
   app.post('/listings/report', async (req, res) => {
-    const lens = lensRequested(db, req);
+    const lens = lensOf(db, req);
 
     if (lens === undefined) return failed(req, res, 422, 'NoSuchLens', `No such lens: ${lensSlug(req)}`);
 
     if (keysIn(req.body) > MAX_REPORT) return failed(req, res, 400, 'InvalidArgument', `At most ${MAX_REPORT} keys per report`);
 
-    const resolved = resolveReport(db, req.body, lens?.lens ?? null);
+    const resolved = resolveReport(db, req.body, lens);
 
     if (! resolved) return failed(req, res, 400, 'MalformedReport', 'A report is downloaded and failed, each a list of keys, and mismatched, a list of { Key, Size, ETag }');
 

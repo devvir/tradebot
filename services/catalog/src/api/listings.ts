@@ -1,4 +1,4 @@
-import { lensRequested, lensSlug } from '../lenses/requested';
+import { lensOf, lensSlug } from '../lenses/requested';
 import { listingPage } from '../listings/listing';
 import { inLens, partitionNamed } from '../listings/partition';
 import { asXml, requestOf, resultOf } from '../listings/s3';
@@ -17,7 +17,7 @@ import type { S3Body } from '../types';
  */
 export const mountListings = (app: Application, db: DatabaseSync): void => {
   app.get('/listings', (req, res) => {
-    const lens = lensRequested(db, req);
+    const lens = lensOf(db, req);
 
     if (lens === undefined) return failed(req, res, 422, 'NoSuchLens', `No such lens: ${lensSlug(req)}`);
 
@@ -31,7 +31,7 @@ export const mountListings = (app: Application, db: DatabaseSync): void => {
       return failed(req, res, 422, 'NoSuchPartition', `No such partition: ${asked.partition}`);
 
     // A partition the lens does not let through is not in the bucket, as far as this request goes.
-    const lensId = lens?.lens?.id;
+    const lensId = lens?.id;
     const hidden = partition !== null && lensId !== undefined && ! inLens(db, lensId, partition.id);
 
     const page = hidden ? { objects: [], truncated: false } : listingPage(db, {
@@ -41,7 +41,7 @@ export const mountListings = (app: Application, db: DatabaseSync): void => {
       prefix:  partition && ! asked.prefix.startsWith(partition.prefix) ? partition.prefix : asked.prefix,
       maxKeys: asked.maxKeys,
       pending: asked.pending,
-      lens:    lens?.lens ?? null,
+      lens:    lens,
       partition: partition?.id ?? null,
     });
 

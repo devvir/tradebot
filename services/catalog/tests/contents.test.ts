@@ -4,8 +4,10 @@ import { join } from 'node:path';
 import express from 'express';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { putFiles, putVenue, recordSeries, storeLens } from './fixture';
-import { _test_scopes } from '../src/lenses/scope';
 import { openScratch } from './fixture';
+import { lensScope, throughLens } from '../src/lenses/scope';
+import { seriesFor, venueIds } from '../src/queries';
+import { lensNamed } from '@tradebot/lenses';
 import { mount } from '../src/api';
 import type { Application } from 'express';
 import type { SeriesSpec as Found } from './types';
@@ -37,7 +39,6 @@ const publish = async (id: number, over: Partial<Found>, dates: string[]) => {
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'contents-'));
   db  = openScratch(join(dir, 'catalog.db'));
-  _test_scopes.clear();
 
   const id = putVenue(db, 'binance', 'https://data.binance.vision', 'data/');
 
@@ -143,6 +144,104 @@ describe('the contents through a lens', () => {
   it('is a 422 for a lens that does not exist, never the whole catalog', async () => {
     expect((await call('/venues/binance/symbols', { headers: { 'x-catalog-lens': 'nope' } })).status)
       .toBe(422);
+  });
+});
+
+/**
+ * A lens that carves a hole leaves each slice two spans, and a series is
+ * tested against each of them rather than against their outer edges.
+ */
+describe('the contents through a lens with a hole', () => {
+  const HOLED = { 'x-catalog-lens': 'holed' };
+
+  beforeEach(async () => {
+    const id = putVenue(db, 'okx', 'https://okx.example', '');
+
+    await publish(id, {}, ['20200101', '20200301', '20200601']);
+    await publish(id, { symbol: 'ETHUSDT', urlSymbol: 'ETHUSDT' }, ['20200301']);
+    await publish(id, { symbol: 'SOLUSDT', urlSymbol: 'SOLUSDT' }, ['20200115', '20200301']);
+  });
+
+  const holed = (...holes: [string, string][]) => storeLens(db, 'holed', '', '', { format: 1, venues: { okx: [
+    { effect: 'include' },
+    ...holes.map(([from, to]) => ({ effect: 'exclude' as const, from, to })),
+  ] } });
+
+  it('leaves out a series whose only file is in the hole', async () => {
+    holed(['202002', '202005']);
+
+    expect((await call('/venues/okx/symbols', { headers: HOLED })).body.items).toEqual(['BTCUSDT', 'SOLUSDT']);
+  });
+
+  it('counts only the series with a file inside it, in every view', async () => {
+    holed(['202002', '202005']);
+
+    const [shape]  = (await call('/venues/okx/markets/perp', { headers: HOLED })).body.items as { symbols: number }[];
+    const [market] = (await call('/venues/okx', { headers: HOLED })).body.items as { symbols: number }[];
+    const [venue]  = (await call('/venues', { headers: HOLED })).body.items as
+      { venue: string; files: number; series: { withFiles: number } }[];
+
+    expect(shape).toMatchObject({ symbols: 2 });
+    expect(market).toMatchObject({ symbols: 2 });
+    expect(venue).toMatchObject({ venue: 'okx', files: 3, series: { withFiles: 2 } });
+  });
+
+  /** Each series as the lens dates it, by symbol. */
+  const dated = (exact = true) => {
+    const scope = lensScope(db, lensNamed(db, 'holed')!)!;
+    const rows  = venueIds(db, 'okx').flatMap(id => seriesFor(db, id));
+
+    return Object.fromEntries(throughLens(db, rows, scope.get('okx')!, exact).map(one => [one.symbol, [one.first, one.last]]));
+  };
+
+  /**
+   * BTCUSDT has a file on each side of the hole and one in it; SOLUSDT one
+   * before it and one in it. The file in the hole dates neither.
+   */
+  it('dates a series by its first and last file outside the hole', () => {
+    holed(['202002', '202005']);
+
+    expect(dated()).toEqual({ BTCUSDT: ['20200101', '20200601'], SOLUSDT: ['20200115', '20200115'] });
+  });
+
+  /** ADAUSDT's range reaches June, a span it holds nothing in: its last file is looked for further back. */
+  it('looks past a span that holds nothing of the series for its last file', async () => {
+    await publish(venueIds(db, 'okx')[0]!, { symbol: 'ADAUSDT', urlSymbol: 'ADAUSDT' }, ['20200115', '20200301', '20200715']);
+    holed(['202002', '202005'], ['202007', '202007']);
+
+    expect(dated().ADAUSDT).toEqual(['20200115', '20200115']);
+  });
+
+  /** Without reading a file, a series is clamped to the first and last span its range meets. */
+  it('clamps each series to the spans it meets where it reads no file', () => {
+    holed(['202002', '202005']);
+
+    expect(dated(false)).toEqual({ BTCUSDT: ['20200101', '20200601'], SOLUSDT: ['20200115', '20200131'] });
+  });
+});
+
+describe('a lens\'s scope', () => {
+  /** Two catalogs that hold a lens of the same slug, saved at the same instant and caught up as far. */
+  it('is held for the database it was read from, never served for another', async () => {
+    const other = openScratch(join(dir, 'other.db'));
+
+    try {
+      const id = putVenue(other, 'okx', 'https://okx.example', '');
+      const series = recordSeries(other, id, found({}), { first: '20200101', last: '20200101' });
+
+      await putFiles(other, [{ venueId: id, path: 'BTCUSDT/20200101.zip', date: '20200101', size: 10, etag: 'e',
+        modified: null, existence: 'confirmed', seriesId: series.id!, seenAt: 'T1' }]);
+
+      for (const one of [db, other]) {
+        storeLens(one, 'to-2020', '', '', { format: 1, venues: { '*': [{ effect: 'include', to: '202012' }] } });
+        one.prepare("UPDATE lens SET updated_at = '2026-01-01T00:00:00.000Z', partitions_through = 1").run();
+      }
+
+      expect([...lensScope(db, lensNamed(db, 'to-2020')!)!.keys()]).toEqual(['binance']);
+      expect([...lensScope(other, lensNamed(other, 'to-2020')!)!.keys()]).toEqual(['okx']);
+    } finally {
+      other.close();
+    }
   });
 });
 
