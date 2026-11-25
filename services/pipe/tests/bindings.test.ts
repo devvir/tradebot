@@ -3,8 +3,8 @@ import parseBindings, { buildTopology, withDefaults } from '../src/bindings';
 
 // Parsing tests (grammar, exchange types, routing keys, multiple bindings,
 // whitespace, error cases) live in shared/utils/tests/routes.test.ts.
-// This file only covers pipe-specific concerns: validation constraints,
-// withDefaults business rules, and buildTopology output.
+// This file only covers pipe-specific concerns: validation constraints, exchange
+// type resolution, withDefaults business rules, and buildTopology output.
 
 // ── Pipe-specific validation ──────────────────────────────────────────────────
 
@@ -37,6 +37,70 @@ describe('pipe validation', () => {
 
   it('accepts queue@exchange destination', () => {
     expect(() => parseBindings('topic:src > journalist@topic:journalist')).not.toThrow();
+  });
+
+  it('accepts a queue inside a fanout destination', () => {
+    expect(() => parseBindings('topic:src > q@fanout:dst')).not.toThrow();
+  });
+
+  it('rejects a queue prefix on the source', () => {
+    expect(() => parseBindings('q@fanout:src > fanout:dst')).toThrow('Pipe sources are exchanges');
+  });
+
+  it.each([
+    ['source',      'default:a > fanout:b'],
+    ['destination', 'fanout:a > default:b'],
+  ])('rejects the default exchange as %s', (_side, raw) => {
+    expect(() => parseBindings(raw)).toThrow('default exchange cannot be used');
+  });
+
+  it('rejects a queue inside a direct destination', () => {
+    expect(() => parseBindings('topic:src > q@direct:dst')).toThrow('cannot match forwarded keys');
+  });
+
+  it('rejects a queue inside a destination typed direct by another binding', () => {
+    expect(() => parseBindings('direct:dst(key:k) > fanout:x | topic:src > q@dst')).toThrow(
+      'cannot match forwarded keys',
+    );
+  });
+});
+
+// ── Exchange types ────────────────────────────────────────────────────────────
+
+describe('exchange type resolution', () => {
+  it('gives an untyped mention the type its name has in another binding', () => {
+    const bindings = withDefaults(parseBindings('topic:x > fanout:y | @x > fanout:z'));
+
+    expect(bindings[1]).toEqual({
+      source: { name: 'x', type: 'topic' }, destination: { name: 'z', type: 'fanout' }, routingKey: '#',
+    });
+  });
+
+  it('applies a type given on the destination side to the same name as a source', () => {
+    const [, b] = withDefaults(parseBindings('fanout:a > topic:b | @b(key:trade.*) > fanout:c'));
+
+    expect(b!.source).toEqual({ name: 'b', type: 'topic' });
+    expect(b!.routingKey).toBe('trade.*');
+  });
+
+  it('declares a name that is never typed as fanout', () => {
+    const topology = buildTopology(withDefaults(parseBindings('@a > @b')));
+
+    expect(topology.exchanges).toEqual({ a: { type: 'fanout' }, b: { type: 'fanout' } });
+  });
+
+  it.each([
+    'fanout:x > fanout:a | topic:x > fanout:b',
+    'fanout:a > fanout:b | topic:b(key:trade.*) > fanout:c',
+  ])('rejects two types for one exchange name: %s', (raw) => {
+    expect(() => parseBindings(raw)).toThrow('is given two types');
+  });
+
+  it('buildTopology rejects two types for one exchange name', () => {
+    expect(() => buildTopology([
+      { source: { name: 'x', type: 'topic' },  destination: { name: 'a' } },
+      { source: { name: 'x', type: 'fanout' }, destination: { name: 'b' } },
+    ])).toThrow('is given two types');
   });
 });
 
@@ -117,6 +181,12 @@ describe('buildTopology', () => {
     expect(topology.exchangeBindings).toContainEqual({
       source: 'broadcast', destination: 'journalist', routingKey: '#',
     });
+  });
+
+  it('queue inside a fanout destination is bound with #', () => {
+    const topology = buildTopology(withDefaults(parseBindings('fanout:src > q@fanout:dst')));
+
+    expect(topology.exchanges!['dst']).toEqual({ type: 'fanout', queues: { q: { durable: true, routingKey: '#' } } });
   });
 
   it('exchange-only destination has no queues entry', () => {

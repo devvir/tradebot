@@ -3,14 +3,14 @@ import { sanitizeUrl, redactUrl } from '@tradebot/utils';
 import parseBindings, { buildTopology, withDefaults } from './bindings';
 import type { Config } from './types';
 
-const loadConfig = (): Config => {
+export const loadConfig = (): Config => {
   const bindings = withDefaults(parseBindings(process.env.PIPE_BINDINGS || ''));
 
   const config: Config = {
     rabbitmqUrl: sanitizeUrl(process.env.QUEUE_URL || ''),
     topology: buildTopology(bindings),
     bindings,
-  }
+  };
 
   validateConfig(config);
 
