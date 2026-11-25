@@ -26,9 +26,13 @@ import type {
  * Every venue and what it holds — through a lens where one is named.
  *
  * **Under a lens a venue is what the lens lets through**: its files, bytes,
- * pending and months summed over the lens's partitions, its series those dated
- * inside it — and a venue it lets nothing through from is not listed. No file is
- * read and no rule evaluated, which is what lets every venue be answered at
+ * pending, withdrawn and first and last month summed over the lens's
+ * partitions, and its series those dated inside it — and a venue it lets
+ * nothing through from is not listed. A series with no file has no dates, so
+ * none is inside a lens, and both `withFiles` and `total` count the series
+ * dated inside it. `hosts` is the venue's servers, the same under any lens: a
+ * server is where the venue serves from, not something a lens narrows. No file
+ * is read and no rule evaluated, which is what lets every venue be answered at
  * once.
  */
 export const venueContents = (db: DatabaseSync, held: RequestedLens | null): VenueContents[] => {
@@ -67,6 +71,7 @@ export const venueContents = (db: DatabaseSync, held: RequestedLens | null): Ven
       bytes:        figures.bytes,
       pending:      figures.pending,
       pendingBytes: figures.pendingBytes,
+      withdrawn:    figures.withdrawn,
       series:       { withFiles: inside, total: inside },
       hosts:        hostsOf(db, row.venue),
     }];

@@ -3,8 +3,8 @@ import type { Lens, LensSize, LensVenueFigures } from '../types';
 
 /**
  * What a saved lens holds, per venue, summed over its partitions: how many it
- * lets through, their files, bytes and what is still pending, and the first and
- * last month with a file.
+ * lets through, their files, bytes, what is still pending and what has been
+ * withdrawn, and the first and last month with a file.
  *
  * **One query, and nothing evaluated.** The rows are the lens and each carries
  * its own counts, so a size is a sum over them — the same after a restart as an
@@ -18,6 +18,7 @@ export const lensFigures = (db: DatabaseSync, lens: Lens): Map<string, LensVenue
             COALESCE(SUM(q.bytes), 0)         AS bytes,
             COALESCE(SUM(q.pending), 0)       AS pending,
             COALESCE(SUM(q.pending_bytes), 0) AS pendingBytes,
+            COALESCE(SUM(q.withdrawn), 0)     AS withdrawn,
             MIN(CASE WHEN q.files > 0 THEN q.month END) AS first,
             MAX(CASE WHEN q.files > 0 THEN q.month END) AS last
        FROM lens_member l

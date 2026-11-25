@@ -149,6 +149,7 @@ export interface LensVenueFigures {
   bytes:        number;
   pending:      number;
   pendingBytes: number;
+  withdrawn:    number;
 
   /** The first and last month it holds a file in. */
   first:        string | null;

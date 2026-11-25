@@ -159,6 +159,18 @@ describe('the contents through a lens', () => {
     expect(venue).toMatchObject({ files: 2, firstMonth: '202001', lastMonth: '202001', series: { total: 1 } });
   });
 
+  it('counts what was withdrawn from the lens\'s partitions only', async () => {
+    db.prepare('UPDATE partition SET withdrawn = ? WHERE month = ?').run(3, '202001');
+    db.prepare('UPDATE partition SET withdrawn = ? WHERE month = ?').run(5, '202101');
+    await lens();
+
+    const whole  = (await call('/venues')).body.items as { withdrawn: number }[];
+    const lensed = (await call('/venues', { headers: LENS })).body.items as { withdrawn: number }[];
+
+    expect(whole[0]).toMatchObject({ withdrawn: 8 });
+    expect(lensed[0]).toMatchObject({ withdrawn: 3 });
+  });
+
   /**
    * A lens that carves a hole gives each series two spans, so each sits in two of
    * the groups its figures are summed over — and must still be counted once.
