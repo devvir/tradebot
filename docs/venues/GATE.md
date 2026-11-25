@@ -105,7 +105,8 @@ The 571 high ones match a canonical twin's size **to the byte**, with a differen
 `futures_btc/trades/202107/`, and `futures_usdt/202107/` is the 130 four-column files of
 `futures_usdt/trades/202107/`, name for name and size for size, none of them a
 [2021-07 spot file](#2021-07-spot-data-at-the-futures-url). Identical length with a different hash
-is what recompressing gives, since gzip stamps its own header. Having no dataset segment, they name no dataset at all.
+is what recompressing gives, since gzip stamps its own header. Having no dataset segment, they name
+no dataset at all.
 
 The 179 low ones each have a twin at `spot_index/{YYYYMM}/slice_index_<epoch>` with the **same size
 and same ETag** — one object served at two keys, not a re-upload.
