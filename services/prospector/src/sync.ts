@@ -488,9 +488,10 @@ const kindOf = (occasion: Occasion): RunKind =>
  *
  * **A failure is retried for as long as the service runs.** There is no attempt
  * limit and nothing gives up, because there is no failure here that stays failed
- * — a prefix that no longer exists answers with an empty listing rather than an
- * error, so what is left is transient (a 5xx, a 429, a reaped connection) or
- * venue-wide, and both are cured by asking again later.
+ * — a prefix that no longer exists is read as an empty listing, or on an index
+ * as a directory passed over, rather than as an error. What is left is
+ * transient (a 5xx, a 429, a reaped connection, a body that did not read as a
+ * listing) or venue-wide, and both are cured by asking again later.
  *
  * The cost of being wrong about that is a warning every half minute, naming the
  * partition, while its siblings finish and go quiet. That is loud enough to find

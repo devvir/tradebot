@@ -31,10 +31,15 @@ export const s3: Scanner<ListingContext> = {
    * marker it hands back** — keys sort, and S3 answers in that order — or to
    * the scope's end on the last page. So whatever is catalogued there and was
    * not listed has been withdrawn; see `Coverage`.
+   *
+   * A marker handed back that does not sort past the one asked with is a page
+   * that would be read again for ever, so it fails instead — see `advanced`.
    */
   page: async (context, scope, cursor) => {
     const url  = listingUrl(context.base, scope, cursor, false);
     const page = await context.page(url, 's3');
+
+    advanced(url, cursor, page.next);
 
     return { listed: page.listed, cursor: page.next, covers: { after: cursor, through: page.next } };
   },
@@ -110,6 +115,9 @@ const level: ReadLevel = async (context, prefix) => {
     children.push(...page.prefixes.filter(child => accepted(context, child)));
     files  ||= page.listed.some(entry => catalogable(context, entry.key));
     itself ||= page.listed.some(entry => entry.key === prefix && catalogable(context, entry.key));
+
+    advanced(prefix, cursor, page.next);
+
     cursor = page.next;
 
   } while (cursor && ! files);
@@ -160,6 +168,20 @@ const initials = async (context: ListingContext, prefix: string): Promise<string
 /** The last code point Unicode has; nothing sorts after it within a character. */
 const LAST = '\u{10FFFF}';
 
+/**
+ * Throw unless a page's marker sorts after the one it was asked with.
+ *
+ * Keys come back in order and a marker names the last one read, so a marker at
+ * or before the previous one means the venue did not honour it, and asking again
+ * gets the same page back. The throw is an ordinary failure rather than a
+ * refusal: the page is retried, and failing that its prefix is left with its
+ * cursor where it was.
+ */
+const advanced = (asked: string, cursor: string | null, next: string | null): void => {
+  if (cursor !== null && next !== null && next <= cursor)
+    throw new Error(`Listing marker did not advance: ${asked} gave ${next} after ${cursor}`);
+};
+
 const listingUrl = (
   base:      string,
   prefix:    string,
@@ -167,12 +189,24 @@ const listingUrl = (
   delimiter: boolean,
   maxKeys = MAX_KEYS,
 ): string =>
-  // Prefix and marker go in **unencoded**: KuCoin serves its HTML page instead
-  // of the XML listing when the slashes are percent-encoded, and S3 accepts the
-  // raw form everywhere. Anything outside ASCII is encoded by `fetch` itself.
-  `${base.replace(/\/$/, '')}/?prefix=${prefix}&max-keys=${maxKeys}`
+  `${base.replace(/\/$/, '')}/?prefix=${query(prefix)}&max-keys=${maxKeys}`
   + (delimiter ? '&delimiter=/' : '')
-  + (marker ? `&marker=${marker}` : '');
+  + (marker ? `&marker=${query(marker)}` : '');
+
+/**
+ * A prefix or marker made safe to put in a query string, **with as little
+ * encoded as that takes.**
+ *
+ * Only the characters that change what a raw query means are escaped: `&` ends
+ * the parameter, `#` starts a fragment, `+` and a space are read as a space, and
+ * `%` starts an escape. Everything else goes in as written. KuCoin serves its
+ * HTML page instead of the XML listing when the slashes are percent-encoded,
+ * and S3 accepts the raw form everywhere, so nothing a key commonly holds is
+ * touched: `/`, `:`, `=`, `,` and the rest reach the venue as written. Anything
+ * outside ASCII is encoded by `fetch` itself.
+ */
+const query = (value: string): string =>
+  value.replace(/[%&#+ ]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`);
 
 // ── Test access ───────────────────────────────────────────────────────────────
 

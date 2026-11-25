@@ -2169,7 +2169,22 @@ export interface Pages {
 
 export type PageFormat = keyof Pages;
 
-export type ListingPage = Pages[PageFormat];
+/**
+ * What a page read into: the listing its format describes, or `Malformed` when
+ * the text is not one.
+ */
+export type ListingPage = Pages[PageFormat] | Malformed;
+
+/**
+ * A body that does not read as the listing it was asked for: why, and how the
+ * text begins.
+ *
+ * **A reading, not a fault.** The venue answered; what it answered is not a
+ * listing. A page that held no entries reads as an empty listing, never as this.
+ */
+export interface Malformed {
+  malformed: string;
+}
 
 /**
  * How to read the page a `GET` brings back. A request carries one of these or

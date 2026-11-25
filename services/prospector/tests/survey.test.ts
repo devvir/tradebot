@@ -28,6 +28,9 @@ const quick: Adapter = { ...htx, name: 'quick', pacing: { perSecond: 1000, stand
  */
 const VENUE = 'https://venue/';
 
+/** The smallest reply that reads as a listing: an empty one, not truncated. */
+const EMPTY_LISTING = '<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>';
+
 const listed = (key: string): Listed =>
   ({ key, size: 10, etag: 'e', modified: '2025-01-01T00:00:00.000Z' });
 
@@ -249,7 +252,7 @@ describe('a listing that hangs', async () => {
     Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
 
   it('gives every request a deadline', async () => {
-    const fetched = vi.fn(async () => new Response('<ok/>'));
+    const fetched = vi.fn(async () => new Response(EMPTY_LISTING));
 
     vi.stubGlobal('fetch', fetched);
     await fetchPage(quick, 'https://venue/?prefix=spot/', 's3');
@@ -263,7 +266,7 @@ describe('a listing that hangs', async () => {
   it('retries rather than skipping the page', async () => {
     const fetched = vi.fn()
       .mockRejectedValueOnce(timeout())
-      .mockResolvedValueOnce(new Response('<ListBucketResult/>'));
+      .mockResolvedValueOnce(new Response(EMPTY_LISTING));
 
     vi.stubGlobal('fetch', fetched);
 
@@ -308,7 +311,7 @@ describe('the gate every request passes', async () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('counts a walk request against the venue, not just a probe', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('<ok/>')));
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(EMPTY_LISTING)));
 
     await fetchPage(quick, 'https://venue/?prefix=spot/', 's3');
 
@@ -324,7 +327,7 @@ describe('the gate every request passes', async () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockRejectedValueOnce(new Error('other side closed'))
       .mockRejectedValueOnce(new Error('other side closed'))
-      .mockImplementation(async () => new Response('<ok/>')));
+      .mockImplementation(async () => new Response(EMPTY_LISTING)));
 
     await fetchPage(quick, 'https://venue/?prefix=spot/', 's3');
 

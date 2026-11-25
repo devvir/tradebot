@@ -23,8 +23,8 @@ beforeEach(async () => {
     }
 
     res.writeHead(200, { etag: '"abc"' });
-    res.write('<ListBucketResult>');
-    res.end('</ListBucketResult>');
+    res.write('<ListBucketResult><IsTruncated>');
+    res.end('false</IsTruncated></ListBucketResult>');
   });
 
   await new Promise<void>(ready => server.listen(0, '127.0.0.1', ready));

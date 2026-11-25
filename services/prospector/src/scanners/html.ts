@@ -1,5 +1,7 @@
+import { logger } from '@devvir/service-kit';
 import { accepted, catalogable, descend } from './descend';
 import { etagOf } from '../etag';
+import { Refused } from '../http';
 import { ceiling } from '../paths';
 import type { Entries, ListingContext, Listed, ReadLevel, Scanner } from '../types';
 
@@ -29,7 +31,12 @@ import type { Entries, ListingContext, Listed, ReadLevel, Scanner } from '../typ
 export const html: Scanner<ListingContext> = {
   name: 'html',
 
-  scopes: (context, limits) => descend(context, limits, level),
+  /** A job maps its scopes first, so the directories it walks are the ones it read — see `known`. */
+  scopes: (context, limits) => {
+    forget(context);
+
+    return descend(context, limits, level);
+  },
 
   level: (context, prefix) => level(context, prefix),
 
@@ -46,14 +53,25 @@ export const html: Scanner<ListingContext> = {
    * Whether anything follows is settled before answering, so the last directory
    * of a scope ends the walk instead of costing an empty page. That look-ahead
    * is free: everything it consults was read on the way down.
+   *
+   * **A directory that is gone is passed over, and covers nothing.** Its parent
+   * listed it and it now answers `404`, so it is either withdrawn — which the
+   * parent's next reading states — or briefly missing at the edge, which must
+   * not withdraw a subtree. Either way the walk moves on to its next sibling.
    */
   page: async (context, scope, cursor) => {
     const at = await next(context, scope, cursor);
 
     if (! at) return { listed: [], cursor: null };
 
-    const { keys, children } = await read(context, at);
-    const after              = await next(context, scope, at);
+    const { keys, children, gone } = await read(context, at, scope);
+    const after                    = await next(context, scope, at);
+
+    if (gone) {
+      logger.warn({ venue: context.name, directory: at }, 'A listed directory is gone; passing over it');
+
+      return { listed: [], cursor: after ? at : null };
+    }
 
     /**
      * **A directory states its own files and its children in full**, and every
@@ -71,7 +89,7 @@ export const html: Scanner<ListingContext> = {
    * than filling a blank.
    */
   confirm: async (context, path) => {
-    const { status, headers } = await context.head(`${context.base.replace(/\/$/, '')}/${context.keyRoot}${path}`);
+    const { status, headers } = await context.head(urlOf(context.base, context.keyRoot + path));
 
     if (status < 200 || status > 299) return { status, headers };
 
@@ -94,9 +112,12 @@ export const html: Scanner<ListingContext> = {
  *
  * Reading a directory records its children here, and the traversal below only
  * ever asks about directories it has already visited — a parent is read before
- * its children, always. So an entry is written by this process before it is
- * read, which is what keeps a month-old memory from hiding a symbol added since:
- * nothing is answered from a cache this job did not fill.
+ * its children, always. A venue's entries are dropped when a job maps its scopes
+ * (`forget`), so what is answered from here was read by the job asking, or — on
+ * a resume after a restart — is read again on the way back to the cursor.
+ *
+ * A directory that answered `404` is recorded with no children, so the walk
+ * passes it by rather than asking again.
  *
  * It holds directory names only, never the files, so a venue of a few thousand
  * directories costs a few thousand short strings. Keys carry the venue, because
@@ -105,6 +126,13 @@ export const html: Scanner<ListingContext> = {
 const known = new Map<string, string[]>();
 
 const remembered = (context: ListingContext, prefix: string): string => `${context.name}:${prefix}`;
+
+/** Drop everything `known` holds for a venue, so its next job reads its directories afresh. */
+export const forget = (context: ListingContext): void => {
+  const mine = `${context.name}:`;
+
+  for (const key of known.keys()) if (key.startsWith(mine)) known.delete(key);
+};
 
 /**
  * The first directory that sorts after `cursor`, or the scope itself when there
@@ -126,7 +154,7 @@ const next = async (
   const search = async (dir: string): Promise<string | null> => {
     if (dir > cursor) return dir;
 
-    for (const child of await children(context, dir)) {
+    for (const child of await children(context, dir, scope)) {
       // Everything under this child sorts below its ceiling, so a child whose
       // whole subtree ends before the cursor cannot hold the answer.
       if (ceiling(child) <= cursor) continue;
@@ -143,8 +171,11 @@ const next = async (
 };
 
 /** A directory's children, from what a visit already learned where possible. */
-const children = async (context: ListingContext, dir: string): Promise<string[]> =>
-  known.get(remembered(context, dir)) ?? (await read(context, dir)).children;
+const children = async (context: ListingContext, dir: string, scope: string): Promise<string[]> =>
+  known.get(remembered(context, dir)) ?? (await read(context, dir, scope)).children;
+
+/** One directory, read; `gone` where it answered `404` instead. */
+type Reading = Entries & { gone?: true };
 
 /**
  * Read one directory: the child directories worth descending into, and the keys
@@ -152,12 +183,27 @@ const children = async (context: ListingContext, dir: string): Promise<string[]>
  *
  * Refused directories are dropped here, before anyone counts them, so a prefix
  * is judged on the children that count and a refused tree is never opened.
+ *
+ * **A `404` below the scope is a directory that is gone**, read as one with
+ * nothing in it and marked so. The scope itself, or a directory read with no
+ * scope, has no parent here to have listed it, so its `404` stays a failure.
  */
 const read = async (
   context: ListingContext,
   prefix:  string,
-): Promise<Entries> => {
-  const entries = await context.page(directoryUrl(context.base, prefix), 'index', prefix);
+  scope?:  string,
+): Promise<Reading> => {
+  let entries: Entries;
+
+  try {
+    entries = await context.page(urlOf(context.base, prefix), 'index', prefix);
+  } catch (err) {
+    if (! (err instanceof Refused) || err.status !== 404 || scope === undefined || prefix === scope) throw err;
+
+    known.set(remembered(context, prefix), []);
+
+    return { children: [], keys: [], gone: true };
+  }
 
   const found: Entries = {
     /**
@@ -190,8 +236,13 @@ const level: ReadLevel = async (context, prefix) => {
   return { children, files: keys.some(key => catalogable(context, key)) };
 };
 
-const directoryUrl = (base: string, prefix: string): string =>
-  `${base.replace(/\/$/, '')}/${prefix}`;
+/**
+ * A path as a URL on the server, **each segment encoded**. Names are held
+ * decoded, so a `#`, `?` or `%` in one would otherwise end the path or start an
+ * escape.
+ */
+const urlOf = (base: string, path: string): string =>
+  `${base.replace(/\/$/, '')}/${path.split('/').map(encodeURIComponent).join('/')}`;
 
 /**
  * An index names a file and says nothing else about it, so everything but the
@@ -204,3 +255,4 @@ const listed = (key: string): Listed => ({ key, size: null, etag: null, modified
 
 export const _test_next        = next;
 export const _test_known       = known;
+export const _test_urlOf       = urlOf;

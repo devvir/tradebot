@@ -14,7 +14,7 @@ import { binance } from '../src/adapters/binance';
 import { htx } from '../src/adapters/htx';
 import { kucoin } from '../src/adapters/kucoin';
 import { listing } from '../src/context';
-import type { Adapter, S3Page } from '../src/types';
+import type { Adapter, ListingPage, S3Page } from '../src/types';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -37,9 +37,13 @@ vi.mock('../src/http', async (importOriginal) => ({
 
 const parse = (xml: string): S3Page => readPage({ format: 's3', prefix: '' }, xml) as S3Page;
 
+/** The reading itself, which may say the text is not a listing at all. */
+const reading = (xml: string): ListingPage => readPage({ format: 's3', prefix: '' }, xml);
+
+/** A listing as S3 sends it: not truncated unless `extra` says otherwise. */
 const page = (contents: string, extra = '') => `<?xml version="1.0" encoding="UTF-8"?>
 <ListBucketResult><Name>b</Name><Prefix>data/</Prefix><MaxKeys>1000</MaxKeys>
-${extra}${contents}</ListBucketResult>`;
+${extra.includes('<IsTruncated>') ? '' : '<IsTruncated>false</IsTruncated>'}${extra}${contents}</ListBucketResult>`;
 
 const object = (key: string, size = '1045') => `
 <Contents><Key>${key}</Key><LastModified>2025-10-06T09:39:01.000Z</LastModified>
@@ -65,7 +69,7 @@ describe('parsing an S3 page', () => {
    */
   it('lower-cases an ETag, since the case is the server\'s and not the file\'s', () => {
     const upper = `<?xml version="1.0" encoding="UTF-8"?>
-<ListBucketResult><Contents><Key>a.zip</Key>
+<ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>a.zip</Key>
 <ETag>&quot;CDC23CB7F799B55087E0AF9F98419660&quot;</ETag><Size>1</Size></Contents></ListBucketResult>`;
 
     expect(parse(upper).listed[0]!.etag).toBe('cdc23cb7f799b55087e0af9f98419660');
@@ -132,6 +136,53 @@ describe('parsing an S3 page', () => {
     expect(listed[0]!.size).toBeNull();
     expect(listed[0]!.etag).toBeNull();
   });
+
+  /** XML spells `&` as `&amp;`; the key is what it spells. */
+  it('reads keys, directories and markers as the text they escape', () => {
+    const read = parse(page(object('a/b&amp;c-2024-01-01.zip') + object('a/&lt;x&gt;&quot;&apos;&#47;&#x41;.zip'),
+      '<IsTruncated>true</IsTruncated><NextMarker>a/m&amp;n</NextMarker>'
+      + '<CommonPrefixes><Prefix>a/p&amp;q/</Prefix></CommonPrefixes>'));
+
+    expect(read.listed.map(one => one.key)).toEqual(['a/b&c-2024-01-01.zip', `a/<x>"'/A.zip`]);
+    expect(read.prefixes).toEqual(['a/p&q/']);
+    expect(read.next).toBe('a/m&n');
+  });
+
+  it('decodes an escaped escape once, to the escape it spells', () => {
+    expect(parse(page(object('a/&amp;lt;.zip'))).listed[0]!.key).toBe('a/&lt;.zip');
+  });
+
+  it('keeps characters XML does not escape exactly as sent', () => {
+    expect(parse(page(object('a/b+c#d%20e-小.zip'))).listed[0]!.key).toBe('a/b+c#d%20e-小.zip');
+  });
+});
+
+/**
+ * **A body that is not a listing never reads as an empty one.** An empty final
+ * page says nothing is there — which withdraws whatever was — so a maintenance
+ * page, an error served with a 200, or a listing cut short has to be told apart.
+ */
+describe('a body that is not a listing', () => {
+  it.each([
+    ['an HTML page',        '<html><body><h1>Down for maintenance</h1></body></html>'],
+    ['an empty body',       ''],
+    ['an XML error',        '<?xml version="1.0"?><Error><Code>SlowDown</Code></Error>'],
+    ['no IsTruncated',      '<ListBucketResult><Name>b</Name></ListBucketResult>'],
+    ['a garbled IsTruncated', '<ListBucketResult><IsTruncated>maybe</IsTruncated></ListBucketResult>'],
+    ['truncated, with nothing to resume from', '<ListBucketResult><IsTruncated>true</IsTruncated></ListBucketResult>'],
+  ])('is malformed: %s', (_what, body) => {
+    expect(reading(body)).toEqual({ malformed: expect.any(String) });
+  });
+
+  it('says how the body began', () => {
+    expect((reading('<html>Error</html>') as { malformed: string }).malformed).toContain('<html>Error</html>');
+  });
+
+  it('reads a genuine empty listing as an empty final page', () => {
+    expect(reading('<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">'
+      + '<Name>b</Name><IsTruncated>false</IsTruncated></ListBucketResult>'))
+      .toEqual({ listed: [], prefixes: [], next: null });
+  });
 });
 
 describe('building a listing URL', () => {
@@ -159,6 +210,24 @@ describe('building a listing URL', () => {
     expect(url).toContain('prefix=data/spot/');
     expect(url).toContain('marker=data/spot/a/b-2025-01.zip');
     expect(url).not.toContain('%2F');
+  });
+
+  /**
+   * What would change the query's meaning is escaped and nothing else: `&`
+   * would start a parameter, `#` a fragment, `+` and a space would read as a
+   * space, and `%` as an escape.
+   */
+  it('escapes what would break the query, and only that', () => {
+    const url = _test_listingUrl('https://host', 'a/b+c#d&e f%g:h=i,j/', 'a/x&y.zip', false);
+
+    expect(url).toBe('https://host/?prefix=a/b%2Bc%23d%26e%20f%25g:h=i,j/&max-keys=1000&marker=a/x%26y.zip');
+  });
+
+  it('round-trips an awkward key through the query', () => {
+    const key   = 'a/b+c#d&e f%20g-小.zip';
+    const query = new URL(_test_listingUrl('https://host', key, key, false)).searchParams;
+
+    expect([query.get('prefix'), query.get('marker')]).toEqual([key, key]);
   });
 
   it('adds the delimiter only when descending', () => {
@@ -590,5 +659,48 @@ describe('what a page covers', () => {
     vi.mocked(fetchPage).mockResolvedValue(parse(page(object('data/x/b-2025-01-01.zip'))));
 
     expect((await s3.page(context, 'data/x/', null)).covers).toEqual({ after: null, through: null });
+  });
+});
+
+/**
+ * **A marker that does not move is a page that comes back for ever.** Keys
+ * arrive in order, so one handed back at or before the marker asked with means
+ * the venue did not honour it — and that fails rather than being asked again
+ * without end.
+ */
+describe('a marker that does not advance', () => {
+  const context = { ...listing(binance), keyRoot: 'data/' };
+
+  afterEach(() => vi.mocked(fetchPage).mockReset());
+
+  it('fails the page when the venue hands back the marker it was asked with', async () => {
+    vi.mocked(fetchPage).mockResolvedValue(parse(page(object('data/x/b-2025-01-01.zip'),
+      '<IsTruncated>true</IsTruncated><NextMarker>data/x/b-2025-01-01.zip</NextMarker>')));
+
+    await expect(s3.page(context, 'data/x/', 'data/x/b-2025-01-01.zip')).rejects.toThrow(/did not advance/);
+  });
+
+  it('fails when the marker goes backwards', async () => {
+    vi.mocked(fetchPage).mockResolvedValue(parse(page(object('data/x/a-2025-01-01.zip'),
+      '<IsTruncated>true</IsTruncated>')));
+
+    await expect(s3.page(context, 'data/x/', 'data/x/b-2025-01-01.zip')).rejects.toThrow(/did not advance/);
+  });
+
+  it('moves on where it does advance', async () => {
+    vi.mocked(fetchPage).mockResolvedValue(parse(page(object('data/x/c-2025-01-01.zip'),
+      '<IsTruncated>true</IsTruncated>')));
+
+    expect((await s3.page(context, 'data/x/', 'data/x/b-2025-01-01.zip')).cursor).toBe('data/x/c-2025-01-01.zip');
+  });
+
+  /** A level read to `IsTruncated` would otherwise never finish. */
+  it('ends the reading of a level that repeats its marker', async () => {
+    vi.mocked(fetchPage).mockResolvedValue(parse(page(
+      '<CommonPrefixes><Prefix>data/a/</Prefix></CommonPrefixes>',
+      '<IsTruncated>true</IsTruncated><NextMarker>data/a/</NextMarker>')));
+
+    await expect(_test_level(context, 'data/')).rejects.toThrow(/did not advance/);
+    expect(fetchPage).toHaveBeenCalledTimes(2);
   });
 });

@@ -10,6 +10,9 @@ import { _test_pending, countAsked, countSent, flushCounts } from '../src/counts
 import type { DatabaseSync } from 'node:sqlite';
 import type { Adapter } from '../src/types';
 
+/** The smallest reply that reads as a listing: an empty one, not truncated. */
+const EMPTY_LISTING = '<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>';
+
 /**
  * What a job needed, and what that actually sent.
  *
@@ -53,7 +56,7 @@ describe('counting what goes out', () => {
 
     vi.stubGlobal('fetch', vi.fn()
       .mockRejectedValueOnce(timeout)
-      .mockResolvedValueOnce(new Response('<ListBucketResult/>')));
+      .mockResolvedValueOnce(new Response(EMPTY_LISTING)));
 
     beginJob(db, one, 'walk', ['spot/']);
     await fetchPage(primary, 'https://venue/?prefix=spot/', 's3');

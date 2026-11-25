@@ -59,12 +59,33 @@ const standard = (status: number, headers: Headers): boolean =>
   (status === 403 || status === 429) && headers.get('x-amz-error-code') === null;
 
 /**
+ * A venue answered a listing with a success and a body that is not one — see
+ * `Malformed`.
+ *
+ * **Not a `Refused`, because it is not an answer.** An empty listing would say
+ * nothing is there; this says nothing at all, so it is retried like a 5xx and,
+ * past the attempts, fails the page with its cursor kept.
+ */
+export class MalformedListing extends Error {
+  constructor(
+    readonly url:         string,
+    readonly contentType: string | null,
+    readonly snippet:     string,
+  ) {
+    super(`Not a listing: ${url} (${contentType ?? 'no content-type'}) ${snippet}`);
+
+    this.name = 'MalformedListing';
+  }
+}
+
+/**
  * Fetch a listing page, read, retrying only what is worth retrying.
  *
- * Transport errors and 5xx/429 are retried; a 403 or 404 is an answer, and
- * repeating it just delays the inevitable. The jitter is full rather than
- * partial so that several scopes backing off at once do not synchronise into
- * a thundering herd against the same venue.
+ * Transport errors, 5xx/429 and a success whose body is not a listing are
+ * retried; a 403 or 404 is an answer, and repeating it just delays the
+ * inevitable. The jitter is full rather than partial so that several scopes
+ * backing off at once do not synchronise into a thundering herd against the
+ * same venue.
  *
  * S3 reaps idle keep-alive connections and undici will reuse one it has already
  * closed, which surfaces as `fetch failed: other side closed` every few minutes
@@ -96,6 +117,9 @@ export const fetchPage = async <F extends PageFormat>(
 
     try {
       const res = await send(adapter, url, { format, prefix });
+
+      if (res.ok && res.page !== null && 'malformed' in res.page)
+        throw new MalformedListing(url, res.headers.get('content-type'), res.page.malformed);
 
       if (res.ok) return res.page as Pages[F];
 

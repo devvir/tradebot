@@ -1,14 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchPage } from '../src/http';
+import { logger } from '@devvir/service-kit';
+import { Refused, fetchPage } from '../src/http';
 import { listing } from '../src/context';
-import { html, _test_known, _test_next } from '../src/scanners/html';
+import { forget, html, _test_known, _test_next, _test_urlOf } from '../src/scanners/html';
 import { readPage, _test_isDirectory } from '../src/scanners/pages';
-import type { Adapter, Entries } from '../src/types';
+import type { Adapter, Entries, ListingPage } from '../src/types';
 
-/** The scanner is the only thing here that talks to a venue, so the wire is stubbed. */
-vi.mock('../src/http', () => ({ fetchPage: vi.fn(), fetchHead: vi.fn() }));
+/** The scanner is the only thing here that talks to a venue, so the wire is stubbed — and only the wire. */
+vi.mock('../src/http', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../src/http')>(),
+  fetchPage: vi.fn(),
+  fetchHead: vi.fn(),
+}));
 
 const parse = (page: string, prefix: string): Entries => readPage({ format: 'index', prefix }, page) as Entries;
+
+/** The reading itself, which may say the page is not an index at all. */
+const reading = (page: string, prefix: string): ListingPage => readPage({ format: 'index', prefix }, page);
 
 /**
  * A venue of this shape, declared here rather than borrowed from a real one.
@@ -87,6 +95,74 @@ describe('reading an index page', () => {
     const entries = parse('<a href="BTC%20USDT/">x</a><a href="A&amp;B/">y</a>', 'spot/');
 
     expect(entries.children).toEqual(['spot/BTC USDT/', 'spot/A&B/']);
+  });
+
+  it('reads an href however the attribute is quoted', () => {
+    const entries = parse(`<a href='single.zip'>s</a><a href=bare.zip>b</a><a class="x" href = "A/">A</a>`, 'd/');
+
+    expect(entries.keys).toEqual(['d/single.zip', 'd/bare.zip']);
+    expect(entries.children).toEqual(['d/A/']);
+  });
+
+  /**
+   * An index lists what is directly inside it. A dot segment names the same
+   * directory under a longer path — a walk that followed `./` would descend for
+   * ever — or a different one altogether.
+   */
+  it.each([
+    './', '.', 'x/../', 'x/../../y/', 'a//b', 'a/b/', '%2e%2e/', '%2E/', 'q?x=1', '?C=N;O=D', '#top', 'a\\b',
+  ])('reads %s as no entry', (href) => {
+    const entries = parse(`<a href="../">up</a><a href="${href}">x</a>`, 'spot/BTC/');
+
+    expect(entries).toEqual({ children: [], keys: [] });
+  });
+
+  it('ends a walk over an index that links to itself', async () => {
+    vi.mocked(fetchPage).mockImplementation((async (_adapter: Adapter, _url: string, _format: string, prefix = '') =>
+      parse(slashed(['./', 'a-2025-01-01.csv.gz']), prefix)) as typeof fetchPage);
+
+    const page = await html.page(context, 'linear/', null);
+
+    expect(page.listed.map(entry => entry.key)).toEqual(['linear/a-2025-01-01.csv.gz']);
+    expect(page.cursor).toBeNull();
+  });
+});
+
+/**
+ * **An empty index is a statement — nothing is here — so it has to look like an
+ * index to be read as one.** An error or maintenance page served with a 200 has
+ * no entries either.
+ */
+describe('a page that is not an index', () => {
+  it('is malformed where nothing on it marks it as an index', () => {
+    expect(reading('<html>Error</html>', 'spot/')).toEqual({ malformed: expect.stringContaining('<html>Error</html>') });
+    expect(reading('', 'spot/')).toEqual({ malformed: expect.any(String) });
+  });
+
+  it('is malformed where its only links lead out of the directory', () => {
+    expect(reading('<html><a href="https://status.example/">status</a></html>', 'spot/'))
+      .toEqual({ malformed: expect.any(String) });
+  });
+
+  it('reads an empty directory that links its parent', () => {
+    expect(reading('<html><body><a href="../">../</a></body></html>', 'spot/')).toEqual({ children: [], keys: [] });
+  });
+
+  it('reads an empty directory headed as an index', () => {
+    expect(reading('<html><head><title>Index of /spot/</title></head><body></body></html>', 'spot/'))
+      .toEqual({ children: [], keys: [] });
+  });
+});
+
+describe('addressing a directory', () => {
+  /** Names are held decoded, so a `#` would otherwise end the path and a `%` start an escape. */
+  it('encodes each segment of the path', () => {
+    expect(_test_urlOf('https://indexes.example/', 'spot/A#B/50%/'))
+      .toBe('https://indexes.example/spot/A%23B/50%25/');
+  });
+
+  it('leaves an ordinary path as it is', () => {
+    expect(_test_urlOf('https://indexes.example', 'trading/BTCUSDT/')).toBe('https://indexes.example/trading/BTCUSDT/');
   });
 });
 
@@ -243,6 +319,115 @@ describe('paging a partition', () => {
       'https://indexes.example/spot/AAAUSDT/',
       'https://indexes.example/spot/BBBUSDT/',
     ]);
+  });
+});
+
+/**
+ * **A directory its parent listed that now answers `404` is passed over.** It
+ * either went — which the parent's next reading says — or is briefly missing at
+ * the edge, which must not withdraw a subtree. Neither may fail the walk.
+ */
+describe('a directory that is gone', () => {
+  const tree: Record<string, string[]> = {
+    'spot/':         ['AAAUSDT/', 'BBBUSDT/', 'CCCUSDT/'],
+    'spot/AAAUSDT/': ['AAAUSDT-2023-01.csv.gz'],
+    'spot/CCCUSDT/': ['CCCUSDT-2023-01.csv.gz'],
+  };
+
+  /** Serve `tree`, and a 404 for anything outside it. */
+  const missing = () =>
+    vi.mocked(fetchPage).mockImplementation((async (_adapter: Adapter, url: string, _format: string, prefix = '') => {
+      const at = url.replace('https://indexes.example/', '');
+
+      if (! tree[at]) throw new Refused(404, new Headers(), url);
+
+      return parse(slashed(tree[at]), prefix);
+    }) as typeof fetchPage);
+
+  it('is skipped, covers nothing, and the walk moves to its next sibling', async () => {
+    missing();
+
+    const gone = await html.page(context, 'spot/', 'spot/AAAUSDT/');
+
+    expect(gone).toEqual({ listed: [], cursor: 'spot/BBBUSDT/' });
+
+    const next = await html.page(context, 'spot/', gone.cursor);
+
+    expect(next.listed.map(entry => entry.key)).toEqual(['spot/CCCUSDT/CCCUSDT-2023-01.csv.gz']);
+    expect(next.cursor).toBeNull();
+  });
+
+  it('is said', async () => {
+    missing();
+    vi.mocked(logger.warn).mockClear();
+
+    await html.page(context, 'spot/', 'spot/AAAUSDT/');
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ venue: 'indexed', directory: 'spot/BBBUSDT/' }), expect.any(String));
+  });
+
+  /** Read, then removed, then resumed: the parent's memory of it must not fail the walk. */
+  it('does not fail a resume whose memory still lists it', async () => {
+    serving({ ...tree, 'spot/BBBUSDT/': [] });
+
+    await html.page(context, 'spot/', null);
+
+    missing();
+
+    await expect(html.page(context, 'spot/', 'spot/AAAUSDT/')).resolves.toMatchObject({ cursor: 'spot/BBBUSDT/' });
+  });
+
+  it('is the last page of a scope where nothing follows it', async () => {
+    tree['spot/'] = ['AAAUSDT/', 'BBBUSDT/'];
+
+    try {
+      missing();
+
+      expect(await html.page(context, 'spot/', 'spot/AAAUSDT/')).toEqual({ listed: [], cursor: null });
+    } finally {
+      tree['spot/'] = ['AAAUSDT/', 'BBBUSDT/', 'CCCUSDT/'];
+    }
+  });
+
+  /** The scope itself has no parent here to have listed it, so its 404 is a failure. */
+  it('fails the page where the scope itself is gone', async () => {
+    missing();
+
+    await expect(html.page(context, 'nowhere/', null)).rejects.toThrow(Refused);
+  });
+});
+
+/** What a walk remembers of a venue's directories belongs to the job that read them. */
+describe('forgetting a venue', () => {
+  it('reads the directories again after forget', async () => {
+    serving({ 'spot/': ['AAAUSDT/'], 'spot/AAAUSDT/': [] });
+
+    await _test_next(context, 'spot/', 'spot/');
+    forget(context);
+    await _test_next(context, 'spot/', 'spot/');
+
+    expect(vi.mocked(fetchPage).mock.calls.map(call => call[1]))
+      .toEqual(['https://indexes.example/spot/', 'https://indexes.example/spot/']);
+  });
+
+  it('keeps what it holds for other venues', async () => {
+    serving({ 'spot/': ['AAAUSDT/'], 'spot/AAAUSDT/': [] });
+
+    await _test_next(context, 'spot/', 'spot/');
+    forget({ ...context, name: 'another' });
+    await _test_next(context, 'spot/', 'spot/');
+
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+  });
+
+  it('happens when a job maps its scopes', async () => {
+    serving({ '': ['spot/'], 'spot/': ['a-2022-11.csv.gz'] });
+
+    _test_known.set('indexed:stale/', ['stale/gone/']);
+    await html.scopes(context, { concurrency: 1 });
+
+    expect(_test_known.has('indexed:stale/')).toBe(false);
   });
 });
 
