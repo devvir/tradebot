@@ -29,5 +29,5 @@ wrote them.
   the next `_date_`, are the rest of that message. `_action_` is the message's action: `partial`,
   `insert`, `update` or `delete`.
 - **The other tables are plain rows**, as REST and the S3 dumps gave them.
-- **How each value is typed and cast** is in `services/vault/src/data/casts.ts` and
-  `shared/utils/src/tables.ts`; the websocket's own types are in `shared/types/src/bitmex.ts`.
+- **How each value is typed** when the vault service reads a file back is in
+  `services/vault/src/data/casts.ts`: the columns it does not list stay strings.
