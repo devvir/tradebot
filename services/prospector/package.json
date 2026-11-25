@@ -3,6 +3,22 @@
   "version": "1.0.0",
   "description": "Prospector service \u2014 surveys venue archives and records every file they publish",
   "main": "dist/src/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    },
+    "./testing": {
+      "types": "./dist/src/testing/index.d.ts",
+      "default": "./dist/src/testing/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "typesVersions": {
+    "*": {
+      "testing": ["dist/src/testing/index.d.ts"]
+    }
+  },
   "private": true,
   "scripts": {
     "build": "tsc -b && mkdir -p dist/src/database/migrations/seeds && cp -r src/database/migrations/seeds/*/ dist/src/database/migrations/seeds/",
