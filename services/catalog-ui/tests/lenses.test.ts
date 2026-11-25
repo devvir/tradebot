@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  addressIsSound, byPeriod, choiceOf, chosenOf, filed, forget, isUnsaved, keep, keptFor, namedLens, onlyOf, publishedOptions, unsavedLens, withOne, withoutVenue,
+  addressIsReserved, addressIsSound, byPeriod, choiceOf, chosenOf, filed, forget, isUnsaved, keep, keptFor, namedLens, onlyOf, publishedOptions, unsavedLens, withOne, withoutVenue,
 } from '../web/views/Lenses';
 import type { LensProblem, LensRule, RuleEntry } from '../web/types';
 
@@ -95,6 +95,18 @@ describe('addressIsSound', () => {
   it('takes lower case, digits and hyphens, 2 to 64 characters', () => {
     for (const good of ['cold-store', 'ab', '1m-klines', 'a-', 'a'.repeat(64)])
       expect(addressIsSound(good), good).toBe(true);
+  });
+
+  it('refuses the addresses the catalog keeps for itself', () => {
+    for (const reserved of ['options', 'size', 'check', 'resolve']) {
+      expect(addressIsSound(reserved), reserved).toBe(false);
+      expect(addressIsReserved(reserved), reserved).toBe(true);
+    }
+  });
+
+  it('does not count a well-formed address as reserved', () => {
+    for (const free of ['cold-store', 'options-2', 'sizes'])
+      expect(addressIsReserved(free), free).toBe(false);
   });
 });
 

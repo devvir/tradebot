@@ -340,6 +340,11 @@ describe('what comes back', () => {
       res.statusCode = 204;
       res.end();
     },
+    '/venues/moved': (_req, res) => {
+      res.statusCode = 308;
+      res.setHeader('location', '/venues/elsewhere');
+      res.end();
+    },
   }));
 
   it('keeps the status, the content type and the body of a non-JSON answer', async () => {
@@ -369,6 +374,14 @@ describe('what comes back', () => {
 
     expect(status).toBe(204);
     expect(body).toHaveLength(0);
+  });
+
+  it('relays a redirect with its Location rather than following it', async () => {
+    const { status, headers } = await call('GET', '/api/catalog/venues/moved');
+
+    expect(status).toBe(308);
+    expect(headers.location).toBe('/venues/elsewhere');
+    expect(catalog.seen.map(one => one.url)).toEqual(['/venues/moved']);
   });
 });
 

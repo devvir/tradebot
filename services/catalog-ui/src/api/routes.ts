@@ -114,7 +114,8 @@ const sameSite = (allowed: readonly string[]) =>
 
 /**
  * Pass an allowed request to `upstream` and relay its answer: the status, the
- * content type and the body bytes as they came.
+ * content type, the `Location` of a redirect and the body bytes as they came.
+ * A redirect is relayed, not followed.
  *
  * What goes upstream is the path and query, the token, `x-catalog-lens`,
  * `Accept` (`application/json` when the client sent none), and the parsed JSON
@@ -163,11 +164,13 @@ const forward = (name: string, upstream: string, allowed: readonly Allowed[], us
 
       if (gone.signal.aborted || res.headersSent) return;
 
-      const type = answer.headers.get('content-type');
+      const type     = answer.headers.get('content-type');
+      const location = answer.headers.get('location');
 
       res.status(answer.status);
 
       if (type) res.setHeader('content-type', type);
+      if (location) res.setHeader('location', location);
 
       res.send(bytes);
     } catch (err) {
