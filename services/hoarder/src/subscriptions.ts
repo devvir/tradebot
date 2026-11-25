@@ -10,16 +10,23 @@ const RETRY_MAX_MS         = 60_000;
 
 /**
  * Subscribe state of one socket. Its subscribe requests run one at a time:
- * each sends its frame only when the previous one's ack has arrived or timed
- * out, so a socket never has more than one ack awaited.
+ * each sends its frame only when the previous one's wait has ended, by an
+ * answer or by its deadline. A request whose wait ended without its answer
+ * may still be answered later, while a later one is awaited.
  */
 interface SocketTurns {
-  queue:     Promise<void>;
+  queue:      Promise<void>;
   /** Channels queued, awaiting their ack, waiting to retry, or confirmed on this socket. */
-  claimed:   Set<string>;
-  confirmed: Set<string>;
+  claimed:    Set<string>;
+  confirmed:  Set<string>;
   /** The next retry delay per channel: from 1 s, doubling to 60 s. */
-  delays:    Map<string, number>;
+  delays:     Map<string, number>;
+  /**
+   * The channel of each request whose wait ended before its answer was read,
+   * oldest first. While it names a channel other than the one awaited, a
+   * refusal that names no channel may be the late answer to that request.
+   */
+  unanswered: string[];
 }
 
 interface Waiter {
@@ -44,7 +51,9 @@ const waiters = new WeakMap<PoolEntry, Map<string, Waiter[]>>();
  *
  * A subscribe that the venue does not confirm in time, or whose socket closes
  * before the ack, is retried: on the same socket with a backoff while it stays
- * open, and on the replacement socket otherwise. The returned promise resolves
+ * open, and on the replacement socket otherwise. So is one met by a refusal
+ * that names no channel while an earlier request on the socket is unanswered,
+ * as the refusal may be that request's. The returned promise resolves
  * the first time the venue confirms the channel and rejects when the venue
  * refuses it; a refused channel is not subscribed again. It rejects at once
  * when the service is shutting down and the socket was never made.
@@ -116,9 +125,23 @@ const attempt = async (venue: string, entry: PoolEntry, ws: WebSocket, channel: 
   try {
     await subscribeOn(ws, venue, channel, SUBSCRIBE_TIMEOUT_MS);
   } catch (err) {
-    if (err instanceof SubscriptionRejected) return drop(venue, entry, ws, channel, err);
+    const t = turnsOf(ws);
 
-    return retry(venue, entry, ws, channel, err as Error);
+    if (! (err instanceof SubscriptionRejected)) {
+      t.unanswered.push(channel);
+      return retry(venue, entry, ws, channel, err as Error);
+    }
+
+    if (! t.unanswered.some(c => c !== channel)) return drop(venue, entry, ws, channel, err);
+
+    // The refusal may answer an older request instead: take it as the oldest
+    // one's, leave this one's answer to come, and retry this channel.
+    t.unanswered.shift();
+    t.unanswered.push(channel);
+
+    return retry(venue, entry, ws, channel, new Error(
+      `Subscription to ${venue}/${channel}: a refusal naming no channel arrived while an earlier request was unanswered`,
+    ));
   }
 
   confirm(entry, ws, channel);
@@ -168,6 +191,8 @@ const confirm = (entry: PoolEntry, ws: WebSocket, channel: string): void => {
 
   t.confirmed.add(channel);
   t.delays.delete(channel);
+  // Any answer still to come for this channel is an ack naming it, which no wait can misread.
+  t.unanswered = t.unanswered.filter(c => c !== channel);
 
   for (const w of takeWaiters(entry, channel)) w.resolve();
 };
@@ -198,7 +223,7 @@ const turnsOf = (ws: WebSocket): SocketTurns => {
   let t = turns.get(ws);
 
   if (! t) {
-    t = { queue: Promise.resolve(), claimed: new Set(), confirmed: new Set(), delays: new Map() };
+    t = { queue: Promise.resolve(), claimed: new Set(), confirmed: new Set(), delays: new Map(), unanswered: [] };
     turns.set(ws, t);
   }
 
@@ -239,7 +264,9 @@ const subscribeOn = (ws: WebSocket, venue: string, channel: string, timeoutMs: n
 /**
  * Waits for the venue to confirm the subscription — `matchAck` owns the
  * protocol. Rejects with `SubscriptionRejected` when the venue refuses it, and
- * with a plain error on timeout or when the socket closes first.
+ * with a plain error on timeout or when the socket closes first. A deadline
+ * that falls while the socket is paused is pushed back by `timeoutMs`: a
+ * paused socket reads no answer, so its silence says nothing about the venue.
  */
 const waitForSubscription = (
   ws:        WebSocket,
@@ -256,10 +283,17 @@ const waitForSubscription = (
       ws.off('close', onClose);
     };
 
-    const timer = setTimeout(() => {
+    const onDeadline = (): void => {
+      if (ws.isPaused) {
+        timer = setTimeout(onDeadline, timeoutMs);
+        return;
+      }
+
       done();
       reject(Object.assign(new Error(`Subscription to ${venue}/${channel} timed out`), { httpStatus: 503 }));
-    }, timeoutMs);
+    };
+
+    let timer = setTimeout(onDeadline, timeoutMs);
 
     const onClose = (): void => {
       done();

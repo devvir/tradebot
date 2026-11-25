@@ -28,9 +28,9 @@ export interface Venue {
   /**
    * Classify an inbound frame while awaiting a subscribe ack for `channel`:
    * `ok` confirms, `failed` rejects, `null` means "not an ack for this channel"
-   * and the wait continues. A socket has at most one subscribe ack awaited at a
-   * time, so a venue whose error frames name no channel may report any error
-   * as `failed` for the channel being awaited.
+   * and the wait continues. A venue whose error frames name no channel reports
+   * any error as `failed`; the subscriber, which sends one subscribe at a time
+   * and knows which requests are still unanswered, decides whose refusal it is.
    */
   matchAck(frame: unknown, channel: string): AckResult;
 

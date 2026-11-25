@@ -9,15 +9,15 @@ One instance can collect one venue, several, or all of them — selected with `H
 
 "Venue" means a trading exchange (Binance, OKX, …) everywhere in this service. "Exchange" unqualified means the AMQP exchange, and nothing else.
 
-**Status: parked.** The channel lists in [src/venues/channels.ts](src/venues/channels.ts) are
-provisional: two symbols per venue (BTC and ETH), each with a trade channel and a book channel.
+**Status: parked.** [src/venues/channels.ts](src/venues/channels.ts) lists two symbols per venue
+(BTC and ETH), each with a trade channel and a book channel.
 
 ## Core Functionality
 
 - **Multi-venue WebSocket connections** — one socket per (venue, endpoint, socket key), opened when its first channel is subscribed
 - **Byte-faithful relay** — a frame is parsed only to ask its venue whether it is market data; what is published is the received buffer, so number text, escapes and whitespace stay as the venue sent them. Control frames (acks, heartbeats, status) are logged, not published; a frame that is not JSON is logged and dropped
 - **Venue routing keys** — the routing key is the venue name (`okx`). Anything finer is venue-local vocabulary a binding cannot express portably, and it is already in the payload
-- **Subscriptions** — each socket sends one subscribe at a time and waits for its ack (5 s). An unconfirmed subscribe is retried on the same socket, from 1 s doubling to 60 s; a channel the venue refuses is logged and dropped. Every socket that opens, a reconnected replacement included, subscribes every channel assigned to it that has not been refused
+- **Subscriptions** — each socket sends one subscribe at a time and waits for its ack (5 s, not counting time the socket is paused). An unconfirmed subscribe is retried on the same socket, from 1 s doubling to 60 s; a channel the venue refuses is logged and dropped. Every socket that opens, a reconnected replacement included, subscribes every channel assigned to it that has not been refused
 - **Reconnection** — only a socket's close schedules its replacement, after a backoff from 200 ms doubling to 15 s (±20% jitter), reset once a socket has stayed open for 30 s; a handshake refused with HTTP 418 or 429 backs off at 15 s at once. A handshake must complete within 10 s, and an open socket that sends nothing in the 30 s after a ping is terminated (a paused socket is not judged)
 - **Backpressure** — while the AMQP channel's write buffer is full, every socket stops reading, including one that opens meanwhile, and resumes when it drains. A paused socket answers no ping from its venue; a pause lasting over 30 s is logged as a warning
 - **Shutdown** — on SIGTERM or SIGINT every socket is paused and terminated and no socket is made or replaced; frames already read may still be published. A publish failing because the broker channel or connection is closed shuts the service down; the compose file's `restart: unless-stopped` starts it again
@@ -40,9 +40,9 @@ Currently implemented:
 
 Binance futures is not collected; for its endpoint, see [BINANCE.md](../../docs/venues/BINANCE.md#websocket).
 
-Where an ack does not name the channel (Binance, Bybit), the adapter derives the request id from the channel and recomputes it when matching, so nothing is held between send and ack. Where a rejection names no channel (OKX, Kraken), it is taken as the refusal of the channel being awaited, which is unambiguous because a socket has one ack awaited at a time. Binance acknowledges a stream that does not exist exactly as a real one, so a Binance channel counts as confirmed once its request is acknowledged, whether or not data follows.
+Where an ack does not name the channel (Binance, Bybit), the adapter derives the request id from the channel and recomputes it when matching, so nothing is held between send and ack. Where a rejection names no channel (OKX, Kraken), it is taken as the refusal of the channel being awaited only while no other request on the socket is unanswered. A request whose wait timed out can still be answered while a later one is awaited; until that answer is read, such a rejection may be its, so the awaited channel is retried instead of dropped, and the rejection is counted as the answer to the oldest unanswered request. Binance acknowledges a stream that does not exist exactly as a real one, so a Binance channel counts as confirmed once its request is acknowledged, whether or not data follows.
 
-The frames in `tests/venues-protocols.test.ts` are trimmed from frames captured against the live endpoints. For each venue's WebSocket protocol, see the *WebSocket* section of its doc: [BINANCE.md](../../docs/venues/BINANCE.md), [BYBIT.md](../../docs/venues/BYBIT.md), [OKX.md](../../docs/venues/OKX.md), [KRAKEN.md](../../docs/venues/KRAKEN.md).
+The frames in `tests/venues-protocols.test.ts` are trimmed from frames captured against the live endpoints. For each venue's WebSocket protocol, see the *WebSocket* section of its doc, where one exists: [BINANCE.md](../../docs/venues/BINANCE.md), [BYBIT.md](../../docs/venues/BYBIT.md), [OKX.md](../../docs/venues/OKX.md). Kraken's observed frames are in the docblock of [src/venues/kraken.ts](src/venues/kraken.ts).
 
 ## Development
 

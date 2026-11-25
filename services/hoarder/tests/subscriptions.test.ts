@@ -637,9 +637,9 @@ describe('subscribe: reconnect', () => {
   });
 });
 
-// ── subscribe: one ack at a time ──────────────────────────────────────────────
+// ── subscribe: one at a time ──────────────────────────────────────────────────
 
-describe('subscribe: one ack awaited per socket', () => {
+describe('subscribe: one subscribe sent at a time per socket', () => {
   const okxAck = (channel: string) => {
     const [name, instId] = channel.split(':');
 
@@ -696,5 +696,122 @@ describe('subscribe: one ack awaited per socket', () => {
 
     await expect(second).resolves.toBeUndefined();
     expect(ws.send).toHaveBeenCalledTimes(2);
+  });
+
+  const okxError = { event: 'error', code: '60018', msg: 'Wrong URL or channel:nonsense,instId:BTC-USDT' };
+
+  // A request that timed out can still be answered while the next channel is
+  // awaited; its refusal names no channel, so it must not drop that channel.
+  it('retries, not drops, the awaited channel when a refusal may be a timed-out request\'s late answer', async () => {
+    const { service } = makeService();
+    const ws = connectingWs();
+
+    mockConnect.mockReturnValue(ws);
+
+    const bad  = subscribe('okx', 'nonsense:BTC-USDT', service as any, vi.fn());
+    const good = subscribe('okx', 'trades:BTC-USDT',   service as any, vi.fn());
+    const badSettled  = vi.fn();
+    const goodSettled = vi.fn();
+
+    bad.then(badSettled, badSettled);
+    good.then(goodSettled, goodSettled);
+
+    open(ws);
+    await vi.advanceTimersByTimeAsync(5_100);   // `nonsense` timed out; `trades` sent
+
+    expect(sent(ws).map(f => f.args[0].channel)).toEqual(['nonsense', 'trades']);
+
+    reply(ws, okxError);                        // the late answer to `nonsense`
+    await flush();
+    expect(goodSettled).not.toHaveBeenCalled();
+
+    reply(ws, okxAck('trades:BTC-USDT'));       // the answer to `trades`, read during its backoff
+    await expect(good).resolves.toBeUndefined();
+
+    // `nonsense` is resent, and with nothing else unanswered its refusal is its own.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(sent(ws).map(f => f.args[0].channel)).toEqual(['nonsense', 'trades', 'nonsense']);
+
+    reply(ws, okxError);
+    await expect(bad).rejects.toThrow(/nonsense:BTC-USDT failed/);
+    expect(badSettled).toHaveBeenCalledOnce();
+    expect(sent(ws)).toHaveLength(3);
+  });
+
+  it('drops a refused channel once the slow ack that kept the refusal ambiguous has arrived (kraken)', async () => {
+    const { service } = makeService();
+    const ws = connectingWs();
+    const refusal = { error: 'Subscription name invalid', success: false, method: 'subscribe' };
+    const ack = (channel: string, symbol: string) =>
+      ({ method: 'subscribe', result: { channel, symbol }, success: true });
+
+    mockConnect.mockReturnValue(ws);
+
+    const slow = subscribe('kraken', 'trade:BTC/USD',    service as any, vi.fn());
+    const bad  = subscribe('kraken', 'nonsense:BTC/USD', service as any, vi.fn());
+    const badSettled = vi.fn();
+
+    bad.then(badSettled, badSettled);
+
+    open(ws);
+    await vi.advanceTimersByTimeAsync(5_100);   // `trade` timed out; `nonsense` sent
+
+    reply(ws, refusal);                         // `nonsense`'s own, though it cannot be told yet
+    await flush();
+    expect(badSettled).not.toHaveBeenCalled();
+
+    reply(ws, ack('trade', 'BTC/USD'));         // `trade`'s late ack, during its backoff
+    await expect(slow).resolves.toBeUndefined();
+
+    await vi.advanceTimersByTimeAsync(2_000);   // `nonsense` is resent after its backoff
+    expect(sent(ws).map(f => f.params.channel)).toEqual(['trade', 'nonsense', 'nonsense']);
+
+    reply(ws, refusal);
+    await expect(bad).rejects.toThrow(/nonsense:BTC\/USD failed/);
+  });
+
+  // A paused socket reads nothing, so an answer cannot arrive before it resumes.
+  it('does not let a subscribe time out while its socket is paused', async () => {
+    const { service } = makeService();
+    const ws = connectingWs() as MockWs & { isPaused: boolean };
+
+    mockConnect.mockReturnValue(ws);
+
+    const pending = subscribe('okx', 'trades:BTC-USDT', service as any, vi.fn());
+    const settled = vi.fn();
+
+    pending.then(settled, settled);
+
+    ws.isPaused = true;
+    open(ws);
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(ws.send).toHaveBeenCalledOnce();
+    expect(logger.warn).not.toHaveBeenCalled();
+
+    ws.isPaused = false;
+    reply(ws, okxAck('trades:BTC-USDT'));
+    await expect(pending).resolves.toBeUndefined();
+    expect(ws.send).toHaveBeenCalledOnce();
+  });
+
+  it('times a subscribe out once its socket has resumed and the venue stays silent', async () => {
+    const { service } = makeService();
+    const ws = connectingWs() as MockWs & { isPaused: boolean };
+
+    mockConnect.mockReturnValue(ws);
+
+    void subscribe('okx', 'trades:BTC-USDT', service as any, vi.fn());
+
+    ws.isPaused = true;
+    open(ws);
+    await vi.advanceTimersByTimeAsync(12_000);
+    ws.isPaused = false;
+    await vi.advanceTimersByTimeAsync(3_100);   // the deadline pushed back to 15s
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ venue: 'okx', channel: 'trades:BTC-USDT' }),
+      expect.stringMatching(/not confirmed/),
+    );
   });
 });

@@ -27,7 +27,7 @@ export const okx: Venue = {
   /**
    * The ack echoes the full arg, so it matches on channel + instId. An error
    * frame carries no arg — it names the offender in prose — so any error is
-   * reported as a failure of the channel being awaited.
+   * reported as `failed`, whichever channel is asked about.
    */
   matchAck: (frame, channel): AckResult => {
     const f = frame as { event?: string; arg?: { channel?: string; instId?: string } };
