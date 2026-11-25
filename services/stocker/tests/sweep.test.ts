@@ -5,9 +5,10 @@ import { dirname, join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { logger } from '@devvir/service-kit';
 import config from '../src/config';
+import { SCRATCH } from '../src/containers';
 import { open } from '../src/db';
 import { parseKey } from '../src/keys';
-import { BACKEDUP, ERRORS, LEDGER, validate } from '../src/ledger';
+import { BACKEDUP, ERRORS, LEDGER, outdate, read, reinstate, validate } from '../src/ledger';
 import * as build from '../src/build';
 import { _test_held as held } from '../src/prepare';
 import * as room from '../src/room';
@@ -834,6 +835,31 @@ describe('the ledger', () => {
     expect((await lines(LEDGER)).at(-1)).toMatchObject({ partition: PARTITION, mode: 'bundle', count: '1' });
   });
 
+  /** A write cut short leaves a tail that is not a line: it is never read, and the next line is not lost to it. */
+  it('reads past a line cut short, and keeps the one written after it whole', async () => {
+    const entry = (await read()).get(PARTITION)!;
+
+    await outdate(entry);
+
+    const whole = (await readFile(join(config.vaultDir, LEDGER), 'utf8')).trim().split('\n')[1]!;
+
+    await appendFile(join(config.vaultDir, LEDGER), whole.replace(MONTH, '202607').slice(0, 70));
+    await reinstate((await read()).get(PARTITION)!);
+
+    const ledger = await read();
+
+    expect([...ledger.keys()]).toEqual([PARTITION]);
+    expect(ledger.get(PARTITION)).toEqual(entry);
+  });
+
+  it('starts an empty ledger with its heading, so its first line is read', async () => {
+    await writeFile(join(config.vaultDir, LEDGER), '');
+
+    expect(await sweep(conns)).toMatchObject({ built: 1, current: 0 });
+    expect((await read()).get(PARTITION)).toMatchObject({ partition: PARTITION, mode: 'bundle', count: 1 });
+    expect(await sweep(conns)).toMatchObject({ built: 0, current: 1 });
+  });
+
   describe('set against the vault as the service starts', () => {
     it('finds nothing wrong with a vault that holds what it says', async () => {
       expect(await validate()).toBe(0);
@@ -893,6 +919,40 @@ describe('the ledger', () => {
       expect(await sweep(conns)).toMatchObject({ built: 1, current: 0 });
       expect(await validate()).toBe(0);
     });
+  });
+});
+
+describe('scratch', () => {
+  const scratch = (): string => join(config.vaultDir, SCRATCH);
+
+  /** The engine spills with everything else transient, and no further than the volume's floor allows. */
+  it('is where the engine spills, capped short of the space floor', async () => {
+    const [[at, cap]] = (await conns[0]!.runAndReadAll(
+      "SELECT current_setting('temp_directory'), current_setting('max_temp_directory_size')")).getRows() as [[string, string]];
+
+    expect(at.startsWith(`${scratch()}/`)).toBe(true);
+    expect(cap).not.toMatch(/%/);
+  });
+
+  /** What a hard kill leaves goes as the service starts — spill and all — but hours of pieces built stay. */
+  it('is cleared of everything but the pieces that are built', async () => {
+    const piece  = join(scratch(), 'stage', 'gate_perp.abc', 'own', build.PIECES, '0', '0');
+    const legacy = join(config.vaultDir, '.duckdb-tmp');
+
+    await mkdir(join(scratch(), 'engine'), { recursive: true });
+    await writeFile(join(scratch(), 'engine', 'duckdb_temp_storage_x.tmp'), 'spill');
+    await mkdir(join(scratch(), 'unpack-x'), { recursive: true });
+    await mkdir(legacy, { recursive: true });
+    await writeFile(join(legacy, 'duckdb_temp_storage_y.tmp'), 'spill');
+    await mkdir(piece, { recursive: true });
+    await writeFile(join(piece, 'BTC_USDT.parquet'), 'rows');
+    await writeFile(join(piece, '.built'), '{}');
+
+    await build.sweepScratch();
+
+    expect(await readdir(scratch())).toEqual(['stage']);
+    expect(await readdir(piece)).toEqual(expect.arrayContaining(['BTC_USDT.parquet', '.built']));
+    expect(await stat(legacy).catch(() => null)).toBeNull();
   });
 });
 

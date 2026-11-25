@@ -1,7 +1,8 @@
-import { appendFile, readFile, stat } from 'node:fs/promises';
+import { appendFile, open, readFile, stat } from 'node:fs/promises';
 import { basename, dirname, join, relative } from 'node:path';
 import { logger } from '@devvir/service-kit';
 import config from './config';
+import { syncDir } from './durable';
 import { Slices, clear, countOf, filesAt, filesOf, isWhole, monthOf, sliceDirOf } from './vault';
 import type { Edge, Entry, Partition, Side, Stocked, VaultKey } from './types';
 
@@ -20,6 +21,11 @@ import type { Edge, Entry, Partition, Side, Stocked, VaultKey } from './types';
  * **A line is never changed.** A partition stocked again gets another line, and
  * the last line for a partition is the one that counts — so the file is only
  * ever appended to, and can be read while it is.
+ *
+ * **A line is on the disk before anything goes on from it**, and is a line only
+ * once it is whole: every field, and the line break after. A write cut short —
+ * the power gone, the volume full — leaves a tail that is not one, and is not
+ * read; the next line written starts on a line of its own after it.
  *
  * **A partition whose files are being changed says so first.** The vault's files
  * carry no mark of which build wrote them, so the ledger is the only thing that
@@ -85,7 +91,7 @@ export const read = async (): Promise<Map<string, Entry>> => {
 export const readBackedUp = async (): Promise<Map<string, Set<string>>> => {
   const safe = new Map<string, Set<string>>();
 
-  for (const [partition, revision] of await linesOf(BACKEDUP, 2))
+  for (const [partition, revision] of await linesOf(BACKEDUP, 2, false))
     safe.set(partition!, (safe.get(partition!) ?? new Set()).add(revision!));
 
   return safe;
@@ -358,12 +364,33 @@ const append = async (entry: Entry): Promise<void> => {
 
   if (bad !== undefined) throw new Error(`A ledger field may not hold '|' or a line break: ${JSON.stringify(bad)}`);
 
-  await appendFile(join(config.vaultDir, LEDGER), `${await headed(LEDGER, COLUMNS)}${fields.join('|')}\n`);
+  const path   = join(config.vaultDir, LEDGER);
+  const handle = await open(path, 'a+');
+  let size: number;
+
+  try {
+    ({ size } = await handle.stat());
+
+    // A file with nothing in it is started with its heading; one whose last line was cut short is given the line break it lacks.
+    const last = Buffer.alloc(1);
+
+    if (size > 0) await handle.read(last, 0, 1, size - 1);
+
+    const lead = size === 0 ? `${COLUMNS.join('|')}\n` : last[0] === NEWLINE ? '' : '\n';
+
+    await handle.write(`${lead}${fields.join('|')}\n`);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+
+  // Its first line, so the file may be new: its name in the vault's directory goes to the disk with it.
+  if (size === 0) await syncDir(config.vaultDir);
 };
 
 /** Every line of the ledger, in the order they were written. */
 const entriesOf = async (): Promise<Entry[]> =>
-  (await linesOf(LEDGER, COLUMNS.length)).map((fields) => {
+  (await linesOf(LEDGER, COLUMNS.length, true)).map((fields) => {
     const entry = Object.fromEntries(COLUMNS.map((name, at) => [name, fields[at]!])) as unknown as Record<(typeof COLUMNS)[number], string>;
 
     return { ...entry, size: Number(entry.size), count: Number(entry.count) } as Entry;
@@ -389,16 +416,25 @@ const sidesAdded = (was: Entry, now: Entry): Side[] => {
 /** Whether a line says its partition's files are being changed, in either way. */
 const isUpdating = (revision: string): boolean => revision === UPDATING || revision === UPDATING_SIDES;
 
-/** A file's lines as fields, without its heading; nothing where there is no file. Short lines are left out. */
-const linesOf = async (name: string, width: number): Promise<string[][]> => {
-  const text = await readFile(join(config.vaultDir, name), 'utf8').catch(() => '');
+/**
+ * A file's lines as fields, without its heading; nothing where there is no file.
+ *
+ * `whole` is for a file written here a line at a time: a line counts only with
+ * exactly `width` fields and the line break after it, so what a write cut short
+ * left is never read. Otherwise a line counts with at least `width` fields,
+ * line break or not.
+ */
+const linesOf = async (name: string, width: number, whole: boolean): Promise<string[][]> => {
+  const text  = await readFile(join(config.vaultDir, name), 'utf8').catch(() => '');
+  const lines = text.split('\n').slice(1);
 
-  return text.split('\n').slice(1)
+  // Text ending in a line break splits into an empty last segment; one that does not, into the unfinished line.
+  if (whole) lines.pop();
+
+  return lines
     .filter(line => line !== '')
     .map(line => line.split('|'))
-    .filter(fields => fields.length >= width);
+    .filter(fields => whole ? fields.length === width : fields.length >= width);
 };
 
-/** The heading line, where the file does not exist yet and this write starts it. */
-const headed = async (name: string, columns: readonly string[]): Promise<string> =>
-  (await stat(join(config.vaultDir, name)).then(() => true, () => false)) ? '' : `${columns.join('|')}\n`;
+const NEWLINE = 0x0a;

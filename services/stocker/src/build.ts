@@ -6,6 +6,7 @@ import config from './config';
 import { SCRATCH, hasContent, unpackAll } from './containers';
 import { TAG } from './containers/pack';
 import { q } from './db';
+import { syncDir, syncFile } from './durable';
 import { formatFor, formatOf, isTable } from './formats';
 import { marginOf } from './schema/margin';
 import { selectFor } from './schema/project';
@@ -501,10 +502,26 @@ export const joinPieces = async (
  * from other archives, or under versions that write otherwise, are never found.
  * What the note adds is which files the piece held: how a symbol's files are
  * cut into pieces is not part of the revision.
+ *
+ * **The note is on the disk only after the piece's files are**, and is whole
+ * or not there — written beside its name and renamed to it — so a note is never
+ * found for files a power cut took back. See `durable`.
  */
 export const finishPiece = async (dir: string, inputs: readonly DiskFile[], done: { rows: number; files: number }): Promise<void> => {
   await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, FINISHED), JSON.stringify({ inputs: inputs.map(input => input.file.key), ...done }));
+
+  for (const name of await readdir(dir))
+    if (name.endsWith(STAGED)) await syncFile(join(dir, name));
+
+  await syncDir(dir);
+
+  const note = join(dir, FINISHED);
+  const temp = `${note}.tmp`;
+
+  await writeFile(temp, JSON.stringify({ inputs: inputs.map(input => input.file.key), ...done }));
+  await syncFile(temp);
+  await rename(temp, note);
+  await syncDir(dir);
 };
 
 /** What came of a piece built before from these very files, or null where it is still to build. */
@@ -622,15 +639,21 @@ const FINISHED = '.built';
 const STAGE = 'stage';
 
 /**
- * Clear what a hard kill leaves behind: extractions, part-built partitions, the
- * engine's spill. Everything transient lives in one directory.
+ * Clear what a hard kill leaves behind in `<vault>/.stocker-tmp`, where
+ * everything transient is: extractions, part-built partitions, the engine's
+ * spill. Run before the engine is opened, so none of it is in use.
  *
  * **All of it goes but the pieces that are built** — see `finishPiece`: hours
  * of a partition that was being built a piece at a time, which the next build
  * of it takes up.
+ *
+ * `<vault>/.duckdb-tmp`, an engine spill directory outside scratch, goes too
+ * wherever it is found.
  */
 export const sweepScratch = async (): Promise<void> => {
   const scratch = join(config.vaultDir, SCRATCH);
+
+  await rm(join(config.vaultDir, '.duckdb-tmp'), { recursive: true, force: true }).catch(() => {});
 
   for (const name of await readdir(scratch).catch(() => [] as string[]))
     if (name !== STAGE) await rm(join(scratch, name), { recursive: true, force: true }).catch(() => {});

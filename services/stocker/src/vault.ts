@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readdir, rename, rm, statfs } from 'node:fs/promises';
+import { readdir, rename, rm, statfs } from 'node:fs/promises';
 import { join } from 'node:path';
 import config from './config';
 import { SCRATCH } from './containers';
+import { makeDir, syncDir, syncFile } from './durable';
 import { fieldsOf, rootOf } from './schema/tables';
 import { versionsOf } from './versions';
 import type { Edge, Partition, Series, Side, SliceIndex, Stocked, VaultKey } from './types';
@@ -186,10 +187,21 @@ export const clear = async (dir: string, month: string, held: Stocked | undefine
   for (const file of files) await rm(file, { force: true });
 };
 
-/** Put a month built as one file in place — or, with a side, the file of what a neighbouring month held of it. */
+/**
+ * Put a month built as one file in place — or, with a side, the file of what a
+ * neighbouring month held of it.
+ *
+ * The file is on the disk, and so is its name in the vault, when this returns —
+ * see `durable`.
+ */
 export const publishBundle = async (key: VaultKey, built: string, side?: Side): Promise<void> => {
-  await mkdir(join(sliceDirOf(key), BUNDLE), { recursive: true });
+  const touched = new Set<string>();
+
+  await makeDir(join(sliceDirOf(key), BUNDLE), touched);
+  await syncFile(built);
   await rename(built, bundleOf(key, side));
+
+  for (const dir of touched) await syncDir(dir);
 };
 
 /**
@@ -201,6 +213,8 @@ export const publishBundle = async (key: VaultKey, built: string, side?: Side): 
  *
  * **Many renames cannot be one**, so a month is in neither state while they
  * run. That is the ledger's to say, before the first file moves — see `mark`.
+ * Every file is on the disk before it moves, and every directory it moved into
+ * once the last has — see `durable`.
  */
 export const publishSplit = async (
   key:     VaultKey,
@@ -212,19 +226,24 @@ export const publishSplit = async (
 
   const symbols = staging === null ? [] : await staged(staging);
   const beside: Stocked['sides'] = [];
+  const touched = new Set<string>();
 
-  for (const symbol of symbols) {
-    await mkdir(join(sliceDirOf(key), symbol), { recursive: true });
-    await rename(join(staging!, `${symbol}${STAGED}`), fileOf(key, symbol));
-  }
+  const place = async (from: string, symbol: string, to: string): Promise<void> => {
+    await makeDir(join(sliceDirOf(key), symbol), touched);
+    await syncFile(join(from, `${symbol}${STAGED}`));
+    await rename(join(from, `${symbol}${STAGED}`), to);
+  };
+
+  for (const symbol of symbols) await place(staging!, symbol, fileOf(key, symbol));
 
   for (const { side, staging: from } of sides)
     for (const symbol of await staged(from)) {
-      await mkdir(join(sliceDirOf(key), symbol), { recursive: true });
-      await rename(join(from, `${symbol}${STAGED}`), fileOf(key, symbol, side));
+      await place(from, symbol, fileOf(key, symbol, side));
 
       beside.push({ symbol, side });
     }
+
+  for (const dir of touched) await syncDir(dir);
 
   return { symbols, sides: beside };
 };

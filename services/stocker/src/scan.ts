@@ -9,7 +9,7 @@ import {
 import { listPartitions } from './catalog';
 import config from './config';
 import { weightsOf } from './containers';
-import { q } from './db';
+import { capSpill, q } from './db';
 import { Instruments, filesOf, matches } from './disk';
 import { edgesOf, idOf, neighbourOf } from './keys';
 import { SERIES, extrasOf, seriesFor, seriesOf } from './schema/series';
@@ -67,6 +67,9 @@ import type {
 export const sweep = async (conns: DuckDBConnection[]): Promise<Summary> => {
   // A partition the last sweep was stopped half way through putting in place is put right before anything is read.
   await repair();
+
+  // Nothing is spilled between sweeps, so the cap is set again from the volume as it is now.
+  await capSpill(conns[0]!);
 
   const summary: Summary = {
     considered: 0, current: 0, outdated: 0, built: 0, empty: 0, waiting: 0, partial: 0, completed: 0, missing: 0,
