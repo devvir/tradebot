@@ -94,6 +94,10 @@ export const sweep = async (conns: DuckDBConnection[], stop?: AbortSignal): Prom
 
   const halt = (): void => {
     stopping = summary.drained = true;
+
+    // Decided and never to be stocked now: nothing more is extracted for them while what is under way finishes.
+    for (const job of ready.splice(0)) job.prefetch.release();
+
     stir();
   };
 
@@ -123,7 +127,12 @@ export const sweep = async (conns: DuckDBConnection[], stop?: AbortSignal): Prom
   const following = async (): Promise<Job | null> => {
     while (ready.length === 0 && ! ended && ! stopping) await moved();
 
-    if (stopping) return null;
+    if (stopping) {
+      // What stopped deciding is still the sweep's, though it stocks nothing more.
+      if (refused) throw refused;
+
+      return null;
+    }
 
     const job = ready.shift() ?? null;
 
@@ -147,8 +156,9 @@ export const sweep = async (conns: DuckDBConnection[], stop?: AbortSignal): Prom
   const idle    = [...conns];
   const running = new Set<Promise<void>>();
 
+  /** The connections a partition wants, or what is idle of them once the sweep is told to stop. */
   const freed = async (wanted: number): Promise<DuckDBConnection[]> => {
-    while (idle.length < wanted) await Promise.race(running);
+    while (idle.length < wanted && ! stopping) await Promise.race([...running, moved()]);
 
     return idle.splice(0, wanted);
   };
@@ -157,10 +167,10 @@ export const sweep = async (conns: DuckDBConnection[], stop?: AbortSignal): Prom
     for (let job = await following(); job; job = await following()) {
       const mine = await freed(job.partition.bytes >= aloneBytes ? conns.length : 1);
 
-      // Told to stop while waiting for connections: the partition goes back with the others never stocked.
+      // Told to stop while waiting for connections: the partition is never stocked, and what was extracted for it is given up.
       if (stopping) {
         idle.push(...mine);
-        ready.unshift(job);
+        job.prefetch.release();
 
         break;
       }
@@ -218,7 +228,11 @@ export const report = (summary: Summary, scanMinutes: number): void => {
   const counts = { ...summary, minutes: scanMinutes };
 
   if (summary.drained) {
-    logger.info(counts, `Drained — stocked ${summary.built} partition${summary.built === 1 ? '' : 's'} and started nothing more`);
+    const drained = `Drained — stocked ${summary.built} partition${summary.built === 1 ? '' : 's'} and started nothing more`;
+
+    if (summary.stopped) logger.warn(counts, `${drained}; stopped for want of space`);
+    else if (summary.failed > 0) logger.warn(counts, `${drained}; ${summary.failed} partition${summary.failed === 1 ? '' : 's'} failed`);
+    else logger.info(counts, drained);
 
     return;
   }

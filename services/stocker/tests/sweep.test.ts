@@ -11,7 +11,7 @@ import { Scans, drain } from '../src/drain';
 import { parseKey } from '../src/keys';
 import { BACKEDUP, ERRORS, LEDGER, outdate, read, reinstate, validate } from '../src/ledger';
 import * as build from '../src/build';
-import { _test_held as held } from '../src/prepare';
+import { Prefetch, _test_held as held } from '../src/prepare';
 import * as disk from '../src/disk';
 import * as room from '../src/room';
 import * as vault from '../src/vault';
@@ -1437,6 +1437,61 @@ describe('a sweep drained for a shutdown', () => {
     expect(pool).toHaveBeenCalledOnce();
 
     for (const conn of engine.conns) await expect(conn.run('SELECT 1')).rejects.toThrow(/disconnected/);
+  });
+
+  /** Decided ahead and never to be stocked: nothing more is extracted for them while the placement under way ends. */
+  it('gives up what was decided ahead as soon as it is told to stop', async () => {
+    await place('gate.futures_usdt-trades.csv', key('BTC_USDT', '202604'));
+    await place('gate.futures_usdt-trades.csv', key('BTC_USDT', '202605'));
+    await place('gate.futures_usdt-trades.csv', key('BTC_USDT', '202606'));
+
+    // Every partition heavy, so the first is stocked alone and the others wait, decided; each instrument built on its own.
+    aloneAt(1);
+    directAt(1);
+
+    const baseline = held();
+    const stop     = new AbortController();
+    const released = vi.spyOn(Prefetch.prototype, 'release');
+    const real     = build.buildGroup;
+    const files    = disk.filesOf;
+    const looked   = new Set<string>();
+
+    let whileBuilding = -1;
+
+    const looking = vi.spyOn(disk, 'filesOf').mockImplementation(async (at, instruments) => {
+      const found = await files(at, instruments);
+
+      looked.add(at.month);
+
+      return found;
+    });
+
+    const building = vi.spyOn(build, 'buildGroup').mockImplementation(async (...args) => {
+      if (whileBuilding < 0) {
+        // Both later months decided before the signal comes.
+        await vi.waitFor(() => expect(looked).toEqual(new Set(['2026-04', '2026-05', '2026-06'])));
+        await new Promise(resolve => setTimeout(resolve, 20));
+
+        stop.abort();
+        await new Promise(resolve => setTimeout(resolve, 20));
+
+        whileBuilding = released.mock.calls.length;
+      }
+
+      return real(...args);
+    });
+
+    try {
+      expect(await sweep(conns, stop.signal)).toMatchObject({ built: 1, failed: 0, drained: true });
+    } finally {
+      building.mockRestore();
+      looking.mockRestore();
+      released.mockRestore();
+    }
+
+    expect(whileBuilding).toBe(2);
+    expect(await stocked()).toEqual(['@/202604.parquet']);
+    await vi.waitFor(() => expect(held()).toBe(baseline));
   });
 
   it('stocks nothing once told to stop before it starts', async () => {

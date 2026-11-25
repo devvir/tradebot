@@ -69,6 +69,22 @@ describe('the end-of-sweep report', () => {
     expect(said(logger.info)).not.toContain('rescanning');
   });
 
+  /** Drained or not, a failed partition or a low-space stop is still a warning. */
+  it('still warns of failed partitions when drained', () => {
+    report(summary({ built: 1, failed: 2, drained: true }), 30);
+
+    expect(said(logger.warn)).toContain('Drained — stocked 1 partition and started nothing more; 2 partitions failed');
+    expect(said(logger.warn)).not.toContain('rescanning');
+    expect(said(logger.info)).toBe('');
+  });
+
+  it('still warns of a stop for want of space when drained', () => {
+    report(summary({ built: 0, stopped: true, drained: true }), 30);
+
+    expect(said(logger.warn)).toContain('Drained — stocked 0 partitions and started nothing more; stopped for want of space');
+    expect(said(logger.info)).toBe('');
+  });
+
   it('says one partition, not 1 partitions', () => {
     report(summary({ built: 1 }), 30);
 

@@ -76,10 +76,11 @@ export interface Held {
 /**
  * Shut down: drain the sweeps, then close what they held.
  *
- * The placements under way are given `boundMs` to finish. One that does not is
- * left as it is: the engine is not closed under it, the process exits with it,
- * and the next start puts right what it left — the ledger's `updating` line is
- * repaired, and its scratch cleared but for the pieces that were built.
+ * The sweep under way is given `boundMs` to end. One that does not is left as
+ * it is: the engine is not closed under it, the process exits with it, and the
+ * next start puts right whatever it left half done — a placement's `updating`
+ * line in the ledger is repaired, and its scratch cleared but for the pieces
+ * that were built.
  */
 export const drain = async (scans: Scans, boundMs: number, held: Held): Promise<void> => {
   logger.info({ seconds: boundMs / 1000 }, 'Draining — starting nothing more, waiting for what is under way');
@@ -87,7 +88,7 @@ export const drain = async (scans: Scans, boundMs: number, held: Held): Promise<
   const drained = await scans.drain(boundMs);
 
   if (drained) held.engine();
-  else logger.warn({ seconds: boundMs / 1000 }, 'Drain ran out of time — exiting with a placement unfinished, put right on the next start');
+  else logger.warn({ seconds: boundMs / 1000 }, 'Drain ran out of time — exiting with the sweep still running; what it left half done is put right on the next start');
 
   await held.pool();
 
