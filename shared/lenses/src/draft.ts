@@ -1,4 +1,5 @@
-import { GLOBAL, letThrough, rulesFor, siblingKey, spansFor, venuesIn } from './rules';
+import { GLOBAL, groupSiblings, letThrough, rulesFor, spansFor, venuesIn } from './rules';
+import { venueNames } from './venues';
 import type { DatabaseSync } from 'node:sqlite';
 import type {
   Choice, LensDefinition, LensOption, LensPartition, LensProblem, LensResolved, LensRule, LensSize, LensSlice, Slice,
@@ -49,36 +50,23 @@ export const resolveSlices = (db: DatabaseSync, definition: LensDefinition): Map
  * Decided the way a stored lens's rows are: a month of a dataset in its several
  * forms is one set of siblings, and the rules say which of them are let
  * through — see `letThrough`.
+ *
+ * **A venue is read only where the definition lets some month of some slice of
+ * it through**: a partition let through is in a month its slice is let through
+ * for, so where no slice has one nothing of the venue can be.
  */
-export const resolve = (db: DatabaseSync, definition: LensDefinition): Map<string, LensPartition[]> => {
-  const out = new Map<string, LensPartition[]>();
-
-  for (const venue of venuesIn(db, definition)) {
-    const rules  = rulesFor(definition, venue);
-    const groups = new Map<string, LensPartition[]>();
-
-    for (const one of partitionsOf(db, venue)) {
-      const key = siblingKey(one);
-
-      groups.set(key, [...groups.get(key) ?? [], one]);
-    }
-
-    const held = [...groups.values()].flatMap(siblings => letThrough(rules, siblings) as LensPartition[]);
-
-    if (held.length > 0) out.set(venue, held);
-  }
-
-  return out;
-};
+export const resolve = (db: DatabaseSync, definition: LensDefinition): Map<string, LensPartition[]> =>
+  partitionsAt(db, definition, [...resolveSlices(db, definition).keys()]);
 
 /** What a definition selects, per venue: how many slices, how many partitions, and the months as its rules bound them. */
 export const resolvedSummary = (db: DatabaseSync, definition: LensDefinition): Record<string, LensResolved> => {
-  const partitions = resolve(db, definition);
+  const slices     = resolveSlices(db, definition);
+  const partitions = partitionsAt(db, definition, [...slices.keys()]);
 
-  return Object.fromEntries([...resolveSlices(db, definition)].map(([venue, slices]) => [venue, {
-    slices:     slices.length,
+  return Object.fromEntries([...slices].map(([venue, held]) => [venue, {
+    slices:     held.length,
     partitions: partitions.get(venue)?.length ?? 0,
-    spans:      [...new Set(slices.flatMap(one => one.spans.map(span => `${span.from ?? ''}..${span.to ?? ''}`)))].sort(),
+    spans:      [...new Set(held.flatMap(one => one.spans.map(span => `${span.from ?? ''}..${span.to ?? ''}`)))].sort(),
   }]));
 };
 
@@ -236,12 +224,10 @@ const faultsOf = (rule: LensRule): Fault[] => {
 };
 
 /**
- * How much a definition would put on a disk, before it is saved — the editor
- * asks on every change. A saved lens is sized off its rows instead; see
- * `savedLensSize`.
+ * How much a definition would put on a disk, summed over the partitions it lets
+ * through, whether or not it is ever saved.
  *
- * Exact, always: summed over the partitions the definition lets through, each of
- * which carries its own counts. No file is read.
+ * Exact, always: each partition carries its own counts. No file is read.
  */
 export const lensSize = (db: DatabaseSync, definition: LensDefinition): LensSize => {
   const total: LensSize = { partitions: 0, files: 0, bytes: 0, pending: 0, pendingBytes: 0 };
@@ -311,9 +297,19 @@ const formOf = <T>(choice: Choice<T> | undefined): T | undefined =>
 /** Whether a choice prefers a form — of whatever a caller sent in its place. */
 const prefers = (choice: unknown): boolean => typeof choice === 'object' && choice !== null && 'prefer' in choice;
 
-/** Every venue the catalog has, by name. */
-const venueNames = (db: DatabaseSync): string[] =>
-  (db.prepare('SELECT DISTINCT name FROM venue ORDER BY name').all() as { name: string }[]).map(one => one.name);
+/** What `resolve` answers, of these venues only. */
+const partitionsAt = (db: DatabaseSync, definition: LensDefinition, venues: readonly string[]): Map<string, LensPartition[]> => {
+  const out = new Map<string, LensPartition[]>();
+
+  for (const venue of venues) {
+    const rules = rulesFor(definition, venue);
+    const held  = groupSiblings(partitionsOf(db, venue)).flatMap(siblings => letThrough(rules, siblings) as LensPartition[]);
+
+    if (held.length > 0) out.set(venue, held);
+  }
+
+  return out;
+};
 
 /** A venue's slices, whether or not any holds a file. */
 const slicesOf = (db: DatabaseSync, venue: string): Slice[] =>
@@ -326,6 +322,5 @@ const partitionsOf = (db: DatabaseSync, venue: string): LensPartition[] =>
     `SELECT q.id AS partitionId, q.month, q.files, q.bytes, q.pending, q.pending_bytes AS pendingBytes,
             c.id, c.venue, c.market, c.dataset, c.variant, c.grain, c.bundle
        FROM slice c JOIN partition q ON q.slice_id = c.id
-      WHERE c.venue = ?
-      ORDER BY c.id, q.month`,
+      WHERE c.venue = ?`,
   ).all(venue) as unknown as LensPartition[];

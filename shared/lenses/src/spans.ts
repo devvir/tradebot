@@ -3,11 +3,11 @@ import type { LensSpan } from './types';
 /**
  * Stretches of time, added to and taken away from.
  *
- * **A lens composes its rules in order, and that is set arithmetic on dates.**
- * Including 2019 to 2021 and then excluding 2020 leaves two spans; collapsing
- * that to one range would hand back a year nobody asked for. So the answer is a
- * list, kept sorted and disjoint at every step, and the two operations below are
- * the whole of what a rule can do to it.
+ * **A lens unions what its includes match and subtracts what its excludes
+ * match, and that is set arithmetic on dates.** Including 2019 to 2021 less 2020
+ * leaves two spans; collapsing that to one range would hand back a year nobody
+ * asked for. So the answer is a list, kept sorted and disjoint at every step,
+ * and the two operations below are the whole of what a rule can do to it.
  *
  * **A bound is a month, `yyyymm`.** A day would be a false precision: nobody
  * collects up to the 14th, and a file dated `202006` covers all of June — so a
@@ -20,8 +20,8 @@ import type { LensSpan } from './types';
  * `'20201215' > '202012'`, because the shorter sorts first. So the bound becomes
  * `20201299`: every stamp inside the month sorts under it at any grain — a day
  * `20201231`, an hour `2020123123`, a minute `202012312359` — the month's own
- * stamp still sorts below it, and the next month above. `31` was tried first and
- * dropped the last day's hourly and minutely files, which sort past it.
+ * stamp still sorts below it, and the next month above. `31` would not do: the
+ * last day's hourly and minutely files sort past it.
  *
  * The lower bound needs no such help — `202006` already sorts below both
  * `20200601` and `202006`.

@@ -5,9 +5,8 @@
  * its grain, and two fields that can disagree about that are worse than one that
  * cannot.
  *
- * Four, because four is what these venues publish: a month, a day, an hour —
- * gate's order books are 24 files a day — and a minute, which is gate's options
- * ticker and nothing else so far.
+ * `monthly` is a file a month, `daily` a file a day, `hourly` a file an hour
+ * and `minutely` a file a minute.
  */
 export type Grain = 'monthly' | 'daily' | 'hourly' | 'minutely';
 
@@ -29,7 +28,7 @@ export type Bundle = 'instrument' | 'market';
  * change.
  */
 export interface Lens {
-  id?:        number;
+  id:         number;
   slug:       string;
   name:       string;
   note:       string;
@@ -71,10 +70,9 @@ export interface LensWrite {
  * **Keyed by venue name, never by id.** An id names a *host* — bybit publishes
  * its books from a second server and has two rows in `venue` — and a lens has no
  * opinion about which server a file came from. The name is also what the API
- * speaks in everywhere else, and what the seeds are keyed by.
+ * speaks in everywhere else.
  *
- * `format` is what lets a document written under one set of rules be read under
- * another. Nothing migrates it today; it exists so that something can.
+ * `format` identifies the set of rules a document was written under.
  */
 export interface LensDefinition {
   format: number;
@@ -82,23 +80,15 @@ export interface LensDefinition {
 }
 
 /**
- * One rule, applied in order to what the rules before it left.
+ * One rule.
  *
- * **Evaluation starts from nothing.** `include` adds what it matches and
- * `exclude` takes it away, so a venue's rules read top to bottom like a sentence:
- * everything up to a date, except books, except recent trades. A list that opens
- * with `exclude` therefore sees nothing — subtracting from the empty set — which
- * is legal, almost never meant, and worth saying out loud in an editor.
+ * **A lens lets through what any of its includes match, less what any of its
+ * excludes match.** Where a rule sits never matters: an exclude always wins over
+ * an include it overlaps, and a list of only excludes lets nothing through.
  *
  * **A rule states only what it constrains.** An absent dimension means all of it,
- * so `{ effect: 'include', datasets: ['trades'] }` is every market, variant,
- * grain and bundle, for all time.
- *
- * Writing `markets: 'all'` everywhere was considered and rejected: it is not more
- * explicit, only longer, and it ages in the wrong direction. Datasets, variants
- * and grains are *added* over time, and a rule that names what it constrains
- * absorbs an addition, where one enumerating every value silently stops covering
- * the archive.
+ * so `{ effect: 'include', datasets: [{ dataset: 'trades' }] }` is every market,
+ * variant, grain and bundle of trades, for all time.
  */
 export interface LensRule {
   effect:       'include' | 'exclude';
@@ -130,7 +120,7 @@ export interface LensRule {
    */
   bundle?:      Choice<Bundle>;
 
-  /** Inclusive `yyyymmdd` bounds on the period a file covers; absent is open. */
+  /** Inclusive `yyyymm` months on the period a file covers; absent is open. */
   from?:        string;
   to?:          string;
 }
@@ -150,10 +140,10 @@ export interface LensDataset {
 /**
  * A stretch of time a lens lets through for one slice.
  *
- * **A list of them, because a rule can carve a hole.** Including 2019 to 2021 and
- * then excluding 2020 leaves two spans, and collapsing that to one range would
- * quietly hand back a year nobody asked for. Both bounds are inclusive, and null
- * is open at that end.
+ * **A list of them, because an exclude can carve a hole.** Including 2019 to 2021
+ * less 2020 leaves two spans, and collapsing that to one range would quietly
+ * hand back a year nobody asked for. Both bounds are inclusive `yyyymm` months,
+ * and null is open at that end.
  */
 export interface LensSpan {
   from: string | null;
@@ -224,9 +214,7 @@ export interface LensSlice {
 /**
  * One combination a venue publishes, as a rule is written against, and the venue it is of.
  *
- * **The strings a filter matches**, not the shape a reader is shown: `Shape`
- * reports a variant taken apart into its levels, and a rule stores the variant
- * whole. Two projections of the same rows, for two different jobs.
+ * **The strings a rule matches**: the variant is whole, as a rule stores it.
  */
 export interface LensOption {
   venue:   string;

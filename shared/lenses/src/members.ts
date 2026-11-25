@@ -1,5 +1,5 @@
 import { writing } from './db';
-import { letThrough, rulesFor, siblingKey } from './rules';
+import { groupSiblings, letThrough, rulesFor, siblingKey } from './rules';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Lens, PartitionMember } from './types';
 
@@ -31,6 +31,8 @@ import type { Lens, PartitionMember } from './types';
  * Look at the partitions past where the lens has read, up to `most` of them,
  * and settle them and their siblings. Says whether more remain.
  *
+ * From partition 0 it works the whole lens out in one pass and ignores `most`.
+ *
  * Each step is one transaction, and `partitions_through` moves with it, so a
  * restart or a crash resumes where it stopped. A lens that has read everything
  * is no longer being rebuilt, and is told so.
@@ -41,7 +43,7 @@ export const catchUp = (db: DatabaseSync, lens: Lens, most: number): boolean => 
 
   if (through >= newest) {
     // Nothing left to look at: whatever rebuild was under way is over.
-    db.prepare('UPDATE lens SET rebuilding = 0 WHERE id = ? AND rebuilding = 1').run(lens.id!);
+    db.prepare('UPDATE lens SET rebuilding = 0 WHERE id = ? AND rebuilding = 1').run(lens.id);
 
     return false;
   }
@@ -59,7 +61,7 @@ export const catchUp = (db: DatabaseSync, lens: Lens, most: number): boolean => 
     settle(db, lens, through, upto);
 
     db.prepare('UPDATE lens SET partitions_through = ?, rebuilding = CASE WHEN ? THEN 0 ELSE rebuilding END WHERE id = ?')
-      .run(upto, upto >= newest ? 1 : 0, lens.id!);
+      .run(upto, upto >= newest ? 1 : 0, lens.id);
   });
 
   return upto < newest;
@@ -118,9 +120,9 @@ export const admit = (db: DatabaseSync, held: readonly Lens[], partitionId: numb
       continue;
     }
 
-    for (const one of siblings) (kept.has(one.partitionId) ? insert : remove).run(lens.id!, one.partitionId);
+    for (const one of siblings) (kept.has(one.partitionId) ? insert : remove).run(lens.id, one.partitionId);
 
-    read.run(partitionId, lens.id!, partitionId - 1);
+    read.run(partitionId, lens.id, partitionId - 1);
   }
 };
 
@@ -140,33 +142,23 @@ export const dropMembers = (db: DatabaseSync, lensId: number): void => {
  * and one that moves none writes none.
  */
 const whole = (db: DatabaseSync, lens: Lens, newest: number): void => {
-  const rows   = db.prepare(`${MEMBER} WHERE q.id <= ?`).all(newest) as unknown as PartitionMember[];
-  const groups = new Map<string, PartitionMember[]>();
-
-  for (const row of rows) {
-    const key = siblingKey(row);
-    const had = groups.get(key);
-
-    if (had) had.push(row);
-    else groups.set(key, [row]);
-  }
-
+  const rows = db.prepare(`${MEMBER} WHERE q.id <= ?`).all(newest) as unknown as PartitionMember[];
   const kept = new Set<number>();
 
-  for (const siblings of groups.values())
+  for (const siblings of groupSiblings(rows))
     for (const one of letThrough(rulesFor(lens.definition, siblings[0]!.venue), siblings)) kept.add(one.partitionId);
 
-  const held = new Set((db.prepare('SELECT partition_id AS id FROM lens_member WHERE lens_id = ?').all(lens.id!) as { id: number }[])
+  const held = new Set((db.prepare('SELECT partition_id AS id FROM lens_member WHERE lens_id = ?').all(lens.id) as { id: number }[])
     .map(one => one.id));
 
   writing(db, () => {
     const remove = db.prepare('DELETE FROM lens_member WHERE lens_id = ? AND partition_id = ?');
     const insert = db.prepare('INSERT OR IGNORE INTO lens_member (lens_id, partition_id) VALUES (?, ?)');
 
-    for (const id of held) if (! kept.has(id)) remove.run(lens.id!, id);
-    for (const id of kept) if (! held.has(id)) insert.run(lens.id!, id);
+    for (const id of held) if (! kept.has(id)) remove.run(lens.id, id);
+    for (const id of kept) if (! held.has(id)) insert.run(lens.id, id);
 
-    db.prepare('UPDATE lens SET partitions_through = ?, rebuilding = 0 WHERE id = ?').run(newest, lens.id!);
+    db.prepare('UPDATE lens SET partitions_through = ?, rebuilding = 0 WHERE id = ?').run(newest, lens.id);
   });
 };
 
@@ -197,7 +189,7 @@ const settle = (db: DatabaseSync, lens: Lens, after: number, upto: number): void
     const siblings = siblingsOf.all(row.venue, row.market, row.dataset, row.variant, row.month) as unknown as PartitionMember[];
     const kept     = new Set(letThrough(rulesFor(lens.definition, row.venue), siblings).map(one => one.partitionId));
 
-    for (const one of siblings) (kept.has(one.partitionId) ? insert : remove).run(lens.id!, one.partitionId);
+    for (const one of siblings) (kept.has(one.partitionId) ? insert : remove).run(lens.id, one.partitionId);
   }
 };
 
@@ -218,7 +210,7 @@ const SIBLINGS =
     WHERE c.venue = ? AND c.market = ? AND c.dataset = ? AND c.variant = ? AND q.month = ?`;
 
 const throughOf = (db: DatabaseSync, lens: Lens): number =>
-  (db.prepare('SELECT partitions_through AS at FROM lens WHERE id = ?').get(lens.id!) as { at: number } | undefined)?.at ?? 0;
+  (db.prepare('SELECT partitions_through AS at FROM lens WHERE id = ?').get(lens.id) as { at: number } | undefined)?.at ?? 0;
 
 const newestPartition = (db: DatabaseSync): number =>
   (db.prepare('SELECT MAX(id) AS id FROM partition').get() as { id: number | null }).id ?? 0;

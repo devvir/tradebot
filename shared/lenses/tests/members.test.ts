@@ -27,16 +27,16 @@ const everything: LensDefinition = { format: 1, venues: { '*': [{ effect: 'inclu
 const caughtUp = (slug: string, definition: LensDefinition, through: number): Lens => {
   const lens = putLens(db, slug, '', '', definition)!;
 
-  db.prepare('UPDATE lens SET partitions_through = ?, rebuilding = 0 WHERE id = ?').run(through, lens.id!);
+  db.prepare('UPDATE lens SET partitions_through = ?, rebuilding = 0 WHERE id = ?').run(through, lens.id);
 
   return { ...lens, updating: false };
 };
 
 const members = (lens: Lens): number[] =>
-  (db.prepare('SELECT partition_id AS id FROM lens_member WHERE lens_id = ?').all(lens.id!) as { id: number }[]).map(one => one.id);
+  (db.prepare('SELECT partition_id AS id FROM lens_member WHERE lens_id = ?').all(lens.id) as { id: number }[]).map(one => one.id);
 
 const through = (lens: Lens): number =>
-  (db.prepare('SELECT partitions_through AS at FROM lens WHERE id = ?').get(lens.id!) as { at: number }).at;
+  (db.prepare('SELECT partitions_through AS at FROM lens WHERE id = ?').get(lens.id) as { at: number }).at;
 
 describe('admitting a partition', () => {
   it('takes it into the lenses that let it through', () => {

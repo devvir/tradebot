@@ -2,7 +2,7 @@ import { writing } from './db';
 import { misshapen } from './draft';
 import { dropMembers } from './members';
 import type { DatabaseSync } from 'node:sqlite';
-import type { Lens, LensDefinition, LensRow, LensRule } from './types';
+import type { Lens, LensDefinition, LensRow, LensRule, LensWrite } from './types';
 
 /**
  * A lens as a row: read, made, replaced and removed.
@@ -87,7 +87,7 @@ export const putLens = (
 export const editLens = (
   db:    DatabaseSync,
   slug:  string,
-  to:    { slug?: string; name?: string; note?: string; definition?: LensDefinition },
+  to:    LensWrite,
 ): Lens | null => {
   const had = lensNamed(db, slug);
 
@@ -126,8 +126,8 @@ export const dropLens = (db: DatabaseSync, slug: string): boolean => {
   if (! had) return false;
 
   writing(db, () => {
-    dropMembers(db, had.id!);
-    db.prepare('DELETE FROM lens WHERE id = ?').run(had.id!);
+    dropMembers(db, had.id);
+    db.prepare('DELETE FROM lens WHERE id = ?').run(had.id);
   });
 
   return true;
@@ -225,10 +225,7 @@ const dropped = (row: LensRow, what: string, definition: LensDefinition): LensDe
 /** The versions of a lens already reported as stored with something that is not a rule. */
 const REPORTED = new Set<string>();
 
-/**
- * A rule's bounds as months: a stored bound longer than a month is read as its
- * month, which is how it was already compared everywhere.
- */
+/** A rule's bounds as months: a stored bound longer than a month is read as its month. */
 const month = (rule: LensRule): LensRule => ({
   ...rule,
   ...(rule.from !== undefined ? { from: rule.from.slice(0, 6) } : {}),

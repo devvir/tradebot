@@ -94,7 +94,7 @@ describe('removing a lens', () => {
     const [partition] = sliceWith(db, { venue: 'binance', market: 'spot', dataset: 'trades', grain: 'monthly', bundle: 'instrument' }, ['202001']);
     const lens        = putLens(db, 'cold', '', '', trades)!;
 
-    db.prepare('INSERT INTO lens_member (lens_id, partition_id) VALUES (?, ?)').run(lens.id!, partition!);
+    db.prepare('INSERT INTO lens_member (lens_id, partition_id) VALUES (?, ?)').run(lens.id, partition!);
 
     expect(dropLens(db, 'cold')).toBe(true);
     expect(lensNamed(db, 'cold')).toBeNull();

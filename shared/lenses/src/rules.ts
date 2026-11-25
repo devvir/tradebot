@@ -1,4 +1,5 @@
 import { holds, union, without } from './spans';
+import { venueNames } from './venues';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Choice, LensDefinition, LensRule, LensSpan, PartitionMember, SliceTraits } from './types';
 
@@ -65,14 +66,6 @@ export const spansFor = (slice: SliceTraits, rules: readonly LensRule[]): LensSp
 };
 
 /**
- * Whether a lens lets a partition through: its slice, at its month.
- *
- * **A rule never reaches inside a partition** — it names traits of a slice and
- * a span of months — so a partition is let through whole or not at all.
- */
-export const lets = (spans: readonly LensSpan[], month: string): boolean => holds(spans, month);
-
-/**
  * Of the partitions that are one month of one dataset in its several forms,
  * the ones a venue's rules let through.
  *
@@ -112,6 +105,21 @@ export const letThrough = (rules: readonly LensRule[], siblings: readonly Partit
 export const siblingKey = (one: Pick<PartitionMember, 'venue' | 'market' | 'dataset' | 'variant' | 'month'>): string =>
   [one.venue, one.market, one.dataset, one.variant, one.month].join('\u0000');
 
+/** Partitions put together with their siblings, each set in the order its members came. */
+export const groupSiblings = <T extends PartitionMember>(rows: Iterable<T>): T[][] => {
+  const groups = new Map<string, T[]>();
+
+  for (const row of rows) {
+    const key = siblingKey(row);
+    const had = groups.get(key);
+
+    if (had) had.push(row);
+    else groups.set(key, [row]);
+  }
+
+  return [...groups.values()];
+};
+
 // ── Internals ─────────────────────────────────────────────────────────────────
 
 /** Whether a rule speaks about a partition: its slice, at its month. */
@@ -130,10 +138,6 @@ const preferring = <T>(
 
   return preferred.length > 0 ? preferred : held;
 };
-
-/** Every venue the catalog has, by name. */
-const venueNames = (db: DatabaseSync): string[] =>
-  (db.prepare('SELECT DISTINCT name FROM venue ORDER BY name').all() as { name: string }[]).map(one => one.name);
 
 /**
  * Whether a rule speaks about this slice at all.

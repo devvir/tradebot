@@ -5,6 +5,5 @@ export * from './routes';
 export * from './security';
 export * from './services';
 export * from './sizes';
-export * from './stores';
 export * from './tables';
 export * from './testing';
