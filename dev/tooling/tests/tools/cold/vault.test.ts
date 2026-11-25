@@ -423,6 +423,15 @@ describe('storing the vault', () => {
     expect(record.vaultFilesPending(db).filter(file => file.partition.startsWith(SMALL))).toEqual([]);
   });
 
+  /** Being given what its neighbours hold of it, or left so: not a partition to store until its line says what it holds. */
+  it('plans nothing of a partition whose neighbouring months\' hours are being added', () => {
+    stock(SMALL, '202001', 'updating-sides', null);
+
+    plan(db, config(), []);
+
+    expect(record.vaultFilesPending(db).filter(file => file.partition.startsWith(SMALL))).toEqual([]);
+  });
+
   /** Whole and readable, and of an older making: stored again only once it has been stocked again. */
   it('plans nothing of a partition the ledger says is outdated', () => {
     stock(SMALL, '202001', 'outdated', null);
@@ -562,6 +571,16 @@ describe('moving vault files out', () => {
 
     stock(SMALL, '202001', 'cccccccccccc', null);
 
+    expect(going({ ...all, dataset: 'klines' })).toEqual([]);
+  });
+
+  /** Its files on disk may be more than what cold storage holds of it: none of them is taken. */
+  it('takes nothing of a stored partition whose neighbouring months\' hours are being added', async () => {
+    await storeAll();
+
+    stock(SMALL, '202001', 'updating-sides', null);
+
+    expect(stockedIn(config().vaultRoot)!.map(one => one.partition)).toEqual([`${LARGE}/202001`]);
     expect(going({ ...all, dataset: 'klines' })).toEqual([]);
   });
 

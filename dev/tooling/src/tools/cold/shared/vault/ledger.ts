@@ -30,8 +30,10 @@ import type { Bundle, Grain, Stocked } from '../types';
  *
  * A partition whose last line says `updating` in place of a revision is having
  * its files changed, or was when something stopped it; one whose last line says
- * `outdated` holds files of an older making, waiting to be stocked again.
- * Neither is stocked, and neither is answered here.
+ * `updating-sides` is having what its neighbouring months hold of it added, or
+ * was; one whose last line says `outdated` holds files of an older making,
+ * waiting to be stocked again. None of them is stocked, and none is answered
+ * here.
  */
 export const stockedIn = (vaultRoot: string): Stocked[] | null => {
   const rows = rowsOf(path.join(vaultRoot, LEDGER));
@@ -41,7 +43,7 @@ export const stockedIn = (vaultRoot: string): Stocked[] | null => {
   const last = new Map<string, Stocked>();
 
   for (const row of rows) {
-    if (row['revision'] === UPDATING || row['revision'] === OUTDATED) last.delete(row['partition']!);
+    if (NOT_STOCKED.has(row['revision']!)) last.delete(row['partition']!);
     else last.set(row['partition']!, lineOf(row));
   }
 
@@ -110,7 +112,13 @@ export const ERRORS  = 'ERROR.log';
 /** What a ledger line says in place of a revision while its partition's files are being changed. */
 const UPDATING = 'updating';
 
+/** What a ledger line says in place of a revision while what neighbouring months hold of its partition is being added. */
+const UPDATING_SIDES = 'updating-sides';
+
 const OUTDATED = 'outdated';
+
+/** What a ledger line says in place of a revision where its partition is not stocked. */
+const NOT_STOCKED: ReadonlySet<string> = new Set([UPDATING, UPDATING_SIDES, OUTDATED]);
 
 /** A ledger line, as what it says of a partition. */
 const lineOf = (row: Record<string, string>): Stocked => ({
