@@ -29,7 +29,7 @@ import { updatePage, updateScopes } from './update';
 import type { Rules } from './update';
 import type { Occasion, CatalogFile, Run, RunKind } from './types';
 import type { DatabaseSync } from 'node:sqlite';
-import type { Adapter, Config, Coverage, Listed, Span, Survey } from './types';
+import type { Adapter, Config, Coverage, Listed, Span, Survey, Unreadable } from './types';
 
 /**
  * Whether this pass has a probing half.
@@ -1146,7 +1146,7 @@ const catalogued = (
   const seenAt = new Date().toISOString();
 
   /** Paths this venue's adapter could not place, kept for the worklist. */
-  const unread: { path: string; reason: string }[] = [];
+  const unread: { path: string; reason: Unreadable['reason'] }[] = [];
 
   for (const entry of listed) {
     const path = relative(adapter, entry.key);

@@ -1880,7 +1880,14 @@ export interface Unreadable {
   venue:     string;
   host:      string;
   path:      string;
-  reason:    'unread';
+
+  /**
+   * Which way it failed. `unread`: the venue's reader recognised no shape it
+   * knows in the path. `unplaced`: the path was dated but read into no series
+   * this catalog holds, which is every dated path of a venue with no reader.
+   */
+  reason:    'unread' | 'unplaced';
+
   seen:      number;
   firstSeen: string;
   lastSeen:  string;

@@ -206,6 +206,20 @@ describe('a path the adapter cannot place', () => {
     expect(rows.every(one => one.seen === 2)).toBe(true);
   });
 
+  /**
+   * **Without a reader nothing is placed, and that is said differently.** The
+   * keys carry dates, so they are files; but with no series to file them under
+   * they are listed as unplaced, which is not the same as a shape a reader
+   * looked at and did not recognise.
+   */
+  it('lists the dated paths of a venue with no reader as unplaced', async () => {
+    const summary = await surveyVenue(db, venue(), config, 'full');
+
+    expect(summary.failed).toBe(0);
+    expect(recorded()).toHaveLength(20);
+    expect(recorded().every(one => one.reason === 'unplaced')).toBe(true);
+  });
+
   /** A venue whose reader places its keys writes nothing here. */
   it('says nothing about a venue whose keys it can place', async () => {
     const summary = await surveyVenue(db, strict('series'), config, 'full');

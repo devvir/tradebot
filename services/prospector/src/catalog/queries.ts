@@ -1452,7 +1452,7 @@ export const establishedAt = (
 export const putUnreadable = (
   db:      DatabaseSync,
   venueId: number,
-  paths:   readonly { path: string; reason: string }[],
+  paths:   readonly { path: string; reason: Unreadable['reason'] }[],
 ): void => {
   if (paths.length === 0) return;
 

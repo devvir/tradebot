@@ -192,8 +192,9 @@ CREATE TABLE IF NOT EXISTS unreadable (
   venue_id   INTEGER NOT NULL,
   path       TEXT    NOT NULL,
 
-  -- Which way it failed: no adapter placed the path at all, or one placed it
-  -- and the venue's own dateOf then declined to date it.
+  -- Which way it failed: 'unread' when the venue's reader recognised no shape
+  -- it knows in the path, 'unplaced' when the path was dated but read into no
+  -- series this catalog holds, including every path of a venue with no reader.
   reason     TEXT    NOT NULL,
 
   seen       INTEGER NOT NULL DEFAULT 1, -- times this path has been offered
