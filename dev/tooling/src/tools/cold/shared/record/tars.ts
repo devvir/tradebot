@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import type { CatalogPartition, Held, HeldRow, PartitionKey, Totals } from '../types';
+import type { CatalogPartition, Content, Held, HeldRow, PartitionKey, Totals } from '../types';
 import type { Origin, Tar, TarState } from '../../types';
 
 /** Every tar of an origin, in the order they were planned. */
@@ -73,17 +73,20 @@ export const planTar = (
  * **A plan is redrawn on every run.** What is ready is the catalog's answer
  * today, and a tar nothing was done for is only yesterday's answer written
  * down — so it is dropped, and whatever of it is still ready is planned again.
+ *
+ * **Only a tar Mega has never held.** One that was stored and is to be sent
+ * again is `planned` too, and the record is the only thing that knows which
+ * partitions it holds: it keeps them.
  */
 export const dropPlanned = (db: DatabaseSync, origin: Origin, venue: string): number => {
   db.exec('BEGIN IMMEDIATE');
 
   try {
-    const tars = `SELECT id FROM tar WHERE origin = ? AND venue = ? AND state = 'planned'`;
+    const never = `origin = ? AND venue = ? AND state = 'planned' AND handle IS NULL AND stored_at IS NULL`;
 
-    db.prepare(`DELETE FROM held WHERE tar_id IN (${tars})`).run(origin, venue);
+    db.prepare(`DELETE FROM held WHERE tar_id IN (SELECT id FROM tar WHERE ${never})`).run(origin, venue);
 
-    const dropped = Number(db.prepare(
-      `DELETE FROM tar WHERE origin = ? AND venue = ? AND state = 'planned'`).run(origin, venue).changes);
+    const dropped = Number(db.prepare(`DELETE FROM tar WHERE ${never}`).run(origin, venue).changes);
 
     db.exec('COMMIT');
 
@@ -98,10 +101,11 @@ export const dropPlanned = (db: DatabaseSync, origin: Origin, venue: string): nu
 /**
  * Say what the catalog now holds of a partition the record already has.
  *
- * The tar exists, so what it holds is no longer current: the new version is
- * noted beside the old, and a tar already in Mega becomes `stale` — to be
- * brought back, corrected and stored again. A tar not made yet never gets
- * here: its plan was dropped and is drawn again from what the catalog says.
+ * The new version is noted beside the one the record has, whatever the tar's
+ * state. A tar stored in Mega becomes `stale` — to be brought back, corrected
+ * and stored again. A tar on its way keeps going: what it was made with is
+ * written down as stored when Mega confirms it, and the change, still noted,
+ * sends it back to be corrected then — see `confirmed`.
  */
 export const noteChange = (db: DatabaseSync, held: Held, now: CatalogPartition): void => {
   const tar = tarById(db, held.tarId);
@@ -112,12 +116,34 @@ export const noteChange = (db: DatabaseSync, held: Held, now: CatalogPartition):
   if (tar.state === 'stored') move(db, tar.id, 'stale');
 };
 
-/** A corrected tar holds the new versions: what was noted as next is what it holds. */
-export const applyChanges = (db: DatabaseSync, tarId: number): void => {
-  db.prepare(
-    `UPDATE held SET version = next_version, files = next_files, bytes = next_bytes,
-                     next_version = NULL, next_files = NULL, next_bytes = NULL
-      WHERE tar_id = ? AND next_version IS NOT NULL`).run(tarId);
+/**
+ * Take back a change noted of a partition whose tar has not been brought back
+ * yet: the catalog holds again what cold storage holds. Says whether it could —
+ * only a `stale` tar is still as Mega holds it. One with no change left noted is
+ * `stored` again.
+ */
+export const cancelChange = (db: DatabaseSync, held: Held): boolean => {
+  if (tarById(db, held.tarId).state !== 'stale') return false;
+
+  db.exec('BEGIN IMMEDIATE');
+
+  try {
+    db.prepare(`UPDATE held SET next_version = NULL, next_files = NULL, next_bytes = NULL WHERE ${WHERE}`)
+      .run(...whereOf(held));
+
+    if (! pending(db, held.tarId)) {
+      db.prepare(`UPDATE held SET ${PACKED_NONE} WHERE tar_id = ?`).run(held.tarId);
+      move(db, held.tarId, 'stored');
+    }
+
+    db.exec('COMMIT');
+
+    return true;
+  } catch (err) {
+    db.exec('ROLLBACK');
+
+    throw err;
+  }
 };
 
 /** Move a tar to another state. */
@@ -125,15 +151,85 @@ export const move = (db: DatabaseSync, id: number, state: TarState): void => {
   db.prepare('UPDATE tar SET state = ? WHERE id = ?').run(state, id);
 };
 
-/** A tar is on disk and proved: this is what it weighs. */
-export const packed = (db: DatabaseSync, id: number, bytes: number): void => {
-  db.prepare(`UPDATE tar SET state = 'packed', bytes = ? WHERE id = ?`).run(bytes, id);
+/**
+ * A tar is on disk and proved: what it weighs, and what it holds of each of its
+ * partitions. Where that is not given, it holds each at the version the record
+ * has of it.
+ */
+export const packed = (
+  db:     DatabaseSync,
+  id:     number,
+  bytes:  number,
+  holds?: readonly (PartitionKey & Content)[],
+): void => {
+  db.exec('BEGIN IMMEDIATE');
+
+  try {
+    if (holds) {
+      const one = db.prepare(`UPDATE held SET packed_version = ?, packed_files = ?, packed_bytes = ? WHERE ${WHERE}`);
+
+      db.prepare(`UPDATE held SET ${PACKED_NONE} WHERE tar_id = ?`).run(id);
+
+      for (const held of holds) one.run(held.version, held.files, held.bytes, ...whereOf({ ...held, tarId: id }));
+    } else {
+      db.prepare('UPDATE held SET packed_version = version, packed_files = files, packed_bytes = bytes WHERE tar_id = ?').run(id);
+    }
+
+    db.prepare(`UPDATE tar SET state = 'packed', bytes = ? WHERE id = ?`).run(bytes, id);
+
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+
+    throw err;
+  }
 };
 
-/** Mega confirms a tar: where it is, under which handle. */
+/** Mega holds a tar: where it is, under which handle. */
 export const stored = (db: DatabaseSync, id: number, handle: string | null): void => {
   db.prepare(`UPDATE tar SET state = 'stored', handle = ?, stored_at = ? WHERE id = ?`)
     .run(handle, new Date().toISOString(), id);
+};
+
+/**
+ * Mega confirms a tar that was packed or corrected: what the tar was made with
+ * is what cold storage holds now, under this handle. Returns the state it is
+ * left in.
+ *
+ * **What it was made with, not what the catalog says now.** A partition that
+ * changed while the tar was on its way keeps the change noted, and the tar is
+ * `stale`: to be brought back and corrected again. Where the record has
+ * nothing of what a partition was packed with, the tar is taken to hold the
+ * version written down, and a change noted of it is corrected the same way.
+ */
+export const confirmed = (db: DatabaseSync, id: number, handle: string | null): 'stored' | 'stale' => {
+  db.exec('BEGIN IMMEDIATE');
+
+  try {
+    db.prepare(
+      `UPDATE held SET version = packed_version, files = packed_files, bytes = packed_bytes
+        WHERE tar_id = ? AND packed_version IS NOT NULL`).run(id);
+
+    db.prepare(
+      `UPDATE held SET next_version = NULL, next_files = NULL, next_bytes = NULL
+        WHERE tar_id = ? AND next_version = version`).run(id);
+
+    db.prepare(`UPDATE held SET ${PACKED_NONE} WHERE tar_id = ?`).run(id);
+
+    stored(db, id, handle);
+
+    const state = pending(db, id) ? 'stale' : 'stored';
+
+    if (state === 'stale') move(db, id, 'stale');
+
+    db.exec('COMMIT');
+
+    return state;
+  } catch (err) {
+    db.exec('ROLLBACK');
+
+    throw err;
+  }
 };
 
 /** Mega's own identifier for a stored tar, where it is no longer the one written down. */
@@ -180,7 +276,14 @@ export const totals = (db: DatabaseSync, origin: Origin): Totals => ({
 const TAR = `id, origin, venue, month, seq, remote, local, bytes, state, handle, stored_at AS storedAt`;
 
 const HELD = `tar_id AS tarId, venue, market, dataset, variant, grain, bundle, month, version, files, bytes,
-              next_version AS nextVersion, next_files AS nextFiles, next_bytes AS nextBytes`;
+              next_version AS nextVersion, next_files AS nextFiles, next_bytes AS nextBytes,
+              packed_version AS packedVersion, packed_files AS packedFiles, packed_bytes AS packedBytes`;
+
+const PACKED_NONE = 'packed_version = NULL, packed_files = NULL, packed_bytes = NULL';
+
+/** Whether any partition of a tar has a change noted. */
+const pending = (db: DatabaseSync, tarId: number): boolean =>
+  db.prepare('SELECT 1 FROM held WHERE tar_id = ? AND next_version IS NOT NULL LIMIT 1').get(tarId) !== undefined;
 
 const WHERE = 'tar_id = ? AND market = ? AND dataset = ? AND variant = ? AND grain = ? AND bundle = ? AND month = ?';
 
@@ -188,7 +291,11 @@ const whereOf = (held: PartitionKey & { tarId: number }): (string | number)[] =>
   [held.tarId, held.market, held.dataset, held.variant, held.grain, held.bundle, held.month];
 
 const asHeld = (row: HeldRow): Held => {
-  const { nextVersion, nextFiles, nextBytes, ...rest } = row;
+  const { nextVersion, nextFiles, nextBytes, packedVersion, packedFiles, packedBytes, ...rest } = row;
 
-  return { ...rest, next: nextVersion === null ? null : { version: nextVersion, files: nextFiles!, bytes: nextBytes! } };
+  return {
+    ...rest,
+    next:   nextVersion === null ? null : { version: nextVersion, files: nextFiles!, bytes: nextBytes! },
+    packed: packedVersion === null ? null : { version: packedVersion, files: packedFiles!, bytes: packedBytes! },
+  };
 };

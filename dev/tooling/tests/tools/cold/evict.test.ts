@@ -169,6 +169,43 @@ describe('what of the archives can be evicted', () => {
     expect(await evictable()).not.toContain('202002 monthly');
   });
 
+  /** The tar holds what it was packed with: the change it was sent with is not in cold storage yet. */
+  it('leaves what changed while its tar was on its way to cold storage', async () => {
+    const late = partition('202002', 'monthly');
+    const id   = record.planTar(db, 'archives', 'gate', '202002', seq => ({ remote: `late${seq}`, local: `late${seq}` }), [late]);
+
+    record.packed(db, id, 10);
+    record.noteChange(db, record.heldIn(db, id)[0]!, partition('202002', 'monthly', 'v2'));
+    record.confirmed(db, id, 'H:late');
+
+    publish([...MONTHS.map(month => partition(month)), partition('202002', 'monthly', 'v2')]);
+    onDisk('202002', 'monthly');
+
+    expect(await evictable()).not.toContain('202002 monthly');
+    expect((await look()).held).toMatchObject({ 'not in cold storage': 1 });
+  });
+
+  /** Corrected to one version and confirmed after the catalog moved to another: what is stored is the first. */
+  it('leaves what changed again while its corrected tar was on its way to cold storage', async () => {
+    const late = partition('202002', 'monthly');
+    const id   = record.planTar(db, 'archives', 'gate', '202002', seq => ({ remote: `late${seq}`, local: `late${seq}` }), [late]);
+
+    record.packed(db, id, 10);
+    record.confirmed(db, id, 'H:1');
+    record.noteChange(db, record.heldIn(db, id)[0]!, partition('202002', 'monthly', 'v2'));
+    record.packed(db, id, 12, [{ ...late, version: 'v2' }]);
+    record.noteChange(db, record.heldIn(db, id)[0]!, partition('202002', 'monthly', 'v3'));
+    record.confirmed(db, id, 'H:2');
+
+    expect(record.heldIn(db, id)[0]).toMatchObject({ version: 'v2', next: { version: 'v3' } });
+
+    publish([...MONTHS.map(month => partition(month)), partition('202002', 'monthly', 'v3')]);
+    onDisk('202002', 'monthly');
+
+    expect(await evictable()).not.toContain('202002 monthly');
+    expect((await look()).held).toMatchObject({ 'not in cold storage': 1 });
+  });
+
   it('leaves what the vault was not stocked from at the catalog\'s version', async () => {
     fs.rmSync(path.join(dir, 'vault', 'ledger.csv'));
     stock(partition('202001'), partition('202002', 'daily', 'old'), partition('202003'), partition('202004'));

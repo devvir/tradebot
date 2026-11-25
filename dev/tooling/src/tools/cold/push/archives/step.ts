@@ -14,7 +14,7 @@ import { fmtBytes } from '../../../../shared/utils/format';
 import type { DatabaseSync } from 'node:sqlite';
 import type { ColdConfig, Origin, Tar } from '../../types';
 import type { Round } from '../types';
-import type { SourceFile } from '../../shared/types';
+import type { Held, SourceFile } from '../../shared/types';
 
 /**
  * Take one tar one step. Says whether anything moved, so a round in which
@@ -36,7 +36,8 @@ export const step = async (
       // Packing ahead of the link only fills the disk with tars waiting to go.
       if (! await round.room()) return false;
 
-      const held    = record.heldIn(db, tar.id);
+      // What each partition is made with: the catalog's version of it, noted as a change where it has one.
+      const held    = record.heldIn(db, tar.id).map(madeOf);
       const members: string[] = [];
       const sized:   SourceFile[] = [];
 
@@ -75,7 +76,7 @@ export const step = async (
 
       const bytes = fs.statSync(local).size;
 
-      record.packed(db, tar.id, bytes);
+      record.packed(db, tar.id, bytes, held);
       progress.worked(`Packed ${labelOf(tar)} · ${fmtBytes(bytes)}`);
 
       // One tar a round: the queue is asked again before another is made.
@@ -113,10 +114,12 @@ export const step = async (
        * complete, so the tar on disk found there, at its size and its own
        * modification time, is the proof — see `landed`. Where it replaces an
        * older one, its handle is no longer the older one's either.
+       *
+       * What is written down as stored is what the tar was made with. A
+       * partition that changed since leaves it to be corrected again.
        */
       if (found && mega.landed(local, found) && (tar.handle === null || found.handle !== tar.handle)) {
-        record.applyChanges(db, tar.id);
-        record.stored(db, tar.id, found.handle);
+        record.confirmed(db, tar.id, found.handle);
 
         await fs.promises.rm(local, { force: true });
 
@@ -167,7 +170,9 @@ export const step = async (
     }
 
     case 'fetched': {
-      const changed = record.heldIn(db, tar.id).filter(one => one.next !== null);
+      // Read once: what the tar is corrected to is what is written down as packed.
+      const held    = record.heldIn(db, tar.id);
+      const changed = held.filter(one => one.next !== null);
       const stale   = new Set(changed.map(idOf));
       const add: string[] = [];
 
@@ -209,7 +214,8 @@ export const step = async (
         throw err;
       }
 
-      record.packed(db, tar.id, fs.statSync(local).size);
+      // The version written down stays what Mega holds until this tar is confirmed — see `confirmed`.
+      record.packed(db, tar.id, fs.statSync(local).size, held.map(madeOf));
       progress.worked(`Corrected ${labelOf(tar)} · ${changed.length} partition${changed.length === 1 ? '' : 's'} · `
         + `${remove.length} files out, ${add.length} in`);
 
@@ -222,3 +228,8 @@ export const step = async (
 };
 
 export const labelOf = (tar: Tar): string => `${tar.venue}/${path.basename(tar.local)}`;
+
+// ── Internals ─────────────────────────────────────────────────────────────────
+
+/** A partition as a tar is made with it: at the version noted as next where there is one. */
+const madeOf = (one: Held): Held => (one.next ? { ...one, ...one.next } : one);

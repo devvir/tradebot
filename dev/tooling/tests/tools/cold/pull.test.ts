@@ -204,7 +204,7 @@ describe('how a stored partition stands', () => {
 
 describe('what is asked', () => {
   const found = (...list: Pullable['state'][]): Pullable[] =>
-    list.map((state, at) => ({ state, held: { ...partition(`20200${at + 1}`), tarId: 1, next: null } }));
+    list.map((state, at) => ({ state, held: { ...partition(`20200${at + 1}`), tarId: 1, next: null, packed: null } }));
 
   /** `--yes` is the answer a question has by itself: over what differs, and not again what is the same. */
   it('takes each question\'s own answer where every answer was given beforehand', async () => {

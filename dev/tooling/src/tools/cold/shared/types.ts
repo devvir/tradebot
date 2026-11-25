@@ -123,15 +123,25 @@ export interface ListedLens {
   note: string;
 }
 
-/** A partition inside a tar, at the version it was packed at. */
-export interface Held extends PartitionKey {
-  tarId:   number;
+/** What a tar holds of one partition: the catalog's version of it, and its files. */
+export interface Content {
   version: string;
   files:   number;
   bytes:   number;
+}
 
-  /** What the catalog says now, where that is no longer what the tar holds. */
-  next:    { version: string; files: number; bytes: number } | null;
+/**
+ * A partition inside a tar: what cold storage holds of it once the tar is
+ * stored, and what the tar is to be made with until then.
+ */
+export interface Held extends PartitionKey, Content {
+  tarId:   number;
+
+  /** What the catalog says now, where that is no longer what cold storage holds. */
+  next:    Content | null;
+
+  /** What the tar on disk holds, from when it is packed or corrected until Mega confirms it. */
+  packed:  Content | null;
 }
 
 /** A file of the tree being backed up, relative to its root. */
@@ -232,11 +242,14 @@ export interface Totals {
   storedBytes: number;
 }
 
-/** A `held` row as the record reads it back, before what comes next is folded into one field. */
-export interface HeldRow extends Omit<Held, 'next'> {
-  nextVersion: string | null;
-  nextFiles:   number | null;
-  nextBytes:   number | null;
+/** A `held` row as the record reads it back, before what comes next and what was packed are each folded into one field. */
+export interface HeldRow extends Omit<Held, 'next' | 'packed'> {
+  nextVersion:   string | null;
+  nextFiles:     number | null;
+  nextBytes:     number | null;
+  packedVersion: string | null;
+  packedFiles:   number | null;
+  packedBytes:   number | null;
 }
 
 /** What storing the vault asks of Mega: the part of it a run can be given a stand-in for. */

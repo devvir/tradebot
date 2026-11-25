@@ -39,6 +39,9 @@ export const work = async (db: DatabaseSync, config: ColdConfig, venues: readonl
   let scanAt  = Date.now() + WATCH_MS;
   let waiting = false;
 
+  /** Files that cannot be sent and are kept as the record has them: not asked about again until the ledger is. */
+  const kept = new Set<string>();
+
   /** From when what was stored has not had its second look — see `confirm.ts`. */
   let unconfirmed = new Date().toISOString();
 
@@ -58,6 +61,8 @@ export const work = async (db: DatabaseSync, config: ColdConfig, venues: readonl
 
       if (trusted(config)) plan(db, config, venues);
 
+      kept.clear();
+
       const found = partitions() - before;
 
       if (found > 0) progress.log(`Found ${found} new partition${found === 1 ? '' : 's'} ready to push`);
@@ -67,7 +72,7 @@ export const work = async (db: DatabaseSync, config: ColdConfig, venues: readonl
       scanAt = Date.now() + WATCH_MS;
     }
 
-    const pending = pendingOf(db, venues);
+    const pending = pendingOf(db, venues).filter(file => ! kept.has(keyOf(file)));
 
     // A partition left a step short has nothing pending, and still has a round coming to it.
     if (pending.length === 0 && unfinishedOf(db, config).length === 0) {
@@ -75,7 +80,7 @@ export const work = async (db: DatabaseSync, config: ColdConfig, venues: readonl
       if (! waiting) {
         await confirm();
 
-        if (pendingOf(db, venues).length > 0) continue;
+        if (pendingOf(db, venues).some(file => ! kept.has(keyOf(file)))) continue;
       }
 
       if (! isWatch()) break;
@@ -94,7 +99,7 @@ export const work = async (db: DatabaseSync, config: ColdConfig, venues: readonl
 
     waiting = false;
 
-    if (! await round(db, config, pending, remote, line => progress.log(line), (name, bytes) => progress.stored(name, bytes)))
+    if (! await round(db, config, pending, remote, line => progress.log(line), (name, bytes) => progress.stored(name, bytes), kept))
       await sleep(POLL_MS);
   }
 
@@ -116,6 +121,11 @@ export const work = async (db: DatabaseSync, config: ColdConfig, venues: readonl
  * has room. Then each partition all of whose files are stored is stored itself,
  * and what the revisions it replaces had beyond it is removed.
  *
+ * **A file no longer in the vault is forgotten with its revision** — unless
+ * cold storage has held any file of that revision: then Mega may have the only
+ * copy, and the record is the only thing that says so. It is said, left as the
+ * record has it, and put in `kept`, so the rounds that follow pass it by.
+ *
  * **A file is only confirmed after it was handed over.** Every revision of a
  * file is stored at the same path, so what Mega holds there beforehand may be
  * the month this one replaces, at the same size.
@@ -129,6 +139,7 @@ const round = async (
 
   /** A partition was stored: its name and what it weighs, said with how far the run has got. */
   stored:  (name: string, bytes: number) => void = (name, bytes) => say(`Stored ${name} · ${fmtBytes(bytes)}`),
+  kept:    Set<string> = new Set(),
 ): Promise<boolean> => {
   const queued = await remote.queuedPaths();
 
@@ -176,6 +187,14 @@ const round = async (
     if (room <= 0) continue;
 
     if (! fs.existsSync(local)) {
+      if (record.vaultFilesOf(db, file.partition, file.revision).some(heldOnce)) {
+        say(`${file.path} is no longer in the vault, and cold storage has held its partition — it is left as the record has it`);
+
+        kept.add(keyOf(file));
+
+        continue;
+      }
+
       say(`${file.path} is no longer in the vault — its partition is left for the next look at the ledger`);
 
       record.dropVaultRevision(db, file.partition, file.revision);
@@ -265,6 +284,12 @@ const retire = async (
     if (cleared) record.dropVaultRevision(db, partition, revision);
   }
 };
+
+/** Whether a vault file is, or has been, in cold storage as far as the record can tell. */
+const heldOnce = (file: StoredFile): boolean => file.state === 'stored' || file.handle !== null || file.evictedAt !== null;
+
+/** One vault file, as one string. */
+const keyOf = (file: StoredFile): string => [file.partition, file.revision, file.instrument, file.side].join('|');
 
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 

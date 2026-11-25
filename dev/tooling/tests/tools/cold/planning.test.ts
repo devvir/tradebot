@@ -164,6 +164,42 @@ describe('planning a push', () => {
     expect(await run()).toMatchObject({ changed: 0, stale: 1 });
   });
 
+  /** Sent back to be packed again, a tar Mega has held keeps its partitions, and nothing else is planned for them. */
+  it('keeps a tar Mega has held that is to be packed again', async () => {
+    slices = [slice('trades', [month('202001', 1)])];
+    await run();
+
+    const [only] = record.tarsOf(db, 'archives');
+
+    record.packed(db, only!.id, 100);
+    record.stored(db, only!.id, 'H:1');
+    record.move(db, only!.id, 'planned');
+
+    expect(await run()).toMatchObject({ tars: 0, added: 0 });
+    expect(tars()).toEqual(['gate-202001.001.tar planned: trades']);
+    expect(record.tarById(db, only!.id).handle).toBe('H:1');
+  });
+
+  /** The catalog back to what cold storage holds before the tar was brought back: nothing is left to correct. */
+  it('takes back a change the catalog has undone', async () => {
+    slices = [slice('trades', [month('202001', 1)])];
+    await run();
+
+    const [only] = record.tarsOf(db, 'archives');
+
+    record.packed(db, only!.id, 100);
+    record.stored(db, only!.id, 'H:1');
+
+    slices[0]!.partitions[0]!.version = 'v2';
+    await run();
+
+    slices[0]!.partitions[0]!.version = 'v1';
+
+    expect(await run()).toMatchObject({ changed: 1, stale: 0 });
+    expect(tars()).toEqual(['gate-202001.001.tar stored: trades']);
+    expect(record.heldIn(db, only!.id)[0]!.next).toBeNull();
+  });
+
   /** Outside the lens, still downloading, still changing: none is a reason to touch what is stored. */
   it('leaves alone a stored partition the catalog no longer answers with', async () => {
     slices = [slice('trades', [month('202001', 1)])];

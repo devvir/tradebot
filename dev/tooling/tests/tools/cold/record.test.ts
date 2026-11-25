@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import * as record from '../../../src/tools/cold/shared/record';
-import type { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync } from 'node:sqlite';
 import type { CatalogPartition } from '../../../src/tools/cold/shared/types';
 
 let dir: string;
@@ -80,17 +80,101 @@ describe('a partition that changed in the catalog', () => {
     expect(record.heldIn(db, id).find(one => one.dataset === 'klines')!.next).toBeNull();
   });
 
-  it('holds the new version once the corrected tar is stored', () => {
+  it('holds the new version once the corrected tar is confirmed', () => {
     const id = plan(partition('trades'));
 
     record.packed(db, id, 1000);
-    record.stored(db, id, 'H:old');
-    record.noteChange(db, record.heldIn(db, id)[0]!, partition('trades', { version: 'v2', files: 4, bytes: 40 }));
-    record.applyChanges(db, id);
-    record.stored(db, id, 'H:new');
+    expect(record.confirmed(db, id, 'H:old')).toBe('stored');
 
-    expect(record.heldIn(db, id)[0]).toMatchObject({ version: 'v2', files: 4, bytes: 40, next: null });
+    record.noteChange(db, record.heldIn(db, id)[0]!, partition('trades', { version: 'v2', files: 4, bytes: 40 }));
+
+    // Brought back and corrected to what was noted.
+    record.packed(db, id, 1200, [{ ...record.heldIn(db, id)[0]!, version: 'v2', files: 4, bytes: 40 }]);
+
+    expect(record.heldIn(db, id)[0]).toMatchObject({ version: 'v1', packed: { version: 'v2', files: 4, bytes: 40 } });
+    expect(record.confirmed(db, id, 'H:new')).toBe('stored');
+    expect(record.heldIn(db, id)[0]).toMatchObject({ version: 'v2', files: 4, bytes: 40, next: null, packed: null });
     expect(record.tarById(db, id)).toMatchObject({ state: 'stored', handle: 'H:new' });
+  });
+
+  /** A tar on its way holds what it was made with, whatever the catalog says since. */
+  it('holds what a tar was packed with once it is confirmed, and leaves it to be corrected where the catalog moved on', () => {
+    const id = plan(partition('trades'), partition('klines'));
+
+    record.packed(db, id, 1000);
+    record.noteChange(db, record.heldIn(db, id).find(one => one.dataset === 'trades')!, partition('trades', { version: 'v2', files: 4, bytes: 40 }));
+
+    expect(record.tarById(db, id).state).toBe('packed');
+    expect(record.confirmed(db, id, 'H:1')).toBe('stale');
+    expect(record.heldIn(db, id).find(one => one.dataset === 'trades'))
+      .toMatchObject({ version: 'v1', files: 3, next: { version: 'v2', files: 4, bytes: 40 }, packed: null });
+    expect(record.tarById(db, id)).toMatchObject({ state: 'stale', handle: 'H:1' });
+    expect(record.storedOf(db, 'archives', 'gate')).toEqual([]);
+  });
+
+  it('takes back a change of a tar not brought back yet, once the catalog is back to what is stored', () => {
+    const id = plan(partition('trades'));
+
+    record.packed(db, id, 1000);
+    record.confirmed(db, id, 'H:1');
+    record.noteChange(db, record.heldIn(db, id)[0]!, partition('trades', { version: 'v2' }));
+
+    expect(record.cancelChange(db, record.heldIn(db, id)[0]!)).toBe(true);
+    expect(record.heldIn(db, id)[0]).toMatchObject({ version: 'v1', next: null });
+    expect(record.tarById(db, id)).toMatchObject({ state: 'stored', handle: 'H:1' });
+  });
+
+  it('does not take back a change of a tar already being brought back', () => {
+    const id = plan(partition('trades'));
+
+    record.packed(db, id, 1000);
+    record.confirmed(db, id, 'H:1');
+    record.noteChange(db, record.heldIn(db, id)[0]!, partition('trades', { version: 'v2' }));
+    record.move(db, id, 'fetching');
+
+    expect(record.cancelChange(db, record.heldIn(db, id)[0]!)).toBe(false);
+    expect(record.heldIn(db, id)[0]!.next).toMatchObject({ version: 'v2' });
+  });
+});
+
+describe('a tar Mega has held', () => {
+  /** Sent back to be packed again, it is still the record's only map of what is in it. */
+  it('is not dropped with the plans', () => {
+    const id = plan(partition('trades'));
+
+    record.packed(db, id, 1000);
+    record.confirmed(db, id, 'H:1');
+    record.move(db, id, 'planned');
+
+    expect(record.dropPlanned(db, 'archives', 'gate')).toBe(0);
+    expect(record.heldIn(db, id)).toHaveLength(1);
+  });
+});
+
+describe('a record whose held table has no columns for what a tar was packed with', () => {
+  it('gains the columns, empty, and keeps what it holds', () => {
+    const file = path.join(dir, 'old.sqlite');
+    const old  = new DatabaseSync(file);
+
+    old.exec(`CREATE TABLE held (
+      tar_id INTEGER NOT NULL, origin TEXT NOT NULL, venue TEXT NOT NULL, market TEXT NOT NULL, dataset TEXT NOT NULL,
+      variant TEXT NOT NULL, grain TEXT NOT NULL, bundle TEXT NOT NULL, month TEXT NOT NULL, version TEXT NOT NULL,
+      files INTEGER NOT NULL, bytes INTEGER NOT NULL, next_version TEXT, next_files INTEGER, next_bytes INTEGER,
+      PRIMARY KEY (origin, venue, market, dataset, variant, grain, bundle, month)) STRICT`);
+    old.exec(`INSERT INTO held VALUES (7, 'archives', 'gate', 'spot', 'trades', '', 'daily', 'instrument', '202001', 'v1', 3, 30, NULL, NULL, NULL)`);
+    old.close();
+
+    const opened = record.open(file);
+
+    try {
+      expect(record.heldIn(opened, 7)).toEqual([expect.objectContaining({ version: 'v1', next: null, packed: null })]);
+
+      // Opened again, nothing is added twice.
+      record.close(opened);
+      record.close(record.open(file));
+    } finally {
+      record.close(opened);
+    }
   });
 });
 

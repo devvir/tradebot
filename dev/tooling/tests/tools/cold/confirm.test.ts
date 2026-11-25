@@ -118,6 +118,18 @@ describe('a second look at tars just stored', () => {
     expect(record.tarById(db, renamed)).toMatchObject({ state: 'stored', handle: 'SECOND' });
     expect(record.tarById(db, gone).state).toBe('planned');
   });
+
+  /** Packed again or not, the record is still the only map of what the tar in Mega holds. */
+  it('keeps what a tar not there as sent holds when the plan is redrawn', async () => {
+    const gone = tar('202001');
+
+    await confirmTars(db, config(), 'archives', LONG_AGO, () => {}, async () => ({ bytes: 99, handle: 'FIRST' }));
+
+    expect(record.tarById(db, gone).state).toBe('planned');
+    expect(record.dropPlanned(db, 'archives', 'gate')).toBe(0);
+    expect(record.tarById(db, gone)).toMatchObject({ state: 'planned', handle: 'FIRST' });
+    expect(record.heldIn(db, gone)).toHaveLength(1);
+  });
 });
 
 describe('second transfers of the same file in the queue', () => {

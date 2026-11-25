@@ -16,11 +16,27 @@ import type { Check, Finding, Looking } from '../types';
  * the record is the claim and Mega the fact. The one thing offered that touches
  * Mega is removing what the record has never heard of, and that is never done
  * unasked.
+ *
+ * **Except where Mega has nothing at all.** An empty answer while the record
+ * has anything stored is far likelier a wrong root or another account than a
+ * tree that is gone, and nothing is offered on it.
  */
 export const againstMega: Check = async (looking) => {
   if (! looking.remote) return [];
 
-  const held = await looking.remote.listing(looking.config.megaRoot);
+  const { megaRoot } = looking.config;
+  const held = await looking.remote.listing(megaRoot);
+
+  const claimed = looking.origin === 'vault'
+    ? record.vaultFiles(looking.db).filter(file => file.state === 'stored').length
+    : record.tarsOf(looking.db, looking.origin).filter(tar => tar.state === 'stored' || tar.state === 'stale').length;
+
+  if (held.size === 0 && claimed > 0) return [{
+    problem:   `Mega has nothing below ${megaRoot}, and the record has ${count(claimed, looking.origin === 'vault' ? 'file' : 'tar')} stored there`,
+    examples:  [megaRoot],
+    note:      'MEGA_ROOT, or the account Mega is logged in to, is likely not the one cold storage is in. Nothing is changed on an empty answer.',
+    solutions: [],
+  }];
 
   return looking.origin === 'vault' ? vault(looking, held) : tars(looking, held);
 };
@@ -51,9 +67,11 @@ const tars = (looking: Looking, held: Held): Finding[] => {
       .filter(one => evicted.has(JSON.stringify([one.venue, one.market, one.dataset, one.variant, one.grain, one.bundle, one.month]))).length;
   };
 
+  // Destructive where cold storage was the only copy of any of it: not taken where nobody is asked.
   const again = (list: readonly Tar[]) => ({
-    label: 'Write them down as not stored, so the next push packs and sends them again',
-    apply: () => { for (const tar of list) record.move(db, tar.id, 'planned'); },
+    label:       'Write them down as not stored, so the next push packs and sends them again',
+    destructive: gone(list) > 0,
+    apply:       () => { for (const tar of list) record.move(db, tar.id, 'planned'); },
   });
 
   const lost = (list: readonly Tar[]): string | undefined => {
@@ -106,9 +124,11 @@ const vault = (looking: Looking, held: Held): Finding[] => {
   const known   = new Set(all.map(remoteOf));
   const orphans = [...held].filter(([path]) => path.endsWith('.parquet') && ! known.has(path));
 
+  // Destructive where cold storage was the only copy of any of them: not taken where nobody is asked.
   const again = (list: readonly StoredFile[]) => ({
-    label: 'Write them down as not stored, so the next push sends them again',
-    apply: () => {
+    label:       'Write them down as not stored, so the next push sends them again',
+    destructive: list.some(file => file.evictedAt !== null),
+    apply:       () => {
       for (const file of list) {
         record.moveVaultFile(db, file, 'planned');
         record.dropVaultPartition(db, file.partition, file.revision);

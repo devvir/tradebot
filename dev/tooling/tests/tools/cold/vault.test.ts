@@ -383,6 +383,40 @@ describe('storing the vault', () => {
     expect(record.vaultFilesPending(db).filter(file => file.partition.startsWith(SMALL))).toEqual([]);
   });
 
+  /** Taken off the disk after it was stored, and not in Mega as sent: the record is all that says where it went. */
+  it('keeps on record a file taken off the disk that is to be sent again', async () => {
+    await storeAll();
+
+    const [file] = record.vaultFilesOf(db, `${SMALL}/202001`, 'aaaaaaaaaaaa');
+
+    await remove(db, config(), 'gate', evictable(db, config(), { ...all, dataset: 'klines' }), true);
+
+    expect(fs.existsSync(path.join(dir, 'vault', file!.path))).toBe(false);
+
+    // The second look finds Mega without it.
+    record.moveVaultFile(db, file!, 'planned');
+    record.dropVaultPartition(db, file!.partition, file!.revision);
+
+    const said: string[] = [];
+    const kept = new Set<string>();
+
+    expect(await round(db, config(), record.vaultFilesPending(db), mega(), one => said.push(one), undefined, kept)).toBe(false);
+    expect(record.vaultFilesOf(db, file!.partition, file!.revision)).toEqual([expect.objectContaining({ state: 'planned' })]);
+    expect(record.vaultFilesOf(db, file!.partition, file!.revision)[0]!.evictedAt).not.toBeNull();
+    expect(said).toEqual([expect.stringMatching(/no longer in the vault, and cold storage has held its partition/)]);
+    expect(kept.size).toBe(1);
+  });
+
+  it('forgets a revision no longer in the vault that cold storage never held', async () => {
+    plan(db, config(), []);
+
+    fs.rmSync(path.join(dir, 'vault', SMALL), { recursive: true });
+
+    await round(db, config(), record.vaultFilesPending(db), mega(), () => {});
+
+    expect(record.vaultFilesOf(db, `${SMALL}/202001`, 'aaaaaaaaaaaa')).toEqual([]);
+  });
+
   it('forgets what it planned for a revision the ledger moved on from before it was sent', () => {
     plan(db, config(), []);
 

@@ -18,7 +18,9 @@ import type { ColdConfig, Origin } from '../types';
  *
  * - **another identifier at the size sent** is written down;
  * - **another size, or nothing there**, is written down as not stored, and the
- *   push that is running sends it again.
+ *   push that is running sends it again. A tar keeps the partitions written
+ *   down as in it, so the record still says what it holds whether or not it
+ *   can be made again.
  *
  * Returns how many of each it found.
  */
@@ -75,10 +77,10 @@ export const confirmTars = async (
     const there = await lookup(remotePath(config, tar));
 
     if (! there || there.bytes !== tar.bytes) {
-      // Its local copy went when it was stored, so it is packed again and not merely handed over.
+      // Its local copy went when it was stored: it is packed again from disk, which can be done only while every partition of it is there.
       record.move(db, tar.id, 'planned');
 
-      say(`${tar.remote} is not in Mega as it was sent — it is packed and sent again`);
+      say(`${tar.remote} is not in Mega as it was sent — it is packed again from disk and sent, where the disk still has it`);
 
       found.again++;
     } else if (there.handle !== tar.handle) {

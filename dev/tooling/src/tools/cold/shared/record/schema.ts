@@ -25,6 +25,7 @@ export const open = (file: string): DatabaseSync => {
   db.exec('PRAGMA busy_timeout = 5000');
   db.exec('PRAGMA foreign_keys = ON');
   db.exec(SCHEMA);
+  addColumns(db);
 
   return db;
 };
@@ -38,6 +39,25 @@ export const close = (db: DatabaseSync): void => {
 };
 
 // ── Internals ─────────────────────────────────────────────────────────────────
+
+/**
+ * The columns `SCHEMA` declares that a table already there may not have.
+ * `CREATE TABLE IF NOT EXISTS` leaves a table that exists as it is, so each of
+ * these is added to it here, empty.
+ */
+const ADDED: readonly { table: string; column: string; type: string }[] = [
+  { table: 'held', column: 'packed_version', type: 'TEXT' },
+  { table: 'held', column: 'packed_files',   type: 'INTEGER' },
+  { table: 'held', column: 'packed_bytes',   type: 'INTEGER' },
+];
+
+const addColumns = (db: DatabaseSync): void => {
+  for (const { table, column, type } of ADDED) {
+    const has = (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some(one => one.name === column);
+
+    if (! has) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  }
+};
 
 const SCHEMA = `
 -- One tar in cold storage, or on its way there. A venue-month has as many as it
@@ -64,7 +84,8 @@ CREATE TABLE IF NOT EXISTS tar (
 
 CREATE INDEX IF NOT EXISTS tar_state ON tar (origin, state);
 
--- A partition inside a tar, at the catalog version it was packed at. A
+-- A partition inside a tar. Its version is what cold storage holds of it once
+-- the tar is stored, and what the tar is to be made with until then. A
 -- partition is in one tar and no other.
 CREATE TABLE IF NOT EXISTS held (
   tar_id  INTEGER NOT NULL REFERENCES tar (id),
@@ -85,6 +106,12 @@ CREATE TABLE IF NOT EXISTS held (
   next_version TEXT,
   next_files   INTEGER,
   next_bytes   INTEGER,
+
+  -- What the tar on disk holds, from when it is packed or corrected until Mega
+  -- confirms it: what is then written down as stored.
+  packed_version TEXT,
+  packed_files   INTEGER,
+  packed_bytes   INTEGER,
   PRIMARY KEY (origin, venue, market, dataset, variant, grain, bundle, month)
 ) STRICT;
 

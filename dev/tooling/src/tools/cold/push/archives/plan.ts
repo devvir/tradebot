@@ -19,7 +19,10 @@ import type { Planned } from '../types';
  *   venue-month.
  * - **One it has at another version** is noted as changed, and its tar — where
  *   Mega already holds it — becomes one to bring back and correct.
- * - **One it has at this version** needs nothing.
+ * - **One it has at this version** needs nothing — unless a change is noted of
+ *   it, and the catalog is back to what cold storage holds: the change is taken
+ *   back where its tar has not been brought back yet, and noted as this version
+ *   where it has, so the correction goes to what the catalog holds.
  *
  * A partition the catalog does not answer with is left exactly as it is: it is
  * outside the lens, still downloading, or still changing, and none of those is
@@ -58,9 +61,10 @@ export const plan = async (
         continue;
       }
 
-      if (had.version === one.version || had.next?.version === one.version) continue;
+      if (had.next === null ? had.version === one.version : had.next.version === one.version) continue;
 
-      record.noteChange(db, had, one);
+      if (had.version !== one.version || ! record.cancelChange(db, had)) record.noteChange(db, had, one);
+
       changed++;
     }
 

@@ -184,7 +184,7 @@ describe('a partition that can be completed', () => {
 
 describe('what there is room to bring back', () => {
   const tar = (id: number, bytes: number): Tar => ({ id, bytes } as Tar);
-  const of  = (tarId: number, bytes: number): Needed['archives'][number] => ({ state: 'away', held: { ...partition('202012'), tarId, bytes, next: null } });
+  const of  = (tarId: number, bytes: number): Needed['archives'][number] => ({ state: 'away', held: { ...partition('202012'), tarId, bytes, next: null, packed: null } });
 
   it('is tars in order for as long as each, and what comes out of it, leaves the reserve', () => {
     const wanted: Needed = { partitions: 3, vault: [], unstored: [], archives: [of(1, 30), of(2, 30), of(3, 30)] };

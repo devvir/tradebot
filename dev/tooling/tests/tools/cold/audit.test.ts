@@ -129,14 +129,56 @@ describe('the tars of the archives, against Mega', () => {
     expect(await againstMega(looking('archives'))).toEqual([]);
   });
 
-  /** Cold storage was the only copy: that has to be said before anything is chosen. */
-  it('says so where what a missing tar held is no longer on disk', async () => {
-    tar('202001', false);
+  /** Cold storage was the only copy: that has to be said before anything is chosen, and nothing is chosen unasked. */
+  it('says so where what a missing tar held is no longer on disk, and does not write it down as not stored unasked', async () => {
+    tar('202002');
+
+    const id = tar('202001', false);
+
     record.noteEviction(db, 'archives', partition('202001'), { files: 1, bytes: 2 });
 
     const [finding] = await againstMega(looking('archives'));
 
     expect(finding!.note).toMatch(/1 of their partitions have been taken off the disk/);
+    expect(finding!.solutions[0]!.destructive).toBe(true);
+
+    setYes(true);
+
+    expect(await choiceOf(finding!.solutions)).toBeNull();
+    expect(record.tarById(db, id).state).toBe('stored');
+  });
+
+  /** A wrong root or another account answers with nothing: that is not every tar gone. */
+  it('offers nothing where Mega has nothing at all and the record has tars stored', async () => {
+    const id = tar('202001', false);
+
+    tar('202002', false);
+
+    const findings = await againstMega(looking('archives'));
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]!.problem).toMatch(/Mega has nothing below \/x\/archives, and the record has 2 tars stored there/);
+    expect(findings[0]!.solutions).toEqual([]);
+
+    setYes(true);
+
+    expect(await choiceOf(findings[0]!.solutions)).toBeNull();
+    expect(record.tarById(db, id).state).toBe('stored');
+    expect(record.heldIn(db, id)).toHaveLength(1);
+  });
+
+  /** Sent again or not, the record still says which partitions the tar holds. */
+  it('keeps what a tar written down as not stored holds through the next plan', async () => {
+    tar('202002');
+
+    const id = tar('202001', false);
+    const [finding] = await againstMega(looking('archives'));
+
+    await fix(finding);
+
+    expect(record.dropPlanned(db, 'archives', 'gate')).toBe(0);
+    expect(record.tarById(db, id)).toMatchObject({ state: 'planned', handle: 'H202001' });
+    expect(record.heldIn(db, id)).toHaveLength(1);
   });
 
   it('finds a tar that is not the size sent', async () => {
@@ -197,15 +239,47 @@ describe('the files of the vault, against Mega', () => {
   });
 
   it('finds a stored file that is not there, and writes it and its partition down as not stored', async () => {
+    vaultFile('202002');
+
     const file = vaultFile('202001', { mega: false });
     const [finding] = await againstMega(looking('vault'));
 
     expect(finding!.examples).toEqual(['gate: spot/trades/202001']);
+    expect(finding!.solutions[0]!.destructive).toBe(false);
 
     await fix(finding);
 
     expect(record.vaultFilesOf(db, file.partition, 'r1')[0]!.state).toBe('planned');
-    expect(record.vaultStored(db).size).toBe(0);
+    expect([...record.vaultStored(db).keys()]).toEqual([`${SLICE}/202002`]);
+  });
+
+  /** Taken off the disk, it has no other copy: not written down as not stored where nobody is asked. */
+  it('does not write down unasked as not stored a missing file that was taken off the disk', async () => {
+    vaultFile('202002');
+
+    const file = vaultFile('202001', { mega: false, disk: false });
+
+    record.noteVaultMoves(db, [file], 'evicted');
+
+    const [finding] = await againstMega(looking('vault'));
+
+    expect(finding!.solutions[0]!.destructive).toBe(true);
+
+    setYes(true);
+
+    expect(await choiceOf(finding!.solutions)).toBeNull();
+    expect(record.vaultFilesOf(db, file.partition, 'r1')[0]!.state).toBe('stored');
+  });
+
+  it('offers nothing where Mega has nothing at all and the record has files stored', async () => {
+    const file = vaultFile('202001', { mega: false });
+
+    const findings = await againstMega(looking('vault'));
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]!.problem).toMatch(/Mega has nothing below \/x\/vault, and the record has 1 file stored there/);
+    expect(findings[0]!.solutions).toEqual([]);
+    expect(record.vaultFilesOf(db, file.partition, 'r1')[0]!.state).toBe('stored');
   });
 
   it('finds a file of the vault the record has never heard of', async () => {
