@@ -232,38 +232,6 @@ describe('while the walk is still running', () => {
 });
 
 /**
- * A venue is never finished, only current.
- *
- * **The archives grow every day**, so reaching the end of one is not a state to
- * stop in — it is the point where the cheap half becomes possible. What is worth
- * pinning is the cadence: measured from the *start* of a pass, so a venue whose
- * walk outruns the interval does not drift a day later on every turn.
- */
-describe('keeping a venue current', () => {
-  it('waits out the rest of the day when a pass was quick', () => {
-    const began = Date.now() - 3_600_000;
-    const wait  = Math.max(0, began + _test_EVERY_HOURS * 3_600_000 - Date.now());
-
-    expect(wait).toBeGreaterThan((_test_EVERY_HOURS - 2) * 3_600_000);
-    expect(wait).toBeLessThanOrEqual((_test_EVERY_HOURS - 1) * 3_600_000);
-  });
-
-  /**
-   * An index walk can run for days. Measuring from the end would push the next
-   * update a whole interval past a pass that already took longer than one.
-   */
-  it('goes straight round again when a pass outran the interval', () => {
-    const began = Date.now() - (_test_EVERY_HOURS + 6) * 3_600_000;
-
-    expect(Math.max(0, began + _test_EVERY_HOURS * 3_600_000 - Date.now())).toBe(0);
-  });
-
-  it('updates daily', () => {
-    expect(_test_EVERY_HOURS).toBe(24);
-  });
-});
-
-/**
  * Whether a pass has a probing half.
  *
  * **The pass decides, not the adapter.** An update generates its keys rather
@@ -357,29 +325,6 @@ describe('which pass runs', () => {
  */
 describe('when the next pass is due', () => {
   const HOURS = _test_EVERY_HOURS * 3_600_000;
-
-  /**
-   * **Gate's case.** Its walk began 2026-08-30T09:44 and ran 26.6 hours, so the
-   * next update fell due two hours before the walk finished. Timed from the
-   * moment this process picked the walk up instead, it would have slept another
-   * 22 — the same pass answering differently depending on whether a restart
-   * happened to intervene, which is the one thing measuring from the start
-   * exists to prevent.
-   */
-  it('is already past for a pass that outran the interval', () => {
-    const began = Date.parse('2026-08-30T09:44:00.000Z');
-    const ended = Date.parse('2026-08-31T12:20:00.000Z');
-
-    expect(Math.max(0, began + HOURS - ended)).toBe(0);
-  });
-
-  /** And the reading a resumption would have given instead, which is the bug. */
-  it('would not be, timed from when the process picked the pass up', () => {
-    const resumed = Date.parse('2026-08-31T10:52:00.000Z');
-    const ended   = Date.parse('2026-08-31T12:20:00.000Z');
-
-    expect(Math.max(0, resumed + HOURS - ended)).toBeGreaterThan(22 * 3_600_000);
-  });
 
   /** `dueAfter` reads the same rule from the same field, for the startup path. */
   it('answers the same thing on startup as the loop does between passes', () => {

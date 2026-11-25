@@ -75,13 +75,20 @@ export const syncVenue = async (
     if (paused()) return;
   }
 
+  /** How long the next retry of a pass that threw waits; doubled per failure, reset by a pass that returns. */
+  let retry = FLOOR_MS;
+
   for (;;) {
     const fallback = Date.now();
 
     underway.set(adapter.name, (underway.get(adapter.name) ?? 0) + 1);
 
+    let failure: { err: unknown } | null = null;
+
     try {
       await onePass(db, adapter, config, occasion, paused);
+    } catch (err) {
+      failure = { err };
     } finally {
       const left = (underway.get(adapter.name) ?? 1) - 1;
 
@@ -90,6 +97,35 @@ export const syncVenue = async (
     }
 
     if (paused()) return;
+
+    /**
+     * **A pass that throws is retried, never the end of the loop.** Most of a
+     * pass catches its own faults, but the preamble's instrument listing, the
+     * reconciliation and the closing writes do not, and nothing outside this
+     * loop restarts it — a loop that ended on a throw would leave the venue
+     * enrolled and unpaused with nothing surveying it.
+     *
+     * The retry backs off, from `FLOOR_MS` doubling to `PASS_RETRY_CEILING_MS`,
+     * because what throws here is usually venue-wide — an API refusing every
+     * call — and asking twice a minute for hours is noise against it. A pass
+     * that returns resets the back-off. Nothing is lost by retrying: a pass that
+     * threw before its job opened starts again from its preamble, and one that
+     * threw after resumes from its cursors.
+     */
+    if (failure) {
+      logger.error({ ...fault(failure.err), venue: labelOf(adapter),
+        nextRun: new Date(Date.now() + retry).toISOString() }, 'Pass failed; retrying');
+
+      await waiting(retry, paused);
+
+      retry = Math.min(retry * 2, PASS_RETRY_CEILING_MS);
+
+      if (paused()) return;
+
+      continue;
+    }
+
+    retry = FLOOR_MS;
 
     /**
      * **Measured from the start of the pass, not its end.** A pass that took
@@ -126,19 +162,6 @@ export const syncVenue = async (
 };
 
 /**
- * Wait, but not through a pause.
- *
- * **A pause has to be answered while the venue is idle, which is most of its
- * life.** Between passes a venue sleeps for the whole interval — a day, and
- * rather longer while the seed rebuild raises it — and a plain `sleep` reads the
- * flag only once it is over. Asking to pause then appeared to do nothing: the
- * survey was recorded as stopping and went on reporting itself as running for
- * as long as the wait had left, because nothing was there to notice.
- *
- * So the wait is broken into beats. It costs one comparison a second and makes
- * a pause take effect in about that long, whatever the venue was waiting for.
- */
-/**
  * Whether a pass is under way for this venue in this process — on any host.
  *
  * **What the rows cannot say.** A venue's state is read off its job rows, and a
@@ -154,6 +177,19 @@ export const inPass = (venue: string): boolean => underway.has(venue);
 
 const underway = new Map<string, number>();
 
+/**
+ * Wait, but not through a pause.
+ *
+ * **A pause has to be answered while the venue is idle, which is most of its
+ * life.** Between passes a venue sleeps for the whole interval — a day, and
+ * rather longer while the seed rebuild raises it — and a plain `sleep` reads the
+ * flag only once it is over. Asking to pause then appeared to do nothing: the
+ * survey was recorded as stopping and went on reporting itself as running for
+ * as long as the wait had left, because nothing was there to notice.
+ *
+ * So the wait is broken into beats. It costs one comparison a second and makes
+ * a pause take effect in about that long, whatever the venue was waiting for.
+ */
 const waiting = async (ms: number, paused: () => boolean): Promise<void> => {
   const until = Date.now() + ms;
 
@@ -498,6 +534,9 @@ const kindOf = (occasion: Occasion): RunKind =>
  * without any bookkeeping to support it.
  */
 const FLOOR_MS = 30_000;
+
+/** The longest a pass that threw waits before it is tried again. */
+const PASS_RETRY_CEILING_MS = 30 * 60_000;
 
 /**
  * Take one venue as far as it goes, and stop.

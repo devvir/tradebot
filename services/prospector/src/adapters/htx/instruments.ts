@@ -6,9 +6,9 @@ import type { Instrument } from '../../types';
 export const htxInstruments = async (_db: DatabaseSync): Promise<Instrument[]> => {
   const out: Instrument[] = [];
 
-  const spot = await fetchJson<{ data?: Spot[] }>(SPOT, 'htx');
+  const spot = await fetchJson<{ data?: Spot[] }>(SPOT, 'htx', refusedV2);
 
-  for (const one of spot.data ?? []) {
+  for (const one of listOf(spot, SPOT)) {
     if (! one.bc || ! one.qc) continue;
 
     out.push({
@@ -23,9 +23,9 @@ export const htxInstruments = async (_db: DatabaseSync): Promise<Instrument[]> =
   await metadataGap();
 
   /** A dated contract is underlying, quote and delivery day, the day read from its own field. */
-  const futures = await fetchJson<{ data?: Future[] }>(FUTURES, 'htx');
+  const futures = await fetchJson<{ data?: Future[] }>(FUTURES, 'htx', refused);
 
-  for (const one of futures.data ?? []) {
+  for (const one of listOf(futures, FUTURES)) {
     if (! one.symbol || ! one.delivery_date) continue;
 
     out.push({
@@ -39,9 +39,9 @@ export const htxInstruments = async (_db: DatabaseSync): Promise<Instrument[]> =
   for (const url of [COIN_SWAP, LINEAR_SWAP]) {
     await metadataGap();
 
-    const body = await fetchJson<{ data?: Swap[] }>(url, 'htx');
+    const body = await fetchJson<{ data?: Swap[] }>(url, 'htx', refused);
 
-    for (const one of body.data ?? []) {
+    for (const one of listOf(body, url)) {
       if (! one.contract_code) continue;
 
       out.push({
@@ -56,6 +56,28 @@ export const htxInstruments = async (_db: DatabaseSync): Promise<Instrument[]> =
 };
 
 // ── Internals ─────────────────────────────────────────────────────────────────
+
+/**
+ * **Every answer is a `200`; the body is what says whether it worked**, and read
+ * without that an error reads as an empty list — every instrument on that
+ * endpoint delisted. The derivative endpoints answer `status: "ok"` and nothing
+ * else when they worked.
+ */
+const refused = (body: unknown): boolean => (body as { status?: unknown }).status !== 'ok';
+
+/** The spot endpoint, which may speak either dialect: `status` or a numeric `code`. */
+const refusedV2 = (body: unknown): boolean => {
+  const { status, code } = body as { status?: unknown; code?: unknown };
+
+  return status === 'error' || (code !== undefined && code !== 200);
+};
+
+/** An answer's records, or a failure: a body without a list is not an empty listing. */
+const listOf = <T>(body: { data?: T[] }, url: string): T[] => {
+  if (! Array.isArray(body.data)) throw new Error(`htx instruments: no list in the answer from ${url}`);
+
+  return body.data;
+};
 
 interface Spot   { sc?: string; bc?: string; qc?: string; state?: string }
 interface Future { symbol?: string; delivery_date?: string; contract_status?: number }

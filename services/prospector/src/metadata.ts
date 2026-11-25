@@ -87,28 +87,36 @@ export const fetchJson = async <T>(url: string, of: string, refused?: Refusal): 
       }
 
       /**
-       * **A `200` is not always an answer.** okx's portal returns its throttle
-       * as a code inside the body, so the status alone cannot say whether this
-       * worked — and only the venue knows what that looks like.
+       * **A `200` is not always an answer.** Several venues return their errors
+       * and throttles as a code inside the body, so the status alone cannot say
+       * whether this worked — and only the venue knows what that looks like.
        */
       if (! refused?.(body)) return body;
 
-      if (attempt >= METADATA_ATTEMPTS) throw new Error(`${of} throttled the metadata: ${url}`);
+      if (attempt >= METADATA_ATTEMPTS) throw new Error(`${of} refused the metadata: ${url}`);
     } else {
       // Nothing below reads a refusal's body, and an unread one holds its socket.
       if (answered.body) await answered.body.cancel().catch(() => {});
 
-      if (res.status !== 429 || attempt >= METADATA_ATTEMPTS)
+      /**
+       * **A throttle and a server fault are asked again; anything else is an
+       * answer.** A 429 or a 5xx says nothing about the request, only about the
+       * moment, and lapses; another 4xx is the venue saying no to the request
+       * itself, and asking again only says it again.
+       */
+      if (! retryable(res.status) || attempt >= METADATA_ATTEMPTS)
         throw new Error(`${of} metadata failed ${res.status}: ${url}`);
     }
 
     const wait = METADATA_PAUSE_MS * (attempt + 1);
 
-    logger.warn({ url, attempt: attempt + 1, wait }, `${of} metadata throttled — waiting`);
+    logger.warn({ url, attempt: attempt + 1, wait }, `${of} metadata refused — waiting`);
 
     await sleep(wait);
   }
 };
+
+const retryable = (status: number): boolean => status === 429 || status >= 500;
 
 const METADATA_ATTEMPTS = 6;
 

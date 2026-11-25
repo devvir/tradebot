@@ -37,6 +37,9 @@ setDefaultAutoSelectFamily(false);
 /** Names are looked up once per host, not once per connection — see `lookup.ts`. */
 cacheLookups();
 
+/** The exit status for a configuration that cannot be used, as `sysexits.h` numbers it. */
+const EX_CONFIG = 78;
+
 /**
  * The prospector establishes what each venue publishes, and stops there.
  *
@@ -90,9 +93,14 @@ const main = async (service: Service): Promise<void> => {
   /**
    * **When each venue's update is a walk is this deployment's to say**, in a
    * file that need not be there. A file that is there and cannot be taken as
-   * written stops the service — with a clean exit, so that nothing restarts it
-   * into the same refusal: the alternative is walking a venue on a day nobody
-   * chose, and a walk is days of this machine's link.
+   * written stops the service before it surveys anything: the alternative is
+   * walking a venue on a day nobody chose, and a walk is days of this machine's
+   * link.
+   *
+   * **The exit says the start failed** — `EX_CONFIG`, a configuration error —
+   * rather than reporting success. A supervisor that restarts failed services
+   * restarts this one into the same refusal, logged on every start, until the
+   * file is fixed or removed.
    */
   try {
     applySchedule(loadSchedule(schedulePath(), walkable(db), VENUE_NAMES));
@@ -100,7 +108,7 @@ const main = async (service: Service): Promise<void> => {
     logger.error({ file: schedulePath(), problem: (err as Error).message },
       'The walk schedule cannot be used — fix it or remove it; stopping');
 
-    process.exit(0);
+    process.exit(EX_CONFIG);
   }
 
   logger.info({ file: existsSync(schedulePath()) ? schedulePath() : '(none — every venue on its default day)',
@@ -342,6 +350,12 @@ const dueFor = (db: DatabaseSync, adapter: Adapter): number => {
  * **Waiting is the whole of it.** Resetting under a live walk would drop the
  * rows a partition is still committing cursors to, and the pass would carry on
  * writing against a job that no longer exists.
+ *
+ * **The latest request wins.** A request that acts on the venue takes a ticket
+ * from `generation`, and so does a pause; one that has been waiting and finds a
+ * later ticket out gives up without touching anything. So two refreshes in a row
+ * discard the runs once, and a pause sent while a refresh or a forced update
+ * waits leaves the venue paused rather than being lifted by it.
  */
 const begin = async (
   db:       DatabaseSync,
@@ -357,9 +371,18 @@ const begin = async (
    */
   const interrupt = refresh || occasion === 'partial';
 
-  if (walking.has(venue)) {
-    if (! interrupt) return;
+  /**
+   * **An ordinary request for a running venue takes no ticket**, because it
+   * does nothing: superseding a refresh that is waiting would leave the loop
+   * that refresh stopped stopped, with nothing to start it again.
+   */
+  if (walking.has(venue) && ! interrupt) return;
 
+  const ticket = supersede(venue);
+  const asked  = new Date().toISOString();
+  const latest = (): boolean => generation.get(venue) === ticket;
+
+  if (walking.has(venue)) {
     logger.info({ venue, for: refresh ? 'refresh' : 'update' },
       'Stopping the current pass first');
 
@@ -370,7 +393,23 @@ const begin = async (
      */
     halt(venue);
 
-    await until(() => ! walking.has(venue));
+    if (! await until(() => ! walking.has(venue), latest)) {
+      logger.info({ venue }, 'Superseded by a later request; not starting');
+
+      return;
+    }
+  }
+
+  /**
+   * **A pause recorded after this was asked is the later word**, wherever it
+   * came from, and is left standing.
+   */
+  const pausedAt = enrolled(db, venue)?.pausedAt ?? null;
+
+  if (! latest() || (pausedAt !== null && pausedAt > asked)) {
+    logger.info({ venue }, 'Superseded by a later request; not starting');
+
+    return;
   }
 
   /**
@@ -430,22 +469,57 @@ const begin = async (
     .map(adapter => syncVenue(db, adapter, config, occasion, () => halting.has(venue),
       occasion === 'partial' ? 0 : dueFor(db, adapter)));
 
-  void Promise.allSettled(done).finally(() => {
+  /**
+   * **A loop that ends other than by stopping is said out loud.** Each one
+   * catches and retries its own passes, so a rejection here is a fault in the
+   * loop itself, and the venue is left enrolled with nothing surveying it.
+   */
+  void Promise.allSettled(done).then(settled => {
+    for (const one of settled)
+      if (one.status === 'rejected')
+        logger.error({ ...fault(one.reason), venue }, 'Survey loop ended');
+  }).finally(() => {
     walking.delete(venue);
     halting.delete(venue);
   });
 };
 
 /**
- * Wait for a condition the survey loops clear on their own.
+ * Wait for a condition the survey loops clear on their own, for as long as the
+ * wait is still wanted.
  *
  * Polled rather than signalled: a pass stops between pages and a page can be a
  * listing request, so the wait is seconds either way and a poll costs one map
  * lookup a beat.
+ *
+ * Answers whether the condition was met, which is `false` once `wanted` stops
+ * holding.
  */
-const until = async (met: () => boolean): Promise<void> => {
-  while (! met()) await new Promise(resolve => setTimeout(resolve, 250));
+const until = async (met: () => boolean, wanted: () => boolean): Promise<boolean> => {
+  for (;;) {
+    if (! wanted()) return false;
+    if (met())      return true;
+
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
 };
+
+/**
+ * Take the next ticket for a venue, which makes every earlier one stale.
+ *
+ * **Held only in memory**, like `walking`: what it orders is requests to this
+ * process, and a restart leaves none of them waiting.
+ */
+const supersede = (venue: string): number => {
+  const next = (generation.get(venue) ?? 0) + 1;
+
+  generation.set(venue, next);
+
+  return next;
+};
+
+/** The latest ticket taken for each venue, by `begin` or by `pause`. */
+const generation = new Map<string, number>();
 
 /**
  * Ask a venue's survey to stop where it is.
@@ -466,6 +540,9 @@ export const pause = (db: DatabaseSync, venue: string): boolean => {
    * it now.
    */
   const recorded = pauseSurvey(db, venue, new Date().toISOString());
+
+  /** Whatever `begin` is still waiting to start is overruled by this. */
+  supersede(venue);
 
   if (! halt(venue)) {
     if (recorded) logger.info({ venue }, 'Survey paused');
@@ -558,3 +635,7 @@ export const surveyable = (): string[] =>
   [...new Set(adaptersFor(config.venues).filter(a => a.scanner.name !== 'none').map(a => a.name))];
 
 SK.run(main);
+
+// ── Test access ───────────────────────────────────────────────────────────────
+
+export const _test_begin = begin;

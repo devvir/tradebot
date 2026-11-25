@@ -5,22 +5,32 @@ import type { Instrument } from '../../types';
 export const kucoinInstruments = async (): Promise<Instrument[]> => {
   const out: Instrument[] = [];
 
-  const spot = await fetchJson<{ data?: Spot[] }>(SPOT, 'kucoin');
+  const spot = await fetchJson<{ data?: Spot[] }>(SPOT, 'kucoin', refused);
 
-  for (const one of spot.data ?? [])
+  for (const one of listOf(spot, SPOT))
     if (one.symbol) out.push({ market: 'spot', symbol: one.symbol, live: one.enableTrading !== false });
 
   await metadataGap();
 
-  const futures = await fetchJson<{ data?: Contract[] }>(FUTURES, 'kucoin');
+  const futures = await fetchJson<{ data?: Contract[] }>(FUTURES, 'kucoin', refused);
 
-  for (const one of futures.data ?? [])
+  for (const one of listOf(futures, FUTURES))
     if (one.symbol) out.push({ market: 'perp', symbol: one.symbol, live: one.status === 'Open' });
 
   return out;
 };
 
 // ── Internals ─────────────────────────────────────────────────────────────────
+
+/** Every answer is `{code, data}`, and only `"200000"` is success. */
+const refused = (body: unknown): boolean => (body as { code?: unknown }).code !== '200000';
+
+/** An answer's records, or a failure: a body without a list is not an empty listing. */
+const listOf = <T>(body: { data?: T[] }, url: string): T[] => {
+  if (! Array.isArray(body.data)) throw new Error(`kucoin instruments: no list in the answer from ${url}`);
+
+  return body.data;
+};
 
 interface Spot     { symbol?: string; enableTrading?: boolean }
 interface Contract { symbol?: string; status?: string }

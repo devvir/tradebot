@@ -58,21 +58,37 @@ const catalogue = async (
       if (baseCoin) query.set('baseCoin', baseCoin);
       if (cursor) query.set('cursor', cursor);
 
-      const body = await fetchJson<Answer>(`${INSTRUMENTS}?${query}`, 'bybit');
+      /**
+       * **Every answer is a `200`; `retCode` is what says whether it worked.**
+       * Read without it, an error reads as an empty category — and every
+       * instrument in it as delisted.
+       */
+      const body = await fetchJson<Answer>(`${INSTRUMENTS}?${query}`, 'bybit', refused);
+      const list = body.result?.list;
 
-      for (const one of body.result?.list ?? [])
+      if (! Array.isArray(list))
+        throw new Error(`bybit instruments: ${category} ${status} answered without a list`);
+
+      for (const one of list)
         out.push({ symbol: one.symbol, status: one.status });
 
       cursor = body.result?.nextPageCursor ?? '';
 
       if (! cursor) break;
     }
+
+    /** A category cut short is not a category: what is missing from it would read as delisted. */
+    if (cursor)
+      throw new Error(`bybit instruments: cursor not exhausted after ${PAGES} pages of ${category} ${status}`);
   }
 
   return out;
 };
 
+const refused = (body: unknown): boolean => (body as Answer).retCode !== 0;
+
 interface Answer {
+  retCode?: number;
   result?: {
     list?:            { symbol: string; status: string }[];
     nextPageCursor?:  string;
@@ -81,5 +97,5 @@ interface Answer {
 
 const INSTRUMENTS = 'https://api.bybit.com/v5/market/instruments-info';
 
-/** A cap on pages, so that a cursor that never empties cannot spin. */
+/** A cap on pages, so that a cursor that never empties cannot spin; reaching it fails the listing. */
 const PAGES = 12;

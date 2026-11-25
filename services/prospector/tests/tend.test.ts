@@ -2,11 +2,11 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { putVenue } from '../src/catalog';
+import { putVenue, reconcile } from '../src/catalog';
 import { openCatalog } from '../src/database';
 import { REFUSALS_BEFORE_BLOCK, _test_paces, paceFor } from '../src/pace';
 import { surveyVenue } from '../src/survey';
-import { _test_FLOOR_MS, _test_tend } from '../src/sync';
+import { _test_FLOOR_MS, _test_onePass, _test_tend } from '../src/sync';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Adapter, Config, Survey } from '../src/types';
 
@@ -14,6 +14,12 @@ vi.mock('../src/survey', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/survey')>()),
   surveyVenue: vi.fn(),
 }));
+
+vi.mock('../src/catalog', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/catalog')>();
+
+  return { ...actual, reconcile: vi.fn(actual.reconcile) };
+});
 
 /**
  * How long the survey loop waits after a pass that reported a block.
@@ -58,6 +64,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.mocked(surveyVenue).mockReset();
+  vi.mocked(reconcile).mockClear();
   _test_paces.clear();
   db.close();
   rmSync(dir, { recursive: true, force: true });
@@ -90,6 +97,44 @@ describe('after a pass that was blocked', () => {
 
   /** Nothing latched: the pass did not finish, and the loop waits as it does for any such pass. */
   it('takes the ordinary floor when the gate holds nothing', async () => {
+    const tending = _test_tend(db, adapter, config, 'full', () => false);
+
+    expect(await passesAfter(0)).toBe(1);
+    expect(await passesAfter(_test_FLOOR_MS - 1_000)).toBe(1);
+    expect(await passesAfter(2_000)).toBe(2);
+
+    await expect(tending).resolves.toBe(true);
+  });
+
+  /** A pass stopped while it waits out a block has not finished, so nothing is reconciled. */
+  it('does not reconcile a pass that ends while it waits', async () => {
+    const gate = paceFor(adapter, adapter.base);
+
+    for (let i = 0; i < REFUSALS_BEFORE_BLOCK; i++)
+      gate.block(403, adapter.base, new Headers({ server: 'CloudFront' }));
+
+    let paused = false;
+
+    const passing = _test_onePass(db, adapter, config, 'full', () => paused);
+
+    expect(await passesAfter(0)).toBe(1);
+
+    paused = true;
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    await expect(passing).resolves.toBeUndefined();
+    expect(vi.mocked(surveyVenue).mock.calls.length).toBe(1);
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+});
+
+describe('after a pass that threw', () => {
+  /** Whatever the survey managed is committed; the next turn continues from its cursors. */
+  it('tries again after the floor', async () => {
+    vi.mocked(surveyVenue).mockReset()
+      .mockRejectedValueOnce(new Error('listing failed 503'))
+      .mockResolvedValue(pass({ generated: true }));
+
     const tending = _test_tend(db, adapter, config, 'full', () => false);
 
     expect(await passesAfter(0)).toBe(1);
