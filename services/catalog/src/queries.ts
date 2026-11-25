@@ -22,8 +22,8 @@ export const venueIds = (db: DatabaseSync, name: string): number[] =>
  * **Held for `SERIES_MS`.** The contents fold a venue's series on every view of
  * it — its markets, shapes and instruments, and its summary through a lens — and
  * a venue can have a hundred thousand of them. The registry changes only when a
- * survey finds an instrument, so a minute-old read is current enough. The rows are frozen: they are shared by
- * every caller until they are dropped.
+ * survey finds an instrument, so a minute-old read is current enough. The rows
+ * are frozen: they are shared by every caller until they are dropped.
  */
 export const seriesFor = (db: DatabaseSync, venueId: number, only?: SeriesFilter): Series[] =>
   heldSeries(db, venueId).filter(row =>
