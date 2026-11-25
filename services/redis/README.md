@@ -18,7 +18,7 @@ own name, ports and volume.
 
 | Variable | Meaning |
 |---|---|
-| `CACHE_PASS` | The password. Required: compose refuses to start the service when it is unset or empty, since an empty password would turn authentication off. Redis has no user name. |
+| `CACHE_PASS` | The password. Required: compose refuses to start the service when it is unset or empty, since an empty password would turn authentication off. Clients authenticate as Redis's `default` user, so a URL carries no user name. |
 | `CACHE_PORT` | The host port published for 6379. Empty still publishes, on a free host port docker picks; `docker compose port` shows which. |
 | `CACHE_BIND` | The host address the port is published on. Default `127.0.0.1`, so only the host connects. |
 | `TZ` | The container's time zone. Default `UTC`. |

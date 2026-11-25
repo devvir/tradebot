@@ -1,8 +1,7 @@
 # ui (stub)
 
 A BitMEX-style trading dashboard in React 19 and Vite, kept as a stub. It is wired against BitMEX's REST
-and WebSocket APIs and against `digger`, a replay backend; neither exists today (BitMEX has closed, and
-no service in this repository is `digger`).
+and WebSocket APIs and against `digger`, a replay backend that no service in this repository provides.
 
 Deployed by: no module.
 
