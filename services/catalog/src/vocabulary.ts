@@ -10,9 +10,6 @@
 /** The venue-wide file: one file carrying every instrument of a market. */
 export const VENUE_WIDE = '@';
 
-/** How often a shape can publish. */
-export const GRAINS = ['monthly', 'daily', 'hourly', 'minutely'] as const;
-
 /**
  * One dataset's variant, taken apart into the levels it is made of.
  *

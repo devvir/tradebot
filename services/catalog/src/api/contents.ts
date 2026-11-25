@@ -2,11 +2,11 @@ import { contentsOf, venueContents } from '../contents';
 import { lensRequested, noSuchLens } from '../lenses/requested';
 import { partitionContents } from '../partitions';
 import { venueIds } from '../queries';
-import { INVALID, flag, grainOf, queryText } from './query';
-import { GRAINS } from '../vocabulary';
+import { BUNDLES, GRAINS } from '@tradebot/lenses';
+import { INVALID, bundleOf, flag, grainOf, queryText } from './query';
 import type { Application, Request, Response } from 'express';
 import type { DatabaseSync } from 'node:sqlite';
-import type { Bundle, ContentsAsked, Grain, RequestedLens } from '../types';
+import type { ContentsAsked, Grain, RequestedLens } from '../types';
 
 /**
  * What the catalog holds, walked one level at a time: venues, then a venue's
@@ -50,10 +50,10 @@ export const mountContents = (app: Application, db: DatabaseSync): void => {
 
     if (grain === null) return;
 
-    const { bundle } = asked;
+    const bundle = bundleOf(asked.bundle);
 
-    if (bundle !== undefined && bundle !== 'instrument' && bundle !== 'market') {
-      res.status(400).json({ error: 'bundle must be instrument or market' });
+    if (bundle === 'invalid') {
+      res.status(400).json({ error: `bundle must be one of ${BUNDLES.join(', ')}` });
 
       return;
     }
@@ -82,7 +82,7 @@ export const mountContents = (app: Application, db: DatabaseSync): void => {
       ...(datasets ? { datasets } : {}),
       ...(variant  ? { variant }  : {}),
       ...(grain    ? { grain }    : {}),
-      ...(bundle   ? { bundle: bundle as Bundle } : {}),
+      ...(bundle   ? { bundle } : {}),
       ...(downloaded ? { downloaded: true } : {}),
       ...(settled  ? { settled: true } : {}),
       ...(before   ? { settledBefore: before } : {}),

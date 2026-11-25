@@ -477,8 +477,15 @@ describe('a venue\'s partitions', () => {
   });
 
   it('refuses a grain or a bundle there is no such thing as', async () => {
-    expect((await call('/venues/binance/partitions?grain=weekly')).status).toBe(400);
-    expect((await call('/venues/binance/partitions?bundle=symbol')).status).toBe(400);
+    expect(await call('/venues/binance/partitions?grain=weekly'))
+      .toMatchObject({ status: 400, body: { error: 'grain must be one of monthly, daily, hourly, minutely' } });
+    expect(await call('/venues/binance/partitions?bundle=symbol'))
+      .toMatchObject({ status: 400, body: { error: 'bundle must be one of instrument, market' } });
     expect((await call('/venues/nowhere/partitions')).status).toBe(404);
+  });
+
+  it('narrows by bundle', async () => {
+    expect((await partitions('?bundle=instrument')).map(one => one.bundle)).toEqual(['instrument']);
+    expect(await partitions('?bundle=market')).toEqual([]);
   });
 });

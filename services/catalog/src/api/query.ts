@@ -6,8 +6,8 @@
  * `'invalid'`), and its route refuses the request.
  */
 
-import { GRAINS } from '../vocabulary';
-import type { Grain } from '../types';
+import { BUNDLES, GRAINS } from '@tradebot/lenses';
+import type { Bundle, Grain } from '../types';
 
 /** A parameter given more than once, or as anything but text. */
 export const INVALID: unique symbol = Symbol('invalid');
@@ -36,6 +36,10 @@ export const flag = (raw: unknown): boolean | undefined | 'invalid' => {
 /** A grain, from a parameter's text: `undefined` where none was given, `'invalid'` where it is not one of `GRAINS`. */
 export const grainOf = (text: string | undefined): Grain | undefined | 'invalid' =>
   (text === undefined ? undefined : (GRAINS as readonly string[]).includes(text) ? text as Grain : 'invalid');
+
+/** A bundle, from a parameter's text: `undefined` where none was given, `'invalid'` where it is not one of `BUNDLES`. */
+export const bundleOf = (text: string | undefined): Bundle | undefined | 'invalid' =>
+  (text === undefined ? undefined : (BUNDLES as readonly string[]).includes(text) ? text as Bundle : 'invalid');
 
 /**
  * Whether XML 1.0 can carry a text: no control character but tab, newline and
