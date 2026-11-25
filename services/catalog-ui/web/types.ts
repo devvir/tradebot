@@ -224,7 +224,7 @@ export interface LensDraft {
   /** Each venue's rules, drafts among the saved ones. */
   rules: Record<string, RuleEntry[]>;
 
-  /** The lens's `updatedAt` it was written against; empty for a lens not yet saved. */
+  /** The lens's `updatedAt` it was written against — for a lens not yet saved, when it was named. */
   from:  string;
 }
 
