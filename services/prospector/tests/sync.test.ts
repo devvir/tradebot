@@ -169,7 +169,7 @@ describe('while the walk is still running', () => {
     /**
      * **Everything but `setImmediate`.** These tests drive the probe loop's own
      * wait; the catalog's writer yields with `setImmediate` between slices, and
-     * faking that stops a write ever completing — see `slice` in `queries.ts`.
+     * faking that stops a write ever completing — see `slice` in `serial.ts`.
      */
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
 
@@ -206,7 +206,7 @@ describe('while the walk is still running', () => {
     /**
      * **Everything but `setImmediate`.** These tests drive the probe loop's own
      * wait; the catalog's writer yields with `setImmediate` between slices, and
-     * faking that stops a write ever completing — see `slice` in `queries.ts`.
+     * faking that stops a write ever completing — see `slice` in `serial.ts`.
      */
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
 

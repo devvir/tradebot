@@ -1,4 +1,4 @@
-import type { DatabaseSync, StatementSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
 import type { LookupAddress } from 'node:dns';
 import type { ClientHttp2Session } from 'node:http2';
 import type { Worker } from 'node:worker_threads';
@@ -121,7 +121,7 @@ export interface FileMetadata {
   modified: string | null;
 }
 
-/** A catalogued file as `queries.ts` reads it back. */
+/** A catalogued file as the catalog reads it back — see `ROW` in `catalog/rows.ts`. */
 export interface FileRow extends FileMetadata {
   seriesId:     number;
   partitionId:  number;
@@ -1475,6 +1475,13 @@ export interface Parts {
  */
 export type Parking = Omit<Unsettled, 'seq'>;
 
+/** Keys waiting to be parked, and the callers waiting on them, for one database. */
+export interface ParkingBuffer {
+  rows:    Parking[];
+  waiting: { ok: (n: number) => void; no: (err: unknown) => void }[];
+  timer:   ReturnType<typeof setTimeout> | null;
+}
+
 /**
  * A backlog row written by a caller whose transaction spans `file` as well —
  * see `writer` in `catalog/wip.ts`. It carries the metadata a walk already had,
@@ -1833,9 +1840,6 @@ export interface PartitionDelta {
   version:      bigint;
 }
 
-/** The partition writer's statements, prepared once per database. */
-export type PartitionStatements = Record<'count' | 'version' | 'move' | 'slice' | 'find' | 'make', StatementSync>;
-
 /** Which partition a file of a series and a date belongs to, created where it is new. */
 export interface PartitionResolver {
   of: (seriesId: number, date: string) => number;
@@ -2166,6 +2170,27 @@ export interface Publishing extends Series {
   retiredAt:    string | null;
 }
 
+/**
+ * The series and patterns held for one open database.
+ *
+ * `moved` is the debounce: the ids whose tip has advanced in memory and not yet
+ * on disk. `patterns` is how a reported shape finds its id without a query.
+ */
+export interface SeriesRegistry {
+  /** The database these rows came from, so a self-scheduled flush can reach it. */
+  db:       DatabaseSync;
+
+  byKey:    Map<string, Publishing>;
+  byId:     Map<number, Publishing>;
+
+  /** Every series of each instrument, since they share its state. */
+  byInstrument: Map<number, Publishing[]>;
+  patterns: Map<string, { id: number; retiredAt: string | null }>;
+  moved:    Set<number>;
+
+  /** The pending quiet-interval flush, if one is owed. */
+  timer:    NodeJS.Timeout | null;
+}
 
 /** What a listing page reads into, by the format it is in. */
 export interface Pages {

@@ -1,7 +1,8 @@
 import { admit, lenses } from '@tradebot/lenses';
 import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import type { FileEffect, FileState, PartitionDelta, PartitionResolver, PartitionStatements } from '../../types';
+import { statement } from '../state';
+import type { FileEffect, FileState, PartitionDelta, PartitionResolver } from '../../types';
 
 /**
  * The partitions: one row per slice and month, holding how many files it has,
@@ -95,18 +96,20 @@ export const record = (
 
   if (deltas.length === 0) return;
 
-  const sql = statements(db);
+  const count   = statement(db, COUNT);
+  const version = statement(db, VERSION);
+  const move    = statement(db, MOVE);
 
   for (const d of deltas) {
     if (d.version === 0n) {
-      sql.count.run(d.files, d.bytes, d.pending, d.pendingBytes, d.withdrawn, d.partitionId);
+      count.run(d.files, d.bytes, d.pending, d.pendingBytes, d.withdrawn, d.partitionId);
 
       continue;
     }
 
-    const held = sql.version.get(d.partitionId) as { version: string };
+    const held = version.get(d.partitionId) as { version: string };
 
-    sql.move.run(d.files, d.bytes, d.pending, d.pendingBytes, d.withdrawn,
+    move.run(d.files, d.bytes, d.pending, d.pendingBytes, d.withdrawn,
       versionOf(BigInt(`0x${held.version}`) + d.version), at, d.partitionId);
   }
 };
@@ -120,16 +123,18 @@ export const record = (
  * it — so it must not outlive that transaction.
  */
 export const resolver = (db: DatabaseSync, at: string = new Date().toISOString()): PartitionResolver => {
-  const sql    = statements(db);
-  const slices = new Map<number, number>();
-  const ids    = new Map<string, number>();
+  const sliceOf = statement(db, SLICE);
+  const find    = statement(db, FIND);
+  const make    = statement(db, MAKE);
+  const slices  = new Map<number, number>();
+  const ids     = new Map<string, number>();
 
   return {
     of: (seriesId: number, date: string): number => {
       let slice = slices.get(seriesId);
 
       if (slice === undefined) {
-        slice = (sql.slice.get(seriesId) as { sliceId: number }).sliceId;
+        slice = (sliceOf.get(seriesId) as { sliceId: number }).sliceId;
         slices.set(seriesId, slice);
       }
 
@@ -139,8 +144,8 @@ export const resolver = (db: DatabaseSync, at: string = new Date().toISOString()
 
       if (had !== undefined) return had;
 
-      const found = sql.find.get(slice, month) as { id: number } | undefined;
-      const id    = found ? found.id : Number(sql.make.run(slice, month, at).lastInsertRowid);
+      const found = find.get(slice, month) as { id: number } | undefined;
+      const id    = found ? found.id : Number(make.run(slice, month, at).lastInsertRowid);
 
       /**
        * **A partition is in its lenses from the moment it exists.** It is taken
@@ -208,28 +213,14 @@ const moves = (d: PartitionDelta): boolean =>
   d.files !== 0 || d.bytes !== 0 || d.pending !== 0 || d.pendingBytes !== 0 || d.withdrawn !== 0
   || d.version !== 0n;
 
-/** Prepared once per database: every file write passes through here. */
-const statements = (db: DatabaseSync): PartitionStatements => {
-  let held = PREPARED.get(db);
+// Prepared once per database, since every file write passes through here.
 
-  if (! held) {
-    const counters = `files = files + ?, bytes = bytes + ?, pending = pending + ?,
-                      pending_bytes = pending_bytes + ?, withdrawn = withdrawn + ?`;
+const COUNTERS = `files = files + ?, bytes = bytes + ?, pending = pending + ?,
+                  pending_bytes = pending_bytes + ?, withdrawn = withdrawn + ?`;
 
-    held = {
-      count:   db.prepare(`UPDATE partition SET ${counters} WHERE id = ?`),
-      version: db.prepare('SELECT version FROM partition WHERE id = ?'),
-      move:    db.prepare(`UPDATE partition SET ${counters}, version = ?, updated_at = ? WHERE id = ?`),
-      slice:   db.prepare(
-        'SELECT p.slice_id AS sliceId FROM series s JOIN pattern p ON p.id = s.pattern_id WHERE s.id = ?'),
-      find:    db.prepare('SELECT id FROM partition WHERE slice_id = ? AND month = ?'),
-      make:    db.prepare('INSERT INTO partition (slice_id, month, updated_at) VALUES (?, ?, ?)'),
-    };
-
-    PREPARED.set(db, held);
-  }
-
-  return held;
-};
-
-const PREPARED = new WeakMap<DatabaseSync, PartitionStatements>();
+const COUNT   = `UPDATE partition SET ${COUNTERS} WHERE id = ?`;
+const VERSION = 'SELECT version FROM partition WHERE id = ?';
+const MOVE    = `UPDATE partition SET ${COUNTERS}, version = ?, updated_at = ? WHERE id = ?`;
+const SLICE   = 'SELECT p.slice_id AS sliceId FROM series s JOIN pattern p ON p.id = s.pattern_id WHERE s.id = ?';
+const FIND    = 'SELECT id FROM partition WHERE slice_id = ? AND month = ?';
+const MAKE    = 'INSERT INTO partition (slice_id, month, updated_at) VALUES (?, ?, ?)';

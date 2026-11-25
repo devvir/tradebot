@@ -3,9 +3,10 @@ import { atGrain, dueAt, lastClosed, lastSettled } from '../dates';
 import { putTransform, transformFor, transformsOf } from './transform';
 import { BUCKET } from '../canonical';
 import { INSTRUMENT_OF, SLICE_OF } from '../database/schema';
+import { inMemory, statement } from './state';
 import { inTransaction } from './tx';
-import type { DatabaseSync, StatementSync } from 'node:sqlite';
-import type { Found, Grain, Publishing, Reconciled, SeriesCount, SeriesFilter, Slots, Transform } from '../types';
+import type { DatabaseSync } from 'node:sqlite';
+import type { Found, Grain, Publishing, Reconciled, SeriesCount, SeriesFilter, SeriesRegistry as Registry, Slots, Transform } from '../types';
 
 /**
  * What a venue publishes: the URL shapes, and the instruments occupying them.
@@ -84,7 +85,7 @@ export const updateSeries = (db: DatabaseSync, series: Publishing): Publishing =
 
   if (! row) return series;
 
-  statements(db, held).bounds.run(series.first, series.last, series.tip, row.id!);
+  statement(db, BOUNDS).run(series.first, series.last, series.tip, row.id!);
 
   Object.assign(row, {
     first:  series.first,
@@ -349,7 +350,7 @@ export const retirePattern = (db: DatabaseSync, patternId: number, at: string): 
 export const addTransform = (db: DatabaseSync, row: Transform): void => {
   putTransform(db, row);
 
-  const held = REGISTRIES.get(db);
+  const held = inMemory(db).series;
 
   if (! held) return;
 
@@ -704,7 +705,7 @@ export const reconcile = async (
 
     if (real.first === null) {
       if ((referenced.get(row.id!) as { held: number }).held === 0) {
-        dropRow(db, held, row);
+        dropRow(db, row);
         dropped.push(row);
       }
 
@@ -796,7 +797,7 @@ export const flushTips = (db: DatabaseSync): number => {
 
   if (held.moved.size === 0) return 0;
 
-  const set = statements(db, held).bounds;
+  const set = statement(db, BOUNDS);
 
   /**
    * **A caller may already be inside a transaction.** Opening a second would
@@ -824,7 +825,8 @@ export const flushTips = (db: DatabaseSync): number => {
  * SQLite to learn whether a series is known.
  */
 export const loadSeries = (db: DatabaseSync): number => {
-  const had = REGISTRIES.get(db);
+  const memory = inMemory(db);
+  const had    = memory.series;
 
   // Bounds moved in the registry being replaced are written out first: the new
   // one is read from disk, and would otherwise come back without them.
@@ -832,10 +834,10 @@ export const loadSeries = (db: DatabaseSync): number => {
 
   const held: Registry = {
     db, byKey: new Map(), byId: new Map(), byInstrument: new Map(), patterns: new Map(),
-    moved: new Set(), timer: null, sql: null,
+    moved: new Set(), timer: null,
   };
 
-  REGISTRIES.set(db, held);
+  memory.series = held;
 
   for (const row of readPatterns(db))
     held.patterns.set(patternKey(row.venueId, row.market, row.dataset, row.bundle, row.pattern),
@@ -998,93 +1000,40 @@ const substituted = (series: Publishing, at: string): string =>
   series.pattern.replaceAll(TRANSFORM, (_, kind: string, fallback: string) =>
     transformFor(series.transforms, series.dataset, kind, at) ?? fallback);
 
-/**
- * What is held for one open database.
- *
- * `moved` is the debounce: the ids whose tip has advanced in memory and not yet
- * on disk. `patterns` is how a reported shape finds its id without a query.
- */
-interface Registry {
-  /** The database these rows came from, so a self-scheduled flush can reach it. */
-  db:       DatabaseSync;
+// ── Statements ────────────────────────────────────────────────────────────────
+//
+// Prepared once per database — see `statement` — because inserting is a per-row
+// path: a seed inserts tens of thousands of rows in one go, and preparing the
+// same SQL for each of them would make opening a catalog roughly ten times
+// slower. `SLICE_OF` and `INSTRUMENT_OF` find a shape's slice and a series'
+// instrument, creating either where it is new.
 
-  byKey:    Map<string, Publishing>;
-  byId:     Map<number, Publishing>;
+const PATTERN = `INSERT INTO pattern (venue_id, slice_id, pattern, holds)
+                      VALUES (?, ?, ?, ?)
+                 ON CONFLICT (venue_id, slice_id, pattern) DO NOTHING
+                   RETURNING id`;
 
-  /** Every series of each instrument, since they share its state. */
-  byInstrument: Map<number, Publishing[]>;
-  patterns: Map<string, { id: number; retiredAt: string | null }>;
-  moved:    Set<number>;
+const INSERT = `INSERT INTO series (pattern_id, instrument_id, url_symbol,
+                                    first, last, tip)
+                     VALUES (?, ?, ?, ?, ?, ?)
+                -- A self-assignment of half the conflict key, so the row is untouched and
+                -- RETURNING still yields its id. DO NOTHING would return no row at all,
+                -- and every caller here needs the id of the series it just named.
+                --
+                -- The registry refuses two series of one shape whose keys carry one name
+                -- before either reaches here -- see identity(). This is what is left for
+                -- the table to hold: one row per shape, instrument and spelling.
+                ON CONFLICT (pattern_id, COALESCE(instrument_id, 0), COALESCE(url_symbol, ''))
+                DO UPDATE SET pattern_id = excluded.pattern_id
+                  RETURNING id`;
 
-  /** The pending quiet-interval flush, if one is owed. */
-  timer:    NodeJS.Timeout | null;
+/** An instrument's state, which every series of it shares. */
+const STATE = 'UPDATE instrument SET state = ? WHERE id = ?';
 
-  sql:      Statements | null;
-}
+/** The one place a series row is removed — see `dropRow`. */
+const DROP = 'DELETE FROM series WHERE id = ?';
 
-interface Statements {
-  /** The slice a shape publishes into, created where it is new. */
-  slice:    StatementSync;
-  pattern:  StatementSync;
-  insert:   StatementSync;
-
-  /** The instrument a series is a shape of, created where it is new, and its state. */
-  instrument: StatementSync;
-  state:    StatementSync;
-
-  /** The one place a series row is removed — see `dropRow`. */
-  drop:     StatementSync;
-  bounds:   StatementSync;
-
-}
-
-/**
- * The statements, prepared once.
- *
- * **Because inserting is a per-row path.** A seed inserts tens of thousands of
- * rows in one go, and preparing the same SQL for each of them would make opening
- * a catalog roughly ten times slower.
- */
-const statements = (db: DatabaseSync, held: Registry): Statements =>
-  held.sql ??= {
-    slice: db.prepare(SLICE_OF),
-
-    pattern: db.prepare(
-      `INSERT INTO pattern (venue_id, slice_id, pattern, holds)
-            VALUES (?, ?, ?, ?)
-       ON CONFLICT (venue_id, slice_id, pattern) DO NOTHING
-         RETURNING id`,
-    ),
-
-    insert: db.prepare(
-      `INSERT INTO series (pattern_id, instrument_id, url_symbol,
-                           first, last, tip)
-            VALUES (?, ?, ?, ?, ?, ?)
-       -- A self-assignment of half the conflict key, so the row is untouched and
-       -- RETURNING still yields its id. DO NOTHING would return no row at all,
-       -- and every caller here needs the id of the series it just named.
-       --
-       -- The registry refuses two series of one shape whose keys carry one name
-       -- before either reaches here -- see identity(). This is what is left for
-       -- the table to hold: one row per shape, instrument and spelling.
-       ON CONFLICT (pattern_id, COALESCE(instrument_id, 0), COALESCE(url_symbol, ''))
-       DO UPDATE SET pattern_id = excluded.pattern_id
-         RETURNING id`,
-    ),
-
-    instrument: db.prepare(INSTRUMENT_OF),
-
-    state: db.prepare('UPDATE instrument SET state = ? WHERE id = ?'),
-    drop:  db.prepare('DELETE FROM series WHERE id = ?'),
-    bounds: db.prepare('UPDATE series SET first = ?, last = ?, tip = ? WHERE id = ?'),
-
-  };
-
-/**
- * Per database rather than per process: a service opens one and the tests open
- * several. Keyed on the handle, so nothing has to be threaded through callers.
- */
-const REGISTRIES = new WeakMap<DatabaseSync, Registry>();
+const BOUNDS = 'UPDATE series SET first = ?, last = ?, tip = ? WHERE id = ?';
 
 /**
  * **Built on first use, and never silently.**
@@ -1100,7 +1049,7 @@ const REGISTRIES = new WeakMap<DatabaseSync, Registry>();
  * it must not do is disappear for seconds without saying so.
  */
 const registry = (db: DatabaseSync): Registry => {
-  const held = REGISTRIES.get(db);
+  const held = inMemory(db).series;
 
   if (held) return held;
 
@@ -1112,7 +1061,7 @@ const registry = (db: DatabaseSync): Registry => {
   logger.info({ series, seconds: Math.round((Date.now() - started) / 100) / 10 },
     'Series loaded');
 
-  return REGISTRIES.get(db)!;
+  return inMemory(db).series!;
 };
 
 /**
@@ -1173,8 +1122,8 @@ const bundleOf = (symbol: string): 'instrument' | 'market' =>
  * `file` and `wip` both reference `series`, so the row must have neither: the
  * caller checks, and a row that still has one fails the foreign key.
  */
-const dropRow = (db: DatabaseSync, held: Registry, row: Publishing): void => {
-  statements(db, held).drop.run(row.id!);
+const dropRow = (db: DatabaseSync, row: Publishing): void => {
+  statement(db, DROP).run(row.id!);
 };
 
 /**
@@ -1224,7 +1173,7 @@ const setState = (
 ): void => {
   if (row.instrumentId === null) return;
 
-  statements(db, held).state.run(state, row.instrumentId);
+  statement(db, STATE).run(state, row.instrumentId);
 
   for (const one of held.byInstrument.get(row.instrumentId) ?? []) one.state = state;
 };
@@ -1302,11 +1251,11 @@ const patternIdOf = (
   if (had !== undefined) return had;
 
   /** The slice first, since the pattern is written against it. */
-  const slice = statements(db, held).slice.get(
+  const slice = statement(db, SLICE_OF).get(
     venueId, found.market, found.dataset, found.variant ?? '',
     grainOf(found.pattern), bundleOf(found.symbol)) as { id: number };
 
-  const made = statements(db, held).pattern.get(
+  const made = statement(db, PATTERN).get(
     venueId, slice.id, found.pattern, found.holds ?? 'instrument') as { id: number } | undefined;
 
   /**
@@ -1372,12 +1321,12 @@ const insert = (
    * so has none.
    */
   const instrument = row.symbol === BUCKET ? undefined
-    : statements(db, held).instrument.get(shape.id, row.symbol) as { id: number; state: Publishing['state'] };
+    : statement(db, INSTRUMENT_OF).get(shape.id, row.symbol) as { id: number; state: Publishing['state'] };
 
   row.instrumentId = instrument?.id ?? null;
   row.state        = instrument?.state ?? 'active';
 
-  const { id } = statements(db, held).insert.get(
+  const { id } = statement(db, INSERT).get(
     shape.id, row.instrumentId, row.urlSymbol, row.first, row.last, row.tip) as { id: number };
 
   if (bounds?.state && bounds.state !== row.state && row.instrumentId !== null) {

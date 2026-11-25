@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WITHDRAWALS_LOG, advanceRun, ancestorsOf, beginJob, clearUpdate, closeRun, closeWalk, countUnsettled, establishedAt, exclusionsFor, markDownloaded, openJob, openPartitions, putFiles, putVenue, recordSeries, venueIds, settleFiles, unsettled, withdrawFile } from '../src/catalog';
 import { assertWritable, migrate, openCatalog, SCHEMA_VERSION, version } from '../src/database';
-import { _test_BREATH_MS as BREATH_MS } from '../src/catalog/queries';
+import { _test_BREATH_MS as BREATH_MS } from '../src/catalog/files';
 import type { CatalogFile, Run, Span } from '../src/types';
 import { DatabaseSync } from 'node:sqlite';
 

@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { inMemory } from './state';
 import type { Transform } from '../types';
 
 /**
@@ -15,24 +16,22 @@ import type { Transform } from '../types';
  * exactly like a venue that stopped serving a key.
  */
 
-/** Every transform a venue holds, by the instrument it belongs to. */
-const held = new WeakMap<DatabaseSync, Map<string, Transform[]>>();
-
 /** One instrument's key in the map. A venue's markets are canonical, so this is unique. */
 const identity = (venueId: number, market: string, symbol: string): string =>
   `${venueId} ${market.toLowerCase()} ${symbol}`;
 
 /**
- * Load the table, once per database.
+ * Every transform a venue holds, by the instrument it belongs to: the table,
+ * loaded once per database.
  *
  * Ordered so that a dataset named outright is met before the catch-all, which is
  * what makes "most specific wins" a property of the scan rather than of a sort
  * at every lookup.
  */
 const registry = (db: DatabaseSync): Map<string, Transform[]> => {
-  const had = held.get(db);
+  const memory = inMemory(db);
 
-  if (had) return had;
+  if (memory.transforms) return memory.transforms;
 
   const map = new Map<string, Transform[]>();
 
@@ -47,7 +46,7 @@ const registry = (db: DatabaseSync): Map<string, Transform[]> => {
     map.set(at, [...(map.get(at) ?? []), row]);
   }
 
-  held.set(db, map);
+  memory.transforms = map;
 
   return map;
 };

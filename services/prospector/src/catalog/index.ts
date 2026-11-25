@@ -1,52 +1,61 @@
 export { flushParked, parkSoon } from './wip';
 export { WITHDRAWALS_LOG } from './withdrawals';
 
+export { putVenue, venues, venueIdOf, venueIds, venueTotals } from './venues';
+
 export {
-  putVenue,
-  venues,
-  venueIdOf,
   putFiles,
-  putUnreadable,
-  unreadable,
-  unsettled,
-  missedFiles,
-  dropWip,
-  anyUnsettled,
-  countUnsettled,
   settleFiles,
   markDownloaded,
   correctFile,
   withdrawFile,
   isHeld,
-  venueTotals,
-  venueIds,
+} from './files';
+
+export { putUnreadable, unreadable } from './unreadable';
+export { exclusionsFor } from './exclusions';
+
+export {
+  parkKeys,
+  unsettled,
+  missedFiles,
+  dropWip,
+  anyUnsettled,
+  countUnsettled,
+} from './backlog';
+
+export {
   openJob,
-  updateStarted,
-  clearUpdate,
-  producedSoFar,
   beginJob,
   openPartitions,
-  parkKeys,
+  refinePartition,
   advanceRun,
   addCounts,
   closeRun,
   closeWalk,
-  establishedAt,
+  updateStarted,
+  clearUpdate,
+  producedSoFar,
+  resetRuns,
+} from './jobs';
+
+export {
   phaseOf,
   everCompleted,
-  enrolment,
+  establishedAt,
+  ancestorsOf,
   lastRun,
   walkedAt,
-  standingOf,
+} from './passes';
+
+export {
   enrolled,
   enrol,
   pauseSurvey,
   resumeSurvey,
-  resetRuns,
-  exclusionsFor,
-  ancestorsOf,
-  refinePartition,
-} from './queries';
+  enrolment,
+  standingOf,
+} from './enrolment';
 
 export {
   loadSeries,

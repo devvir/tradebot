@@ -1,5 +1,6 @@
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import { BREATH_MS, slice } from './serial';
+import { inMemory } from './state';
 import { inTransaction } from './tx';
 import type { Edge, Held, Parked, Parking, Unsettled } from '../types';
 
@@ -32,19 +33,7 @@ import type { Edge, Held, Parked, Parking, Unsettled } from '../types';
  * catalog would inherit the first one's backlog — and it is the kind of wrong
  * that ends a drain early, since the drain stops when this reaches zero.
  */
-const counts = new WeakMap<DatabaseSync, Map<number, number>>();
-
-const countsFor = (db: DatabaseSync): Map<number, number> => {
-  const held = counts.get(db);
-
-  if (held) return held;
-
-  const made = new Map<number, number>();
-
-  counts.set(db, made);
-
-  return made;
-};
+const countsFor = (db: DatabaseSync): Map<number, number> => inMemory(db).parked;
 
 /**
  * How many keys this venue still owes an answer for.
@@ -427,7 +416,7 @@ export const pathsIn = (db: DatabaseSync, venueId: number, from: Edge, to: Edge)
 export const parkSoon = async (db: DatabaseSync, rows: readonly Parking[]): Promise<number> => {
   if (rows.length === 0) return 0;
 
-  const held = bufferFor(db);
+  const held = inMemory(db).parking;
 
   held.rows.push(...rows);
 
@@ -452,9 +441,9 @@ export const parkSoon = async (db: DatabaseSync, rows: readonly Parking[]): Prom
  * still worth doing and not worth blocking an exit for.
  */
 export const flushParked = (db: DatabaseSync): number => {
-  const held = buffers.get(db);
+  const held = inMemory(db).parking;
 
-  if (! held || held.rows.length === 0) return 0;
+  if (held.rows.length === 0) return 0;
 
   if (held.timer) { clearTimeout(held.timer); held.timer = null; }
 
@@ -498,26 +487,6 @@ const FLUSH_ROWS = 2_000;
  */
 const FLUSH_MS = 25;
 
-interface Buffer {
-  rows:    Parking[];
-  waiting: { ok: (n: number) => void; no: (err: unknown) => void }[];
-  timer:   ReturnType<typeof setTimeout> | null;
-}
-
-const buffers = new WeakMap<DatabaseSync, Buffer>();
-
-const bufferFor = (db: DatabaseSync): Buffer => {
-  const held = buffers.get(db);
-
-  if (held) return held;
-
-  const made: Buffer = { rows: [], waiting: [], timer: null };
-
-  buffers.set(db, made);
-
-  return made;
-};
-
 /**
  * Take everything waiting and write it.
  *
@@ -534,9 +503,9 @@ const bufferFor = (db: DatabaseSync): Buffer => {
  * however many rows fit in its budget instead of one page's sixteen.
  */
 const flush = async (db: DatabaseSync): Promise<void> => {
-  const held = buffers.get(db);
+  const held = inMemory(db).parking;
 
-  if (! held || held.rows.length === 0) return;
+  if (held.rows.length === 0) return;
 
   if (held.timer) { clearTimeout(held.timer); held.timer = null; }
 

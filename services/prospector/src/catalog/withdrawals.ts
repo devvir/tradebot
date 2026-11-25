@@ -2,6 +2,7 @@ import { appendFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { logger } from '@devvir/service-kit';
 import type { DatabaseSync } from 'node:sqlite';
+import { inMemory } from './state';
 import type { Withdrawal } from '../types';
 
 /**
@@ -68,14 +69,16 @@ export const noteWithdrawals = (db: DatabaseSync, entries: readonly Withdrawal[]
 
 /** Where this database's log is; null for a database that is not a file. */
 const logOf = (db: DatabaseSync): string | null => {
-  if (! LOGS.has(db)) {
+  const memory = inMemory(db);
+
+  if (memory.withdrawalsLog === undefined) {
     const main = (db.prepare('PRAGMA database_list').all() as { name: string; file: string }[])
       .find(one => one.name === 'main');
 
-    LOGS.set(db, main?.file ? join(dirname(main.file), WITHDRAWALS_LOG) : null);
+    memory.withdrawalsLog = main?.file ? join(dirname(main.file), WITHDRAWALS_LOG) : null;
   }
 
-  return LOGS.get(db)!;
+  return memory.withdrawalsLog;
 };
 
 const venueOf = (db: DatabaseSync, venueId: number): { venue: string; host: string } => {
@@ -84,5 +87,3 @@ const venueOf = (db: DatabaseSync, venueId: number): { venue: string; host: stri
 
   return { venue: row?.name ?? `#${venueId}`, host: row?.host ?? '' };
 };
-
-const LOGS = new WeakMap<DatabaseSync, string | null>();
