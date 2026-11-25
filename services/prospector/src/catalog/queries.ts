@@ -5,6 +5,7 @@ import { BREATH_MS, slice } from './serial';
 import { ceiling } from '../paths';
 import { sawFile } from './series';
 import { noteWithdrawals } from './withdrawals';
+import { inTransaction } from './tx';
 import type { FileMetadata as Metadata, FileRow as Row, PathRow } from '../types';
 import type { CatalogFile, DirectorySpan, Edge, FinishedRun, RangeSpan, Span, LastRun, Existence, FileEffect, FileState, Parking, Phase, Run, RunKind, Settlement, Standing, Unreadable, Unsettled, VenueTotals, Withdrawal } from '../types';
 
@@ -205,155 +206,151 @@ export const putFiles = async (
         if (delta !== 0) parked.set(venueId, (parked.get(venueId) ?? 0) + delta);
       };
 
-      db.exec('BEGIN');
-
       try {
-        const effects: FileEffect[] = [];
-        const partitions = cache.resolver(db);
+        inTransaction(db, () => {
+          const effects: FileEffect[] = [];
+          const partitions = cache.resolver(db);
 
-        const fresh = (file: CatalogFile): Row | undefined =>
-          current.get(file.venueId, file.path) as Row | undefined;
+          const fresh = (file: CatalogFile): Row | undefined =>
+            current.get(file.venueId, file.path) as Row | undefined;
 
-        /** What the span says of a key, or the row itself where the span cannot answer for it. */
-        const said = (file: CatalogFile): Row | undefined =>
-          known && inSpan(file.path, span as RangeSpan) ? known.get(file.path) : fresh(file);
+          /** What the span says of a key, or the row itself where the span cannot answer for it. */
+          const said = (file: CatalogFile): Row | undefined =>
+            known && inSpan(file.path, span as RangeSpan) ? known.get(file.path) : fresh(file);
 
-        for (; at < ordered.length && Date.now() < until; at++) {
-          const file = ordered[at]!;
-          const hint = said(file);
+          for (; at < ordered.length && Date.now() < until; at++) {
+            const file = ordered[at]!;
+            const hint = said(file);
 
-          // Nothing new: skipped on the span's word, with no write and no second read.
-          if (hint && ready(file) && unchanged(file, hint)) {
+            // Nothing new: skipped on the span's word, with no write and no second read.
+            if (hint && ready(file) && unchanged(file, hint)) {
+              sighted.push({ seriesId: file.seriesId, date: file.date });
+
+              continue;
+            }
+
+            const was = known ? fresh(file) : hint;
+
+            /**
+             * A file sighted without size or checksum can't be catalogued yet:
+             * catalogued means measured. Parked in `wip` for a probe to settle —
+             * and if it is already catalogued, the row says more than this
+             * sighting does, so nothing is written.
+             *
+             * **Unless the row says the file was withdrawn.** A listing that names
+             * it again is the venue saying otherwise, and a row marked absent
+             * says nothing a probe could not correct — so it is asked about, and
+             * comes back through `settleFiles` if it is there.
+             */
+            if (! ready(file)) {
+              if (! was || was.existence === 'absent') moved(file.venueId, backlog.park({
+                venueId:   file.venueId,
+                path:      file.path,
+                date:      file.date,
+                size:      file.size,
+                etag:      file.etag,
+                modified:  file.modified,
+                seriesId:  file.seriesId,
+                existence: file.existence,
+                seenAt:    file.seenAt,
+              }));
+
+              continue;
+            }
+
             sighted.push({ seriesId: file.seriesId, date: file.date });
 
-            continue;
-          }
+            if (was && unchanged(file, was)) continue;
 
-          const was = known ? fresh(file) : hint;
+            // Complete this time. If it had been parked, it is parked no longer.
+            if (! was) moved(file.venueId, backlog.unpark(file.venueId, file.path));
 
-          /**
-           * A file sighted without size or checksum can't be catalogued yet:
-           * catalogued means measured. Parked in `wip` for a probe to settle —
-           * and if it is already catalogued, the row says more than this
-           * sighting does, so nothing is written.
-           *
-           * **Unless the row says the file was withdrawn.** A listing that names
-           * it again is the venue saying otherwise, and a row marked absent
-           * says nothing a probe could not correct — so it is asked about, and
-           * comes back through `settleFiles` if it is there.
-           */
-          if (! ready(file)) {
-            if (! was || was.existence === 'absent') moved(file.venueId, backlog.park({
-              venueId:   file.venueId,
-              path:      file.path,
-              date:      file.date,
-              size:      file.size,
-              etag:      file.etag,
-              modified:  file.modified,
-              seriesId:  file.seriesId,
-              existence: file.existence,
-              seenAt:    file.seenAt,
-            }));
+            const changed = !! was && replaced(file, was);
 
-            continue;
-          }
+            // Appended to only when a *stated* size or ETag differs from a known
+            // one. Silence is not a change, and neither is a new date on the same bytes.
+            if (changed)
+              revise.run(
+                file.venueId, file.path, file.seenAt,
+                was.size, was.etag, was.modified, was.downloadedAt,
+              );
 
-          sighted.push({ seriesId: file.seriesId, date: file.date });
+            // A changed file is a different file: whatever was downloaded is not it.
+            const downloadedAt = changed ? null : was?.downloadedAt ?? null;
 
-          if (was && unchanged(file, was)) continue;
+            // The partition of where the file is now: its date or its series may have moved.
+            const partitionId = partitions.of(file.seriesId ?? was!.seriesId, file.date);
 
-          // Complete this time. If it had been parked, it is parked no longer.
-          if (! was) moved(file.venueId, backlog.unpark(file.venueId, file.path));
-
-          const changed = !! was && replaced(file, was);
-
-          // Appended to only when a *stated* size or ETag differs from a known
-          // one. Silence is not a change, and neither is a new date on the same bytes.
-          if (changed)
-            revise.run(
-              file.venueId, file.path, file.seenAt,
-              was.size, was.etag, was.modified, was.downloadedAt,
+            insert.run(
+              file.venueId, file.path, file.date,
+              file.size, file.etag, file.modified, file.existence, file.seriesId,
+              partitionId, file.seenAt, downloadedAt,
             );
 
-          // A changed file is a different file: whatever was downloaded is not it.
-          const downloadedAt = changed ? null : was?.downloadedAt ?? null;
-
-          // The partition of where the file is now: its date or its series may have moved.
-          const partitionId = partitions.of(file.seriesId ?? was!.seriesId, file.date);
-
-          insert.run(
-            file.venueId, file.path, file.date,
-            file.size, file.etag, file.modified, file.existence, file.seriesId,
-            partitionId, file.seenAt, downloadedAt,
-          );
-
-          effects.push({
-            was:  was ? stateOf(was.partitionId, was.existence, was.size, was.etag, was.downloadedAt) : null,
-            now:  stateOf(partitionId, file.existence, file.size ?? was?.size ?? null,
-              file.etag ?? was?.etag ?? null, downloadedAt),
-          });
-
-          if (was?.existence === 'absent' && file.existence !== 'absent')
-            notes.push({
-              event: 'returned', cause: 'walk', venueId: file.venueId, path: file.path, date: file.date,
-              size: file.size ?? was.size, etag: file.etag ?? was.etag,
+            effects.push({
+              was:  was ? stateOf(was.partitionId, was.existence, was.size, was.etag, was.downloadedAt) : null,
+              now:  stateOf(partitionId, file.existence, file.size ?? was?.size ?? null,
+                file.etag ?? was?.etag ?? null, downloadedAt),
             });
-        }
 
-        last = at >= ordered.length;
-
-        /**
-         * **What the span held and the page did not offer.** For a key range,
-         * the stretch this slice covered — up to the next unwritten key, or the
-         * span's end on the last slice — so every catalogued path in the span
-         * is judged exactly once. For a directory, all of it, on the last slice.
-         */
-        if (span && isRange(span) && spanned) {
-          const upto = last ? { path: span.high, open: span.highOpen } : { path: ordered[at]!.path, open: true };
-
-          // The span's rows up to where this slice stopped, each judged once, and re-read before it is marked.
-          const gone: { path: string; row: Row }[] = [];
-
-          for (; judged < spanned.length && below(spanned[judged]!.path, upto); judged++) {
-            const { path } = spanned[judged]!;
-
-            if (offered.has(path)) continue;
-
-            const row = current.get(span.venueId, path) as Row | undefined;
-
-            if (row && row.existence !== 'absent') gone.push({ path, row });
+            if (was?.existence === 'absent' && file.existence !== 'absent')
+              notes.push({
+                event: 'returned', cause: 'walk', venueId: file.venueId, path: file.path, date: file.date,
+                size: file.size ?? was.size, etag: file.etag ?? was.etag,
+              });
           }
 
-          withdrawn += withdraw(db, span.venueId, gone, effects, notes);
-          moved(span.venueId, dropParked(db, backlog, span.venueId, from!, upto, offered));
+          last = at >= ordered.length;
 
-          if (! last) from = { path: ordered[at]!.path, open: false };
-        }
+          /**
+           * **What the span held and the page did not offer.** For a key range,
+           * the stretch this slice covered — up to the next unwritten key, or the
+           * span's end on the last slice — so every catalogued path in the span
+           * is judged exactly once. For a directory, all of it, on the last slice.
+           */
+          if (span && isRange(span) && spanned) {
+            const upto = last ? { path: span.high, open: span.highOpen } : { path: ordered[at]!.path, open: true };
 
-        if (span && ! isRange(span) && last) {
-          const { gone, subtrees } = vacated(db, span, offered);
+            // The span's rows up to where this slice stopped, each judged once, and re-read before it is marked.
+            const gone: { path: string; row: Row }[] = [];
 
-          withdrawn += withdraw(db, span.venueId, gone, effects, notes);
+            for (; judged < spanned.length && below(spanned[judged]!.path, upto); judged++) {
+              const { path } = spanned[judged]!;
 
-          for (const tree of subtrees) {
-            const rows = rowsIn(db, span.venueId, { path: tree, open: false }, { path: ceiling(tree), open: true });
+              if (offered.has(path)) continue;
 
-            withdrawn += withdraw(db, span.venueId,
-              rows.filter(row => row.existence !== 'absent').map(row => ({ path: row.path, row })), effects, notes);
+              const row = current.get(span.venueId, path) as Row | undefined;
+
+              if (row && row.existence !== 'absent') gone.push({ path, row });
+            }
+
+            withdrawn += withdraw(db, span.venueId, gone, effects, notes);
+            moved(span.venueId, dropParked(db, backlog, span.venueId, from!, upto, offered));
+
+            if (! last) from = { path: ordered[at]!.path, open: false };
+          }
+
+          if (span && ! isRange(span) && last) {
+            const { gone, subtrees } = vacated(db, span, offered);
+
+            withdrawn += withdraw(db, span.venueId, gone, effects, notes);
+
+            for (const tree of subtrees) {
+              const rows = rowsIn(db, span.venueId, { path: tree, open: false }, { path: ceiling(tree), open: true });
+
+              withdrawn += withdraw(db, span.venueId,
+                rows.filter(row => row.existence !== 'absent').map(row => ({ path: row.path, row })), effects, notes);
+              moved(span.venueId, dropParked(db, backlog, span.venueId,
+                { path: tree, open: false }, { path: ceiling(tree), open: true }, offered));
+            }
+
             moved(span.venueId, dropParked(db, backlog, span.venueId,
-              { path: tree, open: false }, { path: ceiling(tree), open: true }, offered));
+              { path: span.directory, open: false }, { path: ceiling(span.directory), open: true }, offered, true));
           }
 
-          moved(span.venueId, dropParked(db, backlog, span.venueId,
-            { path: span.directory, open: false }, { path: ceiling(span.directory), open: true }, offered, true));
-        }
-
-        cache.record(db, effects);
-
-        db.exec('COMMIT');
+          cache.record(db, effects);
+        });
       } catch (err) {
-        db.exec('ROLLBACK');
-
         notes.length = 0;
 
         throw err;
@@ -420,9 +417,7 @@ export const markDownloaded = (
       WHERE venue_id = ? AND path = ? AND downloaded_at IS NULL`,
   );
 
-  db.exec('BEGIN');
-
-  try {
+  return inTransaction(db, () => {
     const effects: FileEffect[] = [];
 
     for (const { venueId, path } of files) {
@@ -442,14 +437,8 @@ export const markDownloaded = (
 
     cache.record(db, (effects));
 
-    db.exec('COMMIT');
-
     return effects.length;
-  } catch (err) {
-    db.exec('ROLLBACK');
-
-    throw err;
-  }
+  });
 };
 
 /**
@@ -469,39 +458,31 @@ export const markDownloaded = (
 export const withdrawFile = (db: DatabaseSync, venueId: number, path: string, status?: number): boolean => {
   const current = db.prepare(`SELECT ${ROW} FROM file WHERE venue_id = ? AND path = ?`);
 
-  db.exec('BEGIN');
+  const was = inTransaction(db, () => {
+    const row = current.get(venueId, path) as Row | undefined;
 
-  try {
-    const was = current.get(venueId, path) as Row | undefined;
-
-    if (! was || was.existence === 'absent') {
-      db.exec('COMMIT');
-
-      return false;
-    }
+    if (! row || row.existence === 'absent') return null;
 
     db.prepare(`UPDATE file SET existence = 'absent' WHERE venue_id = ? AND path = ?`)
       .run(venueId, path);
 
     cache.record(db, ([{
-      was: stateOf(was.partitionId, was.existence, was.size, was.etag, was.downloadedAt),
-      now: stateOf(was.partitionId, 'absent',      was.size, was.etag, was.downloadedAt),
+      was: stateOf(row.partitionId, row.existence, row.size, row.etag, row.downloadedAt),
+      now: stateOf(row.partitionId, 'absent',      row.size, row.etag, row.downloadedAt),
     }]));
 
-    db.exec('COMMIT');
+    return row;
+  });
 
-    noteWithdrawals(db, [{
-      event: 'withdrawn', cause: 'report', venueId, path, date: was.date,
-      size: was.size, etag: was.etag, downloaded: was.downloadedAt !== null,
-      ...(status === undefined ? {} : { status }),
-    }]);
+  if (! was) return false;
 
-    return true;
-  } catch (err) {
-    db.exec('ROLLBACK');
+  noteWithdrawals(db, [{
+    event: 'withdrawn', cause: 'report', venueId, path, date: was.date,
+    size: was.size, etag: was.etag, downloaded: was.downloadedAt !== null,
+    ...(status === undefined ? {} : { status }),
+  }]);
 
-    throw err;
-  }
+  return true;
 };
 
 /**
@@ -532,16 +513,10 @@ export const correctFile = (
 ): boolean => {
   const current = db.prepare(`SELECT ${ROW} FROM file WHERE venue_id = ? AND path = ?`);
 
-  db.exec('BEGIN');
-
-  try {
+  return inTransaction(db, () => {
     const was = current.get(venueId, path) as Row | undefined;
 
-    if (! was) {
-      db.exec('COMMIT');
-
-      return false;
-    }
+    if (! was) return false;
 
     if (replaced(observed, was))
       db.prepare(
@@ -565,14 +540,8 @@ export const correctFile = (
       now: stateOf(was.partitionId, was.existence, size, observed.etag ?? was.etag, downloadedAt),
     }]));
 
-    db.exec('COMMIT');
-
     return true;
-  } catch (err) {
-    db.exec('ROLLBACK');
-
-    throw err;
-  }
+  });
 };
 
 /**
@@ -725,12 +694,10 @@ export const settleFiles = (db: DatabaseSync, settled: readonly Settlement[]): n
   /** What left the backlog, reported to `wip` once this has committed. */
   const unparked = new Map<number, number>();
 
-  db.exec('BEGIN');
-
-  try {
+  const moved = inTransaction(db, () => {
     const effects: FileEffect[] = [];
     const partitions = cache.resolver(db);
-    let   moved  = 0;
+    let   arrivals = 0;
 
     for (const file of settled) {
       const was = backlog.held(file.venueId, file.path);
@@ -764,7 +731,7 @@ export const settleFiles = (db: DatabaseSync, settled: readonly Settlement[]): n
 
       unparked.set(file.venueId,
         (unparked.get(file.venueId) ?? 0) + backlog.unpark(file.venueId, file.path));
-      moved++;
+      arrivals++;
 
       answered.push({ seriesId: was.seriesId, date: was.date });
 
@@ -803,32 +770,25 @@ export const settleFiles = (db: DatabaseSync, settled: readonly Settlement[]): n
 
     cache.record(db, (effects));
 
-    db.exec('COMMIT');
+    return arrivals;
+  });
 
-    noteWithdrawals(db, notes);
+  noteWithdrawals(db, notes);
 
-    for (const [venueId, delta] of unparked) wip.counted(db, venueId, delta);
+  for (const [venueId, delta] of unparked) wip.counted(db, venueId, delta);
 
-    /**
-     * **A file that arrived is a sighting however it was found.** A probe found
-     * this one by asking about a key nothing listed, which is weaker evidence
-     * about the venue and exactly as good about the file — so both bounds move
-     * on it, as they would for a walk.
-     *
-     * Without this they moved only on venues that can be walked, and every
-     * generated-key venue looked as though its archive stopped the day it was
-     * seeded.
-     */
-    for (const one of answered) {
-      sawFile(db, one.seriesId, one.date);
-    }
-
-    return moved;
-  } catch (err) {
-    db.exec('ROLLBACK');
-
-    throw err;
+  /**
+   * **A file that arrived is a sighting however it was found.** A probe found
+   * this one by asking about a key nothing listed, which is weaker evidence
+   * about the venue and exactly as good about the file — so both bounds move
+   * on it, as they would for a walk, and for every venue whose keys are
+   * generated rather than listed.
+   */
+  for (const one of answered) {
+    sawFile(db, one.seriesId, one.date);
   }
+
+  return moved;
 };
 
 /**
@@ -987,19 +947,11 @@ export const beginJob = (
     `INSERT INTO run (venue_id, kind, scope, cursor, started) VALUES (?, ?, ?, NULL, ?)`,
   );
 
-  db.exec('BEGIN');
-
-  try {
+  inTransaction(db, () => {
     insert.run(venueId, kind, '', started);
 
     for (const scope of scopes) insert.run(venueId, kind, scope, started);
-
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-
-    throw err;
-  }
+  });
 
   return openJob(db, venueId, kind)!;
 };
@@ -1875,9 +1827,7 @@ export const refinePartition = (
 
   const wanted = progress(parent.cursor, children);
 
-  db.exec('BEGIN');
-
-  try {
+  inTransaction(db, () => {
     // Closed rather than deleted: what a partition read is part of the job's
     // history, and its `requests` and `found` still count towards the pass.
     db.prepare('UPDATE run SET completed = ?, cursor = NULL WHERE id = ?')
@@ -1885,13 +1835,7 @@ export const refinePartition = (
 
     for (const [scope, cursor] of wanted)
       insert.run(parent.venueId, parent.kind, scope, cursor, parent.started);
-
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-
-    throw err;
-  }
+  });
 
   return openPartitions(db, parent.venueId, parent.kind)
     .filter(run => wanted.some(([scope]) => scope === run.scope));

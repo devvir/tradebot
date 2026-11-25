@@ -1,5 +1,6 @@
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import { BREATH_MS, slice } from './serial';
+import { inTransaction } from './tx';
 import type { Edge, Held, Parked, Parking, Unsettled } from '../types';
 
 /**
@@ -216,9 +217,7 @@ export const park = (db: DatabaseSync, rows: readonly Parking[]): number => {
 
   const added = new Map<number, number>();
 
-  db.exec('BEGIN');
-
-  try {
+  inTransaction(db, () => {
     for (const row of rows) {
       const done = insert.run(row.venueId, row.path, row.date, row.seriesId, row.existence, at,
         row.nextPart ?? null, row.venueId, row.path);
@@ -226,13 +225,7 @@ export const park = (db: DatabaseSync, rows: readonly Parking[]): number => {
       if (Number(done.changes) > 0)
         added.set(row.venueId, (added.get(row.venueId) ?? 0) + 1);
     }
-
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-
-    throw err;
-  }
+  });
 
   for (const [venueId, delta] of added) counted(db, venueId, delta);
 
@@ -246,21 +239,13 @@ export const drop = (db: DatabaseSync, rows: readonly Unsettled[]): number => {
   const remove = db.prepare('DELETE FROM wip WHERE venue_id = ? AND path = ?');
   const gone   = new Map<number, number>();
 
-  db.exec('BEGIN');
-
-  try {
+  inTransaction(db, () => {
     for (const row of rows) {
       const done = remove.run(row.venueId, row.path);
 
       if (Number(done.changes) > 0) gone.set(row.venueId, (gone.get(row.venueId) ?? 0) - 1);
     }
-
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-
-    throw err;
-  }
+  });
 
   for (const [venueId, delta] of gone) counted(db, venueId, delta);
 
@@ -279,17 +264,9 @@ export const missed = (db: DatabaseSync, rows: readonly Unsettled[]): number => 
 
   const bump = db.prepare('UPDATE wip SET tries = tries + 1 WHERE venue_id = ? AND path = ?');
 
-  db.exec('BEGIN');
-
-  try {
+  inTransaction(db, () => {
     for (const row of rows) bump.run(row.venueId, row.path);
-
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-
-    throw err;
-  }
+  });
 
   return rows.length;
 };
@@ -496,10 +473,8 @@ export const flushParked = (db: DatabaseSync): number => {
   const waiting = held.waiting.splice(0, held.waiting.length);
 
   try {
-    const joined = (db as { isTransaction?: boolean }).isTransaction === true;
-
     // No budget here: the exit has no later turn to finish in.
-    const { added } = write(db, rows, 0, Infinity, joined);
+    const { added, joined } = write(db, rows, 0, Infinity);
 
     /**
      * **Only where this owns nothing.** `write` counts the transaction it
@@ -584,7 +559,7 @@ const flush = async (db: DatabaseSync): Promise<void> => {
 
     /** Each slice counts its own commit — see `write`. Nothing is carried here. */
     while (at < rows.length)
-      at = (await slice(() => write(db, rows, at, Date.now() + BREATH_MS, false))).upto;
+      at = (await slice(() => write(db, rows, at, Date.now() + BREATH_MS))).upto;
 
     for (const one of waiting) one.ok(rows.length);
   } catch (err) {
@@ -598,31 +573,28 @@ const flush = async (db: DatabaseSync): Promise<void> => {
  * `DO NOTHING` rather than an upsert, so `changes` says exactly how many rows
  * are new — an upsert reports an update as a change too, and the count would
  * drift by every key a venue offered twice.
+ *
+ * A transaction already open is joined rather than refused, and `joined` says
+ * whether it was.
  */
 const write = (
   db:     DatabaseSync,
   rows:   readonly Parking[],
   from:   number,
   until:  number,
-  joined: boolean,
-): { upto: number; added: Map<number, number> } => {
-  /**
-   * **The count is applied here, in the same synchronous span as the COMMIT that
-   * earned it** — see the note on `added` below for why anywhere else is wrong.
-   */
+): { upto: number; added: Map<number, number>; joined: boolean } => {
   const at = new Date().toISOString();
 
   const insert = db.prepare(
     PARKING,
   );
 
-  const added = new Map<number, number>();
+  const added  = new Map<number, number>();
+  const joined = db.isTransaction;
 
   let upto = from;
 
-  if (! joined) db.exec('BEGIN');
-
-  try {
+  inTransaction(db, () => {
     /**
      * **At least one row, then as many as the budget allows.** Stopping on the
      * clock alone could write nothing at all on a loaded machine, and a slice
@@ -635,31 +607,21 @@ const write = (
 
       if (Number(done.changes) > 0) added.set(row.venueId, (added.get(row.venueId) ?? 0) + 1);
     }
+  }, { join: true });
 
-    if (! joined) {
-      db.exec('COMMIT');
+  /**
+   * **Counted here, in the same synchronous span as the commit that earned
+   * it, because returning yields.** `slice` awaits a `setImmediate` after every
+   * slice, and the probe settles rows in that gap: it reads what this
+   * transaction just committed, deletes it and reports `-n`. `counted` clamps at
+   * zero, so a decrement that reached the counter before its `+n` would be
+   * discarded and the counter would stay high for good. From the commit to the
+   * count there is no await, so a decrement cannot precede its increment.
+   *
+   * Joined to a caller's transaction, nothing is committed yet: the count is the
+   * caller's to apply after its own commit.
+   */
+  if (! joined) for (const [venueId, delta] of added) counted(db, venueId, delta);
 
-      /**
-       * **Before returning, because returning yields.** `slice` awaits a
-       * `setImmediate` after every slice, and the probe settles rows in that
-       * gap: it reads what this transaction just committed, deletes it and
-       * reports `-n` — against a counter that has not yet heard the matching
-       * `+n`. `counted` clamps at zero, so that decrement is discarded and the
-       * increment lands afterwards on a table that no longer holds the rows.
-       *
-       * That is a counter drifting permanently high, which is a pass that can
-       * never finish: measured 2026-09-28 as okx stuck at 7,801 and bitget at
-       * 60, both with an empty backlog. Nothing is deferred here now — from the
-       * commit to the count there is no await, and a decrement cannot precede
-       * its increment.
-       */
-      for (const [venueId, delta] of added) counted(db, venueId, delta);
-    }
-  } catch (err) {
-    if (! joined) db.exec('ROLLBACK');
-
-    throw err;
-  }
-
-  return { upto, added };
+  return { upto, added, joined };
 };

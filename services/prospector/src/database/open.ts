@@ -2,6 +2,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { AT_CREATION, ON_OPEN } from './schema';
+import { inTransaction } from '../catalog/tx';
 import { MIGRATIONS, SCHEMA_VERSION } from './migrations';
 
 /**
@@ -76,19 +77,17 @@ export const migrate = (db: DatabaseSync, seedData = true): number => {
       continue;
     }
 
-    db.exec('BEGIN');
-
     try {
-      if (migration.sql) db.exec(migration.sql);
+      inTransaction(db, () => {
+        if (migration.sql) db.exec(migration.sql);
 
-      migration.run?.(db, seedData);
-      setVersion(db, at + 1);
-      db.exec('COMMIT');
+        migration.run?.(db, seedData);
+        setVersion(db, at + 1);
+      });
     } catch (err) {
-      db.exec('ROLLBACK');
-
       throw new Error(
         `Migration ${at + 1} (${migration.name}) failed: ${(err as Error).message}`,
+        { cause: err },
       );
     }
   }

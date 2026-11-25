@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   flushTips, loadSeries, open, parkKeys, putFiles, putVenue, recordSeries, reconcile,
-  retirePattern, retireSeries, seriesFor, updateSeries, walkSeries,
+  retirePattern, retireSeries, seriesFor, updateSeries, walkSeries, withdrawFile,
 } from '../src/catalog';
 import { openCatalog } from '../src/database';
 import { okx } from '../src/adapters/okx';
@@ -618,6 +618,81 @@ describe('reconciling a completed update', () => {
     loadSeries(db);
 
     expect(seriesFor(db, id)[0]!.tip).toBe(EDGE);
+  });
+});
+
+/**
+ * **A series that holds nothing is deleted; one still referred to is not.** A
+ * withdrawn file stays on record under its series and a parked key is queued
+ * under one, so either keeps the row — and the rest of the venue is reconciled
+ * all the same.
+ */
+describe('removing what holds nothing', () => {
+  const NOW  = new Date('2026-08-01T00:00:00Z');
+  const EDGE = '20260716';
+
+  const stored = (): number =>
+    (db.prepare('SELECT count(*) AS n FROM series').get() as { n: number }).n;
+
+  const symbols = (): string[] => seriesFor(db, id).map(one => one.symbol).sort();
+
+  it('keeps a series whose every file was withdrawn, and reconciles the rest', async () => {
+    const gone = record({ symbol: 'GONE' }, { tip: '20260401' });
+    const kept = record({ symbol: 'KEPT' }, { tip: '20260401' });
+
+    await catalogued(gone, '20200101', 'p/gone');
+    await catalogued(kept, '20200101', 'p/kept');
+
+    withdrawFile(db, id, 'p/gone');
+
+    expect(await reconcile(db, id, NOW)).toMatchObject({ lifted: 2, removed: 0 });
+
+    loadSeries(db);
+
+    expect(Object.fromEntries(seriesFor(db, id).map(one => [one.symbol, one.tip])))
+      .toEqual({ GONE: EDGE, KEPT: EDGE });
+  });
+
+  it('keeps a series with nothing but a parked key', async () => {
+    const row = record({ symbol: 'PARKED' });
+
+    parkKeys(db, [{ venueId: id, path: 'p/parked', date: '20260301', seriesId: row.id!, existence: 'assumed', tries: 0 }]);
+
+    expect(await reconcile(db, id, NOW)).toMatchObject({ removed: 0 });
+    expect(symbols()).toEqual(['PARKED']);
+    expect(stored()).toBe(1);
+  });
+
+  it('deletes a series with neither, from the table and from memory', async () => {
+    record({ symbol: 'EMPTY' });
+    await catalogued(record({ symbol: 'FULL' }), '20200101');
+
+    expect(await reconcile(db, id, NOW)).toMatchObject({ removed: 1 });
+    expect(symbols()).toEqual(['FULL']);
+    expect(stored()).toBe(1);
+  });
+
+  /** More than one stretch between yields, so every stretch commits its own. */
+  it('deletes every empty series of a venue, however many', async () => {
+    for (let n = 0; n < 2_500; n++) record({ symbol: `E${n}` });
+
+    expect(await reconcile(db, id, NOW)).toMatchObject({ removed: 2_500 });
+    expect(seriesFor(db, id)).toEqual([]);
+    expect(stored()).toBe(0);
+  });
+
+  /** A stretch that fails takes back every deletion in it, and memory follows the table. */
+  it('leaves table and registry as they were where a stretch fails', async () => {
+    const rows = ['A', 'B', 'C'].map(symbol => record({ symbol }));
+
+    db.exec(`CREATE TRIGGER series_boom BEFORE DELETE ON series WHEN old.id = ${rows[1]!.id}
+               BEGIN SELECT RAISE(ABORT, 'boom'); END`);
+
+    await expect(reconcile(db, id, NOW)).rejects.toThrow(/^boom$/);
+
+    expect(db.isTransaction).toBe(false);
+    expect(stored()).toBe(3);
+    expect(symbols()).toEqual(['A', 'B', 'C']);
   });
 });
 

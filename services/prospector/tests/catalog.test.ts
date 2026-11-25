@@ -4,9 +4,10 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { advanceRun, ancestorsOf, beginJob, closeRun, establishedAt, exclusionsFor, markDownloaded, openJob, openPartitions, putFiles, putVenue, recordSeries, venueIds, settleFiles, unsettled } from '../src/catalog';
 import { assertWritable, migrate, openCatalog, SCHEMA_VERSION, version } from '../src/database';
+import { MIGRATIONS } from '../src/database/migrations';
 import { _test_BREATH_MS as BREATH_MS } from '../src/catalog/queries';
 import type { CatalogFile, Run } from '../src/catalog';
-import type { Span } from '../src/types';
+import type { Migration, Span } from '../src/types';
 import { DatabaseSync } from 'node:sqlite';
 
 let dir: string;
@@ -912,6 +913,31 @@ describe('migrations', () => {
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION + 5}`);
 
     expect(() => migrate(db)).toThrow(/only knows/);
+  });
+
+  /**
+   * **A failed migration names its own cause**, including where SQLite has
+   * already rolled the transaction back by itself, and leaves the version
+   * where it was.
+   */
+  it('reports what made a migration fail and leaves the version alone', () => {
+    db.exec(`CREATE TABLE doomed (x);
+             CREATE TRIGGER doomed_boom BEFORE INSERT ON doomed BEGIN SELECT RAISE(ROLLBACK, 'boom'); END;`);
+    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION - 1}`);
+
+    const chain = MIGRATIONS as Migration[];
+    const last  = chain[SCHEMA_VERSION - 1]!;
+
+    chain[SCHEMA_VERSION - 1] = { name: 'explodes', sql: 'INSERT INTO doomed VALUES (1)' };
+
+    try {
+      expect(() => migrate(db)).toThrow(`Migration ${SCHEMA_VERSION} (explodes) failed: boom`);
+    } finally {
+      chain[SCHEMA_VERSION - 1] = last;
+    }
+
+    expect(version(db)).toBe(SCHEMA_VERSION - 1);
+    expect(db.isTransaction).toBe(false);
   });
 });
 

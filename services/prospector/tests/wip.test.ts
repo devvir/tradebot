@@ -176,6 +176,34 @@ describe('arriving', () => {
     expect(count('wip')).toBe(1);
     expect(db.prepare('SELECT size FROM wip').get()).toMatchObject({ size: 64 });
   });
+
+  /**
+   * **What fails after the commit fails as itself.** Each arrival moves its
+   * series' bounds, and enough of them write the bounds out there and then; a
+   * failure in that write is reported as it is, with the arrivals it followed
+   * committed and counted.
+   */
+  it('reports a failure after the commit as itself, with the arrivals kept', () => {
+    const rows = Array.from({ length: 1_000 }, (_, n) => ({
+      venueId: 1, path: `x/${n}.zip`, date: '20250301', existence: 'assumed' as const, tries: 0,
+      seriesId: recordSeries(db, 1, {
+        market: 'perp', dataset: 'klines', symbol: `S${n}`, pattern: 'p/{YYYY}{MM}/{SYMBOL}.zip',
+      }, { first: null }).id!,
+    }));
+
+    parkKeys(db, rows);
+
+    db.exec(`CREATE TRIGGER series_boom BEFORE UPDATE ON series BEGIN SELECT RAISE(ABORT, 'boom'); END`);
+
+    expect(() => settleFiles(db, rows.map(row => ({
+      venueId: 1, path: row.path, size: 1, etag: 'e', modified: null, seenAt: 'T2',
+    })))).toThrow(/^boom$/);
+
+    expect(count('file')).toBe(1_000);
+    expect(count('wip')).toBe(0);
+    expect(countUnsettled(db, 1)).toBe(0);
+    expect(db.isTransaction).toBe(false);
+  });
 });
 
 /**

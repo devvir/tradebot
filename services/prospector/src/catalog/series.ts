@@ -3,6 +3,7 @@ import { atGrain, dueAt, lastClosed, lastSettled } from '../dates';
 import { transformFor, transformsOf } from './transform';
 import { BUCKET } from '../canonical';
 import { INSTRUMENT_OF, SLICE_OF } from '../database/schema';
+import { inTransaction } from './tx';
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import type { Found, Grain, Publishing, Reconciled, SeriesCount, SeriesFilter, Slots } from '../types';
 
@@ -301,18 +302,10 @@ export const retireSeries = (
 
   const held = registry(db);
 
-  db.exec('BEGIN');
-
-  try {
+  inTransaction(db, () => {
     for (const row of rows)
       if (row.state !== state) setState(db, held, row, state);
-
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-
-    throw err;
-  }
+  });
 
   return rows.length;
 };
@@ -532,8 +525,7 @@ export const sawFile = (db: DatabaseSync, seriesId: number, date: string): void 
  * **Every pass, whichever kind.** How the files arrived — read from an index or
  * asked for one key at a time — changes nothing about what is owed afterwards:
  * how long to wait for what is missing, which rows the files disagree with, and
- * which series turned out to hold nothing. A walk used to state its own tips
- * separately, which was the same rule written twice.
+ * which series turned out to hold nothing.
  *
  * **As of when the pass began, not the clock.** A pass that ran for two days
  * asked about the archive as it stood when it started, and reconciling against
@@ -545,6 +537,13 @@ export const sawFile = (db: DatabaseSync, seriesId: number, date: string): void 
  * process for as long as that takes, and every request in flight goes unread
  * until its stall timer fires — a whole service unanswering, `/status`
  * included, for one venue's bookkeeping.
+ *
+ * **Each stretch between yields is one transaction**, committed before the
+ * loop is handed back, so no other writer meets it open. A venue's empty series
+ * are deleted a stretch at a time rather than one commit each, and a stretch
+ * that fails leaves both the table and the registry as they were before it:
+ * rows leave the registry only once their deletion has committed. Bounds moved
+ * along the way are marked for `flushTips` after the stretch, never inside it.
  */
 export const reconcile = async (
   db:      DatabaseSync,
@@ -563,7 +562,7 @@ export const reconcile = async (
    * hold. Without it a bound is only ever as good as every path that touches it,
    * and one of those is a withdrawal, which lowers no bound today.
    *
-   * **No answer means the series holds no file at all**, which is the other
+   * **No answer means the series holds no live file**, which is the other
    * thing this loop needs to know. Asking once settles both.
    *
    * **Asked per series rather than per venue**, because a venue is not a
@@ -583,13 +582,21 @@ export const reconcile = async (
             (SELECT date FROM file WHERE series_id = ?1 AND existence <> 'absent' ORDER BY date DESC LIMIT 1) AS last`,
   );
 
+  /**
+   * **Whether anything still refers to a series.** A withdrawn file stays on
+   * record under its series, and a parked key belongs to one, so a series can
+   * hold no live file and still be referenced; deleting it then would break the
+   * reference.
+   */
+  const referenced = db.prepare(
+    `SELECT EXISTS (SELECT 1 FROM file WHERE series_id = ?1)
+         OR EXISTS (SELECT 1 FROM wip  WHERE series_id = ?1) AS held`,
+  );
+
   const summary: Reconciled = { lifted: 0, removed: 0, corrected: 0 };
 
-  let seen = 0;
-
-  for (const row of seriesFor(db, venueId)) {
-    if (++seen % YIELD_EVERY === 0) await new Promise(done => setImmediate(done));
-
+  /** One series' reconciliation, inside its stretch's transaction. What it moved is reported, not applied. */
+  const settle = (row: Publishing, moved: Publishing[], dropped: Publishing[]): void => {
     const floor = lastSettled(row.grain, now);
 
     /**
@@ -620,7 +627,7 @@ export const reconcile = async (
 
     if (row.tip === null || row.tip < upto) {
       row.tip = upto;
-      touch(held, row);
+      moved.push(row);
       summary.lifted++;
     }
 
@@ -644,19 +651,24 @@ export const reconcile = async (
      * shape is retired, nothing recreates it — `patternsOf` refuses a retired
      * pattern to a new instrument — and it stays gone, which is the point.
      *
-     * **Asked of `file`, not of `first`.** The two agree now that a sighting
-     * writes the start, and the column would be the cheaper read — but they
-     * agree only for rows written since it did. A catalog still carrying series
-     * from before that, files and all, would have them deleted wholesale by a
-     * reader that trusted the column. The file table cannot be wrong about this.
+     * **Only a series nothing refers to.** Files the venue has withdrawn stay
+     * on record under their series, and a parked key is queued under one. A
+     * series with either keeps its row and its bounds as they stand: deleting
+     * it would orphan what refers to it.
+     *
+     * **Asked of `file`, not of `first`.** The column would be the cheaper
+     * read, but it is a bound held in memory and flushed on a schedule, where
+     * the file table is the archive itself and cannot be wrong about this.
      */
     const real = bounds.get(row.id!) as { first: string | null; last: string | null };
 
     if (real.first === null) {
-      remove(db, held, row);
-      summary.removed++;
+      if ((referenced.get(row.id!) as { held: number }).held === 0) {
+        dropRow(db, held, row);
+        dropped.push(row);
+      }
 
-      continue;
+      return;
     }
 
     /**
@@ -674,7 +686,7 @@ export const reconcile = async (
       row.first = real.first;
       row.last  = real.last;
 
-      touch(held, row);
+      moved.push(row);
       summary.corrected++;
     }
 
@@ -684,6 +696,27 @@ export const reconcile = async (
      * from the row every time it is asked rather than written down here as a
      * verdict that could go stale.
      */
+  };
+
+  const rows = seriesFor(db, venueId);
+
+  for (let at = 0; at < rows.length; at += YIELD_EVERY) {
+    if (at > 0) await new Promise(done => setImmediate(done));
+
+    const moved:   Publishing[] = [];
+    const dropped: Publishing[] = [];
+
+    try {
+      inTransaction(db, () => {
+        for (const row of rows.slice(at, at + YIELD_EVERY)) settle(row, moved, dropped);
+      });
+
+      for (const row of dropped) forget(held, row);
+
+      summary.removed += dropped.length;
+    } finally {
+      for (const row of moved) if (held.byId.has(row.id!)) touch(held, row);
+    }
   }
 
   flushTips(db);
@@ -716,27 +749,16 @@ export const flushTips = (db: DatabaseSync): number => {
   const set = statements(db, held).bounds;
 
   /**
-   * **A caller may already be inside a transaction**, and the seed migration is:
-   * every migration runs in one. Opening a second would throw, so the batch
-   * joins the one already open and is committed with it.
+   * **A caller may already be inside a transaction.** Opening a second would
+   * throw, so the batch joins the one already open and is committed with it.
    */
-  const joined = (db as { isTransaction?: boolean }).isTransaction === true;
-
-  if (! joined) db.exec('BEGIN');
-
-  try {
+  inTransaction(db, () => {
     for (const id of held.moved) {
       const row = held.byId.get(id)!;
 
       set.run(row.first, row.last, row.tip, id);
     }
-
-    if (! joined) db.exec('COMMIT');
-  } catch (err) {
-    if (! joined) db.exec('ROLLBACK');
-
-    throw err;
-  }
+  }, { join: true });
 
   const written = held.moved.size;
 
@@ -958,7 +980,7 @@ interface Statements {
   instrument: StatementSync;
   state:    StatementSync;
 
-  /** The one place a series row is removed — see `remove`. */
+  /** The one place a series row is removed — see `dropRow`. */
   drop:     StatementSync;
   bounds:   StatementSync;
 
@@ -1090,21 +1112,29 @@ const bundleOf = (symbol: string): 'instrument' | 'market' =>
   (symbol === BUCKET ? 'market' : 'instrument');
 
 /**
- * Take a series out of the catalog and out of the registry that mirrors it.
+ * Delete a series row from the catalog, leaving the registry as it is.
  *
- * **Both, or the registry serves a row the database no longer has.** Reads are
- * answered from memory here, so a row deleted only in SQLite would go on being
- * generated for, and a tip it still held would be flushed as an `UPDATE` against
- * an id that is gone — silently doing nothing, which is the worst of the three.
- * Dropping it from `moved` is what stops that last one.
+ * **Half of a removal; `forget` is the other.** The delete belongs inside the
+ * caller's transaction and the registry follows only once that has committed,
+ * so a rollback leaves memory and table agreeing.
  *
- * No dependants to consider: `file` and `wip` both reference `series`, and
- * reconciliation only deletes a row with neither — one that never published, at
- * a moment when the pass that generated for it has drained.
+ * `file` and `wip` both reference `series`, so the row must have neither: the
+ * caller checks, and a row that still has one fails the foreign key.
  */
-const remove = (db: DatabaseSync, held: Registry, row: Publishing): void => {
+const dropRow = (db: DatabaseSync, held: Registry, row: Publishing): void => {
   statements(db, held).drop.run(row.id!);
+};
 
+/**
+ * Take a deleted series out of the registry that mirrors the table.
+ *
+ * **Every map, or the registry serves a row the database no longer has.** Reads
+ * are answered from memory here, so a row left in the registry would go on
+ * being generated for, and a tip it still held would be flushed as an `UPDATE`
+ * against an id that is gone — silently doing nothing. Dropping it from `moved`
+ * is what stops that last one.
+ */
+const forget = (held: Registry, row: Publishing): void => {
   held.moved.delete(row.id!);
   held.byId.delete(row.id!);
   held.byKey.delete(identity(row.venueId, row));
