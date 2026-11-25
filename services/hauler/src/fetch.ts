@@ -26,10 +26,10 @@ import type { Haulable, Hauled, Host, Pacing } from './types';
  *
  * **The first row is what adopts an archive already on disk** with no seeding:
  * a file present and correct is confirmed whatever the catalog believed, and
- * its new date says this pass accounted for it — see `touch`. The second and
- * third keep whatever disagreed for somebody to read, and only once a file that
- * agrees is in hand to take its place: a download that fails, or does not
- * match either, leaves it where it was. See `replace`. The last never settles
+ * touched — see `touch`. The second and third keep whatever disagreed for
+ * somebody to read, and only once a file that agrees is in hand to take its
+ * place: a download that fails, or does not match either, leaves it where it
+ * was. See `replace`. The last never settles
  * itself: the catalog asks the venue and rules — and where it rules for what
  * was fetched, that download is the file, and is not fetched twice; where it
  * rules for the file on disk, the download is dropped. See `held.ts`.
@@ -160,7 +160,7 @@ const fromDisk = async (file: Haulable, path: string): Promise<Hauled | null> =>
 
   if (held !== null) {
     if (await agrees(file, path, held)) {
-      // Its date is what says this pass saw it; a file that keeps the old one is present all the same.
+      // Its date says it was confirmed; a file that keeps the old one is present all the same.
       await touch(path).catch((err: unknown) =>
         logger.warn({ key: file.key, err }, 'Present and verified, but its date could not be set'));
 

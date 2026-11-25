@@ -26,8 +26,7 @@ import type { Readable } from 'node:stream';
  * **Every partial lives in one directory**, `.hauler-tmp` at the archives'
  * root — the same volume, so the rename that makes it a file is still one
  * step. What an interrupted hauler leaves behind is then one directory to
- * delete, where partials beside their files would mean walking millions of
- * directories to find them.
+ * delete.
  */
 
 /** What is at a path, or `null` where nothing is. */
@@ -176,7 +175,7 @@ export const replace = async (path: string, digest: string): Promise<string | nu
   if (there !== null && there === await measure(partialOf(path)) && await md5(path) === digest) {
     await discard(path);
 
-    // Its date is a record of the pass; the file is no less there for keeping the old one.
+    // Its date says it was confirmed; the file is no less there for keeping the old one.
     await touch(path).catch(() => undefined);
 
     return null;
@@ -213,12 +212,13 @@ export const sweepPartials = async (): Promise<number> => {
 };
 
 /**
- * Mark a file as seen by this pass: its modification time becomes now.
+ * Mark a file found already on disk and correct: its modification time becomes
+ * now.
  *
- * **Deliberately overwriting what was there.** After a pass, every file the
- * catalog accounts for carries that pass's date, so a file still showing an
- * older one is a file nothing listed — misfiled, withdrawn, or junk — and finds
- * itself by its date alone.
+ * Only files still listed as owed are checked, so a file downloaded and
+ * reported earlier is not listed again and keeps the time it was downloaded. A
+ * file's date says when hauler last wrote or confirmed it, not whether the
+ * catalog accounts for it.
  */
 export const touch = async (path: string): Promise<void> => {
   const now = new Date();
@@ -266,10 +266,8 @@ export const md5 = async (path: string): Promise<string> => {
  *
  * **Compared case-blind and unquoted.** The quotes are HTTP's and the case is
  * the server's — okx serves the same digest in opposite cases from its two
- * clouds — so neither is a fact about the file. A multipart etag carries a
- * `-partcount` suffix and is not a digest of the whole object at all, which is
- * why an etag that does not look like one is no evidence either way rather than
- * evidence against.
+ * clouds — so neither is a fact about the file. Only meaningful for an etag
+ * that `isDigest`.
  */
 export const etagAgrees = (declared: string, digest: string): boolean =>
   cleaned(declared) === digest;

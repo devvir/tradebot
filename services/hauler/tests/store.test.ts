@@ -40,7 +40,7 @@ vi.mock('node:fs/promises', async (actual) => {
   };
 });
 
-const { DiskError, commit, partialOf, replace, roomRefusedAt, writePartial, _test_forgetRefusal } = await import('../src/store');
+const { DiskError, commit, etagAgrees, isDigest, partialOf, replace, roomRefusedAt, writePartial, _test_forgetRefusal } = await import('../src/store');
 
 const md5 = (bytes: Buffer | string) => createHash('md5').update(bytes).digest('hex');
 
@@ -178,5 +178,21 @@ describe('a file replaced', () => {
     expect(readFileSync(at('v/x.zip'), 'utf8')).toBe('same');
     expect(existsSync(at('v/x.zip.bak'))).toBe(false);
     expect(readdirSync(at('.hauler-tmp'))).toEqual([]);
+  });
+});
+
+describe('an etag', () => {
+  const digest = md5('bytes');
+
+  it('agrees with a digest whatever its quotes and case', () => {
+    expect(etagAgrees(`"${digest.toUpperCase()}"`, digest)).toBe(true);
+    expect(etagAgrees(digest, digest)).toBe(true);
+    expect(etagAgrees(`"${md5('other')}"`, digest)).toBe(false);
+  });
+
+  it('is a digest only where it is one of the whole object', () => {
+    expect(isDigest(`"${digest.toUpperCase()}"`)).toBe(true);
+    expect(isDigest(`"${digest}-3"`)).toBe(false);
+    expect(isDigest(undefined)).toBe(false);
   });
 });

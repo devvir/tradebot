@@ -26,7 +26,7 @@ export type Config = {
    */
   lens:         string;
 
-  /** Concurrent fetches within one venue. Venues never wait on each other. */
+  /** Fetches in flight across every venue together; a venue walking alone has all of it. */
   concurrency:  number;
 
   /** Free space on the archives' volume below which nothing more is fetched, in GB. */

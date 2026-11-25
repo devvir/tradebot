@@ -13,11 +13,10 @@ import config from './config';
 /**
  * Brings catalogued venue files to disk, under canonical names.
  *
- * Prospector establishes what every venue publishes; hauler walks each venue as
- * a bucket the catalog serves — only what is still owed, through a lens where
- * one is configured — fetches what it lists, and reports. It never discovers,
- * never learns how a venue structures its archive, and never names a file:
- * each key is where its file goes.
+ * The catalog serves every venue as a bucket; hauler walks each one — only what
+ * is still owed, through a lens where one is configured — fetches what it
+ * lists, and reports. It never discovers, never learns how a venue structures
+ * its archive, and never names a file: each key is where its file goes.
  *
  * Each venue walks on its own loop, soon again after a walk that found work and
  * later after one that found nothing; see `run.ts`.

@@ -462,7 +462,7 @@ describe('a file the disk will not take', () => {
 });
 
 describe('a file already on disk', () => {
-  /** Its new date is what says this pass accounted for it. */
+  /** Its new date says it was confirmed. */
   it('is touched, not fetched, where it matches', async () => {
     const one = file({ path: 'gone.zip' });
 
