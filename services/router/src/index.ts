@@ -10,7 +10,7 @@ import { exitOnBrokerLoss, answerHealthCheck } from './lifecycle';
 SK.run(async (service: Service) => {
   const consumer  = await service.providers.connect('rabbitmq') as RabbitMQ.Broker;
   const publisher = await RabbitMQ.keepAlive(process.env.QUEUE_URL!);
-  const config          = service.config() as Config;
+  const config    = service.config() as Config;
 
   exitOnBrokerLoss(consumer, publisher);
   answerHealthCheck(service, consumer, publisher);
@@ -18,7 +18,9 @@ SK.run(async (service: Service) => {
   await declareConsumerTopology(consumer, config);
   await declarePublisherTopology(publisher, config);
 
-  const holdPublishing = createBackpressureGate(consumer, config);
+  const backpressure = await createBackpressureGate(consumer, config);
 
-  await consumeAndRepublish(consumer, publisher, config, holdPublishing);
+  if (backpressure) service.on('shutdown', backpressure.stop);
+
+  await consumeAndRepublish(consumer, publisher, config, backpressure?.hold ?? null);
 });

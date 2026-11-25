@@ -1,89 +1,203 @@
-import { logger, RabbitMQ } from '@devvir/service-kit';
+import { logger } from '@devvir/service-kit';
+import type { RabbitMQ } from '@devvir/service-kit';
 import type { Config } from './types';
 
-const BACKPRESSURE_POLL_MS = 2_000;
+/** How often the depths of the watched queues are read in the background. */
+export const BACKPRESSURE_POLL_MS = 2_000;
+
+/** How often a held gate reads the depth of the queue it waits on. */
+export const PAUSED_POLL_MS = 1_000;
+
+/** The shortest gap between two warnings that one watched queue does not exist. */
+export const MISSING_QUEUE_WARN_MS = 60_000;
+
+export interface BackpressureGate {
+  /** Resolves once no watched queue is at or above the limit; at once when all have room. */
+  hold: () => Promise<void>;
+  /** Ends the background depth reads and closes the depth channel. */
+  stop: () => Promise<void>;
+}
+
+/** The ready-message count of a queue, or undefined when it cannot be read right now. */
+type GetDepth = (name: string) => Promise<number | undefined>;
 
 // ── Public ────────────────────────────────────────────────────────────────────
 
 /**
- * Returns a gate function that resolves immediately when all watched queues
- * have room, or waits until each drops below maxReady. Returns null when
- * backpressure is disabled.
+ * A gate that holds publishing while any watched queue (`config.watchQueues`) holds
+ * `config.maxReady` ready messages or more. Null when backpressure is off: `maxReady` is 0 or
+ * less, or no queue is watched.
  *
- * Uses channel.checkQueue (passive) to inspect any queue in RabbitMQ — the
- * queue does not need to be declared in this service's topology.
- * Queue depths are polled in the background every BACKPRESSURE_POLL_MS so the
- * gate check is a cached read with no RPC on the hot path.
+ * Depths are read once before the gate is returned, then every BACKPRESSURE_POLL_MS in the
+ * background, so `hold()` compares cached depths with no call to the broker. When a queue is at
+ * or above the limit, `hold()` waits, reading that queue's depth every PAUSED_POLL_MS, until no
+ * watched queue is at or above it. Callers that arrive while the gate holds share that wait and
+ * are released together.
+ *
+ * Each depth is a passive queue check on a channel of the broker's connection that serves only
+ * these checks, so a failed check never closes the broker's own channel. That channel is opened
+ * on first use, and again on the next read after it closes. A watched queue that does not exist
+ * counts as depth 0, with a warning at most once per MISSING_QUEUE_WARN_MS. A depth that cannot
+ * be read (an error, or no connection) keeps its last value, and counts as 0 until one is read:
+ * the gate fails open.
  */
-export const createBackpressureGate = (
+export const createBackpressureGate = async (
   broker: RabbitMQ.Broker,
   config: Config,
-): (() => Promise<void>) | null => {
+): Promise<BackpressureGate | null> => {
   if (config.maxReady <= 0 || config.watchQueues.length === 0) return null;
 
-  const getDepth = async (name: string): Promise<number> => {
-    const channel = broker.getChannel();
+  const depths = depthReader(broker);
+  const gate   = createGate(config.watchQueues, depths.getDepth, config.maxReady);
 
-    if (! channel) return 0;
+  await gate.poll();
 
-    const ok = await channel.checkQueue(name);
-
-    return ok.messageCount;
+  return {
+    hold: gate.hold,
+    stop: async () => {
+      gate.stop();
+      await depths.close();
+    },
   };
-
-  return createHoldPublishing(config.watchQueues, getDepth, config.maxReady);
 };
 
 // ── Private ───────────────────────────────────────────────────────────────────
 
-const createHoldPublishing = (
-  queueNames: string[],
-  getDepth: (name: string) => Promise<number>,
-  maxReady: number,
-) => {
+/**
+ * Read queue depths on a channel of their own, opened from the broker's connection. A missing
+ * queue reads as 0; no connection reads as undefined; any other failure rejects.
+ */
+const depthReader = (broker: RabbitMQ.Broker): { getDepth: GetDepth; close: () => Promise<void> } => {
+  let channel: Promise<RabbitMQ.RawChannel> | null = null;
+  const missingWarnedAt = new Map<string, number>();
+
+  const openChannel = (connection: RabbitMQ.RawConnection): Promise<RabbitMQ.RawChannel> => {
+    const opening = connection.createChannel().then((ch) => {
+      // A failed check closes the channel with an error; the check rejects with it as well and
+      // is handled there, so the event needs no handling beyond keeping it from throwing.
+      ch.on('error', () => {});
+      ch.once('close', () => { if (channel === opening) channel = null; });
+
+      return ch;
+    });
+
+    opening.catch(() => { if (channel === opening) channel = null; });
+
+    return opening;
+  };
+
+  const warnMissing = (name: string): void => {
+    const now = Date.now();
+
+    if (now - (missingWarnedAt.get(name) ?? -Infinity) < MISSING_QUEUE_WARN_MS) return;
+
+    missingWarnedAt.set(name, now);
+    logger.warn({ queue: name }, 'Watched queue does not exist; counting its depth as 0');
+  };
+
+  const getDepth: GetDepth = async (name) => {
+    const connection = broker.getConnection();
+
+    if (! connection) return undefined;
+
+    const ch = await (channel ??= openChannel(connection));
+
+    try {
+      return (await ch.checkQueue(name)).messageCount;
+    } catch (err) {
+      if ((err as { code?: unknown }).code !== 404) throw err;
+
+      warnMissing(name);
+
+      return 0;
+    }
+  };
+
+  const close = async (): Promise<void> => {
+    const open = channel;
+
+    channel = null;
+
+    try {
+      await (await open)?.close();
+    } catch {
+      // Already closed.
+    }
+  };
+
+  return { getDepth, close };
+};
+
+const createGate = (queueNames: string[], getDepth: GetDepth, maxReady: number) => {
   const cachedDepths = new Map(queueNames.map((name) => [name, 0]));
 
-  const interval = setInterval(async () => {
-    for (const name of queueNames) {
-      cachedDepths.set(name, await getDepth(name));
+  /** Read one queue's depth into the cache; a depth that cannot be read keeps its last value. */
+  const refresh = async (name: string): Promise<void> => {
+    try {
+      const depth = await getDepth(name);
+
+      if (depth !== undefined) cachedDepths.set(name, depth);
+    } catch (err) {
+      logger.warn({ err, queue: name }, 'Could not read the queue depth; keeping the last one');
     }
-  }, BACKPRESSURE_POLL_MS);
+  };
+
+  let polling = false;
+
+  /** Read every watched queue's depth; a read that starts while another runs is skipped. */
+  const poll = async (): Promise<void> => {
+    if (polling) return;
+
+    polling = true;
+
+    try {
+      for (const name of queueNames) await refresh(name);
+    } finally {
+      polling = false;
+    }
+  };
+
+  const interval = setInterval(() => void poll(), BACKPRESSURE_POLL_MS);
 
   interval.unref();
 
-  // Shared gate: once one concurrent caller starts waiting, all others await
-  // the same promise instead of each spinning independently.
+  const fullQueue = (): string | undefined => queueNames.find((name) => cachedDepths.get(name)! >= maxReady);
+
+  const waitForRoom = async (full: string): Promise<void> => {
+    logger.warn({ depth: cachedDepths.get(full), limit: maxReady, queue: full }, 'Router paused: downstream queue at capacity');
+
+    let waitingOn: string | undefined = full;
+
+    while (waitingOn !== undefined) {
+      await new Promise((resolve) => setTimeout(resolve, PAUSED_POLL_MS));
+      await refresh(waitingOn);
+      waitingOn = fullQueue();
+    }
+
+    logger.info({ limit: maxReady, queues: Object.fromEntries(cachedDepths) }, 'Router resumed');
+  };
+
+  // Shared gate: while one caller waits for room, every other caller awaits the same promise.
   let gatePromise: Promise<void> | null = null;
 
-  return async () => {
-    if (gatePromise !== null) {
-      await gatePromise;
-      return;
-    }
+  const hold = async (): Promise<void> => {
+    if (gatePromise !== null) return gatePromise;
 
-    for (const name of queueNames) {
-      const depth = cachedDepths.get(name)!;
+    const full = fullQueue();
 
-      if (depth < maxReady) continue;
+    if (full === undefined) return;
 
-      logger.warn({ depth, limit: maxReady, queue: name }, 'Router paused: downstream queue at capacity');
+    let release!: () => void;
 
-      // Assign synchronously before any await so concurrent callers see it immediately.
-      gatePromise = (async () => {
-        let d = depth;
+    gatePromise = new Promise<void>((resolve) => { release = resolve; });
 
-        while (d >= maxReady) {
-          await new Promise((r) => setTimeout(r, 1000));
-          d = await getDepth(name);
-          cachedDepths.set(name, d);
-        }
-
-        logger.info({ depth: d, limit: maxReady, queue: name }, 'Router resumed');
-        gatePromise = null;
-      })();
-
-      await gatePromise;
-      return;
+    try {
+      await waitForRoom(full);
+    } finally {
+      gatePromise = null;
+      release();
     }
   };
+
+  return { hold, poll, stop: () => clearInterval(interval) };
 };

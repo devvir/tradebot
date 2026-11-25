@@ -158,21 +158,67 @@ describe('consumeAndRepublish', () => {
     expect(channel.ack).toHaveBeenCalledWith(msg);
   });
 
-  it('named exchange: calls getExchange and republishes to it', async () => {
+  it('named exchange: republishes to it with the incoming routing key', async () => {
     const { consumer, publisher, deliver } = makeBrokers();
 
     const routes: Route[] = [{
       source: { queue: 'src' },
-      destination: { exchange: { name: 'out-exchange', type: 'fanout' } },
+      destination: { exchange: { name: 'out-exchange', type: 'topic' } },
     }];
 
     await consumeAndRepublish(consumer as any, publisher as any, config(routes), null);
 
-    const msg = makeMsg({ data: 1 });
+    const msg = makeMsg({ data: 1 }, 'trade.btc');
     await deliver('src', msg);
 
     expect(publisher.getExchange).toHaveBeenCalledWith('out-exchange');
-    expect(mockRepublish).toHaveBeenCalledWith(msg, expect.objectContaining({ routingKey: '' }));
+    expect(mockRepublish).toHaveBeenCalledWith(msg, expect.objectContaining({ routingKey: 'trade.btc' }));
+  });
+
+  // ── Setup failures ──────────────────────────────────────────────────────────
+
+  it('rejects when the consumer has no channel', async () => {
+    const { consumer, publisher, channel } = makeBrokers();
+
+    consumer.getChannel.mockReturnValue(null as any);
+
+    await expect(consumeAndRepublish(consumer as any, publisher as any, config([bareRoute('src', 'dst')]), null))
+      .rejects.toThrow('No RabbitMQ channel available');
+    expect(channel.consume).not.toHaveBeenCalled();
+  });
+
+  it('rejects when the publisher has no channel', async () => {
+    const { consumer, publisher, channel } = makeBrokers();
+
+    publisher.getChannel.mockReturnValue(null as any);
+
+    await expect(consumeAndRepublish(consumer as any, publisher as any, config([bareRoute('src', 'dst')]), null))
+      .rejects.toThrow('No RabbitMQ publisher channel available');
+    expect(channel.consume).not.toHaveBeenCalled();
+  });
+
+  // ── Backpressure ────────────────────────────────────────────────────────────
+
+  it('publishes only once the backpressure gate lets it through', async () => {
+    const { consumer, publisher, channel, deliver } = makeBrokers();
+    let open!: () => void;
+
+    const hold = vi.fn(() => new Promise<void>((resolve) => { open = resolve; }));
+
+    await consumeAndRepublish(consumer as any, publisher as any, config([bareRoute('src', 'dst')]), hold);
+
+    const msg     = makeMsg({});
+    const handled = deliver('src', msg);
+
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(hold).toHaveBeenCalledTimes(1);
+    expect(mockRepublish).not.toHaveBeenCalled();
+
+    open();
+    await handled;
+
+    expect(mockRepublish).toHaveBeenCalledTimes(1);
+    expect(channel.ack).toHaveBeenCalledWith(msg);
   });
 
   // ── Routing keys ────────────────────────────────────────────────────────────
