@@ -29,7 +29,7 @@ One instance can collect one venue, several, or all of them — selected with `H
 
 ## Adding a venue
 
-Each venue is one file under [src/venues/](src/venues/) implementing the `Venue` interface — endpoints, which endpoint carries a channel, subscribe/unsubscribe frames, ack matching, and whether a frame is market data. Add its subscriptions to [src/venues/channels.ts](src/venues/channels.ts) and register it in [src/venues/index.ts](src/venues/index.ts). The core never learns a venue's name.
+Each venue is one file under [src/venues/](src/venues/) implementing the `Venue` interface — endpoints, which endpoint carries a channel, the subscribe frame, ack matching, and whether a frame is market data. Add its subscriptions to [src/venues/channels.ts](src/venues/channels.ts) and register it in [src/venues/index.ts](src/venues/index.ts). The core never learns a venue's name.
 
 Currently implemented:
 

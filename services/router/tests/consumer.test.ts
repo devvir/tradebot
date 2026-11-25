@@ -879,6 +879,30 @@ describe('consumeAndRepublish', () => {
       expect(failures()[1][0]).toEqual(expect.objectContaining({ suppressed: 2 }));
     });
 
+    it('logs dead letters of a source at most once per interval', async () => {
+      const { consumer, publisher, exchanges, deliver } = makeBrokers();
+
+      mockRepublish.mockImplementation(async (_msg: unknown, overrides: { routingKey: string }) => {
+        if (overrides.routingKey === 'dst') throw new Error('publish failed');
+      });
+
+      await consumeAndRepublish(consumer as any, publisher as any, config([bareRoute('src', 'dst')], 500, 1), null);
+
+      const deadLetters = () => vi.mocked(logger.error).mock.calls.filter(([, m]) => m === 'Dead-lettered a message');
+
+      for (let i = 0; i < 3; i++) await deliver('src', makeMsg({}, 'k'));
+
+      expect(publications(exchanges).filter((p) => p.exchange === 'dead')).toHaveLength(3);
+      expect(deadLetters()).toHaveLength(1);
+      expect(deadLetters()[0][0]).toEqual({ source: 'src', attempts: 1, exchange: 'dead' });
+
+      await vi.advanceTimersByTimeAsync(FAILURE_LOG_INTERVAL_MS);
+      await deliver('src', makeMsg({}, 'k'));
+
+      expect(deadLetters()).toHaveLength(2);
+      expect(deadLetters()[1][0]).toEqual(expect.objectContaining({ source: 'src', suppressed: 2 }));
+    });
+
     it('survives an ack on a closed channel', async () => {
       const { consumer, publisher, channel, deliver } = makeBrokers();
 

@@ -173,7 +173,7 @@ When the publishing connection is down, the attempt does not count: the message 
 is once the connection is back. When the retry copy or the dead letter cannot be published either,
 the message is requeued as it is, after 500 ms or once the connection is back.
 
-Failures are logged at most once per 10 s per source queue, with the count of those left out.
+Failures, and dead letters, are each logged at most once per 10 s per source queue, with the count of those left out.
 
 ### Delivery guarantees
 

@@ -10,7 +10,7 @@ export const RETRY_BASE_DELAY_MS = 500;
 /** The longest back-off before a retry. */
 export const RETRY_MAX_DELAY_MS = 30_000;
 
-/** The shortest gap between two 'Failed to route message' logs of one source queue. */
+/** The shortest gap between two 'Failed to route message' logs, or two 'Dead-lettered a message' logs, of one source queue. */
 export const FAILURE_LOG_INTERVAL_MS = 10_000;
 
 /** How many times routing a message has failed, on the copy the router retries or dead-letters. */
@@ -119,7 +119,8 @@ export const consumeAndRepublish = async (
 
   const sources = [...groupBySource(config.routes)].map(([queueName, routes]) => {
     const targets    = distinctDestinations(routes).map(toTarget);
-    const logFailure = throttledFailureLog(queueName);
+    const logFailure    = throttledLog((fields) => logger.error(fields, 'Failed to route message'));
+    const logDeadLetter = throttledLog((fields) => logger.error(fields, 'Dead-lettered a message'));
 
     /** Publish the message to every destination of the source queue. */
     const route = async (msg: RabbitMQ.RawMessage): Promise<void> => {
@@ -159,7 +160,7 @@ export const consumeAndRepublish = async (
             routingKey: incomingRoutingKey(msg),
             headers:    { ...copy.headers, [SOURCE_QUEUE_HEADER]: queueName, [ERROR_HEADER]: errorText(err) },
           });
-          logger.error({ source: queueName, attempts: failed, exchange: config.deadLetterExchange }, 'Dead-lettered a message');
+          logDeadLetter({ source: queueName, attempts: failed, exchange: config.deadLetterExchange });
         } else {
           await delay(retryDelay(failed));
           await publish(retryTarget(queueName), msg, { ...copy, routingKey: queueName });
@@ -185,7 +186,7 @@ export const consumeAndRepublish = async (
       try {
         await route(msg);
       } catch (err) {
-        logFailure(err);
+        logFailure({ err, source: queueName });
         await recover(msg, err);
         return;
       }
@@ -283,14 +284,16 @@ const settle = (source: string, action: 'ack' | 'nack', fn: () => void): void =>
 };
 
 /**
- * Log routing failures of one source queue at most once per FAILURE_LOG_INTERVAL_MS, with the
- * number of failures left unlogged since the previous log.
+ * A log of one source queue that writes at most once per FAILURE_LOG_INTERVAL_MS, with the number
+ * of calls left unlogged since the previous write.
  */
-const throttledFailureLog = (source: string): ((err: unknown) => void) => {
+const throttledLog = (
+  write: (fields: Record<string, unknown>) => void,
+): ((fields: Record<string, unknown>) => void) => {
   let loggedAt   = -Infinity;
   let suppressed = 0;
 
-  return (err) => {
+  return (fields) => {
     const now = Date.now();
 
     if (now - loggedAt < FAILURE_LOG_INTERVAL_MS) {
@@ -298,7 +301,7 @@ const throttledFailureLog = (source: string): ((err: unknown) => void) => {
       return;
     }
 
-    logger.error({ err, source, ...(suppressed ? { suppressed } : {}) }, 'Failed to route message');
+    write({ ...fields, ...(suppressed ? { suppressed } : {}) });
     loggedAt   = now;
     suppressed = 0;
   };
