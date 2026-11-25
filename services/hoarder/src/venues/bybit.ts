@@ -22,8 +22,8 @@ export const bybit: Venue = {
 
   endpointFor: () => 'linear',
 
-  subscribeFrame:   (channels) => frame('subscribe', channels),
-  unsubscribeFrame: (channels) => frame('unsubscribe', channels),
+  subscribeFrame:   (channel) => frame('subscribe', channel),
+  unsubscribeFrame: (channel) => frame('unsubscribe', channel),
 
   matchAck: (frame, channel): AckResult => {
     const ack = frame as { op?: string; success?: boolean; req_id?: string };
@@ -41,10 +41,14 @@ export const bybit: Venue = {
   describeControl: (frame) => {
     const f = frame as { op?: string; success?: boolean; ret_msg?: string; req_id?: string };
 
-    if (f.op === 'subscribe' || f.op === 'unsubscribe')
-      return `${f.op} ${f.req_id ?? ''}: success=${f.success}${f.ret_msg ? ` (${f.ret_msg})` : ''}`;
+    if (f.op === 'subscribe' || f.op === 'unsubscribe') {
+      return {
+        text:    `${f.op} ${f.req_id ?? ''}: success=${f.success}${f.ret_msg ? ` (${f.ret_msg})` : ''}`,
+        failure: f.success === false,
+      };
+    }
 
-    if (f.op) return `${f.op}`;
+    if (f.op) return { text: `${f.op}` };
 
     return null;
   },
@@ -56,5 +60,5 @@ export const bybit: Venue = {
  * The topic doubles as the `req_id`: it is echoed verbatim, so correlation
  * needs no state between send and ack.
  */
-const frame = (op: 'subscribe' | 'unsubscribe', channels: string[]): string =>
-  JSON.stringify({ op, args: channels, req_id: channels[0] ?? '' });
+const frame = (op: 'subscribe' | 'unsubscribe', channel: string): string =>
+  JSON.stringify({ op, args: [channel], req_id: channel });

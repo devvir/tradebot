@@ -7,6 +7,12 @@ vi.mock('ws', () => ({
   default: { OPEN: 1 },
 }));
 
+vi.mock('../src/websocket', () => ({
+  connect: vi.fn(),
+}));
+
+vi.mock('../src/venues', async importOriginal => (await import('./twin')).withTwin(importOriginal as never));
+
 // ── MockWs helper ─────────────────────────────────────────────────────────────
 
 const makeMockWs = (readyState = 1) => {
@@ -21,21 +27,29 @@ const makeMockWs = (readyState = 1) => {
 
 // ── Fresh module per test (singleton pool) ────────────────────────────────────
 
-let poolKey:   typeof import('../src/pool').poolKey;
-let set:       typeof import('../src/pool').set;
-let pauseAll:  typeof import('../src/pool').pauseAll;
-let resumeAll: typeof import('../src/pool').resumeAll;
+let poolKey:      typeof import('../src/pool').poolKey;
+let get:          typeof import('../src/pool').get;
+let set:          typeof import('../src/pool').set;
+let getOrConnect: typeof import('../src/pool').getOrConnect;
+let pauseAll:     typeof import('../src/pool').pauseAll;
+let resumeAll:    typeof import('../src/pool').resumeAll;
+let mockConnect:  ReturnType<typeof vi.fn>;
 
 beforeEach(async () => {
   vi.resetModules();
 
   const mod = await import('../src/pool');
 
-  poolKey   = mod.poolKey;
-  set       = mod.set;
-  pauseAll  = mod.pauseAll;
-  resumeAll = mod.resumeAll;
+  poolKey      = mod.poolKey;
+  get          = mod.get;
+  set          = mod.set;
+  getOrConnect = mod.getOrConnect;
+  pauseAll     = mod.pauseAll;
+  resumeAll    = mod.resumeAll;
+  mockConnect  = (await import('../src/websocket') as any).connect;
 });
+
+const service = { on: vi.fn() } as any;
 
 afterEach(() => vi.clearAllMocks());
 
@@ -56,6 +70,50 @@ describe('poolKey', () => {
   it('adds the socket segment so each socket key gets its own connection', () => {
     expect(poolKey('twin', 'realtime', 'Primary')).toBe('twin:realtime:Primary');
     expect(poolKey('twin', 'realtime', 'Secondary')).toBe('twin:realtime:Secondary');
+  });
+});
+
+// ── getOrConnect ──────────────────────────────────────────────────────────────
+
+describe('getOrConnect', () => {
+  it('shares one entry and one connection between calls for the same key', () => {
+    mockConnect.mockReturnValue(makeMockWs(0));
+
+    const a = getOrConnect('twin', 'realtime', service, vi.fn());
+    const b = getOrConnect('twin', 'realtime', service, vi.fn());
+
+    expect(a).toBe(b);
+    expect(mockConnect).toHaveBeenCalledOnce();
+    expect(get('twin:realtime:')).toBe(a);
+  });
+
+  it('throws for an endpoint the venue does not have', () => {
+    expect(() => getOrConnect('twin', 'nowhere', service, vi.fn()))
+      .toThrow("Venue 'twin' has no endpoint 'nowhere'");
+  });
+
+  // Whoever subscribes learns of every socket the entry opens, so the
+  // replacement after a reconnect can be subscribed like the first one was.
+  it('reports the open of the first socket and of every replacement, and swaps in the replacement', () => {
+    const first  = makeMockWs(0);
+    const second = makeMockWs(0);
+    const onOpen = vi.fn();
+
+    mockConnect.mockReturnValue(first);
+
+    const entry = getOrConnect('twin', 'realtime', service, vi.fn(), { onOpen });
+    const { onReconnect } = mockConnect.mock.calls[0]![4];
+
+    first.emit('open');
+    expect(onOpen).toHaveBeenLastCalledWith(entry, first);
+
+    onReconnect(second);
+    expect(entry.ws).toBe(second);
+    expect(onOpen).toHaveBeenCalledOnce();
+
+    second.emit('open');
+    expect(onOpen).toHaveBeenLastCalledWith(entry, second);
+    expect(onOpen).toHaveBeenCalledTimes(2);
   });
 });
 

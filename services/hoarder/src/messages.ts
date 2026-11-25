@@ -1,5 +1,6 @@
 import { Broker, logger, Service } from '@devvir/service-kit';
 import { venueFor } from './venues';
+import type { ControlDescription } from './venues/types';
 import type { Config, MessageHandler } from './types';
 
 /**
@@ -53,9 +54,13 @@ export const createMessageHandler = (service: Service, onMessage: () => void): M
   };
 };
 
-const logControlFrame = (description: string | null, frame: unknown, venue: string): void => {
-  if (description)
-    return logger.debug({ venue }, description);
+/** A venue refusing a request is worth seeing; the rest of the control chatter is not. */
+const logControlFrame = (control: ControlDescription | null, frame: unknown, venue: string): void => {
+  if (control?.failure)
+    return logger.warn({ venue }, control.text);
+
+  if (control)
+    return logger.debug({ venue }, control.text);
 
   logger.warn({ venue, frame: JSON.stringify(frame).slice(0, 200) }, 'Unrecognized message received');
 };

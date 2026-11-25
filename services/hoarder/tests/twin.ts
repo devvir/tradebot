@@ -20,8 +20,8 @@ export const twin: Venue = {
 
   endpointFor: (channel) => (PLATFORM.includes(split(channel).base) ? 'platform' : 'realtime'),
 
-  subscribeFrame:   (channels) => JSON.stringify({ op: 'subscribe',   args: channels }),
-  unsubscribeFrame: (channels) => JSON.stringify({ op: 'unsubscribe', args: channels }),
+  subscribeFrame:   (channel) => JSON.stringify({ op: 'subscribe',   args: [channel] }),
+  unsubscribeFrame: (channel) => JSON.stringify({ op: 'unsubscribe', args: [channel] }),
 
   matchAck: (frame, channel): AckResult => {
     const ack = frame as { subscribe?: string; pool?: string; success?: boolean };
@@ -45,9 +45,9 @@ export const twin: Venue = {
   describeControl: (frame) => {
     const msg = frame as { info?: string; version?: string; subscribe?: string; unsubscribe?: string; success?: boolean };
 
-    if (typeof msg.info === 'string')        return `info: ${msg.info} (API ${msg.version})`;
-    if (typeof msg.subscribe === 'string')   return `subscribed: ${msg.subscribe} (success=${msg.success})`;
-    if (typeof msg.unsubscribe === 'string') return `unsubscribed: ${msg.unsubscribe} (success=${msg.success})`;
+    if (typeof msg.info === 'string')        return { text: `info: ${msg.info} (API ${msg.version})` };
+    if (typeof msg.subscribe === 'string')   return { text: `subscribed: ${msg.subscribe} (success=${msg.success})`, failure: ! msg.success };
+    if (typeof msg.unsubscribe === 'string') return { text: `unsubscribed: ${msg.unsubscribe} (success=${msg.success})`, failure: ! msg.success };
 
     return null;
   },

@@ -29,8 +29,8 @@ export const binance: Venue = {
 
   endpointFor: () => 'public',
 
-  subscribeFrame:   (channels) => frame('SUBSCRIBE', channels),
-  unsubscribeFrame: (channels) => frame('UNSUBSCRIBE', channels),
+  subscribeFrame:   (channel) => frame('SUBSCRIBE', channel),
+  unsubscribeFrame: (channel) => frame('UNSUBSCRIBE', channel),
 
   /**
    * Correlates on the request id, since the ack carries nothing else. The id is
@@ -51,8 +51,8 @@ export const binance: Venue = {
   describeControl: (frame) => {
     const f = frame as { id?: string | number; result?: unknown; error?: { code?: number; msg?: string } };
 
-    if (f.error)          return `error ${f.error.code}: ${f.error.msg} (id=${f.id})`;
-    if (f.id !== undefined) return `ack id=${f.id}`;
+    if (f.error)            return { text: `error ${f.error.code}: ${f.error.msg} (id=${f.id})`, failure: true };
+    if (f.id !== undefined) return { text: `ack id=${f.id}` };
 
     return null;
   },
@@ -60,8 +60,8 @@ export const binance: Venue = {
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
-const frame = (method: 'SUBSCRIBE' | 'UNSUBSCRIBE', channels: string[]): string =>
-  JSON.stringify({ method, params: channels, id: requestId(channels[0] ?? '') });
+const frame = (method: 'SUBSCRIBE' | 'UNSUBSCRIBE', channel: string): string =>
+  JSON.stringify({ method, params: [channel], id: requestId(channel) });
 
 /**
  * Binance rejects a request id that is not an integer or a string matching

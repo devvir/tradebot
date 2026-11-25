@@ -1,4 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { logger } from '@devvir/service-kit';
 import { createMessageHandler } from '../src/messages';
 import type { State, Config } from '../src/types';
 
@@ -239,5 +240,49 @@ describe('failure handling', () => {
     exchange.publish.mockRejectedValueOnce(new Error('Channel closed'));
 
     await expect(handler(buf(dataMsg()), 'twin')).rejects.toThrow('Channel closed');
+  });
+});
+
+// ── Control frame logging ─────────────────────────────────────────────────────
+
+describe('control messages: logging', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  // Captured refusals, one per venue: each is a request the venue turned down.
+  const refusals: [string, unknown][] = [
+    ['binance', { error: { code: 2, msg: 'Invalid request: unknown stream' }, id: 'btcusdt-nonsense' }],
+    ['bybit',   { success: false, ret_msg: 'error:handler not found,topic:nonsense.BTCUSDT', req_id: 'nonsense.BTCUSDT', op: 'subscribe' }],
+    ['kraken',  { error: 'Subscription name invalid', method: 'subscribe', success: false }],
+    ['okx',     { event: 'error', msg: 'Wrong URL or channel:nonsense,instId:BTC-USDT', code: '60018' }],
+    ['twin',    { subscribe: 'nonsense', success: false }],
+  ];
+
+  it.each(refusals)('logs a %s refusal at warn', async (venue, frame) => {
+    const { service, exchange } = makeService();
+    const handler = createMessageHandler(service as any, vi.fn());
+
+    await handler(buf(frame), venue);
+
+    expect(exchange.publish).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith({ venue }, expect.any(String));
+    expect(logger.debug).not.toHaveBeenCalled();
+  });
+
+  const acks: [string, unknown][] = [
+    ['binance', { result: null, id: 'btcusdt-aggTrade' }],
+    ['bybit',   { success: true, ret_msg: '', req_id: 'publicTrade.BTCUSDT', op: 'subscribe' }],
+    ['kraken',  { method: 'subscribe', result: { channel: 'trade', symbol: 'BTC/USD' }, success: true }],
+    ['okx',     { event: 'subscribe', arg: { channel: 'trades', instId: 'BTC-USDT' } }],
+    ['twin',    { subscribe: 'trade', success: true }],
+  ];
+
+  it.each(acks)('logs a %s ack at debug', async (venue, frame) => {
+    const { service } = makeService();
+    const handler = createMessageHandler(service as any, vi.fn());
+
+    await handler(buf(frame), venue);
+
+    expect(logger.debug).toHaveBeenCalledWith({ venue }, expect.any(String));
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 });

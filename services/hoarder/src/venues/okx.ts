@@ -21,14 +21,13 @@ export const okx: Venue = {
 
   endpointFor: () => 'public',
 
-  subscribeFrame:   (channels) => JSON.stringify({ op: 'subscribe',   args: channels.map(toArg) }),
-  unsubscribeFrame: (channels) => JSON.stringify({ op: 'unsubscribe', args: channels.map(toArg) }),
+  subscribeFrame:   (channel) => JSON.stringify({ op: 'subscribe',   args: [toArg(channel)] }),
+  unsubscribeFrame: (channel) => JSON.stringify({ op: 'unsubscribe', args: [toArg(channel)] }),
 
   /**
    * The ack echoes the full arg, so it matches on channel + instId. An error
-   * frame carries no arg — it names the offender in prose — so any error while
-   * waiting is taken as this subscription's failure; nothing else is in flight
-   * on the socket at that moment.
+   * frame carries no arg — it names the offender in prose — so any error is
+   * reported as a failure of the channel being awaited.
    */
   matchAck: (frame, channel): AckResult => {
     const f = frame as { event?: string; arg?: { channel?: string; instId?: string } };
@@ -51,10 +50,10 @@ export const okx: Venue = {
   describeControl: (frame) => {
     const f = frame as { event?: string; msg?: string; code?: string; arg?: { channel?: string; instId?: string } };
 
-    if (f.event === 'error')       return `error ${f.code}: ${f.msg}`;
-    if (f.event === 'subscribe')   return `subscribed: ${f.arg?.channel}:${f.arg?.instId}`;
-    if (f.event === 'unsubscribe') return `unsubscribed: ${f.arg?.channel}:${f.arg?.instId}`;
-    if (f.event)                   return `${f.event}`;
+    if (f.event === 'error')       return { text: `error ${f.code}: ${f.msg}`, failure: true };
+    if (f.event === 'subscribe')   return { text: `subscribed: ${f.arg?.channel}:${f.arg?.instId}` };
+    if (f.event === 'unsubscribe') return { text: `unsubscribed: ${f.arg?.channel}:${f.arg?.instId}` };
+    if (f.event)                   return { text: `${f.event}` };
 
     return null;
   },

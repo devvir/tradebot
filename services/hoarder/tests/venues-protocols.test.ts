@@ -15,7 +15,7 @@ import { okx, _test_toArg as toArg } from '../src/venues/okx';
 
 describe('binance', () => {
   it('builds the observed subscribe frame', () => {
-    expect(binance.subscribeFrame(['btcusdt@aggTrade'])).toBe(
+    expect(binance.subscribeFrame('btcusdt@aggTrade')).toBe(
       '{"method":"SUBSCRIBE","params":["btcusdt@aggTrade"],"id":"btcusdt-aggTrade"}',
     );
   });
@@ -52,7 +52,7 @@ describe('okx', () => {
   it('splits a channel into the arg object it subscribes with', () => {
     expect(toArg('trades:BTC-USDT')).toEqual({ channel: 'trades', instId: 'BTC-USDT' });
 
-    expect(okx.subscribeFrame(['trades:BTC-USDT'])).toBe(
+    expect(okx.subscribeFrame('trades:BTC-USDT')).toBe(
       '{"op":"subscribe","args":[{"channel":"trades","instId":"BTC-USDT"}]}',
     );
   });
@@ -85,7 +85,7 @@ describe('bybit', () => {
   // A successful ack has an empty ret_msg and does not name the topic, so the
   // req_id we set is the only correlator available.
   it('sends the topic as req_id and confirms on its echo', () => {
-    expect(bybit.subscribeFrame(['publicTrade.BTCUSDT'])).toBe(
+    expect(bybit.subscribeFrame('publicTrade.BTCUSDT')).toBe(
       '{"op":"subscribe","args":["publicTrade.BTCUSDT"],"req_id":"publicTrade.BTCUSDT"}',
     );
 
@@ -120,7 +120,7 @@ describe('kraken', () => {
   it('splits a channel into its channel + symbol subscribe params', () => {
     expect(splitKraken('trade:BTC/USD')).toEqual({ name: 'trade', symbol: 'BTC/USD' });
 
-    expect(kraken.subscribeFrame(['trade:BTC/USD'])).toBe(
+    expect(kraken.subscribeFrame('trade:BTC/USD')).toBe(
       '{"method":"subscribe","params":{"channel":"trade","symbol":["BTC/USD"]}}',
     );
   });
@@ -166,17 +166,30 @@ describe('all venues', () => {
     for (const n of names) expect(channelsFor(n).length).toBeGreaterThan(0);
   });
 
-  // A subscribe frame must be valid JSON and mention the channel, or the venue
-  // is being sent something it cannot act on.
-  it('produces a JSON subscribe frame referencing the channel', () => {
+  // A subscribe frame must be valid JSON and name every part of its channel
+  // (OKX and Kraken split `<channel>:<instrument>`), or the venue is sent
+  // something other than what was asked for.
+  it('produces a JSON subscribe frame naming every part of the channel', () => {
     for (const n of names) {
       const v = venueFor(n);
 
       for (const channel of channelsFor(n)) {
-        const frame = v.subscribeFrame([channel]);
+        const frame = v.subscribeFrame(channel);
 
         expect(() => JSON.parse(frame)).not.toThrow();
+
+        for (const part of channel.split(':')) expect(frame).toContain(JSON.stringify(part));
       }
+    }
+  });
+
+  // Each channel gets a frame of its own, so no two channels' frames coincide.
+  it('gives every channel a distinct subscribe frame', () => {
+    for (const n of names) {
+      const v      = venueFor(n);
+      const frames = channelsFor(n).map(c => v.subscribeFrame(c));
+
+      expect(new Set(frames).size).toBe(frames.length);
     }
   });
 

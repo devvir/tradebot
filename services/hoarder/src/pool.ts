@@ -24,13 +24,30 @@ export const remove = (key: string) => pool.delete(key);
 
 // ── Connection management ─────────────────────────────────────────────────────
 
-export const getOrConnect = async (
+export interface GetOrConnectOptions {
+  socketKey?: string;
+
+  /**
+   * Called with the entry and the socket each time one of the entry's sockets
+   * opens — the first one and every reconnected replacement. Fixed by the call
+   * that creates the entry.
+   */
+  onOpen?: (entry: PoolEntry, ws: WebSocket) => void;
+}
+
+/**
+ * The pool entry for (venue, endpoint, socketKey), connecting it if it does
+ * not exist yet. The entry is in the pool by the time this returns, so a second
+ * call for the same key — even one made before the socket opens — shares it.
+ */
+export const getOrConnect = (
   venue:        string,
   endpointName: string,
   service:      Service,
   onMessage:    MessageHandler,
-  socketKey  =  '',
-): Promise<PoolEntry> => {
+  options:      GetOrConnectOptions = {},
+): PoolEntry => {
+  const { socketKey = '', onOpen } = options;
   const key      = poolKey(venue, endpointName, socketKey);
   const existing = pool.get(key);
 
@@ -46,26 +63,25 @@ export const getOrConnect = async (
 
   pool.set(key, entry);
 
+  const watchOpen = (ws: WebSocket): void => {
+    ws.once('open', () => onOpen?.(entry, ws));
+  };
+
   const ws = connect(endpoint, venue, service, onMessage, {
     socketKey,
     onReconnect: (newWs) => {
-      const e = pool.get(key);
-      if (! e) return;
+      if (pool.get(key) !== entry) return;
 
-      e.ws = newWs;
-
-      // Resubscribe tracked channels after the new connection opens
-      if (e.channels.size > 0) {
-        newWs.once('open', () => {
-          newWs.send(v.subscribeFrame([...e.channels]));
-        });
-      }
+      entry.ws = newWs;
+      watchOpen(newWs);
     },
   });
 
   service.on('shutdown', () => ws.close());
 
   entry.ws = ws;
+
+  if (ws) watchOpen(ws);
 
   return entry;
 };

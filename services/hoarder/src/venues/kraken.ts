@@ -24,13 +24,13 @@ export const kraken: Venue = {
 
   endpointFor: () => 'public',
 
-  subscribeFrame:   (channels) => frame('subscribe', channels),
-  unsubscribeFrame: (channels) => frame('unsubscribe', channels),
+  subscribeFrame:   (channel) => frame('subscribe', channel),
+  unsubscribeFrame: (channel) => frame('unsubscribe', channel),
 
   /**
-   * The ack echoes channel and symbol. An error frame carries neither, so any
-   * error seen while waiting is taken as this subscription's failure — nothing
-   * else is in flight on the socket at that moment.
+   * The ack echoes channel and symbol. A rejection carries neither, so any
+   * `success: false` answer to a subscribe is reported as a failure of the
+   * channel being awaited.
    */
   matchAck: (frame, channel): AckResult => {
     const f = frame as {
@@ -71,12 +71,16 @@ export const kraken: Venue = {
       data?:    { version?: string; system?: string }[];
     };
 
-    if (f.channel === 'heartbeat') return 'heartbeat';
-    if (f.channel === 'status')    return `status: ${f.data?.[0]?.system} (v${f.data?.[0]?.version})`;
-    if (f.error)                   return `error: ${f.error}`;
+    if (f.channel === 'heartbeat') return { text: 'heartbeat' };
+    if (f.channel === 'status')    return { text: `status: ${f.data?.[0]?.system} (v${f.data?.[0]?.version})` };
+    if (f.error)                   return { text: `error: ${f.error}`, failure: true };
 
-    if (f.method)
-      return `${f.method} ${f.result?.channel}:${f.result?.symbol}: success=${f.success}`;
+    if (f.method) {
+      return {
+        text:    `${f.method} ${f.result?.channel}:${f.result?.symbol}: success=${f.success}`,
+        failure: f.success === false,
+      };
+    }
 
     return null;
   },
@@ -93,8 +97,8 @@ const split = (channel: string): { name: string; symbol: string } => {
     : { name: channel.slice(0, at), symbol: channel.slice(at + 1) };
 };
 
-const frame = (method: 'subscribe' | 'unsubscribe', channels: string[]): string => {
-  const { name, symbol } = split(channels[0] ?? '');
+const frame = (method: 'subscribe' | 'unsubscribe', channel: string): string => {
+  const { name, symbol } = split(channel);
 
   return JSON.stringify({ method, params: { channel: name, symbol: [symbol] } });
 };

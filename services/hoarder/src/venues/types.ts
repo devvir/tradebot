@@ -19,16 +19,18 @@ export interface Venue {
   /** Which endpoint carries a given channel. */
   endpointFor(channel: string): string;
 
-  /** Frame sent to subscribe to `channels`. */
-  subscribeFrame(channels: string[]): string;
+  /** Frame sent to subscribe to one channel. */
+  subscribeFrame(channel: string): string;
 
-  /** Frame sent to unsubscribe from `channels`. */
-  unsubscribeFrame(channels: string[]): string;
+  /** Frame sent to unsubscribe from one channel. */
+  unsubscribeFrame(channel: string): string;
 
   /**
    * Classify an inbound frame while awaiting a subscribe ack for `channel`:
    * `ok` confirms, `failed` rejects, `null` means "not an ack for this channel"
-   * and the wait continues.
+   * and the wait continues. A socket has at most one subscribe ack awaited at a
+   * time, so a venue whose error frames name no channel may report any error
+   * as `failed` for the channel being awaited.
    */
   matchAck(frame: unknown, channel: string): AckResult;
 
@@ -40,10 +42,11 @@ export interface Venue {
   isData(frame: unknown): boolean;
 
   /**
-   * Human-readable description of a control frame, for the debug log. `null`
-   * when the venue does not recognise the frame — the relay warns instead.
+   * Description of a control frame, for the log: its text, and whether it
+   * reports that the venue refused a request. `null` when the venue does not
+   * recognise the frame — the relay warns instead.
    */
-  describeControl?(frame: unknown): string | null;
+  describeControl?(frame: unknown): ControlDescription | null;
 
   /**
    * Sub-socket key for a channel, when one endpoint needs several sockets (a
@@ -53,3 +56,9 @@ export interface Venue {
 }
 
 export type AckResult = 'ok' | 'failed' | null;
+
+export interface ControlDescription {
+  text:     string;
+  /** The frame reports a refused request (an error, a rejected subscription). */
+  failure?: boolean;
+}

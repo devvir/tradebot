@@ -1,5 +1,5 @@
 import SK from './service';
-import type { RabbitMQ, Service } from '@devvir/service-kit';
+import { logger, type RabbitMQ, type Service } from '@devvir/service-kit';
 import { createMessageHandler } from './messages';
 import { pauseAll, resumeAll } from './pool';
 import { subscribe } from './subscriptions';
@@ -18,10 +18,12 @@ SK.run(async (service: Service) => {
   const onMessage = createMessageHandler(service, () => service.emit('message'));
 
   // Subscribe every configured venue's channels — connections are created on
-  // demand, one per (venue, endpoint, socket key).
+  // demand, one per (venue, endpoint, socket key). A channel the venue refuses
+  // is dropped; every other one is retried until it is confirmed.
   await Promise.all(config.venues.flatMap(venue =>
     channelsFor(venue).map(channel =>
-      subscribe(venue, channel, service, onMessage).catch(err => service.emit('failure', err)),
+      subscribe(venue, channel, service, onMessage)
+        .catch(err => logger.error({ err, venue, channel }, 'Subscription failed')),
     ),
   ));
 });

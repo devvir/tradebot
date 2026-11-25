@@ -18,7 +18,14 @@ export interface State {
 }
 
 export interface PoolEntry {
+  /** The entry's current socket; replaced on every reconnect. */
   ws:       WebSocket;
+
+  /**
+   * The channels this socket is meant to carry: a channel joins when it is
+   * asked for, before any answer from the venue, and leaves only when the venue
+   * rejects it. Every socket the entry opens subscribes all of them.
+   */
   channels: Set<string>;
 }
 
