@@ -195,6 +195,10 @@ const scan = async (
  * want to know: whether the upload queue has room for another tar, and which
  * local paths it is sending and bringing back. A queue whose size is not known
  * has no room: a tar is made only where Mega is seen to be catching up.
+ *
+ * **The queue is Mega's whole queue**, whoever filled it: another run's
+ * transfers, or one started by hand, are backlog in front of this run's the
+ * same way, since there is one link either way.
  */
 const roundOf = (config: ColdConfig): Round => {
   let room:      Promise<boolean> | null = null;

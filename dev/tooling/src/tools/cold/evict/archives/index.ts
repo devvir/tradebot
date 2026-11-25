@@ -78,6 +78,14 @@ import type { Origin } from '../../types';
  * same files, older ones, or half of them. It is a look taken on purpose and
  * once: never while watching, where it would take files as they are pulled.
  *
+ * **A push of the same tree may be running meanwhile**, and is not kept out:
+ * each command takes a lock of its own (`lock.ts`). Push stores only what the
+ * record does not hold at the catalog's version; what goes here is what the
+ * record says cold storage holds at that version, asked again just before it
+ * goes. So the two never act on one partition, and SQLite keeps their writes to
+ * the record apart. A push runs for days, which is when a filling disk most
+ * needs room made.
+ *
  * **Nothing is evicted while the vault reports a loss.** `ERROR.log` in the
  * vault means its ledger said something its disk did not bear out — and the
  * ledger is what this trusts.

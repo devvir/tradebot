@@ -34,6 +34,9 @@ vi.mock('../../../src/shared/ui/logger', async actual => ({
   info: vi.fn(), error: vi.fn(), spacer: vi.fn(), setPrefix: vi.fn(),
 }));
 
+/** What a command that keeps going by itself, given `--watch`, is run with. */
+const WATCHES = { watches: true };
+
 /** What ends a watching run: Ctrl-C at a prompt, which no retry outlasts. */
 const stopped = (): Error => Object.assign(new Error('User force closed the prompt'), { name: 'ExitPromptError' });
 
@@ -62,7 +65,7 @@ describe('a command over several trees, left watching', () => {
       ran.push(origin);
     });
 
-    const going = each(['archives', 'vault'], run);
+    const going = each(['archives', 'vault'], run, WATCHES);
     const ended = expect(going).rejects.toThrow(/force closed/);
 
     await vi.advanceTimersByTimeAsync(0);
@@ -90,7 +93,7 @@ describe('a command over several trees, left watching', () => {
       if (watching.length === 2) throw stopped();
 
       watching.push(isWatch());
-    });
+    }, WATCHES);
     const ended = expect(going).rejects.toThrow(/force closed/);
 
     await vi.advanceTimersByTimeAsync(WATCH_MS);
@@ -107,7 +110,7 @@ describe('a command over several trees, left watching', () => {
       if (yes.length === 4) throw stopped();
 
       yes.push(isYes());
-    });
+    }, WATCHES);
     const ended = expect(going).rejects.toThrow(/force closed/);
 
     await vi.advanceTimersByTimeAsync(2 * WATCH_MS);
@@ -134,13 +137,39 @@ describe('a command over several trees, left watching', () => {
   });
 });
 
+describe('a command that does not watch, given --watch', () => {
+  it('runs each tree once, and ends', async () => {
+    setWatch(true);
+
+    const run = vi.fn(async () => {});
+
+    await each(['archives', 'vault'], run);
+
+    expect(run.mock.calls).toEqual([['archives'], ['vault']]);
+  });
+
+  it('is not run again where it fails', async () => {
+    setWatch(true);
+
+    const began = Date.now();
+    const run = vi.fn(async () => {
+      vi.setSystemTime(began + 60_000);
+
+      throw new Error('Mega would not answer');
+    });
+
+    await expect(each(['archives'], run)).rejects.toThrow(/Mega would not answer/);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('a command left watching that fails', () => {
   it('fails as it would without watching, where it fails as it starts', async () => {
     setWatch(true);
 
     const run = vi.fn(async () => { throw new Error('a lock somebody holds'); });
 
-    await expect(each(['archives'], run)).rejects.toThrow(/a lock somebody holds/);
+    await expect(each(['archives'], run, WATCHES)).rejects.toThrow(/a lock somebody holds/);
     expect(run).toHaveBeenCalledTimes(1);
   });
 
@@ -158,7 +187,7 @@ describe('a command left watching that fails', () => {
       if (at.length <= 5) throw new Error('Mega would not answer');
     });
 
-    const going = each(['archives'], run);
+    const going = each(['archives'], run, WATCHES);
 
     await vi.advanceTimersByTimeAsync(0);
     expect(run).toHaveBeenCalledTimes(1);
@@ -190,7 +219,7 @@ describe('a command left watching that fails', () => {
       vi.setSystemTime(began + 60_000);
 
       if (yes.length === 1) throw new Error('Mega would not answer');
-    });
+    }, WATCHES);
 
     await vi.advanceTimersByTimeAsync(5_000);
     await going;
@@ -208,7 +237,7 @@ describe('a command left watching that fails', () => {
       throw stopped();
     });
 
-    await expect(each(['archives'], run)).rejects.toThrow(/force closed/);
+    await expect(each(['archives'], run, WATCHES)).rejects.toThrow(/force closed/);
     expect(run).toHaveBeenCalledTimes(1);
   });
 });

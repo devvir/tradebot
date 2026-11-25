@@ -7,33 +7,19 @@ import { confirm } from '../../shared/ui/prompts';
 import { info, warn } from '../../shared/ui/logger';
 
 /**
- * One run of a command per origin at a time.
+ * One run of a command per origin at a time, on this host.
  *
- * **Keyed by both, because neither alone is the thing at risk.** Two pushes over
- * one origin would plan the same partitions twice and pack them into two sets
- * of tars, both of which would upload; two evicts would walk and prompt over the
- * same tree. Neither collision crosses origins — each stages into its own
- * directory, recovers only from that directory, and works only on its own rows.
+ * **Keyed by both**: a file `cold.<origin>.<command>.lock` in cold's directory,
+ * where the origin is whatever the command names in an origin's place. A run
+ * holding it keeps out another run of the same command over the same origin,
+ * and nothing else: another command, or the same one over another origin, takes
+ * a lock of its own. Which commands may run beside which is theirs to say.
  *
- * **A push and an evict do not collide, so they do not share a lock.** What each
- * acts on is decided by the record, and the record says it the same way to both.
- * Push stores only partitions the record does not hold at the version they are
- * at now — the catalog's for the archives, the ledger's for the vault. Evict
- * removes only partitions Mega has confirmed holding at that same version, with
- * no change noted, and checks that again right before it removes them. A
- * partition push is storing is not one evict will remove, and one evict has
- * removed is not one push will store. Both write the record, and SQLite keeps
- * those writes apart. A push runs for days, which is when a filling tree most
- * needs reclaiming, so a shared lock would keep eviction out exactly when it
- * matters.
- *
- * The upload queue *is* shared, and is meant to be. Pacing reads it globally on
- * purpose, so a second origin's transfers are backlog in front of ours in
- * exactly the way an upload started by hand would be — which is the honest
- * answer, since there is one link either way.
- *
- * The lock is a file rather than anything cleverer because the thing being
- * protected is a directory of tars on one host.
+ * **Taken only where there is none.** The file is created exclusively, so of two
+ * runs starting at once only one has it. It names the process that took it, when,
+ * in which boot of the machine, and a token only that run knows. It is given back
+ * by the function `acquire` returns, and by `cleanup.ts` on the way out; either
+ * way it is removed only while the token in it is still that run's.
  *
  * **A lock whose holder is gone is cleared; one still held is asked about.**
  * Where the process that took it is still there, the risk of overriding it is

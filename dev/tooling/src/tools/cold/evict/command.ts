@@ -42,6 +42,6 @@ export const register = (cold: Command): void => {
       await each(asked.origins, async chosen => {
         if (chosen === 'vault') await (await import('./vault')).runEvictVault(selection, how);
         else await (await import('./archives')).runEvict(chosen, { venues: asked.venues, ...how, ...(options.cleanup ? { cleanup: true } : {}) });
-      });
+      }, { watches: true });
     }));
 };

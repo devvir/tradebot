@@ -53,7 +53,7 @@ export const register = (cold: Command): void => {
         setYes(given.yes ?? false);
         setWatch(given.watch ?? false);
 
-        await each(['archives'], async () => (await import('./needed')).runPullNeeded(options.dryRun ? { dryRun: true } : {}));
+        await each(['archives'], async () => (await import('./needed')).runPullNeeded(options.dryRun ? { dryRun: true } : {}), { watches: true });
 
         return;
       }

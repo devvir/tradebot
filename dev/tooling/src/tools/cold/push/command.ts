@@ -65,7 +65,7 @@ export const register = (cold: Command): void => {
       await each(asked.origins, chosen => push.runPush(chosen, {
         venues: asked.venues,
         ...(options.lens === undefined ? {} : { lens: options.lens }),
-      }));
+      }), { watches: true });
     }));
 };
 

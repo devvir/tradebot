@@ -2,13 +2,14 @@ import fs from 'node:fs';
 import { Archives } from '../shared/disk';
 import { completable } from '../shared/vault/spill';
 import path from 'node:path';
-import { loadConfig } from '../config';
+import { loadConfig, WATCH_MS } from '../config';
 import { onExit } from '../cleanup';
+import { recordOf, save } from '../shared/backup';
 import { discard } from './discard';
 import { acquire } from '../lock';
 import { Progress } from '../shared/progress';
 import { trusted } from '../shared/vault/trusted';
-import { agreed } from '../options';
+import { agreed, isWatch } from '../options';
 import * as record from '../shared/record';
 import { meansToEvict } from '../shared/vault/select';
 import { LEDGER, stockedIn } from '../shared/vault/ledger';
@@ -39,6 +40,10 @@ import type { Stocked, StoredFile, VaultOptions } from '../shared/types';
  * a file's path does not say which revision it is of, so one stocked again in
  * the meantime is only told by that.
  *
+ * **A push of the vault may be running meanwhile**, and is not kept out: each
+ * command takes a lock of its own (`lock.ts`). Push stores only what the record
+ * does not hold at the ledger's revision, which is never what goes here.
+ *
  * **A file is the unit here, where a partition is the unit that is stored.** A
  * small month is one file and goes whole. A large month is a file per
  * instrument, and any of them can go while the others stay.
@@ -52,59 +57,29 @@ export const runEvictVault = async (selection: Selection, options: VaultOptions)
   const release = await acquire(config.coldRoot, 'vault', 'evict');
 
   try {
-    if (! trusted(config).ok) return;
-
     const db = record.open(config.dbPath);
 
     onExit(() => record.close(db));
 
     try {
-      await notice(db);
+      const run: Run = { agreed: false, waiting: false };
 
       /**
-       * **A partition that is about to be completed stays.** It was stocked
-       * without the hours a neighbouring month holds of it, and that month's
-       * archives are on disk now: whoever stocks the vault adds those hours
-       * beside the partition's own files, and needs them here to do it.
+       * **Watching, the same is asked again at intervals.** What can go changes
+       * as partitions are stored, so a run left going removes each file as it
+       * becomes removable. It asks before the first removal and not again: the
+       * answer was to the kind of thing being removed, and that does not change
+       * between one look and the next.
        */
-      const stocked = stockedIn(config.vaultRoot) ?? [];
-      const waiting = new Set((await completable(config, new Archives(loadConfig('archives').sourceRoot), stocked)).map(one => one.partition));
+      for (let first = true; ; first = false) {
+        if (! await pass(db, config, selection, options, run, first)) return;
 
-      const { going, kept } = leaving(evictable(db, config, selection, stocked), waiting);
+        if (! isWatch()) return;
 
-      if (kept > 0)
-        info(`${kept.toLocaleString('en-US')} partition${kept === 1 ? ' stays' : 's stay'}: the month beside ${kept === 1 ? 'it' : 'them'} is on disk, and stocker needs ${kept === 1 ? 'its' : 'their'} main file to add the spill`);
+        await save(config, [recordOf(config)]);
 
-      if (going.length === 0) {
-        success('Nothing of that is on disk and in cold storage — nothing to evict');
-
-        return;
+        await new Promise(resolve => setTimeout(resolve, WATCH_MS));
       }
-
-      info('What of the vault can leave the disk');
-
-      for (const [venue, files] of byVenue(going)) info(`  ${venue.padEnd(8)} ${loadOf(files, EVICTABLE)}`);
-
-      spacer();
-      info(loadOf(going, EVICTABLE));
-      spacer();
-
-      if (options.dryRun) return;
-
-      const purge = options.purge ?? false;
-
-      if (! await agreed(purge ? 'Delete them from disk?' : 'Move them to the trash?', true)) return;
-
-      for (const [venue, files] of byVenue(going)) {
-        await remove(db, config, venue, files, purge);
-
-        info(`  ${venue.padEnd(8)} ${files.length.toLocaleString('en-US')} files ${purge ? 'deleted' : 'moved to the trash'} · ${fmtBytes(bytesOf(files))}`);
-      }
-
-      spacer();
-      success('Evicted. What was removed is in cold storage, and `cold pull vault` brings it back.');
-
-      if (! purge) info(`${fmtBytes(bytesOf(going))} is reclaimed once the trash is emptied — nothing is freed until then`);
     } finally {
       record.close(db);
     }
@@ -114,6 +89,102 @@ export const runEvictVault = async (selection: Selection, options: VaultOptions)
 };
 
 // ── Internals ─────────────────────────────────────────────────────────────────
+
+/** What one run carries from one look to the next. */
+interface Run {
+  /** Whether removing was agreed to: asked before the first removal of a run, and not again. */
+  agreed:  boolean;
+
+  /** Whether a watching run has said that it is waiting, since it last had something to do. */
+  waiting: boolean;
+}
+
+/**
+ * Look once at what can go, and remove it. Says whether the run goes on: false
+ * where the vault's account cannot be gone by and nobody is watching, or where
+ * removing was refused.
+ *
+ * **The first look says everything it finds; a later one only what it has to
+ * do.** A run that is watching and finds nothing says so once, and then stays
+ * quiet until there is something.
+ */
+const pass = async (
+  db:        DatabaseSync,
+  config:    ColdConfig,
+  selection: Selection,
+  options:   VaultOptions,
+  run:       Run,
+  first:     boolean,
+): Promise<boolean> => {
+  // Read on every look: the vault is stocked while this runs, and may report a loss while it does. Left watching, it looks again later.
+  const trust = trusted(config, { watching: isWatch() });
+
+  if (! trust.ok) return trust.retry;
+
+  const { stocked } = trust;
+
+  if (first) await notice(db);
+
+  /**
+   * **A partition that is about to be completed stays.** It was stocked
+   * without the hours a neighbouring month holds of it, and that month's
+   * archives are on disk now: whoever stocks the vault adds those hours
+   * beside the partition's own files, and needs them here to do it.
+   */
+  const waiting = new Set((await completable(config, new Archives(loadConfig('archives').sourceRoot), stocked)).map(one => one.partition));
+
+  const { going, kept } = leaving(evictable(db, config, selection, stocked), waiting);
+
+  if (kept > 0 && (first || going.length > 0))
+    info(`${kept.toLocaleString('en-US')} partition${kept === 1 ? ' stays' : 's stay'}: the month beside ${kept === 1 ? 'it' : 'them'} is on disk, and stocker needs ${kept === 1 ? 'its' : 'their'} main file to add the spill`);
+
+  if (going.length === 0) {
+    if (! isWatch()) success('Nothing of that is on disk and in cold storage — nothing to evict');
+    else if (! run.waiting) info('Watch mode - Waiting for vault files to evict');
+
+    run.waiting = true;
+
+    return true;
+  }
+
+  run.waiting = false;
+
+  info('What of the vault can leave the disk');
+
+  for (const [venue, files] of byVenue(going)) info(`  ${venue.padEnd(8)} ${loadOf(files, EVICTABLE)}`);
+
+  spacer();
+  info(loadOf(going, EVICTABLE));
+  spacer();
+
+  if (options.dryRun) return true;
+
+  const purge = options.purge ?? false;
+
+  if (! run.agreed && ! await agreed(purge ? 'Delete them from disk?' : 'Move them to the trash?', true)) return false;
+
+  run.agreed = true;
+
+  for (const [venue, files] of byVenue(going)) {
+    await remove(db, config, venue, files, purge);
+
+    info(`  ${venue.padEnd(8)} ${files.length.toLocaleString('en-US')} files ${purge ? 'deleted' : 'moved to the trash'} · ${fmtBytes(bytesOf(files))}`);
+  }
+
+  spacer();
+  success('Evicted. What was removed is in cold storage, and `cold pull vault` brings it back.');
+
+  if (! purge) info(`${fmtBytes(bytesOf(going))} is reclaimed once the trash is emptied — nothing is freed until then`);
+
+  // Done for now, and said: the next look is half an hour away.
+  if (isWatch()) {
+    info('Watch mode - Waiting for vault files to evict');
+
+    run.waiting = true;
+  }
+
+  return true;
+};
 
 /**
  * The files a selection means that can go: of a partition cold storage holds at

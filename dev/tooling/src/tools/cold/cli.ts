@@ -32,15 +32,23 @@ const shared = (command: Command): { allSources: boolean } => {
  * **With more than one, every line says which tree it is about**, and nothing
  * else is done to tell them apart.
  *
+ * **Only a command that `watches` is kept going by `--watch`.** One that does
+ * not runs over each tree once and ends, whatever was given: `--watch` is a
+ * cold-level option, and a command with no use for it ignores it.
+ *
  * **Watching several, each is seen through before the next begins**, and the
  * whole round comes again after the wait. A command watching one tree looks
  * again by itself, in the middle of its own work; over several that would never
  * hand over to the next, so here it is the round that repeats. What a command
  * asks, it asks in the first round and not again.
  */
-export const each = async (origins: readonly Origin[], run: (origin: Origin) => Promise<void>): Promise<void> => {
+export const each = async (
+  origins: readonly Origin[],
+  run:     (origin: Origin) => Promise<void>,
+  { watches = false }: { watches?: boolean } = {},
+): Promise<void> => {
   const several  = origins.length > 1;
-  const staying  = isWatch();
+  const staying  = watches && isWatch();
   const watching = several && staying;
 
   if (watching) setWatch(false);
