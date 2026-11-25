@@ -31,6 +31,7 @@ export interface Route {
 export type Config = {
   rabbitmqUrl: string;
   routes: Route[];
+  prefetch: number;      // Max unacknowledged messages the router holds per source queue
   maxReady: number;      // Max messages in any watched queue before pausing (0 = disabled)
   watchQueues: string[]; // Queues to monitor for backpressure (set exactly when maxReady > 0)
 };

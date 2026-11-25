@@ -20,6 +20,7 @@ describe('Router Config', () => {
     delete process.env.QUEUE_URL;
     delete process.env.ROUTER_RULES;
     delete process.env.ROUTER_MAX_READY;
+    delete process.env.ROUTER_PREFETCH;
     delete process.env.ROUTER_WATCH_QUEUES;
   });
 
@@ -64,6 +65,19 @@ describe('Router Config', () => {
     it.each(['abc', '10k', '-1', '1.5'])('rejects ROUTER_MAX_READY=%s', (raw) => {
       expect(() => load('broadcast > writer', { ROUTER_MAX_READY: raw, ROUTER_WATCH_QUEUES: 'writer' }))
         .toThrow(`ROUTER_MAX_READY must be a non-negative integer, got "${raw}"`);
+    });
+
+    it('holds 500 unacknowledged messages per source queue when ROUTER_PREFETCH is unset', () => {
+      expect(load('broadcast > writer').prefetch).toBe(500);
+    });
+
+    it('reads ROUTER_PREFETCH', () => {
+      expect(load('broadcast > writer', { ROUTER_PREFETCH: '50' }).prefetch).toBe(50);
+    });
+
+    it.each(['0', '-1', 'abc', '1.5'])('rejects ROUTER_PREFETCH=%s', (raw) => {
+      expect(() => load('broadcast > writer', { ROUTER_PREFETCH: raw }))
+        .toThrow(`ROUTER_PREFETCH must be a positive integer, got "${raw}"`);
     });
 
     it('reports every problem of a configuration in one error', () => {

@@ -17,7 +17,8 @@ export const loadConfig = (): Config => {
       source:      toSource(p.source, typeOf),
       destination: toDestination(p.destination, typeOf),
     })),
-    maxReady:    parseNonNegativeInt('ROUTER_MAX_READY', 0),
+    prefetch:    parseInteger('ROUTER_PREFETCH', 500, 1),
+    maxReady:    parseInteger('ROUTER_MAX_READY', 0, 0),
     watchQueues: (process.env.ROUTER_WATCH_QUEUES || '').split(',').map((s) => s.trim()).filter(Boolean),
   };
 
@@ -35,18 +36,18 @@ export const loadConfig = (): Config => {
 // ── Environment values ────────────────────────────────────────────────────────
 
 /**
- * Read a non-negative integer from an environment variable; the fallback when it is unset or
- * empty. Anything else that is not a whole number of at least 0 throws.
+ * Read an integer of at least `min` (0 or 1) from an environment variable; the fallback when it
+ * is unset or empty. Anything else that is not a whole number of at least `min` throws.
  */
-const parseNonNegativeInt = (name: string, fallback: number): number => {
+const parseInteger = (name: string, fallback: number, min: 0 | 1): number => {
   const raw = process.env[name]?.trim();
 
   if (! raw) return fallback;
 
   const n = Number(raw);
 
-  if (! Number.isInteger(n) || n < 0)
-    throw new Error(`${name} must be a non-negative integer, got "${raw}"`);
+  if (! Number.isInteger(n) || n < min)
+    throw new Error(`${name} must be a ${min === 0 ? 'non-negative' : 'positive'} integer, got "${raw}"`);
 
   return n;
 };
