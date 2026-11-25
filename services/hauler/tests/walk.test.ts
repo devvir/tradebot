@@ -1,8 +1,9 @@
 import { createServer } from 'node:http';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { logger } from '@devvir/service-kit';
 import type { Server } from 'node:http';
 
 /**
@@ -29,6 +30,7 @@ let flying:  number;
 let most:    number;
 
 const KEYS = ['binance/a/1.zip', 'binance/a/2.zip', 'binance/b/3.zip'];
+const SIZED = ['sized/a/0.zip', 'sized/a/1.zip', 'sized/a/2.zip', 'sized/a/3.zip'];
 
 beforeEach(async () => {
   cfg.archivesDir = mkdtempSync(join(tmpdir(), 'walk-'));
@@ -91,6 +93,16 @@ beforeEach(async () => {
       return;
     }
 
+    // A venue whose listing says what each file weighs: each is served as its own path.
+    if (url.searchParams.get('prefix') === 'sized/') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        Name: 'catalog', Prefix: 'sized/', Marker: '', MaxKeys: 1000, IsTruncated: false,
+        Contents: SIZED.map(Key => ({ Key, Path: `files/${Key}`, Host: '', Size: `/files/${Key}`.length })),
+      }));
+      return;
+    }
+
     // A venue with more listed than is ever held ready: pages of four, said to be pages of one.
     if (url.searchParams.get('prefix') === 'many/') {
       const from = Number(url.searchParams.get('marker')?.split('-').at(-1) ?? -1) + 1;
@@ -123,6 +135,8 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
+
   await new Promise(done => server.close(done));
   rmSync(cfg.archivesDir, { recursive: true, force: true });
 });
@@ -224,6 +238,69 @@ describe('a walk', () => {
       `/listings?prefix=${encodeURIComponent('binance/')}&pending=true&max-keys=1000&marker=${encodeURIComponent(KEYS[1]!)}`,
     ]);
     expect(asked.every(one => one.lens === 'backfill-20' && one.token === 'secret')).toBe(true);
+  });
+});
+
+describe('a file that cannot be hauled', () => {
+  const pause = (ms: number) => new Promise(done => setTimeout(done, ms));
+
+  /** One file the disk will not move aside is that file left owed, not the walk lost. */
+  it('is left owed, and the rest of its page is reported, the walk over when it says it is', async () => {
+    setHosts('sized', { '': [`${cfg.catalogApi}/`] });
+
+    const stale = join(cfg.archivesDir, SIZED[0]!);
+
+    mkdirSync(join(`${stale}.bak`, 'taken'), { recursive: true });
+    writeFileSync(stale, 'not the file');
+
+    const walked = await walkVenue('sized', () => false);
+
+    expect(walked).toMatchObject({ listed: 4, progressed: 3, unreached: 1 });
+    expect(reports).toHaveLength(1);
+    expect([...(reports[0] as { downloaded: string[] }).downloaded].sort()).toEqual(SIZED.slice(1));
+
+    const after = served;
+
+    await pause(300);
+    expect(served).toBe(after);
+  });
+
+  /** A volume that cannot be looked at is taken to be as it was last seen, and nothing is lost to it. */
+  it('is not one the volume could not be looked at for', async () => {
+    cfg.archivesDir = join(cfg.archivesDir, 'not-yet');
+    _test_lookAgain();
+
+    try {
+      expect(await walkVenue('binance', () => false)).toMatchObject({ listed: 3, progressed: 3, unreached: 0, full: false });
+    } finally {
+      _test_lookAgain();
+    }
+  });
+
+  /** A fault of the walk itself ends it, and only once nothing of it is running. */
+  it('that is a fault of the walk itself ends the walk, with no worker left fetching', async () => {
+    setHosts('many', { '': [`${cfg.catalogApi}/`] });
+
+    const info = logger.info.bind(logger);
+    let thrown = false;
+
+    vi.spyOn(logger, 'info').mockImplementation(((obj: unknown, msg?: string) => {
+      if (msg === 'Page done' && ! thrown) {
+        thrown = true;
+
+        throw new Error('a fault of the walk');
+      }
+
+      return info(obj as object, msg);
+    }) as typeof logger.info);
+
+    await expect(walkVenue('many', () => false)).rejects.toThrow('a fault of the walk');
+
+    const after = served;
+
+    expect(after).toBeLessThan(44);
+    await pause(300);
+    expect(served).toBe(after);
   });
 });
 

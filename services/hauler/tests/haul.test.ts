@@ -17,6 +17,22 @@ const cfg = vi.hoisted(() => ({ archivesDir: '', catalogApi: '', catalogToken: '
 
 vi.mock('../src/config', () => ({ default: cfg }));
 
+/** A volume that will not set a file's date, as one owned by another user. */
+const disk = vi.hoisted(() => ({ touchRefused: false }));
+
+vi.mock('../src/store', async (actual) => {
+  const real = await actual<typeof import('../src/store')>();
+
+  return {
+    ...real,
+    touch: async (path: string) => {
+      if (disk.touchRefused) throw Object.assign(new Error('EPERM: operation not permitted, utime'), { code: 'EPERM' });
+
+      await real.touch(path);
+    },
+  };
+});
+
 const { haul, abandon, _test_resume, _test_retryAfter } = await import('../src/fetch');
 const { setHosts, _test_forget, _test_hostsOf } = await import('../src/hosts');
 const { sweepPartials } = await import('../src/store');
@@ -65,6 +81,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.restoreAllMocks();
+
+  disk.touchRefused = false;
 
   _test_resume();
 
@@ -206,7 +224,7 @@ describe('a file not yet on disk', () => {
     expect((await haul(file({ venue: 'gate', key: 'gate/spot/trades/B/BTC_USDT/202001/x.zip' }))).outcome).toBe('downloaded');
     expect(Date.now() - since).toBeLessThan(500);
 
-    expect((await haul(file())).outcome).toBe('downloaded');
+    expect((await haul(file({ key: 'binance/perp/trades/B/BTCUSDT/202001/z.zip' }))).outcome).toBe('downloaded');
     expect(Date.now() - since).toBeGreaterThanOrEqual(900);
 
     expect((await refused).outcome).toBe('unreached');
@@ -270,6 +288,44 @@ describe('a file already on disk', () => {
     expect(readFileSync(`${at(one)}.bak`, 'utf8')).toBe('stale one');
     expect(readFileSync(`${at(one)}.bak.2`, 'utf8')).toBe('stale two');
     expect(readFileSync(at(one), 'utf8')).toBe(BODY);
+  });
+
+  /** Its date is a record of the pass; the file is no less there for keeping the old one. */
+  it('is present where it matches, even where its date cannot be set', async () => {
+    const one = file({ path: 'gone.zip' });
+
+    place(one, BODY);
+    disk.touchRefused = true;
+
+    expect(await haul(one)).toEqual({ outcome: 'present' });
+  });
+
+  /** What the disk will not do is no answer about the file: it stays owed, and nothing is fetched. */
+  it('is unreached, and left where it is, where it differs and cannot be moved aside', async () => {
+    const one = file({ path: 'busy.zip' });
+
+    place(one, 'stale one');
+    mkdirSync(join(`${at(one)}.bak`, 'taken'), { recursive: true });
+
+    expect(await haul(one)).toEqual({ outcome: 'unreached' });
+    expect(readFileSync(at(one), 'utf8')).toBe('stale one');
+    expect(asked).toBe(0);
+  });
+});
+
+describe('a key already being hauled', () => {
+  /** Two downloads of one key would write one partial between them. */
+  it('is unreached at once, and the haul in hand carries on', async () => {
+    const one = file();
+
+    const [first, second] = await Promise.all([haul(one), haul(one)]);
+
+    expect(first).toEqual({ outcome: 'downloaded' });
+    expect(second).toEqual({ outcome: 'unreached' });
+    expect(readFileSync(at(one), 'utf8')).toBe(BODY);
+
+    // Once in hand no longer, it is hauled as ever.
+    expect(await haul(one)).toEqual({ outcome: 'present' });
   });
 });
 

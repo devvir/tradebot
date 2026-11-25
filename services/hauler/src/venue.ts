@@ -3,7 +3,7 @@ import { page, report } from './catalog';
 import { LARGE_BYTES, haul } from './fetch';
 import { freeGb } from './store';
 import config from './config';
-import type { BucketObject, BucketPage, Haulable, Leaf, Walked } from './types';
+import type { BucketObject, BucketPage, Haulable, Hauled, Leaf, Walked } from './types';
 
 /**
  * Walk a venue's bucket once, end to end, fetching every object it lists.
@@ -40,11 +40,12 @@ export const walkVenue = async (venue: string, stopped: () => boolean): Promise<
 
   let listing = true;
   let pages   = 0;
+  let broken  = false;
 
   /** Wake whoever is waiting: a worker for files, or the lister for room. */
   const stir = (): void => { for (const wake of waiting.splice(0)) wake(); };
   const rest = (): Promise<void> => new Promise(wake => waiting.push(wake));
-  const done = (): boolean => stopped() || walked.full;
+  const done = (): boolean => broken || stopped() || walked.full;
 
   logger.info({ venue, lens: config.lens || '(none)' }, 'Walk started — asking the catalog what is owed');
 
@@ -157,7 +158,18 @@ export const walkVenue = async (venue: string, stopped: () => boolean): Promise<
    */
   const listed: Promise<unknown> = list().then(() => null, (err: unknown) => err);
 
-  await Promise.all(Array.from({ length: config.concurrency }, worker));
+  /**
+   * **A worker that throws stops the walk, and the walk waits for the rest.**
+   * Each file's own failure is contained where it is fetched; what reaches here
+   * is a fault of the walk itself. The others take nothing new and finish what
+   * they hold, and the walk settles only once nothing of it runs.
+   */
+  const working = await Promise.allSettled(Array.from({ length: config.concurrency }, () => worker().catch((err: unknown) => {
+    broken = true;
+    stir();
+
+    throw err;
+  })));
 
   const failed = await listed;
 
@@ -168,6 +180,10 @@ export const walkVenue = async (venue: string, stopped: () => boolean): Promise<
   // What a stop or a full volume left part-done still reports what it got through;
   // a page held ready and never begun was not walked at all.
   for (const leaf of [...open]) if (leaf.left < leaf.size) await settle(leaf);
+
+  const fault = working.find(one => one.status === 'rejected');
+
+  if (fault) throw fault.reason;
 
   return walked;
 };
@@ -262,7 +278,17 @@ const fetchOne = async (venue: string, object: BucketObject, leaf: Leaf): Promis
     ...(object.ETag === undefined ? {} : { etag: object.ETag }),
   };
 
-  const hauled = await haul(file);
+  let hauled: Hauled;
+
+  try {
+    hauled = await haul(file);
+  } catch (err) {
+    logger.error({ venue, key: object.Key, err }, 'Could not haul — stays owed');
+
+    leaf.unreached++;
+
+    return;
+  }
 
   if (hauled.outcome === 'downloaded' || hauled.outcome === 'present') leaf.done.downloaded.push(object.Key);
   else if (hauled.outcome === 'failed') leaf.done.failed.push(object.Key);
@@ -273,11 +299,21 @@ const fetchOne = async (venue: string, object: BucketObject, leaf: Leaf): Promis
 /**
  * Whether the archives' volume is below the floor. Asked before every file,
  * and answered from the last look where that was under a second ago: files are
- * taken many at a time, and the volume does not move that fast.
+ * taken many at a time, and the volume does not move that fast. A look that
+ * fails answers what the last one said, and is tried again a second later.
  */
 const low = async (): Promise<boolean> => {
-  if (Date.now() - looked.at > LOOK_MS)
-    looked = { at: Date.now(), low: await freeGb(config.archivesDir) < config.minFreeGb };
+  if (Date.now() - looked.at > LOOK_MS) {
+    const at = Date.now();
+
+    try {
+      looked = { at, low: await freeGb(config.archivesDir) < config.minFreeGb };
+    } catch (err) {
+      logger.error({ err, dir: config.archivesDir }, 'Could not look at the archives volume — going by the last look');
+
+      looked = { at, low: looked.low };
+    }
+  }
 
   return looked.low;
 };

@@ -43,45 +43,40 @@ import type { Haulable, Hauled, Host } from './types';
  * `404`; any other failure of an address that is not the listed one marks it
  * down and the file is asked elsewhere. **A refusal takes the
  * address that refused out of rotation**, not the file's chances.
+ *
+ * **What the disk will not do leaves the file owed.** A file that cannot be
+ * read, moved aside or given its place is `unreached`, and comes round again;
+ * one present and correct whose date cannot be set is present all the same.
+ * **A key is hauled once at a time**: asked for again while it is in hand, it is
+ * `unreached` at once.
  */
 export const haul = async (file: Haulable): Promise<Hauled> => {
-  const path = join(config.archivesDir, file.key);
-  const held = await measure(path);
+  // The same key twice at once would write one partial from two downloads.
+  if (inHand.has(file.key)) {
+    logger.warn({ key: file.key }, 'Already being hauled — stays owed');
 
-  if (held !== null) {
-    if (await agrees(file, path, held)) {
-      await touch(path);
-
-      logger.info({ key: file.key, size: sizeOf(held) }, 'Already downloaded and current');
-
-      return { outcome: 'present' };
-    }
-
-    const aside = await backup(path);
-
-    logger.warn({ key: file.key, size: held, expected: file.size, aside: basename(aside) },
-      'Differs from the catalog — moved aside, fetching again');
+    return { outcome: 'unreached' };
   }
 
-  /**
-   * Fetched before, when the catalog said something else of it: if what the
-   * catalog says now is what was fetched then, that is the file.
-   */
-  const kept = taken(file);
+  inHand.add(file.key);
 
-  if (kept) {
-    if (settles(file, kept.bytes, kept.digest)) {
-      await commit(path);
+  try {
+    const path = join(config.archivesDir, file.key);
 
-      logger.info({ key: file.key, size: sizeOf(kept.bytes) }, 'Downloaded — fetched earlier, and the catalog agrees now');
+    let settled: Hauled | null;
 
-      return { outcome: 'downloaded' };
+    try {
+      settled = await fromDisk(file, path);
+    } catch (err) {
+      logger.error({ key: file.key, err }, 'Could not set what is on disk against the catalog — stays owed');
+
+      return { outcome: 'unreached' };
     }
 
-    await discard(path);
+    return settled ?? await retrieve(file, path);
+  } finally {
+    inHand.delete(file.key);
   }
-
-  return await retrieve(file, path);
 };
 
 /**
@@ -128,6 +123,55 @@ let given = new AbortController();
  * which for a service is for ever.
  */
 const flying = new Set<AbortController>();
+
+/** The keys being hauled right now. */
+const inHand = new Set<string>();
+
+/**
+ * What the disk already settles of a file, before anything is fetched: the file
+ * present and correct, or a download held from before that the catalog agrees
+ * with now. Null where it must be fetched; whatever disagreed is out of its way.
+ */
+const fromDisk = async (file: Haulable, path: string): Promise<Hauled | null> => {
+  const held = await measure(path);
+
+  if (held !== null) {
+    if (await agrees(file, path, held)) {
+      // Its date is what says this pass saw it; a file that keeps the old one is present all the same.
+      await touch(path).catch((err: unknown) =>
+        logger.warn({ key: file.key, err }, 'Present and verified, but its date could not be set'));
+
+      logger.info({ key: file.key, size: sizeOf(held) }, 'Already downloaded and current');
+
+      return { outcome: 'present' };
+    }
+
+    const aside = await backup(path);
+
+    logger.warn({ key: file.key, size: held, expected: file.size, aside: basename(aside) },
+      'Differs from the catalog — moved aside, fetching again');
+  }
+
+  /**
+   * Fetched before, when the catalog said something else of it: if what the
+   * catalog says now is what was fetched then, that is the file.
+   */
+  const kept = taken(file);
+
+  if (kept) {
+    if (settles(file, kept.bytes, kept.digest)) {
+      await commit(path);
+
+      logger.info({ key: file.key, size: sizeOf(kept.bytes) }, 'Downloaded — fetched earlier, and the catalog agrees now');
+
+      return { outcome: 'downloaded' };
+    }
+
+    await discard(path);
+  }
+
+  return null;
+};
 
 const retrieve = async (file: Haulable, path: string): Promise<Hauled> => {
   const tried = new Set<Host>();
