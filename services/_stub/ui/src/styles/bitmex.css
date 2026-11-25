@@ -675,20 +675,6 @@ td {
 .orderbook__price--ask { color: var(--Sell-Primary); font-weight: 600; }
 .orderbook__price--bid { color: var(--Buy-Primary);  font-weight: 600; }
 
-/* Stacked layout (SIDE_BY_SIDE = false) */
-.orderbook__table--stacked .orderbook__row--ask td:first-child { color: var(--Sell-Primary); font-weight: 600; }
-.orderbook__table--stacked .orderbook__row--bid td:first-child { color: var(--Buy-Primary);  font-weight: 600; }
-
-.orderbook__spread {
-  background: var(--Gray-Gray-90);
-  text-align: center;
-  font-size: 10px;
-  color: var(--OnBackground-Disabled);
-  padding: 2px;
-  border-top: 1px solid var(--Border-Border-Low);
-  border-bottom: 1px solid var(--Border-Border-Low);
-}
-
 /* ── Recent trades ── */
 
 .recenttrades__row--buy { border-left: 2px solid var(--Buy-Primary); }

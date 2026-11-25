@@ -6,7 +6,7 @@ import type { OrderBookLevel } from '../../types';
 export interface OrderbookRow {
   price: number;
   size:  number;
-  /** Cumulative size from the worst price of this side (top of display) down to this level. */
+  /** Cumulative size from the best price of this side out to this level, inclusive. */
   total: number;
 }
 
@@ -14,13 +14,13 @@ export interface Orderbook {
   /**
    * Sorted DESCENDING — index 0 is the worst (highest) ask, last is the best (lowest).
    * Display order: row 0 at the top, best ask at the bottom.
-   * Total accumulates from row 0 downward (worst-first).
+   * Total accumulates from the best ask outward, so the best ask's total is its own size.
    */
   asks:   OrderbookRow[];
   /**
    * Sorted ASCENDING — index 0 is the worst (lowest) bid, last is the best (highest).
    * Display order: row 0 at the top, best bid at the bottom.
-   * Total accumulates from row 0 downward (worst-first).
+   * Total accumulates from the best bid outward, so the best bid's total is its own size.
    */
   bids:   OrderbookRow[];
   bestAsk: number;
@@ -45,18 +45,19 @@ function levelKey(l: Pick<OrderBookLevel, 'symbol' | 'id' | 'side'>): string {
  * Derive display-ready rows from the live book map.
  * Both sides are sorted worst-first (top of display) so the best prices sit at the bottom,
  * matching BitMEX's layout where the spread is visible at the center-bottom of the widget.
- * Totals accumulate from the worst price downward, so row 0 total = just its own size.
+ * Totals accumulate from the best price outward, so each row's total is the size available
+ * at its price or better.
  */
 function derive(book: Map<string, OrderBookLevel>): Orderbook {
   const levels = Array.from(book.values());
 
-  // Best 25 asks, ascending (best = lowest at end)
+  // Best 25 asks, ascending (best = lowest first)
   const rawAsks = levels
     .filter(l => l.side === 'Sell')
     .sort((a, b) => a.price - b.price)
     .slice(0, DEPTH);
 
-  // Best 25 bids, descending (best = highest at end after we reverse)
+  // Best 25 bids, descending (best = highest first)
   const rawBids = levels
     .filter(l => l.side === 'Buy')
     .sort((a, b) => b.price - a.price)
@@ -65,23 +66,16 @@ function derive(book: Map<string, OrderBookLevel>): Orderbook {
   const bestAsk = rawAsks.length ? rawAsks[0].price : 0;
   const bestBid = rawBids.length ? rawBids[0].price : 0;
 
-  // Asks: display worst-first (descending). Accumulate from worst downward.
+  // Accumulate from the best price outward, then reverse so the worst price comes first.
   let askTotal = 0;
-  const asks: OrderbookRow[] = [...rawAsks]
-    .reverse()                                 // now worst (highest price) first
-    .map(l => {
-      askTotal += l.size;
-      return { price: l.price, size: l.size, total: askTotal };
-    });
+  const asks: OrderbookRow[] = rawAsks
+    .map(l => ({ price: l.price, size: l.size, total: askTotal += l.size }))
+    .reverse();
 
-  // Bids: display worst-first (ascending). Accumulate from worst downward.
   let bidTotal = 0;
-  const bids: OrderbookRow[] = [...rawBids]
-    .reverse()                                 // now worst (lowest price) first
-    .map(l => {
-      bidTotal += l.size;
-      return { price: l.price, size: l.size, total: bidTotal };
-    });
+  const bids: OrderbookRow[] = rawBids
+    .map(l => ({ price: l.price, size: l.size, total: bidTotal += l.size }))
+    .reverse();
 
   const spread = bestAsk && bestBid ? bestAsk - bestBid : 0;
 

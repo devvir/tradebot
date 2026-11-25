@@ -11,11 +11,14 @@ export interface TaggedTrade {
 const DEFAULT_LIMIT = 100;
 
 /**
- * Loads a page of recent trades via REST then streams live inserts for the
- * symbol currently in the URL. Returns trades newest-first, capped at `limit`
- * entries (FIFO). Each entry carries a locally-assigned uid suitable for use
- * as a React key — the trade channel has no declared keys so field values
- * cannot be relied upon to be unique.
+ * Loads a page of recent trades via REST and streams live inserts for the
+ * symbol currently in the URL; both start together. Returns trades
+ * newest-first, capped at `limit` entries (FIFO).
+ *
+ * Inserts that arrive before the REST page resolves are newer than it, so the
+ * page is appended behind them; a REST trade whose trdMatchID is already in
+ * the list is dropped, so trades in both the page and the stream appear once.
+ * Each entry carries a locally-assigned uid used as its React key.
  */
 export function useRecentTrades(limit = DEFAULT_LIMIT): TaggedTrade[] {
   const { symbol = 'XBTUSD' } = useParams<{ symbol: string }>();
@@ -35,9 +38,16 @@ export function useRecentTrades(limit = DEFAULT_LIMIT): TaggedTrade[] {
     bitmex
       .fetch<Trade>('trade', limit, { symbol })
       .then(initial => {
-        if (active) {
-          setTrades(initial.map(tag));
+        if (! active) {
+          return;
         }
+
+        setTrades(prev => {
+          const seen = new Set(prev.map(t => t.trade.trdMatchID));
+          const page = initial.filter(t => ! seen.has(t.trdMatchID)).map(tag);
+
+          return [...prev, ...page].slice(0, limit);
+        });
       })
       .catch(err => {
         console.warn('useRecentTrades: initial fetch failed', err);

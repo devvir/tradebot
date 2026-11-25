@@ -1,7 +1,7 @@
 /**
  * Holds the currently selected data environment (live / testnet / replay).
- * Persists across reloads via localStorage. Consumers are the `Header`
- * dropdown (writer) and `DataProvider` (reader, recreates clients on change).
+ * Persists across reloads via localStorage. A stored value that is not a known
+ * env, or is 'replay' in a build without replay, restores as the default env.
  */
 
 import { createContext, useContext, useState, type ReactNode } from 'react';
@@ -11,10 +11,20 @@ import type { Env, EnvContextValue } from '../types';
 const STORAGE_KEY = 'tradebot.ui.env';
 const DEFAULT_ENV: Env = 'live';
 
+declare const __REPLAY_ENABLED__: boolean;
+
 const EnvContext = createContext<EnvContextValue | null>(null);
 
+const isEnv = (v: unknown): v is Env => v === 'live' || v === 'testnet' || v === 'replay';
+
+function restoreEnv(): Env {
+  const stored = get<unknown>(STORAGE_KEY, DEFAULT_ENV);
+
+  return isEnv(stored) && (stored !== 'replay' || __REPLAY_ENABLED__) ? stored : DEFAULT_ENV;
+}
+
 export function EnvProvider({ children }: { children: ReactNode }) {
-  const [env, setEnvState] = useState<Env>(() => get<Env>(STORAGE_KEY, DEFAULT_ENV));
+  const [env, setEnvState] = useState<Env>(restoreEnv);
 
   const setEnv = (next: Env) => {
     set(STORAGE_KEY, next);

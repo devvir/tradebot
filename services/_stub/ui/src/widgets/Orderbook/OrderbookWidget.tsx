@@ -2,12 +2,6 @@ import { useParams } from 'react-router-dom';
 import { useOrderbook } from './useOrderbook';
 import type { OrderbookRow } from './useOrderbook';
 
-/**
- * When true, bids and asks are shown side-by-side (asks left | bids right).
- * Set to false for the classic stacked layout (asks above, bids below).
- */
-const SIDE_BY_SIDE = true;
-
 function quoteCurrency(symbol: string): string {
   if (symbol.endsWith('USDT')) return 'USDT';
   if (symbol.endsWith('USD'))  return 'USD';
@@ -98,48 +92,6 @@ function SideBySideLayout({ asks, bids, bestAsk, bestBid, spread, currency }: Si
   );
 }
 
-interface StackedProps {
-  asks:     OrderbookRow[];
-  bids:     OrderbookRow[];
-  spread:   number;
-  currency: string;
-}
-
-function StackedLayout({ asks, bids, spread, currency }: StackedProps) {
-  return (
-    <table className="orderbook__table orderbook__table--stacked">
-      <thead>
-        <tr>
-          <th>Price</th>
-          <th>Size ({currency})</th>
-          <th>Total</th>
-        </tr>
-      </thead>
-      <tbody>
-        {asks.map(row => (
-          <tr key={`ask-${row.price}`} className="orderbook__row--ask">
-            <td className="orderbook__price--ask">{fmtPrice(row.price)}</td>
-            <td>{fmtSize(row.size)}</td>
-            <td>{fmtSize(row.total)}</td>
-          </tr>
-        ))}
-        <tr>
-          <td colSpan={3} className="orderbook__spread">
-            Spread {spread > 0 ? spread.toFixed(1) : '—'}
-          </td>
-        </tr>
-        {bids.map(row => (
-          <tr key={`bid-${row.price}`} className="orderbook__row--bid">
-            <td className="orderbook__price--bid">{fmtPrice(row.price)}</td>
-            <td>{fmtSize(row.size)}</td>
-            <td>{fmtSize(row.total)}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
 export function OrderbookWidget() {
   const { symbol = 'XBTUSD' } = useParams<{ symbol: string }>();
   const { asks, bids, bestAsk, bestBid, spread } = useOrderbook();
@@ -154,7 +106,7 @@ export function OrderbookWidget() {
       <div className="widget__body orderbook__body">
         {loading ? (
           <div className="widget__empty">Connecting…</div>
-        ) : SIDE_BY_SIDE ? (
+        ) : (
           <SideBySideLayout
             asks={asks}
             bids={bids}
@@ -163,8 +115,6 @@ export function OrderbookWidget() {
             spread={spread}
             currency={currency}
           />
-        ) : (
-          <StackedLayout asks={asks} bids={bids} spread={spread} currency={currency} />
         )}
       </div>
     </section>

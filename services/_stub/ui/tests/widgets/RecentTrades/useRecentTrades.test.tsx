@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
+import { useNavigate } from 'react-router-dom';
 import { useRecentTrades } from '../../../src/widgets/RecentTrades/useRecentTrades';
 import { makeFakeBitmex, makeBitmexWrapper, type FakeBitmex } from '../../helpers/fakeBitmex';
 import type { Trade } from '../../../src/types';
@@ -102,6 +103,98 @@ describe('useRecentTrades — WS inserts', () => {
     act(() => { fake.emit<Trade>('trade:XBTUSD', 'delete', [trade({ price: 99 })]); });
 
     expect(result.current).toEqual([]);
+  });
+});
+
+// ── REST page and WS inserts together ──────────────────────────────────────────
+
+/** A fetch whose resolution the test controls. */
+function pendingFetch(): (page: Trade[]) => Promise<void> {
+  let resolve!: (page: Trade[]) => void;
+  fake.fetchMock.mockReturnValueOnce(new Promise<Trade[]>(r => { resolve = r; }));
+
+  return async (page) => {
+    await act(async () => { resolve(page); });
+  };
+}
+
+describe('useRecentTrades — REST page racing WS inserts', () => {
+  it('keeps inserts that arrive before the REST page, ahead of it', async () => {
+    const resolveFetch = pendingFetch();
+
+    const { result } = renderHook(() => useRecentTrades(10), { wrapper: makeBitmexWrapper(fake) });
+
+    act(() => {
+      fake.emit<Trade>('trade:XBTUSD', 'insert', [trade({ trdMatchID: 'live-1', price: 103 })]);
+    });
+
+    /** REST page is newest-first. */
+    await resolveFetch([
+      trade({ trdMatchID: 'rest-2', price: 102 }),
+      trade({ trdMatchID: 'rest-1', price: 101 }),
+    ]);
+
+    expect(result.current.map(t => t.trade.trdMatchID)).toEqual(['live-1', 'rest-2', 'rest-1']);
+  });
+
+  it('lists a trade present in both the stream and the REST page once', async () => {
+    const resolveFetch = pendingFetch();
+
+    const { result } = renderHook(() => useRecentTrades(10), { wrapper: makeBitmexWrapper(fake) });
+
+    act(() => {
+      fake.emit<Trade>('trade:XBTUSD', 'insert', [
+        trade({ trdMatchID: 'both', price: 102 }),
+        trade({ trdMatchID: 'live-1', price: 103 }),
+      ]);
+    });
+
+    await resolveFetch([
+      trade({ trdMatchID: 'both', price: 102 }),
+      trade({ trdMatchID: 'rest-1', price: 101 }),
+    ]);
+
+    expect(result.current.map(t => t.trade.trdMatchID)).toEqual(['live-1', 'both', 'rest-1']);
+  });
+
+  it('caps the merged list at `limit`, dropping the oldest REST trades', async () => {
+    const resolveFetch = pendingFetch();
+
+    const { result } = renderHook(() => useRecentTrades(2), { wrapper: makeBitmexWrapper(fake) });
+
+    act(() => {
+      fake.emit<Trade>('trade:XBTUSD', 'insert', [trade({ trdMatchID: 'live-1' })]);
+    });
+
+    await resolveFetch([trade({ trdMatchID: 'rest-2' }), trade({ trdMatchID: 'rest-1' })]);
+
+    expect(result.current.map(t => t.trade.trdMatchID)).toEqual(['live-1', 'rest-2']);
+  });
+
+  it('clears the list on symbol change and ignores the old symbol\'s late REST page', async () => {
+    const resolveOld = pendingFetch();
+    const resolveNew = pendingFetch();
+
+    const { result } = renderHook(
+      () => ({ trades: useRecentTrades(10), navigate: useNavigate() }),
+      { wrapper: makeBitmexWrapper(fake) },
+    );
+
+    act(() => {
+      fake.emit<Trade>('trade:XBTUSD', 'insert', [trade({ trdMatchID: 'xbt-live' })]);
+    });
+    expect(result.current.trades).toHaveLength(1);
+
+    act(() => { result.current.navigate('/ETHUSD'); });
+
+    expect(result.current.trades).toEqual([]);
+    expect(fake.fetchMock).toHaveBeenLastCalledWith('trade', 10, { symbol: 'ETHUSD' });
+
+    await resolveOld([trade({ trdMatchID: 'xbt-rest', symbol: 'XBTUSD' })]);
+    expect(result.current.trades).toEqual([]);
+
+    await resolveNew([trade({ trdMatchID: 'eth-rest', symbol: 'ETHUSD' })]);
+    expect(result.current.trades.map(t => t.trade.trdMatchID)).toEqual(['eth-rest']);
   });
 });
 

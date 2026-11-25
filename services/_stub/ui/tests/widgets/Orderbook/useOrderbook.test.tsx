@@ -33,9 +33,9 @@ describe('useOrderbook — partial snapshot', () => {
       ]);
     });
 
-    /** Worst (highest price) at index 0, best at the end; totals accumulate downward from worst. */
+    /** Worst (highest price) at index 0, best at the end; totals accumulate outward from the best. */
     expect(result.current.asks.map(r => r.price)).toEqual([102, 101, 100]);
-    expect(result.current.asks.map(r => r.total)).toEqual([4, 6, 7]);
+    expect(result.current.asks.map(r => r.total)).toEqual([7, 3, 1]);
     expect(result.current.bestAsk).toBe(100);
   });
 
@@ -51,7 +51,7 @@ describe('useOrderbook — partial snapshot', () => {
     });
 
     expect(result.current.bids.map(r => r.price)).toEqual([97, 98, 99]);
-    expect(result.current.bids.map(r => r.total)).toEqual([7, 12, 15]);
+    expect(result.current.bids.map(r => r.total)).toEqual([15, 8, 3]);
     expect(result.current.bestBid).toBe(99);
   });
 
