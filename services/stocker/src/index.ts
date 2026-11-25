@@ -4,7 +4,9 @@ import { logger } from '@devvir/service-kit';
 import SK from './service';
 import config from './config';
 import { sweepScratch } from './build';
+import { pool } from './containers';
 import { open } from './db';
+import { Scans, drain } from './drain';
 import { validate } from './ledger';
 import { SCAN_MINUTES, report, sweep } from './scan';
 
@@ -46,8 +48,18 @@ const assertWritable = async (dir: string): Promise<void> => {
  * Declared above rather than below, deliberately: `SK.run` invokes its callback
  * while this module is still evaluating, so the first thing the callback touches
  * must already exist.
+ *
+ * Shutdown — SIGTERM or SIGINT, through service-kit — drains the sweeps: see
+ * `drain`. It is listened for before anything else is done, so a signal during
+ * the checks below exits without a sweep ever starting.
  */
-SK.run(async () => {
+SK.run(async (service) => {
+  const scans = new Scans(SCAN_MINUTES * 60 * 1000);
+
+  let closeEngine = (): void => {};
+
+  service.on('shutdown', () => drain(scans, config.drainSeconds * 1000, { engine: () => closeEngine(), pool: () => pool.close() }));
+
   await assertReadable(config.archivesDir);
   await assertWritable(config.vaultDir);
 
@@ -56,35 +68,13 @@ SK.run(async () => {
   // Once, before the first sweep: what the ledger says against what the vault holds.
   await validate();
 
-  const { conns } = await open();
+  const { conns, close } = await open();
+
+  closeEngine = close;
 
   /**
-   * Long-lived rather than a batch job, so files that land while nobody is
-   * watching are picked up on its own. "Caught up" from a completed sweep is
-   * then a signal worth acting on: everything in scope that is on disk is
-   * stocked.
+   * "Caught up" from a completed sweep is a signal worth acting on: everything
+   * in scope that is on disk is stocked.
    */
-  let sweeping = false;
-
-  const pass = async (): Promise<void> => {
-    if (sweeping) {
-      logger.debug('Sweep still running — skipping this scan');
-
-      return;
-    }
-
-    sweeping = true;
-
-    try {
-      report(await sweep(conns), SCAN_MINUTES);
-    } catch (err) {
-      logger.error({ err }, 'Sweep failed');
-    } finally {
-      sweeping = false;
-    }
-  };
-
-  await pass();
-
-  setInterval(() => void pass(), SCAN_MINUTES * 60 * 1000);
+  await scans.start(async stop => report(await sweep(conns, stop), SCAN_MINUTES));
 });

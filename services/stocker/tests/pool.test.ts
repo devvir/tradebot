@@ -139,4 +139,17 @@ describe('the extraction pool', () => {
     expect(contents(after.paths)).toEqual([[['0-0-a.csv', 'after']]]);
     expect(new Set(threads.map(answer => answer.bytes)).size).toBe(1);
   });
+
+  it('closed, stops its threads and fails what was under way, waiting, or asked after', async () => {
+    const pool = new Pool(1, shim);
+
+    const under   = expect(pool.extract([], '<who>')).rejects.toThrow(/extraction thread exited/);
+    const waiting = expect(pool.extract([], '<who>')).rejects.toThrow('extraction pool closed');
+
+    await pool.close();
+
+    await under;
+    await waiting;
+    await expect(pool.extract([], '<who>')).rejects.toThrow('extraction pool closed');
+  });
 });

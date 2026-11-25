@@ -63,8 +63,12 @@ import type {
  * venue the catalog cannot list, or a partition that cannot be decided or
  * stocked, is logged and counted as failed, and the sweep goes on with the
  * rest. Only the vault's volume falling below its floor stops it.
+ *
+ * **Told to stop, it starts nothing more.** Once `stop` is aborted no other
+ * partition is decided or stocked; the ones being stocked go on to their end,
+ * and the sweep returns when they are there, saying it was drained.
  */
-export const sweep = async (conns: DuckDBConnection[]): Promise<Summary> => {
+export const sweep = async (conns: DuckDBConnection[], stop?: AbortSignal): Promise<Summary> => {
   // A partition the last sweep was stopped half way through putting in place is put right before anything is read.
   await repair();
 
@@ -73,14 +77,14 @@ export const sweep = async (conns: DuckDBConnection[]): Promise<Summary> => {
 
   const summary: Summary = {
     considered: 0, current: 0, outdated: 0, built: 0, empty: 0, waiting: 0, partial: 0, completed: 0, missing: 0,
-    noRoom: 0, failed: 0, rows: 0, files: 0, stopped: false,
+    noRoom: 0, failed: 0, rows: 0, files: 0, stopped: false, drained: false,
   };
 
   const instruments = new Instruments();
   const slices      = new Slices();
   const sweeping    = { instruments, slices, ledger: await readLedger() };
 
-  const upcoming = jobsOf(sweeping, summary);
+  const upcoming = jobsOf(sweeping, summary, stop);
 
   /**
    * **Partitions are decided ahead of the one being stocked**, and wait here.
@@ -103,6 +107,14 @@ export const sweep = async (conns: DuckDBConnection[]): Promise<Summary> => {
   const full  = (): boolean =>
     ready.length >= AHEAD_JOBS || ready.reduce((total, job) => total + job.partition.bytes, 0) >= AHEAD_BYTES;
 
+  const halt = (): void => {
+    stopping = summary.drained = true;
+    stir();
+  };
+
+  if (stop?.aborted) halt();
+  else stop?.addEventListener('abort', halt, { once: true });
+
   const deciding = (async (): Promise<void> => {
     try {
       for await (const job of upcoming) {
@@ -122,9 +134,11 @@ export const sweep = async (conns: DuckDBConnection[]): Promise<Summary> => {
     }
   })();
 
-  /** The next partition to stock, or null when there are no more. */
+  /** The next partition to stock, or null when there are no more or the sweep is told to stop. */
   const following = async (): Promise<Job | null> => {
-    while (ready.length === 0 && ! ended) await moved();
+    while (ready.length === 0 && ! ended && ! stopping) await moved();
+
+    if (stopping) return null;
 
     const job = ready.shift() ?? null;
 
@@ -157,6 +171,14 @@ export const sweep = async (conns: DuckDBConnection[]): Promise<Summary> => {
   try {
     for (let job = await following(); job; job = await following()) {
       const mine = await freed(job.partition.bytes >= aloneBytes ? conns.length : 1);
+
+      // Told to stop while waiting for connections: the partition goes back with the others never stocked.
+      if (stopping) {
+        idle.push(...mine);
+        ready.unshift(job);
+
+        break;
+      }
 
       const { key, partition, prefetch } = job;
 
@@ -195,6 +217,8 @@ export const sweep = async (conns: DuckDBConnection[]): Promise<Summary> => {
 
     // Decided and never stocked: what was extracted for them is given up.
     for (const job of ready) job.prefetch.release();
+
+    stop?.removeEventListener('abort', halt);
   }
 
   return finish(summary);
@@ -207,6 +231,12 @@ export const sweep = async (conns: DuckDBConnection[]): Promise<Summary> => {
  */
 export const report = (summary: Summary, scanMinutes: number): void => {
   const counts = { ...summary, minutes: scanMinutes };
+
+  if (summary.drained) {
+    logger.info(counts, `Drained — stocked ${summary.built} partition${summary.built === 1 ? '' : 's'} and started nothing more`);
+
+    return;
+  }
 
   if (summary.stopped) {
     logger.warn(counts, `Stopped for want of space — rescanning in ${scanMinutes} minutes`);
@@ -381,13 +411,17 @@ const targetsOf = (partitions: Map<string, Partition>): Target[] => {
  * when it is asked for: venue by venue, the catalog asked once for each.
  *
  * A venue the catalog does not list, and a partition that cannot be decided,
- * are counted as failed and passed over. Only `LowSpace` ends this early.
+ * are counted as failed and passed over. `LowSpace` ends this early, and so
+ * does `stop`, before the next venue or partition.
  */
 const jobsOf = async function* (
   sweeping: Sweeping,
   summary:  Summary,
+  stop?:    AbortSignal,
 ): AsyncGenerator<Job, void> {
   for (const venue of venuesInScope()) {
+    if (stop?.aborted) return;
+
     const datasets = datasetsOf(venue);
 
     if (datasets.length === 0) continue;
@@ -410,6 +444,8 @@ const jobsOf = async function* (
     }
 
     for (const target of targetsOf(partitions)) {
+      if (stop?.aborted) return;
+
       summary.considered++;
 
       let job: Job | null;

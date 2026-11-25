@@ -28,6 +28,7 @@ const loadConfig = (): Config => {
     threads:      parsePositiveInt(process.env.STOCKER_THREADS, 4),
     minFreeGb:    parsePositiveInt(process.env.STOCKER_MIN_FREE_GB, 20),
     memoryGb:     parsePositiveInt(process.env.STOCKER_ENGINE_MEMORY_GB, 4),
+    drainSeconds: parsePositiveInt(process.env.STOCKER_DRAIN_SECONDS, 60),
   };
 
   logger.info({ ...config, catalogToken: config.catalogToken ? '<set>' : '<none>' },
@@ -83,3 +84,4 @@ export default loadConfig();
 // ── Test access ───────────────────────────────────────────────────────────────
 
 export const _test_parseKnown = parseKnown;
+export const _test_loadConfig = loadConfig;

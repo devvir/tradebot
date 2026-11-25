@@ -7,6 +7,7 @@ import { logger } from '@devvir/service-kit';
 import config from '../src/config';
 import { SCRATCH } from '../src/containers';
 import { open } from '../src/db';
+import { Scans, drain } from '../src/drain';
 import { parseKey } from '../src/keys';
 import { BACKEDUP, ERRORS, LEDGER, outdate, read, reinstate, validate } from '../src/ledger';
 import * as build from '../src/build';
@@ -18,7 +19,7 @@ import {
   _test_aloneAt as aloneAt, _test_directAt as directAt, _test_pieceAt as pieceAt, _test_splitAt as splitAt, sweep,
 } from '../src/scan';
 import type { DuckDBConnection } from '@duckdb/node-api';
-import type { ListedSlice } from '../src/types';
+import type { ListedSlice, Summary } from '../src/types';
 
 /** The real `rm` throughout, so a test can make one removal fail. */
 vi.mock('node:fs/promises', async (original) => {
@@ -1375,5 +1376,78 @@ describe('partitions sharing the engine', () => {
     for (const one of heavy) expect(meet(one, light[0]!)).toBe(false);
 
     expect(meet(heavy[0]!, heavy[1]!)).toBe(true);
+  });
+});
+
+/**
+ * A shutdown in the middle of a sweep: the partition being stocked is put in
+ * place whole, no other is, and the engine is closed once nothing runs on it.
+ */
+describe('a sweep drained for a shutdown', () => {
+  afterEach(() => { aloneAt(null); directAt(null); });
+
+  it('finishes the placement under way, starts no other, and closes the engine, within the bound', async () => {
+    await place('gate.futures_usdt-trades.csv', key('BTC_USDT', '202604'));
+    await place('gate.futures_usdt-trades.csv', key('BTC_USDT', '202605'));
+    await place('gate.futures_usdt-trades.csv', key('BTC_USDT', '202606'));
+
+    // Every partition heavy, so they are stocked one at a time; each instrument built on its own.
+    aloneAt(1);
+    directAt(1);
+
+    const engine = await open();
+    const closed = vi.fn(engine.close);
+    const pool   = vi.fn(async () => {});
+    const scans  = new Scans(60 * 60 * 1000);
+    const bound  = 20_000;
+    const months: string[] = [];
+
+    let draining: Promise<void> | undefined;
+    let summary:  Summary | undefined;
+
+    const real = build.buildGroup;
+
+    // The signal comes as the first partition is being built, and the build takes a while after it.
+    const building = vi.spyOn(build, 'buildGroup').mockImplementation(async (...args) => {
+      months.push(args[1].month);
+      draining ??= drain(scans, bound, { engine: closed, pool });
+
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      return real(...args);
+    });
+
+    const from = performance.now();
+
+    try {
+      await scans.start(async stop => { summary = await sweep(engine.conns, stop); });
+      await draining;
+    } finally {
+      building.mockRestore();
+    }
+
+    expect(performance.now() - from).toBeLessThan(bound);
+    expect(summary).toMatchObject({ built: 1, failed: 0, drained: true });
+    expect([...new Set(months)]).toEqual(['2026-04']);
+    expect(await stocked()).toEqual(['@/202604.parquet']);
+    expect((await linesOf(LEDGER)).map(line => [line['partition'], line['revision']]))
+      .toEqual([[`${SLICE}/202604`, expect.stringMatching(/^[0-9a-f]{12}$/)]]);
+
+    expect(closed).toHaveBeenCalledOnce();
+    expect(pool).toHaveBeenCalledOnce();
+
+    for (const conn of engine.conns) await expect(conn.run('SELECT 1')).rejects.toThrow(/disconnected/);
+  });
+
+  it('stocks nothing once told to stop before it starts', async () => {
+    await place('gate.futures_usdt-trades.csv', key('BTC_USDT'));
+
+    const stop = new AbortController();
+
+    stop.abort();
+
+    expect(await sweep(conns, stop.signal)).toMatchObject({ built: 0, considered: 0, drained: true });
+    expect(await stocked()).toEqual([]);
+    expect(queries).toEqual([]);
   });
 });

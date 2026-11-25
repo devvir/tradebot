@@ -480,6 +480,9 @@ export interface Summary {
 
   /** The sweep stopped because the vault volume ran low. */
   stopped:    boolean;
+
+  /** The sweep was told to stop, and started nothing after: the service is shutting down. */
+  drained:    boolean;
 }
 
 export interface Config {
@@ -509,6 +512,12 @@ export interface Config {
 
   /** Memory the engine may use before it spills to disk, in GB. */
   memoryGb:     number;
+
+  /**
+   * How long a shutdown waits for the placements under way to finish, in
+   * seconds, before it exits without them.
+   */
+  drainSeconds: number;
 
   [key: string]: unknown;
 }

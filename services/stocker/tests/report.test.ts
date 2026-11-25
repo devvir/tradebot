@@ -5,7 +5,7 @@ import type { Summary } from '../src/types';
 
 const summary = (over: Partial<Summary> = {}): Summary => ({
   considered: 0, current: 0, outdated: 0, built: 0, empty: 0, waiting: 0, partial: 0, completed: 0, missing: 0,
-  noRoom: 0, failed: 0, rows: 0, files: 0, stopped: false, ...over,
+  noRoom: 0, failed: 0, rows: 0, files: 0, stopped: false, drained: false, ...over,
 });
 
 const said = (fn: typeof logger.info): string =>
@@ -59,6 +59,14 @@ describe('the end-of-sweep report', () => {
     report(summary({ built: 2, stopped: true }), 30);
 
     expect(said(logger.warn)).toContain('want of space');
+  });
+
+  /** Drained for a shutdown, there is no next scan to promise. */
+  it('says it was drained, and promises no rescan', () => {
+    report(summary({ built: 1, drained: true }), 30);
+
+    expect(said(logger.info)).toContain('Drained — stocked 1 partition and started nothing more');
+    expect(said(logger.info)).not.toContain('rescanning');
   });
 
   it('says one partition, not 1 partitions', () => {

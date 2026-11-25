@@ -18,6 +18,10 @@ import type { ExtractAnswered, Extracted, Pack, PoolWorker, Wrapped } from './ty
  * extractions are worth starting, and how many, is decided by whoever asks —
  * see `prepare.ts`. With no threads configured the work is done where it is
  * asked for, on the main thread, and nothing else changes.
+ *
+ * **Closed, it takes nothing more.** Its threads are stopped, and what they
+ * were extracting, what was waiting for them, and what is asked of it after
+ * fails.
  */
 export class Pool {
   /** `worker` is the compiled thread script; the one beside this file unless another is given. */
@@ -25,8 +29,10 @@ export class Pool {
 
   private readonly idle:    PoolWorker[] = [];
   private readonly queued:  { inputs: readonly Wrapped[]; dir: string; shapes: readonly Pack[]; settle: PoolWorker['settle'] & {} }[] = [];
+  private readonly threads = new Set<PoolWorker>();
   private started = 0;
   private sequence = 0;
+  private closed = false;
 
   /** How many extractions can run at once. */
   get size(): number {
@@ -34,6 +40,8 @@ export class Pool {
   }
 
   extract(inputs: readonly Wrapped[], dir: string, shapes: readonly Pack[] = []): Promise<Extracted> {
+    if (this.closed) return Promise.reject(new Error(CLOSED));
+
     if (this.width <= 0 || ! existsSync(this.worker)) return extractInto(inputs, dir, shapes);
 
     return new Promise<Extracted>((resolve, reject) => {
@@ -42,10 +50,19 @@ export class Pool {
     });
   }
 
+  /** Stop every thread, and fail what was under way or waiting. */
+  async close(): Promise<void> {
+    this.closed = true;
+
+    for (const { settle } of this.queued.splice(0)) settle.reject(new Error(CLOSED));
+
+    await Promise.all([...this.threads].map(worker => worker.thread.terminate()));
+  }
+
   // ── Internals ───────────────────────────────────────────────────────────────
 
   private pump(): void {
-    while (this.queued.length > 0) {
+    while (this.queued.length > 0 && ! this.closed) {
       const worker = this.idle.pop() ?? (this.started < this.width ? this.start() : null);
 
       if (! worker) return;
@@ -61,6 +78,7 @@ export class Pool {
     const worker: PoolWorker = { thread: new Worker(this.worker), settle: null };
 
     this.started++;
+    this.threads.add(worker);
 
     // The pool waits on work, never the process on the pool.
     worker.thread.unref();
@@ -88,6 +106,7 @@ export class Pool {
       if (gone) return;
 
       gone = true;
+      this.threads.delete(worker);
 
       const at = this.idle.indexOf(worker);
 
@@ -106,6 +125,8 @@ export class Pool {
     return worker;
   }
 }
+
+const CLOSED = 'extraction pool closed';
 
 /** The compiled worker beside this file. Absent where the service runs from source, as its tests do. */
 const WORKER = join(__dirname, 'worker.js');

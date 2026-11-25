@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { _test_parseKnown as parseKnown } from '../src/config';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { _test_loadConfig as loadConfig, _test_parseKnown as parseKnown } from '../src/config';
 
 describe('the venue filter', () => {
   const known = ['binance', 'orderBookBands', 'trades'];
@@ -25,5 +25,29 @@ describe('the venue filter', () => {
     expect(parseKnown(undefined, 'STOCKER_VENUES', known)).toEqual([]);
     expect(parseKnown('', 'STOCKER_VENUES', known)).toEqual([]);
     expect(parseKnown('trades,Trades', 'STOCKER_VENUES', known)).toEqual(['trades']);
+  });
+});
+
+describe('the drain bound', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('is a minute unless set', () => {
+    vi.stubEnv('STOCKER_DRAIN_SECONDS', '');
+
+    expect(loadConfig().drainSeconds).toBe(60);
+  });
+
+  it('is read in seconds', () => {
+    vi.stubEnv('STOCKER_DRAIN_SECONDS', '15');
+
+    expect(loadConfig().drainSeconds).toBe(15);
+  });
+
+  it('rejects anything but a positive whole number', () => {
+    for (const bad of ['0', '-5', 'soon']) {
+      vi.stubEnv('STOCKER_DRAIN_SECONDS', bad);
+
+      expect(() => loadConfig()).toThrow(/positive integer/);
+    }
   });
 });
