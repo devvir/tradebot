@@ -1113,7 +1113,7 @@ export interface Probe {
  * `absent` is a ruling and belongs to `file`: a key that was there and is not
  * any more.
  */
-export type Existence = 'unknown' | 'confirmed' | 'assumed' | 'absent';
+export type Existence = 'confirmed' | 'assumed' | 'absent';
 
 /**
  * One step from one schema version to the next.

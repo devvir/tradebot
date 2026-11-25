@@ -101,6 +101,14 @@ describe('where a finding lands', () => {
  * same bare names on every walk, so routing on the sighting alone would drag
  * every settled file back into the queue, once per refresh, for ever.
  */
+/** `file` holds what a venue serves or withdrew; a key nobody has seen is never catalogued. */
+it('refuses a page offering a ready file that is only assumed, writing none of it', async () => {
+  await expect(putFiles(db, [stated('a.zip'), stated('b.zip', { existence: 'assumed' })]))
+    .rejects.toThrow(/b\.zip/);
+
+  expect(count('file')).toBe(0);
+});
+
 describe('ready stays ready', () => {
   const settled = async () => {
     await putFiles(db, [bare('orderbook/a.zip')]);
@@ -149,6 +157,24 @@ describe('arriving', () => {
     settleFiles(db, [{
       venueId: 1, path: 'orderbook/a.zip', size: 10, etag: 'e', modified: null, seenAt: 'T9',
     }]);
+
+    expect(db.prepare('SELECT seen_at FROM file').get()).toMatchObject({ seen_at: 'T1' });
+  });
+
+  /** Offering a parked key again is not discovering it again. */
+  it('keeps first discovery through a key offered again while parked', async () => {
+    await putFiles(db, [bare('orderbook/a.zip', { seenAt: 'T1' })]);
+    await putFiles(db, [bare('orderbook/a.zip', { seenAt: 'T5' })]);
+    settleFiles(db, [{
+      venueId: 1, path: 'orderbook/a.zip', size: 10, etag: 'e', modified: null, seenAt: 'T9',
+    }]);
+
+    expect(db.prepare('SELECT seen_at FROM file').get()).toMatchObject({ seen_at: 'T1' });
+  });
+
+  it('keeps first discovery when a later listing describes a parked key', async () => {
+    await putFiles(db, [bare('orderbook/a.zip', { seenAt: 'T1' })]);
+    await putFiles(db, [stated('orderbook/a.zip', { seenAt: 'T5' })]);
 
     expect(db.prepare('SELECT seen_at FROM file').get()).toMatchObject({ seen_at: 'T1' });
   });

@@ -312,6 +312,7 @@ export const dropAbove = (
 export const writer = (db: DatabaseSync): {
   park:   (row: Parked) => number;
   unpark: (venueId: number, path: string) => number;
+  take:   (venueId: number, path: string) => string | null;
   learn:  (size: number | null, etag: string | null, modified: string | null,
            existence: string | null, venueId: number, path: string) => void;
   held:   (venueId: number, path: string) => Held | undefined;
@@ -339,14 +340,14 @@ export const writer = (db: DatabaseSync): {
   );
 
   /**
-   * What the upsert used to do on conflict, as its own statement.
+   * What a key offered again while parked updates, as its own statement.
    *
    * `existence` is left alone: a ruling somebody made survives the venue going
    * on offering the key, which it will on every walk. So is `seq` — re-offering
    * a key must not move it to the back of the queue, or a venue that re-lists
    * the same names every walk would keep pushing its own backlog out of reach of
-   * the sweep reading it. `created_at` *is* refreshed: the key was offered again
-   * just now.
+   * the sweep reading it. So is `created_at`: it is when the key was first
+   * sighted, which is what the file's `seen_at` becomes once it arrives.
    */
   const refresh: StatementSync = db.prepare(
     `UPDATE wip
@@ -354,12 +355,13 @@ export const writer = (db: DatabaseSync): {
             series_id  = COALESCE(?, series_id),
             size       = COALESCE(?, size),
             etag       = COALESCE(?, etag),
-            modified   = COALESCE(?, modified),
-            created_at = ?
+            modified   = COALESCE(?, modified)
       WHERE venue_id = ? AND path = ?`,
   );
 
-  const remove: StatementSync = db.prepare('DELETE FROM wip WHERE venue_id = ? AND path = ?');
+  const remove: StatementSync = db.prepare(
+    'DELETE FROM wip WHERE venue_id = ? AND path = ? RETURNING created_at AS seenAt',
+  );
 
   const learned: StatementSync = db.prepare(
     `UPDATE wip
@@ -388,12 +390,20 @@ export const writer = (db: DatabaseSync): {
       if (Number(done.changes) > 0) return 1;
 
       refresh.run(row.date, row.seriesId, row.size, row.etag, row.modified,
-        row.seenAt, row.venueId, row.path);
+        row.venueId, row.path);
 
       return 0;
     },
 
-    unpark: (venueId, path) => (Number(remove.run(venueId, path).changes) > 0 ? -1 : 0),
+    unpark: (venueId, path) => (remove.get(venueId, path) ? -1 : 0),
+
+    /**
+     * Unpark a key the catalog is about to receive, handing back when it was
+     * first sighted, or null where it was not parked. Wherever this returns a
+     * time, the row delta is -1.
+     */
+    take: (venueId, path) =>
+      (remove.get(venueId, path) as { seenAt: string } | undefined)?.seenAt ?? null,
 
     learn: (size, etag, modified, existence, venueId, path) =>
       void learned.run(size, etag, modified, existence, venueId, path),

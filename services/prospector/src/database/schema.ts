@@ -133,7 +133,7 @@ CREATE TABLE IF NOT EXISTS wip (
   -- service built it from a pattern.
   existence TEXT NOT NULL DEFAULT 'confirmed',
 
-  created_at TEXT NOT NULL,              -- enqueued, refreshed if offered again
+  created_at TEXT NOT NULL,              -- enqueued; first sighting, never refreshed
   tries      INTEGER NOT NULL DEFAULT 0, -- asked and not settled, so far
 
   -- What to ask the venue for once this row settles, where a period is published

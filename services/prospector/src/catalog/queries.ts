@@ -66,7 +66,8 @@ export const venueIds = (db: DatabaseSync, name: string): number[] =>
  *   re-walk that is nearly every key, and rewriting each one to say so was most
  *   of what a walk cost.
  * - `seen_at` is left alone. It is first discovery, and answers "when did we
- *   first learn this existed" — a question whose answer must not drift.
+ *   first learn this existed" — a question whose answer must not drift. A key
+ *   parked before a listing described it was discovered when it was parked.
  * - If size or ETag differ, the new version becomes current, **the one it
  *   replaced is appended to `revision`** — so a consumer can ask what changed
  *   since it last looked rather than being told only that something did — and
@@ -80,6 +81,11 @@ export const venueIds = (db: DatabaseSync, name: string): number[] =>
  * its row, its history and its `seen_at`, and only its `existence` changes.
  * Without a span — keys that did not come from a listing — nothing is withdrawn.
  *
+ * **A file ready to be catalogued is `confirmed` or `absent`**, the two states
+ * `file` holds; `assumed` describes a key nobody has seen, which is parked and
+ * never catalogued. A page offering a ready file in any other state is refused
+ * whole, before anything is written.
+ *
  * Returns how many files were withdrawn.
  */
 export const putFiles = async (
@@ -89,15 +95,16 @@ export const putFiles = async (
 ): Promise<number> => {
   if (files.length === 0 && ! span) return 0;
 
+  const misplaced = files.find(file => ready(file) && file.existence !== 'confirmed' && file.existence !== 'absent');
+
+  if (misplaced)
+    throw new Error(`${misplaced.path}: a catalogued file is 'confirmed' or 'absent', not '${misplaced.existence}'`);
+
   const current = db.prepare(
     `SELECT ${ROW} FROM file WHERE venue_id = ? AND path = ?`,
   );
 
-  const revise = db.prepare(
-    `INSERT INTO revision (venue_id, path, seen_at, size, etag, modified, downloaded_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (venue_id, path, seen_at) DO NOTHING`,
-  );
+  const revise = db.prepare(REVISE);
 
   const insert = db.prepare(
     `INSERT INTO file (venue_id, path, date, size, etag, modified, existence,
@@ -105,9 +112,7 @@ export const putFiles = async (
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (venue_id, path) DO UPDATE SET
           date          = excluded.date,
-          -- Learned once and kept: a sighting that cannot name a series is not
-          -- a statement that the file has none.
-          series_id     = COALESCE(excluded.series_id, file.series_id),
+          series_id     = excluded.series_id,
           partition_id  = excluded.partition_id,
           size          = COALESCE(excluded.size, file.size),
           etag          = COALESCE(excluded.etag, file.etag),
@@ -262,8 +267,11 @@ export const putFiles = async (
 
             if (was && unchanged(file, was)) continue;
 
-            // Complete this time. If it had been parked, it is parked no longer.
-            if (! was) moved(file.venueId, backlog.unpark(file.venueId, file.path));
+            // Complete this time. If it had been parked, it is parked no longer,
+            // and it was first sighted when it was parked.
+            const parkedAt = was ? null : backlog.take(file.venueId, file.path);
+
+            if (parkedAt !== null) moved(file.venueId, -1);
 
             const changed = !! was && replaced(file, was);
 
@@ -279,12 +287,12 @@ export const putFiles = async (
             const downloadedAt = changed ? null : was?.downloadedAt ?? null;
 
             // The partition of where the file is now: its date or its series may have moved.
-            const partitionId = partitions.of(file.seriesId ?? was!.seriesId, file.date);
+            const partitionId = partitions.of(file.seriesId, file.date);
 
             insert.run(
               file.venueId, file.path, file.date,
               file.size, file.etag, file.modified, file.existence, file.seriesId,
-              partitionId, file.seenAt, downloadedAt,
+              partitionId, parkedAt ?? file.seenAt, downloadedAt,
             );
 
             effects.push({
@@ -519,11 +527,7 @@ export const correctFile = (
     if (! was) return false;
 
     if (replaced(observed, was))
-      db.prepare(
-        `INSERT INTO revision (venue_id, path, seen_at, size, etag, modified, downloaded_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT (venue_id, path, seen_at) DO NOTHING`,
-      ).run(venueId, path, seenAt, was.size, was.etag, was.modified, was.downloadedAt);
+      db.prepare(REVISE).run(venueId, path, seenAt, was.size, was.etag, was.modified, was.downloadedAt);
 
     const downloadedAt = downloaded ? seenAt : null;
     const size         = observed.size ?? was.size;
@@ -651,6 +655,12 @@ export const anyUnsettled = (db: DatabaseSync, venueId: number): boolean =>
  * `revision` on arrival, turning "what changed since I last looked" into
  * "everything, once".
  *
+ * **Returning with different bytes is a revision.** A row the catalog holds as
+ * withdrawn already has a version; where the probe finds another size or ETag,
+ * that version is appended to `revision` — keyed by when the probe observed its
+ * replacement — and the file is owed again. The same bytes come back with
+ * whatever was downloaded of them.
+ *
  * A settlement that still states too little leaves the row where it is, with
  * whatever it did learn: a HEAD that answered without a checksum is progress,
  * not an arrival.
@@ -666,7 +676,7 @@ export const settleFiles = (db: DatabaseSync, settled: readonly Settlement[]): n
   const arrive = db.prepare(
     `INSERT INTO file (venue_id, path, date, size, etag, modified, existence,
                        series_id, partition_id, seen_at, downloaded_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (venue_id, path) DO UPDATE SET
           date          = excluded.date,
           size          = excluded.size,
@@ -675,10 +685,11 @@ export const settleFiles = (db: DatabaseSync, settled: readonly Settlement[]): n
           existence     = excluded.existence,
           series_id     = excluded.series_id,
           partition_id  = excluded.partition_id,
-          downloaded_at = CASE WHEN file.size IS excluded.size AND file.etag IS excluded.etag
-                               THEN file.downloaded_at END
+          downloaded_at = excluded.downloaded_at
         WHERE file.existence = 'absent' AND excluded.existence <> 'absent'`,
   );
+
+  const revise = db.prepare(REVISE);
 
   /** The row a settlement lands on, where the catalog holds it as withdrawn. */
   const lost = db.prepare(
@@ -723,11 +734,19 @@ export const settleFiles = (db: DatabaseSync, settled: readonly Settlement[]): n
 
       const gone = lost.get(file.venueId, file.path) as Row | undefined;
 
+      // Different bytes from the withdrawn row's: whatever was downloaded is not them.
+      const changed = !! gone && replaced(merged, gone);
+      const downloadedAt = gone && ! changed ? gone.downloadedAt : null;
+
       const arrived = Number(arrive.run(
         file.venueId, file.path, was.date,
         merged.size, merged.etag, merged.modified, existence, was.seriesId,
-        partitionId, was.seenAt,
+        partitionId, was.seenAt, downloadedAt,
       ).changes) > 0;
+
+      if (arrived && gone && changed)
+        revise.run(file.venueId, file.path, file.seenAt,
+          gone.size, gone.etag, gone.modified, gone.downloadedAt);
 
       unparked.set(file.venueId,
         (unparked.get(file.venueId) ?? 0) + backlog.unpark(file.venueId, file.path));
@@ -753,11 +772,9 @@ export const settleFiles = (db: DatabaseSync, settled: readonly Settlement[]): n
        * the archives hold of it still counts where the bytes are the same.
        */
       if (arrived) {
-        const same = !! gone && gone.size === merged.size && gone.etag === merged.etag;
-
         effects.push({
           was:  gone ? stateOf(gone.partitionId, 'absent', gone.size, gone.etag, gone.downloadedAt) : null,
-          now:  stateOf(partitionId, existence, merged.size, merged.etag, same ? gone.downloadedAt : null),
+          now:  stateOf(partitionId, existence, merged.size, merged.etag, downloadedAt),
         });
 
         if (gone)
@@ -1496,6 +1513,14 @@ export const ancestorsOf = (prefix: string): string[] => {
 const ROW = `series_id AS seriesId, partition_id AS partitionId, date, size, etag, modified, existence,
              downloaded_at AS downloadedAt`;
 
+/**
+ * Append the version a file is leaving behind to its trail, keyed by when its
+ * replacement was observed. Writing the same replacement twice says nothing new.
+ */
+const REVISE = `INSERT INTO revision (venue_id, path, seen_at, size, etag, modified, downloaded_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)
+                  ON CONFLICT (venue_id, path, seen_at) DO NOTHING`;
+
 const isRange = (span: Span): span is RangeSpan => 'low' in span;
 
 /**
@@ -1560,14 +1585,13 @@ const rowsIn = (db: DatabaseSync, venueId: number, from: Edge, to: Edge): PathRo
  * Whether a sighting says nothing the row does not already say.
  *
  * The same silence rule as `restated`: a field the listing left unsaid is not a
- * field that changed. A sighting that names no series leaves the row's alone,
- * as the upsert would.
+ * field that changed.
  */
 const unchanged = (file: CatalogFile, was: Row): boolean =>
   ! restated(file, was)
   && file.date === was.date
   && file.existence === was.existence
-  && (file.seriesId === null || file.seriesId === was.seriesId);
+  && file.seriesId === was.seriesId;
 
 /**
  * Mark these files withdrawn, and say what that did to their partitions. Returns how

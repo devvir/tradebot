@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { advanceRun, ancestorsOf, beginJob, closeRun, establishedAt, exclusionsFor, markDownloaded, openJob, openPartitions, putFiles, putVenue, recordSeries, venueIds, settleFiles, unsettled } from '../src/catalog';
+import { advanceRun, ancestorsOf, beginJob, closeRun, establishedAt, exclusionsFor, markDownloaded, openJob, openPartitions, putFiles, putVenue, recordSeries, venueIds, settleFiles, unsettled, withdrawFile } from '../src/catalog';
 import { assertWritable, migrate, openCatalog, SCHEMA_VERSION, version } from '../src/database';
 import { MIGRATIONS } from '../src/database/migrations';
 import { _test_BREATH_MS as BREATH_MS } from '../src/catalog/queries';
@@ -254,6 +254,42 @@ describe('re-walking', () => {
 
     expect(db.prepare(`SELECT count(*) n FROM revision WHERE seen_at > 'T2'`).get())
       .toMatchObject({ n: 1 });
+  });
+
+  /**
+   * **A withdrawn file a probe finds again with other bytes is a new version**,
+   * however it came back: the one it replaces joins the trail, keyed by when the
+   * probe saw its replacement, and the new one is owed.
+   */
+  describe('returning through a probe', () => {
+    const settle = (size: number, etag: string) => settleFiles(db, [{
+      venueId: 1, path: 'spot/a-2025-03.zip', size, etag, modified: null, seenAt: 'T9',
+    }]);
+
+    beforeEach(async () => {
+      await seed();
+      markDownloaded(db, [{ venueId: 1, path: 'spot/a-2025-03.zip' }], 'D1');
+      withdrawFile(db, 1, 'spot/a-2025-03.zip');
+      // Listed again without metadata, so it is parked for a probe to answer.
+      await putFiles(db, [file('spot/a-2025-03.zip', { seenAt: 'T5', size: null, etag: null })]);
+    });
+
+    it('files the outgoing version in the trail when the bytes differ', () => {
+      expect(settle(20, 'v2')).toBe(1);
+
+      expect(db.prepare('SELECT seen_at, size, etag, downloaded_at FROM revision').all())
+        .toEqual([{ seen_at: 'T9', size: 10, etag: 'v1', downloaded_at: 'D1' }]);
+      expect(db.prepare('SELECT size, etag, existence, seen_at, downloaded_at FROM file').get())
+        .toMatchObject({ size: 20, etag: 'v2', existence: 'confirmed', seen_at: 'T1', downloaded_at: null });
+    });
+
+    it('brings back the same bytes with what was downloaded of them, and no revision', () => {
+      expect(settle(10, 'V1')).toBe(1);
+
+      expect(db.prepare('SELECT count(*) n FROM revision').get()).toMatchObject({ n: 0 });
+      expect(db.prepare('SELECT existence, downloaded_at FROM file').get())
+        .toMatchObject({ existence: 'confirmed', downloaded_at: 'D1' });
+    });
   });
 
   /**
