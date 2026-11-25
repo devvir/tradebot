@@ -1,181 +1,219 @@
 # Seeds
 
-What a venue publishes, for the venues nothing can discover.
+A seed is catalog rows that ship with prospector, for what reading a venue's archive cannot
+establish. A migration plants them once, through `seed.ts`; nothing else reads these files.
 
-A listing venue is walked: its shapes and instruments are read out of the archive, and the first
-walk establishes everything a seed could have said. okx and bitget publish no listing at any
-layer — no `ListObjects`, no index, nothing that answers about more than one key — so what they
-contain cannot be found by looking. It has to be brought.
+There are two kinds:
 
-That is all these files are. `seed.ts` reads them; nothing else does.
+- **Series seeds** (`okx`, `bitget`). These venues answer no bucket listing (`ListObjects` is denied
+  at every layer), so there is nothing to walk: every key is generated from a series the catalog
+  already holds. The seed carries the venue's patterns, a series for every instrument that occupies
+  them, each series' floor, and, for bitget, the transforms its URLs need. okx's download portal has
+  an index of files, which prospector does not walk; see [OKX.md](../../../../../../docs/venues/OKX.md#archives).
+- **Retirement-only seeds** (`htx`, `gate`, `binance`). These venues are walked, and a walk finds their
+  shapes and instruments itself. What it cannot find is that a shape has ended: a missing file and a
+  tree the venue stopped writing give the same answer. The seed is `pattern.csv` alone, one row per
+  ended shape with its `retired_at`, and the walk fills in everything else.
 
 ## Layout
 
 ```
 seeds/
-  seed.ts          the only code, shared by every venue
-  README.md        this
-  okx/
+  README.md
+  seed.ts          the reader, shared by every venue
+  binance/
     pattern.csv
-    series.csv
   bitget/
     pattern.csv
     series.csv
-    transform.csv  optional — most venues have none
+    transform.csv
+  gate/
+    pattern.csv
+  htx/
+    pattern.csv
+  okx/
+    pattern.csv
+    series.csv
 ```
 
-A directory per venue, named as the `venue` table names it. Adding a venue is a directory and a
-one-line migration that calls `seed(db, '<venue>')` — no new code.
+A directory per venue, named as the `venue` table names it. A missing file reads as no rows. The build
+copies the directories to `dist/` beside the compiled `seed.ts`.
+
+## Adding a seed
+
+1. Create `seeds/<venue>/` with the files the seed needs. The venue's row must already exist in
+   `VENUES` (`migrations/001-core.ts`) with an empty `host`; `seed.ts` plants into that row and
+   refuses a venue that has none.
+2. Append a migration to `MIGRATIONS` in `migrations/index.ts`, marked `seedData: true`, whose `run`
+   is `seed(db, '<venue>')`.
+3. For a series seed, add the venue to `SEEDED_AT` in `seed.ts` (see [`last`](#last)).
+
+A seed is read when a catalog runs its migration, and never again. Editing the CSVs changes what a new
+catalog starts from; how an existing catalog is brought to match is the migration policy in
+`migrations/index.ts`.
 
 ## The files are the tables
 
-Both files are the catalog's own tables written out, column for column, minus the ids the
-database assigns. Nothing is translated on the way in: a `pattern` is the pattern string that
-generates a URL, and `market`, `dataset` and `variant` are already canonical.
+Each file is one of the catalog's tables (`pattern`, `series`, `transform` in `database/schema.ts`)
+written out column for column, minus the ids the database assigns. Nothing is translated on the way
+in: a `pattern` is the URL template itself, and `market`, `dataset` and `variant` are already
+canonical. Columns are read by name, and **a column `seed.ts` does not read is ignored**, so a seed may
+keep whatever its research found useful beside a row (bitget's `archivesMarket`, `displaySymbol`,
+`listed`, `archivesFirst` and `archivesLast`).
 
-**pattern.csv**
+### pattern.csv
+
+```
+virtual_id,market,dataset,variant,pattern,grain,retired_at,holds
+1,future,books,"incremental,400",okx/match/orderbook/L2/400lv/daily/{YYYY}{MM}{DD}/{SYMBOL}-futureschain-L2orderbook-400lv-{YYYY}-{MM}-{DD}.tar.gz,daily,20260804,chain
+2,future,books,"incremental,400",okx/match/orderbook/pro/L2/400lv/daily/{YYYY}{MM}{DD}/{SYMBOL}-futureschain-L2orderbook-400lv-{YYYY}-{MM}-{DD}.tar.gz,daily,,chain
+```
+
+- `virtual_id`: the row's identity inside the seed, which `series.csv` refers to. See
+  [virtual_id](#virtual_id).
+- `market`, `dataset`, `variant`: the slice the pattern publishes into, found or created as the row
+  is read.
+- `pattern`: the URL template, with [slots](#slots) where the varying parts go.
+- `grain`: checked, not taken. A pattern's grain is read off its slots, and a row stating another is
+  refused. Empty is accepted.
+- `retired_at`: the last date the shape was written, inclusive (`yyyymm` or `yyyymmdd`); empty while
+  it is live. Generation for a retired shape runs up to that date and no further, and a newly listed
+  instrument gets no series on it.
+- `holds` (optional): `chain` where one file of the shape carries every expiry of a family under the
+  family's name, as okx's `…-futureschain-…` files do. Empty or absent is `instrument`.
+- `bundle` (optional): `instrument` or `market`. Empty or absent, a pattern with a `{SYMBOL}` slot
+  holds one instrument per file and one without holds a whole market.
+
+In a retirement-only seed, a row must name the slice and spell the pattern exactly as the venue's
+adapter reports them. The walk then meets the row already in place and takes its `retired_at`; a row
+that differs is a separate shape, and the walk creates the live one beside it. The shapes these seeds
+carry are of two kinds: trees the venue stopped writing, and shapes whose directory is a fixed month
+that holds a single day:
 
 ```
 virtual_id,market,dataset,variant,pattern,grain,retired_at
-34,spot,trades,,trades/SPBL/{SYMBOL}/{SYMBOL}_{YYYY}{MM}{DD}_001.zip,daily,
+1,perp,indexPrice,15m,data/index-klines/linear-swap/daily/{SYMBOL}/15min/{SYMBOL}-15min-{YYYY}-{MM}-{DD}.zip,daily,20260804
 ```
 
-`market`, `dataset` and `variant` are the pattern's slice, which is found or created as the row is
-read. `grain` is checked rather than taken: a pattern's grain is read off its slots, and a row
-stating another is refused.
-
-Two columns are optional. `holds` is `chain` where one file of the shape carries every expiry of a
-family under the family's name, as okx's `…-futureschain-…` files do; absent or empty is one
-instrument per file. `bundle` is `instrument` or `market`; absent or empty, a pattern with a
-`{SYMBOL}` slot holds one instrument per file and one without holds a whole market. A series named
-`@` under a per-instrument pattern, or an instrument under a venue-wide one, is refused.
-
-**transform.csv** — what one instrument puts where its pattern says `{TRANSFORM:kind:default}`,
-over a span of dates. Absent for a venue whose URLs follow their patterns.
-
 ```
-market,symbol,dataset,kind,transform,date_from,date_to
-perp,AAVEPERP,,marginToken,CMCBL,20250208,
+virtual_id,market,dataset,variant,pattern,grain,retired_at
+4,spot,klines,1m,spot/candlesticks_1m/202407/{SYMBOL}-{YYYY}{MM}{DD}.csv.gz,daily,20240630
 ```
 
-**series.csv**
+The first is from `htx/pattern.csv`, the second from `gate/pattern.csv`. Which shapes ended when is
+venue fact, in each venue's doc under `docs/venues/`.
+
+### series.csv
 
 ```
 pattern_id,symbol,url_symbol,last,floor
-1,$AIUSDT,,,,20180502
+1,AAOI-USD_UM_XPERP,,20260804,20260709
+34,@,,20260904,20210901
 ```
 
-**A column nobody reads is ignored**, so a seed may carry whatever its own research found worth
-keeping beside a row — bitget records the `displaySymbol` its download form answers for, so a later
-reader can search for a series' files without re-deriving anything. Only the table's own columns and
-`floor` are read.
+- `pattern_id`: a `virtual_id` from `pattern.csv`. A series has no venue of its own and reaches it
+  through its pattern, so the patterns are planted first.
+- `symbol`: the instrument, which is found or created (as a chain where the pattern `holds` chains).
+  `@` is the market bundle, and goes only under a pattern whose files hold a whole market; `@` under a
+  per-instrument pattern, or an instrument under a market pattern, is refused.
+- `url_symbol`: how the archive spells the instrument where that differs from `symbol`; empty
+  otherwise.
+- `last`: the newest file seen. Empty means not measured. See [`last`](#last).
+- `floor`: the first period worth asking about. See [`floor`](#floor).
 
-`pattern_id` is a `virtual_id` from the file above. A series has no `venue_id` of its own — it
-reaches its venue through its pattern — so the patterns are written first and their real ids
-mapped as they go.
+`floor` and `last` must be stamps of the pattern's grain (`yyyymm` for monthly, `yyyymmdd` for daily).
+Two rows of one pattern with the same key spelling (`url_symbol`, or `symbol` where that is empty) are
+one series: an exact repeat is skipped, and one that differs in anything else is refused.
+
+### transform.csv
+
+What one instrument puts where its pattern says `{TRANSFORM:kind:default}`, over a span of dates.
+Absent for a venue whose URLs follow their patterns.
+
+```
+market,symbol,dataset,kind,transform,date_from,date_to
+future,BTCCMZ26,,archiveDir,BTCCM_D2,20260903,
+```
+
+`dataset` empty applies to every dataset whose pattern asks for that `kind`; a named dataset limits
+the row to that one. `date_from` is required and `date_to` empty is open-ended, both inclusive stamps. Where no row
+applies, the default written in the slot stands.
+
+### Slots
+
+A pattern is literal except for its slots:
+
+| slot | filled with |
+|---|---|
+| `{SYMBOL}` | the series' `url_symbol`, or its `symbol` |
+| `{YYYY}` `{MM}` `{DD}` `{HH}` `{MI}` | the period's year, month, day, hour and minute |
+| `{PART}` | one part of a period the venue publishes as several files; which parts exist is the adapter's `expandParts` answer |
+| `{TRANSFORM:kind:default}` | the `transform.csv` row for the instrument, kind and date, else `default`, which may itself be a slot (`{TRANSFORM:archiveDir:{SYMBOL}}`) |
+
+An adapter may fill further slots of its own through `slotsFor`, such as `{MONTH_LAST_DAY}`; the full
+list is the `pattern` column's comment in `database/schema.ts`. The grain comes from the finest
+calendar slot: a slot ending in `MI}` is minutely, `HH}` hourly, `DD}` daily, and none is monthly.
+`{PART}` declares no grain.
 
 ### virtual_id
 
-**A line's identity inside the seed, and nothing else.** The real id belongs to the database and
-is not knowable until the row is written, so the two files need a name for a pattern that both
-can agree on beforehand.
+The database assigns a pattern's real id as the row is written, so the two files need a name for a
+pattern that both agree on beforehand. That is all a `virtual_id` is: not a line number and not an
+order. Renumber freely, so long as every `pattern_id` still points at the row you meant. `seed.ts`
+refuses a `pattern_id` with no matching `virtual_id`, which catches a deletion but not a renumbering.
 
-It is not a line number and it is not an ordering. Renumber it however you like, so long as every
-`pattern_id` in `series.csv` still points at the row you meant — change one without the other and
-tens of thousands of series quietly attach to the wrong shape. `seed.ts` refuses a `pattern_id`
-with no matching `virtual_id`, which catches a deletion but cannot catch a renumbering.
+## The bounds a seed states
 
-### What is deliberately not here
+### floor
 
-- **A `first`.** Not a column here at all, and the reason is narrower than "a seed should not
-  guess". **Nothing ever raises a `first`** — `sawFile` lowers it and only lowers it — so a seeded
-  start is uncorrectable the moment it is too low, and it becomes too low as soon as the venue
-  withdraws its earliest file. That is a lie in a column everything downstream trusts, with nothing
-  in the system able to notice it.
+The file states a `floor`, the first period worth asking about. The table holds a `tip` instead: the
+claim that everything at or below it is settled, with generation starting at the period after it. So
+`seed.ts` stores `tip` as the period before the floor, in the series' grain.
 
-  A `floor` costs the first pass a few requests and arrives at whatever is true today: right where
-  a stated `first` would have been right, and right where it would not.
-- **A `last` nothing measured.** The column carries what the research actually saw, and is empty
-  where it saw nothing.
-- **Series `state`.** It defaults to `active`. What the venue listed on the day the seed was
-  built says nothing about today.
-- **Empty series, in a *permanent* seed.** A series the archive answers nothing for is not worth
-  shipping: reconciliation deletes it after the first completed pass, so it is work in both
-  directions. A **research** seed is the opposite case and deliberately declares them — that a
-  combination is empty is one of the things the pass is being run to establish.
+A floor too high loses files without a trace, because a tip only moves forward and nothing asks below
+it. A floor too low costs requests. A row with no floor plants a series with no tip, which generation
+skips.
 
-### What is here and matters
+A seed carries no `first`. The catalog's `first` and `last` are what its `file` table holds: a sighting
+only lowers `first` and only raises `last`, and the reconciliation that ends every finished pass resets
+both to the earliest and newest file on record. Any seeded `first` would be replaced by the first
+finished pass.
 
-- **`floor`** — the **first period worth asking about**, and the one this file states directly.
+### last
 
-  The table holds a `tip` instead, which is a different claim: everything at or below a tip is
-  settled, and generation starts at the period *after* it. Nothing has walked a seeded venue yet,
-  so there is no settled history for a seed to claim — what a seed knows is where to start. Written
-  as a tip, every floor in the file sat one day or one month before the thing it described and a
-  reader had to carry the off-by-one to see the number meant.
+`last` is the newest file the pass that built the seed saw: proof the archive reaches that far, never a
+claim that it stops there, and never a ceiling on generation.
 
-  So the file says `floor`, and `seed.ts` writes `tip = floor − 1` in the series' own grain. The
-  table is unchanged; only the language here is.
-
-  A floor too high loses files silently, because a tip only ever moves forward. One too low only
-  costs requests.
-
-  **Before anything has measured the venue, a floor is a claim about a whole dataset.** It is set
-  deliberately far below where that dataset is thought to begin — per market and dataset, books
-  additionally by era, since okx's `pro/L2/` trees start where the old ones stop. At that stage a
-  floor is not an estimate of where data starts; it is the instrument that measures it. A hit
-  landing near one means it is too high and wants reviewing before it costs something; a hit below
-  where the archive was assumed to begin is the assumption being disproved, which is the whole point
-  of asking down there. One series' start is no evidence about the dataset, which is why they are
-  shared at this stage.
-
-  **Once a pass has measured every series, a floor is that series' own measured start.** The claim it
-  makes has changed: the venue-wide guess has done its work and been replaced by what was found.
-  This is what a re-extracted seed carries, and it is the difference between asking about a venue's
-  whole calendar and asking about each instrument's own life — for okx, 18.6M keys against 7.2M.
-- **`last`, where something measured it.** Empty otherwise.
-
-  A `last` needs only a file: seeing one proves the archive reaches at least that far. It is
-  "the newest file seen", never a claim the archive stopped there.
-
-  **A stated `last` is never a claim that the series ended**, so there is no need to withhold one
-  for an instrument the venue still lists. It is read in two places and neither treats it as a
-  ceiling: `open` uses it to decide whether a quiet series on a **retired** shape is still worth
-  asking about, and `updatePage` uses it with `SEEDED_AT` to skip the span the seeding pass already
-  looked at and found empty. Generation runs to the frontier either way — see `under` in
-  `update.ts`, which says outright that `last` must not become a bound.
-
-  **`SEEDED_AT` in `seed.ts` dates the seed**, and is updated with the CSVs it describes.
-
-- **Pattern `retired_at`** — the last date a shape was written to, empty while it is still live.
-  It is an inclusive ceiling: generation runs up to it and stops, so the archive under a dead
-  naming goes on being read while nothing is asked for beyond the day it died. No *new* series is
-  made on a retired shape either. bitget's superseded namings and okx's pre-`pro/L2/` book trees
-  are retired here.
+It also lets the first pass skip what the seed already measured. `SEEDED_AT` in `seed.ts` records the
+day each series seed was built; the pass that built it asked every series above its `last` up to that
+day and found nothing. So on a venue with no listing, until a pass over it has finished, generation
+skips each series from the period after `last` to `OVERDUE_DAYS` before the seed's date. `SEEDED_AT` is
+edited together with the CSVs it dates.
 
 ## Research seeds and permanent ones
 
-The files read the same and mean different things, and mistaking one for the other is how a
-throwaway becomes canon.
+The files read the same either way, and nothing in the service knows which kind it holds.
 
-A **permanent** seed is the output of a finished investigation: one floor per series at its measured
+A **permanent** seed is the output of a finished investigation: a floor per series at its measured
 start, `last` where the archive was seen to reach, and only the series the venue turned out to serve.
-okx ships one. A venue holding it finds its whole history as surely as a listed venue walks to its
-own.
+The shipped series seeds are permanent. A series that holds no file is deleted by the first finished
+pass, so a permanent seed does not ship one.
 
-A **research** seed is the instrument that produces one. Floors sit far below where any file of that
-dataset can be, series are declared for combinations nobody expects to exist, and the pass is allowed
-to ask about all of it — because a run that finds files near a floor has proved that floor wrong,
-which is the only cheap way to be wrong. When it has run, the `file` table says what is real and the
-permanent seed is written from that.
+A **research** seed is the instrument that produces one, run through prospector because a finished
+pass is a measurement. Floors sit far below where any file of a dataset can be, and series are declared
+for combinations nobody expects to exist. When the pass has finished, the `file` table says which
+series are real and where each begins and ends, and the permanent seed is written from that. A file
+found near a research floor means that floor was too high.
 
-**Prospector is being used as the tool, not being described by it.** A standalone script could do
-the same crawl; it would be re-implementing generation, probing, pacing and resumability to do it.
-Nothing in the service knows which kind of seed it is holding, and nothing needs to.
+## The bitget seed
+
+bitget's is the one seed with a `transform.csv`, whose kinds are `archiveDir`, `eraName` and
+`marginToken`, and with research columns beside its rows. Venue facts are in
+[BITGET.md](../../../../../../docs/venues/BITGET.md#archives).
 
 ## Quoting
 
-A field is quoted only where it contains a comma or a quote — today that is okx's
-`"incremental,400"` and `"incremental,5000"` variants and nothing else. A doubled quote inside a
-quoted field is one literal quote. Empty is empty; there is no distinction between an empty
-string and a null, and none is needed.
+A field is quoted only where it contains a comma or a quote, as multi-part variants such as
+`"incremental,400"` do. Inside a quoted field a doubled quote is one literal quote. Empty is empty:
+there is no distinction between an empty string and a null. A field spans one line, and a row must
+have as many fields as the header.

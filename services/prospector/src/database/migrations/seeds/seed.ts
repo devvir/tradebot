@@ -195,35 +195,24 @@ export const seed = (db: DatabaseSync, venue: string, dir: string = __dirname): 
 };
 
 /**
- * The day each seed was built — **stated, because it is not derivable.**
+ * The day each series seed was built — **stated, because the rows do not carry
+ * it.** The newest `last` in a seed is the newest file that answered, and the
+ * pass that built the seed went on asking past it up to the day it ran.
  *
- * The newest `last` in a seed is not it: a `last` is only written where the
- * archive had already gone quiet long enough to say so, so reading the file back
- * answers a fortnight or more early and answers something other than its name.
- * Better a number somebody writes down than one that is nearly right for a
- * reason nobody remembers.
+ * **It must not claim more looking than that pass did.** A reader takes it to
+ * mean the pass asked every series above its `last` up to this date and saw
+ * nothing, so it is the day the pass ran, and never later.
  *
- * **It must not claim more looking than the pass that built the seed did.** What
- * a reader takes from this is that the seed's author went on asking up to this
- * date and saw nothing beyond each series' `last` — so it is the day the seed
- * was written, and never later.
- *
- * Re-seeding a venue means editing its CSVs, and this sits beside them.
+ * Re-seeding a venue means editing its CSVs and this entry together.
  */
 const SEEDED_AT: Record<string, string> = {
   okx:    '20260912',
 
   /**
-   * **Measured, not taken from the download index.** The pass behind it ran on
-   * this day: for every series it asked each period from that series' newest
-   * known file up to the frontier, and each `last` in the seed is the newest one
-   * that answered. So the claim this horizon makes — the seeding pass looked
-   * above every `last` and saw nothing — is the pass's own result.
-   *
-   * The index was never a candidate for it. It under-reports in both directions
-   * — files it never listed, and recent days it withholds long after the archive
-   * has published them — so a horizon taken from it would have the run skip what
-   * the index was silent about and report the index back to itself as confirmed.
+   * **Measured, not taken from the download index**, which both omits files
+   * that exist and withholds recent days (see `docs/venues/BITGET.md`). Each
+   * `last` is the newest period that answered when the pass asked every series
+   * from its newest known file up to the frontier.
    */
   bitget: '20260922',
 };
