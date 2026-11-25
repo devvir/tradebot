@@ -49,7 +49,7 @@ afterEach(() => {
 });
 
 const config: Config = {
-  catalogDir: dir, venues: [], concurrency: 4,
+  catalogDir: '', token: '', port: 0, venues: [], concurrency: 4,
 };
 
 /** How many pages each scope serves before it is exhausted, keyed by prefix. */
@@ -81,6 +81,8 @@ const venue = (archive: Archive, breaks: string[] = []): Adapter => {
         covers: { after: at > 0 ? keyAt(at) : null, through: next < pages ? keyAt(next) : null },
       };
     },
+
+    confirm: async () => null,
   };
 
   return {
@@ -104,7 +106,7 @@ const venue = (archive: Archive, breaks: string[] = []): Adapter => {
 
 describe('one clean pass', () => {
   it('closes the job and establishes the venue', async () => {
-    const summary = await surveyVenue(db, venue({ 'spot/': 2, 'futures/': 1 }), config);
+    const summary = await surveyVenue(db, venue({ 'spot/': 2, 'futures/': 1 }), config, 'full');
     const id      = putVenue(db, 'fake', 'https://x', '');
 
     expect(summary).toMatchObject({ partitions: 2, failed: 0, found: 3 });
@@ -113,7 +115,7 @@ describe('one clean pass', () => {
   });
 
   it('records what every partition found', async () => {
-    await surveyVenue(db, venue({ 'spot/': 3 }), config);
+    await surveyVenue(db, venue({ 'spot/': 3 }), config, 'full');
 
     expect(db.prepare('SELECT count(*) n FROM file').get()).toMatchObject({ n: 3 });
   });
@@ -135,7 +137,7 @@ describe('a pass with a single lane', () => {
 
     const scanner = { ...adapter.scanner, scopes: (_context: unknown, limits: Limits) => descend(root, limits, read) };
     const id      = putVenue(db, 'fake', 'https://x', '');
-    const summary = await surveyVenue(db, { ...adapter, scanner }, { ...config, concurrency: 1 });
+    const summary = await surveyVenue(db, { ...adapter, scanner }, { ...config, concurrency: 1 }, 'full');
 
     expect(summary).toMatchObject({ partitions: 2, failed: 0, found: 2 });
     expect(openJob(db, id, 'walk')).toBeNull();
@@ -155,7 +157,7 @@ describe('a walk whose venue probes', () => {
   const probed = (): Adapter => ({ ...venue({ 'spot/': 2 }), probes: true });
 
   it('leaves its job open when the listing ends', async () => {
-    const summary = await surveyVenue(db, probed(), config);
+    const summary = await surveyVenue(db, probed(), config, 'full');
     const id      = putVenue(db, 'fake', 'https://x', '');
 
     expect(summary).toMatchObject({ failed: 0, generated: true });
@@ -163,7 +165,7 @@ describe('a walk whose venue probes', () => {
   });
 
   it('closes it once the drain has returned', async () => {
-    await surveyVenue(db, probed(), config);
+    await surveyVenue(db, probed(), config, 'full');
 
     const id = putVenue(db, 'fake', 'https://x', '');
 
@@ -178,7 +180,7 @@ describe('a walk whose venue probes', () => {
    * stated by the listing itself, so there is no backlog to hold the job open.
    */
   it('still closes at once where nothing will probe', async () => {
-    const summary = await surveyVenue(db, venue({ 'spot/': 2 }), config);
+    const summary = await surveyVenue(db, venue({ 'spot/': 2 }), config, 'full');
     const id      = putVenue(db, 'fake', 'https://x', '');
 
     expect(summary).toMatchObject({ generated: true });
@@ -194,7 +196,7 @@ describe('a walk whose venue probes', () => {
  */
 describe('a partition that fails', () => {
   it('leaves the job open rather than establishing the venue', async () => {
-    const summary = await surveyVenue(db, venue({ 'spot/': 1, 'futures/': 1 }, ['futures/']), config);
+    const summary = await surveyVenue(db, venue({ 'spot/': 1, 'futures/': 1 }, ['futures/']), config, 'full');
     const id      = putVenue(db, 'fake', 'https://x', '');
 
     expect(summary.failed).toBe(1);
@@ -206,7 +208,7 @@ describe('a partition that fails', () => {
   it('does not hold back the partitions that succeeded', async () => {
     const id = putVenue(db, 'fake', 'https://x', '');
 
-    await surveyVenue(db, venue({ 'spot/': 1, 'futures/': 1 }, ['futures/']), config);
+    await surveyVenue(db, venue({ 'spot/': 1, 'futures/': 1 }, ['futures/']), config, 'full');
 
     expect(establishedAt(db, id, 'spot/')).not.toBeNull();
     expect(establishedAt(db, id, 'futures/')).toBeNull();
@@ -219,11 +221,11 @@ describe('a partition that fails', () => {
   it('retries only the failed partition on the next pass', async () => {
     const id = putVenue(db, 'fake', 'https://x', '');
 
-    await surveyVenue(db, venue({ 'spot/': 1, 'futures/': 1 }, ['futures/']), config);
+    await surveyVenue(db, venue({ 'spot/': 1, 'futures/': 1 }, ['futures/']), config, 'full');
 
     expect(openPartitions(db, id, 'walk').map(p => p.scope)).toEqual(['futures/']);
 
-    const second = await surveyVenue(db, venue({ 'spot/': 1, 'futures/': 1 }), config);
+    const second = await surveyVenue(db, venue({ 'spot/': 1, 'futures/': 1 }), config, 'full');
 
     expect(second.partitions).toBe(1);
     expect(openJob(db, id, 'walk')).toBeNull();
@@ -240,10 +242,10 @@ describe('resuming', () => {
   it('continues the open job rather than re-partitioning', async () => {
     const id = putVenue(db, 'fake', 'https://x', '');
 
-    await surveyVenue(db, venue({ 'spot/': 1, 'futures/': 1 }, ['futures/']), config);
+    await surveyVenue(db, venue({ 'spot/': 1, 'futures/': 1 }, ['futures/']), config, 'full');
 
     const grown = await surveyVenue(
-      db, venue({ 'spot/': 1, 'futures/': 1, 'option/': 1 }, ['futures/']), config,
+      db, venue({ 'spot/': 1, 'futures/': 1, 'option/': 1 }, ['futures/']), config, 'full',
     );
 
     expect(grown.partitions).toBe(1);
@@ -256,12 +258,12 @@ describe('resuming', () => {
   it('carries the cursor across an interruption', async () => {
     const id = putVenue(db, 'fake', 'https://x', '');
 
-    await surveyVenue(db, venue({ 'spot/': 4 }, ['spot/']), config);
+    await surveyVenue(db, venue({ 'spot/': 4 }, ['spot/']), config, 'full');
 
     // Nothing was read, so the cursor is still null and all four pages remain.
     expect(openPartitions(db, id, 'walk')[0]!.cursor).toBeNull();
 
-    await surveyVenue(db, venue({ 'spot/': 4 }), config);
+    await surveyVenue(db, venue({ 'spot/': 4 }), config, 'full');
 
     expect(db.prepare('SELECT count(*) n FROM file').get()).toMatchObject({ n: 4 });
   });
@@ -281,7 +283,7 @@ describe('the exclusion list', () => {
 
     exclude(id, 'spot/A/A-2025-01-01.zip');
 
-    await surveyVenue(db, venue({ 'spot/': 2 }), config);
+    await surveyVenue(db, venue({ 'spot/': 2 }), config, 'full');
 
     expect(db.prepare('SELECT path FROM file').all().map((r: any) => r.path))
       .toEqual(['spot/A/A-2025-01-02.zip']);
@@ -291,14 +293,14 @@ describe('the exclusion list', () => {
   it('picks up a file excluded after the previous job finished', async () => {
     const id = putVenue(db, 'fake', 'https://x', '');
 
-    await surveyVenue(db, venue({ 'spot/': 2 }), config);
+    await surveyVenue(db, venue({ 'spot/': 2 }), config, 'full');
 
     expect(db.prepare('SELECT count(*) n FROM file').get()).toMatchObject({ n: 2 });
 
     exclude(id, 'spot/A/A-2025-01-01.zip');
 
     await new Promise(r => setTimeout(r, 5));
-    await surveyVenue(db, venue({ 'spot/': 2 }), config);
+    await surveyVenue(db, venue({ 'spot/': 2 }), config, 'full');
 
     /**
      * The row already catalogued is left as it is. The venue still lists the
@@ -320,7 +322,7 @@ describe('a catalogued file that can no longer be read', () => {
   it('stays catalogued and is listed as unreadable', async () => {
     const id = putVenue(db, 'fake', 'https://x', '');
 
-    await surveyVenue(db, venue({ 'spot/': 2 }), config);
+    await surveyVenue(db, venue({ 'spot/': 2 }), config, 'full');
 
     const strange = 'spot/A/A-2025-01-01.zip';
     const before  = venue({ 'spot/': 2 });
@@ -330,7 +332,7 @@ describe('a catalogued file that can no longer be read', () => {
     };
 
     await new Promise(r => setTimeout(r, 5));
-    await surveyVenue(db, after, config);
+    await surveyVenue(db, after, config, 'full');
 
     expect(db.prepare('SELECT existence FROM file WHERE path = ?').get(strange))
       .toMatchObject({ existence: 'confirmed' });
@@ -348,12 +350,12 @@ describe('a second job over the same venue', () => {
   it('re-partitions and walks every scope again', async () => {
     const id = putVenue(db, 'fake', 'https://x', '');
 
-    await surveyVenue(db, venue({ 'spot/': 1, 'futures/': 1 }), config);
+    await surveyVenue(db, venue({ 'spot/': 1, 'futures/': 1 }), config, 'full');
 
     const first = establishedAt(db, id, '');
 
     await new Promise(r => setTimeout(r, 5));
-    await surveyVenue(db, venue({ 'spot/': 1, 'futures/': 1 }), config);
+    await surveyVenue(db, venue({ 'spot/': 1, 'futures/': 1 }), config, 'full');
 
     expect(establishedAt(db, id, '')).not.toBe(first);
     expect(db.prepare(`SELECT count(*) n FROM run WHERE scope = 'spot/'`).get())
@@ -362,10 +364,10 @@ describe('a second job over the same venue', () => {
 
   /** A file the venue stopped offering is marked, never deleted. */
   it('marks what the venue no longer offers', async () => {
-    await surveyVenue(db, venue({ 'spot/': 2 }), config);
+    await surveyVenue(db, venue({ 'spot/': 2 }), config, 'full');
 
     await new Promise(r => setTimeout(r, 5));
-    await surveyVenue(db, venue({ 'spot/': 1 }), config);
+    await surveyVenue(db, venue({ 'spot/': 1 }), config, 'full');
 
     expect(db.prepare(`SELECT count(*) n FROM file WHERE existence = 'absent'`).get())
       .toMatchObject({ n: 1 });
@@ -403,11 +405,12 @@ describe('a venue that blocks us mid-walk', () => {
         throw new Refused(403, new Headers({ server: 'CloudFront', 'x-cache': 'Error from cloudfront' }),
           'https://public.bybit.com/spot/');
       },
+      confirm: async () => null,
     },
   });
 
   it('reports the venue as blocking rather than merely failing', async () => {
-    const summary = await surveyVenue(db, refusing(), config);
+    const summary = await surveyVenue(db, refusing(), config, 'full');
 
     expect(summary.blocked).toBe(true);
     expect(summary.failed).toBeGreaterThan(0);
@@ -419,14 +422,14 @@ describe('a venue that blocks us mid-walk', () => {
     const adapter = refusing();
     const scanner = {
       ...adapter.scanner,
-      page: async (_a: Adapter, scope: string) => {
+      page: async (_context: unknown, scope: string) => {
         asked.push(scope);
 
         throw new Refused(403, new Headers({ server: 'CloudFront' }), 'https://public.bybit.com/');
       },
     };
 
-    await surveyVenue(db, { ...adapter, scanner }, { ...config, concurrency: 1 });
+    await surveyVenue(db, { ...adapter, scanner }, { ...config, concurrency: 1 }, 'full');
 
     expect(asked).toHaveLength(1);
   });
@@ -442,7 +445,7 @@ describe('a venue that blocks us mid-walk', () => {
       },
     };
 
-    const summary = await surveyVenue(db, { ...adapter, scanner }, config);
+    const summary = await surveyVenue(db, { ...adapter, scanner }, config, 'full');
 
     expect(summary.blocked).toBe(false);
     expect(summary.failed).toBe(2);
@@ -452,7 +455,7 @@ describe('a venue that blocks us mid-walk', () => {
   it('leaves the job open with its partitions', async () => {
     const id = putVenue(db, 'fake', 'https://x', '');
 
-    await surveyVenue(db, refusing(), config);
+    await surveyVenue(db, refusing(), config, 'full');
 
     expect(openJob(db, id, 'walk')).not.toBeNull();
     expect(openPartitions(db, id, 'walk').length).toBeGreaterThan(0);
@@ -482,7 +485,7 @@ describe('a venue that refuses once', () => {
       },
     };
 
-    const summary = await surveyVenue(db, { ...adapter, scanner }, { ...config, concurrency: 1 });
+    const summary = await surveyVenue(db, { ...adapter, scanner }, { ...config, concurrency: 1 }, 'full');
 
     expect(summary).toMatchObject({ blocked: false, failed: 1 });
     expect(asked).toEqual(['spot/', 'trading/']);

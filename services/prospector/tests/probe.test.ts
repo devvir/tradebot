@@ -4,12 +4,12 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { countUnsettled, parkSoon, putFiles, putVenue, recordSeries, unsettled } from '../src/catalog';
 import { openCatalog } from '../src/database';
-import { surveying, surveyingAs } from '../src/context';
+import { listing, surveying, surveyingAs } from '../src/context';
 import { blocked, fetchHead } from '../src/http';
 import { CONFIRMATIONS, probeFiles, _test_settlement, _test_url } from '../src/probe';
 import { html } from '../src/scanners/html';
 import type { DatabaseSync } from 'node:sqlite';
-import type { Adapter, Pacing } from '../src/types';
+import type { Adapter, Pacing, Unsettled } from '../src/types';
 
 vi.mock('../src/http', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/http')>()),
@@ -26,6 +26,7 @@ vi.mock('../src/http', async (importOriginal) => ({
  * keeps these tests about the mechanism rather than about that choice.
  */
 const indexed: Adapter = {
+  getContext: async () => listing(indexed),
   name:    'indexed',
   scanner: html,
   base:    'https://indexes.example',
@@ -81,8 +82,7 @@ const found = (etag = 'abc', size = '1024') =>
 
 /** The work a probe is given: rows, and how many are left for the log. */
 const source = () => ({
-  next:      (after: { date: string; path: string } | null, limit: number) =>
-    unsettled(db, venueId, after, limit),
+  next:      (after: number, limit: number) => unsettled(db, venueId, after, limit),
   remaining: () => countUnsettled(db, venueId),
 });
 
@@ -242,7 +242,7 @@ describe('a file the venue does not serve', () => {
     for (let pass = 0; pass < CONFIRMATIONS.assumed; pass++)
       await probeFiles(db, indexed, source(), pacing);
 
-    const left = unsettled(db, venueId, null, 10).map(row => row.path);
+    const left = unsettled(db, venueId, 0, 10).map(row => row.path);
 
     expect(left).not.toContain('trading/G/G2020-03-25.csv.gz');
     expect(left).toContain('trading/DOTUSD/DOTUSDT2021-12-06.csv.gz');
@@ -272,7 +272,7 @@ describe('when a probe cannot be answered', () => {
     const summary = await probeFiles(db, indexed, source(), pacing);
 
     expect(summary).toMatchObject({ refused: 1, settled: 0 });
-    expect(unsettled(db, venueId, null, 10)).toHaveLength(1);
+    expect(unsettled(db, venueId, 0, 10)).toHaveLength(1);
   });
 
   it('counts a spent retry ladder without abandoning the pass', async () => {
@@ -292,7 +292,9 @@ describe('when a probe cannot be answered', () => {
 });
 
 describe('reading a HEAD', () => {
-  const row = { venueId: 1, path: 'a/b.csv.gz', date: '20200325' };
+  const row: Unsettled = {
+    seq: 1, venueId: 1, path: 'a/b.csv.gz', date: '20200325', tries: 0, existence: 'confirmed', seriesId: 1,
+  };
 
   it('takes size, checksum and last-modified as the catalog stores them', () => {
     const settled = _test_settlement(row, new Headers({

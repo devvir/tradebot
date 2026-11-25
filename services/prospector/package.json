@@ -10,7 +10,8 @@
     "dev": "ts-node src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc -p tsconfig.test.json"
   },
   "dependencies": {
     "@devvir/netgate": "workspace:*",

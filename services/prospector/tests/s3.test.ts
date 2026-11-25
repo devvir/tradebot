@@ -23,9 +23,6 @@ import { addressVenues } from '../src/venues';
 import { venues } from '../src/catalog';
 import { openCatalog } from '../src/database';
 
-/** What the core would hand the scanner: one venue's addresses and a paced fetcher. */
-const context = listing(binance);
-
 /**
  * Descent is the only thing here that talks to a venue, so the wire is stubbed —
  * and only the wire. The stub serves a page's text and reads it with
@@ -248,31 +245,31 @@ describe('what counts as a file when deciding to descend', () => {
    * venue into one scope walked as a single serial chain.
    */
   it('ignores keys the venue would never catalogue', () => {
-    expect(_test_catalogable(binance, 'index.html')).toBe(false);
-    expect(_test_catalogable(binance, 'favicon.ico')).toBe(false);
-    expect(_test_catalogable(binance, 'test.file')).toBe(false);
+    expect(_test_catalogable(listing(binance), 'index.html')).toBe(false);
+    expect(_test_catalogable(listing(binance), 'favicon.ico')).toBe(false);
+    expect(_test_catalogable(listing(binance), 'test.file')).toBe(false);
   });
 
   it('counts a key that would become a row', () => {
-    expect(_test_catalogable(binance,
+    expect(_test_catalogable(listing(binance),
       'data/spot/monthly/trades/BTCUSDT/BTCUSDT-trades-2025-03.zip')).toBe(true);
   });
 
   /** Checksum sidecars are not files to protect either — they are never stored. */
   it('ignores checksum sidecars', () => {
-    expect(_test_catalogable(binance,
+    expect(_test_catalogable(listing(binance),
       'data/spot/monthly/trades/BTCUSDT/BTCUSDT-trades-2025-03.zip.CHECKSUM')).toBe(false);
   });
 
   /** And it honours the adapter's own refusals, not just its date pattern. */
   it('ignores what the adapter refuses', () => {
-    expect(_test_catalogable(binance,
+    expect(_test_catalogable(listing(binance),
       'data2/data/spot/trades/A/A-trades-2020-12.zip')).toBe(false);
   });
 
   /** Same answer for a venue whose root is stripped before the adapter sees it. */
   it('strips the root before asking the adapter', () => {
-    expect(_test_catalogable(kucoin,
+    expect(_test_catalogable(listing(kucoin),
       'data/spot/daily/trades/A/A-trades-2024-07-03.zip')).toBe(true);
   });
 });
@@ -288,8 +285,8 @@ describe('what counts as a file when deciding to descend', () => {
  */
 describe('refusing a directory before descending into it', () => {
   it('refuses binance staging as a directory, not only as a key', () => {
-    expect(_test_accepted(binance, 'data2/')).toBe(false);
-    expect(_test_accepted(binance, 'data2/data/spot/klines/')).toBe(false);
+    expect(_test_accepted(listing(binance), 'data2/')).toBe(false);
+    expect(_test_accepted(listing(binance), 'data2/data/spot/klines/')).toBe(false);
   });
 
   /**
@@ -299,17 +296,17 @@ describe('refusing a directory before descending into it', () => {
    * `data/spot/monthly/`.
    */
   it('refuses the leading-slash duplicate of the binance spot tree', () => {
-    expect(_test_accepted(binance, '/')).toBe(false);
-    expect(_test_accepted(binance, '/data/spot/klines/BTCUSDT/1m/')).toBe(false);
-    expect(_test_accepted(binance,
+    expect(_test_accepted(listing(binance), '/')).toBe(false);
+    expect(_test_accepted(listing(binance), '/data/spot/klines/BTCUSDT/1m/')).toBe(false);
+    expect(_test_accepted(listing(binance),
       '/data/spot/aggTrades/BNBBTC/BNBBTC-aggTrades-2017-07.zip')).toBe(false);
-    expect(_test_accepted(binance, 'data/spot/monthly/klines/BTCUSDT/1m/')).toBe(true);
+    expect(_test_accepted(listing(binance), 'data/spot/monthly/klines/BTCUSDT/1m/')).toBe(true);
   });
 
   it('refuses the htx directories that are not archive', () => {
-    expect(_test_accepted(htx, 'assets/')).toBe(false);
-    expect(_test_accepted(htx, 'test/')).toBe(false);
-    expect(_test_accepted(htx, 'test/daily/')).toBe(false);
+    expect(_test_accepted(listing(htx), 'assets/')).toBe(false);
+    expect(_test_accepted(listing(htx), 'test/')).toBe(false);
+    expect(_test_accepted(listing(htx), 'test/daily/')).toBe(false);
   });
 
   /**
@@ -319,10 +316,10 @@ describe('refusing a directory before descending into it', () => {
    * list looking like a shape nobody has parsed.
    */
   it('refuses the htx field-description files', () => {
-    expect(_test_accepted(htx, 'data/klines/spot/remark.txt')).toBe(false);
-    expect(_test_accepted(htx, 'data/trades/linear-swap/remark.txt')).toBe(false);
+    expect(_test_accepted(listing(htx), 'data/klines/spot/remark.txt')).toBe(false);
+    expect(_test_accepted(listing(htx), 'data/trades/linear-swap/remark.txt')).toBe(false);
 
-    expect(_test_accepted(htx,
+    expect(_test_accepted(listing(htx),
       'data/klines/spot/daily/BTCUSDT/1min/BTCUSDT-1min-2026-01-31.zip')).toBe(true);
   });
 
@@ -336,12 +333,12 @@ describe('refusing a directory before descending into it', () => {
     const at = (day: string) =>
       `data/klines/spot/daily/BTCUSDT/1min/BTCUSDT-1min-${day}.zip`;
 
-    expect(_test_accepted(htx, at('2026-01-31'))).toBe(true);
-    expect(_test_accepted(htx, at('2026-02-01'))).toBe(false);
-    expect(_test_accepted(htx, at('2026-08-04'))).toBe(false);
+    expect(_test_accepted(listing(htx), at('2026-01-31'))).toBe(true);
+    expect(_test_accepted(listing(htx), at('2026-02-01'))).toBe(false);
+    expect(_test_accepted(listing(htx), at('2026-08-04'))).toBe(false);
 
     // The tree that took over is untouched, whatever the date.
-    expect(_test_accepted(htx,
+    expect(_test_accepted(listing(htx),
       'historical_data/spot/daily/klines/BTC-USDT/1min/BTC-USDT-1min-2026-08-04.zip')).toBe(true);
   });
 
@@ -352,14 +349,14 @@ describe('refusing a directory before descending into it', () => {
    * USDT-margined liquidation snapshots that exist nowhere else in the bucket.
    */
   it('keeps the data3 directory while refusing a stray key beside it', () => {
-    expect(_test_accepted(binance, 'data3/liquidationSnapshot/')).toBe(true);
-    expect(_test_accepted(binance, 'data3/stray.zip')).toBe(false);
+    expect(_test_accepted(listing(binance), 'data3/liquidationSnapshot/')).toBe(true);
+    expect(_test_accepted(listing(binance), 'data3/stray.zip')).toBe(false);
   });
 
   it('keeps the archive directories of every venue', () => {
-    expect(_test_accepted(binance, 'data/')).toBe(true);
-    expect(_test_accepted(htx, 'historical_data/')).toBe(true);
-    expect(_test_accepted(htx, 'data/')).toBe(true);
+    expect(_test_accepted(listing(binance), 'data/')).toBe(true);
+    expect(_test_accepted(listing(htx), 'historical_data/')).toBe(true);
+    expect(_test_accepted(listing(htx), 'data/')).toBe(true);
   });
 
   /**
@@ -373,9 +370,9 @@ describe('refusing a directory before descending into it', () => {
    * the same range.
    */
   it('refuses kucoin futures 1d klines as a directory, not only as a key', () => {
-    expect(_test_accepted(kucoin, 'data/futures/daily/klines/SANDUSDTM/1d/')).toBe(false);
-    expect(_test_accepted(kucoin, 'data/futures/daily/klines/SANDUSDTM/1d')).toBe(false);
-    expect(_test_accepted(kucoin,
+    expect(_test_accepted(listing(kucoin), 'data/futures/daily/klines/SANDUSDTM/1d/')).toBe(false);
+    expect(_test_accepted(listing(kucoin), 'data/futures/daily/klines/SANDUSDTM/1d')).toBe(false);
+    expect(_test_accepted(listing(kucoin),
       'data/futures/daily/klines/SANDUSDTM/1d/SANDUSDTM-1d-2023-01-01.zip')).toBe(false);
   });
 
@@ -385,22 +382,22 @@ describe('refusing a directory before descending into it', () => {
    * `mark` have no volume column at any interval by design.
    */
   it('keeps everything kucoin publishes correctly', () => {
-    expect(_test_accepted(kucoin, 'data/spot/')).toBe(true);
-    expect(_test_accepted(kucoin, 'data/futures/daily/klines/SANDUSDTM/1h/')).toBe(true);
-    expect(_test_accepted(kucoin, 'data/futures/daily/klines/SANDUSDTM/12h/x.zip')).toBe(true);
-    expect(_test_accepted(kucoin, 'data/spot/daily/klines/SANDUSDT/1d/x.zip')).toBe(true);
-    expect(_test_accepted(kucoin, 'data/futures/daily/index/SANDUSDTM/1d/x.zip')).toBe(true);
-    expect(_test_accepted(kucoin, 'data/futures/daily/mark/SANDUSDTM/1d/x.zip')).toBe(true);
+    expect(_test_accepted(listing(kucoin), 'data/spot/')).toBe(true);
+    expect(_test_accepted(listing(kucoin), 'data/futures/daily/klines/SANDUSDTM/1h/')).toBe(true);
+    expect(_test_accepted(listing(kucoin), 'data/futures/daily/klines/SANDUSDTM/12h/x.zip')).toBe(true);
+    expect(_test_accepted(listing(kucoin), 'data/spot/daily/klines/SANDUSDT/1d/x.zip')).toBe(true);
+    expect(_test_accepted(listing(kucoin), 'data/futures/daily/index/SANDUSDTM/1d/x.zip')).toBe(true);
+    expect(_test_accepted(listing(kucoin), 'data/futures/daily/mark/SANDUSDTM/1d/x.zip')).toBe(true);
   });
 
   /** A symbol may begin with the interval's own name. */
   it('does not mistake a symbol for the refused interval', () => {
-    expect(_test_accepted(kucoin, 'data/futures/daily/klines/1dCOIN/1h/x.zip')).toBe(true);
+    expect(_test_accepted(listing(kucoin), 'data/futures/daily/klines/1dCOIN/1h/x.zip')).toBe(true);
   });
 
   /** And the root comes off first, as it does everywhere else. */
   it('strips the root before asking the adapter', () => {
-    expect(_test_accepted(kucoin, 'data/futures/')).toBe(true);
+    expect(_test_accepted(listing(kucoin), 'data/futures/')).toBe(true);
   });
 });
 
@@ -415,20 +412,20 @@ describe('the enumerated exclusions', () => {
   it('refuses a listed file the adapter would otherwise accept', () => {
     const path = 'data/spot/monthly/trades/BTCUSDT/BTCUSDT-trades-2025-03.zip';
 
-    expect(_test_catalogable(binance, path)).toBe(true);
+    expect(_test_catalogable(listing(binance), path)).toBe(true);
 
     _test_seed('binance', [path]);
 
-    expect(_test_catalogable(binance, path)).toBe(false);
+    expect(_test_catalogable(listing(binance), path)).toBe(false);
   });
 
   /** Exactly, not as a prefix — describable rules belong in `accepts`. */
   it('matches the whole path and nothing near it', () => {
     _test_seed('binance', ['data/spot/monthly/trades/BTCUSDT/BTCUSDT-trades-2025-03.zip']);
 
-    expect(_test_catalogable(binance,
+    expect(_test_catalogable(listing(binance),
       'data/spot/monthly/trades/BTCUSDT/BTCUSDT-trades-2025-04.zip')).toBe(true);
-    expect(_test_accepted(binance, 'data/spot/monthly/trades/BTCUSDT/')).toBe(true);
+    expect(_test_accepted(listing(binance), 'data/spot/monthly/trades/BTCUSDT/')).toBe(true);
   });
 
   /** One venue's bad file says nothing about another's. */
@@ -437,14 +434,14 @@ describe('the enumerated exclusions', () => {
 
     _test_seed('binance', [path]);
 
-    expect(_test_accepted(kucoin, `data/${path}`)).toBe(true);
+    expect(_test_accepted(listing(kucoin), `data/${path}`)).toBe(true);
   });
 
   /** The path is the one the catalog stores, so the root comes off first. */
   it('is matched against the stored path, not the raw key', () => {
     _test_seed('kucoin', ['spot/daily/trades/A/A-trades-2024-07-03.zip']);
 
-    expect(_test_catalogable(kucoin,
+    expect(_test_catalogable(listing(kucoin),
       'data/spot/daily/trades/A/A-trades-2024-07-03.zip')).toBe(false);
   });
 });
