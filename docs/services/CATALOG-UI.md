@@ -85,8 +85,8 @@ where the page sent one, `Accept` (`application/json` where the client sent none
 where there is one, with `content-type: application/json`. Nothing else of the client's request is
 passed on, and an upstream redirect is not followed.
 
-Back comes the upstream answer's **status, content type and body bytes**, as they came; no other
-header is relayed. The services answer a refusal with a body saying what was wrong, and the page shows
+Back comes the upstream answer's **status, content type, `Location` for a redirect, and body bytes**,
+as they came; no other header is relayed. The services answer a refusal with a body saying what was wrong, and the page shows
 that whole rather than a generic failure.
 
 Where there is no answer to relay:

@@ -800,9 +800,9 @@ which no expression predicts.
 (`exclusions.ts`), so a row added to the live catalog applies from the next job, and a job keeps one
 list for its whole run. Nothing in the survey path writes them. A row is added twice, by hand: the
 `INSERT` on the live catalog, and the same row in the migration that ships the list, because a
-catalog rebuilt from scratch walks the same files again — a walk of gate's 2021-07 lists its 85
-spot files at futures URLs again unless something refuses them. The shipped rows are written for
-every server of their venue.
+catalog rebuilt from scratch walks the same files again — a walk of gate's
+`futures_usdt/trades/202107/` lists the 85 spot files the migration excludes again unless something
+refuses them. The shipped rows are written for every server of their venue.
 
 **Nothing already catalogued is removed.** A rule stops a path being catalogued; a row already in
 `file` stays, with its history.
@@ -823,7 +823,8 @@ Four suffixes, in `excludedAnywhere`. None of them is one venue's quirk:
 **Each adapter's `accepts` docblock names what it refuses**, in `src/adapters/`, and the
 venue's doc under [docs/venues/](../venues/) holds the evidence. **The shipped `exclusion` rows are in
 `src/database/migrations/001-core.ts`**, each list with its reason in the docblock above it: gate's
-two zero-byte uploads and 85 spot files served at futures URLs, and bybit's one misfiled day. How each
+two zero-byte uploads, 85 of the spot files it serves at futures URLs for 2021-07 (what that month
+holds: [GATE.md](../venues/GATE.md#2021-07-spot-data-at-the-futures-url)), and bybit's one misfiled day. How each
 venue's refusals were chosen, where that is this service's decision rather than the venue's fact, is
 under [venue by venue](#venue-by-venue).
 
@@ -2063,7 +2064,8 @@ so a failure leaves the file where it was rather than half-migrated, and a catal
 build is refused rather than written to by an older one.
 
 The chain is six steps: the schema with the venue rows and the shipped exclusions (gate's two
-zero-byte upload tests, gate's 85 spot files at futures URLs, bybit's one misfiled `DOTUSDT` day),
+zero-byte upload tests, 85 of the spot files gate serves at futures URLs for 2021-07, bybit's one
+misfiled `DOTUSDT` day),
 then htx's retirement dates, then okx's series, then bitget's, then the shapes gate filed under a
 month they do not belong to, retired at the one day each holds, then the shapes binance stopped
 writing. **A seed is a migration and not a startup hook**, because a fresh catalog is exactly the
@@ -2960,14 +2962,17 @@ Within the seven, `accepts` also refuses:
 
 - a key at the wrong depth: what sits directly below a tree is a month for the two snapshot trees and
   a dataset name for every other;
-- an `s3deals/` directory directly inside a dataset month;
+- an `s3deals/` directory directly inside a dataset month, as in
+  `spot/candlesticks_{1m,5m,1h,4h,1d,7d}/201802/`, where it holds bars of that interval
+  ([GATE.md](../venues/GATE.md#misfiled-months-beyond-the-2022-books-hour));
 - a file whose directory and filename name different months (`gateMisfiled`), except hourly books,
   whose misfiled hour is the only copy, and the closed list of klines with no correctly filed twin
   (`adapters/gate/misfiled.ts`);
 - a file under `futures_btc/` whose instrument is not a `*_USD` (`gateWrongTree`).
 
-The two zero-byte uploads and the 85 spot files served at futures URLs for 2021-07 are rows in the
-`exclusion` table: there is no shape to describe.
+The two zero-byte uploads and 85 of the spot files served at futures URLs for 2021-07 are rows in
+the `exclusion` table: there is no shape to describe. What else `futures_usdt/trades/202107/` holds is
+in [GATE.md](../venues/GATE.md#2021-07-spot-data-at-the-futures-url).
 
 **The misfiled files that are kept sit on literal-month shapes, seeded retired** by migration
 `005-gate` — see [a directory that names another period stays literal](#a-constructed-key-venue-is-still-a-scanner-and-must-behave-like-one),

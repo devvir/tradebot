@@ -325,7 +325,7 @@ file is listed once prospector has confirmed the venue serves it, and not after 
 
 | | |
 |---|---|
-| `pending=true` | only files not yet reported downloaded. `false` is no filter; anything else is a `400` |
+| `pending=true` | only files not yet reported downloaded. `pending` given bare, as `true` or as `1` means yes; `false` or `0` is no filter; anything else is a `400` |
 | `partition=<name>` | only the files of one partition, named `venue\|market\|dataset[,variant]\|*\|grain\|YYYYMM` — `@` in place of `*` for a market-bundle partition, as in `binance\|perp\|klines,1m\|*\|daily\|202001`. Through a lens that does not let the partition through, nothing. A name that is not one, or names none, is a `422 NoSuchPartition` |
 | `x-catalog-lens: <slug>`, or `lens=<slug>` | only what that lens lets through. An unknown lens is a `422 NoSuchLens` |
 

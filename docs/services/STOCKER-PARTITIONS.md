@@ -347,7 +347,7 @@ header is a row whose time does not parse. The perpetual's earlier mark and inde
 
 **books** — okx's record, `{instId, action, ts, asks, bids}`, with a level of two values and `ts` in
 microseconds: `action` `snapshot` → `snapshot`, `update` → `set`
-([why](../venues/HTX.md#books-are-the-richest-published-anywhere-bar-okx)).
+([why](../venues/HTX.md#order-books-400-levels-spot-150-futures)).
 
 ### gate
 
