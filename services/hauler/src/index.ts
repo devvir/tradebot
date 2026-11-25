@@ -13,9 +13,9 @@ import config from './config';
 /**
  * Brings catalogued venue files to disk, under canonical names.
  *
- * The catalog serves every venue as a bucket; hauler walks each one — only what
- * is still owed, through a lens where one is configured — fetches what it
- * lists, and reports. It never discovers, never learns how a venue structures
+ * Hauler walks each venue's prefix of the catalog's one bucket — only what is
+ * still owed, through a lens where one is configured — fetches what it lists,
+ * and reports. It never discovers, never learns how a venue structures
  * its archive, and never names a file: each key is where its file goes.
  *
  * Each venue walks on its own loop, soon again after a walk that found work and

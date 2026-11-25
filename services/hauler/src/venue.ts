@@ -7,7 +7,7 @@ import config from './config';
 import type { BucketObject, BucketPage, Haulable, Hauled, Leaf, Pacing, Walked } from './types';
 
 /**
- * Walk a venue's bucket once, end to end, fetching every object it lists.
+ * Walk a venue's prefix of the catalog's bucket once, end to end, fetching every object it lists.
  *
  * **A bucket walk, nothing more.** The listing is already narrowed to what is
  * still owed and to the lens, and each key is where its file goes, so this only

@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { logger } from '@devvir/service-kit';
 import type { Server } from 'node:http';
+import type { Report } from '../src/types';
 
 /**
  * A venue walked as a bucket: every page, through the lens, only what is owed,
@@ -45,7 +46,7 @@ const { halt, page, venues, _test_unhalt } = await import('../src/catalog');
 
 let server:  Server;
 let asked:   { url: string; lens: string | undefined; token: string | undefined }[];
-let reports: unknown[];
+let reports: Report[];
 let served:  number;
 let drops:   number;
 let refused: boolean;
@@ -314,7 +315,7 @@ describe('a walk', () => {
     for (const key of KEYS) expect(readFileSync(join(cfg.archivesDir, key), 'utf8')).toBe(`/files/${key}`);
 
     // Fetched two at a time, so a page's files are reported in whichever order they finished.
-    expect(reports.map(one => ({ ...(one as { downloaded: string[] }), downloaded: [...(one as { downloaded: string[] }).downloaded].sort() }))).toEqual([
+    expect(reports.map(one => ({ ...one, downloaded: [...one.downloaded].sort() }))).toEqual([
       { downloaded: [KEYS[0], KEYS[1]], failed: [], mismatched: [] },
       { downloaded: [KEYS[2]], failed: [], mismatched: [] },
     ]);
@@ -526,7 +527,7 @@ describe('a file that cannot be hauled', () => {
 
     expect(walked).toMatchObject({ listed: 4, progressed: 3, unreached: 1 });
     expect(reports).toHaveLength(1);
-    expect([...(reports[0] as { downloaded: string[] }).downloaded].sort()).toEqual(SIZED.slice(1));
+    expect([...reports[0]!.downloaded].sort()).toEqual(SIZED.slice(1));
 
     const after = served;
 

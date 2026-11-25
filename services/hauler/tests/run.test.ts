@@ -182,7 +182,7 @@ describe('a venue', () => {
     await vi.advanceTimersByTimeAsync(QUIET + 1);
     await stop(runner, running);
 
-    const calls = deps.walkVenue.mock.calls.map(([venue]) => venue);
+    const calls = vi.mocked(deps.walkVenue).mock.calls.map(([venue]) => venue);
 
     // Binance walks every FOUND (at 0, 5, … 30 minutes); gate, failing, every QUIET.
     expect(calls.filter(venue => venue === 'binance')).toHaveLength(QUIET / FOUND + 1);

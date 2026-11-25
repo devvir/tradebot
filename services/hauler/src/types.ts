@@ -179,7 +179,7 @@ export interface ReportAnswer {
   Error?: { Key: string; Code: string; Message: string }[];
 }
 
-/** What one walk of a venue's bucket came to. */
+/** What one walk of a venue's prefix came to. */
 export interface Walked {
   /** Objects of the pages the walk settled; a page listed and never begun is not counted. */
   listed:     number;
