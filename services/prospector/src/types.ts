@@ -868,7 +868,11 @@ export interface Pacing {
    */
   concurrency: number;
 
-  /** The longest a stand-down may grow to, however often a venue keeps refusing. */
+  /**
+   * The longest a stand-down may grow to, however often a venue keeps refusing,
+   * and the longest `Retry-After` waited out inside a request: one asking for
+   * more stands the venue down for this long instead.
+   */
   ceilingMs:   number;
 
   /**

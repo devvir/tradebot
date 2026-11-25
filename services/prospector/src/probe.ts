@@ -2,7 +2,7 @@ import { logger } from '@devvir/service-kit';
 import { fault } from './faults';
 import { dropWip, keyFor, missedFiles, parkKeys, seriesById, settleFiles } from './catalog';
 import { metadataOf } from './etag';
-import { blocked, fetchHead } from './http';
+import { StoodDown, Stopped, blocked, fetchHead } from './http';
 import { flushCounts } from './counts';
 import { REFUSALS_BEFORE_BLOCK, describeWait, labelOf, paceFor } from './pace';
 import type { Parking, Settlement, Unsettled } from './types';
@@ -407,7 +407,7 @@ export const probeFiles = async (
     if (summary.abandoned) return;
 
     try {
-      const seen = await fetchHead(adapter, url(adapter, row));
+      const seen = await fetchHead(adapter, url(adapter, row), paused);
 
       summary.requests++;
 
@@ -524,6 +524,16 @@ export const probeFiles = async (
       else if (summary.settled === 0 && summary.refused >= pacing.giveUpAfter)
         summary.abandoned = true;
     } catch (err) {
+      /**
+       * **Stopped, or stood down, while waiting on the venue.** Neither is a
+       * failure of the row, which stays unsettled for the next pass like any
+       * other: a stop ends the lanes, and a venue that asked for more than its
+       * ceiling is already paused — `obey` in `http.ts` latched it — so the
+       * pass ends as it does on a block.
+       */
+      if (err instanceof Stopped) { summary.stopped = true; return; }
+      if (err instanceof StoodDown) { summary.abandoned = true; return; }
+
       // Retries are spent. The row stays unsettled, so the next pass has it.
       summary.failed++;
 

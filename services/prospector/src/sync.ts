@@ -430,7 +430,7 @@ const passing = async (
       doing === 'partial'
         ? 'Update finished'
         : 'Walk finished');
-  });
+  }, paused);
 };
 
 /**

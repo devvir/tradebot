@@ -13,7 +13,9 @@ import type { Adapter, ListingContext, RunKind, Scanner } from './types';
  * point of them: `paceFor` keys a limiter on the venue and the host, and
  * `labelOf` names the venue in the log, so a scanner handed these cannot outrun
  * a cadence, cannot pick the wrong budget, and cannot log as the wrong venue —
- * none of which it has any business deciding.
+ * none of which it has any business deciding. They are bound to the venue's
+ * stop as well — see `halted` — so a wait inside either ends when the pass is
+ * asked to stop.
  */
 export const listing = (adapter: Adapter<Scanner<ListingContext>>): ListingContext => ({
   name:    adapter.name,
@@ -22,8 +24,8 @@ export const listing = (adapter: Adapter<Scanner<ListingContext>>): ListingConte
   keyRoot: adapter.keyRoot,
   accepts: adapter.accepts,
   dateOf:  adapter.dateOf,
-  page:    (url, format, prefix) => fetchPage(adapter, url, format, prefix),
-  head:    (url) => fetchHead(adapter, url),
+  page:    (url, format, prefix) => fetchPage(adapter, url, format, prefix, () => halted(adapter)),
+  head:    (url) => fetchHead(adapter, url, () => halted(adapter)),
 });
 
 /**
@@ -51,10 +53,22 @@ export const listing = (adapter: Adapter<Scanner<ListingContext>>): ListingConte
  * presses a status on this pass.
  */
 export const surveying = (adapter: Adapter): RunKind | null =>
-  PASSES.get(labelOf(adapter)) ?? null;
+  PASSES.get(labelOf(adapter))?.kind ?? null;
 
 /**
- * Run one pass with its kind on record, and take it off again however it ends.
+ * Whether the pass in progress on a venue has been asked to stop.
+ *
+ * **Ambient for the same reason as `surveying`.** A request waiting out a
+ * venue's `Retry-After` is several calls below the pass, inside a scanner that
+ * has no business knowing about it, and the stop is a property of the pass. With
+ * no pass in progress, nothing has been asked to stop.
+ */
+export const halted = (adapter: Adapter): boolean =>
+  PASSES.get(labelOf(adapter))?.stop() ?? false;
+
+/**
+ * Run one pass with its kind and its stop on record, and take them off again
+ * however it ends.
  *
  * A scope rather than a pair of calls, so there is no path — a throw, a pause, a
  * venue blocking us — that leaves a venue looking like it is still walking long
@@ -64,10 +78,11 @@ export const surveyingAs = async <T>(
   adapter: Adapter,
   kind:    RunKind,
   run:     () => Promise<T>,
+  stop:    () => boolean = () => false,
 ): Promise<T> => {
   const label = labelOf(adapter);
 
-  PASSES.set(label, kind);
+  PASSES.set(label, { kind, stop });
 
   try {
     return await run();
@@ -76,4 +91,4 @@ export const surveyingAs = async <T>(
   }
 };
 
-const PASSES = new Map<string, RunKind>();
+const PASSES = new Map<string, { kind: RunKind; stop: () => boolean }>();

@@ -19,7 +19,7 @@ import {
 } from './catalog';
 import { surveying } from './context';
 import { loadExclusions, isExcluded } from './exclusions';
-import { Refused, answered, blocked } from './http';
+import { Refused, StoodDown, Stopped, answered, blocked } from './http';
 import { describeWait, labelOf, lanesFor, paceFor, ticketing } from './pace';
 import { byteOrder, ceiling, excludedAnywhere, relative } from './paths';
 import { seriesSeededAt } from './database/migrations/seeds/seed';
@@ -703,10 +703,13 @@ type StopReason = 'blocked' | 'splitting' | 'paused' | 'aborting' | null;
  *
  * A refusal that reads as a block (see `blocked`) counts only once the gate has
  * latched, which takes a run of them — see `Pace.block`. A lone one is a failure
- * of whatever asked, and nothing more.
+ * of whatever asked, and nothing more. A `StoodDown` is the gate latching on a
+ * `Retry-After` longer than the venue's ceiling, and counts the same way.
  */
 const latched = (adapter: Adapter, err: unknown): err is Refused =>
-  err instanceof Refused && blocked(adapter, err.status, err.headers) && paceFor(adapter, err.url).blockedFor() > 0;
+  err instanceof Refused
+  && (err instanceof StoodDown || blocked(adapter, err.status, err.headers))
+  && paceFor(adapter, err.url).blockedFor() > 0;
 
 /** Whether splitting here would actually produce work, rather than closing a run for nothing. */
 const divisible = (cursor: string | null, children: readonly string[]): boolean =>
@@ -919,10 +922,12 @@ const sweep = async (
      * do anyway: nothing of a page counts until its cursor is written.
      *
      * A refusal that is the venue's final answer (see `answered`) is never
-     * repeated here. A retryable status that outlasted the fetch's own attempts
-     * — a 5xx, a throttling 429 — is retried like a transport error. Past
-     * `PAGE_ATTEMPTS` the page is taken to be wrong in a way waiting does not
-     * mend, and the prefix is left for the next pass.
+     * repeated here, nor is a `StoodDown`: the venue is paused, and the pass
+     * ends on it as on a block. A retryable status that outlasted the fetch's
+     * own attempts — a 5xx, a throttling 429 — is retried like a transport
+     * error, and so is a transfer `deliver` refused. Past `PAGE_ATTEMPTS` the
+     * page is taken to be wrong in a way waiting does not mend, and the prefix
+     * is left for the next pass.
      */
     let read = 0;
 
@@ -1017,7 +1022,11 @@ const sweep = async (
 
         break;
       } catch (err) {
-        if ((err instanceof Refused && answered(adapter, err.status, err.headers)) || attempt >= PAGE_ATTEMPTS)
+        // Told to stop while the request waited: where it stands is on disk, so it simply leaves.
+        if (err instanceof Stopped) return { requests, found, closed: false };
+
+        if ((err instanceof Refused && answered(adapter, err.status, err.headers))
+          || err instanceof StoodDown || attempt >= PAGE_ATTEMPTS)
           throw err;
 
         // Said once it is clearly more than a blip, and not again for the same page.

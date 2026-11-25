@@ -3,7 +3,9 @@ import { constants as h2, connect } from 'node:http2';
 import { Agent as HttpsAgent, request as httpsRequest } from 'node:https';
 import { connect as tlsConnect } from 'node:tls';
 import { readPage } from './scanners/pages';
-import type { Carried, Carrier, PageRead } from './types';
+import type { Carried, Carrier, PageFormat, PageRead } from './types';
+
+const MIB = 1024 * 1024;
 
 /**
  * One request, sent and read to its end.
@@ -21,9 +23,45 @@ import type { Carried, Carrier, PageRead } from './types';
  * listing that succeeded comes back with its page read, and any other reply
  * with its body thrown away. So whoever holds a slot for it holds it for
  * exactly as long as the venue is sending.
+ *
+ * **A listing stays on its host and within its size.** A redirect is followed
+ * only to `https` on the host that was asked, and a body is read only up to its
+ * format's `BODY_CEILING`. Anything else is refused as a failed transfer, named
+ * by the code `declined` reads off it.
  */
 export const deliver = (url: string, read: PageRead | null): Promise<Carried> =>
   read ? get(url, read) : head(url);
+
+/**
+ * The most of a listing body read before the transfer is refused, by format.
+ *
+ * **Far above any real page, and far below what hurts.** An S3 page holds at
+ * most a thousand keys and an index lists one directory, so a body past this is
+ * not a page, and reading it to the end would hold all of it in memory for
+ * nothing.
+ */
+export const BODY_CEILING: Readonly<Record<PageFormat, number>> = {
+  s3:    64 * MIB,
+  index: 64 * MIB,
+};
+
+/** A listing that redirected anywhere but `https` on its own host, or redirected too often. */
+export const REDIRECT_REFUSED = 'REDIRECT_REFUSED';
+
+/** A listing body past its format's `BODY_CEILING`. */
+export const BODY_TOO_LARGE = 'BODY_TOO_LARGE';
+
+/**
+ * Which of the two refusals above an error is, or null for any other.
+ *
+ * Read off the error's `cause`, which is what survives the trip back from a
+ * transport worker — see `rebuilt` in `transport.ts`.
+ */
+export const declined = (err: unknown): typeof REDIRECT_REFUSED | typeof BODY_TOO_LARGE | null => {
+  const code = err instanceof Error ? (err.cause as { code?: unknown } | undefined)?.code : undefined;
+
+  return code === REDIRECT_REFUSED || code === BODY_TOO_LARGE ? code : null;
+};
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
@@ -58,6 +96,10 @@ const STALL_MS = 10_000;
  * fault — a listing page runs to megabytes and is entitled to take as long as it
  * takes. The body is held to silence instead, the clock restarting on every
  * chunk.
+ *
+ * **Redirects are followed here, not by `fetch`**, so each one can be checked
+ * first: only to `https`, only on the host asked, and at most `REDIRECTS` of
+ * them. The deadline covers the whole chain.
  */
 const get = async (url: string, read: PageRead): Promise<Carried> => {
   const control = new AbortController();
@@ -68,7 +110,7 @@ const get = async (url: string, read: PageRead): Promise<Carried> => {
   let res: Response;
 
   try {
-    res = await fetch(url, { signal: control.signal });
+    res = await followed(url, control.signal);
   } finally {
     clearTimeout(answer);
   }
@@ -83,7 +125,7 @@ const get = async (url: string, read: PageRead): Promise<Carried> => {
     return { status: res.status, headers, page: null };
   }
 
-  const text    = await readAll(res, control);
+  const text    = await readAll(res, control, BODY_CEILING[read.format]);
   const arrived = performance.now();
   const page    = readPage(read, text);
 
@@ -93,20 +135,60 @@ const get = async (url: string, read: PageRead): Promise<Carried> => {
   };
 };
 
+/** Redirects one listing request may follow. */
+const REDIRECTS = 5;
+
 /**
- * A body read to its end, failing on `STALL_MS` of silence.
+ * The reply to `url`, through whatever redirects lead to it on the same host.
+ *
+ * A redirect anywhere else is refused before it is followed, with where it
+ * pointed in the error, and its body dropped.
+ */
+const followed = async (url: string, signal: AbortSignal): Promise<Response> => {
+  const host = new URL(url).host;
+
+  let at = url;
+
+  for (let hops = 0; ; hops++) {
+    const res      = await fetch(at, { signal, redirect: 'manual' });
+    const location = res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
+
+    if (location === null) return res;
+
+    await res.body?.cancel().catch(() => {});
+
+    const next = new URL(location, at);
+
+    if (next.protocol !== 'https:' || next.host !== host)
+      throw refusal(REDIRECT_REFUSED, `Redirect to ${next.protocol}//${next.host} refused: ${url}`);
+
+    if (hops >= REDIRECTS)
+      throw refusal(REDIRECT_REFUSED, `Redirected more than ${REDIRECTS} times: ${url}`);
+
+    at = next.href;
+  }
+};
+
+/** An error carrying `code` as its cause, which is how it is told apart once it crosses from a worker. */
+const refusal = (code: string, message: string): Error =>
+  new Error(message, { cause: Object.assign(new Error(code), { code }) });
+
+/**
+ * A body read to its end, failing on `STALL_MS` of silence or on passing
+ * `ceiling` bytes.
  *
  * **Failing on the read itself rather than through the abort**: an aborted
  * `fetch` does not reliably settle, and a listing nobody is ever answered about
  * parks a partition for the life of the process.
  */
-const readAll = async (res: Response, control: AbortController): Promise<string> => {
+const readAll = async (res: Response, control: AbortController, ceiling: number): Promise<string> => {
   if (! res.body) return '';
 
   const reader  = res.body.getReader();
   const decoder = new TextDecoder();
 
-  let text = '';
+  let text  = '';
+  let bytes = 0;
 
   for (;;) {
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -120,6 +202,10 @@ const readAll = async (res: Response, control: AbortController): Promise<string>
       ]);
 
       if (step.done) return text + decoder.decode();
+
+      bytes += step.value.byteLength;
+
+      if (bytes > ceiling) throw refusal(BODY_TOO_LARGE, `Response body passed ${ceiling} bytes`);
 
       text += decoder.decode(step.value, { stream: true });
     } catch (err) {

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { countUnsettled, parkSoon, putFiles, putVenue, recordSeries, unsettled } from '../src/catalog';
 import { openCatalog } from '../src/database';
 import { listing, surveying, surveyingAs } from '../src/context';
-import { blocked, fetchHead } from '../src/http';
+import { StoodDown, Stopped, blocked, fetchHead } from '../src/http';
 import { CONFIRMATIONS, probeFiles, _test_settlement, _test_url } from '../src/probe';
 import { html } from '../src/scanners/html';
 import type { DatabaseSync } from 'node:sqlite';
@@ -288,6 +288,32 @@ describe('when a probe cannot be answered', () => {
     const summary = await probeFiles(db, indexed, source(), pacing);
 
     expect(summary).toMatchObject({ failed: 1, settled: 1 });
+  });
+
+  /** Stopped while it waited on the venue: the pass stops, and the row is owed rather than failed. */
+  it('stops the pass when the wait it was in was stopped', async () => {
+    await walked('trading/A/A2020-03-25.csv.gz', '20200325');
+    vi.mocked(fetchHead).mockRejectedValue(new Stopped('https://indexes.example/a'));
+
+    const summary = await probeFiles(db, indexed, source(), pacing);
+
+    expect(summary).toMatchObject({ stopped: true, failed: 0, settled: 0 });
+    expect(unsettled(db, venueId, 0, 10)).toHaveLength(1);
+  });
+
+  /** Asked for longer than its ceiling, the venue is stood down, and the pass ends as on a block. */
+  it('abandons the pass when the venue was stood down', async () => {
+    for (let day = 1; day <= 10; day++)
+      await walked(`trading/A/A2021-01-${String(day).padStart(2, '0')}.csv.gz`, `202101${String(day).padStart(2, '0')}`);
+
+    vi.mocked(fetchHead).mockRejectedValue(
+      new StoodDown(503, new Headers({ 'retry-after': '7200' }), 'https://indexes.example/a', 7_200_000));
+
+    const summary = await probeFiles(db, indexed, source(), { ...pacing, concurrency: 1 });
+
+    expect(summary).toMatchObject({ abandoned: true, failed: 0, settled: 0 });
+    expect(vi.mocked(fetchHead)).toHaveBeenCalledTimes(1);
+    expect(unsettled(db, venueId, 0, 20)).toHaveLength(10);
   });
 });
 

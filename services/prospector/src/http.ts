@@ -2,6 +2,8 @@ import { logger } from '@devvir/service-kit';
 import { pass } from '@devvir/netgate';
 import { labelOf, paceFor } from './pace';
 import { countAsked, countSent } from './counts';
+import { declined, REDIRECT_REFUSED } from './deliver';
+import { faultLine } from './faults';
 import { carry } from './transport';
 import { timed } from './timings';
 import type { Adapter, Carried, PageFormat, Pages, PageRead, Probed, Reply } from './types';
@@ -79,6 +81,48 @@ export class MalformedListing extends Error {
 }
 
 /**
+ * A venue asked for a longer wait than its pacing ever stands down for — see
+ * `retryAfterMs`.
+ *
+ * **A `Refused`, because it settles the request.** The venue's gate is already
+ * latched for `ceilingMs` by the time this is thrown, so every request to the
+ * host waits that out, and asking again here would only queue behind it.
+ */
+export class StoodDown extends Refused {
+  constructor(
+    status:           number,
+    headers:          Headers,
+    url:              string,
+    readonly askedMs: number,
+  ) {
+    super(status, headers, url);
+
+    this.name    = 'StoodDown';
+    this.message = `Stood down: ${url} asked for ${Math.round(askedMs / 1000)}s`;
+  }
+}
+
+/**
+ * A wait ended early because its `StopSignal` was raised.
+ *
+ * **Not a failure.** The request was never answered, so nothing is known about
+ * what it asked for: the page or HEAD it interrupted is still owed.
+ */
+export class Stopped extends Error {
+  constructor(readonly url: string) {
+    super(`Stopped while waiting: ${url}`);
+
+    this.name = 'Stopped';
+  }
+}
+
+/**
+ * Whether the caller wants its request to stop waiting. Read during every wait
+ * in this file, so a stop does not have to outlast a venue's `Retry-After`.
+ */
+export type StopSignal = () => boolean;
+
+/**
  * Fetch a listing page, read, retrying only what is worth retrying.
  *
  * Transport errors, 5xx/429 and a success whose body is not a listing are
@@ -99,12 +143,21 @@ export class MalformedListing extends Error {
  * a partition that exhausts its attempts keeps its cursor and its open run, so
  * it is picked up again on the next turn of the venue's loop. Nothing is ever
  * skipped.
+ *
+ * **What the transfer refused is not retried here** — a redirect off the host
+ * or a body over its format's ceiling (see `deliver`). The same request gets
+ * the same reply, so it fails at once, as a transport error does once its
+ * attempts are spent.
+ *
+ * **Every wait ends on `stop`**, with a `Stopped`: the backoff between attempts
+ * and a venue's `Retry-After` alike.
  */
 export const fetchPage = async <F extends PageFormat>(
   adapter: Adapter,
   url:     string,
   format:  F,
   prefix = '',
+  stop:    StopSignal = never,
 ): Promise<Pages[F]> => {
   /** One request needed, whatever the attempts below cost to get an answer. */
   countAsked(adapter);
@@ -132,7 +185,7 @@ export const fetchPage = async <F extends PageFormat>(
       const after = retryAfterMs(res.headers.get('retry-after'));
 
       if (after !== null) {
-        await waitOut(adapter, url, after);
+        await obey(adapter, url, after, res.status, res.headers, stop);
 
         continue;
       }
@@ -140,10 +193,12 @@ export const fetchPage = async <F extends PageFormat>(
       // A refusal is an answer; only the retryable statuses come back here.
       if (err instanceof Refused && answered(adapter, err.status, err.headers)) throw err;
 
+      if (err instanceof StoodDown || err instanceof Stopped || declined(err)) throw err;
+
       last = err;
     }
 
-    if (attempt < ATTEMPTS) await sleep(delayFor(attempt));
+    if (attempt < ATTEMPTS) await waitFor(delayFor(attempt), url, stop);
   }
 
   throw last instanceof Error ? last : new Error(`Listing failed: ${url}`);
@@ -162,8 +217,10 @@ export const fetchPage = async <F extends PageFormat>(
  * Rate-limit headers are handed back untouched. No venue probed so far sends
  * any, which is exactly why the rate this service measures for itself is the
  * only figure there is — see `pace.ts`.
+ *
+ * Waits end on `stop` as they do in `fetchPage`.
  */
-export const fetchHead = async (adapter: Adapter, url: string): Promise<Probed> => {
+export const fetchHead = async (adapter: Adapter, url: string, stop: StopSignal = never): Promise<Probed> => {
   /** One request needed, whatever the attempts below cost to get an answer. */
   countAsked(adapter);
 
@@ -183,15 +240,17 @@ export const fetchHead = async (adapter: Adapter, url: string): Promise<Probed> 
       const after = retryAfterMs(res.headers.get('retry-after'));
 
       if (after !== null) {
-        await waitOut(adapter, url, after);
+        await obey(adapter, url, after, res.status, res.headers, stop);
 
         continue;
       }
     } catch (err) {
+      if (err instanceof StoodDown || err instanceof Stopped) throw err;
+
       last = err;
     }
 
-    if (attempt < ATTEMPTS) await sleep(delayFor(attempt));
+    if (attempt < ATTEMPTS) await waitFor(delayFor(attempt), url, stop);
   }
 
   throw last instanceof Error ? last : new Error(`Probe failed: ${url}`);
@@ -202,6 +261,9 @@ export const fetchHead = async (adapter: Adapter, url: string): Promise<Probed> 
 const ATTEMPTS = 5;
 const BASE_MS  = 500;
 const MAX_MS   = 30_000;
+
+/** The stop signal of a caller that has none. */
+const never: StopSignal = () => false;
 
 /**
  * Whether a status settles the question, leaving nothing for another attempt.
@@ -274,6 +336,10 @@ const send = async (adapter: Adapter, url: string, read: PageRead | null): Promi
     // `Pace.faulted`.
     pace.faulted(url, err);
 
+    // The error names where the redirect pointed, which is the part worth reading.
+    if (declined(err) === REDIRECT_REFUSED)
+      logger.warn({ venue: labelOf(adapter), url, err: faultLine(err) }, 'Redirect refused');
+
     throw err;
   } finally {
     pace.done();
@@ -308,36 +374,88 @@ const send = async (adapter: Adapter, url: string, read: PageRead | null): Promi
 };
 
 /**
+ * Do what a venue's `Retry-After` asked, within what its pacing allows.
+ *
+ * **Up to `ceilingMs`, waited out here**, by the request that was told — see
+ * `waitOut`. **Beyond it, the venue stops instead**: its gate latches for
+ * `ceilingMs`, so nothing at all goes to the host for the longest stand-down it
+ * is ever given, and the request fails with a `StoodDown` rather than holding
+ * its lane for however long was asked.
+ */
+const obey = async (
+  adapter: Adapter,
+  url:     string,
+  ms:      number,
+  status:  number,
+  headers: Headers,
+  stop:    StopSignal,
+): Promise<void> => {
+  const pace = paceFor(adapter, url);
+
+  if (ms > pace.pacing.ceilingMs) {
+    pace.standDown(ms, status, url, headers);
+
+    throw new StoodDown(status, headers, url, ms);
+  }
+
+  await waitOut(adapter, url, ms, stop);
+};
+
+/**
  * Wait as long as a venue asked, saying so for as long as it takes.
  *
- * **The wait is not shortened.** A venue is the authority on its own pace, and
- * trimming what it asked for is how a 429 becomes a ban — a run keeps its cursor
- * and a survey is measured in days, so nothing is lost by obeying.
+ * **The wait is not shortened.** Within its ceiling a venue is the authority on
+ * its own pace, and trimming what it asked for is how a 429 becomes a ban — a
+ * run keeps its cursor and a survey is measured in days, so nothing is lost by
+ * obeying.
  *
  * **But it is never silent.** One line at the start and then nothing is
  * indistinguishable from a wedged service, which is exactly what an hour of
  * quiet looked like: partitions open, nothing logged, no way to tell waiting
  * from stuck. So it reports while it waits, and says when it will be back.
+ *
+ * **And it ends on `stop`**, within `STOP_POLL_MS`, with a `Stopped`.
  */
-const waitOut = async (adapter: Adapter, url: string, ms: number): Promise<void> => {
+const waitOut = async (adapter: Adapter, url: string, ms: number, stop: StopSignal): Promise<void> => {
   const until = Date.now() + ms;
 
   logger.warn({ venue: labelOf(adapter), url, ms, until: new Date(until).toISOString() },
     'Venue asked us to slow down');
 
-  for (let left = ms; left > 0; left = until - Date.now()) {
-    await sleep(Math.min(left, SAYING_MS));
+  for (let said = Date.now(); until > Date.now(); ) {
+    await waitFor(Math.min(until - Date.now(), SAYING_MS - (Date.now() - said)), url, stop);
 
     const remaining = until - Date.now();
 
-    if (remaining > 0)
+    if (remaining > 0 && Date.now() - said >= SAYING_MS) {
+      said = Date.now();
+
       logger.warn({ venue: labelOf(adapter), seconds: Math.round(remaining / 1000) },
         'Still waiting out the pause a venue asked for');
+    }
   }
 };
 
 /** How long the wait above may go unmentioned. */
 const SAYING_MS = 60_000;
+
+/** Sleep for `ms`, looking at `stop` every `STOP_POLL_MS`; a stop ends it with a `Stopped`. */
+const waitFor = async (ms: number, url: string, stop: StopSignal): Promise<void> => {
+  const until = Date.now() + ms;
+
+  for (;;) {
+    if (stop()) throw new Stopped(url);
+
+    const left = until - Date.now();
+
+    if (left <= 0) return;
+
+    await sleep(Math.min(left, STOP_POLL_MS));
+  }
+};
+
+/** How often a wait looks at its stop signal. */
+const STOP_POLL_MS = 250;
 
 /** Exponential with full jitter, so retries across scopes do not synchronise. */
 const delayFor = (attempt: number): number =>
@@ -347,10 +465,8 @@ const delayFor = (attempt: number): number =>
  * How long a venue asked us to wait, in either form the header takes — a count of
  * seconds or an HTTP date.
  *
- * **Honoured as sent, never capped.** A venue is the authority on its own pace,
- * and shortening the wait it asked for is how a 429 becomes a ban. Nothing is
- * lost by waiting: the run keeps its cursor, and a survey is measured in days
- * against a refresh interval of weeks.
+ * **Read as sent.** What a wait beyond the venue's `ceilingMs` turns into is
+ * `obey`'s to decide.
  */
 const retryAfterMs = (header: string | null): number | null => {
   if (! header) return null;

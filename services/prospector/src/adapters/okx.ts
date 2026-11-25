@@ -1,5 +1,6 @@
 import { probed } from '../scanners/probed';
 import { fetchHead } from '../http';
+import { halted } from '../context';
 import { okxInstruments } from './okx/instruments';
 import type { Adapter, ProbedContext } from '../types';
 import { declare } from './declare';
@@ -19,7 +20,7 @@ export const okx: Adapter = declare({
   getContext: async (): Promise<ProbedContext> => ({
     base:    okx.base,
     keyRoot: okx.keyRoot,
-    head:    (url: string) => fetchHead(okx, url),
+    head:    (url: string) => fetchHead(okx, url, () => halted(okx)),
   }),
 
   /** Clean at 100 a second and refused at 200 — measured in `docs/venues/OKX.md`. */

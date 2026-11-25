@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { putVenue, venueIds } from '../src/catalog';
 import { openCatalog } from '../src/database';
-import { Refused } from '../src/http';
+import { Refused, StoodDown, Stopped } from '../src/http';
+import { _test_paces, paceFor } from '../src/pace';
 import { _test_retryWait as retryWait, surveyVenue } from '../src/survey';
 import type { Adapter, Config, Page, Scanner } from '../src/types';
 import type { DatabaseSync } from 'node:sqlite';
@@ -144,5 +145,40 @@ describe('a page that fails', () => {
     expect(summary.failed).toBe(1);
     expect(asked.get(1)).toBe(1);
     expect(waits).toEqual([]);
+  });
+});
+
+describe('a page whose request was told to wait', () => {
+  afterEach(() => _test_paces.clear());
+
+  /** A stop that arrived while the request waited is a stop, not a failure. */
+  it('leaves where it stands when the wait was stopped', async () => {
+    const summary = await surveyVenue(db, venue(page =>
+      (page === 2 ? new Stopped('https://x/deep/') : null)), config, 'full');
+
+    expect(summary.failed).toBe(0);
+    expect(asked.get(2)).toBe(1);
+    expect(waits).toEqual([]);
+    expect(open()).toEqual([{ scope: 'deep/', cursor: 'deep/#2' }]);
+  });
+
+  /** Asked for longer than its ceiling, the venue is stood down: the pass ends on it as on a block. */
+  it('ends the pass when the venue was stood down', async () => {
+    const adapter = venue(page => {
+      if (page !== 1) return null;
+
+      const headers = new Headers({ 'x-amz-error-code': 'SlowDown', 'retry-after': '7200' });
+
+      paceFor(adapter, 'https://x/deep/').standDown(7_200_000, 503, 'https://x/deep/', headers);
+
+      return new StoodDown(503, headers, 'https://x/deep/', 7_200_000);
+    });
+
+    const summary = await surveyVenue(db, adapter, config, 'full');
+
+    expect(summary).toMatchObject({ failed: 1, blocked: true });
+    expect(asked.get(1)).toBe(1);
+    expect(waits).toEqual([]);
+    expect(open()).toEqual([{ scope: 'deep/', cursor: 'deep/#1' }]);
   });
 });

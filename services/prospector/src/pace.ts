@@ -626,6 +626,30 @@ export class Pace {
     }, 'Blocked by venue; all requests to it paused');
   }
 
+  /**
+   * Stop the whole venue for `ceilingMs`, because it asked for a wait longer
+   * than that.
+   *
+   * **The longest stand-down there is, and no longer.** `ceilingMs` is as long
+   * as this venue is ever left alone, so a `Retry-After` beyond it is met with
+   * exactly that, after which the next request asks again. A pause already
+   * running longer is left as it is.
+   */
+  standDown(askedMs: number, status: number, url: string, headers: Headers): void {
+    this.until = Math.max(this.until, Date.now() + this.pacing.ceilingMs);
+
+    logger.error({
+      venue:    this.venue,
+      status,
+      url,
+      server:   headers.get('server'),
+      amzError: headers.get('x-amz-error-code'),
+      askedSeconds: Math.round(askedMs / 1000),
+      ...this.rates(),
+      minutes:  Math.round(this.blockedFor() / 60_000),
+    }, 'Venue asked for a longer wait than its ceiling; all requests to it paused');
+  }
+
   /** How long the pause still has to run, so a caller can say why nothing moves. */
   blockedFor(): number {
     return Math.max(0, this.until - Date.now());

@@ -1,5 +1,6 @@
 import { probed } from '../scanners/probed';
 import { fetchHead } from '../http';
+import { halted } from '../context';
 import { dateOf } from './bitget/shapes';
 import { bitgetInstruments, bitgetUrlSymbol } from './bitget/instruments';
 import type { Adapter, ProbedContext } from '../types';
@@ -24,7 +25,7 @@ export const bitget: Adapter = declare({
   getContext: async (): Promise<ProbedContext> => ({
     base: bitget.base,
     keyRoot: bitget.keyRoot,
-    head: (url: string) => fetchHead(bitget, url),
+    head: (url: string) => fetchHead(bitget, url, () => halted(bitget)),
   }),
 
   /** Under the edge's own limit, near 2,900 a second — measured in `docs/venues/BITGET.md`. */

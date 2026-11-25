@@ -239,8 +239,8 @@ describe('http retry policy', async () => {
     expect(_test_retryAfterMs(null)).toBeNull();
   });
 
-  /** A venue is the authority on its own pace: a long wait is honoured, not capped. */
-  it('honours a long retry-after in full', () => {
+  /** Read as sent, however long: what a wait past the ceiling becomes is decided by `obey`. */
+  it('reads a long retry-after in full', () => {
     expect(_test_retryAfterMs('300')).toBe(300_000);
   });
 });
