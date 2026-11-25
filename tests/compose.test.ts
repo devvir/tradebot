@@ -2,9 +2,9 @@
  * What `docker compose config` makes of every compose file: where each port is
  * published, which credentials the broker and the cache refuse to start
  * without, where the data directories are mounted from, which project each
- * module and pack is, how logs rotate, and which DuckDB extensions stocker's
- * image is built with. Skipped where docker compose
- * is not installed.
+ * module and pack is, how logs rotate, which Host names catalog-ui is told to
+ * serve, and which DuckDB extensions stocker's image is built with. Skipped
+ * where docker compose is not installed.
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -43,6 +43,7 @@ interface Service {
   build?: { args?: Record<string, string> };
   ports?: Port[];
   command?: string[];
+  environment?: Record<string, string>;
   healthcheck?: { test?: string[] };
   volumes?: Array<{ source?: string; target: string }>;
   logging?: { driver?: string; options?: Record<string, string> };
@@ -155,6 +156,19 @@ describe.skipIf(!hasCompose)('compose files', () => {
 
     expect(rendered['catalog-ui'].ports?.map((port) => port.host_ip)).toEqual(['0.0.0.0']);
     expect(rendered.catalog.ports?.map((port) => port.host_ip)).toEqual(['127.0.0.1']);
+  });
+
+  describe('catalog-ui\'s Host allowlist', () => {
+    const hosts = (env: Record<string, string | undefined>): string | undefined =>
+      services('modules/collect/archives/compose.yml', env)['catalog-ui'].environment?.CATALOG_UI_HOSTS;
+
+    it('is empty unless set', () => {
+      expect(hosts(required)).toBe('');
+    });
+
+    it('takes CATALOG_UI_HOSTS as given', () => {
+      expect(hosts({ ...required, CATALOG_UI_HOSTS: 'localhost,catalog.lan' })).toBe('localhost,catalog.lan');
+    });
   });
 
   describe.each(['modules/infra/local/compose.yml', 'modules/infra/market/compose.yml'])('the cache in %s', (file) => {

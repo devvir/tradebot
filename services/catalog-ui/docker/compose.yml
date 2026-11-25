@@ -8,11 +8,11 @@
 # It owns no storage. The page is served from the image, and everything else is
 # a request forwarded to a service that does own something.
 #
-# The browser never reaches either service directly: prospector's collector
-# publishes no port, the catalog may run elsewhere, and the token would
-# otherwise have to travel with the page. It checks nothing about who is
-# asking, so whoever reaches this page acts with CATALOG_TOKEN: it can start
-# and pause surveys and create, edit and delete lenses.
+# The browser reaches the catalog and prospector's collector only through this
+# service, which adds the token to every request it forwards, so the token
+# never travels with the page. It checks nothing about who is asking, so
+# whoever reaches this page acts with CATALOG_TOKEN: it can start and pause
+# surveys and create, edit and delete lenses.
 
 services:
   catalog-ui:
@@ -37,6 +37,11 @@ services:
       # Empty is allowed and means both are open — this then forwards without a
       # header, and nothing else changes.
       CATALOG_TOKEN: ${CATALOG_TOKEN:-}
+
+      # The names the page may be opened as, comma-separated (a name matches
+      # with or without its port). A forwarded request whose Host is none of
+      # them is refused. Empty serves any Host.
+      CATALOG_UI_HOSTS: ${CATALOG_UI_HOSTS:-}
 
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV:  ${APP_ENV:-prod}
