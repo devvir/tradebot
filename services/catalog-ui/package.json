@@ -8,7 +8,8 @@
     "build": "tsc -p web && vite build && tsc -b",
     "start": "node dist/src/index.js",
     "dev": "vite",
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p . && tsc -p web && tsc -p tsconfig.test.json"
   },
   "dependencies": {
     "@devvir/service-kit": "workspace:*",
