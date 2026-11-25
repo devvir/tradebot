@@ -921,7 +921,7 @@ prefix nobody has read.
 page is nearly always what would fail any other at that moment — the link, the venue, a write that
 could not get its turn — so moving on to another prefix gains nothing and leaves this one half read.
 The page is read again from the same cursor, up to twelve times, after a wait that doubles from two
-seconds to a minute: a little under seven minutes in all. A refusal is the venue's answer and is not
+seconds to a minute: about seven minutes in all. A refusal is the venue's answer and is not
 repeated. Nothing of a page counts until its cursor is written, so asking again costs one request.
 
 Only a page that outlasts that fails its scope, and the job stays open over it. The next turn of
@@ -1138,8 +1138,8 @@ disagree with them.
 So **a restart picks up what was already running and asks nothing new**. For each enrolled venue —
 `PROSPECTOR_VENUES` still applying — an open job resumes at once from its cursors, a venue between
 passes waits out the remainder of its day, and a paused one stays paused. A venue nobody enrolled is
-untouched for ever, which makes **read-only a real state** rather than a convention: an instance that
-serves the catalog and collects nothing is one where nobody started a survey.
+untouched for ever, which makes **read-only a real state** rather than a convention: a deployment
+that collects nothing is one where nobody started a survey.
 
 **Resumption is per host, because the passes are.** Bybit's two servers keep separate run rows and
 separate cursors, and one being mid-walk says nothing about the other — so each is picked up from its
@@ -1152,52 +1152,8 @@ before its container was replaced is not owed another update. Completing a walk 
 pass, not a prelude to a special first update: the next is due a day after the walk began, which for
 a walk that ran longer than a day means immediately.
 
-**One verb, because where a venue has got to is not a caller's decision.** `POST /surveys` is the
-whole of it. A venue with nothing starts, one with work outstanding continues from its cursors, one
-that has been complete waits for its next update, as it would have anyway — all read off the run
-rows, none of it a decision a caller should have to make. Skipping that wait is what `update: true`
-is for. Venues are unrelated hosts already surveyed concurrently, so naming none of them, and meaning
-all, is the ordinary request. A named venue is checked against the adapter registry, never against
-the catalog's `venue` table: the registry defines what a venue is, and a database built without seed
-data has no `venue` rows.
-
-**The request places the order and answers; it does not carry it out.** A survey claims its venue
-synchronously — that claim is what stops a second request starting the same one twice — and hands
-the passes themselves to the next turn of the loop, so the reply is not held behind every venue's
-synchronous prologue (the series registry loaded, a phase read, a probe opened). What a caller is
-owed is the order and the state each venue was in, both of which are known immediately.
-
-**Two modifiers, and they are the only decisions a caller makes.**
-
-`refresh: true` throws the run rows away and walks it all again. Opt-in precisely so that the
-ordinary request cannot discard a backfill in flight.
-
-`update: true` skips the wait and updates now. It is **refused where no pass has ever completed** —
-a venue mid-walk or one that has never run is owed the walk it is already doing, and an update
-planned against bounds nothing has established is not a cheaper version of that — and it does
-**nothing where an update is already running**. So it acts in one state and a half: a venue waiting
-out its interval, and one **paused partway through an update**, which it resumes.
-
-That last case reports itself as a **resume**, not as a new update. From outside the two are
-identical and they are not the same thing: one carries on from scope cursors that already exist,
-the other plans fresh scopes, and somebody told "update started" about work that was half done has
-been told the wrong thing. Whether the venue was paused is not the question — *what the pause
-interrupted* is. A pause during the walk fails for the ordinary reason.
-
-The two are mutually exclusive: one discards the progress the other builds on, so a request asking
-for both has not decided, and is a 400. A forced update that moves nothing is a **409**, because the
-one thing it was for did not happen — where an ordinary request finding every venue current has done
-its job.
-
-**They are also the only requests that interrupt, and they have to be.** A venue's loop does not end
-on its own, so once a venue has been surveyed it is *always* running — and refusing on that ground
-would make a refresh impossible for ever after the first survey, and a forced update useless in the
-one state it exists for, since what it skips is a wait this loop is in the middle of. Both therefore
-stop the loop, wait for it to actually stop, and start it again. The waiting is the whole of it:
-interrupting from outside would drop the rows a scope is still committing cursors against.
-
-**An ordinary request adds nothing to a venue already surveying**, and says so. That is not an
-obstacle being reported — it is the work already happening.
+**Starting, refreshing and forcing an update are requests to the API**, and what each does to a
+venue in each state is in [Surveying](#surveying).
 
 **A pause is not a cancellation, and there is no resume verb to go with it.** The flag is read
 between pages, so the page in flight is committed, every scope keeps its cursor and the job stays
@@ -1805,8 +1761,8 @@ lets go of what it held, the ticket pool opens gradually again.
 
 ## The API
 
-**Private to the archives module.** Prospector publishes no port: it is reachable only on the
-module's network, on `8080`. It starts, pauses and reports on surveys, settles reports of what became
+**Private to the archives module.** Prospector publishes no host port: it is reachable only over the
+deployment's shared Docker network, on `8080`. It starts, pauses and reports on surveys, settles reports of what became
 of listed files, and stores lenses. What the catalog holds is served by the catalog service — see
 [CATALOG-API.md](../modules/CATALOG-API.md).
 
@@ -1863,7 +1819,15 @@ a `400`. A forced update that started and resumed nothing is a `409` carrying th
 **They are also the only requests that interrupt a venue already surveying**, which they have to be: the
 loop does not end on its own, so refusing on that ground would make a refresh impossible for ever after
 the first survey. An *ordinary* request on a running venue is answered `already running`, which says the
-work is happening rather than refusing it.
+work is happening rather than refusing it. Both modifiers stop the venue's loop, wait for it to
+actually stop, and start it again: resetting under a live walk would drop the rows a scope is still
+committing cursors against. The latest request wins — a refresh or forced update still waiting when a
+later one, or a pause, arrives gives up without touching anything.
+
+**The request places the order and answers; it does not carry it out.** A survey claims its venue
+synchronously — that claim is what stops a second request starting the same one twice — and hands
+the passes to the next turn of the loop, so the reply is not held behind every venue's synchronous
+prologue (the series registry loaded, a phase read, a probe opened).
 
 The answer says what happened to each venue rather than failing the whole call because one was busy:
 
@@ -2245,9 +2209,6 @@ by a date, and every file belongs to one; what differs is only how the rows get 
 venue records them as its walk confirms files, and one that cannot be listed has them declared and
 its bounds measured.
 
-`market` is whatever that venue calls an instrument type and `dataset` whatever it calls a kind of
-data — both stored, never parsed, exactly as `tag` is.
-
 **Two tables because they change at different rates.** A venue adds symbols weekly and changes the
 shape of a URL once in years, so `pattern` holds the shapes — tens of rows, effectively frozen — and
 `series` holds one row per instrument per shape, with its bounds and its tip, in the tens of
@@ -2255,8 +2216,10 @@ thousands. Holding both in one table would make adding a symbol something only c
 to build that venue's URLs could do, which is knowledge an adapter would then carry for ever.
 
 **A pattern's slots are a calendar, an instrument and a part** — `{YYYY}` `{MM}` `{DD}` `{HH}`
-`{MI}`, `{SYMBOL}` and `{PART}` — and everything else in it is literal, because a different value of
-it is a different shape. So building a key is substitution and nothing else, whoever does it.
+`{MI}`, `{SYMBOL}` and `{PART}` — beside the slots an adapter renders itself (below) and
+`{TRANSFORM:…}` ([what a pattern cannot spell](#what-a-pattern-cannot-spell-one-instrument-at-a-time)).
+Everything else in it is literal, because a different value of it is a different shape. So building a
+key is substitution and nothing else, whoever does it.
 
 **The grain is read off the shape rather than recorded twice**: the finest calendar slot a pattern
 carries is how often it publishes, so a pattern with `{DD}` is daily and one without is monthly. A
