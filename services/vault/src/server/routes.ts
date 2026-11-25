@@ -23,15 +23,24 @@ import { createParser } from '../data/parse';
 import { encode } from '../data/encode';
 import { buffers } from '../data/buffers';
 import { closeBucket } from '../data/close';
+import { acceptsRows } from '../data/bucket';
+import { isShuttingDown } from '../shutdown';
 import { NotFoundError } from '../fs/errors';
 import { closedPath, openPath } from '../fs/paths';
 import type { Row, WsMessage } from '../data/types';
 
-// Append-only set of `table/filename` buckets the client has asked to seal.
-// Once added, all further row writes for that bucket are rejected. Never
-// cleaned up — after the rename, fileState='closed' would also produce a 409,
-// so the set is just an immediate barrier while the close completes.
-const closing = new Set<string>();
+// An upload that sends nothing for this long is cut off. A moving upload is
+// never cut, however long it takes.
+const UPLOAD_IDLE_TIMEOUT_MS = 90_000;
+
+/** Answers 503 and returns true once shutdown has started. */
+const refuseWhenShuttingDown = (res: Response): boolean => {
+  if (! isShuttingDown()) return false;
+
+  res.status(503).json({ error: 'Vault is shutting down' });
+
+  return true;
+};
 
 /** Reads optional `?suffix=` and returns `<date>` or `<date>.<suffix>`. */
 const filenameOf = (req: Request): string => {
@@ -46,6 +55,8 @@ export const registerRoutes = (app: Application): void => {
   // ── POST /files/:table/:date/rows — buffer rows or a WS message ──────────────
 
   app.post('/files/:table/:date/rows', (req: Request, res: Response) => {
+    if (refuseWhenShuttingDown(res)) return;
+
     if (! isHealthy()) {
       res.status(503).json({ error: `Storage unhealthy: ${getFailureReason()}` });
       return;
@@ -60,7 +71,7 @@ export const registerRoutes = (app: Application): void => {
       return;
     }
 
-    if (closing.has(key) || fileState(table, filename) === 'closed') {
+    if (! acceptsRows(table, filename) || fileState(table, filename) === 'closed') {
       res.status(409).json({ error: 'File is closed' });
       return;
     }
@@ -103,20 +114,19 @@ export const registerRoutes = (app: Application): void => {
   // ── POST /files/:table/:date/close — seal an open file ──────────────────────
   //
   // Fire-and-forget: returns 202 immediately. The seal happens at the tail of
-  // the file's write chain so any in-flight appends complete first.
+  // the file's write chain so any in-flight appends complete first. Rows for
+  // the bucket get 409 until the seal settles; after a failed seal the bucket
+  // accepts rows again and can be closed again.
 
   app.post('/files/:table/:date/close', (req: Request, res: Response) => {
+    if (refuseWhenShuttingDown(res)) return;
+
     const table    = req.params['table'] as string;
     const filename = filenameOf(req);
-    const key      = `${table}/${filename}`;
 
-    closing.add(key);
-
-    closeBucket(table, filename)
-      .then(() => closing.delete(key))
-      .catch((err) => {
-        logger.error({ err, table, filename }, 'closeBucket failed');
-      });
+    closeBucket(table, filename).catch((err) => {
+      logger.error({ err, table, filename }, 'closeBucket failed');
+    });
 
     res.status(202).end();
   });
@@ -160,6 +170,15 @@ export const registerRoutes = (app: Application): void => {
   // file is permanent and returns 409.
 
   app.put('/files/:table/:date', async (req: Request, res: Response) => {
+    if (refuseWhenShuttingDown(res)) {
+      req.resume();
+      return;
+    }
+
+    req.setTimeout(UPLOAD_IDLE_TIMEOUT_MS, () => {
+      req.destroy(new Error(`Upload idle for ${UPLOAD_IDLE_TIMEOUT_MS} ms`));
+    });
+
     const table    = req.params['table'] as string;
     const filename = filenameOf(req);
     const state    = fileState(table, filename);
@@ -188,6 +207,8 @@ export const registerRoutes = (app: Application): void => {
   // ── DELETE /files/:table/:date — discard an open file ────────────────────────
 
   app.delete('/files/:table/:date', (req: Request, res: Response) => {
+    if (refuseWhenShuttingDown(res)) return;
+
     const table    = req.params['table'] as string;
     const filename = filenameOf(req);
 
@@ -281,7 +302,3 @@ export const registerRoutes = (app: Application): void => {
     });
   });
 };
-
-// ── Test helpers ──────────────────────────────────────────────────────────────
-
-export const _test_resetClosing = (): void => { closing.clear(); };

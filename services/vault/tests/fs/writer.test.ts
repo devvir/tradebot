@@ -4,6 +4,44 @@ import { gunzipSync, gzipSync } from 'zlib';
 import * as os from 'os';
 import * as path from 'path';
 
+// ── Record every fsync (path) without changing behaviour ─────────────────────
+
+const synced = vi.hoisted(() => [] as string[]);
+
+vi.mock('fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs/promises')>();
+
+  return {
+    ...actual,
+    open: async (p: string, flags?: string) => {
+      const handle = await actual.open(p, flags);
+      const sync   = handle.sync.bind(handle);
+
+      handle.sync = async () => { synced.push(String(p)); return sync(); };
+
+      return handle;
+    },
+  };
+});
+
+vi.mock('fs', async (importOriginal) => {
+  const actual  = await importOriginal<typeof import('fs')>();
+  const fdPaths = new Map<number, string>();
+
+  return {
+    ...actual,
+    openSync: (p: string, ...rest: unknown[]) => {
+      const fd = (actual.openSync as (...a: unknown[]) => number)(p, ...rest);
+      fdPaths.set(fd, String(p));
+      return fd;
+    },
+    fsyncSync: (fd: number) => {
+      synced.push(fdPaths.get(fd) ?? `fd:${fd}`);
+      actual.fsyncSync(fd);
+    },
+  };
+});
+
 // ── Redirect storage paths to a temp dir ─────────────────────────────────────
 
 let tmpDir: string;
@@ -26,7 +64,7 @@ import {
   appendBatch,
   isInitialized,
   deleteFile,
-  drainHandle,
+  drainAll,
   _test_reset as resetWriter,
 } from '../../src/fs/writer';
 import { recordFailure } from '../../src/fs/health';
@@ -64,6 +102,7 @@ beforeEach(() => {
   tmpDir = mkdirSync(path.join(os.tmpdir(), `vault-writer-test-${Date.now()}-${Math.random()}`), { recursive: true }) as string;
   resetWriter();
   vi.clearAllMocks();
+  synced.length = 0;
 });
 
 afterEach(() => {
@@ -185,7 +224,7 @@ describe('appendBatch — seal', () => {
   });
 });
 
-// ── deleteFile / drainHandle ──────────────────────────────────────────────────
+// ── deleteFile / drainAll ─────────────────────────────────────────────────────
 
 describe('deleteFile', () => {
   it('unlinks .csv.gz.tmp and drops the handle (idempotent)', async () => {
@@ -201,18 +240,117 @@ describe('deleteFile', () => {
   });
 });
 
-describe('drainHandle', () => {
-  it('resolves immediately when no handle exists', async () => {
-    await expect(drainHandle('trade', '2023-02-01')).resolves.toBeUndefined();
+describe('drainAll', () => {
+  it('resolves immediately when nothing is pending', async () => {
+    await expect(drainAll()).resolves.toBeUndefined();
   });
 
-  it('awaits the queued write chain', async () => {
-    const _ignored = appendBatch('trade', '2023-02-01', ['line']);
-    await drainHandle('trade', '2023-02-01');
-    void _ignored;
+  it('awaits every writer\'s queued members', async () => {
+    void appendBatch('trade', '20230201', ['a']);
+    void appendBatch('tick',  '20230201', ['b']);
 
-    const tmp = openPath('trade', '2023-02-01');
-    expect(readMembers(tmp)).toBe('line\n');
+    await drainAll();
+
+    expect(readMembers(openPath('trade', '20230201'))).toBe('a\n');
+    expect(readMembers(openPath('tick',  '20230201'))).toBe('b\n');
+  });
+
+  it('awaits a seal in progress, including its rename', async () => {
+    void appendBatch('trade', '20230201', ['header']);
+    const sealed = appendBatch('trade', '20230201', ['last'], true);
+
+    await drainAll();
+
+    expect(existsSync(openPath('trade', '20230201'))).toBe(false);
+    expect(readMembers(closedPath('trade', '20230201'))).toBe('header\nlast\n');
+    await sealed;
+  });
+
+  it('settles even when a seal fails', async () => {
+    await appendBatch('trade', '20230201', ['header']);
+    rmSync(openPath('trade', '20230201'));
+
+    const sealed = appendBatch('trade', '20230201', [], true);
+
+    await expect(drainAll()).resolves.toBeUndefined();
+    await expect(sealed).rejects.toThrow();
+  });
+});
+
+// ── Failure handling ──────────────────────────────────────────────────────────
+
+describe('appendBatch — failures', () => {
+  it('rejects (does not throw) when the year directory cannot be created', async () => {
+    writeFileSync(path.join(tmpDir, 'funding'), 'not a directory');
+
+    let result: Promise<void> | undefined;
+
+    expect(() => { result = appendBatch('funding', '20240101', ['x']); }).not.toThrow();
+    await expect(result).rejects.toThrow(/ENOTDIR|EEXIST/);
+  });
+
+  it('starts a fresh writer after a failed seal, which can then seal the file', async () => {
+    await appendBatch('trade', '20230201', ['header', 'old']);
+    rmSync(openPath('trade', '20230201'));
+
+    await expect(appendBatch('trade', '20230201', [], true)).rejects.toThrow();
+
+    // The failed writer is gone: the next batch starts a new open file.
+    expect(isInitialized('trade', '20230201')).toBe(false);
+
+    await appendBatch('trade', '20230201', ['header', 'new'], true);
+
+    expect(readMembers(closedPath('trade', '20230201'))).toBe('header\nnew\n');
+  });
+
+  it('starts a fresh writer after the writer\'s close itself failed', async () => {
+    await appendBatch('trade', '20230201', ['header']);
+
+    // A directory at the sealed path makes the rename fail after the fsync.
+    mkdirSync(closedPath('trade', '20230201'));
+
+    await expect(appendBatch('trade', '20230201', ['a'], true)).rejects.toThrow();
+
+    rmSync(closedPath('trade', '20230201'), { recursive: true });
+
+    await expect(appendBatch('trade', '20230201', ['b'], true)).resolves.toBeUndefined();
+    expect(readMembers(closedPath('trade', '20230201'))).toBe('header\na\nb\n');
+  });
+});
+
+// ── Durability ────────────────────────────────────────────────────────────────
+
+describe('fsync', () => {
+  it('a seal fsyncs the open file before the rename and the year directory after it', async () => {
+    await appendBatch('trade', '20230201', ['header']);
+    synced.length = 0;
+
+    await appendBatch('trade', '20230201', ['last'], true);
+
+    expect(synced).toEqual([openPath('trade', '20230201'), path.join(tmpDir, 'trade', '2023')]);
+    expect(readMembers(closedPath('trade', '20230201'))).toBe('header\nlast\n');
+  });
+
+  it('fsyncs the parent of every directory it creates, and only then', async () => {
+    await appendBatch('trade', '20230201', ['header']);
+
+    expect(synced).toEqual([path.join(tmpDir, 'trade'), tmpDir]);
+
+    synced.length = 0;
+    await appendBatch('trade', '20230202', ['header']);
+    expect(synced).toEqual([]);
+
+    await appendBatch('trade', '20240101', ['header']);
+    expect(synced).toEqual([path.join(tmpDir, 'trade')]);
+  });
+
+  it('does not fsync on a plain append', async () => {
+    await appendBatch('trade', '20230201', ['header']);
+    synced.length = 0;
+
+    await appendBatch('trade', '20230201', ['a']);
+
+    expect(synced).toEqual([]);
   });
 });
 

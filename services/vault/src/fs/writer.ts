@@ -2,19 +2,28 @@
 //
 // Two write paths:
 //
-//   - storeFile()   — full pre-built gzip stream from courier (PUT route).
+//   - storeFile()   — full pre-built gzip stream (PUT route).
 //                     Streamed to .csv.gz.tmp, renamed to .csv.gz on success.
 //
-//   - appendBatch() — incremental gzip-member append (ticker, closeBucket).
-//                     Each call appends one self-contained gzip member to the
-//                     open file via a per-file @devvir/zipper writer, which
-//                     owns compression, the serialised write chain, retry and
-//                     recovery, and the .csv.gz.tmp → .csv.gz rename on seal.
+//   - appendBatch() — incremental gzip-member append. Each call appends one
+//                     self-contained gzip member to the open file via a
+//                     per-file @devvir/zipper writer, which owns compression,
+//                     the serialised write chain, retry and recovery, and the
+//                     .csv.gz.tmp → .csv.gz rename on seal.
+//
+// Durability: a seal fsyncs the open file before the rename and the year
+// directory after it, and every directory this module creates is made durable
+// by syncing its parent. Individual members are not fsynced.
 //
 // `fs/` knows nothing about row formats, CSV structure, headers, or buffering —
 // callers in `data/` produce ready-to-write strings.
 
-import { existsSync, mkdirSync, createWriteStream, unlinkSync, renameSync, appendFileSync } from 'fs';
+import {
+  existsSync, mkdirSync, createWriteStream, unlinkSync, renameSync, appendFileSync,
+  openSync, fsyncSync, closeSync,
+} from 'fs';
+import { open } from 'fs/promises';
+import path from 'path';
 import { pipeline } from 'stream/promises';
 import type { Readable } from 'stream';
 import { logger } from '@devvir/service-kit';
@@ -42,6 +51,10 @@ const TMP_EXTENSION = '.tmp';
 
 const writers = new Map<string, Writer>();
 
+// Seals in progress. A seal's rename runs after the writer's chain has
+// drained, so awaiting `flush()` alone does not cover it.
+const sealing = new Set<Promise<void>>();
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
@@ -59,21 +72,27 @@ export const isInitialized = (table: string, filename: string): boolean => {
 /**
  * Appends one gzip member to the open file for table/filename. The per-file
  * zipper writer serialises writes onto its internal chain, so concurrent calls
- * queue in arrival order with no interleaving. When `seal` is true, after the
- * write (or immediately if `lines` is empty) the writer is closed — renaming
- * `.csv.gz.tmp` → `.csv.gz` — and dropped.
+ * queue in arrival order with no interleaving. The writer is looked up (or
+ * created) and the member enqueued synchronously, before the returned promise
+ * settles, so two calls made in a row always land in call order.
+ *
+ * When `seal` is true, once every member queued so far is on disk the open
+ * file is fsynced, the writer is closed — renaming `.csv.gz.tmp` → `.csv.gz` —
+ * and the year directory is fsynced. The writer is dropped whether the seal
+ * succeeds or fails, so a later call starts a fresh writer that resumes the
+ * open file.
  *
  * The returned promise resolves when this specific batch (and any seal) is
- * complete. Under `recovery: 'auto'` a dropped member still resolves; the loss
- * is surfaced through `onWriteFailure`.
+ * complete, and rejects on any failure, including creating the directory.
+ * Under `recovery: 'auto'` a dropped member still resolves; the loss is
+ * surfaced through `onWriteFailure`.
  */
-export const appendBatch = (
+export const appendBatch = async (
   table:    string,
   filename: string,
   lines:    string[],
   seal:     boolean = false,
 ): Promise<void> => {
-  const key    = `${table}/${filename}`;
   const writer = getOrCreateWriter(table, filename);
 
   const written = lines.length > 0
@@ -82,18 +101,15 @@ export const appendBatch = (
 
   if (! seal) return written;
 
-  return written
-    .then(() => writer.close())
-    .then(() => {
-      writers.delete(key);
+  const sealed = sealWriter(table, filename, writer, written);
 
-      logger.info({ table, filename }, 'File sealed');
-    })
-    .catch((err) => {
-      logger.error({ err, table, filename }, 'Seal failed');
+  sealing.add(sealed);
 
-      throw err;
-    });
+  try {
+    await sealed;
+  } finally {
+    sealing.delete(sealed);
+  }
 };
 
 /**
@@ -106,7 +122,7 @@ export const storeFile = async (table: string, filename: string, source: Readabl
   const tmp  = openPath(table, filename);
   const dest = closedPath(table, filename);
 
-  mkdirSync(yearDir(table, filename), { recursive: true });
+  ensureDir(yearDir(table, filename));
 
   try {
     await pipeline(source, createWriteStream(tmp));
@@ -127,13 +143,27 @@ export const deleteFile = (table: string, filename: string): void => {
   writers.delete(`${table}/${filename}`);
 };
 
-/** Awaits the pending writes for a given file. Returns immediately if no writer. */
-export const drainHandle = async (table: string, filename: string): Promise<void> => {
-  const writer = writers.get(`${table}/${filename}`);
+/**
+ * Resolves once every write and seal started before the call has settled,
+ * successfully or not. Failures are reported where each write or seal was
+ * started, not here.
+ */
+export const drainAll = async (): Promise<void> => {
+  await Promise.allSettled([...writers.values()].map(w => w.flush()));
+  await Promise.allSettled([...sealing]);
+};
 
-  if (! writer) return;
+/** Flushes a file's data and metadata to stable storage. */
+export const fsyncFile = async (file: string): Promise<void> => {
+  await syncPath(file);
+};
 
-  await writer.flush();
+/**
+ * Makes the entries of a directory durable: files and directories created,
+ * renamed or removed in it survive a power loss once this resolves.
+ */
+export const fsyncDir = async (dir: string): Promise<void> => {
+  await syncPath(dir);
 };
 
 // ── Internals ─────────────────────────────────────────────────────────────────
@@ -144,7 +174,7 @@ const getOrCreateWriter = (table: string, filename: string): Writer => {
 
   if (existing) return existing;
 
-  mkdirSync(yearDir(table, filename), { recursive: true });
+  ensureDir(yearDir(table, filename));
 
   // createWriter resumes an existing `.csv.gz.tmp` automatically, so a writer
   // re-created after a restart picks up where the previous run left off.
@@ -163,6 +193,75 @@ const getOrCreateWriter = (table: string, filename: string): Writer => {
   writers.set(key, writer);
 
   return writer;
+};
+
+/**
+ * Waits for every member queued on `writer`, fsyncs the open file, closes the
+ * writer (the rename) and fsyncs the year directory. The writer leaves the map
+ * however this ends; a closed zipper writer refuses further writes and returns
+ * the same result to every later close.
+ */
+const sealWriter = async (
+  table:    string,
+  filename: string,
+  writer:   Writer,
+  written:  Promise<void>,
+): Promise<void> => {
+  const key = `${table}/${filename}`;
+
+  try {
+    await written;
+    await writer.flush();
+    await fsyncFile(openPath(table, filename));
+    await writer.close();
+    await fsyncDir(yearDir(table, filename));
+
+    logger.info({ table, filename }, 'File sealed');
+  } catch (err) {
+    logger.error({ err, table, filename }, 'Seal failed');
+
+    throw err;
+  } finally {
+    if (writers.get(key) === writer) writers.delete(key);
+  }
+};
+
+/**
+ * Creates `dir` and any missing parents. A new directory's entry lives in its
+ * parent, so the parent of every directory created here is fsynced before
+ * returning. This runs synchronously so a writer can be created and used
+ * within one call; it does work only when a directory is actually created.
+ */
+const ensureDir = (dir: string): void => {
+  const created = mkdirSync(dir, { recursive: true });
+
+  if (created === undefined) return;
+
+  for (let d = dir; ; d = path.dirname(d)) {
+    syncPathSync(path.dirname(d));
+
+    if (d === created || path.dirname(d) === d) break;
+  }
+};
+
+const syncPath = async (p: string): Promise<void> => {
+  const handle = await open(p, 'r');
+
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+};
+
+const syncPathSync = (p: string): void => {
+  const fd = openSync(p, 'r');
+
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
 };
 
 /**
@@ -219,4 +318,4 @@ const writeErrorSidecar = (
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
-export const _test_reset = (): void => { writers.clear(); };
+export const _test_reset = (): void => { writers.clear(); sealing.clear(); };

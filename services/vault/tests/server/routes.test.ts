@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import { registerRoutes, _test_resetClosing } from '../../src/server/routes';
+import { registerRoutes } from '../../src/server/routes';
+import { markClosing, _test_reset as resetBucket } from '../../src/data/bucket';
 import { NotFoundError } from '../../src/fs/errors';
 
 // ── Mock the data and fs layers ───────────────────────────────────────────────
@@ -76,7 +77,7 @@ registerRoutes(app);
 
 beforeEach(() => {
   vi.clearAllMocks();
-  _test_resetClosing();
+  resetBucket();
 
   // Default mock returns — individual tests can override.
   vi.mocked(isHealthy).mockReturnValue(true);
@@ -386,16 +387,22 @@ describe('POST /files/:table/:date/rows', () => {
     expect(encode).not.toHaveBeenCalled();
   });
 
-  it('rejects further writes while a close is in progress', async () => {
-    vi.mocked(closeBucket).mockReturnValue(new Promise(() => {})); // never resolves
+  it('returns 409 while the bucket is closing and accepts rows once the close settles', async () => {
+    const release = markClosing('trade', '2023-02-01');
 
-    await request(app).post('/files/trade/2023-02-01/close').send();
-
-    const res = await request(app)
+    const during = await request(app)
       .post('/files/trade/2023-02-01/rows')
       .send({ symbol: 'X' });
 
-    expect(res.status).toBe(409);
+    expect(during.status).toBe(409);
+
+    release();
+
+    const after = await request(app)
+      .post('/files/trade/2023-02-01/rows')
+      .send({ symbol: 'X' });
+
+    expect(after.status).toBe(202);
   });
 });
 

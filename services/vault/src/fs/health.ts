@@ -12,10 +12,10 @@
 //     throttled set. Routes return 429 only for requests targeting a
 //     throttled file; every other path is unaffected.
 //
-// `fs/writer.ts` calls `recordFailure()` after a batch exhausts all retries,
-// and `setBackpressure(path, busy, count)` as a per-handle inflight count
-// crosses the busy/resume thresholds. `server/routes.ts` calls `isHealthy()`
-// for the 503 check and `isThrottled(table, filename)` for the 429 check.
+// `recordFailure()` counts one write failure that lost data and `isHealthy()`
+// reports the resulting storage verdict. `setBackpressure(path, busy, count)`
+// sets or clears one path's throttle and `isThrottled(table, filename)`
+// reports it.
 
 import path from 'path';
 import { appendFileSync, existsSync, unlinkSync } from 'fs';
@@ -72,7 +72,7 @@ export const setBackpressure = (path: string, busy: boolean, count: number = 0):
   }
 };
 
-/** Called from the writer when one batch exhausts all retries. */
+/** Records one write failure that lost data: a batch that could not be written. */
 export const recordFailure = (reason: string): void => {
   const now    = Date.now();
   const cutoff = now - FAILURE_WINDOW_MS;

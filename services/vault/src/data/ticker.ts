@@ -1,15 +1,14 @@
-// Periodic flush orchestrator.
+// Periodic flush.
 //
-// On every TICK_MS interval: pulls ready batches from buffers, prepends a
-// header line if the on-disk file is not yet initialised, and hands each
-// batch to `fs/writer.appendBatch`. The single path through which buffered
-// rows reach disk for streaming writes (the other being `closeBucket` and
-// the shutdown drain in `index.ts`).
+// On every TICK_MS interval, pulls the ready batches from buffers and writes
+// each one through `writeLines`. Batches are independent: one that fails is
+// logged, counted toward storage health, and its rows are dropped, while the
+// other batches of the same tick are written as usual.
 
 import { logger } from '@devvir/service-kit';
 import { buffers } from './buffers';
-import { headersFor } from './headers';
-import { appendBatch, isInitialized } from '../fs/writer';
+import { writeLines } from './bucket';
+import { recordFailure } from '../fs/health';
 
 const TICK_MS = 200;
 
@@ -29,28 +28,13 @@ export const stopTicker = (): void => {
 };
 
 const tick = (): void => {
-  const ready = buffers.flushReady();
+  for (const { table, filename, lines } of buffers.flushReady()) {
+    writeLines(table, filename, lines).catch((err: Error) => {
+      logger.error({ err, table, filename, rowsDropped: lines.length }, 'Batch write failed, rows dropped');
 
-  for (const { table, filename, lines } of ready) {
-    // The init check and appendBatch call are both synchronous — the event
-    // loop cannot yield between them, so no race is possible on header
-    // prepending across concurrent batches for the same file.
-    const finalLines = isInitialized(table, filename)
-      ? lines
-      : [headerLine(table), ...lines];
-
-    appendBatch(table, filename, finalLines).catch((err) => {
-      logger.error({ err, table, filename }, 'appendBatch failed');
+      recordFailure(`batch write failed for ${table}/${filename}: ${err.message}`);
     });
   }
-};
-
-const headerLine = (table: string): string => {
-  const cols = headersFor(table);
-
-  if (! cols) throw new Error(`No header definition for table '${table}'`);
-
-  return cols.join(',');
 };
 
 // ── Test helpers ──────────────────────────────────────────────────────────────

@@ -7,11 +7,13 @@ vi.mock('../../src/fs/writer', () => ({
 
 import { closeBucket } from '../../src/data/close';
 import { buffers, _test_reset } from '../../src/data/buffers';
+import { isClosing, _test_reset as resetBucket } from '../../src/data/bucket';
 import { appendBatch, isInitialized } from '../../src/fs/writer';
 import { TABLE_HEADERS } from '../../src/data/headers';
 
 beforeEach(() => {
   _test_reset();
+  resetBucket();
   vi.clearAllMocks();
   vi.mocked(isInitialized).mockReturnValue(false);
   vi.mocked(appendBatch).mockResolvedValue(undefined);
@@ -52,5 +54,38 @@ describe('closeBucket', () => {
     await closeBucket('orderBookL2', '2023-02-01');
 
     expect(appendBatch).toHaveBeenCalledWith('orderBookL2', '2023-02-01', [], true);
+  });
+
+  it('marks the bucket closing synchronously and releases it when the seal resolves', async () => {
+    vi.mocked(isInitialized).mockReturnValue(true);
+
+    let finish!: () => void;
+    vi.mocked(appendBatch).mockReturnValue(new Promise<void>((resolve) => { finish = resolve; }));
+
+    const closed = closeBucket('orderBookL2', '20230201');
+
+    expect(isClosing('orderBookL2', '20230201')).toBe(true);
+
+    finish();
+    await closed;
+
+    expect(isClosing('orderBookL2', '20230201')).toBe(false);
+  });
+
+  it('releases the closing mark when the seal fails', async () => {
+    vi.mocked(isInitialized).mockReturnValue(true);
+    vi.mocked(appendBatch).mockRejectedValue(new Error('rename failed'));
+
+    await expect(closeBucket('orderBookL2', '20230201')).rejects.toThrow('rename failed');
+
+    expect(isClosing('orderBookL2', '20230201')).toBe(false);
+  });
+
+  it('rejects (and releases the mark) when the table has no header definition', async () => {
+    buffers.get('unknownTable', '20230201').push('row-1');
+
+    await expect(closeBucket('unknownTable', '20230201')).rejects.toThrow(/No header definition/);
+
+    expect(isClosing('unknownTable', '20230201')).toBe(false);
   });
 });
