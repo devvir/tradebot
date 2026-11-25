@@ -1,21 +1,27 @@
 # Hoarder Service
 
-Connects to trading venues' market-data WebSockets and publishes every message to RabbitMQ, verbatim.
+Connects to trading venues' public market-data WebSockets and publishes every market-data frame to
+RabbitMQ exactly as it was received.
 
 One instance can collect one venue, several, or all of them — selected with `HOARDER_VENUES`, so deployments can be split per venue or consolidated without code changes.
 
 "Venue" means a trading exchange (Binance, OKX, …) everywhere in this service. "Exchange" unqualified means the AMQP exchange, and nothing else.
 
+**Status: parked.** The channel lists in [src/venues/channels.ts](src/venues/channels.ts) are
+provisional: two symbols per venue (BTC and ETH), each with a trade channel and a book channel.
+
 ## Core Functionality
 
-- **Multi-venue WebSocket connections** — one socket per (venue, endpoint, socket key), created on demand
-- **Verbatim relay** — payloads are published exactly as received; normalising across venues is a downstream concern, and a byte-faithful archive is what makes it possible later
+- **Multi-venue WebSocket connections** — one socket per (venue, endpoint, socket key), opened when its first channel is subscribed
+- **Byte-faithful relay** — a frame is parsed only to ask its venue whether it is market data; what is published is the received buffer, so number text, escapes and whitespace stay as the venue sent them. Control frames (acks, heartbeats, status) are logged, not published; a frame that is not JSON is logged and dropped
 - **Venue routing keys** — the routing key is the venue name (`okx`). Anything finer is venue-local vocabulary a binding cannot express portably, and it is already in the payload
-- **Automatic reconnection** with exponential backoff, and resubscription of tracked channels
-- **Backpressure** — a paused publisher pauses every socket across every venue
-- **Health monitoring** and graceful shutdown
+- **Subscriptions** — each socket sends one subscribe at a time and waits for its ack (5 s). An unconfirmed subscribe is retried on the same socket, from 1 s doubling to 60 s; a channel the venue refuses is logged and dropped. Every socket that opens, a reconnected replacement included, subscribes every channel assigned to it that has not been refused
+- **Reconnection** — only a socket's close schedules its replacement, after a backoff from 200 ms doubling to 15 s (±20% jitter), reset once a socket has stayed open for 30 s; a handshake refused with HTTP 418 or 429 backs off at 15 s at once. A handshake must complete within 10 s, and an open socket that sends nothing in the 30 s after a ping is terminated (a paused socket is not judged)
+- **Backpressure** — while the AMQP channel's write buffer is full, every socket stops reading, including one that opens meanwhile, and resumes when it drains. A paused socket answers no ping from its venue; a pause lasting over 30 s is logged as a warning
+- **Shutdown** — on SIGTERM or SIGINT every socket is paused and terminated and no socket is made or replaced; frames already read may still be published. A publish failing because the broker channel or connection is closed shuts the service down; the compose file's `restart: unless-stopped` starts it again
+- **Health** — port 3000 answers `200` while a frame has been published in the last 30 s (60 s after startup, before the first), `503` otherwise, with `{healthy, messages, startedAt, lastMessageAt}`
 
-**Public market data only.** Private streams need one pipeline per account and belong to a separate service, so hoarder carries no credential handling of any kind.
+**Public market data only.** Hoarder subscribes to public channels and carries no venue credentials of any kind.
 
 ## Adding a venue
 
@@ -25,19 +31,16 @@ Currently implemented:
 
 | Venue | Endpoint | Channel syntax | Ack correlates on |
 |---|---|---|---|
-| `binance` | spot | raw stream name — `btcusdt@aggTrade` | request id only |
-| `bybit` | v5 linear | raw topic — `publicTrade.BTCUSDT` | `req_id` only |
-| `okx` | v5 public | `channel:instId` — `trades:BTC-USDT` | echoed arg |
-| `kraken` | v2 public | `channel:symbol` — `trade:BTC/USD` | echoed channel + symbol |
+| `binance` | spot, `wss://stream.binance.com:9443/ws` | raw stream name — `btcusdt@aggTrade` | request id, derived from the channel |
+| `bybit` | v5 linear, `wss://stream.bybit.com/v5/public/linear` | raw topic — `publicTrade.BTCUSDT` | `req_id`, set to the topic |
+| `okx` | v5 public, `wss://ws.okx.com:8443/ws/v5/public` | `channel:instId` — `trades:BTC-USDT` | echoed arg (`channel` + `instId`) |
+| `kraken` | v2 public, `wss://ws.kraken.com/v2` | `channel:symbol` — `trade:BTC/USD` | echoed `channel` + `symbol` |
 
-Every adapter was written from traffic captured against the live endpoint, and the frames in `tests/venues-protocols.test.ts` are those captures.
+Binance futures is not collected; for its endpoint, see [BINANCE.md](../../docs/venues/BINANCE.md).
 
-Two protocol traps worth knowing before adding a venue:
+Where an ack does not name the channel (Binance, Bybit), the adapter derives the request id from the channel and recomputes it when matching, so nothing is held between send and ack. Where a rejection names no channel (OKX, Kraken), it is taken as the refusal of the channel being awaited, which is unambiguous because a socket has one ack awaited at a time. Binance acknowledges a stream that does not exist exactly as a real one, so a Binance channel counts as confirmed once its request is acknowledged, whether or not data follows.
 
-- **Binance does not validate a subscription.** `btcusdt@nonsense` is answered `{"result":null,"id":…}`, identically to a real stream. A typo in the channel list produces silence, not an error. OKX, Bybit and Kraken all reject unknown channels explicitly.
-- **Binance and Bybit acks do not name the channel.** Correlation is by request id, so both adapters derive that id deterministically from the channel and recompute it when matching — no state between send and ack. Binance additionally constrains the id to `^[a-zA-Z0-9-_]{1,36}$`, which the raw channel violates.
-
-Binance **futures** (`fstream.binance.com`) is not implemented: it accepts a subscribe and then delivers nothing from our network, on both the `/ws` and combined-stream paths, while spot streams normally and the futures REST API answers. It needs verifying from wherever hoarder actually runs before being added.
+The frames in `tests/venues-protocols.test.ts` are trimmed from frames captured against the live endpoints. For each venue's WebSocket protocol, see the *WebSocket* section of its doc: [BINANCE.md](../../docs/venues/BINANCE.md), [BYBIT.md](../../docs/venues/BYBIT.md), [OKX.md](../../docs/venues/OKX.md), [KRAKEN.md](../../docs/venues/KRAKEN.md).
 
 ## Development
 
@@ -59,6 +62,10 @@ Requires RabbitMQ — see [infra packs](../../modules/infra/README.md).
 **What each venue subscribes to is not configurable** — the lists live in [src/venues/channels.ts](src/venues/channels.ts). They change rarely and never per host, so a rebuild is the right cost for changing them, and the collected set stays legible in one file instead of spread across deployment envs.
 
 ## Message Envelope
+
+Every market-data frame is published to the topic exchange `hoarder`, which hoarder declares at
+startup, with the venue name as routing key, `contentType` `application/json`, persistent, and the
+frame as received as body.
 
 | Header | Meaning |
 |---|---|

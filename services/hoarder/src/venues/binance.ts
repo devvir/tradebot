@@ -5,19 +5,13 @@ const WS_URL = 'wss://stream.binance.com:9443/ws';
 /**
  * Binance spot only (`wss://stream.binance.com:9443/ws`); Binance futures is
  * not collected. Channels are raw stream names (`btcusdt@aggTrade`), sent one
- * SUBSCRIBE frame at a time on a single socket. For the venue's streams and
- * endpoints, see the *WebSocket* section of `docs/venues/BINANCE.md`.
+ * SUBSCRIBE frame each on a single socket, with a request id derived from the
+ * channel.
  *
- * Observed against the live endpoint:
- *   → {"method":"SUBSCRIBE","params":["btcusdt@aggTrade"],"id":"btcusdt-aggTrade"}
- *   ← {"result":null,"id":"btcusdt-aggTrade"}
- *   ← {"e":"aggTrade","E":…,"s":"BTCUSDT",…}
- *
- * **The ack does not name the channel and does not validate it.** Subscribing
- * to `btcusdt@nonsense` is answered `{"result":null,…}` exactly like a real
- * stream, so a typo here fails silently — the socket simply never carries that
- * data. Confirmation is by request id only; treat "subscribed" as "the request
- * was well-formed", not "the stream exists".
+ * Binance acknowledges a stream that does not exist exactly as a real one, so
+ * a channel here counts as confirmed once its request is acknowledged, whether
+ * or not data follows. For the venue's endpoints, frames and acks, see the
+ * *WebSocket* section of `docs/venues/BINANCE.md`.
  */
 export const binance: Venue = {
   name: 'binance',
@@ -75,10 +69,9 @@ const frame = (method: 'SUBSCRIBE' | 'UNSUBSCRIBE', channel: string): string =>
   JSON.stringify({ method, params: [channel], id: requestId(channel) });
 
 /**
- * Binance rejects a request id that is not an integer or a string matching
- * `^[a-zA-Z0-9-_]{1,36}$` — verified: sending the raw channel closes the socket
- * with 1008, because `@` is not allowed. Substituting the offending characters
- * keeps the id derivable from the channel and inside the 36-char limit.
+ * A request id Binance accepts (its rule is in `docs/venues/BINANCE.md`): every
+ * character outside `[a-zA-Z0-9_-]` becomes `-`, and the id is cut to 36
+ * characters, so it stays derivable from the channel.
  */
 const requestId = (channel: string): string =>
   channel.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 36);

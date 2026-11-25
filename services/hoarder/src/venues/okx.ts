@@ -11,8 +11,8 @@ const WS_URL = 'wss://ws.okx.com:8443/ws/v5/public';
  *   ← {"event":"subscribe","arg":{"channel":"trades","instId":"BTC-USDT"},"connId":"…"}
  *   ← {"arg":{"channel":"trades","instId":"BTC-USDT"},"data":[{…}]}
  *
- * Unlike Binance, OKX validates: an unknown channel is answered
- * `{"event":"error","code":"60018",…}` rather than a cheerful ack.
+ * OKX validates a subscription: an unknown channel is answered
+ * `{"event":"error","code":"60018",…}`.
  */
 export const okx: Venue = {
   name: 'okx',

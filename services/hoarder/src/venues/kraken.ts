@@ -3,19 +3,11 @@ import type { AckResult, Venue } from './types';
 const WS_URL = 'wss://ws.kraken.com/v2';
 
 /**
- * Kraken v2 public. A subscription is a channel plus a symbol list, so channels
- * are written `<channel>:<symbol>` (e.g. `trade:BTC/USD`) — one symbol each, so
- * every subscription acks independently.
- *
- * Observed against the live endpoint:
- *   → {"method":"subscribe","params":{"channel":"trade","symbol":["BTC/USD"]}}
- *   ← {"channel":"status","type":"update","data":[{"version":"2.0.10",…}]}   (on connect)
- *   ← {"method":"subscribe","result":{"channel":"trade","symbol":"BTC/USD"},"success":true,…}
- *   ← {"channel":"trade","type":"update","data":[{…}]}
- *   ← {"channel":"heartbeat"}                                                (periodic)
- *
- * Kraken validates: an unknown channel answers
- * `{"error":"Subscription name invalid","success":false}`.
+ * Kraken v2 public (`wss://ws.kraken.com/v2`). A subscription is a channel plus
+ * a symbol list, so channels are written `<channel>:<symbol>` (e.g.
+ * `trade:BTC/USD`) and each is sent with one symbol, so every subscription is
+ * acknowledged on its own. For the venue's frames, acks and errors, see the
+ * *WebSocket* section of `docs/venues/KRAKEN.md`.
  */
 export const kraken: Venue = {
   name: 'kraken',
