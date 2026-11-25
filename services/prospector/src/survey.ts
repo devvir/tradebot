@@ -92,7 +92,7 @@ export const surveyVenue = async (
    * Read here rather than at startup, so a file excluded by hand takes effect on
    * the next job instead of the next deploy.
    */
-  loadExclusions(db, adapter.name, venueId);
+  loadExclusions(db, adapter, venueId);
 
   /**
    * **One run, reached two ways.** A full survey walks the venue's keyspace; a
@@ -1155,7 +1155,7 @@ const catalogued = (
     // that carries no date is not a file this catalog can place. The enumerated
     // known-bad files are checked before the adapter's rules, so a wrong file
     // never enters the catalog and nothing built on it has to know.
-    if (isExcluded(adapter.name, path)) continue;
+    if (isExcluded(adapter, path)) continue;
 
     if (adapter.accepts && ! adapter.accepts(path)) continue;
 

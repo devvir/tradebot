@@ -17,6 +17,7 @@ import type { Adapter, ListingContext, RunKind, Scanner } from './types';
  */
 export const listing = (adapter: Adapter<Scanner<ListingContext>>): ListingContext => ({
   name:    adapter.name,
+  host:    adapter.host,
   base:    adapter.base,
   keyRoot: adapter.keyRoot,
   accepts: adapter.accepts,

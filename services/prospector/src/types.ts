@@ -321,6 +321,9 @@ export interface ListingContext {
   /** Names the venue in logs and in exclusion lookups. */
   name:    string;
 
+  /** Which of the venue's servers this is, where it has several; with `name`, keys the exclusion lookups. */
+  host?:   string;
+
   /** Where the venue is — listed, probed and downloaded alike — and the prefix every key shares. */
   base:    string;
   keyRoot: string;

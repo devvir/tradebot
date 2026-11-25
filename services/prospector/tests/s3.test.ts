@@ -415,14 +415,14 @@ describe('the enumerated exclusions', () => {
 
     expect(_test_catalogable(listing(binance), path)).toBe(true);
 
-    _test_seed('binance', [path]);
+    _test_seed(binance, [path]);
 
     expect(_test_catalogable(listing(binance), path)).toBe(false);
   });
 
   /** Exactly, not as a prefix — describable rules belong in `accepts`. */
   it('matches the whole path and nothing near it', () => {
-    _test_seed('binance', ['data/spot/monthly/trades/BTCUSDT/BTCUSDT-trades-2025-03.zip']);
+    _test_seed(binance, ['data/spot/monthly/trades/BTCUSDT/BTCUSDT-trades-2025-03.zip']);
 
     expect(_test_catalogable(listing(binance),
       'data/spot/monthly/trades/BTCUSDT/BTCUSDT-trades-2025-04.zip')).toBe(true);
@@ -433,14 +433,14 @@ describe('the enumerated exclusions', () => {
   it('is kept apart per venue', () => {
     const path = 'data/spot/daily/trades/A/A-trades-2024-07-03.zip';
 
-    _test_seed('binance', [path]);
+    _test_seed(binance, [path]);
 
     expect(_test_accepted(listing(kucoin), `data/${path}`)).toBe(true);
   });
 
   /** The path is the one the catalog stores, so the root comes off first. */
   it('is matched against the stored path, not the raw key', () => {
-    _test_seed('kucoin', ['spot/daily/trades/A/A-trades-2024-07-03.zip']);
+    _test_seed(kucoin, ['spot/daily/trades/A/A-trades-2024-07-03.zip']);
 
     expect(_test_catalogable(listing(kucoin),
       'data/spot/daily/trades/A/A-trades-2024-07-03.zip')).toBe(false);

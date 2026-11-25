@@ -135,7 +135,7 @@ export const catalogable = (context: ListingContext, key: string): boolean =>
 export const accepted = (context: ListingContext, key: string): boolean => {
   const path = relative(context, key);
 
-  if (isExcluded(context.name, path)) return false;
+  if (isExcluded(context, path)) return false;
 
   return ! context.accepts || context.accepts(path);
 };

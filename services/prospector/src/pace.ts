@@ -9,7 +9,7 @@ import type { Adapter, PaceState, Pacing, Rates, Ticketing } from './types';
  * the pair, or two servers share a limiter and a log line cannot say which of
  * them refused.
  */
-export const labelOf = (adapter: Adapter): string =>
+export const labelOf = (adapter: Pick<Adapter, 'name' | 'host'>): string =>
   adapter.host ? `${adapter.name}/${adapter.host}` : adapter.name;
 
 /**
