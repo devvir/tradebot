@@ -1,506 +1,484 @@
 # Stocker partitions
 
-Every input format stocker reads, by dataset: what a raw file looks like and how it becomes the
-canonical table. The canonical schemas, and the machinery every format shares (unit inference,
-`TRY_CAST`, empty and malformed files, spill), are in [STOCKER.md](STOCKER.md); terms are in
-[VOCABULARY.md](../VOCABULARY.md).
+The series map, venue by venue: which entry of `src/schema/series.ts` reads each format, how its
+columns become the canonical table, and which series options it declares. The canonical tables and
+their columns are in [STOCKER.md](STOCKER.md#canonical-tables); the machinery every format shares —
+unit inference, `TRY_CAST`, empty and malformed files, spill — is the rest of
+[STOCKER.md](STOCKER.md). What a venue's files hold, and the evidence for each reading below, is the
+venue's own doc, linked as **why**.
 
-A format is described by what is in the file, never by where the file came from. Stocker knows a
-partition's attributes — venue, market, dataset, variant, bundle, grain, month — each file's
-instrument, and the files' contents; anything else is not an input. Where a format depends on the
-instrument's **margining** (linear or inverse), that is read from the venue's symbol
-(`schema/margin.ts`), and the same answer fills the canonical `margin` column.
+A series knows a partition's attributes — venue, market, dataset, variant, bundle, grain, month —
+each file's instrument and the files' contents; nothing else is an input. Where a format depends on
+the instrument's margining, that is read from the venue's symbol (`schema/margin.ts`), and the same
+answer fills the canonical `margin` column.
 
-**How to read the tables.** One row per format. A dataset whose format changed over time has one row
-per era, with the dates it holds for. `—` means the venue publishes no such column, and the canonical
-field is NULL. Every row is the **archives** source today; REST and WS formats join as rows of their
-own.
+Every entry is written from a decoded file of its format, except those marked **unverified — no
+file decoded**, which are mapped from the columns the venue documents.
+
+**How to read the tables.** One row per format, and one row per era where a dataset's format
+changed. `—` means the file has no such column, and the canonical field is NULL.
 
 | Column | Meaning |
 |---|---|
-| Hdr | `yes` mapped by column name · `no` positional, every column declared in order · `grew` positional, because a header appeared partway through history and reads as a dropped row |
-| Sym | whether rows name the instrument. Where they do, a file filed under the wrong symbol is provable from its contents; where they do not, only the path says what it is |
-| ts | the timestamp as written. The unit is inferred from the value ([STOCKER.md](STOCKER.md#time)) |
+| Hdr | `yes` mapped by column name · `no` positional, every column declared in order · `grew` positional, because a header appeared partway through history and drops as a row whose timestamp does not parse |
+| Sym | whether rows name the instrument. Where they do and a file can hold several, the series names the column (`instrument`) and the rows are split by it |
+| ts | the timestamp as written; its unit is inferred per value ([STOCKER.md](STOCKER.md#time)) |
+| Options | series options beyond the mapping: `margin`, `from`/`until` (the era), `spill`, `repeatsRows`, `utcOffsetHours`, `instrument` |
 
 ## Overview
 
 ### trades
 
-Canonical: `ts, tradeId, price, size, baseSize, quoteSize, side, buyerMaker`. `side` is the taker's,
-lowercase `buy`/`sell`.
+Into [`trades`](STOCKER.md#canonical-tables). `side` is the taker's, lowercased. Trades the catalog
+gives no variant are `aggregated=false`; binance's aggregated trades are `aggregated=true`.
 
-| Venue | Market | Era | File | Hdr | Sym | ts | Side | Size | Notes |
+| Venue | Market | Variant · era | File | Hdr | Sym | ts | Side | Size | Options · notes |
 |---|---|---|---|---|---|---|---|---|---|
-| binance | spot | all | zip · csv | no | no | int ms; **µs from 2025-01** | from `is_buyer_maker` (true → sell) | base · quote both published | |
-| binance | perp | linear | zip · csv | grew | no | int ms | from `is_buyer_maker` | base · quote both published | 4th column is `quote_qty` — see [details](#binance) |
-| binance | perp | inverse | zip · csv | grew | no | int ms | from `is_buyer_maker` | contracts; base published | 4th column is `base_qty` — **same position, opposite meaning** |
-| bybit | perp | all | csv.gz | yes | **yes** | float s, µs | `Buy`/`Sell` | base on linear, **quote on inverse** — the leg filled follows the margining | gained `RPI` 2025-04 |
-| bybit | spot | all | csv.gz | yes | no | int ms | `buy`/`sell` | base | gained `rpi` 2025-04 |
-| bybit | option | all | zip · csv | yes | **yes** | int ms | `Buy`/`Sell`, in `direction` | `amount`, as published — which leg it is, not settled | an underlying's whole book a day: **several instruments**; iv, index and mark price per row are not kept |
+| binance | spot | all | zip · csv | no | no | int epoch, unit inferred per value ([why](../venues/BINANCE.md#spot-timestamps-change-unit-in-2025-01)) | from `is_buyer_maker` (true → sell) | base · quote | |
+| binance | perp | all | zip · csv | grew | no | int ms | from `is_buyer_maker` | base · quote | `margin: linear`; 4th column `quote_qty` |
+| binance | perp | all | zip · csv | grew | no | int ms | from `is_buyer_maker` | contracts; base | `margin: inverse`; 4th column `base_qty` — **same position, opposite meaning** |
+| binance | spot | aggregated | zip · csv | no | no | int epoch, unit inferred per value ([why](../venues/BINANCE.md#spot-timestamps-change-unit-in-2025-01)) | from `is_buyer_maker` | base | 8 columns |
+| binance | perp | aggregated | zip · csv | grew | no | int ms | from `is_buyer_maker` | base | `margin: linear`; 7 columns |
+| binance | perp | aggregated | zip · csv | grew | no | int ms | from `is_buyer_maker` | contracts, no leg | `margin: inverse`; 7 columns |
+| bybit | perp | all | csv.gz | yes | yes | float s | `Buy`/`Sell` | base | `margin: linear` |
+| bybit | perp | all | csv.gz | yes | yes | float s | `Buy`/`Sell` | **quote** | `margin: inverse` |
+| bybit | spot | all | csv.gz | yes | no | int ms | `buy`/`sell` | base | |
+| bybit | option | all | zip · csv | yes | yes | int ms | `direction` | as published, no leg | `instrument: instrument_name` |
 | kucoin | spot | all | zip · csv | yes | no | int ms | `BUY`/`SELL` | base | |
-| kucoin | perp | all | zip · csv | yes | no | int ms | `BUY`/`SELL` | contracts | |
-| htx | spot | before 2026-02-01 | zip · csv | no | no | int ms | `buy`/`sell` | base | 5 columns |
-| htx | perp, future | before 2026-02-01, inverse | zip · csv | no | no | int ms | `buy`/`sell` | contracts; base published | 6 columns — see [details](#htx) |
-| htx | perp, future | before 2026-02-01, linear | zip · csv | no | no | int ms | `buy`/`sell` | contracts; base · quote published | 7 columns |
-| htx | option | all (ended 2021-06) | zip · csv | no | no | int ms | `buy`/`sell` | contracts; base · quote published | the linear contract's 7 columns; the quote leg is the premium paid |
-| htx | spot | from 2026-02-01 | zip · csv | yes | **yes** | int ms | `buy`/`sell` | base | |
-| htx | perp, future | from 2026-02-01 | zip · csv | yes | **yes** | int ms | `buy`/`sell` | contracts | |
-| gate | spot | all | csv.gz | no | no | float s, µs | `1`/`2` (1 = buy, by price impact) | base | rows in **descending** time |
-| gate | perp | all | csv.gz | no | no | float s, µs | **sign of size** (negative = sell) | unsigned after `abs` | a file wider than 4 columns is refused — see [details](#gate) |
-| okx | spot, perp | all | zip · csv | yes | **yes** | int ms | `buy`/`BUY`, by year | base on spot, contracts on perp | perp files from 2025-11 carry `source`, not kept |
-| okx | future | all | zip · csv | yes | **yes** | int ms | `buy`/`BUY` | as published | one file holds a whole expiry chain: **several instruments** |
-| okx | option | all | zip · csv | yes | **yes** | int ms | `buy`/`sell` | contracts | a family's whole chain in a file, or every option; gained `source` by 2026 |
-| bitget | spot, perp, future | all | zip · csv, a day in parts, a month whole | yes | no | int ms; **whole seconds** in later files | `buy`/`sell` | base · quote both published | spills back; every part has its own header |
+| kucoin | perp | all | zip · csv | yes | no | int ms | `BUY`/`SELL` | contracts, no leg | |
+| htx | spot | before 2026-02 | zip · csv | no | no | int ms | `buy`/`sell` | base | `until: 2026-02`, `spill: back`; 5 columns |
+| htx | perp, future | before 2026-02 | zip · csv | no | no | int ms | `buy`/`sell` | contracts; base | `margin: inverse`, `until`, `spill: back`; 6 columns |
+| htx | perp, future | before 2026-02 | zip · csv | no | no | int ms | `buy`/`sell` | contracts; base · quote | `margin: linear`, `until`, `spill: back`; 7 columns |
+| htx | option | before 2026-02 | zip · csv | no | no | int ms | `buy`/`sell` | contracts; base · quote | `until`, `spill: back`; the linear contract's 7 columns |
+| htx | spot | from 2026-02 | zip · csv | yes | yes | int ms | `buy`/`sell` | base | `from: 2026-02`, `spill: back` |
+| htx | perp, future | from 2026-02 | zip · csv | yes | yes | int ms | `buy`/`sell` | contracts, no leg | `from: 2026-02`, `spill: back` |
+| gate | spot | all | csv.gz | no | no | float s | `1` buy, `2` sell | base | rows in descending time |
+| gate | perp | all | csv.gz | no | no | float s | **sign of size** | `abs(size)`, no leg | a file wider than 4 columns is refused — see [gate](#gate) |
+| okx | spot | all | zip · csv | yes | yes | int ms | `buy` or `BUY` | base | `instrument`, `spill: back` |
+| okx | perp, future, option | all | zip · csv | yes | yes | int ms | `buy` or `BUY` | contracts, no leg | `instrument`, `spill: back`; perp 2021-10 holds each trade twice — see [okx](#okx) |
+| bitget | spot, perp, future | all | zip · csv | yes | no | int ms | `buy`/`sell` | base · quote | `spill: back` |
 
 ### klines
 
-Canonical: `ts, open, high, low, close, volume, quoteVolume, trades, takerBuyVolume,
-takerBuyQuote`. The interval is the variant; it is never a column.
+Into [`klines`](STOCKER.md#canonical-tables). The interval is always the catalog's variant, written
+as the `interval=` level, and never a column.
 
-| Venue | Market | Era | File | Hdr | Sym | ts | Column order | Volume | Interval from | Notes |
-|---|---|---|---|---|---|---|---|---|---|---|
-| binance | spot | all | zip · csv | no | no | int ms; **µs from 2025-01** | OHLC | base, quote, trades, taker buy both legs | variant | 12 columns; `close_time` dropped |
-| binance | perp | all | zip · csv | grew | no | int ms | OHLC | base, quote, trades, taker buy both legs | variant | same 12 columns |
-| bybit | perp (MT4) | all | csv.gz | no | no | text `2024.11.01 00:00`, **UTC+3** | OHLC | one | the catalog's variant (from `15` in the filename) | declared UTC+3, spills back — see [details](#bybit) |
-| kucoin | spot | all | zip · csv | yes | no | int s | **O C H L** | base, quote (`turnover`) | variant | by name, so the order costs nothing |
-| kucoin | perp | all | zip · csv | yes | no | int ms | OHLC | one | variant | `1d` files are malformed — see [details](#kucoin) |
-| htx | spot | before 2026-02-01 | zip · csv | no | no | int s | **O C H L** | **`vol` is quote, `amount` base** | variant | names invert against the later era |
-| htx | perp, future, option | before 2026-02-01 | zip · csv | no | no | int s | **O C H L** | `vol` contracts, `amount` base | variant | two-sided, by the venue's definition — see [details](#htx) |
-| htx | spot, perp, future | from 2026-02-01 | zip · csv | yes | **yes** | int s | OHLC | `vol` (base on spot, contracts on contracts), quote `volCcyQuote` | variant | |
-| gate | spot, perp | all | csv.gz | no | no | int s | **`volume, close, high, low, open`** | base | variant | open and close reversed — see [details](#gate) |
-| gate | tradfi | all | csv.gz | no | no | int s | **`close, high, low, open`** | none published | variant | the spot candle less its volume |
-| okx | spot, perp, future, option | all | zip · csv | yes | **yes** | int ms | OHLC | `vol` (base on spot, contracts on contracts); quote from `vol_quote`, and on spot from `vol_ccy` where that is empty | the catalog's `1m`, named nowhere in a file | spills back; literal `None` in volume columns; exact repeated rows dropped |
-| bitget | spot, perp, future | two layouts, interleaved | zip · **xlsx** in a day's file, **csv** in a month's | yes | no | int s or ms | OHLC | base, quote | **declared `1m`**, named nowhere | spills back; see [details](#bitget) |
+| Venue | Market | Era | File | Hdr | Sym | ts | Column order | Volume → `volume`, `quoteVolume` | Options · notes |
+|---|---|---|---|---|---|---|---|---|---|
+| binance | spot | all | zip · csv | no | no | int epoch, unit inferred per value ([why](../venues/BINANCE.md#spot-timestamps-change-unit-in-2025-01)) | OHLC | base, quote; also trades and taker buy, both legs | 12 columns |
+| binance | perp | all | zip · csv | grew | no | int ms | OHLC | the same | 12 columns |
+| bybit | perp (MT4) | all | csv.gz | no | no | text `2024.11.01 00:00` | OHLC | base, — | `utcOffsetHours: 3`, `spill: back` — see [bybit](#bybit) |
+| kucoin | spot | all | zip · csv | yes | no | int s | O C H L, by name | `volume`, `turnover` | |
+| kucoin | perp | all | zip · csv | yes | no | int ms | OHLC | `volume`, — | `1d` files fail the build — see [kucoin](#kucoin) |
+| htx | spot | before 2026-02 | zip · csv | no | no | int s | **O C H L** | `amount`, `vol` | `until`, `spill: back` |
+| htx | perp, future, option | before 2026-02 | zip · csv | no | no | int s | **O C H L** | `vol` (contracts), — | `until`, `spill: back` |
+| htx | spot, perp, future | from 2026-02 | zip · csv | yes | yes | int s | OHLC | `vol`, `volCcyQuote` | `from`, `spill: back` |
+| gate | spot, perp | all | csv.gz | no | no | int s | **`volume, close, high, low, open`** | base, — | see [gate](#gate) |
+| gate | tradfi | all | csv.gz | no | no | int s | **`close, high, low, open`** | — | |
+| okx | spot, perp, future, option | all | zip · csv | yes | yes | int ms | OHLC | `vol`; on spot `vol_quote`, else `vol_ccy`; elsewhere `vol_quote` | `instrument`, `spill: back`, `repeatsRows` |
+| bitget | spot, perp, future | all | zip · xlsx a day, csv a month | yes | no | int epoch | OHLC | `basevolume`, `usdtvolume` | `spill: back` |
 
 ### Reference prices — markPrice · indexPrice · premiumIndex
 
-Canonical `markPrice`/`indexPrice`: `ts, price, open, high, low, close`; `premiumIndex`: `ts, open,
-high, low, close`. A bar of a reference price is OHLC; a tick of one is `price`.
+Into [`markPrice`, `indexPrice` and `premiumIndex`](STOCKER.md#canonical-tables), the table named as
+the dataset. A bar fills the OHLC columns and carries the catalog's variant as `interval=`; a tick
+fills `price` and has no interval.
 
-| Venue | Dataset | Market | File | Hdr | Sym | ts | Shape | Notes |
+| Venue | Dataset | Market | File | Hdr | Sym | ts | Shape | Options · notes |
 |---|---|---|---|---|---|---|---|---|
-| binance | mark, index, premium | perp | zip · csv | grew | no | int ms | the 12-column kline shape | volume always 0, `count` is a sample count |
-| bybit | premiumIndex | perp | csv.gz | yes | ? | `start_at` | OHLC bars | |
-| bybit | indexPrice | spot | csv.gz | yes | ? | `start_at` | OHLC bars | |
+| binance | mark, index, premium | perp | zip · csv | grew | no | int ms | the 12-column kline; OHLC kept | volume is 0 and `count` a sample count, so neither is read |
+| bybit | premiumIndex | perp | csv.gz | yes | unverified | `start_at` | OHLC bars, by name | **unverified — no file decoded** |
+| bybit | indexPrice | spot | csv.gz | yes | unverified | `start_at` | OHLC bars, by name | **unverified — no file decoded** |
 | kucoin | mark, index | perp | zip · csv | yes | no | int ms | OHLC bars | |
-| htx | mark, index | perp | zip · csv | yes | **yes** | int s | OHLC bars | before 2026-02-01: headerless O C H L, no symbol — mapped from the published header names, not yet seen in a file |
-| htx | mark | future | zip · csv | yes | **yes** | int s | OHLC bars | before 2026-02-01: O C H L by position, no symbol, **some files with a header line and some without** |
-| gate | markPrice | perp | csv.gz | no | no | float s, µs | ticks: `ts` and three prices | only the first price is identified |
-| gate | indexPrice | spot | plain text, **market** bundle | no | **yes** | **the file's name** | ticks: a line an instrument, `<symbol> <price>` | an hour apart; see [details](#gate) |
+| htx | mark, index | perp | zip · csv | no | no | int s | `ts, open, close, high, low` by position | `until: 2026-02`, `spill: back`; **unverified — no file decoded** |
+| htx | mark | future | zip · csv | no | no | int s | `ts, open, close, high, low` by position | `until: 2026-02`, `spill: back`; a header line in some files drops as a row whose time does not parse |
+| htx | mark, index | perp | zip · csv | yes | yes | int s | OHLC bars | `from: 2026-02`, `spill: back` |
+| htx | mark | future | zip · csv | yes | yes | int s | OHLC bars | `from: 2026-02`, `spill: back` |
+| gate | markPrice | perp | csv.gz | no | no | float s | ticks: `ts` and three prices | only the first is read, as `price` |
+| gate | indexPrice | spot | plain text, `@` | no | yes | **the file's name** | ticks: `<symbol> <price>` a line | `instrument: name` — see [gate](#gate) |
 
 ### quotes
 
-Canonical: `ts, bidPrice, bidSize, askPrice, askSize` — level 1 of a book.
+Into [`quotes`](STOCKER.md#canonical-tables), level 1 of a book.
 
-| Venue | Market | File | Hdr | Sym | ts | Notes |
+| Venue | Market | File | Hdr | Sym | ts | Options · notes |
 |---|---|---|---|---|---|---|
-| binance | perp | zip · csv | yes | no | int ms (`transaction_time`) | `bookTicker`; the archive ended |
-| bitget | spot, perp, future | zip · **xlsx** in a day's file, **csv** in a month's | yes | no | int s | missing quote is **`-999999`** → NULL; spills back |
+| binance | perp | zip · csv | yes | no | int ms (`transaction_time`) | `bookTicker` |
+| bitget | spot, perp, future | zip · xlsx a day, csv a month | yes | no | int s | `-999999` → NULL; `spill: back` |
 
 ### funding
 
-Canonical: `ts, rate, intervalHours`, under `kind=realised` (charged) or `kind=predicted` (the
-running estimate).
+Into [`funding`](STOCKER.md#canonical-tables), under `kind=realised` (charged) or `kind=predicted`
+(the running estimate), the catalog's variant.
 
-| Venue | Kind | Bundle | File | Hdr | Sym | ts | Notes |
+| Venue | Kind | Bundle | File | Hdr | Sym | ts | Options · notes |
 |---|---|---|---|---|---|---|---|
 | binance | realised | instrument | zip · csv | yes | no | int ms (`calc_time`) | carries `funding_interval_hours` |
-| kucoin | realised | instrument | zip · csv | yes | **yes** | int ms | |
-| htx | realised | instrument | zip · csv | yes | **yes** | int ms | |
+| kucoin | realised | instrument | zip · csv | yes | yes | int ms | |
+| htx | realised | instrument | zip · csv | yes | yes | int ms | `from: 2026-02`, `spill: back` |
 | gate | realised | instrument | csv.gz | no | no | int s | `ts, rate` |
-| gate | predicted | instrument | csv.gz | no | no | int s | `ts, rate` and six unidentified columns |
-| okx | realised | **market** | zip · csv | yes | **yes** | int ms | daily, every swap in one file — split per instrument |
+| gate | predicted | instrument | csv.gz | no | no | int s | `ts, rate` and six columns not read |
+| okx | realised | `@` daily; instrument monthly, preferred where present | zip · csv | yes | yes | int ms | `instrument`, `spill: back` — see [okx](#okx) |
 
 ### The rest
 
-| Venue | Dataset | Market | File | Hdr | Sym | ts | Notes |
+| Venue | Dataset → table | Market | File | Hdr | Sym | ts | Options · notes |
 |---|---|---|---|---|---|---|---|
-| binance | openInterest | perp | zip · csv | yes | **yes** | **datetime text** | `metrics`: OI, OI value, two of four ratios mapped |
-| binance | liquidations | perp, future | zip · csv | yes | no | int ms | `liquidationSnapshot`, one shape on every line of futures; **every row written twice**, written once here |
-| binance | volatilityIndex | option | zip · csv | yes | **yes** | int ms (`calc_time`) | `BVOLIndex`, a value a second → `volatilityIndex.value` |
-| okx | borrowing | spot | zip · csv | yes | currency | int ms | **market** bundle, keyed by currency rather than instrument — split per currency |
+| binance | openInterest → `openInterest` | perp | zip · csv | yes | yes | **datetime text** | `metrics`: two of its four ratios are mapped |
+| binance | liquidations → `liquidations` | perp, future | zip · csv | yes | no | int ms | `liquidationSnapshot`; `repeatsRows` |
+| okx | borrowing → `borrowing` | spot | zip · csv | yes | currency | int ms | `@`, keyed by currency: `instrument: currency_name`, `spill: back` |
 
-### orderBook · orderBookSnapshot
+### orderBook · orderBookSnapshot · orderBookBands
 
-A book published as an image and the changes since is `orderBook`: `ts, action, side, price, size,
-orderCount, sequence`, a row a level ([what `action` says](STOCKER.md#canonical-tables)). A book
-published whole at each tick is `orderBookSnapshot`: `ts, asks, bids, sequence`, a row a message, each
-side a list of `[price, size]`. A book summed into bands either side of the mid is `orderBookBands`:
-`ts, percentage, depth, notional`, a row a band. The catalog's variant is the kind and the depth, and
-both are levels of the path, the kind first, under one dataset:
-`dataset=orderBook/kind=incremental/depth=400`.
+Into the [book tables](STOCKER.md#canonical-tables), all three under `dataset=orderBook`. The catalog's
+variant is the kind and the depth, both levels of the path, the kind first:
+`kind=incremental/depth=400`.
 
-| Venue | Market | Kind · depth | File | Read as | Sym | ts | Action | Sequence | Notes |
+| Venue | Market | Kind · depth | File | Read as | Sym | ts | `action` | `sequence` | Options · notes |
 |---|---|---|---|---|---|---|---|---|---|
-| okx | spot, perp, future, option | incremental · 400, 5000 | tar.gz · JSON a line | ndjson | **yes** | int ms | `snapshot` → snapshot, `update` → set | — | a level is `[price, size, orders]`; an image a minute at 400 levels, padded with price-0 levels that are dropped; **cuts at UTC midnight**, unlike the rest of okx |
-| htx | spot (400), perp, future (150) | incremental | tar.gz · JSON a line | ndjson | yes, unused | int µs | `snapshot` → snapshot, `update` → set | — | okx's record with a level of two values; one image as the file opens; spills back |
-| bybit | perp | incremental · 200, 500 | zip · JSON a line | ndjson | yes, unused | int ms | `snapshot` → snapshot, `delta` → set | `data.seq` | levels under `data.b` / `data.a` |
-| gate | spot | incremental · full | csv.gz, an hour a part | csv, by position | no | float s, tenths | as published: `set`, `make`, `take` | the id | `ts, side, action, price, amount, id, merged`; side `1` ask, `2` bid |
-| gate | perp, future | incremental · full | csv.gz, an hour a part | csv, by position | no | float s, tenths | as published | the id | `ts, action, price, size, id, merged`; **a negative size is an ask** |
+| okx | spot, perp, future, option | incremental · 400, 5000 | tar.gz · JSON a line | `ndjson` | yes | int ms | `snapshot` → snapshot, `update` → set | — | `instrument: instId`; levels of price 0 dropped; `orderCount` from the level's third value; **no spill** |
+| htx | spot, perp, future | incremental | tar.gz · JSON a line | `ndjson` | yes, not read | int µs | `snapshot` → snapshot, `update` → set | — | `spill: back` |
+| bybit | perp | incremental · 200, 500 | zip · JSON a line | `ndjson` | yes, not read | int ms | `snapshot` → snapshot, `delta` → set | `data.seq` | |
+| gate | spot | incremental · full | csv.gz, an hour a part | `csv`, by position | no | float s, tenths | as published: `set`, `make`, `take` | the id | side `1` ask, `2` bid |
+| gate | perp, future | incremental · full | csv.gz, an hour a part | `csv`, by position | no | float s, tenths | as published | the id | **a negative size is an ask**; the size stored is its magnitude |
 
-| Venue | Market | Kind · depth | File | Read as | ts | Sequence | Notes |
+| Venue | Market | Kind · depth | File | Read as | ts | `sequence` | Options · notes |
 |---|---|---|---|---|---|---|---|
-| gate | spot | snapshot · 20 | gz · JSON a line, an hour a part | ndjson | `current`: float s early, int ms later | `id` | a level is `[price, size]` |
-| gate | perp | snapshot · 20 | gz · JSON a line, an hour a part | ndjson | `current` | `id` | a level is `{p, s}`, stored as `[price, size]` |
-| kucoin | spot, perp | snapshot · 50 | zip · JSON a line under a one-word header | lines | int ms (`timestamp`) | `sequence`, futures only | **some files write every line twice**, written once here; lines are not in time order |
-| bitget | spot, perp, future | snapshot · 500 | zip · **xlsx** in a day's file, **csv** in a month's | xlsx · csv | int s | — | `timestamp, asks, bids`, a side JSON text in one cell; an image every 20 s; spills back |
-
-| Venue | Market | Kind · depth | File | Hdr | ts | Notes |
-|---|---|---|---|---|---|---|
-| binance | perp | bands · 5pct | zip · csv | yes | **datetime text** | `bookDepth`: ten bands a moment, ±1% to ±5% of the mid; a summary, none of the book's levels |
+| gate | spot | snapshot · 20 | gz · JSON a line, an hour a part | `ndjson` | `current`: float s early, int ms later | `id` | a level `[price, size]` |
+| gate | perp | snapshot · 20 | gz · JSON a line, an hour a part | `ndjson` | `current`, float s | `id` | a level `{p, s}`, stored as `[price, size]` |
+| kucoin | spot, perp | snapshot · 50 | zip · JSON a line under a one-word header | `lines` | int ms (`timestamp`) | `sequence`, futures only | `repeatsRows`; rows are not in time order |
+| bitget | spot, perp, future | snapshot · 500 | zip · xlsx a day, csv a month | `xlsx` or `csv`, off the file | int s | — | a side JSON text in one cell; `spill: back` |
+| binance | perp | bands · 5pct | zip · csv | `csv`, by name | **datetime text** | — | `bookDepth` → `orderBookBands` |
 
 ### Options — optionTicker · optionMarkPrice · volatilityIndex
 
-Canonical `optionTicker`: `ts, option, open, high, low, close, volume, quoteVolume, bidPrice, bidSize,
-bidIv, askPrice, askSize, askIv, markPrice, markIv, delta, gamma, vega, theta, openInterest,
-openInterestValue`. `optionMarkPrice`: `ts, option, open, high, low, close, delta, gamma, vega, theta`.
-`volatilityIndex`: `ts, value`.
+Into [`optionTicker`, `optionMarkPrice` and `volatilityIndex`](STOCKER.md#canonical-tables). In the
+first two the instrument is the underlying and `option` names the contract, so a vault file is an
+underlying's month.
 
-**The instrument of these two tables is the underlying, and `option` names the contract** — a file
-of the vault is an underlying's month, not a contract's.
-
-| Venue | Dataset → table | File | Hdr | Sym | ts | Notes |
+| Venue | Dataset → table | File | Hdr | Sym | ts | Options · notes |
 |---|---|---|---|---|---|---|
-| binance | optionSummary (1h) → optionTicker | zip · csv | yes | the option | `date` + `hour`, text | an underlying's file holds every option on it; fills every column |
-| gate | optionTicker (ticks, **market** bundle) → optionTicker | plain text, a file a minute | no | the option | **the file's name** | 13 unnamed values a line — see [details](#gate); fills the mark, the quote and the greeks; rows are split per underlying, the option's name up to its first hyphen |
-| bybit | markPrice (1m) → optionMarkPrice | zip · csv | yes | the option | int ms (`open_time`) | an underlying's file holds a day of every option on it; gamma is spelled `gama` |
-| binance | volatilityIndex (ticks) → volatilityIndex | zip · csv | yes | **yes** | int ms | listed under [the rest](#the-rest) |
+| binance | optionSummary (1h) → `optionTicker` | zip · csv | yes | the option | `date` + `hour`, text | `option = symbol`; fills every column |
+| gate | optionTicker (ticks, `@`) → `optionTicker` | plain text, a file a minute | no | the option | **the file's name** | `instrument`: the option's name up to its first hyphen — see [gate](#gate) |
+| bybit | markPrice (1m) → `optionMarkPrice` | zip · csv | yes | the option | int ms (`open_time`) | `option = instrument_name`; gamma is read from `gama` |
+| binance | volatilityIndex (ticks) → `volatilityIndex` | zip · csv | yes | yes | int ms (`calc_time`) | `BVOLIndex`: `value = index_value` |
 
 ## Telling formats apart inside one partition
 
 A partition can hold more than one format: different eras, or several shapes of one dataset filed
-under one canonical key. Each case has to be decided from the file, its name or the partition's
-attributes.
+under one key. Each is told apart from the file, its name or the partition's attributes.
 
 | Partition | Formats in it | Told apart by |
 |---|---|---|
-| binance perp trades | linear and inverse — the 4th column is quote on one, base on the other | the instrument's margining: inverse symbols are `<COIN>USD_<PERP or expiry>`, checked against every binance perpetual and future symbol in the catalog |
-| bybit perp trades | linear and inverse — `size` is base on one, quote on the other | the instrument's margining |
-| htx contract trades before 2026-02-01 | linear (7 columns) and inverse (6) | the instrument's margining |
-| binance spot trades, klines | ms through 2024-12, µs from 2025-01 | the value — unit inference |
-| binance futures datasets | headerless, then a header from 2021-01 … 2022-07 | positional read; the header line is a row whose timestamp does not parse |
-| bybit perp, spot trades | without and with `RPI` | by-name mapping absorbs it |
-| htx everything | `data/` shape before 2026-02-01, `historical_data/` shape from it | the date — a flat cut, no overlap |
-| bitget klines | two layouts in one month, never the same day twice | by-name mapping, case-insensitive (`baseVolume` = `basevolume`) |
+| binance perp trades | linear and inverse — the 4th column is quote on one, base on the other; aggregated, `qty` is base on one and contracts on the other | `margin`: inverse symbols are `<COIN>USD_<PERP or expiry>` |
+| bybit perp trades | linear and inverse — `size` is base on one, quote on the other | `margin` |
+| htx contract trades before 2026-02 | linear (7 columns) and inverse (6) | `margin` |
+| binance spot trades, aggregated trades, klines | a timestamp unit that changes in 2025-01 ([why](../venues/BINANCE.md#spot-timestamps-change-unit-in-2025-01)) | the value — the unit is inferred per value |
+| binance futures trades, aggregated trades, klines, mark, index and premium klines | headerless, then a header ([why](../venues/BINANCE.md#headers)) | positional read: the header line is a row whose timestamp does not parse |
+| bybit perp, spot trades | without and with `RPI` / `rpi` | mapping by name: the extra column is never read |
+| htx, every dataset | the `data/` shape before 2026-02, the `historical_data/` shape from it | `from`/`until`, on the file's month |
+| bitget klines | two layouts in one month, never the same day twice | mapping by name; DuckDB folds `baseVolume` and `basevolume` into one column |
 | bitget klines, quotes, books | a sheet in a day's file, text in a month's | the file itself: a sheet opens as a zip archive does |
-| okx spot klines | quote volume in `vol_ccy` early, in `vol_quote` and `vol_ccy` later | whichever holds a number |
+| okx spot klines | the quote volume in `vol_ccy` early, in `vol_quote` and `vol_ccy` later | whichever holds a number |
+| okx funding | the daily `@` bundle and the monthly per-instrument file | one entry reads both; the per-instrument rendering is preferred where both are on disk |
 
 ## Details
 
 ### binance
 
-**trades, spot** — headerless for the whole archive:
-`id, price, qty, quote_qty, time, is_buyer_maker, is_best_match` → `tradeId, price, size = baseSize =
-qty, quoteSize = quote_qty, ts = time, side, buyerMaker`. `is_best_match` is dropped. The side is
-`is_buyer_maker` inverted: a maker buyer means the taker sold — verified on 400,000 trades by the next
-trade's price.
+No series spills.
 
-**trades, perp** — `id, price, qty, <4th>, time, is_buyer_maker`.
+**trades, spot** — headerless: `id, price, qty, quote_qty, time, is_buyer_maker, is_best_match` →
+`tradeId = id, price, size = baseSize = qty, quoteSize = quote_qty, ts = time, side, buyerMaker`.
+`is_best_match` is dropped. `side` is `is_buyer_maker` inverted: a maker buyer means the taker sold.
 
-- USDⓈ-M: 4th is `quote_qty` → `size = baseSize = qty`, `quoteSize = quote_qty`.
-- COIN-M: 4th is `base_qty` → `size = qty` (contracts), `baseSize = base_qty`; `qty` is neither leg.
+**trades, perp** — `id, price, qty, <4th>, time, is_buyer_maker`, one entry per margining:
 
-**klines** and **mark/index/premium klines** — twelve columns: `open_time, open, high, low, close,
-volume, close_time, quote_volume, count, taker_buy_volume, taker_buy_quote_volume, ignore`. Klines
-map all but `close_time` and `ignore`; the reference-price datasets map OHLC only, since their volume
-is 0 and `count` is a sample count. Spot has never had a header; the futures files grew one.
+- `margin: linear` (USDⓈ-M): the 4th is `quote_qty` → `size = baseSize = qty`, `quoteSize = quote_qty`.
+- `margin: inverse` (COIN-M): the 4th is `base_qty` → `size = qty` (contracts), `baseSize = base_qty`;
+  `qty` is neither leg.
+
+**trades, aggregated** — by position: the aggregate's id, price, quantity, the first and the last
+trade id it stands for, time, `is_buyer_maker`, and on spot an eighth, `is_best_match` → `tradeId`,
+`price`, `size` = the quantity, `ts`, `side`, `buyerMaker`, and `baseSize` = the quantity on spot and
+linear; on inverse, where the quantity is contracts, no leg is filled. The two trade ids and
+`is_best_match` are dropped. Written under `aggregated=true`.
+
+**klines** and **mark, index and premium klines** — twelve columns: `open_time, open, high, low,
+close, volume, close_time, quote_volume, count, taker_buy_volume, taker_buy_quote_volume, ignore`.
+Klines map all but `close_time` and `ignore` (`trades = count`); the reference-price datasets map
+OHLC only. Spot is headerless; the futures files grew a header, read past by position
+([why](../venues/BINANCE.md#headers)).
 
 **funding** — `calc_time, funding_interval_hours, last_funding_rate` → `ts, intervalHours, rate`.
 
 **quotes** (`bookTicker`) — `update_id, best_bid_price, best_bid_qty, best_ask_price, best_ask_qty,
-transaction_time, event_time`; `ts = transaction_time`.
+transaction_time, event_time` → `bidPrice, bidSize, askPrice, askSize`, `ts = transaction_time`.
 
-**books, bands** (`bookDepth`) — `timestamp, percentage, depth, notional`: the size and the notional
-within ±1% to ±5% of the mid, ten rows a moment, so its depth is `5pct`. `timestamp` is
-`2026-07-29 00:00:01` text.
+**books, bands** (`bookDepth`) — `timestamp, percentage, depth, notional`, read by name; the variant
+is `bands,5pct`. `timestamp` is datetime text (`2026-07-29 00:00:01`).
 
 **openInterest** (`metrics`) — `create_time, symbol, sum_open_interest, sum_open_interest_value,
 count_toptrader_long_short_ratio, sum_toptrader_long_short_ratio, count_long_short_ratio,
-sum_taker_long_short_vol_ratio` → `openInterest, openInterestValue, longShortRatio =
-count_long_short_ratio, takerLongShortVol = sum_taker_long_short_vol_ratio`. `create_time` is
+sum_taker_long_short_vol_ratio` → `openInterest = sum_open_interest, openInterestValue =
+sum_open_interest_value, longShortRatio = count_long_short_ratio, takerLongShortVol =
+sum_taker_long_short_vol_ratio`; the two top-trader ratios are not read. `ts = create_time`,
 datetime text.
 
 **liquidations** (`liquidationSnapshot`) — `time, side, order_type, time_in_force,
 original_quantity, price, average_price, order_status, last_fill_quantity,
-accumulated_fill_quantity` → `ts, side, size = original_quantity, price, averagePrice, status`.
-
-**liquidations** — `time, side, order_type, time_in_force, original_quantity, price, average_price,
-order_status, last_fill_quantity, accumulated_fill_quantity` → `side, price, size = original_quantity,
-averagePrice, status`. The same ten columns on coin-margined and USDⓈ-M instruments, perpetual and
-dated. Every row is written twice, one after the other, in every file read (`BTCUSDT` 2023-06-25:
-1,720 rows, 860 of them; `BTCUSD_PERP` 2024-10-14: 100 and 50), so exact repeats are dropped.
-`original_quantity` is contracts on a coin-margined instrument and the base coin on the others.
+accumulated_fill_quantity` → `ts = time, side, price, size = original_quantity, averagePrice =
+average_price, status = order_status`. One entry each for perp and future, on both margins. The
+series declares `repeatsRows`, so a row the file writes twice is kept once
+([why](../venues/BINANCE.md#liquidation-snapshots-write-every-row-twice)).
+`original_quantity` is contracts on a coin-margined instrument and the base coin on the others; the
+`margin` column says which.
 
 **optionSummary** — `date, hour, symbol, underlying, type, strike, open, high, low, close,
-volume_contracts, volume_usdt, best_bid_price, best_ask_price, best_bid_qty, best_ask_qty, best_buy_iv,
-best_sell_iv, mark_price, mark_iv, delta, gamma, vega, theta, openinterest_contracts,
-openinterest_usdt` → `optionTicker`, a row an option an hour, `option = symbol`. `ts` is
-`date` and `hour` together. An empty quote is `""` or `0E-8`; the first is NULL and the second 0, as
-published.
+volume_contracts, volume_usdt, best_bid_price, best_ask_price, best_bid_qty, best_ask_qty,
+best_buy_iv, best_sell_iv, mark_price, mark_iv, delta, gamma, vega, theta, openinterest_contracts,
+openinterest_usdt` → `optionTicker`, a row an option an hour: `option = symbol`, `volume =
+volume_contracts`, `quoteVolume = volume_usdt`, `bidIv = best_buy_iv`, `askIv = best_sell_iv`,
+`openInterest = openinterest_contracts`, `openInterestValue = openinterest_usdt`, the rest by their
+names. `ts` is `date` and `hour` read together as datetime text. An empty quote, `""` or `0E-8`, is
+kept as published: the first casts to NULL and the second to 0.
 
-**volatilityIndex** — `calc_time, symbol, base_asset, quote_asset, index_value` → `value`, a row a
-second.
+**volatilityIndex** (`BVOLIndex`) — `calc_time, symbol, base_asset, quote_asset, index_value` →
+`value = index_value`, `ts = calc_time`.
 
 ### bybit
 
 **trades, perp** — `timestamp, symbol, side, size, price, tickDirection, trdMatchID, grossValue,
-homeNotional, foreignNotional[, RPI]` → `ts, side, size, price, tradeId = trdMatchID`. `timestamp`
-is fractional seconds (`1785283200.0635`). `size` is base for USDT and PERP symbols and **quote** for
-the `USD` inverse ones — checked over 160 symbols against `foreignNotional` — so it turns on the
-instrument's margining: `baseSize = size` on linear, `quoteSize = size` on inverse.
+homeNotional, foreignNotional[, RPI]` → `ts = timestamp, side, size, price, tradeId = trdMatchID`.
+`size` is base on a linear contract and quote on an inverse one, so the entries split by `margin`:
+`baseSize = size` on linear, `quoteSize = size` on inverse. Bybit's inverse symbols end `USD`, with
+or without a futures month code.
 
-**trades, option** — `trade_id, trade_seq, timestamp, instrument_name, direction, price, amount, iv,
-index_price, mark_price, mark_iv` → `tradeId = trade_id, ts, price, size = amount, side =
-direction`. One file a day per underlying holds every option of it, so the rows are split by
-`instrument_name`. `timestamp` is integer milliseconds, plain UTC: the 2026-10-04 file opens four
-seconds after midnight. Which leg `amount` measures has not been settled, so neither `baseSize` nor
-`quoteSize` is filled. `iv`, `index_price`, `mark_price` and `mark_iv` are not kept.
+**trades, spot** — `id, timestamp, price, volume, side[, rpi]` → `tradeId = id, ts = timestamp,
+price, size = baseSize = volume, side`. `timestamp` is integer milliseconds here, where the perp files
+write seconds under the same name.
 
-**trades, spot** — `id, timestamp, price, volume, side[, rpi]` → `tradeId, ts, price, size =
-volume, side`. Integer milliseconds under the same `timestamp` name the perp files use for seconds.
+**trades, option** — `trade_id, trade_seq, timestamp, instrument_name, direction, price, amount,
+iv, index_price, mark_price, mark_iv` → `tradeId = trade_id, ts = timestamp, price, size = amount,
+side = direction`. An underlying's file holds every option on it, so the series declares
+`instrument: instrument_name` and the rows are split by it. Which leg `amount` measures is not
+known, so neither `baseSize` nor `quoteSize` is filled. `iv`, `index_price`, `mark_price` and
+`mark_iv` are not kept.
 
-**klines (MT4)** — headerless `datetime, open, high, low, close, volume`, the datetime as
-`2024.11.01 00:00` in **UTC+3**, the MetaTrader server zone, with no daylight-saving switch.
-They are perpetual klines: `BTCUSDT` 1h bars match the perp trades summed per hour exactly on every
-hour of 2020-10 and 2020-12 (1,000+ hours), and only at a 3-hour offset — the bar labelled 03:00 is
-the trades of 00:00–01:00 UTC. A month's file is a UTC+3 month, so it holds the last 3 hours of the
-previous UTC month and stops 3 hours short of its own end. So the series declares the zone
-(`utcOffsetHours: 3`) and a back spill: each month is read with the next month's file and clipped
-to its UTC bounds. The interval is the catalog's variant — the filename's bare count of minutes
-(`BTCUSDT_15_2024-02-01_2024-02-29`) in the shared vocabulary, `15m`. The filename carries a date
-range, always exactly one calendar month.
+**klines (MT4)** — headerless `datetime, open, high, low, close, volume` → OHLCV, `ts = datetime`.
+The datetime (`2024.11.01 00:00`) is local to UTC+3 with no daylight-saving switch, so the series
+declares `utcOffsetHours: 3`; a month's file is then a UTC+3 month, holding the previous UTC month's
+last three hours, so it also declares `spill: back`
+([why](../venues/BYBIT.md#four-shapes-and-none-of-them-is-the-obvious-one)). A file also carries
+the first bar of the next month's file, which is kept once
+([STOCKER.md](STOCKER.md#venues-whose-periods-do-not-cut-at-utc-midnight)). The interval is the
+catalog's variant (`15m` for a file named `BTCUSDT_15_…`). A month the venue published truncated is
+stocked as it is. The entry carries `version: 1.0.1`.
 
-**Truncated months.** Some MT4 files hold a fraction of their month — `BTCUSDT` 1h for 2023-12,
-2024-01 and 2024-03 hold 200 bars, 2024-02 400. Nothing in the file says so; stocked as they are.
+**premiumIndex, indexPrice** — headed; `start_at` and OHLC mapped by name. **Unverified — no file
+decoded.**
 
-**premiumIndex, indexPrice** — headed; `start_at` and OHLC are mapped by name.
+**books** — a record a line: `{topic, type, ts, data: {s, b, a, u, seq}, cts}`, read with
+`type`, `ts` and `data` declared. `b` and `a` are `[price, size]` levels, unfolded to a row a level;
+`type` `snapshot` → `snapshot` and `delta` → `set`. `sequence = data.seq`; `u` is not kept.
 
-**books** — a record a line: `{topic, type, ts, data: {s, b, a, u, seq}, cts}`. `type` is `snapshot`
-when the stream opens and `delta` after; `b` and `a` are `[price, size]` levels, a size of `0` removing
-the level. `seq`, bybit's cross sequence, rises through a file and is kept as `sequence`; `u` starts
-over at every snapshot and is not.
-
-**markPrice, option** — `instrument_name, open_time, open, high, low, close, delta, gama, vega, theta`
-→ `optionMarkPrice`, `option = instrument_name`.
+**markPrice, option** — `instrument_name, open_time, open, high, low, close, delta, gama, vega,
+theta` → `optionMarkPrice`: `option = instrument_name`, `ts = open_time`, `gamma = gama`.
 
 ### kucoin
 
-**trades** — `trade_id, trade_time, price, size, side`; side `BUY`/`SELL`. Spot size is base; perp
-size is a contract count.
+No series spills.
 
-**klines, spot** — `time, open, close, high, low, volume, turnover`: close **before** high, unlike
-every other venue and unlike kucoin's own perp klines. `time` is seconds; `turnover` is the quote
-volume.
+**trades** — `trade_id, trade_time, price, size, side` → `tradeId = trade_id, ts = trade_time,
+price, size, side`; `baseSize = size` on spot. On perp `size` is a contract count and no leg is
+filled.
 
-**klines, perp** — `time, open, high, low, close, volume`, `time` in milliseconds. The **`1d`
-files are malformed**: six columns declared, five written on every row of every file, byte-identical
-to what the venue serves. They parse to one column and fail the build, which names them.
+**klines, spot** — `time, open, close, high, low, volume, turnover`, read by name, so the order
+costs nothing: `quoteVolume = turnover`, `ts = time` in seconds.
 
-**funding** — `symbol, time, fundingRate`. **mark, index** — `time, open, high, low, close`.
+**klines, perp** — `time, open, high, low, close, volume`, `time` in milliseconds. The `1d` files
+declare six columns over rows of five, parse to one column and fail the build, which names them as
+malformed ([STOCKER.md](STOCKER.md#files-a-venue-published-malformed);
+[why](../venues/KUCOIN.md#futures-klines-at-1d-are-published-broken)).
 
-**books** — a line is `{"asks": [[price, size], …], "bids": […], "timestamp": ms}`, futures adding
-`sequence` and `ts`, under a header line that says `data`. Every line is a whole image of the top 50
-levels a side. The file calls itself a CSV and is not one — its lines are full of JSON's own commas —
-so it is read a line at a time and each line parsed; the header, and a line cut short, parse to
-nothing. Lines are not in time order, and some files hold every line twice.
+**funding** — `symbol, time, fundingRate` → `rate = fundingRate`, `ts = time`. **mark, index** —
+`time, open, high, low, close` → OHLC.
+
+**books** — a JSON record a line, `{"asks": [[price, size], …], "bids": […], "timestamp": ms}`,
+futures adding `sequence`, under a header line that says `data`. The `lines` format reads a line at a
+time and parses each; the header, and a line cut short, parse to nothing and drop. `asks`, `bids`
+and `sequence` are read off the record, `ts = timestamp`. The series declares `repeatsRows`, since
+some files hold every line twice.
 
 ### htx
 
-**Every dataset spills back**: a day file is a UTC+8 day in both exports — the 2020-06-15 trades
-and klines hold 06-14 16:00 → 06-15 15:59 UTC, and the 2026-07-29 files open at 07-28 16:00.
+**Every series spills back** — books included — since a day's file is a UTC+8 day in both exports
+([why](../venues/HTX.md#daily-files-are-utc8-days-not-utc-days)).
 
-**Two eras, cut flat at 2026-02-01.** Everything before is the `data/` shape, everything from it the
-`historical_data/` shape. Both are mapped.
+**Two eras, cut flat at 2026-02.** Every entry is bound by `until: 2026-02` (the `data/` shape) or
+`from: 2026-02` (the `historical_data/` shape), on the file's month. The earlier files carry no
+header and are read by position; the names below are the venue's, for what each position holds:
 
-The earlier files carry **no header** — every 2019–2020 file read on 2026-10-04 starts with data —
-so they are read by position. The names below are the venue's own, for what each position holds:
+| Dataset | Before 2026-02, by position | Mapped | From 2026-02, by name | Mapped |
+|---|---|---|---|---|
+| trades, spot | `Trade ID, Trade Time, Trade Price, Volume (Base Currency), Side` | `size = baseSize` = the base volume | `instId, tradeId, px, side, size, ts` | `price = px`, `size = baseSize = size` |
+| trades, contract, linear | `Trade ID, Trade Time, Trade Price, Volume (in Contracts), Volume (in Base Currency), Turnover, Side` | `size` = contracts, `baseSize` = base, `quoteSize` = turnover | `instId, tradeId, px, side, size, ts` | `price = px`, `size` (contracts) |
+| trades, contract, inverse | the same without `Turnover` | `size` = contracts, `baseSize` = base | as linear | as linear |
+| trades, option | the linear contract's 7 columns | as linear; the turnover is the premium paid | — | — |
+| klines, spot | `timestamp, open, close, high, low, vol, amount` | `volume = amount`, `quoteVolume = vol` | `instId, open, high, low, close, vol, volCcy, volCcyQuote, ts` | `volume = vol`, `quoteVolume = volCcyQuote` |
+| klines, contract | `timestamp, open, close, high, low, vol, amount` | `volume = vol` (contracts); `amount` not read | as spot | `volume = vol` (contracts), `quoteVolume = volCcyQuote` |
+| mark, index | `timestamp, open, close, high, low` | OHLC | `instId, open, high, low, close, ts` | OHLC |
+| funding | — | — | `instId, fundingRate, fundingTime` | `rate = fundingRate`, `ts = fundingTime` |
 
-| dataset | from 2026-02-01 | before 2026-02-01 |
-|---|---|---|
-| klines | `instId, open, high, low, close, vol, volCcy, volCcyQuote, ts` | `timestamp, open, close, high, low, vol, amount` |
-| trades, spot | `instId, tradeId, px, side, size, ts` | `Trade ID, Trade Time, Trade Price, Volume (Base Currency), Side (buy/sell)` |
-| trades, perp, linear | `instId, tradeId, px, side, size, ts` | `Trade ID, Trade Time, Trade Price, Volume (in Contracts), Volume (in Base Currency), Turnover, Side (buy/sell)` |
-| trades, perp/future, inverse | `instId, tradeId, px, side, size, ts` | the same without `Turnover` — six columns |
-| mark, index | `instId, open, high, low, close, ts` | `timestamp, open, close, high, low` |
-| funding | `instId, fundingRate, fundingTime` | — (none before the cut) |
+**On spot the volume names invert between eras**: the earlier `vol` is quote and `amount` base, the
+later `vol` base and `volCcyQuote` quote
+([why](../venues/HTX.md#two-archives-in-one-bucket-the-current-one-and-the-one-it-replaced)).
 
-**The volume names invert between eras** on spot: the later `vol` is base and `volCcyQuote` quote;
-the earlier `vol` is quote and `amount` base (868.87 ZEC against 44,492 USDT at ~51). On contracts
-`vol` is the contract count in both eras, and the earlier `amount` the base coin. On the same day the two eras agree bar for bar
-(`BTC-USDT` 1m, all 1,440 bars). The earlier perp trades carry both legs, which the later shape drops.
+**A contract's kline volume is two-sided, and is stored as published.** htx counts both sides of
+every trade in a contract kline's `vol` and `amount`
+([why](../venues/HTX.md#a-contracts-kline-volume-counts-both-sides-of-every-trade)); nothing is
+halved.
 
-**A contract's kline volume is two-sided, and is stored as published.** htx counts both the buy and
-the sell side of every trade in a contract kline's `vol` and `amount`, so they are twice what its
-trades add up to — by its own definition, on every contract market and never on spot
-([HTX.md](../venues/HTX.md#a-contracts-kline-volume-counts-both-sides-of-every-trade)). Nothing is
-halved here: the column holds what the venue reports, and what the venue means by it is the venue's.
-
-**Options** (`BTC-USDT-201225-C-13000`) ran from 2020-08 to 2021-06, USDT-margined throughout, and
-are the linear contract's shapes: trades with contracts, base and a quote leg that is the premium
-paid, and the seven-column kline.
-
-**Dated futures publish a mark price and no index.** Before the cut it is the perpetual's five
-columns by position — except that some files open with a header line, `id,open,close,high,low`
-(`ADA210702`, 2021-07-02) and others do not (`BTC-USDT-230714`, 2023-07-14). Read by position, the
-header is a row whose time does not parse.
-
-Later-era klines and mark/index are stamped in seconds, trades and funding in milliseconds. `vol` and
-`volCcyQuote` were confirmed as base and quote by rebinning a day of trades into 1m bars.
-
-**mark, index** carry an interval, so they are klines *of* the mark and index price rather than
-ticks.
+**mark, index** carry the catalog's variant as `interval=`: they are bars of the mark and index
+price, not ticks. Dated futures publish a mark price and no index; before the cut some of their
+files open with a header line (`id,open,close,high,low`) and others do not, and read by position the
+header is a row whose time does not parse. The perpetual's earlier mark and index entries are
+**unverified — no file decoded**.
 
 **books** — okx's record, `{instId, action, ts, asks, bids}`, with a level of two values and `ts` in
-microseconds. One `snapshot` as the day's file opens, `update`s after.
+microseconds: `action` `snapshot` → `snapshot`, `update` → `set`
+([why](../venues/HTX.md#books-are-the-richest-published-anywhere-bar-okx)).
 
 ### gate
 
-Headerless throughout.
+No series spills. Every csv file is headerless and read by position.
 
-**trades** — two shapes that differ by one column:
+**trades** — two shapes that differ by one column
+([why](../venues/GATE.md#two-trade-shapes-not-interchangeable)):
 
 ```
 spot   ts, id, price, size, side    size unsigned; side 1 = buy, 2 = sell
 perp   ts, id, price, size          size signed; the sign is the side
 ```
 
-Both were settled from rows: spot side `1` is followed by an uptick 1.63M times against 0.19M
-downticks over 7.5M `BTC_USDT` trades; negative perp sizes are followed by downticks on both
-USDT- and BTC-settled contracts. Perp maps `size = abs(size)`, `side` from the sign. Timestamps are
-fractional seconds at µs precision. Spot rows are in **descending** time.
+Spot maps `side` from the code and `size = baseSize = size`. Perp maps `size = abs(size)` and
+`side` from the sign, negative a sell, and fills no leg.
 
-Read with the perp map, a spot file still "works" — every trade a buy, the unsigned size in place of
-the signed one. So a file **wider than its series declares is refused**, naming it. 2021-07 is the
-known case: 85 perp-trade files are truncated copies of the spot file for the same symbol, five
-columns wide, and their last lines are cut mid-row.
+**A perp trades file wider than four columns is refused.** Read with the perp map, a spot file would
+put its unsigned size where the signed one belongs and every trade would come out a buy, so the
+partition fails naming the file, as every positional series does with a file wider than it declares
+([STOCKER.md](STOCKER.md#builds-share-one-engine)). The venue serves such files for 2021-07
+([why](../venues/GATE.md#2021-07-spot-data-at-the-futures-url)).
 
-**klines, tradfi** — `ts, close, high, low, open`: the candle below less its volume. Settled from the
-rows: the third column is each bar's highest value and the fourth its lowest, and the second of one
-bar is the fifth of the next on every consecutive pair read (AAPL 1m, 2024-01). Stamped in plain UTC
-seconds — AAPL's first 1m bar of a day is 14:30 UTC.
+**klines** — `ts, volume, close, high, low, open`: **open and close are reversed** from the obvious
+reading ([why](../venues/GATE.md#smaller-facts)). `volume` is the base leg on spot as on perp.
 
-**klines** — `ts, volume, close, high, low, open`. **Open and close are reversed** from the obvious
-reading; nothing in a single bar shows it. Settled by alignment: bars of 1m, 5m, 1h and 1d sharing a
-start share the last column and differ in the third, so the last is the open. `volume` is the base
-leg on spot as on perp — summing spot trades per hour reproduces it to six decimals.
+**klines, tradfi** — `ts, close, high, low, open`: the candle above less its volume.
 
-**markPrice** — `ts, price, ?, ?`: three prices per row, only the first identified.
+**markPrice** — `ts, price, ?, ?`: three prices a row, only the first identified, so the other two are
+dropped. A tick: no `interval=`.
 
 **funding** — `funding_applies` (realised): `ts, rate`. `funding_updates` (predicted): `ts, rate`
-and six columns not identified. Three rows a day against 1,440.
+and six columns not read.
 
-**Empty files.** A symbol that listed and never traded leaves a **zero-byte** file, not a valid gzip;
-it is empty and skipped.
+**Empty files.** Some files are zero bytes, which is not a valid gzip
+([why](../venues/GATE.md#smaller-facts)). A zero-length file is empty whatever its extension and is
+dropped before the read, so an instrument with nothing else has no file
+([STOCKER.md](STOCKER.md#files-a-venue-published-empty)).
 
-**books, incremental** — an hour's file opens with the whole book as `set` rows under one id; `make`
-and `take` rows follow, each adding to a level or taking from it. Rebuilt from a file that way, no
-level goes below zero and the sides never cross (`BTC_USD` 2026-06-01 21h: 18,538 rows). Spot names
-the side — `1` the asks, `2` the bids: in the first image every `2` sits below every `1`. Futures
-have no side column and sign the size, negative for an ask; the size stored is its magnitude. Times
-are in tenths of a second, so the id is what orders the rows inside one.
+**books, incremental** — `ts, side, action, price, amount, id, merged` on spot, `ts, action, price,
+size, id, merged` on futures; `merged` is dropped. `action` is kept as published — `set`, `make`,
+`take` — and `sequence = id`, which orders the rows inside one tenth of a second. Spot maps the side
+`1` → `ask`, `2` → `bid`; futures take it from the sign of the size, negative an ask, and store its
+magnitude ([why](../venues/GATE.md#the-two-depth-products-are-different-data)).
 
-**books, snapshot** — a record a line: `{id, current, update, asks, bids}`, the top 20 levels a side.
-`current` is when the image was taken and is the row's time; `update` is when the book last changed.
-Both are seconds with a fraction in the early files (2021) and whole milliseconds in the later ones.
-Spot writes a level `[price, size]`, futures `{"p": price, "s": size}`.
+**books, snapshot** — a record a line: `{id, current, update, asks, bids}`, the top 20 levels a side,
+read with `id`, `current`, `asks` and `bids` declared. `ts = current`, `sequence = id`; `update` is not
+kept. Spot writes a level `[price, size]`, futures `{p, s}`, which is stored as `[price, size]`.
 
 **Files named by the moment they hold** — the spot index (`indexPrice`, an hour apart) and the option
-ticker (`optionTicker`, a minute apart) are plain text with no header and no time inside: a line an
-instrument, its values parted by blanks, a line sometimes beginning with one. The catalog keeps the
-moment as the file's part — `…|202606.part1780272000.txt` — and `ts` is read from it.
+ticker (`optionTicker`, a minute apart) are read with the `words` format: a line an instrument, its
+values parted by blanks. `ts` is read from the moment the catalog keeps as the file's part,
+`…|202606.part1780272000.txt` ([why](../venues/GATE.md#the-files-named-by-an-instant-hold-a-line-an-instrument)).
 
-- **indexPrice** — `<symbol> <price>`.
-- **optionTicker** — the option's name and twelve unnamed values, read as: mark price, mark iv; bid
-  size, bid price, bid iv; ask size, ask price, ask iv; delta, gamma, theta, vega. Settled from the
-  numbers: the second value is the same for the call and the put of one strike; the two triples
-  bracket the first value from below and from above, their third values bracketing the second; and
-  of the last four the first is negative on every put and the third negative throughout.
+- **indexPrice** — `<symbol> <price>` → `price`; `instrument: name`, so the rows are split per symbol.
+- **optionTicker** — the option's name and twelve values, read as: mark price, mark iv; bid size, bid
+  price, bid iv; ask size, ask price, ask iv; delta, gamma, theta, vega. `option = name`; the rows are
+  filed under the underlying, the name up to its first hyphen.
 
 ### okx
 
-**Every dataset spills back**: a day or month file is a UTC+8 period, so the file dated
-2020-06-15 holds 06-14 16:00 → 06-15 15:59 UTC — the same cut as bitget's
-([STOCKER.md](STOCKER.md#venues-whose-periods-do-not-cut-at-utc-midnight)).
+**Every series but books spills back**: a day or month file of trades, candlesticks, funding or
+borrowing is a UTC+8 period, and book files are UTC days
+([why](../venues/OKX.md#periods-are-utc8)). Every row names its instrument, and every series
+declares that column as `instrument`, so a file holding a chain or a whole market is split by it.
 
-**Options** are the other markets' files with the same columns: a family's whole chain in one
-(`BTC-USD-optionchain`), or every option there is (`alloption`). The price is the premium in the
-coin. The earliest kline files spell an absent volume `None` (2021-09-01); later trade files carry a
-`source` column the earlier ones lack.
+**trades** — `instrument_name, trade_id, side, price, size, created_time[, source]` → `tradeId =
+trade_id, price, size, side, ts = created_time`; `baseSize = size` on spot, and no leg on the
+contracts, where `size` is a contract count. Read by name, so the `source` column of later perp and
+option files is never read. Perpetual trades for 2021-10 are published with every trade twice, once
+a side ([why](../venues/OKX.md#swap-trades-for-2021-10-list-every-trade-twice)), and are stocked as
+published: that month's perp trades hold each trade twice.
 
-**Duplicated bars.** Candlestick files can repeat rows byte for byte: 96 of 200 sampled 2020 spot
-files repeat every bar, 4 of 40 sampled 2023 perpetual files repeat a few. The series declares it
-(`repeatsRows`), and exact repeats are written once.
+**klines** — `instrument_name, open, high, low, close, vol, vol_ccy, vol_quote, open_time,
+confirm` → OHLC, `volume = vol`, `ts = open_time`. `quoteVolume` is `vol_quote`; on spot, where that
+holds no number, it is `vol_ccy`, the same quantity there
+([why](../venues/OKX.md#candlestick-volumes-are-three-columns-filled-by-era)). A literal `None`
+casts to NULL. No interval is named in a file; the catalog files them as `1m`, and the bars' spacing
+agrees. The series declares `repeatsRows`
+([why](../venues/OKX.md#candlestick-files-can-repeat-rows)).
 
-**Kline quote volume.** `quoteVolume` is `vol_quote`. On spot, where that holds no number, it is
-`vol_ccy`, which there is the same quantity; on a contract `vol_ccy` is the base coin and is not read.
-The eras are in [OKX.md](../venues/OKX.md#candlestick-volumes-are-three-columns-filled-by-era).
+**funding** — `instrument_name, funding_rate, funding_time` → `rate = funding_rate`, `ts = funding_time`. One entry
+reads both renderings: the daily `allswap` file, every swap in one, and the monthly per-instrument
+file ([why](../venues/OKX.md#funding-is-per-symbol-monthly-venue-wide-daily--and-has-a-three-month-hole)).
+Where both are on disk the per-instrument rendering is preferred. The monthly rendering is read with
+the daily file's columns and is **unverified — no file decoded**.
 
-**trades** — `instrument_name, trade_id, side, price, size, created_time`. Side is `buy` or `BUY`,
-depending on the year. A dated-futures file covers a whole expiry chain, so its rows name several
-instruments.
+**borrowing** — `currency_name, borrow_rate, time`, every currency in one daily file →
+`currency = currency_name, rate = borrow_rate, ts = time`; the currency is the instrument
+(`instrument: currency_name`).
 
-**`source` is not kept.** A perpetual's monthly file from 2025-11 carries a seventh column, `source`:
-`1` where the resting order came through okx's Retail Price Improvement programme — its Enhanced
-Liquidity Program until 2026-07 — and `0` otherwise (seen on 2025-11 and 2025-12, 2026-10-07; every
-row of the one file counted is `0`). The trades table has no column for it and gains none for one
-venue's flag. The files are read by their header's names, so the extra column changes nothing else,
-and a file with it and one without are the same rows.
-
-**klines** — `instrument_name, open, high, low, close, vol, vol_ccy, vol_quote, open_time, confirm`
-→ OHLC, `volume = vol`, `quoteVolume = vol_quote`, `ts = open_time`. No interval is named anywhere;
-`open_time` steps by exactly 60,000, so the series declares `1m`. Early eras write Python's **`None`**
-in `vol_ccy` and `vol_quote` on every row, which reads as NULL.
-
-**funding** — `instrument_name, funding_rate, funding_time`, every swap in one daily file. The
-monthly per-instrument rendering is not mapped.
-
-**borrowing** — `currency_name, borrow_rate, time`, every currency in one daily file.
-
-**books** — a record a line, `{instId, action, ts, asks, bids}`: `action` is `snapshot` (the whole
-book to its depth, once a minute at 400 levels) or `update` (the levels that changed), a level
-`[price, size, orders]`, a size of `0` removing it. An image is filled out to its depth with levels of
-price `0`, which are dropped. `ts` is unique and rising through a file. The files cut at UTC midnight
-— not at 16:00 like okx's trades and candlesticks — so nothing spills. A dated-futures or option file
-holds a whole chain, each record naming its instrument.
+**books** — a record a line, `{instId, action, ts, asks, bids}`: `action` `snapshot` → `snapshot`,
+`update` → `set`; a level is `[price, size, orders]`, its third value read as `orderCount`. Levels of
+price `0` pad an image to its depth and are dropped. No spill
+([why](../venues/OKX.md#what-a-book-file-holds)).
 
 ### bitget
 
-**Every dataset spills back**: a bucket cuts at 16:00 UTC (midnight UTC+8), so the file named
-`20250101` opens at 2024-12-31 16:00 UTC. The timestamps are plain epoch ms UTC; only which file
-holds a row is shifted ([STOCKER.md](STOCKER.md#venues-whose-periods-do-not-cut-at-utc-midnight)).
+**Every series spills back**: a day cuts at 16:00 UTC, midnight UTC+8
+([why](../venues/BITGET.md#buckets-cut-at-1600-utc-not-midnight)). Spot, perp and future share one
+set of formats, an entry for each market.
 
-**trades** — `trade_id, timestamp, price, side, volume(quote), size(base)` → `size = baseSize =
-size(base)`, `quoteSize = volume(quote)`; `price × size(base)` reproduces `volume(quote)` on every row
-checked. `timestamp` is ms; in the files measured from 2024 on the millisecond part is **always zero**,
-so it cannot order trades within a second there — `trade_id` and file order can. 2019 files carry
-real milliseconds. A day is split into parts of 100,000 rows, each a standalone
-zip with its own header.
+**trades** — `trade_id, timestamp, price, side, volume(quote), size(base)` → `tradeId = trade_id,
+price, side, ts = timestamp, size = baseSize = size(base)`, `quoteSize = volume(quote)`. A day is
+split into parts, each a standalone zip with its own header
+([why](../venues/BITGET.md#multi-part-days-are-independent-zips)). The millisecond part of
+`timestamp` is zero in later files, so `trade_id` and file order, not `ts`, order trades within a
+second there ([why](../venues/BITGET.md#trade-timestamps-carry-only-second-resolution)).
+
+**A day's klines, quotes and books are a sheet, a month's are text**, with the same columns under the
+same names; one entry reads both, and which a file is, is read off the file
+([why](../venues/BITGET.md#a-days-klines-and-depth-are-a-sheet-a-months-are-text)). Trades are CSV in
+both.
 
 **klines** — `timestamp, open, high, low, close, basevolume, usdtvolume` → OHLC, `volume =
-basevolume`, `quoteVolume = usdtvolume`. Two layouts are served and both are read; they interleave
-within a month, never holding the same day twice. The older writes `baseVolume`/`usdtVolume` and full
-float expansions, the newer lowercase and the shortest float — the same data, folded by a
-case-insensitive union by name. No interval is named; `timestamp` steps by a minute, so the series
-declares `1m`.
+basevolume`, `quoteVolume = usdtvolume`. Two layouts are served, the older spelling
+`baseVolume`/`usdtVolume`; a union by name folds them, DuckDB's identifiers being case-insensitive.
+No interval is named in a file; the catalog files them as `1m`, and the bars' spacing agrees.
 
-**quotes** (`depth`) — `timestamp, ask_price, bid_price, ask_volume, bid_volume`, the best bid and
-ask over time. A missing quote is **`-999999`**, mapped to NULL — cast to a number before comparing,
-since sizes exceed 2^31 and carry decimals. Sizes are stored as published, which is the base coin
-except on the coin-margined contracts sized in whole contracts
-([BITGET.md](../venues/BITGET.md#coin-margined-futures-are-two-live-product-lines)).
+**quotes** (`depth`) — `timestamp, ask_price, bid_price, ask_volume, bid_volume` → `bidPrice,
+bidSize, askPrice, askSize`. A missing quote is `-999999`
+([why](../venues/BITGET.md#sentinel-value-in-depth)), mapped to NULL after a cast to `DOUBLE` —
+comparing first would cast the column to an integer and fail on sizes past 2^31 or with decimals.
+Sizes are stored as published
+([why](../venues/BITGET.md#coin-margined-futures-are-two-live-product-lines)).
 
-**A day's klines and quotes are a sheet, a month's are text.** The file of a day holds an XLSX inside
-the `.zip`, the file of a month a CSV, with the same columns under the same names. One entry reads
-both: which a file is, is read off the file. Trades are CSV in both.
+**books** (`depth_500`) — `timestamp, asks, bids`: each side JSON text in one cell,
+`[[price, size], …]`, parsed into the list. Rows are not in time order.
 
-**books** (`depth_500`) — `timestamp, asks, bids`: an image of up to 500 levels a side every twenty
-seconds, each side JSON text in one cell, `[[price, size], …]`. A sheet in a day's file and text in a
-month's, like the klines; rows are not in time order.
+## Partitions read with another market's formats
 
-## Known discrepancies with the catalog
-
-- **Linear and inverse contracts** share one canonical key, so a partition mixes their formats —
-  see [telling formats apart](#telling-formats-apart-inside-one-partition).
-- **bitget `future`** is read with its perpetuals' formats, which its trades, klines and quotes share
-  — daily and monthly files of `BTCUSDU24` to `BTCCMZ26` have the same columns.
-- **htx `future`** is read with its perpetuals' formats.
+- **bitget `future`** is read with the formats of its perpetuals, an entry for each market with the
+  same mapping: its trades, klines and quotes have the perpetuals' columns.
+- **htx `future`** is read with its perpetuals' formats, but for its mark price, an entry of its own
+  in the same shape; dated futures publish no index.

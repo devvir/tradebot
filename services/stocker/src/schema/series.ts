@@ -5,12 +5,13 @@ import type { ArchiveFile, Series } from '../types';
 /**
  * How to read every format stocker knows about.
  *
- * **Every entry here was written from a decoded file.** The shapes came from
- * probing real files at each end of every dataset's history, and the semantics
- * a file cannot state — which of Gate's `1`/`2` means "buy", whether a size is
- * base or quote — were settled by arithmetic over real rows. Where neither was
- * possible the field is left out rather than guessed. Every format, venue by
- * venue, is described in docs/services/STOCKER-PARTITIONS.md.
+ * **Entries are written from decoded files.** The shapes came from probing
+ * real files at each end of every dataset's history, and the semantics a file
+ * cannot state — which of Gate's `1`/`2` means "buy", whether a size is base or
+ * quote — were settled by arithmetic over real rows. Where neither was possible
+ * the field is left out rather than guessed. Every format, venue by venue, is
+ * described in docs/services/STOCKER-PARTITIONS.md, which marks the entries
+ * written without a decoded file as unverified.
  *
  * **Keyed by what the catalog says a file is** — venue, market, dataset,
  * variant — and never by where the venue keeps it. Where one dataset holds more
@@ -504,7 +505,7 @@ export const SERIES: Series[] = [
     ts: 'trade_time',
   },
   // Spot klines are `open, close, high, low` — close **before** high, unlike
-  // every other venue here and unlike KuCoin's own futures klines below.
+  // KuCoin's own futures klines below.
   {
     venue: 'kucoin', market: 'spot', dataset: 'klines', variant: '*', table: 'klines', ...csv,
     header: true, project: { ...OHLCV, quoteVolume: 'turnover' }, ts: 'time',
@@ -533,7 +534,7 @@ export const SERIES: Series[] = [
   // its klines are stamped in seconds and its trades in milliseconds, which the
   // inferred unit handles without either being declared.
   //
-  // **Buckets cut at 16:00 UTC** — midnight UTC+8 — in both exports, so every
+  // **Periods cut at 16:00 UTC** — midnight UTC+8 — in both exports, so every
   // dataset spills `back`: the 2020-06-15 trade and kline files hold
   // 06-14 16:00 → 06-15 15:59 UTC, and the 2026-07-29 ones open at 07-28 16:00.
   {
@@ -775,13 +776,13 @@ export const SERIES: Series[] = [
   //
   // Every row names its instrument, which matters twice: a dated-futures file
   // holds a whole expiry chain, and the daily `all…` files hold a whole market.
-  // Either way the rows are split by it, one vault file per instrument.
+  // Either way the rows are split by it.
   //
-  // **Buckets cut at 16:00 UTC** — midnight UTC+8 — exactly as bitget's do, so
-  // every dataset spills `back`. Read off the candlesticks on 2026-10-04: the
-  // day file dated 2020-06-15 holds 06-14 16:00 → 06-15 15:59 UTC, and the
-  // June file 05-31 16:00 → 06-30 15:59. Declared venue-wide, as bitget's is: a
-  // dataset that turned out UTC-aligned would make the trait a no-op.
+  // **Periods cut at 16:00 UTC** — midnight UTC+8 — exactly as bitget's do, so
+  // every dataset but the books spills `back`. Read off the candlesticks on
+  // 2026-10-04: the day file dated 2020-06-15 holds 06-14 16:00 → 06-15 15:59
+  // UTC, and the June file 05-31 16:00 → 06-30 15:59. The books cut at UTC
+  // midnight and declare no spill.
   // Options are the same files with the same columns: a family's whole chain
   // in one (`BTC-USD-optionchain`), or every option there is (`alloption`). The
   // price is the premium in the coin and `size` the contract count, as on the
@@ -866,7 +867,7 @@ export const SERIES: Series[] = [
   // file is, is read off the file: a table is a table, and an entry that reads
   // one reads it as text or as a sheet alike.
   //
-  // **Buckets cut at 16:00 UTC** — midnight UTC+8 — so every dataset spills
+  // **Periods cut at 16:00 UTC** — midnight UTC+8 — so every dataset spills
   // `back`: a file dated `20250101` opens at 2024-12-31 16:00 UTC. Verified on
   // spot trades (120 files sampled across 514 symbols and 2024→2026: zero rows
   // outside the shifted window, zero before it). Timestamps themselves are
