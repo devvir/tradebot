@@ -1,12 +1,10 @@
-# Local Infra — Development Server
+# Infra pack: local
 #
-# Shared infrastructure for local development.
+# Defines, on the shared network ${PROJECT_NAME}-network:
+#   queue-rt   — RabbitMQ (services/rabbitmq/docker/base.yml)
+#   cache      — Redis (services/redis/docker/compose.yml)
 #
-# Hostnames on the shared network:
-#   queue-rt   — real-time live data message broker
-#   cache      — cache
-#
-# It runs no general / batch broker: `queue` is not defined here.
+# `queue` is kept below, commented out: this pack runs no `queue`.
 
 name: infrastructure
 

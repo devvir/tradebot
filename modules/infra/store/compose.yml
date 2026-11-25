@@ -1,10 +1,8 @@
-# Store Infra — Collecting Server
+# Infra pack: store
 #
-# Shared infrastructure for the data collection server.
-#
-# Hostnames on the shared network:
-#   queue      — batch / general message broker
-#   queue-rt   — real-time message broker
+# Defines, on the shared network ${PROJECT_NAME}-network:
+#   queue      — RabbitMQ (services/rabbitmq/docker/base.yml)
+#   queue-rt   — RabbitMQ (services/rabbitmq/docker/base.yml)
 
 name: store
 

@@ -1,9 +1,7 @@
-# Bootcamp Infra — Training Server
+# Infra pack: bootcamp
 #
-# Shared infrastructure for the model training / replay server.
-#
-# Hostnames on the shared network:
-#   queue-rt   — replay data pipeline message broker
+# Defines, on the shared network ${PROJECT_NAME}-network:
+#   queue-rt   — RabbitMQ (services/rabbitmq/docker/base.yml)
 
 name: infra-bootcamp
 

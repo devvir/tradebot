@@ -1,51 +1,47 @@
-# RabbitMQ Service
+# RabbitMQ
 
-Message queue broker (RabbitMQ 3.13). Provides pub/sub messaging for inter-service communication.
+A RabbitMQ 3.12 message broker with the management plugin (`rabbitmq:3.12-management-alpine`).
 
-## Official Documentation
+Deployed by: the `local`, `store`, `market`, `bootcamp` and `shuttle` infra packs, as `queue` and
+`queue-rt` (see [modules/infra](../../modules/infra/README.md) for which pack defines which).
 
-- [RabbitMQ Documentation](https://www.rabbitmq.com/documentation.html)
-- [RabbitMQ Installation Guides](https://www.rabbitmq.com/download.html)
-- [RabbitMQ Management Plugin](https://www.rabbitmq.com/management.html)
+## Files
 
-### Environment Variables
+| File | What it is |
+|---|---|
+| `docker/base.yml` | The broker definition, service `rabbitmq`, meant to be extended: each instance sets its own hostname, container name, ports and data volume. |
+| `docker/compose.yml` | One standalone instance of it, service, hostname and container `rabbitmq`, with its data in the `rabbitmq-data` volume. |
+| `docker/rabbitmq.conf` | Mounted as `/etc/rabbitmq/conf.d/90-tradebot.conf`, read after the image's own `10-defaults.conf`: console logging, `guest` limited to loopback, listeners on 5672 (AMQP) and 15672 (management), memory watermark, TCP buffers, a 60 s heartbeat. |
+| `docker/advanced.config` | Mounted as `/etc/rabbitmq/advanced.config`: raises the connection-to-queue credit flow to `{4000, 2000}`. |
 
-All credentials are configured via environment variables:
+Data lives in `/var/lib/rabbitmq`, on the instance's volume. The healthcheck is
+`rabbitmq-diagnostics -q ping`.
 
-- `QUEUE_USER` - Admin username (default: `guest`)
-- `QUEUE_PASS` - Admin password (default: `guest`)
-- `RABBITMQ_AMQP_PORT` - AMQP port for client connections (default: `9672`)
-- `RABBITMQ_MGMT_PORT` - Management UI port (default: `19672`)
+## Credentials
 
-**Important**: The user created via `QUEUE_USER`/`QUEUE_PASS` will have full administrator privileges and can access:
-- The RabbitMQ message queue (for publishers/consumers)
-- The management web UI at `http://localhost:${RABBITMQ_MGMT_PORT}`
+| Variable | Meaning |
+|---|---|
+| `QUEUE_USER` | The broker's user, created on its first start with full administrator rights. Required: compose refuses to start the broker without it. |
+| `QUEUE_PASS` | That user's password. Required. |
 
-### ⚠️  Security Warning
+The user is created only when the data volume is empty; changing the variables later does not change an
+existing broker's user. `guest` logs in only from inside the container.
 
-**CRITICAL**: This RabbitMQ configuration allows remote connections from any host. The default `guest/guest` credentials are well-known and **MUST be changed** before running in any environment.
+A client connects with `amqp://<QUEUE_USER>:<QUEUE_PASS>@<host>:5672`, each percent-encoded if it holds a
+character reserved in URLs.
 
-**YOU MUST**:
-1. Change `QUEUE_USER` and `QUEUE_PASS` in your module's `.env` file
-2. Update the `QUEUE_URL` connection string in all services to match
-3. Never commit real credentials to version control
+## Ports
 
-### Services Using RabbitMQ
+The standalone `compose.yml` publishes:
 
-Services connect using the `QUEUE_URL` environment variable, which automatically includes the credentials:
+| Variable | Container port | Bind variable |
+|---|---|---|
+| `QUEUE_PORT` | 5672 (AMQP) | `QUEUE_BIND` |
+| `QUEUE_MGMT_PORT` | 15672 (management UI and HTTP API) | `QUEUE_MGMT_BIND` |
 
-```typescript
-// Example: services/hoarder/docker/compose.yml
-QUEUE_URL: amqp://${QUEUE_USER}:${QUEUE_PASS}@rabbitmq:${RABBITMQ_AMQP_PORT}
-```
+A bind address defaults to `127.0.0.1`, so only the host connects. An empty port variable still
+publishes, on a free host port docker picks; `docker compose port` shows which. The management UI is at
+`http://<bind>:<port>`, with the `QUEUE_USER` login.
 
-This ensures all services use the same credentials set at the module level.
-
-## Management UI
-
-Access the management interface at:
-```
-http://localhost:${RABBITMQ_MGMT_PORT}
-```
-
-Login with the credentials set via `QUEUE_USER` and `QUEUE_PASS`.
+Each pack publishes its own instances' ports under its own variables (see
+[modules/infra](../../modules/infra/README.md)).

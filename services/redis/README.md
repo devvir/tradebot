@@ -1,75 +1,27 @@
-# Redis Service
+# Redis
 
-In-memory data store (Redis 7). Provides fast, ephemeral storage for caching and temporary data.
+A Redis 7.4 cache (`redis:7.4-alpine`), kept on disk with an append-only file so its data survives a
+restart.
 
-## Docker Commands
+Deployed by: the `local` and `market` infra packs, as `cache` (see
+[modules/infra](../../modules/infra/README.md)).
 
-Build the image:
-```bash
-docker compose -f services/redis/docker/compose.yml build
-```
+## Definition
 
-Start the container:
-```bash
-docker compose -f services/redis/docker/compose.yml up -d
-```
+`docker/compose.yml` defines service `redis`, which is also its hostname on its network. It runs
+`redis-server --appendonly yes --requirepass "$CACHE_PASS"`, keeps its data in `/data` on the
+`redis-data` volume, and checks its health with an authenticated `redis-cli ping` that reads the password
+from the container's environment, keeping it off the command line. An instance that extends it sets its
+own name, ports and volume.
 
-Stop the container:
-```bash
-docker compose -f services/redis/docker/compose.yml down
-```
+## Variables
 
-View logs:
-```bash
-docker compose -f services/redis/docker/compose.yml logs -f
-```
+| Variable | Meaning |
+|---|---|
+| `CACHE_PASS` | The password. Required: compose refuses to start the service when it is unset or empty, since an empty password would turn authentication off. Redis has no user name. |
+| `CACHE_PORT` | The host port published for 6379. Empty still publishes, on a free host port docker picks; `docker compose port` shows which. |
+| `CACHE_BIND` | The host address the port is published on. Default `127.0.0.1`, so only the host connects. |
+| `TZ` | The container's time zone. Default `UTC`. |
 
-## Official Documentation
-
-- [Redis Documentation](https://redis.io/documentation)
-- [Redis Server](https://redis.io/commands/)
-- [Redis Docker Hub](https://hub.docker.com/_/redis)
-
-### Environment Variables
-
-All configuration is done via environment variables:
-
-- `CACHE_PASS` - Redis password (default: `""` / no password). Note: Redis uses password-only authentication (no username).
-- `CACHE_PORT` - Port for client connections (default: `6379`)
-
-### ⚠️ Security Warning
-
-**CRITICAL**: This Redis configuration allows unauthenticated connections if `CACHE_PASS` is empty.
-
-**YOU MUST**:
-1. Set `CACHE_PASS` to a strong password in your module's `.env` file
-2. Update the `CACHE_URL` in services that connect to Redis
-3. Never commit real credentials to version control
-
-### Setting Credentials
-
-Set credentials in your module's `.env` file:
-
-```bash
-CACHE_PASS=your-secure-password-here
-```
-
-Or pass them when starting a module:
-
-```bash
-CACHE_PASS=secret tb up infra
-```
-
-## Connection String
-
-After setting `CACHE_PASS`, services connect via (note: Redis uses no username, only password):
-
-```
-redis://:${CACHE_PASS}@redis:6379
-```
-
-Or without authentication (if `CACHE_PASS` is empty):
-
-```
-redis://redis:6379
-```
+A client connects with `redis://:<CACHE_PASS>@<host>:6379`, the password percent-encoded if it holds a
+character reserved in URLs.

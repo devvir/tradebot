@@ -1,11 +1,9 @@
-# Market Infra — Trading Server
+# Infra pack: market
 #
-# Shared infrastructure for the live trading server.
-#
-# Hostnames on the shared network:
-#   queue      — trading signals / order message broker
-#   queue-rt   — real-time live feed message broker
-#   cache      — fast cache for order/position data
+# Defines, on the shared network ${PROJECT_NAME}-network:
+#   queue      — RabbitMQ (services/rabbitmq/docker/base.yml)
+#   queue-rt   — RabbitMQ (services/rabbitmq/docker/base.yml)
+#   cache      — Redis (services/redis/docker/compose.yml)
 
 name: market
 
