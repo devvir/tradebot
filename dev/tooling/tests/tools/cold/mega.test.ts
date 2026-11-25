@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { _test_with as standIns, megaCmd, notThere } from '../../../src/tools/cold/shared/mega/exec';
 import { landed, listing } from '../../../src/tools/cold/shared/mega/listing';
 import { _test_parseListing as parseListing } from '../../../src/tools/cold/shared/mega/listing';
-import { _test_parseSummary as parseSummary, queue, queuedPaths } from '../../../src/tools/cold/shared/mega/transfers';
+import { _test_parseSummary as parseSummary, queue, queuedPaths, transferName } from '../../../src/tools/cold/shared/mega/transfers';
 import { _test_roundOf as roundOf } from '../../../src/tools/cold/push/archives/work';
 import { runPush } from '../../../src/tools/cold/push/archives';
 import { runPushVault } from '../../../src/tools/cold/push/vault';
@@ -36,8 +36,6 @@ describe('what the upload queue has left', () => {
   /**
    * **Mega's `GB` is a GiB.** A tar of 2,001,274,880 bytes on disk comes back
    * from `mega-transfers` as `1908.56 MB` — that figure over 1024², not 1000².
-   * Reading the labels as decimal made the queue measure 7.4% light, so packing
-   * ran further ahead than the configured target asked for.
    */
   it('reads the labels as binary, which is what Mega means by them', () => {
     const total = parseSummary(
@@ -48,7 +46,7 @@ describe('what the upload queue has left', () => {
     // Mega prints two decimals, so the most it can pin down is ±0.005 MiB.
     expect(Math.abs(total - 2001274880)).toBeLessThan(0.005 * 1024 ** 2);
 
-    // Read as decimal it would have come back ~7.4% light, which is the bug.
+    // Binary, not decimal: 1024² over 1000² more than the figure printed.
     expect(total / (1908.56 * 1e6)).toBeCloseTo(1.048576, 3);
   });
 
@@ -75,14 +73,14 @@ describe('what the upload queue has left', () => {
 
 describe('confirming a file landed', () => {
   const LISTING = [
-    '/Tradebot/sources/vault/bybit/2024:',
+    '/Tradebot/sources/archives/bybit/2024:',
     'FLAGS VERS      SIZE            DATE          HANDLE NAME',
-    '----    1   1998765432 2026-08-05T22:09:10 H:7BtQjCAL 202405.p01.tar',
-    '----    1    998765432 2026-08-05T22:11:02 H:7AkyiIDQ 202405.p02.tar',
+    '----    1   1998765432 2026-08-05T22:09:10 H:7BtQjCAL bybit-202405.001.tar',
+    '----    1    998765432 2026-08-05T22:11:02 H:7AkyiIDQ bybit-202405.002.tar',
   ].join('\n');
 
   it('reads the size, the handle and the modification time of the file asked for', () => {
-    expect(parseListing(LISTING, '202405.p02.tar'))
+    expect(parseListing(LISTING, 'bybit-202405.002.tar'))
       .toEqual({ bytes: 998765432, handle: 'H:7AkyiIDQ', modified: '2026-08-05T22:11:02' });
   });
 
@@ -114,7 +112,25 @@ describe('confirming a file landed', () => {
 
   /** A file Mega does not hold is how "not uploaded yet" is expressed. */
   it('returns nothing when the name is absent', () => {
-    expect(parseListing(LISTING, '202405.p09.tar')).toBeNull();
+    expect(parseListing(LISTING, 'bybit-202405.009.tar')).toBeNull();
+
+    // A name that only ends with one listed is not it.
+    expect(parseListing(LISTING, 'it-202405.001.tar')).toBeNull();
+  });
+});
+
+describe('what a file being moved is called', () => {
+  it('names a tar by its own name, which carries its venue and month', () => {
+    expect(transferName('/Tradebot/sources/archives/binance/2024/binance-202405.001.tar')).toBe('binance-202405.001.tar');
+    expect(transferName('/data/cold/archives/staging/binance/binance-202405.001.tar')).toBe('binance-202405.001.tar');
+  });
+
+  it('names a vault file by the partition it is of, since every slice has a file called after its month', () => {
+    const one = transferName('/Tradebot/sources/vault/venue=binance/market=spot/dataset=trades/BTCUSDT/2024-05.parquet');
+    const two = transferName('/Tradebot/sources/vault/venue=bybit/market=spot/dataset=trades/BTCUSDT/2024-05.parquet');
+
+    expect(one).not.toBe(two);
+    expect(one).toContain('BTCUSDT');
   });
 });
 

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { release } from '../../../src/tools/cold/cleanup';
 import { acquire, orphans } from '../../../src/tools/cold/lock';
 import { setYes } from '../../../src/tools/cold/options';
 import { confirm } from '../../../src/shared/ui/prompts';
@@ -40,6 +41,47 @@ describe('the cold lock', () => {
 
     await expect(acquire(dir, 'archives', 'push')).rejects.toThrow(/Locked/);
     expect(fs.readFileSync(file(), 'utf8')).toBe(`pid ${process.ppid} since T\n`);
+  });
+
+  it('stops a run where the lock is held and nobody is there to ask', async () => {
+    fs.writeFileSync(file(), `pid ${process.ppid} since T\n`);
+    setYes(true);
+
+    await expect(acquire(dir, 'archives', 'push')).rejects.toThrow(/Locked/);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(fs.readFileSync(file(), 'utf8')).toBe(`pid ${process.ppid} since T\n`);
+  });
+
+  it('stops a run where the lock is held and the answer is to leave it', async () => {
+    fs.writeFileSync(file(), `pid ${process.ppid} since T\n`);
+    vi.mocked(confirm).mockResolvedValueOnce(false);
+
+    await expect(acquire(dir, 'archives', 'push')).rejects.toThrow(/Locked/);
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(fs.readFileSync(file(), 'utf8')).toBe(`pid ${process.ppid} since T\n`);
+  });
+
+  it('is held by one origin and command, and not by another', async () => {
+    const push  = await acquire(dir, 'archives', 'push');
+    const evict = await acquire(dir, 'archives', 'evict');
+    const vault = await acquire(dir, 'vault', 'push');
+
+    expect(confirm).not.toHaveBeenCalled();
+
+    push();
+    evict();
+    vault();
+
+    expect(fs.readdirSync(dir)).toEqual([]);
+  });
+
+  /** However the run ends: everything registered is given back by the same route. */
+  it('is given back when the run releases what it holds', async () => {
+    await acquire(dir, 'archives', 'push');
+
+    release();
+
+    expect(fs.existsSync(file())).toBe(false);
   });
 
   it('is given back on the way out', async () => {

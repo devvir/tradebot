@@ -3,17 +3,18 @@ import { info } from '../../shared/ui/logger';
 /**
  * What has to be given back before the process goes, however it goes.
  *
- * A run holds two things a later run would trip over: the lock file, and an open
- * SQLite handle. `try/finally` covers a normal return and a thrown error, but
- * not a signal — `process.exit` inside a handler skips every pending `finally`,
- * so anything relying on one is simply not run.
+ * A run holds things a later run, or the terminal, would trip over: its lock
+ * file, an open SQLite handle, the mega-cmd commands still running for it, and
+ * a progress display drawn over the terminal. `try/finally` covers a normal
+ * return and a thrown error, but not a signal — `process.exit` inside a handler
+ * skips every pending `finally`, so anything relying on one is simply not run.
  *
- * So both are registered here instead, and the signal path and the ordinary path
- * end up in the same place.
+ * So each is registered here instead, and the signal path and the ordinary
+ * path end up in the same place.
  *
  * **Last registered, first released.** Registration order is the order things
- * were acquired — lock, then database — so unwinding in reverse hands them back
- * the way a stack would.
+ * were acquired — the lock before the database it guards — so unwinding in
+ * reverse hands them back the way a stack would.
  */
 export const onExit = (task: () => void): void => {
   tasks.push(task);

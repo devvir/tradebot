@@ -17,6 +17,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { Finding, Looking } from '../../../src/tools/cold/audit/types';
 import type { CatalogPartition, Remote, VaultFile } from '../../../src/tools/cold/shared/types';
 import type { ColdConfig, Origin } from '../../../src/tools/cold/types';
+import { coldConfigFor } from './fixtures';
 
 /** What was taken off the disk, and whether outright: the trash is the host's, and not a test's to fill. */
 const discarded = vi.hoisted(() => [] as { paths: string[]; purge: boolean }[]);
@@ -35,10 +36,8 @@ let db:  DatabaseSync;
 let held: Map<string, { bytes: number; handle: string | null }>;
 let removed: string[];
 
-const config = (origin: Origin): ColdConfig => ({
-  sourceRoot: path.join(dir, 'archives'), vaultRoot: path.join(dir, 'vault'), coldRoot: path.join(dir, 'cold'), megaRoot: `/x/${origin}`,
-  backupRoot: '/x/cold', dbPath: path.join(dir, 'cold', 'cold.sqlite'), capBytes: 1e12, queueTargetGb: 10, settledHours: null,
-  catalogUrl: 'http://catalog.test', catalogToken: 't',
+const config = (origin: Origin): ColdConfig => coldConfigFor(dir, {
+  megaRoot: `/x/${origin}`, backupRoot: '/x/cold', dbPath: path.join(dir, 'cold', 'cold.sqlite'),
 });
 
 const remote = (): Remote => ({

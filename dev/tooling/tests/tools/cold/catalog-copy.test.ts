@@ -16,6 +16,7 @@ import * as record from '../../../src/tools/cold/shared/record';
 import type { Sending } from '../../../src/tools/cold/push/types';
 import type { Fetching, Remote } from '../../../src/tools/cold/shared/types';
 import type { ColdConfig } from '../../../src/tools/cold/types';
+import { coldConfigFor } from './fixtures';
 
 /**
  * The catalog's copy in cold storage: the database as the base, a file for
@@ -27,11 +28,7 @@ let dir: string;
 let db:  DatabaseSync;
 let sent: string[];
 
-const config = (): ColdConfig => ({
-  sourceRoot: path.join(dir, 'archives'), vaultRoot: path.join(dir, 'vault'), coldRoot: path.join(dir, 'cold'), megaRoot: '/x', backupRoot: '/x/@cold',
-  catalogDb: path.join(dir, 'catalog', 'catalog.db'), catalogRoot: '/x/@catalog',
-  dbPath: path.join(dir, 'cold.sqlite'), capBytes: 1e12, queueTargetGb: 10, settledHours: null, catalogUrl: 'http://catalog.test', catalogToken: '',
-});
+const config = (): ColdConfig => coldConfigFor(dir, { catalogRoot: '/x/@catalog', catalogToken: '' });
 
 const inMega = (at = ''): string => path.join(dir, 'mega', at);
 

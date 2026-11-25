@@ -10,6 +10,7 @@ import { completable } from '../../../src/tools/cold/shared/vault/spill';
 import type { DatabaseSync } from 'node:sqlite';
 import type { ListedSlice, VaultFile } from '../../../src/tools/cold/shared/types';
 import type { ColdConfig } from '../../../src/tools/cold/types';
+import { coldConfigFor } from './fixtures';
 
 /**
  * Partitions stocked without a neighbouring month's hours, once that month's
@@ -20,10 +21,7 @@ let dir: string;
 let db:  DatabaseSync;
 let catalog: ListedSlice[];
 
-const config = (): ColdConfig => ({
-  sourceRoot: path.join(dir, 'archives'), vaultRoot: path.join(dir, 'vault'), coldRoot: dir, megaRoot: '/x', backupRoot: '/x/@cold',
-  dbPath: path.join(dir, 'cold.sqlite'), capBytes: 1e12, queueTargetGb: 10, settledHours: null, catalogUrl: 'http://catalog.test', catalogToken: '',
-});
+const config = (): ColdConfig => coldConfigFor(dir, { coldRoot: dir, catalogToken: '' });
 
 const SLICE = 'venue=gate/market=spot/dataset=trades';
 

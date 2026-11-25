@@ -263,14 +263,14 @@ export const transfers = async (queue: Queue): Promise<Transfer[]> => {
  * What a file being moved is called on a line of progress: enough of its path
  * to say which it is.
  *
- * A tar is called `202202.p01.tar` and every venue produces one, so the
- * basename alone identifies nothing. A vault file is called `<month>.parquet`
- * and every slice has one, so it is named by the partition it is of.
+ * A tar's name says its venue and month (`binance-202405.001.tar`), so it is
+ * named by that alone. A vault file is called `<month>.parquet` and every slice
+ * has one, so it is named by the partition it is of.
  */
 export const transferName = (at: string): string => {
   const vault = at.indexOf('/venue=');
 
-  return vault < 0 ? at.split('/').slice(-2).join('/') : fileLabelOf(at.slice(vault + 1));
+  return vault < 0 ? at.slice(at.lastIndexOf('/') + 1) : fileLabelOf(at.slice(vault + 1));
 };
 
 // ── Internals ─────────────────────────────────────────────────────────────────
@@ -302,9 +302,6 @@ const parseSummary = (stdout: string): QueueState | null => {
  * **Mega's `GB` is a GiB.** A tar of 2,001,274,880 bytes on disk is reported by
  * `mega-transfers` as `1908.56 MB`, which is that figure over 1024² — so the
  * labels are decimal and the arithmetic behind them is binary.
- *
- * Reading them as decimal made the queue measure 7.4% light, which let packing
- * run further ahead than the target asked for.
  */
 const UNITS: Record<string, number> = {
   B:  1,

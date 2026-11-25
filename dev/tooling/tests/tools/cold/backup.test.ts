@@ -10,6 +10,7 @@ import { _test_with as megaWith } from '../../../src/tools/cold/shared/mega/exec
 import * as record from '../../../src/tools/cold/shared/record';
 import type { ColdConfig } from '../../../src/tools/cold/types';
 import type { CatalogPartition, Remote } from '../../../src/tools/cold/shared/types';
+import { coldConfigFor } from './fixtures';
 
 /** Nobody is there to answer in a test: a question asked where none should be is a failure. */
 const asked = vi.hoisted(() => ({ answer: null as boolean | null, questions: [] as string[] }));
@@ -31,10 +32,8 @@ vi.mock('../../../src/shared/ui/prompts', () => ({
 
 let dir: string;
 
-const config = (): ColdConfig => ({
-  sourceRoot: path.join(dir, 'archives'), vaultRoot: path.join(dir, 'vault'), coldRoot: path.join(dir, 'cold'), megaRoot: '/x/vault',
-  backupRoot: '/x/cold', dbPath: path.join(dir, 'cold', 'cold.sqlite'), capBytes: 1e12, queueTargetGb: 10, settledHours: null,
-  catalogUrl: 'http://catalog.test', catalogToken: 't',
+const config = (): ColdConfig => coldConfigFor(dir, {
+  megaRoot: '/x/vault', backupRoot: '/x/cold', dbPath: path.join(dir, 'cold', 'cold.sqlite'),
 });
 
 /** Mega, as far as keeping a file goes: what was handed over is what it holds. */

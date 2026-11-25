@@ -3,7 +3,8 @@ import path from 'node:path';
 import { membersOf, run } from '../../shared/tar';
 
 /**
- * Write one part, and prove it before letting anything else see it.
+ * Write one tar of whole partitions, and prove it before letting anything else
+ * see it.
  *
  * **Three names, one per step, so a run stopped anywhere picks up where it
  * was.** A tar is written to `.tar.tmp`, renamed to `.tar.unverified` once it is
@@ -45,7 +46,7 @@ export const writePart = async (
 
   try {
     if (! fs.existsSync(written)) {
-      // The member list goes through a file rather than the argument vector: a part
+      // The member list goes through a file rather than the argument vector: a tar
       // can hold tens of thousands of paths, far past any exec limit.
       await fs.promises.writeFile(list, members.join('\n') + '\n');
 
@@ -68,40 +69,6 @@ export const writePart = async (
   } finally {
     await fs.promises.rm(list, { force: true });
     await fs.promises.rm(temporary, { force: true });
-  }
-};
-
-/**
- * Whether a tar left by an earlier run still holds exactly what its plan says.
- *
- * Run on resume, when a tar exists but Mega does not have it. Uploading is what
- * costs hours here, so a tar that survives this is reused rather than rebuilt.
- *
- * **Two questions, and `tar -d` only answers one.** It compares what is *in* the
- * tar against the tree, so it catches a member deleted, moved or rewritten since
- * packing. It says nothing about a member the plan lists and the tar never
- * had — that file is simply not examined, the diff passes, and the part uploads
- * while the database records a file that is not inside it. Nothing later
- * notices: the path is in `member`, so no future run considers it unpacked.
- *
- * That is reachable rather than theoretical. Part names are deterministic, so a
- * tar left by an earlier run is adopted by whichever plan lands on its name —
- * and a venue-month that has gained a partition since produces a plan wider than
- * the tar sitting there.
- */
-export const verifyPart = async (
-  sourceRoot: string,
-  local:      string,
-  members:    string[],
-): Promise<boolean> => {
-  try {
-    if (! await holds(local, members)) return false;
-
-    await run('tar', ['-df', local, '-C', sourceRoot]);
-
-    return true;
-  } catch {
-    return false;
   }
 };
 

@@ -9,6 +9,7 @@ import { neededOf } from '../../../src/tools/cold/shared/vault/needed';
 import type { DatabaseSync } from 'node:sqlite';
 import type { CatalogPartition, ListedSlice, Needed, VaultFile } from '../../../src/tools/cold/shared/types';
 import type { ColdConfig, Tar } from '../../../src/tools/cold/types';
+import { coldConfigFor } from './fixtures';
 
 /**
  * What the vault waits for that is in cold storage: the archives an outdated
@@ -20,10 +21,8 @@ let dir: string;
 let db:  DatabaseSync;
 let catalog: ListedSlice[];
 
-const config = (): ColdConfig => ({
-  sourceRoot: path.join(dir, 'archives'), vaultRoot: path.join(dir, 'vault'), coldRoot: dir, megaRoot: '/x', backupRoot: '/x/@cold',
-  catalogDb: path.join(dir, 'catalog.db'), catalogRoot: '/x/@catalog',
-  dbPath: path.join(dir, 'cold.sqlite'), capBytes: 1e12, queueTargetGb: 10, settledHours: null, catalogUrl: 'http://catalog.test', catalogToken: '',
+const config = (): ColdConfig => coldConfigFor(dir, {
+  coldRoot: dir, catalogDb: path.join(dir, 'catalog.db'), catalogRoot: '/x/@catalog', catalogToken: '',
 });
 
 const SLICE = 'venue=gate/market=spot/dataset=trades';

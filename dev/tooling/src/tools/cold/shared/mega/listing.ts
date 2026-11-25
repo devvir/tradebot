@@ -25,7 +25,7 @@ export const removeTree = async (remotePath: string): Promise<void> => {
 /**
  * Every object under a path, in one call.
  *
- * **Hundreds of parts, one round trip.** Asking per part is correct and costs a
+ * **Hundreds of tars, one round trip.** Asking per tar is correct and costs a
  * process spawn each; a recursive listing answers the same question for a whole
  * origin at once, which is what makes it affordable to check *before* acting
  * rather than only when something already looks wrong.
@@ -34,9 +34,9 @@ export const removeTree = async (remotePath: string): Promise<void> => {
  * directory is tracked as the output is read and each name joined to it.
  *
  * **Keyed relative to `root`**, which is what makes it comparable to the paths
- * the database holds. Those record a part's own location and not this
+ * the database holds. Those record a tar's own location and not this
  * deployment's remote root, so keying the listing absolutely would mean pasting
- * the root onto every part at every lookup, in a dozen places, to undo a
+ * the root onto every tar at every lookup, in a dozen places, to undo a
  * difference neither side cares about.
  *
  * Given five minutes and waited for while Mega is busy, unless `asked` says
@@ -178,12 +178,12 @@ const relativeTo = (full: string, root: string): string => {
 };
 
 /**
- * `----    1   4780000000 2026-08-05T22:09:10 H:7BtQjCAL 202405.p01.tar`
+ * `----    1   4780000000 2026-08-05T22:09:10 H:7BtQjCAL binance-202405.001.tar`
  *
  * Columns are `FLAGS VERS SIZE DATE HANDLE NAME`, so the size is the
  * *second* number and not the first — `VERS` sits in front of it and is also
  * digits. The name is compared as a whole field rather than as a suffix, since
- * `x202405.p01.tar` ends with `202405.p01.tar`.
+ * `xbinance-202405.001.tar` ends with `binance-202405.001.tar`.
  */
 const parseListing = (
   stdout: string,

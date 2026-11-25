@@ -10,21 +10,22 @@ import { info, warn } from '../../shared/ui/logger';
  * One run of a command per origin at a time.
  *
  * **Keyed by both, because neither alone is the thing at risk.** Two pushes over
- * one origin would plan the same unpacked files twice and pack them into two sets
+ * one origin would plan the same partitions twice and pack them into two sets
  * of tars, both of which would upload; two evicts would walk and prompt over the
  * same tree. Neither collision crosses origins — each stages into its own
- * directory, recovers only from that directory, and diffs only its own rows.
+ * directory, recovers only from that directory, and works only on its own rows.
  *
- * **A push and an evict do not collide, so they do not share a lock.** The files
- * are disjoint by construction: evict deletes only what an *uploaded* part
- * records and blocks any month holding a part Mega does not have yet, while push
- * plans only what is not already packed at the same size and mtime — so an
- * evicted file is never a candidate, it is simply not there. Push already treats
- * the tree as something that moves underneath it, skipping a directory it cannot
- * read and a file it cannot stat, and evict never writes to the database at all.
- * Sharing a lock bought none of that and cost the availability: a push that runs
- * for days would lock eviction out for days, exactly when a filling tree most
- * needs reclaiming.
+ * **A push and an evict do not collide, so they do not share a lock.** What each
+ * acts on is decided by the record, and the record says it the same way to both.
+ * Push stores only partitions the record does not hold at the version they are
+ * at now — the catalog's for the archives, the ledger's for the vault. Evict
+ * removes only partitions Mega has confirmed holding at that same version, with
+ * no change noted, and checks that again right before it removes them. A
+ * partition push is storing is not one evict will remove, and one evict has
+ * removed is not one push will store. Both write the record, and SQLite keeps
+ * those writes apart. A push runs for days, which is when a filling tree most
+ * needs reclaiming, so a shared lock would keep eviction out exactly when it
+ * matters.
  *
  * The upload queue *is* shared, and is meant to be. Pacing reads it globally on
  * purpose, so a second origin's transfers are backlog in front of ours in
@@ -34,10 +35,10 @@ import { info, warn } from '../../shared/ui/logger';
  * The lock is a file rather than anything cleverer because the thing being
  * protected is a directory of tars on one host.
  *
- * **A stale lock is offered rather than enforced.** A crashed run leaves one
- * behind, and refusing to start until someone finds the file is worse than
- * asking — the risk of overriding it is the operator's to take, and they are
- * standing right there.
+ * **A lock whose holder is gone is cleared; one still held is asked about.**
+ * Where the process that took it is still there, the risk of overriding it is
+ * the operator's to take, and they are standing right there. With `--yes`
+ * nobody is, and the run stops.
  */
 export const acquire = async (
   coldRoot: string,

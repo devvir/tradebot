@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Archives } from '../../../src/tools/cold/shared/disk';
 import { _test_pass as pass } from '../../../src/tools/cold/evict/archives';
 import { _test_remove as remove } from '../../../src/tools/cold/evict/archives/remove';
-import { setYes } from '../../../src/tools/cold/options';
+import { setWatch, setYes } from '../../../src/tools/cold/options';
 import { confirm } from '../../../src/shared/ui/prompts';
 import { _test_survey as survey } from '../../../src/tools/cold/evict/archives/survey';
 import * as record from '../../../src/tools/cold/shared/record';
@@ -14,6 +14,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { CatalogPartition, Grain, ListedSlice } from '../../../src/tools/cold/shared/types';
 import type { ColdConfig } from '../../../src/tools/cold/types';
 import type { Run } from '../../../src/tools/cold/evict/types';
+import { coldConfigFor } from './fixtures';
 
 vi.mock('../../../src/shared/ui/prompts', () => ({ confirm: vi.fn(async () => true) }));
 
@@ -29,11 +30,7 @@ let settled:  Set<string>;
 
 const MONTHS = ['202001', '202002', '202003', '202004'];
 
-const config = (): ColdConfig => ({
-  sourceRoot: path.join(dir, 'archives'), vaultRoot: path.join(dir, 'vault'), coldRoot: dir, megaRoot: '/x',
-  dbPath: path.join(dir, 'cold.sqlite'), capBytes: 1e12, queueTargetGb: 10, settledHours: null,
-  catalogUrl: 'http://catalog.test', catalogToken: 't',
-});
+const config = (): ColdConfig => coldConfigFor(dir, { coldRoot: dir });
 
 const partition = (month: string, grain: Grain = 'daily', version = 'v1'): CatalogPartition => ({
   venue: 'gate', market: 'spot', dataset: 'trades', variant: '', grain, bundle: 'instrument',
@@ -137,6 +134,8 @@ beforeEach(() => {
 
 afterEach(() => {
   setYes(false);
+  setWatch(false);
+  process.exitCode = undefined;
   vi.mocked(confirm).mockReset();
   vi.unstubAllGlobals();
   record.close(db);
@@ -595,6 +594,94 @@ describe('a pass over the archives', () => {
 
     expect(fs.existsSync(path.join(dir, 'archives', added))).toBe(false);
     expect(evicted().at(-1)).toEqual({ month: '202004', files: 2 });
+  });
+});
+
+/** When a pass removes nothing at all, and what it says of the run. */
+describe('a pass that removes nothing', () => {
+  const run = (options: Partial<Run['options']> = {}): Run => ({
+    config: config(), origin: 'archives', venues: ['gate'], options: { venues: ['gate'], purge: true, ...options }, agreed: false, waiting: false,
+  });
+
+  const onDiskStill = (): number => MONTHS.filter(month => fs.existsSync(path.join(dir, 'archives', 'gate/spot/trades/B/BTC_USDT', month))).length;
+  const evictions   = (): number => (db.prepare('SELECT COUNT(*) AS n FROM eviction').get() as { n: number }).n;
+
+  beforeEach(() => {
+    vi.mocked(confirm).mockImplementation(async () => true);
+  });
+
+  it('while the vault reports a loss: the command fails, and a watching run looks again later', async () => {
+    fs.writeFileSync(path.join(dir, 'vault', 'ERROR.log'), 'T|p|r|its files are not in the vault\n');
+
+    expect(await pass(db, run(), true)).toBe(false);
+    expect(process.exitCode).toBe(1);
+
+    process.exitCode = undefined;
+    setWatch(true);
+
+    expect(await pass(db, run(), true)).toBe(true);
+    expect(process.exitCode).toBeUndefined();
+
+    expect(onDiskStill()).toBe(MONTHS.length);
+    expect(evictions()).toBe(0);
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it('where the vault has no ledger: the command fails, and a watching run looks again later', async () => {
+    fs.rmSync(path.join(dir, 'vault', 'ledger.csv'));
+
+    expect(await pass(db, run(), true)).toBe(false);
+    expect(process.exitCode).toBe(1);
+
+    process.exitCode = undefined;
+    setWatch(true);
+
+    expect(await pass(db, run(), true)).toBe(true);
+    expect(process.exitCode).toBeUndefined();
+
+    expect(onDiskStill()).toBe(MONTHS.length);
+    expect(evictions()).toBe(0);
+  });
+
+  it('on a dry run: says what could go, asks nothing, and goes on', async () => {
+    expect(await pass(db, run({ dryRun: true }), true)).toBe(true);
+
+    expect(onDiskStill()).toBe(MONTHS.length);
+    expect(evictions()).toBe(0);
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it('where the answer is no: ends the run', async () => {
+    vi.mocked(confirm).mockImplementation(async () => false);
+
+    expect(await pass(db, run(), true)).toBe(false);
+
+    expect(onDiskStill()).toBe(MONTHS.length);
+    expect(evictions()).toBe(0);
+  });
+});
+
+describe('a pass of a run left watching', () => {
+  it('asks before its first removal, and not again', async () => {
+    setWatch(true);
+    vi.mocked(confirm).mockImplementation(async () => true);
+
+    // The last month is not stocked yet, and stays through the first pass.
+    fs.rmSync(path.join(dir, 'vault', 'ledger.csv'));
+    stock(...MONTHS.slice(0, 3).map(month => partition(month)));
+
+    const shared: Run = {
+      config: config(), origin: 'archives', venues: ['gate'], options: { venues: ['gate'], purge: true }, agreed: false, waiting: false,
+    };
+
+    expect(await pass(db, shared, true)).toBe(true);
+
+    stock(partition('202004'));
+
+    expect(await pass(db, shared, false)).toBe(true);
+
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(fs.readdirSync(path.join(dir, 'archives', 'gate'))).toEqual([]);
   });
 });
 

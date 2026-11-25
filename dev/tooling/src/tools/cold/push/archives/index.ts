@@ -20,7 +20,8 @@ import type { Planned, PushOptions } from '../types';
  * Store what is ready and not in cold storage yet.
  *
  * **What is ready is the catalog's to say**: a partition with nothing left to
- * download that has not changed for a day. Each is checked against the files on
+ * download that the catalog has settled, and that has not changed for
+ * `COLD_SETTLED_HOURS` where that is set. Each is checked against the files on
  * disk, packed with the rest of its venue-month into tars of whole partitions,
  * uploaded to Mega, and recorded — which partitions each tar holds, and at
  * which version.

@@ -12,6 +12,7 @@ import type { PushProgress } from '../../../src/tools/cold/push/progress';
 import type { Round } from '../../../src/tools/cold/push/types';
 import type { CatalogPartition, Listed } from '../../../src/tools/cold/shared/types';
 import type { ColdConfig, TarState } from '../../../src/tools/cold/types';
+import { coldConfigFor } from './fixtures';
 
 /**
  * A tar taken through its states against a stand-in for Mega, while the
@@ -49,11 +50,7 @@ vi.mock('../../../src/tools/cold/shared/mega', async (actual) => {
 let dir: string;
 let db:  DatabaseSync;
 
-const config = (): ColdConfig => ({
-  sourceRoot: path.join(dir, 'archives'), vaultRoot: path.join(dir, 'vault'), coldRoot: path.join(dir, 'cold'), megaRoot: '/m',
-  dbPath: path.join(dir, 'cold.sqlite'), capBytes: 1e12, queueTargetGb: 10, settledHours: null,
-  catalogUrl: 'http://catalog.test', catalogToken: 't',
-});
+const config = (): ColdConfig => coldConfigFor(dir, { megaRoot: '/m' });
 
 const progress = {
   working: () => {}, worked: () => {}, verifying: () => {}, stored: () => {}, log: () => {},
@@ -312,5 +309,152 @@ describe('a change the catalog takes back', () => {
 
     expect(heldNow(id)).toMatchObject({ version: 'v1', next: null });
     expect(await inMega(id)).toEqual(['01:2']);
+  });
+});
+
+/** Each state a tar can be in, and what one step from it does. */
+describe('one step of a tar', () => {
+  const localOf = (id: number): string => path.join(config().coldRoot, 'archives', tarOf(id).local);
+
+  /** One step, with the queues and the room as given. */
+  const goWith = async (id: number, given: Partial<Round>): Promise<boolean> =>
+    step(db, config(), 'archives', new Archives(config().sourceRoot), tarOf(id), progress, { ...round, ...given });
+
+  it('packs a planned tar from the disk, and writes down what it weighs', async () => {
+    const id = planned('v1');
+
+    expect(await go(id)).toBe('packed');
+    expect(fs.existsSync(localOf(id))).toBe(true);
+    expect(tarOf(id).bytes).toBe(fs.statSync(localOf(id)).size);
+    expect(heldNow(id).packed).toMatchObject({ version: 'v1', files: 1, bytes: 2 });
+  });
+
+  it('packs nothing while the upload queue has no room', async () => {
+    const id = planned('v1');
+
+    expect(await goWith(id, { room: async () => false })).toBe(false);
+    expect(tarOf(id).state).toBe('planned');
+    expect(fs.existsSync(localOf(id))).toBe(false);
+  });
+
+  it('refuses to pack a partition the disk does not hold as the catalog says, and leaves the tar planned', async () => {
+    const id = planned('v1');
+
+    onDisk('v2');
+
+    await expect(go(id)).rejects.toThrow(/not on disk as the catalog says/);
+    expect(tarOf(id).state).toBe('planned');
+    expect(fs.existsSync(localOf(id))).toBe(false);
+  });
+
+  it('hands a packed tar to Mega and takes it as queued', async () => {
+    const id = planned('v1');
+
+    await go(id);
+
+    expect(await go(id)).toBe('queued');
+    expect(cloud.uploads).toBe(1);
+  });
+
+  it('does not hand over a packed tar the upload queue already has', async () => {
+    const id = planned('v1');
+
+    await go(id);
+
+    expect(await goWith(id, { uploads: async () => new Set([localOf(id)]) })).toBe(true);
+    expect(tarOf(id).state).toBe('queued');
+    expect(cloud.uploads).toBe(0);
+  });
+
+  it('plans a packed tar again where it is lost from staging and Mega never held it', async () => {
+    const id = planned('v1');
+
+    await go(id);
+    fs.rmSync(localOf(id));
+
+    expect(await go(id)).toBe('planned');
+  });
+
+  it('brings a packed tar back where it is lost from staging and Mega holds an older one', async () => {
+    const id = await storedAtV1();
+
+    changeTo('v2', id);
+    await until(id, 'packed');
+    fs.rmSync(localOf(id));
+
+    expect(await go(id)).toBe('stale');
+  });
+
+  it('takes a queued tar as stored once Mega lists it at its size, and clears it from staging', async () => {
+    const id = planned('v1');
+
+    await until(id, 'queued');
+
+    expect(await go(id)).toBe('stored');
+    expect(tarOf(id).handle).toBe('H:1');
+    expect(fs.existsSync(localOf(id))).toBe(false);
+    expect(record.storedOf(db, 'archives', 'gate').map(one => one.version)).toEqual(['v1']);
+  });
+
+  it('hands a queued tar over again where Mega neither lists it nor has it queued', async () => {
+    const id = planned('v1');
+
+    await go(id);
+    record.move(db, id, 'queued');
+
+    expect(await go(id)).toBe('packed');
+    expect(fs.existsSync(localOf(id))).toBe(true);
+  });
+
+  it('waits on a queued tar Mega is still sending', async () => {
+    const id = planned('v1');
+
+    await go(id);
+    record.move(db, id, 'queued');
+
+    expect(await goWith(id, { uploads: async () => new Set([localOf(id)]) })).toBe(false);
+    expect(tarOf(id).state).toBe('queued');
+  });
+
+  it('asks Mega for a stale tar and takes it as being fetched', async () => {
+    const id = await storedAtV1();
+
+    changeTo('v2', id);
+
+    expect(await go(id)).toBe('fetching');
+    expect(fs.statSync(localOf(id)).size).toBe(tarOf(id).bytes);
+  });
+
+  it('takes a tar as fetched once it is here whole and has left the download queue', async () => {
+    const id = await storedAtV1();
+
+    changeTo('v2', id);
+    await go(id);
+
+    expect(await goWith(id, { downloads: async () => new Set([localOf(id)]) })).toBe(false);
+    expect(tarOf(id).state).toBe('fetching');
+
+    expect(await go(id)).toBe('fetched');
+  });
+
+  it('asks again for a tar that left the download queue without arriving whole', async () => {
+    const id = await storedAtV1();
+
+    changeTo('v2', id);
+    await go(id);
+    fs.truncateSync(localOf(id), 10);
+
+    expect(await go(id)).toBe('stale');
+  });
+
+  it('corrects a fetched tar to the version noted and takes it as packed, with Mega still described as it is', async () => {
+    const id = await storedAtV1();
+
+    changeTo('v2', id);
+    await until(id, 'fetched');
+
+    expect(await go(id)).toBe('packed');
+    expect(heldNow(id)).toMatchObject({ version: 'v1', packed: { version: 'v2', files: 2, bytes: 5 } });
+    expect((await sizedMembersOf(localOf(id))).map(one => `${one.path.slice(-9, -7)}:${one.bytes}`).sort()).toEqual(['01:3', '02:2']);
   });
 });

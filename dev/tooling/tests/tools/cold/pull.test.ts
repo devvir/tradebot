@@ -11,9 +11,10 @@ import { _test_chosen as chosen } from '../../../src/tools/cold/pull/archives';
 import { _test_survey as survey } from '../../../src/tools/cold/pull/archives/survey';
 import * as record from '../../../src/tools/cold/shared/record';
 import type { DatabaseSync } from 'node:sqlite';
-import type { CatalogPartition, ListedSlice } from '../../../src/tools/cold/shared/types';
+import type { CatalogPartition, Fetching, ListedSlice } from '../../../src/tools/cold/shared/types';
 import type { ColdConfig } from '../../../src/tools/cold/types';
-import type { Fetching, PullFilter, Pullable } from '../../../src/tools/cold/pull/types';
+import type { PullFilter, Pullable } from '../../../src/tools/cold/pull/types';
+import { coldConfigFor } from './fixtures';
 
 /**
  * Bringing the archives back: what a filter means, how each stored partition
@@ -25,11 +26,7 @@ let dir:     string;
 let db:      DatabaseSync;
 let catalog: ListedSlice[];
 
-const config = (): ColdConfig => ({
-  sourceRoot: path.join(dir, 'archives'), vaultRoot: path.join(dir, 'vault'), coldRoot: path.join(dir, 'cold'), megaRoot: '/x',
-  dbPath: path.join(dir, 'cold.sqlite'), capBytes: 1e12, queueTargetGb: 10, settledHours: null,
-  catalogUrl: 'http://catalog.test', catalogToken: 't',
-});
+const config = (): ColdConfig => coldConfigFor(dir);
 
 const partition = (month: string, dataset = 'trades', version = 'v1'): CatalogPartition => ({
   venue: 'gate', market: 'spot', dataset, variant: '', grain: 'daily', bundle: 'instrument',

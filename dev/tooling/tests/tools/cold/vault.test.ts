@@ -13,8 +13,8 @@ import { backedUpIn, stockedIn } from '../../../src/tools/cold/shared/vault/ledg
 import { filesOf, remoteOf } from '../../../src/tools/cold/shared/vault/layout';
 import type { DatabaseSync } from 'node:sqlite';
 import type { ColdConfig, Selection } from '../../../src/tools/cold/types';
-import type { Fetching } from '../../../src/tools/cold/pull/types';
-import type { Remote } from '../../../src/tools/cold/push/types';
+import type { Fetching, Remote } from '../../../src/tools/cold/shared/types';
+import { coldConfigFor } from './fixtures';
 
 /**
  * The vault in cold storage: stored a partition at a time, as the files it is,
@@ -63,10 +63,8 @@ const GB = 1024 ** 3;
 const SMALL = 'venue=gate/market=spot/dataset=klines/interval=1h';
 const LARGE = 'venue=gate/market=perp/dataset=trades/aggregated=false';
 
-const config = (): ColdConfig => ({
-  sourceRoot: path.join(dir, 'vault'), vaultRoot: path.join(dir, 'vault'), coldRoot: dir, megaRoot: '/Mega/vault',
-  dbPath: path.join(dir, 'cold.sqlite'), capBytes: 5 * GB, queueTargetGb: 10, settledHours: null,
-  catalogUrl: 'http://catalog.test', catalogToken: 't',
+const config = (): ColdConfig => coldConfigFor(dir, {
+  sourceRoot: path.join(dir, 'vault'), coldRoot: dir, megaRoot: '/Mega/vault', capBytes: 5 * GB,
 });
 
 /** A file of the vault, of this many bytes. */
@@ -112,6 +110,12 @@ const mega = (waiting = 0): Remote & { queued: Set<string>; arrive: () => void }
     queueUpload: async (file: string, remoteDir: string) => {
       queued.add(file);
       local.set(file, `${remoteDir}/${path.basename(file)}`);
+    },
+    queueUploads: async (files: readonly string[], remoteDir: string) => {
+      for (const file of files) {
+        queued.add(file);
+        local.set(file, `${remoteDir}/${path.basename(file)}`);
+      }
     },
     remove: async (remotePath: string) => {
       gone.push(remotePath);

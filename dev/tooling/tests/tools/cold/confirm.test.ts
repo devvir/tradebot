@@ -8,6 +8,7 @@ import * as record from '../../../src/tools/cold/shared/record';
 import type { DatabaseSync } from 'node:sqlite';
 import type { CatalogPartition, Remote, VaultFile } from '../../../src/tools/cold/shared/types';
 import type { ColdConfig } from '../../../src/tools/cold/types';
+import { coldConfigFor } from './fixtures';
 
 /** The second look at what a push has just stored, and the queue kept free of second transfers of a file. */
 
@@ -15,11 +16,7 @@ let dir: string;
 let db:  DatabaseSync;
 let held: Map<string, { bytes: number; handle: string | null }>;
 
-const config = (): ColdConfig => ({
-  sourceRoot: path.join(dir, 'archives'), vaultRoot: path.join(dir, 'vault'), coldRoot: path.join(dir, 'cold'), megaRoot: '/x',
-  backupRoot: '/x/cold', dbPath: path.join(dir, 'cold.sqlite'), capBytes: 1e12, queueTargetGb: 10, settledHours: null,
-  catalogUrl: 'http://catalog.test', catalogToken: 't',
-});
+const config = (): ColdConfig => coldConfigFor(dir, { backupRoot: '/x/cold' });
 
 const remote = (): Remote => ({
   queuedPaths: async () => new Set<string>(),

@@ -9,6 +9,7 @@ import * as record from '../../../src/tools/cold/shared/record';
 import type { DatabaseSync } from 'node:sqlite';
 import type { ColdConfig } from '../../../src/tools/cold/types';
 import type { ListedSlice } from '../../../src/tools/cold/shared/types';
+import { coldConfigFor } from './fixtures';
 
 /**
  * What a run decides before it packs anything: the catalog's ready partitions
@@ -22,10 +23,7 @@ let db:     DatabaseSync;
 let slices: ListedSlice[];
 let asked:  { url: URL; lens: string | null }[];
 
-const config = (): ColdConfig => ({
-  sourceRoot: dir, vaultRoot: dir, coldRoot: dir, megaRoot: '/x', dbPath: path.join(dir, 'cold.sqlite'),
-  capBytes: 5 * GB, queueTargetGb: 10, settledHours: null, catalogUrl: 'http://catalog.test', catalogToken: 't',
-});
+const config = (): ColdConfig => coldConfigFor(dir, { sourceRoot: dir, vaultRoot: dir, coldRoot: dir, capBytes: 5 * GB });
 
 const slice = (dataset: string, partitions: ListedSlice['partitions']): ListedSlice =>
   ({ market: 'spot', dataset, variant: '', grain: 'daily', bundle: 'instrument', partitions });
