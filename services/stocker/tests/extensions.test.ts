@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ensureExtensions } from '../src/db';
+import { whyUnavailable } from './reachable';
 import type { DuckDBConnection } from '@duckdb/node-api';
 
 /** A connection that records what it is asked to run, and fails `INSTALL` while `offline` says so. */
@@ -47,5 +48,52 @@ describe('loading the extensions a format needs', () => {
 
     expect(ran.filter(sql => sql === 'INSTALL flaky')).toHaveLength(2);
     expect(ran).toContain('LOAD flaky');
+  });
+});
+
+/**
+ * A connection whose `INSTALL` of `stalled` never answers until interrupted, as
+ * on a host whose network drops the download; anything else succeeds.
+ */
+const unanswered = () => {
+  const seen: string[] = [];
+  let interrupt = () => {};
+  const conn = {
+    run: (sql: string) => sql === 'INSTALL stalled'
+      ? new Promise((_, reject) => { interrupt = () => reject(new Error('Interrupted')); })
+      : Promise.resolve(),
+    interrupt: () => { seen.push('interrupt'); interrupt(); },
+    closeSync: () => { seen.push('close'); },
+  } as unknown as DuckDBConnection;
+
+  return { conn, seen };
+};
+
+describe('probing whether a host can have an extension', () => {
+  it('says nothing, and closes the connection, when the extension can be had', async () => {
+    const { conn, seen } = unanswered();
+
+    expect(await whyUnavailable(conn, ['ready'], 'xlsx', 1_000)).toBeUndefined();
+    expect(seen).toEqual(['close']);
+  });
+
+  it('gives the reason when the install fails', async () => {
+    const { conn } = fake({ offline: true });
+    const closable = { closeSync: () => {}, interrupt: () => {} };
+
+    expect(await whyUnavailable(Object.assign(conn, closable), ['absent'], 'xlsx', 1_000))
+      .toMatch(/'absent' extension, which could not be installed or loaded: Failed to download/);
+  });
+
+  /** A download nobody answers gives up at the deadline instead of holding the run until it times out. */
+  it('gives up on an install that does not answer in time, and interrupts it', async () => {
+    const { conn, seen } = unanswered();
+    const started        = Date.now();
+
+    expect(await whyUnavailable(conn, ['stalled'], 'xlsx', 50)).toMatch(/did not answer within 0.05s/);
+    expect(Date.now() - started).toBeLessThan(1_000);
+
+    await new Promise(resolve => setImmediate(resolve));
+    expect(seen).toEqual(['interrupt', 'close']);
   });
 });

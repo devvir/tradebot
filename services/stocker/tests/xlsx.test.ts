@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { DuckDBInstance } from '@duckdb/node-api';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ensureExtensions } from '../src/db';
+import { whyUnavailable } from './reachable';
 import { xlsx } from '../src/formats/xlsx';
 import { formatOf } from '../src/formats';
 import { parseKey } from '../src/keys';
@@ -24,17 +25,8 @@ import { selectFor } from '../src/schema/project';
  * fetched from DuckDB's extension repository the first time, so a host without
  * that access skips this file and says so, rather than failing every test in it.
  */
-const unavailable = await (async (): Promise<string | undefined> => {
-  const probe = await (await DuckDBInstance.create(':memory:')).connect();
-
-  try {
-    await ensureExtensions(probe, xlsx.extensions ?? [], 'xlsx');
-  } catch (err) {
-    return (err as Error).message;
-  } finally {
-    probe.closeSync();
-  }
-})();
+const unavailable = await whyUnavailable(
+  await (await DuckDBInstance.create(':memory:')).connect(), xlsx.extensions ?? [], 'xlsx');
 
 if (unavailable) console.warn(`Skipping the xlsx tests: ${unavailable}`);
 
