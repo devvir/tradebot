@@ -31,9 +31,15 @@ export const tarSize = (members: { path: string; bytes: number }[]): number => {
   return pad(size + 1024, 10240);
 };
 
-/** Every member of a tar, by its path inside it. */
+/**
+ * Every member of a tar, by its path inside it.
+ *
+ * **Named as they are, not quoted.** A listing escapes unusual characters by
+ * default, and a name read off it is then not the name on disk, nor one a list
+ * read with `--verbatim-files-from` finds again; so listings here are literal.
+ */
 export const membersOf = async (local: string): Promise<string[]> =>
-  (await capture('tar', ['-tf', local]))
+  (await capture('tar', ['-tf', local, '--quoting-style=literal']))
     .split('\n')
     .map(entry => entry.replace(/\/$/, '').trim())
     .filter(Boolean);
@@ -45,7 +51,7 @@ export const extractMembers = async (local: string, into: string, members: reado
   await fs.promises.mkdir(into, { recursive: true });
 
   try {
-    // Through a file, as when packing: a tar holds far more paths than an argument vector does.
+    // Through a file, as when packing: a tar holds far more paths than an argument vector does. Each line is a name as it is.
     await fs.promises.writeFile(list, members.join('\n') + '\n');
     await run('tar', ['-xf', local, '-C', into, '--verbatim-files-from', '-T', list]);
   } finally {
@@ -55,7 +61,7 @@ export const extractMembers = async (local: string, into: string, members: reado
 
 /** Every member of a tar with what it weighs, by its path inside it. */
 export const sizedMembersOf = async (local: string): Promise<SourceFile[]> =>
-  (await capture('tar', ['-tvf', local]))
+  (await capture('tar', ['-tvf', local, '--quoting-style=literal']))
     .split('\n')
     .map(line => /^\S+\s+\S+\s+(\d+)\s+\S+\s+\S+\s+(.+)$/.exec(line))
     .filter((found): found is RegExpExecArray => found !== null && ! found[2]!.endsWith('/'))

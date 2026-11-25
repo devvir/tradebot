@@ -3,6 +3,7 @@ import { release } from './cleanup';
 import { WATCH_MS, loadConfig } from './config';
 import { busy, orphaned } from './lock';
 import { isWatch, setWatch, setYes } from './options';
+import { monthsOf } from './pull/filter';
 import { error, info, setPrefix, spacer } from '../../shared/ui/logger';
 import type { Command } from 'commander';
 import type { Chosen, Origin, Selection } from './types';
@@ -179,7 +180,6 @@ const ORIGINS: { value: Origin; name: string }[] = [
   // The REST and websocket collector buckets get their own beside these.
 ];
 
-/** What narrows a command to part of the vault, as it is written on the line. */
 /** What the command line said becomes of the catalog's snapshot on disk: kept, dropped, or nothing said. */
 export const snapshotOf = (options: { keepSnapshot?: boolean; dropSnapshot?: boolean }): { snapshot?: 'keep' | 'drop' } => {
   if (options.keepSnapshot && options.dropSnapshot) throw new Error('--keep-snapshot and --drop-snapshot say opposite things — give one');
@@ -187,15 +187,29 @@ export const snapshotOf = (options: { keepSnapshot?: boolean; dropSnapshot?: boo
   return options.keepSnapshot ? { snapshot: 'keep' } : options.dropSnapshot ? { snapshot: 'drop' } : {};
 };
 
-export const selectionOf = (venues: readonly string[], options: Chosen): Selection => ({
-  venues:      venues.map(venue => venue.toLowerCase()),
-  instruments: (options.instruments ?? '').split(',').map(one => one.trim()).filter(Boolean),
-  ...(options.market  ? { market: options.market }   : {}),
-  ...(options.dataset ? { dataset: options.dataset } : {}),
-  ...(options.variant ? { variant: options.variant } : {}),
-  ...(options.from    ? { from: options.from.replace('-', '') } : {}),
-  ...(options.to      ? { to: options.to.replace('-', '') }     : {}),
-});
+/**
+ * What narrows a command to part of the vault, as it is written on the line.
+ *
+ * `--from` and `--to` are a month or a year: a year is from its January, and
+ * through its December. Anything else is refused, as is a `--from` after the
+ * `--to`.
+ */
+export const selectionOf = (venues: readonly string[], options: Chosen): Selection => {
+  const from = options.from ? monthsOf(options.from, '--from').from : undefined;
+  const to   = options.to   ? monthsOf(options.to, '--to').to       : undefined;
+
+  if (from && to && from > to) throw new Error(`--from ${options.from} is after --to ${options.to}`);
+
+  return {
+    venues:      venues.map(venue => venue.toLowerCase()),
+    instruments: (options.instruments ?? '').split(',').map(one => one.trim()).filter(Boolean),
+    ...(options.market  ? { market: options.market }   : {}),
+    ...(options.dataset ? { dataset: options.dataset } : {}),
+    ...(options.variant ? { variant: options.variant } : {}),
+    ...(from ? { from } : {}),
+    ...(to   ? { to }   : {}),
+  };
+};
 
 /**
  * Which trees a command is for, and which venues.

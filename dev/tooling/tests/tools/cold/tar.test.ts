@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import { tarSize } from '../../../src/tools/cold/shared/tar';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { replaceMembers } from '../../../src/tools/cold/push/archives/correct';
+import { writePart } from '../../../src/tools/cold/push/archives/pack';
+import { extractMembers, membersOf, sizedMembersOf, tarSize } from '../../../src/tools/cold/shared/tar';
 
 /**
  * The point of this is checking a tar that is *only* in cold storage: its size
@@ -48,5 +53,49 @@ describe('predicting a tar size from its member list', () => {
 
   it('is empty-safe', () => {
     expect(tarSize([])).toBe(10_240);
+  });
+});
+
+describe('a member whose name has unusual characters', () => {
+  /** A backslash, which a list read as tar reads one by default takes for an escape, and a listing quotes. */
+  const unusual = ['v/c\\d', 'v/\u00fc.zip', 'v/with space', 'v/-dash'];
+
+  let dir: string;
+
+  const source = (): string => path.join(dir, 'source');
+  const tar    = (): string => path.join(dir, 'one.tar');
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-tar-'));
+
+    for (const [at, name] of [...unusual, 'v/plain', 'v/added\\too'].entries()) {
+      fs.mkdirSync(path.dirname(path.join(source(), name)), { recursive: true });
+      fs.writeFileSync(path.join(source(), name), 'x'.repeat(at + 1));
+    }
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('is packed, and listed by the name it has on disk', async () => {
+    await writePart(source(), tar(), [...unusual, 'v/plain']);
+
+    expect((await membersOf(tar())).sort()).toEqual([...unusual, 'v/plain'].sort());
+    expect((await sizedMembersOf(tar())).map(one => one.path).sort()).toEqual([...unusual, 'v/plain'].sort());
+  });
+
+  it('is taken out by that name', async () => {
+    await writePart(source(), tar(), [...unusual, 'v/plain']);
+    await extractMembers(tar(), path.join(dir, 'out'), unusual);
+
+    for (const name of unusual) expect(fs.readFileSync(path.join(dir, 'out', name), 'utf8')).toBe(fs.readFileSync(path.join(source(), name), 'utf8'));
+  });
+
+  it('is removed from a tar and added to one by that name', async () => {
+    await writePart(source(), tar(), [...unusual, 'v/plain']);
+    await replaceMembers(source(), tar(), ['v/c\\d'], ['v/added\\too']);
+
+    expect((await membersOf(tar())).sort()).toEqual([...unusual.filter(one => one !== 'v/c\\d'), 'v/plain', 'v/added\\too'].sort());
   });
 });

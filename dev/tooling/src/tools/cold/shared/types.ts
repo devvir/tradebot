@@ -275,7 +275,7 @@ export interface Remote {
   dropUploadsOf?: (local: string) => Promise<number>;
 
   /** Hand several files over for one remote directory at once. */
-  queueUploads?: (locals: readonly string[], remoteDir: string) => Promise<void>;
+  queueUploads:  (locals: readonly string[], remoteDir: string) => Promise<void>;
 
   /** Whether Mega answers at all. */
   available?:    () => Promise<boolean>;

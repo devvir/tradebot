@@ -66,13 +66,13 @@ export const replaceMembers = async (
   try {
     if (remove.length > 0) {
       await fs.promises.writeFile(list, remove.join('\n') + '\n');
-      await run('tar', ['--delete', '-f', temporary, '-T', list]);
+      await run('tar', ['--delete', '-f', temporary, '--verbatim-files-from', '-T', list]);
     }
 
     if (add.length > 0) {
       await fs.promises.writeFile(list, add.join('\n') + '\n');
-      await run('tar', ['-rf', temporary, '-C', sourceRoot, '-T', list]);
-      await run('tar', ['-df', temporary, '-C', sourceRoot, '-T', list]);
+      await run('tar', ['-rf', temporary, '-C', sourceRoot, '--verbatim-files-from', '-T', list]);
+      await run('tar', ['-df', temporary, '-C', sourceRoot, '--verbatim-files-from', '-T', list]);
     }
 
     const gone     = new Set(remove);

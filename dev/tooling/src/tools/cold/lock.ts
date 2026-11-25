@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { onExit } from './cleanup';
@@ -43,13 +44,16 @@ export const acquire = async (
   origin:   string,
   command:  string,
 ): Promise<() => void> => {
-  const file = path.join(coldRoot, `cold.${origin}.${command}.lock`);
+  const file  = path.join(coldRoot, `cold.${origin}.${command}.lock`);
+  const token = randomUUID();
+  const boot  = bootId();
+  const mine  = `pid ${process.pid} since ${new Date().toISOString()}${boot ? ` boot ${boot}` : ''} token ${token}\n`;
 
   fs.mkdirSync(coldRoot, { recursive: true });
 
-  if (fs.existsSync(file)) {
-    const held  = fs.readFileSync(file, 'utf8').trim();
-    const owner = /pid (\d+)/.exec(held)?.[1];
+  // Created only where there is none, so two runs starting at once cannot both have it.
+  if (! take(file, mine)) {
+    const held = readLock(file);
 
     /**
      * **A lock whose holder is gone is not a question.**
@@ -61,25 +65,26 @@ export const acquire = async (
      * lock becomes a habit of saying yes, which is the opposite of what a lock
      * is for.
      *
-     * So the pid is recorded in the file precisely so this can be checked.
-     * Signal 0 delivers nothing and only reports whether the process exists.
+     * So the pid is recorded in the file precisely so this can be checked, and
+     * the boot it was taken in: after a restart, the same pid is somebody else.
      */
-    if (owner && ! alive(Number(owner))) {
-      info(`Clearing the ${origin} ${command} lock left by ${held} — that process is gone`);
-
-      fs.rmSync(file, { force: true });
+    if (! held && ! fs.existsSync(file)) {
+      // Given back between the two: nothing to clear.
+    } else if (held && ! holds(held)) {
+      info(`Clearing the ${origin} ${command} lock left by ${held.who} — that process is gone`);
     } else {
-      warn(`A cold ${command} ${origin} run is already holding the lock: ${held}`);
+      warn(`A cold ${command} ${origin} run is already holding the lock: ${held?.who ?? 'unreadable'}`);
 
       // Not a question `--yes` answers: with nobody to ask, a lock that is held stops the run.
       if (isYes() || ! await confirm('Remove it and continue anyway?', false))
         throw new Error('Locked — another cold run is in progress');
-
-      fs.rmSync(file, { force: true });
     }
-  }
 
-  fs.writeFileSync(file, `pid ${process.pid} since ${new Date().toISOString()}\n`);
+    fs.rmSync(file, { force: true });
+
+    // Another run that took it in the meantime has it.
+    if (! take(file, mine)) throw new Error('Locked — another cold run is in progress');
+  }
 
   let released = false;
 
@@ -87,7 +92,9 @@ export const acquire = async (
     if (released) return;
 
     released = true;
-    fs.rmSync(file, { force: true });
+
+    // Only while it is still this run's: one that was taken over is the other run's to give back.
+    if (readLock(file)?.token === token) fs.rmSync(file, { force: true });
   };
 
   // Registered rather than wired to signals here: a run holds more than the
@@ -102,28 +109,87 @@ export const acquire = async (
 export const orphaned = (coldRoot: string): boolean => orphans(coldRoot).length > 0;
 
 /** The locks in cold's directory whose holder is gone, by file name. */
-export const orphans = (coldRoot: string): string[] => holders(coldRoot).filter(one => ! alive(one.pid)).map(one => one.name);
+export const orphans = (coldRoot: string): string[] => holders(coldRoot).filter(one => ! holds(one)).map(one => one.name);
 
 /** Whether another cold command is running: a lock whose holder is there. */
-export const busy = (coldRoot: string): boolean => holders(coldRoot).some(one => one.pid !== process.pid && alive(one.pid));
+export const busy = (coldRoot: string): boolean => holders(coldRoot).some(one => one.pid !== process.pid && holds(one));
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
-/** Who holds each lock in cold's directory, by pid. */
-const holders = (coldRoot: string): { name: string; pid: number }[] => {
+/** What a lock file says: who took it, in which boot, and the token only that run knows. */
+interface Lock {
+  who:   string;
+  pid:   number;
+  boot:  string | null;
+  token: string | null;
+}
+
+/** Create the lock file, unless there is one already. */
+const take = (file: string, content: string): boolean => {
+  try {
+    fs.writeFileSync(file, content, { flag: 'wx' });
+
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false;
+
+    throw err;
+  }
+};
+
+/** A lock file's content, or null where there is none or it names no pid. */
+const readLock = (file: string): Lock | null => {
+  let held: string;
+
+  try {
+    held = fs.readFileSync(file, 'utf8').trim();
+  } catch {
+    // Given back between being looked for and being read.
+    return null;
+  }
+
+  const pid = /pid (\d+)/.exec(held)?.[1];
+
+  if (! pid) return null;
+
+  return {
+    who:   held.replace(/ (boot|token) \S+/g, ''),
+    pid:   Number(pid),
+    boot:  / boot (\S+)/.exec(held)?.[1] ?? null,
+    token: / token (\S+)/.exec(held)?.[1] ?? null,
+  };
+};
+
+/** Who holds each lock in cold's directory. */
+const holders = (coldRoot: string): (Lock & { name: string })[] => {
   const locks = fs.existsSync(coldRoot) ? fs.readdirSync(coldRoot).filter(name => /^cold\..+\.lock$/.test(name)) : [];
 
   return locks.flatMap((name) => {
-    try {
-      const owner = /pid (\d+)/.exec(fs.readFileSync(path.join(coldRoot, name), 'utf8'))?.[1];
+    const held = readLock(path.join(coldRoot, name));
 
-      return owner ? [{ name, pid: Number(owner) }] : [];
-    } catch {
-      // Given back between being listed and being read.
-      return [];
-    }
+    return held ? [{ ...held, name }] : [];
   });
 };
+
+/** Whether a lock's holder is still there: taken in this boot, by a process that exists. */
+const holds = (held: Lock): boolean => {
+  const boot = bootId();
+
+  if (held.boot && boot && held.boot !== boot) return false;
+
+  return alive(held.pid);
+};
+
+/** This boot of the machine, where the system says (Linux); null elsewhere. */
+const bootId = (): string | null => {
+  try {
+    return fs.readFileSync(BOOT_ID, 'utf8').trim() || null;
+  } catch {
+    return null;
+  }
+};
+
+const BOOT_ID = '/proc/sys/kernel/random/boot_id';
 
 /** Whether a process exists. Signal 0 delivers nothing and only asks. */
 const alive = (pid: number): boolean => {

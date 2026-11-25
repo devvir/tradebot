@@ -8,6 +8,7 @@ import { acquire } from '../../lock';
 import { agreed } from '../../options';
 import { clearStale } from '../../push/catalog';
 import { PARTITIONS, SNAPSHOT, TABLES, digestOf, workOf } from '../../push/catalog';
+import { freeBytes, moveFile } from '../../shared/fs';
 import * as mega from '../../shared/mega';
 import * as record from '../../shared/record';
 import { applyPartition, applyTables, filesIn } from './apply';
@@ -103,11 +104,11 @@ export const runPullCatalog = async (options: CatalogPull, remote: Remote & Fetc
     const from = here ? local : staged(config, SNAPSHOT);
 
     // Not to be kept: it becomes what is handed over. Otherwise it is put where it is kept, and what is handed over is a copy.
-    if (! keeps) move(from, target);
+    if (! keeps) await moveFile(from, target);
     else {
       if (! here) {
         fs.mkdirSync(path.dirname(local), { recursive: true });
-        move(from, local);
+        await moveFile(from, local);
       }
 
       await copy(local, target);
@@ -260,28 +261,6 @@ const apply = async (base: string, tables: string, partitions: string): Promise<
   } finally {
     db.close();
   }
-};
-
-/** Move a file, across volumes where it has to. */
-const move = (from: string, to: string): void => {
-  try {
-    fs.renameSync(from, to);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'EXDEV') throw err;
-
-    fs.copyFileSync(from, to);
-    fs.rmSync(from);
-  }
-};
-
-const freeBytes = (dir: string): number => {
-  let at = dir;
-
-  while (! fs.existsSync(at)) at = path.dirname(at);
-
-  const stats = fs.statfsSync(at);
-
-  return stats.bavail * stats.bsize;
 };
 
 /** How much of the snapshot is copied between one line of progress and the next. */

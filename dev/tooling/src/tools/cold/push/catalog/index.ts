@@ -50,8 +50,10 @@ import type { CatalogOptions, CatalogPartitionRow, Sending } from '../types';
  *
  * **Not while the catalog is being written.** What is read is read at one
  * moment, so this waits for prospector to be stopped, and makes the database
- * one file — see `whole`. **It says when the catalog is free again**: as soon
- * as everything is read out of it, long before Mega has it all.
+ * one file — see `whole`; once it is read, nothing must have written to it
+ * meanwhile, or nothing is sent — see `untouched`. **It says when the catalog
+ * is free again**: as soon as everything is read out of it, long before Mega
+ * has it all.
  *
  * **The snapshot on disk is cold's own.** A run that takes one removes it once
  * Mega has it, unless `--keep-snapshot` — where a pull then finds it and brings
@@ -129,12 +131,21 @@ export const runPushCatalog = async (options: CatalogOptions, remote: Remote = m
           if (! await agreed('Go ahead?', true)) return;
 
           const state: Sending = { db, config, catalog, remote, staging, writing };
+          const before         = fs.statSync(config.catalogDb);
 
           // Everything that is read out of the catalog is read here, and the catalog is free from then on.
           if (taking) await copySnapshot(state, partitions);
 
           tables = writeTables(catalog, path.join(staging, TABLES)).tables;
           files  = await writePartitions(state, changed);
+
+          // What was read beside the snapshot is of its moment too, or none of it is sent: no run takes up where this one stops.
+          if (! await untouched(state, before)) {
+            fs.rmSync(path.join(staging, TABLES), { force: true });
+            fs.rmSync(path.join(staging, VERSIONS), { force: true });
+
+            throw new Error(NOT_A_SNAPSHOT);
+          }
         } finally {
           catalog.close();
         }
@@ -218,13 +229,18 @@ export const clearStale = async (file: string, bytes: number | null): Promise<bo
  *
  * **It is the copy that is sent, never the database.** The copy is of one
  * moment — nothing is writing while it is taken — and the version of every
- * partition is written down beside it, of that same moment.
+ * partition is written down beside it, of that same moment. That nothing wrote
+ * is asked again once the copy is taken — see `untouched` — and a copy taken
+ * while something did is not written down, and so never sent.
  */
-const copySnapshot = async ({ db, config, catalog, staging }: Sending, partitions: readonly CatalogPartitionRow[]): Promise<void> => {
+const copySnapshot = async (state: Sending, partitions: readonly CatalogPartitionRow[]): Promise<void> => {
+  const { db, config, catalog, staging } = state;
+
   const schema = fileSchemaOf(catalog);
-  const to    = path.join(staging, SNAPSHOT);
-  const total = fs.statSync(config.catalogDb).size;
-  const hash  = createHash('sha256');
+  const to     = path.join(staging, SNAPSHOT);
+  const before = fs.statSync(config.catalogDb);
+  const total  = before.size;
+  const hash   = createHash('sha256');
 
   fs.mkdirSync(staging, { recursive: true });
   fs.rmSync(path.join(staging, VERSIONS), { force: true });
@@ -254,8 +270,7 @@ const copySnapshot = async ({ db, config, catalog, staging }: Sending, partition
     fs.createWriteStream(to),
   );
 
-  if (fs.statSync(to).size !== total || fs.statSync(config.catalogDb).size !== total)
-    throw new Error('The copy of the catalog is not the size the catalog is — it is not a snapshot of it, and nothing is sent');
+  if (fs.statSync(to).size !== total || ! await untouched(state, before)) throw new Error(NOT_A_SNAPSHOT);
 
   fs.writeFileSync(path.join(staging, VERSIONS), JSON.stringify(Object.fromEntries(partitions.map(one => [one.name, one.version]))));
 
@@ -270,7 +285,10 @@ const copySnapshot = async ({ db, config, catalog, staging }: Sending, partition
  * **Read once more before it goes**: its digest has to be the one taken as the
  * catalog was read. A copy that is not what was read is not sent.
  */
-const storeSnapshot = async (db: DatabaseSync, config: ColdConfig, staging: string, remote: Remote, rebase: boolean, pollMs = POLL_MS): Promise<void> => {
+const storeSnapshot = async (
+  db: DatabaseSync, config: ColdConfig, staging: string, remote: Remote, rebase: boolean,
+  pollMs = POLL_MS, askMs = ASK_MS, sayMs = SAY_MS,
+): Promise<void> => {
   const local = path.join(staging, SNAPSHOT);
   const known = record.catalogCopies(db).get(SNAPSHOT)!;
   const bytes = fs.statSync(local).size;
@@ -283,26 +301,30 @@ const storeSnapshot = async (db: DatabaseSync, config: ColdConfig, staging: stri
     throw new Error(`The snapshot at ${local} is not what was read from the catalog — it is not sent. Run this again to take another`);
   }
 
-  for (let waited = 0, asked = false; ; waited += pollMs) {
+  for (let waited = 0, asked: number | null = null, said: number | null = null; ; waited += pollMs) {
     const there  = (await remote.listing(config.catalogRoot)).get(SNAPSHOT);
     const queued = (await remote.queuedPaths()).has(local);
 
     // Stored where Mega lists this very file: its size and its own modification time — see `landed`.
     // And never before it was handed over by this run: what is there beforehand may be the snapshot this one replaces.
-    if (asked && mega.landed(local, there)) {
+    if (asked !== null && mega.landed(local, there)) {
       record.storeCatalogCopy(db, SNAPSHOT, there!.handle);
 
       break;
     }
 
     // Handed over once, and again only where Mega has dropped it: never while it is on its way.
-    if (! queued && (! asked || waited % ASK_MS === 0)) {
+    if (! queued && (asked === null || waited - asked >= askMs)) {
       await remote.queueUpload(local, config.catalogRoot);
 
-      asked = true;
+      asked = waited;
     }
 
-    if (waited % SAY_MS === 0) info(waited === 0 ? `  sending the snapshot (${fmtBytes(bytes)})` : `  still sending the snapshot (${Math.round(waited / 60_000)} min)`);
+    if (said === null || waited - said >= sayMs) {
+      info(said === null ? `  sending the snapshot (${fmtBytes(bytes)})` : `  still sending the snapshot (${Math.round(waited / 60_000)} min)`);
+
+      said = waited;
+    }
 
     await new Promise(resolve => setTimeout(resolve, pollMs));
   }
@@ -355,7 +377,7 @@ const deliver = async (db: DatabaseSync, config: ColdConfig, staging: string, re
   const tables  = [path.join(staging, TABLES)].filter(file => fs.existsSync(file));
   const pending = (): CatalogCopy[] => [...record.catalogCopies(db).values()].filter(one => one.kind === 'partition' && one.state !== 'stored');
 
-  if (tables.length > 0) await remote.queueUploads!(tables, config.catalogRoot);
+  if (tables.length > 0) await remote.queueUploads(tables, config.catalogRoot);
 
   const dirs = new Map<string, string[]>();
 
@@ -365,7 +387,7 @@ const deliver = async (db: DatabaseSync, config: ColdConfig, staging: string, re
     dirs.set(path.posix.dirname(one.remote), [...dirs.get(path.posix.dirname(one.remote)) ?? [], path.join(staging, one.remote)]);
   }
 
-  for (const [dir, files] of dirs) await remote.queueUploads!(files, `${config.catalogRoot}/${dir}`);
+  for (const [dir, files] of dirs) await remote.queueUploads(files, `${config.catalogRoot}/${dir}`);
 
   // Until Mega has every one of them. Only after a wait is one that is in neither place taken for dropped.
   for (let round = 0, said = -1; ; round++) {
@@ -475,6 +497,24 @@ const whole = async (file: string): Promise<void> => {
 
 /** Whether the catalog's writer is running. */
 const writing = (): Promise<boolean> => running(WRITER);
+
+/**
+ * Whether the catalog is as it was when `before` was taken of it: its writer
+ * not running, the database at the same size and modification time, and
+ * nothing in a write-ahead log beside it. A log that is there and empty is a
+ * reader's — opening the database leaves one — and nothing was written.
+ */
+const untouched = async ({ config, writing }: Sending, before: fs.Stats): Promise<boolean> => {
+  if (await writing()) return false;
+
+  const now = fs.statSync(config.catalogDb);
+  const log = `${config.catalogDb}-wal`;
+
+  return now.size === before.size && now.mtimeMs === before.mtimeMs && ! (fs.existsSync(log) && fs.statSync(log).size > 0);
+};
+
+/** What a read of the catalog that something wrote to while it was read is. */
+const NOT_A_SNAPSHOT = 'The catalog changed while it was read — what was read is not a snapshot of it, and nothing is sent. Stop prospector, and run this again';
 
 /** Whether a container is running, as Docker says. */
 const running = async (container: string): Promise<boolean> => {

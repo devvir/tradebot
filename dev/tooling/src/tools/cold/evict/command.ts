@@ -15,8 +15,8 @@ export const register = (cold: Command): void => {
     .option('--market <market>', 'vault: only this market')
     .option('--dataset <dataset>', 'vault: only this dataset')
     .option('--variant <variant>', 'vault: only this variant of it — a kline\'s interval, funding\'s kind')
-    .option('--from <yyyymm>', 'vault: from this month')
-    .option('--to <yyyymm>', 'vault: through this month')
+    .option('--from <YYYY|YYYYMM>', 'vault: from this month, or this year\'s first')
+    .option('--to <YYYY|YYYYMM>', 'vault: through this month, or this year\'s last')
     .option('--instruments <list>', 'vault: only these instruments, comma-separated')
     .action(gracefully(async (origin: string | undefined, venues: string[] = [], options: Chosen = {}, command: Command) => {
       const asked = await resolve(command, origin, venues, ['archives', 'vault']);

@@ -25,8 +25,9 @@ const remote = (): Remote => ({
   queuedPaths: async () => new Set<string>(),
   queue:       async () => ({ remaining: 0, total: 0, uploaded: 0, transfers: 0 }),
   listing:     async () => held,
-  queueUpload: async () => {},
-  remove:      async () => {},
+  queueUpload:  async () => {},
+  queueUploads: async () => {},
+  remove:       async () => {},
 });
 
 const SLICE = 'venue=gate/market=spot/dataset=trades';

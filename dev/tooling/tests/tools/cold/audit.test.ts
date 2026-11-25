@@ -45,8 +45,9 @@ const remote = (): Remote => ({
   queuedPaths: async () => new Set<string>(),
   queue:       async () => ({ remaining: 0, total: 0, uploaded: 0, transfers: 0 }),
   listing:     async () => held,
-  queueUpload: async () => {},
-  remove:      async (at) => { removed.push(at); },
+  queueUpload:  async () => {},
+  queueUploads: async () => {},
+  remove:       async (at) => { removed.push(at); },
 });
 
 const looking = (origin: Origin, mega: Remote | null = remote()): Looking =>

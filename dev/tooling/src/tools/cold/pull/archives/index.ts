@@ -1,9 +1,9 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import { onExit } from '../../cleanup';
 import { GB, loadConfig } from '../../config';
 import { Archives } from '../../shared/disk';
 import { descriptorOf } from '../../shared/keys';
+import { freeBytes, sameVolume } from '../../shared/fs';
 import { acquire } from '../../lock';
 import * as mega from '../../shared/mega';
 import { agreed } from '../../options';
@@ -100,8 +100,16 @@ export const runPull = async (origin: Origin, options: PullOptions): Promise<voi
 
       info(`${count(wanted.length, 'partition')} in ${count(tars.length, 'tar')} to download (${fmtBytes(heavy)})`);
 
-      if (heavy + bytesOf(wanted) + RESERVE_GB * GB > free)
+      // On one volume, the tars and what comes out of them share its room; on two, the archives need their own.
+      const apart = ! sameVolume(config.coldRoot, config.sourceRoot);
+      const back  = bytesOf(wanted.filter(one => one.state !== 'old'));
+      const here  = apart ? heavy + bytesOf(wanted) - back : heavy + bytesOf(wanted);
+
+      if (here + RESERVE_GB * GB > free)
         warn(`${fmtBytes(free)} is free: not enough for all of it and ${RESERVE_GB}GB spare — it will wait wherever it runs short`);
+
+      if (apart && back + RESERVE_GB * GB > freeBytes(config.sourceRoot))
+        warn(`${fmtBytes(freeBytes(config.sourceRoot))} is free in the archives: not enough for what comes back and ${RESERVE_GB}GB spare — it will wait wherever it runs short`);
 
       if (! await mega.available()) {
         error('mega-cmd is not available — is the session logged in?');
@@ -132,12 +140,6 @@ export const runPull = async (origin: Origin, options: PullOptions): Promise<voi
 
 /** Where partitions of a version the catalog has moved on from are put. */
 export const asideRoot = (config: ColdConfig, origin: Origin): string => path.join(config.coldRoot, PULLED, origin);
-
-export const freeBytes = (dir: string): number => {
-  const stats = fs.statfsSync(dir);
-
-  return stats.bavail * stats.bsize;
-};
 
 export const count = (n: number, what: string): string => `${n.toLocaleString('en-US')} ${what}${n === 1 ? '' : 's'}`;
 

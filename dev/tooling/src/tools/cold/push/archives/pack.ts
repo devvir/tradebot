@@ -49,7 +49,7 @@ export const writePart = async (
       // can hold tens of thousands of paths, far past any exec limit.
       await fs.promises.writeFile(list, members.join('\n') + '\n');
 
-      await run('tar', ['-cf', temporary, '-C', sourceRoot, '-T', list]);
+      await run('tar', ['-cf', temporary, '-C', sourceRoot, '--verbatim-files-from', '-T', list]);
 
       await fs.promises.rename(temporary, written);
     }

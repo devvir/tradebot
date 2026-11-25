@@ -347,6 +347,82 @@ describe('the catalog\'s copy', () => {
   });
 });
 
+describe('a snapshot taken while something writes the catalog', () => {
+  /** A copy taken with `writing` saying this, at the moment it is asked after the copy. */
+  const take = async (writing: () => Promise<boolean>): Promise<void> => {
+    const catalog = openCatalog(config().catalogDb);
+    const state: Sending = { db, config: config(), catalog, remote: remote(), staging: path.join(dir, 'cold', 'catalog'), writing };
+
+    try {
+      await copySnapshot(state, partitionsOf(catalog));
+    } finally {
+      catalog.close();
+    }
+  };
+
+  it('is not taken where the writer is running once the copy is done', async () => {
+    await expect(take(async () => true)).rejects.toThrow(/not a snapshot/);
+    expect(record.catalogCopies(db).has('catalog.db')).toBe(false);
+  });
+
+  /** A writer that started and stopped again while the copy was taken is not running, and has left its mark. */
+  it('is not taken where the catalog was written to while it was copied', async () => {
+    await expect(take(async () => {
+      fs.utimesSync(config().catalogDb, new Date(), new Date(Date.now() + 5_000));
+
+      return false;
+    })).rejects.toThrow(/not a snapshot/);
+
+    expect(record.catalogCopies(db).has('catalog.db')).toBe(false);
+  });
+
+  it('is not taken where a write-ahead log beside the catalog has something in it', async () => {
+    await expect(take(async () => {
+      fs.writeFileSync(`${config().catalogDb}-wal`, 'written');
+
+      return false;
+    })).rejects.toThrow(/not a snapshot/);
+
+    expect(record.catalogCopies(db).has('catalog.db')).toBe(false);
+  });
+
+  /** Opening the database in its log's mode leaves an empty log beside it, which is a reader's and no write. */
+  it('is taken where the log beside the catalog is empty', async () => {
+    fs.writeFileSync(`${config().catalogDb}-wal`, '');
+
+    await take(async () => false);
+
+    expect(record.catalogCopies(db).get('catalog.db')!.state).toBe('queued');
+  });
+});
+
+describe('a snapshot on its way', () => {
+  /** Handed over again once Mega has dropped it for long enough, however that time divides into rounds. */
+  it('is handed over again once the wait for it has gone on that long', async () => {
+    const catalog = openCatalog(config().catalogDb);
+    const staging = path.join(dir, 'cold', 'catalog');
+
+    await copySnapshot({ db, config: config(), catalog, remote: remote(), staging, writing: async () => false }, partitionsOf(catalog));
+    catalog.close();
+
+    const bytes = fs.statSync(path.join(staging, 'catalog.db')).size;
+    const asked: number[] = [];
+
+    let round = -1;
+
+    // Mega drops it the first time it is handed over, and keeps it the second.
+    await storeSnapshot(db, config(), staging, {
+      ...remote(),
+      listing:     async () => { round++; return new Map(asked.length >= 2 ? [['catalog.db', { bytes, handle: 'H' }]] : []); },
+      queueUpload: async () => { asked.push(round); },
+    }, false, 7, 20, 20);
+
+    // 20ms is three rounds of 7: handed over at the first, and again at the fourth.
+    expect(asked).toEqual([0, 3]);
+    expect(record.catalogCopies(db).get('catalog.db')!.state).toBe('stored');
+  });
+});
+
 describe('the catalog brought back', () => {
   const pulled = (): ColdConfig => config();
 

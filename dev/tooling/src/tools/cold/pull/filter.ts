@@ -103,9 +103,9 @@ const ofDescriptor = (text: string): PullFilter => {
   return comma < 0 ? { dataset: text } : { dataset: text.slice(0, comma), variant: text.slice(comma + 1) };
 };
 
-/** A year or a month as the months it covers. */
-const monthsOf = (text: string, what: string): Pick<PullFilter, 'from' | 'to'> => {
-  const found = /^(\d{4})-?(\d{2})?$/.exec(text);
+/** A year or a month — `YYYY`, `YYYYMM` or `YYYY-MM` — as the first and last months it covers. `what` names it in the error. */
+export const monthsOf = (text: string, what: string): Required<Pick<PullFilter, 'from' | 'to'>> => {
+  const found = /^(\d{4})-?(0[1-9]|1[0-2])?$/.exec(text);
 
   if (! found) throw new Error(`${what} is YYYY or YYYYMM, not "${text}"`);
 

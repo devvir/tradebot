@@ -41,18 +41,21 @@ const mega = (): Remote & { sent: string[]; held: Map<string, { bytes: number; h
   const sent: string[] = [];
   const held = new Map<string, { bytes: number; handle: string | null }>();
 
+  const queueUpload = async (local: string, remoteDir: string): Promise<void> => {
+    const at = path.posix.join(path.posix.relative('/x/cold', remoteDir), path.basename(local));
+
+    sent.push(at);
+    held.set(at, { bytes: fs.statSync(local).size, handle: 'H' });
+  };
+
   return {
     sent, held,
-    queuedPaths: async () => new Set<string>(),
-    queue:       async () => ({ remaining: 0, total: 0, uploaded: 0, transfers: 0 }),
-    listing:     async () => held,
-    remove:      async () => {},
-    queueUpload: async (local, remoteDir) => {
-      const at = path.posix.join(path.posix.relative('/x/cold', remoteDir), path.basename(local));
-
-      sent.push(at);
-      held.set(at, { bytes: fs.statSync(local).size, handle: 'H' });
-    },
+    queuedPaths:  async () => new Set<string>(),
+    queue:        async () => ({ remaining: 0, total: 0, uploaded: 0, transfers: 0 }),
+    listing:      async () => held,
+    remove:       async () => {},
+    queueUpload,
+    queueUploads: async (locals, remoteDir) => { for (const local of locals) await queueUpload(local, remoteDir); },
   };
 };
 

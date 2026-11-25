@@ -9,7 +9,8 @@ import { follow } from '../../shared/progress-mega';
 import { extractMembers, sizedMembersOf } from '../../shared/tar';
 import { fmtBytes } from '../../../../shared/utils/format';
 import { warn } from '../../../../shared/ui/logger';
-import { asideRoot, count, freeBytes } from '.';
+import { freeBytes, moveFile, sameVolume } from '../../shared/fs';
+import { asideRoot, count } from '.';
 import type { DatabaseSync } from 'node:sqlite';
 import type { ColdConfig, Origin, Tar } from '../../types';
 import type { Pullable } from '../types';
@@ -47,7 +48,7 @@ export const bring = async (
       const mine  = wanted.filter(one => one.held.tarId === tar.id);
       const label = `${path.basename(tar.local)} (${at + 1}/${tars.length})`;
 
-      await room(config, pollMs, reserve);
+      await room(config, pollMs, reserve, mine.filter(one => one.state !== 'old').reduce((sum, one) => sum + one.held.bytes, 0));
 
       // Two lines: all of the tars together, and the one on its way.
       if (tars.length > 1) progress.set(ALL, { label: `${count(tars.length, 'tar')}`, done: back, total: heavy, unit: 'bytes' });
@@ -90,12 +91,26 @@ export const RESERVE_GB = 25;
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
-/** Wait until the volume has this much free, saying so once. */
-const room = async (config: ColdConfig, pollMs: number, reserve: number): Promise<void> => {
+/**
+ * Wait until cold's own volume has `reserve` free, saying so once. Where the
+ * archives are on another volume, what comes back into them (`back` bytes) is
+ * not on cold's, so theirs is waited on too: for that much and `reserve` more.
+ */
+const room = async (config: ColdConfig, pollMs: number, reserve: number, back: number): Promise<void> => {
+  const apart = ! sameVolume(config.coldRoot, config.sourceRoot);
+  const short = (): string | null => {
+    if (freeBytes(config.coldRoot) < reserve) return `Less than ${fmtBytes(reserve)} free (${fmtBytes(freeBytes(config.coldRoot))})`;
+
+    if (apart && freeBytes(config.sourceRoot) < back + reserve)
+      return `Less than ${fmtBytes(back + reserve)} free in the archives (${fmtBytes(freeBytes(config.sourceRoot))})`;
+
+    return null;
+  };
+
   let said = false;
 
-  while (freeBytes(config.coldRoot) < reserve) {
-    if (! said) warn(`Less than ${fmtBytes(reserve)} free (${fmtBytes(freeBytes(config.coldRoot))}) — waiting for room before the next tar`);
+  for (let why = short(); why; why = short()) {
+    if (! said) warn(`${why} — waiting for room before the next tar`);
 
     said = true;
 
@@ -133,8 +148,11 @@ const fetched = async (config: ColdConfig, tar: Tar, local: string, remote: Fetc
 
 /**
  * Take the files of these partitions out of a tar: into the archives, by way
- * of a directory beside them, or — for a version the catalog has moved on from
- * — into `PULLED` and no further. Returns how many files came out.
+ * of a directory beside the tar, or — for a version the catalog has moved on
+ * from — into `PULLED` and no further. Returns how many files came out.
+ *
+ * Each file is moved from that directory into the archives: a rename on one
+ * volume, a copy where the archives are on another — see `moveFile`.
  *
  * A partition the tar does not hold as the record says is still taken out, and
  * said: what is there is what there is to have.
@@ -171,7 +189,7 @@ const unpack = async (config: ColdConfig, origin: Origin, local: string, wanted:
       const target = path.join(config.sourceRoot, member);
 
       await fs.promises.mkdir(path.dirname(target), { recursive: true });
-      await fs.promises.rename(path.join(stage, member), target);
+      await moveFile(path.join(stage, member), target);
     }
 
     await fs.promises.rm(stage, { recursive: true, force: true });

@@ -307,6 +307,37 @@ describe('a tar brought back', () => {
     expect(db.prepare('SELECT count(*) AS n, count(returned_at) AS back FROM eviction').get()).toEqual({ n: 1, back: 1 });
   });
 
+  /** The archives on another volume than cold's own directory: no rename reaches them, and a copy does. */
+  it('moves what comes out into archives on another volume', async () => {
+    const one = partition('202001');
+
+    store(one);
+    publish(one);
+
+    const rename = fs.promises.rename.bind(fs.promises);
+    const across = vi.spyOn(fs.promises, 'rename').mockImplementation(async (from: fs.PathLike, to: fs.PathLike) => {
+      if (String(to).startsWith(path.join(dir, 'archives')) && ! String(from).startsWith(path.join(dir, 'archives')))
+        throw Object.assign(new Error('cross-device link not permitted'), { code: 'EXDEV' });
+
+      return rename(from, to);
+    });
+
+    record.noteEviction(db, 'archives', one, { files: 1, bytes: 2 });
+
+    try {
+      expect(await pull(await look())).toBe(0);
+    } finally {
+      across.mockRestore();
+    }
+
+    expect(fs.readFileSync(path.join(dir, 'archives', fileOf(one)), 'utf8')).toBe('aa');
+    expect(fs.existsSync(`${path.join(dir, 'archives', fileOf(one))}.part`)).toBe(false);
+
+    // Nothing of the tar or what came out of it is left, and its coming back is on record.
+    expect(fs.readdirSync(path.join(dir, 'cold', 'pulling', 'archives', 'gate'))).toEqual([]);
+    expect(record.evictedOf(db, 'archives', 'gate').size).toBe(0);
+  });
+
   it('counts a tar that never comes, and carries on', async () => {
     store(partition('202001'));
     publish(partition('202001'));
