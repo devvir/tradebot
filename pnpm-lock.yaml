@@ -496,6 +496,10 @@ importers:
       '@tradebot/utils':
         specifier: workspace:*
         version: link:../../shared/utils
+    devDependencies:
+      '@types/node':
+        specifier: ~22.20.5
+        version: 22.20.5
 
   services/prospector:
     dependencies:
@@ -530,6 +534,10 @@ importers:
       '@tradebot/utils':
         specifier: workspace:*
         version: link:../../shared/utils
+    devDependencies:
+      '@types/node':
+        specifier: ~22.20.5
+        version: 22.20.5
 
   services/stocker:
     dependencies:
@@ -574,6 +582,9 @@ importers:
       '@types/express':
         specifier: ^5.0.6
         version: 5.0.6
+      '@types/node':
+        specifier: ~22.20.5
+        version: 22.20.5
       '@types/supertest':
         specifier: ^6.0.3
         version: 6.0.3
