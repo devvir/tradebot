@@ -3,13 +3,19 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Archives } from '../../../src/tools/cold/shared/disk';
+import { _test_pass as pass } from '../../../src/tools/cold/evict/archives';
 import { _test_remove as remove } from '../../../src/tools/cold/evict/archives/remove';
+import { setYes } from '../../../src/tools/cold/options';
+import { confirm } from '../../../src/shared/ui/prompts';
 import { _test_survey as survey } from '../../../src/tools/cold/evict/archives/survey';
 import * as record from '../../../src/tools/cold/shared/record';
 import { errorsIn, stockedIn } from '../../../src/tools/cold/shared/vault/ledger';
 import type { DatabaseSync } from 'node:sqlite';
 import type { CatalogPartition, Grain, ListedSlice } from '../../../src/tools/cold/shared/types';
 import type { ColdConfig } from '../../../src/tools/cold/types';
+import type { Run } from '../../../src/tools/cold/evict/types';
+
+vi.mock('../../../src/shared/ui/prompts', () => ({ confirm: vi.fn(async () => true) }));
 
 /**
  * What of the archives can leave the disk: only what cold storage holds and
@@ -130,6 +136,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  setYes(false);
+  vi.mocked(confirm).mockReset();
   vi.unstubAllGlobals();
   record.close(db);
   fs.rmSync(dir, { recursive: true, force: true });
@@ -516,6 +524,77 @@ describe('evicting', () => {
 
     expect((await look()).ready).toEqual([]);
     expect((await look()).gone).toBe(4);
+  });
+});
+
+describe('evicting the files of one partition', () => {
+  /** Found evictable, then changed before its turn came: cold storage holds only what it was. */
+  it('leaves a partition whose tar has a change noted since it was found', async () => {
+    const found = await look();
+    const held  = record.storedOf(db, 'archives', 'gate').find(one => one.month === '202002')!;
+
+    record.noteChange(db, held, partition('202002', 'daily', 'v2'));
+
+    expect(await remove(db, config(), 'archives', found, new Archives(config().sourceRoot), true)).toEqual({ files: 3, bytes: 6 });
+    expect(fs.existsSync(path.join(dir, 'archives', 'gate/spot/trades/B/BTC_USDT/202002'))).toBe(true);
+    expect(db.prepare('SELECT month FROM eviction ORDER BY month').all().map(row => (row as { month: string }).month))
+      .toEqual(['202001', '202003', '202004']);
+  });
+});
+
+describe('a pass over the archives', () => {
+  const run = (): Run => ({
+    config: config(), origin: 'archives', venues: ['gate'], options: { venues: ['gate'], purge: true }, agreed: false, waiting: false,
+  });
+
+  const evicted = (): { month: string; files: number }[] =>
+    db.prepare('SELECT month, files FROM eviction ORDER BY month').all() as { month: string; files: number }[];
+
+  /** The catalog moves a partition on while the question waits: cold storage holds only the version before. */
+  it('removes only what is still ready when its venue\'s turn comes, at the version it was found at', async () => {
+    vi.mocked(confirm).mockImplementation(async () => {
+      publish(MONTHS.map(month => partition(month, 'daily', month === '202002' ? 'v2' : 'v1')));
+
+      return true;
+    });
+
+    expect(await pass(db, run(), true)).toBe(true);
+
+    expect(fs.existsSync(path.join(dir, 'archives', 'gate/spot/trades/B/BTC_USDT/202002'))).toBe(true);
+    expect(evicted().map(one => one.month)).toEqual(['202001', '202003', '202004']);
+  });
+
+  it('removes everything it found where nothing changed in between', async () => {
+    expect(await pass(db, run(), true)).toBe(true);
+
+    expect(fs.readdirSync(path.join(dir, 'archives', 'gate'))).toEqual([]);
+    expect(evicted().map(one => one.month)).toEqual(MONTHS);
+  });
+
+  /** A run left watching: an instrument the dataset gained after an earlier pass is part of the partition. */
+  it('sees the instruments a dataset gained since the pass before', async () => {
+    setYes(true);
+
+    // The last month is not stocked yet, and stays through the first pass.
+    fs.rmSync(path.join(dir, 'vault', 'ledger.csv'));
+    stock(...MONTHS.slice(0, 3).map(month => partition(month)));
+
+    const shared = run();
+
+    expect(await pass(db, shared, true)).toBe(true);
+    expect(evicted().map(one => one.month)).toEqual(['202001', '202002', '202003']);
+
+    // Then the venue lists another instrument, its file is downloaded, and the month is stocked.
+    const added = 'gate/spot/trades/E/ETH_USDT/202004/gate|spot|trades|ETH_USDT|20200401.csv.gz';
+
+    fs.mkdirSync(path.dirname(path.join(dir, 'archives', added)), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'archives', added), 'aa');
+    stock(partition('202004'));
+
+    expect(await pass(db, shared, false)).toBe(true);
+
+    expect(fs.existsSync(path.join(dir, 'archives', added))).toBe(false);
+    expect(evicted().at(-1)).toEqual({ month: '202004', files: 2 });
   });
 });
 

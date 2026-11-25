@@ -55,6 +55,22 @@ describe('a partition\'s files on disk', () => {
   it('is nothing for a dataset that is not on disk', async () => {
     expect((await new Archives(root).filesOf(daily))).toEqual([]);
   });
+
+  /** A look at the disk is taken once per `Archives`: a new one sees an instrument added since the last. */
+  it('includes, from a new look, an instrument the dataset gained since the last', async () => {
+    put('gate/spot/trades/B/BTC_USDT/202006/gate|spot|trades|BTC_USDT|20200601.csv.gz');
+
+    expect(await new Archives(root).filesOf(daily)).toHaveLength(1);
+
+    put('gate/spot/trades/N/NEW_USDT/202007/gate|spot|trades|NEW_USDT|20200701.csv.gz');
+
+    const july   = { ...daily, month: '202007' };
+    const looked = new Archives(root);
+
+    expect((await looked.filesOf(july)).map(file => file.path))
+      .toEqual(['gate/spot/trades/N/NEW_USDT/202007/gate|spot|trades|NEW_USDT|20200701.csv.gz']);
+    expect((await looked.monthDirsOf(july)).map(one => one.dir)).toEqual(['gate/spot/trades/N/NEW_USDT/202007']);
+  });
 });
 
 describe('whether the disk holds what the catalog says', () => {

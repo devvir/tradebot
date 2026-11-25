@@ -11,8 +11,13 @@ import type { PartitionKey, SourceFile } from './types';
  *
  * A month of a dataset is not one directory — it is the `YYYYMM` directory
  * under every instrument — so a partition is gathered by visiting each
- * instrument of the dataset. Those are listed once per dataset per run, since a
- * dataset holds thousands and a run asks about it once per month.
+ * instrument of the dataset. Those are listed once per dataset for as long as
+ * one `Archives` lasts, since a dataset holds thousands and is asked about once
+ * per month.
+ *
+ * **One `Archives` is one look at the disk, and lasts one pass.** Instruments
+ * are added to a dataset as the venue lists them, and a list kept longer than
+ * a pass leaves out each one added since; the next pass makes a new one.
  *
  * Only canonical names count, and only those of the partition asked for: a
  * dataset's directory holds every grain of it side by side.

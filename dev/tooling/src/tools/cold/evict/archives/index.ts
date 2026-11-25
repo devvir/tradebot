@@ -4,6 +4,7 @@ import * as catalog from '../../shared/catalog';
 import { loadConfig, WATCH_MS } from '../../config';
 import { onExit } from '../../cleanup';
 import { Archives } from '../../shared/disk';
+import { idOf } from '../../shared/keys';
 import { acquire } from '../../lock';
 import { agreed, isWatch } from '../../options';
 import * as record from '../../shared/record';
@@ -99,9 +100,8 @@ export const runEvict = async (origin: Origin, options: EvictOptions): Promise<v
     onExit(() => record.close(db));
 
     try {
-      const venues   = options.venues.length > 0 ? options.venues : await catalog.venues(config);
-      const archives = new Archives(config.sourceRoot);
-      const run: Run = { config, origin, venues, archives, options, agreed: false, waiting: false };
+      const venues = options.venues.length > 0 ? options.venues : await catalog.venues(config);
+      const run: Run = { config, origin, venues, options, agreed: false, waiting: false };
 
       /**
        * **Watching, the same is asked again at intervals.** What can go changes
@@ -136,9 +136,20 @@ export const runEvict = async (origin: Origin, options: EvictOptions): Promise<v
  * **The first look says everything it finds; a later one only what it has to
  * do.** A run that is watching and finds nothing says so once, and then stays
  * quiet until there is something.
+ *
+ * **Each venue is looked at again just before its files go.** Between the
+ * first look and the removal there is the question, which waits for as long as
+ * nobody answers, and every venue removed before this one, which can be hours.
+ * The catalog may have moved a partition to a new version meanwhile, which cold
+ * storage does not hold yet. So only what the second look still finds ready, at
+ * the same version, goes; the rest is left for the next pass.
+ *
+ * **The disk is listed afresh on every pass**, so a run left watching sees the
+ * instruments a dataset gained since the last one.
  */
 const pass = async (db: DatabaseSync, run: Run, first: boolean): Promise<boolean> => {
   const { config, origin, venues, options } = run;
+  const archives = new Archives(config.sourceRoot);
 
   // Read on every look: the vault is stocked while this runs, and may report a loss while it does.
   const lost = errorsIn(config.vaultRoot);
@@ -177,7 +188,7 @@ const pass = async (db: DatabaseSync, run: Run, first: boolean): Promise<boolean
 
   try {
     for (const venue of venues) {
-      const one = await survey(db, config, origin, venue, stocked, Date.now(), options.cleanup ? run.archives : undefined);
+      const one = await survey(db, config, origin, venue, stocked, Date.now(), options.cleanup ? archives : undefined);
 
       found.push(one);
 
@@ -226,11 +237,14 @@ const pass = async (db: DatabaseSync, run: Run, first: boolean): Promise<boolean
   for (const one of found) {
     if (one.ready.length === 0) continue;
 
-    const removed = await remove(db, config, origin, one, run.archives, purge);
+    const still   = await again(db, run, one, archives);
+    const removed = still.ready.length > 0 ? await remove(db, config, origin, still, archives, purge) : { files: 0, bytes: 0 };
+    const stayed  = one.ready.length - still.ready.length;
 
     bytes += removed.bytes;
 
-    info(`  ${one.venue.padEnd(8)} ${removed.files.toLocaleString('en-US')} files ${purge ? 'deleted' : 'moved to the trash'} · ${fmtBytes(removed.bytes)}`);
+    info(`  ${one.venue.padEnd(8)} ${removed.files.toLocaleString('en-US')} files ${purge ? 'deleted' : 'moved to the trash'} · ${fmtBytes(removed.bytes)}`
+      + (stayed > 0 ? ` · ${stayed.toLocaleString('en-US')} partition${stayed === 1 ? '' : 's'} no longer ready, left for the next look` : ''));
   }
 
   spacer();
@@ -248,6 +262,26 @@ const pass = async (db: DatabaseSync, run: Run, first: boolean): Promise<boolean
   return true;
 };
 
+/**
+ * What of a venue's evictable partitions is evictable still: looked at again,
+ * kept only where the new look finds it ready at the same version. Nothing is,
+ * where the vault has reported a loss since or its ledger cannot be read.
+ */
+const again = async (db: DatabaseSync, run: Run, found: Evictable, archives: Archives): Promise<Evictable> => {
+  const { config, origin, options } = run;
+  const stocked = stockedIn(config.vaultRoot);
+
+  if (! stocked || errorsIn(config.vaultRoot).length > 0) return { ...found, ready: [] };
+
+  const now   = await survey(db, config, origin, found.venue, stocked, Date.now(), options.cleanup ? archives : undefined);
+  const ready = new Set(now.ready.map(versionOf));
+
+  return { ...found, ready: found.ready.filter(one => ready.has(versionOf(one))) };
+};
+
+/** A partition at one version. */
+const versionOf = (one: Evictable['ready'][number]): string => `${idOf(one)}@${one.version}`;
+
 /** One venue's answer in a line: what can go. What stays, and why, is counted and not said. */
 const said = (found: Evictable): string => [
   found.ready.length > 0 ? loadOf(found.ready) : 'nothing to evict',
@@ -264,3 +298,6 @@ const loadOf = (ready: Evictable['ready']): string => {
     + `(${files.toLocaleString('en-US')} file${files === 1 ? '' : 's'} · ${fmtBytes(bytes)})`;
 };
 
+// ── Test access ───────────────────────────────────────────────────────────────
+
+export const _test_pass = pass;

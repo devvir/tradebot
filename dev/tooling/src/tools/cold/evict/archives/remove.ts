@@ -6,6 +6,7 @@ import { idOf, partitionOf } from '../../shared/keys';
 import { Progress } from '../../shared/progress';
 import * as record from '../../shared/record';
 import type { DatabaseSync } from 'node:sqlite';
+import type { PartitionKey } from '../../shared/types';
 import type { ColdConfig, Origin } from '../../types';
 import type { Evictable } from '../types';
 
@@ -27,6 +28,11 @@ import type { Evictable } from '../types';
  * measured. What is written down is how many files went, and what the catalog
  * says the partition weighs.
  *
+ * **Cold storage is asked once more, as the venue's turn comes.** A partition
+ * goes only while the record has it in a stored tar at the version given here,
+ * with no change noted of it: one that changed since it was found evictable is
+ * left as it is, and nothing is written down of it.
+ *
  * A partition whose files would not go to the trash stops the run where it is:
  * nothing of it is written down, and nothing is deleted in its place.
  */
@@ -39,7 +45,9 @@ export const remove = async (
   purge:    boolean,
 ): Promise<{ files: number; bytes: number }> => {
   const total = { files: 0, bytes: 0 };
-  const going = new Set(found.ready.map(idOf));
+  const held  = new Set(record.storedOf(db, origin, found.venue).map(versionOf));
+  const ready = found.ready.filter(one => held.has(versionOf(one)));
+  const going = new Set(ready.map(idOf));
 
   /** Files removed for each partition so far: a directory taken whole takes its other renderings' files with it. */
   const took = new Map<string, number>();
@@ -54,12 +62,12 @@ export const remove = async (
   const progress = new Progress();
 
   const show = (): void => progress.set(found.venue, {
-    label: found.venue.padEnd(8), done, total: found.ready.length, unit: 'count', of: `partitions · ${total.files.toLocaleString('en-US')} files`,
+    label: found.venue.padEnd(8), done, total: ready.length, unit: 'count', of: `partitions · ${total.files.toLocaleString('en-US')} files`,
   });
 
   show();
 
-  for (const partition of found.ready) {
+  for (const partition of ready) {
     const mine   = idOf(partition);
     const whole: string[] = [];
     const single: string[] = [];
@@ -122,6 +130,9 @@ const prune = (root: string, dir: string): void => {
     }
   }
 };
+
+/** A partition at one version. */
+const versionOf = (one: PartitionKey & { version: string }): string => `${idOf(one)}@${one.version}`;
 
 // ── Test access ───────────────────────────────────────────────────────────────
 

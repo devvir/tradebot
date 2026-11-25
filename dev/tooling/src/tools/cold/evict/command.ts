@@ -1,4 +1,6 @@
 import { each, gracefully, resolve, selectionOf } from '../cli';
+import { isWatch } from '../options';
+import { error } from '../../../shared/ui/logger';
 import type { Command } from 'commander';
 import type { Chosen } from '../types';
 
@@ -20,6 +22,19 @@ export const register = (cold: Command): void => {
       const asked = await resolve(command, origin, venues, ['archives', 'vault']);
 
       if (! asked) return;
+
+      /**
+       * **Refused here, while `--watch` is still as it was given.** Watching
+       * several trees, each round is repeated over all of them and each tree's
+       * run is told it is not watching — so the run itself would not know.
+       */
+      if (options.cleanup && isWatch()) {
+        error('--cleanup looks at the disk once and removes what it finds; it does not run with --watch');
+
+        process.exitCode = 1;
+
+        return;
+      }
 
       const how       = { ...(options.dryRun ? { dryRun: true } : {}), ...(options.purge ? { purge: true } : {}) };
       const selection = selectionOf(asked.venues, options);

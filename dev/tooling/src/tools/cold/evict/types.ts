@@ -26,7 +26,6 @@ export interface Run {
   config:   ColdConfig;
   origin:   Origin;
   venues:   readonly string[];
-  archives: import('../shared/disk').Archives;
   options:  EvictOptions;
 
   /** Whether removing was agreed to: asked before the first removal of a run, and not again. */

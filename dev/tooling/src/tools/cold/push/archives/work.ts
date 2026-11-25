@@ -35,7 +35,6 @@ export const work = async (
   lens:   string | null,
   watch:  boolean,
 ): Promise<void> => {
-  const archives = new Archives(config.sourceRoot);
   const failed   = new Set<number>();
   const all      = record.tarsOf(db, origin).filter(tar => venues.includes(tar.venue));
   const progress = new PushProgress(all.length, all.filter(tar => tar.state === 'stored').length);
@@ -100,6 +99,9 @@ export const work = async (
     let moved = false;
 
     const round = roundOf(config);
+
+    // Listed afresh each round: a run left watching sees the instruments added to a dataset since the last.
+    const archives = new Archives(config.sourceRoot);
 
     for (const tar of todo) {
       try {
