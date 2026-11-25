@@ -4,12 +4,14 @@ import { localPath } from '../../config';
 import { busy } from '../../lock';
 import { matches } from '../../shared/disk';
 import { idOf, partitionOf } from '../../shared/keys';
+import { groupBy } from '../../shared/group';
 import * as record from '../../shared/record';
 import { sizedMembersOf } from '../../shared/tar';
 import { asFound, othersAtWork } from '../again';
-import { are, count, found } from '../finding';
+import { are, found } from '../finding';
+import { count } from '../../shared/count';
 import { fmtBytes } from '../../../../shared/utils/format';
-import type { Content, Held, SourceFile } from '../../shared/types';
+import type { Content, Held } from '../../shared/types';
 import type { Tar } from '../../types';
 import type { Check, Finding, Looking } from '../types';
 
@@ -130,14 +132,11 @@ const sizeOf = (files: number, bytes: number): string =>
 
 /** Why a tar does not hold what the record says it was made with, or null where it does. */
 const differs = async (file: string, tar: Tar, held: readonly Held[]): Promise<string | null> => {
-  const inside = new Map<string, SourceFile[]>();
-
-  for (const member of await sizedMembersOf(file)) {
+  const inside = groupBy(await sizedMembersOf(file), (member) => {
     const key = partitionOf(member.path);
-    const id  = key ? idOf(key) : '(not a file of any partition)';
 
-    inside.set(id, [...inside.get(id) ?? [], member]);
-  }
+    return key ? idOf(key) : '(not a file of any partition)';
+  });
 
   for (const one of held) {
     const files = inside.get(idOf(one)) ?? [];

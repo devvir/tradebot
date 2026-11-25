@@ -59,7 +59,7 @@ export const work = async (db: DatabaseSync, config: ColdConfig, venues: readonl
     if (isWatch() && Date.now() >= scanAt) {
       const before = partitions();
 
-      if (trusted(config)) plan(db, config, venues);
+      if (trusted(config).ok) plan(db, config, venues);
 
       kept.clear();
 
@@ -72,10 +72,11 @@ export const work = async (db: DatabaseSync, config: ColdConfig, venues: readonl
       scanAt = Date.now() + WATCH_MS;
     }
 
-    const pending = pendingOf(db, venues).filter(file => ! kept.has(keyOf(file)));
+    const pending    = pendingOf(db, venues).filter(file => ! kept.has(keyOf(file)));
+    const unfinished = unfinishedOf(db, config);
 
     // A partition left a step short has nothing pending, and still has a round coming to it.
-    if (pending.length === 0 && unfinishedOf(db, config).length === 0) {
+    if (pending.length === 0 && unfinished.length === 0) {
       // Everything found has been sent: what was stored is looked at once more, and what that undoes is sent again.
       if (! waiting) {
         await confirm();
@@ -99,7 +100,7 @@ export const work = async (db: DatabaseSync, config: ColdConfig, venues: readonl
 
     waiting = false;
 
-    if (! await round(db, config, pending, remote, line => progress.log(line), (name, bytes) => progress.stored(name, bytes), kept))
+    if (! await round(db, config, pending, remote, line => progress.log(line), (name, bytes) => progress.stored(name, bytes), kept, unfinished))
       await sleep(POLL_MS);
   }
 
@@ -140,6 +141,9 @@ const round = async (
   /** A partition was stored: its name and what it weighs, said with how far the run has got. */
   stored:  (name: string, bytes: number) => void = (name, bytes) => say(`Stored ${name} · ${fmtBytes(bytes)}`),
   kept:    Set<string> = new Set(),
+
+  /** The partitions a run before this one left a step short, as `unfinishedOf` gives them. */
+  unfinished: readonly { partition: string; revision: string }[] = unfinishedOf(db, config),
 ): Promise<boolean> => {
   const queued = await remote.queuedPaths();
 
@@ -222,7 +226,7 @@ const round = async (
    * them. Only at the revision the ledger has now — an older one is not a
    * partition to finish, but one to be replaced.
    */
-  for (const key of new Set([...pending, ...unfinishedOf(db, config)].map(file => `${file.partition}|${file.revision}`))) {
+  for (const key of new Set([...pending, ...unfinished].map(file => `${file.partition}|${file.revision}`))) {
     const [partition, revision] = key.split('|') as [string, string];
     const files = record.vaultFilesOf(db, partition, revision);
 
@@ -266,8 +270,9 @@ const retire = async (
   remote:    Remote,
   say:       (line: string) => void,
 ): Promise<void> => {
-  const old  = record.vaultFiles(db).filter(file => file.partition === partition && file.revision !== keep);
-  const kept = new Set(record.vaultFilesOf(db, partition, keep).map(remoteOf));
+  const files = record.vaultFilesOfPartition(db, partition);
+  const old   = files.filter(file => file.revision !== keep);
+  const kept  = new Set(files.filter(file => file.revision === keep).map(remoteOf));
 
   for (const revision of new Set(old.map(file => file.revision))) {
     let cleared = true;

@@ -1,16 +1,18 @@
-import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { promisify } from 'node:util';
 import { onExit } from '../../cleanup';
 import { POLL_MS, loadConfig } from '../../config';
 import { acquire } from '../../lock';
 import { agreed } from '../../options';
 import * as mega from '../../shared/mega';
+import { groupBy } from '../../shared/group';
+import { count } from '../../shared/count';
+import { digestOf } from '../../shared/digest';
+import { execFileAsync } from '../../shared/exec';
 import * as record from '../../shared/record';
 import { fileSchemaOf, openCatalog, partitionsOf, writePartition, writeTables } from './source';
 import { fmtBytes } from '../../../../shared/utils/format';
@@ -339,15 +341,6 @@ const storeSnapshot = async (
   if (rebase) await remote.removeTree?.(`${config.catalogRoot}/${PARTITIONS}`);
 };
 
-/** A file's SHA-256, in hex. */
-export const digestOf = async (file: string): Promise<string> => {
-  const hash = createHash('sha256');
-
-  for await (const chunk of fs.createReadStream(file, { highWaterMark: 8 * 1024 ** 2 })) hash.update(chunk as Buffer);
-
-  return hash.digest('hex');
-};
-
 /** Write each changed partition's file rows to its file, and write down that it is on its way. Returns how much that was. */
 const writePartitions = async ({ db, catalog, staging }: Sending, partitions: readonly CatalogPartitionRow[]): Promise<{ partitions: number; bytes: number }> => {
   const done = { partitions: 0, bytes: 0 };
@@ -379,15 +372,9 @@ const deliver = async (db: DatabaseSync, config: ColdConfig, staging: string, re
 
   if (tables.length > 0) await remote.queueUploads(tables, config.catalogRoot);
 
-  const dirs = new Map<string, string[]>();
+  const dirs = groupBy(pending().filter(one => fs.existsSync(path.join(staging, one.remote))), one => path.posix.dirname(one.remote));
 
-  for (const one of pending()) {
-    if (! fs.existsSync(path.join(staging, one.remote))) continue;
-
-    dirs.set(path.posix.dirname(one.remote), [...dirs.get(path.posix.dirname(one.remote)) ?? [], path.join(staging, one.remote)]);
-  }
-
-  for (const [dir, files] of dirs) await remote.queueUploads(files, `${config.catalogRoot}/${dir}`);
+  for (const [dir, files] of dirs) await remote.queueUploads(files.map(one => path.join(staging, one.remote)), `${config.catalogRoot}/${dir}`);
 
   // Until Mega has every one of them. Only after a wait is one that is in neither place taken for dropped.
   for (let round = 0, said = -1; ; round++) {
@@ -519,7 +506,7 @@ const NOT_A_SNAPSHOT = 'The catalog changed while it was read — what was read 
 /** Whether a container is running, as Docker says. */
 const running = async (container: string): Promise<boolean> => {
   try {
-    const { stdout } = await promisify(execFile)('docker', ['inspect', '-f', '{{.State.Running}}', container], { timeout: 20_000 });
+    const { stdout } = await execFileAsync('docker', ['inspect', '-f', '{{.State.Running}}', container], { timeout: 20_000 });
 
     return stdout.trim() === 'true';
   } catch (err) {
@@ -529,8 +516,6 @@ const running = async (container: string): Promise<boolean> => {
     throw new Error(`Cannot tell whether ${container} is running (${(err as Error).message.split('\n')[0]}) — nothing is copied on a guess`);
   }
 };
-
-const count = (n: number, what: string): string => `${n.toLocaleString('en-US')} ${what}${n === 1 ? '' : 's'}`;
 
 /** The container that writes the catalog, and how often it is asked after while it is waited for. */
 const WRITER    = 'prospector';

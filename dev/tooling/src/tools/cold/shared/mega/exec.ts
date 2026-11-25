@@ -1,11 +1,8 @@
-import { execFile, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
-import { promisify } from 'node:util';
 import { onExit } from '../../cleanup';
 import { above, waitingFor } from '../progress';
 import { info, warn } from '../../../../shared/ui/logger';
-
-export const execFileAsync = promisify(execFile);
 
 /**
  * One mega-cmd command — waited for, for as long as Mega is not answering.

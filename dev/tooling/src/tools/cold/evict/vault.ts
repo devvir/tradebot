@@ -11,15 +11,15 @@ import { trusted } from '../shared/vault/trusted';
 import { agreed } from '../options';
 import * as record from '../shared/record';
 import { meansToEvict } from '../shared/vault/select';
-import { locate } from '../shared/vault/layout';
-import { stockedIn } from '../shared/vault/ledger';
+import { LEDGER, stockedIn } from '../shared/vault/ledger';
+import { byVenue, bytesOf, loadOf } from '../shared/vault/files';
+import { groupBy } from '../shared/group';
 import { fmtBytes } from '../../../shared/utils/format';
 import { info, spacer, success } from '../../../shared/ui/logger';
-import { byKey } from '../order';
 import { notice } from '../shared/vault/needed';
 import type { DatabaseSync } from 'node:sqlite';
 import type { ColdConfig, Selection } from '../types';
-import type { StoredFile, VaultOptions } from '../shared/types';
+import type { Stocked, StoredFile, VaultOptions } from '../shared/types';
 
 /**
  * Take vault files off the local disk, to make room.
@@ -34,9 +34,10 @@ import type { StoredFile, VaultOptions } from '../shared/types';
  * **A file can go once its partition is in cold storage at the revision the
  * ledger has.** A partition is stored whole or not at all, so a file of a
  * stored partition is in cold storage itself — and one of a partition still on
- * its way, or stocked again since it was stored, stays. The ledger is read
- * again as each partition's turn comes: a file's path does not say which
- * revision it is of, so one stocked again in the meantime is only told by that.
+ * its way, or stocked again since it was stored, stays. The ledger is looked at
+ * again as each partition's turn comes, and read again wherever it has changed:
+ * a file's path does not say which revision it is of, so one stocked again in
+ * the meantime is only told by that.
  *
  * **A file is the unit here, where a partition is the unit that is stored.** A
  * small month is one file and goes whole. A large month is a file per
@@ -51,7 +52,7 @@ export const runEvictVault = async (selection: Selection, options: VaultOptions)
   const release = await acquire(config.coldRoot, 'vault', 'evict');
 
   try {
-    if (! trusted(config)) return;
+    if (! trusted(config).ok) return;
 
     const db = record.open(config.dbPath);
 
@@ -66,11 +67,10 @@ export const runEvictVault = async (selection: Selection, options: VaultOptions)
        * archives are on disk now: whoever stocks the vault adds those hours
        * beside the partition's own files, and needs them here to do it.
        */
-      const waiting = new Set((await completable(config, new Archives(loadConfig('archives').sourceRoot), stockedIn(config.vaultRoot) ?? []))
-        .map(one => one.partition));
+      const stocked = stockedIn(config.vaultRoot) ?? [];
+      const waiting = new Set((await completable(config, new Archives(loadConfig('archives').sourceRoot), stocked)).map(one => one.partition));
 
-      const going = evictable(db, config, selection, waiting);
-      const kept  = new Set(evictable(db, config, selection).filter(file => waiting.has(file.partition)).map(file => file.partition)).size;
+      const { going, kept } = leaving(evictable(db, config, selection, stocked), waiting);
 
       if (kept > 0)
         info(`${kept.toLocaleString('en-US')} partition${kept === 1 ? ' stays' : 's stay'}: the month beside ${kept === 1 ? 'it' : 'them'} is on disk, and stocker needs ${kept === 1 ? 'its' : 'their'} main file to add the spill`);
@@ -83,10 +83,10 @@ export const runEvictVault = async (selection: Selection, options: VaultOptions)
 
       info('What of the vault can leave the disk');
 
-      for (const [venue, files] of byVenue(going)) info(`  ${venue.padEnd(8)} ${loadOf(files)}`);
+      for (const [venue, files] of byVenue(going)) info(`  ${venue.padEnd(8)} ${loadOf(files, EVICTABLE)}`);
 
       spacer();
-      info(loadOf(going));
+      info(loadOf(going, EVICTABLE));
       spacer();
 
       if (options.dryRun) return;
@@ -117,21 +117,31 @@ export const runEvictVault = async (selection: Selection, options: VaultOptions)
 
 /**
  * The files a selection means that can go: of a partition cold storage holds at
- * the revision the ledger has now, and not already away.
+ * the revision the ledger has (`stocked`, as read), and not already away.
  *
  * Decided from the ledger and the record. The disk is not asked.
  */
-const evictable = (db: DatabaseSync, config: ColdConfig, selection: Selection, keep: ReadonlySet<string> = new Set()): StoredFile[] => {
-  const current = new Map((stockedIn(config.vaultRoot) ?? []).map(one => [one.partition, one.revision]));
+const evictable = (
+  db:        DatabaseSync,
+  config:    ColdConfig,
+  selection: Selection,
+  stocked:   readonly Stocked[] = stockedIn(config.vaultRoot) ?? [],
+): StoredFile[] => {
+  const current = new Map(stocked.map(one => [one.partition, one.revision]));
   const stored  = record.vaultStored(db);
 
   return record.vaultFiles(db).filter(file =>
     current.get(file.partition) === file.revision
     && (stored.get(file.partition)?.has(file.revision) ?? false)
     && file.evictedAt === null
-    && ! keep.has(file.partition)
     && meansToEvict(selection, file.partition, file.instrument));
 };
+
+/** Of the files that can go, those that do, and how many partitions stay because they are `waiting` to be completed. */
+const leaving = (files: readonly StoredFile[], waiting: ReadonlySet<string>): { going: StoredFile[]; kept: number } => ({
+  going: files.filter(file => ! waiting.has(file.partition)),
+  kept:  new Set(files.filter(file => waiting.has(file.partition)).map(file => file.partition)).size,
+});
 
 /** Remove one venue's files, a partition at a time, and write down each as it goes. */
 const remove = async (
@@ -141,22 +151,20 @@ const remove = async (
   files:  readonly StoredFile[],
   purge:  boolean,
 ): Promise<void> => {
-  const partitions = [...new Set(files.map(file => file.partition))];
+  const partitions = groupBy(files, file => file.partition);
+  const revisionOf = ledgerNow(config.vaultRoot);
 
   let done = 0;
 
   const progress = new Progress();
 
-  const show = (): void => progress.set(venue, { label: venue.padEnd(8), done, total: partitions.length, unit: 'count', of: 'partitions' });
+  const show = (): void => progress.set(venue, { label: venue.padEnd(8), done, total: partitions.size, unit: 'count', of: 'partitions' });
 
   show();
 
-  for (const partition of partitions) {
-    const own = files.filter(file => file.partition === partition);
-    const now = stockedIn(config.vaultRoot)?.find(one => one.partition === partition)?.revision;
-
+  for (const [partition, own] of partitions) {
     // Stocked again, or being stocked, since it was listed: what is at those paths is not what cold storage holds.
-    if (now !== own[0]!.revision) {
+    if (revisionOf(partition) !== own[0]!.revision) {
       done++;
       show();
 
@@ -185,31 +193,39 @@ const remove = async (
   progress.stop();
 };
 
-const byVenue = (files: readonly StoredFile[]): Map<string, StoredFile[]> => {
-  const venues = new Map<string, StoredFile[]>();
+/**
+ * The revision the ledger has of a partition now — asked as each partition's
+ * turn comes. The ledger is read again only where it has changed since it was
+ * last read (its inode, size and modification time), so a run over thousands
+ * of partitions reads it once while nothing stocks the vault. Where there is no
+ * ledger, no partition has a revision.
+ */
+const ledgerNow = (vaultRoot: string): ((partition: string) => string | undefined) => {
+  let seen: string | null = null;
+  let now = new Map<string, string>();
 
-  for (const file of files) {
-    const venue = locate(file.partition).levels['venue'] ?? '';
+  return (partition) => {
+    const stats = fs.statSync(path.join(vaultRoot, LEDGER), { throwIfNoEntry: false });
+    const at    = stats ? `${stats.ino}|${stats.size}|${stats.mtimeMs}` : '';
 
-    venues.set(venue, [...venues.get(venue) ?? [], file]);
-  }
+    if (at !== seen) {
+      now  = new Map((stats ? stockedIn(vaultRoot) ?? [] : []).map(one => [one.partition, one.revision]));
+      seen = at;
+    }
 
-  return new Map([...venues].sort(byKey));
+    return now.get(partition);
+  };
 };
 
-const bytesOf = (files: readonly StoredFile[]): number => files.reduce((sum, file) => sum + file.bytes, 0);
-
-const loadOf = (files: readonly StoredFile[]): string => {
-  const partitions = new Set(files.map(file => file.partition)).size;
-
-  return `${files.length.toLocaleString('en-US')} file${files.length === 1 ? '' : 's'} evictable `
-    + `in ${partitions.toLocaleString('en-US')} partition${partitions === 1 ? '' : 's'} (${fmtBytes(bytesOf(files))})`;
-};
+/** How a file that can go stands, in a line about it. */
+const EVICTABLE = 'evictable';
 
 // ── Test access ───────────────────────────────────────────────────────────────
 
 export const _test_evictable = evictable;
 
 export const _test_byVenue   = byVenue;
+
+export const _test_leaving   = leaving;
 
 export const _test_remove    = remove;

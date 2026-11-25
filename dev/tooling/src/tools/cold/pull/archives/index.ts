@@ -1,6 +1,5 @@
-import path from 'node:path';
 import { onExit } from '../../cleanup';
-import { GB, loadConfig } from '../../config';
+import { ARCHIVES_RESERVE_GB, GB, loadConfig } from '../../config';
 import { Archives } from '../../shared/disk';
 import { descriptorOf } from '../../shared/keys';
 import { freeBytes, sameVolume } from '../../shared/fs';
@@ -11,9 +10,9 @@ import * as record from '../../shared/record';
 import { fmtBytes } from '../../../../shared/utils/format';
 import { error, info, spacer, success, warn } from '../../../../shared/ui/logger';
 import { survey } from './survey';
-import { bring, RESERVE_GB } from './bring';
-import type { DatabaseSync } from 'node:sqlite';
-import type { ColdConfig, Origin, Tar } from '../../types';
+import { asideRoot, bring, tarsOf } from './bring';
+import { count } from '../../shared/count';
+import type { Origin } from '../../types';
 import type { Pullable, PullOptions, PullState } from '../types';
 
 /**
@@ -51,7 +50,7 @@ import type { Pullable, PullOptions, PullState } from '../types';
  *
  * **Space is watched, not promised.** What the tars weigh is said against what
  * is free before anything starts, and a tar is not asked for while less than
- * `RESERVE_GB` is free — the run waits there until there is room.
+ * `ARCHIVES_RESERVE_GB` is free — the run waits there until there is room.
  */
 export const runPull = async (origin: Origin, options: PullOptions): Promise<void> => {
   const config  = loadConfig(origin);
@@ -105,11 +104,11 @@ export const runPull = async (origin: Origin, options: PullOptions): Promise<voi
       const back  = bytesOf(wanted.filter(one => one.state !== 'old'));
       const here  = apart ? heavy + bytesOf(wanted) - back : heavy + bytesOf(wanted);
 
-      if (here + RESERVE_GB * GB > free)
-        warn(`${fmtBytes(free)} is free: not enough for all of it and ${RESERVE_GB}GB spare — it will wait wherever it runs short`);
+      if (here + ARCHIVES_RESERVE_GB * GB > free)
+        warn(`${fmtBytes(free)} is free: not enough for all of it and ${ARCHIVES_RESERVE_GB}GB spare — it will wait wherever it runs short`);
 
-      if (apart && back + RESERVE_GB * GB > freeBytes(config.sourceRoot))
-        warn(`${fmtBytes(freeBytes(config.sourceRoot))} is free in the archives: not enough for what comes back and ${RESERVE_GB}GB spare — it will wait wherever it runs short`);
+      if (apart && back + ARCHIVES_RESERVE_GB * GB > freeBytes(config.sourceRoot))
+        warn(`${fmtBytes(freeBytes(config.sourceRoot))} is free in the archives: not enough for what comes back and ${ARCHIVES_RESERVE_GB}GB spare — it will wait wherever it runs short`);
 
       if (! await mega.available()) {
         error('mega-cmd is not available — is the session logged in?');
@@ -138,11 +137,6 @@ export const runPull = async (origin: Origin, options: PullOptions): Promise<voi
   }
 };
 
-/** Where partitions of a version the catalog has moved on from are put. */
-export const asideRoot = (config: ColdConfig, origin: Origin): string => path.join(config.coldRoot, PULLED, origin);
-
-export const count = (n: number, what: string): string => `${n.toLocaleString('en-US')} ${what}${n === 1 ? '' : 's'}`;
-
 // ── Internals ─────────────────────────────────────────────────────────────────
 
 /**
@@ -165,12 +159,6 @@ const chosen = async (found: readonly Pullable[], force: boolean): Promise<Pulla
   return [...of('away'), ...of('old'), ...(again ? same : []), ...(over ? differs : [])];
 };
 
-/** The tars these partitions are in, oldest month first. */
-export const tarsOf = (db: DatabaseSync, wanted: readonly Pullable[]): Tar[] =>
-  [...new Set(wanted.map(one => one.held.tarId))]
-    .map(id => record.tarById(db, id))
-    .sort((a, b) => (a.local < b.local ? -1 : a.local > b.local ? 1 : 0));
-
 const bytesOf = (found: readonly Pullable[]): number => found.reduce((sum, one) => sum + one.held.bytes, 0);
 
 /** What was found of a venue, in a line: how many partitions stand each way. */
@@ -187,8 +175,6 @@ const said = (found: readonly Pullable[]): string => {
 
   return `${count(found.length, 'partition')} of ${count(datasets, 'dataset')} (${fmtBytes(bytesOf(found))}) — ${parts.join(', ')}`;
 };
-
-const PULLED  = 'pulled';
 
 // ── Test access ───────────────────────────────────────────────────────────────
 

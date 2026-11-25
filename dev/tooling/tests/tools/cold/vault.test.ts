@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { _test_byVenue as byVenue, _test_evictable as evictable, _test_remove as remove } from '../../../src/tools/cold/evict/vault';
 import { _test_fetch as fetch } from '../../../src/tools/cold/shared/vault/fetch';
 import { _test_pullable as pullable } from '../../../src/tools/cold/pull/vault';
@@ -20,6 +20,37 @@ import type { Remote } from '../../../src/tools/cold/push/types';
  * The vault in cold storage: stored a partition at a time, as the files it is,
  * and moved out and brought back a file at a time.
  */
+
+/** Something to do once the next partition has been taken off the disk. */
+const discarding = vi.hoisted(() => ({ then: null as (() => void) | null }));
+
+// Each the real thing, counted: how often the ledger and the whole of the record's vault files are read.
+vi.mock('../../../src/tools/cold/shared/vault/ledger', async (actual) => {
+  const real = await actual<typeof import('../../../src/tools/cold/shared/vault/ledger')>();
+
+  return { ...real, stockedIn: vi.fn(real.stockedIn) };
+});
+
+vi.mock('../../../src/tools/cold/shared/record', async (actual) => {
+  const real = await actual<typeof import('../../../src/tools/cold/shared/record')>();
+
+  return { ...real, vaultFiles: vi.fn(real.vaultFiles) };
+});
+
+vi.mock('../../../src/tools/cold/evict/discard', async (actual) => {
+  const real = await actual<typeof import('../../../src/tools/cold/evict/discard')>();
+
+  return {
+    discard: async (paths: readonly string[], purge: boolean): Promise<void> => {
+      await real.discard(paths, purge);
+
+      const then = discarding.then;
+
+      discarding.then = null;
+      then?.();
+    },
+  };
+});
 
 let dir:  string;
 let db:   DatabaseSync;
@@ -113,6 +144,10 @@ beforeEach(() => {
 
   stock(SMALL, '202001', 'aaaaaaaaaaaa', null);
   stock(LARGE, '202001', 'bbbbbbbbbbbb', ['BTC_USDT', 'ETH_USDT']);
+
+  discarding.then = null;
+  vi.mocked(stockedIn).mockClear();
+  vi.mocked(record.vaultFiles).mockClear();
 });
 
 afterEach(() => {
@@ -417,6 +452,27 @@ describe('storing the vault', () => {
     expect(kept.size).toBe(1);
   });
 
+  /** A first push is every partition of the vault: each one stored reads its own rows, never the whole table. */
+  it('reads no partition\'s files out of the whole record as it stores them', async () => {
+    stock(SMALL, '202002', 'cccccccccccc', null);
+    stock(SMALL, '202003', 'dddddddddddd', null);
+
+    const remote = mega();
+
+    plan(db, config(), []);
+
+    vi.mocked(record.vaultFiles).mockClear();
+
+    await round(db, config(), record.vaultFilesPending(db), remote, () => {});
+
+    remote.arrive();
+
+    await round(db, config(), record.vaultFilesPending(db), remote, () => {});
+
+    expect(record.vaultStored(db).size).toBe(4);
+    expect(record.vaultFiles).not.toHaveBeenCalled();
+  });
+
   it('forgets a revision no longer in the vault that cold storage never held', async () => {
     plan(db, config(), []);
 
@@ -517,6 +573,43 @@ describe('moving vault files out', () => {
 
     expect(fs.existsSync(path.join(dir, 'vault', SMALL, '@', '202001.parquet'))).toBe(true);
     expect(db.prepare('SELECT count(*) AS n FROM vault_move').get()).toEqual({ n: 0 });
+  });
+
+  /** Nothing stocks the vault meanwhile: the ledger is read once, however many partitions there are. */
+  it('reads the ledger once for every partition it removes while the ledger stays as it is', async () => {
+    stock(SMALL, '202002', 'cccccccccccc', null);
+
+    await storeAll();
+
+    const files = evictable(db, config(), all);
+
+    vi.mocked(stockedIn).mockClear();
+
+    await remove(db, config(), 'gate', files, true);
+
+    expect(new Set(files.map(file => file.partition)).size).toBe(3);
+    expect(stockedIn).toHaveBeenCalledTimes(1);
+    expect(db.prepare('SELECT DISTINCT partition FROM vault_move').all()).toHaveLength(3);
+  });
+
+  /** The ledger is read again where it has changed: the partition stocked again since is told by that. */
+  it('leaves on disk a partition stocked again while the one before it was being removed', async () => {
+    stock(SMALL, '202002', 'cccccccccccc', null);
+
+    await storeAll();
+
+    const files = evictable(db, config(), all);
+
+    // The first to go is the per-instrument month; the small month after it is stocked again once that is gone.
+    discarding.then = () => stock(SMALL, '202001', 'eeeeeeeeeeee', null);
+
+    await remove(db, config(), 'gate', files, true);
+
+    expect(fs.existsSync(path.join(dir, 'vault', SMALL, '@', '202001.parquet'))).toBe(true);
+    expect(db.prepare('SELECT DISTINCT partition FROM vault_move ORDER BY partition').all()).toEqual([
+      { partition: `${LARGE}/202001` }, { partition: `${SMALL}/202002` },
+    ]);
+    expect(record.vaultFilesOf(db, `${SMALL}/202001`, 'aaaaaaaaaaaa')[0]!.evictedAt).toBeNull();
   });
 
   /** Rows as the record gives them, of more than one venue: what a run over the real vault is. */

@@ -5,6 +5,11 @@ import type { StoredFile, VaultFile } from '../types';
 export const vaultFiles = (db: DatabaseSync): StoredFile[] =>
   db.prepare(`SELECT ${VAULT_FILE} FROM vault_file ORDER BY partition, revision, instrument, side`).all() as unknown as StoredFile[];
 
+/** Every vault file of one partition, at whichever revision. */
+export const vaultFilesOfPartition = (db: DatabaseSync, partition: string): StoredFile[] =>
+  db.prepare(`SELECT ${VAULT_FILE} FROM vault_file WHERE partition = ? ORDER BY revision, instrument, side`)
+    .all(partition) as unknown as StoredFile[];
+
 /** The vault files that are not in cold storage yet, in the order they were planned. */
 export const vaultFilesPending = (db: DatabaseSync): StoredFile[] =>
   db.prepare(`SELECT ${VAULT_FILE} FROM vault_file WHERE state <> 'stored' ORDER BY rowid`).all() as unknown as StoredFile[];

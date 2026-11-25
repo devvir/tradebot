@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { _test_evictable as evictable } from '../../../src/tools/cold/evict/vault';
+import { _test_evictable as evictable, _test_leaving as leaving } from '../../../src/tools/cold/evict/vault';
 import { Archives } from '../../../src/tools/cold/shared/disk';
 import * as record from '../../../src/tools/cold/shared/record';
 import { stockedIn } from '../../../src/tools/cold/shared/vault/ledger';
@@ -105,6 +105,6 @@ describe('a partition stocked without the next month\'s hours', () => {
     const all = { venues: [], instruments: [] };
 
     expect(evictable(db, config(), all)).toHaveLength(1);
-    expect(evictable(db, config(), all, new Set(await waiting()))).toEqual([]);
+    expect(leaving(evictable(db, config(), all), new Set(await waiting()))).toEqual({ going: [], kept: 1 });
   });
 });

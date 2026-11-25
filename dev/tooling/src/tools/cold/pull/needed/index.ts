@@ -1,6 +1,6 @@
 import { recordOf, save } from '../../shared/backup';
 import { onExit } from '../../cleanup';
-import { GB, POLL_MS, WATCH_MS, loadConfig } from '../../config';
+import { ARCHIVES_RESERVE_GB, GB, POLL_MS, WATCH_MS, loadConfig } from '../../config';
 import { acquire } from '../../lock';
 import * as mega from '../../shared/mega';
 import { agreed, isWatch } from '../../options';
@@ -8,8 +8,8 @@ import { waitingFor } from '../../shared/progress';
 import * as record from '../../shared/record';
 import { fetch } from '../../shared/vault/fetch';
 import { neededOf } from '../../shared/vault/needed';
-import { RESERVE_GB, bring } from '../archives/bring';
-import { count, tarsOf } from '../archives';
+import { bring, tarsOf } from '../archives/bring';
+import { count } from '../../shared/count';
 import { freeBytes } from '../../shared/fs';
 import { C } from '../../../../shared/utils/colors';
 import { fmtBytes } from '../../../../shared/utils/format';
@@ -36,7 +36,7 @@ import type { Tar } from '../../types';
  * A tar comes back whole, so the archives weigh what their tars do.
  *
  * **No more than there is room for.** Tars are taken oldest first for as long
- * as they and what comes out of them leave `RESERVE_GB` free; the rest is said
+ * as they and what comes out of them leave `ARCHIVES_RESERVE_GB` free; the rest is said
  * and left for a later run, when what was brought has been stocked and has gone
  * again.
  *
@@ -73,7 +73,7 @@ export const runPullNeeded = async (options: { dryRun?: boolean }): Promise<void
         const wanted = fitting(needed, tars, freeBytes(config.coldRoot));
 
         if (wanted.left > 0)
-          warn(`${count(wanted.left, 'tar')} more than there is room for (${fmtBytes(freeBytes(config.coldRoot))} free, ${RESERVE_GB}GB kept) — brought by a later run, once what is brought now has been stocked and evicted`);
+          warn(`${count(wanted.left, 'tar')} more than there is room for (${fmtBytes(freeBytes(config.coldRoot))} free, ${ARCHIVES_RESERVE_GB}GB kept) — brought by a later run, once what is brought now has been stocked and evicted`);
 
         if (! options.dryRun && wanted.tars.length + wanted.vault.length > 0) {
           if (! await mega.available()) {
@@ -118,7 +118,7 @@ export const fitting = (
   needed:  Needed,
   tars:    readonly Tar[],
   free:    number,
-  reserve = RESERVE_GB * GB,
+  reserve = ARCHIVES_RESERVE_GB * GB,
 ): { vault: StoredFile[]; tars: Tar[]; left: number } => {
   let room = free - reserve;
 
@@ -160,7 +160,7 @@ const brought = async (db: DatabaseSync, files: readonly StoredFile[], tars: rea
   const lost    = files.length > 0 ? await fetch(db, loadConfig('vault'), files, mega) : 0;
   const mine    = new Set(tars.map(tar => tar.id));
   const missing = tars.length > 0
-    ? await bring(db, loadConfig('archives'), 'archives', tars, needed.archives.filter(one => mine.has(one.held.tarId)), mega, POLL_MS, RESERVE_GB * GB, SCRATCH)
+    ? await bring(db, loadConfig('archives'), 'archives', tars, needed.archives.filter(one => mine.has(one.held.tarId)), mega, POLL_MS, ARCHIVES_RESERVE_GB * GB, SCRATCH)
     : 0;
 
   spacer();

@@ -2,12 +2,12 @@ import { binsOf } from './bins';
 import * as catalog from '../../shared/catalog';
 import { tarName } from '../../config';
 import { idOf } from '../../shared/keys';
+import { groupBy } from '../../shared/group';
 import * as record from '../../shared/record';
 import { fmtBytes } from '../../../../shared/utils/format';
 import { info } from '../../../../shared/ui/logger';
 import { byKey } from '../../order';
 import type { DatabaseSync } from 'node:sqlite';
-import type { CatalogPartition } from '../../shared/types';
 import type { ColdConfig, Origin, Tar } from '../../types';
 import type { Planned } from '../types';
 
@@ -48,18 +48,14 @@ export const plan = async (
     record.dropPlanned(db, origin, venue);
 
     const held  = new Map(record.heldOf(db, origin, venue).map(one => [idOf(one), one]));
-    const fresh = new Map<string, CatalogPartition[]>();
+    const fresh = groupBy(ready.filter(one => ! held.has(idOf(one))), one => one.month);
 
     let changed = 0;
 
     for (const one of ready) {
       const had = held.get(idOf(one));
 
-      if (! had) {
-        fresh.set(one.month, [...fresh.get(one.month) ?? [], one]);
-
-        continue;
-      }
+      if (! had) continue;
 
       if (had.next === null ? had.version === one.version : had.next.version === one.version) continue;
 

@@ -1,4 +1,5 @@
 import { fileLabelOf } from '../vault/layout';
+import { groupBy } from '../group';
 import { warn } from '../../../../shared/ui/logger';
 import { above } from '../progress';
 import { answering, megaCmd } from './exec';
@@ -203,15 +204,17 @@ const uploadsOf = (stdout: string, local: string): string[] =>
 
 /** The tags of the transfers to cancel, read off the queue as `TAG|STATE|SOURCEPATH|DESTINYPATH` lines. */
 const duplicatesIn = (stdout: string, under: readonly string[]): string[] => {
-  const same = new Map<string, { tag: string; active: boolean }[]>();
+  const listed: { tag: string; active: boolean; at: string }[] = [];
 
   for (const line of stdout.split('\n')) {
     const [tag, state, source, destiny] = line.split('|').map(part => part.trim());
 
     if (! tag || ! /^\d+$/.test(tag) || ! source || ! under.some(dir => source.startsWith(`${dir.replace(/\/$/, '')}/`))) continue;
 
-    same.set(`${source}|${destiny}`, [...same.get(`${source}|${destiny}`) ?? [], { tag, active: state === 'ACTIVE' }]);
+    listed.push({ tag, active: state === 'ACTIVE', at: `${source}|${destiny}` });
   }
+
+  const same = groupBy(listed, one => one.at);
 
   return [...same.values()].flatMap((transfers) => {
     const keep = transfers.find(one => one.active) ?? transfers.sort((a, b) => Number(a.tag) - Number(b.tag))[0]!;

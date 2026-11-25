@@ -1,7 +1,7 @@
 import { busy } from '../lock';
 import * as record from '../shared/record';
 import { warn } from '../../../shared/ui/logger';
-import { count } from './finding';
+import { count } from '../shared/count';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Tar } from '../types';
 

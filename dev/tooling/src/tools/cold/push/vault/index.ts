@@ -58,7 +58,7 @@ export const runPushVault = async (options: PushOptions): Promise<void> => {
       return;
     }
 
-    if (! trusted(config)) return;
+    if (! trusted(config).ok) return;
 
     const db = record.open(config.dbPath);
 

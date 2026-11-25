@@ -4,7 +4,8 @@ import { orphans } from '../../lock';
 import * as record from '../../shared/record';
 import { labelOf } from '../../shared/vault/layout';
 import { backedUpIn, noteBackedUp, stockedIn } from '../../shared/vault/ledger';
-import { are, count, found } from '../finding';
+import { are, found } from '../finding';
+import { count } from '../../shared/count';
 import { warn } from '../../../../shared/ui/logger';
 import type { Check, Finding, Looking } from '../types';
 

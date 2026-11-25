@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { GB, POLL_MS, remotePath } from '../../config';
+import { ARCHIVES_RESERVE_GB, GB, POLL_MS, remotePath } from '../../config';
 import { matches } from '../../shared/disk';
 import { idOf, partitionOf } from '../../shared/keys';
 import * as record from '../../shared/record';
@@ -10,7 +10,7 @@ import { extractMembers, sizedMembersOf } from '../../shared/tar';
 import { fmtBytes } from '../../../../shared/utils/format';
 import { warn } from '../../../../shared/ui/logger';
 import { freeBytes, moveFile, sameVolume } from '../../shared/fs';
-import { asideRoot, count } from '.';
+import { count } from '../../shared/count';
 import type { DatabaseSync } from 'node:sqlite';
 import type { ColdConfig, Origin, Tar } from '../../types';
 import type { Pullable } from '../types';
@@ -33,7 +33,7 @@ export const bring = async (
   wanted:  readonly Pullable[],
   remote:  Fetching,
   pollMs  = POLL_MS,
-  reserve = RESERVE_GB * GB,
+  reserve = ARCHIVES_RESERVE_GB * GB,
   scratch: string = origin,
 ): Promise<number> => {
   const progress = new Progress();
@@ -86,8 +86,14 @@ export const bring = async (
   return failed;
 };
 
-/** Free space below which no further tar is asked for. */
-export const RESERVE_GB = 25;
+/** Where partitions of a version the catalog has moved on from are put. */
+export const asideRoot = (config: ColdConfig, origin: Origin): string => path.join(config.coldRoot, PULLED, origin);
+
+/** The tars these partitions are in, oldest month first. */
+export const tarsOf = (db: DatabaseSync, wanted: readonly Pullable[]): Tar[] =>
+  [...new Set(wanted.map(one => one.held.tarId))]
+    .map(id => record.tarById(db, id))
+    .sort((a, b) => (a.local < b.local ? -1 : a.local > b.local ? 1 : 0));
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
@@ -200,6 +206,7 @@ const unpack = async (config: ColdConfig, origin: Origin, local: string, wanted:
 
 /** Below cold's own directory: tars on their way back, and what an older version is taken out to. */
 const PULLING = 'pulling';
+const PULLED  = 'pulled';
 
 /** The block's two lines: every tar together, and the one on its way. */
 const ALL = 'all';

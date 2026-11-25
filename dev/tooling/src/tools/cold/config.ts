@@ -24,6 +24,12 @@ export const CAPS: Record<Origin, number> = {
 /** How long to wait before asking Mega again. */
 export const POLL_MS = 30_000;
 
+/** Free space, in GB, below which no further tar of the archives is asked back from cold storage. */
+export const ARCHIVES_RESERVE_GB = 25;
+
+/** Free space, in GB, left on the vault's volume after every vault file asked back is there, at the least. */
+export const VAULT_RESERVE_GB = 5;
+
 /**
  * Days after a month ends before the catalog takes its partitions as settled.
  * The catalog's own rule, repeated here for the one question only this side

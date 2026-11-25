@@ -1,4 +1,3 @@
-import path from 'node:path';
 import { recordOf, save } from '../../shared/backup';
 import * as catalog from '../../shared/catalog';
 import { loadConfig, WATCH_MS } from '../../config';
@@ -9,7 +8,8 @@ import { acquire } from '../../lock';
 import { agreed, isWatch } from '../../options';
 import * as record from '../../shared/record';
 import { notice } from '../../shared/vault/needed';
-import { ERRORS, errorsIn, LEDGER, stockedIn } from '../../shared/vault/ledger';
+import { errorsIn, stockedIn } from '../../shared/vault/ledger';
+import { trusted } from '../../shared/vault/trusted';
 import { fmtBytes } from '../../../../shared/utils/format';
 import { error, info, spacer, success } from '../../../../shared/ui/logger';
 import { survey } from './survey';
@@ -151,34 +151,12 @@ const pass = async (db: DatabaseSync, run: Run, first: boolean): Promise<boolean
   const { config, origin, venues, options } = run;
   const archives = new Archives(config.sourceRoot);
 
-  // Read on every look: the vault is stocked while this runs, and may report a loss while it does.
-  const lost = errorsIn(config.vaultRoot);
+  // Read on every look: the vault is stocked while this runs, and may report a loss while it does. Left watching, it looks again later.
+  const trust = trusted(config, { watching: isWatch() });
 
-  if (lost.length > 0) {
-    error(`The vault reports ${lost.length} problem${lost.length === 1 ? '' : 's'} in ${path.join(config.vaultRoot, ERRORS)} — `
-      + 'nothing is evicted until that is understood and the file is gone');
+  if (! trust.ok) return trust.retry;
 
-    for (const line of lost.slice(0, 5)) info(`  ${line}`);
-
-    // Left watching, it looks again later: the file is somebody's to deal with, and nothing is evicted until they have.
-    if (isWatch()) return true;
-
-    process.exitCode = 1;
-
-    return false;
-  }
-
-  const stocked = stockedIn(config.vaultRoot);
-
-  if (! stocked) {
-    error(`No ${LEDGER} in ${config.vaultRoot} — without the vault's ledger nothing can be said to be stocked. Is DATA_VAULT_DIR right?`);
-
-    if (isWatch()) return true;
-
-    process.exitCode = 1;
-
-    return false;
-  }
+  const { stocked } = trust;
 
   if (first) await notice(db);
 

@@ -1,6 +1,5 @@
-import { execFile } from 'node:child_process';
 import fs from 'node:fs';
-import { promisify } from 'node:util';
+import { execFileAsync } from '../shared/exec';
 
 /**
  * Taking things off the local disk, for every command that does.
@@ -67,8 +66,6 @@ const trash = async (paths: readonly string[]): Promise<void> => {
 
 /** Paths per `gio trash` call. Far under any argument limit, far over one spawn. */
 const BATCH = 500;
-
-const execFileAsync = promisify(execFile);
 
 /** How long removal may hold the thread before handing it back. */
 const BREATH_MS = 20;

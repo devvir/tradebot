@@ -3,6 +3,7 @@ import path from 'node:path';
 import { localPath, remotePath } from '../../config';
 import { Archives, matches } from '../../shared/disk';
 import { idOf, partitionOf } from '../../shared/keys';
+import { groupBy } from '../../shared/group';
 import * as mega from '../../shared/mega';
 import { PushProgress } from '../progress';
 import * as record from '../../shared/record';
@@ -179,13 +180,12 @@ export const step = async (
       const remove: string[] = [];
 
       /** What the tar holds of each partition that changed. */
-      const inTar = new Map<string, SourceFile[]>();
-
-      for (const member of await sizedMembersOf(local)) {
+      const inTar = groupBy(await sizedMembersOf(local), (member) => {
         const key = partitionOf(member.path);
+        const id  = key === null ? null : idOf(key);
 
-        if (key !== null && stale.has(idOf(key))) inTar.set(idOf(key), [...inTar.get(idOf(key)) ?? [], member]);
-      }
+        return id !== null && stale.has(id) ? id : null;
+      });
 
       /**
        * **From the disk, or from the disk and the tar together.** A partition

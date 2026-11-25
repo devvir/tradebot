@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -138,6 +139,30 @@ describe('the record\'s copy, as a command starts', () => {
     expect(remote.sent).toHaveLength(2);
   });
 
+  /** The copy is hashed as it is read, a piece at a time: a record of any size is never held in memory whole. */
+  it('writes down the SHA-256 of what was sent, without reading the copy whole', async () => {
+    const remote = mega();
+    const whole  = fs.readFileSync;
+
+    const reads = vi.spyOn(fs, 'readFileSync').mockImplementation(((file: fs.PathOrFileDescriptor, ...rest: unknown[]) => {
+      if (String(file).endsWith('.new')) throw new Error('read whole');
+
+      return (whole as (...args: unknown[]) => unknown)(file, ...rest);
+    }) as typeof fs.readFileSync);
+
+    try {
+      await save(config(), [recordOf(config())], remote);
+    } finally {
+      reads.mockRestore();
+    }
+
+    const sent = JSON.parse(fs.readFileSync(path.join(config().coldRoot, 'backup', 'sent.json'), 'utf8')) as Record<string, { digest: string }>;
+    const [[at, one]] = Object.entries(sent) as [[string, { digest: string }]];
+
+    expect(remote.sent).toEqual([at]);
+    expect(one.digest).toBe(createHash('sha256').update(fs.readFileSync(path.join(config().coldRoot, 'backup', at))).digest('hex'));
+  });
+
   it('is sent again where Mega no longer holds what was sent', async () => {
     const remote = mega();
 
@@ -155,7 +180,8 @@ describe('the record\'s copy, as a command starts', () => {
 
     await save(config(), [recordOf(config())], mega());
 
-    vi.useFakeTimers();
+    // The clock is the test's; the disk is not, and the copy is read off it before Mega is asked.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
 
     // Mega busy with something long: nothing answered, each command ended only once its time is up.
     megaWith((command, _args, options) => {
@@ -167,9 +193,16 @@ describe('the record\'s copy, as a command starts', () => {
     }, null);
 
     try {
-      const checked = check(config(), false);
+      let settled = false;
 
-      await vi.advanceTimersByTimeAsync(20_000);
+      const checked = check(config(), false).finally(() => { settled = true; });
+
+      // Time goes on until the check is over, however long the read takes.
+      while (! settled) {
+        await vi.advanceTimersByTimeAsync(1_000);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+
       await checked;
 
       expect(asked).not.toContain('mega-whoami');

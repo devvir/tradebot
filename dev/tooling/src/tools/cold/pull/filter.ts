@@ -1,3 +1,4 @@
+import { groupBy } from '../shared/group';
 import type { Chosen } from '../types';
 import type { Preference, PullFilter } from './types';
 
@@ -53,13 +54,7 @@ export const preferred = <T extends { market: string; dataset: string; variant: 
   found:  readonly T[],
   prefer: Preference = {},
 ): T[] => {
-  const groups = new Map<string, T[]>();
-
-  for (const one of found) {
-    const data = [one.market, one.dataset, one.variant, one.month].join('|');
-
-    groups.set(data, [...groups.get(data) ?? [], one]);
-  }
+  const groups = groupBy(found, one => [one.market, one.dataset, one.variant, one.month].join('|'));
 
   const narrowed = (group: T[], by: 'grain' | 'bundle'): T[] => {
     const liked = prefer[by] ? group.filter(one => one[by] === prefer[by]) : [];

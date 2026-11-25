@@ -1,6 +1,7 @@
 import * as catalog from '../../shared/catalog';
 import { SETTLE_DAYS } from '../../config';
 import { Archives } from '../../shared/disk';
+import { groupBy } from '../../shared/group';
 import { idOf, partitionOf, shiftMonth } from '../../shared/keys';
 import * as record from '../../shared/record';
 import { MISSING } from '../../shared/vault/ledger';
@@ -41,18 +42,16 @@ export const survey = async (
   /** The months each dataset has anything in, whatever the rendering. */
   const months = new Map<string, Set<string>>();
 
-  for (const one of all) months.set(dataOf(one), (months.get(dataOf(one)) ?? new Set()).add(one.month));
+  for (const one of all) {
+    const data = dataOf(one);
+    const had  = months.get(data);
+
+    if (had) had.add(one.month);
+    else months.set(data, new Set([one.month]));
+  }
 
   /** The ledger's lines by the data they hold: a dataset's month, in whichever rendering it was stocked from. */
-  const lines = new Map<string, Stocked[]>();
-
-  for (const one of stocked) {
-    if (one.source.venue !== venue) continue;
-
-    const at = `${dataOf(one.source)}|${one.source.month}`;
-
-    lines.set(at, [...lines.get(at) ?? [], one]);
-  }
+  const lines = groupBy(stocked, one => (one.source.venue === venue ? `${dataOf(one.source)}|${one.source.month}` : null));
 
   /**
    * **The vault's own copy has to be somewhere**: in cold storage, as the record

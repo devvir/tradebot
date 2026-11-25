@@ -1,8 +1,8 @@
-import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { agreed } from '../options';
+import { digestOf } from './digest';
 import * as mega from './mega';
 import { BACKEDUP, LEDGER } from './vault/ledger';
 import { fmtBytes } from '../../../shared/utils/format';
@@ -197,7 +197,7 @@ const stateOf = async (
 
   if (! kept.copy(copy)) return null;
 
-  const digest = createHash('sha256').update(fs.readFileSync(copy)).digest('hex');
+  const digest = await digestOf(copy);
   const bytes  = fs.statSync(copy).size;
   const sent   = sentOf(config)[keyOf(kept)];
 

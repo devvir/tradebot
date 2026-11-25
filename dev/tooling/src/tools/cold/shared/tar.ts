@@ -1,6 +1,5 @@
-import { execFile } from 'node:child_process';
 import fs from 'node:fs';
-import { promisify } from 'node:util';
+import { execFileAsync } from './exec';
 import type { SourceFile } from './types';
 
 /**
@@ -79,8 +78,6 @@ export const run = async (command: string, args: string[]): Promise<void> => {
 };
 
 // ── Internals ─────────────────────────────────────────────────────────────────
-
-const execFileAsync = promisify(execFile);
 
 const capture = async (command: string, args: string[]): Promise<string> => {
   const { stdout } = await execFileAsync(command, args, { maxBuffer: 256 * 1024 * 1024 });

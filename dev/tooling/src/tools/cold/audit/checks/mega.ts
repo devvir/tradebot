@@ -1,10 +1,12 @@
 import * as record from '../../shared/record';
+import { groupBy } from '../../shared/group';
 import { asFound } from '../again';
 import { fileLabelOf, remoteOf } from '../../shared/vault/layout';
 import { fmtBytes } from '../../../../shared/utils/format';
 import type { StoredFile } from '../../shared/types';
 import type { Tar } from '../../types';
-import { are, count, found } from '../finding';
+import { are, found } from '../finding';
+import { count } from '../../shared/count';
 import type { Check, Finding, Looking } from '../types';
 
 /**
@@ -111,9 +113,7 @@ const vault = (looking: Looking, held: Held): Finding[] => {
   const all = record.vaultFiles(db);
 
   /** Several revisions of a file are one path in Mega: what is there may be any of the ones written down as stored. */
-  const stored = new Map<string, StoredFile[]>();
-
-  for (const file of all.filter(one => one.state === 'stored')) stored.set(remoteOf(file), [...stored.get(remoteOf(file)) ?? [], file]);
+  const stored = groupBy(all, file => (file.state === 'stored' ? remoteOf(file) : null));
 
   const missing: StoredFile[] = [];
   const resized: StoredFile[] = [];

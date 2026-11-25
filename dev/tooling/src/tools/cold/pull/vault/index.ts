@@ -1,5 +1,4 @@
-import fs from 'node:fs';
-import { GB, loadConfig } from '../../config';
+import { GB, VAULT_RESERVE_GB, loadConfig } from '../../config';
 import { onExit } from '../../cleanup';
 import { acquire } from '../../lock';
 import * as mega from '../../shared/mega';
@@ -7,11 +6,11 @@ import { trusted } from '../../shared/vault/trusted';
 import { agreed } from '../../options';
 import * as record from '../../shared/record';
 import { meansToPull } from '../../shared/vault/select';
-import { locate } from '../../shared/vault/layout';
+import { byVenue, bytesOf, loadOf } from '../../shared/vault/files';
+import { freeBytes } from '../../shared/fs';
 import { stockedIn } from '../../shared/vault/ledger';
 import { fmtBytes } from '../../../../shared/utils/format';
 import { error, info, spacer, success, warn } from '../../../../shared/ui/logger';
-import { byKey } from '../../order';
 import { fetch } from '../../shared/vault/fetch';
 import { notice } from '../../shared/vault/needed';
 import type { DatabaseSync } from 'node:sqlite';
@@ -44,7 +43,7 @@ export const runPullVault = async (selection: Selection, options: VaultOptions):
   const release = await acquire(config.coldRoot, 'vault', 'pull');
 
   try {
-    if (! trusted(config)) return;
+    if (! trusted(config).ok) return;
 
     const db = record.open(config.dbPath);
 
@@ -63,19 +62,19 @@ export const runPullVault = async (selection: Selection, options: VaultOptions):
 
       info('What of the vault can be brought back');
 
-      for (const [venue, files] of byVenue(wanted)) info(`  ${venue.padEnd(8)} ${loadOf(files)}`);
+      for (const [venue, files] of byVenue(wanted)) info(`  ${venue.padEnd(8)} ${loadOf(files, AWAY)}`);
 
       spacer();
-      info(loadOf(wanted));
+      info(loadOf(wanted, AWAY));
       spacer();
 
       if (options.dryRun) return;
 
       const free = freeBytes(config.vaultRoot);
 
-      if (bytesOf(wanted) + RESERVE_GB * GB > free) {
+      if (bytesOf(wanted) + VAULT_RESERVE_GB * GB > free) {
         error(`That is ${fmtBytes(bytesOf(wanted))}, and the vault's volume has ${fmtBytes(free)} free — `
-          + `not enough to bring it back and leave ${RESERVE_GB}GB spare`);
+          + `not enough to bring it back and leave ${VAULT_RESERVE_GB}GB spare`);
 
         process.exitCode = 1;
 
@@ -121,35 +120,8 @@ const pullable = (db: DatabaseSync, config: ColdConfig, selection: Selection): S
     && meansToPull(selection, file.partition, file.instrument));
 };
 
-const freeBytes = (dir: string): number => {
-  const info = fs.statfsSync(dir);
-
-  return info.bavail * info.bsize;
-};
-
-const byVenue = (files: readonly StoredFile[]): Map<string, StoredFile[]> => {
-  const venues = new Map<string, StoredFile[]>();
-
-  for (const file of files) {
-    const venue = locate(file.partition).levels['venue'] ?? '';
-
-    venues.set(venue, [...venues.get(venue) ?? [], file]);
-  }
-
-  return new Map([...venues].sort(byKey));
-};
-
-const bytesOf = (files: readonly StoredFile[]): number => files.reduce((sum, file) => sum + file.bytes, 0);
-
-const loadOf = (files: readonly StoredFile[]): string => {
-  const partitions = new Set(files.map(file => file.partition)).size;
-
-  return `${files.length.toLocaleString('en-US')} file${files.length === 1 ? '' : 's'} away `
-    + `in ${partitions.toLocaleString('en-US')} partition${partitions === 1 ? '' : 's'} (${fmtBytes(bytesOf(files))})`;
-};
-
-/** Free space left on the vault's volume after everything asked for is back, at the least. */
-const RESERVE_GB = 5;
+/** How a file that can come back stands, in a line about it. */
+const AWAY = 'away';
 
 // ── Test access ───────────────────────────────────────────────────────────────
 
