@@ -15,8 +15,7 @@ export const kraken: Venue = {
 
   endpointFor: () => 'public',
 
-  subscribeFrame:   (channel) => frame('subscribe', channel),
-  unsubscribeFrame: (channel) => frame('unsubscribe', channel),
+  subscribeFrame: (channel) => frame(channel),
 
   /**
    * The ack echoes channel and symbol. A rejection carries neither, so any
@@ -88,10 +87,10 @@ const split = (channel: string): { name: string; symbol: string } => {
     : { name: channel.slice(0, at), symbol: channel.slice(at + 1) };
 };
 
-const frame = (method: 'subscribe' | 'unsubscribe', channel: string): string => {
+const frame = (channel: string): string => {
   const { name, symbol } = split(channel);
 
-  return JSON.stringify({ method, params: { channel: name, symbol: [symbol] } });
+  return JSON.stringify({ method: 'subscribe', params: { channel: name, symbol: [symbol] } });
 };
 
 // ── Test access ───────────────────────────────────────────────────────────────

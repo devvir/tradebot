@@ -22,9 +22,6 @@ export interface Venue {
   /** Frame sent to subscribe to one channel. */
   subscribeFrame(channel: string): string;
 
-  /** Frame sent to unsubscribe from one channel. */
-  unsubscribeFrame(channel: string): string;
-
   /**
    * Classify an inbound frame while awaiting a subscribe ack for `channel`:
    * `ok` confirms, `failed` rejects, `null` means "not an ack for this channel"

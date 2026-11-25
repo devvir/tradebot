@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import WebSocket from 'ws';
 import { logger, type Service } from '@devvir/service-kit';
 import type { ConnectOptions, EndpointDefinition, MessageHandler } from './types';
@@ -45,8 +46,13 @@ interface ReconnectState {
  *
  * Stopping: once the service is shutting down or `signal` is aborted, no
  * socket is made or replaced; aborting cancels a pending reconnect. A socket
- * closing then is expected, so its close is not logged and its error only at
+ * closing then is expected, so its close and its error are logged only at
  * debug.
+ *
+ * Identity: every socket gets a fresh connection id (a UUID), passed with each
+ * of its frames to `onMessage` and named in the log lines of its connect, open
+ * and close. A reconnect therefore shows as a change of connection id, and the
+ * log says when each socket opened and closed.
  *
  * Inbound frames go to `onMessage`; a rejection from it is logged and the
  * socket carries on.
@@ -85,7 +91,9 @@ export const connect = (
 
     if (current && current.readyState !== WebSocket.CLOSED) current.terminate();
 
-    logger.info({ endpointName: endpoint.name, socket: label }, 'Connecting to Websocket endpoint');
+    const connectionId = randomUUID();
+
+    logger.info({ endpointName: endpoint.name, socket: label, connectionId }, 'Connecting to Websocket endpoint');
 
     const ws = new WebSocket(endpoint.url, { handshakeTimeout: HANDSHAKE_TIMEOUT_MS }).setMaxListeners(0);
 
@@ -100,7 +108,7 @@ export const connect = (
     const alive = (): void => { awaitingPong = false; };
 
     ws.on('open', () => {
-      logger.info(`Connected to ${endpoint.name} (${label})`);
+      logger.info({ connectionId }, `Connected to ${endpoint.name} (${label})`);
 
       stable    = setTimeout(() => { reconnect.delayMs = RECONNECT_DELAY_MS; }, STABLE_AFTER_MS);
       heartbeat = setInterval(() => {
@@ -126,7 +134,7 @@ export const connect = (
     ws.on('pong', alive);
     ws.on('message', (msg: Buffer) => {
       alive();
-      onMessage(msg, venue).catch(err => logger.error({ err, venue }, 'Relay failed'));
+      onMessage(msg, venue, connectionId).catch(err => logger.error({ err, venue }, 'Relay failed'));
     });
 
     ws.on('error', (err: Error) => {
@@ -158,11 +166,14 @@ export const connect = (
 
       replaced = true;
 
-      if (stopping()) return;
+      if (stopping())
+        return logger.debug({ connectionId, code }, `${endpoint.name} closed while stopping (${label})`);
 
-      // A close following an error is expected — the error line already covered it.
-      if (! errorLogged)
-        logger.warn({ code, reason: reason.toString() }, `${endpoint.name} closed (${label})`);
+      // A close following an error is expected: the error line already gave the cause.
+      if (errorLogged)
+        logger.info({ connectionId, code }, `${endpoint.name} closed after an error (${label})`);
+      else
+        logger.warn({ connectionId, code, reason: reason.toString() }, `${endpoint.name} closed (${label})`);
 
       scheduleReconnect();
     });

@@ -21,8 +21,7 @@ export const okx: Venue = {
 
   endpointFor: () => 'public',
 
-  subscribeFrame:   (channel) => JSON.stringify({ op: 'subscribe',   args: [toArg(channel)] }),
-  unsubscribeFrame: (channel) => JSON.stringify({ op: 'unsubscribe', args: [toArg(channel)] }),
+  subscribeFrame: (channel) => JSON.stringify({ op: 'subscribe', args: [toArg(channel)] }),
 
   /**
    * The ack echoes the full arg, so it matches on channel + instId. An error

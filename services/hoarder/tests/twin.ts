@@ -20,8 +20,7 @@ export const twin: Venue = {
 
   endpointFor: (channel) => (PLATFORM.includes(split(channel).base) ? 'platform' : 'realtime'),
 
-  subscribeFrame:   (channel) => JSON.stringify({ op: 'subscribe',   args: [channel] }),
-  unsubscribeFrame: (channel) => JSON.stringify({ op: 'unsubscribe', args: [channel] }),
+  subscribeFrame: (channel) => JSON.stringify({ op: 'subscribe', args: [channel] }),
 
   matchAck: (frame, channel): AckResult => {
     const ack = frame as { subscribe?: string; pool?: string; success?: boolean };

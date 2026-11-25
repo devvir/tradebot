@@ -17,11 +17,12 @@ const load = async (env: Record<string, string | undefined>) => {
   return { config, logger };
 };
 
-const saved = { QUEUE_URL: process.env.QUEUE_URL, HOARDER_VENUES: process.env.HOARDER_VENUES };
+const KEYS = ['QUEUE_URL', 'HOARDER_VENUES', 'HOARDER_QUEUE', 'HOARDER_QUEUE_MAX_LENGTH'];
+
+const saved = Object.fromEntries(KEYS.map(key => [key, process.env[key]]));
 
 beforeEach(() => {
-  delete process.env.QUEUE_URL;
-  delete process.env.HOARDER_VENUES;
+  for (const key of KEYS) delete process.env[key];
 });
 
 afterEach(() => {
@@ -51,6 +52,23 @@ describe('config', () => {
   it('refuses an unknown venue, naming the valid ones', async () => {
     await expect(load({ QUEUE_URL: 'amqp://h', HOARDER_VENUES: 'okx,nowhere' }))
       .rejects.toThrow(`HOARDER_VENUES: unknown venue "nowhere". Valid: ${VENUE_NAMES.join(', ')}`);
+  });
+
+  it('buffers frames in hoarder.raw, capped at a million, by default', async () => {
+    const { config } = await load({ QUEUE_URL: 'amqp://h', HOARDER_QUEUE: ' ', HOARDER_QUEUE_MAX_LENGTH: '' });
+
+    expect(config.queue).toEqual({ name: 'hoarder.raw', maxLength: 1_000_000 });
+  });
+
+  it('reads the queue name and cap from HOARDER_QUEUE and HOARDER_QUEUE_MAX_LENGTH', async () => {
+    const { config } = await load({ QUEUE_URL: 'amqp://h', HOARDER_QUEUE: ' frames ', HOARDER_QUEUE_MAX_LENGTH: ' 2500 ' });
+
+    expect(config.queue).toEqual({ name: 'frames', maxLength: 2500 });
+  });
+
+  it.each(['0', '-5', '1.5', '1e6', 'lots'])('refuses HOARDER_QUEUE_MAX_LENGTH=%s', async (value) => {
+    await expect(load({ QUEUE_URL: 'amqp://h', HOARDER_QUEUE_MAX_LENGTH: value }))
+      .rejects.toThrow(`HOARDER_QUEUE_MAX_LENGTH must be a positive integer, got "${value}"`);
   });
 
   // A password that is not valid percent-encoding must not reach the log either.

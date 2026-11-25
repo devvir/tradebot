@@ -6,7 +6,18 @@ export interface Config {
   /** Venues this instance collects, from `HOARDER_VENUES`. Each must be a known venue. */
   venues:     readonly string[];
 
+  /** The queue that buffers every published frame. */
+  queue:      QueueConfig;
+
   [key: string]: unknown;
+}
+
+export interface QueueConfig {
+  /** Queue name, from `HOARDER_QUEUE`. */
+  name:      string;
+
+  /** Most frames the queue holds, from `HOARDER_QUEUE_MAX_LENGTH`; past it the oldest are dropped. */
+  maxLength: number;
 }
 
 export interface State {
@@ -42,5 +53,9 @@ export interface EndpointDefinition {
   url:  string;
 }
 
-/** A venue-tagged inbound frame, on its way to the relay. */
-export type MessageHandler = (msg: Buffer, venue: string) => Promise<void>;
+/**
+ * An inbound frame on its way to the relay, tagged with its venue and with the
+ * connection id of the socket that read it (one per socket, fresh on every
+ * reconnect).
+ */
+export type MessageHandler = (msg: Buffer, venue: string, connectionId: string) => Promise<void>;

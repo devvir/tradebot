@@ -20,8 +20,7 @@ export const binance: Venue = {
 
   endpointFor: () => 'public',
 
-  subscribeFrame:   (channel) => frame('SUBSCRIBE', channel),
-  unsubscribeFrame: (channel) => frame('UNSUBSCRIBE', channel),
+  subscribeFrame: (channel) => frame(channel),
 
   /**
    * Correlates on the request id, since the ack carries nothing else. The id is
@@ -65,8 +64,8 @@ export const binance: Venue = {
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
-const frame = (method: 'SUBSCRIBE' | 'UNSUBSCRIBE', channel: string): string =>
-  JSON.stringify({ method, params: [channel], id: requestId(channel) });
+const frame = (channel: string): string =>
+  JSON.stringify({ method: 'SUBSCRIBE', params: [channel], id: requestId(channel) });
 
 /**
  * A request id Binance accepts (its rule is in `docs/venues/BINANCE.md`): every

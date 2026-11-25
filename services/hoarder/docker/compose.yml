@@ -2,8 +2,6 @@
 
 services:
   hoarder:
-    scale: ${HOARDER_REPLICAS:-1}
-
     build:
       context: ../../..
       dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile
@@ -17,6 +15,11 @@ services:
 
       # Queue
       QUEUE_URL: ${QUEUE_URL}
+
+      # Durable queue buffering every published frame, and the most frames it
+      # holds before the oldest are dropped
+      HOARDER_QUEUE: ${HOARDER_QUEUE:-hoarder.raw}
+      HOARDER_QUEUE_MAX_LENGTH: ${HOARDER_QUEUE_MAX_LENGTH:-1000000}
 
       # Runtime
       LOG_LEVEL: ${LOG_LEVEL:-info}

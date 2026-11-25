@@ -140,7 +140,7 @@ describe('ping and message events', () => {
 
     result.emit('message', payload);
 
-    expect(onMessage).toHaveBeenCalledWith(payload, 'twin');
+    expect(onMessage).toHaveBeenCalledWith(payload, 'twin', expect.any(String));
   });
 
   // The relay looks the venue up by this tag to route the frame, so every
@@ -155,7 +155,7 @@ describe('ping and message events', () => {
 
     result.emit('message', payload);
 
-    expect(onMessage).toHaveBeenCalledWith(payload, 'binance')
+    expect(onMessage).toHaveBeenCalledWith(payload, 'binance', expect.any(String));
   });
 
   // A handler's rejection must not escape as an unhandled rejection, which
@@ -322,6 +322,53 @@ describe('reconnection', () => {
 
     expect(onReconnect).toHaveBeenCalledOnce();
     expect(onReconnect).not.toHaveBeenCalledWith(original);
+  });
+
+  // The connection id is what shows a reconnect downstream: one per socket,
+  // shared by all its frames, and never reused by its replacement.
+  it('tags frames with a connection id that changes on reconnect', () => {
+    const { service } = makeService();
+    const onMessage   = vi.fn().mockResolvedValue(undefined);
+    const onReconnect = vi.fn();
+
+    const original = connect(endpoint(), 'twin', service as any, onMessage, { onReconnect })!;
+
+    original.emit('open');
+    original.emit('message', Buffer.from('{"a":1}'));
+    original.emit('message', Buffer.from('{"a":2}'));
+    original.emit('close', 1006, Buffer.from(''));
+
+    vi.runOnlyPendingTimers();
+
+    const replacement = onReconnect.mock.calls[0]![0] as WebSocket;
+
+    replacement.emit('open');
+    replacement.emit('message', Buffer.from('{"a":3}'));
+
+    const ids = onMessage.mock.calls.map(call => call[2] as string);
+
+    expect(ids[0]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(ids[1]).toBe(ids[0]);
+    expect(ids[2]).not.toBe(ids[0]);
+  });
+
+  // Opens and closes are not frames: they reach the log, with the connection
+  // id, and never the relay.
+  it('logs the open and close of each socket with its connection id, relaying neither', () => {
+    const { service } = makeService();
+    const onMessage = vi.fn().mockResolvedValue(undefined);
+
+    const original = connect(endpoint(), 'twin', service as any, onMessage)!;
+
+    original.emit('open');
+    original.emit('message', Buffer.from('{"a":1}'));
+    original.emit('close', 1006, Buffer.from('abnormal'));
+
+    const connectionId = onMessage.mock.calls[0]![2] as string;
+
+    expect(onMessage).toHaveBeenCalledOnce();
+    expect(logger.info).toHaveBeenCalledWith({ connectionId }, expect.stringContaining('Connected'));
+    expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ connectionId, code: 1006 }), expect.stringContaining('closed'));
   });
 
   it('reconnects after the connection closes', () => {

@@ -10,6 +10,10 @@ import type { Config, MessageHandler } from './types';
  * exponents, integers beyond double precision), escapes and whitespace are
  * published exactly as the venue sent them. Hoarder never reshapes a payload.
  *
+ * Each published frame carries its envelope in headers: `x-venue`,
+ * `x-hoarder-uuid` (this process), `x-connection-id` (the socket that read it,
+ * so a change of id marks a reconnect and a possible gap) and `x-collected-at`.
+ *
  * The routing key is the venue name alone. Everything finer (table, action,
  * symbol) is venue-specific vocabulary a binding cannot express portably, and
  * it is already in the payload.
@@ -44,7 +48,7 @@ export const createMessageHandler = (service: Service, onMessage: () => void): M
     });
   };
 
-  return async (buffer: Buffer, venue: string): Promise<void> => {
+  return async (buffer: Buffer, venue: string, connectionId: string): Promise<void> => {
     try {
       var frame = JSON.parse(buffer.toString()) as unknown;
     } catch (error) {
@@ -60,9 +64,10 @@ export const createMessageHandler = (service: Service, onMessage: () => void): M
       await broker.getExchange()!.publish(buffer, venue, {
         contentType: 'application/json',
         headers: {
-          'x-venue':        venue,
-          'x-hoarder-uuid': config.workerUuid,
-          'x-collected-at': new Date().toISOString(),
+          'x-venue':         venue,
+          'x-hoarder-uuid':  config.workerUuid,
+          'x-connection-id': connectionId,
+          'x-collected-at':  new Date().toISOString(),
         },
       });
 

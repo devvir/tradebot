@@ -17,6 +17,7 @@ const makeService = (stateOverrides: Partial<State> = {}) => {
   const config: Config = {
     workerUuid: 'test-uuid-1234',
     venues:     ['twin'],
+    queue:      { name: 'hoarder.raw', maxLength: 1000 },
   };
 
   const exchange = { publish: vi.fn().mockResolvedValue(undefined) };
@@ -50,6 +51,8 @@ const infoMsg = (version = '1.0.0') => ({
   docs:      'https://twin.test/docs',
 });
 
+const CONNECTION_ID = 'test-connection-1';
+
 /** amqplib's error for a publish on a closed channel. */
 const channelClosed = (): Error => Object.assign(new Error('Channel closed'), { name: 'IllegalOperationError' });
 
@@ -60,7 +63,7 @@ describe('data messages: publishing', () => {
     const { service, exchange } = makeService();
     const handler = createMessageHandler(service as any, vi.fn());
 
-    await handler(buf(dataMsg()), 'twin');
+    await handler(buf(dataMsg()), 'twin', CONNECTION_ID);
 
     expect(exchange.publish).toHaveBeenCalledOnce();
   });
@@ -79,7 +82,7 @@ describe('data messages: publishing', () => {
       const { service, exchange } = makeService();
       const handler = createMessageHandler(service as any, vi.fn());
 
-      await handler(buf(dataMsg(table, action)), 'twin');
+      await handler(buf(dataMsg(table, action)), 'twin', CONNECTION_ID);
 
       expect(exchange.publish.mock.calls[0][1]).toBe('twin');
     }
@@ -94,7 +97,7 @@ describe('data messages: publishing', () => {
       "data":[{"qty":0.10000000,"price":45283.50,"fee":1e-8,"id":12345678901234567890,"note":"caf\u00e9"}] }`;
     const buffer = Buffer.from(raw);
 
-    await handler(buffer, 'twin');
+    await handler(buffer, 'twin', CONNECTION_ID);
 
     const content = exchange.publish.mock.calls[0][0] as Buffer;
 
@@ -106,7 +109,7 @@ describe('data messages: publishing', () => {
     const { service, exchange } = makeService();
     const handler = createMessageHandler(service as any, vi.fn());
 
-    await handler(buf(dataMsg()), 'twin');
+    await handler(buf(dataMsg()), 'twin', CONNECTION_ID);
 
     expect((exchange.publish.mock.calls[0][2] as any).headers['x-venue']).toBe('twin');
   });
@@ -115,18 +118,30 @@ describe('data messages: publishing', () => {
     const { service, config, exchange } = makeService();
     const handler = createMessageHandler(service as any, vi.fn());
 
-    await handler(buf(dataMsg()), 'twin');
+    await handler(buf(dataMsg()), 'twin', CONNECTION_ID);
 
     const headers = (exchange.publish.mock.calls[0][2] as any).headers;
 
     expect(headers['x-hoarder-uuid']).toBe(config.workerUuid);
   });
 
+  it('includes x-connection-id from the socket the frame was read on', async () => {
+    const { service, exchange } = makeService();
+    const handler = createMessageHandler(service as any, vi.fn());
+
+    await handler(buf(dataMsg()), 'twin', 'socket-a');
+    await handler(buf(dataMsg()), 'twin', 'socket-b');
+
+    const ids = exchange.publish.mock.calls.map(call => (call[2] as any).headers['x-connection-id']);
+
+    expect(ids).toEqual(['socket-a', 'socket-b']);
+  });
+
   it('includes x-collected-at as a parseable timestamp', async () => {
     const { service, exchange } = makeService();
     const handler = createMessageHandler(service as any, vi.fn());
 
-    await handler(buf(dataMsg()), 'twin');
+    await handler(buf(dataMsg()), 'twin', CONNECTION_ID);
 
     const ts = (exchange.publish.mock.calls[0][2] as any).headers['x-collected-at'];
 
@@ -134,16 +149,16 @@ describe('data messages: publishing', () => {
     expect(new Date(ts).getTime()).not.toBeNaN();
   });
 
-  // The envelope is exactly these three headers.
-  it('sends exactly the three envelope headers', async () => {
+  // The envelope is exactly these four headers.
+  it('sends exactly the four envelope headers', async () => {
     const { service, exchange } = makeService();
     const handler = createMessageHandler(service as any, vi.fn());
 
-    await handler(buf(dataMsg()), 'twin');
+    await handler(buf(dataMsg()), 'twin', CONNECTION_ID);
 
     const headers = (exchange.publish.mock.calls[0][2] as any).headers;
 
-    expect(Object.keys(headers).sort()).toEqual(['x-collected-at', 'x-hoarder-uuid', 'x-venue']);
+    expect(Object.keys(headers).sort()).toEqual(['x-collected-at', 'x-connection-id', 'x-hoarder-uuid', 'x-venue']);
   });
 
   it('calls the onMessage callback after each publish', async () => {
@@ -151,8 +166,8 @@ describe('data messages: publishing', () => {
     const onMessage = vi.fn();
     const handler = createMessageHandler(service as any, onMessage);
 
-    await handler(buf(dataMsg()), 'twin');
-    await handler(buf(dataMsg()), 'twin');
+    await handler(buf(dataMsg()), 'twin', CONNECTION_ID);
+    await handler(buf(dataMsg()), 'twin', CONNECTION_ID);
 
     expect(onMessage).toHaveBeenCalledTimes(2);
   });
@@ -166,7 +181,7 @@ describe('control messages: no publish', () => {
     const onMessage = vi.fn();
     const handler = createMessageHandler(service as any, onMessage);
 
-    await handler(buf({ subscribe: 'trade', success: true }), 'twin');
+    await handler(buf({ subscribe: 'trade', success: true }), 'twin', CONNECTION_ID);
 
     expect(exchange.publish).not.toHaveBeenCalled();
     expect(onMessage).not.toHaveBeenCalled();
@@ -177,7 +192,7 @@ describe('control messages: no publish', () => {
     const onMessage = vi.fn();
     const handler = createMessageHandler(service as any, onMessage);
 
-    await handler(buf({ unsubscribe: 'trade', success: true }), 'twin');
+    await handler(buf({ unsubscribe: 'trade', success: true }), 'twin', CONNECTION_ID);
 
     expect(exchange.publish).not.toHaveBeenCalled();
     expect(onMessage).not.toHaveBeenCalled();
@@ -188,7 +203,7 @@ describe('control messages: no publish', () => {
     const onMessage = vi.fn();
     const handler = createMessageHandler(service as any, onMessage);
 
-    await handler(buf(infoMsg()), 'twin');
+    await handler(buf(infoMsg()), 'twin', CONNECTION_ID);
 
     expect(exchange.publish).not.toHaveBeenCalled();
     expect(onMessage).not.toHaveBeenCalled();
@@ -199,7 +214,7 @@ describe('control messages: no publish', () => {
     const onMessage = vi.fn();
     const handler = createMessageHandler(service as any, onMessage);
 
-    await handler(buf({ unexpected: true, whatever: 123 }), 'twin');
+    await handler(buf({ unexpected: true, whatever: 123 }), 'twin', CONNECTION_ID);
 
     expect(exchange.publish).not.toHaveBeenCalled();
     expect(onMessage).not.toHaveBeenCalled();
@@ -215,7 +230,7 @@ describe('failure handling', () => {
     const { service, exchange } = makeService();
     const handler = createMessageHandler(service as any, vi.fn());
 
-    await handler(Buffer.from('not json at all'), 'twin');
+    await handler(Buffer.from('not json at all'), 'twin', CONNECTION_ID);
 
     expect(exchange.publish).not.toHaveBeenCalled();
   });
@@ -224,7 +239,7 @@ describe('failure handling', () => {
     const { service, exchange } = makeService();
     const handler = createMessageHandler(service as any, vi.fn());
 
-    await handler(buf(dataMsg()), 'nasdaq');
+    await handler(buf(dataMsg()), 'nasdaq', CONNECTION_ID);
 
     expect(exchange.publish).not.toHaveBeenCalled();
   });
@@ -236,8 +251,8 @@ describe('failure handling', () => {
 
     exchange.publish.mockRejectedValueOnce(new Error('boom'));
 
-    await expect(handler(buf(dataMsg()), 'twin')).resolves.toBeUndefined();
-    await handler(buf(dataMsg()), 'twin');
+    await expect(handler(buf(dataMsg()), 'twin', CONNECTION_ID)).resolves.toBeUndefined();
+    await handler(buf(dataMsg()), 'twin', CONNECTION_ID);
 
     expect(logger.error).toHaveBeenCalledWith(expect.objectContaining({ venue: 'twin' }), 'Error processing WebSocket message');
     expect(onMessage).toHaveBeenCalledOnce();
@@ -253,7 +268,7 @@ describe('failure handling', () => {
     exchange.publish.mockRejectedValue(channelClosed());
 
     for (let i = 0; i < 3; i++)
-      await expect(handler(buf(dataMsg()), 'twin')).resolves.toBeUndefined();
+      await expect(handler(buf(dataMsg()), 'twin', CONNECTION_ID)).resolves.toBeUndefined();
 
     expect(service.shutdown).toHaveBeenCalledOnce();
     expect(service.shutdown).toHaveBeenCalledWith('RABBITMQ_LOST');
@@ -266,7 +281,7 @@ describe('failure handling', () => {
 
     exchange.publish.mockRejectedValue(channelClosed());
 
-    await expect(handler(buf(dataMsg()), 'twin')).resolves.toBeUndefined();
+    await expect(handler(buf(dataMsg()), 'twin', CONNECTION_ID)).resolves.toBeUndefined();
 
     expect(service.shutdown).not.toHaveBeenCalled();
     expect(logger.error).not.toHaveBeenCalled();
@@ -291,7 +306,7 @@ describe('control messages: logging', () => {
     const { service, exchange } = makeService();
     const handler = createMessageHandler(service as any, vi.fn());
 
-    await handler(buf(frame), venue);
+    await handler(buf(frame), venue, CONNECTION_ID);
 
     expect(exchange.publish).not.toHaveBeenCalled();
     expect(logger.warn).toHaveBeenCalledWith({ venue }, expect.any(String));
@@ -310,7 +325,7 @@ describe('control messages: logging', () => {
     const { service } = makeService();
     const handler = createMessageHandler(service as any, vi.fn());
 
-    await handler(buf(frame), venue);
+    await handler(buf(frame), venue, CONNECTION_ID);
 
     expect(logger.debug).toHaveBeenCalledWith({ venue }, expect.any(String));
     expect(logger.warn).not.toHaveBeenCalled();
