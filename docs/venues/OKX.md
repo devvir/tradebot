@@ -9,9 +9,6 @@ its documentation.
 
 ### The shape of the archive
 
-**Read this before designing any probe, sweep or bound.** Every wrong conclusion recorded here so
-far came from testing one cell of this table and generalising from it.
-
 Five datasets, and the markets each applies to — okx's *expiry* is `FUTURES`, its *perpetual* is
 `SWAP`:
 
@@ -31,18 +28,16 @@ Five datasets, and the markets each applies to — okx's *expiry* is `FUTURES`, 
   `allswap` — `BTC-USDT-SWAP-fundingrates-2026-08-15.zip`, `…-swaprates-…` and a `fundingrates/daily/`
   path all answer 404 while the bucket answers 200.
 - **Borrowing rates are keyed by currency**, not by instrument: `BTC-borrowrates-2026-07.zip` is
-  real, but no endpoint enumerates okx's currencies, so the bucket is the only rendering that can be
-  generated. It begins **2021-12-14** — the 13th answers 404 and the 14th 200.
+  real, but no endpoint enumerates okx's currencies, so the bucket is the only rendering whose name
+  follows from a date alone. It begins **2021-12-14** — the 13th answers 404 and the 14th 200.
 
 #### The buckets are the dataset, not an instrument in it
 
-`allspot`, `allswap`, `allfutures`, `alloption` and `allmargin` have no listing, no lifetime and
-nothing to measure: each exists for as long as its dataset has. So they are **never given a series** —
-they are generated from the earliest start anything in that dataset records through to the last
-complete day, and no gap is assumed or hunted for. A day the venue did not publish costs one 404.
+`allspot`, `allswap`, `allfutures`, `alloption` and `allmargin` have no listing and no lifetime of
+their own: each exists for as long as its dataset has.
 
-Their floors differ by market for the same dataset, which is why each bucket takes its own market's
-earliest: spot candlesticks reach back to 2019-12 while futures begin in 2021-09.
+Their floors differ by market for the same dataset: spot candlesticks reach back to 2019-12 while
+futures begin in 2021-09.
 
 #### A chain is not spelled the way the venue names it
 
@@ -62,39 +57,20 @@ allfutures-trades-2026-07-15.zip           every futures instrument, that day
 included (`AAVE-USD_UM_XPERP-futureschain-L2orderbook-400lv-2026-07-15.tar.gz`).
 
 Asking for the plain name on a futures family does not fail; **it returns the spot pair's file**.
-That is what recorded 174 futures families as publishing nothing and gave the other 84 spot data
-under a futures label, and it is why an absence on this venue is a claim about our spelling until
-proved otherwise.
 
-#### `preopen` instruments do not exist here
+#### `preopen` instruments have no archive
 
 okx's instruments API carries a `state`, and `preopen` means **announced, not yet trading** —
 `JP225-USDT-SWAP` sat in the portal's list on 2026-08-16 with a listing date of 2026-09-09. It has no
 archive, cannot have one, and is not a gap: the form lists what will be tradable, which is a
 different question from what has been published.
 
-**They are dropped from the universe entirely, as though the venue had not named them.** Not
-recorded as absent, not carried as pending, not counted in any total. When one lists it becomes an
-ordinary new symbol and is discovered like any other.
-
-The portal's list cannot say this — it is names only — which is the one thing the public API is
-needed for.
-
-#### The rules that follow from all of this
-
-- **A symbol that is listed and shows no data means the URL is wrong**, not that the venue publishes
-  nothing — the more so for an *active* instrument. Absence is the last conclusion to reach, not the
-  first.
-- **A whole market or dataset coming back empty is a bug report.** Test one cell, and the answer
-  says nothing about the rest of the row.
-- **Never record an absence from an answer that is not a 404.** A 403 here is CloudFront blocking
-  the address, and it looks identical to "not published" once written down.
+The portal's list cannot say this — it is names only. `state` is on the public API alone.
 
 ### The archive has an index, and it is public
 
-OKX publishes no bucket listing, so its URLs are constructed from a date and probed. That is
-avoidable: the download portal's own form calls a list endpoint that needs no cookies and no
-token.
+OKX publishes no bucket listing. The download portal's own form calls a list endpoint that needs
+no cookies and no token.
 
 ```
 POST https://www.okx.com/priapi/v5/broker/public/trade-data/download-link?t=<epoch-ms>
@@ -116,17 +92,16 @@ BTC-USDT-trades-2025-07-02.zip   3.8 MB
 
 `totalSizeMB` sums the selection. The `?v=999` suffix is part of what the portal hands out.
 
-Two things this is worth beyond enumeration:
+Beyond enumeration:
 
-- **Sizes are an integrity check.** Binance is otherwise the only venue here that publishes
-  anything to verify a download against, and it does it with `.CHECKSUM` files.
+- **Sizes are an integrity check**: the index reports each file's size in MB.
 - **It answers absence directly**, which a probe can only ever infer from a 404. That is worth
   having as a second opinion when a file is expected and missing — see
   [the unsupported claim](#a-404-is-reliable-as-far-as-anyone-has-checked) that okx's 404s are
   unreliable.
 
 The endpoint rate-limits: a handful of rapid calls returns `{"msg":"Too Many Requests",
-"code":"50011"}`, so it needs the same pacing as any other okx call.
+"code":"50011"}`.
 
 ### What the parameters select
 
@@ -151,16 +126,11 @@ same `instType`, same `instIdList`, same window:
 {"module":"5", … }  → BTC-USD-L2orderbook-5000lv-2026-08-12.tar.gz
 ```
 
-**The numbering is sparse, and that is the trap.** `7` through `10` answer `51000 Parameter module
-error` while `11` serves borrowing rates, so **a module that errors says nothing about the next
-one**. Two claims in this file were wrong for exactly that reason: `5` was recorded as borrowing
-rates, which sent the hunt for 5000lv chasing a `depth` parameter that does not exist; and a sweep
-that stopped at the `7`–`10` gap concluded `6` was the ceiling.
+**The numbering is sparse.** `7` through `10` answer `51000 Parameter module error` while `11`
+serves borrowing rates, so **a module that errors says nothing about the next one**. There is no
+`depth` parameter.
 
-**Swept 7 to 40: only `11` answers.** So the set is `1`–`6` and `11`, established by exhaustion
-rather than inferred from where the errors began. A module number cannot be reasoned about, only
-observed — by capturing what the form sends, or by sweeping far past the first gap and treating
-every silence as unproven rather than as an ending.
+**Swept 7 to 40: only `11` answers.** The set is `1`–`6` and `11`.
 
 **This is what the form offers, which is not the same as what exists.** Two places they already
 diverge:
@@ -182,7 +152,7 @@ monthly, per currency   …/borrowrates/monthly/202607/BTC-borrowrates-2026-07.z
 daily,   all at once    …/borrowrates/daily/20260813/allmargin-borrowrates-2026-08-13.zip
 ```
 
-So `module: 5` takes `instQueryParam.ccyList` rather than `instIdList`, and there is no per-currency
+So `module: 11` takes `instQueryParam.ccyList` rather than `instIdList`, and there is no per-currency
 daily file to ask for.
 
 ### The floors, measured rather than read off the portal
@@ -198,38 +168,27 @@ right more often than it is wrong — and wrong badly enough that none of it can
 | funding rate | 2022-03 | **202109** ✗ | 137 pairs begin there, 18 months before the claim |
 | borrowing rate | 2021-12 | **202112** ✓ | venue-wide daily: `404` on 2021-12-01, serves 2021-12-15 |
 | L2 books 5000 | 2025-11 | **202511** ✓ | 1,104 pairs begin there, `404` at 2025-10-01 |
-| L2 books 400 | 2023-03 | **≤ 20230403** ✗ | see below — 202309 was a spot floor, not the archive's |
+| L2 books 400 | 2023-03 | **≤ 20230403** ? | futures chains by 2023-04-03; spot pairs from 202309 |
 
-Three of six are wrong, in both directions — the form is early for the books and late for candles
-and funding — which is the argument for measuring each floor rather than for distrusting the form
-wholesale. **A floor is cheap to establish and expensive to guess.**
+Two of the claims are wrong, both late — candlesticks and funding. The 400-level claim is neither
+confirmed nor refuted.
 
-**And the 400-level book floor was itself wrong, in the way this section warns about.** It read
-202309 from 481 spot pairs. A seed experiment probing from 2023-01-02 found
-`BTC-USD-futureschain-L2orderbook-400lv-2023-04-03.tar.gz` — 200, 151 MB, verified at the CDN — on
-the *second day it asked*, five months earlier. The futures chains publish books before the spot
-pairs do, so 202309 was a floor for the symbols measured and not for the dataset. Whether anything
-sits below 2023-01 is still open: the experiment started one day under what it found, which is no
-margin at all.
+**The 400-level books begin earlier on the futures chains than on spot.**
+`BTC-USD-futureschain-L2orderbook-400lv-2023-04-03.tar.gz` answers `200`, 151 MB, while the spot
+pairs begin in 202309 (481 of them). How far below 2023-04-03 the chains reach is not established.
 
-**These are archive floors, and only a walk of every symbol produces one.** The earlier reading of
-this table put candlesticks at 202001 because `BTC-USDT` was the symbol asked, and `BTC-USDT` has no
-201912 file. `BSV-USDT`, `BTC-USDC`, `ETC-USDT`, `ETH-USDC` and `TRX-USDT` all do, and all `404` at
-201911. **A floor measured from one symbol is that symbol's floor**, and here it was twenty months
-off.
+**These are archive floors, and a floor measured from one symbol is that symbol's floor.**
+`BTC-USDT` has no 201912 candlestick file; `BSV-USDT`, `BTC-USDC`, `ETC-USDT`, `ETH-USDC` and
+`TRX-USDT` all do, and all `404` at 201911.
 
 #### Candles reach twenty months further back than trades
 
-This is the finding that governs how a symbol's range can be established: **a dataset's history is
-not bounded by its symbol's trade history.** `BTC-USDT` serves candlesticks for 202001 through
-202108 while trades for those months do not exist at any granularity.
+**A dataset's history is not bounded by its symbol's trade history.** `BTC-USDT` serves
+candlesticks for 202001 through 202108 while trades for those months do not exist at any
+granularity. A symbol's first month differs by dataset.
 
-So a range cannot be derived once per symbol and reused. `first` has to be probed **per dataset**,
-from that dataset's own measured floor.
-
-**At the other end they do agree.** `AAC-USDT` stops at 202206 for trades and candlesticks alike,
-with 202207 absent in both — so the *last* month can be taken from trades and applied across
-datasets, which is the half of the assumption that survives.
+**At the other end they agree.** `AAC-USDT` stops at 202206 for trades and candlesticks alike, with
+202207 absent in both: a delisting ends every dataset in the same month.
 
 **A symbol that listed after a floor starts everywhere at once.** `ASTR-USDT` (202201),
 `ZENT-USDT` (202405), `BNB-USD` (202503) and `PNUT-USD` (202504) each begin trades and candlesticks
@@ -247,15 +206,13 @@ For anything predating the floors it is wrong in both directions at once. Five s
 | AAVE | trades `404` | `404` | `200` | `404` |
 
 Trades ignore it and begin at the archive floor eight months later; candlesticks begin eleven
-months *earlier* than it. So `max(floor, listTime)` loses a year of candles for every one of them,
-and `listTime` alone wastes eight months of probes on trades.
+months *earlier* than it.
 
 **And it is largely fabricated at that depth:** 73 of the 98 live spot symbols below the trades
 floor carry exactly `202101`, which is a migration stamp rather than 73 listings in one month.
 
-It stays useful for genuinely recent instruments — 369 symbols carry 202603, and there the date is
-real — but a bound that has to be trusted selectively is not a bound. **Probing a dataset's own
-range is what establishes a start; `listTime` at most suggests where to look first.**
+For recent instruments the date is real — 369 symbols carry 202603 — but it is not a bound on what
+the archive holds.
 
 #### Funding is per symbol monthly, venue-wide daily — and has a three-month hole
 
@@ -273,9 +230,8 @@ by construction and invisible to the index.
 
 **`BTC-USDT-SWAP` serves 202109, then nothing until 202201.** Re-probed to be sure, and the
 venue-wide daily is missing across the same span (2021-10-15, -11-15, -12-15 all `404`). So funding
-begins at the trades floor, skips three months, and resumes — which means **the first month found
-is not proof of a contiguous start**, and a bisect over a funding range would land in the hole and
-report 202201.
+begins at the trades floor, skips three months, and resumes: **the first month is not proof of a
+contiguous start**.
 
 #### Swap trades for 2021-10 list every trade twice
 
@@ -332,6 +288,14 @@ What they measure depends on the market:
 Read from the monthly files of `BTC-USDT`, `ETH-BTC`, `BTC-USDT-SWAP` and `BTC-USD-SWAP`, one row a
 month.
 
+#### Candlestick files can repeat rows
+
+Measured on 2026-10-04: of 200 random 2020 spot 1m files, 96 carry every bar exactly twice, byte for
+byte — `BTC-USDT`'s June 2020 monthly file holds 86,400 rows for 43,200 bars — and 104 carry each
+once; 2021 perpetual files, 0 of 40; 2023 perpetual files, 4 of 40, and those repeat a handful of
+rows rather than all (`KSM-USDT` 2023-10: 44,651 rows, 44,640 bars). Which way a file goes varies by
+instrument, by day and by year.
+
 #### What a book file holds
 
 The `.tar.gz` holds one `.data` file of a JSON record a line:
@@ -364,22 +328,10 @@ So the gaps are the venue's, not an artifact of guessing URLs — which also rul
 [unsupported "404 may be 200" claim](#a-404-is-reliable-as-far-as-anyone-has-checked) as an explanation
 for them.
 
-**Whether the book window rolls is not established.** 2023-12-18 sat ~2.6 years back when
-measured, which one observation cannot distinguish from a fixed start — the same trap bitget's
-floor set. Re-probing that date in a few weeks answers it: if it has moved, OKX book history is
-perishable and worth collecting first.
+### What the archive holds (walked 2026-08-16/17)
 
-Funding and borrowing are published venue-wide, one file a day for every instrument at once:
-`allswap-fundingrates-2025-07-01.zip` under `traderecords/swaprates/`, and
-`allmargin-borrowrates-…` under `borrowrates/`. The borrowing archive's oldest file on disk is
-2021-12-14, against a `RATES_START` of 2021-12-01 — so its true floor is a fortnight later than
-the constant, which costs probes rather than data.
-
-### What a walk of the whole universe found
-
-The first such walk — every pair probed a month at a time from a uniform floor of 201901 — is where
-most of the shape below was learned. **Its bounds were wrong** and have since been rebuilt at the
-right spellings; what survives it is the shape, which the rebuild confirmed.
+Every instrument-dataset pair, walked at the spellings above until it answered or the archive ran
+out.
 
 #### A dataset's floor is a launch, not a gradual filling
 
@@ -389,90 +341,46 @@ Each dataset appears all at once, backfilled across everything listed at the tim
 |---|---|---|
 | 201912 | the archive itself begins, candlesticks only | 291 |
 | 202109 | trades and funding rates launch together | 478 + 137 |
-| 202309 | 400-level books launch | 481, then 169 the next month |
+| ≤2023-04 | 400-level books: futures chains from ≤2023-04-03, spot pairs from 2023-09 | 481 spot, then 169 the next month |
 | 202511 | 5000-level books launch | 1,104 |
 
-**So `first` is usually a fact about the dataset, not the symbol.** 478 of 2,578 trade series share
-one month, and 1,104 of 1,884 5000lv series share another. A symbol that listed *before* its
-dataset launched has a `first` that says nothing about when it started trading — which is why
-`listTime` and the archive disagree so freely, and why neither can be derived from the other.
+**A symbol that listed before its dataset launched begins at the launch**, whatever its trading
+history: 478 of the 2,578 instruments with trades begin in 202109, and 1,104 of the 1,884 with
+5000-level books in 202511. Only candlesticks reach 201912, so **candles are the only part of the
+archive before 2021-09**.
 
-Only candlesticks reach 201912. Everything else floors at its own launch, so **candles are the only
-way to see okx before 2021-09** at all.
+#### Two mass listings
 
-#### Two mass listings dominate everything after
+202511 (1,239 pairs) and 202603 (1,240) each add as much as a dataset launch, spread across all five
+datasets rather than concentrated in one: new instruments rather than new history. 202604 through
+202606 stay elevated.
 
-202511 (1,239 pairs) and 202603 (1,240) each add as much as a dataset launch, but spread
-proportionally across all five datasets rather than concentrated in one — the signature of new
-instruments rather than new history. 202604 through 202606 stay elevated. Any capacity estimate
-that extrapolates from the archive's early years will be wrong by a wide margin.
+#### A delisting ends every dataset of a symbol together
 
-#### An end is a property of the symbol, not of one dataset
+202603 closes 22 pairs in each of the five datasets, 202602 closes 7 of each. 2,360 pairs have an end,
+across 56 distinct months.
 
-Delisting takes everything down together, and the counts make that visible: 202603 closes 22 series
-in each of the five datasets, 202602 closes 7 of each. **2,360 series have a measured end across 56
-distinct months**, and where they line up into matched sets they are real.
+#### The universe
 
-Where they *don't* line up, suspect the probe rather than the venue. 264 book series appeared to end
-at 202606 while their candlesticks ran on; re-asking that one month reopened 262 of them, and only
-`PANW-USDT-SWAP` was genuinely dead there. See [the two prefixes](#the-books-sit-on-two-clouds-at-two-prefixes)
-for what caused it.
-
-#### A third of the probe space returned nothing, and most of that was our fault
-
-The first walk asked about 12,968 pairs and **2,945 of them — 23% — had no file anywhere in the
-range**. That number is the loudest thing the walk produced and it decomposes into three very
-different causes:
-
-| cause | pairs | whose fault |
-|---|---|---|
-| symbol died before the dataset launched | 1,019 | nobody's — legitimate |
-| `_UM` chains, asked for at the wrong spelling | 1,255 | **ours**, and they all publish |
-| has data in some datasets, none in this one | 671 | mostly ours too — see the rebuild |
-
-**Every one of the second row was a real instrument.** They were called fictional on the strength of
-this very walk, which asked for them at `<name>-<dataset>-…` instead of
-`<name>-futureschain-<dataset>-…`. The rebuild found data for all of them.
-
-**They come from `underlying`.** FUTURES and OPTION are enumerated by underlying, because the
-instruments API refuses to list contracts and because files are published one chain at a time. That endpoint also returns unified-margin perpetual underlyings — `AAVE-USD_UM_XPERP`
-beside `AAVE-USD`, `BTC-USD_UM` beside `BTC-USD`.
-
-**Those names were once recorded as having no dated chain at all, and that was wrong.** The evidence
-was 129 instruments probed across every dataset and every month with not one file returned — but
-they were probed at `<name>-<dataset>-…`, and a futures chain is served at
-`<name>-futureschain-<dataset>-…`. Every one of them exists, and for the tokenised equities and
-commodities it is the *only* spelling they publish under. The filter that dropped them and the
-absences that justified it were one mistake seen from two sides.
-
-**Use the portal's instrument list for dated markets, not the public API's.** The API returns
-`AAVE-USD`; the archive holds `AAVE-USD_UM_XPERP`; the portal returns what the download form is
-populated from, which is what the index answers for.
-
-#### What the universe actually is
-
-Rebuilt from scratch on 2026-08-16/17, at the spellings above, and every pair walked until it
-answered or the archive ran out. **12,430 instrument-dataset pairs**, and not one of them is a guess:
+**12,430 instrument-dataset pairs**:
 
 | | pairs |
 |---|---|
-| bounded — a start, and an end where the archive has one | 10,680 |
-| `void` — walked across the whole archive, publishes nothing, and the venue no longer lists it | 1,750 |
+| a start, and an end where the archive has one | 10,680 |
+| no file anywhere in the archive, and no longer listed | 1,750 |
 
-By market, excluding order books: SPOT 4,340 · SWAP 1,926 · FUTURES 258 · OPTION 12, with **nothing
-unaccounted**. Order books account for a further 5,894 pairs, resolved the same way.
+By market, excluding order books: SPOT 4,340 · SWAP 1,926 · FUTURES 258 · OPTION 12. Order books
+account for the other 5,894.
 
-**Every active symbol has data in every dataset its market publishes.** The absences are all dead
-symbols, and they have an ordinary explanation: candlesticks reach back to 2019-12 while every other
-dataset begins in 2021-09, so a pair that stopped trading before then can only ever have
-candlesticks — which okx then keeps writing, zero-volume, for ever.
+**Every active symbol has data in every dataset its market publishes.** Every pair with nothing is a
+dead symbol: candlesticks reach back to 2019-12 while every other dataset begins in 2021-09, so a pair
+that stopped trading before then has only candlesticks, which okx goes on writing with zero volume.
 
-#### What this costs to collect
-
-Generating every path inside these bounds, in every rendering, is dominated by the books and by the
-daily files — the monthly ones are a rounding error beside them. The exact figure moves as the
-bounds are narrowed to days, which is the point of narrowing them: a bound stated as a month asks
-about the days before the archive began, every survey, for ever.
+**The unified-margin families publish only as chains.** The underlyings okx returns for `FUTURES`
+include unified-margin names beside the plain ones — `AAVE-USD_UM_XPERP` beside `AAVE-USD`,
+`BTC-USD_UM` beside `BTC-USD`. Every one of them publishes, under `<name>-futureschain-<dataset>-…`
+only; nothing is served at `<name>-<dataset>-…`. For the tokenised equities and commodities that is
+the only spelling they have.
 
 ### The origin is Alibaba OSS, and it serves files directly
 
@@ -492,7 +400,9 @@ $ curl -X PUT https://static.okx.com/cdn/okex/traderecords/zzz
 **Bucket `okg-pub-hk`, region `oss-cn-hongkong`**, and it fronts every prefix — `traderecords`, the
 `okx/match` books, and the root all answer with the same host.
 
-**Objects are publicly readable there, and it is the better download address.** The same key returns
+**Objects are publicly readable there**, for the `okex/traderecords/` and `okx/match/orderbook/L2/`
+keys but not for `pro/L2/` (see [the two prefixes](#the-books-sit-on-two-clouds-at-two-prefixes)).
+The same key returns
 `200` with identical `Content-Length` and `ETag`, from `Server: AliyunOSS` with no CDN in the path:
 
 ```
@@ -500,12 +410,10 @@ static.okx.com                           3740179  "3170CA8595A3AE1ABC66C27A94D01
 okg-pub-hk.oss-cn-hongkong.aliyuncs.com  3740179  "3170CA8595A3AE1ABC66C27A94D01374"
 ```
 
-So okx **is** the case for an optional second base: list one place, download another. Downloading at
-the origin skips CloudFront entirely, which is where a rate limit would come from. Supporting it
-means a second address on the adapter or the catalog's `venue` row, defaulting to the walking base
-when empty. Nothing implements that yet.
+A request to the origin does not pass through CloudFront, where
+[the refusals](#what-the-cdn-tolerates-and-how-it-refuses) come from.
 
-**Listing is denied everywhere, and that is now established rather than assumed.** `ListObjects` at
+**Listing is denied everywhere.** `ListObjects` at
 the origin answers `AccessDenied — The bucket you access does not belong to you`; the
 `oss-website-…` endpoint does not resolve; `/cdn/` is a zero-byte directory marker rather than an
 index. There is no listable surface at any layer.
@@ -535,10 +443,8 @@ BTC-USDT-trades-2024-09.zip   101.54 MB
 ```
 
 Roughly a twentieth of the calls: five years of one symbol's history is about a dozen monthly
-requests against some 260 daily ones. Both modes are still needed, since each enumerates only its
-own rendering and okx publishes months through 2026-06 and days after — but **the mode asked for is
-what says which rendering came back**, so the granularity is known from the request rather than
-parsed out of a path.
+requests against some 260 daily ones. Each mode enumerates only its own rendering, so **the mode
+asked for is what says which rendering came back**.
 
 **An empty `instIdList` returns the venue-wide files** rather than an error —
 `allspot-trades-2025-07-02.zip`, 52 MB, every spot instrument in one file. Daily only: the same
@@ -560,26 +466,56 @@ It applies the empty-selection rule above and hands back the venue-wide bucket:
 ```
 
 **Both answers are `code: 0`.** So a bucket coming back is not evidence that the per-symbol file is
-absent — it is the answer to a question that selected no instrument. Every market here publishes
-per-symbol files, and reading the first reply as "this market is bucket-only" is a conclusion the
-endpoint never supported.
+absent — it is the answer to a question that selected no instrument. Every market publishes
+per-symbol files.
 
 **Confirm existence against the CDN, not against this index.** A `HEAD` on the constructed URL is
 the only thing that answers whether a key exists; the index answers what the portal's form would
 offer for a selection, which is a different question and has more ways to be silently empty.
 
 **The index reaches the books, including their separate prefix.** `module: 4` answers with
-`cdn/okx/match/orderbook/L2/400lv/daily/…`, so nothing needs to know in advance that the books live
-somewhere other than `traderecords`.
+`cdn/okx/match/orderbook/L2/400lv/daily/…`, outside `traderecords`.
 
 ### `module: 6` — a 50-level book with order counts
 
 **`module` is not one per card on the download page.** A card carries its own selectors, and the
-order book card's depths turned out to be modules `4` and `5` — so cards and modules do not
+order book card's depths are modules `4` and `5` — so cards and modules do not
 correspond, and a module without a card is not by itself proof of anything hidden.
 
-What can be said about `6` is narrower and still worth having: it returns a file matching **neither
-depth the order book card offers**, from a different bucket, in a different shape.
+What `6` returns is a file matching **neither depth the order book card offers**, from a
+different bucket, in a different shape:
+
+```
+module=6 → BTC-USDT.OK.csv.gz   279.78 MB   (one day, one spot instrument)
+http://qp-pri-hk.oss-cn-hongkong.aliyuncs.com/qp-storage/public_tbt/20250701/spot/BTC-USDT.OK.csv.gz
+  ?Expires=…&OSSAccessKeyId=…&Signature=…
+```
+
+**303 columns: two timestamps, fifty levels a side, and an order count on every level.**
+
+```
+timeMs, exchTimeMs, bid_1_px, bid_1_qty, bid_1_ordCnt, ask_1_px, ask_1_qty, ask_1_ordCnt, … , symbol
+1751328000003, 1751328000001, 107140, 0.47629152, 11, 107140.1, 0.09357525, 3, …
+```
+
+Two things here exist nowhere else in this venue's public archive. **`ordCnt` per level** is the
+count of resting orders making up that size — the difference between "50 BTC on the bid" and "50 BTC
+from one participant". And **`exchTimeMs` beside `timeMs`** gives the venue's own stamp against the
+capture's.
+
+`public_tbt` is presumably tick-by-tick; the two stamps in row one are 2 ms apart. At 280 MB per
+instrument-day gzipped it is by far the largest thing okx publishes.
+
+**It cannot be addressed the way everything else is.** The bucket is `qp-pri-hk` — private, where
+the public archive is `okg-pub-hk` — and the URL is *presigned* with an `Expires`, an
+`OSSAccessKeyId` and a `Signature`. The path is stable and storable
+(`qp-storage/public_tbt/<yyyymmdd>/<market>/<INSTID>.OK.csv.gz`) but the URL is minted per request
+and expires, so it cannot be constructed: a fresh link has to be asked of the index each time.
+Nothing else okx publishes is addressed this way. It comes from an undocumented endpoint on a
+private bucket.
+
+Confirmed on `BTC-USDT` and `ETH-USDT` spot, same shape and path both times. The same query for
+`ETH-USDT-SWAP` returns no files, so it may be spot-only — unestablished.
 
 ### The books sit on two clouds, at two prefixes
 
@@ -603,11 +539,6 @@ Both depths are served under `L2/` for older dates and `pro/L2/` for recent ones
 
 So this is **one dataset addressable twice**, not two products and not a change of content.
 
-**Which costs nothing here, because there is no listing to enumerate.** Every okx path is one we
-construct, so the overlap is a choice rather than a duplicate: pick a cut date and build one prefix
-or the other on either side of it. A listing venue would have no such option — it would see both
-keys and have to decide afterwards which to keep.
-
 #### `pro/` is a different host, not just a different prefix
 
 **"Behind the same hostname" means `static.okx.com`, and only `static.okx.com`.** The Alibaba OSS
@@ -627,70 +558,19 @@ okg-pub-hk.oss-…/cdn/…/pro/L2/400lv/daily/20260801/… 404  AliyunOSS
 Checked across five instruments and both depths, `pro/` answers `404` at the OSS origin every time,
 including for dates it serves at `static.okx.com`.
 
-**This is what produced 264 false endings.** A walk addressing the OSS bucket built `pro/` paths for
-2026-07 onward, got `404` for keys that bucket could never hold, and recorded the month below as a
-measured end for every book series it walked back. The blast radius was exactly one month — the
-ceiling — because every month beneath it was asked under `L2/`, which the bucket does serve.
-
-**So a date is not enough to build a book path.** The prefix decides the origin, and a cut date is
-only correct if the host is the one that serves both. Since plain `L2/` runs to 2026-08-04, anything
+**So a date is not enough to name a book file.** The prefix decides the origin, and only
+`static.okx.com` serves both. Since plain `L2/` runs to 2026-08-04, anything
 at or below 2026-07 is reachable at the OSS origin under `L2/` alone; from 2026-08-05 the books are
 reachable **only** through `static.okx.com`.
 
-**The ETag case differs by origin** — OSS answers uppercase, S3 lowercase — which is a serving
-artifact and not a difference in the object. Two comparisons in prospector are case-sensitive today
-([`queries.ts:1035`](../../services/prospector/src/catalog/queries.ts#L1035), the revision rule, and
-[`routes.ts:433`](../../services/prospector/src/api/routes.ts#L433), the download check). Neither
-misfires while a path stays on one origin, since paths differ between the prefixes — but okx has just
-demonstrated that it moves trees between clouds, and the day a path changes origin, a case-sensitive
-compare reads a version change that did not happen and marks a held file pending again. **ETags want
-normalising before comparison.**
+**The ETag case differs by origin**: Alibaba OSS answers the MD5 uppercase and S3 lowercase, for
+the same bytes. It is a serving artifact, not a difference in the object.
 
-**A single probe cannot tell a wrong prefix from a wrong date**, which is how this file came to claim
-5000lv was unreachable under `L2/` — one test, at 2026-08-12, past the point where the old prefix
-stops. Both variables have to move before a path is called dead.
+**A `404` on a book path does not say whether the prefix or the date is wrong**: `5000lv` at
+2026-08-12 answers `404` under `L2/` and `200` under `pro/L2/`.
 
 **Only two depths exist.** `5, 10, 20, 25, 50, 100, 200, 500, 1000` and `2000` are all `404` under
 `pro/L2/`; only `400lv` and `5000lv` answer.
-
-```
-module=6 → BTC-USDT.OK.csv.gz   279.78 MB   (one day, one spot instrument)
-http://qp-pri-hk.oss-cn-hongkong.aliyuncs.com/qp-storage/public_tbt/20250701/spot/BTC-USDT.OK.csv.gz
-  ?Expires=…&OSSAccessKeyId=…&Signature=…
-```
-
-`module: 7` answers `51000 Parameter module error`, so six is the ceiling.
-
-**303 columns: two timestamps, fifty levels a side, and an order count on every level.**
-
-```
-timeMs, exchTimeMs, bid_1_px, bid_1_qty, bid_1_ordCnt, ask_1_px, ask_1_qty, ask_1_ordCnt, … , symbol
-1751328000003, 1751328000001, 107140, 0.47629152, 11, 107140.1, 0.09357525, 3, …
-```
-
-Two things here exist nowhere else in this venue's public archive. **`ordCnt` per level** is the
-count of resting orders making up that size — the difference between "50 BTC on the bid" and "50 BTC
-from one participant", which is what depth means for anything modelling liquidity or impact. And
-**`exchTimeMs` beside `timeMs`** gives the venue's own stamp against the capture's, so latency is
-measurable from the file rather than assumed.
-
-`public_tbt` is presumably tick-by-tick; the two stamps in row one are 2 ms apart. At 280 MB per
-instrument-day gzipped it is by far the largest thing okx publishes.
-
-**It cannot be addressed the way everything else is.** The bucket is `qp-pri-hk` — private, where
-the public archive is `okg-pub-hk` — and the URL is *presigned* with an `Expires`, an
-`OSSAccessKeyId` and a `Signature`. The path is stable and storable
-(`qp-storage/public_tbt/<yyyymmdd>/<market>/<INSTID>.OK.csv.gz`) but the URL is minted per request
-and dies, so `base + keyRoot + path` cannot rebuild it. Anything fetching this has to ask the portal
-for a fresh link at download time — a second shape of "where is this file", and the first thing here
-that needs one.
-
-Worth being explicit about the risk: **reachable is not the same as promised.** It comes from an
-undocumented endpoint on a private bucket, which is a reason to take it sooner rather than to plan
-around it.
-
-Confirmed on `BTC-USDT` and `ETH-USDT` spot, same shape and path both times. The same query for
-`ETH-USDT-SWAP` returns no files, so it may be spot-only — unestablished.
 
 ### Where the symbols come from, and what each source knows
 
@@ -706,9 +586,8 @@ Three sources, none sufficient alone:
 asking for `AAC-USDT` by `instId` answers `51001 … doesn't exist`. So `listTime` is unavailable for
 more than a third of the universe.
 
-**But the index answers for dead symbols.** `AAC-USDT` returns four monthly files for 2022. That
-makes the index the only complete source, and makes a range table an optimisation rather than a
-prerequisite here — see [the note on ranges](#ranges-are-cheap-here-and-expensive-on-bitget).
+**But the index answers for dead symbols.** `AAC-USDT` returns four monthly files for 2022, which
+makes the index the only complete source.
 
 `instType` takes `SPOT`, `SWAP`, `FUTURES` and `OPTION`, matching the card's
 Spot/Perpetual/Expiry/Options. Two traps in the answers:
@@ -756,58 +635,7 @@ BTC-USD-260828-trades-2026-08-25.zip                   404
 BTC-USD-260925-futureschain-trades-2026-08-25.zip      404
 ```
 
-So a new expiry listing under a family the catalog already holds creates no series and needs no
-discovery: it simply keeps that chain's file publishing.
-
-#### Ranges, and why the monthly sweep is how to get them
-
-Two costs, and they are nothing alike. Sixty months of archive, four instruments a call:
-
-| | window | windows | calls, spot's 2,170 symbols |
-|---|---|---|---|
-| `monthly` | ~5 months | 12 | **~6,500** |
-| `daily` | 7 days | ~257 | **~139,000** |
-
-Per module, per instrument type — and the catalog wants both renderings of everything, so the daily
-figure is the one that repeats across modules 1, 2, 4, 5 and 6.
-
-**Most of those daily calls ask about a symbol that was already dead, or not yet born.** 818 of
-2,170 spot symbols are delisted, most with short lives, so a sweep that runs every symbol across the
-full sixty months spends the overwhelming majority of its requests confirming emptiness. Knowing the
-range is not a tidy saving on a cheap job; it is the difference between asking a bounded question and
-brute-forcing the keyspace.
-
-**So the monthly pass is how the ranges get established.** It is cheap enough to run blind, it
-answers exactly which months each symbol has — including the dead ones, which nothing else will say
-— and its answer bounds every daily pass that follows. Ranges are an output of the first sweep and an
-input to all the rest.
-
-**For a live symbol, one request bounds it.** Monthly candles at the maximum page size return a
-whole history at once:
-
-```
-GET /api/v5/market/history-candles?instId=BTC-USDT&bar=1M&limit=100
-  → 100 bars, 2018-04 … 2026-07
-```
-
-A hundred months reaches back past the 2021-09 archive floor from any date this decade, so **one
-call per symbol always spans the entire archive era** — 1,354 calls for all of live spot, answering
-where data actually starts and stops rather than when trading opened. That is a tighter bound than
-`listTime`, which says nothing about whether an archive file exists.
-
-**For a dead symbol there is nothing.** Delisted instruments are gone from the public API entirely:
-`AAC-USDT` answers `51001 … doesn't exist` from `public/instruments` and `market/history-candles`
-alike, so no pagination trick reaches behind a delisting.
-
-So the ranges come from two places, split by whether the symbol still trades:
-
-| | how | cost, spot |
-|---|---|---|
-| 1,354 live | one monthly-candle call each | ~1,350 |
-| 818 dead | the monthly index sweep | ~2,500 |
-
-Roughly **3,800 requests to bound the whole spot universe**, after which every daily pass asks only
-about months that can hold something.
+So a new expiry under an existing family adds no file: it is published inside that chain's file.
 
 ### What the CDN tolerates, and how it refuses
 
@@ -816,21 +644,16 @@ Measured with sustained `HEAD` against `static.okx.com`:
 | | |
 |---|---|
 | clean | **100/s** |
-| refuses | **200/s** — 35 `403`s inside one pass, enough to stand the venue down |
-| in use | **120/s** with 100 sockets in flight, for the seed experiment |
+| refuses | **200/s** — 35 `403`s inside one pass |
 
 **A refusal is a `403` and a missing key is a `404`, and they are never confused.** An invented
 symbol and an impossible date both answer 404; 403 only ever means the cadence was exceeded. The
 refusal carries `server: Tengine` and `cache: Error from cloudfront`, so **the ceiling is the CDN
-edge, not the origin** — which is consistent with the origin being the way to avoid it entirely.
-
-That distinction is what makes it safe to retire a key on its first 404 here, where bitget needs its
-headers read because its bucket spells both answers as 403.
+edge, not the origin**.
 
 **The refusal is sticky.** Once tripped, unrelated paths keep being refused for minutes, answering in
-~40 ms, so a burst poisons the requests after it rather than only itself. That is why the cost of
-overshooting is minutes rather than one request, and why 120 rather than 199: an edge figure measured
-on one night at one edge location is not a constant of the venue.
+~40 ms, so a burst poisons the requests after it rather than only itself. The figures were measured
+on one night at one edge location, and an edge figure is not a constant of the venue.
 
 ### Where the instrument lists disagree, and which to believe
 
@@ -858,67 +681,46 @@ row: the eight calls it takes to list every market trip a `429` when made back t
 **The test pairs are the one thing the full listing is missing and v5 has.** `XTESTA-USDT` and
 `XTESTA-USDC` come back from v5 as `state: 'live'` — okx documents a `test` state and does not use it
 for these — while the full listing omits them entirely, and the archive publishes nothing for them.
-They are also the only two of 196 margin instruments that are not spot pairs. So they cannot be
-filtered on state; they are excluded by name — by their base, since the quote varies: `XTESTA-*` in
-spot and margin, and `TEST002-*` among the futures families.
+They are also the only two of 196 margin instruments that are not spot pairs. Their state does not
+mark them: they are named by base, `XTESTA-*` in spot and margin and `TEST002-*` among the futures
+families.
 
-**Margin needs no handling of its own.** 194 of 196 margin instruments are spot pairs, and the
-archive has exactly one margin-specific series — the venue-wide `allmargin` borrowing rates, filed
-under spot. There is no per-instrument margin file.
-
-### Nobody else has a listing either
-
-The published tools all construct URLs and probe, which is worth recording so it is not
-re-investigated as a possible shortcut:
-
-- **`okx-data-dump`** (PyPI `okx-dump`) builds `…/traderecords/{type}/daily/…` and treats a 404 as
-  absent — and takes its instrument universe from **`api.tardis.dev`**, not from okx.
-- **`OKX-CandlestickRetriever`** does not touch the archives at all; it pages `api/v5` candles.
-
-So the portal index is already better than any of them: it enumerates, and it answers for
-instruments and prefixes a constructed URL has to guess at.
+**Margin has no archive of its own.** 194 of 196 margin instruments are spot pairs, and the
+archive's one margin dataset is the venue-wide `allmargin` borrowing rates. There is no
+per-instrument margin file.
 
 ### A 404 is reliable, as far as anyone has checked
 
 The claim is that the same URL has answered 404 and then 200 seconds later. **The evidence does not
-support it.** Of 46,847 recorded okx absences, 219 were re-probed at the origin, sampled across all
-eight datasets, and none exists. A 404 that was spurious at the time would serve `200` today, so zero
+support it.** 219 keys that had answered `404`, sampled across all eight datasets, were re-probed at
+the origin, and none exists. A 404 that was spurious at the time would serve `200` today, so zero
 hits is a real result rather than an inconclusive one.
 
 Not disproven — 219 is a sample, and nobody has caught the alternating behaviour in the act.
 
 ### Periods are UTC+8
 
-**A day or a month in the archive is a UTC+8 one.** The candlestick file dated 2020-06-15 holds
+**A day or a month of trades or candlesticks is a UTC+8 one**; book files are UTC days (see
+[what a book file holds](#what-a-book-file-holds)). The candlestick file dated 2020-06-15 holds
 2020-06-14 16:00 → 2020-06-15 15:59 UTC, and the June 2020 monthly file 2020-05-31 16:00 →
 2020-06-30 15:59 UTC (read off `BTC-USDT` and `BTC-USDC` on 2026-10-04). The timestamps inside are
 plain epoch milliseconds; only which file holds a row is shifted — a UTC day's last eight hours
 are in the next day's file. It is also why a download window ending `2021-09-05T23:59:59.999Z`
 returned a 2021-09-06 file.
 
-**Candlestick files can repeat rows.** Measured on 2026-10-04: of 200 random 2020 spot 1m files, 96
-carry every bar exactly twice, byte for byte — `BTC-USDT`'s June 2020 monthly file holds 86,400 rows
-for 43,200 bars — and 104 carry each once; 2021 perpetual files, 0 of 40; 2023 perpetual files, 4 of
-40, and those repeat a handful of rows rather than all (`KSM-USDT` 2023-10: 44,651 rows, 44,640
-bars). Which way a file goes varies by instrument, by day and by year.
-
 ### Not yet established
 - Where exactly the monthly window boundary falls: three months is accepted and a span of exactly
   six is refused, so the limit is inclusive of fewer months than the message implies.
-- Whether anything sits below 2023-01 for the 400-level books. The seed experiment found one on the
-  second day it asked, so its floor is untested from beneath.
+- How far below 2023-04-03 the 400-level books of the futures chains reach.
 - Where borrowing rates get their universe. They key on a currency rather than an instrument, so
   none of the instrument lists above enumerates them.
 - Whether `module: 6` covers anything but spot. `ETH-USDT-SWAP` returned no files.
 - Whether the order books have a monthly rendering. The form offers no period for them, but the
   tree carries a `daily/` segment, which is not how a venue names something with only one form.
-- Whether the book window rolls. 2,295 pairs have 400-level books, and a floor that holds today says
-  nothing about whether the oldest month is being dropped. The
-  same walk repeated in a few weeks settles it, and it is the one measurement here with a deadline:
-  if the window rolls, the earliest months are perishable.
-- Whether the 2,945 pairs the walk found nothing for can gain data later. They are recorded as
-  measured absences, which is what keeps them from being re-walked — so an instrument that starts
-  publishing after being probed would stay invisible until something revisits it.
+- Whether the book window rolls. 2,295 pairs have 400-level books, and 2023-12-18 was served when
+  it was about 2.6 years old; one observation cannot tell a rolling window from a fixed start. If
+  the window rolls, the earliest months disappear.
+- Whether files are ever added for past dates that once answered `404`.
 
 ### Layout
 
@@ -943,9 +745,7 @@ qp-storage/public_tbt/<yyyymmdd>/<market>/<INSTID>.OK.csv.gz
 
 **None of the three is reachable by guessing from another.** The books' prefix does not follow from
 the `traderecords` layout, the `pro/` segment does not follow from the books' own older path, and
-the tick-by-tick tree is on a different bucket entirely. Every one of them was found by asking the
-index what it would serve — which is the argument for the index over constructed URLs, stated as a
-layout fact rather than as a preference.
+the tick-by-tick tree is on a different bucket entirely. The index answers with all three.
 
 ## REST
 
@@ -1006,7 +806,8 @@ in October 2026. *(documented)* marks what okx's documentation states and was no
   UTC+8, or the same with `utc` appended opening at UTC), `after`, `before`, `limit` ≤ 300.
 - **Answer**: rows of strings `[ts, open, high, low, close, vol, volCcy, volCcyQuote, confirm]`.
 - **Reaches**: BTC-USDT 2018-01-11; ETH-BTC and the three swaps tried, 2020-01-01. Of the listed
-  spot pairs only four start before 2020. `1s` bars answered 120 days back; 3 months is what is
+  spot pairs only four start before 2020. `bar=1M&limit=100` on BTC-USDT returned 100 bars, 2018-04
+  to 2026-07. `1s` bars answered 120 days back; 3 months is what is
   stated.
 - **Budget**: 20 per 2 seconds, by address.
 - **`GET /api/v5/market/candles` is another endpoint**: the recent bars only; `after` in 2020 is
