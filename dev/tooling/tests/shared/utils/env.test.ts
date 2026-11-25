@@ -55,10 +55,21 @@ describe('parseEnvFile', () => {
     expect(parse('URL=http://host/path?a=1&b=2\n')).toEqual({ URL: 'http://host/path?a=1&b=2' });
   });
 
-  /** As docker compose reads the same files: a # after whitespace starts a comment. */
-  it('leaves an inline comment out of the value', () => {
-    expect(parse('DIR=/data/vault        # Default: somewhere\nEMPTY=   # nothing set\nCOLOUR=#ff0000\nURL=http://host/#anchor\n'))
-      .toEqual({ DIR: '/data/vault', EMPTY: '', COLOUR: '#ff0000', URL: 'http://host/#anchor' });
+  it('leaves an inline comment after a value out of the value', () => {
+    expect(parse('DIR=/data/vault        # Default: somewhere\nTWO=a # b # c\nCOLOUR=#ff0000\nURL=http://host/#anchor\n'))
+      .toEqual({ DIR: '/data/vault', TWO: 'a', COLOUR: '#ff0000', URL: 'http://host/#anchor' });
+  });
+
+  it('takes a comment with no value before it as the value', () => {
+    expect(parse('EMPTY=   # nothing set\nTIGHT=#note\n')).toEqual({ EMPTY: '# nothing set', TIGHT: '#note' });
+  });
+
+  it('keeps a # after a tab in the value', () => {
+    expect(parse('TAB=x\t# not a comment\n')).toEqual({ TAB: 'x\t# not a comment' });
+  });
+
+  it('leaves a comment right after the closing quote out of the value', () => {
+    expect(parse('Q="a"#c\nE=""   # empty\n')).toEqual({ Q: 'a', E: '' });
   });
 
   it('trims whitespace from keys and values', () => {

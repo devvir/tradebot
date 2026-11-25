@@ -16,15 +16,21 @@ interface EnvFile {
 const ASSIGNMENT = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_.-]*)\s*=(.*)$/;
 
 /** Nothing, or a comment, after a closing quote. */
-const AFTER_QUOTE = /^(?:\s*|\s+#.*)$/;
+const AFTER_QUOTE = /^\s*(?:#.*)?$/;
 
 const ESCAPES: Record<string, string> = { n: '\n', '"': '"', '\\': '\\' };
 
 /**
- * One value as written after `=`. A value in single quotes is taken as written; one in double
- * quotes has `\n`, `\"` and `\\` unescaped. Either may hold `#`, and may be followed by a comment.
- * An unquoted value ends at a `#` that follows whitespace, as docker compose reads it; a `#` with
- * nothing before it is part of the value.
+ * One value as written after `=`, by docker compose's .env rules.
+ *
+ * - A value in single quotes is taken as written. One in double quotes has `\n`, `\"` and `\\`
+ *   unescaped; any other backslash is kept as written, `\t` included. Either may hold `#`, and may
+ *   be followed by a `#` comment.
+ * - An unquoted value ends at its first ` #` (a value character, a space, then `#`), and is
+ *   trimmed. Any other `#` is part of the value: one after a tab, one with no space before it, and
+ *   one with nothing before it, so `KEY=   # note` sets KEY to `# note`.
+ * - A quote that does not close the value, or is followed by more than a comment, is read as an
+ *   unquoted value.
  */
 function parseValue(raw: string): { value: string; quoted: "'" | '"' | null } {
   const text = raw.trimStart();
@@ -55,8 +61,10 @@ function parseValue(raw: string): { value: string; quoted: "'" | '"' | null } {
     }
   }
 
-  // Unquoted, or a quote that does not close the value: read it as written.
-  return { value: raw.replace(/\s+#.*$/, '').trim(), quoted: null };
+  // Unquoted, or a quote that does not close the value.
+  const comment = text.indexOf(' #');
+
+  return { value: (comment === -1 ? text : text.slice(0, comment)).trimEnd(), quoted: null };
 }
 
 function readEnvFile(filePath: string): EnvFile {
@@ -85,10 +93,11 @@ function readEnvFile(filePath: string): EnvFile {
 }
 
 /**
- * The variables a .env file sets, `{}` for a file that does not exist. Lines are `KEY=value`,
- * optionally prefixed with `export`; blank lines and `#` comment lines are skipped. Values are
- * read as docker compose reads them: see `parseValue` for quoting and inline comments. `${VAR}`
- * references are left as written.
+ * The variables a .env file sets, `{}` for a file that does not exist. Lines are read by docker
+ * compose's .env grammar for `KEY=value` lines, optionally prefixed with `export`; blank lines,
+ * lines whose first non-blank character is `#`, and lines of any other form are skipped. A key set
+ * twice takes its last value. `parseValue` gives the rules for quoting and inline comments.
+ * `${VAR}` references are left as written.
  */
 function parseEnvFile(filePath: string): Record<string, string> {
   return readEnvFile(filePath).values;
