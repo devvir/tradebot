@@ -151,9 +151,13 @@
     "versions": "every=1.0.0",
     "digest": "adb9e2748b39b2fc"
   },
+  "bybit.spot-trades-month.csv": {
+    "versions": "every=1.0.0",
+    "digest": "38390356782fa590"
+  },
   "bybit.spot-trades.csv": {
     "versions": "every=1.0.0",
-    "digest": "1e230b53391ea98e"
+    "digest": "38390356782fa590"
   },
   "gate.futures_btc-candlesticks_1d.csv": {
     "versions": "every=1.0.0",

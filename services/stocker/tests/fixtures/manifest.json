@@ -136,6 +136,10 @@
     "key": "bybit/spot/trades/B/BTCUSDT/202607/bybit|spot|trades|BTCUSDT|20260729.csv.gz"
   },
   {
+    "fixture": "bybit.spot-trades-month.csv",
+    "key": "bybit/spot/trades/B/BTCUSDT/202607/bybit|spot|trades|BTCUSDT|202607.csv.gz"
+  },
+  {
     "fixture": "bybit.mt4-klines.csv",
     "key": "bybit/perp/klines,1h/B/BTCUSDT/202411/bybit|perp|klines,1h|BTCUSDT|202411.csv.gz"
   },

@@ -27,10 +27,10 @@ import type { ArchiveFile, Series } from '../types';
  * - A file whose header can be trusted for the whole of its history is mapped
  *   **by name**, so a column appended later shifts nothing.
  * - Everything else declares every column in published order. That covers files
- *   that never had a header, and equally files that *grew* one partway through
- *   — nine Binance futures datasets did, between 2021-01 and 2022-07. Read
- *   positionally both eras are one shape, and the stray header line resolves to
- *   a NULL timestamp and is dropped by the build.
+ *   that carry no header, and equally series where only some files carry one,
+ *   or where a header names fewer columns than its rows hold. Read positionally
+ *   every file is one shape, and a header line resolves to a NULL timestamp and
+ *   is dropped by the build.
  *
  * Timestamp units are never declared: the unit follows from the value. Where a
  * venue writes a local datetime, its zone is (`utcOffsetHours`).
@@ -276,9 +276,9 @@ const REFERENCE = ['markPrice', 'indexPrice', 'premiumIndex'] as const;
 export const SERIES: Series[] = [
   // ── Binance ─────────────────────────────────────────────────────────────────
   //
-  // Spot files have never carried a header. Futures files gained one between
-  // 2021-01 and 2022-07 depending on the dataset, so all of them are read
-  // positionally and the header line is dropped as an unparseable timestamp.
+  // Spot files carry no header. Futures files carry one on scattered files from
+  // 2020-01 and on every file only from mid-2022, so all of them are read
+  // positionally and a header line is dropped as an unparseable timestamp.
   {
     venue: 'binance', market: 'spot', dataset: 'trades', table: 'trades', ...csv,
     header: false, columns: BINANCE_SPOT_TRADE,
@@ -413,8 +413,9 @@ export const SERIES: Series[] = [
 
   // ── Bybit ───────────────────────────────────────────────────────────────────
   //
-  // Headers throughout, which is what absorbed the `RPI` column both trade
-  // datasets gained in 2025-04 without an entry here changing.
+  // Every series but the MT4 klines carries a header, and all but spot trades
+  // are read by name. Perpetual trades carry `RPI` from 2025-04, which a
+  // name-keyed entry never refers to.
   //
   // `size` is base for USDT and PERP symbols and **quote** for the `USD`
   // inverse ones — checked across 160 symbols by testing `foreignNotional`
@@ -432,9 +433,14 @@ export const SERIES: Series[] = [
     project: { tradeId: 'trdMatchID', price: 'price', size: 'size', quoteSize: 'size', side: SIDE },
     ts: 'timestamp',
   },
+  // Spot trades are read by position. Daily files carry `rpi` as a sixth column
+  // from 2025-03, and monthly files keep the five-name header
+  // `id,timestamp,price,volume,side` over rows of six values, which a read by
+  // name cannot use. Files without `rpi` are short by one and padded.
   {
     venue: 'bybit', market: 'spot', dataset: 'trades', table: 'trades', ...csv,
-    header: true,
+    header: false,
+    columns: [col('id'), col('timestamp'), col('price'), col('volume'), col('side'), drop],
     project: { tradeId: 'id', price: 'price', size: 'volume', baseSize: 'volume', side: SIDE },
     ts: 'timestamp',
   },

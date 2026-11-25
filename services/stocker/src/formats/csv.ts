@@ -34,19 +34,23 @@ const declared = (series: { columns?: { as: string | null }[] }): string[] =>
  * Two ways to read a CSV, chosen per series by whether a header can be relied
  * on across the whole of its history.
  *
- * **By name** (`header: true`) for a venue that has always published one. A
- * column appended later then costs nothing: Bybit added `RPI` to perpetual
- * trades and `rpi` to spot in 2025-04, and a name-keyed projection did not
- * notice.
+ * **By name** (`header: true`) for a series whose every file carries a header
+ * naming every column its rows hold. A column appended later then costs
+ * nothing: Bybit's perpetual trades carry `RPI` from 2025-04, and a name-keyed
+ * projection never refers to it. A header must be as wide as the rows under it:
+ * DuckDB does not take a shorter line as their header, and names the columns
+ * after the first row instead.
  *
  * **By position** (`header: false`) for everything else, with every column
  * declared in published order. That is the only option for a file carrying no
  * header — Binance spot, Gate, Bybit's MT4 klines — and it is also the right one
- * for a file that *grew* a header partway through its history, which nine
- * Binance futures datasets did between 2021-01 and 2022-07. Read positionally,
- * both eras are one shape: the header line in the later files parses as a row
- * whose timestamp is the text `open_time`, resolves to NULL, and is dropped by
- * the build. No boundary date is encoded anywhere.
+ * for a series whose files cannot all be read by name: Binance's futures files,
+ * which carry a header on scattered files from 2020-01 and on every file only
+ * from mid-2022, and Bybit's spot trades, whose monthly files name five columns
+ * over rows of six. Read positionally, every file is one shape: a header line
+ * parses as a row whose timestamp is the text `open_time` or `timestamp`,
+ * resolves to NULL, and is dropped by the build. No boundary date is encoded
+ * anywhere.
  *
  * `null_padding` covers the mirror case — a file from before a column was
  * appended is short, and padding it keeps one declared list valid across the

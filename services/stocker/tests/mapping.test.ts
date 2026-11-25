@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DuckDBInstance } from '@duckdb/node-api';
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
@@ -170,7 +171,7 @@ describe('the map against real files', () => {
 
 describe('shapes that changed mid-history', () => {
   /**
-   * Binance futures files grew a header between 2021-01 and 2022-07. Read
+   * Binance futures files carry a header on some files and not others. Read
    * positionally, the header line becomes a row whose timestamp is the text
    * `time` — unparseable, hence NULL, hence dropped.
    */
@@ -186,12 +187,48 @@ describe('shapes that changed mid-history', () => {
     expect(Number(all.getRows()[0]![0]) - Number(kept.getRows()[0]![0])).toBe(1);
   });
 
-  /** Bybit added `RPI` to perpetual trades in 2025-04; mapping by name ignores it. */
+  /** Bybit's perpetual trades carry `RPI` from 2025-04; mapping by name ignores it. */
   it('is unaffected by a column appended to a headed file', () => {
     const series = resolve(named('bybit.perp-trades.csv'))!;
 
     expect(Object.values(series.project)).not.toContain('RPI');
     expect(series.header).toBe(true);
+  });
+
+  /**
+   * Bybit's monthly spot trades name five columns, `id,timestamp,price,volume,
+   * side`, over rows that carry a sixth, `rpi`. They read as the daily files do,
+   * which name all six.
+   */
+  it('reads bybit\'s monthly spot trades, whose header is one column short of its rows', async () => {
+    const daily   = await rowsOf(resolve(named('bybit.spot-trades.csv'))!, 'bybit.spot-trades.csv', 50);
+    const monthly = await rowsOf(resolve(named('bybit.spot-trades-month.csv'))!, 'bybit.spot-trades-month.csv', 50);
+
+    expect(monthly[0]).toMatchObject({ tradeId: '1', price: 63929.9, size: 0.0045, baseSize: 0.0045, side: 'sell' });
+    expect(monthly).toEqual(daily);
+  });
+
+  /** And the files that carry no `rpi` at all, header and rows five wide, read the same. */
+  it('reads bybit\'s spot trades without the `rpi` column', async () => {
+    const series = resolve(named('bybit.spot-trades.csv'))!;
+    const dir    = mkdtempSync(join(tmpdir(), 'stocker-bybit-spot-'));
+
+    try {
+      const lines = readFileSync(join(DIR, 'bybit.spot-trades.csv'), 'utf8').trim().split('\n');
+      const path  = join(dir, 'narrow.csv');
+
+      writeFileSync(path, `${lines.map(line => line.split(',').slice(0, 5).join(',')).join('\n')}\n`);
+
+      const narrow = await conn.runAndReadAll(
+        `SELECT * FROM (${selectFor(series, csv.relation([path], series))}) WHERE ts IS NOT NULL`);
+
+      expect(narrow.getRows()).toEqual(
+        (await conn.runAndReadAll(`SELECT * FROM (${selectFor(series, csv.relation([join(DIR, 'bybit.spot-trades.csv')], series))}) ` +
+          `WHERE ts IS NOT NULL`)).getRows());
+      expect(narrow.getRows().length).toBe(lines.length - 1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
