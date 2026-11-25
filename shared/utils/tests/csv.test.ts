@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { createCsvParser, rowToCsv } from '../src/csv';
 
 /** Parse CSV text with `createCsvParser` and collect every record. */
-const parseAll = async (text: string, columns: false | true | string[] = true): Promise<unknown[]> => {
-  const parser  = createCsvParser(columns);
+const parseAll = async (text: string, columns: false | true | string[] = true, relaxColumnCount = false): Promise<unknown[]> => {
+  const parser  = createCsvParser(columns, relaxColumnCount);
   const records: unknown[] = [];
 
   parser.on('readable', () => {
@@ -51,6 +51,51 @@ describe('rowToCsv', () => {
 
   it('writes objects as quoted JSON when the JSON needs quoting', () => {
     expect(rowToCsv({ v: [[1, 2], [3, 4]] }, ['v'])).toBe('"[[1,2],[3,4]]"');
+  });
+
+  it('writes objects as bare JSON when the JSON needs no quoting', () => {
+    expect(rowToCsv({ v: [1] }, ['v'])).toBe('[1]');
+  });
+
+  it('writes the columns in the order given, whatever order the row holds them in', () => {
+    expect(rowToCsv({ c: 3, a: 1, b: 2 }, ['b', 'c', 'a'])).toBe('2,3,1');
+  });
+
+  it('writes only the columns given, and an empty field for one the row lacks', () => {
+    expect(rowToCsv({ a: 1, extra: 'x' }, ['a', 'missing'])).toBe('1,');
+  });
+});
+
+describe('createCsvParser', () => {
+  it('reads a multi-line quoted field as one field of one record', async () => {
+    expect(await parseAll('id,text\n1,"first\nsecond\n\nthird"\n2,ok\n')).toEqual([
+      { id: '1', text: 'first\nsecond\n\nthird' },
+      { id: '2', text: 'ok' },
+    ]);
+  });
+
+  it('reads every field as a string', async () => {
+    expect(await parseAll('n,b\n42,true\n')).toEqual([{ n: '42', b: 'true' }]);
+  });
+
+  it('drops empty records', async () => {
+    expect(await parseAll('a\n1\n\n2\n')).toEqual([{ a: '1' }, { a: '2' }]);
+  });
+
+  it('emits records as arrays, header included, with no columns', async () => {
+    expect(await parseAll('a,b\n1,2\n', false)).toEqual([['a', 'b'], ['1', '2']]);
+  });
+
+  it('reads the first record as data with the columns given', async () => {
+    expect(await parseAll('1,2\n', ['a', 'b'])).toEqual([{ a: '1', b: '2' }]);
+  });
+
+  it('refuses a record whose field count is not the column count', async () => {
+    await expect(parseAll('a,b\n1,2,3\n')).rejects.toThrow();
+  });
+
+  it('passes such a record through when the column count is relaxed', async () => {
+    expect(await parseAll('a,b\n1,2\n3\n', false, true)).toEqual([['a', 'b'], ['1', '2'], ['3']]);
   });
 });
 

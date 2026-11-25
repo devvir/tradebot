@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Bindings, Service, Spec } from '@devvir/service-kit';
+import type { Bindings, ProviderSpec, Service, Spec } from '@devvir/service-kit';
+import type { TopologySpec } from '@devvir/rabbitmq';
 
 vi.mock('@devvir/service-kit', () => ({
   default: { create: (config: { spec: Spec; bindings: Bindings }) => config },
@@ -99,5 +100,66 @@ describe('SKFactory message-tracking health', () => {
 
     expect(bindings).toEqual({});
     expect(spec.state).toBeUndefined();
+  });
+});
+
+describe('SKFactory spec', () => {
+  const env = { ...process.env };
+
+  beforeEach(() => {
+    process.env.QUEUE_URL  = 'amqp://queue:5672';
+    process.env.CACHE_URL  = 'redis://cache:6379';
+    process.env.CACHE_PASS = 'secret';
+  });
+
+  afterEach(() => { process.env = { ...env }; });
+
+  const specOf = (factorySpec: Parameters<typeof SKFactory>[0]): Spec =>
+    (SKFactory(factorySpec) as unknown as Tracked).spec;
+
+  it('reaches RabbitMQ at QUEUE_URL through the broker', () => {
+    expect(specOf({ name: 'test', rabbitmq: true }).providers?.rabbitmq)
+      .toMatchObject({ url: 'amqp://queue:5672', useBroker: true });
+  });
+
+  it('reaches Redis at CACHE_URL with CACHE_PASS', () => {
+    expect(specOf({ name: 'test', redis: true }).providers?.redis)
+      .toMatchObject({ url: 'redis://cache:6379', password: 'secret' });
+  });
+
+  it('passes a topology through to RabbitMQ', () => {
+    const topology: TopologySpec = { queues: { trades: {} } };
+
+    expect(specOf({ name: 'test', rabbitmq: { topology } }).providers?.rabbitmq).toMatchObject({ topology });
+    expect(specOf({ name: 'test', rabbitmq: true }).providers?.rabbitmq).not.toHaveProperty('topology');
+  });
+
+  it('keeps the providers the caller names beside its own', () => {
+    const other: ProviderSpec = { url: 'mongodb://elsewhere' };
+    const spec  = specOf({ name: 'test', redis: true, providers: { other } });
+
+    expect(Object.keys(spec.providers ?? {}).sort()).toEqual(['other', 'redis']);
+    expect(spec.providers?.other).toBe(other);
+  });
+
+  it('adds no providers where none is asked for', () => {
+    expect(specOf({ name: 'test' })).not.toHaveProperty('providers');
+  });
+
+  it('lets the caller set the state it would otherwise start from', () => {
+    expect(specOf({ name: 'test', trackMessages: true, state: { messages: 7, mine: 'x' } }).state)
+      .toEqual({ messages: 7, startedAt: null, lastMessageAt: null, mine: 'x' });
+  });
+
+  it('answers health checks on port 3000 unless the caller says otherwise', () => {
+    expect(specOf({ name: 'test' }).healthcheck).toEqual({ port: 3000 });
+    expect(specOf({ name: 'test', healthcheck: false }).healthcheck).toBe(false);
+    expect(specOf({ name: 'test', healthcheck: { port: 4000 } }).healthcheck).toEqual({ port: 4000 });
+  });
+
+  it('passes every other field through as given', () => {
+    const config = { batch: 10 };
+
+    expect(specOf({ name: 'writer', config })).toMatchObject({ name: 'writer', config });
   });
 });

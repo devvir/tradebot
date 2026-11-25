@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { writing } from '../src/db';
 import { dropLens, editLens, lensNamed, putLens } from '../src/store';
 import { scratch, sliceWith } from './db';
 import type { DatabaseSync } from 'node:sqlite';
@@ -100,6 +101,48 @@ describe('removing a lens', () => {
     expect(lensNamed(db, 'cold')).toBeNull();
     expect(db.prepare('SELECT COUNT(*) AS n FROM lens_member').get()).toEqual({ n: 0 });
     expect(dropLens(db, 'cold')).toBe(false);
+  });
+
+  it('keeps the lens and what it let through where the removal cannot finish', () => {
+    const [partition] = sliceWith(db, { venue: 'binance', market: 'spot', dataset: 'trades', grain: 'monthly', bundle: 'instrument' }, ['202001']);
+    const lens        = putLens(db, 'cold', '', '', trades)!;
+
+    db.prepare('INSERT INTO lens_member (lens_id, partition_id) VALUES (?, ?)').run(lens.id, partition!);
+    db.exec("CREATE TRIGGER no_delete BEFORE DELETE ON lens BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END;");
+
+    expect(() => dropLens(db, 'cold')).toThrow(/disk I\/O error/);
+    expect(lensNamed(db, 'cold')).not.toBeNull();
+    expect(db.prepare('SELECT COUNT(*) AS n FROM lens_member').get()).toEqual({ n: 1 });
+  });
+});
+
+describe('a transaction', () => {
+  it('keeps every step of work that finishes', () => {
+    writing(db, () => {
+      putLens(db, 'cold', '', '');
+      putLens(db, 'warm', '', '');
+    });
+
+    expect(db.prepare('SELECT COUNT(*) AS n FROM lens').get()).toEqual({ n: 2 });
+  });
+
+  it('keeps none of the steps of work that throws, and throws what it threw', () => {
+    const failure = new Error('halfway');
+
+    expect(() => writing(db, () => {
+      putLens(db, 'cold', '', '');
+      throw failure;
+    })).toThrow(failure);
+
+    expect(lensNamed(db, 'cold')).toBeNull();
+  });
+
+  it('leaves the database ready for the next one after a rollback', () => {
+    expect(() => writing(db, () => { throw new Error('halfway'); })).toThrow();
+
+    writing(db, () => { putLens(db, 'cold', '', ''); });
+
+    expect(lensNamed(db, 'cold')).not.toBeNull();
   });
 });
 
