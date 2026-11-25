@@ -1,8 +1,6 @@
 # The BitMEX tables
 
 The columns of every table, in the order they are written. This is the header row of each file.
-Taken from the vault service's own definition, `services/vault/src/data/headers.ts`, which is what
-wrote them.
 
 | table | columns |
 |---|---|
@@ -29,5 +27,6 @@ wrote them.
   the next `_date_`, are the rest of that message. `_action_` is the message's action: `partial`,
   `insert`, `update` or `delete`.
 - **The other tables are plain rows**, as REST and the S3 dumps gave them.
-- **How each value is typed** when the vault service reads a file back is in
-  `services/vault/src/data/casts.ts`: the columns it does not list stay strings.
+- **Only `announcement`, `chat` and `publicNotifications` quote their values**, as RFC 4180 does,
+  where a value holds a comma, a double quote or a line break, so one of their records can run over
+  several lines. In every other table no value holds any of those, and a line is a record.

@@ -113,8 +113,7 @@ dataset in the vault.
 
 **Vault.** The folder of monthly Parquet files stocking produces: the curated product of every
 source. In the vault a dataset has one form whatever venue, source, format, grain or bundle it came
-from, so the same data stocked from two partitions is identical. Not the vault service
-(`services/vault`), a separate store of CSV files.
+from, so the same data stocked from two partitions is identical.
 
 **Table.** The vault's canonical name for what a dataset is stocked into, with its columns. It need
 not be the dataset's name: `books` is stocked into book tables such as `orderBook`.

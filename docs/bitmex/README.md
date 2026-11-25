@@ -39,7 +39,8 @@ Four sources, each for what the one before it could not give:
 ```
 
 - **A file is a day of a table**, gzip-compressed CSV, its first row the header. The columns of each
-  table are in [TABLES.md](TABLES.md).
+  table are in [TABLES.md](TABLES.md). A file can be several gzip members one after another, which
+  a gzip reader reads as one stream.
 - **A day is the UTC day of the event**, not of its reception — see below.
 - **A name with a second part, `<yyyymmdd>.<suffix>.csv.gz`, is a source and not the day's file**: one
   collector's copy of that day, kept beside the file that was made from it. The suffixes are listed
@@ -47,8 +48,6 @@ Four sources, each for what the one before it could not give:
 - **A dotted table holds part of the table before the dot**, in a directory of its own:
   `orderBookL2.secondary` is the order book of the Secondary pool, with `orderBookL2` holding the
   Primary one.
-
-The store that wrote this layout is the vault service: [VAULT.md](../services/VAULT.md).
 
 ### Source suffixes
 

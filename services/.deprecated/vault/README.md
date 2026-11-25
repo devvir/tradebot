@@ -4,7 +4,7 @@ An HTTP file store for date-partitioned BitMEX CSV data. It accepts rows over HT
 gzip CSV files, and manages each file's open → closed lifecycle. It is not the Parquet vault.
 
 Deployed by: no module.
-How it works: [docs/services/VAULT.md](../../docs/services/VAULT.md).
+How it works: [VAULT.md](VAULT.md).
 
 ## Core Functionality
 

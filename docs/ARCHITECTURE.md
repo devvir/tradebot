@@ -113,7 +113,4 @@ No module deploys these services:
   ([ROUTER.md](services/ROUTER.md));
 - **pipe**, which declares RabbitMQ exchange-to-exchange bindings and exits
   ([README](../services/pipe/README.md));
-- **the vault service**, a date-partitioned CSV file store, not the Parquet vault
-  ([VAULT.md](services/VAULT.md)); the dataset in its layout is described in
-  [bitmex/README.md](bitmex/README.md);
 - **the UI stub**, a trading dashboard kept as a stub ([README](../services/_stub/ui/README.md)).

@@ -1,12 +1,13 @@
 # The vault service
 
-The vault service (`services/vault`) is a date-partitioned HTTP file store for BitMEX CSV data. It
-accepts rows over HTTP, buffers them in memory, and appends them to disk as gzip members. A complete
-pre-built file can be stored in one request instead. Closed files are read back as NDJSON.
+The vault service (`services/.deprecated/vault`) is a date-partitioned HTTP file store for BitMEX
+CSV data. It accepts rows over HTTP, buffers them in memory, and appends them to disk as gzip
+members. A complete pre-built file can be stored in one request instead. Closed files are read back
+as NDJSON.
 
 It is not a database and has no query capability. It is not the Parquet vault either (see
-[VOCABULARY.md](../VOCABULARY.md)). The BitMEX dataset it holds is described in
-[docs/bitmex/README.md](../bitmex/README.md).
+[VOCABULARY.md](../../../docs/VOCABULARY.md)). The BitMEX dataset it holds is described in
+[docs/bitmex/README.md](../../../docs/bitmex/README.md).
 
 ---
 
