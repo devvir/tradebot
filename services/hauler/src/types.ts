@@ -195,6 +195,9 @@ export interface Walked {
   /** The walk stopped taking files because the archives' volume ran low. */
   full:       boolean;
 
+  /** The listing ended early: the catalog failed a page after the first, and what was listed was walked. */
+  cut:        boolean;
+
   /** The venue owed nothing: the catalog's first page was empty, and the last. */
   nothingOwed: boolean;
 }

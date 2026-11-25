@@ -39,7 +39,7 @@ vi.mock('node:fs/promises', async (actual) => {
   };
 });
 
-const { walkVenue, _test_safe, _test_lookAgain } = await import('../src/venue');
+const { walkVenue, _test_safe, _test_lookAgain, _test_turns } = await import('../src/venue');
 const { _test_forgetRefusal } = await import('../src/store');
 const { setHosts } = await import('../src/hosts');
 const { halt, page, venues, _test_unhalt } = await import('../src/catalog');
@@ -75,6 +75,20 @@ let heavyMost:   number;
 let lightServed: number;
 let lightBefore: number | null;
 
+/** When the first slow large file was done, and when the first small file of a later page was served, from the walk's start. */
+let walkStart:   number;
+let slowDoneAt:  number | null;
+let nextPageAt:  number | null;
+
+/** Large files refused before they are served, and those served in flight at once. */
+let laterRefusals: number;
+let laterFlying:   number;
+let laterMost:     number;
+let laterServed:   number;
+
+/** Nothing held or waited for by any walk: what every walk leaves behind it. */
+const NO_TURNS = { flying: 0, queued: 0, flyingLarge: 0, queuedLarge: 0, largeFreed: 0 };
+
 const KEYS = ['binance/a/1.zip', 'binance/a/2.zip', 'binance/b/3.zip'];
 const SIZED = ['sized/a/0.zip', 'sized/a/1.zip', 'sized/a/2.zip', 'sized/a/3.zip'];
 const DIFFERS = 'differs/a/0.zip';
@@ -98,6 +112,9 @@ beforeEach(async () => {
   outAsked = inFlight = peak = 0;
   heavyBegun = heavyFlying = heavyMost = lightServed = 0;
   lightBefore = null;
+  walkStart = Date.now();
+  slowDoneAt = nextPageAt = null;
+  laterRefusals = laterFlying = laterMost = laterServed = 0;
 
   server = createServer((req, res) => {
     const url = new URL(req.url!, 'http://x');
@@ -141,6 +158,23 @@ beforeEach(async () => {
       if (++heavyBegun === 7) lightBefore = lightServed;
       heavyMost = Math.max(heavyMost, ++heavyFlying);
       setTimeout(() => { heavyFlying--; res.writeHead(200); res.end('x'); }, 200);
+      return;
+    }
+
+    // Large files that take a while, and small files of a page listed after them.
+    if (url.pathname.startsWith('/files/slow/')) {
+      setTimeout(() => { slowDoneAt ??= Date.now() - walkStart; res.writeHead(200); res.end('x'); }, 600);
+      return;
+    }
+
+    if (url.pathname.startsWith('/files/next/')) { nextPageAt ??= Date.now() - walkStart; res.writeHead(200); res.end(url.pathname); return; }
+
+    // Large files whose server turns the first six requests away for a second, and then serves each a moment.
+    if (url.pathname.startsWith('/files/later/')) {
+      if (laterRefusals > 0) { laterRefusals--; res.writeHead(429, { 'retry-after': '1' }); res.end(); return; }
+
+      laterMost = Math.max(laterMost, ++laterFlying);
+      setTimeout(() => { laterFlying--; laterServed++; res.writeHead(200); res.end('x'); }, 100);
       return;
     }
 
@@ -200,6 +234,18 @@ beforeEach(async () => {
       return;
     }
 
+    // A listing the catalog refuses from its second page on.
+    if (url.searchParams.get('prefix') === 'cut/') {
+      if (url.searchParams.get('marker') !== null) { res.writeHead(422); res.end('no such lens'); return; }
+
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        Name: 'catalog', Prefix: 'cut/', Marker: '', MaxKeys: 2, IsTruncated: true, NextMarker: 'cut/a/1.zip',
+        Contents: ['cut/a/0.zip', 'cut/a/1.zip'].map(Key => ({ Key, Path: `files/${Key}`, Host: '' })),
+      }));
+      return;
+    }
+
     // A listing the catalog refuses outright.
     if (url.searchParams.get('prefix') === 'refused/') { res.writeHead(422); res.end('no such lens'); return; }
 
@@ -238,6 +284,51 @@ beforeEach(async () => {
 
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ Name: 'catalog', Prefix: 'mixed/', Marker: '', MaxKeys: 1000, IsTruncated: false, Contents: [...heavy, ...light] }));
+      return;
+    }
+
+    // A venue of two servers, the files of one listed among the other's.
+    if (url.searchParams.get('prefix') === 'two/') {
+      const fine = (at: number) => ({ Key: `two/spot/trades/B/ETH/202001/y-${at}`, Path: `files/two/y-${at}`, Host: 'fine' });
+      const out  = (at: number) => ({ Key: `two/spot/trades/B/BTC/202001/x-${at}`, Path: `files/out/x-${at}`, Host: 'away' });
+
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        Name: 'catalog', Prefix: 'two/', Marker: '', MaxKeys: 1000, IsTruncated: false,
+        Contents: [out(0), ...[0, 1, 2, 3, 4].map(fine), out(1), ...[5, 6, 7, 8, 9].map(fine)],
+      }));
+      return;
+    }
+
+    // A page of slow large files, then — a moment later — a page of small ones.
+    if (url.searchParams.get('prefix') === 'paged/') {
+      const marker = url.searchParams.get('marker');
+      const answer = (Contents: object[], more: boolean) => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({
+          Name: 'catalog', Prefix: 'paged/', Marker: marker ?? '', MaxKeys: 1000, IsTruncated: more,
+          ...(more ? { NextMarker: 'paged/spot/trades/B/BTC/202001/h-9' } : {}), Contents,
+        }));
+      };
+
+      if (marker === null) answer(Array.from({ length: 10 }, (_, at) => ({
+        Key: `paged/spot/trades/B/BTC/202001/h-${at}`, Path: `files/slow/h-${at}`, Host: '', Size: 60 * 1024 ** 2,
+      })), true);
+      else setTimeout(() => answer(Array.from({ length: 10 }, (_, at) => ({
+        Key: `paged/spot/trades/B/ETH/202001/l-${at}`, Path: `files/next/l-${at}`, Host: '', Size: `/files/next/l-${at}`.length,
+      })), false), 50);
+      return;
+    }
+
+    // Large files whose server first turns them away.
+    if (url.searchParams.get('prefix') === 'later/') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        Name: 'catalog', Prefix: 'later/', Marker: '', MaxKeys: 1000, IsTruncated: false,
+        Contents: Array.from({ length: 10 }, (_, at) => ({
+          Key: `later/spot/trades/B/BTC/202001/f-${at}`, Path: `files/later/f-${at}`, Host: '', Size: 60 * 1024 ** 2,
+        })),
+      }));
       return;
     }
 
@@ -310,7 +401,7 @@ describe('a walk', () => {
   it('fetches every object of every page to its key, and reports each page', async () => {
     const walked = await walkVenue('binance', () => false);
 
-    expect(walked).toEqual({ listed: 3, progressed: 3, failed: 0, mismatched: 0, unreached: 0, full: false, nothingOwed: false });
+    expect(walked).toEqual({ listed: 3, progressed: 3, failed: 0, mismatched: 0, unreached: 0, full: false, cut: false, nothingOwed: false });
 
     for (const key of KEYS) expect(readFileSync(join(cfg.archivesDir, key), 'utf8')).toBe(`/files/${key}`);
 
@@ -388,7 +479,7 @@ describe('a walk', () => {
 
   it('says so where the venue owes nothing', async () => {
     expect(await walkVenue('empty', () => false)).toEqual({
-      listed: 0, progressed: 0, failed: 0, mismatched: 0, unreached: 0, full: false, nothingOwed: true,
+      listed: 0, progressed: 0, failed: 0, mismatched: 0, unreached: 0, full: false, cut: false, nothingOwed: true,
     });
     expect(reports).toEqual([]);
   });
@@ -397,14 +488,14 @@ describe('a walk', () => {
   it('asks again when the catalog drops the connection', async () => {
     drops = 1;
 
-    expect(await walkVenue('binance', () => false)).toEqual({ listed: 3, progressed: 3, failed: 0, mismatched: 0, unreached: 0, full: false, nothingOwed: false });
+    expect(await walkVenue('binance', () => false)).toEqual({ listed: 3, progressed: 3, failed: 0, mismatched: 0, unreached: 0, full: false, cut: false, nothingOwed: false });
   });
 
   /** A 5xx is the catalog away, not a verdict: waited for, and the walk carries on. */
   it('waits for a catalog that cannot answer, and loses nothing', async () => {
     failing = 2;
 
-    expect(await walkVenue('binance', () => false)).toEqual({ listed: 3, progressed: 3, failed: 0, mismatched: 0, unreached: 0, full: false, nothingOwed: false });
+    expect(await walkVenue('binance', () => false)).toEqual({ listed: 3, progressed: 3, failed: 0, mismatched: 0, unreached: 0, full: false, cut: false, nothingOwed: false });
     expect(reports).toHaveLength(2);
   });
 
@@ -416,7 +507,7 @@ describe('a walk', () => {
       // Asked to stop the moment the first file has been served.
       const walked = await walkVenue('binance', () => served > 0);
 
-      expect(walked).toEqual({ listed: 2, progressed: 1, failed: 0, mismatched: 0, unreached: 0, full: false, nothingOwed: false });
+      expect(walked).toEqual({ listed: 2, progressed: 1, failed: 0, mismatched: 0, unreached: 0, full: false, cut: false, nothingOwed: false });
       expect(reports).toEqual([{ downloaded: [KEYS[0]], failed: [], mismatched: [] }]);
     } finally {
       cfg.concurrency = 2;
@@ -462,6 +553,50 @@ describe('a walk', () => {
       expect(lightBefore).toBe(20);
       expect(heavyBegun).toBe(20);
       expect(heavyMost).toBe(6);
+    } finally {
+      cfg.concurrency = 2;
+    }
+  });
+
+  /** Small files listed after a page of large ones are taken as soon as they are listed, not once a large one is done. */
+  it('takes the small files of a later page while the large files of an earlier one wait their turn', async () => {
+    cfg.concurrency = 10;
+    setHosts('paged', { '': [`${cfg.catalogApi}/`] });
+
+    try {
+      walkStart = Date.now();
+
+      expect(await walkVenue('paged', () => false)).toMatchObject({ listed: 20, unreached: 0 });
+      expect(nextPageAt).not.toBeNull();
+      expect(slowDoneAt).not.toBeNull();
+      expect(nextPageAt!).toBeLessThan(slowDoneAt!);
+      expect(_test_turns()).toEqual(NO_TURNS);
+    } finally {
+      cfg.concurrency = 2;
+    }
+  });
+
+  /** A large file that must wait gives its turn for one back, and takes one again before it goes on: never more than six, and none lost. */
+  it('fetches large files six at a time through a server turning them away, and leaves every turn as it found it', async () => {
+    cfg.concurrency = 20;
+    laterRefusals = 6;
+    setHosts('later', { '': [`${cfg.catalogApi}/`] });
+    setHosts('big', { '': [`${cfg.catalogApi}/`] });
+
+    // No wait between attempts but the one the server asks for.
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+
+    try {
+      expect(await walkVenue('later', () => false)).toMatchObject({ listed: 10, mismatched: 10, unreached: 0 });
+      expect(laterRefusals).toBe(0);
+      expect(laterServed).toBe(10);
+      expect(laterMost).toBeLessThanOrEqual(6);
+      expect(_test_turns()).toEqual(NO_TURNS);
+
+      // A later walk has every turn for a large file there was.
+      expect(await walkVenue('big', () => false)).toMatchObject({ listed: 18 });
+      expect(most).toBe(6);
+      expect(_test_turns()).toEqual(NO_TURNS);
     } finally {
       cfg.concurrency = 2;
     }
@@ -541,7 +676,7 @@ describe('a file that cannot be hauled', () => {
     _test_lookAgain();
 
     try {
-      expect(await walkVenue('binance', () => false)).toMatchObject({ listed: 3, progressed: 3, unreached: 0, full: false, nothingOwed: false });
+      expect(await walkVenue('binance', () => false)).toMatchObject({ listed: 3, progressed: 3, unreached: 0, full: false, cut: false, nothingOwed: false });
     } finally {
       _test_lookAgain();
     }
@@ -604,6 +739,25 @@ describe('a venue whose server turns every request away', () => {
     expect(peak).toBeLessThanOrEqual(2);
   });
 
+  /** A server out of rotation holds up its own files, and not those of the venue's other servers listed behind them. */
+  it('takes the files of its other servers meanwhile', async () => {
+    cfg.concurrency = 4;
+    setHosts('two', { away: [`${cfg.catalogApi}/`], fine: [`${cfg.catalogApi}/`] });
+
+    const since = Date.now();
+
+    try {
+      const walked = await walkVenue('two', () => served >= 10 || Date.now() - since > 2_500);
+
+      expect(served).toBe(10);
+      expect(Date.now() - since).toBeLessThan(2_500);
+      expect(walked).toMatchObject({ progressed: 10, failed: 0, mismatched: 0 });
+      expect(_test_turns()).toEqual(NO_TURNS);
+    } finally {
+      cfg.concurrency = 2;
+    }
+  });
+
   /** A stop is not held up by a refusal it would take a minute to wait out. */
   it('ends promptly when stopped while it waits, its files left owed', async () => {
     outFor = '60';
@@ -632,6 +786,14 @@ describe('the catalog', () => {
   /** A `4xx` is the catalog's answer, and not one to wait out. */
   it('refusing the listing fails the walk with what it said', async () => {
     await expect(walkVenue('refused', () => false)).rejects.toThrow(/422/);
+  });
+
+  /** Past the first page, what was listed is walked; the walk says it was cut short, since it says nothing of the rest. */
+  it('refusing a later page ends the walk with what was listed, cut short', async () => {
+    setHosts('cut', { '': [`${cfg.catalogApi}/`] });
+
+    expect(await walkVenue('cut', () => false)).toMatchObject({ listed: 2, progressed: 2, full: false, cut: true });
+    expect(reports).toHaveLength(1);
   });
 
   /** The files a lost report named are listed again on the next walk, found on disk, and reported then. */

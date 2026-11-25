@@ -24,12 +24,14 @@ import type { BucketObject, BucketPage, Haulable, Hauled, Leaf, Pacing, Walked }
  * **Large files are taken as their turns allow, and the rest meanwhile.** A
  * large file listed when every turn for large files is taken is set aside, and
  * the files behind it are taken; the ones set aside go first once a turn for
- * them is free, and are waited for only where nothing else is ready.
+ * them is free, and are waited for only where nothing else is ready — a page
+ * listed meanwhile is taken at once.
  *
  * **A server turning every request away is waited out holding no turn.** Its
- * files wait for one of its addresses to be back, and a file that must wait
- * once begun gives its turns back while it waits: the budget goes to whoever
- * can use it, of this venue or any other.
+ * files are set aside until one of its addresses is back, and the files of the
+ * venue's other servers are taken meanwhile; a file that must wait once begun
+ * gives its turns back while it waits: the budget goes to whoever can use it,
+ * of this venue or any other.
  *
  * **Stopping takes no new file**: the files in flight finish, for as long as
  * the process is given, and every page reports what it got through, so nothing
@@ -47,12 +49,19 @@ import type { BucketObject, BucketPage, Haulable, Hauled, Leaf, Pacing, Walked }
  */
 export const walkVenue = async (venue: string, stopped: () => boolean): Promise<Walked> => {
   const walked: Walked = {
-    listed: 0, progressed: 0, failed: 0, mismatched: 0, unreached: 0, full: false, nothingOwed: false,
+    listed: 0, progressed: 0, failed: 0, mismatched: 0, unreached: 0, full: false, cut: false, nothingOwed: false,
   };
   const queue: Queued[] = [];
 
   /** Large files taken from the queue while every turn for one was taken: first to go once one is free. */
   const parked: Queued[] = [];
+
+  /** Files of a server with every address out of rotation, by server, and how many: taken again once one is back. */
+  const aside = new Map<string, Queued[]>();
+  let away    = 0;
+
+  /** Files listed and not yet taken, wherever they wait. */
+  const ahead = (): number => queue.length + parked.length + away;
 
   const open  = new Set<Leaf>();
   const waiting: (() => void)[] = [];
@@ -82,7 +91,7 @@ export const walkVenue = async (venue: string, stopped: () => boolean): Promise<
 
     if (leaf.size > 0)
       logger.info({
-        venue, page: ++pages, ...walked, more: (listing || queue.length + parked.length > 0) && ! walked.full,
+        venue, page: ++pages, ...walked, more: (listing || ahead() > 0) && ! walked.full,
       }, 'Page done');
   };
 
@@ -116,7 +125,7 @@ export const walkVenue = async (venue: string, stopped: () => boolean): Promise<
 
         if (! after) return;
 
-        while (queue.length + parked.length > AHEAD * current.MaxKeys && ! done()) await rest();
+        while (ahead() > AHEAD * current.MaxKeys && ! done()) await rest();
       }
     } finally {
       listing = false;
@@ -128,8 +137,22 @@ export const walkVenue = async (venue: string, stopped: () => boolean): Promise<
    * The next file to take: one set aside, where a turn for a large file is
    * free, and otherwise the next listed — a large one setting itself aside
    * where no such turn is free. A large file taken holds its turn for one.
+   * The files of a server back in rotation are first in line again.
    */
   const take = (): Queued | null => {
+    const now  = Date.now();
+    const back: Queued[] = [];
+
+    for (const [server, files] of aside) if (readyAt(venue, server) <= now) {
+      aside.delete(server);
+      back.push(...files);
+    }
+
+    if (back.length > 0) {
+      away -= back.length;
+      queue.unshift(...back);
+    }
+
     if (parked.length > 0 && tryLargeTurn()) return parked.shift()!;
 
     for (let next = queue.shift(); next; next = queue.shift()) {
@@ -153,10 +176,45 @@ export const walkVenue = async (venue: string, stopped: () => boolean): Promise<
     stir();
   };
 
-  /** Wait while every address of a server is out of rotation, waking within a second once the walk is done. */
-  const whileOut = async (server: string): Promise<void> => {
-    for (let left = readyAt(venue, server) - Date.now(); left > 0 && ! done(); left = readyAt(venue, server) - Date.now())
-      await new Promise(wake => setTimeout(wake, Math.min(left, WAKE_MS)));
+  /** A file taken and not begun whose server has every address out: set aside with that server's, its turn for a large file given back. */
+  const setAside = (next: Queued, server: string): void => {
+    if (isLarge(next)) handBackLarge();
+
+    const files = aside.get(server);
+
+    if (files) files.push(next);
+    else aside.set(server, [next]);
+
+    away++;
+  };
+
+  /**
+   * Wait for something to take: a page listed, a turn for a large file given
+   * back, or an address back in rotation for a file set aside. Where anything
+   * waits to be taken, looked at again within a second, so that a walk done is
+   * seen.
+   */
+  const idle = async (): Promise<void> => {
+    let wake = (): void => undefined;
+
+    const woken = new Promise<void>(resolve => { wake = resolve; });
+
+    waiting.push(wake);
+
+    if (parked.length > 0) largeFreed.push(wake);
+
+    const soonest = Math.min(...[...aside.keys()].map(server => readyAt(venue, server)));
+    const timer   = parked.length + away > 0
+      ? setTimeout(wake, Math.max(0, Math.min(soonest - Date.now(), WAKE_MS)))
+      : undefined;
+
+    try {
+      await woken;
+    } finally {
+      clearTimeout(timer);
+      unlist(waiting, wake);
+      unlist(largeFreed, wake);
+    }
   };
 
   const worker = async (): Promise<void> => {
@@ -168,24 +226,13 @@ export const walkVenue = async (venue: string, stopped: () => boolean): Promise<
         return;
       }
 
-      let next = take();
+      const next = take();
 
-      // Nothing else to take meanwhile: a large file set aside waits for its turn.
-      if (! next && parked.length > 0) {
-        await largeTurn();
-
-        next = parked.shift() ?? null;
-
-        if (! next) {
-          handBackLarge();
-          continue;
-        }
-      }
-
+      // Nothing to take now: whatever is set aside, or still to be listed, is waited for.
       if (! next) {
-        if (! listing) return;
+        if (! listing && parked.length + away === 0) return;
 
-        await rest();
+        await idle();
         continue;
       }
 
@@ -204,9 +251,7 @@ export const walkVenue = async (venue: string, stopped: () => boolean): Promise<
       const server = object.Host ?? '';
 
       if (readyAt(venue, server) > Date.now()) {
-        putBack(next);
-
-        await whileOut(server);
+        setAside(next, server);
         continue;
       }
 
@@ -277,7 +322,11 @@ export const walkVenue = async (venue: string, stopped: () => boolean): Promise<
 
   // A listing that failed before anything was listed is a walk that failed; later, the walk got as far as it got.
   if (failed && open.size === 0 && pages === 0) throw failed;
-  if (failed) logger.warn({ venue, err: failed }, 'Listing ended early');
+  if (failed) {
+    walked.cut = true;
+
+    logger.warn({ venue, err: failed }, 'Listing ended early');
+  }
 
   // What a stop or a full volume left part-done still reports what it got through;
   // a page held ready and never begun was not walked at all.
@@ -358,11 +407,29 @@ const tryLargeTurn = (): boolean => {
   return true;
 };
 
+/** Walks with large files set aside and nothing else to take, woken when a turn for one is given back to nobody. */
+const largeFreed: (() => void)[] = [];
+
+/** Give the turn for a large file to whoever has waited longest for it, or back, waking the walks that could take it. */
 const handBackLarge = (): void => {
   const next = queuedLarge.shift();
 
-  if (next) next();
-  else flyingLarge--;
+  if (next) {
+    next();
+
+    return;
+  }
+
+  flyingLarge--;
+
+  for (const wake of largeFreed.splice(0)) wake();
+};
+
+/** Take one out of a list of wakers, where it is still in it. */
+const unlist = (list: (() => void)[], one: () => void): void => {
+  const at = list.indexOf(one);
+
+  if (at >= 0) list.splice(at, 1);
 };
 
 /** Give the turn to whoever has waited longest, or back to the budget. */
@@ -475,3 +542,8 @@ export const _test_safe = safe;
 
 /** Look at the volume afresh, where a test has just changed what counts as low. */
 export const _test_lookAgain = (): void => { looked = { at: 0, low: false }; };
+
+/** Turns held and waited for across every walk: all nothing once no walk runs. */
+export const _test_turns = () => ({
+  flying, queued: queued.length, flyingLarge, queuedLarge: queuedLarge.length, largeFreed: largeFreed.length,
+});

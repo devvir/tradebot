@@ -60,8 +60,8 @@ export interface Runner {
  * **What is held for the catalog to rule on is let go of when it is no longer
  * owed.** Everything held of a venue is dropped after a walk whose venue owed
  * nothing; what was held walks ago and not listed since is dropped after a walk
- * that went through everything owed — not one cut short by a stop or a full
- * volume, which says nothing of what it did not reach.
+ * that went through everything owed — not one cut short by a stop, a full
+ * volume or a listing that ended early, which says nothing of what it did not reach.
  *
  * **A stop gives the files in flight `flightMs`, and no longer.** No new file is
  * taken, the catalog is no longer waited for, and the downloads already running
@@ -105,7 +105,7 @@ export const makeRunner = (deps: RunnerOf): Runner => {
             'Round finished');
 
         const dropped = walked.nothingOwed ? await deps.dropHeld(venue)
-          : ! walked.full && ! stopping ? await deps.dropStale(venue)
+          : ! walked.full && ! walked.cut && ! stopping ? await deps.dropStale(venue)
           : 0;
 
         if (dropped > 0)

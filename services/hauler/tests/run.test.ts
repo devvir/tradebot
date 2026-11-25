@@ -25,7 +25,7 @@ const FLIGHT = 15_000;
 const RETRY  = 60_000;
 
 const walked = (over: Partial<Walked> = {}): Walked =>
-  ({ listed: 0, progressed: 0, failed: 0, mismatched: 0, unreached: 0, full: false, nothingOwed: false, ...over });
+  ({ listed: 0, progressed: 0, failed: 0, mismatched: 0, unreached: 0, full: false, cut: false, nothingOwed: false, ...over });
 
 /** A runner whose walks answer `walks` in turn, the last one for every walk after. */
 const runnerOf = (walks: ((stopped: () => boolean) => Promise<Walked>)[], over: Partial<RunnerOf> = {}) => {
@@ -253,6 +253,13 @@ describe('a download held for the catalog to rule on', () => {
     const full = () => walked({ full: true });
 
     expect(await walkThrough([() => walked({ listed: 1, mismatched: 1 }), full, full, full, full])).toEqual([true, true, true, true, true]);
+    expect(taken(one)?.path).toBe(join(cfg.archivesDir, key));
+  });
+
+  it('is kept through walks whose listing ended early, which say nothing of what they did not list', async () => {
+    const cut = () => walked({ listed: 2, progressed: 2, cut: true });
+
+    expect(await walkThrough([() => walked({ listed: 1, mismatched: 1 }), cut, cut, cut, cut])).toEqual([true, true, true, true, true]);
     expect(taken(one)?.path).toBe(join(cfg.archivesDir, key));
   });
 });
