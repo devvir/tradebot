@@ -33,10 +33,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-.nx/cache
-.nx/workspace-data
 vitest.config.*.timestamp*
-.nx/polygraph
 .claude/settings.json
 
 # Prospector: when each venue walks, per deployment

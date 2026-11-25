@@ -91,8 +91,7 @@ sudo mkdir -p <dir> && sudo chown 1000:1000 <dir>
   in the prod image leaves out what an ignore file of the package names, and some name `dist/`;
 - environment files: `.env` and `.env.*` at any depth, except `.env.example`;
 - host build output, rebuilt in the image: `node_modules`, `dist`, `coverage`, `*.tsbuildinfo`,
-  `.pnpm-store`, `.turbo`, `.nx`, vitest timestamp files;
-- Python caches: `.venv`, `__pycache__`;
+  `.pnpm-store`, `.turbo`, vitest timestamp files;
 - retired code: `.deprecated` at any depth;
 - editor files, `.prettier*`, `.eslint*`, `.github/`, CI files, `TODO.md`, `LICENSE`;
 - the root `docs/` directory and the root `README.md`.

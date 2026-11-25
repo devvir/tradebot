@@ -22,12 +22,7 @@
 
 # Build artifacts & caches
 **/.turbo
-**/.nx
 **/vitest.config.*.timestamp*
-
-# Python artifacts
-**/.venv
-**/__pycache__
 
 # Retired code
 **/.deprecated
