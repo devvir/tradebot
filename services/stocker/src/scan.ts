@@ -958,9 +958,13 @@ const stock = async (
     } finally {
       slices.forget(key);
 
-      // In the vault, nothing of the build is kept; stopped short of it, the pieces that are built are.
-      if (failure) await keepPieces(staging);
-      else await rm(staging, { recursive: true, force: true });
+      /**
+       * In the vault, nothing of the build is kept; stopped short of it, the
+       * pieces that are built are. Clearing staging never changes how the
+       * partition went: what it leaves is scratch, cleared at the next start.
+       */
+      await (failure ? keepPieces(staging) : rm(staging, { recursive: true, force: true }))
+        .catch((err: unknown) => logger.warn({ err, partition: labelOf(key) }, 'Could not clear staging'));
 
       spent.place = Date.now() - entered - spent.join;
     }

@@ -10,16 +10,18 @@ it is mapped: [docs/services/STOCKER-PARTITIONS.md](../../docs/services/STOCKER-
 
 ## Storage
 
-Two mounts. Compose refuses to start without either.
+Two mounts. Each host directory is its own variable where set, and otherwise under `DATA_DIR`;
+compose refuses to start while `DATA_DIR` is unset and either mount's own variable is too.
 
 | Host directory | In the container | Access |
 |---|---|---|
-| `DATA_ARCHIVES_DIR` | `/data/archives` | read-only |
-| `DATA_VAULT_DIR` | `/data/vault` | read-write. The container runs as uid 1000, so the directory must exist and be writable by it |
+| `DATA_ARCHIVES_DIR`, by default `${DATA_DIR}/archives` | `/data/archives` | read-only |
+| `DATA_VAULT_DIR`, by default `${DATA_DIR}/vault` | `/data/vault` | read-write. The container runs as uid 1000, so the directory must exist and be writable by it |
 
 ```bash
-sudo mkdir -p "$DATA_VAULT_DIR"
-sudo chown 1000:1000 "$DATA_VAULT_DIR"
+dir="${DATA_VAULT_DIR:-$DATA_DIR/vault}"
+sudo mkdir -p "$dir"
+sudo chown 1000:1000 "$dir"
 ```
 
 At startup the service checks that the archives can be read and the vault written, and stops with
@@ -42,8 +44,9 @@ Scratch sits on the vault's volume, never in the system temp directory, so every
 
 | Variable | Default | Description |
 |---|---|---|
-| `DATA_ARCHIVES_DIR` | _(required)_ | Host archives directory, mounted read-only at `/data/archives`. Set in the root `.env` |
-| `DATA_VAULT_DIR` | _(required)_ | Host vault directory, mounted at `/data/vault`. Set in the root `.env` |
+| `DATA_DIR` | _(none)_ | Host data root the two mounts default under. Compose needs it unless both of the two below are set |
+| `DATA_ARCHIVES_DIR` | `${DATA_DIR}/archives` | Host archives directory, mounted read-only at `/data/archives`. An override: unset, it is under `DATA_DIR` |
+| `DATA_VAULT_DIR` | `${DATA_DIR}/vault` | Host vault directory, mounted at `/data/vault`. An override: unset, it is under `DATA_DIR` |
 | `CATALOG_API` | `http://catalog:8080` | Where the catalog answers |
 | `CATALOG_TOKEN` | _(none)_ | The catalog's shared secret, sent as `x-catalog-token` |
 | `STOCKER_LENS` | _(none)_ | The lens the catalog is read through, sent as `x-catalog-lens`; none reads the whole catalog |

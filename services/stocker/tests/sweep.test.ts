@@ -20,6 +20,13 @@ import {
 import type { DuckDBConnection } from '@duckdb/node-api';
 import type { ListedSlice } from '../src/types';
 
+/** The real `rm` throughout, so a test can make one removal fail. */
+vi.mock('node:fs/promises', async (original) => {
+  const real = await original<typeof import('node:fs/promises')>();
+
+  return { ...real, rm: vi.fn(real.rm) };
+});
+
 /**
  * Whole sweeps, against a fake archives tree and a catalog answered by a stub:
  * what gets stocked and in which form, what reads as current, what restocks,
@@ -1053,6 +1060,59 @@ describe('a sweep that meets a failure', () => {
     expect(await stocked()).toEqual(['@/202606.parquet']);
     expect(logged(logger.error)).toContain('Stocking failed');
     await vi.waitFor(() => expect(held()).toBe(baseline));
+  });
+
+  /** Staging that cannot be cleared once a placement has failed: the partition has failed once, and is said to once. */
+  it('counts a failed placement once where its staging cannot be cleared after it', async () => {
+    await place('gate.futures_usdt-trades.csv', key('BTC_USDT'));
+
+    const real    = build.keepPieces;
+    const placing = vi.spyOn(vault, 'publishBundle').mockRejectedValueOnce(Object.assign(new Error('EIO'), { code: 'EIO' }));
+    const kept    = vi.spyOn(build, 'keepPieces')
+      .mockImplementationOnce(real)
+      .mockRejectedValueOnce(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
+
+    try {
+      expect(await sweep(conns)).toMatchObject({ built: 0, failed: 1 });
+      expect(kept).toHaveBeenCalledTimes(2);
+    } finally {
+      placing.mockRestore();
+      kept.mockRestore();
+    }
+
+    expect(logged(logger.error).filter(said => said === 'Stocking failed')).toHaveLength(1);
+    expect(logged(logger.warn)).toContain('Could not clear staging');
+  });
+
+  /** Staging that cannot be cleared once a partition is in the vault: it is stocked, and counted so. */
+  it('counts a partition in the vault as built where its staging cannot be cleared after it', async () => {
+    await place('gate.futures_usdt-trades.csv', key('BTC_USDT'));
+
+    const stage  = join(config.vaultDir, SCRATCH, 'stage');
+    const real   = vi.mocked(rm).getMockImplementation()!;
+    const failed = vi.fn();
+
+    vi.mocked(rm).mockImplementation(async (path, options) => {
+      if (dirname(String(path)) === stage) {
+        failed(path);
+
+        throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' });
+      }
+
+      return real(path, options);
+    });
+
+    try {
+      expect(await sweep(conns)).toMatchObject({ built: 1, failed: 0 });
+      expect(failed).toHaveBeenCalled();
+    } finally {
+      vi.mocked(rm).mockImplementation(real);
+    }
+
+    expect(await stocked()).toEqual(['@/202606.parquet']);
+    expect((await linesOf(LEDGER)).map(line => line['partition'])).toEqual([`${SLICE}/${MONTH}`]);
+    expect(logged(logger.error)).toEqual([]);
+    expect(logged(logger.warn)).toContain('Could not clear staging');
   });
 
   /** On disk as catalogued, so not missing: the warning that there is no room is the one thing said of it. */
