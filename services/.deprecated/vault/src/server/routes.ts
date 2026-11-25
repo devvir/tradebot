@@ -15,7 +15,7 @@ import { Readable } from 'stream';
 import { stat } from 'fs/promises';
 import type { Stats } from 'fs';
 import { logger } from '@devvir/service-kit';
-import { baseTable, WS_TABLES } from '@tradebot/utils';
+import { baseTable, WS_TABLES } from '../data/tables';
 import { listFiles, listTables, fileState } from '../fs/reader';
 import { isHealthy, getFailureReason, isThrottled } from '../fs/health';
 import { decodeFile } from '../data/decode';

@@ -35,10 +35,14 @@ describe('App routing', () => {
 });
 
 describe('App shell', () => {
-  it('shows no market figures, connection indicator or links', () => {
+  it('frames the widget grid with a header holding the name alone: no figures, ticker, connection indicator or links', () => {
     const { container } = renderAt('/XBTUSD');
+    const shell = container.querySelector('.app-shell');
 
-    expect(screen.getByRole('banner')).toHaveTextContent('TradeBot');
+    expect(screen.getByRole('banner').textContent).toBe('TradeBot');
+    expect([...shell!.children].map(el => el.className)).toEqual(['header', 'app-body']);
+    expect(shell!.querySelector('.app-body')!.children).toHaveLength(1);
+    expect(shell!.querySelector('.app-body > .widget-grid-container')).not.toBeNull();
     expect(screen.queryByText(/online/i)).not.toBeInTheDocument();
     expect(container.querySelector('a')).toBeNull();
   });

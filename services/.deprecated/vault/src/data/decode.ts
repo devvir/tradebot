@@ -1,4 +1,4 @@
-import { baseTable, WS_TABLES } from '@tradebot/utils';
+import { baseTable, WS_TABLES } from './tables';
 import { createParser } from './parse';
 import { compileCasts } from './casts';
 

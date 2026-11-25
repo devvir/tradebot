@@ -11,7 +11,7 @@
 // String / symbol / guid / timestamp / timespan fields are omitted — they pass
 // through as strings. Empty fields are dropped for every table.
 
-import { baseTable } from '@tradebot/utils';
+import { baseTable } from './tables';
 
 type CastType   = 'number' | 'boolean' | 'json' | 'timestamp_D';
 type TableCasts = Record<string, CastType>;

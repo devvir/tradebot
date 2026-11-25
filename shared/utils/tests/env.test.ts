@@ -110,6 +110,19 @@ describe('parseEnvFile', () => {
     expect(parseEnvFile(envFile('B=[${UNSET}][${C}]\nC=later\n'), {})).toEqual({ B: '[][]', C: 'later' });
   });
 
+  it('expands a key set again after a reference to it against the lines before the new value', () => {
+    expect(parseEnvFile(envFile('B=${A}\nA=1\nB=${A}x\n'), {})).toEqual({ B: '1x', A: '1' });
+  });
+
+  it('expands a reference to a key set more than once with the value set last before it', () => {
+    expect(parseEnvFile(envFile('C=1\nD=${C}\nC=2\n'), {})).toEqual({ C: '2', D: '1' });
+  });
+
+  it('expands a single-quoted value set again unquoted, and an unquoted one set again single-quoted, by its last quoting', () => {
+    expect(parseEnvFile(envFile("A=one\nB='${A}'\nB=${A}\nC=${A}\nC='${A}'\n"), {}))
+      .toEqual({ A: 'one', B: 'one', C: '${A}' });
+  });
+
   it('does not expand a single-quoted value', () => {
     expect(parseEnvFile(envFile("A=one\nB='${A}'\n"), {})).toEqual({ A: 'one', B: '${A}' });
   });

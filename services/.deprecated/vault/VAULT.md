@@ -30,7 +30,7 @@ service deals in one `filename`.
 
 **Pseudo-tables.** A dotted table name, `<table>.<variant>`, is a pseudo-table of the undotted one:
 it has its own directory, but shares the real table's columns, casts and read strategy.
-`baseTable` (in `@tradebot/utils`) strips the variant, so every per-table lookup resolves
+`baseTable` (in `src/data/tables.ts`) strips the variant, so every per-table lookup resolves
 `<table>.<anything>` to `<table>`, and no variant ever gets entries of its own in `TABLE_HEADERS`
 or `TABLE_CASTS`. This table-name variant is independent of the per-file `?suffix=` tag.
 
@@ -47,7 +47,7 @@ A file built from rows starts with a header row (for the one exception, see
 and their order, are `TABLE_HEADERS` in `src/data/headers.ts`. They are never inferred from incoming
 data.
 
-**WS tables** (the set `WS_TABLES` in `shared/utils/src/tables.ts`: `announcement`, `chat`,
+**WS tables** (the set `WS_TABLES` in `src/data/tables.ts`: `announcement`, `chat`,
 `connected`, `instrument`, `liquidation`, `orderBookL2`, `publicNotifications`) store messages. Two
 metadata columns, `_date_` and `_action_`, come first:
 
@@ -57,12 +57,12 @@ metadata columns, `_date_` and `_action_`, come first:
 
 **Every other table** stores plain rows, one per line, with no metadata columns.
 
-**Quoting.** Only the free-text tables (`FREE_TEXT_TABLES` in `shared/utils/src/tables.ts`:
+**Quoting.** Only the free-text tables (`FREE_TEXT_TABLES` in `src/data/tables.ts`:
 `announcement`, `chat`, `publicNotifications`) hold values that need quoting. Their fields are
 RFC 4180 quoted where they contain `,`, `"` or a line break, so one record can span several physical
-lines, and they are read back with a full CSV parser. On every other table a value containing `,`,
-`"`, `\r` or `\n`, or an object or array, is refused on write, so each physical line is one record
-and is read with a plain comma split.
+lines, and they are read back with a full CSV parser (both in `src/data/csv.ts`). On every other
+table a value containing `,`, `"`, `\r` or `\n`, or an object or array, is refused on write, so
+each physical line is one record and is read with a plain comma split.
 
 ---
 

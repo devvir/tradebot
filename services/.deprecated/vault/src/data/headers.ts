@@ -4,7 +4,7 @@
 // every row of that table is encoded in. Columns are never inferred from
 // incoming data, because WS updates only include changed fields.
 
-import { baseTable } from '@tradebot/utils';
+import { baseTable } from './tables';
 
 // The four resolutions of each bin table share one column list.
 const TRADE_BIN = ['timestamp', 'symbol', 'open', 'high', 'low', 'close', 'trades', 'volume', 'vwap', 'lastSize', 'turnover', 'homeNotional', 'foreignNotional', 'pool'];

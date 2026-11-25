@@ -16,7 +16,7 @@
   "dependencies": {
     "@devvir/service-kit": "workspace:*",
     "@devvir/zipper": "^0.1.0",
-    "@tradebot/utils": "workspace:*",
+    "csv-parse": "^6.2.1",
     "express": "^5.2.1"
   },
   "devDependencies": {

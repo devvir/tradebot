@@ -34,16 +34,7 @@ export type EnvLookup = Record<string, string | undefined>;
 export const parseEnv = (text: string): EnvFile => {
   const file: EnvFile = { values: {}, literal: new Set() };
 
-  for (const line of text.split(/\r?\n/)) {
-    if (/^\s*(?:#|$)/.test(line)) continue;
-
-    const match = ASSIGNMENT.exec(line);
-
-    if (! match) continue;
-
-    const [, key, raw] = match;
-    const { value, quoted } = parseValue(raw);
-
+  for (const { key, value, quoted } of assignments(text)) {
     file.values[key] = value;
 
     if (quoted === "'") file.literal.add(key);
@@ -57,18 +48,18 @@ export const parseEnv = (text: string): EnvFile => {
  * The variables a .env file sets, read by the grammar `parseEnv` describes, with `${VAR}`
  * references expanded as docker compose expands them in a .env file: a reference in an unquoted
  * or double-quoted value takes the variable's value in `lookup` (`process.env` by default), else
- * that of a key set on an earlier line of the file, else the empty string. Single-quoted values
- * are taken as written. Only the `${VAR}` form is expanded; `$VAR` and `${VAR:-default}` are
+ * that of a key set on an earlier line of the file, else the empty string. Each line is expanded
+ * as it is read, so a reference to a key set more than once takes the value set last before the
+ * reference. Single-quoted values are taken as written. Only the `${VAR}` form is expanded; `$VAR` and `${VAR:-default}` are
  * left as written.
  *
  * Throws when the file cannot be read, a missing file included.
  */
 export const parseEnvFile = (filePath: string, lookup: EnvLookup = process.env): Record<string, string> => {
-  const { values, literal } = parseEnv(readFileSync(filePath, 'utf8'));
   const result: Record<string, string> = {};
 
-  for (const [key, value] of Object.entries(values)) {
-    result[key] = literal.has(key)
+  for (const { key, value, quoted } of assignments(readFileSync(filePath, 'utf8'))) {
+    result[key] = quoted === "'"
       ? value
       : value.replace(REFERENCE, (_, name: string) => lookup[name] ?? (Object.hasOwn(result, name) ? result[name] : ''));
   }
@@ -87,8 +78,29 @@ const AFTER_QUOTE = /^\s*(?:#.*)?$/;
 
 const ESCAPES: Record<string, string> = { n: '\n', '"': '"', '\\': '\\' };
 
+type Quote = "'" | '"' | null;
+
+/** Each `KEY=value` line of a .env file, in file order, by the rules `parseEnv` gives. */
+const assignments = (text: string): Array<{ key: string; value: string; quoted: Quote }> => {
+  const found: Array<{ key: string; value: string; quoted: Quote }> = [];
+
+  for (const line of text.split(/\r?\n/)) {
+    if (/^\s*(?:#|$)/.test(line)) continue;
+
+    const match = ASSIGNMENT.exec(line);
+
+    if (! match) continue;
+
+    const [, key, raw] = match;
+
+    found.push({ key, ...parseValue(raw) });
+  }
+
+  return found;
+};
+
 /** One value as written after `=`, and the quote it was written in, by the rules `parseEnv` gives. */
-const parseValue = (raw: string): { value: string; quoted: "'" | '"' | null } => {
+const parseValue = (raw: string): { value: string; quoted: Quote } => {
   const text  = raw.trimStart();
   const quote = text[0];
 

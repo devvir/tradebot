@@ -22,7 +22,8 @@
 
 import readline from 'node:readline';
 import { pipeline } from 'node:stream/promises';
-import { baseTable, createCsvParser, FREE_TEXT_TABLES, WS_TABLES } from '@tradebot/utils';
+import { createCsvParser } from './csv';
+import { baseTable, FREE_TEXT_TABLES, WS_TABLES } from './tables';
 import { openClosedFile } from '../fs/reader';
 import type { VaultParser } from './types';
 
