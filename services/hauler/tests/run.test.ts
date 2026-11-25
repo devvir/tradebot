@@ -1,8 +1,18 @@
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { logger } from '@devvir/service-kit';
-import { makeRunner } from '../src/run';
 import type { RunnerOf } from '../src/run';
-import type { Walked } from '../src/types';
+import type { Haulable, Walked } from '../src/types';
+
+const cfg = vi.hoisted(() => ({ archivesDir: '', catalogApi: '', catalogToken: '', venues: [], lens: '', concurrency: 2, minFreeGb: 0 }));
+
+vi.mock('../src/config', () => ({ default: cfg }));
+
+const { makeRunner } = await import('../src/run');
+const { dropHeld, dropStale, hold, startWalk, taken } = await import('../src/held');
+const { partialOf } = await import('../src/store');
 
 /**
  * Each venue walked again and again, sooner or later by what the last walk
@@ -15,7 +25,7 @@ const FLIGHT = 15_000;
 const RETRY  = 60_000;
 
 const walked = (over: Partial<Walked> = {}): Walked =>
-  ({ listed: 0, progressed: 0, failed: 0, mismatched: 0, unreached: 0, full: false, ...over });
+  ({ listed: 0, progressed: 0, failed: 0, mismatched: 0, unreached: 0, full: false, nothingOwed: false, ...over });
 
 /** A runner whose walks answer `walks` in turn, the last one for every walk after. */
 const runnerOf = (walks: ((stopped: () => boolean) => Promise<Walked>)[], over: Partial<RunnerOf> = {}) => {
@@ -27,7 +37,9 @@ const runnerOf = (walks: ((stopped: () => boolean) => Promise<Walked>)[], over: 
 
       return walks[Math.min(at.length, walks.length) - 1]!(stopped);
     }),
+    startWalk: vi.fn(),
     dropHeld:  vi.fn(async () => 0),
+    dropStale: vi.fn(async () => 0),
     halt:      vi.fn(),
     abandon:   vi.fn(),
     minFreeGb: 25,
@@ -88,15 +100,16 @@ describe('a venue', () => {
     expect(at[1]! - at[0]!).toBe(QUIET);
   });
 
-  it('drops what is held of it after a walk that listed nothing, and only then', async () => {
+  it('drops everything held of it after a walk in which it owed nothing, and only then', async () => {
     const { runner, deps } = runnerOf([
       async () => walked({ listed: 1, mismatched: 1 }),
-      async () => walked(),
+      async () => walked({ full: true }),
+      async () => walked({ nothingOwed: true }),
     ]);
 
     const running = runner.start(['binance']);
 
-    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(QUIET + 1);
     expect(deps.dropHeld).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(QUIET);
@@ -104,6 +117,37 @@ describe('a venue', () => {
 
     expect(deps.dropHeld).toHaveBeenCalledTimes(1);
     expect(deps.dropHeld).toHaveBeenCalledWith('binance');
+  });
+
+  it('drops what was held long ago and not listed since only after a walk that went through what is owed', async () => {
+    let release = (): void => undefined;
+    const { runner, deps } = runnerOf([
+      async () => walked({ listed: 1, mismatched: 1 }),
+      async () => walked({ listed: 2, progressed: 1, full: true }),
+      () => new Promise(resolve => { release = () => resolve(walked({ listed: 1 })); }),
+    ], {
+      // The walk in flight ends as the stop is asked for.
+      halt: vi.fn(() => release()),
+    });
+
+    const running = runner.start(['binance']);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(deps.startWalk).toHaveBeenCalledTimes(1);
+    expect(deps.dropStale).toHaveBeenCalledTimes(1);
+
+    // Full: what it did not reach may still be owed.
+    await vi.advanceTimersByTimeAsync(QUIET);
+    expect(deps.startWalk).toHaveBeenCalledTimes(2);
+    expect(deps.dropStale).toHaveBeenCalledTimes(1);
+
+    // Stopped: the same.
+    await vi.advanceTimersByTimeAsync(QUIET);
+    expect(deps.startWalk).toHaveBeenCalledTimes(3);
+    await stop(runner, running);
+
+    expect(deps.dropStale).toHaveBeenCalledTimes(1);
+    expect(deps.dropHeld).not.toHaveBeenCalled();
   });
 
   it('is walked again later after a walk that failed, and its loop carries on', async () => {
@@ -143,6 +187,73 @@ describe('a venue', () => {
     // Binance walks every FOUND (at 0, 5, … 30 minutes); gate, failing, every QUIET.
     expect(calls.filter(venue => venue === 'binance')).toHaveLength(QUIET / FOUND + 1);
     expect(calls.filter(venue => venue === 'gate')).toHaveLength(2);
+  });
+});
+
+describe('a download held for the catalog to rule on', () => {
+  const key = 'binance/spot/trades/B/BTC/202001/x.zip';
+  const one: Haulable = { venue: 'binance', key, server: '', path: 'x.zip' };
+
+  /**
+   * Walk binance on the real held list, the first walk holding a download and
+   * the last asking the runner to stop; answers whether its partial was there as
+   * each later walk started, and once every walk was over.
+   */
+  const walkThrough = async (walks: ((at: number) => Walked)[]): Promise<boolean[]> => {
+    const kept: boolean[] = [];
+    const path = join(cfg.archivesDir, key);
+    let n = 0;
+
+    const runner = makeRunner({
+      walkVenue: async () => {
+        n++;
+
+        if (n > 1) kept.push(existsSync(partialOf(path)));
+
+        if (n === 1) {
+          mkdirSync(dirname(partialOf(path)), { recursive: true });
+          writeFileSync(partialOf(path), 'what was served');
+          hold(one, path, 15, '');
+        }
+
+        if (n === walks.length) void runner.stopAfterFlight();
+
+        return walks[n - 1]!(n);
+      },
+      startWalk, dropHeld, dropStale, halt: () => undefined, abandon: () => undefined,
+      minFreeGb: 25, foundMs: 1, quietMs: 1, flightMs: 1_000, retryMs: 1,
+    });
+
+    await runner.start(['binance']);
+
+    kept.push(existsSync(partialOf(path)));
+
+    return kept;
+  };
+
+  beforeEach(() => {
+    vi.useRealTimers();
+    cfg.archivesDir = mkdtempSync(join(tmpdir(), 'run-'));
+  });
+
+  afterEach(async () => {
+    await dropHeld('binance');
+    rmSync(cfg.archivesDir, { recursive: true, force: true });
+  });
+
+  it('is dropped, and its partial removed, once two walks through what is owed have not listed its file', async () => {
+    const owed = () => walked({ listed: 3, progressed: 3 });
+
+    // Seen as each later walk starts, then after the last: kept after the walk that held it and the next, gone after the one after.
+    expect(await walkThrough([() => walked({ listed: 1, mismatched: 1 }), owed, owed, owed])).toEqual([true, true, false, false]);
+    expect(taken(one)).toBeUndefined();
+  });
+
+  it('is kept through walks that ended for want of room, with nothing settled', async () => {
+    const full = () => walked({ full: true });
+
+    expect(await walkThrough([() => walked({ listed: 1, mismatched: 1 }), full, full, full, full])).toEqual([true, true, true, true, true]);
+    expect(taken(one)?.path).toBe(join(cfg.archivesDir, key));
   });
 });
 

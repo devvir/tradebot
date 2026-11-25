@@ -2,7 +2,7 @@ import { logger } from '@devvir/service-kit';
 import type { Service } from '@devvir/service-kit';
 import { halt, venues } from './catalog';
 import { sweepPartials } from './store';
-import { dropHeld } from './held';
+import { dropHeld, dropStale, startWalk } from './held';
 import { setHosts } from './hosts';
 import { abandon } from './fetch';
 import { makeRunner } from './run';
@@ -72,7 +72,7 @@ const FLIGHT_MS = 15_000;
 const RETRY_MS = 60_000;
 
 const runner = makeRunner({
-  walkVenue, dropHeld, halt, abandon,
+  walkVenue, startWalk, dropHeld, dropStale, halt, abandon,
   minFreeGb: config.minFreeGb,
   foundMs:   FOUND_MS,
   quietMs:   QUIET_MS,

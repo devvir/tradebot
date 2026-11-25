@@ -33,7 +33,9 @@ import type { BucketObject, BucketPage, Haulable, Hauled, Leaf, Walked } from '.
  * work, and silence reads as either nothing happening or something unlogged.
  */
 export const walkVenue = async (venue: string, stopped: () => boolean): Promise<Walked> => {
-  const walked: Walked = { listed: 0, progressed: 0, failed: 0, mismatched: 0, unreached: 0, full: false };
+  const walked: Walked = {
+    listed: 0, progressed: 0, failed: 0, mismatched: 0, unreached: 0, full: false, nothingOwed: false,
+  };
   const queue: { object: BucketObject; leaf: Leaf }[] = [];
   const open  = new Set<Leaf>();
   const waiting: (() => void)[] = [];
@@ -73,9 +75,12 @@ export const walkVenue = async (venue: string, stopped: () => boolean): Promise<
       for (let first = true; ! done(); first = false) {
         const current: BucketPage = await page(venue, after);
 
-        if (first)
+        if (first) {
+          walked.nothingOwed = current.Contents.length === 0 && ! current.IsTruncated;
+
           logger.info({ venue, owed: current.Contents.length, more: current.IsTruncated },
             current.Contents.length === 0 ? 'Nothing is owed' : 'The catalog answered — fetching');
+        }
 
         const leaf: Leaf = {
           size: current.Contents.length, left: current.Contents.length, unreached: 0,

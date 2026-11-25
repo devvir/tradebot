@@ -123,7 +123,6 @@ export interface Host {
   trialUntil: number;
 }
 
-/** What happened to one file. */
 /** A download that did not agree with the catalog, kept in scratch until the catalog has asked the venue. */
 export interface Withheld {
   /** Where the file belongs: its partial in scratch is named after it. */
@@ -132,8 +131,12 @@ export interface Withheld {
 
   /** The MD5 of what was fetched, in hex. */
   digest: string;
+
+  /** Which of its venue's walks held it, counted from the start of the process. */
+  walk:   number;
 }
 
+/** What happened to one file. */
 export type Outcome = 'downloaded' | 'present' | 'failed' | 'mismatched' | 'unreached';
 
 /** What one fetch came to, with what was seen where it disagreed. */
@@ -161,7 +164,7 @@ export interface ReportAnswer {
 
 /** What one walk of a venue's bucket came to. */
 export interface Walked {
-  /** Objects the walk was handed. */
+  /** Objects of the pages the walk settled; a page listed and never begun is not counted. */
   listed:     number;
 
   /** Files brought to disk or found there already — the walk's progress. */
@@ -169,9 +172,12 @@ export interface Walked {
   failed:     number;
   mismatched: number;
 
-  /** Files the network would not bring, left unreported to come round again. */
+  /** Files not brought — the network or the disk would not — left unreported to come round again. */
   unreached:  number;
 
   /** The walk stopped taking files because the archives' volume ran low. */
   full:       boolean;
+
+  /** The venue owed nothing: the catalog's first page was empty, and the last. */
+  nothingOwed: boolean;
 }

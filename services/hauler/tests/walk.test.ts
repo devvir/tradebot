@@ -93,6 +93,13 @@ beforeEach(async () => {
       return;
     }
 
+    // A venue that owes nothing.
+    if (url.searchParams.get('prefix') === 'empty/') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ Name: 'catalog', Prefix: 'empty/', Marker: '', MaxKeys: 1000, IsTruncated: false, Contents: [] }));
+      return;
+    }
+
     // A venue whose listing says what each file weighs: each is served as its own path.
     if (url.searchParams.get('prefix') === 'sized/') {
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -145,7 +152,7 @@ describe('a walk', () => {
   it('fetches every object of every page to its key, and reports each page', async () => {
     const walked = await walkVenue('binance', () => false);
 
-    expect(walked).toEqual({ listed: 3, progressed: 3, failed: 0, mismatched: 0, unreached: 0, full: false });
+    expect(walked).toEqual({ listed: 3, progressed: 3, failed: 0, mismatched: 0, unreached: 0, full: false, nothingOwed: false });
 
     for (const key of KEYS) expect(readFileSync(join(cfg.archivesDir, key), 'utf8')).toBe(`/files/${key}`);
 
@@ -165,7 +172,8 @@ describe('a walk', () => {
     _test_lookAgain();
 
     try {
-      expect(await walkVenue('binance', () => false)).toMatchObject({ progressed: 0, full: true });
+      // Nothing settled, and still owing: what it did not reach is owed all the same.
+      expect(await walkVenue('binance', () => false)).toMatchObject({ listed: 0, progressed: 0, full: true, nothingOwed: false });
       expect(served).toBe(0);
       expect(reports).toEqual([]);
     } finally {
@@ -174,18 +182,25 @@ describe('a walk', () => {
     }
   });
 
+  it('says so where the venue owes nothing', async () => {
+    expect(await walkVenue('empty', () => false)).toEqual({
+      listed: 0, progressed: 0, failed: 0, mismatched: 0, unreached: 0, full: false, nothingOwed: true,
+    });
+    expect(reports).toEqual([]);
+  });
+
   /** A connection the catalog dropped is asked again, not a walk lost for half an hour. */
   it('asks again when the catalog drops the connection', async () => {
     drops = 1;
 
-    expect(await walkVenue('binance', () => false)).toEqual({ listed: 3, progressed: 3, failed: 0, mismatched: 0, unreached: 0, full: false });
+    expect(await walkVenue('binance', () => false)).toEqual({ listed: 3, progressed: 3, failed: 0, mismatched: 0, unreached: 0, full: false, nothingOwed: false });
   });
 
   /** A 5xx is the catalog away, not a verdict: waited for, and the walk carries on. */
   it('waits for a catalog that cannot answer, and loses nothing', async () => {
     failing = 2;
 
-    expect(await walkVenue('binance', () => false)).toEqual({ listed: 3, progressed: 3, failed: 0, mismatched: 0, unreached: 0, full: false });
+    expect(await walkVenue('binance', () => false)).toEqual({ listed: 3, progressed: 3, failed: 0, mismatched: 0, unreached: 0, full: false, nothingOwed: false });
     expect(reports).toHaveLength(2);
   });
 
@@ -197,7 +212,7 @@ describe('a walk', () => {
       // Asked to stop the moment the first file has been served.
       const walked = await walkVenue('binance', () => served > 0);
 
-      expect(walked).toEqual({ listed: 2, progressed: 1, failed: 0, mismatched: 0, unreached: 0, full: false });
+      expect(walked).toEqual({ listed: 2, progressed: 1, failed: 0, mismatched: 0, unreached: 0, full: false, nothingOwed: false });
       expect(reports).toEqual([{ downloaded: [KEYS[0]], failed: [], mismatched: [] }]);
     } finally {
       cfg.concurrency = 2;
@@ -271,7 +286,7 @@ describe('a file that cannot be hauled', () => {
     _test_lookAgain();
 
     try {
-      expect(await walkVenue('binance', () => false)).toMatchObject({ listed: 3, progressed: 3, unreached: 0, full: false });
+      expect(await walkVenue('binance', () => false)).toMatchObject({ listed: 3, progressed: 3, unreached: 0, full: false, nothingOwed: false });
     } finally {
       _test_lookAgain();
     }

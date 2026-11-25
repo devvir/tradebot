@@ -6,8 +6,14 @@ export interface RunnerOf {
   /** One walk of a venue, end to end, taking no new file once `stopped` says so. */
   walkVenue: (venue: string, stopped: () => boolean) => Promise<Walked>;
 
+  /** Count the start of a walk of a venue, for what it holds. */
+  startWalk: (venue: string) => void;
+
   /** Drop whatever is held of a venue, answering how many there were. */
   dropHeld:  (venue: string) => Promise<number>;
+
+  /** Drop what is held of a venue from walks long enough ago and not listed since, answering how many. */
+  dropStale: (venue: string) => Promise<number>;
 
   /** Stop waiting for the catalog. */
   halt:      () => void;
@@ -51,8 +57,11 @@ export interface Runner {
  * one that did not, that ran out of space, or that failed. A failed walk is
  * logged and tried again; nothing a walk does ends its loop.
  *
- * **A venue with nothing owed has nothing held to wait for**: what is held of it
- * is dropped after a walk that listed nothing.
+ * **What is held for the catalog to rule on is let go of when it is no longer
+ * owed.** Everything held of a venue is dropped after a walk whose venue owed
+ * nothing; what was held walks ago and not listed since is dropped after a walk
+ * that went through everything owed — not one cut short by a stop or a full
+ * volume, which says nothing of what it did not reach.
  *
  * **A stop gives the files in flight `flightMs`, and no longer.** No new file is
  * taken, the catalog is no longer waited for, and the downloads already running
@@ -82,6 +91,8 @@ export const makeRunner = (deps: RunnerOf): Runner => {
       let found = false;
 
       try {
+        deps.startWalk(venue);
+
         const walked = await deps.walkVenue(venue, () => stopping);
 
         found = walked.progressed > 0 && ! walked.full;
@@ -93,7 +104,14 @@ export const makeRunner = (deps: RunnerOf): Runner => {
           logger.info({ venue, ...walked, nextInMinutes: (found ? deps.foundMs : deps.quietMs) / 60_000 },
             'Round finished');
 
-        if (walked.listed === 0) await deps.dropHeld(venue);
+        const dropped = walked.nothingOwed ? await deps.dropHeld(venue)
+          : ! walked.full && ! stopping ? await deps.dropStale(venue)
+          : 0;
+
+        if (dropped > 0)
+          logger.info({ venue, dropped }, walked.nothingOwed
+            ? 'Nothing is owed — dropped every download held for the catalog to rule on'
+            : 'Dropped downloads held for files no longer listed');
       } catch (err) {
         logger.error({ err, venue }, 'Walk failed — trying again later');
       }
