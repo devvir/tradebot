@@ -1,316 +1,253 @@
 # Hauler
 
-Hauler brings catalogued venue files to disk under canonical names. Prospector
-establishes what every venue publishes; hauler walks each venue's listing over
-the [catalog API](../modules/CATALOG-API.md), fetches what it lists, verifies it,
+Hauler brings catalogued venue files to disk under canonical names. It walks each venue's listing over
+the [catalog API](../modules/CATALOG-API.md), fetches what the listing says is still owed, verifies it,
 and reports what became of it.
 
-Everything it does follows from one division: **prospector owns what exists, and
-hauler owns what is on disk.** Neither writes the other's conclusions, and where
-they disagree the disagreement stays visible rather than being resolved by
-whichever wrote last.
+Everything it does follows from one division: **the catalog says what exists and what is owed, and
+hauler owns what is on disk.** Hauler never decides that a file exists or is gone; it reports what the
+venue answered, and the catalog's side rules on it.
 
 ## What it is not
 
-- **It does not discover.** The catalog knows what exists. Hauler reads a
-  listing and fetches it.
-- **It does not know how a venue structures its archive**, nor what a venue
-  calls anything. Each object's key is the canonical path it is written at, and
-  adding a venue to prospector adds nothing to hauler.
-- **It does not decide what to fetch.** A catalog lens does, named in
-  `HAULER_LENS`; with none, everything the catalog holds.
-- **It keeps no state.** What is on disk and what the catalog says is still owed
-  are the whole of it, so a restart simply walks again.
+- **It does not discover.** The catalog knows what exists. Hauler reads a listing and fetches it.
+- **It does not know how a venue structures its archive**, nor what a venue calls anything. Each
+  object's key is the path it is written at, so a venue the catalog gains needs nothing of hauler.
+- **It does not decide what to fetch.** A catalog lens does, named in `HAULER_LENS`; with none, every
+  file the catalog holds. See [Through a lens](#through-a-lens).
+- **It keeps no persistent state.** What is on disk and what the catalog says is owed are the whole of
+  it, so a restart simply walks again. Some state lives in memory only and starts empty with the
+  process: downloads held for the catalog to rule on, each address's score and time out of rotation,
+  and the count of each venue's walks.
+
+## Through a lens
+
+`HAULER_LENS` names a catalog lens by its slug. Hauler sends it as `x-catalog-lens` on every listing
+and every report, and on nothing else: the venue list is asked for without it. The catalog then lists
+only what the lens lets through, and settles a report only for what it lets through, so hauler
+filters nothing itself. An unknown slug is refused by the catalog, and each walk fails loudly rather
+than hauling everything. What a lens is and how it selects is in
+[CATALOG-LENSES.md](../modules/CATALOG-LENSES.md).
+
+**Several haulers split the work by disjoint lenses.** Pending is a property of the file, not of the
+lens it was listed through: a file one hauler reports downloaded is no longer pending for any other.
+Two haulers whose lenses overlap each miss, in their own archives, what the other fetched first.
+Nothing in the catalog keeps them apart; the deployments do, by giving each hauler its own lens, or
+its own `HAULER_VENUES`, and its own archives directory. Each hauler needs an archives directory of
+its own in any case: a start deletes the directory of unfinished downloads (see [Stopping](#stopping)),
+whoever's they are.
 
 ## The layout on disk
 
-```
-<archives>/<key>
-<key> = venue/market/dataset[,variant]/FL/symbol/YYYYMM/venue|market|dataset[,variant]|symbol|date[.partNN].ext
-      | venue/market/dataset[,variant]/@/YYYYMM/venue|market|dataset[,variant]|@|date[.partNN].ext
-```
-
-**The key is the catalog's, not hauler's.** The catalog serves every venue as
-one bucket keyed by this canonical path, so hauler writes each object at
-`<archives>/<key>` and names nothing itself. What follows describes the layout
-those keys make on disk.
-
-**The full identity is in the filename.** That is what lets a reader ignore the
-directory structure entirely — list files, parse names, never learn where they
-live. Which raises the honest question of why there is a hierarchy at all, since
-everything could go flat and nothing in the pipeline would care. Two reasons: a
-flat archive cannot be *looked at*, and every targeted listing becomes a scan of
-the whole thing rather than a descent into the part you meant. The path is for
-people and for narrowing; the filename is for programs.
-
-**Positional, not `key=value`.** The vault is read by a query engine that
-harvests `key=value` from any path position; the archives are read by code that
-knows the shape. So a level means what its position says, and the depth never
-varies.
-
-| part | | |
-|---|---|---|
-| `venue` | `bitget` | |
-| `market` | `perp` | canonical; a venue with one market still names it |
-| `dataset` | `klines,1m` | canonical, **with its variants** — `books,incremental,500`; no comma where a dataset has none |
-| `FL` | `B` | the symbol's first letter, `_` for anything that is not a Latin letter |
-| `symbol` | `BTCUSDT` | the venue's own name for the instrument |
-| `@` | `@` | in place of `FL/symbol`, where one file carries every instrument |
-| `YYYYMM` | `202506` | the month |
-| `date` | `20250601` | the date covered, **at the grain it covers** |
-| `.partNN` | `.part101` | **only** where a period is split across files |
-
-**The date's own length carries its grain** — `202506` monthly, `20250601`
-daily — so nothing else has to say it. A part is where a venue splits a period:
-bitget cuts a day of trades every 100,000 rows and numbers the pieces, and gate
-files its books by the hour. It sits before the extension, as a downloaded
-piece's name would carry it.
-
-**`FL` is a filesystem device, not a fact about the data**, which is why it is a
-bare segment rather than a labelled one: a few dozen directories per letter
-instead of thousands side by side.
-
-**Separators are `|` between fields and `,` inside the dataset descriptor.**
-Measured across every symbol in the catalog — bitget `$0-9A-Z`, okx
-`-_0-9A-Za-z` — neither character occurs, which is the property that matters.
-Bitget symbols do contain `$`, so these names need shell quoting whatever
-separator is chosen.
-
-### What a canonical name discards, and why it does not matter
-
-A canonical name throws away the venue's own filename, which was the only thing
-on disk tying a file to the URL it came from.
-
-**The catalog holds that link.** `(venue, market, dataset, symbol, period)`
-identifies the series, and the series and the date identify the pattern, which
-rebuilds the URL. So provenance is preserved where provenance belongs, and the
-filesystem is free to be canonical.
-
-### The instrument comes before the month
-
-**The order on disk is the order of the catalog's listing**: series prefix, then
-date. That is what lets a page of the listing be one indexed query, so the layout
-follows it.
-
-**An instrument's history is one directory** (`…/FL/symbol/`), with its months
-beneath it. **A month of a dataset is not**: it is the `YYYYMM` directory under
-every symbol, and under the bucket, found with two globs and moved one directory
-at a time:
+Hauler writes each listed object at `<archives>/<key>` and derives no name of its own. In the
+container `<archives>` is `/data/archives`, so a file lands at, for example:
 
 ```
-venue/market/dataset/*/*/YYYYMM/     every instrument
-venue/market/dataset/@/YYYYMM/       the venue-wide file
+/data/archives/binance/perp/klines,1m/B/BTCUSDT/202001/binance|perp|klines,1m|BTCUSDT|20200101.zip
 ```
 
-**The bucket is a level shallower, on purpose.** `@` is only ever the venue-wide
-file, so it needs no letter folder, and it sorts below every letter, so it sits
-first in its dataset rather than lost among thousands of instruments. The cost is
-the second glob, which anything gathering a month must not forget.
-
-The cost is directories: a month of one symbol's daily files is about thirty, so
-roughly 2.3M leaf directories across a catalog of ~70M files — about 1% of the
-volume's inodes.
+The key grammar, including the letter folder `F` and the market bundle (`@`), is the catalog's:
+[CATALOG-API.md](../modules/CATALOG-API.md#listings). A key that is not under the venue being walked,
+or that has an empty, `.` or `..` segment, is logged and skipped rather than written.
 
 ## Walking a listing
 
-For each venue — every one the catalog holds files for, or `HAULER_VENUES` — hauler pages
-through `GET /listings?prefix=<venue>/&pending=true`, 1,000 keys at a time, resuming after
-the last key of each page. `pending=true` asks only for files not yet
-downloaded, and `HAULER_LENS` travels as `x-catalog-lens`, so the catalog leaves
-everything else out of the listing and nothing here filters. Each object names
-its server and its `Path` there — [which address](#which-address-a-file-is-fetched-from) it is
-fetched from is decided here — and a key outside the venue asked for is refused rather than written.
+**The venue list and each venue's addresses are read once, at startup**, from `GET /venues`: every
+venue the catalog knows, or those named in `HAULER_VENUES`. A venue the catalog gains later is walked
+only after a restart. A venue named in `HAULER_VENUES` that the catalog did not know at startup has no
+address: its files stay owed, logged per file as having no known address, until a restart. A refusal
+of the venue list is asked again every minute; hauler does nothing until it has an answer.
 
-**The venue list is asked for without the lens.** Only the names and the addresses are wanted, a
-venue the lens lets nothing through from simply lists nothing, and the lensed
-venue list sizes the lens for every venue, which costs the catalog seconds.
+For each venue hauler pages through `GET /listings?prefix=<venue>/&pending=true&max-keys=1000` as
+JSON, resuming after the last key of each page. Each object names its server (`Host`) and its `Path`
+there; [which address](#which-address-a-file-is-fetched-from) it is fetched from is decided here.
 
-**Pages are listed ahead of the fetching and held ready** — three of them — and the files of every
-page held are one queue, fetched as turns come up. So listing is never what anything
-waits on, and neither is a page's end: its last slow files hold up nobody, the next page's being
-fetched already. A page is reported the moment its last file settles.
+**Pages are listed ahead of the fetching**, up to three pages' worth of files waiting, and the files
+of every page held are one queue. Listing is never what anything waits on, and neither is a page's
+end: its last slow files hold up nobody, since the next page's files are already being fetched. A page
+is reported the moment its last file settles.
 
-**Files of 50 MB or more are fetched six at a time**, across every venue, the size being the listing's.
-A large file is bounded by the link, not by the wait for an answer: a hundred at once arrive no sooner
-than six, each takes as long as all of them, nothing else is fetched meanwhile, and a stop loses every
-one part-done. Six share the link and the rest of the budget stays with the small files. Each is
-logged as it starts (`Downloading a large file`), since it is minutes before anything else is said of it.
+**`HAULER_CONCURRENCY` is how many files are in flight across every venue together.** What it
+protects is the link: every connection leaves through the same network whichever venue it is to, and
+a budget per venue would multiply by the venues walking. A venue walking alone has all of it; several
+share it in the order their files asked. A file waiting, for an address or between attempts, gives
+its turn back meanwhile.
 
-**`HAULER_CONCURRENCY` is how many files are in flight across every venue together.** What it protects
-is the link: every connection goes through one router whichever venue it is to, and a budget for each
-venue would multiply by the venues walking. A venue walking alone has all of it; several share it in
-the order their files asked.
+**Files of 50 MB or more are fetched six at a time**, across every venue, by the size the listing
+gives. A large file is bounded by the link, not by the wait for an answer, so more at once arrive no
+sooner and a stop loses each one part-done. A large file whose turn is not free waits aside while the
+files behind it are fetched. Each is logged as it starts (`Downloading a large file`).
+
+**A server whose every address is out of rotation is waited out.** Its files are put back in the
+queue and wait for an address to come back, holding no turn.
 
 **A file added behind the cursor is found by the next walk**, as on any bucket.
 
-**Nothing is fetched below `HAULER_MIN_FREE_GB`** of free space on the archives' volume. The
-volume is looked at before each file, at most once a second; once it is low no new file is taken,
-the ones in flight finish and are reported, and the walk ends saying so. The venue is tried again
-after the long wait, so freeing space is all it takes to resume.
+**A walk says what it is doing**: when it asks the catalog what is owed, when the catalog has
+answered, and what each page came to.
 
-**A walk says what it is doing.** Each walk says when it asks the catalog what is owed, when the catalog has answered, and
-what each page came to — so a quiet log means nothing is happening, not that something is
-unlogged.
+### Space on the archives volume
+
+The volume is looked at before each file, at most once a second. It is low below `HAULER_MIN_FREE_GB`
+of free space, with fewer free inodes than 10,000 or half a percent of all (whichever is more), or
+for a minute after a write
+was refused for want of room (`ENOSPC`, `EDQUOT`), which also catches a quota no look at the volume
+sees. While it is low no new file is taken, the ones in flight finish and are reported, and the walk
+ends saying so. The venue is walked again after the long wait, so freeing space is all it takes.
 
 ### When it walks again
 
-Each venue walks on its own loop. After a walk that brought any file to disk —
-fetched, or found there already — the next one starts **5 minutes** later: a
-backfill in progress keeps cataloguing more. After a walk that found nothing to
-do, **30 minutes**: new files may be landing outside the lens, and asking often
-would only list nothing.
+Each venue walks on its own loop. After a walk that brought any file to disk, fetched or found there
+already, the next one starts **5 minutes** later: a backfill in progress keeps cataloguing more. After
+any other walk (nothing to do, the volume low, or a failure, which is logged), **30 minutes**.
 
 ## Verifying what was fetched
 
-The listing carries each file's size and ETag, and every file is checked
-against both before it is called done:
+The listing carries each file's size and ETag, and every file is checked against both before it is
+called done. An ETag is compared as an MD5, without its quotes and in any case; one that is not a
+plain MD5 (a multipart ETag, or none) is not evidence either way, and the size alone decides.
 
 | the file | matches | |
 |---|---|---|
 | already on disk | yes | **touched**, and reported as downloaded |
-| already on disk | no | **moved aside** as `.bak`, then fetched again |
-| just fetched | yes | downloaded |
-| just fetched | no | **reported as a mismatch**, and held in scratch |
+| already on disk | no | **fetched again**; the file on disk stays until a verified replacement is in hand |
+| just fetched | yes | downloaded; whatever was at its path is **moved aside** as `.bak` |
+| just fetched | no | **reported as a mismatch**, with the size and MD5 it came as, and held in scratch |
 
-**A download that differs is held, not thrown away.** It is usually the venue's newer file: the
-catalog is told, asks the venue, and takes what the venue says, after which the file is owed again at
-its new size and checksum. When it comes round, what was fetched the first time is set against what
-the catalog says now — agreeing, it is given its place and nothing is fetched; not, it is dropped and
-fetched like any other. What is held is a short list in memory, by venue and key, so nothing is
-looked for on disk. It is dropped for a venue that owes nothing, and with the rest of scratch as the
-service starts.
+**What is stored is the bytes as served.** Hauler asks with `accept-encoding: identity` and decodes
+nothing; redirects are followed, five at most. A connection silent for five minutes fails.
 
-**Nothing, where the catalog says there is something, is not a difference**: an empty body is a
-transfer that failed, tried again like any other, and never reported.
+**A body shorter than promised is a transfer that failed**, not a file that differs: shorter than its
+own `content-length`, or empty where the listing says the file is not. It is tried again like any
+other failure and never reported.
 
-**Nothing appears at its final path until it has been checked.** A download
-lands in `.hauler-tmp` at the archives' root, under a name that is a digest of
-its destination, and is renamed into place only once it agrees with the listing;
-verifying after the rename would leave a truncated file at the real path, where
-every later pass would see it present and skip it.
+**A download that differs is held, not thrown away.** It is usually the venue's newer file: the report
+has the venue asked again, and the file comes back owed at its new size and ETag. When it comes round,
+the held download is set against what the listing says now. Agreeing, it is given its place and
+nothing is fetched; not, it is dropped and the file fetched like any other. What is held is a list in
+memory, by venue and key. Everything held of a venue is dropped after a walk that found nothing owed,
+and a download held two walks ago or earlier, its file not listed since, after any walk not cut short
+by a stop or a low volume.
+
+**Nothing appears at its final path until it has been checked.** A download lands in `.hauler-tmp`
+at the archives' root, under a name that is a digest of its destination, and is renamed into place
+only once it agrees with the listing. The file is flushed before the rename and its directory after
+it, so a file at its path survives a power cut. Verifying after the rename would leave a truncated
+file at the real path, where every later walk would see it present and skip it.
+
+**What the disk will not do leaves the file owed**: a download that cannot be written, or a file that
+cannot be read, moved aside or given its place, is left out of the report and comes round again.
 
 ### Adopting an archive that already exists
 
-The first row is what adopts files already on disk with no seeding step: a file
-present and correct is reported as downloaded whatever the catalog believed.
+The first row is what adopts files already on disk with no seeding step: a file present and correct
+is reported as downloaded whatever the catalog believed.
 
-**Touching is deliberate.** The file's modification time becomes the pass's
-date, so after a pass every file the catalog accounts for carries that date. A
-file still showing an older one is a file nothing listed — misfiled, withdrawn,
-or junk — and finds itself by its date alone.
+**Touching is deliberate.** Only files listed as owed are checked, so a touched file's modification
+time is the walk that confirmed it, and a file hauler downloaded keeps the time it was written. A
+file's date says when hauler last wrote or confirmed it.
 
-**A file that disagrees is kept, never deleted.** It is renamed beside itself to
-`<name>.bak`, or `.bak.2`, `.bak.3` where that is taken, and fetched again. Real
-updates to a published archive are rare; whichever this turns out to be, it is
-there to read.
+**A file that disagrees is kept, never deleted.** Once a verified replacement is in hand, the old file
+is renamed beside itself to `<name>.bak`, or `.bak.2`, `.bak.3` where that is taken. Where the
+replacement is the same bytes, nothing is moved and the file is touched.
 
 ## Which address a file is fetched from
 
-A venue's server can answer at more than one address: its bucket, and a CDN in front of it, the same
-files under the same paths. At startup hauler asks the catalog where each venue's servers answer
-(`GET /venues`, `hosts`); a listed file names its server and its path, and its URL is one of the
-server's addresses followed by the path.
+A venue's server can answer at more than one address: the one the catalog lists and probes, and
+alternatives such as a CDN in front of the same bucket, with the same files under the same paths.
+`GET /venues` gives each server's addresses, the listed one first; a file's URL is one of them
+followed by the file's `Path`.
 
 Which address is faster depends on where hauler runs, on what a CDN has cached and on the hour, so it
-is measured as it goes. Each file is asked of an address chosen at random, by weight:
+is measured as it goes. Each request goes to an address chosen at random, by weight:
 
 - **An address is scored by what it delivers while it is delivering**: bytes per second of the time
-  its requests were in flight, less its share of requests that failed. How often it was chosen does
-  not enter into it, so an address given little work is not marked down for doing little.
-- **Weights move once a minute, and half way.** Each look blends the last minute into the score — the
-  first time, into the server's average for that minute — and only where the address answered at
-  least 20 requests in it. A slow minute does not turn the choice
-  round; several agreeing ones do. Shares are the scores in proportion, logged as `Hosts reweighed`
-  when one moves by five points or more.
-- **A refusal does not wait for the minute.** An address that answers `429`, or any answer saying how
-  long to wait, is out of rotation at once: for as long as it said, or three minutes, doubling each
-  time it does it again, to half an hour. So is one that answers `403` five times running with
-  nothing delivered between — one `403` can be a file an edge will not serve, five are a block.
-  Logged as `Turned away — out of rotation`.
+  its requests were in flight, scaled by the share of its requests that succeeded. How often it was
+  chosen does not enter into it.
+- **Weights move once a minute, and half way.** Each look blends the last minute into the score (the
+  first time, into the server's average for that minute), and only where the address answered at
+  least 20 requests in it. Shares are the scores in proportion, logged as `Hosts reweighed` when one
+  moves by five points or more.
+- **A refusal does not wait for the minute.** An address that answers `429`, or any answer carrying a
+  `Retry-After`, is out of rotation at once: for as long as it said, an hour at most, or, where it
+  said nothing, three minutes, doubling while it keeps on, to half an hour. One that answers `403`
+  five times running with nothing delivered between is taken out the same way: one `403` can be a
+  file an edge will not serve, five are a block. Logged as `Turned away — out of rotation`.
 - **No address is left out for good.** The least any address in rotation gets is one request in a
   hundred. One that has sat at that floor for half an hour is given a tenth of the work for five
-  minutes, its old score forgotten, to show what it does now; one that was taken out comes back the
-  same way.
+  minutes, its old score forgotten; one that was taken out comes back the same way.
 
-**A file is gone only where every address in rotation says so.** A `404` from one address has the
-file asked of the next at once, and it is `failed` when none is left to ask. For anything else, only
-the listed address — the first of a server, the one the catalog lists and probes — speaks for the
-venue: another that refuses a file or fails is an address doing badly, marked down, and the file is
-asked of one not tried for it yet, without waiting.
+**A file is gone only where the listed address and every other in rotation say so.** A `404` or
+`410` from one address has the file asked of the next in rotation at once. The file is `failed` once
+none is left to ask and the listed address was among those asked; where the listed address could not
+be asked, the file stays owed.
+
+**Otherwise only the listed address speaks for the venue.** Another address that refuses a file or
+fails is marked down, and the file is asked of one not yet tried for it; once none is left, of the
+listed address. A file is given three attempts in all; a `404` or `410` that leaves another address
+to ask does not count as one. After an error status from an alternative the next attempt goes at
+once; otherwise it waits a random time up to 5, then up to 10 seconds.
+
+Hauler sets no request rate of its own; a venue that keeps refusing is a sign to lower
+`HAULER_CONCURRENCY`.
 
 ## Reporting
 
-After each page, hauler posts what became of it to `POST /listings/report`, by
-each object's Key and through its lens: `downloaded` (fetched, or present and
-correct), `failed` (the venue answered `404` or `410`, or `403` on every attempt), and `mismatched`
-(with the size actually received).
+After each page, hauler posts what became of it to `POST /listings/report`, by each object's Key and
+through its lens:
 
-**A `207` names keys the catalog would not settle** — one naming no file, or one
-the lens does not let through. Each is logged as an error and not sent again:
-neither mends itself by asking twice, and both mean the catalog and hauler
-disagree about what was listed.
+- **`downloaded`**: fetched and verified, present and correct, or a held download the listing now
+  agrees with.
+- **`failed`**: gone at every address asked, as above, or a `403` from the listed address every
+  time it was asked, the last attempt included. A `403` is as often a venue turning a client away as
+  a bucket hiding a file it lacks, so it is tried again first, and reported for the venue to be asked
+  only where the listed address answered nothing else.
+- **`mismatched`**: with the size and MD5 actually received.
 
-**Only the venue's own answer makes a file `failed`.** A `404` or a `410` does
-at once. A `403` is how a venue turns *us* away as often as how a bucket hides a
-file it lacks, so it is tried again like any other failure, and reported as
-failed only where it answers every attempt — the catalog knows which a venue
-means, and rules. A connection that never opens, a DNS lookup that fails, a
-`5xx` or a `429` say nothing about the file, only about the way to it. Those are
-tried three times, with waits drawn up to 5 and then 10 seconds, and if they
-persist the file is left out of the report entirely: it stays owed and is listed again on the next walk. A
-walk's log line counts them as `unreached`. Reporting them as failures had
-prospector asking the venue about hundreds of files it was serving perfectly
-well, during a burst of connect timeouts on this machine's side.
+**What says nothing about the file is not reported.** A connection that never opens, a lookup that
+fails, a `5xx`, a `429`, a short body or a disk that will not take the file: the file is left out of
+the report, stays owed, and is listed again on the next walk. A walk's log counts these as
+`unreached`. They are not failures: the file is fine, only the way to it is not, and reporting them
+would have the venue asked again about files it serves.
 
-**A refusal takes the address that refused out of rotation.** A `403` or a `429` is aimed at the
-address as often as at the file, and every request sent through a refusing address is refused too.
-So that address is left alone — see [which address](#which-address-a-file-is-fetched-from) — and the
-file is asked elsewhere. Where a server has one address, its fetches wait for it. Hauler sets no rate
-of its own; a venue that keeps refusing is a sign to lower `HAULER_CONCURRENCY`.
+**A `207` names keys the catalog would not settle**: one naming no file, or one the lens does not let
+through. Each is logged as an error and not sent again; neither mends itself by being sent twice, and
+both mean the catalog and hauler disagree about what was listed. A report that fails outright is
+logged, and its files are listed again on the next walk.
 
-**The caller reports problems; prospector rules on them.** The catalog forwards
-each report to prospector, which owns a file's state. A failed file is checked
-against the venue and either stays owed or is ruled absent; a mismatch
-is confirmed the same way, and what the venue says is what gets recorded.
+**The caller reports; the catalog's side rules.** The catalog forwards each report to prospector,
+which checks a failed or mismatched file against the venue and records what the venue says. See
+[PROSPECTOR.md](PROSPECTOR.md#reports).
 
-**Reporting is not transactional with the download, on purpose.** A file
-fetched but never reported is listed again on the next walk, found on disk, and
-reported then.
+**Reporting is not transactional with the download, on purpose.** A file fetched but never reported
+is listed again on the next walk, found on disk, and reported then.
 
-**A catalog that is away is waited for.** A connection that fails — refused,
-dropped, the name not found while the container restarts, no answer in time —
-and a `5xx` are the catalog not able to answer, and nothing about the request.
-Every request is asked again, a second apart and doubling up to thirty seconds,
-until the catalog answers: a walk pauses where it is, the files already in hand
-keep downloading, and reports are delivered late rather than dropped. Both
-requests are safe to repeat: a listing is a read, and a file reported twice is
-recorded once. A `4xx` is the catalog's answer, and is not asked again.
-
-**Said once for the service**: one line as the catalog goes, with the cause in a
-word, and one as it comes back, with how long it was away — however many venues
-were waiting on it. Once hauler is stopping it no longer waits, and a request
-gets three attempts.
+**A catalog that is away is waited for.** A connection that fails (refused, dropped, the name not
+found while the container restarts, no answer in time) and a `5xx` are the catalog unable to answer,
+not an answer. The request is asked again, a second apart and doubling up to thirty seconds, until
+the catalog answers: a walk pauses where it is, the files already in hand keep downloading, and
+reports are delivered late rather than dropped. Both requests are safe to repeat: a listing is a
+read, and a file reported twice is recorded once. A `4xx` is the catalog's answer and is not asked
+again. The catalog going away and coming back are each logged once for the service, however many
+venues were waiting on it.
 
 ## Stopping
 
-**A stop gives the files in flight fifteen seconds, and no longer.** It takes no new file. The
-files already downloading that finish in that time are counted; whatever is still downloading after
-it is given up — left owed, its partial removed — and every page then reports what it got through
-before the process exits. Fifteen seconds is half the compose file's `stop_grace_period`, which
-leaves the other half for the reports to go out: a stop is an order and matters more than a
-download, and what was downloaded before it is not checked a second time for the sake of a few
-files that were slow.
+**A stop gives the files in flight fifteen seconds, and no longer.** It takes no new file, and the
+catalog is no longer waited for: each request gets three attempts. A file waiting for an address or
+between attempts asks nothing more and stays owed. Downloads that finish in the fifteen seconds count;
+whatever is still downloading after them is given up, left owed and its partial removed, and every
+page then reports what it got through before the process exits. Fifteen seconds is half the compose
+file's `stop_grace_period` of thirty, which leaves the other half for the reports to go out.
 
-**A start removes every unfinished download** before it fetches anything, which
-is deleting one directory: every partial is in `.hauler-tmp`, on the archives'
-own volume so that the rename into place stays one step.
-A partial only becomes a file by being verified and renamed, so one left over is
-a download that never finished — a stop that outlived its grace period, a crash,
-a pulled plug — and the next walk fetches that file again. `.bak` files are left
-alone: they are whole files that disagreed, kept for a person to read.
+**A start removes every unfinished download** before it fetches anything, which is deleting
+`.hauler-tmp`: every partial is there, on the archives' own volume so that the rename into place stays
+one step. A partial becomes a file only by being verified and renamed, so one left over is a download
+that never finished (a stop that outlived its grace period, a crash, a pulled plug), and the next walk
+fetches that file again. `.bak` files are left alone: they are whole files that disagreed, kept for a
+person to read.
 
 ## Configuration
 
-See the service README for the environment. `HAULER_LENS` names a lens by its
-slug; an unknown one is refused by the catalog, so the walk fails loudly rather
-than quietly hauling everything.
+The variables are in the [service README](../../services/hauler/README.md). Hauler serves no API
+beyond its health check, `GET /health` on port 3000.
