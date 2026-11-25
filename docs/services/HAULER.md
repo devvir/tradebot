@@ -91,8 +91,9 @@ answered, and what each page came to.
 The volume is looked at before each file, at most once a second. It is low below `HAULER_MIN_FREE_GB`
 of free space, with fewer free inodes than 10,000 or half a percent of all (whichever is more), or
 for a minute after a write was refused for want of room (`ENOSPC`, `EDQUOT`), which also catches a
-quota no look at the volume sees. While it is low no new file is taken, the ones in flight finish and are reported, and the walk
-ends saying so. The venue is walked again after the long wait, so freeing space is all it takes.
+quota no look at the volume sees. While it is low no new file is taken, the ones in flight finish and
+are reported, and the walk ends saying so. The venue is walked again after the long wait, so freeing
+space is all it takes.
 
 ### When it walks again
 
