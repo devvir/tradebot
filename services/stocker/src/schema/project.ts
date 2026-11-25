@@ -48,8 +48,8 @@ const rowsOf = (series: Series, relation: string): string =>
  * value that cannot be parsed is the same statement made badly.
  *
  * The cost is that a *wrongly mapped* column now yields NULLs instead of an
- * error. That trade is deliberate: `mapping.test.ts` drives every series
- * against a real file from the venue and asserts the projected values, which
+ * error. That trade is deliberate: a series with a fixture cut from a real
+ * venue file is tested against it, asserting the projected values, which
  * catches a bad mapping at the point where it can be read and fixed. A failed
  * build at 3am catches it too, but only as a partition that never lands.
  *

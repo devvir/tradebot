@@ -142,8 +142,9 @@ export interface Series {
 
   /**
    * The column naming each row's instrument, where a file can hold more than one
-   * — a market bundle, or a futures chain. Rows are split by it, one vault file
-   * per instrument. Absent means the file is the catalog symbol's alone.
+   * — a market bundle, or a futures chain. Each row is written as the
+   * instrument it names rather than as the catalog symbol the file was listed
+   * under. Absent means the file is the catalog symbol's alone.
    */
   instrument?: string;
 
