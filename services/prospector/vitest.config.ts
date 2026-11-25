@@ -17,7 +17,6 @@ export default mergeConfig(
     test: {
       setupFiles: ['./tests/setup.ts'],
       maxWorkers: 4,
-      minWorkers: 1,
     },
   })
 );

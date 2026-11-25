@@ -11,11 +11,11 @@ import { vi } from 'vitest';
  * **Taken from the module that defines it rather than from the package root.**
  * The root pulls in the servers as a side effect — express, ws — into every test
  * worker, for one function, which cost more than every test in the file it was
- * slowing down.
+ * slowing down. It is the built module, the same code the service runs.
  */
 vi.mock('@devvir/service-kit', async () => ({
   guardBody: (await vi.importActual<Record<string, unknown>>(
-    '../../packages/service-kit/src/net/clients/fetch')).guardBody,
+    '../../packages/service-kit/dist/net/clients/fetch')).guardBody,
   logger: {
     info:  vi.fn(),
     warn:  vi.fn(),
