@@ -16,7 +16,28 @@ announcements cover the archive's current form:
 The shutdown notice says legacy data "dated August 3, 2026, and earlier" is retained; the old tree
 also holds klines and trades dated `2026-08-04`.
 
-### Two archives in one bucket: the current one and the one it replaced
+### Where it is served
+
+#### The bucket behind the Akamai edge
+
+The bucket names itself in every listing (`<Name>huobi-service-data</Name>`). It is public and
+answers the S3 listing API at `huobi-service-data.s3.amazonaws.com`. A missing key is a plain `404`,
+every key carries an MD5 `ETag`, and a `.CHECKSUM` beside each archive holds its SHA-256 and file
+name.
+
+`www.htx.com/data/` serves the same keys through Akamai, unchanged in content; the portal's download
+buttons go through `/vision/?prefix=…`, a browser over the same keys. The edge enforces a limit far
+below the bucket's. Half a dozen listing requests earn a `403 AkamaiGHost` on every prefix at once.
+Probes are then left neither answered nor refused, each socket silent until it dies on its own
+deadline. Through the edge a `403` carries no `x-amz-error-code`, so absence and rejection arrive as
+the same answer.
+
+**No limit found on the bucket.** Measured 2026-09-29 and 30 with `HEAD` requests: about 1,800 a
+second from one machine and 1,180 from a remote one, without a single throttling answer.
+
+### Layout
+
+#### Two archives in one bucket: the current one and the one it replaced
 
 HTX publishes **two trees** in one bucket, and both are official. The data portal
 ([`/futures/data/landing_page/`](https://www.htx.com/futures/data/landing_page/), which carries a
@@ -107,7 +128,7 @@ on spot and `lv150` on futures.
   `data/index-klines/swap/daily/2025-12-10 12:06:29/` and
   `data/mark-price-klines/future/daily/2026-01-25 12:17:38/`.
 
-#### Where they ran together: `2026-02-01` to `2026-08-04`
+##### Where they ran together: `2026-02-01` to `2026-08-04`
 
 Both ends of the span are declared by HTX: the portal's sentence above, and the shutdown notice. The
 figures below were measured over the whole overlap. `data/` has not been written since `2026-08-05`,
@@ -167,6 +188,26 @@ klines, index, mark and funding every listed day, and trade files only on some. 
 same way before the overlap; during it, the holes above make a missing `data/` trades file no
 evidence that the instrument was quiet.
 
+#### Paths
+
+```
+historical_data/<market>/daily/<dataset>/<SYMBOL>/[<interval>/]<SYMBOL>-<stem>-[<interval>-]<yyyy-mm-dd>.zip
+historical_data/<market>/daily/orderbook/lv{400,150}/<SYMBOL>/<SYMBOL>-l2orderbook-{400,150}lv-<yyyy-mm-dd>.tar.gz
+
+data/<dataset>/<market>/daily/<SYMBOL>/<SYMBOL>-trades-<yyyy-mm-dd>.zip
+data/<dataset>/<market>/daily/<SYMBOL>/<interval>/<SYMBOL>-<interval>-<yyyy-mm-dd>.zip
+```
+
+- `historical_data/` stems: `trades`, `klines`, `index-klines`, `mark-price-klines`, `fundingRates`
+  (`BTC-USDT-PERP-fundingRates-2026-11-24.zip`, `BTC-USDT-klines-1m-2026-11-24.zip`).
+- `data/` kline files carry no dataset stem: `BTCUSDT-1min-2026-08-04.zip`.
+- Checksums: `<file>.CHECKSUM` in `historical_data/`, `<file without .zip>.CHECKSUM` in `data/`.
+- The two trees **invert dataset and market**: `historical_data/spot/daily/trades/` against
+  `data/trades/spot/daily/`.
+- Only daily files exist in either tree; there is no monthly tree.
+
+### File formats
+
 #### The shapes the two trees write
 
 Four datasets are in both trees, and each has a different shape in each tree. Read off real files of
@@ -210,24 +251,7 @@ Four datasets are in both trees, and each has a different shape in each tree. Re
 
 A row of 2021 has the same fields in the same order as a row of 2026.
 
-### The bucket behind the Akamai edge
-
-The bucket names itself in every listing (`<Name>huobi-service-data</Name>`). It is public and
-answers the S3 listing API at `huobi-service-data.s3.amazonaws.com`. A missing key is a plain `404`,
-every key carries an MD5 `ETag`, and a `.CHECKSUM` beside each archive holds its SHA-256 and file
-name.
-
-`www.htx.com/data/` serves the same keys through Akamai, unchanged in content; the portal's download
-buttons go through `/vision/?prefix=…`, a browser over the same keys. The edge enforces a limit far
-below the bucket's. Half a dozen listing requests earn a `403 AkamaiGHost` on every prefix at once.
-Probes are then left neither answered nor refused, each socket silent until it dies on its own
-deadline. Through the edge a `403` carries no `x-amz-error-code`, so absence and rejection arrive as
-the same answer.
-
-**No limit found on the bucket.** Measured 2026-09-29 and 30 with `HEAD` requests: about 1,800 a
-second from one machine and 1,180 from a remote one, without a single throttling answer.
-
-### Daily files are UTC+8 days, not UTC days
+#### Daily files are UTC+8 days, not UTC days
 
 A file named `<yyyy-mm-dd>` holds `16:00:00` UTC the previous day through `15:59:5x` UTC that day: a
 Beijing day, cut at midnight UTC+8. This was read off real trade timestamps in `BTC-USDT` spot,
@@ -238,7 +262,7 @@ The REST API agrees: its `1day` kline `id` is the same UTC+8 day start. A bar re
 formatter appears to sit one day before the file covering the same trades; both match exactly once
 read as UTC+8.
 
-### Order books: 400 levels spot, 150 futures
+#### Order books: 400 levels spot, 150 futures
 
 `historical_data/<market>/daily/orderbook/lv400/` on spot and `lv150/` on futures, each day a
 `.tar.gz` holding one `.data` file (every other dataset is a `.zip` holding one `.csv`).
@@ -249,25 +273,13 @@ A level is `[price, size]`, both strings, and a size of `"0"` removes it. `ts` i
 microseconds and rises through the file. A day's file runs 16:00 UTC to 16:00 UTC, like every other
 daily file.
 
-### Layout
+#### Mark and index prices are klines
 
-```
-historical_data/<market>/daily/<dataset>/<SYMBOL>/[<interval>/]<SYMBOL>-<stem>-[<interval>-]<yyyy-mm-dd>.zip
-historical_data/<market>/daily/orderbook/lv{400,150}/<SYMBOL>/<SYMBOL>-l2orderbook-{400,150}lv-<yyyy-mm-dd>.tar.gz
+Mark and index prices are published as klines: `index-klines/` and `mark-klines/` (in `data/`,
+`mark-price-klines/`), a directory per interval, each row a bar's open, high, low and close of the
+price.
 
-data/<dataset>/<market>/daily/<SYMBOL>/<SYMBOL>-trades-<yyyy-mm-dd>.zip
-data/<dataset>/<market>/daily/<SYMBOL>/<interval>/<SYMBOL>-<interval>-<yyyy-mm-dd>.zip
-```
-
-- `historical_data/` stems: `trades`, `klines`, `index-klines`, `mark-price-klines`, `fundingRates`
-  (`BTC-USDT-PERP-fundingRates-2026-11-24.zip`, `BTC-USDT-klines-1m-2026-11-24.zip`).
-- `data/` kline files carry no dataset stem: `BTCUSDT-1min-2026-08-04.zip`.
-- Checksums: `<file>.CHECKSUM` in `historical_data/`, `<file without .zip>.CHECKSUM` in `data/`.
-- The two trees **invert dataset and market**: `historical_data/spot/daily/trades/` against
-  `data/trades/spot/daily/`.
-- Only daily files exist in either tree; there is no monthly tree.
-
-### A contract's kline volume counts both sides of every trade
+#### A contract's kline volume counts both sides of every trade
 
 **On perpetuals, dated futures and options a kline's volume is twice what was traded.** A trade of
 ten contracts is ten bought and ten sold, and the kline reports twenty. That is the venue's
@@ -298,12 +310,6 @@ same text for spot, where `vol` is the quote volume.
 larger: 1.7 times on `2024-07-02`, 4.7 on `2025-01-02`, 3.3 on `2026-01-31` and 13.7 on `2026-11-24`
 (`historical_data/`). `ETH-USDT` on `2026-11-24` is 6.9 times; `DOGE-USDT` on the same day matches
 exactly.
-
-### Mark and index prices are klines
-
-Mark and index prices are published as klines: `index-klines/` and `mark-klines/` (in `data/`,
-`mark-price-klines/`), a directory per interval, each row a bar's open, high, low and close of the
-price.
 
 ### Publication
 
@@ -349,6 +355,8 @@ marks what neither settled. Nothing here is inferred from another venue.
 | derived bars, any family | `https://api.hbdm.com` | | `/index/market/history/*` |
 
 - **Spot is behind CloudFront, derivatives behind Tencent EdgeOne** (`eo-log-uuid` in the headers).
+  From the machine that asked, spot was served from CloudFront's New York edge (JFK52), 90 to
+  145 ms to connect; derivatives 13 ms to connect, with the API 243 ms behind the edge.
   `api-aws.huobi.pro` is the spot host for clients inside AWS *(documented)*.
 - **Names**: `btcusdt` on spot, lower case; `BTC-USDT` a USDT-margined swap; `BTC-USD` a
   coin-margined swap; `BTC_CQ` the current quarter's coin-margined future, `BTC261016` a dated one.
@@ -415,7 +423,7 @@ An endpoint has one of three ways, and no other:
 - **The v1 endpoint of the same name is switched off**: "The interface is offline".
 
 **Settlements — `GET /linear-swap-api/v1/swap_settlement_records`**: `contract_code`, `page_index`,
-`page_size`; `data.settlement_record[]` of `{contract_code, settlement_time, settlement_price,
+`page_size` (50 a page); `data.settlement_record[]` of `{contract_code, settlement_time, settlement_price,
 clawback_ratio, settlement_type, …}`. **Reaches 90 days**: 270 records for BTC-USDT.
 
 ### Endpoints that hold only the newest
@@ -446,15 +454,7 @@ clawback_ratio, settlement_type, …}`. **Reaches 90 days**: 270 records for BTC
   sell_ratio, locked_ratio}`. 30 points.
 - **Insurance fund — `swap_insurance_fund`**: switched off, "Function suspended".
 
-### The listings, and what a delisted contract answers
-
-- `GET /linear-swap-api/v1/swap_contract_info`, `/swap-api/v1/swap_contract_info`,
-  `/api/v1/contract_contract_info`: `data[]` with `contract_code`, `create_date` (`yyyymmdd`),
-  `contract_status`, `settlement_period`, and for dated contracts `delivery_time`.
-- **A delisted contract does not exist**: `LUNA-USDT` is `invalid symbol` for bars and "The
-  perpetual contract does not exist" for funding.
-
-### The instrument listings
+### The listings
 
 Four endpoints on two hosts, because htx files its markets separately: spot on the exchange API,
 and each derivative family on its own service of `api.hbdm.com`.
@@ -476,3 +476,43 @@ list is the only ending stated. A `suspend` is a halt, not an ending.
 **Under `linear-swap` a dated contract is told by its expiry.** Every symbol there ending in six
 digits is dash-separated and parses as a `YYMMDD` expiry, and no perpetual ends in digits at all.
 Options are another matter: their symbols end in a strike, and a six-figure one reads as a date.
+
+**A derivative's record** carries `contract_code`, `create_date` (`yyyymmdd`), `contract_status`,
+`settlement_period`, and for dated contracts `delivery_time`.
+
+**A delisted contract does not exist**: `LUNA-USDT` is `invalid symbol` for bars and "The perpetual
+contract does not exist" for funding.
+
+**What the listing held in 2026-10**: 382 USDT-margined contracts, with 116,947 instrument-days
+since 2020-10, two fifths of them in 2026; five coin-margined swaps; eight coin-margined futures.
+
+### Against htx's own archive
+
+Set side by side in 2026-10:
+
+| over REST | in the archive |
+|---|---|
+| spot bars and trades, the newest only | every bar and trade |
+| swap bars, from the contract's first, BTC-USDT from 2020-10 | the same history |
+| mark and index bars, the last 2,000 | mark and index klines |
+| funding, from the contract's first | from 2026-02-01 only |
+| premium, estimated rate and basis bars; liquidations; open interest; elite ratios; settlements | none |
+
+### Its documentation
+
+The static pages at `huobiapi.github.io/docs` are the older site; the current portal is a script.
+The static pages state limits and parameters in full. **Where the API differs from them**: the two
+endpoints switched off; `/api/v1/timestamp` reports 100 a second where 240 per 3 seconds is stated.
+
+### Pace, measured
+
+4,238 calls in 2026-10, from one machine, most of them the runs at pace, with no failure but the
+refusals provoked on purpose. Bars at 2,000 a page came at 1.4 pages a second on one connection,
+p50 689 ms.
+
+## Open questions
+
+- **What the current documentation portal states.** It is a script; the older static pages were
+  read.
+- **What limits market data.** 132 calls a second on derivatives and 126 on spot were not refused.
+- **Where the REST API's servers are.** Only the delay behind its edge is known.

@@ -11,20 +11,9 @@ What bybit's published archive contains, established by asking the archive itsel
 separate server with a different tree, a different format and limits of its own — see
 [A second host: the order books](#a-second-host-the-order-books).
 
-### Publication
+### Where it is served
 
-From the files' own `Last-Modified`, measured on 2026-09-25 over the 16,571 files dated 2026-09-15
-to 21, a day's file appears this many hours after the start of the day it is dated:
-
-| p50 | p99 |
-|---|---|
-| 25.2 h | 26.0 h |
-
-The trees publish at different hours. Read on 2026-11-25, over the days 2026-11-10 to 19: `BTCUSDT`'s
-`trading/` file for day D appeared between 01:09 and 01:15 UTC on D+1, its `spot/` daily file at
-about 02:00, and `BTC`'s option trades within seconds of midnight.
-
-### The CDN answers no listing API; the bucket does
+#### The CDN answers no listing API; the bucket does
 
 `public.bybit.com` is CloudFront, and **every query parameter is ignored**: `?prefix=`,
 `?list-type=2`, `?marker=` all return the same thing as `/` — the browsable HTML index a plain file
@@ -44,109 +33,47 @@ MD5. The bucket serves the files too.
 into the hostname, where the wildcard certificate does not reach and TLS fails outright. Addressed
 as a path, `s3.ap-southeast-1.amazonaws.com/public.bybit.com/`, the hostname is clean.
 
-### What is in the bucket but is not archive
+#### A second host: the order books
 
-- `backup/` is a copy: one symbol's (`ZKUSDT`) `trading/` files, served under `trading/` as well.
-- **The bucket root holds one key of its own, `index.html`**, the page of the browsing UI; every
-  other key sits below a directory. An `index.html` also sits *inside* directories —
-  `kline_for_metatrader4/BTCUSDT/2020/index.html`, `trading/BTCUSDU21/index.html` — one per
-  instrument per dataset.
-- `backup/` is also a zero-byte key of its own, beside the keys beneath it.
+Order books are not in [the trees](#the-trees) and are not on that host at all:
 
-No tree carries checksum files.
+```
+base    https://quote-saver.bycsi.com
+root    orderbook/
+layout  orderbook/{linear,inverse}/<SYMBOL>/<yyyy-mm-dd>_<SYMBOL>_ob<depth>.data.zip
+```
 
-### Four shapes, and none of them is the obvious one
+**A separate server means a separate everything.** Different address, different tree, browsable HTML
+indexes instead of a bucket listing, and its own limits. The host carries `linear/` and `inverse/`
+and no third market.
 
-Every tree names its instrument and its date differently:
+**The indexes name files and state nothing else** — no size, no last-modified, no checksum. They are
+generated rather than stale; `orderbook/linear/` was rewritten the morning it was checked.
 
-| tree | shape |
-|---|---|
-| `trading/`, `premium_index/`, `spot_index/` | the instrument runs **straight into** the date — `BTCUSD2019-10-01_premium_index.csv.gz` |
-| `spot/` | monthly and daily files in one directory, told apart by the separator — `-2026-08` monthly, `_2026-08-03` daily |
-| `trade/option/`, `mark_kline/option/` | dated **first**, keyed by the underlying coin — `2026-08-03_BTC_USDT.trades.csv.zip` |
-| `kline_for_metatrader4/` | a whole month named by **both its ends** — `ADAUSDT_15_2021-01-01_2021-01-31.csv.gz` |
+**The depth changed mid-history.** `linear/BTCUSDT/` holds:
 
-**An instrument's name is letters, digits, dashes and underscores** — match-outcome markets are
-listed as `WC_ARG_ALG_USDT-17JUN26` — so its own punctuation says nothing about where it ends. The
-date does.
+```
+ob500     946 files   2023-01-18 → 2025-08-20
+ob200     353 files   2025-08-21 → 2026-08-08
+```
 
-**The metatrader tree is monthly, not a range.** All 5,731 of its files (2026-11-25) cover exactly
-one whole calendar month, from 2020-04 to 2025-11, at five intervals, with no exceptions: the second
-date is always the month's last day.
+No date carries both, so bybit switched from 500 levels to 200 on 2025-08-21.
 
-**The metatrader klines are the USDT perpetuals, stamped in UTC+3.** The files are headerless:
-`datetime, open, high, low, close, volume`. The datetimes (`2024.11.01 00:00`) are the MetaTrader
-server's zone, with no daylight-saving switch: `BTCUSDT`'s 1h bars equal the perpetual trades summed
-per hour, exactly, on every hour of 2020-10 and 2020-12 (over 1,000 hours), and only with the bar
-labelled 03:00 holding the trades of 00:00–01:00 UTC. A month's file is therefore a UTC+3 month: it
-opens with the previous UTC month's last three hours, and its month ends three hours before the UTC
-month does.
+**No limit found.** Measured 2026-09-30: 5,496 `HEAD`s a second from a remote machine on keys the
+edge had cached, and 3,870 a second from a home link on missing ones, which the edge passes to the
+origin (~220 ms), without a single throttling answer.
 
-**A metatrader file also ends with the next month's first bar.** `BTCUSDT`'s 1h file for 2020-10
-closes with the bar `2020.11.01 00:00`, and the 2020-11 file opens with the same row, value for
-value.
+**A missing key's `404` carries neither a `Content-Length` nor chunked encoding**, so over HTTP/1.1
+its end is the connection closing. The host speaks HTTP/2, where each request is a stream of its own.
 
-**Four metatrader months are truncated.** `BTCUSDT`'s 1h files for 2023-12, 2024-01 and 2024-03
-hold 200 bars and 2024-02 holds 400, against 721–745 for a whole month; the 1m file of 2024-03 holds
-200 bars (2024-03-01 00:00 → 03:19). Every other month from 2021-01 to 2024-11 is complete.
-Checked on `BTCUSDT` only, on 2026-10-04.
+##### Its origin bucket is not findable
 
-### Columns
-
-| tree | header |
-|---|---|
-| `trading/` | `timestamp, symbol, side, size, price, tickDirection, trdMatchID, grossValue, homeNotional, foreignNotional[, RPI]` |
-| `spot/` | `id, timestamp, price, volume, side[, rpi]` |
-| `premium_index/`, `spot_index/` | `start_at, symbol, period, open, high, low, close` |
-| `kline_for_metatrader4/` | none |
-
-`timestamp` is fractional seconds in `trading/` (`1743379200.0609`) and integer milliseconds in
-`spot/` (`1743379200057`). `start_at` is whole seconds.
-
-**A last column was appended in 2025-03 and 2025-04.** `trading/` files carry `RPI` from 2025-04-03
-(`BTCUSDT`, `ETHUSDT`, the inverse `BTCUSD`), and `spot/` daily files carry `rpi` from 2025-03-13
-(`BTCUSDT`, `ETHUSDT`).
-
-**`spot/` monthly files kept the old header.** From 2025-03-13 on, their rows carry six values under
-the five names `id, timestamp, price, volume, side`. `BTCUSDT-2025-03` mixes the two: 26,701,545
-rows of five values, then 15,401,750 of six from 2025-03-13 00:00 UTC. In `BTCUSDT-2025-04`, every
-row but the header has six. The monthly files of 2025-06, 2025-12 and 2026-06 are the same.
-
-### The 2021 expiries are abandoned
-
-`trading/` holds 44 dated futures directories. Forty of them — every expiry from 2022 on — carry
-197 to 205 daily files each, a contiguous history. **The four 2021 ones do not**, and bybit's own
-download form offers nothing older than 2022:
-
-| directory | files | what is in them |
-|---|---|---|
-| `BTCUSDU21`, `ETHUSDU21` | 2 | one day, 2021-07-26, and nothing else |
-| `BTCUSDZ21`, `ETHUSDZ21` | 29 | that same day, 27 days from 2021-12-06, one empty file |
-
-A December-2021 contract traded for months before December, so 27 days is a fragment of it, and a
-September-2021 contract with one July day is not a series at all.
-
-**The single day is served twice and the two copies disagree.** `…2021-07-26_v2.csv`, uncompressed,
-is the whole day, 28,828 rows; `…2021-07-26_v2.csv.gz` beside it holds 307 rows, of which 137 carry
-a different `tickDirection` for the same `trdMatchID`. Whatever `_v2` meant, one of the two is wrong
-and nothing says which.
-
-#### Eight empty files, all written on one day
-
-Across all 7,424 files in those 44 directories, exactly eight are under 100 bytes. Every one is 44
-bytes, is a gzip of **nothing**, and is stamped **2022-12-12** — one per contract live or recent
-that day, in `BTCUSDZ21`, `ETHUSDZ21` and the six 2022 expiries.
-
-Two of them fall inside the 2021 directories. They are 44 bytes rather than zero: only the file
-itself says it is empty.
-
-### A directory can be renamed out from under its files
-
-`trading/DATAOLD01USDT/` holds 527 files named `DATAUSDT2023-12-20.csv.gz` to
-`DATAUSDT2025-05-29.csv.gz`. Bybit renamed the instrument, moved the directory and left every
-filename as it was. `trading/DATAUSDT/` exists as well, but holds only files from 2026-07-09 on.
-
-So **the directory is not evidence of the instrument's name**; the filename is.
+- A missing key returns S3's own 404 through the edge, but it carries only `Code`, `Key`,
+  `RequestId` and an opaque `HostId`, and no `BucketName` field.
+- The primary's convention does not hold. `public.bybit.com` is literally a bucket name, but
+  `quote-saver.bycsi.com`, `quote-saver`, `bycsi.com` and `bybit-quote-saver` all answer
+  `NoSuchBucket` from `s3.amazonaws.com`, where a bucket in another region would answer
+  `PermanentRedirect` and name itself. The S3 namespace is global, so those names exist nowhere.
 
 ### Limits
 
@@ -190,7 +117,9 @@ began.
 `403` on every one of 300 requests, with no ban involved — curl was answered `200` at the same
 moment.
 
-### The trees
+### Layout
+
+#### The trees
 
 ```
 trading/<SYMBOL>/<SYMBOL><yyyy-mm-dd>.csv.gz                    derivatives trades
@@ -210,7 +139,56 @@ rather than by symbol, and are the only trees on this host in `.csv.zip`.
 file carries a `period` column reading `1`, and its rows are 60 seconds apart — 1,440 a day, checked
 across twelve files of each. Option mark bars are a uniform 60,000 ms between `open_time` values.
 
-### Renderings told apart by filename alone
+#### What is in the bucket but is not archive
+
+- `backup/` is a copy: one symbol's (`ZKUSDT`) `trading/` files, served under `trading/` as well.
+- **The bucket root holds one key of its own, `index.html`**, the page of the browsing UI; every
+  other key sits below a directory. An `index.html` also sits *inside* directories —
+  `kline_for_metatrader4/BTCUSDT/2020/index.html`, `trading/BTCUSDU21/index.html` — one per
+  instrument per dataset.
+- `backup/` is also a zero-byte key of its own, beside the keys beneath it.
+
+No tree carries checksum files.
+
+### Naming
+
+#### Four shapes, and none of them is the obvious one
+
+Every tree names its instrument and its date differently:
+
+| tree | shape |
+|---|---|
+| `trading/`, `premium_index/`, `spot_index/` | the instrument runs **straight into** the date — `BTCUSD2019-10-01_premium_index.csv.gz` |
+| `spot/` | monthly and daily files in one directory, told apart by the separator — `-2026-08` monthly, `_2026-08-03` daily |
+| `trade/option/`, `mark_kline/option/` | dated **first**, keyed by the underlying coin — `2026-08-03_BTC_USDT.trades.csv.zip` |
+| `kline_for_metatrader4/` | a whole month named by **both its ends** — `ADAUSDT_15_2021-01-01_2021-01-31.csv.gz` |
+
+**An instrument's name is letters, digits, dashes and underscores** — match-outcome markets are
+listed as `WC_ARG_ALG_USDT-17JUN26` — so its own punctuation says nothing about where it ends. The
+date does.
+
+**The metatrader tree is monthly, not a range.** All 5,731 of its files (2026-11-25) cover exactly
+one whole calendar month, from 2020-04 to 2025-11, at five intervals, with no exceptions: the second
+date is always the month's last day.
+
+**The metatrader klines are the USDT perpetuals, stamped in UTC+3.** The files are headerless:
+`datetime, open, high, low, close, volume`. The datetimes (`2024.11.01 00:00`) are the MetaTrader
+server's zone, with no daylight-saving switch: `BTCUSDT`'s 1h bars equal the perpetual trades summed
+per hour, exactly, on every hour of 2020-10 and 2020-12 (over 1,000 hours), and only with the bar
+labelled 03:00 holding the trades of 00:00–01:00 UTC. A month's file is therefore a UTC+3 month: it
+opens with the previous UTC month's last three hours, and its month ends three hours before the UTC
+month does.
+
+**A metatrader file also ends with the next month's first bar.** `BTCUSDT`'s 1h file for 2020-10
+closes with the bar `2020.11.01 00:00`, and the 2020-11 file opens with the same row, value for
+value.
+
+**Four metatrader months are truncated.** `BTCUSDT`'s 1h files for 2023-12, 2024-01 and 2024-03
+hold 200 bars and 2024-02 holds 400, against 721–745 for a whole month; the 1m file of 2024-03 holds
+200 bars (2024-03-01 00:00 → 03:19). Every other month from 2021-01 to 2024-11 is complete.
+Checked on `BTCUSDT` only, on 2026-10-04.
+
+#### Renderings told apart by filename alone
 
 **`spot/` publishes the same month twice in one directory**, told apart by nothing but the filename:
 
@@ -225,59 +203,43 @@ Hyphen against underscore: a monthly file is `<SYMBOL>-YYYY-MM`, a daily one `<S
 which MetaTrader counts in minutes — all in the same year directory. Only the interval in the
 filename tells two files for one month apart.
 
-### Dates are not at the end of a name
+#### Dates are not at the end of a name
 
 The date is not the last token of a name: a suffix follows it (`_premium_index`, `_index_price`).
 Bybit also runs the symbol straight into the date (`BTCUSDT2020-03-25`), and gives MetaTrader files
 two dates. The **first** date in a filename is the date of its contents — a MetaTrader file's second
 is its month's last day — and a monthly `spot/` file carries a month with no day.
 
-### The misfiled file
+#### A directory can be renamed out from under its files
 
-`trading/DOTUSD/DOTUSDT2021-12-06.csv.gz` is genuinely served: a file named for `DOTUSDT`, in
-`DOTUSD`'s folder. It holds DOTUSDT rows and is a shorter copy of the day served whole at
-`trading/DOTUSDT/DOTUSDT2021-12-06.csv.gz`:
+`trading/DATAOLD01USDT/` holds 527 files named `DATAUSDT2023-12-20.csv.gz` to
+`DATAUSDT2025-05-29.csv.gz`. Bybit renamed the instrument, moved the directory and left every
+filename as it was. `trading/DATAUSDT/` exists as well, but holds only files from 2026-07-09 on.
 
-| | bytes | trades | from | timestamps |
-|---|---|---|---|---|
-| under `DOTUSDT/` | 2,185,333 | 55,249 | 00:00:02 UTC | with fractions of a second |
-| under `DOTUSD/` | 1,758,646 | 45,780 | 06:06:23 UTC | whole seconds |
+So **the directory is not evidence of the instrument's name**; the filename is.
 
-Every trade id of the shorter one is in the whole one (2026-10-07). One misfiled artifact, not a
-pattern.
+### File formats
 
-### A second host: the order books
+#### Columns
 
-Order books are not in the trees above and are not on that host at all:
+| tree | header |
+|---|---|
+| `trading/` | `timestamp, symbol, side, size, price, tickDirection, trdMatchID, grossValue, homeNotional, foreignNotional[, RPI]` |
+| `spot/` | `id, timestamp, price, volume, side[, rpi]` |
+| `premium_index/`, `spot_index/` | `start_at, symbol, period, open, high, low, close` |
+| `kline_for_metatrader4/` | none |
 
-```
-base    https://quote-saver.bycsi.com
-root    orderbook/
-layout  orderbook/{linear,inverse}/<SYMBOL>/<yyyy-mm-dd>_<SYMBOL>_ob<depth>.data.zip
-```
+`timestamp` is fractional seconds in `trading/` (`1743379200.0609`) and integer milliseconds in
+`spot/` (`1743379200057`). `start_at` is whole seconds.
 
-**A separate server means a separate everything.** Different address, different tree, browsable HTML
-indexes instead of a bucket listing, and its own limits. The host carries `linear/` and `inverse/`
-and no third market.
+**A last column was appended in 2025-03 and 2025-04.** `trading/` files carry `RPI` from 2025-04-03
+(`BTCUSDT`, `ETHUSDT`, the inverse `BTCUSD`), and `spot/` daily files carry `rpi` from 2025-03-13
+(`BTCUSDT`, `ETHUSDT`).
 
-**The indexes name files and state nothing else** — no size, no last-modified, no checksum. They are
-generated rather than stale; `orderbook/linear/` was rewritten the morning it was checked.
-
-**The depth changed mid-history.** `linear/BTCUSDT/` holds:
-
-```
-ob500     946 files   2023-01-18 → 2025-08-20
-ob200     353 files   2025-08-21 → 2026-08-08
-```
-
-No date carries both, so bybit switched from 500 levels to 200 on 2025-08-21.
-
-**No limit found.** Measured 2026-09-30: 5,496 `HEAD`s a second from a remote machine on keys the
-edge had cached, and 3,870 a second from a home link on missing ones, which the edge passes to the
-origin (~220 ms), without a single throttling answer.
-
-**A missing key's `404` carries neither a `Content-Length` nor chunked encoding**, so over HTTP/1.1
-its end is the connection closing. The host speaks HTTP/2, where each request is a stream of its own.
+**`spot/` monthly files kept the old header.** From 2025-03-13 on, their rows carry six values under
+the five names `id, timestamp, price, volume, side`. `BTCUSDT-2025-03` mixes the two: 26,701,545
+rows of five values, then 15,401,750 of six from 2025-03-13 00:00 UTC. In `BTCUSDT-2025-04`, every
+row but the header has six. The monthly files of 2025-06, 2025-12 and 2026-06 are the same.
 
 #### What a book file holds
 
@@ -292,14 +254,64 @@ The `.data.zip` holds one file of a JSON record a line:
 `b` and `a` are `[price, size]` levels, and a size of `0` removes the level. `ts` is in milliseconds,
 unique and rising through a file. `seq` rises through a file; `u` starts over at each snapshot.
 
-#### Its origin bucket is not findable
+### Coverage
 
-- A missing key returns S3's own 404 through the edge, but it carries only `Code`, `Key`,
-  `RequestId` and an opaque `HostId`, and no `BucketName` field.
-- The primary's convention does not hold. `public.bybit.com` is literally a bucket name, but
-  `quote-saver.bycsi.com`, `quote-saver`, `bycsi.com` and `bybit-quote-saver` all answer
-  `NoSuchBucket` from `s3.amazonaws.com`, where a bucket in another region would answer
-  `PermanentRedirect` and name itself. The S3 namespace is global, so those names exist nowhere.
+#### The 2021 expiries are abandoned
+
+`trading/` holds 44 dated futures directories. Forty of them — every expiry from 2022 on — carry
+197 to 205 daily files each, a contiguous history. **The four 2021 ones do not**, and bybit's own
+download form offers nothing older than 2022:
+
+| directory | files | what is in them |
+|---|---|---|
+| `BTCUSDU21`, `ETHUSDU21` | 2 | one day, 2021-07-26, and nothing else |
+| `BTCUSDZ21`, `ETHUSDZ21` | 29 | that same day, 27 days from 2021-12-06, one empty file |
+
+A December-2021 contract traded for months before December, so 27 days is a fragment of it, and a
+September-2021 contract with one July day is not a series at all.
+
+**The single day is served twice and the two copies disagree.** `…2021-07-26_v2.csv`, uncompressed,
+is the whole day, 28,828 rows; `…2021-07-26_v2.csv.gz` beside it holds 307 rows, of which 137 carry
+a different `tickDirection` for the same `trdMatchID`. Whatever `_v2` meant, one of the two is wrong
+and nothing says which.
+
+##### Eight empty files, all written on one day
+
+Across all 7,424 files in those 44 directories, exactly eight are under 100 bytes. Every one is 44
+bytes, is a gzip of **nothing**, and is stamped **2022-12-12** — one per contract live or recent
+that day, in `BTCUSDZ21`, `ETHUSDZ21` and the six 2022 expiries.
+
+Two of them fall inside the 2021 directories. They are 44 bytes rather than zero: only the file
+itself says it is empty.
+
+### Publication
+
+From the files' own `Last-Modified`, measured on 2026-09-25 over the 16,571 files dated 2026-09-15
+to 21, a day's file appears this many hours after the start of the day it is dated:
+
+| p50 | p99 |
+|---|---|
+| 25.2 h | 26.0 h |
+
+The trees publish at different hours. Read on 2026-11-25, over the days 2026-11-10 to 19: `BTCUSDT`'s
+`trading/` file for day D appeared between 01:09 and 01:15 UTC on D+1, its `spot/` daily file at
+about 02:00, and `BTC`'s option trades within seconds of midnight.
+
+### Known defects
+
+#### The misfiled file
+
+`trading/DOTUSD/DOTUSDT2021-12-06.csv.gz` is genuinely served: a file named for `DOTUSDT`, in
+`DOTUSD`'s folder. It holds DOTUSDT rows and is a shorter copy of the day served whole at
+`trading/DOTUSDT/DOTUSDT2021-12-06.csv.gz`:
+
+| | bytes | trades | from | timestamps |
+|---|---|---|---|---|
+| under `DOTUSDT/` | 2,185,333 | 55,249 | 00:00:02 UTC | with fractions of a second |
+| under `DOTUSD/` | 1,758,646 | 45,780 | 06:06:23 UTC | whole seconds |
+
+Every trade id of the shorter one is in the whole one (2026-10-07). One misfiled artifact, not a
+pattern.
 
 ## REST
 
@@ -312,7 +324,8 @@ in October 2026. *(documented)* marks what bybit's documentation states and was 
 **One API on one host**: `https://api.bybit.com/v5/market/<endpoint>`, asked a `category` at a time —
 `spot`, `linear` (USDT and USDC contracts), `inverse` (coin-margined), `option`.
 
-- **`api.bytick.com` answers the same**, and both are behind CloudFront. Regional hosts exist
+- **`api.bytick.com` answers the same**, and both are behind CloudFront — from the machine that
+  asked, its edge BCN50, with the API 187 ms behind it. Regional hosts exist
   *(documented)*: `api.bybit.tr`, `.kz`, `.ae`, `.eu`, `.id`, `api.bybitgeorgia.ge`.
 - **Times are milliseconds**, in requests and answers; in answers they are strings.
 - **Every answer is HTTP 200** with `{retCode, retMsg, result, retExtInfo, time}`. `retCode` 0 is
@@ -368,10 +381,12 @@ in October 2026. *(documented)* marks what bybit's documentation states and was 
 - **Answer**: rows `[startTime, open, high, low, close]`.
 - **Reaches**: BTCUSDT mark 2020-03-25T08:41Z, index 07:57Z, premium 08:41Z.
 - **A delisted contract still answers** mark and index; its premium bars came back all `"0"`.
+  `10000000AIDOGEUSDT`, closed 2025-04-28, answered trade, mark and index bars and funding, and
+  an empty list for open interest and the ratio.
 
 **Funding — `GET /v5/market/funding/history`**
-- **Ask**: `category` (`linear`, `inverse`), `symbol` — required — `startTime`, `endTime`, `limit`
-  ≤ 200.
+- **Ask**: `category` (`linear`, `inverse`), `symbol` — required, and there is no call for every
+  symbol at once — `startTime`, `endTime`, `limit` ≤ 200.
 - **Answer**: `{symbol, fundingRate, fundingRateTimestamp}`.
 - **Reaches the first funding**: BTCUSD 2018-11-15T00:00Z, BTCUSDT 2020-03-25T16:00Z.
 - **A delisted contract still answers.**
@@ -406,13 +421,13 @@ in October 2026. *(documented)* marks what bybit's documentation states and was 
 - **Options have their own — `GET /v5/market/new-delivery-price`**: `category=option`, `baseCoin`;
   `{deliveryPrice, deliveryTime}`, the most recent 50, one a day.
 
-**Delisted instruments** are listed by [the instrument listing](#the-instrument-listing).
+**Delisted instruments** are listed by [the listings](#the-listings).
 
 **Announcements — `GET /v5/announcements/index`**: `locale`, `type` (`delistings`, `new_crypto`,
 …), `page`, `limit`; `result.list[]` of `{title, description, type, tags, url, dateTimestamp, …}`
 and `result.total` — 483 delistings when asked. Where a delisted spot pair's name can be found.
 
-### Endpoints that do not
+### Endpoints that hold only the newest
 
 - **`recent-trade`**: the newest 1,000, or 60 on spot, and nothing older.
   `{execId, symbol, price, size, side, time, isBlockTrade, isRPITrade, seq}`.
@@ -425,13 +440,7 @@ and `result.total` — 483 delistings when asked. Where a delisted spot pair's n
 - **`/v5/spread/market/*`** — spread instruments, their book, recent trades and tickers
   *(documented)*; no history among them.
 
-### Against bybit's own archive
-
-**REST bars are the archive's bars.** Of the first 600 rows of the archive's `BTCUSDT` 1-minute file
-for 2020-05, all 600 are in REST with the same open, high, low, close and volume, three hours
-earlier: the archive stamps UTC+3. REST adds turnover.
-
-### The instrument listing
+### The listings
 
 **`GET /v5/market/instruments-info`**, asked a `category` at a time — `spot`; `linear` (settled in
 USDT or USDC) and `inverse` (settled in the base coin), each holding perpetuals and dated futures;
@@ -448,6 +457,47 @@ contracts that share nothing with its 836 live ones. Spot answers `status=Closed
 list again, byte for byte, and states no launch time, so there an ending is only ever an absence.
 `Trading` and `PreLaunch` are the other values that answered; `Settling` is refused, `Delivering`
 empty.
+
+**What the listing held in 2026-10**, launch to delivery, and for spot from each pair's first bar:
+
+| | contracts | instrument-days | by year |
+|---|---|---|---|
+| linear perpetuals, listed | 859 | 530,522 | 2021: 8k · 2022: 42k · 2023: 57k · 2024: 90k · 2025: 149k · 2026: 180k |
+| linear perpetuals, delisted | 327 | 176,354 | 2022: 19k · 2023: 30k · 2024: 53k · 2025: 60k |
+| linear dated, delisted | 691 | 28,203 | |
+| inverse, listed and delisted | 76 | 36,483 | |
+| spot, listed and delisted | 1,051 | 79,064 at most before 2022-11, a delisted pair counted to now | 2021: 9k · 2022: 90k |
+
+Two thirds of the contracts' days are in 2025 and 2026. Funding is every 8 hours for 440 perpetuals
+and every 4 hours for 417.
+
+### Against bybit's own archive
+
+**REST bars are the archive's bars.** Of the first 600 rows of the archive's `BTCUSDT` 1-minute file
+for 2020-05, all 600 are in REST with the same open, high, low, close and volume, three hours
+earlier: the archive stamps UTC+3. REST adds turnover.
+
+**What else the archive holds of the same**, set side by side in 2026-10:
+
+| over REST | in the archive |
+|---|---|
+| trade bars, every contract to now; spot from 2021-07 | five intervals for the USDT perpetuals, 2020-04 to 2025-11 ([the metatrader tree](#four-shapes-and-none-of-them-is-the-obvious-one)); spot trades from 2022-11 |
+| mark, index and premium bars | premium-index and spot-index bars for a few symbols, to 2024-09 |
+| funding, open interest, long/short ratio, volatility, delivery prices | none |
+| trades: the newest only | every trade |
+
+### Its documentation
+
+Static pages, current, every parameter stated. **Where the API differs from it**: historical
+volatility is said to reach 2 years and answered at 6; the wait after a 403 is said to be ten
+minutes and was not thirty seconds; nothing says that a closed contract's open interest and ratio
+are gone.
+
+### Pace, measured
+
+2,943 calls in 2026-10, from one machine, with no failure but the one refusal provoked on purpose.
+One connection did 1.7 pages a second, its answers either near 205 ms or near 800; four
+connections 8 a second; eight, 23 a second, p50 204 ms.
 
 ## WebSocket
 
@@ -487,3 +537,9 @@ and its value, and the funding rate with its cap, interval and next time all arr
 The archive holds only premium-index and spot-index klines of these. The history of the rest is on
 REST, under [Endpoints that serve the past](#endpoints-that-serve-the-past): funding, open interest,
 and mark, index and premium bars.
+
+## Open questions
+
+- **What a 403 from the REST API leads to.** A wait of at least 10 minutes is stated; the host
+  answered the next call.
+- **Where the REST API's servers are.** Only the delay behind its edge is known.

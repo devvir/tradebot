@@ -6,7 +6,9 @@ KuCoin as a source of market data: what it publishes, where, and how it behaves 
 
 What kucoin's published archive holds, measured against the bucket.
 
-### One bucket, listed where it is served
+### Where it is served
+
+#### One bucket, listed where it is served
 
 `historical-data.kucoin.com` answers the standard S3 listing API on the same host that serves the
 files, with a size, a last-modified and an md5 ETag for every key. Everything sits under `data/`,
@@ -16,7 +18,9 @@ and every file is a day: there is no monthly tree. A `.CHECKSUM` sits beside eve
 and 3,602 from a remote one, without a single throttling answer, on keys the edge had cached. A
 missing key goes to the origin and takes 270–700 ms.
 
-### The tree
+### Layout
+
+#### The tree
 
 ```
 data/<market>/daily/[depth/]<dataset>/<SYMBOL>/[<interval>/]<file>-<yyyy-mm-dd>.zip
@@ -36,7 +40,30 @@ and a handful of quarterly contracts in the same tree, named by a month code and
 **The books are whole books**, one a row: fifty levels a side, and no deltas. The depth is in the
 dataset's name, and `depth/` is the only place this tree is three deep before the instrument.
 
-### What the files hold
+### Naming
+
+#### A name in the API is not always the name in a path
+
+| | the API | the archive |
+|---|---|---|
+| spot, `klines` and `trades` | `0G-USDT` | `0GUSDT` — no dash |
+| spot, books | `0G-USDT` | `0G-USDT` |
+| bitcoin perpetuals | `XBTUSDTM`, `XBTUSDM`, `XBTUSDCM` | `BTCUSDTM`, `BTCUSDM`, `BTCUSDCM`, in every tree |
+| dated bitcoin contracts | `XBTMU26` | `XBTMU26`, and `BTCMU26` under books |
+
+No contract the API lists begins with `BTC`. The spellings above are as the bucket lists them on
+2026-10-08.
+
+**The dash goes back in from the quote currency.** All 1,775 dashed names in the archive, and all
+1,007 the API lists, are rebuilt exactly from their dashless form by splitting off the longest quote
+that fits: `USDT`, `USDC`, `USD1`, `USDG`, `TUSD`, `DOGE`, `BTC`, `ETH`, `KCS`, `EUR`, `TRX`, `BRL`,
+`DAI`, `GBP`, `THB`, `TRY`. The last four are retired — no listed pair uses them — and the archive
+still does. 23 of the archive's 2,419 dashless spot names end in a quote kucoin no longer lists at
+all, and cannot be split.
+
+### File formats
+
+#### What the files hold
 
 Each `.zip` holds a `.csv` with a header row. Read from the heads of the files of 2026-07-29
 (`BTC-USDT` and `BTCUSDTM`):
@@ -64,7 +91,18 @@ Each `.zip` holds a `.csv` with a header row. Read from the heads of the files o
   hold 36 to 48. Its day's file opens with books stamped a few seconds before that day's midnight
   UTC.
 
-### Futures klines at `1d` are published broken
+### Publication
+
+From the files' own `Last-Modified`, measured on 2026-09-25 over the 173,150 files dated 2026-09-15
+to 21, a day's file appears this many hours after the start of the day it is dated:
+
+| p50 | p99 |
+|---|---|
+| 27.8 h | 29.0 h |
+
+### Known defects
+
+#### Futures klines at `1d` are published broken
 
 Every file under `futures/daily/klines/<SYMBOL>/1d/` declares `time,open,high,low,close,volume` and
 then writes five fields a row: the volume is not empty, it is absent. A file fetched fresh is
@@ -76,34 +114,6 @@ six values, spot klines seven and seven, and `index` and `mark` five and five at
 correctly, since a mark-price bar has no volume. Checked across forty symbols: `1d` is six and five
 everywhere. The `1m` series is published whole over the same range.
 
-### A name in the API is not always the name in a path
-
-| | the API | the archive |
-|---|---|---|
-| spot, `klines` and `trades` | `0G-USDT` | `0GUSDT` — no dash |
-| spot, books | `0G-USDT` | `0G-USDT` |
-| bitcoin perpetuals | `XBTUSDTM`, `XBTUSDM`, `XBTUSDCM` | `BTCUSDTM`, `BTCUSDM`, `BTCUSDCM`, in every tree |
-| dated bitcoin contracts | `XBTMU26` | `XBTMU26`, and `BTCMU26` under books |
-
-No contract the API lists begins with `BTC`. The spellings above are as the bucket lists them on
-2026-10-08.
-
-**The dash goes back in from the quote currency.** All 1,775 dashed names in the archive, and all
-1,007 the API lists, are rebuilt exactly from their dashless form by splitting off the longest quote
-that fits: `USDT`, `USDC`, `USD1`, `USDG`, `TUSD`, `DOGE`, `BTC`, `ETH`, `KCS`, `EUR`, `TRX`, `BRL`,
-`DAI`, `GBP`, `THB`, `TRY`. The last four are retired — no listed pair uses them — and the archive
-still does. 23 of the archive's 2,419 dashless spot names end in a quote kucoin no longer lists at
-all, and cannot be split.
-
-### Publication
-
-From the files' own `Last-Modified`, measured on 2026-09-25 over the 173,150 files dated 2026-09-15
-to 21, a day's file appears this many hours after the start of the day it is dated:
-
-| p50 | p99 |
-|---|---|
-| 27.8 h | 29.0 h |
-
 ## REST
 
 **How to read this section.** A statement with no mark is what the API answered when it was asked,
@@ -112,7 +122,8 @@ in October 2026. *(documented)* marks what kucoin's documentation states and was
 
 ### The API
 
-**Three surfaces on two hosts**, all behind Cloudflare:
+**Three surfaces on two hosts**, all behind Cloudflare — from the machine that asked, its edge MAD,
+with the API 266 ms behind it:
 
 | surface | host and base | serves |
 |---|---|---|
@@ -144,7 +155,7 @@ in October 2026. *(documented)* marks what kucoin's documentation states and was
   index 3, index 2, interest index 5, unified bars 3, open interest 10, announcements 20.
 - **Beyond it**: HTTP 429, `{"code":"429000","msg":"Too many requests. User-level rate limit
   exceeded."}`, with `gw-ratelimit-remaining: 0`. **It stays refused until the window ends** —
-  `gw-ratelimit-reset` says how long — and every other weighted call on both hosts is refused with
+  `gw-ratelimit-reset` says how long; 20 seconds when tried — and every other weighted call on both hosts is refused with
   it. `/api/v1/timestamp` still answers.
 
 ### How it is paged
@@ -231,16 +242,50 @@ in October 2026. *(documented)* marks what kucoin's documentation states and was
   (`delistings`, `new-listings`, …), `lang`, `pageSize` ≤ 50; `{id, title, type, description,
   releaseTime, url}`.
 
-### What the listings carry
+### The listings
 
 - `GET api.kucoin.com/api/v2/symbols`: listed pairs, with no listing date.
 - `GET api-futures.kucoin.com/api/v1/contracts/active`: `{symbol, type, firstOpenDate, expireDate,
   status, fundingRateGranularity, …}`; listed contracts only.
 
-### The listings
-
-Spot is `api.kucoin.com/api/v2/symbols` and futures `api-futures.kucoin.com/api/v1/contracts/active`.
-
 **Neither states an ending.** Spot's `enableTrading` is a halt rather than a delisting — one symbol
 of a thousand — and the futures endpoint returns only what is active. A symbol leaving the list is
 the only ending either of them states.
+
+**What the listings held in 2026-10** — spot from each pair's first week, futures from the listing:
+
+| | instruments | instrument-days | before the archive | by year |
+|---|---|---|---|---|
+| spot | 969 | 1,093,312 | 245,574 before 2022-12 | 2018: 10k · 2019: 24k · 2020: 35k · 2021: 71k · 2022: 116k |
+| futures | 692 | 467,751 | 50,645 before 2023-01 | 2023: 49k · 2024: 79k · 2025: 128k · 2026: 161k |
+
+### Against kucoin's own archive
+
+Set side by side in 2026-10:
+
+| over REST | in the archive |
+|---|---|
+| spot bars, from 2017-10 | from 2022-12, carrying the unified endpoint's volume |
+| futures bars; mark, index and premium bars | futures bars, mark and index from 2023-01 |
+| funding, from 2020-01 at least | from 2023-01 |
+| trades: the newest 100 | every trade |
+| index at one second, about 100 days | `index` bars at one minute |
+| premium index at one minute, open interest | none |
+
+### Its documentation
+
+An index of every page as markdown, each page stating its pool and its weight (see
+[The API](#the-api)). **Where the API differs from it**: futures bars return 200 a page where 500
+is stated; 1-minute futures bars answer from 2024-12-24 where "after 2025-01-01" is stated.
+
+### Pace, measured
+
+1,384 calls in 2026-10, from one machine, with no failure but the refusals provoked on purpose.
+Four connections did 12 pages of 1,500 spot bars a second, p50 305 ms; the pool allows 22.
+
+## Open questions
+
+- **Whether a delisted contract's premium index still answers.** Its bars and funding do.
+- **Where coin-margined funding begins.** XBTUSDM, listed 2019-03-15, has none for its first month
+  and has it by 2020-01.
+- **Where the REST API's servers are.** Only the delay behind its edge is known.

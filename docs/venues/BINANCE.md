@@ -7,52 +7,56 @@ Binance as a source of market data: what it publishes, where, and how it behaves
 What Binance's published archive contains, established by asking the archive itself. Where
 Binance's documentation says something that was not measured, that is marked.
 
-### Publication
+### Where it is served
 
-From [Binance Academy](https://www.binance.com/en/academy/articles/how-to-get-trading-data-via-the-binance-api):
+#### The bucket and its CDN
 
-> Daily files are updated and available **the day after** trading happens, while monthly files are
-> compiled and released on the **first Monday of each month**.
+The archive is the S3 bucket `s3-ap-northeast-1.amazonaws.com/data.binance.vision`.
+`data.binance.vision` is CloudFront in front of it: the same files, byte for byte (MD5 = ETag on
+both). Only the bucket answers the S3 listing API; Binance's own browsing page lists through the
+bucket address and links each file at `data.binance.vision`.
 
-**Daily files, measured.** From the files' own `Last-Modified`, measured on 2026-09-25 over the
-457,671 files dated 2026-09-15 to 21, a day's file appears this many hours after the start of the
-day it is dated:
+#### Discovery
 
-| p50 | p99 |
-|---|---|
-| 32.0 h | 33.6 h |
+A standard S3 listing: `prefix`, `marker` and `delimiter` all honoured. `max-keys` caps at **1000** —
+larger values are echoed back in `<MaxKeys>` and never applied, so a response looks like it worked.
+`NextMarker` is returned only when a `delimiter` is sent; without one, the next page starts from
+the last key of the page.
 
-A file dated D appears between about 08:00 and 09:40 UTC on the day after D.
+A handful of `delimiter=/` requests map the whole archive, down to `option/`, `BVOLIndex`,
+`EOHSummary` and `aggTrades`.
 
-**Monthly files** are Binance's claim only: the first Monday, which can be as late as the 7th.
+#### Scale
 
-### Two renderings of the same period
+Order 10⁸ keys across the whole bucket, about half of them checksum sidecars, so order 10⁵ listing
+pages to walk it whole. In 2026-11 the spot trees held about 3,770 symbols, and the whole archive
+about 4,600.
 
-Most datasets are published **both** as monthly files and as that month's days, for the same
-history: the same rows in two shapes. The distinction is a path segment — `data/spot/monthly/…`
-against `data/spot/daily/…`.
+### Limits
 
-Not every dataset has both: `metrics`, `bookDepth`, `liquidationSnapshot` and the two options datasets
-publish days only, and `fundingRate` months only.
+#### Rate limits
 
-### Files carry checksums
+**None documented, and none signalled in responses.** No `x-ratelimit-*`, no `retry-after`, and no
+`x-mbx-used-weight` — that header and the documented 429 → 418 ban ladder belong to the REST API
+(see [REST](#rest)), which has its own weight accounting.
 
-Every `.zip` has a `.zip.CHECKSUM` beside it, holding its SHA-256. A listing page of 1,000 keys is
-therefore about 500 files.
+The [binance-public-data](https://github.com/binance/binance-public-data/) repository documents no
+limits, throttling policy or concurrency guidance either. The one relevant community report
+([Download limits for data.binance.vision](https://dev.binance.vision/t/download-limits-for-https-data-binance-vision-data-spot/20275))
+has a user hitting `SSLEOFError` on bulk downloads, which support attributed to rate limiting; no
+Binance staff ever stated a threshold, and that was the CloudFront host, not the bucket.
 
-### Binance announces its own corrections
+**Measured 2026-09-29, from one machine, ramping until something gave:**
 
-The [binance-public-data](https://github.com/binance/binance-public-data/) repository keeps an
-**Updates** section:
+| request at the bucket | reached | throttling answers | p50 |
+|---|---|---|---|
+| LIST (`max-keys=1`) | 1,562/s sustained | none in ~1.4 M requests | 272 ms, flat |
+| HEAD on a file | 1,788/s | none in ~290 k requests | 267 ms, flat |
 
-> Archived files may be updated at a later date as a result of recently discovered issues. Below
-> is an exhaustive list of updates performed to the archive, containing the file path for
-> reference, and CHECKSUMs of the replaced file and the replacement file
-
-Each correction is a dated changelog file in that repository's `updates/` folder. Two are listed:
-2022-08-08 `kline_updates.zip`, "Fixed inconsistent data", and 2022-04-21
-`aggregate_trade_updates.zip`, aligning to a change in spot aggregate trades. Binance publishes
-which already-published files changed; a file corrected in place keeps its key.
+From a second machine the same requests reached about 1,200 a second, with no throttling answer
+either. Every run ended at the client's own ceiling — 500 requests in flight at ~270 ms each — not
+at the bucket's. S3's published ceiling is 5,500 GET/HEAD a second per partitioned prefix. A limit
+that exists and was never reached is still possible.
 
 ### Layout
 
@@ -90,13 +94,6 @@ Binance has [integrated CM into UM's architecture](https://developers.binance.co
 As listed in 2026-08, CM held 30 contracts over 20 base assets, all `underlyingType: COIN`; UM held
 883, spanning `COIN, EQUITY, CN_EQUITY, HK_EQUITY, KR_EQUITY, COMMODITY, INDEX, PREMARKET`, with a
 `TRADIFI_PERPETUAL` contract type — equity and commodity perpetuals are UM contracts.
-
-#### The bucket and its CDN
-
-The archive is the S3 bucket `s3-ap-northeast-1.amazonaws.com/data.binance.vision`.
-`data.binance.vision` is CloudFront in front of it: the same files, byte for byte (MD5 = ETag on
-both). Only the bucket answers the S3 listing API; Binance's own browsing page lists through the
-bucket address and links each file at `data.binance.vision`.
 
 #### Prefixes outside `data/` — one of them holds data that exists nowhere else
 
@@ -173,7 +170,18 @@ row of its counterpart, value for value:
 So the tree is a **snapshot of the spot archive taken around 2021-01-12**. It carries no file and
 no value that `data/spot/monthly/` lacks; where the two disagree it holds strictly less.
 
-### Headers
+#### Two renderings of the same period
+
+Most datasets are published **both** as monthly files and as that month's days, for the same
+history: the same rows in two shapes. The distinction is a path segment — `data/spot/monthly/…`
+against `data/spot/daily/…`.
+
+Not every dataset has both: `metrics`, `bookDepth`, `liquidationSnapshot` and the two options datasets
+publish days only, and `fundingRate` months only.
+
+### File formats
+
+#### Headers
 
 - **Spot files have no header**, in every dataset and over the whole history: trades, aggregated
   trades and klines from 2017-08 to today all start with a data row.
@@ -185,7 +193,7 @@ no value that `data/spot/monthly/` lacks; where the two disagree it holds strict
 - **Every other futures dataset has always had a header**: `bookTicker`, `bookDepth`, `metrics`,
   `fundingRate` and `liquidationSnapshot` carry one from their first file on.
 
-### Spot timestamps change unit in 2025-01
+#### Spot timestamps change unit in 2025-01
 
 Spot `trades`, `aggTrades` and `klines` carry integer epoch **milliseconds** through the files of
 2024-12 and **microseconds** from the files of 2025-01, daily and monthly alike, with no change of
@@ -200,16 +208,14 @@ BTCUSDT-1m-2025-01          1735689600000000,93576.00000000,…,1735689659999999
 A kline's close time is its open time plus the interval minus one tick, so it ends `…999` before
 the change and `…999999` after. Futures files did not change: they carry milliseconds before and after.
 
-### Liquidation snapshots write every row twice
+#### Files carry checksums
 
-The liquidation files of all three families — `data3/`, and coin-margined perpetuals and dated
-contracts under `data/futures/cm/` — share one header of ten columns, `time, side, order_type,
-time_in_force, original_quantity, price, average_price, order_status, last_fill_quantity,
-accumulated_fill_quantity`, and hold each row twice in a row: `BTCUSDT` 2023-06-25 has 1,720 rows,
-860 of them a repeat of the row before; `BTCUSD_PERP` 2024-10-14 has 100 and 50; `BTCUSD_241227`
-2024-10-14 has 10 and 5.
+Every `.zip` has a `.zip.CHECKSUM` beside it, holding its SHA-256. A listing page of 1,000 keys is
+therefore about 500 files.
 
-### Datasets that ended
+### Coverage
+
+#### Datasets that ended
 
 Each of these ended on the same date for every symbol checked; nothing has been written to these
 trees since. Checked 2026-11-25:
@@ -231,7 +237,26 @@ appears.
 
 None of these datasets is derivable from anything else Binance publishes.
 
-### The `1w`, `3d` and `1mo` intervals publish irregularly
+### Publication
+
+From [Binance Academy](https://www.binance.com/en/academy/articles/how-to-get-trading-data-via-the-binance-api):
+
+> Daily files are updated and available **the day after** trading happens, while monthly files are
+> compiled and released on the **first Monday of each month**.
+
+**Daily files, measured.** From the files' own `Last-Modified`, measured on 2026-09-25 over the
+457,671 files dated 2026-09-15 to 21, a day's file appears this many hours after the start of the
+day it is dated:
+
+| p50 | p99 |
+|---|---|
+| 32.0 h | 33.6 h |
+
+A file dated D appears between about 08:00 and 09:40 UTC on the day after D.
+
+**Monthly files** are Binance's claim only: the first Monday, which can be as late as the 7th.
+
+#### The `1w`, `3d` and `1mo` intervals publish irregularly
 
 They exist on every interval dataset — `klines`, `markPriceKlines`, `indexPriceKlines`,
 `premiumIndexKlines` — and no tree carries them on a schedule. Checked 2026-11-25:
@@ -251,45 +276,30 @@ Each is an aggregate of the `1m` file of the same dataset, which every tree publ
 complete — spot also has `1s`. `3d` is not a calendar period: it is a stride from a fixed epoch, so
 it cannot be re-cut from or into calendar months.
 
-### Discovery
+### Known defects
 
-A standard S3 listing: `prefix`, `marker` and `delimiter` all honoured. `max-keys` caps at **1000** —
-larger values are echoed back in `<MaxKeys>` and never applied, so a response looks like it worked.
-`NextMarker` is returned only when a `delimiter` is sent; without one, the next page starts from
-the last key of the page.
+#### Liquidation snapshots write every row twice
 
-A handful of `delimiter=/` requests map the whole archive, down to `option/`, `BVOLIndex`,
-`EOHSummary` and `aggTrades`.
+The liquidation files of all three families — `data3/`, and coin-margined perpetuals and dated
+contracts under `data/futures/cm/` — share one header of ten columns, `time, side, order_type,
+time_in_force, original_quantity, price, average_price, order_status, last_fill_quantity,
+accumulated_fill_quantity`, and hold each row twice in a row: `BTCUSDT` 2023-06-25 has 1,720 rows,
+860 of them a repeat of the row before; `BTCUSD_PERP` 2024-10-14 has 100 and 50; `BTCUSD_241227`
+2024-10-14 has 10 and 5.
 
-### Rate limits
+#### Binance announces its own corrections
 
-**None documented, and none signalled in responses.** No `x-ratelimit-*`, no `retry-after`, and no
-`x-mbx-used-weight` — that header and the documented 429 → 418 ban ladder belong to the REST API
-(see [REST](#rest)), which has its own weight accounting.
+The [binance-public-data](https://github.com/binance/binance-public-data/) repository keeps an
+**Updates** section:
 
-The [binance-public-data](https://github.com/binance/binance-public-data/) repository documents no
-limits, throttling policy or concurrency guidance either. The one relevant community report
-([Download limits for data.binance.vision](https://dev.binance.vision/t/download-limits-for-https-data-binance-vision-data-spot/20275))
-has a user hitting `SSLEOFError` on bulk downloads, which support attributed to rate limiting; no
-Binance staff ever stated a threshold, and that was the CloudFront host, not the bucket.
+> Archived files may be updated at a later date as a result of recently discovered issues. Below
+> is an exhaustive list of updates performed to the archive, containing the file path for
+> reference, and CHECKSUMs of the replaced file and the replacement file
 
-**Measured 2026-09-29, from one machine, ramping until something gave:**
-
-| request at the bucket | reached | throttling answers | p50 |
-|---|---|---|---|
-| LIST (`max-keys=1`) | 1,562/s sustained | none in ~1.4 M requests | 272 ms, flat |
-| HEAD on a file | 1,788/s | none in ~290 k requests | 267 ms, flat |
-
-From a second machine the same requests reached about 1,200 a second, with no throttling answer
-either. Every run ended at the client's own ceiling — 500 requests in flight at ~270 ms each — not
-at the bucket's. S3's published ceiling is 5,500 GET/HEAD a second per partitioned prefix. A limit
-that exists and was never reached is still possible.
-
-### Scale
-
-Order 10⁸ keys across the whole bucket, about half of them checksum sidecars, so order 10⁵ listing
-pages to walk it whole. In 2026-11 the spot trees held about 3,770 symbols, and the whole archive
-about 4,600.
+Each correction is a dated changelog file in that repository's `updates/` folder. Two are listed:
+2022-08-08 `kline_updates.zip`, "Fixed inconsistent data", and 2022-04-21
+`aggregate_trade_updates.zip`, aligning to a change in spot aggregate trades. Binance publishes
+which already-published files changed; a file corrected in place keeps its key.
 
 ## REST
 
@@ -309,8 +319,10 @@ in October 2026. *(documented)* marks what binance's documentation states and wa
 | options | `https://eapi.binance.com/eapi/v1` | |
 
 - **Spot has more hosts** *(documented)*: `api-gcp.binance.com`, `api1`–`api4.binance.com`.
-- **Where they answer from.** `api`, `fapi` and `eapi` are behind CloudFront. `dapi` and
-  `data-api.binance.vision` are not: they resolve to AWS `ap-northeast-1`.
+- **Where they answer from.** `api`, `fapi` and `eapi` are behind CloudFront — from the machine
+  that asked, its edge BCN50, with the service 240 ms behind it. `dapi` and
+  `data-api.binance.vision` are not: they resolve to AWS `ap-northeast-1`, 225 ms to connect from
+  the same machine.
 - **Times are milliseconds**, in requests and answers.
 - **A successful answer is the data itself** — a bare JSON array or object, no envelope.
 - **An error is an HTTP status with `{"code": <negative>, "msg": "…"}`.** Seen: 400 `-1130` (a
@@ -366,7 +378,9 @@ in October 2026. *(documented)* marks what binance's documentation states and wa
 - **A `limit` over the maximum** is refused on futures (400 `-1130`) and silently capped on spot and
   options.
 
-### Spot — `https://api.binance.com`
+### Endpoints, service by service
+
+#### Spot — `https://api.binance.com`
 
 **Bars — `GET /api/v3/klines`**
 - **Ask**: `symbol`, `interval` (`1s 1m 3m 5m 15m 30m 1h 2h 4h 6h 8h 12h 1d 3d 1w 1M`), `startTime`,
@@ -392,7 +406,7 @@ in October 2026. *(documented)* marks what binance's documentation states and wa
 
 **The listing — `GET /api/v3/exchangeInfo`**: `symbols[]` with `status`; no listing date. Costs 20.
 
-### USDⓈ-margined futures — `https://fapi.binance.com`
+#### USDⓈ-margined futures — `https://fapi.binance.com`
 
 **Bars — `GET /fapi/v1/klines`**
 - **Ask**: `symbol`, `interval` (as spot, without `1s`), `startTime`, `endTime`, `limit` ≤ 1,500.
@@ -450,7 +464,7 @@ wants a key (401 `-2014`).
 `insuranceBalance` (a balance for each group of symbols), `constituents?symbol=` (an index's
 exchanges, prices and weights), `indexInfo`, `assetIndex`, `premiumIndex`, `openInterest`.
 
-### Coin-margined futures — `https://dapi.binance.com`
+#### Coin-margined futures — `https://dapi.binance.com`
 
 - **Bars — `GET /dapi/v1/klines`**: as the USDⓈ service; `limit` ≤ 1,500; BTCUSD_PERP from
   2020-08-11T07:02Z with `startTime=1`. A window of 200 days at most is what is stated; a window of
@@ -470,7 +484,7 @@ exchanges, prices and weights), `indexInfo`, `assetIndex`, `premiumIndex`, `open
 - **Delivery prices — `GET /futures/data/delivery-price?pair=BTCUSD`**: 18, from 2022-12-30.
 - **`aggTrades`**: two days, as above. **`allForceOrders`**: 404.
 
-### Options — `https://eapi.binance.com`
+#### Options — `https://eapi.binance.com`
 
 - **Exercises — `GET /eapi/v1/exerciseHistory`**: `underlying`, `startTime`, `endTime`, `limit` (100
   *(documented)*; 101 returned 101); `{symbol, strikePrice, realStrikePrice, expiryDate,
@@ -483,7 +497,7 @@ exchanges, prices and weights), `indexInfo`, `assetIndex`, `premiumIndex`, `open
 - **Of now only**: `mark` (mark price, implied volatilities and greeks of every contract),
   `openInterest?underlyingAsset=&expiration=`, `exchangeInfo` (`optionSymbols[]`).
 
-### Alpha — `https://www.binance.com/bapi/defi/v1/public`
+#### Alpha — `https://www.binance.com/bapi/defi/v1/public`
 
 A separate market, of tokens not listed on spot, with its own public endpoints.
 
@@ -495,12 +509,12 @@ A separate market, of tokens not listed on spot, with its own public endpoints.
 - **Also** `alpha-trade/agg-trades`, `ticker`, `fullDepth`, `get-exchange-info` *(documented)*.
 - **Its limits** *(not known)*.
 
-### What wants a key
+#### What wants a key
 
 `/sapi/v1/margin/*` (pairs, delist and list schedules, price index) and `/sapi/v1/equity/market/*`
 are marked `MARKET_DATA`: an API key, no signature *(documented)*. Not tried.
 
-### The instrument listings
+### The listings
 
 Four hosts, because binance runs a service per margin:
 
@@ -522,6 +536,45 @@ under two names.
 
 **Options are listed by contract and filed by underlying**: the 1,862 contracts listed collapse to
 the handful of underlyings the archive holds.
+
+### Against binance's own archive
+
+**The archive holds nearly everything the API serves of the past, and more of it.** Set side by
+side in 2026-10, and the archive's first keys read again on 2026-11-25:
+
+| over REST | in the archive |
+|---|---|
+| spot bars | the same twelve columns |
+| spot trades, from 2022-09-02 | from 2017-08 |
+| USDⓈ-margined bars | BTCUSDT's daily files from 2019-12-31, monthly from 2020-01; REST's bars start 2019-09-08, so its first four months are REST's alone |
+| USDⓈ-margined index, mark and premium bars | BTCUSDT's daily index and mark bars from 2019-12-23 and premium bars from 2019-12-24, as REST's |
+| coin-margined bars, and index, mark and premium bars | BTCUSD_PERP bars and mark bars from 2020-08, BTCUSD index bars from 2020-06, BTCUSD_PERP premium bars from 2020-11 |
+| funding | BTCUSDT's monthly files from 2020-01, where REST reaches 2019-09-10. REST's records add `markPrice`; the archive's carry the funding interval |
+| open interest and ratios, 30 days | `metrics`, daily from 2020-09-01; REST adds the taker buy and sell volumes in absolute terms, where the archive has their ratio |
+| futures trades, two days | `trades` from 2019-09 and `aggTrades` from 2020-01, for BTCUSDT |
+| basis, delivery prices, option exercises | none |
+| liquidations: none | snapshots, ended — see [Datasets that ended](#datasets-that-ended) |
+| Alpha's bars | none |
+
+### Its documentation
+
+- **Spot's is plain markdown on GitHub**, and complete.
+- **Futures' and options' cannot be read by a script**: the site answers with a challenge. Binance's
+  own connector repository carries each endpoint's notes.
+- **Where the API differs from it**: spot trades start on 2022-09-02, which nothing documents;
+  `openInterestHist` returns 1,000 where 500 is the stated maximum; `fundingRate` answers an
+  over-limit `limit` with HTTP 200 and an error body, returns at most 500 without `startTime`, and
+  is not held to its stated 500 calls per 5 minutes; coin-margined bars answer a window of 1,157
+  days where 200 is the stated most.
+
+### Pace, measured
+
+2,629 calls in 2026-10, from one machine, with no failure but the refusals provoked on purpose.
+
+- **Futures bars at 1,500 a page**: 2.4 pages a second on one connection, p50 483 ms; 12.6 a second
+  on five.
+- **The weight budget allows 4 such pages a second**, for `fapi` and `dapi` together: 2,400 a
+  minute at 10 a page.
 
 
 ## WebSocket
@@ -581,3 +634,9 @@ with the documented snapshot-plus-diff procedure:
 
 So `@depth` frames alone do not determine a book: it takes a REST snapshot to start from, and
 `U`/`u`/`pu` to check continuity.
+
+## Open questions
+
+- **What limits `/futures/data/*` and `fundingRate`.** Neither was refused, at 1,300 calls in 44
+  seconds and 700 in 31 ([Its limits](#its-limits)).
+- **Alpha's limits.**

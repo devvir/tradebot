@@ -7,7 +7,9 @@ Bitget as a source of market data: what it publishes, where, and how it behaves 
 What bitget's published archives contain, and how its several catalogues name the same instrument.
 Everything here is measured against the venue unless marked **Unverified** or **Assumption**.
 
-### The archive
+### Where it is served
+
+#### The archive
 
 Files sit under `https://img.bitgetimg.com/online/`, always `.zip`, never with a query string. The
 first path segment is the dataset — `kline`, `trades` or `depth` — and the date appears exactly once,
@@ -29,6 +31,8 @@ By status alone a missing key is indistinguishable from a forbidden one.
 **Who answered separates them.** A `403` with `server: AmazonS3` means no such key. A `403` or `503`
 from the CloudFront edge under its own `server` never reached the origin, and is a refusal of the
 client. That is the only distinction available on a `HEAD`.
+
+### Limits
 
 #### Its edge limits the rate, near 2,900 a second
 
@@ -60,93 +64,9 @@ behind Cloudflare: roughly one request a second sustained, 429 above that, and a
 instead of JSON without a browser `User-Agent` and a `cf_clearance` cookie. A client that treats a
 challenge or a 429 as "no results" records silence as fact.
 
-#### Buckets cut at 16:00 UTC, not midnight
+### Layout
 
-A file named `20250101` covers **2024-12-31 16:00 → 2025-01-01 16:00 UTC** — midnight in UTC+8.
-Verified across 120 files spanning all 514 spot symbols and the whole range: zero rows
-outside the shifted window. Timestamps themselves are correct UTC instants; only *which file holds a
-row* is shifted.
-
-**Unverified:** only spot trades were checked. Futures products and the kline/depth datasets deserve
-their own check.
-
-#### Trade timestamps carry only second resolution
-
-The `timestamp` column is epoch milliseconds with the millisecond part **always zero**. Measured over
-133,260 rows across 32 consecutive `SNXUSDT` files: zero exceptions. Confirmed over the ~9.6 M
-`BTCUSDT` spot trades of 2024-06: every timestamp falls on a whole second.
-
-So `timestamp` cannot order trades within a second; sequence lives in `trade_id` and file order.
-Sub-second bins are not derivable from this source.
-
-#### Multi-part days are independent zips
-
-A busy day splits as `20250117_001.zip`, `_002.zip`, and so on. Each opens standalone with its own
-end-of-central-directory record and one CSV **with its own header row** — not a spanned archive.
-
-**The rule is 100,000 rows, not a size.** Parts are sequential and do not overlap. Nothing in a path
-says how many parts a day has, so the only way to learn is that the next answers 403. Parts reach
-`_101`; 98% of day-series are `_001` alone.
-
-A part's compressed size does not say whether it is the last: it varies with symbol, precision and
-era, and full parts (215,212 bytes upward) overlap terminal ones (median 135,981).
-
-#### Sentinel value in depth
-
-Depth publishes a missing quote as **`-999999`**, not an empty field: the value means no quote, not a
-price.
-
-#### A day's klines and depth are a sheet, a month's are text
-
-The `.zip` of a day holds an Excel file (`20260910.xlsx`, or `<name>.xlsx` in the older naming); the
-`.zip` of a month, under `kline_month/` and `depth_month/`, holds a CSV named after the file
-(`ETHUSDT_SP_1min_202609.csv`, `ETHUSDT_3_202603.csv`). The columns and their names are the same:
-
-```
-klines  timestamp, open, high, low, close, basevolume, usdtvolume
-depth   timestamp, ask_price, bid_price, ask_volume, bid_volume
-```
-
-`timestamp` is in whole seconds in both, and the rows of a depth file are not in time order. Trades
-are CSV at either grain, `trade_id, timestamp, price, side, volume(quote), size(base)`, with
-`timestamp` in milliseconds. Seen on spot, USDT futures and delivery contracts, 2025-08 to 2026-09.
-
-**Depth sizes follow the product line.** They are in the base coin (`BTCUSDT`: 14.4588;
-`BTCUSDU24`: 0.082), and in whole contracts on the coin-margined line filed under `…CM…`
-(`BTCCMZ26`, 2026-09-10: every one of 3,658 rows a whole number, median 10,417) — see
-[the two product lines](#coin-margined-futures-are-two-live-product-lines).
-
-#### Depth is two datasets, and one of them is invisible without a parameter
-
-`deptType: 2` on the download index returns a different tree from the default, `deptType: 1`:
-
-```
-quotes  depth/BTCUSDT/1/BTCUSDT_1_20260901.zip
-books   depth_500/BTCUSDT/1/BTCUSDT_1_20260901.zip
-```
-
-A level-1 depth file is quotes; `depth_500` is a real 500-level book. The two are separate
-datasets with separate keys, and a request that omits `deptType` never sees the second.
-
-A `depth_500` file is `timestamp, asks, bids`: an image of the book every twenty seconds, `timestamp`
-in whole seconds, each side JSON text in one cell — `[[1.0082,0.7161],[1.0173,0.7161],…]`, a level
-`[price, size]`. Like klines and quotes it is a sheet in a day's file and a CSV in a month's.
-
-**Books carry one shape and no eras.** Measured over 794 windows across both business lines, the
-whole range, with no window failing: 324,979 files under `depth_500/{S}/1/{S}_1_{DATE}.zip` for
-1,704 spot-line symbols, and 262,808 under `depth_500/{S}/2/{S}_3_{DATE}.zip` for 1,099 on the
-futures line. Both begin **2025-08-01** and neither has a second spelling: this dataset launched on
-the era-3 convention, which the other datasets adopted only at the 2026-08-18 boundary.
-
-The perp quirk holds here too: the directory says `2` where the filename says `3`.
-
-**374 keys name one instrument in another's directory**, on exactly four dates — 2026-07-01, and
-2026-09-03 through 05, the last three carrying 105 each. Both sides run alphabetically in step
-(`ADAPERP` → `ALPINEUSDT`, `ALGOUSDT` → `AMDONUSDT`), which is the venue zipping two sorted
-lists with an offset rather than a naming convention. Every one is served, 200. Neither name can be
-trusted for them, and no single-symbol shape reads them.
-
-### The three naming eras
+#### The three naming eras
 
 The same series is published under different shapes over time. Both boundaries are exact and apply
 across the archive, not per symbol; the exceptions are the kline keys described below.
@@ -214,7 +134,7 @@ same. Of 75 perp pairs compared on 2026-10-08 (seven `…USDT` symbols, 2022-01-
 era-1 files were empty. How many era-1 kline files are empty across the archive has not been
 measured, and the table above counts keys, not their contents.
 
-#### Every shape, and the token rules
+##### Every shape, and the token rules
 
 Twenty-six shapes cover the archive, counting the monthly trees. **Every one of 5,055,779 indexed URLs matches exactly one of
 them, with no ambiguity and nothing unmatched** — measured by anchoring each shape as a regular
@@ -241,25 +161,39 @@ contract asked for under the wrong token answers the same `403` as a missing key
 
 **The symbol in a path never contains an underscore** — 0 of 5,055,779 URLs.
 
-#### Per-dataset floors
+#### Depth is two datasets, and one of them is invisible without a parameter
 
-| market | dataset | first file |
-|---|---|---|
-| spot | kline | 2018-07-25 |
-| spot | trades | 2018-07-25 |
-| spot | depth | 2024-07-09 |
-| perp | kline | 2019-04-23 |
-| perp | trades | 2021-05-18 |
-| perp | depth | 2024-07-09 |
+`deptType: 2` on the download index returns a different tree from the default, `deptType: 1`:
 
-Established rather than assumed: the index was asked in 8-day windows from 2018-01-01, and all 25
-windows before 2018-07-20 return nothing in all six market/dataset groups. The portal datepicker
-enables dates from 2018-01-02, which is a UI constant with nothing behind it.
+```
+quotes  depth/BTCUSDT/1/BTCUSDT_1_20260901.zip
+books   depth_500/BTCUSDT/1/BTCUSDT_1_20260901.zip
+```
 
-Availability is patchy in the early years and must be read, not assumed: for `BTC/USDT` spot trades,
-2018-07-25 present, 2018-07-26 absent, 2019-06-01 absent, 2021-01-01 onward present.
+A level-1 depth file is quotes; `depth_500` is a real 500-level book. The two are separate
+datasets with separate keys, and a request that omits `deptType` never sees the second.
 
-### Bitget names one instrument four different ways
+A `depth_500` file is `timestamp, asks, bids`: an image of the book every twenty seconds, `timestamp`
+in whole seconds, each side JSON text in one cell — `[[1.0082,0.7161],[1.0173,0.7161],…]`, a level
+`[price, size]`. Like klines and quotes it is a sheet in a day's file and a CSV in a month's.
+
+**Books carry one shape and no eras.** Measured over 794 windows across both business lines, the
+whole range, with no window failing: 324,979 files under `depth_500/{S}/1/{S}_1_{DATE}.zip` for
+1,704 spot-line symbols, and 262,808 under `depth_500/{S}/2/{S}_3_{DATE}.zip` for 1,099 on the
+futures line. Both begin **2025-08-01** and neither has a second spelling: this dataset launched on
+the era-3 convention, which the other datasets adopted only at the 2026-08-18 boundary.
+
+The perp quirk holds here too: the directory says `2` where the filename says `3`.
+
+**374 keys name one instrument in another's directory**, on exactly four dates — 2026-07-01, and
+2026-09-03 through 05, the last three carrying 105 each. Both sides run alphabetically in step
+(`ADAPERP` → `ALPINEUSDT`, `ALGOUSDT` → `AMDONUSDT`), which is the venue zipping two sorted
+lists with an offset rather than a naming convention. Every one is served, 200. Neither name can be
+trusted for them, and no single-symbol shape reads them.
+
+### Naming
+
+#### Bitget names one instrument four different ways
 
 This is the venue's central difficulty. Four catalogues, four spellings, none authoritative alone.
 
@@ -281,7 +215,7 @@ archive path            BTCUSDU26
 web UI URL              BTCUSD_DMCBL_260925
 ```
 
-#### The four endpoints
+##### The four endpoints
 
 **The dropdown list.** `POST /v1/statistics/public/download/getSymbolList` with
 `{displaySymbol, businessLine, businessType, languageType}`. Substring search, matching anywhere in
@@ -356,7 +290,7 @@ Its `businessLine` is finer than the download form's: `1` spot and margin, `10` 
 
 **It covers classic instruments only** — no UTA instrument appears in it at all.
 
-### Which market an instrument belongs to
+#### Which market an instrument belongs to
 
 The v3 listing states it outright:
 
@@ -371,7 +305,7 @@ The v3 listing states it outright:
 missing value. `symbolType` alone does not separate crypto from the rest on futures, where some
 equities are typed `crypto`.
 
-### Naming: what can be derived, and what must be looked up
+#### Naming: what can be derived, and what must be looked up
 
 Measured over the distinct (market, portal name, archive path) triples in the index:
 
@@ -386,7 +320,7 @@ Measured over the distinct (market, portal name, archive path) triples in the in
 The 881 are relistings, stock wrappers (`APPUSDT` → `APPSTOCKUSDT`), `OLD`/`NEW` infixes between base
 and quote (`EDENOLD/USDT` → `EDENUSDT`), and dated expiries.
 
-#### That residue is mostly derivable after all
+##### That residue is mostly derivable after all
 
 Asked the other way round — per API category, over the 6,942 instruments whose archive spelling is
 known — **99.8% derive and 17 do not**:
@@ -419,7 +353,7 @@ tickers — `BOOMUP/USDT` → `BOOMUSDT`, `GDXGOLD/USDT` → `GDXUSDT`, `MAJORPO
 unrelated renames, `KAON` → `AKRO` and `SLTC` → `SBCHS`. These must be read from the venue, which
 is what the trading platform search is for, since `symbolCode` gives the archive name directly.
 
-#### The index answers with its own label, so read `displayName`
+##### The index answers with its own label, so read `displayName`
 
 Every row the download index returns carries the `displayName` that produced it, which is the exact
 symbol-to-URL mapping a bulk request otherwise loses — asking 2,000 names at once returns one flat
@@ -438,7 +372,7 @@ Friday on that date, which makes it `BTCUSDH26`. It reads either way.
 Where a pairing is not obvious, **a request naming one symbol settles it**: it is categorical about
 what that instrument has.
 
-#### A path names whoever held the ticker when the file was written
+##### A path names whoever held the ticker when the file was written
 
 Bitget reuses tickers and a path cannot be renamed after the fact, so the plain spelling belongs to
 the *first* holder and every later one gets a fresh path:
@@ -470,7 +404,7 @@ the spot listing calls it `AIOLD/USDT`.
 The trading platform search settles it — if `symbolCode(A) = B` then `B` is a spelling; if `A` and
 `B` each appear as their own record, they are two instruments.
 
-#### Depth can be spelled differently from the rest of an instrument
+##### Depth can be spelled differently from the rest of an instrument
 
 Asking the download index for every spot instrument under its *slashless* name — rather than the
 dropdown spelling the form accepts — turned up ten instruments whose depth is filed under the bare
@@ -493,7 +427,7 @@ For seven of them that is the ordinary case — one stream, handed over at a ren
 for its whole life. **The first three overlap**, by two weeks (`VELOUSDC`) to more than a year
 (`MRSOONUSDT`): for that period bitget wrote two depth streams for one listed instrument.
 
-#### An instrument is a market plus a symbol, and a path belongs to nobody
+##### An instrument is a market plus a symbol, and a path belongs to nobody
 
 A symbol is unique **per market**, never globally. `BTCUSD` may exist as spot, as a perpetual and as
 a dated future at the same time, and those are three instruments.
@@ -515,7 +449,7 @@ futures  AIUSDT          -> AIUSDT          the plain name again, on a later sha
 All three are right. They sit on different datasets and different eras, so they name different
 keys; and where they do share a shape, they cover different date ranges.
 
-#### Two keys name one instrument inside another's directory
+##### Two keys name one instrument inside another's directory
 
 ```
 kline/TRXUSDT/TRXETH_SP_1min_20220508.zip
@@ -529,7 +463,7 @@ their own case, [374 keys on four dates](#depth-is-two-datasets-and-one-of-them-
 No single-symbol shape reads them. `RUNEUSDT`'s day exists only at this key; `TRXETH`'s has a
 byte-identical copy at its proper key.
 
-### What the download form does not know
+#### What the download form does not know
 
 The dropdown enumeration is the only listing that remembers delisted instruments, and it is still
 incomplete in two measured ways.
@@ -552,6 +486,84 @@ Those files are also not a copy of the futures ones. Measured on matched timesta
 a consistent 0.4–0.5 and the `/1/` file carries two rows per timestamp with different books, so
 whatever the venue is filing there, it is not the `/2/` stream under another name.
 
+### File formats
+
+#### Buckets cut at 16:00 UTC, not midnight
+
+A file named `20250101` covers **2024-12-31 16:00 → 2025-01-01 16:00 UTC** — midnight in UTC+8.
+Verified across 120 files spanning all 514 spot symbols and the whole range: zero rows
+outside the shifted window. Timestamps themselves are correct UTC instants; only *which file holds a
+row* is shifted.
+
+**Unverified:** only spot trades were checked. Futures products and the kline/depth datasets deserve
+their own check.
+
+#### Trade timestamps carry only second resolution
+
+The `timestamp` column is epoch milliseconds with the millisecond part **always zero**. Measured over
+133,260 rows across 32 consecutive `SNXUSDT` files: zero exceptions. Confirmed over the ~9.6 M
+`BTCUSDT` spot trades of 2024-06: every timestamp falls on a whole second.
+
+So `timestamp` cannot order trades within a second; sequence lives in `trade_id` and file order.
+Sub-second bins are not derivable from this source.
+
+#### Multi-part days are independent zips
+
+A busy day splits as `20250117_001.zip`, `_002.zip`, and so on. Each opens standalone with its own
+end-of-central-directory record and one CSV **with its own header row** — not a spanned archive.
+
+**The rule is 100,000 rows, not a size.** Parts are sequential and do not overlap. Nothing in a path
+says how many parts a day has, so the only way to learn is that the next answers 403. Parts reach
+`_101`; 98% of day-series are `_001` alone.
+
+A part's compressed size does not say whether it is the last: it varies with symbol, precision and
+era, and full parts (215,212 bytes upward) overlap terminal ones (median 135,981).
+
+#### Sentinel value in depth
+
+Depth publishes a missing quote as **`-999999`**, not an empty field: the value means no quote, not a
+price.
+
+#### A day's klines and depth are a sheet, a month's are text
+
+The `.zip` of a day holds an Excel file (`20260910.xlsx`, or `<name>.xlsx` in the older naming); the
+`.zip` of a month, under `kline_month/` and `depth_month/`, holds a CSV named after the file
+(`ETHUSDT_SP_1min_202609.csv`, `ETHUSDT_3_202603.csv`). The columns and their names are the same:
+
+```
+klines  timestamp, open, high, low, close, basevolume, usdtvolume
+depth   timestamp, ask_price, bid_price, ask_volume, bid_volume
+```
+
+`timestamp` is in whole seconds in both, and the rows of a depth file are not in time order. Trades
+are CSV at either grain, `trade_id, timestamp, price, side, volume(quote), size(base)`, with
+`timestamp` in milliseconds. Seen on spot, USDT futures and delivery contracts, 2025-08 to 2026-09.
+
+**Depth sizes follow the product line.** They are in the base coin (`BTCUSDT`: 14.4588;
+`BTCUSDU24`: 0.082), and in whole contracts on the coin-margined line filed under `…CM…`
+(`BTCCMZ26`, 2026-09-10: every one of 3,658 rows a whole number, median 10,417) — see
+[the two product lines](#coin-margined-futures-are-two-live-product-lines).
+
+### Coverage
+
+#### Per-dataset floors
+
+| market | dataset | first file |
+|---|---|---|
+| spot | kline | 2018-07-25 |
+| spot | trades | 2018-07-25 |
+| spot | depth | 2024-07-09 |
+| perp | kline | 2019-04-23 |
+| perp | trades | 2021-05-18 |
+| perp | depth | 2024-07-09 |
+
+Established rather than assumed: the index was asked in 8-day windows from 2018-01-01, and all 25
+windows before 2018-07-20 return nothing in all six market/dataset groups. The portal datepicker
+enables dates from 2018-01-02, which is a UI constant with nothing behind it.
+
+Availability is patchy in the early years and must be read, not assumed: for `BTC/USDT` spot trades,
+2018-07-25 present, 2018-07-26 absent, 2019-06-01 absent, 2021-01-01 onward present.
+
 ### Publication
 
 Day `D` appears at `D+2`, around 03:00 UTC. Measured from the archive's own `Last-Modified` over
@@ -561,18 +573,6 @@ Across eight consecutive days of `BTCUSDT` spot klines, trades and depth, each d
 03:00 UTC to the minute. So the newest day the archive holds is two days behind.
 
 The cadence slips: on 2026-08-21 the file for the 18th was still absent, 21 hours past due.
-
-### Open questions
-
-- Why 809 depth streams stop on 2026-08-17, the last day of era 2, with nothing taking over — probing
-  every filename digit on later dates answers `403` for all of them.
-- What the two rows per timestamp in a depth file are.
-- Which depth stream is the instrument's while two are written: LIQUIDIUMUSDT, MRSOONUSDT and
-  VELOUSDC each have depth under two spellings for an overlapping period.
-- Whether the era-3 `fileName` variant (`<displayName>-<real basename>`) means anything.
-- Whether the bucket cut holds for futures products and for klines and depth.
-- Whether `pre`-prefixed equities are pre-IPO instruments.
-- Whether `XUSD` and `XCM` are one economic instrument under two account systems.
 
 ## REST
 
@@ -588,7 +588,8 @@ the names being in `/docs-static/assets/entry.client-<hash>.js`. The groups that
 
 ### The API
 
-**One host, `https://api.bitget.com`, behind Cloudflare, serving two generations at once.**
+**One host, `https://api.bitget.com`, behind Cloudflare, serving two generations at once.** From
+the machine that asked, the edge was MAD, with the API 259 ms behind it.
 
 | generation | base | markets by |
 |---|---|---|
@@ -614,7 +615,7 @@ the names being in `/docs-static/assets/entry.client-<hash>.js`. The groups that
 - **The documentation states each endpoint's**: "20 times/1s (IP)" for most market endpoints, 10
   for trade history, 1 for the ratio endpoints, 5 for v3's liquidations.
 - **`history-candles` is 5 a second, not the 20 stated**: the header starts at 4, and the sixth
-  call inside a second is refused.
+  call inside a second is refused. At 4 a second, 40 calls passed.
 - **Beyond it**: HTTP 429, `{"code":"429","msg":"Too Many Requests","requestTime":…,"data":null}`,
   with no header. The next second answers.
 - **An endpoint's budget is its own**: with mark bars refused after 20 calls, index bars and
@@ -680,14 +681,17 @@ the names being in `/docs-static/assets/entry.client-<hash>.js`. The groups that
   `isolated-borrow-rate`, `spot/market/whale-net-flow`, `fund-flow`: 30 points or fewer.
 - **`/api/v3/market/index-components`**: an index's exchanges and weights now.
 
-### The listings, and what a delisted contract answers
+### The listings
 
 - `GET /api/v2/mix/market/contracts?productType=`: `{symbol, symbolStatus, fundInterval, launchTime,
   offTime, deliveryTime, …}`. `launchTime` was empty on every contract; listed contracts only.
 - **A delisted contract does not exist**: bars and mark bars answer `40309` "The symbol has been
   removed".
+- **What the USDT futures listing held in 2026-10**: 820 contracts, with no launch date. Their first
+  months of bars, asked one contract at a time: 811 with history, the earliest 2019-07, and 441,518
+  instrument-days — 2023: 41k · 2024: 68k · 2025: 128k · 2026: 172k.
 
-### The two REST APIs are two account systems
+#### The two REST APIs are two account systems
 
 v3 is the **UTA** (Unified Trading Account) API; v2 is the classic one. They are not versions of one
 listing, and neither contains the other.
@@ -727,7 +731,7 @@ identical sets. Two places they do not:
 `delivery`. v3 uses it for asset class — `crypto`, `stock`, `metal` — and carries contract style in
 `type` instead. So the field that separates a perp from a dated contract is only meaningful in v2.
 
-#### Delivery contracts, and how each API names its own
+##### Delivery contracts, and how each API names its own
 
 Both account systems run them, and each names only its own. v2 has `BTCUSDU26` and `ETHUSDU26` under
 `COIN-FUTURES` plus `SBTCSUSDU26`/`SETHSUSDU26` under `SCOIN-FUTURES`; v3 has `BTCCMZ26` and
@@ -748,7 +752,7 @@ own contracts, so one API alone shows part of the delivery universe; and an **ex
 appears in no listing at all, so its name is then the only thing left to read: the month code, or
 bitget's `_D1`/`_D2`.
 
-#### Demo instruments are published too
+##### Demo instruments are published too
 
 The `S`-prefixed product types (`SUSDT-`, `SCOIN-`, `SUSDC-FUTURES`) are bitget's simulated trading
 instruments, and the archive carries them: `SBTCSUSDT` has 4,323 files across three datasets from
@@ -757,7 +761,7 @@ instruments, and the archive carries them: `SBTCSUSDT` has 4,323 files across th
 They are identifiable by product type, **not** by the `S` prefix — `SANTOSUSDT`, `SYSUSDT`,
 `SATSUSDT` and `SAROSUSDT` are real tokens whose names begin with S.
 
-#### Coin-margined futures are two live product lines
+##### Coin-margined futures are two live product lines
 
 `BTCUSD` (v2) and `BTCUSD_CM` (v3) are not one instrument named twice. The API fields differ in kind:
 
@@ -788,7 +792,7 @@ and depth entirely in the move — under either name.
 sizing and collateral differences are measured; the interpretation is not. Their files are separate
 keys either way.
 
-#### Two fifths of what bitget lists is not crypto
+##### Two fifths of what bitget lists is not crypto
 
 From v3's `symbolType`: **700 stock, 604 crypto, 2 metal** in SPOT alone, with 698 flagged
 `isReality: yes`. These are Bitget's tokenised US equities ("Reality"), displayed with a lowercase
@@ -820,3 +824,39 @@ one, `AAPLUSDT`.
 
 **Spot equities publish almost nothing.** Of the ~700, exactly one appears among the indexed files.
 Futures equities are published normally.
+
+### Against bitget's own archive
+
+Set side by side in 2026-10:
+
+| over REST | in the archive |
+|---|---|
+| trade bars, futures from 2020-06 and spot from 2018-07 | 1-minute bars |
+| trades, 90 days | every trade |
+| mark and index bars, from 2019-07 | none |
+| funding, 90 days; ratios; liquidations; risk reserve; open interest | none |
+
+### Its documentation
+
+Where it is, and how it is read, is at the head of this section. It states a limit for every
+endpoint and little about how far back each reaches. **Where the API differs from it**:
+`history-candles` is stated at 20 calls a second and takes 5.
+
+### Pace, measured
+
+979 calls in 2026-10, from one machine, with no failure but the refusals provoked on purpose. One
+connection did 3.5 pages a second, p50 275 ms. At 200 bars a page, a day of one contract's
+1-minute bars is 8 calls.
+
+## Open questions
+
+- Why 809 depth streams stop on 2026-08-17, the last day of era 2, with nothing taking over — probing
+  every filename digit on later dates answers `403` for all of them.
+- What the two rows per timestamp in a depth file are.
+- Which depth stream is the instrument's while two are written: LIQUIDIUMUSDT, MRSOONUSDT and
+  VELOUSDC each have depth under two spellings for an overlapping period.
+- Whether the era-3 `fileName` variant (`<displayName>-<real basename>`) means anything.
+- Whether the bucket cut holds for futures products and for klines and depth.
+- Whether `pre`-prefixed equities are pre-IPO instruments.
+- Whether `XUSD` and `XCM` are one economic instrument under two account systems.
+- **Where the REST API's servers are.** Only the delay behind its edge is known.
