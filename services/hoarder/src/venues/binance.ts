@@ -45,8 +45,22 @@ export const binance: Venue = {
     return ack.error ? 'failed' : 'ok';
   },
 
-  /** Data frames carry an event type; acks and errors carry `id`/`error` instead. */
-  isData: (frame) => typeof (frame as { e?: unknown }).e === 'string',
+  /**
+   * Data by exclusion: a frame is control when it has a control shape, and data
+   * otherwise, because not every stream carries an event type (`bookTicker` and
+   * partial-depth frames have no `e`, and `…@arr` streams are arrays). An array
+   * is data; an object with `error` is control, with or without an `id`; an
+   * object with both `id` and `result` is an ack. Anything that is neither an
+   * object nor an array is control.
+   */
+  isData: (frame) => {
+    if (Array.isArray(frame))                        return true;
+    if (typeof frame !== 'object' || frame === null) return false;
+    if ('error' in frame)                            return false;
+    if ('id' in frame && 'result' in frame)          return false;
+
+    return true;
+  },
 
   describeControl: (frame) => {
     const f = frame as { id?: string | number; result?: unknown; error?: { code?: number; msg?: string } };

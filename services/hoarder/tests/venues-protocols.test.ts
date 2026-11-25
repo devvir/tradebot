@@ -44,6 +44,24 @@ describe('binance', () => {
     expect(binance.isData({ result: null, id: 'btcusdt-aggTrade' })).toBe(false);
     expect(binance.isData({ error: { code: 2, msg: 'Invalid request' } })).toBe(false);
   });
+
+  // Not every stream names its event type, and some stream arrays: data is
+  // whatever is not an ack or an error.
+  it('accepts data frames that carry no event type', () => {
+    const bookTicker = { u: 97856816298, s: 'BTCUSDT', b: '64511.88', B: '0.47198', a: '64511.89', A: '8.11666' };
+    const depth20    = { lastUpdateId: 97856816298, bids: [['64511.88', '0.47198']], asks: [['64511.89', '8.11666']] };
+    const miniTicker = [{ e: '24hrMiniTicker', E: 1785049160796, s: 'BTCUSDT', c: '64511.89' }];
+
+    expect(binance.isData(bookTicker)).toBe(true);
+    expect(binance.isData(depth20)).toBe(true);
+    expect(binance.isData(miniTicker)).toBe(true);
+  });
+
+  it('treats acks and errors as control, with or without an id', () => {
+    expect(binance.isData({ result: null, id: 'x' })).toBe(false);
+    expect(binance.isData({ error: { code: 2, msg: 'Invalid request: unknown stream' }, id: 'x' })).toBe(false);
+    expect(binance.isData({ error: { code: 2, msg: 'Invalid request: unknown stream' } })).toBe(false);
+  });
 });
 
 // ── OKX ───────────────────────────────────────────────────────────────────────

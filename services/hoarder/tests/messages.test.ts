@@ -84,17 +84,21 @@ describe('data messages: publishing', () => {
     }
   });
 
-  it('publishes the original message verbatim as a JSON Buffer', async () => {
+  // Number text, escapes and whitespace are all things a parse/serialise round
+  // trip would change; the archive must hold the bytes the venue sent.
+  it('publishes the received bytes unchanged', async () => {
     const { service, exchange } = makeService();
     const handler = createMessageHandler(service as any, vi.fn());
-    const msg = dataMsg('quote', 'update');
+    const raw = String.raw`{ "table" : "trade",  "action":"insert",
+      "data":[{"qty":0.10000000,"price":45283.50,"fee":1e-8,"id":12345678901234567890,"note":"caf\u00e9"}] }`;
+    const buffer = Buffer.from(raw);
 
-    await handler(buf(msg), 'twin');
+    await handler(buffer, 'twin');
 
     const content = exchange.publish.mock.calls[0][0] as Buffer;
 
     expect(Buffer.isBuffer(content)).toBe(true);
-    expect(JSON.parse(content.toString())).toEqual(msg);
+    expect(content.equals(Buffer.from(raw))).toBe(true);
   });
 
   it('includes x-venue', async () => {
