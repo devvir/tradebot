@@ -8,6 +8,7 @@
     "build": "tsc -b",
     "start": "node dist/src/index.js",
     "dev": "ts-node src/index.ts",
+    "typecheck": "tsc -p tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
