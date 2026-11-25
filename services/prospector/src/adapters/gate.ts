@@ -242,7 +242,9 @@ const TREES = new Set([
 const SNAPSHOTS = new Set(['spot_index', 'options_ticker']);
 
 /**
- * A directory of spot deals filed inside one month of daily candlesticks:
- * `spot/candlesticks_1d/201802/s3deals/`.
+ * A directory of the interval's own candles, filed inside one month of each
+ * spot candlestick tree: `spot/candlesticks_{1m,5m,1h,4h,1d,7d}/201802/s3deals/`.
+ * The name says deals; the files are bars. Refused by its segment, so for every
+ * interval at once.
  */
 const STRAY = 's3deals';

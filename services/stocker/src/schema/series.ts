@@ -277,8 +277,9 @@ export const SERIES: Series[] = [
   // ── Binance ─────────────────────────────────────────────────────────────────
   //
   // Spot files carry no header. Futures files carry one on scattered files from
-  // 2020-01 and on every file only from mid-2022, so all of them are read
-  // positionally and a header line is dropped as an unparseable timestamp.
+  // 2020-01 and on every file only from 2022-06 to 2022-08, by tree (see
+  // docs/venues/BINANCE.md), so all of them are read positionally and a header
+  // line is dropped as an unparseable timestamp.
   {
     venue: 'binance', market: 'spot', dataset: 'trades', table: 'trades', ...csv,
     header: false, columns: BINANCE_SPOT_TRADE,
@@ -414,7 +415,7 @@ export const SERIES: Series[] = [
   // ── Bybit ───────────────────────────────────────────────────────────────────
   //
   // Every series but the MT4 klines carries a header, and all but spot trades
-  // are read by name. Perpetual trades carry `RPI` from 2025-04, which a
+  // are read by name. Perpetual trades carry `RPI` from 2025-04-03, which a
   // name-keyed entry never refers to.
   //
   // `size` is base for USDT and PERP symbols and **quote** for the `USD`
@@ -434,9 +435,10 @@ export const SERIES: Series[] = [
     ts: 'timestamp',
   },
   // Spot trades are read by position. Daily files carry `rpi` as a sixth column
-  // from 2025-03, and monthly files keep the five-name header
-  // `id,timestamp,price,volume,side` over rows of six values, which a read by
-  // name cannot use. Files without `rpi` are short by one and padded.
+  // from 2025-03-13, and monthly files keep the five-name header
+  // `id,timestamp,price,volume,side` over rows of six values from that day on
+  // (2025-03 switches part-way), which a read by name cannot use. Rows without
+  // `rpi` are short by one and padded.
   {
     venue: 'bybit', market: 'spot', dataset: 'trades', table: 'trades', ...csv,
     header: false,

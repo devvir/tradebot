@@ -19,7 +19,7 @@ const DATED = /^([A-Z0-9]+?)(\d{6})$/;
 
 /** Every currency `data/` quotes a spot pair in, longest first so that the match cannot stop early. */
 const QUOTES = [
-  'EUROC', 'USDT', 'USDC', 'USDD', 'USD1', 'TUSD', 'HUSD',
+  'EUROC', 'USDT', 'USDC', 'USDD', 'USD1', 'TUSD', 'HUSD', 'KGST',
   'ARS', 'BRL', 'BTC', 'EOS', 'ETH', 'EUR', 'GBP', 'HPT', 'IDR',
   'JPY', 'KRW', 'RUB', 'THB', 'TRX', 'TRY', 'UAH', 'USD', 'UST',
   'HT',

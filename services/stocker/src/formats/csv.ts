@@ -36,7 +36,7 @@ const declared = (series: { columns?: { as: string | null }[] }): string[] =>
  *
  * **By name** (`header: true`) for a series whose every file carries a header
  * naming every column its rows hold. A column appended later then costs
- * nothing: Bybit's perpetual trades carry `RPI` from 2025-04, and a name-keyed
+ * nothing: Bybit's perpetual trades carry `RPI` from 2025-04-03, and a name-keyed
  * projection never refers to it. A header must be as wide as the rows under it:
  * DuckDB does not take a shorter line as their header, and names the columns
  * after the first row instead.

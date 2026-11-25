@@ -24,8 +24,10 @@ export const binance: Adapter = declare({
   probingLag: 3,
 
   /**
-   * Not archive: `data2/`, keys directly under `data3/`, the tree whose keys begin
-   * with `/`, and the `1w`, `3d` and `1mo` intervals.
+   * Not archive: `data2/`, keys directly under `data3/` and the tree whose keys
+   * begin with `/`. Also refused: the `1w`, `3d` and `1mo` intervals, which no
+   * tree publishes on a schedule and which aggregate the `1m` file of the same
+   * dataset — see `docs/venues/BINANCE.md`.
    */
   accepts: (path) =>
     ! /^\//.test(path) && ! /^data2\//.test(path) && ! /^data3\/[^/]+$/.test(path)

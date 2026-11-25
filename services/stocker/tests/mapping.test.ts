@@ -187,7 +187,7 @@ describe('shapes that changed mid-history', () => {
     expect(Number(all.getRows()[0]![0]) - Number(kept.getRows()[0]![0])).toBe(1);
   });
 
-  /** Bybit's perpetual trades carry `RPI` from 2025-04; mapping by name ignores it. */
+  /** Bybit's perpetual trades carry `RPI` from 2025-04-03; mapping by name ignores it. */
   it('is unaffected by a column appended to a headed file', () => {
     const series = resolve(named('bybit.perp-trades.csv'))!;
 
@@ -226,6 +226,45 @@ describe('shapes that changed mid-history', () => {
         (await conn.runAndReadAll(`SELECT * FROM (${selectFor(series, csv.relation([join(DIR, 'bybit.spot-trades.csv')], series))}) ` +
           `WHERE ts IS NOT NULL`)).getRows());
       expect(narrow.getRows().length).toBe(lines.length - 1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * A monthly file that changes width part-way: the five-name header, rows of
+   * five values, then rows of six. Every row is kept, in place, none is taken
+   * for wider than the series, and each reads as the daily file's does.
+   */
+  it('reads a bybit monthly spot file whose rows widen from five values to six part-way', async () => {
+    const series = resolve(named('bybit.spot-trades-month.csv'))!;
+    const dir    = mkdtempSync(join(tmpdir(), 'stocker-bybit-spot-'));
+
+    try {
+      const [, ...rows] = readFileSync(join(DIR, 'bybit.spot-trades.csv'), 'utf8').trim().split('\n');
+      const half        = Math.floor(rows.length / 2);
+      const path        = join(dir, 'mixed.csv');
+
+      writeFileSync(path, `${[
+        'id,timestamp,price,volume,side',
+        ...rows.slice(0, half).map(line => line.split(',').slice(0, 5).join(',')),
+        ...rows.slice(half),
+      ].join('\n')}\n`);
+
+      expect(rows[0]!.split(',')).toHaveLength(6);
+
+      const read = (file: string) => conn.runAndReadAll(
+        `SELECT * FROM (${selectFor(series, csv.relation([file], series), [`${csv.wide!(series)} AS _wide`])}) ` +
+        'WHERE ts IS NOT NULL');
+
+      const mixed = await read(path);
+      const daily = await read(join(DIR, 'bybit.spot-trades.csv'));
+      const wide  = mixed.columnNames().indexOf('_wide');
+
+      expect(mixed.getRows()).toHaveLength(rows.length);
+      expect(mixed.getRows()).toEqual(daily.getRows());
+      expect(mixed.getRows().map(row => row[wide])).toEqual(rows.map(() => false));
+      expect((await conn.runAndReadAll(csv.overflow!([path], series)!)).getRows()).toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

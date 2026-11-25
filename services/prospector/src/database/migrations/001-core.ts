@@ -95,16 +95,18 @@ const MISFILED_AT_BYBIT = `
      WHERE venue.name = 'bybit';`;
 
 /**
- * The 85 gate files that are **not** what their URL says.
+ * 85 gate files that are **not** what their URL says.
  *
- * For 2021-07 alone, `futures_usdt/trades/` served the *spot* file for these
+ * For 2021-07 alone, `futures_usdt/trades/` serves the *spot* file for these
  * symbols: gate's own bytes rather than a transport fault — five columns where
  * every other month of gate futures has four, and re-fetching returns the same
  * md5. Read as futures the file "works", because spot's unsigned size lands
  * where the signed futures size belongs and every trade then reads as a buy.
  *
- * For 84 of the 85 the perp market had not launched, so nothing real is missing;
- * `SUN_USDT` is the one genuine gap, recorded in `docs/venues/GATE.md`.
+ * These are 85 of the spot-shaped files in that month, not all of them; the
+ * month's full make-up is in `docs/venues/GATE.md`. For 84 of these 85 the perp
+ * market had not launched, so nothing real is missing; `SUN_USDT` is the one
+ * genuine gap, recorded there too.
  *
  * **A list, so it is rows**: there is no shape to describe, only these files in
  * that one month, and gate still serves the same bytes.
