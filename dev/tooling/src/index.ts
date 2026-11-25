@@ -55,8 +55,8 @@ async function main(): Promise<void> {
     .name('tools')
     .version('1.0.0')
     .description('TradeBot development tools and utilities')
-    .option('-e, --env <path>', 'Additional .env file to load (overrides root and module .env)')
-    .option('-m, --module <name>', 'Load this module\'s .env (modules/<name>/.env)')
+    .option('-e, --env <path>', 'Additional .env file to load (overrides every other .env file)')
+    .option('-m, --module <name>', 'Load this module\'s .env: modules/<group>/<name>/.env, or just <name>')
     .option('-v, --verbose', 'Verbose output')
     .hook('preAction', (thisCommand) => {
       const opts = thisCommand.opts() as any;
