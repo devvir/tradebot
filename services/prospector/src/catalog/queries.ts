@@ -1257,8 +1257,8 @@ const newestRun = (db: DatabaseSync, venueId: number) =>
  * **`survey` says whether it should be running; `run` says what it is doing.**
  * Neither answers on its own, and keeping them apart is what stops the pair
  * disagreeing: a venue can be enrolled with no job (waiting for the next
- * update), or have an open job while nobody is working it (a killed container,
- * or a pause).
+ * update), or have an open job while nobody is working it (a pause, a survey
+ * loop that ended on a fault, or a venue outside this process's scope).
  *
  * The interval is measured from the **start** of the last pass rather than its
  * end, so a walk that ran longer than the interval is already overdue when it
@@ -1322,7 +1322,10 @@ export const standingOf = (
  *   left is finding what has appeared since
  *
  * **Having been complete once is permanent**, and a closed job is what records
- * it: a venue never goes back to walking scopes it has already exhausted.
+ * it: from then on a venue reads `updating` wherever it would read `complete`.
+ * That is the venue's standing, not a promise about its next pass. A scope once
+ * exhausted is never walked again, while a later walk plans scopes of its own
+ * and reads `running` while they have keyspace ahead.
  *
  * **Read off whichever kind of run the venue actually does.** A venue with a
  * keyspace to read walks it; okx and bitget have none and only ever generate

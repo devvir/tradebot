@@ -107,8 +107,8 @@ export const startSurveys = (
        * a new update would plan fresh scopes. Somebody told "update started"
        * about work that was half done has been told the wrong thing.
        *
-       * That is what a pause during an update leaves, and equally what a killed
-       * container leaves — neither needs its own rule.
+       * That is what a pause during an update leaves, and equally what a survey
+       * loop that ended on a fault leaves — neither needs its own rule.
        */
       if (open) resumed.push(venue);
     }
@@ -222,18 +222,20 @@ return venueTotals(db)
         /**
          * **One word for where the venue stands, and the facts behind it.**
          *
-         * This used to report an open job beside a boolean and leave the
-         * reader to work out the rest, which could not distinguish the two
-         * states a person most needs to tell apart: a venue between passes and
-         * a venue nobody has ever asked about both showed as not surveying.
+         * A state, rather than an open job beside a boolean for the reader to
+         * work the rest out from: that pair cannot tell apart the two states a
+         * person most needs to, because a venue between passes and a venue
+         * nobody has ever asked about both have no job and nothing surveying.
          */
         ...starting(standingOf(db, row.venue, ids, surveys.everyMs()), surveys.passing(row.venue)),
 
         /**
          * **Whether this process has a loop alive**, which is not the same as
-         * work being outstanding. An open job with nothing surveying is what a
-         * killed container leaves behind; the pair is kept side by side
-         * because they want opposite responses.
+         * work being outstanding. An open job with nothing surveying it is what
+         * a survey loop that ended on a fault leaves, and what a venue outside
+         * this process's `PROSPECTOR_VENUES` shows; the pair is kept side by
+         * side because a survey in progress wants leaving alone and an open job
+         * nobody is working wants starting.
          */
         surveying:   surveys.running(row.venue),
 
@@ -254,9 +256,9 @@ return venueTotals(db)
          *
          * **Every one of the venue's servers, not any.** Bybit publishes from
          * two, and a venue whose second host has never finished a pass has not
-         * been surveyed before — it is half read. Asking `some` made it report
-         * as surveyed the moment the smaller host finished, while the other was
-         * still hours into its first walk.
+         * been surveyed before — it is half read. Asking whether any host has
+         * would report it as surveyed the moment the smaller host finished,
+         * while the other is still hours into its first walk.
          */
         completedEver: ids.every(id => everCompleted(db, id)),
 

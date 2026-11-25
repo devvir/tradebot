@@ -364,8 +364,11 @@ export type Occasion = 'full' | 'partial' | 'lookup';
  * - `'updating'` — every scope exhausted and the venue has been complete before,
  *   so what is left is finding what has appeared since
  *
- * Reaching `complete` once changes the venue permanently: it never goes back to
- * walking scopes it has already exhausted.
+ * Reaching `complete` once changes the venue permanently: from then on it
+ * reads `updating` wherever it would otherwise read `complete`. That is about
+ * the venue's standing, not its next pass. A scope once exhausted is never
+ * walked again, while a later walk plans scopes of its own and reads `running`
+ * while they have keyspace ahead.
  */
 export type Phase = 'not run' | 'planned' | 'running' | 'complete' | 'updating';
 
@@ -1677,8 +1680,8 @@ export interface Surveys {
    *
    * **A pause is not a cancellation.** Every partition keeps its cursor and the
    * job stays open, so starting the venue again continues from exactly where it
-   * stopped — the same state a killed container leaves behind, reached
-   * deliberately.
+   * stopped. The pause is written down as well, so a restart leaves the venue
+   * stopped rather than resuming it.
    *
    * Returns whether anything was actually asked to stop, which is how a caller
    * tells "paused it" from "it was not running".
@@ -1689,10 +1692,11 @@ export interface Surveys {
    * Whether **this process** is walking the venue right now.
    *
    * Distinct from the catalog having an open job, and the distinction is the
-   * point: a job is open whenever work is outstanding, including after a
-   * container died mid-survey. That reads identically to a survey in progress
-   * from the rows alone, and the two want opposite responses — one needs
-   * resuming, the other needs leaving alone.
+   * point: a job is open whenever work is outstanding, including after the
+   * loop working it ended on a fault, and for a venue outside this process's
+   * scope. That reads identically to a survey in progress from the rows alone,
+   * and the two want opposite responses — one needs starting, the other needs
+   * leaving alone.
    *
    * Held in memory on purpose. It is a fact about this process, and a process
    * that is gone should not be able to leave a claim behind saying it is busy.
