@@ -29,14 +29,14 @@ import type { LensSpan } from './types';
  * `null` is open at that end.
  */
 
-/** Add a span, merging anything it touches or overlaps. */
+/** Add a span, merging anything it overlaps or meets at a month boundary. */
 export const union = (spans: readonly LensSpan[], one: LensSpan): LensSpan[] => {
   const kept: LensSpan[] = [];
 
   let { from, to } = one;
 
   for (const span of spans) {
-    if (disjoint(span, { from, to })) { kept.push(span); continue; }
+    if (separate(span, { from, to })) { kept.push(span); continue; }
 
     from = lower(span.from, from);
     to   = upper(span.to, to);
@@ -89,6 +89,15 @@ export const ALL: LensSpan = { from: null, to: null };
 const disjoint = (a: LensSpan, b: LensSpan): boolean =>
   (a.to !== null && b.from !== null && a.to < b.from)
   || (b.to !== null && a.from !== null && b.to < a.from);
+
+/**
+ * Whether a month lies between two spans, so that adding one leaves the other
+ * as it is. Spans that share a month or meet at a month boundary are one
+ * stretch of time, and are merged.
+ */
+const separate = (a: LensSpan, b: LensSpan): boolean =>
+  (a.to !== null && b.from !== null && after(a.to) < b.from)
+  || (b.to !== null && a.from !== null && after(b.to) < a.from);
 
 /** The earlier left edge, where null is earlier than any date. */
 const lower = (a: string | null, b: string | null): string | null =>

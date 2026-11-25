@@ -110,69 +110,127 @@ export const lensOptions = (db: DatabaseSync): LensOption[] => {
 /**
  * Why a lens cannot be stored, in a person's words.
  *
- * **Only what is not a rule at all is refused**: a venue that does not exist, a
- * grain or a bundle that is not one, an exclude that prefers, a bound that is
- * not a month, a range that ends before it starts.
+ * **Only what is not a rule at all is refused**: a definition that is not one
+ * document of venues each with a list of rules, a rule that is not shaped as
+ * one, a venue that does not exist, a grain or a bundle that is not one, an
+ * exclude that prefers, a bound that is not a month, a range that ends before it
+ * starts. Whatever is sent, the answer is a list of problems and never an
+ * exception.
  *
  * **What a rule matches is never weighed.** A rule that selects nothing today,
  * or a form taken alone that only part of what the rule names is published in,
  * may be exactly what was meant — and where it was not, preferring the form
  * says so. Every problem names the venue and the rule's position, so an editor
- * can put it where the choice was made.
+ * can put it where the choice was made; a problem with the definition as a
+ * whole names venue `''` and rule `-1`, and one with a venue's list rule `-1`.
  */
-export const problemsWith = (db: DatabaseSync, definition: LensDefinition): LensProblem[] => {
+export const problemsWith = (db: DatabaseSync, definition: unknown): LensProblem[] => {
+  if (! plain(definition))
+    return [{ venue: '', rule: -1, message: 'A definition is a document of venues, each with its rules.' }];
+
+  const venues = definition['venues'];
+
+  if (venues === undefined) return [];
+
+  if (! plain(venues))
+    return [{ venue: '', rule: -1, message: 'The venues of a definition are named, each with its rules.' }];
+
   const out: LensProblem[] = [];
 
   const known = new Set(venueNames(db));
 
-  for (const [venue, rules] of Object.entries(definition.venues ?? {})) {
+  for (const [venue, rules] of Object.entries(venues)) {
     if (venue !== GLOBAL && ! known.has(venue)) {
       out.push({ venue, rule: -1, message: `No venue called '${venue}'.` });
 
       continue;
     }
 
-    out.push(...faultsIn(rules, venue));
+    if (! Array.isArray(rules)) {
+      out.push({ venue, rule: -1, message: 'A venue\'s rules are a list.' });
+
+      continue;
+    }
+
+    rules.forEach((rule: unknown, at) => {
+      const shape = misshapen(rule);
+
+      out.push(...(shape.length > 0 ? shape : faultsOf(rule as LensRule)).map(one => ({ venue, rule: at, ...one })));
+    });
   }
 
   return out;
 };
 
-/** What is wrong with one venue's rules. */
-const faultsIn = (rules: readonly LensRule[], venue: string): LensProblem[] => {
-  const out: LensProblem[] = [];
+/**
+ * What is wrong with the shape of one rule: that it is not a rule at all, and
+ * so cannot be weighed. Nothing where every part of it is of its kind, whatever
+ * the values say.
+ *
+ * **Never throws**, whatever it is handed. A rule this passes is one every
+ * evaluation can read.
+ */
+export const misshapen = (rule: unknown): Fault[] => {
+  if (! plain(rule)) return [{ message: 'A rule is an effect and what it matches.' }];
 
-  rules.forEach((rule, at) => {
-    if (rule.grain !== undefined && ! GRAINS.includes(formOf(rule.grain) as never))
-      out.push({ venue, rule: at, field: 'grain',
-        message: `A grain is only one of ${GRAINS.join(', ')}, or prefers one; leave it out for any.` });
+  const out: Fault[] = [];
 
-    if (rule.bundle !== undefined && ! BUNDLES.includes(formOf(rule.bundle) as never))
-      out.push({ venue, rule: at, field: 'bundle',
-        message: 'A bundle is only instrument or market, or prefers one; leave it out for either.' });
+  for (const key of Object.keys(rule))
+    if (! (RULE_KEYS as readonly string[]).includes(key))
+      out.push({ message: `A rule has no '${key}': it is ${RULE_KEYS.join(', ')}.` });
 
-    /**
-     * **An exclude has nothing to prefer.** Preferring is choosing what to keep
-     * among the forms a month is published in, and an exclude keeps nothing.
-     */
-    if (rule.effect === 'exclude' && [rule.grain, rule.bundle].some(one => prefers(one)))
-      out.push({ venue, rule: at, field: prefers(rule.grain) ? 'grain' : 'bundle',
-        message: 'An exclude cannot prefer a form: it takes away what it matches. Make it only that form, or any.' });
+  if (rule['effect'] !== 'include' && rule['effect'] !== 'exclude')
+    out.push({ field: 'effect', message: 'A rule either includes or excludes.' });
 
-    /**
-     * **A bound is a month.** A day would be a false precision — nobody
-     * collects up to the 14th — and a file covering a whole month cannot be
-     * halved by one, so the two ends would stop meaning the same thing.
-     */
-    for (const [field, bound] of [['from', rule.from], ['to', rule.to]] as const)
-      if (bound !== undefined && ! /^\d{4}(0[1-9]|1[0-2])$/.test(bound))
-        out.push({ venue, rule: at, field,
-          message: `'${bound}' is not a month. Bounds are written yyyymm.` });
+  if (rule['markets'] !== undefined && ! strings(rule['markets']))
+    out.push({ field: 'markets', message: 'Markets are a list of market names; leave it out for every market.' });
 
-    if (rule.from && rule.to && rule.from > rule.to)
-      out.push({ venue, rule: at, field: 'to',
-        message: 'The end is before the start.' });
-  });
+  if (rule['datasets'] !== undefined
+      && ! (Array.isArray(rule['datasets']) && rule['datasets'].every(kind)))
+    out.push({ field: 'datasets', message: 'Datasets are a list, each a dataset and optionally one of its variants; leave it out for every dataset.' });
+
+  if (rule['grain'] !== undefined && ! choice(rule['grain']))
+    out.push({ field: 'grain', message: GRAIN_IS });
+
+  if (rule['bundle'] !== undefined && ! choice(rule['bundle']))
+    out.push({ field: 'bundle', message: BUNDLE_IS });
+
+  for (const field of ['from', 'to'] as const)
+    if (rule[field] !== undefined && typeof rule[field] !== 'string')
+      out.push({ field, message: `'${String(rule[field])}' is not a month. ${BOUND_IS}` });
+
+  return out;
+};
+
+/** What is wrong with one rule of a proper shape. */
+const faultsOf = (rule: LensRule): Fault[] => {
+  const out: Fault[] = [];
+
+  if (rule.grain !== undefined && ! GRAINS.includes(formOf(rule.grain) as never))
+    out.push({ field: 'grain', message: GRAIN_IS });
+
+  if (rule.bundle !== undefined && ! BUNDLES.includes(formOf(rule.bundle) as never))
+    out.push({ field: 'bundle', message: BUNDLE_IS });
+
+  /**
+   * **An exclude has nothing to prefer.** Preferring is choosing what to keep
+   * among the forms a month is published in, and an exclude keeps nothing.
+   */
+  if (rule.effect === 'exclude' && [rule.grain, rule.bundle].some(one => prefers(one)))
+    out.push({ field: prefers(rule.grain) ? 'grain' : 'bundle',
+      message: 'An exclude cannot prefer a form: it takes away what it matches. Make it only that form, or any.' });
+
+  /**
+   * **A bound is a month.** A day would be a false precision — nobody
+   * collects up to the 14th — and a file covering a whole month cannot be
+   * halved by one, so the two ends would stop meaning the same thing.
+   */
+  for (const [field, bound] of [['from', rule.from], ['to', rule.to]] as const)
+    if (bound !== undefined && ! /^\d{4}(0[1-9]|1[0-2])$/.test(bound))
+      out.push({ field, message: `'${bound}' is not a month. ${BOUND_IS}` });
+
+  if (rule.from && rule.to && rule.from > rule.to)
+    out.push({ field: 'to', message: 'The end is before the start.' });
 
   return out;
 };
@@ -207,6 +265,34 @@ export const lensNameIsSound = (slug: string): boolean => /^[a-z0-9][a-z0-9-]{1,
 
 const GRAINS  = ['monthly', 'daily', 'hourly', 'minutely'] as const;
 const BUNDLES = ['instrument', 'market'] as const;
+
+/** Every part a rule can have. */
+const RULE_KEYS = ['effect', 'markets', 'datasets', 'grain', 'bundle', 'from', 'to'] as const;
+
+const GRAIN_IS  = `A grain is only one of ${GRAINS.join(', ')}, or prefers one; leave it out for any.`;
+const BUNDLE_IS = 'A bundle is only instrument or market, or prefers one; leave it out for either.';
+const BOUND_IS  = 'Bounds are written yyyymm.';
+
+/** A problem with one rule, before it is placed at its venue and position. */
+type Fault = Omit<LensProblem, 'venue' | 'rule'>;
+
+/** Whether something is a document of named parts: an object, and not a list. */
+const plain = (one: unknown): one is Record<string, unknown> =>
+  typeof one === 'object' && one !== null && ! Array.isArray(one);
+
+const strings = (one: unknown): one is string[] =>
+  Array.isArray(one) && one.every(each => typeof each === 'string');
+
+/** Whether one entry of `datasets` is a dataset, with a variant or without. */
+const kind = (one: unknown): boolean =>
+  plain(one)
+  && typeof one['dataset'] === 'string'
+  && (one['variant'] === undefined || typeof one['variant'] === 'string')
+  && Object.keys(one).every(key => key === 'dataset' || key === 'variant');
+
+/** Whether a grain or a bundle is written as a `Choice`: one of `only` and `prefer`, and nothing else. */
+const choice = (one: unknown): boolean =>
+  plain(one) && Object.keys(one).length === 1 && ('only' in one || 'prefer' in one);
 
 /**
  * What each venue offers, as last counted. Counting is a read of every series a

@@ -1,3 +1,4 @@
+import { writing } from './db';
 import { letThrough, rulesFor, siblingKey } from './rules';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Lens, PartitionMember } from './types';
@@ -86,6 +87,11 @@ export const rebuild = (db: DatabaseSync, lensId: number): void => {
  * out. One that has read every partition before this one has now read this one
  * too; one that has not is caught up by `catchUp`, which settles this partition
  * again to the same end.
+ *
+ * **One lens never fails the transaction.** A lens whose rules cannot be
+ * evaluated is reported and left as it was, its `partitions_through` behind
+ * this partition, so `catchUp` comes round to it; the others take the
+ * partition in.
  */
 export const admit = (db: DatabaseSync, held: readonly Lens[], partitionId: number): void => {
   if (held.length === 0) return;
@@ -102,7 +108,15 @@ export const admit = (db: DatabaseSync, held: readonly Lens[], partitionId: numb
   for (const lens of held) {
     if (lens.updating) continue;
 
-    const kept = new Set(letThrough(rulesFor(lens.definition, made.venue), siblings).map(one => one.partitionId));
+    let kept: Set<number>;
+
+    try {
+      kept = new Set(letThrough(rulesFor(lens.definition, made.venue), siblings).map(one => one.partitionId));
+    } catch (err) {
+      console.warn(`Lens '${lens.slug}' could not be evaluated against partition ${partitionId}, left for its catching up: ${String(err)}`);
+
+      continue;
+    }
 
     for (const one of siblings) (kept.has(one.partitionId) ? insert : remove).run(lens.id!, one.partitionId);
 
@@ -208,17 +222,3 @@ const throughOf = (db: DatabaseSync, lens: Lens): number =>
 
 const newestPartition = (db: DatabaseSync): number =>
   (db.prepare('SELECT MAX(id) AS id FROM partition').get() as { id: number | null }).id ?? 0;
-
-/** One transaction, so a step is never read half written. */
-const writing = (db: DatabaseSync, work: () => void): void => {
-  db.exec('BEGIN IMMEDIATE');
-
-  try {
-    work();
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-
-    throw err;
-  }
-};

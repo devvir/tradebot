@@ -33,6 +33,28 @@ describe('adding time', () => {
     expect(out).toEqual([{ from: '201901', to: '202012' }]);
   });
 
+  it('merges spans that meet at a month boundary', () => {
+    expect(union(union([], span('202001', '202012')), span('202101', '202112')))
+      .toEqual([{ from: '202001', to: '202112' }]);
+
+    expect(union(union([], span('202101', null)), span(null, '202012')))
+      .toEqual([{ from: null, to: null }]);
+  });
+
+  it('closes a gap with the span that fills it', () => {
+    const out = union(union(union([], span('201901', '201912')), span('202101', '202112')), span('202001', '202012'));
+
+    expect(out).toEqual([{ from: '201901', to: '202112' }]);
+  });
+
+  it('keeps a month between two spans', () => {
+    expect(union(union([], span('201901', '201912')), span('202102', '202112'))).toHaveLength(2);
+    expect(union(union([], span('201901', '201912')), span('202002', '202012'))).toEqual([
+      { from: '201901', to: '201912' },
+      { from: '202002', to: '202012' },
+    ]);
+  });
+
   it('treats an open end as beyond every date', () => {
     const out = union(union([], span('201901', '201912')), span('201906', null));
 

@@ -1,6 +1,8 @@
-import { dropMembers, rebuild } from './members';
+import { writing } from './db';
+import { misshapen } from './draft';
+import { dropMembers } from './members';
 import type { DatabaseSync } from 'node:sqlite';
-import type { Lens, LensDefinition, LensRow } from './types';
+import type { Lens, LensDefinition, LensRow, LensRule } from './types';
 
 /**
  * A lens as a row: read, made, replaced and removed.
@@ -38,11 +40,12 @@ export const lensNamed = (db: DatabaseSync, slug: string): Lens | null => {
 };
 
 /**
- * Make one, or fail because the name is taken.
+ * Make one, or `null` because the slug is taken.
  *
- * The name is the handle a consumer passes, so it is the thing that must be
- * unique — and the caller gets `null` rather than an exception, because a name
- * already in use is an ordinary answer to give a form.
+ * The slug is the handle a consumer passes, so it is the thing that must be
+ * unique — and a slug already in use comes back as `null` rather than an
+ * exception, because it is an ordinary answer to give a form. `null` means that
+ * and nothing else: any other failure to write is thrown.
  */
 export const putLens = (
   db:         DatabaseSync,
@@ -58,20 +61,28 @@ export const putLens = (
       `INSERT INTO lens (slug, name, note, definition, created_at, updated_at, rebuilding)
             VALUES (?, ?, ?, ?, ?, ?, 1)`,
     ).run(slug, name || slug, note, JSON.stringify(definition), at, at);
-  } catch {
-    return null;
+  } catch (err) {
+    if (slugTaken(err)) return null;
+
+    throw err;
   }
 
   return lensNamed(db, slug);
 };
 
 /**
- * Replace a lens, whole.
+ * Replace a lens, whole; `null` where there is no lens of that slug, or where
+ * the slug it is given is another lens's. Any other failure to write is thrown.
  *
  * **There is no `PATCH` of one rule**, which is why rules need no stable ids and
  * their position in the array is identity enough. Editing one lens from two
  * places at once is a thing not to do rather than a thing to guard against, and
  * last write wins is the obvious outcome.
+ *
+ * **New rules are marked to be worked out from the start in the same write that
+ * stores them**, so no lens holds rules its members are not being worked out
+ * from. A rename or a new note changes nothing a lens lets through, and leaves
+ * its working out where it stands.
  */
 export const editLens = (
   db:    DatabaseSync,
@@ -89,30 +100,35 @@ export const editLens = (
     definition: to.definition ?? had.definition,
   };
 
+  const changed = JSON.stringify(next.definition) !== JSON.stringify(had.definition) ? 1 : 0;
+
   try {
     db.prepare(
-      `UPDATE lens SET slug = ?, name = ?, note = ?, definition = ?, updated_at = ?
+      `UPDATE lens SET slug = ?, name = ?, note = ?, definition = ?, updated_at = ?,
+                       partitions_through = CASE WHEN ? THEN 0 ELSE partitions_through END,
+                       rebuilding         = CASE WHEN ? THEN 1 ELSE rebuilding END
         WHERE slug = ?`,
     ).run(next.slug, next.name, next.note, JSON.stringify(next.definition),
-      new Date().toISOString(), slug);
-  } catch {
-    return null;
-  }
+      new Date().toISOString(), changed, changed, slug);
+  } catch (err) {
+    if (slugTaken(err)) return null;
 
-  // New rules are worked out from the start; a rename or a new note changes nothing a lens lets through.
-  if (JSON.stringify(next.definition) !== JSON.stringify(had.definition)) rebuild(db, had.id!);
+    throw err;
+  }
 
   return lensNamed(db, next.slug);
 };
 
-/** Take one away, and what it let through. Says whether there was one. */
+/** Take one away, and what it let through, in one transaction. Says whether there was one. */
 export const dropLens = (db: DatabaseSync, slug: string): boolean => {
   const had = lensNamed(db, slug);
 
   if (! had) return false;
 
-  dropMembers(db, had.id!);
-  db.prepare('DELETE FROM lens WHERE id = ?').run(had.id!);
+  writing(db, () => {
+    dropMembers(db, had.id!);
+    db.prepare('DELETE FROM lens WHERE id = ?').run(had.id!);
+  });
 
   return true;
 };
@@ -129,40 +145,92 @@ const asLens = (row: LensRow): Lens => ({
   note:       row.note,
   createdAt:  row.created_at,
   updatedAt:  row.updated_at,
-  definition: read(row.definition),
+  definition: read(row),
   updating:   row.rebuilding === 1,
 });
 
-/**
- * A stored definition, or an empty one.
- *
- * **A document that cannot be parsed lets nothing through**, which is the safe
- * direction: a lens is an allow-list, so failing closed hands back nothing rather
- * than the whole archive.
- */
-const read = (text: string): LensDefinition => {
-  try {
-    const had = JSON.parse(text) as LensDefinition;
+/** Whether a write failed only because another lens has the slug: SQLite's unique-constraint failure, on `lens.slug`. */
+const slugTaken = (err: unknown): boolean => {
+  const e = err as { errcode?: number; message?: string } | null;
 
-    return { format: had.format ?? 1, venues: months(had.venues ?? {}) };
-  } catch {
-    return { format: 1, venues: {} };
-  }
+  return e?.errcode === SQLITE_CONSTRAINT_UNIQUE && /lens\.slug/.test(e.message ?? '');
 };
 
+const SQLITE_CONSTRAINT_UNIQUE = 2067;
+
 /**
- * Bounds as months, whatever was stored.
+ * A stored definition, as much of it as is a rule.
  *
- * **Lenses written before a bound was a month carry a day.** Truncating on the
- * way out costs nothing, keeps them valid, and means the first save writes the
- * month — rather than an editor refusing to store a lens it did not write.
- *
- * Truncation is right in both directions: a day bound was already being read as
- * its month everywhere it was compared.
+ * **What cannot be read lets nothing through**, which is the safe direction: a
+ * lens is an allow-list, so failing closed hands back nothing rather than the
+ * whole archive. A document that does not parse, or is not a document of venues,
+ * reads as empty; a venue whose rules are not a list reads as having none; a
+ * rule that is not shaped as one (see `misshapen`) is left out on its own, and
+ * the rules beside it stand. What is left out is reported once for each version
+ * of a lens.
  */
-const months = (venues: LensDefinition['venues']): LensDefinition['venues'] =>
-  Object.fromEntries(Object.entries(venues).map(([venue, rules]) => [venue, rules.map(rule => ({
-    ...rule,
-    ...(rule.from ? { from: rule.from.slice(0, 6) } : {}),
-    ...(rule.to   ? { to:   rule.to.slice(0, 6)   } : {}),
-  }))]));
+const read = (row: LensRow): LensDefinition => {
+  let had: unknown;
+
+  try {
+    had = JSON.parse(row.definition);
+  } catch {
+    return dropped(row, 'its definition is not JSON', { format: 1, venues: {} });
+  }
+
+  if (typeof had !== 'object' || had === null || Array.isArray(had))
+    return dropped(row, 'its definition is not a document', { format: 1, venues: {} });
+
+  const { format, venues } = had as { format?: unknown; venues?: unknown };
+
+  if (venues !== undefined && (typeof venues !== 'object' || venues === null || Array.isArray(venues)))
+    return dropped(row, 'its venues are not a document', { format: 1, venues: {} });
+
+  const lost: string[] = [];
+  const out:  LensDefinition['venues'] = {};
+
+  for (const [venue, rules] of Object.entries(venues ?? {})) {
+    if (! Array.isArray(rules)) {
+      lost.push(`${venue}: not a list of rules`);
+
+      continue;
+    }
+
+    out[venue] = rules.filter((rule: unknown, at) => {
+      const faults = misshapen(rule);
+
+      if (faults.length > 0) lost.push(`${venue} #${at}: ${faults.map(one => one.message).join(' ')}`);
+
+      return faults.length === 0;
+    }).map(month);
+  }
+
+  const definition = { format: typeof format === 'number' ? format : 1, venues: out };
+
+  return lost.length > 0 ? dropped(row, `left out ${lost.join('; ')}`, definition) : definition;
+};
+
+/** Report once for each version of a lens what of its stored definition could not be read, and hand back what could. */
+const dropped = (row: LensRow, what: string, definition: LensDefinition): LensDefinition => {
+  const version = `${row.id}\u0000${row.updated_at}`;
+
+  if (! REPORTED.has(version)) {
+    REPORTED.add(version);
+    console.warn(`Lens '${row.slug}' (as stored ${row.updated_at}) is read without what is not a rule: ${what}`);
+  }
+
+  return definition;
+};
+
+/** The versions of a lens already reported as stored with something that is not a rule. */
+const REPORTED = new Set<string>();
+
+/**
+ * A rule's bounds as months: a stored bound longer than a month is read as its
+ * month, which is how it was already compared everywhere.
+ */
+const month = (rule: LensRule): LensRule => ({
+  ...rule,
+  ...(rule.from !== undefined ? { from: rule.from.slice(0, 6) } : {}),
+  ...(rule.to   !== undefined ? { to:   rule.to.slice(0, 6)   } : {}),
+});

@@ -42,6 +42,9 @@ export const GLOBAL = '*';
  * rule sits never changes what the lens lets through — an exclude always wins
  * over an include it overlaps, and a carve-back is written as a narrower
  * exclude. Two rows come out where an exclude cuts a hole in an include.
+ *
+ * A rule whose effect is neither `include` nor `exclude` says nothing, here as
+ * in `letThrough`.
  */
 export const spansFor = (slice: SliceTraits, rules: readonly LensRule[]): LensSpan[] => {
   let included: LensSpan[] = [];
@@ -53,7 +56,7 @@ export const spansFor = (slice: SliceTraits, rules: readonly LensRule[]): LensSp
     const span = { from: rule.from ?? null, to: rule.to ?? null };
 
     if (rule.effect === 'include') included = union(included, span);
-    else excluded = union(excluded, span);
+    else if (rule.effect === 'exclude') excluded = union(excluded, span);
   }
 
   for (const span of excluded) included = without(included, span);
