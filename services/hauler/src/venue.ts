@@ -412,7 +412,11 @@ const fetchOne = async (venue: string, object: BucketObject, leaf: Leaf, pacing:
   if (hauled.outcome === 'downloaded' || hauled.outcome === 'present') leaf.done.downloaded.push(object.Key);
   else if (hauled.outcome === 'failed') leaf.done.failed.push(object.Key);
   else if (hauled.outcome === 'unreached') leaf.unreached++;
-  else leaf.done.mismatched.push({ Key: object.Key, ...(hauled.size === undefined ? {} : { Size: hauled.size }) });
+  else leaf.done.mismatched.push({
+    Key: object.Key,
+    ...(hauled.size === undefined ? {} : { Size: hauled.size }),
+    ...(hauled.etag === undefined ? {} : { ETag: hauled.etag }),
+  });
 };
 
 /**

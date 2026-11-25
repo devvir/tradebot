@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -67,6 +68,7 @@ let lightBefore: number | null;
 
 const KEYS = ['binance/a/1.zip', 'binance/a/2.zip', 'binance/b/3.zip'];
 const SIZED = ['sized/a/0.zip', 'sized/a/1.zip', 'sized/a/2.zip', 'sized/a/3.zip'];
+const DIFFERS = 'differs/a/0.zip';
 
 beforeEach(async () => {
   cfg.archivesDir = mkdtempSync(join(tmpdir(), 'walk-'));
@@ -199,6 +201,16 @@ beforeEach(async () => {
       return;
     }
 
+    // A venue whose one file the catalog lists at a size it is not served at.
+    if (url.searchParams.get('prefix') === 'differs/') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        Name: 'catalog', Prefix: 'differs/', Marker: '', MaxKeys: 1000, IsTruncated: false,
+        Contents: [{ Key: DIFFERS, Path: `files/${DIFFERS}`, Host: '', Size: 3 }],
+      }));
+      return;
+    }
+
     // A venue with more listed than is ever held ready: pages of four, said to be pages of one.
     if (url.searchParams.get('prefix') === 'many/') {
       const from = Number(url.searchParams.get('marker')?.split('-').at(-1) ?? -1) + 1;
@@ -250,6 +262,19 @@ describe('a walk', () => {
       { downloaded: [KEYS[0], KEYS[1]], failed: [], mismatched: [] },
       { downloaded: [KEYS[2]], failed: [], mismatched: [] },
     ]);
+  });
+
+  /** What was received instead is told to the catalog: its size and its MD5. */
+  it('reports a file served other than the catalog lists it, with the size and MD5 it came as', async () => {
+    setHosts('differs', { '': [`${cfg.catalogApi}/`] });
+
+    const body = `/files/${DIFFERS}`;
+
+    expect(await walkVenue('differs', () => false)).toMatchObject({ listed: 1, progressed: 0, mismatched: 1 });
+    expect(reports).toEqual([{
+      downloaded: [], failed: [],
+      mismatched: [{ Key: DIFFERS, Size: body.length, ETag: createHash('md5').update(body).digest('hex') }],
+    }]);
   });
 
   /**

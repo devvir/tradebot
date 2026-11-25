@@ -22,7 +22,7 @@ import type { Haulable, Hauled, Host, Pacing } from './types';
  * | already there | yes | **touched**, and reported as downloaded |
  * | already there | no  | **fetched again**, and left where it is until the new one matches |
  * | just fetched  | yes | downloaded — whatever was at its path **moved aside** as `.bak` |
- * | just fetched  | no  | **reported as a mismatch**, and held in scratch |
+ * | just fetched  | no  | **reported as a mismatch**, with the size and MD5 it came as, and held in scratch |
  *
  * **The first row is what adopts an archive already on disk** with no seeding:
  * a file present and correct is confirmed whatever the catalog believed, and
@@ -40,18 +40,20 @@ import type { Haulable, Hauled, Host, Pacing } from './types';
  * not.
  *
  * **Only the venue's own answer makes a file `failed`** — `404` or `410` at once,
- * and a `403` that persists through every attempt: a `403` is as often a venue
- * refusing *us* as a bucket hiding a file it lacks, so it is tried again first,
- * and reported for the catalog to rule on only once it holds. A connection that
- * never opened, a lookup that failed, a `5xx` or a `429` say nothing about the
- * file, only about the way to it: those are tried again, and if they persist the
- * file is `unreached`, left out of the report, and listed again on the next walk.
+ * and a `403` from the listed address on every attempt made of it: a `403` is
+ * as often a venue refusing *us* as a bucket hiding a file it lacks, so it is
+ * tried again first, and reported for the catalog to rule on only where the
+ * listed address answered nothing else. A connection that never opened, a
+ * lookup that failed, a `5xx` or a `429` say nothing about the file, only about
+ * the way to it: those are tried again, and if they persist the file is
+ * `unreached`, left out of the report, and listed again on the next walk.
  *
  * **A server can answer at several addresses** — its bucket, a CDN in front of
  * it — and each attempt asks one of them, chosen by how each has been doing;
- * see `hosts.ts`. A file is gone only where every address in rotation answers
- * `404`; any other failure of an address that is not the listed one marks it
- * down and the file is asked elsewhere. **A refusal takes the
+ * see `hosts.ts`. A file is gone only where the listed address and every other
+ * in rotation answer `404`; where the listed one could not be asked, the file is
+ * `unreached`. Any other failure of an address that is not the listed one marks
+ * it down and the file is asked elsewhere. **A refusal takes the
  * address that refused out of rotation**, not the file's chances.
  *
  * **What the disk will not do leaves the file owed**, at once, and holds
@@ -129,7 +131,8 @@ const GONE = new Set([404, 410]);
 
 /**
  * The status that may say the file is not there, or may say we are refused —
- * held to be the first only where every attempt answers it.
+ * held to be the first only where the listed address answers it on every
+ * attempt made of it.
  */
 const HIDDEN = 403;
 
@@ -215,6 +218,10 @@ const retrieve = async (file: Haulable, path: string, pacing: Pacing): Promise<H
   const tried  = new Set<Host>();
   const halted = (): boolean => given.signal.aborted || stopped();
 
+  /** Whether the listed address has been asked for the file, and has answered nothing but `403` when it was. */
+  let askedMain        = false;
+  let hiddenThroughout = true;
+
   /**
    * Wait so long through `pause`, waking within a second once halted — at once
    * where downloads are given up. Whether the file may be asked for again.
@@ -248,6 +255,8 @@ const retrieve = async (file: Haulable, path: string, pacing: Pacing): Promise<H
     if (attempt === 1 && (file.size ?? 0) >= LARGE_BYTES)
       logger.info({ key: file.key, size: sizeOf(file.size!), host: host.base }, 'Downloading a large file');
 
+    if (host.main) askedMain = true;
+
     const own = new AbortController();
 
     flying.add(own);
@@ -267,11 +276,15 @@ const retrieve = async (file: Haulable, path: string, pacing: Pacing): Promise<H
         if (REFUSED.has(status) || wait !== null) refused(host, status, wait);
         else faltered(host);
 
+        if (host.main && status !== HIDDEN) hiddenThroughout = false;
+
         /**
-         * **A file is gone only where every address in rotation says so.** One
-         * address not having it is asked no more for it, and the next is asked
-         * at once; a withdrawal is rare, and an edge that has lost a file the
-         * bucket still holds is not one.
+         * **A file is gone only where the listed address and every other in
+         * rotation say so.** One address not having it is asked no more for it,
+         * and the next is asked at once; a withdrawal is rare, and an edge that
+         * has lost a file the bucket still holds is not one. Where the listed
+         * address is out of rotation and was never asked, nothing has spoken
+         * for the venue: the file stays owed.
          */
         if (GONE.has(status)) {
           tried.add(host);
@@ -280,6 +293,12 @@ const retrieve = async (file: Haulable, path: string, pacing: Pacing): Promise<H
             attempt--;
 
             continue;
+          }
+
+          if (! askedMain) {
+            logger.warn({ key: file.key, status, url }, 'Not at an edge, and the listed address could not be asked — stays owed');
+
+            return { outcome: 'unreached' };
           }
 
           logger.warn({ key: file.key, status, url }, 'Gone at the venue');
@@ -299,7 +318,7 @@ const retrieve = async (file: Haulable, path: string, pacing: Pacing): Promise<H
           continue;
         }
 
-        if (attempt === ATTEMPTS && status === HIDDEN) {
+        if (attempt === ATTEMPTS && status === HIDDEN && hiddenThroughout) {
           logger.warn({ key: file.key, status, url }, 'Refused throughout — reported for the catalog to rule');
 
           return { outcome: 'failed' };
@@ -341,6 +360,8 @@ const retrieve = async (file: Haulable, path: string, pacing: Pacing): Promise<H
           continue;
         }
 
+        hiddenThroughout = false;
+
         if (attempt === ATTEMPTS) {
           logger.warn({ key: file.key, size: written.bytes, ...(Number.isNaN(promised) ? {} : { promised }), expected: file.size, url },
             'Served short — stays owed');
@@ -367,7 +388,8 @@ const retrieve = async (file: Haulable, path: string, pacing: Pacing): Promise<H
 
       faltered(host);
 
-      if (! host.main) tried.add(host);
+      if (host.main) hiddenThroughout = false;
+      else tried.add(host);
 
       if (attempt === ATTEMPTS) {
         logger.warn({ key: file.key, err: reason(err), url }, 'Unreachable — stays owed');
@@ -402,7 +424,7 @@ const verified = async (file: Haulable, path: string, { bytes, digest }: Written
 
     logger.error({ key: file.key, size: bytes, expected: file.size, url }, 'Served differs from the catalog — held until it has asked the venue');
 
-    return { outcome: 'mismatched', size: bytes };
+    return { outcome: 'mismatched', size: bytes, etag: digest };
   }
 
   try {
@@ -421,10 +443,11 @@ const verified = async (file: Haulable, path: string, { bytes, digest }: Written
 
 /**
  * The address to ask next for a file: any in rotation not yet tried for it, by
- * weight — and where none is, the listed one, once it is back. An address that
- * turned us away is left alone until it said, or for the default, and a server
- * whose every address did is waited for, with `waited`: every request sent
- * meanwhile would be turned away too. Null where the file is to be asked of
+ * weight — and where none is, the listed one, waited for with `waited` while it
+ * is out of rotation. An address already tried for the file is not asked again
+ * for it: only the listed address speaks for the venue. An address that turned
+ * us away is out until it said, or for the default, and every request sent to
+ * it meanwhile would be turned away too. Null where the file is to be asked of
  * none: downloads were given up, or the wait was cut short.
  */
 const hostToAsk = async (
@@ -433,11 +456,10 @@ const hostToAsk = async (
   for (;;) {
     if (given.signal.aborted) return null;
 
-    const host = hostFor(file.venue, file.server, tried) ?? hostFor(file.venue, file.server);
+    const main = mainOf(file.venue, file.server);
+    const host = hostFor(file.venue, file.server, tried) ?? (main && backAt(main) <= Date.now() ? main : null);
 
     if (host) return host;
-
-    const main = mainOf(file.venue, file.server);
 
     if (! main || ! await waited(Math.max(backAt(main) - Date.now(), 100))) return null;
   }

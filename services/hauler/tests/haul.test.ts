@@ -35,7 +35,7 @@ vi.mock('../src/store', async (actual) => {
 });
 
 const { haul, abandon, _test_resume, _test_retryAfter } = await import('../src/fetch');
-const { setHosts, _test_forget, _test_hostsOf } = await import('../src/hosts');
+const { refused: turnedAway, setHosts, _test_forget, _test_hostsOf } = await import('../src/hosts');
 const { sweepPartials } = await import('../src/store');
 
 const BODY = 'the file';
@@ -49,10 +49,14 @@ let base:     string;
 let asked:    number;
 let requests: { url: string; encoding: string | undefined }[];
 
+/** What `/answers.zip` says, one step per request: a status, or `drop` for a connection lost before any answer. */
+let answers:  string[];
+
 beforeEach(async () => {
   cfg.archivesDir = mkdtempSync(join(tmpdir(), 'haul-'));
   asked = 0;
   requests = [];
+  answers  = [];
 
   // No waiting between attempts: the jitter draws from zero.
   vi.spyOn(Math, 'random').mockReturnValue(0);
@@ -61,6 +65,17 @@ beforeEach(async () => {
     requests.push({ url: req.url!, encoding: req.headers['accept-encoding'] });
 
     if (req.url === '/file.zip') { res.writeHead(200); res.end(BODY); return; }
+    if (req.url === '/answers.zip') {
+      const answer = answers.shift() ?? '404';
+
+      if (answer === 'drop') { req.socket.destroy(); return; }
+
+      res.writeHead(Number(answer), answer === '403' ? { 'retry-after': '0' } : {});
+      res.end();
+      return;
+    }
+    // An edge having a bad day: it answers every request with a server error.
+    if (req.url!.startsWith('/broken/')) { res.writeHead(500); res.end(); return; }
     if (req.url === '/gzipped.gz') { res.writeHead(200, { 'content-encoding': 'gzip', 'content-type': 'application/gzip' }); res.end(GZIPPED); return; }
     if (req.url === '/moved.zip') { res.writeHead(302, { location: '/file.zip' }); res.end(); return; }
     // Less than it said it would send, the connection then lost: the first time only, or every time.
@@ -136,7 +151,15 @@ describe('a file not yet on disk', () => {
   it('is reported as a mismatch, and not put in place, when the venue serves something else', async () => {
     const one = file({ path: 'short.zip' });
 
-    expect(await haul(one)).toEqual({ outcome: 'mismatched', size: 5 });
+    expect(await haul(one)).toEqual({ outcome: 'mismatched', size: 5, etag: md5('short') });
+    expect(existsSync(at(one))).toBe(false);
+  });
+
+  /** The catalog is told what was received, so it can tell a same-sized different file from the one it lists. */
+  it('is reported as a mismatch, with the MD5 it came as, where it is the listed size and not the listed file', async () => {
+    const one = file({ etag: `"${md5('another file')}"` });
+
+    expect(await haul(one)).toEqual({ outcome: 'mismatched', size: BODY.length, etag: md5(BODY) });
     expect(existsSync(at(one))).toBe(false);
   });
 
@@ -271,6 +294,21 @@ describe('a file not yet on disk', () => {
     expect(asked).toBe(3);
   });
 
+  /** A `403` is taken for the venue's word only where the listed address said nothing else. */
+  it('is unreached where the listed address answers anything but 403 before it does', async () => {
+    for (const first of [['503', '503', '403'], ['drop', '403', '403']]) {
+      answers  = [...first];
+      requests = [];
+
+      expect((await haul(file({ path: 'answers.zip' }))).outcome).toBe('unreached');
+      expect(requests).toHaveLength(3);
+    }
+
+    answers = ['403', '403', '403'];
+
+    expect((await haul(file({ path: 'answers.zip' }))).outcome).toBe('failed');
+  });
+
   /** A refusal is aimed at us by the address that gave it: every file it alone serves waits it out, other venues do not. */
   it('leaves an address alone when it refuses, and waits for it where there is no other', async () => {
     const refused = haul(file({ path: 'refused.zip' }));
@@ -307,6 +345,32 @@ describe('a file not yet on disk', () => {
 
     expect((await haul(file({ path: 'gone.zip', key: 'binance/perp/trades/B/BTCUSDT/202001/y.zip' }))).outcome).toBe('failed');
     expect(asked).toBe(1);
+  });
+
+  /** An edge that has lost a file says nothing for the venue: the listed address must have been asked too. */
+  it('is unreached, not failed, where an edge lacks it and the listed address is out of rotation', async () => {
+    setHosts('binance', { '': [`${base}/`, `${base}/elsewhere/`] });
+    turnedAway(_test_hostsOf('binance', '')[0]!, 429, 60_000);
+
+    expect(await haul(file())).toEqual({ outcome: 'unreached' });
+    expect(requests.map(one => one.url)).toEqual(['/elsewhere/file.zip']);
+  });
+
+  it('fails where an edge lacks it and the listed address, in rotation, says it is gone too', async () => {
+    setHosts('binance', { '': [`${base}/`, `${base}/elsewhere/`] });
+    vi.spyOn(Math, 'random').mockReturnValue(0.99);
+
+    expect((await haul(file({ path: 'gone.zip' }))).outcome).toBe('failed');
+    expect(requests.map(one => one.url)).toEqual(['/elsewhere/gone.zip', '/gone.zip']);
+  });
+
+  /** An address tried for a file and failing is not asked again for it: the listed one is waited for instead. */
+  it('waits for the listed address, and does not ask a failing edge again, where the listed one is out', async () => {
+    setHosts('binance', { '': [`${base}/`, `${base}/broken/`] });
+    turnedAway(_test_hostsOf('binance', '')[0]!, 429, 300);
+
+    expect(await haul(file())).toEqual({ outcome: 'downloaded' });
+    expect(requests.map(one => one.url)).toEqual(['/broken/file.zip', '/file.zip']);
   });
 
   it('reads Retry-After as seconds or as a date', () => {
@@ -472,7 +536,7 @@ describe('a file already on disk', () => {
 
     place(one, 'stale one');
 
-    expect(await haul(one)).toEqual({ outcome: 'mismatched', size: 5 });
+    expect(await haul(one)).toEqual({ outcome: 'mismatched', size: 5, etag: md5('short') });
     expect(readFileSync(at(one), 'utf8')).toBe('stale one');
     expect(existsSync(`${at(one)}.bak`)).toBe(false);
   });
@@ -483,7 +547,7 @@ describe('a file already on disk', () => {
 
     place(one, BODY);
 
-    expect(await haul(one)).toEqual({ outcome: 'mismatched', size: BODY.length });
+    expect(await haul(one)).toEqual({ outcome: 'mismatched', size: BODY.length, etag: md5(BODY) });
 
     expect(await haul({ ...one, size: BODY.length, etag: `"${md5(BODY)}"` })).toEqual({ outcome: 'present' });
     expect(readFileSync(at(one), 'utf8')).toBe(BODY);

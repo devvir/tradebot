@@ -158,6 +158,9 @@ export interface Hauled {
 
   /** The size actually received, where it disagreed with the listing. */
   size?:   number;
+
+  /** The MD5 of what was received, in hex, where it disagreed with the listing. */
+  etag?:   string;
 }
 
 /**
@@ -167,7 +170,8 @@ export interface Hauled {
 export interface Report {
   downloaded: string[];
   failed:     string[];
-  mismatched: { Key: string; Size?: number }[];
+  /** Each with the size and the MD5, in hex, of what was received instead. */
+  mismatched: { Key: string; Size?: number; ETag?: string }[];
 }
 
 /** The keys a report could not settle, as the catalog answers a `207`. */
