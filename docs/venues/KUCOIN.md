@@ -36,6 +36,34 @@ and a handful of quarterly contracts in the same tree, named by a month code and
 **The books are whole books**, one a row: fifty levels a side, and no deltas. The depth is in the
 dataset's name, and `depth/` is the only place this tree is three deep before the instrument.
 
+### What the files hold
+
+Each `.zip` holds a `.csv` with a header row. Read from the heads of the files of 2026-07-29
+(`BTC-USDT` and `BTCUSDTM`):
+
+| dataset | header | time unit |
+|---|---|---|
+| `trades`, both markets | `trade_id,trade_time,price,size,side` | ms |
+| spot `klines` | `time,open,close,high,low,volume,turnover` | s |
+| futures `klines` | `time,open,high,low,close,volume` | ms |
+| `index`, `mark` | `time,open,high,low,close` | ms |
+| `fundingRates` | `symbol,time,fundingRate` | ms |
+| `depth/orderbooklv50` | `data` | ms |
+
+- **Spot klines put close before high**, the same order as the classic spot bars on REST.
+- **`side` is upper case**: `BUY`, `SELL`.
+- **A futures `size` is a count of contracts**, a whole number (`31`, `3`, `10`); a spot `size` is
+  in the base currency (`0.00001563`).
+- **A book file is JSON lines in a `.csv`.** Under the one-word header `data`, each line is one
+  object: `{"asks":[[price,size],…],"bids":[…],"timestamp":…}` on spot, with `sequence` and `ts`
+  (equal to `timestamp`) added on futures. Prices are strings in both; sizes are strings on spot
+  and whole numbers on futures.
+- **Book lines are not in time order**, and in the spot file every line is written twice: its first
+  26 lines are 13 books, each repeated.
+- **A futures book line can hold fewer than fifty levels a side**: the first lines of `BTCUSDTM`
+  hold 36 to 48. Its day's file opens with books stamped a few seconds before that day's midnight
+  UTC.
+
 ### Futures klines at `1d` are published broken
 
 Every file under `futures/daily/klines/<SYMBOL>/1d/` declares `time,open,high,low,close,volume` and
@@ -66,6 +94,15 @@ that fits: `USDT`, `USDC`, `USD1`, `USDG`, `TUSD`, `DOGE`, `BTC`, `ETH`, `KCS`, 
 `DAI`, `GBP`, `THB`, `TRY`. The last four are retired — no listed pair uses them — and the archive
 still does. 23 of the archive's 2,419 dashless spot names end in a quote kucoin no longer lists at
 all, and cannot be split.
+
+### Publication
+
+From the files' own `Last-Modified`, measured on 2026-09-25 over the 173,150 files dated 2026-09-15
+to 21, a day's file appears this many hours after the start of the day it is dated:
+
+| p50 | p99 |
+|---|---|
+| 27.8 h | 29.0 h |
 
 ## REST
 

@@ -24,7 +24,7 @@ Deep history that the venue's archive does not have.
 | okx | 3 months | 1,440 points | **deep, from 2020 / 2018** | swaps, 2020-01 → 2021-09 | — |
 | gate | 180 days | 180 days | index of 12 option underlyings, from 2022 | — | option settlements |
 | htx | **deep** | 200 points | 2,000 points | — | — |
-| kucoin | **deep, from 2020** | 7 days | from 2024-12 | **spot, 2017-10 → 2022-12** | premium index, from 2020 |
+| kucoin | **deep, from 2020** | 6 days at 5 min | below 8 h from 2024-12; 8 h from 2021 | **spot, 2017-10 → 2022-12** | premium index, from 2020 |
 | bitget | 90 days | now only | **deep** | — | — |
 
 **Trades are not history over REST**: a window of 2 days to 6 months by venue, or only the newest
@@ -53,7 +53,7 @@ arrays.
 
 - **Windows**: `/futures/data/*` (open interest, ratios, taker volume, basis) 30 days; futures
   `aggTrades` 2 days; option exercises 6 to 9 months.
-- **Gone**: liquidations (`allForceOrders` is 404).
+- **None**: liquidations (`allForceOrders` answers 404).
 - **Limit**: weight a minute by address — 6,000 spot, 2,400 for both futures hosts together, 400
   options — reported in `x-mbx-used-weight-1m`. A page of 1,500 futures bars costs 10. Spent: 429
   with `Retry-After`, back when the minute turns.
@@ -74,12 +74,12 @@ newest first. **The one API that is a second archive.**
 | `instruments-info?status=Closed` | delisted contracts, with launch and delivery times | 1,000 | cursor | — |
 
 - **Open interest and the ratio are lost when a contract delists**: its list comes back empty. Bars
-  and funding stay, for contracts and spot pairs alike.
-- **`funding/history` refuses `startTime` alone**; `start=1` is ignored on bars, a real past time is
-  not.
+  and funding stay, and a delisted spot pair keeps its bars.
+- **`funding/history` refuses `startTime` alone**; `start=1` is ignored on `linear` and `inverse`
+  bars, a real past time is not.
 - **Windows**: option delivery prices, the last 50. **None**: liquidations, trades.
 - **Limit**: 600 calls per 5 seconds for the host, reported nowhere. Spent: 403 "Access too
-  frequent", gone within 30 seconds.
+  frequent"; the next call answered.
 
 ## OKX
 
@@ -128,8 +128,8 @@ seconds, `from` and `to`. **Nearly everything is a window.**
 ## HTX
 
 `api.huobi.pro` (spot), `api.hbdm.com` (derivatives: `/linear-swap-api` and `/linear-swap-ex` for
-USDT-margined, `/swap-api` and `/swap-ex` for coin-margined). **Every answer is HTTP 200**; the
-error is in the body.
+USDT-margined, `/swap-api` and `/swap-ex` for coin-margined). **Every answer to a path that exists
+is HTTP 200**; the error is in the body.
 
 | endpoint | gives | page | reaches |
 |---|---|---|---|
@@ -162,8 +162,9 @@ error is in the body.
   low. The unified one agrees with the archive on volume and runs open, high, low, close. Use the
   unified one.
 - **A spot bar exists only for a minute that traded.**
-- **Windows**: futures bars below 8 hours — trade, mark, index, premium — since 2024-12; the
-  1-second index about 100 days; open interest 7 days.
+- **Windows**: futures bars below 8 hours — trade, mark, index, premium — reach late 2024 (1-minute
+  bars 2024-12); the 1-second index about 100 days; open interest 6 days at 5 minutes, 69 rows at
+  1 day.
 - **Limit**: 2,000 weight per 30 seconds for every public call on both hosts; bars cost 3, funding
   5. Reported in `gw-ratelimit-remaining`. Spent: 429 `429000` until the window ends.
 
@@ -192,7 +193,7 @@ error is in the body.
 | venue | budget | reported | spent | back after |
 |---|---|---|---|---|
 | binance | weight a minute for each service | used so far | 429 + `Retry-After` | the minute's turn |
-| bybit | 600 calls / 5 s, whole host | nothing | 403 | under 30 s |
+| bybit | 600 calls / 5 s, whole host | nothing | 403 | the next call |
 | okx | each endpoint, per 2 s | nothing | 429 | 1 to 2 s |
 | gate | 200 calls / 10 s, each endpoint | remaining | 429 | 2 s |
 | htx | 240 calls / 3 s on reference data | remaining | HTTP 200, error in the body | 3 s |
