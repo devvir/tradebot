@@ -114,7 +114,7 @@ there. On a host where `cold` runs, set `CATALOG_PORT` in the archives module, o
 | remote, archives | `<MEGA_ROOT>/sources/archives/<venue>/<YYYY>/<venue>-<YYYYMM>.<NNN>.tar` |
 | remote, vault | `<MEGA_ROOT>/vault/<venue>/<market>/<dataset>[,<variant>…]/<@ or instrument>/<YYYYMM>[.pre\|.post].parquet` |
 | remote, catalog | `<MEGA_ROOT>/@cold/catalog/`: `catalog.db`, `tables.db`, `partitions/<venue>/<YYYY>/…` |
-| remote, cold's own files | `<MEGA_ROOT>/@cold/cold.sqlite`, `<MEGA_ROOT>/@cold/vault/ledger.csv`, `backedup.csv` |
+| remote, cold's own files | `<MEGA_ROOT>/@cold/cold.sqlite`; `<MEGA_ROOT>/@cold/vault/ledger.csv` and `<MEGA_ROOT>/@cold/vault/backedup.csv` |
 
 Vault files come back straight to their place in the vault.
 
@@ -141,7 +141,7 @@ and an explicit pull runs beside `pull needed`. All of them write the record, an
 writes apart.
 
 **A lock whose holder is gone is cleared**: the file names the process and the boot it was taken in.
-One still held is asked about, and the answer is no; with `--yes` the run stops.
+One still held is asked about, no unless told otherwise; with `--yes` the run stops.
 
 **`audit` and `stats` take no lock**, and run beside any command. `audit` writes its fixes to the
 record without one: a fix looks again at what it changes as it is applied, and leaves alone what has
@@ -294,13 +294,13 @@ through a lens where one is asked for, and what the vault's ledger says is stock
 ## The code
 
 `dev/tooling/src/tools/cold/`, registered on the command line by `dev/tooling/src/commands/cold.ts`.
-Each subcommand's directory holds its `command.ts`, its place on the command line, and what that
-subcommand alone needs:
+Each subcommand's directory holds its `command.ts`, its place on the command line, and the code
+behind it:
 
 | | |
 |---|---|
 | `push/` | `archives/`, `vault/`, `catalog/`; `confirm.ts`, the second look at what was stored |
-| `evict/` | `archives/`, `vault.ts`; `discard.ts`, removal to the trash or outright |
+| `evict/` | `archives/`, `vault.ts`; `discard.ts`, removal to the trash or outright, which `audit` uses too |
 | `pull/` | `archives/`, `vault/`, `catalog/`, `needed/`; `filter.ts`, what a pull is narrowed to |
 | `audit/` | `checks/`, one module per check; `again.ts`, what a fix looks at again |
 | `stats/` | one module |

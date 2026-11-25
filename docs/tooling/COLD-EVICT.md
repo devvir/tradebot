@@ -134,9 +134,9 @@ instrument's, its letter's, the dataset's and the market's — never the venue's
 anything is left, and so is everything above it.
 
 This is the only time the disk is read, and only for names: no file is opened or measured. Each
-partition removed is written to the record, in `eviction`: what it was, the version cold storage
-holds of it, how many files went, what the catalog says it weighed, and when. That row is what keeps
-it from being offered again.
+partition removed is written to [the record](COLD.md#the-record), in `eviction`: what it was, the
+version cold storage holds of it, how many files went, what the catalog says it weighed, and when.
+That row is what keeps it from being offered again.
 
 ### Files go to the trash
 

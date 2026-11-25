@@ -58,10 +58,10 @@ its partition's version moving is not seen.
 weighs what the catalog weighs, and nothing but `cold` reads it. Whether one is there is read off the
 disk each time, and written down nowhere: it is anyone's to delete.
 
-**The record tells it from any other file**: `catalog_copy` holds its SHA-256, what it weighs, and
-Mega's handle for the object once it is stored. A file there is the snapshot where it has that
-weight and that digest, and Mega still lists that very object. Then a pull brings nothing of the
-snapshot back, whatever is asked of it.
+**The record tells it from any other file**: `catalog_copy` ([COLD.md](COLD.md#the-record)) holds
+its SHA-256, what it weighs, and Mega's handle for the object once it is stored. A file there is the
+snapshot where it has that weight and that digest, and Mega still lists that very object. Then a
+pull brings nothing of the snapshot back, whatever is asked of it.
 
 **Anything else found there is said, and the command asks whether to delete it**; yes is the
 answer. A push tells by its weight alone; a pull, which reads it, by its digest.

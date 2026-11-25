@@ -14,7 +14,7 @@ of bandwidth. It keeps just enough packed to keep Mega's queue fed.
 
 Every step is resumable, because a run measured in days will be interrupted.
 
-**`-n` and the snapshot options are `push catalog`'s.** On a tree nothing reads them:
+**`-n`, `--rebase` and the snapshot options are `push catalog`'s.** On a tree nothing reads them:
 `cold push archives -n` packs and uploads like any other run. A lens narrows the archives only:
 `cold push vault`, and the vault's half of `cold push all`, push the whole vault whatever lens is
 given.
