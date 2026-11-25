@@ -57,7 +57,7 @@ export function useBitmex(): BitmexClient {
   return client;
 }
 
-/** Returns null when digger is not configured (e.g. live or testnet env). */
+/** Returns null unless the env has a replay control path and the build has replay on. */
 export function useDigger(): DiggerClient | null {
   return useContext(DiggerContext);
 }

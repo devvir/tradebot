@@ -1,7 +1,7 @@
 /**
- * Dropdown that switches the active data environment. Persists across reloads
- * via `EnvProvider` (which uses the storage helper). The Replay option is
- * disabled at build time when `UI_REPLAY_HOST` is unset on the dev server.
+ * Dropdown that shows and sets the active data environment through `useEnv()`.
+ * The Replay option is disabled when the build has replay off
+ * (`__REPLAY_ENABLED__`, which vite.config.ts sets from `UI_DIGGER_HOST`).
  */
 
 import { useEnv } from '../data/EnvProvider';

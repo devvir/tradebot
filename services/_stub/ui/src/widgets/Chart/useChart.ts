@@ -8,14 +8,12 @@ export interface UseChartResult {
   /** Candles the renderer should draw — a viewport slice of the buffer,
    *  with the running bin appended as the last element in live mode. */
   candles:  Candle[];
-  /** Current viewport state — exposed so widgets can show status (e.g. "go live" button). */
+  /** Current viewport state. */
   viewport: ViewportState;
   /** Multiply candlesPerView by factor (e.g. 1.1 to zoom out, 1/1.1 to zoom in). */
   onZoom:   (factor: number) => void;
   /** Shift the right anchor by deltaCandles (negative = earlier, positive = later). */
   onPan:    (deltaCandles: number) => void;
-  /** Snap back to live mode (rightAnchor = null). */
-  goLive:   () => void;
 }
 
 /**
@@ -59,7 +57,6 @@ export function useChart(timeframe: Timeframe): UseChartResult {
     viewport: vp.state,
     onZoom:   vp.zoom,
     onPan,
-    goLive:   vp.goLive,
   };
 }
 

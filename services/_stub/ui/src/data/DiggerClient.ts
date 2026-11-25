@@ -1,18 +1,14 @@
 /**
- * HTTP client for digger's control-plane API.
- *
- * Digger is the replay engine — it serves historical BitMEX data from MongoDB
- * at a configurable replay clock. This client lets the UI act as an orchestrator:
- * setting the clock moves the entire replay stream to a new point in time.
+ * HTTP client for a replay control endpoint at `baseUrl`. Its one operation
+ * sets the replay clock: `POST <baseUrl>/set-clock?timestamp=<epoch ms>`.
  */
 export class DiggerClient {
   constructor(private readonly baseUrl: string) {}
 
   /**
-   * Move the replay clock to `timestamp` (epoch ms).
-   * Digger pauses the stream, resets its accumulator and buffers, re-primes all
-   * active subscriptions at the new position, then resumes. Returns when the
-   * operation is complete and fresh data is about to flow.
+   * Move the replay clock to `timestamp` (epoch ms). Resolves when the endpoint
+   * answers with a 2xx status; otherwise rejects with the status and the
+   * response body.
    */
   async setClock(timestamp: number): Promise<void> {
     const res = await fetch(`${this.baseUrl}/set-clock?timestamp=${timestamp}`, {

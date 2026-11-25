@@ -35,11 +35,11 @@ interface ChartCanvasProps {
  * drag moves the candles exactly as far as the pointer.
  *
  * Pattern: size, candles, candlesPerView, binMs, and hover state are stored in refs so
- * draw() and gesture handlers always see fresh values. Hover changes redraw
- * imperatively (no React re-render per pixel of mouse movement). When the
- * candles or the zoom change under a resting pointer, the hovered index is
- * re-resolved from the pointer's last x, so it always names the candle drawn
- * under the crosshair.
+ * draw() and gesture handlers always see fresh values. Hover recomputes the
+ * column under the pointer, and redraws and notifies onHover only when that
+ * column changes. When the candles or the zoom change under a resting pointer,
+ * the hovered index is re-resolved from the pointer's last x, so it always
+ * names the candle drawn under the crosshair.
  */
 export function ChartCanvas({
   candles, candlesPerView, binMs, onZoom, onPan, onHover,

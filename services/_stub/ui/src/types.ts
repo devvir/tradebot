@@ -25,12 +25,6 @@ export interface OrderBookLevel {
   price:  number;
 }
 
-export interface WsMessage<T = unknown> {
-  table:  string;
-  action: WsAction;
-  data:   T[];
-}
-
 export interface TradeBin {
   timestamp:        string;
   symbol:           string;

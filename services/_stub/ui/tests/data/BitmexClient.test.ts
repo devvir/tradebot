@@ -18,13 +18,13 @@ afterEach(() => {
 // ── fetch — URL composition ───────────────────────────────────────────────────
 
 describe('BitmexClient.fetch URL composition', () => {
-  it('hits `${restUrl}/${table}` with reverse=true and the default count', async () => {
+  it('hits `${restUrl}/${table}` with reverse=true and the given count', async () => {
     const f = vi.fn().mockResolvedValueOnce(okJson([]));
     vi.stubGlobal('fetch', f);
 
     const client = new BitmexClient('/api/v1', 'wss://x/realtime');
 
-    await client.fetch('trade');
+    await client.fetch('trade', 50);
 
     const url = (f.mock.calls[0] as [string, unknown])[0];
 
@@ -33,7 +33,7 @@ describe('BitmexClient.fetch URL composition', () => {
     expect(url).toContain('reverse=true');
   });
 
-  it('honors an explicit count and passes through extra params', async () => {
+  it('passes through extra params', async () => {
     const f = vi.fn().mockResolvedValueOnce(okJson([]));
     vi.stubGlobal('fetch', f);
 
@@ -58,7 +58,7 @@ describe('BitmexClient.fetch headers', () => {
 
     const client = new BitmexClient('/api/v1', 'wss://x/realtime', { 'x-testnet': 'true' });
 
-    await client.fetch('trade');
+    await client.fetch('trade', 50);
 
     const opts = (f.mock.calls[0] as [string, RequestInit])[1];
 
@@ -71,7 +71,7 @@ describe('BitmexClient.fetch headers', () => {
 
     const client = new BitmexClient('/api/v1', 'wss://x/realtime');
 
-    await client.fetch('trade');
+    await client.fetch('trade', 50);
 
     const opts = (f.mock.calls[0] as [string, RequestInit])[1];
 
@@ -87,7 +87,7 @@ describe('BitmexClient.fetch error handling', () => {
 
     const client = new BitmexClient('/api/v1', 'wss://x/realtime');
 
-    await expect(client.fetch('trade')).rejects.toThrow(/500/);
+    await expect(client.fetch('trade', 50)).rejects.toThrow(/500/);
   });
 });
 

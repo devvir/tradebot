@@ -25,11 +25,3 @@ export function set<T>(key: string, value: T): void {
     /** disabled / quota / SSR — silent */
   }
 }
-
-export function remove(key: string): void {
-  try {
-    localStorage.removeItem(key);
-  } catch {
-    /** see `set` */
-  }
-}

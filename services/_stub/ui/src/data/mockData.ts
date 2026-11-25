@@ -1,39 +1,3 @@
-export const orderbookData = {
-  bids: [
-    { price: 68940.2, size: 1500, sum: 45000, time: '12:34:56' },
-    { price: 68938.5, size: 2100, sum: 43500, time: '12:34:55' },
-    { price: 68936.0, size: 1800, sum: 41400, time: '12:34:54' },
-    { price: 68933.5, size: 2500, sum: 39600, time: '12:34:53' },
-    { price: 68930.0, size: 1200, sum: 37100, time: '12:34:52' },
-    { price: 68928.3, size: 1900, sum: 35900, time: '12:34:51' },
-    { price: 68925.0, size: 2200, sum: 34000, time: '12:34:50' },
-    { price: 68920.5, size: 1600, sum: 31800, time: '12:34:49' },
-  ],
-  asks: [
-    { price: 68942.0, size: 1700, sum: 45000, time: '12:34:56' },
-    { price: 68944.5, size: 2300, sum: 43300, time: '12:34:55' },
-    { price: 68947.0, size: 2000, sum: 41000, time: '12:34:54' },
-    { price: 68950.0, size: 2600, sum: 39000, time: '12:34:53' },
-    { price: 68953.5, size: 1400, sum: 36400, time: '12:34:52' },
-    { price: 68956.0, size: 2100, sum: 35000, time: '12:34:51' },
-    { price: 68959.5, size: 1900, sum: 32900, time: '12:34:50' },
-    { price: 68965.0, size: 2400, sum: 31000, time: '12:34:49' },
-  ],
-};
-
-export const recentTradesData = [
-  { price: 68941.5, size: 243,  time: '12:34:58', side: 'buy' },
-  { price: 68941.0, size: 156,  time: '12:34:57', side: 'sell' },
-  { price: 68940.8, size: 512,  time: '12:34:56', side: 'buy' },
-  { price: 68940.2, size: 789,  time: '12:34:55', side: 'sell' },
-  { price: 68939.5, size: 421,  time: '12:34:54', side: 'buy' },
-  { price: 68938.0, size: 667,  time: '12:34:53', side: 'sell' },
-  { price: 68937.5, size: 334,  time: '12:34:52', side: 'buy' },
-  { price: 68936.8, size: 923,  time: '12:34:51', side: 'sell' },
-  { price: 68936.2, size: 555,  time: '12:34:50', side: 'buy' },
-  { price: 68935.0, size: 801,  time: '12:34:49', side: 'sell' },
-];
-
 export const positionsData = [
   {
     symbol: 'XBTUSD',

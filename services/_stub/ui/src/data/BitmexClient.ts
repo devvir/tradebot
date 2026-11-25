@@ -3,15 +3,6 @@ import { WsClient } from './WsClient';
 
 type StreamHandler<T> = (action: WsAction, data: T[]) => void;
 
-/** Sensible defaults for fetch() count per table. */
-const FETCH_DEFAULTS: Record<string, number> = {
-  trade:     50,
-  orderBook: 25,
-  order:    100,
-  position:  10,
-  execution: 50,
-};
-
 /**
  * Unified data client for BitMEX. Widgets use data language — fetch and stream —
  * without knowing whether the underlying transport is REST or WebSocket.
@@ -33,17 +24,16 @@ export class BitmexClient {
   }
 
   /**
-   * Fetch a page of records from the REST API.
-   * count defaults to a sensible value per table.
-   * Extra params (symbol, start, etc.) are forwarded as query string.
+   * Fetch a page of up to `count` records from the REST API, newest first
+   * (`reverse=true`). Extra params (symbol, start, etc.) are forwarded as query
+   * string.
    */
   async fetch<T>(
     table:   string,
-    count?:  number,
+    count:   number,
     params?: Record<string, string | number>,
   ): Promise<T[]> {
-    const limit = count ?? FETCH_DEFAULTS[table] ?? 50;
-    const qs    = new URLSearchParams({ count: String(limit), reverse: 'true' });
+    const qs = new URLSearchParams({ count: String(count), reverse: 'true' });
 
     for (const [k, v] of Object.entries(params ?? {})) {
       qs.set(k, String(v));

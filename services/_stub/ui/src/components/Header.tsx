@@ -68,8 +68,6 @@ function ReplayClock() {
 }
 
 export function Header() {
-  const [_menuOpen, setMenuOpen] = useState(false);
-
   return (
     <header className="organisms__Header__root__HGNAh">
 
@@ -99,7 +97,7 @@ export function Header() {
             <ChevronDown />
           </a>
         ))}
-        <div className="organisms__Header__link__oZ4NN organisms__Header__dropdownButton__Juhua" onClick={() => setMenuOpen(v => ! v)}>
+        <div className="organisms__Header__link__oZ4NN organisms__Header__dropdownButton__Juhua">
           More
           <ChevronDown />
         </div>
@@ -108,7 +106,7 @@ export function Header() {
       {/* Env switcher (Live / Testnet / Replay) */}
       <EnvSwitcher />
 
-      {/* Replay clock picker — only rendered in replay env (when digger is configured) */}
+      {/* Replay clock picker — rendered only when useDigger() returns a client */}
       <ReplayClock />
 
       {/* End items */}

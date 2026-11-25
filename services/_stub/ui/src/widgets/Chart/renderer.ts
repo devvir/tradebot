@@ -82,14 +82,15 @@ export function columnAt(g: ColumnGeometry, x: number): number | null {
  * Candle timestamps are bin close times; `binMs` is the bin duration, used to
  * label the time axis with bin open times.
  *
- * Sections (easy to split into separate renderers as the chart grows):
+ * Sections:
  *   1. Clear
- *   2. Compute scales
+ *   2. Compute geometry and scales
  *   3. Horizontal price grid
  *   4. Price axis labels
  *   5. Candlestick bodies + wicks
  *   6. Volume bars
  *   7. Time axis labels
+ *   8. Hover crosshair
  */
 export function renderChart(
   ctx:            CanvasRenderingContext2D,
@@ -219,7 +220,7 @@ export function renderChart(
 
   // ── 7. Time axis labels ───────────────────────────────────────────────────────
 
-  drawTimeAxis(ctx, candles, binMs, width, height, centerX);
+  drawTimeAxis(ctx, candles, binMs, height, centerX);
 
   // ── 8. Hover crosshair ────────────────────────────────────────────────────────
 
@@ -248,7 +249,6 @@ function drawTimeAxis(
   ctx:     CanvasRenderingContext2D,
   candles: Candle[],
   binMs:   number,
-  _width:  number,
   height:  number,
   centerX: (i: number) => number,
 ): void {

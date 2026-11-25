@@ -1,7 +1,8 @@
 /**
- * Holds the currently selected data environment (live / testnet / replay).
- * Persists across reloads via localStorage. A stored value that is not a known
- * env, or is 'replay' in a build without replay, restores as the default env.
+ * Holds the currently selected data environment (live / testnet / replay),
+ * persisted in localStorage under `tradebot.ui.env`; useEnv() reads and sets it.
+ * A stored value that is not a known env, or is 'replay' in a build without
+ * replay, restores as the default env.
  */
 
 import { createContext, useContext, useState, type ReactNode } from 'react';

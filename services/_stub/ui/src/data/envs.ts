@@ -1,13 +1,9 @@
 /**
- * Per-environment wiring table. WS URLs for live/testnet are public BitMEX
- * endpoints (CORS-friendly, the browser can open them directly). REST goes
- * through the Vite dev-server proxy (`/api/v1` → `UI_REST_PROXY`; `/replay`
- * and the replay control API at `/replay-control` → the digger at
- * `UI_DIGGER_HOST`) — same-origin to the browser, no CORS dance.
- *
- * The replay WS comes back through the same dev-server proxy (`ws: true`
- * forwarder) so it stays same-origin too; the actual scheme follows the page
- * (`http` → `ws`, `https` → `wss`).
+ * Per-environment wiring table. Live and testnet open the public BitMEX WS
+ * endpoints directly. Every other URL is a same-origin path that the Vite dev
+ * server proxies: REST at `/api/v1` for live/testnet, and `/replay`,
+ * `/replay-ws` and `/replay-control` for replay (targets in vite.config.ts).
+ * The replay WS URL follows the page's scheme (`http` → `ws`, `https` → `wss`).
  */
 
 import type { Env, EnvConfig } from '../types';

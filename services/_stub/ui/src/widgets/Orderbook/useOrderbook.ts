@@ -31,8 +31,7 @@ export interface Orderbook {
 const DEPTH = 25;
 
 /**
- * Uses orderBookL2_25 (25 levels per side) — lighter subscription than the full book.
- * Switch to orderBookL2 if DEPTH ever needs to exceed 25.
+ * orderBookL2_25 carries at most 25 levels per side; DEPTH must not exceed it.
  */
 const WS_TOPIC = 'orderBookL2_25';
 
@@ -87,8 +86,8 @@ function derive(book: Map<string, OrderBookLevel>): Orderbook {
  * The partial action provides the initial snapshot; subsequent insert/update/delete
  * messages are accumulated into a map keyed by symbol:id:side.
  *
- * Uses a live-view pattern: the map is mutated in place and a version counter
- * triggers re-renders. derive() is called at render time (no intermediate copy).
+ * The map is mutated in place and a version counter triggers re-renders;
+ * rows are derived from the map at render time.
  */
 export function useOrderbook(): Orderbook {
   const symbol = useSymbol();

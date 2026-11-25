@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { get, set, remove } from '../../src/utils/storage';
+import { get, set } from '../../src/utils/storage';
 
 beforeEach(() => {
   localStorage.clear();
@@ -67,27 +67,5 @@ describe('storage.set', () => {
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota'); });
 
     expect(() => set('k', 'v')).not.toThrow();
-  });
-});
-
-// ── remove ────────────────────────────────────────────────────────────────────
-
-describe('storage.remove', () => {
-  it('removes a key', () => {
-    localStorage.setItem('k', 'v');
-
-    remove('k');
-
-    expect(localStorage.getItem('k')).toBeNull();
-  });
-
-  it('is a no-op for missing keys', () => {
-    expect(() => remove('missing')).not.toThrow();
-  });
-
-  it('swallows errors when removeItem throws', () => {
-    vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => { throw new Error('blocked'); });
-
-    expect(() => remove('k')).not.toThrow();
   });
 });

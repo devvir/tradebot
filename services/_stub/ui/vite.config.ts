@@ -5,13 +5,12 @@ import react from '@vitejs/plugin-react';
  * Vite dev-server proxies — keep the browser same-origin, no CORS dance.
  *
  *   /api/v1          →  UI_REST_PROXY (default http://proxy)  — live/testnet REST
- *   /replay          →  digger REST    (rewritten /replay → /api/v1)
- *   /replay-ws       →  digger WS      (ws: true, rewritten to upstream root)
- *   /replay-control  →  digger control (rewritten to upstream root)
+ *   /replay          →  UI_DIGGER_HOST:UI_DIGGER_REST_PORT    (default 3101; /replay → /api/v1)
+ *   /replay-ws       →  UI_DIGGER_HOST:UI_DIGGER_WS_PORT      (default 8180; ws: true, prefix stripped)
+ *   /replay-control  →  UI_DIGGER_HOST:UI_DIGGER_CONTROL_PORT (default 8280; prefix stripped)
  *
- * Digger exposes three host-mapped ports. Set `UI_DIGGER_HOST` (e.g. `localhost`)
- * to enable the Replay env; ports default to the replay module's mappings.
- * `__REPLAY_ENABLED__` is a build-time boolean — the env dropdown gates Replay on it.
+ * The three replay rules exist only when `UI_DIGGER_HOST` (e.g. `localhost`) is
+ * set. `__REPLAY_ENABLED__` is a build-time boolean that is true exactly then.
  */
 const REST_PROXY = process.env.UI_REST_PROXY ?? 'http://proxy';
 
