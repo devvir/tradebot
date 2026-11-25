@@ -32,9 +32,15 @@ with `IsTruncated` true and no `NextMarker`. Byte-identical whatever is asked, c
 included; `age` and `x-cache: Hit from cloudfront` are what give it away.
 
 **Both hosts serve the same files**, byte for byte (MD5 = ETag on both); only the bucket answers the
-listing API. Measured 2026-09-29, the bucket answered HEAD at up to 1,781/s and LIST at up to
-1,710/s, flat at ~270 ms, without a single throttling answer — the ceiling was the client's. From a
-remote machine the same requests reached about 1,190 a second.
+listing API.
+
+### Limits
+
+**The bucket: none found.** Measured 2026-09-29, the bucket answered HEAD at up to 1,781/s and LIST
+at up to 1,710/s, flat at ~270 ms, without a single throttling answer — the ceiling was the
+client's. From a remote machine the same requests reached about 1,190 a second.
+
+The API's limits are separate: see [Its limits](#its-limits).
 
 ### Layout
 

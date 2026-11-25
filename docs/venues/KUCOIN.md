@@ -14,9 +14,13 @@ What kucoin's published archive holds, measured against the bucket.
 files, with a size, a last-modified and an md5 ETag for every key. Everything sits under `data/`,
 and every file is a day: there is no monthly tree. A `.CHECKSUM` sits beside every archive.
 
-**No limit found.** Measured 2026-09-29 and 30 with `HEAD` requests: 3,951 a second from one machine
+### Limits
+
+**None found.** Measured 2026-09-29 and 30 with `HEAD` requests: 3,951 a second from one machine
 and 3,602 from a remote one, without a single throttling answer, on keys the edge had cached. A
 missing key goes to the origin and takes 270–700 ms.
+
+The API's limits are separate: see [Its limits](#its-limits).
 
 ### Layout
 
@@ -235,6 +239,7 @@ with the API 266 ms behind it:
   Spot's is `{sequence, tradeId, price, size, side, time}`.
 - **`/api/v1/interest/query`**, the interest rate index a minute *(documented)*; not tried.
 - **`/api/v1/mark-price/{symbol}/current`**: of now *(documented)*.
+- **Liquidations**: the documentation lists no public endpoint for them.
 - **Unified funding — `GET api.kucoin.com/api/ua/v2/market/funding-rate-history`**: `symbol`,
   `startAt`, `endAt` in milliseconds; `data.list[]` of `{fundingRate, ts}`; the same history as the
   classic endpoint.

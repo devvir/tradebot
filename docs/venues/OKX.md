@@ -156,7 +156,7 @@ bars, `3` funding, `4`, `5` and `6` order books, `11` borrowing rates), `instTyp
   answers the same files, with the same limits and the same quirks as everything measured in this
   section, has not been checked. Everything below was measured on the portal's `POST`.
 
-#### The limits, measured
+#### How much one call can ask for
 
 | | |
 |---|---|
@@ -207,12 +207,10 @@ offer for a selection, which is a different question and has more ways to be sil
 
 #### A 404 is reliable, as far as anyone has checked
 
-The claim is that the same URL has answered 404 and then 200 seconds later. **The evidence does not
-support it.** 219 keys that had answered `404`, sampled across all eight datasets, were re-probed at
-the origin, and none exists. A 404 that was spurious at the time would serve `200` today, so zero
-hits is a real result rather than an inconclusive one.
-
-Not disproven — 219 is a sample, and nobody has caught the alternating behaviour in the act.
+**No key has been seen to answer `404` and then `200`.** 219 keys that had answered `404`,
+sampled across all eight datasets, were asked again at the origin, and none exists. A 404 that was
+spurious at the time would serve `200` now, so zero hits is a real result rather than an
+inconclusive one. It is a sample: a key that answers `404` and then `200` is not ruled out.
 
 ### Limits
 
@@ -662,9 +660,8 @@ contiguous start**.
 2023-03-01   index: 0 files   direct: 404
 ```
 
-So the gaps are the venue's, not an artifact of guessing URLs — which also rules out the
-[unsupported "404 may be 200" claim](#a-404-is-reliable-as-far-as-anyone-has-checked) as an explanation
-for them.
+So the gaps are the venue's, not an artifact of guessing URLs, and not a passing `404` either (see
+[a 404 is reliable](#a-404-is-reliable-as-far-as-anyone-has-checked)).
 
 #### What the archive holds (walked 2026-08-16/17)
 

@@ -26,14 +26,19 @@ every key carries an MD5 `ETag`, and a `.CHECKSUM` beside each archive holds its
 name.
 
 `www.htx.com/data/` serves the same keys through Akamai, unchanged in content; the portal's download
-buttons go through `/vision/?prefix=…`, a browser over the same keys. The edge enforces a limit far
-below the bucket's. Half a dozen listing requests earn a `403 AkamaiGHost` on every prefix at once.
-Probes are then left neither answered nor refused, each socket silent until it dies on its own
-deadline. Through the edge a `403` carries no `x-amz-error-code`, so absence and rejection arrive as
-the same answer.
+buttons go through `/vision/?prefix=…`, a browser over the same keys.
+
+### Limits
+
+**The edge enforces a limit far below the bucket's.** Half a dozen listing requests through
+`www.htx.com/data/` earn a `403 AkamaiGHost` on every prefix at once. Probes are then left neither
+answered nor refused, each socket silent until it dies on its own deadline. Through the edge a `403`
+carries no `x-amz-error-code`, so absence and rejection arrive as the same answer.
 
 **No limit found on the bucket.** Measured 2026-09-29 and 30 with `HEAD` requests: about 1,800 a
 second from one machine and 1,180 from a remote one, without a single throttling answer.
+
+The API's limits are separate: see [Its limits](#its-limits).
 
 ### Layout
 

@@ -26,13 +26,14 @@ Each venue's API set against that venue's own archive, under *Against … own ar
 | okx | 3 months | 1,440 points | **deep, from 2020 / 2018** | swaps, 2020-01 → 2021-09 | — |
 | gate | 180 days | 180 days | index of 12 option underlyings, from 2022 | — | option settlements |
 | htx | **deep** | 200 points | 2,000 points | — | — |
-| kucoin | **deep, from 2020** | 6 days at 5 min | below 8 h from 2024-12; 8 h from 2021 | **spot, 2017-10 → 2022-12** | premium index, from 2020 |
+| kucoin | **deep, from 2020** | 6 days at 5 min | below 8 h from late 2024; 8 h from 2021 | **spot, 2017-10 → 2022-12** | premium index, from 2020 |
 | bitget | 90 days | now only | **deep** | — | — |
 
 - **Deep history over REST is mostly derived prices**: mark and index bars at four venues, funding
   at three, open interest at one.
-- **Trades are not history over REST** anywhere: a window of 2 days to 6 months by venue, or only
-  the newest few hundred. Binance spot's reach back to 2022-09-02, short of its archive.
+- **Trades are not history over REST** but at binance spot: elsewhere a window of 2 days to 6
+  months by venue, or only the newest. Binance's spot trades reach back to 2022-09-02, short of its
+  archive.
 - **A delisted instrument answers nothing** at okx, htx, bitget and kucoin's spot. At bybit it
   keeps its bars and funding and loses its open interest and ratios. At kucoin a delisted futures
   contract still answers bars and funding.
@@ -52,14 +53,14 @@ Each is the last so many days or points; older is refused or empty.
 | | open interest and ratios, by instrument | 1,440 points: 5 days at 5 min, 60 days at 1 h; daily since 2024-02 |
 | | open interest and ratios, by currency | 2 days at 5 min, 180 days at 1 d |
 | | liquidations | under a day |
-| gate | bars of every kind | 10,000 points: a week at 1 m |
+| gate | spot and futures bars — trade, mark, index | 10,000 points: a week at 1 m |
 | | funding, contract statistics, futures trades, premium index | 180 days |
 | | liquidation orders | about 11 months |
 | | spot trades | 30 days |
 | htx | spot bars; mark, index, premium, estimated-rate and basis bars | the last 2,000 points |
 | | liquidation orders, settlements | 90 days |
 | | open interest | 200 points |
-| kucoin | futures bars below 8 hours — trade, mark, index, premium | since 2024-12 |
+| kucoin | futures bars below 8 hours — trade, mark, index, premium | since late 2024: 1-minute from 2024-12 |
 | | index at 1 second, with constituents | about 100 days |
 | | open interest | 6 days at 5 min |
 | bitget | funding, trades | 90 days |

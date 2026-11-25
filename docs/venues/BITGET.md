@@ -580,12 +580,6 @@ The cadence slips: on 2026-08-21 the file for the 18th was still absent, 21 hour
 in October 2026. *(documented)* marks what bitget's documentation states and was not tried.
 *(not known)* marks what neither settled. Nothing here is inferred from another venue.
 
-**Where the documentation is.** The site at `www.bitget.com/docs` is rendered by a script and serves
-one page at every address to anything that does not run it. Its content is an OpenAPI document for
-each group of endpoints, bundled as a script: `/docs-static/assets/docs-catalog-<group>-<name>.en.json-<hash>.js`,
-the names being in `/docs-static/assets/entry.client-<hash>.js`. The groups that matter here are
-`classic-contract-market`, `classic-spot-market`, `classic-common-apidata` and `market` (v3).
-
 ### The API
 
 **One host, `https://api.bitget.com`, behind Cloudflare, serving two generations at once.** From
@@ -838,8 +832,13 @@ Set side by side in 2026-10:
 
 ### Its documentation
 
-Where it is, and how it is read, is at the head of this section. It states a limit for every
-endpoint and little about how far back each reaches. **Where the API differs from it**:
+**Where it is.** The site at `www.bitget.com/docs` is rendered by a script and serves one page at
+every address to anything that does not run it. Its content is an OpenAPI document for each group of
+endpoints, bundled as a script: `/docs-static/assets/docs-catalog-<group>-<name>.en.json-<hash>.js`,
+the names being in `/docs-static/assets/entry.client-<hash>.js`. The groups that matter here are
+`classic-contract-market`, `classic-spot-market`, `classic-common-apidata` and `market` (v3).
+
+It states a limit for every endpoint and little about how far back each reaches. **Where the API differs from it**:
 `history-candles` is stated at 20 calls a second and takes 5.
 
 ### Pace, measured
