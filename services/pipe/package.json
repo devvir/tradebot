@@ -8,7 +8,9 @@
     "build": "tsc -b",
     "start": "node dist/src/index.js",
     "dev": "ts-node src/index.ts",
-    "test": "vitest run",
+    "test": "pnpm run test:unit",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },

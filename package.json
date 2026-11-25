@@ -10,13 +10,13 @@
   "scripts": {
     "build": "pnpm --color -r build",
     "test": "vitest run && pnpm --color -r --no-bail test",
-    "check": "pnpm --color -r --if-present run typecheck && pnpm knip",
+    "typecheck": "pnpm --color -r --if-present run typecheck",
+    "check": "pnpm typecheck && pnpm knip",
     "knip": "knip",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
   "devDependencies": {
-    "@tradebot/types": "workspace:*",
     "@types/node": "^22.20.5",
     "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^4.1.6",

@@ -20,7 +20,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm -r build
-      - run: pnpm -r --if-present run typecheck
+      - run: pnpm typecheck
 
       # A build after dist/ is deleted must emit it again.
       - name: Rebuild from an empty dist
