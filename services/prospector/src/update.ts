@@ -1,4 +1,4 @@
-import { isHeld, keyFor, grainOf, open, seriesById, seriesFor } from './catalog';
+import { isHeld, keyFor, open, seriesById, seriesFor } from './catalog';
 import { logger } from '@devvir/service-kit';
 import { atGrain, instant, lastClosed, lastSettled, nextPeriod } from './dates';
 import type {
@@ -91,8 +91,8 @@ export const updatePage = (
    * **One series, by id, from the map that already holds it.**
    *
    * A scope names exactly one series, so asking which of a venue's are still
-   * live in order to find it rebuilt and filtered the whole set — every series
-   * of every venue — once per page. The tests that decide it are per-row, so
+   * live in order to find it would rebuild and filter the whole set — every
+   * series of every venue — once per page. The tests that decide it are per-row, so
    * they are applied to the row.
    */
   const series = seriesById(db, Number(scope));
@@ -209,9 +209,9 @@ const PAGE = 1_000;
  *
  * **A tip is an invariant, not a condition.** A walk states one from the first
  * file it sees, a seed states one below the archive's start, and the preamble
- * states one for anything it creates — so a series without one is a row written
- * by something that no longer exists. It is skipped and counted rather than
- * generated from `first`, which is the guess this design removed.
+ * states one for anything it creates — so a series without one is not a row any
+ * of them wrote. It is skipped and counted rather than generated from `first`,
+ * which would be a guess.
  *
  * **A series with no symbol is one of them.** okx's venue-wide files carry every
  * instrument of a market at once, so their patterns have no `{SYMBOL}` slot and
@@ -403,7 +403,3 @@ const keysAt = (
 
   return out;
 };
-
-// ── Test access ───────────────────────────────────────────────────────────────
-
-export const _test_grainOf   = grainOf;

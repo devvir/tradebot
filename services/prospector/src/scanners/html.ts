@@ -10,10 +10,8 @@ import type { Entries, ListingContext, Listed, ReadLevel, Scanner } from '../typ
  * plain file server renders when there is no index.html, one `<a href>` per
  * entry and nothing else.
  *
- * Written against bybit, which is the only venue on it today, and deliberately
- * kept to what any such index has in common: links, and whether a link names a
- * directory. A second venue of this kind will need its own dialect handled here
- * rather than a second scanner.
+ * Kept to what any such index has in common: links, and whether a link names a
+ * directory. A dialect of it is handled here rather than in a second scanner.
  *
  * Three properties separate it from an S3 listing, and each one costs something:
  *
@@ -24,9 +22,9 @@ import type { Entries, ListingContext, Listed, ReadLevel, Scanner } from '../typ
  * - **There is no marker to page with.** A directory answers in full or not at
  *   all, so the unit of a request is a directory rather than a slice of the
  *   keyspace, and a walk is a tree traversal instead of a straight line.
- * - **A directory is not always marked as one.** bybit's `trading/` links its
- *   children with a trailing slash and `spot/` links them without one, in the
- *   same bucket, so a link's shape is what has to be read — see `isDirectory` in `pages.ts`.
+ * - **A directory is not always marked as one.** One tree can link its
+ *   children with a trailing slash and its sibling without one, in the same
+ *   bucket, so a link's shape is what has to be read — see `isDirectory` in `pages.ts`.
  */
 export const html: Scanner<ListingContext> = {
   name: 'html',

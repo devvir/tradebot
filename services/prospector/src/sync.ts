@@ -21,8 +21,8 @@ import type { Adapter, Config, Occasion, Phase, RunKind } from './types';
  * **Apart from `index.ts` because it is the only part with a shape worth
  * testing.** Wiring a service up — open the database, register the venues, mount
  * the routes — is done once and observed by starting it. Deciding when a venue
- * is finished is a rule, it has been wrong twice, and a rule that cannot be
- * exercised without booting a process does not get exercised.
+ * is finished is a rule, and a rule that cannot be exercised without booting a
+ * process does not get exercised.
  */
 
 /**
@@ -134,11 +134,9 @@ export const syncVenue = async (
      * the interval would drift a day later on every turn.
      *
      * **Read from the run row rather than from a clock**, because a pass this
-     * process *resumed* began before this process did. Timing it from the moment
-     * it was picked up made a restart change a venue's cadence — the one thing
-     * measuring from the start exists to prevent. Gate's walk ran 26.6 hours, so
-     * its next update was due two hours before the walk finished; timed from the
-     * resumption it would instead have slept another 22.
+     * process *resumed* began before this process did. Timed from the moment it
+     * was picked up, a restart would change a venue's cadence — the one thing
+     * measuring from the start exists to prevent.
      *
      * It is also the source `dueFor` reads when a venue is picked up on startup,
      * so the two paths cannot answer the same question differently.
@@ -166,9 +164,9 @@ export const syncVenue = async (
  *
  * **What the rows cannot say.** A venue's state is read off its job rows, and a
  * job opens only once the preamble is done — listing instruments, writing new
- * series — which on binance took four minutes. Through all of it the venue read
- * as waiting, exactly like one asleep between passes, and an update somebody had
- * just asked for looked ignored. This is the one fact that tells them apart.
+ * series — which can take minutes. Through all of it the rows read as waiting,
+ * exactly like a venue asleep between passes, and an update somebody has just
+ * asked for would look ignored. This is the one fact that tells them apart.
  *
  * Counted rather than flagged, because bybit runs a pass per host under one
  * venue name and either may be the one still going.
@@ -181,11 +179,10 @@ const underway = new Map<string, number>();
  * Wait, but not through a pause.
  *
  * **A pause has to be answered while the venue is idle, which is most of its
- * life.** Between passes a venue sleeps for the whole interval — a day, and
- * rather longer while the seed rebuild raises it — and a plain `sleep` reads the
- * flag only once it is over. Asking to pause then appeared to do nothing: the
- * survey was recorded as stopping and went on reporting itself as running for
- * as long as the wait had left, because nothing was there to notice.
+ * life.** Between passes a venue sleeps for the whole interval, and a single
+ * timer would read the flag only once that is over: the survey would be
+ * recorded as stopping and go on reporting itself as running for as long as the
+ * wait had left.
  *
  * So the wait is broken into beats. It costs one comparison a second and makes
  * a pause take effect in about that long, whatever the venue was waiting for.
@@ -196,7 +193,7 @@ const waiting = async (ms: number, paused: () => boolean): Promise<void> => {
   while (Date.now() < until) {
     if (paused()) return;
 
-    await sleep(Math.min(BEAT_MS, until - Date.now()));
+    await new Promise(resolve => setTimeout(resolve, Math.min(BEAT_MS, until - Date.now())));
   }
 };
 
@@ -304,28 +301,8 @@ const passing = async (
    */
   return await surveyingAs(adapter, kindOf(doing), async () => {
     /**
-     * **Whether this is a fresh pass or one being picked up.**
+     * The preamble: what the venue lists, written as series.
      *
-     * Update rows existing at all means the last pass did not reach
-     * reconciliation, which deletes them. Those rows are the generation record:
-     * a partition per series, closed as its keys were written. Resuming means
-     * honouring them — no preamble, no re-planning, and no series generated
-     * twice.
-     *
-     * **However old it is.** Nothing here decides that an interrupted pass has
-     * been sitting too long: an open job with nothing working it is what a
-     * killed container leaves and what a pause leaves, and whatever its age,
-     * resuming it continues from its cursors. Judging a paused walk stale is the
-     * person's call, and `refresh` is how they say so — code guessing at it
-     * means a venue quietly restarting a multi-day walk because a deployment sat
-     * idle over a weekend, the expensive outcome, chosen by nobody.
-     *
-     * What the scopes were planned against having moved since costs one pass of
-     * a narrower range, and the next pass widens it. Discarding the pass costs
-     * everything it had already read.
-     */
-
-    /**
      * **Before the scopes are read, because it is what decides them.** A series
      * created after generation planned its job would not be generated for until
      * the pass after next; one created here is in the list the job is built
@@ -334,6 +311,22 @@ const passing = async (
      * **Skipped on a resume**, where the scopes are already planned and a series
      * created now could not join them anyway. It ran when the pass began, and
      * asking the venue again would spend its API calls to learn nothing.
+     *
+     * Update rows existing at all means the last pass did not reach
+     * reconciliation, which deletes them. Those rows are the generation record:
+     * a partition per series, closed as its keys were written. Resuming means
+     * honouring them — no preamble, no re-planning, and no series generated
+     * twice.
+     *
+     * **However old the pass is.** Nothing here decides that an interrupted pass
+     * has been sitting too long: an open job with nothing working it is what a
+     * killed container leaves and what a pause leaves, and whatever its age,
+     * resuming it continues from its cursors. Judging a paused pass stale is the
+     * person's call, and `refresh` is how they say so; code guessing at it would
+     * restart a multi-day walk because a deployment sat idle, the expensive
+     * outcome, chosen by nobody. What the scopes were planned against having
+     * moved since costs one pass of a narrower range, and the next pass widens
+     * it.
      *
      * Only an update, and only a venue that can be asked. A walk discovers by
      * reading, which is a better answer than any instrument listing, and a venue
@@ -380,37 +373,22 @@ const passing = async (
     const drained = await draining;
 
     /**
-     * **A pass is complete when it generated everything it owed and drained what
-     * that produced**, and only then is it worth anything to a bound.
-     *
-     * Every other ending returns here just the same — blocked, paused, a partition
-     * that could not be read, a venue answering with something that is not an
-     * answer — and none of them has checked the last `OVERDUE_DAYS`. Reconciling
-     * over one of those would assert they were asked about when they were not, and
-     * a tip does not come back.
-     *
-     * A walk never reconciles. It states its own bounds as it reads, and the
-     * clock has nothing to add to an index that was read to the end.
-     */
-    /**
-     * **A walk that left a backlog is not over until the backlog is.**
-     *
-     * Its keyspace has been read, but the rows the listing could not speak for
-     * are in `wip` and unasked, and the job is the only durable record that they
-     * are owed. Closed at the end of listing, the venue reads `waiting` with a
-     * full backlog, the next pass is scheduled from a pass that has not
-     * finished, and a restart in the gap finds nothing open and drains nothing —
-     * the whole backlog waits for the next update to happen upon it. bybit left
-     * 137,066 rows that way.
-     *
-     * So the walk closes here, where the drain has actually returned, and the
-     * listing half leaves it open — see `surveyVenue`, which closes it itself
-     * only where nothing will probe.
-     */
-    /**
      * **A pass is over when it generated everything it owed and drained what
      * that produced** — and where nothing probes, draining is not a thing that
-     * has to happen, so a listing read to the end is the whole of it.
+     * has to happen, so a listing read to the end is the whole of it. Only a
+     * pass that is over is reconciled, a walk and an update alike.
+     *
+     * Every other ending returns here just the same — blocked, paused, a
+     * partition that could not be read, a venue answering with something that is
+     * not an answer — and none of them has checked the last `OVERDUE_DAYS`.
+     * Reconciling over one of those would assert they were asked about when they
+     * were not, and a tip does not come back.
+     *
+     * **A walk that probes closes here, once its drain has returned.** Its
+     * keyspace has been read, but the rows the listing could not speak for are
+     * in `wip` and unasked, and the open job is the only durable record that
+     * they are owed. `surveyVenue` closes a walk itself only where nothing will
+     * probe.
      */
     const finished = generated && ! paused() && (probes ? drained === true : true);
 
@@ -428,9 +406,7 @@ const passing = async (
      * **Reconciliation is the same for either kind, so there is one of it.**
      * How the files arrived says nothing about what is owed afterwards: how long
      * to wait for what is still missing, which bounds the files disagree with,
-     * and which series turned out to hold nothing. A walk stating its own tips
-     * was that rule written a second time, in a second place, with a second
-     * clock.
+     * and which series turned out to hold nothing.
      *
      * **As of when this pass began**, which is what the pass measured the
      * archive against — reconciling to `now` would claim the hours or days it
@@ -539,21 +515,21 @@ const FLOOR_MS = 30_000;
 const PASS_RETRY_CEILING_MS = 30 * 60_000;
 
 /**
- * Take one venue as far as it goes, and stop.
+ * Take one venue as far as generating goes, and stop.
  *
  * **Two states, one question.** Either a job is open, in which case it is
  * continued, or none is, in which case one is opened. Nothing here consults a
- * clock: this loop exists to finish what it was asked for, not to decide when to
- * ask — see `index.ts` for why that decision is not this service's.
+ * clock: this loop finishes the generating half of one pass, and the cadence
+ * between passes is `syncVenue`'s.
  *
  * A first pass is not a third state. A venue nobody has established simply has
  * no open job, so one is opened, and what follows is an ordinary job.
  *
- * So the loop turns for one reason only: something is still outstanding. A pass
- * that leaves the job open comes straight back to it — after `FLOOR_MS`, so a
- * venue that cannot be reached cannot spin — and the loop returns the moment the
- * job closes, the venue is paused, or the venue is blocking us for longer than a
- * wait.
+ * So the loop turns for one reason only: something is still outstanding. It
+ * answers `true` once a pass has generated everything it owed and `false` on a
+ * pause. A pass the venue blocked comes back once the block has lapsed, and any
+ * other pass that did not finish comes back after `FLOOR_MS`, so a venue that
+ * cannot be reached cannot spin.
  *
  * **One loop per venue, not one loop over venues.** Venues are unrelated hosts
  * that already survey concurrently; sequencing them would make every venue wait
@@ -637,9 +613,8 @@ const tend = async (
          * unestablished — so the probe says it instead, once that backlog is
          * gone.
          *
-         * **The pass decides, not the adapter.** Read off `adapter.probes` alone
-         * this was wrong for every update on a listing venue, which probes
-         * because it generated its keys rather than because the venue needs it.
+         * **The pass decides, not the adapter.** An update on a listing venue
+         * probes because it generated its keys, whatever `adapter.probes` says.
          */
         logger.info({ venue: labelOf(adapter), ...counts },
           probing(adapter, occasion)
@@ -660,19 +635,15 @@ const tend = async (
 };
 
 /**
- * How long to wait when the backlog is empty **and the walk is still running**.
+ * How long to wait when the backlog is empty **and the walk is still running**,
+ * or when a round got no answer about any key.
  *
- * The only case there is anything to wait for. A walk writes rows continuously,
- * so an empty backlog means the probe has caught up with it for a moment — not
- * that there is nothing to do. Waiting a quarter of an hour on that turned a
- * venue's probing into fifteen-minute bursts against a walk that never stopped
- * producing, and left files unsettled for no reason.
+ * A walk writes rows continuously, so an empty backlog means the probe has
+ * caught up with it for a moment — not that there is nothing to do.
  *
  * Short, because the only cost of looking again is one query against `wip`.
  */
 const PROBE_EMPTY_MS = 30_000;
-
-
 
 /**
  * Settle this venue's metadata until there is nothing left owed.
@@ -694,9 +665,9 @@ const PROBE_EMPTY_MS = 30_000;
  * announces the venue exactly as a walk-only venue announces itself.
  *
  * **A backlog is a reason to keep going, not a reason to sleep.** A round that
- * left rows outstanding goes straight back round, because sleeping there is what
- * left a walk's output sitting in `wip` for quarter-hours at a time. Only an
- * empty backlog waits, and only while the walk is still running.
+ * left rows outstanding goes straight back round, because sleeping there would
+ * leave a walk's output sitting in `wip`. Only a round that moved nothing waits,
+ * for `PROBE_EMPTY_MS`.
  *
  * That does not weaken the attempt count a row carries. Attempts are meant to be
  * spread across days, and they are — by a row leaving `wip` and being generated
@@ -725,13 +696,11 @@ const settle = async (
     /**
      * **A pause stops the drain where it is, backlog and all.** The loop's only
      * other exit is an empty backlog, so without this a venue with rows left to
-     * settle could not be paused at all: the flag was set, nothing read it, and
-     * the survey reported itself as running and stopping for ever.
+     * settle could not be paused at all.
      *
      * **This alone is not enough**, which is why the flag is handed to the pass
      * as well. A round here is one whole pass, and a pass ends only when the
-     * backlog does — a week on a venue whose keys are constructed. Read only at
-     * this point, a pause was a week away from being acted on.
+     * backlog does, which on a venue whose keys are constructed can take days.
      *
      * Answering `false` is the truth — nothing was drained — and it is what
      * stops the caller reconciling over a pass that did not finish.
@@ -764,7 +733,7 @@ const settle = async (
        *
        * `perSecond` is the cadence, and it is what a venue would object to. It
        * lives in the adapter beside the evidence for it and nothing here can
-       * raise it — bybit's 30 was earned by being turned away.
+       * raise it.
        *
        * `concurrency` is not a limit at all. It is how many requests may be in
        * flight so that the cadence can actually be reached: at one at a time,
@@ -804,9 +773,9 @@ const settle = async (
       /**
        * **The pass says whether it gave up; nothing here guesses.** A pass that
        * settled thousands of rows and was then blocked has the same counts as
-       * one that finished, so inferring it from `settled` and `refused` reports
-       * the venue that just turned us away as idle and comes back in the
-       * ordinary fifteen minutes.
+       * one that finished, so inferring it from `settled` and `refused` would
+       * report the venue that just turned us away as working and ask it again
+       * without standing down.
        */
       refused = pass.abandoned;
 
@@ -822,9 +791,8 @@ const settle = async (
       /**
        * **What is left is asked of the table, not of the counter.** `left` is
        * reported; `owed` decides. They are the same number whenever the counter
-       * is right, and when it is not, a pass that ends on the counter waits on a
-       * backlog nobody has — which is what okx and bitget did for a day, eight
-       * thousand and sixty rows past an empty table.
+       * is right, and when it is not, a pass that ended on the counter would wait
+       * on a backlog nobody has.
        */
       owed  = anyUnsettled(db, venueId);
       left  = countUnsettled(db, venueId);
@@ -886,9 +854,8 @@ const settle = async (
      * Three cases and two of them go straight back round. A refusal is waited
      * out at the venue's own pace, since a block lapses only while nothing is
      * asking. A round that settled, retired, or *confirmed* anything has work in
-     * front of it — sleeping there is what left a walk's output sitting in `wip`
-     * for quarter-hours at a time, and it would also stretch confirming an
-     * absence across minutes for no reason.
+     * front of it — sleeping there would leave a walk's output sitting in `wip`,
+     * and would stretch confirming an absence across minutes for no reason.
      *
      * What is left is a round where the venue answered nothing about any key:
      * an empty backlog while the walk still runs, or a venue that has stopped
@@ -927,31 +894,9 @@ const settle = async (
   }
 };
 
-/**
- * The longest delay `setTimeout` accepts — anything past 2³¹−1 ms overflows and
- * **fires immediately**, which turns a month-long wait into a hot loop rather
- * than into an error.
- */
-const MAX_DELAY_MS = 2_147_483_647;
-
-/**
- * Wait, in chunks a timer can actually hold.
- *
- * Nothing here waits for weeks any more — the longest is a venue's stand-down —
- * but the guard is kept because the cost is one comparison and the failure it
- * prevents is silent: a delay past the limit fires immediately, turning a wait
- * into a hot loop. Waking early costs nothing either way, since every answer
- * comes from the catalog rather than from this timer.
- */
-const sleep = async (ms: number): Promise<void> => {
-  for (let left = ms; left > 0; left -= MAX_DELAY_MS)
-    await new Promise(resolve => setTimeout(resolve, Math.min(left, MAX_DELAY_MS)));
-};
-
 // ── Test access ───────────────────────────────────────────────────────────────
 
 export const _test_settle   = settle;
-export const _test_probing  = probing;
 export const _test_passFor  = passFor;
 export const _test_EVERY_HOURS = EVERY_HOURS;
 export const _test_onePass  = onePass;

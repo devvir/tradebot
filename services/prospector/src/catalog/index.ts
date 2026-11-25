@@ -65,7 +65,6 @@ export {
   open,
   flushTips,
   walkSeries,
-  grainOf,
   keyOf as keyFor,
 } from './series';
 

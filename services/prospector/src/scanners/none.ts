@@ -8,8 +8,7 @@ import type { Scanner } from '../types';
  * means an id, a `venue` row, its exclusions, its documentation and its entry in
  * configuration, and none of that has to wait for a scanner that can read it: a
  * venue wired here is a complete, working registration that simply surveys to
- * nothing. Bitget spent its first months exactly like this, and the next venue
- * will too.
+ * nothing.
  *
  * **It surveys to nothing, which is the honest answer.** There is no keyspace
  * to read, so a walk finds no files, and a consumer looking for this venue in

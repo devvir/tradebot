@@ -34,10 +34,10 @@ export type Config = {
    * **The only limit here that is about us rather than about a venue.** What a
    * venue tolerates is a fact about that venue and lives in its adapter, where
    * the evidence for it is. Every one of those figures can be right while their
-   * sum is not: the hosts surveyed today permit several hundred requests in
-   * flight between them, none of which is unreasonable on its own, and what came
-   * back was connect timeouts on venues that had done nothing unusual. No adapter
-   * can see that number, so it is set here.
+   * sum is not: several hundred requests in flight between the hosts, none of
+   * them unreasonable on its own, come back as connect timeouts on venues that
+   * have done nothing unusual. No adapter can see that number, so it is set
+   * here.
    *
    * Venues draw from it first come, first served. Nothing is reserved and nothing
    * is divided up — a venue asking for its tenth request waits behind one asking
@@ -73,8 +73,8 @@ export interface Listed {
    * before the request was made.** Reading it back off the path asks a parser to
    * recover what the generator had in hand — work that can only agree or be
    * wrong, and being wrong is silent: it files a file under a neighbouring
-   * instrument. It once turned one instrument into two series, when `keyFor` and
-   * `inspectUrl` drifted.
+   * instrument, or turns one instrument into two series wherever `keyFor` and
+   * `inspectUrl` disagree.
    *
    * Absent on anything a scanner listed, since an index offers a name and
    * nothing else. Present or absent is the whole question — the reader runs only
@@ -334,14 +334,6 @@ export interface ListingContext {
   head(url: string): Promise<Probed>;
 }
 
-
-export interface OkxContext {
-  ranges: readonly Publishing[];
-  base:   string;
-  keyRoot: string;
-  head(url: string): Promise<Probed>;
-}
-
 /**
  * Why a context is being built, and therefore how much an adapter may do to
  * build it.
@@ -475,9 +467,9 @@ export interface Adapter<S extends Scanner<any> = Scanner<any>> {
   /**
    * What this venue tolerates, where it differs from the default.
    *
-   * A venue's own property, like everything else in an adapter: bybit bans an
-   * address that asks too fast and says so only in a CloudFront error page,
-   * while a bucket nobody else reads may take far more. Left out means the
+   * A venue's own property, like everything else in an adapter: one host bans
+   * an address that asks too fast, while a bucket nobody else reads may take far
+   * more. Left out means the
    * caller's default, which is deliberately timid.
    */
   pacing?: Partial<Pacing>;
@@ -896,9 +888,8 @@ export interface Pacing {
    * them costs a survey far more than asking again does. The doubling is what
    * finds a real ban: a venue that keeps refusing walks up to `ceilingMs` in a
    * few rounds, and one that refused once is not punished for it. A venue that
-   * needs longer says so in its adapter, as bybit does — its ban lifts on its
-   * own after "at least 10 minutes", which is a measurement of that venue rather
-   * than a default for everybody.
+   * needs longer says so in its adapter, beside the measurement of that venue
+   * that says so, rather than raising the default for everybody.
    */
   standDownMs: number;
 

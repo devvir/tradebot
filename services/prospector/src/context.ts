@@ -6,9 +6,8 @@ import type { Adapter, ListingContext, RunKind, Scanner } from './types';
  * The context a scanner of a listed archive expects, built from an adapter.
  *
  * **Every listing venue's `getContext` is this and nothing else**, so it lives
- * here rather than being written out eight times — binance, htx, kucoin, gate
- * and both bybit hosts differ in their addresses, not in what their scanner
- * needs.
+ * here rather than being written out once per adapter: listing venues differ in
+ * their addresses, not in what their scanner needs.
  *
  * The two fetchers are bound to the adapter on the way through. That is the
  * point of them: `paceFor` keys a limiter on the venue and the host, and

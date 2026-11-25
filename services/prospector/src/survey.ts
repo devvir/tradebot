@@ -32,6 +32,23 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { Adapter, Config, Coverage, Listed, Span, Survey } from './types';
 
 /**
+ * Whether this pass has a probing half.
+ *
+ * **An update always probes, whatever the venue is.** It generates keys rather
+ * than reading them, so nothing it emits carries metadata and nothing is
+ * established until it is asked about — which is exactly the condition `probes`
+ * describes. A listing venue that never probes while walking therefore starts
+ * probing the moment it stops walking.
+ *
+ * **Stated once because three places read it**: the pass, which starts a probe
+ * on it; the log that says whether a pass is complete or now probing; and the
+ * walk's own job, which closes on it rather than on the kind. `adapter.probes`
+ * alone is the wrong answer for all three on every update of a listing venue.
+ */
+export const probing = (adapter: Adapter, doing: Occasion): boolean =>
+  adapter.probes === true || doing === 'partial';
+
+/**
  * Survey one venue: get its partitions, then walk them to the end.
  *
  * **There is one decision here — build a new set of partitions, or continue the
@@ -47,26 +64,6 @@ import type { Adapter, Config, Coverage, Listed, Span, Survey } from './types';
  * **Nothing here fetches archive data** — only listings and the metadata they
  * carry. Establishing what exists is the entire job.
  */
-/**
- * Whether this pass has a probing half.
- *
- * **An update always probes, whatever the venue is.** It generates keys rather
- * than reading them, so nothing it emits carries metadata and nothing is
- * established until it is asked about — which is exactly the condition `probes`
- * describes. A listing venue that never probes while walking therefore starts
- * probing the moment it stops walking.
- *
- * **Stated once because three places read it and each was wrong in its turn.**
- * The pass consulted this expression while the log beside it consulted
- * `adapter.probes` alone — so every update on a listing venue announced "Survey
- * complete" the moment generation ended, with its whole backlog still unprobed.
- * Binance said it with 8,312 rows in `wip` and went on probing for twenty-seven
- * minutes. The third reader is the walk's own job: it closed on the kind alone,
- * which is the same mistake one table over.
- */
-export const probing = (adapter: Adapter, doing: Occasion): boolean =>
-  adapter.probes === true || doing === 'partial';
-
 export const surveyVenue = async (
   db:      DatabaseSync,
   adapter:  Adapter,
@@ -75,10 +72,10 @@ export const surveyVenue = async (
   paused:   () => boolean = () => false,
 ): Promise<Survey> => {
   /**
-   * **Said before anything slow happens.** Establishing a constructed-key
-   * venue's bounds can run for minutes before the first partition exists, and a
-   * survey that answers `started` and then prints nothing is indistinguishable
-   * from one that has failed.
+   * **Said before anything slow happens.** Building a context and mapping the
+   * archive can run for minutes before the first partition exists, and a survey
+   * that answers `started` and then prints nothing is indistinguishable from one
+   * that has failed.
    */
   logger.info({ venue: labelOf(adapter), occasion }, 'Survey starting');
 
@@ -117,14 +114,13 @@ export const surveyVenue = async (
    *
    * Built here rather than when the job opens, because a resume has no job to
    * open and still needs it — a context lives in memory, so a restart mid-walk
-   * arrives with nothing. For a venue that constructs its keys this is also
-   * where its bounds are established, which is why it may take a while.
+   * arrives with nothing.
    *
    * **Built from what was asked for, not from what happens to be open.** A
    * resume works from what is already known and asks the venue nothing; only a
-   * refresh sends an adapter back to establish its own knowledge. Inferring
-   * this from an open job made every resume of a closed-but-incomplete venue a
-   * full re-establishment.
+   * refresh sends an adapter back to establish its own knowledge. Inferred from
+   * an open job, every resume of a closed-but-incomplete venue would be a full
+   * re-establishment.
    */
   const context = await adapter.getContext(db, occasion);
 
@@ -182,8 +178,8 @@ export const surveyVenue = async (
    *
    * A survey ends when its slowest partition does, so one prefix holding a
    * disproportionate share of the archive decides the whole run however fast the
-   * rest finish — binance's spot klines is 29,150 pages and gate's spot books
-   * around 9,500, each walked by one worker while the others idle.
+   * rest finish: tens of thousands of pages, walked by one worker while the
+   * others idle.
    *
    * Which prefix that will be cannot be known before walking it: the mapping
    * sees shape, and shape is not size. So it is discovered instead. Whenever a
@@ -326,13 +322,9 @@ export const surveyVenue = async (
      *
      * It was stopped to be split, and `sweep` honoured that by returning without
      * closing it — so right now it is open, holding a cursor, and running
-     * nowhere. Every path out of here that does not replace it with children has
-     * to requeue it, or it is simply abandoned: not walked, not closed, and
-     * invisible until something notices the venue can never be established.
-     *
-     * That is not hypothetical. Two gate book prefixes were left exactly this
-     * way, stopped mid-alphabet with 3,378 requests of progress, under a job
-     * that closed over them twenty-two hours later.
+     * nowhere. Every path out of here that does not replace it with children
+     * requeues it; one that did not would abandon it — not walked, not closed,
+     * and invisible until something notices the venue can never be established.
      */
     const giveBack = () => { queue.push(at); };
 
@@ -352,12 +344,10 @@ export const surveyVenue = async (
       /**
        * **A split that takes too long is abandoned, not waited on.** Every idle
        * lane is parked on this answer and the partition itself was stopped for
-       * it, so an answer that does not come is the whole survey standing still
-       * — for 46 minutes once, when reading a level meant listing a flat month
-       * to its end. That is fixed where it happened; this is what bounds the
-       * next thing nobody has thought of. The partition is resumed whole and
-       * not offered for splitting again this pass, which costs exactly what a
-       * prefix that could not be split costs.
+       * it, so an answer that does not come is the whole survey standing
+       * still. The partition is resumed whole and not offered for splitting
+       * again this pass, which costs exactly what a prefix that could not be
+       * split costs.
        */
       if (read === null) {
         terminal.add(at.scope);
@@ -494,22 +484,21 @@ export const surveyVenue = async (
     }
   };
 
+  /** Pages and files as they are read, across every lane — see the heartbeat. */
+  const live = { pages: 0, found: 0 };
+
   /**
    * **Proof of life for the survey itself, not for any one partition.**
    *
    * A partition reports while it is turning pages, which says nothing when the
-   * problem is that none of them are. htx stopped with 46 partitions queued, no
-   * open sockets, an idle event loop and not one line in an hour — and there was
-   * no way to tell that from a survey that had quietly finished. The counts
-   * below separate them: a lane count that never moves, with work still queued,
-   * is a stall and says so.
+   * problem is that none of them are: partitions queued, no open sockets, an
+   * idle event loop and no line at all reads exactly like a survey that has
+   * quietly finished. The counts below separate them: a lane count that never
+   * moves, with work still queued, is a stall and says so.
    *
    * `refining` is included because it is the one thing every idle lane waits on
    * at once, which makes a single stuck split look exactly like this.
    */
-  /** Pages and files as they are read, across every lane — see the heartbeat. */
-  const live = { pages: 0, found: 0 };
-
   const alive = setInterval(() => {
     const flow = paceFor(adapter, adapter.base).rates();
 
@@ -538,8 +527,7 @@ export const surveyVenue = async (
       /**
        * **Which wait it is, when nothing is moving.** A request that is not
        * going out is held by this host's limiter or by the machine's pool, and
-       * from outside the two are indistinguishable — the one time it mattered,
-       * finding out took an inspector attached to the running process.
+       * from outside the two are indistinguishable without this.
        */
       pace:     paceFor(adapter, adapter.base).state(),
       tickets:  ticketing(),
@@ -624,11 +612,10 @@ export const surveyVenue = async (
      * finished — and the venue reads as *waiting* meanwhile, with its whole
      * backlog outstanding.
      *
-     * That was true of an update and equally true of a walk on a venue whose
-     * listing cannot state a size or an etag, which is why the condition is
-     * `probing` rather than the kind. What closes those instead is the drain
-     * returning — `closeWalk` for a walk, `clearUpdate` for an update, both in
-     * `survey`.
+     * That holds for an update and equally for a walk on a venue whose listing
+     * cannot state a size or an etag, which is why the condition is `probing`
+     * rather than the kind. What closes those instead is the drain returning —
+     * `closeWalk` for a walk, `clearUpdate` for an update, both in `sync.ts`.
      */
     if (kind === 'walk' && ! probing(adapter, occasion)) {
       flushCounts(db, adapter);
@@ -811,11 +798,11 @@ const withinSplit = async <T>(reading: Promise<T>): Promise<T | null> => {
  */
 const QUIET_MS = 120_000;
 
-/** How often a pass reports its speed — the same clock the probe's heartbeat keeps. */
 /** The timings as a heartbeat carries them: there at debug, and absent otherwise. */
 const timingsAt = <T>(timings: T): { timings?: T } =>
   (logger.isLevelEnabled?.('debug') ? { timings } : {});
 
+/** How often a pass reports its speed — the same clock the probe's heartbeat keeps. */
 const HEARTBEAT_MS = 30_000;
 
 /**
@@ -1050,16 +1037,15 @@ const sweep = async (
     if (kind === 'walk') timed(labelOf(adapter), 'process', performance.now() - read);
 
     /**
-     * A prefix the size of binance's spot klines is thousands of pages and runs
-     * for hours. Without a line while it works, a slow partition and a wedged
-     * one look identical — so it reports where it has reached, which is the part
-     * that says whether anything is moving.
+     * A large prefix is thousands of pages and runs for hours. Without a line
+     * while it works, a slow partition and a wedged one look identical — so it
+     * reports where it has reached, which is the part that says whether anything
+     * is moving.
      *
      * **Whichever comes first, pages or minutes.** Counting pages alone says
      * nothing while a partition is not turning any: a venue that asked us to
      * wait an hour, or a request that will not answer, produces exactly the same
-     * silence as a survey that has finished — which is the state that cost an
-     * afternoon to tell apart.
+     * silence as a survey that has finished.
      */
     if (requests % PROGRESS_EVERY === 0 || Date.now() - spoke > QUIET_MS) {
       spoke = Date.now();
@@ -1195,8 +1181,8 @@ const catalogued = (
      * decided on the entry rather than on what kind of pass produced it: the
      * question is whether the fact is already in hand, not who is asking.
      *
-     * A venue with no `inspectUrl` yet takes the old path and records nothing —
-     * a gap, not a wrong answer.
+     * A venue with no `inspectUrl` places nothing this way, so its paths are
+     * listed as unplaced — a gap, not a wrong answer.
      */
     const seen = entry.seriesId === undefined ? adapter.inspectUrl?.(path) : undefined;
 

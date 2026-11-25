@@ -53,9 +53,8 @@ describe('one budget per venue per host', () => {
 
   /**
    * **Two venues behind one endpoint are two budgets.** binance and gate sit on
-   * the same S3 host, one bucket each, and each bucket took ~1,700 requests a
-   * second without a throttle — so sharing one limiter only let whichever venue
-   * started first set the other's pace.
+   * the same S3 host, one bucket each, and a shared limiter would let whichever
+   * venue started first set the other's pace.
    */
   it('keeps two venues on the same host apart', () => {
     expect(new URL(binance.base).host).toBe(new URL(gate.base).host);
@@ -77,8 +76,7 @@ describe('one budget per venue per host', () => {
   /**
    * Bybit states a rate and a width, having measured them; what it says nothing
    * about falls back. So the pair worth asserting is a field it declares against
-   * the two it leaves alone — a stand-down is deliberately not among them, since
-   * the figure it once carried described a different host's ban policy.
+   * the two it leaves alone.
    */
   it('takes the venue figure where there is one, and the default elsewhere', () => {
     expect(paceFor(bybit, bybit.base).pacing.perSecond).toBe(bybit.pacing!.perSecond);
@@ -116,12 +114,10 @@ describe('the rate it allows', () => {
   });
 
   /**
-   * **The cap belongs to the host, not to whoever is walking it.** Two venues
-   * can share an address — binance and gate are both
-   * `s3-ap-northeast-1.amazonaws.com` — and each running its own pool meant
-   * twice the intended sockets against it, which does not queue politely: it
-   * opens connections until new ones stop being accepted and every request dies
-   * on its own timeout having sent nothing.
+   * **The cap belongs to the limiter, not to whoever is walking it.** A limiter
+   * is one venue at one host, and every caller of that pair — the walk, the
+   * mapping, the probe — draws its in-flight slots from it, so a surplus waits
+   * here rather than opening sockets nobody will answer on.
    */
   it('holds a lane once the host is carrying its share', async () => {
     const pace = new Pace('test', { ...pacing, perSecond: 1000, concurrency: 2 });

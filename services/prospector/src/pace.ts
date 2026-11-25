@@ -27,11 +27,10 @@ export const REFUSALS_BEFORE_BLOCK = 5;
 /**
  * What to use when a caller has no opinion.
  *
- * **A venue that needs less says so in its adapter**, where the evidence for the
- * number can be written down beside it — as bybit does, having earned its 30 by
- * turning us away above it. Nothing here is a measurement of any venue in
- * particular, so a venue still on this figure is one nobody has had a reason to
- * measure.
+ * **A venue that needs other figures says so in its adapter**, where the
+ * evidence for them can be written down beside them. Nothing here is a
+ * measurement of any venue in particular, so a venue still on this figure is one
+ * nobody has had a reason to measure.
  *
  * The two below are different kinds of limit, and only one of them is a limit at
  * all. `perSecond` is the hard cap and the only line a venue could object to.
@@ -91,15 +90,12 @@ export const describeWait = (ms: number): string => {
  * instrument listing — keeps that on a limiter of its own, so a block there does
  * not stop the archive.
  *
- * **And per venue**, because two venues behind one endpoint are not one budget.
- * binance and gate both sit on `s3-ap-northeast-1.amazonaws.com`, one bucket
- * each; measured 2026-09-29, each bucket took LIST and HEAD at up to ~1,700/s
- * without a single throttling answer, where the ceiling was this machine. Keyed
- * by host alone they shared one limiter, paced by whichever venue reached it
- * first.
+ * **And per venue**, because two venues behind one endpoint are not one budget:
+ * two buckets on one S3 host are budgeted per bucket, and a limiter keyed by
+ * host alone would be paced by whichever venue reached it first.
  *
  * Lasts the whole process rather than a pass, so a brake that escalated does not
- * reset every fifteen minutes.
+ * reset between passes.
  */
 export const paceFor = (adapter: Adapter, url: string): Pace => {
   const key  = `${labelOf(adapter)} ${hostOf(url)}`;
@@ -140,9 +136,8 @@ const hostOf = (url: string): string => {
  * without either knowing about the other. A venue's `concurrency` is what *that
  * venue* will tolerate, and it still holds — a venue at its own limit never asks
  * for a ticket. This is what *this machine* will hold open at once, across every
- * venue at once, and it is the figure that was missing: the seven hosts surveyed
- * today permit 360 requests in flight between them, every one of those figures
- * defensible on its own, and connect timeouts are what the sum bought.
+ * venue at once: per-venue figures each defensible on its own can sum to more
+ * than one link can open, and connect timeouts are what the sum buys.
  *
  * **A ticket is transferred rather than released.** Handing it straight to the
  * next waiter keeps the count exact: were it given back to the pool first, a
@@ -222,8 +217,7 @@ class Tickets {
  * How many requests this machine will hold open at once, over every venue.
  *
  * Generous by default, because the bound that matters is the one the deployment
- * sets: a machine nobody has measured should behave as it did before this
- * existed rather than be throttled by a number picked here.
+ * sets: a machine nobody has measured is not throttled by a number picked here.
  */
 let tickets = new Tickets(1_000);
 
@@ -234,9 +228,8 @@ let tickets = new Tickets(1_000);
  * by `RAMP_BY` for every `RAMP_EVERY` requests answered, until it reaches
  * `limit`. A start releases every venue at once, and every request in flight
  * over HTTP/1.1 is a connection opened and a TLS handshake on a transport
- * worker's one thread: measured 2026-10-01, a worker opening hundreds at once
- * falls far enough behind that bodies already arriving read as silent and are
- * abandoned. Growing only as earlier requests are answered opens connections as
+ * worker's one thread: a worker opening hundreds at once falls far enough behind
+ * that bodies already arriving read as silent and are abandoned. Growing only as earlier requests are answered opens connections as
  * fast as the venues can be served, and no faster.
  */
 export const capacity = (limit: number): void => {
@@ -319,19 +312,15 @@ export class Pace {
   private head = 0;
 
   /**
-   * Lanes waiting for one of this host's in-flight slots.
+   * Lanes waiting for one of this limiter's in-flight slots.
    *
-   * **`concurrency` is a bound on a host, and was only ever enforced per venue.**
-   * Each venue runs its own pool, so two venues sharing an address ran twice the
-   * intended number of sockets against it — binance and gate are both
-   * `s3-ap-northeast-1.amazonaws.com`, and with Node's default dispatcher
-   * opening as many connections per origin as it is asked to, the surplus does
-   * not queue: it opens more sockets, until new ones stop being accepted and
-   * every request dies on its own timeout having never sent a byte.
-   *
-   * That reads as a venue problem and is not one. The bound belongs here for the
-   * same reason the rate does — one address, one budget, however many venues
-   * happen to share it.
+   * **`concurrency` is enforced here, beside the rate**, so it bounds what one
+   * venue has open at one host whichever of its callers the lanes belong to.
+   * Like the rate it is per limiter, keyed on the venue and the host — see
+   * `paceFor`. A surplus over it does not queue anywhere else: the dispatcher
+   * opens as many connections per origin as it is asked to, until new ones stop
+   * being accepted and every request dies on its own timeout having never sent
+   * a byte. What every venue holds open at once is the ticket pool's bound.
    */
   private readonly waiting: (() => void)[] = [];
 
@@ -498,11 +487,10 @@ export class Pace {
    *
    * **Concurrency is for keeping the pipe full while answers are outstanding,
    * not for arriving all at once.** Opening every socket in the same
-   * millisecond is what a host sees as a burst rather than as throughput: htx
-   * took 100 connections from a standing start, answered none of them, and
-   * every one died on its own 15-second deadline having never been replied to.
-   * A venue that would happily serve 100/s sustained can still refuse to be met
-   * with 100 at once.
+   * millisecond is what a host sees as a burst rather than as throughput, and a
+   * host can leave every one of them unanswered until it dies on its own
+   * deadline. A venue that would happily serve 100/s sustained can still refuse
+   * to be met with 100 at once.
    *
    * So it opens in tenths: a tenth of the limit in the first second, two tenths
    * in the next, at full in nine — slow enough that a host sees a rise rather
@@ -551,11 +539,9 @@ export class Pace {
    * A request that never reached the venue.
    *
    * **Noise, and reported as noise.** A connect that times out says nothing
-   * about the venue: a full run of all six archives takes hours and produces a
+   * about the venue: a full run of every archive takes hours and produces a
    * scattering of these throughout, on links and hosts that are working
-   * perfectly well. Measured on okx while the service had stood itself down for
-   * twenty minutes over exactly this — a hundred concurrent HEADs from a fresh
-   * process in the same container, 281 a second, not one failure.
+   * perfectly well.
    *
    * **So nothing here pauses anything.** The retry ladder in `http.ts` already
    * covers a bad moment, five attempts with backoff, and a host that is really
@@ -565,8 +551,8 @@ export class Pace {
    *
    * What it does do is say so, once every `FAULTS_PER_WARNING` in a row, with
    * the reason unwrapped from `cause` — because "some timeouts in the log" is
-   * worth being able to see and count, and a silent one is how a genuine outage
-   * looked like a hang.
+   * worth being able to see and count, and a silent one makes a genuine outage
+   * look like a hang.
    */
   faulted(url: string, err: unknown): void {
     this.faults++;
@@ -592,12 +578,10 @@ export class Pace {
    * refusal arriving while a pause is already in force is that same round.
    *
    * **And a round is a run of them, not one.** A single refusal is far more
-   * often an edge having a bad second than a venue objecting: bitget's CDN was
-   * asked 597,000 times in one afternoon, up to 3,500 a second, and refused
-   * nothing — so on that venue every stand-down ever taken came from a one-off.
-   * Standing a venue down on the first costs a survey minutes for something that
-   * would have answered on the retry, so it takes `REFUSALS_BEFORE_BLOCK` of
-   * them with no success in between. `eased` clears the count, which is what
+   * often an edge having a bad second than a venue objecting, and standing a
+   * venue down on the first costs a survey minutes for something that would
+   * have answered on the retry — so it takes `REFUSALS_BEFORE_BLOCK` of them
+   * with no success in between. `eased` clears the count, which is what
    * makes them consecutive rather than merely numerous.
    */
   block(status: number, url: string, headers: Headers): void {
@@ -647,13 +631,6 @@ export class Pace {
     return Math.max(0, this.until - Date.now());
   }
 
-  /**
-   * What is going out, for a log line.
-   *
-   * Three windows because one does not separate the cases: a burst that lasted
-   * a second and a steady climb over ten look identical at either extreme, and
-   * which of the two triggered a block is the question being asked.
-   */
   /** What this limiter is holding — see `PaceState`. */
   state(): PaceState {
     return {
@@ -664,6 +641,13 @@ export class Pace {
     };
   }
 
+  /**
+   * What is going out, for a log line.
+   *
+   * Three windows because one does not separate the cases: a burst that lasted
+   * a second and a steady climb over ten look identical at either extreme, and
+   * which of the two triggered a block is the question being asked.
+   */
   rates(): Rates {
     const now = Date.now();
 
@@ -854,15 +838,6 @@ const FAULTS_PER_WARNING = 50;
 /** Quiet for this long since the last refusal before the doubling is forgotten. */
 const EASE_AFTER_MS = 30 * 60_000;
 
-/**
- * What actually went wrong, rather than the wrapper around it.
- *
- * `fetch` reports every transport fault as the same `TypeError: fetch failed`
- * and puts the reason in `cause`. A log that keeps only the message says a venue
- * is unreachable without ever saying whether the socket was refused, the name
- * would not resolve, or our own deadline fired — which are three different
- * problems with three different answers.
- */
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
 // ── Test access ───────────────────────────────────────────────────────────────

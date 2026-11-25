@@ -197,8 +197,8 @@ const inside = (prefix: string, name: string): boolean => {
 /**
  * Whether a link names a directory rather than a file.
  *
- * A trailing slash settles it, and where a server omits one — bybit's `spot/`
- * tree links `BTCUSDT` where `trading/` links `BTCUSDT/` — the extension does:
+ * A trailing slash settles it, and where a server omits one — one tree linking
+ * `BTCUSDT` where its sibling links `BTCUSDT/` — the extension does:
  * every published file carries one, and no directory in an archive of symbols,
  * years and datasets does. A directory misread as a file costs a subtree; a file
  * misread as a directory is asked for as one, and answered with a `404`.

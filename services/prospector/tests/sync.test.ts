@@ -7,8 +7,9 @@ import { openCatalog } from '../src/database';
 import { fetchHead } from '../src/http';
 import { html } from '../src/scanners/html';
 import {
-  _test_EVERY_HOURS, _test_PROBE_EMPTY_MS, _test_passFor, _test_probing, _test_settle, dueAfter,
+  _test_EVERY_HOURS, _test_PROBE_EMPTY_MS, _test_passFor, _test_settle, dueAfter,
 } from '../src/sync';
+import { probing } from '../src/survey';
 import type { DatabaseSync } from 'node:sqlite';
 import { applySchedule } from '../src/schedule';
 import type { Adapter, Config } from '../src/types';
@@ -245,17 +246,17 @@ describe('when a pass still owes a probe', () => {
   const listing: Adapter = { ...indexed, probes: false };
 
   it('says so for an update on a listing venue', () => {
-    expect(_test_probing(listing, 'partial')).toBe(true);
+    expect(probing(listing, 'partial')).toBe(true);
   });
 
   it('says so for a venue that probes, whatever the pass', () => {
-    expect(_test_probing(indexed, 'full')).toBe(true);
-    expect(_test_probing(indexed, 'partial')).toBe(true);
+    expect(probing(indexed, 'full')).toBe(true);
+    expect(probing(indexed, 'partial')).toBe(true);
   });
 
   /** The one case that is genuinely finished when its keyspace has been read. */
   it('does not for a walk of a listing venue', () => {
-    expect(_test_probing(listing, 'full')).toBe(false);
+    expect(probing(listing, 'full')).toBe(false);
   });
 });
 

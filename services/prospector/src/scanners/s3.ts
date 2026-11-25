@@ -5,9 +5,9 @@ import type { Limits, ListingContext, ReadLevel, S3Page, Scanner } from '../type
  * A standard S3 bucket listing: `prefix` and `marker` honoured, `delimiter` used
  * to see one level at a time.
  *
- * Shared by every venue that publishes one — binance, HTX and KuCoin today —
- * which is the entire point of separating a scanner from an adapter. Those three
- * differ in a hostname, a root prefix and a date pattern, and in nothing else.
+ * Any bucket that answers the S3 `ListObjects` protocol reads the same way, so
+ * what differs between two of them is the context — a hostname and a root
+ * prefix — and nothing here.
  *
  * Two properties of S3 shape everything here:
  *
@@ -81,20 +81,17 @@ const MAX_KEYS = 1000;
  * back, so it is asked rather than assumed.
  *
  * **Until the first file, and no further.** From that page on nothing read
- * here changes the answer — and on a flat directory, which is what every gate
- * month is, "to the end" meant listing the whole month to learn what its first
- * page said. Measured 2026-09-28: 1,965 requests and 46 minutes to split
- * `spot/orderbooks/202602/`, with every idle lane waiting on the answer and the
- * partition itself stopped for it.
+ * here changes the answer — and on a flat directory "to the end" would mean
+ * listing the whole directory to learn what its first page said, with every
+ * idle lane waiting on the answer and the partition itself stopped for it.
  *
  * **A prefix holding files is split by character, not by directory.** A folder
  * split would leave the files sitting directly here in no partition, but S3
  * takes any string as a prefix, so `…/202505/` divides into `…/202505/A`,
  * `…/202505/B` and so on — which together cover every key beneath it, files and
- * directories alike. Without this a flat month was one serial walk however
- * many lanes stood idle: gate's books walked at one or two requests a second
- * for hours. The characters are read off the listing (`initials`) rather than
- * assumed, because gate publishes symbols written in Chinese.
+ * directories alike. Without this a flat directory is one serial walk however
+ * many lanes stand idle. The characters are read off the listing (`initials`)
+ * rather than assumed, because a key can begin with any character at all.
  *
  * The one key a character split cannot hold is the prefix itself, so a prefix
  * that is a catalogable key of its own stays whole.

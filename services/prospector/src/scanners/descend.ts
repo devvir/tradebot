@@ -15,17 +15,14 @@ import type { Limits, ListingContext, ReadLevel } from '../types';
  * **It only has to be roughly right.** A partition that turns out to hold a
  * disproportionate share of the archive is split again while the survey runs —
  * see `refine` in `survey.ts` — so a bad first guess costs a few listings rather
- * than the whole pass. That is what let the old rules go: `FANOUT` guessed where
- * the symbol level was from the width of a directory, and `FRONTIER` capped a
- * frontier that was being built for the wrong reason. Binance's spot klines is
- * both wide *and* branching, so the guess put 29,150 pages behind one worker.
+ * than the whole pass, and no rule about where a symbol level sits from the
+ * width of a directory is needed.
  *
  * **Every prefix not yet read is read at once**, up to the room left before
  * there is enough work, rather than one after another. A wide archive reaches
  * its partitions one symbol directory at a time — each read once, to learn it
- * holds files and stays whole — and asked in turn that was 600 round trips
- * end to end: measured 2026-10-01, gate took 9.5 minutes to map and binance
- * more than 17, while every request still passes the venue's own gate.
+ * holds files and stays whole — and asked in turn that is hundreds of round
+ * trips end to end, while every request still passes the venue's own gate.
  */
 export const descend = async (
   context: ListingContext,
@@ -83,8 +80,8 @@ export const descend = async (
       /**
        * **Split in order, and only while there is room.** Read together, the
        * whole batch would otherwise be split together, each adding every child
-       * it has — kucoin came out at 9,217 partitions where one at a time it made
-       * 852. Stopping at the target keeps the overshoot to one directory's width;
+       * it has, and overshoot the target by an order of magnitude. Stopping at
+       * the target keeps the overshoot to one directory's width;
        * a prefix read but left whole is a partition like any other.
        */
       if (scopes.length >= limits.concurrency) return;
@@ -128,8 +125,8 @@ export const catalogable = (context: ListingContext, key: string): boolean =>
  * have to hold for both — see the note on `accepts` in `types.ts`. A refused
  * directory is ignored as though it were not there rather than walked and
  * discarded key by key: filtering only at the recording step is correct but
- * still pays for the whole walk, and binance's `data2/data/spot/klines/` alone
- * is 655 pages that store nothing.
+ * still pays for the whole walk, which on a large refused tree is hundreds of
+ * pages that store nothing.
  *
  * The enumerated exclusions are consulted first, and only ever match a whole
  * key — a directory is never in that list, so this stays a question about files
