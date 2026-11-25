@@ -1,10 +1,10 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
+import { emptyCatalog } from '@tradebot/prospector/testing';
 import { catchUp, editLens, lensNamed, putLens } from '@tradebot/lenses';
 import type { Lens, LensDefinition, LensWrite } from '@tradebot/lenses';
-import { AT_CREATION, CATALOG_SCHEMA, ON_OPEN } from '../../prospector/src/database/schema';
 import type { FileSpec, Scratch, SeriesSpec } from './types';
 
 /**
@@ -13,20 +13,14 @@ import type { FileSpec, Scratch, SeriesSpec } from './types';
  * few writes a test needs to fill it, the way prospector writes them,
  * partitions included, since every size and month is read off those.
  *
- * The schema is imported rather than copied, so the planner sees the tables,
- * types and indexes it sees in production. The real database is prospector's,
- * and nothing in these tests ever opens it.
+ * The schema is prospector's own, from the test entry it exports, rather than
+ * a copy, so the planner sees the tables, types and indexes it sees in
+ * production. The real database is prospector's, and nothing in these tests
+ * ever opens it.
  */
 
 /** An empty catalog at this path, as prospector creates one. */
-export const openScratch = (path: string): DatabaseSync => {
-  const db = new DatabaseSync(path);
-
-  for (const pragma of [...AT_CREATION, ...ON_OPEN]) db.exec(pragma);
-  db.exec(CATALOG_SCHEMA);
-
-  return db;
-};
+export const openScratch = (path: string): DatabaseSync => emptyCatalog(path);
 
 /** An empty catalog in a directory of its own, and how to throw it away. */
 export const scratch = (): Scratch => {

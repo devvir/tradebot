@@ -4,6 +4,12 @@ import { DatabaseSync } from 'node:sqlite';
  * An empty in-memory database with the tables a lens is read, stored and
  * evaluated against, and foreign keys on: `venue` and its names, `slice` and
  * `partition`, `lens` with its unique slug and `lens_member`.
+ *
+ * The tables are written out here, holding only the columns and constraints
+ * this package relies on, rather than imported from the schema of a database
+ * that stores lenses: every such database's owner depends on this package, so
+ * this package taking its schema from one would make the two depend on each
+ * other.
  */
 export const scratch = (): DatabaseSync => {
   const db = new DatabaseSync(':memory:');
