@@ -1,6 +1,8 @@
 import { fileLabelOf } from '../vault/layout';
+import { warn } from '../../../../shared/ui/logger';
+import { above } from '../progress';
 import { answering, megaCmd } from './exec';
-import type { Queue, QueueState, Transfer } from '../types';
+import type { Asking, Queue, QueueState, Transfer } from '../types';
 
 /** Whether mega-cmd will answer at all. */
 export const available = answering;
@@ -72,19 +74,34 @@ export const downloadingPaths = async (): Promise<Set<string>> => {
  *
  * `--summary` also sidesteps the per-transfer listing's default of showing only
  * the first ten rows, which would quietly undercount a long queue.
+ *
+ * **Unknown is not empty.** Null where Mega did not answer, or answered with a
+ * summary that does not read: a drained queue still says so in a line that
+ * reads, so a summary that does not is no news of the queue at all. A summary
+ * that does not read is said once, with its first line.
  */
-export const queue = async (): Promise<QueueState> => {
-  const empty: QueueState = { remaining: 0, total: 0, uploaded: 0, transfers: 0 };
+export const queue = async (): Promise<QueueState | null> => {
+  let stdout: string;
 
   try {
-    const { stdout } = await megaCmd(
-      'mega-transfers', ['--summary', '--only-uploads'], { timeout: 60_000 });
-
-    return parseSummary(stdout) ?? empty;
+    ({ stdout } = await megaCmd('mega-transfers', ['--summary', '--only-uploads'], { timeout: 60_000 }));
   } catch {
-    return empty;
+    return null;
   }
+
+  const state = parseSummary(stdout);
+
+  if (state === null && ! unreadSaid) {
+    unreadSaid = true;
+
+    above(`Mega's upload queue summary does not read — its size is taken as unknown: ${stdout.split('\n').find(line => line.trim()) ?? '(nothing)'}`, warn);
+  }
+
+  return state;
 };
+
+/** Whether a summary that does not read has been said already. */
+let unreadSaid = false;
 
 /**
  * The local paths Mega is already carrying, active or waiting.
@@ -101,8 +118,11 @@ export const queue = async (): Promise<QueueState> => {
  *
  * `--limit` is set past any plausible queue because the listing shows ten rows
  * by default, and a short read here would look like an empty queue.
+ *
+ * Given a minute and waited for while Mega is busy, unless `asked` says
+ * otherwise — see `megaCmd` for `once`.
  */
-export const queuedPaths = async (): Promise<Set<string>> => {
+export const queuedPaths = async (asked: Asking = {}): Promise<Set<string>> => {
   /**
    * **Unknown is not empty.** A file that is not in the queue is taken to have
    * left it — arrived, or dropped — so a queue that could not be read must
@@ -111,7 +131,7 @@ export const queuedPaths = async (): Promise<Set<string>> => {
   const { stdout } = await megaCmd(
     'mega-transfers',
     ['--only-uploads', '--limit=100000', '--col-separator=|', '--output-cols=SOURCEPATH'],
-    { timeout: 60_000, maxBuffer: 64 * 1024 * 1024 },
+    { timeout: asked.timeout ?? 60_000, maxBuffer: 64 * 1024 * 1024, once: asked.once },
   );
 
   return new Set(

@@ -143,7 +143,10 @@ const round = async (
 ): Promise<boolean> => {
   const queued = await remote.queuedPaths();
 
-  let room  = config.queueTargetGb * GB - (await remote.queue()).remaining;
+  // A queue whose size is not known has no room: nothing more is handed over until it is seen.
+  const waiting = await remote.queue();
+
+  let room  = waiting === null ? 0 : config.queueTargetGb * GB - waiting.remaining;
   let moved = false;
 
   /** What Mega holds below each venue of the vault, asked once a round. */

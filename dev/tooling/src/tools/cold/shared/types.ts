@@ -159,6 +159,12 @@ export interface QueueState {
   transfers: number;
 }
 
+/** How long a look at Mega is given, and whether it fails rather than waits once that is up — see `megaCmd`. */
+export interface Asking {
+  timeout?: number;
+  once?:    boolean;
+}
+
 /** A file as Mega lists it: what it weighs, Mega's own identifier for it, and when it was last written. */
 export interface Listed {
   bytes:     number;
@@ -254,9 +260,11 @@ export interface HeldRow extends Omit<Held, 'next' | 'packed'> {
 
 /** What storing the vault asks of Mega: the part of it a run can be given a stand-in for. */
 export interface Remote {
-  queuedPaths: () => Promise<Set<string>>;
-  queue:       () => Promise<QueueState>;
-  listing:     (root: string) => Promise<Map<string, { bytes: number; handle: string | null }>>;
+  queuedPaths: (asked?: Asking) => Promise<Set<string>>;
+
+  /** What the upload queue still has to send; null where that is not known. */
+  queue:       () => Promise<QueueState | null>;
+  listing:     (root: string, asked?: Asking) => Promise<Map<string, { bytes: number; handle: string | null }>>;
   queueUpload: (local: string, remoteDir: string) => Promise<void>;
   remove:      (remotePath: string) => Promise<void>;
 

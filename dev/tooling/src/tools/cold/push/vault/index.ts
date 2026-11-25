@@ -53,6 +53,7 @@ export const runPushVault = async (options: PushOptions): Promise<void> => {
   try {
     if (! await mega.available()) {
       error('mega-cmd is not available — is the session logged in?');
+      process.exitCode = 1;
 
       return;
     }

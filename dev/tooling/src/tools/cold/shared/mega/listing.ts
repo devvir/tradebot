@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { megaCmd, notThere } from './exec';
-import type { Listed } from '../types';
+import type { Asking, Listed } from '../types';
 
 /**
  * Remove one object.
@@ -38,16 +38,20 @@ export const removeTree = async (remotePath: string): Promise<void> => {
  * deployment's remote root, so keying the listing absolutely would mean pasting
  * the root onto every part at every lookup, in a dozen places, to undo a
  * difference neither side cares about.
+ *
+ * Given five minutes and waited for while Mega is busy, unless `asked` says
+ * otherwise — see `megaCmd` for `once`.
  */
 export const listing = async (
-  root: string,
+  root:  string,
+  asked: Asking = {},
 ): Promise<Map<string, Listed>> => {
   const found = new Map<string, Listed>();
 
   try {
     const { stdout } = await megaCmd(
       'mega-ls', ['-lR', '--show-handles', TIMES, root],
-      { timeout: 300_000, maxBuffer: 256 * 1024 * 1024 });
+      { timeout: asked.timeout ?? 300_000, maxBuffer: 256 * 1024 * 1024, once: asked.once });
 
     let dir = root.replace(/\/$/, '');
 

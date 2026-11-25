@@ -8,7 +8,7 @@ import { BACKEDUP, LEDGER } from './vault/ledger';
 import { fmtBytes } from '../../../shared/utils/format';
 import { info, warn } from '../../../shared/ui/logger';
 import type { ColdConfig } from '../types';
-import type { Kept, Remote, Sent } from './types';
+import type { Asking, Kept, Remote, Sent } from './types';
 
 /**
  * A copy in Mega of the files cold storage cannot be read without.
@@ -205,9 +205,13 @@ const stateOf = async (
   let held = true;
 
   if (remote && sent?.digest === digest) {
+    // One deadline for both looks, each ended where it runs past it: nothing is left asking Mega once the command is done.
+    const until = Date.now() + MEGA_MS;
+    const left  = (): Asking => ({ timeout: Math.max(1, until - Date.now()), once: true });
+
     const asked = await within(MEGA_MS, async () => ({
-      listed:  await remote.listing(config.backupRoot),
-      queued:  await remote.queuedPaths(),
+      listed:  await remote.listing(config.backupRoot, left()),
+      queued:  await remote.queuedPaths(left()),
     }));
 
     if (! asked) {

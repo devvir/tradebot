@@ -193,7 +193,8 @@ const scan = async (
 /**
  * What Mega says for the length of one round, asked once however many tars
  * want to know: whether the upload queue has room for another tar, and which
- * local paths it is sending and bringing back.
+ * local paths it is sending and bringing back. A queue whose size is not known
+ * has no room: a tar is made only where Mega is seen to be catching up.
  */
 const roundOf = (config: ColdConfig): Round => {
   let room:      Promise<boolean> | null = null;
@@ -201,7 +202,7 @@ const roundOf = (config: ColdConfig): Round => {
   let downloads: Promise<Set<string>> | null = null;
 
   return {
-    room:      () => (room ??= mega.queue().then(queue => queue.remaining <= config.queueTargetGb * GB)),
+    room:      () => (room ??= mega.queue().then(queue => queue !== null && queue.remaining <= config.queueTargetGb * GB)),
     packed:    () => { room = Promise.resolve(false); },
     uploads:   () => (uploads ??= mega.queuedPaths()),
     downloads: () => (downloads ??= mega.downloadingPaths()),
@@ -212,4 +213,5 @@ const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(r
 
 // ── Test access ───────────────────────────────────────────────────────────────
 
-export const _test_scan = scan;
+export const _test_scan    = scan;
+export const _test_roundOf = roundOf;

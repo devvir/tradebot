@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { info, warn } from '../../../shared/ui/logger';
 import type { CatalogPartition, ListedLens, ListedSlice } from './types';
 import type { ColdConfig } from '../types';
@@ -64,27 +65,22 @@ export const partitions = async (
 
 /**
  * Ask the catalog something that is not worth waiting for: where it does not
- * answer, this fails at once.
+ * answer, or does not answer within 15 seconds, this fails at once.
  *
  * For a look taken in the middle of other work — a push that asks again while
  * its tars are uploading. That work goes on with what it already knows, and the
  * look is taken again later; waiting here would stop it for as long as the
  * catalog is away.
+ *
+ * Only the questions asked within `look` are asked this way: any asked beside
+ * it at the same time are waited for as ever.
  */
-export const once = async <T>(look: () => Promise<T>): Promise<T> => {
-  patient = false;
-
-  try {
-    return await look();
-  } finally {
-    patient = true;
-  }
-};
+export const once = <T>(look: () => Promise<T>): Promise<T> => impatient.run(true, look);
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
-/** Whether a catalog that does not answer is waited for. */
-let patient = true;
+/** Set within `once`: a catalog that does not answer is not waited for. */
+const impatient = new AsyncLocalStorage<boolean>();
 
 /**
  * One question to the catalog — waited for, for as long as it is not there.
@@ -92,11 +88,13 @@ let patient = true;
  * **A catalog that does not answer is restarting, or busy, and will be back.**
  * A command left running for days is not ended by that: it waits, asking again
  * after 5 seconds and then twice as long each time up to a minute, and says so
- * once as the wait begins and once as it ends. A connection that fails and a
- * `5xx` are both that. Any other answer is the catalog's own, and is not asked
- * for twice.
+ * once as the wait begins and once as it ends. A connection that fails, a
+ * `5xx`, and an answer that has not come in full within two minutes are all
+ * that. Any other answer is the catalog's own, and is not asked for twice.
  */
 const ask = async <T>(config: ColdConfig, path: string, lens: string | null = null): Promise<T> => {
+  const patient = impatient.getStore() !== true;
+
   let waited = false;
 
   for (let wait = FIRST_MS; ; wait = Math.min(wait * 2, LONGEST_MS)) {
@@ -109,6 +107,7 @@ const ask = async <T>(config: ColdConfig, path: string, lens: string | null = nu
           ...(config.catalogToken ? { 'x-catalog-token': config.catalogToken } : {}),
           ...(lens ? { 'x-catalog-lens': lens } : {}),
         },
+        signal: AbortSignal.timeout(patient ? answerMs.patient : answerMs.impatient),
       });
 
       if (res.ok) {
@@ -141,6 +140,11 @@ const ask = async <T>(config: ColdConfig, path: string, lens: string | null = nu
 const FIRST_MS   = 5_000;
 const LONGEST_MS = 60_000;
 
+/** How long an answer is given to come in full: where the catalog is waited for, and where it is not. */
+const ANSWER_MS = { patient: 120_000, impatient: 15_000 };
+
+let answerMs = ANSWER_MS;
+
 let pause = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
 // ── Test access ───────────────────────────────────────────────────────────────
@@ -148,4 +152,9 @@ let pause = (ms: number): Promise<void> => new Promise(resolve => setTimeout(res
 /** A stand-in for waiting; null puts the real one back. */
 export const _test_pause = (sleeper: ((ms: number) => Promise<void>) | null): void => {
   pause = sleeper ?? (ms => new Promise(resolve => setTimeout(resolve, ms)));
+};
+
+/** Stand-ins for how long an answer is given; null puts the real ones back. */
+export const _test_answerWithin = (ms: typeof ANSWER_MS | null): void => {
+  answerMs = ms ?? ANSWER_MS;
 };

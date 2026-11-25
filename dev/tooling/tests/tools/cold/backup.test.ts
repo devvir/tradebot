@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setYes } from '../../../src/tools/cold/options';
 import { busy, orphaned } from '../../../src/tools/cold/lock';
 import { check, ledgersOf, recordOf, save } from '../../../src/tools/cold/shared/backup';
+import { _test_with as megaWith } from '../../../src/tools/cold/shared/mega/exec';
 import * as record from '../../../src/tools/cold/shared/record';
 import type { ColdConfig } from '../../../src/tools/cold/types';
 import type { CatalogPartition, Remote } from '../../../src/tools/cold/shared/types';
@@ -143,6 +144,37 @@ describe('the record\'s copy, as a command starts', () => {
     await check(config(), true, remote);
 
     expect(remote.sent).toHaveLength(2);
+  });
+
+  /** Every command looks at the copy as it starts: a Mega that is busy must not keep it going once it is done. */
+  it('leaves nothing asking Mega once it gives up on an answer', async () => {
+    const asked: string[] = [];
+
+    await save(config(), [recordOf(config())], mega());
+
+    vi.useFakeTimers();
+
+    // Mega busy with something long: nothing answered, each command ended only once its time is up.
+    megaWith((command, _args, options) => {
+      asked.push(command);
+
+      return new Promise((_, reject) => {
+        setTimeout(() => reject(Object.assign(new Error(`Command failed: ${command}`), { killed: true })), options.timeout);
+      });
+    }, null);
+
+    try {
+      const checked = check(config(), false);
+
+      await vi.advanceTimersByTimeAsync(20_000);
+      await checked;
+
+      expect(asked).not.toContain('mega-whoami');
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      megaWith(null, null);
+      vi.useRealTimers();
+    }
   });
 
   /** A page or two either way is the record's ordinary life, and no reason to ask anything. */

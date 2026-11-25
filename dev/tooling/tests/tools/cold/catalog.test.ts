@@ -1,5 +1,7 @@
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { _test_pause as pauseWith, venues } from '../../../src/tools/cold/shared/catalog';
+import { _test_answerWithin as answerWithin, _test_pause as pauseWith, once, venues } from '../../../src/tools/cold/shared/catalog';
 import type { ColdConfig } from '../../../src/tools/cold/types';
 
 /** A catalog that is not there is waited for: a command left running is not ended by it. */
@@ -8,6 +10,7 @@ const config = { catalogUrl: 'http://catalog.test', catalogToken: '' } as ColdCo
 
 afterEach(() => {
   pauseWith(null);
+  answerWithin(null);
   vi.unstubAllGlobals();
 });
 
@@ -44,5 +47,40 @@ describe('a question to the catalog', () => {
 
     await expect(venues(config)).rejects.toThrow(/answered 404/);
     expect(waits).toEqual([]);
+  });
+
+  /** A catalog that takes the connection and never answers is one that is not answering. */
+  it('fails at once, within the time it is given, where it is not to be waited for', async () => {
+    const server = http.createServer(() => {});
+
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+
+    answerWithin({ patient: 60_000, impatient: 100 });
+
+    try {
+      const started = Date.now();
+      const silent  = { ...config, catalogUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}` };
+
+      await expect(once(() => venues(silent))).rejects.toThrow(/not answering/);
+      expect(Date.now() - started).toBeLessThan(2_000);
+    } finally {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+  });
+
+  /** Only what is asked within `once` is not waited for: a question asked beside it is, as ever. */
+  it('waits for a question asked beside one that is not to be waited for', async () => {
+    let down = true;
+
+    pauseWith(async () => { down = false; });
+
+    vi.stubGlobal('fetch', vi.fn(async () => down ? new Response('busy', { status: 503 }) : ok()));
+
+    const waited = venues(config);
+    const looked = once(() => venues(config));
+
+    await expect(looked).rejects.toThrow(/not answering/);
+    expect(await waited).toEqual(['gate']);
   });
 });

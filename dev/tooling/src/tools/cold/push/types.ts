@@ -41,7 +41,7 @@ export interface Planned {
 
 /** What Mega says for the length of one round over the tars, asked once. */
 export interface Round {
-  /** Whether the upload queue has room for another tar to be made. */
+  /** Whether the upload queue has room for another tar to be made: none, where how much it holds is not known. */
   room:      () => Promise<boolean>;
 
   /** A tar was made this round: the queue is asked again before another is. */

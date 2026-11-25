@@ -20,9 +20,12 @@ export const execFileAsync = promisify(execFile);
  * that it might get through.
  * `settled` is asked before it is sent again: where what the command was for
  * has come about meanwhile — it was only the answer that never came — it is
- * not sent twice. With `once`, it is not sent again at all and the command
- * fails: for a look that is taken again shortly anyway, where waiting would
- * only stack one look behind another.
+ * not sent twice.
+ *
+ * **With `once`, nothing is waited for.** A command that got no answer, or
+ * failed, fails as it is, and Mega is not asked whether it is there: for a look
+ * that is taken again shortly anyway, or one a caller gives only so long, where
+ * waiting would only stack one look behind another and hold the run past its end.
  *
  * **A command that is given up on is ended, all of it.** A mega-cmd command is
  * a script that starts the program that talks to Mega; ending the script alone
@@ -38,9 +41,10 @@ export const execFileAsync = promisify(execFile);
  *   there, a refusal — and is the caller's to make sense of.
  * - **It does not**: nothing can be concluded and nothing is. The run waits,
  *   asking again after 5 seconds and then twice as long each time up to a
- *   minute, and sends the command again once Mega is back. Nothing moves
- *   forward meanwhile: a run left going rides out an outage of any length, and
- *   what it was told before the outage is not mistaken for what Mega holds.
+ *   minute, and sends the command again once Mega is back. The wait holds the
+ *   process, so the run does not end in the middle of what it was asked to do,
+ *   and nothing moves forward meanwhile: what it was told before the outage is
+ *   not mistaken for what Mega holds.
  */
 export const megaCmd = async (
   command: string,
@@ -76,7 +80,7 @@ export const megaCmd = async (
         continue;
       }
 
-      if (await answering()) throw err;
+      if (options.once || await answering()) throw err;
 
       await untilAnswering();
     }
@@ -115,7 +119,7 @@ const untilAnswering = async (): Promise<void> => {
   warn('Mega is not answering — waiting for it, and nothing moves on until it does');
 
   for (let wait = FIRST_MS; ; wait = Math.min(wait * 2, LONGEST_MS)) {
-    await pause(wait);
+    await hold(wait);
 
     if (await answering()) break;
   }
@@ -201,7 +205,9 @@ let run: (command: string, args: string[], options: { timeout: number; maxBuffer
  * and a run that ended there would have ended in the middle of what it was
  * asked to do.
  */
-let hold = (ms: number): Promise<void> => new Promise((resolve) => { setTimeout(resolve, ms); });
+const held = (ms: number): Promise<void> => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+let hold = held;
 
 /**
  * Wait, saying how long is left: said once that Mega is busy, what follows is
@@ -220,17 +226,13 @@ const counted = async (ms: number): Promise<void> => {
 /** How often the countdown is written again. */
 const TICK_MS = 1_000;
 
-/** Not held against the process ending: a run with nothing left to do but wait for Mega is one that may go. */
-let pause = (ms: number): Promise<void> => new Promise((resolve) => { setTimeout(resolve, ms).unref(); });
-
 // ── Test access ───────────────────────────────────────────────────────────────
 
 /** Stand-ins for running a command and for waiting; null puts the real ones back. */
 export const _test_with = (
   runner:  typeof run | null,
-  sleeper: typeof pause | null,
+  sleeper: typeof hold | null,
 ): void => {
-  run   = runner ?? inGroup;
-  pause = sleeper ?? ((ms) => new Promise((resolve) => { setTimeout(resolve, ms).unref(); }));
-  hold  = sleeper ?? ((ms) => new Promise((resolve) => { setTimeout(resolve, ms); }));
+  run  = runner ?? inGroup;
+  hold = sleeper ?? held;
 };

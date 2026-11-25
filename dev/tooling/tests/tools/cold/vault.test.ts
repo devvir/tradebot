@@ -270,6 +270,16 @@ describe('storing the vault', () => {
     expect(remote.queued.size).toBe(0);
   });
 
+  /** A queue that could not be read may be full: nothing is added to it. */
+  it('hands over nothing where how much the queue holds is not known', async () => {
+    const remote = { ...mega(), queue: async () => null };
+
+    plan(db, config(), []);
+
+    expect(await round(db, config(), record.vaultFilesPending(db), remote, () => {})).toBe(false);
+    expect(remote.queued.size).toBe(0);
+  });
+
   /** Mega's queue outlives the command: what it dropped without storing is handed over again. */
   it('hands over again a file that left the queue without arriving', async () => {
     const remote = mega();

@@ -1,11 +1,15 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { _test_with as standIns, megaCmd, notThere } from '../../../src/tools/cold/shared/mega/exec';
 import { landed, listing } from '../../../src/tools/cold/shared/mega/listing';
 import { _test_parseListing as parseListing } from '../../../src/tools/cold/shared/mega/listing';
-import { _test_parseSummary as parseSummary } from '../../../src/tools/cold/shared/mega/transfers';
+import { _test_parseSummary as parseSummary, queue, queuedPaths } from '../../../src/tools/cold/shared/mega/transfers';
+import { _test_roundOf as roundOf } from '../../../src/tools/cold/push/archives/work';
+import { runPush } from '../../../src/tools/cold/push/archives';
+import { runPushVault } from '../../../src/tools/cold/push/vault';
+import type { ColdConfig } from '../../../src/tools/cold/types';
 import * as mega from '../../../src/tools/cold/shared/mega';
 import * as record from '../../../src/tools/cold/shared/record';
 
@@ -126,7 +130,10 @@ describe('what the commands reach Mega and the record through', () => {
 });
 
 describe('a command sent while Mega is not answering', () => {
-  afterEach(() => standIns(null, null));
+  afterEach(() => {
+    standIns(null, null);
+    vi.restoreAllMocks();
+  });
 
   /** What is asked, in order, and what each attempt is answered with. */
   const mega = (answers: Record<string, (Error | string)[]>) => {
@@ -171,6 +178,66 @@ describe('a command sent while Mega is not answering', () => {
     expect(waits).toEqual([]);
   });
 
+  /** Nothing else holds the process while Mega is away: a wait that did not would end the run with nothing said. */
+  it('holds the run open while it waits for Mega to come back', async () => {
+    const real   = globalThis.setTimeout;
+    const waited: { ms: number; held: () => boolean }[] = [];
+
+    // Each wait taken at once, and kept to see whether it held the process.
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((done: () => void, ms?: number) => {
+      const timer = real(done, 0);
+
+      waited.push({ ms: ms ?? 0, held: () => timer.hasRef() });
+
+      return timer;
+    }) as typeof setTimeout);
+
+    let whoami = 0;
+
+    standIns(async (command) => {
+      if (command === 'mega-whoami' && ++whoami <= 2) throw down;
+      if (command === 'mega-ls' && whoami === 0) throw down;
+
+      return { stdout: 'listed', stderr: '' };
+    }, null);
+
+    expect((await megaCmd('mega-ls', [], { timeout: 1 })).stdout).toBe('listed');
+
+    const forMega = waited.filter(one => one.ms === 5_000 || one.ms === 10_000);
+
+    expect(forMega).toHaveLength(2);
+    expect(forMega.every(one => one.held())).toBe(true);
+  });
+
+  /** A look given only so long: what it gets is what it gets, and Mega is not waited for. */
+  it('with once, fails as it is and asks nothing more', async () => {
+    const late = Object.assign(new Error('Command failed: mega-ls'), { killed: true, signal: 'SIGKILL' });
+    const { asked, waits } = mega({ 'mega-ls': [late, down], 'mega-whoami': [down] });
+
+    await expect(megaCmd('mega-ls', [], { timeout: 1, once: true })).rejects.toBe(late);
+    await expect(megaCmd('mega-ls', [], { timeout: 1, once: true })).rejects.toBe(down);
+
+    expect(asked).toEqual(['mega-ls', 'mega-ls']);
+    expect(waits).toEqual([]);
+  });
+
+  it('gives a listing and a look at the queue the time they are asked for, and fails them once it is up', async () => {
+    const given: Record<string, number> = {};
+
+    standIns(async (command, _args, options) => {
+      given[command] = options.timeout;
+
+      if (command === 'mega-whoami') throw new Error('asked whether Mega is there');
+
+      throw Object.assign(new Error(`Command failed: ${command}`), { killed: true });
+    }, async () => {});
+
+    await expect(listing('/x', { timeout: 1_234, once: true })).rejects.toThrow(/mega-ls/);
+    await expect(queuedPaths({ timeout: 2_345, once: true })).rejects.toThrow(/mega-transfers/);
+
+    expect(given).toEqual({ 'mega-ls': 1_234, 'mega-transfers': 2_345 });
+  });
+
   it('takes a tree that is not there for an empty one, and no other failure for it', async () => {
     mega({ 'mega-ls': [Object.assign(new Error('exit 53'), { stderr: 'cmd ERR  Couldn\'t find /x/none' })], 'mega-whoami': ['me'] });
 
@@ -211,5 +278,86 @@ describe('a command sent while Mega is not answering', () => {
   it('tells a path that is not there from any other failure', () => {
     expect(notThere({ stderr: '[cmd ERR  Couldn\'t find "/a/b"]' })).toBe(true);
     expect(notThere(new Error('ETIMEDOUT'))).toBe(false);
+  });
+});
+
+/** Unknown is not empty: a queue that could not be read may be full, and nothing is packed for it. */
+describe('how much the upload queue holds', () => {
+  afterEach(() => standIns(null, null));
+
+  const SUMMARY = '   NUM DOWNLOADS  DOWNLOADED       TOTAL    %             NUM UPLOADS    UPLOADED       TOTAL    %\n'
+    + '               0    0.00   B    0.00   B   0.00%                    1    0.00   B    1.00 GB   0.00%';
+
+  /** Mega answering each command in turn with one of these. */
+  const answering = (...answers: (Error | string)[]): void =>
+    standIns(async (command) => {
+      if (command === 'mega-whoami') return { stdout: 'me', stderr: '' };
+
+      const next = answers.shift() ?? '';
+
+      if (next instanceof Error) throw next;
+
+      return { stdout: next, stderr: '' };
+    }, async () => {});
+
+  const config = { queueTargetGb: 10 } as ColdConfig;
+
+  it('is not known where Mega refuses to say, or says it in a shape that does not read', async () => {
+    answering(new Error('Command failed: mega-transfers'));
+    expect(await queue()).toBeNull();
+
+    answering('a summary of some new shape');
+    expect(await queue()).toBeNull();
+
+    answering(SUMMARY);
+    expect(await queue()).toMatchObject({ transfers: 1, remaining: 1024 ** 3 });
+  });
+
+  it('leaves room for a tar only where it is known to have room', async () => {
+    answering('a summary of some new shape');
+    expect(await roundOf(config).room()).toBe(false);
+
+    answering(new Error('Command failed: mega-transfers'));
+    expect(await roundOf(config).room()).toBe(false);
+
+    answering(SUMMARY);
+    expect(await roundOf(config).room()).toBe(true);
+  });
+});
+
+/** A command that cannot start for want of Mega has failed, and says so to whatever ran it. */
+describe('a command that finds Mega not there', () => {
+  let dir: string;
+
+  afterEach(() => {
+    standIns(null, null);
+    vi.unstubAllEnvs();
+    process.exitCode = undefined;
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  const away = (): void => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-away-'));
+
+    for (const [name, value] of Object.entries({ DATA_DIR: dir, MEGA_ROOT: '/m', SOURCES_COLD_DIR: '', DATA_ARCHIVES_DIR: '', DATA_VAULT_DIR: '' }))
+      vi.stubEnv(name, value);
+
+    standIns(async () => { throw new Error('mega-cmd server not running'); }, async () => {});
+  };
+
+  it('ends a push of the archives with a failure', async () => {
+    away();
+
+    await runPush('archives', { venues: [] });
+
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('ends a push of the vault with a failure', async () => {
+    away();
+
+    await runPushVault({ venues: [] });
+
+    expect(process.exitCode).toBe(1);
   });
 });
