@@ -7,6 +7,9 @@ import {
   ensureExchange, resolveExchangeType, sourceBindingKey, destinationBindingKey, formatRoute, formatDestination,
 } from './routes';
 
+/** The name of the dead-letter exchange and of the dead-letter queue when neither is configured. */
+export const DEFAULT_DEAD_LETTER_NAME = 'router.dead-letter';
+
 export const loadConfig = (): Config => {
   const rules  = parseRules(process.env.ROUTER_RULES || '');
   const typeOf = resolveTypes(rules);
@@ -20,6 +23,9 @@ export const loadConfig = (): Config => {
     prefetch:    parseInteger('ROUTER_PREFETCH', 500, 1),
     maxReady:    parseInteger('ROUTER_MAX_READY', 0, 0),
     watchQueues: (process.env.ROUTER_WATCH_QUEUES || '').split(',').map((s) => s.trim()).filter(Boolean),
+    maxAttempts: parseInteger('ROUTER_MAX_ATTEMPTS', 5, 1),
+    deadLetterExchange: parseName('ROUTER_DEAD_LETTER_EXCHANGE', DEFAULT_DEAD_LETTER_NAME),
+    deadLetterQueue:    parseName('ROUTER_DEAD_LETTER_QUEUE', DEFAULT_DEAD_LETTER_NAME),
   };
 
   validateConfig(config);
@@ -52,6 +58,9 @@ const parseInteger = (name: string, fallback: number, min: 0 | 1): number => {
   return n;
 };
 
+/** Read a name from an environment variable, trimmed; the fallback when it is unset or blank. */
+const parseName = (name: string, fallback: string): string => process.env[name]?.trim() || fallback;
+
 // ── Validation ────────────────────────────────────────────────────────────────
 
 /** Check the whole configuration, and throw every problem found in one error. */
@@ -78,6 +87,7 @@ const validateConfig = (config: Config): void => {
   }
 
   errors.push(...sharedQueueErrors(config.routes));
+  errors.push(...deadLetterErrors(config));
 
   if (errors.length)
     throw new Error(`Invalid router configuration:\n  - ${errors.join('\n  - ')}`);
@@ -156,6 +166,23 @@ const sharedQueueErrors = (routes: Route[]): string[] => {
       );
     }
   }
+
+  return errors;
+};
+
+/**
+ * The dead-letter queue takes no part in any rule, so that a dead-lettered message is never
+ * routed again; the dead-letter exchange takes none either, so that it keeps its own type.
+ */
+const deadLetterErrors = ({ routes, deadLetterExchange, deadLetterQueue }: Config): string[] => {
+  const queues    = new Set(routes.flatMap(({ source, destination }) => [source.queue, destination.queue]));
+  const exchanges = new Set(routes.flatMap(({ source, destination }) => [source.exchange?.name, destination.exchange?.name]));
+  const errors: string[] = [];
+
+  if (queues.has(deadLetterQueue))
+    errors.push(`The dead-letter queue "${deadLetterQueue}" is a queue of a rule; set ROUTER_DEAD_LETTER_QUEUE to another name`);
+  if (exchanges.has(deadLetterExchange))
+    errors.push(`The dead-letter exchange "${deadLetterExchange}" is an exchange of a rule; set ROUTER_DEAD_LETTER_EXCHANGE to another name`);
 
   return errors;
 };

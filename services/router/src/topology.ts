@@ -15,13 +15,17 @@ export const declareConsumerTopology = async (
 };
 
 /**
- * Declare destination queues/exchanges on the publisher broker.
+ * Declare destination queues/exchanges, and the dead-letter exchange and queue, on the publisher
+ * broker.
  */
 export const declarePublisherTopology = async (
   broker: RabbitMQ.Broker,
   config: Config,
 ): Promise<void> => {
-  await broker.declares(buildPublisherTopology(config.routes));
+  await broker.declares(buildPublisherTopology(config.routes, {
+    exchange: config.deadLetterExchange,
+    queue:    config.deadLetterQueue,
+  }));
 };
 
 /**
@@ -44,11 +48,18 @@ export const buildConsumerTopology = (routes: Route[]): RabbitMQ.TopologySpec =>
   return withEntries(exchanges, queues);
 };
 
+/** A fanout exchange and the durable queue bound to it, for messages the router dead-letters. */
+export interface DeadLetter {
+  exchange: string;
+  queue: string;
+}
+
 /**
  * Builds topology for the publisher broker: destination exchanges, and destination queues
- * bound so that they receive what the router publishes (see destinationBindingKey).
+ * bound so that they receive what the router publishes (see destinationBindingKey). With a
+ * dead letter, also its fanout exchange and its queue, bound to it.
  */
-export const buildPublisherTopology = (routes: Route[]): RabbitMQ.TopologySpec => {
+export const buildPublisherTopology = (routes: Route[], deadLetter?: DeadLetter): RabbitMQ.TopologySpec => {
   const exchanges: NonNullable<RabbitMQ.TopologySpec['exchanges']> = {};
   const queues: NonNullable<RabbitMQ.TopologySpec['queues']> = {};
 
@@ -63,6 +74,8 @@ export const buildPublisherTopology = (routes: Route[]): RabbitMQ.TopologySpec =
       queues[queue] = { durable: true };
     }
   }
+
+  if (deadLetter) bindQueue(ensureExchange(exchanges, { name: deadLetter.exchange, type: 'fanout' }), deadLetter.queue, '');
 
   return withEntries(exchanges, queues);
 };

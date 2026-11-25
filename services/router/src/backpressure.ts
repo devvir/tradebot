@@ -12,6 +12,8 @@ export const PAUSED_POLL_MS = 1_000;
 export const MISSING_QUEUE_WARN_MS = 60_000;
 
 export interface BackpressureGate {
+  /** Whether a watched queue is at or above the limit, by the cached depths. */
+  atCapacity: () => boolean;
   /** Resolves once no watched queue is at or above the limit; at once when all have room. */
   hold: () => Promise<void>;
   /** Ends the background depth reads and closes the depth channel. */
@@ -24,15 +26,16 @@ type GetDepth = (name: string) => Promise<number | undefined>;
 // ── Public ────────────────────────────────────────────────────────────────────
 
 /**
- * A gate that holds publishing while any watched queue (`config.watchQueues`) holds
- * `config.maxReady` ready messages or more. Null when backpressure is off: `maxReady` is 0 or
+ * A gate that tells when any watched queue (`config.watchQueues`) holds `config.maxReady` ready
+ * messages or more, and waits until none does. Null when backpressure is off: `maxReady` is 0 or
  * less, or no queue is watched.
  *
  * Depths are read once before the gate is returned, then every BACKPRESSURE_POLL_MS in the
- * background, so `hold()` compares cached depths with no call to the broker. When a queue is at
- * or above the limit, `hold()` waits, reading that queue's depth every PAUSED_POLL_MS, until no
- * watched queue is at or above it. Callers that arrive while the gate holds share that wait and
- * are released together.
+ * background, so `atCapacity()` and `hold()` compare cached depths with no call to the broker.
+ * A cached depth can be up to one background read old. When a queue is at or above the limit,
+ * `hold()` waits, reading that queue's depth every PAUSED_POLL_MS, until no watched queue is at
+ * or above it. Callers that arrive while the gate holds share that wait and are released
+ * together.
  *
  * Each depth is a passive queue check on a channel of the broker's connection that serves only
  * these checks, so a failed check never closes the broker's own channel. That channel is opened
@@ -53,7 +56,8 @@ export const createBackpressureGate = async (
   await gate.poll();
 
   return {
-    hold: gate.hold,
+    atCapacity: gate.atCapacity,
+    hold:       gate.hold,
     stop: async () => {
       gate.stop();
       await depths.close();
@@ -199,5 +203,5 @@ const createGate = (queueNames: string[], getDepth: GetDepth, maxReady: number) 
     }
   };
 
-  return { hold, poll, stop: () => clearInterval(interval) };
+  return { atCapacity: () => fullQueue() !== undefined, hold, poll, stop: () => clearInterval(interval) };
 };

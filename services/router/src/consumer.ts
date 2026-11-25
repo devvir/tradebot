@@ -1,12 +1,34 @@
 import { logger, RabbitMQ } from '@devvir/service-kit';
 import type { Route, RouteDestination, RoutingKeyConfig, Config } from './types';
+import type { BackpressureGate } from './backpressure';
 import { formatRoute } from './routes';
 
-/** How long a failed message waits before it is requeued, while the publisher is connected. */
-export const REQUEUE_DELAY_MS = 500;
+/** The back-off before the first retry of a failed message; each further failure doubles it. */
+export const RETRY_BASE_DELAY_MS = 500;
+
+/** The longest back-off before a retry. */
+export const RETRY_MAX_DELAY_MS = 30_000;
 
 /** The shortest gap between two 'Failed to route message' logs of one source queue. */
 export const FAILURE_LOG_INTERVAL_MS = 10_000;
+
+/** How many times routing a message has failed, on the copy the router retries or dead-letters. */
+export const ATTEMPTS_HEADER = 'x-router-attempts';
+
+/** The routing key a message arrived with, on the copy the router retries or dead-letters. */
+export const ROUTING_KEY_HEADER = 'x-router-routing-key';
+
+/** The source queue a dead-lettered message was read from. */
+export const SOURCE_QUEUE_HEADER = 'x-router-source-queue';
+
+/** The error of the last failed attempt at a dead-lettered message. */
+export const ERROR_HEADER = 'x-router-error';
+
+/** The router's own headers: a destination never receives them. */
+const ROUTER_HEADERS = [ATTEMPTS_HEADER, ROUTING_KEY_HEADER, SOURCE_QUEUE_HEADER, ERROR_HEADER];
+
+/** What the consumer needs of the backpressure gate. */
+export type Backpressure = Pick<BackpressureGate, 'atCapacity' | 'hold'>;
 
 // ── Public ────────────────────────────────────────────────────────────────────
 
@@ -16,20 +38,39 @@ export const FAILURE_LOG_INTERVAL_MS = 10_000;
  *
  * The consumer channel holds at most `config.prefetch` unacknowledged messages per source queue.
  * Every publish goes through the publisher broker; a named exchange is looked up on it for each
- * message, and a bare queue is published to through the default exchange on its channel.
+ * message, and a bare queue is published to through the default exchange on its channel. The
+ * message body and properties are republished as they arrived, apart from the routing key, the
+ * user id, which is dropped, the destination's injected headers, and the router's own headers
+ * (ATTEMPTS_HEADER and the others), which are removed.
  *
- * A message is acked once every destination has it, and requeued when any publish fails, so a
- * retry publishes again to the destinations that already had it: delivery is at least once per
- * destination. A failed message is requeued once the publisher is connected again, or after
- * REQUEUE_DELAY_MS when it is connected. An ack or nack on a closed channel is logged and
- * dropped, since the broker redelivers the message. A consumer the broker cancels ends the
- * process with exit code 1.
+ * Backpressure: when a message arrives while the gate is at capacity, every source consumer is
+ * cancelled, so the broker keeps the messages behind it, and is consumed again once the gate
+ * has room. The messages delivered before the cancel are routed as usual, so `config.maxReady`
+ * is a soft limit: a watched queue can pass it by up to `config.prefetch` messages per source
+ * queue, plus what arrives between two depth reads.
+ *
+ * A message is acked once every destination has it. When a publish fails while the publisher
+ * is connected, the attempt counts: after a back-off of RETRY_BASE_DELAY_MS, doubled with each
+ * further failure up to RETRY_MAX_DELAY_MS, a copy of the message is published to the back of
+ * its source queue with the failed attempts in ATTEMPTS_HEADER and its routing key in
+ * ROUTING_KEY_HEADER, and the original is acked. A retry publishes again to the destinations
+ * that already had it, so delivery is at least once per destination. The attempt that makes
+ * `config.maxAttempts` failures instead publishes the copy to `config.deadLetterExchange`, with
+ * its routing key, its source queue in SOURCE_QUEUE_HEADER and the error in ERROR_HEADER. When
+ * the publisher is not connected, the attempt does not count: the message is requeued once the
+ * publisher is connected again. When the retry copy or the dead letter cannot be published
+ * either, the message is requeued as it is, after RETRY_BASE_DELAY_MS or once the publisher is
+ * connected again.
+ *
+ * An ack or nack on a closed channel is logged and dropped, since the broker redelivers the
+ * message. A consumer the broker cancels, or a consumer that cannot be cancelled or consumed
+ * again for backpressure, ends the process with exit code 1.
  */
 export const consumeAndRepublish = async (
   consumer: RabbitMQ.Broker,
   publisher: RabbitMQ.Broker,
   config: Config,
-  holdPublishing: (() => Promise<void>) | null,
+  backpressure: Backpressure | null,
 ): Promise<void> => {
   const channel = consumer.getChannel();
 
@@ -41,43 +82,98 @@ export const consumeAndRepublish = async (
   const publish         = publisherOf(publisher);
   const publisherOnline = whenConnected(publisher);
 
-  for (const [queueName, routes] of groupBySource(config.routes)) {
+  /** Requeue a message unchanged, once the publisher is connected and no sooner than `ms` from now. */
+  const requeue = async (source: string, msg: RabbitMQ.RawMessage, ms: number): Promise<void> => {
+    if (publisher.getState() === 'connected') await delay(ms);
+    else await publisherOnline();
+
+    settle(source, 'nack', () => channel.nack(msg, false, true));
+  };
+
+  const sources = [...groupBySource(config.routes)].map(([queueName, routes]) => {
     const targets    = distinctDestinations(routes).map(toTarget);
     const logFailure = throttledFailureLog(queueName);
 
-    await channel.consume(queueName, async (msg) => {
+    /** Publish the message to every destination of the source queue. */
+    const route = async (msg: RabbitMQ.RawMessage): Promise<void> => {
+      const incomingKey = incomingRoutingKey(msg);
+
+      for (const target of targets) {
+        const headers = destinationHeaders(msg.properties?.headers, target.headers);
+
+        await publish(target, msg, {
+          routingKey: target.fixedRoutingKey ?? resolveRoutingKey(target.routingKey, incomingKey),
+          persistent: msg.properties?.deliveryMode === 2,
+          userId:     undefined,
+          ...(headers ? { headers } : {}),
+        });
+      }
+    };
+
+    /** Retry or dead-letter a message whose routing failed, or requeue it when neither works. */
+    const recover = async (msg: RabbitMQ.RawMessage, err: unknown): Promise<void> => {
+      if (publisher.getState() !== 'connected') return requeue(queueName, msg, 0);
+
+      const failed = attemptsOf(msg) + 1;
+      const copy   = {
+        persistent: msg.properties?.deliveryMode === 2,
+        userId:     undefined,
+        headers:    {
+          ...(msg.properties?.headers ?? {}),
+          [ATTEMPTS_HEADER]:    failed,
+          [ROUTING_KEY_HEADER]: incomingRoutingKey(msg),
+        },
+      };
+
+      try {
+        if (failed >= config.maxAttempts) {
+          await publish(deadLetterTarget(config.deadLetterExchange), msg, {
+            ...copy,
+            routingKey: incomingRoutingKey(msg),
+            headers:    { ...copy.headers, [SOURCE_QUEUE_HEADER]: queueName, [ERROR_HEADER]: errorText(err) },
+          });
+          logger.error({ source: queueName, attempts: failed, exchange: config.deadLetterExchange }, 'Dead-lettered a message');
+        } else {
+          await delay(retryDelay(failed));
+          await publish(retryTarget(queueName), msg, { ...copy, routingKey: queueName });
+        }
+      } catch (retryErr) {
+        logger.warn({ err: retryErr, source: queueName }, 'Could not retry or dead-letter the message; requeueing it');
+
+        return requeue(queueName, msg, RETRY_BASE_DELAY_MS);
+      }
+
+      settle(queueName, 'ack', () => channel.ack(msg));
+    };
+
+    const handle = async (msg: RabbitMQ.RawMessage | null): Promise<void> => {
       if (! msg) {
         logger.error({ source: queueName }, 'The broker cancelled the consumer; exiting');
         process.exit(1);
         return;
       }
 
+      if (backpressure?.atCapacity()) void consuming.pause(backpressure);
+
       try {
-        if (holdPublishing) await holdPublishing();
-
-        const incomingKey = msg.fields?.routingKey || '';
-
-        for (const target of targets) {
-          await publish(target, msg, {
-            routingKey: target.fixedRoutingKey ?? resolveRoutingKey(target.routingKey, incomingKey),
-            persistent: msg.properties?.deliveryMode === 2,
-            userId:     undefined,
-            // An injected header replaces an incoming header of the same name.
-            ...(target.headers ? { headers: { ...(msg.properties?.headers ?? {}), ...target.headers } } : {}),
-          });
-        }
-
-        settle(queueName, 'ack', () => channel.ack(msg));
+        await route(msg);
       } catch (err) {
         logFailure(err);
-
-        if (publisher.getState() === 'connected') await delay(REQUEUE_DELAY_MS);
-        else await publisherOnline();
-
-        settle(queueName, 'nack', () => channel.nack(msg, false, true));
+        await recover(msg, err);
+        return;
       }
-    });
 
+      settle(queueName, 'ack', () => channel.ack(msg));
+    };
+
+    return { queueName, routes, handle };
+  });
+
+  const consuming = consumers(channel, sources);
+
+  await consuming.start();
+
+  for (const { queueName, routes } of sources) {
     logger.info({
       source: queueName,
       routes: routes.map(formatRoute),
@@ -176,6 +272,110 @@ const throttledFailureLog = (source: string): ((err: unknown) => void) => {
     suppressed = 0;
   };
 };
+
+/** A source queue and the handler of its deliveries. */
+interface Source {
+  queueName: string;
+  handle: (msg: RabbitMQ.RawMessage | null) => Promise<void>;
+}
+
+/**
+ * The consumers of the source queues on one channel. `pause` cancels every consumer, waits until
+ * the backpressure gate has room and consumes every source queue again; a pause asked for while
+ * one runs joins it. A consumer that cannot be cancelled or consumed again ends the process with
+ * exit code 1, as the router cannot route without it.
+ */
+const consumers = (channel: RabbitMQ.RawChannel, sources: Source[]) => {
+  const tags = new Map<string, string>();
+  let started: Promise<void> = Promise.resolve();
+  let pausing: Promise<void> | null = null;
+
+  const consumeAll = async (): Promise<void> => {
+    for (const { queueName, handle } of sources) {
+      if (tags.has(queueName)) continue;
+
+      const { consumerTag } = await channel.consume(queueName, handle);
+
+      tags.set(queueName, consumerTag);
+    }
+  };
+
+  const cancelAll = async (): Promise<void> => {
+    for (const [queueName, tag] of tags) {
+      await channel.cancel(tag);
+      tags.delete(queueName);
+    }
+  };
+
+  const start = (): Promise<void> => (started = consumeAll());
+
+  const pause = (gate: Backpressure): Promise<void> => (pausing ??= (async () => {
+    try {
+      await started;
+      await cancelAll();
+      await gate.hold();
+      await consumeAll();
+    } catch (err) {
+      logger.error({ err }, 'Could not cancel or restart the consumers for backpressure; exiting');
+      process.exit(1);
+    } finally {
+      pausing = null;
+    }
+  })());
+
+  return { start, pause };
+};
+
+/** The back-off before retrying a message that has failed `failed` times. */
+const retryDelay = (failed: number): number => Math.min(RETRY_BASE_DELAY_MS * 2 ** (failed - 1), RETRY_MAX_DELAY_MS);
+
+/** How many times routing the message has failed before, by ATTEMPTS_HEADER. */
+const attemptsOf = (msg: RabbitMQ.RawMessage): number => {
+  const attempts = Number(msg.properties?.headers?.[ATTEMPTS_HEADER]);
+
+  return Number.isInteger(attempts) && attempts > 0 ? attempts : 0;
+};
+
+/** The routing key the message first arrived with: ROUTING_KEY_HEADER on a retried copy. */
+const incomingRoutingKey = (msg: RabbitMQ.RawMessage): string => {
+  const kept = msg.properties?.headers?.[ROUTING_KEY_HEADER];
+
+  if (typeof kept === 'string') return kept;
+  if (Buffer.isBuffer(kept)) return kept.toString('utf8');
+
+  return msg.fields?.routingKey || '';
+};
+
+/**
+ * The headers a destination receives, or undefined when the incoming ones pass unchanged: the
+ * router's own headers are removed, and an injected header replaces an incoming header of the
+ * same name.
+ */
+const destinationHeaders = (
+  incoming: Record<string, unknown> | undefined,
+  injected: Record<string, string> | undefined,
+): Record<string, unknown> | undefined => {
+  const carriesOwn = incoming !== undefined && ROUTER_HEADERS.some((name) => name in incoming);
+
+  if (! carriesOwn && ! injected) return undefined;
+
+  const kept = Object.entries(incoming ?? {}).filter(([name]) => ! ROUTER_HEADERS.includes(name));
+
+  return { ...Object.fromEntries(kept), ...injected };
+};
+
+/** The longest error text a dead letter carries. */
+const MAX_ERROR_LENGTH = 1_000;
+
+const errorText = (err: unknown): string =>
+  (err instanceof Error ? err.message : String(err)).slice(0, MAX_ERROR_LENGTH);
+
+/** The target of a retried copy: the back of its source queue, through the default exchange. */
+const retryTarget = (queue: string): Target =>
+  ({ exchange: undefined, routingKey: undefined, fixedRoutingKey: queue, headers: undefined });
+
+const deadLetterTarget = (exchange: string): Target =>
+  ({ exchange, routingKey: undefined, fixedRoutingKey: undefined, headers: undefined });
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 

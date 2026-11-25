@@ -1,7 +1,10 @@
 import { EventEmitter } from 'node:events';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { logger, RabbitMQ } from '@devvir/service-kit';
-import { consumeAndRepublish, REQUEUE_DELAY_MS, FAILURE_LOG_INTERVAL_MS } from '../src/consumer';
+import {
+  consumeAndRepublish, RETRY_BASE_DELAY_MS, RETRY_MAX_DELAY_MS, FAILURE_LOG_INTERVAL_MS,
+  ATTEMPTS_HEADER, ROUTING_KEY_HEADER, SOURCE_QUEUE_HEADER, ERROR_HEADER,
+} from '../src/consumer';
 import type { Route } from '../src/types';
 
 // ── Mock service-kit ──────────────────────────────────────────────────────────
@@ -31,6 +34,7 @@ vi.mock('@devvir/service-kit', () => ({
  */
 const makeBrokers = () => {
   const handlers = new Map<string, (msg: any) => Promise<void>>();
+  let consumed = 0;
 
   const channel = {
     prefetch: vi.fn(async () => ({})),
@@ -38,7 +42,9 @@ const makeBrokers = () => {
     nack: vi.fn(),
     consume: vi.fn(async (queue: string, handler: (msg: any) => Promise<void>) => {
       handlers.set(queue, handler);
+      return { consumerTag: `${queue}-${++consumed}` };
     }),
+    cancel: vi.fn(async (_tag: string) => ({})),
   };
 
   const publisherChannel = { name: 'publisher-channel' };
@@ -80,15 +86,45 @@ const keyRoute = (value: string, replace?: string): Route => ({
   },
 });
 
-const config = (routes: Route[], prefetch = 500) => ({
+const config = (routes: Route[], prefetch = 500, maxAttempts = 5) => ({
   rabbitmqUrl: '',
   routes,
   prefetch,
   maxReady: 0,
   watchQueues: [],
+  maxAttempts,
+  deadLetterExchange: 'dead',
+  deadLetterQueue: 'dead.q',
 });
 
 const routingKeysPublished = () => mockRepublish.mock.calls.map((c: any[]) => c[1].routingKey);
+
+/**
+ * Every republish so far: the exchange it went to ('' for the default exchange), the message it
+ * was given, and its overrides.
+ */
+const publications = (exchanges: Map<string, unknown>) => mockRepublish.mock.calls.map((call: any[], i) => {
+  const context = mockRepublish.mock.contexts[i];
+  const name    = [...exchanges].find(([, exchange]) => exchange === context)?.[0] ?? '';
+
+  return { exchange: name, msg: call[0], ...call[1] };
+});
+
+/** A backpressure gate whose capacity the test sets, and whose wait it ends with `open()`. */
+const makeGate = (atCapacity = true) => {
+  let open!: () => void;
+
+  const gate = {
+    full:       atCapacity,
+    atCapacity: vi.fn(() => gate.full),
+    hold:       vi.fn(() => new Promise<void>((resolve) => { open = () => { gate.full = false; resolve(); }; })),
+    open:       () => open(),
+  };
+
+  return gate;
+};
+
+const tick = () => new Promise((resolve) => setImmediate(resolve));
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
@@ -199,26 +235,115 @@ describe('consumeAndRepublish', () => {
 
   // ── Backpressure ────────────────────────────────────────────────────────────
 
-  it('publishes only once the backpressure gate lets it through', async () => {
-    const { consumer, publisher, channel, deliver } = makeBrokers();
-    let open!: () => void;
+  describe('backpressure', () => {
+    const twoSources = [bareRoute('a', 'dst'), bareRoute('b', 'dst')];
 
-    const hold = vi.fn(() => new Promise<void>((resolve) => { open = resolve; }));
+    it('cancels every consumer when a message arrives at capacity, and still routes that message', async () => {
+      const { consumer, publisher, channel, deliver } = makeBrokers();
+      const gate = makeGate();
 
-    await consumeAndRepublish(consumer as any, publisher as any, config([bareRoute('src', 'dst')]), hold);
+      await consumeAndRepublish(consumer as any, publisher as any, config(twoSources), gate);
 
-    const msg     = makeMsg({});
-    const handled = deliver('src', msg);
+      const msg = makeMsg({});
 
-    await new Promise((resolve) => setImmediate(resolve));
-    expect(hold).toHaveBeenCalledTimes(1);
-    expect(mockRepublish).not.toHaveBeenCalled();
+      await deliver('a', msg);
+      await tick();
 
-    open();
-    await handled;
+      expect(channel.cancel.mock.calls.map(([tag]) => tag)).toEqual(['a-1', 'b-2']);
+      expect(mockRepublish).toHaveBeenCalledTimes(1);
+      expect(channel.ack).toHaveBeenCalledWith(msg);
+    });
 
-    expect(mockRepublish).toHaveBeenCalledTimes(1);
-    expect(channel.ack).toHaveBeenCalledWith(msg);
+    it('leaves no delivery waiting on the gate while paused', async () => {
+      const { consumer, publisher, channel, deliver } = makeBrokers();
+      const gate = makeGate();
+
+      await consumeAndRepublish(consumer as any, publisher as any, config(twoSources), gate);
+
+      // Messages delivered before the cancel took effect: each is routed and settled at once.
+      const handled = [deliver('a', makeMsg({ n: 1 })), deliver('a', makeMsg({ n: 2 })), deliver('b', makeMsg({ n: 3 }))];
+
+      await Promise.all(handled);
+
+      expect(channel.ack).toHaveBeenCalledTimes(3);
+      expect(gate.hold).toHaveBeenCalledTimes(1);
+      expect(channel.cancel).toHaveBeenCalledTimes(2);
+    });
+
+    it('consumes every source queue again once the gate has room', async () => {
+      const { consumer, publisher, channel, deliver } = makeBrokers();
+      const gate = makeGate();
+
+      await consumeAndRepublish(consumer as any, publisher as any, config(twoSources), gate);
+      await deliver('a', makeMsg({}));
+      await tick();
+
+      expect(channel.consume).toHaveBeenCalledTimes(2);
+
+      gate.open();
+      await tick();
+
+      expect(channel.consume.mock.calls.map(([queue]) => queue)).toEqual(['a', 'b', 'a', 'b']);
+
+      // Paused again later, the new consumers are the ones cancelled.
+      gate.full = true;
+      await deliver('b', makeMsg({}));
+      await tick();
+
+      expect(channel.cancel.mock.calls.map(([tag]) => tag)).toEqual(['a-1', 'b-2', 'a-3', 'b-4']);
+    });
+
+    it('keeps consuming while the gate has room', async () => {
+      const { consumer, publisher, channel, deliver } = makeBrokers();
+      const gate = makeGate(false);
+
+      await consumeAndRepublish(consumer as any, publisher as any, config(twoSources), gate);
+      await deliver('a', makeMsg({}));
+      await tick();
+
+      expect(channel.cancel).not.toHaveBeenCalled();
+      expect(gate.hold).not.toHaveBeenCalled();
+      expect(channel.ack).toHaveBeenCalledTimes(1);
+    });
+
+    it('exits with code 1 when a consumer cannot be cancelled', async () => {
+      const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as any);
+
+      try {
+        const { consumer, publisher, channel, deliver } = makeBrokers();
+
+        channel.cancel.mockRejectedValueOnce(new Error('Channel closed'));
+
+        await consumeAndRepublish(consumer as any, publisher as any, config(twoSources), makeGate());
+        await deliver('a', makeMsg({}));
+        await tick();
+
+        expect(exit).toHaveBeenCalledWith(1);
+      } finally {
+        exit.mockRestore();
+      }
+    });
+
+    it('exits with code 1 when a source queue cannot be consumed again', async () => {
+      const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as any);
+
+      try {
+        const { consumer, publisher, channel, deliver } = makeBrokers();
+        const gate = makeGate();
+
+        await consumeAndRepublish(consumer as any, publisher as any, config(twoSources), gate);
+        await deliver('a', makeMsg({}));
+        await tick();
+
+        channel.consume.mockRejectedValueOnce(new Error('NOT_FOUND'));
+        gate.open();
+        await tick();
+
+        expect(exit).toHaveBeenCalledWith(1);
+      } finally {
+        exit.mockRestore();
+      }
+    });
   });
 
   // ── Routing keys ────────────────────────────────────────────────────────────
@@ -447,7 +572,7 @@ describe('consumeAndRepublish', () => {
     expect(mockRepublish).not.toHaveBeenCalled();
   });
 
-  it('requeues a message whose destination exchange the publisher no longer holds', async () => {
+  it('retries a message whose destination exchange the publisher no longer holds', async () => {
     vi.useFakeTimers();
 
     const { consumer, publisher, channel, exchanges, deliver } = makeBrokers();
@@ -460,17 +585,44 @@ describe('consumeAndRepublish', () => {
     const msg     = makeMsg({});
     const handled = deliver('src', msg);
 
-    await vi.advanceTimersByTimeAsync(REQUEUE_DELAY_MS);
+    await vi.advanceTimersByTimeAsync(RETRY_BASE_DELAY_MS);
     await handled;
 
-    expect(channel.nack).toHaveBeenCalledWith(msg, false, true);
+    expect(publications(exchanges)).toEqual([expect.objectContaining({ exchange: '', routingKey: 'src' })]);
+    expect(channel.ack).toHaveBeenCalledWith(msg);
     expect(logger.error).toHaveBeenCalledWith(
       expect.objectContaining({ err: expect.objectContaining({ message: 'Destination exchange not found: out' }) }),
       'Failed to route message',
     );
   });
 
-  // ── Acks, nacks and failures ────────────────────────────────────────────────
+  // ── Router headers ──────────────────────────────────────────────────────────
+
+  it('routes a retried copy under the routing key it first arrived with, without the router headers', async () => {
+    const { consumer, publisher, exchanges, deliver } = makeBrokers();
+    const routes: Route[] = [{ source: { queue: 'src' }, destination: { exchange: { name: 'out', type: 'topic' } } }];
+
+    await consumeAndRepublish(consumer as any, publisher as any, config(routes), null);
+
+    // A retried copy reaches the source queue through the default exchange, keyed by the queue.
+    await deliver('src', makeMsg({}, 'src', { [ATTEMPTS_HEADER]: 2, [ROUTING_KEY_HEADER]: 'trade.btc', 'x-app': 'keep' }));
+
+    expect(publications(exchanges)).toEqual([
+      expect.objectContaining({ exchange: 'out', routingKey: 'trade.btc', headers: { 'x-app': 'keep' } }),
+    ]);
+  });
+
+  it('leaves the incoming headers as they are when they carry no router header', async () => {
+    const { consumer, publisher, deliver } = makeBrokers();
+
+    await consumeAndRepublish(consumer as any, publisher as any, config([bareRoute('src', 'dst')]), null);
+
+    await deliver('src', makeMsg({}, '', { 'x-app': 'keep' }));
+
+    expect('headers' in mockRepublish.mock.calls[0][1]).toBe(false);
+  });
+
+  // ── Acks, retries and dead letters ──────────────────────────────────────────
 
   describe('on failure', () => {
     beforeEach(() => {
@@ -481,27 +633,144 @@ describe('consumeAndRepublish', () => {
       vi.useRealTimers();
     });
 
-    it('requeues after a short delay while the publisher is connected', async () => {
-      const { consumer, publisher, channel, deliver } = makeBrokers();
+    it('retries after a back-off: a copy at the back of its source queue with the attempt counted, then acks', async () => {
+      const { consumer, publisher, channel, exchanges, deliver } = makeBrokers();
 
       mockRepublish.mockRejectedValueOnce(new Error('publish failed'));
 
       await consumeAndRepublish(consumer as any, publisher as any, config([bareRoute('src', 'dst')]), null);
 
-      const msg     = makeMsg({});
+      const msg     = makeMsg({ data: 1 }, 'in.key', { 'x-app': 'keep' }, { deliveryMode: 2 });
       const handled = deliver('src', msg);
 
-      await vi.advanceTimersByTimeAsync(REQUEUE_DELAY_MS - 1);
-      expect(channel.nack).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(RETRY_BASE_DELAY_MS - 1);
+      expect(mockRepublish).toHaveBeenCalledTimes(1);
+      expect(channel.ack).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(1);
       await expect(handled).resolves.toBeUndefined();
 
-      expect(channel.nack).toHaveBeenCalledWith(msg, false, true);
-      expect(channel.ack).not.toHaveBeenCalled();
+      const retry = publications(exchanges)[1];
+
+      expect(retry).toEqual(expect.objectContaining({
+        exchange:   '',
+        routingKey: 'src',
+        persistent: true,
+        headers:    { 'x-app': 'keep', [ATTEMPTS_HEADER]: 1, [ROUTING_KEY_HEADER]: 'in.key' },
+      }));
+      // The original message is republished, so the body goes out byte for byte.
+      expect(retry.msg).toBe(msg);
+      expect(channel.ack).toHaveBeenCalledWith(msg);
+      expect(channel.nack).not.toHaveBeenCalled();
     });
 
-    it('waits for the publisher to reconnect before requeueing', async () => {
+    it.each([[1, RETRY_BASE_DELAY_MS * 2], [3, RETRY_BASE_DELAY_MS * 8]])(
+      'doubles the back-off with each failure: after %i earlier failures it waits %i ms',
+      async (earlier, wait) => {
+        const { consumer, publisher, exchanges, deliver } = makeBrokers();
+
+        mockRepublish.mockRejectedValueOnce(new Error('publish failed'));
+
+        await consumeAndRepublish(consumer as any, publisher as any, config([bareRoute('src', 'dst')], 500, 10), null);
+
+        const handled = deliver('src', makeMsg({}, 'src', { [ATTEMPTS_HEADER]: earlier, [ROUTING_KEY_HEADER]: 'k' }));
+
+        await vi.advanceTimersByTimeAsync(wait - 1);
+        expect(mockRepublish).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(1);
+        await handled;
+
+        expect(publications(exchanges)[1].headers).toEqual({ [ATTEMPTS_HEADER]: earlier + 1, [ROUTING_KEY_HEADER]: 'k' });
+      },
+    );
+
+    it('waits no longer than the longest back-off', async () => {
+      const { consumer, publisher, deliver } = makeBrokers();
+
+      mockRepublish.mockRejectedValueOnce(new Error('publish failed'));
+
+      await consumeAndRepublish(consumer as any, publisher as any, config([bareRoute('src', 'dst')], 500, 100), null);
+
+      const handled = deliver('src', makeMsg({}, '', { [ATTEMPTS_HEADER]: 50 }));
+
+      await vi.advanceTimersByTimeAsync(RETRY_MAX_DELAY_MS);
+      await handled;
+
+      expect(mockRepublish).toHaveBeenCalledTimes(2);
+    });
+
+    it('dead-letters the message at its last attempt, with its key, source and error, and acks it', async () => {
+      const { consumer, publisher, channel, exchanges, deliver } = makeBrokers();
+
+      mockRepublish.mockRejectedValueOnce(new Error('publish failed'));
+
+      await consumeAndRepublish(consumer as any, publisher as any, config([bareRoute('src', 'dst')]), null);
+
+      const msg = makeMsg({}, 'src', { [ATTEMPTS_HEADER]: 4, [ROUTING_KEY_HEADER]: 'trade.btc', 'x-app': 'keep' });
+
+      await deliver('src', msg);
+
+      const deadLetter = publications(exchanges)[1];
+
+      expect(publisher.getExchange).toHaveBeenCalledWith('dead');
+      expect(deadLetter).toEqual(expect.objectContaining({
+        exchange:   'dead',
+        routingKey: 'trade.btc',
+        headers:    {
+          'x-app':               'keep',
+          [ATTEMPTS_HEADER]:     5,
+          [ROUTING_KEY_HEADER]:  'trade.btc',
+          [SOURCE_QUEUE_HEADER]: 'src',
+          [ERROR_HEADER]:        'publish failed',
+        },
+      }));
+      expect(deadLetter.msg).toBe(msg);
+      expect(mockRepublish).toHaveBeenCalledTimes(2);
+      expect(channel.ack).toHaveBeenCalledWith(msg);
+      expect(channel.nack).not.toHaveBeenCalled();
+    });
+
+    it('dead-letters at the first failure when one attempt is allowed', async () => {
+      const { consumer, publisher, exchanges, deliver } = makeBrokers();
+
+      mockRepublish.mockRejectedValueOnce(new Error('publish failed'));
+
+      await consumeAndRepublish(consumer as any, publisher as any, config([bareRoute('src', 'dst')], 500, 1), null);
+      await deliver('src', makeMsg({}, 'k'));
+
+      expect(publications(exchanges)[1]).toEqual(expect.objectContaining({ exchange: 'dead', routingKey: 'k' }));
+    });
+
+    it('never requeues a message that keeps failing: it is dead-lettered after the allowed attempts', async () => {
+      const { consumer, publisher, channel, exchanges, deliver } = makeBrokers();
+
+      await consumeAndRepublish(consumer as any, publisher as any, config([bareRoute('src', 'dst')], 500, 3), null);
+
+      // Every route to 'dst' fails; the retry copies and the dead letter go through.
+      mockRepublish.mockImplementation(async (_msg: unknown, overrides: { routingKey: string }) => {
+        if (overrides.routingKey === 'dst') throw new Error('publish failed');
+      });
+
+      let msg: any = makeMsg({}, 'k');
+
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        const handled = deliver('src', msg);
+
+        await vi.advanceTimersByTimeAsync(RETRY_MAX_DELAY_MS);
+        await handled;
+
+        const last = publications(exchanges).at(-1)!;
+
+        msg = { ...msg, fields: { routingKey: last.routingKey }, properties: { ...msg.properties, headers: last.headers } };
+      }
+
+      expect(publications(exchanges).filter((p) => p.routingKey !== 'dst').map((p) => p.exchange)).toEqual(['', '', 'dead']);
+      expect(channel.ack).toHaveBeenCalledTimes(3);
+      expect(channel.nack).not.toHaveBeenCalled();
+    });
+
+    it('requeues without counting the attempt once the publisher reconnects', async () => {
       const { consumer, publisher, channel, deliver } = makeBrokers();
 
       await consumeAndRepublish(consumer as any, publisher as any, config([bareRoute('src', 'dst')]), null);
@@ -509,7 +778,8 @@ describe('consumeAndRepublish', () => {
       publisher.state = 'reconnecting';
       mockRepublish.mockRejectedValue(new Error('Channel closed'));
 
-      const handled = [deliver('src', makeMsg({ n: 1 })), deliver('src', makeMsg({ n: 2 }))];
+      const msgs    = [makeMsg({ n: 1 }), makeMsg({ n: 2 })];
+      const handled = msgs.map((msg) => deliver('src', msg));
 
       await vi.advanceTimersByTimeAsync(60_000);
       expect(channel.nack).not.toHaveBeenCalled();
@@ -519,11 +789,50 @@ describe('consumeAndRepublish', () => {
       publisher.emit('connect');
       await Promise.all(handled);
 
-      expect(channel.nack).toHaveBeenCalledTimes(2);
+      expect(channel.nack.mock.calls).toEqual(msgs.map((msg) => [msg, false, true]));
+      expect(mockRepublish).toHaveBeenCalledTimes(2); // the two failed routes, no retry copy
+      expect(channel.ack).not.toHaveBeenCalled();
     });
 
-    it('nacks once and never acks when a later destination fails', async () => {
+    it('requeues the message as it is when its retry copy cannot be published', async () => {
       const { consumer, publisher, channel, deliver } = makeBrokers();
+
+      mockRepublish.mockRejectedValueOnce(new Error('publish failed')).mockRejectedValueOnce(new Error('retry failed'));
+
+      await consumeAndRepublish(consumer as any, publisher as any, config([bareRoute('src', 'dst')]), null);
+
+      const msg     = makeMsg({});
+      const handled = deliver('src', msg);
+
+      await vi.advanceTimersByTimeAsync(RETRY_BASE_DELAY_MS);
+      expect(channel.nack).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(RETRY_BASE_DELAY_MS);
+      await handled;
+
+      expect(channel.nack).toHaveBeenCalledWith(msg, false, true);
+      expect(channel.ack).not.toHaveBeenCalled();
+    });
+
+    it('requeues the message as it is when its dead letter cannot be published', async () => {
+      const { consumer, publisher, channel, deliver } = makeBrokers();
+
+      mockRepublish.mockRejectedValueOnce(new Error('publish failed')).mockRejectedValueOnce(new Error('dead letter failed'));
+
+      await consumeAndRepublish(consumer as any, publisher as any, config([bareRoute('src', 'dst')], 500, 1), null);
+
+      const msg     = makeMsg({});
+      const handled = deliver('src', msg);
+
+      await vi.advanceTimersByTimeAsync(RETRY_BASE_DELAY_MS);
+      await handled;
+
+      expect(channel.nack).toHaveBeenCalledWith(msg, false, true);
+      expect(channel.ack).not.toHaveBeenCalled();
+    });
+
+    it('retries once and acks once when a later destination fails', async () => {
+      const { consumer, publisher, channel, exchanges, deliver } = makeBrokers();
 
       mockRepublish.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('second failed'));
 
@@ -533,18 +842,20 @@ describe('consumeAndRepublish', () => {
 
       const handled = deliver('src', makeMsg({}));
 
-      await vi.advanceTimersByTimeAsync(REQUEUE_DELAY_MS);
+      await vi.advanceTimersByTimeAsync(RETRY_BASE_DELAY_MS);
       await handled;
 
-      expect(mockRepublish).toHaveBeenCalledTimes(2);
-      expect(channel.nack).toHaveBeenCalledTimes(1);
-      expect(channel.ack).not.toHaveBeenCalled();
+      expect(publications(exchanges).map((p) => p.routingKey)).toEqual(['dst1', 'dst2', 'src']);
+      expect(channel.ack).toHaveBeenCalledTimes(1);
+      expect(channel.nack).not.toHaveBeenCalled();
     });
 
     it('logs routing failures of a source at most once per interval', async () => {
       const { consumer, publisher, deliver } = makeBrokers();
 
-      mockRepublish.mockRejectedValue(new Error('publish failed'));
+      mockRepublish.mockImplementation(async (_msg: unknown, overrides: { routingKey: string }) => {
+        if (overrides.routingKey === 'dst') throw new Error('publish failed');
+      });
 
       await consumeAndRepublish(consumer as any, publisher as any, config([bareRoute('src', 'dst')]), null);
 
@@ -552,7 +863,7 @@ describe('consumeAndRepublish', () => {
 
       for (let i = 0; i < 3; i++) {
         const handled = deliver('src', makeMsg({}));
-        await vi.advanceTimersByTimeAsync(REQUEUE_DELAY_MS);
+        await vi.advanceTimersByTimeAsync(RETRY_BASE_DELAY_MS);
         await handled;
       }
 
@@ -561,7 +872,7 @@ describe('consumeAndRepublish', () => {
       await vi.advanceTimersByTimeAsync(FAILURE_LOG_INTERVAL_MS);
 
       const handled = deliver('src', makeMsg({}));
-      await vi.advanceTimersByTimeAsync(REQUEUE_DELAY_MS);
+      await vi.advanceTimersByTimeAsync(RETRY_BASE_DELAY_MS);
       await handled;
 
       expect(failures()).toHaveLength(2);
@@ -583,16 +894,16 @@ describe('consumeAndRepublish', () => {
     it('survives a nack on a closed channel', async () => {
       const { consumer, publisher, channel, deliver } = makeBrokers();
 
-      mockRepublish.mockRejectedValueOnce(new Error('publish failed'));
+      mockRepublish.mockRejectedValueOnce(new Error('publish failed')).mockRejectedValueOnce(new Error('retry failed'));
       channel.nack.mockImplementationOnce(() => { throw new Error('Channel closed'); });
 
       await consumeAndRepublish(consumer as any, publisher as any, config([bareRoute('src', 'dst')]), null);
 
       const handled = deliver('src', makeMsg({}));
 
-      await vi.advanceTimersByTimeAsync(REQUEUE_DELAY_MS);
+      await vi.advanceTimersByTimeAsync(RETRY_BASE_DELAY_MS * 2);
       await expect(handled).resolves.toBeUndefined();
-      expect(logger.warn).toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('Could not nack'));
     });
   });
 

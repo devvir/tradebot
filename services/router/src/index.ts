@@ -24,5 +24,5 @@ SK.run(async (service: Service) => {
 
   if (backpressure) service.on('shutdown', backpressure.stop);
 
-  await consumeAndRepublish(consumer, publisher, config, backpressure?.hold ?? null);
+  await consumeAndRepublish(consumer, publisher, config, backpressure);
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { loadConfig } from '../src/config';
+import { loadConfig, DEFAULT_DEAD_LETTER_NAME } from '../src/config';
 import { formatRoute } from '../src/routes';
 import { buildConsumerTopology, buildPublisherTopology } from '../src/topology';
 
@@ -22,6 +22,9 @@ describe('Router Config', () => {
     delete process.env.ROUTER_MAX_READY;
     delete process.env.ROUTER_PREFETCH;
     delete process.env.ROUTER_WATCH_QUEUES;
+    delete process.env.ROUTER_MAX_ATTEMPTS;
+    delete process.env.ROUTER_DEAD_LETTER_EXCHANGE;
+    delete process.env.ROUTER_DEAD_LETTER_QUEUE;
   });
 
   // ── Config validation ───────────────────────────────────────────────────────
@@ -78,6 +81,52 @@ describe('Router Config', () => {
     it.each(['0', '-1', 'abc', '1.5'])('rejects ROUTER_PREFETCH=%s', (raw) => {
       expect(() => load('broadcast > writer', { ROUTER_PREFETCH: raw }))
         .toThrow(`ROUTER_PREFETCH must be a positive integer, got "${raw}"`);
+    });
+
+    it('allows 5 attempts at a message when ROUTER_MAX_ATTEMPTS is unset', () => {
+      expect(load('broadcast > writer').maxAttempts).toBe(5);
+    });
+
+    it('reads ROUTER_MAX_ATTEMPTS', () => {
+      expect(load('broadcast > writer', { ROUTER_MAX_ATTEMPTS: '1' }).maxAttempts).toBe(1);
+    });
+
+    it.each(['0', '-1', 'abc', '2.5'])('rejects ROUTER_MAX_ATTEMPTS=%s', (raw) => {
+      expect(() => load('broadcast > writer', { ROUTER_MAX_ATTEMPTS: raw }))
+        .toThrow(`ROUTER_MAX_ATTEMPTS must be a positive integer, got "${raw}"`);
+    });
+
+    it.each([['unset', undefined], ['blank', '  ']])('names the dead-letter exchange and queue by default when %s', (_, value) => {
+      const env: Record<string, string> = value === undefined ? {} : { ROUTER_DEAD_LETTER_EXCHANGE: value, ROUTER_DEAD_LETTER_QUEUE: value };
+
+      expect(load('broadcast > writer', env)).toMatchObject({
+        deadLetterExchange: DEFAULT_DEAD_LETTER_NAME,
+        deadLetterQueue:    DEFAULT_DEAD_LETTER_NAME,
+      });
+    });
+
+    it('reads the dead-letter exchange and queue names', () => {
+      expect(load('broadcast > writer', { ROUTER_DEAD_LETTER_EXCHANGE: ' dlx ', ROUTER_DEAD_LETTER_QUEUE: 'dlq' })).toMatchObject({
+        deadLetterExchange: 'dlx',
+        deadLetterQueue:    'dlq',
+      });
+    });
+
+    it.each([
+      ['a source queue', 'dlq > writer'],
+      ['a destination queue', 'broadcast > dlq'],
+      ['a destination queue on an exchange', 'broadcast > dlq@topic:out'],
+    ])('rejects a dead-letter queue that is %s', (_, rules) => {
+      expect(() => load(rules, { ROUTER_DEAD_LETTER_QUEUE: 'dlq' }))
+        .toThrow('The dead-letter queue "dlq" is a queue of a rule');
+    });
+
+    it.each([
+      ['a source exchange', 'in@topic:dlx > writer'],
+      ['a destination exchange', 'broadcast > @fanout:dlx'],
+    ])('rejects a dead-letter exchange that is %s', (_, rules) => {
+      expect(() => load(rules, { ROUTER_DEAD_LETTER_EXCHANGE: 'dlx' }))
+        .toThrow('The dead-letter exchange "dlx" is an exchange of a rule');
     });
 
     it('reports every problem of a configuration in one error', () => {
@@ -375,6 +424,15 @@ describe('Router Config', () => {
 
       expect(topology.exchanges?.f?.queues?.a).toEqual({ durable: true });
       expect(topology.exchanges?.h?.queues?.b).toEqual({ durable: true });
+    });
+
+    it('declares the dead-letter exchange as fanout, with the dead-letter queue bound to it', () => {
+      const config = load('broadcast > writer');
+
+      expect(buildPublisherTopology(config.routes, { exchange: 'dlx', queue: 'dlq' })).toEqual({
+        exchanges: { dlx: { type: 'fanout', queues: { dlq: { durable: true, routingKey: [''] } } } },
+        queues:    { writer: { durable: true } },
+      });
     });
 
     it('full exchange-on-both-sides topology', () => {

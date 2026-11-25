@@ -34,4 +34,7 @@ export type Config = {
   prefetch: number;      // Max unacknowledged messages the router holds per source queue
   maxReady: number;      // Max messages in any watched queue before pausing (0 = disabled)
   watchQueues: string[]; // Queues to monitor for backpressure (set exactly when maxReady > 0)
+  maxAttempts: number;   // Failed attempts at a message before it is dead-lettered (at least 1)
+  deadLetterExchange: string; // Fanout exchange the router declares and dead-letters messages to
+  deadLetterQueue: string;    // Durable queue the router binds to the dead-letter exchange
 };

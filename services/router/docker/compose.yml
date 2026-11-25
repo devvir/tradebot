@@ -14,11 +14,20 @@ services:
       # least 1.
       ROUTER_PREFETCH: ${ROUTER_PREFETCH:-500}
 
-      # Backpressure: publishing pauses while any of ROUTER_WATCH_QUEUES (CSV)
-      # holds ROUTER_MAX_READY messages or more. 0 turns it off; a positive
-      # value needs at least one queue to watch.
+      # Backpressure: consuming pauses while any of ROUTER_WATCH_QUEUES (CSV)
+      # holds ROUTER_MAX_READY messages or more. A soft limit: messages taken
+      # before the pause are still routed. 0 turns it off; a positive value
+      # needs at least one queue to watch.
       ROUTER_MAX_READY:    ${ROUTER_MAX_READY:-0}
       ROUTER_WATCH_QUEUES: ${ROUTER_WATCH_QUEUES:-}
+
+      # A message whose routing fails is retried with back-off, and after
+      # ROUTER_MAX_ATTEMPTS failures (at least 1) is published to the fanout
+      # exchange ROUTER_DEAD_LETTER_EXCHANGE, which the router declares with
+      # ROUTER_DEAD_LETTER_QUEUE bound to it. Neither may be part of a rule.
+      ROUTER_MAX_ATTEMPTS:         ${ROUTER_MAX_ATTEMPTS:-5}
+      ROUTER_DEAD_LETTER_EXCHANGE: ${ROUTER_DEAD_LETTER_EXCHANGE:-router.dead-letter}
+      ROUTER_DEAD_LETTER_QUEUE:    ${ROUTER_DEAD_LETTER_QUEUE:-router.dead-letter}
 
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV: ${APP_ENV:-prod}

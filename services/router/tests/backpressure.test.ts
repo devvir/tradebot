@@ -62,6 +62,9 @@ const config = (watchQueues: string[], maxReady = 100): Config => ({
   prefetch:    500,
   maxReady,
   watchQueues,
+  maxAttempts:        5,
+  deadLetterExchange: 'dead',
+  deadLetterQueue:    'dead.q',
 });
 
 /** Whether a promise has settled, after letting pending microtasks run. */
@@ -112,6 +115,22 @@ describe('createBackpressureGate', () => {
     const gate       = (await createBackpressureGate(broker as any, config(['a'])))!;
 
     expect(await settled(gate.hold())).toBe(false);
+
+    await gate.stop();
+  });
+
+  it('is at capacity while a watched queue is at the limit, by the depths last read', async () => {
+    const depths     = new Map([['a', 0], ['b', 100]]);
+    const { broker } = makeBroker(depths);
+    const gate       = (await createBackpressureGate(broker as any, config(['a', 'b'])))!;
+
+    expect(gate.atCapacity()).toBe(true);
+
+    depths.set('b', 99);
+    expect(gate.atCapacity()).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(BACKPRESSURE_POLL_MS);
+    expect(gate.atCapacity()).toBe(false);
 
     await gate.stop();
   });
