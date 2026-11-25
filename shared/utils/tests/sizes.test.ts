@@ -11,11 +11,20 @@ describe('readable sizes', () => {
     expect(sizeOf(3 * 1024 ** 4)).toBe('3 TB');
   });
 
-  /**
-   * The case that prompted this: a thin symbol's file rounded to `0 mb` and
-   * said nothing at all about what was being read.
-   */
+  /** A non-zero size is written in a unit small enough that it does not print as zero. */
   it('never flattens a small input to zero', () => {
     expect(sizeOf(4096)).not.toMatch(/^0 /);
+  });
+
+  /** The unit follows the rounded number, so no size prints as `1024` of a unit. */
+  it('moves to the next unit when rounding reaches 1024', () => {
+    expect(sizeOf(1024 * 1024 - 1)).toBe('1 MB');
+    expect(sizeOf(1023.96 * 1024)).toBe('1 MB');
+    expect(sizeOf(1024 ** 3 - 1)).toBe('1 GB');
+  });
+
+  it('stays in the unit while the rounded number is below 1024', () => {
+    expect(sizeOf(1023)).toBe('1023 B');
+    expect(sizeOf(1023.9 * 1024)).toBe('1023.9 KB');
   });
 });

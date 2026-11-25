@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { parseEnvFile } from './env';
 
@@ -18,25 +18,34 @@ export interface TestServicesConfig {
   timeout?: number;
 }
 
-const composeCmd = (config: TestServicesConfig): string => {
-  const files = config.composeFiles.map(f => `-f "${f}"`).join(' ');
-  return `docker compose --project-name ${config.projectName} --env-file "${config.envFile}" ${files}`;
+/** `docker compose` arguments for the project, followed by `subcommand`. */
+const composeArgs = (config: TestServicesConfig, subcommand: string[]): string[] => [
+  'compose',
+  '--project-name', config.projectName,
+  '--env-file', config.envFile,
+  ...config.composeFiles.flatMap(f => ['-f', f]),
+  ...subcommand,
+];
+
+/** Block the thread for `ms` milliseconds. */
+const pause = (ms: number): void => {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 };
 
 export const startTestServices = (config: TestServicesConfig): void => {
   const timeout = config.timeout ?? 60;
   const env = { ...process.env, ...parseEnvFile(config.envFile) };
-  const cmd = `${composeCmd(config)} up -d --wait --wait-timeout ${timeout}`;
+  const args = composeArgs(config, ['up', '-d', '--wait', '--wait-timeout', String(timeout)]);
   const maxAttempts = 3;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      execSync(cmd, { stdio: 'inherit', env, timeout: (timeout + 30) * 1000 });
+      execFileSync('docker', args, { stdio: 'inherit', env, timeout: (timeout + 30) * 1000 });
       return;
     } catch (err) {
       if (attempt === maxAttempts) throw err;
       // Docker's IPAM can fail under concurrent compose starts — brief pause before retry
-      execSync(`sleep ${attempt * 2}`);
+      pause(attempt * 2000);
     }
   }
 };
@@ -44,10 +53,7 @@ export const startTestServices = (config: TestServicesConfig): void => {
 export const stopTestServices = (config: TestServicesConfig): void => {
   const env = { ...process.env, ...parseEnvFile(config.envFile) };
 
-  execSync(
-    `${composeCmd(config)} down --volumes`,
-    { stdio: 'inherit', env },
-  );
+  execFileSync('docker', composeArgs(config, ['down', '--volumes']), { stdio: 'inherit', env });
 };
 
 // ── Per-service helpers ────────────────────────────────────────────────────────

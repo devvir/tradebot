@@ -12,14 +12,20 @@ export const sizeOf = (bytes: number): string => {
   let scaled = bytes;
   let unit   = 0;
 
-  while (scaled >= 1024 && unit < UNITS.length - 1) {
+  // The unit is chosen on the number as printed, so a value that rounds up to
+  // 1024 of one unit is written as 1 of the next.
+  while (unit < UNITS.length - 1 && shown(scaled, unit) >= 1024) {
     scaled /= 1024;
     unit++;
   }
 
-  return `${unit === 0 ? scaled : Math.round(scaled * 10) / 10} ${UNITS[unit]}`;
+  return `${shown(scaled, unit)} ${UNITS[unit]}`;
 };
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
 const UNITS = ['B', 'KB', 'MB', 'GB', 'TB'] as const;
+
+/** Bytes print whole; every larger unit prints to one decimal place. */
+const shown = (scaled: number, unit: number): number =>
+  unit === 0 ? scaled : Math.round(scaled * 10) / 10;

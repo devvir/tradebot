@@ -194,6 +194,17 @@ describe('header modifiers', () => {
     expect(r.destination.headers).toEqual({ 'x-flag': '' });
   });
 
+  it('keeps the inner spaces of a header value', () => {
+    const r = one('q > ex@topic:x(header:note=hello world)');
+    expect(r.destination.headers).toEqual({ note: 'hello world' });
+  });
+
+  it('ignores whitespace around modifier tokens', () => {
+    const r = one('src > @topic:out ( key:record , header:x-t = trade )');
+    expect(r.destination.routingKey).toEqual({ value: 'record' });
+    expect(r.destination.headers).toEqual({ 'x-t': 'trade' });
+  });
+
   it('parses key and header combined', () => {
     const r = one('src > @topic:out(key:record,header:x-t=trade)');
     expect(r.destination.routingKey).toEqual({ value: 'record' });
@@ -358,6 +369,31 @@ describe('error cases', () => {
 
   it('throws for empty header name', () => {
     expect(() => parseRules('src > dst(header:=value)')).toThrow('header name cannot be empty');
+  });
+
+  it('throws for a second modifier group', () => {
+    expect(() => parseRules('a > topic:b(key:x)(key:y)')).toThrow('one modifier group');
+  });
+
+  it('throws for a stray closing parenthesis', () => {
+    expect(() => parseRules('a > topic:b(key:x))')).toThrow('one modifier group');
+    expect(() => parseRules('a) > topic:b')).toThrow('one modifier group');
+  });
+
+  it('throws for text after the modifier group', () => {
+    expect(() => parseRules('a > topic:b(key:x)c')).toThrow('Unclosed parenthesis');
+  });
+
+  it('throws for a repeated key modifier', () => {
+    expect(() => parseRules('a > topic:b(key:x,key:y)')).toThrow('More than one key: modifier');
+  });
+
+  it('throws for a repeated header name', () => {
+    expect(() => parseRules('a > topic:b(header:x=1,header:x=2)')).toThrow('Header "x" set more than once');
+  });
+
+  it('throws for whitespace inside a name', () => {
+    expect(() => parseRules('my queue > writer')).toThrow('Invalid route item');
   });
 
   it('throws for invalid queue name in queue@exchange', () => {
