@@ -181,6 +181,128 @@ describe('refusing a definition', () => {
   });
 });
 
+/**
+ * A definition that is not one, in each of the ways a body can be wrong. None
+ * is evaluated or handed on: each is a refusal with its problems, never a failure.
+ */
+const MALFORMED: [string, unknown][] = [
+  ['a venue whose rules are not a list', { venues: { binance: 'x' } }],
+  ['venues that are a list',             { venues: [1] }],
+  ['a rule that is nothing',             { venues: { binance: [null] } }],
+  ['datasets that are not a list',       { venues: { binance: [{ effect: 'include', datasets: 'klines' }] } }],
+  ['markets that are not a list',        { venues: { binance: [{ effect: 'include', markets: 'spot' }] } }],
+  ['a bound that is a number',           { venues: { binance: [{ effect: 'include', from: 202001 }] } }],
+  ['an effect that is neither',          { venues: { binance: [{ effect: 'drop' }] } }],
+  ['a definition that is text',          'str'],
+];
+
+describe('refusing what is not a definition', () => {
+  for (const [what, definition] of MALFORMED) {
+    it(`refuses ${what} everywhere one is taken`, async () => {
+      await ask('POST', '/lenses', { slug: 'cold-store' });
+
+      forwarded = [];
+
+      const asked = [
+        await ask<{ problems: LensProblem[] }>('POST', '/lenses/check', { definition }),
+        await ask<{ problems: LensProblem[] }>('POST', '/lenses/size', { definition }),
+        await ask<{ problems: LensProblem[] }>('POST', '/lenses/resolve', { definition }),
+        await ask<{ problems: LensProblem[] }>('POST', '/lenses', { slug: 'other', definition }),
+        await ask<{ problems: LensProblem[] }>('PUT', '/lenses/cold-store', { definition }),
+      ];
+
+      for (const answer of asked) {
+        expect(answer.status).toBe(400);
+        expect(answer.body.problems.length).toBeGreaterThan(0);
+      }
+
+      expect(forwarded).toEqual([]);
+    });
+  }
+
+  it('takes a definition sent as the body itself', async () => {
+    const answer = await ask<{ problems: LensProblem[] }>('POST', '/lenses/size', { venues: { binance: 'x' } });
+
+    expect(answer.status).toBe(400);
+    expect(answer.body.problems[0]).toMatchObject({ venue: 'binance', rule: -1 });
+  });
+
+  it('answers a definition that can be stored with no problems', async () => {
+    const answer = await ask('POST', '/lenses/check', lens({ binance: [{ effect: 'include' }] }));
+
+    expect(answer).toEqual({ status: 200, body: { problems: [] } });
+  });
+});
+
+describe('refusing a lens write', () => {
+  it('refuses a slug that is not text', async () => {
+    for (const slug of [12, ['ab']])
+      expect((await ask('POST', '/lenses', { slug })).status).toBe(400);
+
+    expect(forwarded).toEqual([]);
+  });
+
+  it('refuses a slug that is a path of its own', async () => {
+    for (const slug of ['options', 'size', 'check', 'resolve'])
+      expect((await ask('POST', '/lenses', { slug })).status).toBe(400);
+
+    expect(forwarded).toEqual([]);
+  });
+
+  it('refuses a name or a note that is not text', async () => {
+    expect((await ask('POST', '/lenses', { slug: 'cold-store', name: { x: 1 } })).status).toBe(400);
+    expect((await ask('POST', '/lenses', { slug: 'cold-store', note: 5 })).status).toBe(400);
+    expect((await ask('PUT', '/lenses/cold-store', { name: ['a'] })).status).toBe(400);
+    expect(forwarded).toEqual([]);
+  });
+
+  it('will not replace a definition with nothing', async () => {
+    await ask('POST', '/lenses', { slug: 'cold-store' });
+
+    forwarded = [];
+
+    const answer = await ask<{ problems: LensProblem[] }>('PUT', '/lenses/cold-store', { definition: null });
+
+    expect(answer.status).toBe(400);
+    expect(answer.body.problems).toHaveLength(1);
+    expect(forwarded).toEqual([]);
+  });
+
+  it('refuses a body that is not a document', async () => {
+    expect((await ask('POST', '/lenses', ['cold-store'])).status).toBe(400);
+    expect((await ask('PUT', '/lenses/cold-store', ['cold-store'])).status).toBe(400);
+    expect(forwarded).toEqual([]);
+  });
+
+  it('hands on only the parts of a lens', async () => {
+    let sent: unknown;
+
+    const real = globalThis.fetch;
+
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      if (! String(url).startsWith('http://prospector:8080')) return real(url, init);
+
+      sent = JSON.parse(String(init?.body));
+
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    await ask('PUT', '/lenses/cold-store', { note: 'what is old', extra: 'x' });
+
+    expect(sent).toEqual({ note: 'what is old' });
+  });
+});
+
+/** A path that names no lens is answered here: nothing outside `/lenses/` is ever asked of prospector. */
+describe('a path that names no lens', () => {
+  for (const path of ['/lenses/%2E%2E', '/lenses/%2E', '/lenses/Not%20Sound'])
+    it(`answers 404 for ${path}, asking prospector nothing`, async () => {
+      expect((await ask('PUT', path, { note: 'what is old' })).status).toBe(404);
+      expect((await ask('DELETE', path)).status).toBe(404);
+      expect(forwarded).toEqual([]);
+    });
+});
+
 describe('what a definition would select', () => {
   it('sizes one that has not been stored', async () => {
     const { status, body } = await ask<{ partitions: number; files: number }>('POST', '/lenses/size',
@@ -295,6 +417,16 @@ describe('a call prospector does not answer', () => {
 
       expect(answer).toEqual({ status, body: { error: 'no' } });
       expect(counted.calls).toBe(1);
+    }
+  });
+
+  it('answers in JSON where prospector does not', async () => {
+    for (const [status, relayed] of [[404, 404], [503, 502]] as const) {
+      failing(async () => new Response('<html>Cannot DELETE /</html>', { status, headers: { 'content-type': 'text/html' } }));
+
+      const answer = await ask<{ error: string }>('DELETE', '/lenses/cold-store');
+
+      expect(answer).toEqual({ status: relayed, body: { error: 'The collector refused the request' } });
     }
   });
 

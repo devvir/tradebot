@@ -4,17 +4,18 @@ import {
 } from '@tradebot/lenses';
 import { savedLensSize } from '../lenses/figures';
 import { send } from '../prospector';
-import type { Application, Request, Response } from 'express';
+import type { Application, Response } from 'express';
 import type { DatabaseSync } from 'node:sqlite';
-import type { LensDefinition, LensWrite } from '../types';
+import type { LensDefinition, LensProblem, LensWrite } from '../types';
 
 /**
  * The lens endpoints.
  *
  * **A lens is read whole and written whole**, so there is no `PATCH` of one rule
  * and rules need no ids — their position in the array is what identifies them.
- * Every write validates first and says what is wrong in a person's words, because
- * the only consumer that writes here is a form.
+ * Every write, and every definition asked about, is checked first and refused
+ * with what is wrong in a person's words: nothing is evaluated or handed on
+ * that is not a definition every evaluation can read.
  *
  * **A lens is stored by prospector, never here.** A write that passes is handed
  * to it, and what it answers is what the caller is told — see `stored`.
@@ -50,56 +51,32 @@ export const mountLenses = (app: Application, db: DatabaseSync): void => {
   });
 
   app.post('/lenses', async (req, res) => {
-    const { slug, name, note, definition } = (req.body ?? {}) as LensWrite;
+    const write = lensWriteOf(db, res, req.body, 'create');
 
-    if (! slug || ! lensNameIsSound(slug)) {
-      res.status(400).json({
-        error: 'A lens is addressed in lower case, digits and hyphens, two characters or more.',
-      });
+    if (! write) return;
 
-      return;
-    }
-
-    const problems = definition ? problemsWith(db, definition) : [];
-
-    if (problems.length > 0) {
-      res.status(400).json({ error: 'That definition cannot be stored', problems });
-
-      return;
-    }
-
-    await stored(res, 'POST', '/lenses', { slug, name: name ?? '', note: note ?? '', definition });
+    await stored(res, 'POST', '/lenses', { ...write, name: write.name ?? '', note: write.note ?? '' });
   });
 
   /** Replace a lens, whole — its name, its note, its definition, or all three. */
   app.put('/lenses/:slug', async (req, res) => {
-    const slug = String(req.params['slug']);
+    const slug = soundSlug(res, req.params['slug']);
 
-    const to = (req.body ?? {}) as LensWrite;
+    if (! slug) return;
 
-    if (to.slug !== undefined && ! lensNameIsSound(to.slug)) {
-      res.status(400).json({
-        error: 'A lens is addressed in lower case, digits and hyphens, two characters or more.',
-      });
+    const write = lensWriteOf(db, res, req.body ?? {}, 'replace');
 
-      return;
-    }
+    if (! write) return;
 
-    if (to.definition) {
-      const problems = problemsWith(db, to.definition);
-
-      if (problems.length > 0) {
-        res.status(400).json({ error: 'That definition cannot be stored', problems });
-
-        return;
-      }
-    }
-
-    await stored(res, 'PUT', `/lenses/${encodeURIComponent(slug)}`, to);
+    await stored(res, 'PUT', `/lenses/${encodeURIComponent(slug)}`, write);
   });
 
   app.delete('/lenses/:slug', async (req, res) => {
-    await stored(res, 'DELETE', `/lenses/${encodeURIComponent(String(req.params['slug']))}`);
+    const slug = soundSlug(res, req.params['slug']);
+
+    if (! slug) return;
+
+    await stored(res, 'DELETE', `/lenses/${encodeURIComponent(slug)}`);
   });
 
   /**
@@ -108,7 +85,9 @@ export const mountLenses = (app: Application, db: DatabaseSync): void => {
    * saved one.
    */
   app.post('/lenses/size', (req, res) => {
-    res.json(lensSize(db, definitionOf(req)));
+    const definition = definitionOf(db, res, req.body);
+
+    if (definition) res.json(lensSize(db, definition));
   });
 
   /** The same, for a lens that exists — summed off its rows, so nothing is evaluated — and whether it is still being worked out. */
@@ -125,9 +104,12 @@ export const mountLenses = (app: Application, db: DatabaseSync): void => {
     res.json({ ...savedLensSize(db, found), updating: found.updating });
   });
 
-  /** Whether a definition can be stored, and what is wrong where it cannot. */
+  /**
+   * Whether a definition can be stored, and what is wrong where it cannot:
+   * `{ problems: [] }` where it can, a `400` with the problems where it cannot.
+   */
   app.post('/lenses/check', (req, res) => {
-    res.json({ problems: problemsWith(db, definitionOf(req)) });
+    if (definitionOf(db, res, req.body)) res.json({ problems: [] });
   });
 
   /**
@@ -135,7 +117,9 @@ export const mountLenses = (app: Application, db: DatabaseSync): void => {
    * The honest answer to "did I mean that", and what a size is computed from.
    */
   app.post('/lenses/resolve', (req, res) => {
-    res.json({ venues: resolvedSummary(db, definitionOf(req)) });
+    const definition = definitionOf(db, res, req.body);
+
+    if (definition) res.json({ venues: resolvedSummary(db, definition) });
   });
 };
 
@@ -145,13 +129,24 @@ export const mountLenses = (app: Application, db: DatabaseSync): void => {
  * Have prospector store what was asked, and answer with what it said: its
  * status and its body, as they are. `502` where it does not answer, or not in
  * time — see `send` for what is tried again first.
+ *
+ * **What is relayed is always JSON.** An answer that is not — a proxy's or a
+ * framework's page — is logged and answered with an error of the same status,
+ * or `502` where prospector failed.
  */
 const stored = async (res: Response, method: string, path: string, body?: unknown): Promise<void> => {
   try {
     const answer = await send(method, path, body);
 
-    if (answer.body === null) res.status(answer.status).end();
-    else res.status(answer.status).json(answer.body);
+    if (answer.body === null) {
+      res.status(answer.status).end();
+    } else if (typeof answer.body === 'string') {
+      logger.warn({ status: answer.status, body: answer.body }, 'Prospector answered a lens write with something that is not JSON');
+
+      res.status(answer.status >= 500 ? 502 : answer.status).json({ error: 'The collector refused the request' });
+    } else {
+      res.status(answer.status).json(answer.body);
+    }
   } catch (err) {
     logger.warn({ err }, 'Prospector did not store a lens');
 
@@ -159,11 +154,108 @@ const stored = async (res: Response, method: string, path: string, body?: unknow
   }
 };
 
-const definitionOf = (req: Request): LensDefinition => {
-  const body = (req.body ?? {}) as LensDefinition & { definition?: LensDefinition };
+const SLUG_IS = 'A lens is addressed in lower case, digits and hyphens, two characters or more.';
 
-  const had = body.definition ?? body;
+/**
+ * Slugs a lens cannot take: each is a path of its own under `/lenses`, so a
+ * lens by that name could not be addressed as one.
+ */
+const RESERVED = new Set(['options', 'size', 'check', 'resolve']);
 
-  return { format: had.format ?? 1, venues: had.venues ?? {} };
+/** Whether a slug is text a lens can be addressed by. */
+const slugIsSound = (slug: unknown): slug is string =>
+  typeof slug === 'string' && lensNameIsSound(slug) && ! RESERVED.has(slug);
+
+/** The slug a path names, or `null` (answered `404`) where no lens could be addressed by it. */
+const soundSlug = (res: Response, slug: unknown): string | null => {
+  if (typeof slug === 'string' && lensNameIsSound(slug)) return slug;
+
+  res.status(404).json({ error: 'No such lens' });
+
+  return null;
 };
 
+/**
+ * A lens write as a body states it, or `null` (answered `400`) where the body
+ * is not one.
+ *
+ * A body is a document of a slug, a name, a note and a definition, each of its
+ * kind where present; a create needs the slug. A definition is one every
+ * evaluation can read — see `definitionProblems`. Only those four parts are
+ * handed on.
+ */
+const lensWriteOf = (db: DatabaseSync, res: Response, body: unknown, as: 'create' | 'replace'): LensWrite | null => {
+  if (! plain(body)) {
+    res.status(400).json({ error: 'A lens is written as a document of its slug, name, note and definition.' });
+
+    return null;
+  }
+
+  const { slug, name, note, definition } = body;
+
+  if ((as === 'create' || slug !== undefined) && ! slugIsSound(slug)) {
+    res.status(400).json({ error: SLUG_IS });
+
+    return null;
+  }
+
+  for (const [field, value] of [['name', name], ['note', note]] as const)
+    if (value !== undefined && typeof value !== 'string') {
+      res.status(400).json({ error: `A lens's ${field} is text.` });
+
+      return null;
+    }
+
+  if (definition !== undefined && ! refused(res, 'That definition cannot be stored', definitionProblems(db, definition)))
+    return null;
+
+  return {
+    slug:       slug as string | undefined,
+    name:       name as string | undefined,
+    note:       note as string | undefined,
+    definition: definition as LensDefinition | undefined,
+  };
+};
+
+/**
+ * The definition a request asks about — its body's `definition`, or the body
+ * itself — or `null` (answered `400` with its problems) where it is not one that
+ * can be evaluated. Nothing is evaluated before it passes.
+ */
+const definitionOf = (db: DatabaseSync, res: Response, body: unknown): LensDefinition | null => {
+  const had = plain(body) && body['definition'] !== undefined ? body['definition'] : (body ?? {});
+
+  if (! refused(res, 'That definition cannot be evaluated', definitionProblems(db, had))) return null;
+
+  const { format, venues } = had as Partial<LensDefinition>;
+
+  return { format: format ?? 1, venues: venues ?? {} };
+};
+
+/**
+ * What is wrong with a definition, as `problemsWith` says. A check that fails
+ * on what it is handed says the definition is not one, rather than failing the
+ * request.
+ */
+const definitionProblems = (db: DatabaseSync, definition: unknown): LensProblem[] => {
+  try {
+    return problemsWith(db, definition);
+  } catch (err) {
+    logger.warn({ err }, 'A lens definition could not be checked');
+
+    return [{ venue: '', rule: -1, message: 'A definition is a document of venues, each with its rules.' }];
+  }
+};
+
+/** Whether there is nothing wrong; where there is, answers `400` with `error` and the problems. */
+const refused = (res: Response, error: string, problems: LensProblem[]): boolean => {
+  if (problems.length === 0) return true;
+
+  res.status(400).json({ error, problems });
+
+  return false;
+};
+
+/** Whether something is a document of named parts: an object, and not a list. */
+const plain = (one: unknown): one is Record<string, unknown> =>
+  typeof one === 'object' && one !== null && ! Array.isArray(one);
