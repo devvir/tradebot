@@ -107,6 +107,9 @@ export const contentsOf = (
  * caller's; where two shapes would be the same data twice, one is offered and
  * the other never surfaces. What a shape does distinguish is **variants of a
  * dataset**, never the same data under two names.
+ *
+ * **`symbols` and `buckets` count series, not instruments.** An instrument held
+ * under two patterns of one shape is two series, and counts twice.
  */
 export const intoShapes = (rows: readonly Series[]): Shape[] => {
   const shapes = new Map<string, Shape>();
@@ -214,9 +217,10 @@ export const intoSymbols = (rows: readonly Series[]): string[] =>
   [...new Set(rows.filter(one => one.symbol !== VENUE_WIDE).map(one => one.symbol))].sort();
 
 /**
- * A venue's servers and the addresses each is reached at: the one the catalog
- * lists and probes, then every alternative recorded for it, each with the
- * server's key root applied so that an address and a file's path make its URL.
+ * A venue's servers and the addresses each is reached at: its primary address
+ * as prospector records it in the `venue` table, then every alternative
+ * recorded for it, each with the server's key root applied so that an address
+ * and a file's path make its URL.
  */
 export const hostsOf = (db: DatabaseSync, venue: string): Record<string, string[]> => {
   const rows = db.prepare('SELECT host, base, key_root AS keyRoot, alternative_hosts AS others FROM venue WHERE name = ? ORDER BY id')

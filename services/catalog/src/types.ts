@@ -286,11 +286,15 @@ export interface Shape {
   /** How often it publishes — which rendering of the data this is. */
   grain:    Grain;
 
-  /** Named instruments carrying it. */
+  /**
+   * How many of its series name an instrument. A count of series, not of
+   * instruments: one held under two patterns of this shape counts twice.
+   */
   symbols:  number;
 
   /**
-   * Venue-wide files carrying every instrument at once, if any.
+   * How many of its series are venue-wide, each file carrying every instrument
+   * at once. None where it has only per-instrument files.
    *
    * **The question a caller asks first**, because one bucket file is cheaper
    * than a file per instrument for the same data — see the `@` symbol.

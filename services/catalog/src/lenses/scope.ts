@@ -10,9 +10,13 @@ import type { HeldScope, LensScope, LensSpan, Series } from '../types';
  * **Read off `lens_member`**, so it is the same answer the listing and the
  * sizes read — and nothing here evaluates a rule.
  *
- * **Held per database until the lens changes**: until it is saved again, or
- * partitions are added to it. Either moves what is compared below, so a held
- * scope is never stale and never thrown away while it is still true.
+ * **Held per database until the lens's `updated_at` or `partitions_through`
+ * moves** — saving the lens moves the first, and working partitions into it
+ * moves the second. Nothing else is compared, so a `lens_member` row written
+ * without moving either is not seen: a partition taken into a lens that has not
+ * read up to it is a member before `partitions_through` reaches it, and the held
+ * scope lags it until that moves. A scope is never thrown away while both still
+ * match.
  */
 export const lensScope = (db: DatabaseSync, lens: Lens): LensScope | null => {
   const state = statementsOf(db).state.get(lens.id) as { updatedAt: string; through: number } | undefined;
