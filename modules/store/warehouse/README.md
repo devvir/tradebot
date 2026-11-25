@@ -2,7 +2,7 @@
 
 Turns the archives into the Parquet vault. Runs continuously: a sweep every 5 minutes asks the
 catalog what each partition holds, and stocks whatever is downloaded in full, settled in the
-catalog, and not yet in the vault at its current revision.
+catalog, and not in the vault's ledger at its current revision.
 
 ## Services
 

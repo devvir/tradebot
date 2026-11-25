@@ -1,4 +1,4 @@
-# Stocker Service — turns every collector's raw files into the Parquet vault.
+# Stocker Service — turns the archives into the Parquet vault.
 #
 # Two mounts. The archives come in **read-only**: they are hauler's, and the
 # mount enforces that rather than trusting the code. The vault is the volume
@@ -8,7 +8,7 @@
 # the shared network — through a lens, where one is set.
 #
 # Pre-create the vault for uid 1000:
-#   sudo mkdir -p /storage/tradebot/vault && sudo chown 1000:1000 /storage/tradebot/vault
+#   sudo mkdir -p "$DATA_VAULT_DIR" && sudo chown 1000:1000 "$DATA_VAULT_DIR"
 
 services:
   stocker:

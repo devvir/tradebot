@@ -13,7 +13,7 @@ the instrument's margining, that is read from the venue's symbol (`schema/margin
 answer fills the canonical `margin` column.
 
 Every entry is written from a decoded file of its format, except those marked **unverified — no
-file decoded**, which are mapped from the columns the venue documents.
+file decoded**, which are mapped without a file of that format to check against.
 
 **How to read the tables.** One row per format, and one row per era where a dataset's format
 changed. `—` means the file has no such column, and the canonical field is NULL.
@@ -75,7 +75,7 @@ as the `interval=` level, and never a column.
 | htx | spot, perp, future | from 2026-02 | zip · csv | yes | yes | int s | OHLC | `vol`, `volCcyQuote` | `from`, `spill: back` |
 | gate | spot, perp | all | csv.gz | no | no | int s | **`volume, close, high, low, open`** | base, — | see [gate](#gate) |
 | gate | tradfi | all | csv.gz | no | no | int s | **`close, high, low, open`** | — | |
-| okx | spot, perp, future, option | all | zip · csv | yes | yes | int ms | OHLC | `vol`; on spot `vol_quote`, else `vol_ccy`; elsewhere `vol_quote` | `instrument`, `spill: back`, `repeatsRows` |
+| okx | spot, perp, future, option | all | zip · csv | yes | yes | int ms | OHLC | `vol`; spot `vol_quote`, or `vol_ccy` where that holds no number; contracts `vol_quote` | `instrument`, `spill: back`, `repeatsRows` |
 | bitget | spot, perp, future | all | zip · xlsx a day, csv a month | yes | no | int epoch | OHLC | `basevolume`, `usdtvolume` | `spill: back` |
 
 ### Reference prices — markPrice · indexPrice · premiumIndex

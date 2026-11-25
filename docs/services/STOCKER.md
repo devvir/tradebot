@@ -79,13 +79,14 @@ away from UTC midnight — see [Time](#time).
 every instrument, under `@`. One whose archive files weigh more than 1 GB (as the catalog counts
 them) is a file per instrument, each under its symbol. A month whose files decode to nothing is one
 file under `@` whatever it weighed. That weight is one number for every deployment and not a
-setting: how a month is stored is how it is found in cold storage, which every machine shares.
+setting: how a month is stored is part of its layout, and two deployments splitting at different
+weights would store the same partition two ways.
 
 **Why two.** The number of files is what makes a tree slow to count, move or delete, and most
 months are small: a file per instrument would be thousands of tiny files each. But the largest
-months weigh hundreds of gigabytes, and fetching one of those whole from cold storage to read one
-instrument is most of a day. So small months stay one file, and large ones are cut where it is
-useful to cut them. Measured against the catalog on 2026-10-04, a threshold of 1 GB stores 13,209
+months weigh hundreds of gigabytes, and a file is what is moved or copied whole: stored per
+instrument, one instrument's share of such a month can be moved on its own. So small months stay
+one file, and large ones are cut where it is useful to cut them. Measured against the catalog on 2026-10-04, a threshold of 1 GB stores 13,209
 of 15,084 months whole and 1,875 per instrument, about 1.5 million files in all.
 
 **The symbol is a column of every file**, in both forms, so the two read as one table and a vault
@@ -326,7 +327,7 @@ front of whoever looks next: nothing removes `ERROR.log` but a person.
 ### Providers
 
 **The catalog** says what exists and what is ready
-([CATALOG-API.md](../modules/CATALOG-API.md#contents)). A sweep asks it once per venue in scope —
+([CATALOG-API.md](../modules/CATALOG-API.md#partitions)). A sweep asks it once per venue in scope —
 those of `STOCKER_VENUES`, or every venue the series map declares, alphabetically:
 
 ```
@@ -379,8 +380,9 @@ directory is not a file of the partition.
 | Written to stay | `src/durable.ts` | a file or a line on the disk before anything goes on from it |
 | What says the output changed | `src/versions.ts` | the version of what is written, for the vault, a table, a series |
 
-Containers, formats, series and tables are extension points: a file or an entry you add rather
-than a switch you edit. Nothing outside `schema/` names a venue.
+Containers, formats, series and tables are extension points: each is added as a file or an entry,
+with the registrations the [service README](../../services/stocker/README.md#extending-it) lists.
+Nothing outside `schema/` names a venue.
 
 ### One series per format
 
