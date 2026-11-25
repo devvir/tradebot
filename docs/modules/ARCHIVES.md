@@ -1,7 +1,8 @@
 # Archives
 
 Establishes what every venue publishes, serves that as the catalog everything downstream is decided
-from, and brings the files a lens selects to disk.
+from, and brings the files a lens selects to disk. Running it (variables, the catalog directory,
+starting surveys) is in the [module README](../../modules/collect/archives/README.md).
 
 ```
 prospector → venue archives → catalog.db
@@ -9,97 +10,49 @@ catalog    → catalog.db → listings, contents and lenses over HTTP
 hauler     ← the catalog's listings (through a lens) → archives on disk
 ```
 
-Four services. [prospector](../services/PROSPECTOR.md) surveys the venues, owns the database, and is
-where the detail lives. [catalog](../../services/catalog/README.md) is the public API over what
-prospector found. [hauler](../services/HAULER.md) downloads what the catalog lists, through a lens, and
-reports back. [catalog-ui](../services/CATALOG-UI.md) is a page for reading the catalog, editing lenses
-and driving the surveys; it holds nothing and can be left out entirely. This page is only what you need
-to run the module.
+Four services. [prospector](../services/PROSPECTOR.md) surveys the venues, is the only writer of
+`catalog.db`, and is where the detail lives. [catalog](../services/CATALOG.md) is the public API over
+what prospector found. [hauler](../services/HAULER.md) downloads what the catalog lists, through a
+lens, and reports back what it fetched. [catalog-ui](../services/CATALOG-UI.md) is a page for reading
+the catalog, editing lenses and starting and pausing surveys; it holds nothing, and no other service
+depends on it.
 
-Going deeper: every public endpoint is [CATALOG-API.md](CATALOG-API.md), and lenses (the named slices a
-consumer reads through) are [CATALOG-LENSES.md](CATALOG-LENSES.md).
+Going deeper: every public endpoint is [CATALOG-API.md](CATALOG-API.md), and lenses (the named
+selections a consumer reads through) are [CATALOG-LENSES.md](CATALOG-LENSES.md).
 
 ## Why it is split this way
 
 **Surveying downloads nothing.** A survey moves kilobytes of XML while the archives it describes are
 terabytes, so prospector needs bandwidth and almost no disk. Hauler is the opposite, and the two meet
-only over HTTP, so a hauler can run on another machine, beside the disk it fills, and several can split
-the venues between them, each through its own lens.
+only over HTTP, through the catalog, so a hauler can run on another machine, beside the disk it fills,
+and several can split the work between them.
 
-**Prospector collects; the catalog serves.** Prospector writes every file, series and survey row, and
-its API (start and pause surveys, settle download reports) is private to the module. Everything a
-consumer asks goes to the catalog, which reads the same database file. A consumer never needs to know
-how collection works, and collection can change without any consumer noticing.
+**Prospector collects; the catalog serves.** Prospector writes every row of the database, and its API
+(start and pause surveys, settle download reports, store lenses) is private to the module. Everything
+a consumer asks goes to the catalog, which opens the same database file read-only and hands what it is
+sent to store, a lens or a download report, to prospector. A consumer never needs to know how
+collection works, and collection can change without any consumer noticing.
 
-**Lenses belong to the catalog**, because a lens is a consumer's choice of what to read, not something
-collection knows or acts on. So the catalog writes the `lens` table and nothing else; every other row is
-prospector's.
+**A lens is a consumer's choice of what to read**, which collection neither knows nor acts on: it is
+defined and checked through the catalog, and prospector stores it like every other row (see
+[PROSPECTOR.md](../services/PROSPECTOR.md#storage)).
 
 **One database, two processes, one host.** SQLite in WAL mode lets the catalog read while prospector
 writes, but only through shared memory, so the two must mount the same directory on the same machine.
 Catalog reads stay short, because a long read holds back prospector's checkpoints.
 
-## Running it
+## Enrolment and access
 
-```
-modules/collect/archives/
-```
+**Nothing is surveyed unasked**: asking for a venue enrols it, and an enrolled venue keeps itself
+current across restarts until it is paused.
 
-| variable | |
-|---|---|
-| `CATALOG_DIR` | host directory holding `catalog.db`, mounted at `/data/catalog` in prospector and catalog |
-| `CATALOG_TOKEN` | sent as `x-catalog-token` on every request, checked by catalog and prospector. **Empty turns the check off** |
-| `CATALOG_PORT` | host port for the catalog API. Empty lets docker pick a free one |
-| `CATALOG_UI_PORT` | host port for the page. `9020` |
-| `PROSPECTOR_VENUES` | the venues prospector surveys; empty for every venue |
-| `PROSPECTOR_CONCURRENCY` | how many requests prospector keeps in flight — see the [prospector README](../../services/prospector/README.md) |
-| `DATA_ARCHIVES_DIR` | host directory hauler writes the archives into |
-| `HAULER_LENS`, `HAULER_VENUES`, `HAULER_CONCURRENCY` | what hauler fetches and how many at once — see the [hauler README](../../services/hauler/README.md) |
+**One shared secret, `CATALOG_TOKEN`, guards the catalog and prospector**, and leaving it empty turns
+the check off. It guards nothing in front of catalog-ui, which adds the token to every request it
+forwards: whoever reaches the page's port acts with it.
 
-**An empty `CATALOG_TOKEN` means an open catalog**, and every service treats it the same way: catalog
-and prospector check no header and warn loudly on startup, catalog-ui and hauler send none. That is what
-makes the read endpoints answerable from a browser with nothing to configure. Set it on anything
-reachable beyond the machine.
-
-Pre-create the directory for uid 1000, as with the other volumes:
-
-```sh
-sudo mkdir -p /storage/tradebot/catalog && sudo chown 1000:1000 /storage/tradebot/catalog
-```
-
-**Point `CATALOG_DIR` at an empty directory and prospector builds a fresh catalog on first start**, by
-running the whole migration chain from zero, which is what puts the venue rows, the known-bad file lists
-and the shipped series seeds in it. Point it at an existing one and it is carried forward from wherever
-it is. The catalog service creates nothing: until the database exists, it waits.
-
-## Starting a survey
-
-Nothing starts unasked. Once a venue has been asked for, though, it **keeps itself current** (walking
-once and then updating daily, **across restarts**) until it is paused or refreshed.
-
-Asking for a venue **enrols** it, and that is what a restart goes back to: an interrupted job resumes
-from its cursors, a venue between passes waits out the rest of its interval, a paused one stays paused,
-and a venue nobody ever asked about is left alone for ever. So a deployment where no survey was ever
-started is read-only, permanently and by construction.
-
-Surveys are started and paused from catalog-ui's Surveys page. Prospector publishes no port, so from a
-shell the same requests go through catalog-ui's proxy:
-
-```sh
-# Every venue — the ordinary case, since they survey concurrently anyway
-curl -X POST http://localhost:$CATALOG_UI_PORT/api/prospector/surveys
-
-# One of them
-curl -X POST http://localhost:$CATALOG_UI_PORT/api/prospector/venues/binance/surveys
-
-# Where each venue stands
-curl http://localhost:$CATALOG_UI_PORT/api/prospector/status
-```
-
-**One verb, and where a venue has got to decides what it means**: a venue with nothing starts, one with
-work outstanding continues from its cursors, one that has caught up looks for what has appeared since.
-Every parameter (several venues, the `refresh` and `update` modifiers, pausing) and what `status`
-reports are in [PROSPECTOR.md](../services/PROSPECTOR.md#the-api).
+**The catalog is published on the host** at `CATALOG_BIND:CATALOG_PORT`, and containers on the shared
+network reach it as `catalog:8080`. With `CATALOG_PORT` empty, docker picks a free host port, so
+anything on the host that must reach the catalog needs `CATALOG_PORT` set.
 
 ## What it is for
 

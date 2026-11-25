@@ -11,9 +11,9 @@
 # rather than a week of probing.
 #
 # Prospector and catalog share catalog.db, so they run on the same host.
-# Prospector's own API is private to this network: catalog forwards download
-# reports to it, and catalog-ui starts and pauses surveys through it. Everything
-# outside the module talks to the catalog.
+# Prospector's own API is private to this network: catalog forwards lens writes
+# and download reports to it, and catalog-ui starts and pauses surveys through
+# it. Everything outside the module talks to the catalog.
 
 # Docker Compose Project
 name: collect
@@ -23,9 +23,6 @@ include:
   - path: ../../../services/catalog/docker/compose.yml
   - path: ../../../services/catalog-ui/docker/compose.yml
   - path: ../../../services/hauler/docker/compose.yml
-
-  # Not started — will own the facts database.
-  # - path: ../../../services/archivist/docker/compose.yml
 
 networks:
   default:
