@@ -36,7 +36,7 @@ How it works, the proxy and what every column means: [docs/services/CATALOG-UI.m
 |---|---|---|
 | `CATALOG_API` | `http://catalog:8080` | where the catalog answers. Prospector is always reached at `http://prospector:8080`, inside the module |
 | `CATALOG_TOKEN` | empty | the secret the catalog and prospector both check, added as `x-catalog-token` to every forwarded request. Empty forwards without the header |
-| `CATALOG_UI_HOSTS` | empty: any `Host` | comma-separated `Host` names (or `host:port`) the API routes answer for. Compose does not set it |
+| `CATALOG_UI_HOSTS` | empty: any `Host` | comma-separated `Host` names (or `host:port`) the API routes answer for, set in the archives module's `.env`. Empty serves any `Host` |
 | `CATALOG_UI_PORT` | `9020` | host port, set in the archives module's `.env` |
 | `CATALOG_UI_BIND` | `127.0.0.1` | host address the port is published on, set in the archives module's `.env` |
 | `LOG_LEVEL` | `info` | log level |

@@ -131,11 +131,11 @@ export const Lenses = ({ slug }: { slug?: string | undefined }) => {
       {error && (
         <Alert
           color="orange" variant="light" title="Request failed"
-          withCloseButton closeButtonLabel="Dismiss" onClose={() => setError(null)}
+          // Where the lenses themselves could not be read, it stays until they are: its Retry is the only way to ask again.
+          withCloseButton={! unread} closeButtonLabel="Dismiss" onClose={() => setError(null)}
         >
           <Stack gap="xs" align="flex-start">
             <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>{error}</Text>
-            {/* Where the lenses themselves could not be read, nothing else asks again: this does. */}
             {unread && (
               <Button size="compact-sm" variant="light" color="orange" loading={reading} onClick={() => void load()}>
                 Retry
@@ -155,7 +155,7 @@ export const Lenses = ({ slug }: { slug?: string | undefined }) => {
             <Text fw={700} size="sm">Lens</Text>
             <Select
               aria-label="Lens"
-              placeholder={choices.length ? 'Choose a lens' : 'No lenses yet'}
+              placeholder={lensPlaceholder(choices.length, lenses === null && unread)}
               data={choices.map(one => ({
                 value: one.slug,
                 label: `${one.name || one.slug}${isUnsaved(one) ? ' (not saved)' : ''}`,
@@ -187,6 +187,13 @@ export const Lenses = ({ slug }: { slug?: string | undefined }) => {
     </Stack>
   );
 };
+
+/**
+ * What the lens picker says while nothing is chosen. **A list never read is not
+ * an empty one**, so it says which of the two it is.
+ */
+export const lensPlaceholder = (choices: number, unread: boolean): string =>
+  (choices > 0 ? 'Choose a lens' : unread ? 'Lenses not read' : 'No lenses yet');
 
 /** How often an open lens asks its size again, so progress moves while its files are downloaded. */
 const SIZE_REFRESH_MS = 30_000;
@@ -247,7 +254,10 @@ const Editing = ({ lens, onStored, onFailed, onGone }: {
   const [note,  setNote]  = useState(kept?.note ?? lens.note);
   const [rules, setRules] = useState<Record<string, RuleEntry[]>>(kept?.rules ?? entriesOf(lens.definition));
 
-  /** The rule being stored, by its key — its buttons wait, and only one store runs at a time. */
+  /**
+   * The rule being stored, by its key — its buttons wait, and only one store
+   * runs at a time, until the lens is read back.
+   */
   const [storing,  setStoring]  = useState<string | null>(null);
   const [problems, setProblems] = useState<Record<string, LensProblem[]>>({});
   const [general,  setGeneral]  = useState<LensProblem[]>([]);
@@ -255,7 +265,7 @@ const Editing = ({ lens, onStored, onFailed, onGone }: {
   const [size,      setSize]      = useState<LensSize | undefined>(unsaved ? undefined : seenSize(lens));
   const [sizeError, setSizeError] = useState<string | null>(null);
 
-  const { options: published, error: unpublished } = usePublished();
+  const { options: published, error: unpublished, asking: republishing, retry: republish } = usePublished();
 
   /** The venues that publish anything: the ones a rule can be written against. */
   const venues = useMemo(() => [...new Set(published.map(one => one.venue))], [published]);
@@ -353,7 +363,7 @@ const Editing = ({ lens, onStored, onFailed, onGone }: {
       setGeneral([]);
       after(body);
 
-      onStored(lens.slug);
+      await onStored(lens.slug);
     } catch (err) {
       onFailed((err as Error).message);
     } finally {
@@ -518,9 +528,15 @@ const Editing = ({ lens, onStored, onFailed, onGone }: {
 
       {unpublished !== null && (
         <Alert color="orange" variant="light" title="What the venues publish could not be read">
-          <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
-            {unpublished} — the pickers below offer nothing until it is, and the venues with no rules yet are not shown.
-          </Text>
+          <Stack gap="xs" align="flex-start">
+            <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
+              {unpublished} — until it is read, the pickers below offer nothing, and the venues with no rules yet are not shown.
+            </Text>
+            {/* Nothing else asks again while this lens is open: this does. */}
+            <Button size="compact-sm" variant="light" color="orange" loading={republishing} onClick={republish}>
+              Retry
+            </Button>
+          </Stack>
         </Alert>
       )}
 
@@ -534,7 +550,7 @@ const Editing = ({ lens, onStored, onFailed, onGone }: {
 
       {[GLOBAL, ...blocks].map(venue => (
         <ForVenue
-          key={venue} venue={venue} entries={rules[venue] ?? []}
+          key={venue} venue={venue} entries={rules[venue] ?? []} published={published}
           problems={problems} storing={storing}
           onAdd={() => add(venue)}
           onClear={() => {
@@ -722,9 +738,12 @@ const keepUnsaved = (lens: Lens | null): void => {
 };
 
 /** One venue's rules — or every venue's, under `*`. */
-const ForVenue = ({ venue, entries, problems, storing, onAdd, onClear, onEdit, onConfirm, onDrop, onDiscard }: {
+const ForVenue = ({ venue, entries, published, problems, storing, onAdd, onClear, onEdit, onConfirm, onDrop, onDiscard }: {
   venue:     string;
   entries:   RuleEntry[];
+
+  /** What every venue publishes, as the lens read it: the card takes its own rows from it. */
+  published: LensOption[];
   problems:  Record<string, LensProblem[]>;
   storing:   string | null;
   onAdd:     () => void;
@@ -734,8 +753,6 @@ const ForVenue = ({ venue, entries, problems, storing, onAdd, onClear, onEdit, o
   onDrop:    (entry: RuleEntry) => void;
   onDiscard: (entry: RuleEntry) => void;
 }) => {
-  const { options: published } = usePublished();
-
   // A venue's rules are written against what it publishes; the rules for every venue, against what any of them does.
   const offered = useMemo(
     () => (venue === GLOBAL ? published : published.filter(one => one.venue === venue)), [published, venue]);
@@ -780,28 +797,36 @@ const ForVenue = ({ venue, entries, problems, storing, onAdd, onClear, onEdit, o
 };
 
 /**
- * What the venues publish, asked for once however many cards read it, and
- * why it is not here where it could not be read.
+ * What the venues publish, and why it is not here where it could not be read.
+ * Asked for once when the lens is opened, and again on `retry`; `asking` is
+ * whether an answer is awaited.
  *
  * One list holds every venue's combinations, so each card takes its own rows
- * from it and none asks again.
+ * from it and none asks on its own.
  */
-const usePublished = (): { options: LensOption[]; error: string | null } => {
+const usePublished = (): { options: LensOption[]; error: string | null; asking: boolean; retry: () => void } => {
   const [published, setPublished] = useState<{ options: LensOption[]; error: string | null }>(
     { options: [], error: null });
+
+  const [asked,  setAsked]  = useState(0);
+  const [asking, setAsking] = useState(true);
 
   useEffect(() => {
     let wanted = true;
 
+    setAsking(true);
+
     publishedOptions().then(
       options => { if (wanted) setPublished({ options, error: null }); },
       (err: Error) => { if (wanted) setPublished(had => ({ ...had, error: err.message })); },
-    );
+    ).finally(() => { if (wanted) setAsking(false); });
 
     return () => { wanted = false; };
-  }, []);
+  }, [asked]);
 
-  return published;
+  const retry = useCallback(() => setAsked(had => had + 1), []);
+
+  return { ...published, asking, retry };
 };
 
 /** How long one reading of what the venues publish is used before it is asked for again. */

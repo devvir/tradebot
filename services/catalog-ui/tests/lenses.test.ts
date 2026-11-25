@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  addressIsReserved, addressIsSound, byPeriod, choiceOf, chosenOf, filed, forget, isUnsaved, keep, keptFor, namedLens, onlyOf, publishedOptions, unsavedLens, withOne, withoutVenue,
+  addressIsReserved, addressIsSound, byPeriod, choiceOf, chosenOf, filed, forget, isUnsaved, keep, keptFor, lensPlaceholder, namedLens, onlyOf, publishedOptions, unsavedLens, withOne, withoutVenue,
 } from '../web/views/Lenses';
 import type { LensProblem, LensRule, RuleEntry } from '../web/types';
 
@@ -266,5 +266,20 @@ describe('byPeriod', () => {
   it('puts periods ahead of anything else, and orders the rest by the alphabet', () => {
     expect(['full', '400', '1h', 'incremental,500', '1m'].sort(byPeriod))
       .toEqual(['1m', '1h', '400', 'full', 'incremental,500']);
+  });
+});
+
+describe('lensPlaceholder', () => {
+  it('does not call a list that could not be read empty', () => {
+    expect(lensPlaceholder(0, true)).toBe('Lenses not read');
+  });
+
+  it('says there are none only where the list was read', () => {
+    expect(lensPlaceholder(0, false)).toBe('No lenses yet');
+  });
+
+  it('asks for a choice wherever there is one, read or not', () => {
+    expect(lensPlaceholder(1, false)).toBe('Choose a lens');
+    expect(lensPlaceholder(1, true)).toBe('Choose a lens');
   });
 });
