@@ -205,15 +205,153 @@ for combinations nobody expects to exist. When the pass has finished, the `file`
 series are real and where each begins and ends, and the permanent seed is written from that. A file
 found near a research floor means that floor was too high.
 
-## The bitget seed
-
-bitget's is the one seed with a `transform.csv`, whose kinds are `archiveDir`, `eraName` and
-`marginToken`, and with research columns beside its rows. Venue facts are in
-[BITGET.md](../../../../../../docs/venues/BITGET.md#archives).
-
 ## Quoting
 
 A field is quoted only where it contains a comma or a quote, as multi-part variants such as
 `"incremental,400"` do. Inside a quoted field a doubled quote is one literal quote. Empty is empty:
 there is no distinction between an empty string and a null. A field spans one line, and a row must
 have as many fields as the header.
+
+## The bitget seed
+
+bitget's archive answers no listing, and its download index both omits files that are served and
+offers keys that are not, so a key is a file only once it has been fetched. The seed is the catalog's
+whole starting knowledge of bitget: every pattern, every series, and the transforms its keys need.
+The venue itself, its naming eras, line tokens, endpoints and download index, is described in
+[BITGET.md](../../../../../../docs/venues/BITGET.md#archives).
+
+### What it holds
+
+- **Only the series that answered.** The pass that built the seed asked every instrument against
+  every shape its market has had, and kept the combinations that published at least one file.
+  Instruments the venue no longer lists are in it, since no listing would ever create them.
+- **A measured `floor` on every series**: the series' first file as that pass found it. No series on
+  an era-2 pattern (the bare-date shapes retired on `20260817`) has a floor before `20240419`; see
+  [The eras](#the-eras).
+- **A measured `last` on every series**: the newest period that answered. `SEEDED_AT` in `seed.ts`
+  holds bitget's entry, `20260922`, the day that pass ran.
+- **Research columns**, which `seed.ts` does not read: `displaySymbol`, the name the download form is
+  asked with; `listed`, `no` for the few streams the form does not offer; `archivesFirst` and
+  `archivesLast`, what the download index claimed for the series, kept for comparison; and
+  `archivesMarket` on a pattern, the archive line it belongs to.
+
+Each daily dataset also has a monthly tree (`kline_month/`, `trades_month/`, `depth_month/`,
+`depth_500_month/`). Those are patterns of their own, monthly grain, with series of their own.
+
+### The floors held
+
+The pass began each dataset well below anything the index had shown. On the run that finished
+2026-09-22, the earliest first of every dataset sat at least 69 days above the floor it was asked
+from:
+
+| dataset | earliest first found | margin above the floor asked from |
+|---|---|---|
+| klines, trades (daily) | 2018-07-25 | 85 days |
+| quotes (daily) | 2024-07-09 | 69 days |
+| books (daily) | 2025-08-01 | 92 days |
+| every monthly tree | 2025-08 (books 2025-09) | 8 months or more |
+
+Per series the index is not a floor. In the shipped rows, 350 series have a `floor` earlier than
+their `archivesFirst`, by up to 642 days, and 48 have no `archivesFirst` at all.
+
+### The eras
+
+The patterns follow bitget's three naming eras: era-1 shapes are retired on `20240418`, era-2 shapes
+on `20260817`, and era-3 shapes are live. The books patterns have one daily shape, live throughout.
+
+Where a day is served under both an era-1 and an era-2 name, the era-1 key is the one generated: no
+era-2 series has a floor before `20240419`, so era-2 keys dated earlier are never asked. The two
+copies usually hold the same candles, but not always: some era-1 kline files are 22-byte empty
+archives whose era-2 key holds the full day. What that costs the catalog is in
+[BUGS.md](../../../../../../docs/planning/BUGS.md#bitget-the-catalog-holds-the-poorer-of-two-copies-of-some-days).
+
+Some days of a continuous era-1 kline series exist only under the era-2 name. The era-1 kline
+patterns name their file through `{TRANSFORM:eraName:…}`, whose default is era 1's own spelling, and
+each such day has one `eraName` row that spells era 2's instead (`UMCBL/{YYYY}{MM}{DD}` on perp,
+`SP/{YYYY}{MM}{DD}` on spot), so the series reads that day from where bitget put it and stays one
+series. There are 20 rows, on 2020-02-29, 2023-01-05 and 2023-02-21.
+
+### The transforms
+
+| kind | default in the pattern | what a row says |
+|---|---|---|
+| `marginToken` | `UMCBL` | the margin line a futures instrument's trades are filed under: `CMCBL` (USDC-margined) or `DMCBL` (coin-margined). Nothing in the symbol shows it |
+| `archiveDir` | `{SYMBOL}` | the directory, where it is not the name the filename carries |
+| `eraName` | era 1's filename | the era-2 filename for one era-1 kline day, as above |
+
+The `archiveDir` rows are of two kinds. Open-ended rows, nearly all from `20260903`, cover depth
+directories that stopped matching their filenames. One row bounded to `20221117` puts perp
+`RUNEUSDT`'s kline day under `TRXUSDT/`, where its only copy is.
+
+A futures instrument discovered after seeding gets its `marginToken` row from discovery, not from this
+file (`marginOf` in `adapters/bitget/instruments.ts`).
+
+### Spellings
+
+`url_symbol` belongs to the series, not the instrument: an instrument's datasets, and its shapes over
+time, can each be spelled differently, and each spelling under each pattern is its own series.
+
+Ten spot instruments have their era-2 depth (`quotes`) filed under the canonical symbol while their
+klines and trades use another spelling. Their era-2 depth series carry no `url_symbol`, their klines
+and trades series carry the other spelling, and none of the ten has an era-2 depth series under the
+other spelling:
+
+| `symbol` | `url_symbol` of its klines and trades |
+|---|---|
+| `LIQUIDIUMUSDT` | `LIQUIDIUMTOKENUSDT` |
+| `MRSOONUSDT` | `SOONUSDT` |
+| `VELOUSDC` | `VELO1USDC` |
+| `KAONUSDT` | `AKROUSDT` |
+| `TXUSDT` | `COREUMUSDT` |
+| `CATEUSDT` | `CATENEWUSDT` |
+| `RBTCUSDT` | `RBTCNEWUSDT` |
+| `RUNESXUSDT` | `RUNESXBITCOINUSDT` |
+| `SOPHUSDC` | `SOPHNEWUSDC` |
+| `SPACEUSD1` | `SPACENEWUSD1` |
+
+Two instruments of one market may share an archive spelling (41 spellings across 298 series in the
+shipped rows), because bitget re-issues tickers and moves streams between names. That is not an
+error so long as they sit on different patterns or cover different dates. **What must never happen
+is two series generating the same key for the same date**: `file` holds one row per venue and path,
+the series that settles the key first keeps it, and the other reads as a hole. `seed.ts` refuses two
+rows of one pattern with the same spelling; beyond that, comparing spellings proves nothing, and the
+check is the generated keys.
+
+### Trades in parts
+
+A day of trades is one or more numbered files (`{PART}`). The adapter's `expandParts` asks `001`
+first, asks the next number after each part found, and ends the day at the first miss, so a day is
+followed to its last part.
+
+### After seeding
+
+Updates find instruments listed later through bitget's v3 instruments endpoint, for the `SPOT`,
+`USDT-FUTURES`, `COIN-FUTURES` and `USDC-FUTURES` categories, and give each new one a series under
+every live shape of its market. Instruments the v3 listing does not name are reached only through
+the seed. How the service handles bitget is in
+[PROSPECTOR.md](../../../../../../docs/services/PROSPECTOR.md#bitget).
+
+### Rebuilding it
+
+None of this runs in the service. The endpoints are described in
+[BITGET.md](../../../../../../docs/venues/BITGET.md#archives).
+
+1. **The instruments.** Crawl `getSymbolList`, the download form's dropdown. It matches a substring
+   anywhere in a name and caps a reply at 200 with no paging, so a reply of 200 is refined with a
+   longer substring and a reply under 200 is complete for its substring. A query given up on is an
+   unexplored subtree that looks like a complete one, so a refusal is asked again, never taken as an
+   empty answer. Add the REST listings, which hold names the crawl cannot construct.
+2. **The files.** Sweep `getPublicDataV2` for each line, business type and `deptType`, asking with
+   every name offered on that line at once, in consecutive 8-day windows from 2018-01-01. Only
+   `code: "200"` is an answer; anything else is asked again, and a window that never answers is
+   recorded as failed, not as empty. Match every returned URL against the known shapes, which gives
+   its pattern and the string in its `{SYMBOL}`.
+3. **The search space.** Every instrument against every shape its market can carry, futures trades
+   only under its own margin token, split wherever the pattern or the spelling changes. Not the
+   combinations the index returned: the index omits files that are served and offers keys that are
+   not, and since nothing walks bitget, a key the seed does not name is never probed. Floors go below
+   anything the dataset can hold. This is a research seed (see
+   [Research seeds and permanent ones](#research-seeds-and-permanent-ones)).
+4. **The measurement.** Run a full pass over the research seed, then write the permanent seed from the
+   `file` table: the series that hold a file, each one's first file as its `floor` and newest as its
+   `last`. Set bitget's `SEEDED_AT` to the day the pass ran.
