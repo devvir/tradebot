@@ -1,9 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { DuckDBInstance } from '@duckdb/node-api';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { parseKey } from '../src/keys';
 import { marginOf } from '../src/schema/margin';
 import { SERIES, extrasOf, seriesFor, seriesOf } from '../src/schema/series';
 import { _test_fractionCols, _test_integralCols, _test_microsOf, _test_projectionFor as projectionFor, selectFor } from '../src/schema/project';
 import { fieldsOf } from '../src/schema/tables';
+import type { DuckDBConnection } from '@duckdb/node-api';
 import type { ArchiveFile, Series } from '../src/types';
 
 /** A catalog file, as its key names it. */
@@ -303,5 +305,74 @@ describe('timestamp conversion', () => {
       expect(sql).toContain(`AS ${col}`);
 
     expect(sql).toContain('x AS _instrument');
+  });
+});
+
+describe('datetime text', () => {
+  let conn: DuckDBConnection;
+
+  /**
+   * The session runs in a zone other than UTC, so a parse that read wall-clock
+   * text in the session's zone would show here.
+   */
+  beforeAll(async () => {
+    conn = await (await DuckDBInstance.create(':memory:')).connect();
+    await conn.run(`SET TimeZone='Asia/Tokyo'`);
+  });
+
+  afterAll(() => conn.closeSync());
+
+  /** Each text value through the full projection of a series, as UTC microseconds. */
+  const tsOf = async (values: string[], over: Partial<Series> = {}): Promise<(string | null)[]> => {
+    const series: Series = {
+      venue: 'v', market: 'spot', dataset: 'trades', table: 'trades',
+      format: 'csv', header: true, project: {}, ts: 'raw', ...over,
+    };
+    const rows   = values.map(value => `('${value}')`).join(', ');
+    const sql    = selectFor(series, `(SELECT * FROM (VALUES ${rows}) t(raw))`);
+    const reader = await conn.runAndReadAll(`SELECT CAST(ts AS VARCHAR) AS ts FROM (${sql})`);
+
+    return reader.getRowObjects().map(row => row.ts as string | null);
+  };
+
+  const MIDNIGHT = '1704067200000000';
+
+  it('moves text with an explicit offset to UTC by that offset', async () => {
+    expect(await tsOf([
+      '2024-01-01T08:00:00+08:00',
+      '2024-01-01T08:00:00+0800',
+      '2024-01-01T08:00:00+08',
+      '2024-01-01 08:00:00+08:00',
+      '2023-12-31T22:00:00-02:00',
+      '2024-01-01T00:00:00Z',
+    ])).toEqual(Array(6).fill(MIDNIGHT));
+  });
+
+  it('keeps the fraction of text with an offset', async () => {
+    expect(await tsOf([
+      '2024-01-01T08:00:00.5+08:00',
+      '2024-01-01T08:00:00.123456+08:00',
+      '2024-01-01T00:00:00.25Z',
+    ])).toEqual(['1704067200500000', '1704067200123456', '1704067200250000']);
+  });
+
+  it('reads naive text as UTC when the series declares no zone', async () => {
+    expect(await tsOf(['2024-01-01T00:00:00', '2024-01-01 00:00:00.123', '2024.11.01 00:00']))
+      .toEqual([MIDNIGHT, '1704067200123000', '1730419200000000']);
+  });
+
+  it('reads naive text in the zone the series declares', async () => {
+    expect(await tsOf(['2024-01-01T03:00:00', '2024.11.01 03:00'], { utcOffsetHours: 3 }))
+      .toEqual([MIDNIGHT, '1730419200000000']);
+  });
+
+  /** The declared zone is for local datetimes; an epoch and an explicit offset each say where they are. */
+  it('applies the declared zone to nothing but naive text', async () => {
+    expect(await tsOf(['1704067200000', '1704067200.5', '2024-01-01T08:00:00+08:00', '2024-01-01T00:00:00Z'], { utcOffsetHours: 3 }))
+      .toEqual([MIDNIGHT, '1704067200500000', MIDNIGHT, MIDNIGHT]);
+  });
+
+  it('lands text that is not a time as NULL', async () => {
+    expect(await tsOf(['timestamp', ''])).toEqual([null, null]);
   });
 });

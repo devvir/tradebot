@@ -129,18 +129,28 @@ const fractionCols = (): string => {
  * spot, under a header that says `timestamp` for both.
  *
  * Text forms are handled for the venues that publish a datetime rather than an
- * epoch: ISO, and the dotted `2024.11.01 00:00` of Bybit's MT4 klines.
+ * epoch: ISO, and the dotted `2024.11.01 00:00` of Bybit's MT4 klines. ISO text
+ * carrying its own offset — `Z`, `+08`, `+0800` or `+08:00` — is moved to UTC by
+ * that offset. Text with none is read in the zone `offsetHours` east of UTC, and
+ * only that text: an epoch has no zone, and an explicit offset already says
+ * which one it is in.
  *
  * Anything that resolves to nothing lands as NULL — including the literal text
  * of a header row, which is how a file that grew a header partway through its
  * history is read without knowing when that happened. The build drops those
  * rows.
  *
- * Both paths round half-up to the microsecond: the nanosecond branch adds 500
- * before dividing, and the fractional one adds the digit past the last one it
- * keeps — the two must not disagree about the same instant.
+ * Both epoch paths round half-up to the microsecond: the nanosecond branch adds
+ * 500 before dividing, and the fractional one adds the digit past the last one
+ * it keeps — the two must not disagree about the same instant. Datetime text
+ * keeps whole microseconds too: text with an offset rounds a finer fraction,
+ * text without one truncates it.
+ *
+ * The two text parses are separate `epoch_us` calls because they yield
+ * different types: a parse with `%z` is an instant, one without is a wall-clock
+ * time, and mixing them would read the wall clock in the session's zone.
  */
-const microsOf = (): string =>
+const microsOf = (offsetHours = 0): string =>
   `CASE ` +
   `WHEN _tsInt IS NOT NULL THEN CASE ` +
     `WHEN abs(_tsInt) < 100000000000 THEN _tsInt * 1000000 ` +
@@ -152,24 +162,32 @@ const microsOf = (): string =>
     `WHEN abs(_tsWhole) < 100000000000000 THEN _tsWhole * 1000 + ${digits(3)} ` +
     `WHEN abs(_tsWhole) < 100000000000000000 THEN _tsWhole + ${digits(0)} ` +
     `ELSE (_tsWhole + 500) // 1000 END ` +
-  `ELSE epoch_us(COALESCE(` +
-    `TRY_CAST(_tsText AS TIMESTAMP), ` +
-    `try_strptime(_tsText, '%Y.%m.%d %H:%M'), ` +
-    `try_strptime(_tsText, '%Y.%m.%d %H:%M:%S'))) END`;
+  `ELSE COALESCE(` +
+    `epoch_us(try_strptime(replace(_tsText, 'Z', '+00'), [${ZONED}])), ` +
+    `epoch_us(COALESCE(` +
+      `TRY_CAST(_tsText AS TIMESTAMP), ` +
+      `try_strptime(_tsText, '%Y.%m.%d %H:%M'), ` +
+      `try_strptime(_tsText, '%Y.%m.%d %H:%M:%S')))` +
+      (offsetHours ? ` - ${offsetHours * 3_600_000_000}` : '') +
+    `) END`;
+
+/**
+ * ISO datetimes with an explicit offset, with or without a fraction of up to nine
+ * digits, `T` or a space between date and time. `%z` takes `+08`, `+0800` and
+ * `+08:00`, but not `Z`, which the parse rewrites to `+00` first.
+ */
+const ZONED = [
+  '%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%dT%H:%M:%S.%n%z',
+  '%Y-%m-%d %H:%M:%S%z', '%Y-%m-%d %H:%M:%S.%n%z',
+].map(format => `'${format}'`).join(', ');
 
 /** The first `keep` fractional digits as an integer, rounded half-up on the next one. */
 const digits = (keep: number): string =>
   (keep ? `CAST(substr(_tsFrac, 1, ${keep}) AS BIGINT) + ` : '') +
   `CASE WHEN substr(_tsFrac, ${keep + 1}, 1) >= '5' THEN 1 ELSE 0 END`;
 
-/**
- * The timestamp in UTC microseconds: inferred, then moved out of the zone a
- * venue writes its local datetimes in, where it declares one.
- */
-const utcOf = (series: Series): string =>
-  series.utcOffsetHours
-    ? `(${microsOf()} - ${series.utcOffsetHours * 3_600_000_000})`
-    : microsOf();
+/** The timestamp in UTC microseconds, local datetimes read in the zone the series declares. */
+const utcOf = (series: Series): string => microsOf(series.utcOffsetHours);
 
 // ── Test access ───────────────────────────────────────────────────────────────
 

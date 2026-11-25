@@ -134,9 +134,9 @@ export interface Series {
   version?: string;
 
   /**
-   * The zone a text timestamp is written in, in whole hours east of UTC — for a
-   * venue that writes local datetimes. Absent means UTC (and is irrelevant to an
-   * epoch, which has no zone).
+   * The zone a venue writes its local datetimes in, in whole hours east of UTC.
+   * It applies only to datetime text that carries no offset of its own: an epoch
+   * has no zone, and text with an offset names its own. Absent means UTC.
    */
   utcOffsetHours?: number;
 

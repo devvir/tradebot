@@ -85,6 +85,47 @@ export const countRows = async (conn: DuckDBConnection, glob: string): Promise<n
 };
 
 /**
+ * Load the DuckDB extensions a format is read with, on the connection about to
+ * read it.
+ *
+ * Installing puts an extension in DuckDB's local extension directory, fetching it
+ * from DuckDB's extension repository where it is not there yet. It runs once per
+ * extension per process, shared by every build that asks at the same time; loading
+ * is local and runs on each call, since it belongs to the instance and is a no-op
+ * once done. A failure names the format and the extension, and is not remembered:
+ * the next build asking for it tries again.
+ */
+export const ensureExtensions = async (
+  conn: DuckDBConnection, extensions: readonly string[], format: string,
+): Promise<void> => {
+  for (const extension of extensions) {
+    try {
+      await installed(conn, extension);
+      await conn.run(`LOAD ${extension}`);
+    } catch (err) {
+      throw new Error(
+        `${format} series need the DuckDB '${extension}' extension, which could not be installed or loaded: ` +
+        (err as Error).message);
+    }
+  }
+};
+
+/** Installs done or under way in this process, by extension. */
+const installs = new Map<string, Promise<void>>();
+
+const installed = (conn: DuckDBConnection, extension: string): Promise<void> => {
+  let install = installs.get(extension);
+
+  if (! install) {
+    install = conn.run(`INSTALL ${extension}`).then(() => undefined);
+    installs.set(extension, install);
+    install.catch(() => installs.delete(extension));
+  }
+
+  return install;
+};
+
+/**
  * Single-quote a value for inline SQL.
  *
  * Paths and identifiers here come from the filesystem and from the series map,

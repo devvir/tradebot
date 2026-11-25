@@ -5,10 +5,12 @@ import { DuckDBInstance } from '@duckdb/node-api';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { csv } from '../src/formats/csv';
 import { parseKey } from '../src/keys';
+import { marginOf } from '../src/schema/margin';
 import { selectFor } from '../src/schema/project';
 import { seriesFor } from '../src/schema/series';
+import { MARGIN, fieldsOf } from '../src/schema/tables';
 import { versionsOf } from '../src/versions';
-import type { Series } from '../src/types';
+import type { ArchiveFile, Series } from '../src/types';
 
 /**
  * What is written of each fixture, held against a record of it.
@@ -26,8 +28,10 @@ import type { Series } from '../src/types';
  * `STOCKER_RECORD_OUTPUT=1` records — a fixture that has no record, and one
  * whose versions moved. It never records over a digest whose versions did not.
  *
- * Covers what the map reads as a table. It says nothing of the order a build
- * writes rows in, which is the build's and not the map's.
+ * Covers what the map reads as a table, and what the build adds to it from the
+ * map and the key: the margin it writes for the fixture's symbol, where the
+ * table has a margin column, and whether it drops repeated rows. It says nothing
+ * of the order a build writes rows in, which is the build's and not the map's.
  */
 
 interface Fixture {
@@ -69,14 +73,23 @@ const resolve = (fixture: Fixture): Series | null => seriesFor(parseKey(fixture.
 /** `YYYY-MM`, off the month folder of a catalog key. */
 const monthOf = (key: string): string => key.replace(/^.*\/(\d{4})(\d{2})\/[^/]+$/, '$1-$2');
 
-/** The columns, their types and every row a fixture is written as, as one digest. */
-const digestOf = async (series: Series, fixture: string): Promise<string> => {
+/**
+ * The columns, their types and every row a fixture is written as, with the
+ * margin written beside them and whether repeated rows are dropped, as one digest.
+ */
+const digestOf = async (series: Series, file: ArchiveFile, fixture: string): Promise<string> => {
   const reader = await conn.runAndReadAll(`SELECT * FROM (${selectFor(series, csv.relation([join(DIR, fixture)], series))})`);
 
   const shape = reader.columnNames().map((name, at) => [name, String(reader.columnTypes()[at])]);
   const rows  = JSON.stringify(reader.getRows(), (_key, value: unknown) => typeof value === 'bigint' ? `${value}n` : value);
+  const added = JSON.stringify({
+    margin:      fieldsOf(series.table).some(field => field.name === MARGIN.name)
+      ? marginOf(file.venue, file.market, file.symbol)
+      : undefined,
+    repeatsRows: Boolean(series.repeatsRows),
+  });
 
-  return createHash('sha256').update(JSON.stringify(shape)).update(rows).digest('hex').slice(0, 16);
+  return createHash('sha256').update(JSON.stringify(shape)).update(rows).update(added).digest('hex').slice(0, 16);
 };
 
 const mapped = FIXTURES.filter(f => ['csv', 'xlsx'].includes(resolve(f)?.format ?? ''));
@@ -87,7 +100,7 @@ describe('what is written of each fixture', () => {
 
     const now: Recorded = {
       versions: versionsOf(series.table, [series], monthOf(fixture.key)).join(' '),
-      digest:   await digestOf(series, name),
+      digest:   await digestOf(series, parseKey(fixture.key)!, name),
     };
 
     const was = RECORDED[name];

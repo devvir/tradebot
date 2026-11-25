@@ -5,7 +5,7 @@ import type { DuckDBConnection } from '@duckdb/node-api';
 import config from './config';
 import { SCRATCH, hasContent, unpackAll } from './containers';
 import { TAG } from './containers/pack';
-import { q } from './db';
+import { ensureExtensions, q } from './db';
 import { syncDir, syncFile } from './durable';
 import { formatFor, formatOf, isTable } from './formats';
 import { marginOf } from './schema/margin';
@@ -104,10 +104,7 @@ export const buildGroup = async (
     for (const [series, paths] of bySeries) {
       const format = formatFor(series.format);
 
-      for (const extension of format.extensions ?? []) {
-        await conn.run(`INSTALL ${extension}`);
-        await conn.run(`LOAD ${extension}`);
-      }
+      await ensureExtensions(conn, format.extensions ?? [], series.format);
 
       await assertDeclaredWidth(conn, format, paths, series, key, symbol);
 
@@ -300,10 +297,7 @@ const batchFrom = async (
     for (const [series, paths] of bySeries) {
       const format = formatFor(series.format);
 
-      for (const extension of format.extensions ?? []) {
-        await conn.run(`INSTALL ${extension}`);
-        await conn.run(`LOAD ${extension}`);
-      }
+      await ensureExtensions(conn, format.extensions ?? [], series.format);
 
       const extra = [
         'filename AS _file',

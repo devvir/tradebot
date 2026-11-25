@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DuckDBInstance } from '@duckdb/node-api';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { ensureExtensions } from '../src/db';
 import { xlsx } from '../src/formats/xlsx';
 import { formatOf } from '../src/formats';
 import { parseKey } from '../src/keys';
@@ -17,6 +18,25 @@ import { selectFor } from '../src/schema/project';
  * under test, DuckDB can write the format, and a binary fixture would say
  * nothing about why it looks the way it does.
  */
+
+/**
+ * Why the excel extension cannot be had here, or nothing where it can. It is
+ * fetched from DuckDB's extension repository the first time, so a host without
+ * that access skips this file and says so, rather than failing every test in it.
+ */
+const unavailable = await (async (): Promise<string | undefined> => {
+  const probe = await (await DuckDBInstance.create(':memory:')).connect();
+
+  try {
+    await ensureExtensions(probe, xlsx.extensions ?? [], 'xlsx');
+  } catch (err) {
+    return (err as Error).message;
+  } finally {
+    probe.closeSync();
+  }
+})();
+
+if (unavailable) console.warn(`Skipping the xlsx tests: ${unavailable}`);
 
 let dir: string;
 let instance: DuckDBInstance;
@@ -38,20 +58,6 @@ const sheet = async (name: string, rows: [number, number, number][]): Promise<st
   return path;
 };
 
-beforeAll(async () => {
-  dir      = await mkdtemp(join(tmpdir(), 'xlsx-'));
-  instance = await DuckDBInstance.create(':memory:');
-  conn     = await instance.connect();
-
-  await conn.run('INSTALL excel');
-  await conn.run('LOAD excel');
-});
-
-afterAll(async () => {
-  conn?.closeSync?.();
-  await rm(dir, { recursive: true, force: true });
-});
-
 const series = () => seriesFor(parseKey('bitget/spot/quotes/C/CETUSUSDT/202409/bitget|spot|quotes|CETUSUSDT|20240903.zip')!)!;
 
 const rowsOf = async (paths: string[]): Promise<Record<string, unknown>[]> => {
@@ -63,7 +69,20 @@ const rowsOf = async (paths: string[]): Promise<Record<string, unknown>[]> => {
   return reader.getRows().map(row => Object.fromEntries(names.map((n, i) => [n, row[i]])));
 };
 
-describe('reading a month of spreadsheets', () => {
+describe.skipIf(!! unavailable)('reading a month of spreadsheets', () => {
+  beforeAll(async () => {
+    dir      = await mkdtemp(join(tmpdir(), 'xlsx-'));
+    instance = await DuckDBInstance.create(':memory:');
+    conn     = await instance.connect();
+
+    await ensureExtensions(conn, xlsx.extensions ?? [], 'xlsx');
+  });
+
+  afterAll(async () => {
+    conn?.closeSync?.();
+    await rm(dir, { recursive: true, force: true });
+  });
+
   /**
    * The bug this exists for: the reader took a single path and threw on
    * anything else, so every bitget depth month of more than one day failed to
