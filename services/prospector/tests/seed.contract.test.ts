@@ -1,7 +1,9 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { grainOf, keyOf } from '../src/catalog/series';
+import { WIDTH } from '../src/dates';
+import { parseCsv } from '../src/database/migrations/seeds/seed';
 import { adaptersFor } from '../src/venues';
 import type { Grain, Publishing } from '../src/types';
 
@@ -23,40 +25,15 @@ import type { Grain, Publishing } from '../src/types';
 
 const SEEDS = join(__dirname, '../src/database/migrations/seeds');
 
+/** One of a venue's seed files, read as the loader reads it, or nothing where it has none. */
+const tableOf = (venue: string, table: string): Record<string, string>[] => {
+  const path = join(SEEDS, venue, `${table}.csv`);
+
+  return existsSync(path) ? parseCsv(readFileSync(path, 'utf8'), `${venue}/${table}.csv`) : [];
+};
+
 /** One venue's `pattern.csv`, or nothing where it seeds no shapes. */
-const patternsOf = (venue: string): Record<string, string>[] => {
-  let text: string;
-
-  try {
-    text = readFileSync(join(SEEDS, venue, 'pattern.csv'), 'utf8');
-  } catch {
-    return [];
-  }
-
-  const [head, ...lines] = text.trim().split('\n');
-  const names = head!.split(',');
-
-  return lines.map(line => Object.fromEntries(fields(line).map((v, i) => [names[i]!, v])));
-};
-
-/** The same quoting rule `seed.ts` reads these with. */
-const fields = (line: string): string[] => {
-  const out: string[] = [];
-
-  let value = '', quoted = false;
-
-  for (const char of line) {
-    if (char === '"') { quoted = ! quoted; continue; }
-
-    if (char === ',' && ! quoted) { out.push(value); value = ''; continue; }
-
-    value += char;
-  }
-
-  out.push(value);
-
-  return out;
-};
+const patternsOf = (venue: string): Record<string, string>[] => tableOf(venue, 'pattern');
 
 /** A stamp of the width each grain writes. */
 const STAMP: Record<Grain, string> = {
@@ -114,5 +91,35 @@ describe('every seeded pattern round-trips through its adapter', () => {
            */
           expect(adapter.dateOf?.(key) ?? null, `dateOf could not read ${key}`).toBe(at);
         });
+    });
+});
+
+/**
+ * **A bound is a stamp at its series' grain.** A `floor` or `last` of another
+ * width is read as some other period — an eight-digit floor on a monthly shape
+ * steps back to a month that does not exist.
+ */
+describe('every seeded series states its bounds at its pattern\'s grain', () => {
+  const venues = readdirSync(SEEDS, { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && existsSync(join(SEEDS, entry.name, 'series.csv')))
+    .map(entry => entry.name);
+
+  it('has a venue to check, or this block asserts nothing', () => {
+    expect(venues.length).toBeGreaterThan(0);
+  });
+
+  for (const venue of venues)
+    it(venue, () => {
+      const grains = new Map(patternsOf(venue).map(row => [row.virtual_id!, grainOf(row.pattern!)]));
+
+      const wrong = tableOf(venue, 'series').flatMap(row => {
+        const width = WIDTH[grains.get(row.pattern_id!)!];
+
+        return (['floor', 'last'] as const)
+          .filter(column => row[column] && row[column]!.length !== width)
+          .map(column => `${row.pattern_id} ${row.symbol} ${column}=${row[column]}`);
+      });
+
+      expect(wrong).toEqual([]);
     });
 });

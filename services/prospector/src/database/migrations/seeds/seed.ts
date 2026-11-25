@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { prevPeriod } from '../../../dates';
+import { WIDTH, prevPeriod } from '../../../dates';
 import { BUCKET } from '../../../canonical';
 import { grainOf } from '../../../catalog/series';
 import { INSTRUMENT_OF, SLICE_OF } from '../../schema';
@@ -8,27 +8,36 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { Grain } from '../../../types';
 
 /**
- * Plant what a venue publishes, from the CSVs beside this file.
+ * Plant what a venue's seed directory states: `<dir>/<venue>/*.csv`.
  *
- * **For venues nothing can discover.** A listing venue is walked: its shapes and
- * its instruments are read out of the archive, and a seed would only be a stale
- * copy of what the first walk establishes anyway. okx and bitget publish no
- * listing at any layer, so what they contain has to arrive some other way — and
- * this is it. Adding a third such venue is a directory, not a migration.
+ * **A seed states what reading the archive cannot establish.** That is one of
+ * two things:
  *
- * **One function for every venue, because there is nothing venue-specific left.**
- * The rows are the venue's, but the shape of them is the catalog's: `pattern.csv`
- * and `series.csv` are those two tables, column for column. Nothing here knows
- * what a bitget token is or how okx spells a futures chain, and no adapter has to
- * be consulted to read them — the pattern *is* the pattern, written out.
+ * - **Series**, for a venue that publishes no listing at any layer: every key it
+ *   serves has to be built from a series already held, so its patterns and
+ *   series arrive here, with `transform.csv` where its URLs need one.
+ * - **Retirements**, for a venue that is walked: a walk finds its shapes and
+ *   instruments itself, but cannot tell a tree that has ended from one that is
+ *   only quiet, so a seed of `pattern.csv` alone carries each shape's
+ *   `retired_at` and the walk fills in the rest.
  *
- * See `README.md` beside this file for the format and how to change it.
+ * Adding a venue is a directory and a one-line migration calling
+ * `seed(db, '<venue>')`.
+ *
+ * **One function for every venue, because there is nothing venue-specific here.**
+ * The rows are the venue's, but the shape of them is the catalog's: `pattern.csv`,
+ * `series.csv` and `transform.csv` are those tables, column for column. Nothing
+ * here knows what a venue's tokens mean, and no adapter has to be consulted to
+ * read them — the pattern *is* the pattern, written out.
+ *
+ * `dir` holds one directory per venue, and is the directory beside this file
+ * unless given. See `README.md` beside this file for the format.
  */
-export const seed = (db: DatabaseSync, venue: string): void => {
+export const seed = (db: DatabaseSync, venue: string, dir: string = __dirname): void => {
   const found = db.prepare('SELECT id FROM venue WHERE name = ? AND host = \'\'')
     .get(venue) as { id: number } | undefined;
 
-  if (! found) throw new Error(`No venue row for '${venue}' — the venues migration must run first`);
+  if (! found) throw new Error(`No venue row for '${venue}' — the core migration must run first`);
 
   /**
    * **The file's own numbering, mapped to whatever the table assigns.** A
@@ -45,7 +54,7 @@ export const seed = (db: DatabaseSync, venue: string): void => {
        RETURNING id`,
   );
 
-  for (const row of rows(venue, 'pattern')) {
+  rows(dir, venue, 'pattern').forEach((row, at) => {
     /**
      * **The grain is the pattern's, read off its slots**, as it is wherever a
      * pattern is met. A seed stating another would plant a shape the walk that
@@ -57,6 +66,10 @@ export const seed = (db: DatabaseSync, venue: string): void => {
       throw new Error(
         `${venue}/pattern.csv gives pattern ${row.virtual_id} the grain "${row.grain}", `
         + `and its slots say "${grain}"`);
+
+    if (row.retired_at && ! STAMP.test(row.retired_at))
+      throw new Error(
+        `${venue}/pattern.csv line ${at + 2}: retired_at "${row.retired_at}" is not a date stamp`);
 
     /**
      * **A shape with no place for an instrument's name holds a whole market**,
@@ -71,7 +84,7 @@ export const seed = (db: DatabaseSync, venue: string): void => {
       row.retired_at || null, row.holds || 'instrument') as { id: number };
 
     ids.set(row.virtual_id!, { id, grain, bundle });
-  }
+  });
 
   /**
    * **No `venue_id`, because a series does not have one.** It reaches its venue
@@ -86,9 +99,9 @@ export const seed = (db: DatabaseSync, venue: string): void => {
   /** A seed names an instrument by its symbol; the table holds the instrument. */
   const instrument = db.prepare(INSTRUMENT_OF);
 
-  const seen = new Map<string, string>();
+  const seen = new Map<string, Record<string, string>>();
 
-  for (const row of rows(venue, 'series')) {
+  rows(dir, venue, 'series').forEach((row, at) => {
     const shape = ids.get(row.pattern_id!);
 
     if (shape === undefined)
@@ -98,45 +111,47 @@ export const seed = (db: DatabaseSync, venue: string): void => {
 
     const patternId = shape.id;
 
+    /** A bound of another width would be read at another grain than its series'. */
+    for (const column of ['floor', 'last'] as const) {
+      const value = row[column];
+
+      if (value && ! (/^\d+$/.test(value) && value.length === WIDTH[shape.grain]))
+        throw new Error(
+          `${venue}/series.csv line ${at + 2}: ${column} "${value}" is not a ${shape.grain} `
+          + `stamp of ${WIDTH[shape.grain]} digits`);
+    }
+
     /**
      * **Two series of one pattern that spell their keys the same way are one
      * series**, so the catalog refuses the second — see `series_key`.
      *
      * A row repeated exactly says nothing new and is skipped. One that collides
-     * while naming a *different* instrument is a fault in whatever generated the
-     * seed: two instruments cannot both own a URL, and picking either would file
-     * somebody's history under the other's name.
+     * while saying anything else is a fault in whatever generated the seed: two
+     * instruments cannot both own a URL, and one series cannot have two sets of
+     * bounds — picking either would file somebody's history under the wrong one.
      */
     const spelling = row.url_symbol || row.symbol;
     const key      = patternId + ' ' + spelling;
     const had      = seen.get(key);
 
     if (had !== undefined) {
-      if (had !== row.symbol)
+      if (had.symbol !== row.symbol)
         throw new Error(
           `${venue}/series.csv gives pattern ${row.pattern_id} the key "${spelling}" for both `
-          + `"${had}" and "${row.symbol}" — two instruments cannot publish to one URL`);
+          + `"${had.symbol}" and "${row.symbol}" — two instruments cannot publish to one URL`);
 
-      continue;
+      const differs = SERIES_COLUMNS.filter(column => (had[column] ?? '') !== (row[column] ?? ''));
+
+      if (differs.length > 0)
+        throw new Error(
+          `${venue}/series.csv line ${at + 2} repeats pattern ${row.pattern_id}'s "${spelling}" `
+          + `with a different ${differs.join(', ')}`);
+
+      return;
     }
 
-    seen.set(key, row.symbol);
+    seen.set(key, row);
 
-    /**
-     * **A seed states a floor; the table holds a tip, and they are one period
-     * apart.**
-     *
-     * A tip is a claim that everything at or below it has been settled, and
-     * generation starts at the period *after* it. Nothing has walked a seeded
-     * venue yet, so there is no settled history for a seed to claim — what it
-     * actually knows is where the archive begins, which is the first period
-     * worth asking about. Writing that as a tip meant every floor in the file
-     * was recorded one day or one month before the thing it described, and a
-     * reader had to know the off-by-one to see the number the seed meant.
-     *
-     * So the file says `floor` and means it, and the conversion lives here —
-     * one place, at the only boundary the two languages meet.
-     */
     /** A series in the wrong bundle would be filed under a slice it does not belong to. */
     if ((row.symbol === BUCKET) !== (shape.bundle === 'market'))
       throw new Error(
@@ -146,9 +161,14 @@ export const seed = (db: DatabaseSync, venue: string): void => {
     const held = row.symbol === BUCKET ? null
       : (instrument.get(patternId, row.symbol!) as { id: number }).id;
 
+    /**
+     * **A seed states a floor; the table holds a tip, one period below it.** The
+     * floor is the first period worth asking about, and generation starts at the
+     * period after a tip, so the tip planted is `prevPeriod(floor, grain)`.
+     */
     series.run(patternId, held, row.url_symbol || null, row.last || null,
       row.floor ? prevPeriod(row.floor, shape.grain) : null);
-  }
+  });
 
   /**
    * **Optional, and most venues have none.** A transform answers a
@@ -160,9 +180,18 @@ export const seed = (db: DatabaseSync, venue: string): void => {
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   );
 
-  for (const row of rows(venue, 'transform'))
+  rows(dir, venue, 'transform').forEach((row, at) => {
+    for (const column of ['date_from', 'date_to'] as const) {
+      const value = row[column];
+
+      if ((value || column === 'date_from') && ! STAMP.test(value ?? ''))
+        throw new Error(
+          `${venue}/transform.csv line ${at + 2}: ${column} "${value ?? ''}" is not a date stamp`);
+    }
+
     transform.run(found.id, row.market, row.symbol, row.dataset ?? '', row.kind,
       row.transform, row.date_from, row.date_to || null);
+  });
 };
 
 /**
@@ -212,42 +241,62 @@ export const seriesSeededAt = (venue: string): string | null => SEEDED_AT[venue]
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
+/** A date stamp at any grain: `yyyymm`, `yyyymmdd`, `yyyymmddhh` or `yyyymmddhhmi`. */
+const STAMP = /^\d{6}(\d{2}){0,3}$/;
+
+/** What a series row says, beyond the key it is filed under. */
+const SERIES_COLUMNS = ['symbol', 'url_symbol', 'last', 'floor'] as const;
+
 /**
- * One seed file, as rows keyed by the header.
+ * One seed file, as rows keyed by the header. **A missing file reads as no
+ * rows**, which is how a venue seeds one table and not another.
  *
- * **Read where it sits.** `__dirname` resolves under `src/` when the tests run
- * and under `dist/` once built, and the build copies the CSVs across — so they
- * are beside this file in both cases and nothing has to know which it is in.
+ * The shipped seeds sit beside this file: `__dirname` resolves under `src/` when
+ * the tests run and under `dist/` once built, and the build copies the CSVs
+ * across.
+ */
+const rows = (dir: string, venue: string, table: string): Record<string, string>[] => {
+  const path = join(dir, venue, `${table}.csv`);
+
+  if (! existsSync(path)) return [];
+
+  return parseCsv(readFileSync(path, 'utf8'), `${venue}/${table}.csv`);
+};
+
+/**
+ * A CSV file's text, as rows keyed by its header; `label` names the file in
+ * every refusal.
+ *
+ * **Line endings are `\n` or `\r\n`, and a leading byte-order mark is not
+ * data.** Header names are trimmed. Trailing blank lines end the file; a blank
+ * line anywhere before them is refused, as is a row whose field count differs
+ * from the header's. A field spans one line.
  *
  * **Columns are taken by name, and a column nobody reads is ignored.** That is
  * deliberate rather than incidental: a seed may carry whatever its own research
  * found useful to keep beside a row — where an archive spelling came from, which
- * sweep produced it — without every such column becoming this file's business.
- * Only the table's own columns and `floor` mean anything here. Do not add a
- * check that the header holds nothing else.
+ * sweep produced it — without every such column becoming the reader's business.
+ * Do not add a check that the header holds nothing else.
  */
-const rows = (venue: string, table: string): Record<string, string>[] => {
-  const path = join(__dirname, venue, `${table}.csv`);
+export const parseCsv = (text: string, label: string): Record<string, string>[] => {
+  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
 
-  /**
-   * **A venue may seed shapes without instruments.** A walked venue discovers
-   * its own series and needs nothing here — but it cannot discover that a tree
-   * has *ended*, because a missing file and a finished tree are the same answer.
-   * So htx seeds patterns carrying their retirement dates and no series at all,
-   * and its walk fills the rest in.
-   */
-  if (! existsSync(path)) return [];
+  while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
 
-  const text = readFileSync(path, 'utf8');
-  const [header, ...lines] = text.trim().split('\n');
-  const names = header!.split(',');
+  if (lines.length === 0) throw new Error(`${label} has no header`);
 
-  return lines.map((line, at) => {
-    const values = fields(line);
+  const names = fields(lines[0]!, label, 1).map(name => name.trim());
+
+  return lines.slice(1).map((line, at) => {
+    const number = at + 2;
+
+    if (line === '') throw new Error(`${label} line ${number} is empty`);
+
+    const values = fields(line, label, number);
 
     if (values.length !== names.length)
       throw new Error(
-        `${venue}/${table}.csv line ${at + 2} has ${values.length} fields, not ${names.length}`);
+        `${label} line ${number} has ${values.length} fields, not ${names.length}`);
 
     return Object.fromEntries(names.map((name, i) => [name, values[i]!]));
   });
@@ -257,12 +306,12 @@ const rows = (venue: string, table: string): Record<string, string>[] => {
  * One line, split on the commas that separate fields rather than the ones inside
  * them.
  *
- * **A field is quoted only where it has to be**, which is where it contains a
- * comma or a quote — okx's `incremental,400` variant and nothing else today. A
- * doubled quote inside a quoted field is one literal quote, as everywhere else
- * that writes CSV.
+ * **A field is quoted where it has to be**, which is where it contains a comma or
+ * a quote. Inside a quoted field a doubled quote is one literal quote; the field
+ * ends at a lone quote, which must be followed by a comma or the end of the line.
+ * A quote inside an unquoted field is an ordinary character.
  */
-const fields = (line: string): string[] => {
+const fields = (line: string, label: string, number: number): string[] => {
   const out: string[] = [];
 
   let value  = '';
@@ -279,6 +328,9 @@ const fields = (line: string): string[] => {
 
       quoted = false;
 
+      if (at + 1 < line.length && line[at + 1] !== ',')
+        throw new Error(`${label} line ${number}: text after a closing quote`);
+
       continue;
     }
 
@@ -288,6 +340,8 @@ const fields = (line: string): string[] => {
 
     value += char;
   }
+
+  if (quoted) throw new Error(`${label} line ${number}: unterminated quote`);
 
   out.push(value);
 

@@ -6,7 +6,7 @@ import { loadSeries, seriesFor, venueIdOf } from '../src/catalog';
 import { openCatalog } from '../src/database';
 import { updatePage, updateScopes } from '../src/update';
 import { okx } from '../src/adapters/okx';
-import { seriesSeededAt } from '../src/database/migrations/seeds/seed';
+import { parseCsv, seriesSeededAt } from '../src/database/migrations/seeds/seed';
 import type { DatabaseSync } from 'node:sqlite';
 
 /**
@@ -18,7 +18,7 @@ import type { DatabaseSync } from 'node:sqlite';
  * is unreachable.
  *
  * The venues here are the two nothing can discover — no listing at any layer —
- * which is the only reason a seed exists at all.
+ * so their seeds carry series, not only shapes.
  */
 
 let dir: string;
@@ -26,8 +26,8 @@ let db:  DatabaseSync;
 
 /** How many rows one of a venue's seed files holds, header excluded. */
 const seeded = (venue: string, table: string): number =>
-  readFileSync(join(__dirname, '../src/database/migrations/seeds', venue, `${table}.csv`), 'utf8')
-    .trim().split('\n').length - 1;
+  parseCsv(readFileSync(join(__dirname, '../src/database/migrations/seeds', venue, `${table}.csv`), 'utf8'),
+    `${venue}/${table}.csv`).length;
 
 /**
  * **Built once and shared.** These all read the shipped seed and none of them
@@ -239,14 +239,12 @@ describe('a seeded venue', () => {
  */
 describe('when a seed was built', () => {
   const newest = (venue: string): string => {
-    const lines = readFileSync(
-      join(__dirname, `../src/database/migrations/seeds/${venue}/series.csv`), 'utf8')
-      .trim().split('\n');
+    const rows = parseCsv(readFileSync(
+      join(__dirname, `../src/database/migrations/seeds/${venue}/series.csv`), 'utf8'),
+      `${venue}/series.csv`);
 
-    const at = lines[0]!.split(',').indexOf('last');
-
-    return lines.slice(1)
-      .map(line => (line.split(',')[at] ?? '').padEnd(8, '0'))
+    return rows
+      .map(row => (row.last ?? '').padEnd(8, '0'))
       .filter(Boolean)
       .reduce((high, one) => (one > high ? one : high), '');
   };
@@ -261,12 +259,9 @@ describe('when a seed was built', () => {
       expect(at! >= newest(venue)).toBe(true);
     });
 
-  /** htx seeds shapes and no series, so there is no span to leave out. */
-  it('answers nothing for a venue that seeds no series', () => {
-    expect(seriesSeededAt('htx')).toBeNull();
-  });
-
-  it('answers nothing for a venue with no seed at all', () => {
-    expect(seriesSeededAt('binance')).toBeNull();
-  });
+  /** These seed shapes and no series, so there is no span to leave out. */
+  for (const venue of ['htx', 'binance'])
+    it(`answers nothing for ${venue}, whose seed holds no series`, () => {
+      expect(seriesSeededAt(venue)).toBeNull();
+    });
 });
