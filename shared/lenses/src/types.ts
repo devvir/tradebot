@@ -16,12 +16,11 @@ export type Grain = typeof GRAINS[number];
 export type Bundle = typeof BUNDLES[number];
 
 /**
- * A named way of looking at the catalog.
+ * A named selection of the catalog.
  *
  * **Where a lens is in force, what it lets through *is* the catalog.** A consumer asks what
  * exists and gets the lens's answer; the database stays complete and unfiltered
- * underneath. That is the whole idea, and the reason it is not called a
- * selection: nothing is being gathered, something is being looked through.
+ * underneath: nothing is gathered or copied, the catalog is looked through.
  *
  * **Three names, and they do different jobs.** `slug` is what a consumer is
  * configured with and what every path addresses, so it is stable and spelled
@@ -40,8 +39,8 @@ export interface Lens {
 
   /**
    * Whether what it lets through is still being worked out from its rules as
-   * they were last saved. Until it is not, its partitions are partly those of
-   * the rules before.
+   * they were last saved. Until it is not, its partitions are those of the
+   * rules before.
    */
   updating:   boolean;
 }

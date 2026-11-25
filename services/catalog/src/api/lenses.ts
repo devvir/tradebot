@@ -98,7 +98,7 @@ export const mountLenses = (app: Application, db: DatabaseSync): void => {
       return;
     }
 
-    // While the lens is being worked out its rows are part of the old rules' and part of the new: the caller is told.
+    // While the lens is being worked out its rows are still the old rules': the caller is told.
     res.json({ ...savedLensSize(db, found), updating: found.updating });
   });
 
@@ -111,8 +111,9 @@ export const mountLenses = (app: Application, db: DatabaseSync): void => {
   });
 
   /**
-   * **What it actually selects**, by venue: how many series, and their spans.
-   * The honest answer to "did I mean that", and what a size is computed from.
+   * **What it actually selects**, by venue: how many slices and partitions,
+   * and the month spans its rules bound them to. The honest answer to "did I
+   * mean that".
    */
   app.post('/lenses/resolve', (req, res) => {
     const definition = definitionOf(db, res, req.body);
