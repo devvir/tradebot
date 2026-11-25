@@ -96,6 +96,118 @@ describe('uptime', () => {
   });
 });
 
+describe('health', () => {
+  const rowFor = async (status: string) => {
+    const { fetchContainerRows } = await import('../../src/tools/monitor/docker');
+    const docker = {
+      listContainers: async () => [{ ...mockContainerList[1], Status: status }],
+      getContainer:   () => ({
+        stats:   (_options: unknown, done: (err: unknown, data: unknown) => void) => done(null, mockStats),
+        logs:    async () => Buffer.from(''),
+        inspect: async () => ({ RestartCount: 0, State: {} }),
+      }),
+    };
+    const [row] = await fetchContainerRows(docker as never);
+    return row!.health;
+  };
+
+  it('shows a failing healthcheck as unhealthy', async () => {
+    expect(await rowFor('Up 2 hours (unhealthy)')).toBe('\x1b[31m✗ unhealthy\x1b[0m');
+  });
+
+  it('shows a healthcheck that has not reported yet as starting', async () => {
+    expect(await rowFor('Up 5 seconds (health: starting)')).toBe('\x1b[33m⟳ starting\x1b[0m');
+  });
+
+  it('shows a passing healthcheck as healthy', async () => {
+    expect(await rowFor('Up 1 hour (healthy)')).toBe('\x1b[32m✓ healthy\x1b[0m');
+  });
+
+  it('shows a dash for a container without a healthcheck', async () => {
+    expect(await rowFor('Up 1 hour')).toBe('—');
+  });
+});
+
+describe('parseInterval', () => {
+  it('accepts whole and fractional seconds', async () => {
+    const { parseInterval } = await import('../../src/tools/monitor/index');
+    expect(parseInterval('3')).toBe(3);
+    expect(parseInterval('0.5')).toBe(0.5);
+    expect(parseInterval(2)).toBe(2);
+    expect(parseInterval(undefined)).toBe(3);
+  });
+
+  it.each(['0', '0.25', '-1', 'x', '', '1s', 'Infinity'])('refuses %j', async (raw) => {
+    const { parseInterval } = await import('../../src/tools/monitor/index');
+    expect(() => parseInterval(raw)).toThrow(/Invalid interval/);
+  });
+});
+
+describe('startLoop', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('never runs two ticks at once and waits the interval after each one finishes', async () => {
+    const { startLoop } = await import('../../src/tools/monitor/index');
+    let running = 0;
+    let maxRunning = 0;
+    const starts: number[] = [];
+
+    const tick = async () => {
+      running++;
+      maxRunning = Math.max(maxRunning, running);
+      starts.push(Date.now());
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+      running--;
+    };
+
+    const start = Date.now();
+    const stop = startLoop(tick, 1000, () => {});
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    stop();
+
+    expect(maxRunning).toBe(1);
+    // Each run takes 2.5 s and the next starts 1 s after it ends.
+    expect(starts.map((t) => t - start)).toEqual([0, 3500, 7000]);
+  });
+
+  it('keeps going after a tick throws', async () => {
+    const { startLoop } = await import('../../src/tools/monitor/index');
+    let calls = 0;
+    const errors: unknown[] = [];
+
+    const stop = startLoop(async () => {
+      calls++;
+      if (calls === 1) throw new Error('boom');
+    }, 1000, (err) => errors.push(err));
+
+    await vi.advanceTimersByTimeAsync(2500);
+    stop();
+
+    expect(calls).toBe(3);
+    expect(errors).toHaveLength(1);
+    expect((errors[0] as Error).message).toBe('boom');
+  });
+
+  it('stops scheduling once stopped', async () => {
+    const { startLoop } = await import('../../src/tools/monitor/index');
+    let calls = 0;
+
+    const stop = startLoop(async () => { calls++; }, 1000, () => {});
+    await vi.advanceTimersByTimeAsync(0);
+    stop();
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(calls).toBe(1);
+  });
+});
+
 describe('cpuPercent', () => {
   it('calculates cpu percentage from stats', async () => {
     const { cpuPercent } = await import('../../src/tools/monitor/docker');
@@ -109,6 +221,15 @@ describe('cpuPercent', () => {
     const stats = {
       cpu_stats: { cpu_usage: { total_usage: 1000 }, system_cpu_usage: 1000, online_cpus: 1 },
       precpu_stats: { cpu_usage: { total_usage: 1000 }, system_cpu_usage: 1000 },
+    };
+    expect(cpuPercent(stats)).toBe('0.00%');
+  });
+
+  it('returns 0.00% when the previous sample has no system usage', async () => {
+    const { cpuPercent } = await import('../../src/tools/monitor/docker');
+    const stats = {
+      cpu_stats: { cpu_usage: { total_usage: 2000 }, system_cpu_usage: 5000, online_cpus: 2 },
+      precpu_stats: { cpu_usage: { total_usage: 1000 } },
     };
     expect(cpuPercent(stats)).toBe('0.00%');
   });

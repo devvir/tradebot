@@ -10,7 +10,7 @@ export function cpuPercent(stats: any): string {
       stats.cpu_stats.system_cpu_usage - stats.precpu_stats.system_cpu_usage;
     const cpus =
       stats.cpu_stats.online_cpus ?? stats.cpu_stats.cpu_usage.percpu_usage?.length ?? 1;
-    if (sysDelta <= 0 || cpuDelta < 0) return '0.00%';
+    if (! Number.isFinite(sysDelta) || ! Number.isFinite(cpuDelta) || sysDelta <= 0 || cpuDelta < 0) return '0.00%';
     return `${((cpuDelta / sysDelta) * cpus * 100).toFixed(2)}%`;
   } catch {
     return 'N/A';
@@ -46,8 +46,35 @@ function extractLogTimestamp(buf: Buffer): string {
   }
 }
 
+/**
+ * The health column for a container, from the health token Docker appends to its status
+ * ("Up 2 hours (unhealthy)"). A container without a healthcheck has no token and shows "—".
+ */
+export function healthLabel(status: string): string {
+  const token = /\((healthy|unhealthy|health: starting)\)/.exec(status)?.[1];
+
+  if (token === 'healthy') return '\x1b[32m✓ healthy\x1b[0m';
+  if (token === 'unhealthy') return '\x1b[31m✗ unhealthy\x1b[0m';
+  if (token === 'health: starting') return '\x1b[33m⟳ starting\x1b[0m';
+
+  return '—';
+}
+
+/** How long one Docker call may take before its column shows "—" (or, for the listing, the frame shows an error). */
+const DOCKER_CALL_TIMEOUT_MS = 5000;
+
+function withTimeout<T>(promise: Promise<T>, what: string, ms = DOCKER_CALL_TIMEOUT_MS): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms / 1000}s`)), ms);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 export async function fetchContainerRows(docker: Dockerode): Promise<ContainerRow[]> {
-  const containers = await docker.listContainers({ all: false });
+  const containers = await withTimeout(docker.listContainers({ all: false }), 'Listing containers');
 
   return Promise.all(
     containers.map(async (c): Promise<ContainerRow> => {
@@ -57,10 +84,7 @@ export async function fetchContainerRows(docker: Dockerode): Promise<ContainerRo
       const id = c.Id.slice(0, 12);
       const isRunning = c.State === 'running';
 
-      let health = '—';
-      if (c.Status.includes('healthy')) health = '\x1b[32m✓ healthy\x1b[0m';
-      else if (c.Status.includes('unhealthy')) health = '\x1b[31m✗ unhealthy\x1b[0m';
-      else if (c.Status.includes('starting')) health = '\x1b[33m⟳ starting\x1b[0m';
+      const health = healthLabel(c.Status ?? '');
 
       // Since the container last started, which a restart resets — read from the inspect below.
       let uptime = isRunning ? '—' : 'stopped';
@@ -74,19 +98,25 @@ export async function fetchContainerRows(docker: Dockerode): Promise<ContainerRo
         const container = docker.getContainer(c.Id);
 
         const [statsRes, logRes, inspectRes] = await Promise.allSettled([
-          new Promise<any>((resolve, reject) =>
-            container.stats({ stream: false } as any, (err: any, data: any) =>
-              err ? reject(err) : resolve(data),
+          withTimeout(
+            new Promise<any>((resolve, reject) =>
+              container.stats({ stream: false } as any, (err: any, data: any) =>
+                err ? reject(err) : resolve(data),
+              ),
             ),
+            'Container stats',
           ),
-          container.logs({
-            stdout: true,
-            stderr: true,
-            tail: 1,
-            timestamps: true,
-            follow: false,
-          }) as Promise<Buffer>,
-          container.inspect(),
+          withTimeout(
+            container.logs({
+              stdout: true,
+              stderr: true,
+              tail: 1,
+              timestamps: true,
+              follow: false,
+            }) as Promise<Buffer>,
+            'Container logs',
+          ),
+          withTimeout(container.inspect(), 'Container inspect'),
         ]);
 
         if (statsRes.status === 'fulfilled') {

@@ -4,8 +4,53 @@ import { discoverRabbitInstances, fetchQueueRows } from './rabbitmq';
 import { buildOutput } from './render';
 import type { ContainerRow, QueueRow, RabbitInstance } from './types';
 
-export async function run(options: { interval?: number } = {}): Promise<void> {
-  const interval = options.interval ?? 3;
+/** The shortest refresh interval, in seconds. */
+export const MIN_INTERVAL_SECONDS = 0.5;
+
+/**
+ * The refresh interval in seconds, from a number or its text form ("3", "0.5"). A value that is not a finite
+ * number, or is below {@link MIN_INTERVAL_SECONDS}, is refused.
+ */
+export function parseInterval(raw: number | string | undefined, fallback = 3): number {
+  if (raw === undefined) return fallback;
+
+  const seconds = typeof raw === 'number' ? raw : Number(raw.trim());
+
+  if (! Number.isFinite(seconds) || seconds < MIN_INTERVAL_SECONDS) {
+    throw new Error(`Invalid interval "${raw}": expected a number of seconds, at least ${MIN_INTERVAL_SECONDS}`);
+  }
+
+  return seconds;
+}
+
+/**
+ * Runs `tick` now and then again `intervalMs` after each run finishes, so two runs never overlap. A run that
+ * throws is passed to `onError` and the loop carries on. Returns a function that stops the loop.
+ */
+export function startLoop(tick: () => Promise<void>, intervalMs: number, onError: (err: unknown) => void): () => void {
+  let stopped = false;
+  let timer: NodeJS.Timeout | undefined;
+
+  const loop = async () => {
+    try {
+      await tick();
+    } catch (err) {
+      onError(err);
+    }
+
+    if (! stopped) timer = setTimeout(loop, intervalMs);
+  };
+
+  void loop();
+
+  return () => {
+    stopped = true;
+    clearTimeout(timer);
+  };
+}
+
+export async function run(options: { interval?: number | string } = {}): Promise<void> {
+  const interval = parseInterval(options.interval);
   const docker = new Dockerode();
 
   process.stdout.write('\x1b[?25l');
@@ -55,6 +100,7 @@ export async function run(options: { interval?: number } = {}): Promise<void> {
     process.stdout.write(output);
   };
 
-  await tick();
-  setInterval(tick, interval * 1000);
+  startLoop(tick, interval * 1000, (err) => {
+    process.stdout.write(`\n \x1b[31m⚠  Refresh failed: ${(err as Error)?.message ?? String(err)}\x1b[0m\n`);
+  });
 }
