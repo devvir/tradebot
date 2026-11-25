@@ -64,6 +64,12 @@ const writers = new Map<string, Writer>();
 // drained, so awaiting `flush()` alone does not cover it.
 const sealing = new Set<Promise<void>>();
 
+// The seal in progress on each writer. A seal requested while one is already
+// running on the same writer joins it rather than starting its own: the first
+// seal may already have renamed the open file, which a second fsync of it
+// would not find.
+const seals = new Map<Writer, Promise<void>>();
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
@@ -89,7 +95,10 @@ export const isInitialized = (table: string, filename: string): boolean => {
  * file is fsynced, the writer is closed — renaming `.csv.gz.tmp` → `.csv.gz` —
  * and the year directory is fsynced. The writer is dropped whether the seal
  * succeeds or fails, so a later call starts a fresh writer that resumes the
- * open file.
+ * open file. A seal requested while another seal of the same writer is in
+ * progress joins that seal: it settles once its own batch and that seal have,
+ * and rejects if either does. Its batch, if any, is not covered by the seal's
+ * fsync, so a caller that needs it sealed does not overlap seals with writes.
  *
  * The returned promise resolves when this specific batch (and any seal) is
  * complete, and rejects on any failure, including creating the directory.
@@ -110,14 +119,23 @@ export const appendBatch = async (
 
   if (! seal) return written;
 
+  const inProgress = seals.get(writer);
+
+  if (inProgress) {
+    await Promise.all([written, inProgress]);
+    return;
+  }
+
   const sealed = sealWriter(table, filename, writer, written);
 
+  seals.set(writer, sealed);
   sealing.add(sealed);
 
   try {
     await sealed;
   } finally {
     sealing.delete(sealed);
+    seals.delete(writer);
   }
 };
 
@@ -133,9 +151,12 @@ export const appendBatch = async (
  * a closed file already exists the call rejects with AlreadyExistsError.
  * Finally the year directory is fsynced.
  *
- * Whenever the call rejects, its temp file is removed and no closed or open
- * file has been created or changed. A temp file left by a process that died
- * mid-call is removed by removeStaleUploads.
+ * Whenever the call rejects, its temp file is removed (best effort once
+ * published) and no open file has been created or changed. A rejection before
+ * publishing leaves no closed file created or changed. A rejection from the
+ * final directory fsync comes after publishing: the closed file then exists,
+ * but its entry is not known to be durable. A temp file left by a process
+ * that died mid-call is removed by removeStaleUploads.
  */
 export const storeFile = async (table: string, filename: string, source: Readable): Promise<void> => {
   const dir  = yearDir(table, filename);
@@ -458,4 +479,4 @@ const writeErrorSidecar = (table: string, filename: string, info: WriteFailure):
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
-export const _test_reset = (): void => { writers.clear(); sealing.clear(); };
+export const _test_reset = (): void => { writers.clear(); sealing.clear(); seals.clear(); };

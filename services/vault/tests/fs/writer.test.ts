@@ -9,6 +9,9 @@ import * as path from 'path';
 
 const synced = vi.hoisted(() => [] as string[]);
 
+// Runs before each async fsync, when set: a test can hold or fail one.
+const syncHook = vi.hoisted(() => ({ before: null as ((p: string) => Promise<void>) | null }));
+
 vi.mock('fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs/promises')>();
 
@@ -18,7 +21,11 @@ vi.mock('fs/promises', async (importOriginal) => {
       const handle = await actual.open(p, flags);
       const sync   = handle.sync.bind(handle);
 
-      handle.sync = async () => { synced.push(String(p)); return sync(); };
+      handle.sync = async () => {
+        synced.push(String(p));
+        await syncHook.before?.(String(p));
+        return sync();
+      };
 
       return handle;
     },
@@ -71,6 +78,7 @@ import {
   _test_reset as resetWriter,
 } from '../../src/fs/writer';
 import { recordFailure } from '../../src/fs/health';
+import { logger } from '@devvir/service-kit';
 import { openPath, closedPath } from '../../src/fs/paths';
 import { fileState } from '../../src/fs/reader';
 import { AlreadyExistsError, InvalidUploadError } from '../../src/fs/errors';
@@ -127,6 +135,7 @@ beforeEach(() => {
   resetWriter();
   vi.clearAllMocks();
   synced.length = 0;
+  syncHook.before = null;
 });
 
 afterEach(() => {
@@ -244,6 +253,49 @@ describe('appendBatch — seal', () => {
     await appendBatch('trade', '20230201', ['header'], true);
 
     expect(isInitialized('trade', '20230201')).toBe(false);
+  });
+
+  it('joins a seal that starts after an earlier seal of the same writer has renamed the file', async () => {
+    const yearDir = path.join(tmpDir, 'trade', '2023');
+
+    await appendBatch('trade', '20230201', ['header', 'row']);
+
+    // Hold the first seal's directory fsync, which runs after its rename, and
+    // start a second seal while it is held.
+    let second: Promise<void> | undefined;
+
+    syncHook.before = async (p) => {
+      if (p !== yearDir || second) return;
+
+      expect(existsSync(closedPath('trade', '20230201'))).toBe(true);
+      expect(isInitialized('trade', '20230201')).toBe(true);
+
+      second = appendBatch('trade', '20230201', [], true);
+      await new Promise(r => setTimeout(r, 20));
+    };
+
+    const first = appendBatch('trade', '20230201', [], true);
+
+    await expect(first).resolves.toBeUndefined();
+    expect(second).toBeDefined();
+    await expect(second).resolves.toBeUndefined();
+
+    expect(logger.error).not.toHaveBeenCalled();
+    expect(readMembers(closedPath('trade', '20230201'))).toBe('header\nrow\n');
+    expect(existsSync(openPath('trade', '20230201'))).toBe(false);
+  });
+
+  it('rejects a joining seal when the seal it joined fails', async () => {
+    await appendBatch('trade', '20230201', ['header']);
+
+    syncHook.before = async () => { throw new Error('EIO'); };
+
+    const first  = appendBatch('trade', '20230201', [], true);
+    const second = appendBatch('trade', '20230201', [], true);
+
+    await expect(first).rejects.toThrow('EIO');
+    await expect(second).rejects.toThrow('EIO');
+    expect(vi.mocked(logger.error).mock.calls.filter(c => c[1] === 'Seal failed')).toHaveLength(1);
   });
 });
 
@@ -390,6 +442,19 @@ describe('storeFile', () => {
     expect(won.filter(Boolean)).toHaveLength(1);
     expect(results.find(r => r.status === 'rejected')).toMatchObject({ reason: expect.any(AlreadyExistsError) });
     expect(readFileSync(closedPath('trade', '20230201'))).toEqual(won[0] ? a : b);
+    expect(yearFiles()).toEqual(['20230201.csv.gz']);
+  });
+
+  it('rejects with the closed file in place when the directory fsync after publishing fails', async () => {
+    const body    = gzipSync('x\n');
+    const yearDir = path.join(tmpDir, 'trade', '2023');
+
+    mkdirSync(yearDir, { recursive: true });
+    syncHook.before = async (p) => { if (p === yearDir) throw new Error('EIO'); };
+
+    await expect(storeFile('trade', '20230201', Readable.from([body]))).rejects.toThrow('EIO');
+
+    expect(readFileSync(closedPath('trade', '20230201'))).toEqual(body);
     expect(yearFiles()).toEqual(['20230201.csv.gz']);
   });
 });

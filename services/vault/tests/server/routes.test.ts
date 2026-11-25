@@ -171,6 +171,29 @@ describe('PUT /files/:table/:date', () => {
     expect(res.body.error).toBe('Upload is empty');
   });
 
+  it('clears the upload idle timeout once the body has arrived', async () => {
+    const timeouts: { during: number | undefined; after: number | undefined } = { during: undefined, after: undefined };
+
+    vi.mocked(storeFile).mockImplementation(async (_table, _filename, source) => {
+      const socket = (source as unknown as { socket: { timeout?: number } }).socket;
+
+      timeouts.during = socket.timeout;
+
+      for await (const _chunk of source) { /* consume the body */ }
+
+      timeouts.after = socket.timeout;
+    });
+
+    const res = await request(app)
+      .put('/files/trade/20230201')
+      .set('Content-Type', 'application/octet-stream')
+      .send(Buffer.alloc(256 * 1024, 1));
+
+    expect(res.status).toBe(204);
+    expect(timeouts.during).toBeGreaterThan(0);
+    expect(timeouts.after).toBe(0);
+  });
+
   it('returns 409 when a closed file appears while uploading', async () => {
     vi.mocked(storeFile).mockRejectedValue(new AlreadyExistsError('exists'));
 

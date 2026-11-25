@@ -32,7 +32,8 @@ import { closedPath, openPath } from '../fs/paths';
 import type { Row, WsMessage } from '../data/types';
 
 // An upload that sends nothing for this long is cut off. A moving upload is
-// never cut, however long it takes.
+// never cut, however long it takes, and neither is the work after its body
+// has arrived.
 const UPLOAD_IDLE_TIMEOUT_MS = 90_000;
 
 // GET /files streams NDJSON in chunks of at least this many characters.
@@ -345,11 +346,17 @@ export const registerRoutes = (app: Application): void => {
 
   // ── PUT /files/:table/:date — store a complete gzip file ─────────────────────
   //
-  // All-or-nothing: the body is stored as the closed file only once it has
-  // fully arrived and decompresses as gzip (400 otherwise). Buffered rows and
-  // any open (.csv.gz.tmp) file for the bucket are discarded first. A closed
-  // (.csv.gz) file is permanent and returns 409, as does a bucket that is
-  // closing, being discarded or already being uploaded.
+  // The body is stored as the closed file only once it has fully arrived and
+  // decompresses as gzip (400 otherwise). Buffered rows and any open
+  // (.csv.gz.tmp) file for the bucket are discarded first. A closed (.csv.gz)
+  // file is permanent and returns 409, as does a bucket that is closing, being
+  // discarded or already being uploaded. A 500 usually means nothing was
+  // stored, but one from the final directory fsync follows publishing: the
+  // closed file then exists and a retry gets 409.
+  //
+  // The idle timeout covers the body only. It is cleared once the body has
+  // arrived, so the verify and fsyncs that follow, which send nothing on the
+  // socket, are never cut however long they take.
 
   app.put('/files/:table/:date', async (req: Request, res: Response) => {
     if (refuseWhenShuttingDown(res)) {
@@ -364,6 +371,9 @@ export const registerRoutes = (app: Application): void => {
     req.setTimeout(UPLOAD_IDLE_TIMEOUT_MS, () => {
       req.destroy(new Error(`Upload idle for ${UPLOAD_IDLE_TIMEOUT_MS} ms`));
     });
+
+    if (req.complete) req.setTimeout(0);
+    else req.once('end', () => req.setTimeout(0));
 
     const { table, filename } = parsed;
     const state = bucketState(table, filename);
