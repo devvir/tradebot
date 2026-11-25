@@ -111,9 +111,8 @@ export const updateSeries = (db: DatabaseSync, series: Publishing): Publishing =
  * it had answered anything. The pair is what a file actually produces: `sawFile`
  * writes both, from the same sighting.
  *
- * The tip cannot answer this at all. It no longer moves per file, so it sits at
- * the floor its seed gave it until a walk finishes or a pass drains — which on a
- * venue mid-probe is exactly when somebody is watching.
+ * The tip cannot answer this at all. It does not move per file, so it sits at
+ * the floor its seed gave it until a walk finishes or a pass drains.
  *
  * **Every venue in one pass**, because the caller wants every venue: the
  * alternative is `seriesFor` per venue, filtering half a million rows and
@@ -210,8 +209,8 @@ export const seriesOf = (
  * writing the old tree on a known day — leaves a pattern that is history rather
  * than a shape anything new will publish to. Creating a series there would
  * manufacture the one thing nothing retires: a row with no files, probed every
- * day for ever. So `pattern.state` has to be written wherever that happens, and
- * this is what reads it.
+ * day for ever. So `pattern.retired_at` has to be written wherever that
+ * happens, and this is what reads it.
  */
 export const patternsOf = (db: DatabaseSync, venueId: number, market: string): Publishing[] => {
   const seen = new Set<number>();
@@ -338,11 +337,8 @@ export const retirePattern = (db: DatabaseSync, patternId: number, at: string): 
 };
 
 /**
- * Record what an instrument substitutes, and make it true for the next key
- * generated rather than for the next process.
- *
- * **Written while the process runs**, since what an instrument substitutes is
- * learnt from the venue as it goes, and generation follows immediately.
+ * Record a transform, and make it visible to the next key generated rather than
+ * to the next process.
  *
  * **Every series of the instrument already held is handed the new list.** A key
  * is built from the series alone, so one left holding the list it was loaded
@@ -619,8 +615,8 @@ export const reconcile = async (
    * **Two ordered lookups, not `min` and `max`.** With the `existence` filter
    * beside them SQLite answers `min(date)`/`max(date)` by reading every entry
    * of the series; ordered with a limit, it stops at the first that qualifies.
-   * Measured 2026-10-03 on gate: 3 ms against 0.1 ms a series, the difference
-   * between holding the process for five minutes and for ten seconds.
+   * On a large venue that is about 3 ms against 0.1 ms a series, the difference
+   * between holding the process for minutes and for seconds.
    */
   const bounds = db.prepare(
     `SELECT (SELECT date FROM file WHERE series_id = ?1 AND existence <> 'absent' ORDER BY date LIMIT 1) AS first,
@@ -843,8 +839,8 @@ export const loadSeries = (db: DatabaseSync): number => {
    * over retains 1,280 bytes against 544 for an ordinary object holding the same
    * values; and the columns that come from the pattern have a few hundred
    * distinct values between them, so they want one string each rather than one
-   * per series. Measured over 282,000 series, the registry falls from 392 MB to
-   * 114 MB — the rest of it is the two maps and their keys.
+   * per series. Together they hold the registry to under a third of the size,
+   * and the rest of it is the two maps and their keys.
    *
    * The pool is local, so nothing outlives the registry it was built for.
    */
@@ -868,7 +864,7 @@ export const loadSeries = (db: DatabaseSync): number => {
    * collector again and again while the copies are made; read one at a time,
    * each dies as soon as it has been copied. And a copy written out as a
    * literal is an ordinary object of one shape, where spreading a driver row
-   * builds each one key by key — together, most of what loading used to cost.
+   * builds each one key by key — together, most of what loading would cost.
    */
   for (const row of read(db)) {
     const series = {
@@ -1036,9 +1032,9 @@ interface Statements {
 /**
  * The statements, prepared once.
  *
- * **Because inserting is a per-row path.** The shipped seed is twenty-two
- * thousand rows in one go, and preparing the same SQL for each of them turned
- * opening a catalog from about a second into more than ten.
+ * **Because inserting is a per-row path.** A seed inserts tens of thousands of
+ * rows in one go, and preparing the same SQL for each of them would make opening
+ * a catalog roughly ten times slower.
  */
 const statements = (db: DatabaseSync, held: Registry): Statements =>
   held.sql ??= {
@@ -1084,8 +1080,8 @@ const REGISTRIES = new WeakMap<DatabaseSync, Registry>();
 /**
  * **Built on first use, and never silently.**
  *
- * Loading it reads every series of every venue and costs seconds — measured at
- * 3.6 against 282,000 of them — and `node:sqlite` is synchronous, so nothing
+ * Loading it reads every series of every venue and costs seconds on a few
+ * hundred thousand of them — and `node:sqlite` is synchronous, so nothing
  * else in the process runs while it happens. Whoever asks first pays, which is
  * whatever survey or request happened to arrive first and looks from outside
  * exactly like a service that has wedged.
@@ -1393,25 +1389,19 @@ const insert = (
   return { ...row, id, ...(exceptions ? { transforms: exceptions } : {}) };
 };
 
-interface Row extends Omit<Publishing, 'found'> {
-  found: number;
-}
+type Row = Publishing;
 
 /**
  * Every series with the pattern it belongs to, exactly as the driver hands them
- * over.
- *
- * **Not reshaped here.** `found` is an integer because SQLite has no boolean,
- * and converting it in a `.map()` allocated a second copy of every row — a
- * whole extra pass over half a million objects the caller is about to walk
- * anyway. `loadSeries` converts it in the loop it already runs.
+ * over: `loadSeries` copies each in the loop it already runs, so nothing is
+ * reshaped here.
  *
  * **Ordered by `s.id`, which costs nothing.** It is the INTEGER PRIMARY KEY, so
  * the scan already produces that order and there is no sort to do. Ordering by
- * anything else — this read used to lead with `p.venue_id` — cannot be answered
- * from an index and puts all half a million joined rows through a temp B-tree
- * first: measured at **17.7s against 0.9s**, for an ordering nothing reads. The
- * registry is two maps and the only two places that iterate it are filters.
+ * anything the index does not serve (`p.venue_id` first, say) puts every joined
+ * row through a temp B-tree, about twenty times slower, for an ordering nothing
+ * reads: the registry is two maps and the only places that iterate it are
+ * filters.
  */
 const read = (db: DatabaseSync): IterableIterator<Row> =>
   db.prepare(

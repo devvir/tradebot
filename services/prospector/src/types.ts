@@ -493,13 +493,13 @@ export interface Adapter<S extends Scanner<any> = Scanner<any>> {
    */
   probes?: boolean;
 
-  /** Where files are served, without a trailing slash. */
   /**
-   * **Read from the `venue` row at startup, never declared here.**
+   * Where files are served, without a trailing slash.
    *
-   * Where a venue is and what prefix it is rooted at are constants of the
-   * application that live in the database so everything can join against them —
-   * see the `venues` migration. An adapter restating them would keep one unit of
+   * **Read from the `venue` row at startup, never declared here.** Where a venue
+   * is and what prefix it is rooted at are constants of the application that
+   * live in the database so everything can join against them — see the `core`
+   * migration. An adapter restating them would keep one unit of
    * information in two places.
    */
   base: string;
@@ -1116,11 +1116,8 @@ export interface Probe {
 export type Existence = 'confirmed' | 'assumed' | 'absent';
 
 /**
- * One step from one schema version to the next.
- *
- * **Frozen once it has shipped.** Editing one changes nothing on a database that
- * already ran it and silently diverges the two — see `database/migrations/` for
- * the chain and what each step was for.
+ * One step from one schema version to the next. The chain, and how a change to
+ * one is made, is documented in `database/migrations/index.ts`.
  */
 export interface Migration {
   name: string;
@@ -1144,8 +1141,8 @@ export interface Migration {
    *
    * A catalog is not correct without it — okx's ranges are as much a part of
    * what this service knows as the tables holding them — but a test fixture
-   * asking for an empty catalog to put three files in does not want twelve
-   * thousand rows of another venue's history first. Marked, so it can be
+   * asking for an empty catalog to put three files in does not want tens of
+   * thousands of rows of another venue's history first. Marked, so it can be
    * declined deliberately rather than by guessing at the environment.
    */
   seedData?: boolean;
@@ -1325,23 +1322,7 @@ export interface Reconciled {
 }
 
 /** What kind of work a discovery run is doing, and therefore what `cursor` means. */
-export type RunKind = 'walk' | 'probe' | 'update';
-
-/**
- * A venue, as the catalog knows it: a name and enough to rebuild a URL from a
- * stored path.
- *
- * The two URL parts live here rather than in code so that a consumer can turn a
- * row into something fetchable without knowing anything about venues. `base` is
- * where files are served from, `keyRoot` the prefix every key shares and which the
- * stored path has had removed.
- */
-export interface Venue {
-  id:   number;
-  name: string;
-  base: string;
-  keyRoot: string;
-}
+export type RunKind = 'walk' | 'update';
 
 /**
  * One file a venue publishes.
@@ -1984,47 +1965,6 @@ export interface Found {
 // ── Series ────────────────────────────────────────────────────────────────────
 
 /**
- * One URL shape a venue publishes to, with slots where the parts that vary go.
- *
- * **Patterns change almost never; instruments change constantly**, which is why
- * this is separate from the series that use it. A symbol arriving must not mean
- * writing a pattern — that is what forced an adapter to know how to build every
- * URL of its venue, for ever.
- *
- * **The slots, in full.** `{YYYY}` `{MM}` `{DD}` `{HH}` `{MI}` take a date, at
- * whatever grain the shape publishes; `{SYMBOL}` takes the archive's spelling of
- * an instrument, which the series stores rather than anything computing per key.
- * A venue whose paths a calendar cannot spell adds its own through `slotsFor`,
- * naming each so it ends in the grain it steps at. Everything else is literal,
- * because a different value of it is a different pattern — so building a key is
- * substitution, whoever does it.
- */
-export interface Pattern {
-  /** Assigned by the catalog. Absent on one being reported for the first time. */
-  id?:      number;
-
-  venueId:  number;
-
-  /** The venue's own instrument type. Stored, never parsed. */
-  market:   string;
-
-  /** Whatever the venue calls this kind of data. Stored, never parsed. */
-  dataset:  string;
-
-  /** The path below the venue's key root, literal but for its slots. */
-  pattern:  string;
-
-  /**
-   * Whether this shape is still served.
-   *
-   * A venue that moves a URL retires the old pattern and opens a new one, and
-   * everything measured under the old one stays true — okx putting `pro/` into
-   * its order-book paths is exactly this.
-   */
-  state:    'active' | 'retired';
-}
-
-/**
  * One instrument's occupancy of one pattern: where its files start, where they
  * stop, and how far we have read.
  *
@@ -2124,10 +2064,6 @@ export type Grain = 'monthly' | 'daily' | 'hourly' | 'minutely';
 export type Slots = (at: string) => Record<string, string>;
 
 /**
- * A series with the pattern it belongs to, which is what anything generating or
- * reading a key actually needs.
- */
-/**
  * One instrument's answer to a `{TRANSFORM:kind:default}` slot, over a span of
  * dates.
  *
@@ -2157,6 +2093,10 @@ export interface Transform {
   to_:       string | null;
 }
 
+/**
+ * A series with the pattern it belongs to, which is what anything generating or
+ * reading a key actually needs.
+ */
 export interface Publishing extends Series {
   venueId:      number;
 
@@ -2166,14 +2106,13 @@ export interface Publishing extends Series {
 
   /**
    * How the archive spells the instrument, which is not always the venue's own
-   * name: okx serves a futures family as `<name>-futureschain`, and the plain
-   * name is a different market's file entirely.
+   * name: bitget files `10000000AIDOGEUSDT` under `AIDOGEUSDT`.
    *
-   * **NULL means the archive spells it exactly as the venue does**, which is
-   * every series of every venue here today. What it is for is a transformation
-   * a pattern cannot express because it happens inside the name — `BTC/USDT`
-   * written `BTC_USDT` — rather than a constant around it, which belongs in the
-   * pattern.
+   * **NULL where the archive spells it exactly as the venue does; set where it
+   * does not.** What it is for is a transformation a pattern cannot express
+   * because it happens inside the name — `BTC/USDT` written `BTC_USDT` — rather
+   * than a constant around it, such as okx's `-futureschain`, which belongs in
+   * the pattern.
    */
   urlSymbol:    string | null;
 
@@ -2190,7 +2129,22 @@ export interface Publishing extends Series {
   dataset:      string;
   variant:      string;
 
+  /**
+   * The URL shape this series publishes to, below the venue's key root, with
+   * slots where the parts that vary go. One shape is shared by every instrument
+   * publishing to it, which is why it is a `pattern` row rather than a column of
+   * the series.
+   *
+   * **The slots, in full.** `{YYYY}` `{MM}` `{DD}` `{HH}` `{MI}` take a date, at
+   * whatever grain the shape publishes; `{SYMBOL}` takes the archive's spelling of
+   * an instrument, which the series stores rather than anything computing per key.
+   * A venue whose paths a calendar cannot spell adds its own through `slotsFor`,
+   * naming each so it ends in the grain it steps at. Everything else is literal,
+   * because a different value of it is a different pattern — so building a key is
+   * substitution, whoever does it.
+   */
   pattern:      string;
+
   grain:        Grain;
 
   /**
@@ -2392,7 +2346,7 @@ export interface VenueStatus extends VenueTotals, Standing {
  * Completion times alone cannot say that — a walk that has never finished has
  * none, whether it is three hours in or was never started — so this reports the
  * newest pass rather than the newest ending, and `ongoing` separates the two
- * cases that used to collapse.
+ * cases.
  *
  * **And *which* kind, because they cost differently.** A venue whose last pass
  * was a walk has been read end to end; one whose last pass was an update has

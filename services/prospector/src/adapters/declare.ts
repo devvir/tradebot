@@ -4,7 +4,7 @@ import type { Adapter, Scanner } from '../types';
  * Declare a venue's adapter: everything about it **except where it is**.
  *
  * `base` and `keyRoot` are constants of the application kept in the `venue` table
- * so everything else can join against them — see the `venues` migration. They
+ * so everything else can join against them — see the `core` migration. They
  * are read from there at startup by `addressVenues`, which is why no adapter
  * names an address: one unit of information, one place.
  *

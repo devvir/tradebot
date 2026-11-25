@@ -5,21 +5,18 @@ import type { DatabaseSync } from 'node:sqlite';
 /**
  * 0 → 1. The catalog: its shape, and the rows that are constants of it.
  *
- * **One baseline rather than the history that produced it.** What a catalog
- * needs is the shape, not the sequence of edits some earlier database took to
- * reach it — and replaying those from empty could only fail, since they rename
- * columns that are now born under their final names. `CATALOG_SCHEMA` is
- * `IF NOT EXISTS` throughout, so this is equally correct on a database that
- * already has the tables.
+ * **One baseline: the shape itself.** `CATALOG_SCHEMA` is `IF NOT EXISTS`
+ * throughout, so this is equally correct on a database that already has the
+ * tables.
  *
  * **The venues ship with the shape because they are part of it.** Which venues
  * exist, where each one is and what prefix it is rooted at cannot be discovered
  * and cannot change without a release — a venue moving its host is a new version
  * of this service, exactly as a column is. Carrying the whole row here rather
  * than splitting the identity from the addresses keeps one unit of information
- * in one place, and fixes the ids for ever: they are assigned in this frozen
- * order, so no seed and no new adapter can renumber the ones already assigned,
- * and adapters read `base` and `key_root` off these rows instead of restating them.
+ * in one place, and fixes the ids: they are assigned in this order, so no seed
+ * and no new adapter can renumber the ones already assigned, and adapters read
+ * `base` and `key_root` off these rows instead of restating them.
  *
  * **The exclusions ship for the same reason.** They name specific files a venue
  * still serves and always will, so a catalog rebuilt without them catalogues the

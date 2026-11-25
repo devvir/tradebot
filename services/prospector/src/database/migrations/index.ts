@@ -13,20 +13,17 @@ import type { Migration } from '../../types';
  * header that nothing else touches — so a database that has never heard of
  * migrations reports 0 and needs no special case.
  *
- * **Every database runs every migration, from zero.** A fresh catalog is not
- * jumped to the head shape and stamped as done: that made the chain run on some
- * databases and not others, which is not a migration system, and it left nowhere
- * to put anything a new deployment needs.
+ * **Every database runs every migration, from zero**, a fresh catalog included,
+ * so the chain is the one way any catalog reaches its shape and the place
+ * everything a new catalog needs is put.
  *
  * So `MIGRATIONS[i]` takes the schema **from version i to version i+1**, and the
  * array index is the version it upgrades from.
  *
- * **The chain is the catalog as it is, not a history of how it got there.** No
- * catalog is shared or deployed yet, so a change edits the migration it belongs
- * to rather than adding one on top — and the one live catalog is brought to
- * match by running the same statements by hand, `user_version` included. That
- * holds until the project has a second developer or a production deployment;
- * from then on a migration that has shipped is frozen and the list only grows.
+ * **The chain is the catalog as it is, not a history of how it got there.** A
+ * change edits the migration it belongs to rather than adding one on top, and a
+ * catalog that already ran that migration is brought to match by running the
+ * same statements by hand, `user_version` included.
  *
  * Each runs in its own transaction together with its version bump, so a failure
  * leaves the database at the version it was, never half-migrated.
@@ -35,10 +32,6 @@ import type { Migration } from '../../types';
  * are constants of it, then the venues whose contents cannot be discovered and
  * therefore ship measured, and last the shapes a venue used once or stopped
  * writing, which no amount of reading can date.
- *
- * There is otherwise no history here, because there is nothing to replay: a
- * chain of deltas is worth keeping only while databases exist at the versions
- * between them.
  */
 export const MIGRATIONS: readonly Migration[] = [
   core,

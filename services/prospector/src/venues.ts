@@ -37,7 +37,7 @@ const ADAPTERS: readonly Adapter[] = [
  *
  * **Called once, before anything surveys.** Where a venue is and what prefix it
  * is rooted at are application constants kept in the database so everything can
- * join against them — see the `venues` migration — and this is the one place
+ * join against them — see the `core` migration — and this is the one place
  * they cross back into code.
  *
  * A venue with no row is refused rather than left blank: an adapter with an
@@ -52,7 +52,7 @@ export const addressVenues = (rows: readonly VenueRow[]): void => {
     if (! row)
       throw new Error(
         `No venue row for '${adapter.name}'${adapter.host ? ` (${adapter.host})` : ''}`
-        + ' — every adapter needs one, and they come from the venues migration');
+        + ' — every adapter needs one, and they come from the core migration');
 
     adapter.base = row.base;
     adapter.keyRoot = row.keyRoot;

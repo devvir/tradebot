@@ -222,7 +222,7 @@ CREATE TABLE IF NOT EXISTS run (
   venue_id  INTEGER NOT NULL,
 
   -- walk: a listing pass. update: keys generated from patterns, no listing
-  -- read. probe: a settling sweep.
+  -- read.
   kind      TEXT NOT NULL,
 
   scope     TEXT NOT NULL,          -- relative prefix; '' is the whole venue

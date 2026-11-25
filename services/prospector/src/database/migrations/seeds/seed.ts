@@ -229,12 +229,10 @@ const SEEDED_AT: Record<string, string> = {
 };
 
 /**
- * When this venue's seed was built, or `null` where it has none.
+ * The date the venue's series seed was built, or `null` where it has none.
  *
- * A backfill leaves out the span between a series' newest seeded file and this
- * date, which the seeding pass already looked at — see `updatePage`. Nothing
- * else reads it, and a venue absent from the table above simply has no span to
- * leave out.
+ * Up to this date the seeding pass already asked above every series' newest
+ * seeded file and found nothing.
  */
 export const seriesSeededAt = (venue: string): string | null => SEEDED_AT[venue] ?? null;
 

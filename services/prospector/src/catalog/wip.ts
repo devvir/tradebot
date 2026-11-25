@@ -10,13 +10,11 @@ import type { Edge, Held, Parked, Parking, Unsettled } from '../types';
  * millions of rows on a venue whose keys are constructed, and `count(*)` over
  * that is not a slow query but a stall: `node:sqlite` is synchronous, so a 1.8
  * second count freezes the whole process — every socket, every timer, every
- * other venue — and the status endpoint was running one per venue on every poll.
+ * other venue — and a count asked for on every poll would do that each time.
  *
- * A maintained counter fixes that only if nothing can change the table behind
- * its back. Before this module there were seven places writing to `wip`, one of
- * them an adapter reaching past the catalog entirely, and no counter could have
- * survived that. So the table is private to this file: everything else asks
- * here, and the count is kept as a consequence rather than as a duty.
+ * A maintained counter holds only if nothing can change the table behind its
+ * back. So the table is private to this file: everything else asks here, and
+ * the count is kept as a consequence rather than as a duty.
  */
 
 /**
@@ -165,18 +163,11 @@ export const next = (
 // ── Writing, where this module owns the transaction ───────────────────────────
 
 /**
- * Park keys nothing has answered for yet.
- *
- * `DO NOTHING` rather than an upsert, so `changes` says exactly how many rows
- * are new — which is what the counter needs and what an upsert cannot report,
- * since SQLite counts an update as a change too.
- */
-/**
  * **Nothing is parked that the catalog already holds.**
  *
  * Generation reads the tip and nothing else, so an update re-emits every key in
- * the patience window whether or not its file arrived days ago — two thirds of
- * them, measured on binance: 203,974 of 302,976 keys queued. Probing those again
+ * the patience window whether or not its file arrived days ago, which on a venue
+ * that publishes promptly is most of them. Probing those again
  * cannot change anything either, since settling acts only on parked rows and
  * inserts `ON CONFLICT DO NOTHING`, so a held file is never corrected by an
  * update; a correction goes through `correctFile`.
@@ -206,6 +197,13 @@ const PARKING_SEEN = `
                            WHERE venue_id = ? AND path = ? AND existence <> 'absent')
      ON CONFLICT (venue_id, path) DO NOTHING`;
 
+/**
+ * Park keys nothing has answered for yet.
+ *
+ * `DO NOTHING` rather than an upsert, so `changes` says exactly how many rows
+ * are new — which is what the counter needs and what an upsert cannot report,
+ * since SQLite counts an update as a change too.
+ */
 export const park = (db: DatabaseSync, rows: readonly Parking[]): number => {
   if (rows.length === 0) return 0;
 
@@ -272,13 +270,11 @@ export const missed = (db: DatabaseSync, rows: readonly Unsettled[]): number => 
 };
 
 /**
- * Drop everything a series has queued above a date.
+ * Delete a series' backlog rows dated after `date`.
  *
- * **An adapter's rule, expressed here rather than there.** A pass that wants the
- * first answer of each series and nothing above it — measuring where each series
- * starts, which is what bitget's floors were taken by — would otherwise reach
- * into the table itself, which is exactly the kind of write no counter can see.
- * The rule stays the adapter's; the table stays this module's.
+ * **Here, because the table is this module's.** Whoever decides that nothing
+ * above a date is worth asking keeps that rule; the delete happens here, where
+ * the counter sees it.
  */
 export const dropAbove = (
   db:       DatabaseSync,
@@ -317,24 +313,7 @@ export const writer = (db: DatabaseSync): {
            existence: string | null, venueId: number, path: string) => void;
   held:   (venueId: number, path: string) => Held | undefined;
 } => {
-  /**
-   * **Nothing is parked that the catalog already holds.**
-   *
-   * Generation reads the tip and nothing else, so an update re-emits every key
-   * in the patience window whether or not its file arrived days ago — two thirds
-   * of them, measured on binance: 203,974 of 302,976 keys queued. Probing those
-   * again cannot change anything either, since settling only acts on parked rows
-   * and inserts `ON CONFLICT DO NOTHING`: a held file is not corrected by an
-   * update, and a correction goes through `correctFile`.
-   *
-   * So the check belongs here rather than at the far end. Asked at the moment of
-   * parking it costs one index probe against `file`'s primary key and the row is
-   * never written; asked when a lane picks the row up it would already have cost
-   * the insert, the read and the request.
-   *
-   * **What is left is exactly what the window is for**: the periods nobody has
-   * answered for yet.
-   */
+  /** **Nothing is parked that the catalog already holds** — see `PARKING`. */
   const insert: StatementSync = db.prepare(
     PARKING_SEEN,
   );

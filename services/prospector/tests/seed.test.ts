@@ -31,8 +31,8 @@ const seeded = (venue: string, table: string): number =>
 
 /**
  * **Built once and shared.** These all read the shipped seed and none of them
- * writes to it, so a catalog per test would plant 114,295 series over again to
- * answer one more question about the same rows.
+ * writes to it, so a catalog per test would plant tens of thousands of series
+ * over again to answer one more question about the same rows.
  */
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), 'seed-'));

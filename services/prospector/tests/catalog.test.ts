@@ -886,14 +886,14 @@ describe('jobs', () => {
     expect(() => beginJob(db, id, 'walk', ['spot/', ''])).toThrow(/empty scope/);
   });
 
-  it('keeps a probe job apart from a walk', () => {
+  it('keeps an update job apart from a walk', () => {
     const id = putVenue(db, 'binance', 'https://x', 'data/');
 
     beginJob(db, id, 'walk', ['spot/']);
-    beginJob(db, id, 'probe', ['spot/']);
+    beginJob(db, id, 'update', ['spot/']);
 
-    expect(openJob(db, id, 'walk')!.id).not.toBe(openJob(db, id, 'probe')!.id);
-    expect(openPartitions(db, id, 'probe')).toHaveLength(1);
+    expect(openJob(db, id, 'walk')!.id).not.toBe(openJob(db, id, 'update')!.id);
+    expect(openPartitions(db, id, 'update')).toHaveLength(1);
   });
 });
 

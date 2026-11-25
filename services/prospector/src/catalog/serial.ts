@@ -7,16 +7,12 @@
  * With the partitions this service runs in parallel that is seconds of
  * uninterrupted synchronous SQLite before a timer or a socket is looked at again.
  *
- * Measured on the running service before this existed: event-loop delay of 477ms
- * at the median and **3.5 seconds** at the peak, with 61% of all CPU inside
- * `node:sqlite` and 92% of that inside `putFiles`. The visible symptom was logs
- * arriving in bursts with long silences between them — nothing could flush.
- *
- * So the slices are serialised and separated: one runs, the loop is handed back,
- * the next runs. Delay becomes one slice rather than however many writers exist,
- * and **nothing is lost by it** — SQLite serialises writes on one connection
- * regardless, so the interleaving was never buying concurrency. What it was
- * buying was the fetches, the timers and the logging that run in between.
+ * So slices from every writer share one queue and are separated: one runs, the
+ * loop is handed back, the next runs, so the loop turns over between writers.
+ * Delay becomes one slice rather than however many writers exist, and **nothing
+ * is lost by it** — SQLite serialises writes on one connection regardless, so
+ * interleaving them buys no concurrency. What the yield buys is the fetches, the
+ * timers and the logging that run in between.
  */
 export const slice = <T>(work: () => T): Promise<T> => {
   const mine = queue.then(async () => {

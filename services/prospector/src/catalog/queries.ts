@@ -10,8 +10,9 @@ import type { FileMetadata as Metadata, FileRow as Row, PathRow } from '../types
 import type { CatalogFile, DirectorySpan, Edge, FinishedRun, RangeSpan, Span, LastRun, Existence, FileEffect, FileState, Parking, Phase, Run, RunKind, Settlement, Standing, Unreadable, Unsettled, VenueTotals, Withdrawal } from '../types';
 
 /**
- * Every write and read the catalog supports, as prepared statements over one
- * open database. Nothing else in either service writes SQL.
+ * The catalog's reads and writes, as prepared statements over one open
+ * database. What has a module of its own — `series.ts`, `wip.ts`,
+ * `transform.ts`, `withdrawals.ts` — is written there.
  *
  * The queries are shaped around two access patterns and no others: **insert a
  * page of discovered files**, and **ask what is known for a venue, a date range
@@ -68,8 +69,8 @@ export const venueIds = (db: DatabaseSync, name: string): number[] =>
  *
  * - **Nothing, where it says nothing new.** Same size, ETag, `modified`, date,
  *   series and existence: the row already states it, so it is not written. On a
- *   re-walk that is nearly every key, and rewriting each one to say so was most
- *   of what a walk cost.
+ *   re-walk that is nearly every key, and rewriting each one to say so would be
+ *   most of what a walk costs.
  * - `seen_at` is left alone. It is first discovery, and answers "when did we
  *   first learn this existed" — a question whose answer must not drift. A key
  *   parked before a listing described it was discovered when it was parked.
@@ -583,22 +584,8 @@ export const venueTotals = (db: DatabaseSync): VenueTotals[] =>
 
 
 /**
- * Files whose metadata nobody has established yet, **oldest first**.
- *
- * Date order rather than path order because everything downstream is organised
- * by month: downloads, partitions, cold storage. Completing the catalog
- * month-major means whoever is waiting on a period gets unblocked in the order
- * they will ask, rather than in whatever order the paths happen to sort.
- *
- * `(date, path)` is the keyset, passed back as `after` to continue. That is a
- * cursor by **value**, not an open statement: SQLite will happily let a query
- * step while the same connection rewrites the rows it is walking, and what
- * happens then depends on which index the planner chose — rows visited twice,
- * or not at all, with nothing said. A keyset cannot be wrong that way, and it
- * survives a restart because it is two short strings.
- *
- * Rows already ruled absent are left out: somebody decided that, and asking the
- * venue about them again is exactly what they decided against.
+ * Keys still owed an answer, in the order they were parked. `after` is the last
+ * `seq` returned; the keyset is documented on `wip.next`.
  */
 export const unsettled = (
   db:      DatabaseSync,
@@ -768,9 +755,8 @@ export const settleFiles = (db: DatabaseSync, settled: readonly Settlement[]): n
        * the catalog already holds: generation reads the tip and nothing else, and
        * a walk can catalogue a path while a row for it sits in the backlog.
        *
-       * Counting those was the counters drifting above the table they describe, by
-       * one file per key that settled onto a row already there — 1,937,264 of
-       * them, 0.59%, before this was measured.
+       * Counting those would drift the counters above the table they describe, by
+       * one file per key that settled onto a row already there.
        *
        * **A row held as withdrawn is the one that does not stay as it was.** The
        * venue serves the file after all, so the row is brought back — and what
@@ -844,7 +830,7 @@ export const updateStarted = (db: DatabaseSync, venueId: number): string | null 
  *
  * **The per-series rows go; the job row is closed and kept.** `run` is a
  * progress table rather than a log, and a venue's pass adds one row per series —
- * thirty-nine thousand on htx. Keeping those to record that a pass happened
+ * tens of thousands on a large venue. Keeping those to record that a pass happened
  * would grow the table by that much every day for a fact one row already states.
  * The job row is that one row: it carries the pass's start, end and totals,
  * costs nothing, and cannot be mistaken for work outstanding because progress is
@@ -1075,8 +1061,7 @@ const ranAny = (db: DatabaseSync, venueId: number, kind: RunKind): boolean =>
  * Every venue the catalog holds, with where it is.
  *
  * Constants of the application rather than anything a survey wrote — they arrive
- * with the `venues` migration and are read back here so the adapters can be
- * given their addresses.
+ * with the `core` migration.
  */
 export const venues = (db: DatabaseSync): {
   name: string; host: string; base: string; keyRoot: string;
@@ -1177,7 +1162,7 @@ export const lastRun = (db: DatabaseSync, venueIds: readonly number[]): LastRun 
 
   /**
    * **Backfilling until every host has read itself through once**, which is the
-   * same test `completedEver` answers with — one fact, asked from two places,
+   * same test `everCompleted` answers with — one fact, asked from two places,
    * rather than two rules that can disagree about the same venue.
    */
   const first = ! venueIds.every(id => everCompleted(db, id));
@@ -1199,7 +1184,7 @@ export const lastRun = (db: DatabaseSync, venueIds: readonly number[]): LastRun 
  * backfill — what a venue last *achieved*, for while another pass runs.
  *
  * **The backfill ends when the last host first finishes**, the moment
- * `completedEver` turns true, so a pass that finished by then was part of it.
+ * `everCompleted` turns true, so a pass that finished by then was part of it.
  * Where some host has never finished one, the venue is still backfilling and
  * every finished pass belongs to that.
  */
@@ -1356,12 +1341,9 @@ export const phaseOf = (db: DatabaseSync, venueId: number): Phase => {
 /**
  * Whether this venue has ever finished a pass of the kind it is surveyed by.
  *
- * **The condition `force-update` turns on**, and the reason it is a query of its
- * own rather than a reading of `phaseOf`. A venue paused halfway through an
- * update has open partitions, so its phase is `running` — which says where it is
- * now and cannot say whether it has ever been complete. Those are the two
- * halves of the question: forcing an update is refused where no pass has ever
- * finished, and *resuming* one is exactly the case where a pass is open.
+ * **A query of its own rather than a reading of `phaseOf`.** A venue paused
+ * halfway through an update has open partitions, so its phase is `running` —
+ * which says where it is now and cannot say whether it has ever been complete.
  *
  * Read off whichever kind the venue actually runs, so a venue with no keyspace
  * to walk — okx, bitget — answers about its updates instead of about walks it
@@ -1433,8 +1415,8 @@ export const establishedAt = (
    * Splitting a partition closes the parent and creates children carrying the
    * rest of its keyspace — so the parent's `completed` says "this run stopped",
    * not "this prefix is established". Read without the guard, a venue would
-   * claim a whole tree the moment it was divided, which is the same false
-   * completeness claim that once closed binance over keyspace nobody had read.
+   * claim a whole tree the moment it was divided, and close the venue over
+   * keyspace nobody had read.
    *
    * The descendant test is a prefix comparison rather than `LIKE`, so a scope
    * containing `%` or `_` cannot quietly match more than itself.
