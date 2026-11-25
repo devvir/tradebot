@@ -39,11 +39,11 @@ services:
       - ${CATALOG_DIR:?CATALOG_DIR is not defined}:/data/catalog
 
     ports:
-      # Health, and the catalog API. Both publish to whatever host port is given
-      # — left empty, docker picks a free one, which is what you want when the
-      # only thing that reaches this is on the same network.
-      - :3000
-      - ${CATALOG_PORT:-}:8080
+      # The catalog API, on CATALOG_PORT or, left empty, a free port docker
+      # picks. Either way it is published, on 127.0.0.1 unless CATALOG_BIND
+      # names another address; containers on the shared network reach it as
+      # catalog:8080 regardless.
+      - "${CATALOG_BIND:-127.0.0.1}:${CATALOG_PORT:-}:8080"
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]

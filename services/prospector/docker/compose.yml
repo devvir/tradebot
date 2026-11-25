@@ -62,9 +62,6 @@ services:
 
     # The collector and reports APIs on 8080 are private: only the catalog and
     # catalog-ui reach them, over the module network. Only health is published.
-    ports:
-      - :3000
-
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
       interval: 30s

@@ -9,5 +9,4 @@ services:
     container_name: vault
 
     ports:
-      - ${VAULT_PORT:-}:8000
-      - :3000
+      - "${VAULT_BIND:-127.0.0.1}:${VAULT_PORT:-}:8000"

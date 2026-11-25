@@ -6,13 +6,16 @@ services:
     image: rabbitmq:3.12-management-alpine
 
     environment:
-      RABBITMQ_DEFAULT_USER: ${QUEUE_USER:-guest}
-      RABBITMQ_DEFAULT_PASS: ${QUEUE_PASS:-guest}
+      # Required. The broker creates this user on first start, and guest only
+      # ever logs in from inside the container (see rabbitmq.conf).
+      RABBITMQ_DEFAULT_USER: ${QUEUE_USER:?QUEUE_USER is required}
+      RABBITMQ_DEFAULT_PASS: ${QUEUE_PASS:?QUEUE_PASS is required}
       TZ: ${TZ:-UTC}
 
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
-      - .:/etc/rabbitmq/conf.d:ro
+      # Added beside the image's own conf.d/10-defaults.conf, and read after it.
+      - ./rabbitmq.conf:/etc/rabbitmq/conf.d/90-tradebot.conf:ro
       - ./advanced.config:/etc/rabbitmq/advanced.config:ro
 
     healthcheck:

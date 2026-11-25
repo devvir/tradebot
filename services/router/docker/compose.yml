@@ -12,9 +12,6 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV: ${APP_ENV:-prod}
 
-    ports:
-      - :3000
-
     user: "1000:1000"
 
     volumes:

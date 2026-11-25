@@ -7,18 +7,20 @@ services:
 
     environment:
       TZ: ${TZ:-UTC}
-      CACHE_PASS: ${CACHE_PASS}
+      # Required: an empty password would turn authentication off. The
+      # healthcheck reads it from here, which keeps it out of its command line.
+      CACHE_PASS: ${CACHE_PASS:?CACHE_PASS is required}
 
     ports:
-      - "${CACHE_PORT:-}:6379"
+      - "${CACHE_BIND:-127.0.0.1}:${CACHE_PORT:-}:6379"
 
     volumes:
       - redis-data:/data
 
-    command: redis-server --appendonly yes --requirepass "${CACHE_PASS}"
+    command: redis-server --appendonly yes --requirepass "${CACHE_PASS:?CACHE_PASS is required}"
 
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${CACHE_PASS}", "ping"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$CACHE_PASS\" redis-cli ping | grep -q PONG"]
       interval: 30s
       timeout: 10s
       retries: 5

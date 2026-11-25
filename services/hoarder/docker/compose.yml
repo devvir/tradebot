@@ -23,9 +23,6 @@ services:
       NODE_ENV: ${APP_ENV:-prod}
       TZ: ${TZ:-UTC}
 
-    ports:
-      - :3000
-
     user: "1000:1000"
 
     volumes:

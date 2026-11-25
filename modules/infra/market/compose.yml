@@ -18,8 +18,8 @@ services:
     hostname: queue
     container_name: queue
     ports:
-      - "${QUEUE_PORT:-}:5672"
-      - "${QUEUE_MGMT_PORT:-}:15672"
+      - "${QUEUE_BIND:-127.0.0.1}:${QUEUE_PORT:-}:5672"
+      - "${QUEUE_MGMT_BIND:-127.0.0.1}:${QUEUE_MGMT_PORT:-}:15672"
     volumes:
       - queue-data:/var/lib/rabbitmq
 
@@ -30,8 +30,8 @@ services:
     hostname: queue-rt
     container_name: queue-rt
     ports:
-      - "${QUEUE_RT_PORT:-}:5672"
-      - "${QUEUE_RT_MGMT_PORT:-}:15672"
+      - "${QUEUE_RT_BIND:-127.0.0.1}:${QUEUE_RT_PORT:-}:5672"
+      - "${QUEUE_RT_MGMT_BIND:-127.0.0.1}:${QUEUE_RT_MGMT_PORT:-}:15672"
     volumes:
       - queue-rt-data:/var/lib/rabbitmq
 

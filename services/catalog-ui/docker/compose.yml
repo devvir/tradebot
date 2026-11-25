@@ -8,9 +8,11 @@
 # It owns no storage. The page is served from the image, and everything else is
 # a request forwarded to a service that does own something.
 #
-# The browser never reaches either service directly: prospector's collector is
-# private to the module network, the catalog may run elsewhere, and the token
-# would otherwise have to travel with the page.
+# The browser never reaches either service directly: prospector's collector
+# publishes no port, the catalog may run elsewhere, and the token would
+# otherwise have to travel with the page. It checks nothing about who is
+# asking, so whoever reaches this page acts with CATALOG_TOKEN: it can start
+# and pause surveys and create, edit and delete lenses.
 
 services:
   catalog-ui:
@@ -28,8 +30,9 @@ services:
       # http://prospector:8080, inside the module.
       CATALOG_API:   ${CATALOG_API:-http://catalog:8080}
 
-      # The secret the catalog and prospector both check, forwarded on their
-      # behalf so the page never holds it.
+      # The secret the catalog and prospector both check, added to every
+      # request forwarded to them so the page never holds it — and so lent to
+      # whoever reaches the page.
       #
       # Empty is allowed and means both are open — this then forwards without a
       # header, and nothing else changes.
@@ -45,11 +48,10 @@ services:
       - ../../../:/live
 
     ports:
-      # Health on whatever port docker picks, and the page on a known one — this
-      # is the only service in the module meant to be opened by a person, so
-      # unlike the catalog's own port it does not default to empty.
-      - :3000
-      - ${CATALOG_UI_PORT:-9020}:8080
+      # The page, on a known port: this is the service in the module a person
+      # opens. Published on 127.0.0.1 unless CATALOG_UI_BIND names another
+      # address.
+      - "${CATALOG_UI_BIND:-127.0.0.1}:${CATALOG_UI_PORT:-9020}:8080"
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
