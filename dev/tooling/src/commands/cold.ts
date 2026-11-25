@@ -5,6 +5,8 @@ import { register as pull } from '../tools/cold/pull/command';
 import { register as push } from '../tools/cold/push/command';
 import { register as stats } from '../tools/cold/stats/command';
 
+export const DESCRIPTION = 'Cold storage: pack, upload, and account for what is backed up';
+
 /**
  * The cold tools are loaded when a cold command runs, not when it is
  * registered.
@@ -35,7 +37,7 @@ export function register(program: Command): void {
    */
   const cold = program
     .command('cold')
-    .description('Cold storage: pack, upload, and account for what is backed up')
+    .description(DESCRIPTION)
     .option('-w, --watch', 'keep running, and look again every 30 minutes')
     .option('-a, --all-sources', 'every tree, one after the other, without asking which')
     .option('-y, --yes', 'answer what a command asks before it acts: each question\'s own default');

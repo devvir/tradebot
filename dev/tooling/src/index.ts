@@ -30,6 +30,7 @@ import { menuArgs } from './menu';
 import { selectTool, selectFromList } from './shared/ui/prompts';
 import { heading, spacer } from './shared/ui/logger';
 import { DESCRIPTION as RABBIT_DESCRIPTION } from './commands/rabbit';
+import { DESCRIPTION as COLD_DESCRIPTION } from './commands/cold';
 
 interface Tool {
   id: string;
@@ -42,7 +43,7 @@ interface Tool {
 const tools: Tool[] = [
   { id: 'rabbit', name: 'RabbitMQ', description: RABBIT_DESCRIPTION },
   { id: 'monitor', name: 'Monitor', description: 'Live dashboard: Docker containers and RabbitMQ queues' },
-  { id: 'cold', name: 'Cold', description: 'Cold storage: pack, upload, and account for backups', pickSubcommand: true },
+  { id: 'cold', name: 'Cold', description: COLD_DESCRIPTION, pickSubcommand: true },
   { id: 'remote', name: 'Remote', description: 'Remote server operations (sync-env)' },
 ];
 

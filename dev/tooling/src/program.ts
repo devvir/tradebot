@@ -19,8 +19,8 @@ export function buildProgram(): Command {
     .name('tools')
     .version('1.0.0')
     .description('TradeBot development tools and utilities')
-    .option('-e, --env <path>', 'Additional .env file to load (overrides every other .env file)')
-    .option('-m, --module <name>', 'Load this module\'s .env: modules/<group>/<name>/.env, or just <name>')
+    .option('-e, --env <path>', 'Additional .env file to load (overrides every other .env file; values the shell exported still win)')
+    .option('-m, --module <name>', 'Load this module\'s .env: modules/<name>/.env, else the one modules/<group>/<name>/.env')
     .showHelpAfterError()
     .hook('preAction', (thisCommand) => {
       const opts = thisCommand.opts() as any;
