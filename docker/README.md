@@ -35,8 +35,12 @@ value. The root `.env.example` sets `APP_ENV=dev`.
 | `NODE_MEMORY_MB` | `2048` | The Node.js heap limit, passed as `--max-old-space-size`. Kept in the image as an environment variable of the same name. |
 | `DUCKDB_EXTENSIONS` | empty | Prod only. Space-separated DuckDB extensions installed into the runtime user's extension directory (`~/.duckdb/extensions`), with the DuckDB the service resolves, so a service that loads them needs no network at run time. The build fails when one cannot be installed. |
 
-Both images use `node:22.23-alpine3.24` (the `NODE_VERSION` argument), run under `dumb-init` for signal
-handling, carry `curl` for healthchecks, and expose port 3000, the services' health port.
+Both images use `node:22.23-alpine3.24` (the `NODE_VERSION` argument), run under `dumb-init`, carry `curl`
+for healthchecks, and expose port 3000, the services' health port. Each starts node with `exec`, so node
+is `dumb-init`'s child and receives the SIGTERM a stop sends.
+
+`NODE_MEMORY_MB` bounds the heap alone: buffers, sockets, worker threads and native modules take memory
+beside it.
 
 ## Prod image
 

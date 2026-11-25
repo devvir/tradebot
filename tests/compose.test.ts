@@ -4,7 +4,8 @@
  * without, where the data directories are mounted from, which project each
  * module and pack is, which hostnames the packs serve, how logs rotate, which
  * Host names catalog-ui is told to serve, which settings the router is given,
- * and which DuckDB extensions stocker's image is built with. Skipped where
+ * which DuckDB extensions stocker's image is built with, how much memory each
+ * container may take, and how long stocker is given to stop. Skipped where
  * docker compose is not installed.
  */
 import { spawnSync } from 'node:child_process';
@@ -50,6 +51,8 @@ interface Service {
   healthcheck?: { test?: string[] };
   volumes?: Array<{ source?: string; target: string }>;
   logging?: { driver?: string; options?: Record<string, string> };
+  mem_limit?: string;
+  stop_grace_period?: string;
 }
 type Rendered = { ok: true; name: string; services: Record<string, Service> } | { ok: false; error: string };
 
@@ -83,6 +86,33 @@ const projectName = (file: string): string => {
 
 const ports = (rendered: Record<string, Service>): Array<[string, Port]> =>
   Object.entries(rendered).flatMap(([name, service]) => (service.ports ?? []).map((port): [string, Port] => [name, port]));
+
+/** Every compose file and every file one extends: the services' own and the shared node and broker bases. */
+const definitions = [...files, ...readdirSync(join(root, 'services'), { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => join('services', entry.name, 'docker', 'base.yml'))
+  .filter((file) => existsSync(join(root, file)))];
+
+/** Every *_MEM_LIMIT variable any of them reads. */
+const memoryVariables = [...new Set(definitions.flatMap((file) =>
+  [...readFileSync(join(root, file), 'utf8').matchAll(/\$\{([A-Z0-9_]+_MEM_LIMIT)\b/g)].map((match) => match[1])))];
+
+const MiB = 2 ** 20;
+const GiB = 2 ** 30;
+
+/** Bytes in a size the broker reads: a whole number of bytes, KiB, MiB or GiB. */
+const brokerBytes = (size: string | undefined): number => {
+  const match = size?.match(/^(\d+)(KiB|MiB|GiB)?$/);
+  if (!match) return NaN;
+  const unit = { KiB: 2 ** 10, MiB, GiB }[match[2] as 'KiB' | 'MiB' | 'GiB'] ?? 1;
+
+  return Number(match[1]) * unit;
+};
+
+/** Seconds in a duration as compose renders it, e.g. `1m15s`. */
+const seconds = (duration: string | undefined): number =>
+  [...(duration ?? '').matchAll(/(\d+)(h|m|s)/g)]
+    .reduce((total, [, value, unit]) => total + Number(value) * { h: 3600, m: 60, s: 1 }[unit as 'h' | 'm' | 's'], 0);
 
 /** Every *_BIND variable any compose file reads. */
 const bindVariables = [...new Set(files.flatMap((file) =>
@@ -136,6 +166,39 @@ describe.skipIf(!hasCompose)('compose files', () => {
         .map(([name]) => name);
 
       expect(unrotated).toEqual([]);
+    });
+
+    it('limits every service\'s memory', () => {
+      const unlimited = Object.entries(services(file, required))
+        .filter(([, service]) => !(Number(service.mem_limit) > 0))
+        .map(([name]) => name);
+
+      expect(unlimited).toEqual([]);
+    });
+
+    it('takes each service\'s memory limit from a variable of its own', () => {
+      const own = Object.fromEntries(memoryVariables.map((name, index) => [name, `${index + 64}MiB`]));
+      const limits = Object.values(services(file, { ...required, ...own })).map((service) => Number(service.mem_limit));
+      const given = memoryVariables.map((_name, index) => (index + 64) * MiB);
+
+      expect(new Set(limits).size).toBe(limits.length);
+      for (const limit of limits) expect(given).toContain(limit);
+    });
+
+    it('leaves each node service a gigabyte beyond its heap and its engine\'s memory, by default', () => {
+      const defaultHeapMb = (dockerfile: string): number =>
+        Number(readFileSync(join(root, dockerfile), 'utf8').match(/^ARG NODE_MEMORY_MB=(\d+)$/m)?.[1]);
+      const short = Object.entries(services(file, required))
+        .filter(([, service]) => /^docker\/\w+\.node\.Dockerfile$/.test(service.build?.dockerfile ?? ''))
+        .filter(([, service]) => {
+          const heap = Number(service.build?.args?.NODE_MEMORY_MB ?? defaultHeapMb(service.build?.dockerfile ?? '')) * MiB;
+          const engine = Number(service.environment?.STOCKER_ENGINE_MEMORY_GB ?? 0) * 1e9;
+
+          return !(Number(service.mem_limit) >= heap + engine + GiB);
+        })
+        .map(([name]) => name);
+
+      expect(short).toEqual([]);
     });
   });
 
@@ -274,6 +337,15 @@ describe.skipIf(!hasCompose)('compose files', () => {
     expect(installed).toEqual(expect.arrayContaining(loaded));
   });
 
+  it('gives stocker longer to stop than its drain takes', () => {
+    const stocker = services('services/stocker/docker/compose.yml', required).stocker;
+    const drain = Number(stocker.environment?.STOCKER_DRAIN_SECONDS
+      ?? readFileSync(join(root, 'services/stocker/src/config.ts'), 'utf8').match(/STOCKER_DRAIN_SECONDS, (\d+)\)/)?.[1]);
+
+    expect(drain).toBeGreaterThan(0);
+    expect(seconds(stocker.stop_grace_period)).toBeGreaterThan(drain);
+  });
+
   describe.each([
     ['services/hauler/docker/compose.yml',     'hauler',     { DATA_ARCHIVES_DIR: '/data/archives' }],
     ['services/stocker/docker/compose.yml',    'stocker',    { DATA_ARCHIVES_DIR: '/data/archives', DATA_VAULT_DIR: '/data/vault' }],
@@ -308,6 +380,21 @@ describe.skipIf(!hasCompose)('compose files', () => {
 
   describe('the broker', () => {
     const packs = files.filter((file) => file.startsWith('modules/infra/'));
+
+    /** The variable rabbitmq.conf takes the broker's total memory from. */
+    const total = readFileSync(join(root, 'services/rabbitmq/docker/rabbitmq.conf'), 'utf8')
+      .match(/^total_memory_available_override_value = \$\(([A-Z0-9_]+)\)$/m)?.[1];
+
+    it.each(packs)('in %s takes its container\'s memory limit as its total memory', (file) => {
+      for (const env of [required, { ...required, QUEUE_MEM_LIMIT: '1536MiB' }]) {
+        const brokers = Object.values(services(file, env)).filter((service) => service.image?.startsWith('rabbitmq:'));
+
+        for (const broker of brokers) {
+          expect(total).toBeDefined();
+          expect(brokerBytes(broker.environment?.[total ?? ''])).toBe(Number(broker.mem_limit));
+        }
+      }
+    });
 
     it.each(['QUEUE_USER', 'QUEUE_PASS'])('refuses to render without %s', (name) => {
       const rendered = render('modules/infra/store/compose.yml', { ...required, [name]: '' });

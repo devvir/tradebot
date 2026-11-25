@@ -84,6 +84,17 @@ services:
       retries: 3
       start_period: 10s
 
+    # The most memory the container may take, everything together: the 4096 MB
+    # node heap, the query engine's STOCKER_ENGINE_MEMORY_GB, and two gigabytes
+    # beside them for the extraction threads and what the engine holds outside
+    # its own budget. Reaching it gets the container killed, so it goes up with
+    # STOCKER_ENGINE_MEMORY_GB.
+    mem_limit: ${STOCKER_MEM_LIMIT:-10GiB}
+
+    # A stop gives the sweeps under way up to 60 s to finish, then closes the
+    # engine and the extraction threads; the other 15 s are for that close.
+    stop_grace_period: 75s
+
     # Rotated: at most five files of 50 MB each.
     logging:
       driver: local

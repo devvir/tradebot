@@ -40,6 +40,7 @@ The packs read these from the root `.env` (see the root `.env.example`):
 | `QUEUE_PORT`, `QUEUE_MGMT_PORT` | Host ports of `queue`'s AMQP (5672) and management (15672) listeners |
 | `CACHE_PASS` | The cache's password; required, a pack with a cache refuses to start without it |
 | `CACHE_PORT` | Host port of the cache (6379) |
+| `QUEUE_MEM_LIMIT`, `CACHE_MEM_LIMIT` | Each container's memory limit; default `2GiB` and `1GiB`. The broker also takes its own as its total memory ([services/rabbitmq](../../services/rabbitmq/README.md#memory)) |
 | `*_BIND` beside each port | The host address the port is published on; default `127.0.0.1` |
 | `TZ` | The containers' time zone; default `UTC` |
 

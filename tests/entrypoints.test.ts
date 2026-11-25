@@ -3,8 +3,13 @@
  * `src/index.ts`: the package's `main`, its `start` script, the prod image's
  * CMD (run from the directory the service is deployed into) and the dev image's
  * entrypoint (run from the workspace root, which the dev compose mounts).
+ *
+ * And both images must hand their process to node, so the SIGTERM a stop sends
+ * reaches the service, which drains, rather than a shell, which dies at once.
  */
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { type ChildProcess, spawn } from 'node:child_process';
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, posix } from 'node:path';
 
 const root = join(__dirname, '..');
@@ -82,5 +87,65 @@ describe('service entrypoints', () => {
       const exec = script.match(/^exec node .*"services\/\$\{SERVICE_NAME\}\/(\S+\.js)"$/m);
       expect(exec?.[1]).toBe(entry);
     });
+  });
+});
+
+describe('the stop signal', () => {
+  /**
+   * A stand-in for node, first on PATH: it records its pid, says when it is
+   * listening, and answers SIGTERM by printing it and exiting cleanly.
+   */
+  let bin: string;
+
+  beforeAll(() => {
+    bin = mkdtempSync(join(tmpdir(), 'entrypoint-'));
+    writeFileSync(join(bin, 'node'), [
+      '#!/bin/sh',
+      `echo $$ > "${join(bin, 'pid')}"`,
+      "trap 'echo SIGTERM; exit 0' TERM",
+      'echo ready',
+      'while :; do sleep 0.05; done',
+      '',
+    ].join('\n'));
+    chmodSync(join(bin, 'node'), 0o755);
+  });
+
+  afterAll(() => {
+    try { process.kill(Number(readFileSync(join(bin, 'pid'), 'utf8')), 'SIGKILL'); } catch { /* already gone */ }
+    rmSync(bin, { recursive: true, force: true });
+  });
+
+  /** Starts `command`, sends it SIGTERM once node is up, and resolves with what node printed and how it ended. */
+  const stop = (command: string[], env: Record<string, string>): Promise<{ out: string; code: number | null }> =>
+    new Promise((resolve, reject) => {
+      const child: ChildProcess = spawn(command[0], command.slice(1), {
+        cwd: bin,
+        env: { PATH: `${bin}:${process.env.PATH}`, ...env },
+      });
+      let out = '';
+
+      child.stdout?.on('data', (chunk: Buffer) => {
+        out += chunk.toString();
+        if (out.includes('ready') && !child.killed) child.kill('SIGTERM');
+      });
+      child.on('error', reject);
+      child.on('exit', (code) => resolve({ out, code }));
+    });
+
+  it('reaches node under the prod image\'s CMD', async () => {
+    const dockerfile = readFileSync(join(root, 'docker', 'prod.node.Dockerfile'), 'utf8');
+    const cmd: string[] = JSON.parse(dockerfile.match(/^CMD (\[.*\])$/m)?.[1] ?? '[]');
+
+    const { out, code } = await stop(cmd, { NODE_MEMORY_MB: '2048' });
+
+    expect(out).toContain('SIGTERM');
+    expect(code).toBe(0);
+  });
+
+  it('reaches node under the dev image\'s entrypoint', async () => {
+    const { out, code } = await stop(['sh', join(root, 'docker', 'node', 'entrypoint.sh')], { SERVICE_NAME: 'stocker' });
+
+    expect(out).toContain('SIGTERM');
+    expect(code).toBe(0);
   });
 });

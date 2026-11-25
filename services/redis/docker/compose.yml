@@ -26,6 +26,12 @@ services:
       retries: 5
       start_period: 15s
 
+    # The most memory the container may take. Redis is given no ceiling of its
+    # own, so a dataset that outgrows this gets the container killed; and each
+    # rewrite of the append-only file forks the server, whose changed pages
+    # count against the same limit.
+    mem_limit: ${CACHE_MEM_LIMIT:-1GiB}
+
     # Rotated: at most five files of 50 MB each.
     logging:
       driver: local

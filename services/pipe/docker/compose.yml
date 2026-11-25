@@ -23,6 +23,11 @@ services:
 
     user: "1000:1000"
 
+    # The most memory the container may take, heap and native together: the
+    # node heap (NODE_MEMORY_MB, 2048 MB) and a gigabyte beside it for buffers,
+    # sockets and the runtime itself. Reaching it gets the container killed.
+    mem_limit: ${PIPE_MEM_LIMIT:-3GiB}
+
     # Rotated: at most five files of 50 MB each.
     logging:
       driver: local
