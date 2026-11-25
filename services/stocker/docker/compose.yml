@@ -41,11 +41,14 @@ services:
       # Which venues to stock (default: everything mapped)
       STOCKER_VENUES:  ${STOCKER_VENUES:-}
 
-      # Builds run at once, one instrument each. Each holds a month-sized sort.
+      # DuckDB connections, one pool shared by partitions: as many light
+      # partitions built side by side, or one heavy partition's instruments.
+      # Each holds a month-sized sort.
       STOCKER_CONCURRENCY: ${STOCKER_CONCURRENCY:-2}
 
-      # Cores a build may take. DuckDB spills to disk inside the vault volume
-      # rather than being killed; this host runs the collectors at the same time.
+      # Cores the query engine may take, shared by every build. DuckDB spills to
+      # disk inside the vault volume rather than being killed; this host runs the
+      # collectors at the same time.
       STOCKER_THREADS: ${STOCKER_THREADS:-4}
 
       # No partition is started below this much free space on the vault volume.

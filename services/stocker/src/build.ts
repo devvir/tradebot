@@ -22,8 +22,8 @@ import type { DiskFile, Group, Series, Side, Spent, VaultKey } from './types';
  * Row group size, in rows rather than bytes.
  *
  * Small enough that a time-range filter can skip most of a month, large enough
- * that the per-group footer is not the dominant cost. Rows are written in `ts`
- * order, which is what makes the group statistics worth having.
+ * that the per-group footer is not the dominant cost. An instrument's rows are
+ * written in `ts` order, which is what makes the group statistics worth having.
  */
 const ROW_GROUP = 100_000;
 
@@ -954,7 +954,7 @@ const settleFile = async (
  */
 const repeats = (series: Series[]): string => (series.some(one => one.repeatsRows) ? 'DISTINCT ' : '');
 
-/** The margining column, where the table carries one: a constant for the whole file. */
+/** The margining column, where the table carries one: a constant for the instrument. */
 const marginColumn = (key: VaultKey, symbol: string): string => {
   if (! fieldsOf(key.table).some(field => field.name === MARGIN.name)) return '';
 

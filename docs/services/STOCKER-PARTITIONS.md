@@ -420,7 +420,7 @@ moment as the file's part — `…|202606.part1780272000.txt` — and `ts` is re
 
 **Every dataset spills back**: a day or month file is a UTC+8 period, so the file dated
 2020-06-15 holds 06-14 16:00 → 06-15 15:59 UTC — the same cut as bitget's
-([STOCKER.md](STOCKER.md#venues-whose-buckets-do-not-cut-at-utc-midnight)).
+([STOCKER.md](STOCKER.md#venues-whose-periods-do-not-cut-at-utc-midnight)).
 
 **Options** are the other markets' files with the same columns: a family's whole chain in one
 (`BTC-USD-optionchain`), or every option there is (`alloption`). The price is the premium in the
@@ -467,7 +467,7 @@ holds a whole chain, each record naming its instrument.
 
 **Every dataset spills back**: a bucket cuts at 16:00 UTC (midnight UTC+8), so the file named
 `20250101` opens at 2024-12-31 16:00 UTC. The timestamps are plain epoch ms UTC; only which file
-holds a row is shifted ([STOCKER.md](STOCKER.md#venues-whose-buckets-do-not-cut-at-utc-midnight)).
+holds a row is shifted ([STOCKER.md](STOCKER.md#venues-whose-periods-do-not-cut-at-utc-midnight)).
 
 **trades** — `trade_id, timestamp, price, side, volume(quote), size(base)` → `size = baseSize =
 size(base)`, `quoteSize = volume(quote)`; `price × size(base)` reproduces `volume(quote)` on every row

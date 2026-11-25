@@ -19,13 +19,14 @@ const TS: Field = { name: 'ts', type: 'BIGINT' };
 
 /**
  * Whether a contract is `linear` (settles in its USD-like quote) or `inverse`
- * (settles in the coin), NULL on spot.
+ * (settles in the coin), NULL outside perpetuals and futures.
  *
  * Carried on every table whose numbers mean something different on the two:
  * a coin-margined trade's size is a contract count and its other leg is the
- * coin, a linear one's is base and quote. A constant per file — stocker knows it
- * per instrument, not per row — so it is the last column, filled when each
- * instrument's file is written rather than by the projection.
+ * coin, a linear one's is base and quote. A constant per instrument, not per
+ * row — a file holding a whole month carries each instrument's own — so it is
+ * the last column, filled as each instrument's rows are written rather than by
+ * the projection.
  */
 export const MARGIN: Field = { name: 'margin', type: 'VARCHAR' };
 
