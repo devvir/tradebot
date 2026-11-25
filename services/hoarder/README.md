@@ -5,7 +5,7 @@ RabbitMQ exactly as it was received.
 
 Deployed by: no module.
 
-One instance can collect one venue, several, or all of them — selected with `HOARDER_VENUES`, so deployments can be split per venue or consolidated without code changes. The compose file runs one instance. Every instance publishes into the same exchange and queue, so two instances given the same venue publish each of its frames twice; instances that split the venues between them are given disjoint `HOARDER_VENUES`.
+One instance can collect one venue, several, or all of them — selected with `HOARDER_VENUES`, so deployments can be split per venue or consolidated without code changes. The compose file runs one instance. Every instance publishes to the same exchange, so two instances given the same venue publish each of its frames twice; instances that split the venues between them are given disjoint `HOARDER_VENUES`.
 
 "Venue" means a trading exchange (Binance, OKX, …) everywhere in this service. "Exchange" unqualified means the AMQP exchange, and nothing else.
 

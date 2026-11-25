@@ -98,16 +98,15 @@ its function as well as its line, so it can be found when the lines move.
 
 Seen:
 
-- Listing the prefix on the venue answers 1,643 keys: 130 written 2022-05-09 and 1,513 written
-  2021-08-11. [GATE.md](../venues/GATE.md#2021-07-spot-data-at-the-futures-url) breaks the second
-  group down into 1,468 five-column spot files and 45 empty or near-empty ones.
+- The prefix holds 1,643 keys: 130 four-column futures files, 1,468 five-column spot files and 45
+  empty or near-empty ones ([GATE.md](../venues/GATE.md#2021-07-spot-data-at-the-futures-url)).
 - Migration `001-core` excludes 85 of the spot files by exact path
   (`SPOT_AT_A_FUTURES_URL`, `services/prospector/src/database/migrations/001-core.ts:114`). Its
   docblock says they are 85 of the spot-shaped files in that month, not all of them.
 - gate's `accepts` (`services/prospector/src/adapters/gate.ts:29-40`) refuses none of the other
   1,383: nothing in it looks at `202107` or at the column count.
 - Stocker refuses a positional file wider than its series declares
-  (`assertDeclaredWidth`, `services/stocker/src/build/shared.ts:255`; in a batch,
+  (`assertDeclaredWidth`, `services/stocker/src/build/shared.ts:255`; in a batch, `batchFrom`,
   `services/stocker/src/build/batch.ts:202`). A perp trade partition holding one of the 1,383 fails
   to build, naming the file, instead of writing spot sizes as signed futures sizes.
 
@@ -124,20 +123,21 @@ Seen:
 
 - The catalog counts a file that is not confirmed in a partition's `withdrawn`, never in its `files`
   or `bytes` (`count`, `services/prospector/src/catalog/cache/partitions.ts:179-183`).
-- Stocker reads the partitions endpoint without `withdrawn`
-  (`services/stocker/src/catalog.ts:47-50`), and counts every canonical name under the partition's
+- Stocker keeps a partition's `files` and `bytes` from the partitions endpoint and drops its
+  `withdrawn` (`listPartitions`, `services/stocker/src/catalog.ts:47-50`), and counts every canonical name under the partition's
   month directories as one of its files (`filesOf`, `services/stocker/src/disk.ts:23`).
 - A partition is built only where that count and byte sum equal the catalog's `files` and `bytes`
-  (`matches`, `services/stocker/src/disk.ts:69-71`; used at `services/stocker/src/decide.ts:148`, and
-  for a neighbour's edge at `:292`).
+  (`matches`, `services/stocker/src/disk.ts:69-71`; used in `decide`,
+  `services/stocker/src/decide.ts:148`, and for a neighbour's edge in `edgesOnDisk`, `:292`).
 - Nothing deletes or renames a file on disk once the venue withdraws it.
 
 So a downloaded file that the venue then withdraws stays under its canonical name, the disk holds one
 file more than the catalog says, and the partition, and any neighbour reading its edge, never matches
 again. A partition stocked before the withdrawal keeps that file's rows in the vault.
 
-**How to check:** a partition the catalog answers with `withdrawn` above 0 whose files are on disk is
-passed over by every sweep (`decide.ts:148`) and never built.
+**How to check:** a partition the catalog answers with `withdrawn` above 0, whose withdrawn file was
+downloaded before the venue withdrew it, is passed over by every sweep (`decide.ts:148`) and never
+built.
 
 ### Stocker: rows that share a timestamp have no fixed order
 
@@ -145,8 +145,9 @@ Seen:
 
 - A partition is sorted by `ts`, or `ts, sequence` for a table with a sequence, and nothing else
   (`orderOf`, `services/stocker/src/build/shared.ts:242-243`).
-- Every connection runs with `preserve_insertion_order=false` (`services/stocker/src/db.ts:52`), so
-  DuckDB's parallel sort does not keep the order the source gave rows with equal keys.
+- Stocker's DuckDB instance is opened with `preserve_insertion_order=false`
+  (`services/stocker/src/db.ts:52`), so its parallel sort does not keep the order the source gave
+  rows with equal keys.
 
 So trades that share a millisecond can come out in a different order from one build of the same
 partition to the next, and a replay of the vault is not byte-for-byte repeatable within a timestamp.
@@ -177,8 +178,8 @@ series; none of them sits on either side of an era cut.
 
 Seen:
 
-- A pattern is unique per `(venue_id, slice_id, pattern)`
-  (`services/prospector/src/database/schema.ts:397`), and two slices can differ by variant alone.
+- A pattern is unique per `(venue_id, slice_id, pattern)` (table `pattern`,
+  `services/prospector/src/database/schema.ts:397`), and two slices can differ by variant alone.
 - The in-memory keys for a shape and a series leave the variant out (`identity` and `patternKey`,
   `services/prospector/src/catalog/series.ts:1094-1109`), and `patternIdOf` looks a shape up by that
   key before it reads the slice (`series.ts:1248`).
@@ -193,8 +194,8 @@ rows share `market`, `dataset` and `pattern` with different `variant`s.
 
 Seen:
 
-- The router acks a message once its publish to every destination has returned
-  (`services/router/src/consumer.ts:131` and `:193`).
+- The router acks a message once its publish to every destination has returned (`route` and
+  `handleDelivery`, `services/router/src/consumer.ts:131` and `:193`).
 - A publish returns once the message is written to the channel: the publisher's channel is a plain
   channel (`createChannel`, `packages/rabbitmq/src/connection.ts:87-88`), not a confirm channel, and
   nothing is published with the mandatory flag.
