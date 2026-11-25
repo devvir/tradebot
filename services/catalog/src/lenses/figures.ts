@@ -25,7 +25,7 @@ export const lensFigures = (db: DatabaseSync, lens: Lens): Map<string, LensVenue
        JOIN slice c     ON c.id = q.slice_id
       WHERE l.lens_id = ?
       GROUP BY c.venue`,
-  ).all(lens.id!) as unknown as (LensVenueFigures & { venue: string })[];
+  ).all(lens.id) as unknown as (LensVenueFigures & { venue: string })[];
 
   return new Map(rows.map(({ venue, ...figures }) => [venue, figures]));
 };

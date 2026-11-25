@@ -32,7 +32,7 @@ const publish = async (id: number, over: Partial<Found>, dates: string[]) => {
 
   await putFiles(db, dates.map(date => ({
     venueId: id, path: `${over.symbol ?? 'BTCUSDT'}/${date}.zip`, date, size: 10, etag: 'e', modified: null,
-    existence: 'confirmed' as const, seriesId: series.id!, seenAt: 'T1',
+    existence: 'confirmed' as const, seriesId: series.id, seenAt: 'T1',
   })));
 };
 
@@ -284,7 +284,7 @@ describe('a lens\'s scope', () => {
       const series = recordSeries(other, id, found({}), { first: '20200101', last: '20200101' });
 
       await putFiles(other, [{ venueId: id, path: 'BTCUSDT/20200101.zip', date: '20200101', size: 10, etag: 'e',
-        modified: null, existence: 'confirmed', seriesId: series.id!, seenAt: 'T1' }]);
+        modified: null, existence: 'confirmed', seriesId: series.id, seenAt: 'T1' }]);
 
       for (const one of [db, other]) {
         storeLens(one, 'to-2020', '', '', { format: 1, venues: { '*': [{ effect: 'include', to: '202012' }] } });

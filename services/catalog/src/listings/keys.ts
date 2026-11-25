@@ -112,7 +112,7 @@ export const filesOfKeys = (db: DatabaseSync, keys: readonly string[], lens: Len
       const file  = same[0]!;
       const month = `${file.seriesId}|${file.date.slice(0, 6)}`;
 
-      if (lens && ! allowed.has(month)) allowed.set(month, Boolean(through.get(file.date.slice(0, 6), lens.id!, file.seriesId)));
+      if (lens && ! allowed.has(month)) allowed.set(month, Boolean(through.get(file.date.slice(0, 6), lens.id, file.seriesId)));
 
       found.set(key, lens && ! allowed.get(month) ? 'AccessDenied' : file);
     }

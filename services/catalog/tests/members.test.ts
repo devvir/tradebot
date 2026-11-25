@@ -237,7 +237,7 @@ describe('catching up', () => {
     while (catchUp(db, lens!, 1));
 
     expect(members('gate')).toEqual(['gate 202001', 'gate 202102']);
-    expect((db.prepare('SELECT partitions_through AS at FROM lens WHERE id = ?').get(lensNamed(db, 'gate')!.id!) as { at: number }).at)
+    expect((db.prepare('SELECT partitions_through AS at FROM lens WHERE id = ?').get(lensNamed(db, 'gate')!.id) as { at: number }).at)
       .toBe(5);
     expect(catchUp(db, lens!, 1)).toBe(false);
   });

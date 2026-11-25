@@ -15,29 +15,29 @@ import type { HeldScope, LensScope, LensSpan, Series } from '../types';
  * scope is never stale and never thrown away while it is still true.
  */
 export const lensScope = (db: DatabaseSync, lens: Lens): LensScope | null => {
-  const state = statementsOf(db).state.get(lens.id!) as { updatedAt: string; through: number } | undefined;
+  const state = statementsOf(db).state.get(lens.id) as { updatedAt: string; through: number } | undefined;
   const held  = scopesOf(db);
 
   if (! state) {
-    held.delete(lens.id!);
+    held.delete(lens.id);
 
     return null;
   }
 
-  const kept = held.get(lens.id!);
+  const kept = held.get(lens.id);
 
   if (kept && kept.updatedAt === state.updatedAt && kept.through === state.through) return kept.scope;
 
   const scope = new Map<string, Map<number, LensSpan[]>>();
 
-  for (const row of statementsOf(db).members.all(lens.id!) as { venue: string; sliceId: number; month: string }[]) {
+  for (const row of statementsOf(db).members.all(lens.id) as { venue: string; sliceId: number; month: string }[]) {
     const venue = scope.get(row.venue) ?? new Map<number, LensSpan[]>();
 
     venue.set(row.sliceId, union(venue.get(row.sliceId) ?? [], { from: row.month, to: row.month }));
     scope.set(row.venue, venue);
   }
 
-  held.set(lens.id!, { updatedAt: state.updatedAt, through: state.through, scope });
+  held.set(lens.id, { updatedAt: state.updatedAt, through: state.through, scope });
 
   return scope;
 };
@@ -103,11 +103,11 @@ export const throughLens = (
     }
 
     const { oldest, newest } = statementsOf(db);
-    const from = firstOf(hit, span => (oldest.get(row.id!, start(span), end(span)) as { at: string | null }).at);
+    const from = firstOf(hit, span => (oldest.get(row.id, start(span), end(span)) as { at: string | null }).at);
 
     if (from === null) continue;
 
-    const to = firstOf([...hit].reverse(), span => (newest.get(row.id!, start(span), end(span)) as { at: string | null }).at);
+    const to = firstOf([...hit].reverse(), span => (newest.get(row.id, start(span), end(span)) as { at: string | null }).at);
 
     out.push({ ...row, first: from, last: to ?? from });
   }

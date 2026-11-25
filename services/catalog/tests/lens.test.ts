@@ -63,8 +63,8 @@ describe('what a lens lets through', () => {
     expect(selects(lens({ binance: [] }))).toBe(0);
   });
 
-  /** Evaluation starts from the empty set, so subtracting from it is a no-op. */
-  it('lets nothing through where the first rule excludes', () => {
+  /** Only an include lets anything in, so an exclude on its own takes away from nothing. */
+  it('lets nothing through where the rules only exclude', () => {
     expect(selects(lens({ binance: [{ effect: 'exclude', datasets: [{ dataset: 'books' }] }] }))).toBe(0);
   });
 
@@ -104,8 +104,11 @@ describe('what a lens lets through', () => {
     ] }))).toBe(1);
   });
 
-  /** The composition, and the example the whole format was designed around. */
-  it('composes include then exclude, in order', () => {
+  /**
+   * What any include matches, less what any exclude matches — the example the
+   * whole format was designed around.
+   */
+  it('lets an exclude take away from an include', () => {
     expect(selects(lens({ binance: [
       { effect: 'include' },
       { effect: 'exclude', datasets: [{ dataset: 'books' }] },
@@ -145,11 +148,12 @@ describe('what a lens lets through', () => {
 });
 
 /**
- * **A rule under `*` is about every venue**, and it runs before that venue's own.
+ * **A rule under `*` is about every venue**, and is read together with each
+ * venue's own as one set of includes and excludes.
  *
  * It is what keeps *everything up to 2020* one rule rather than one per venue —
- * and, because rules compose in order, what lets a venue then carve its own
- * exception out of it.
+ * and, because an exclude takes away from any include, what lets a venue carve
+ * its own exception out of it.
  */
 describe('rules that are about every venue', () => {
   beforeEach(() => {
@@ -171,8 +175,8 @@ describe('rules that are about every venue', () => {
     }))).toBe(7);   // eight slices in all, less binance's one of books
   });
 
-  /** Global first: a venue's own rules see what the globals left. */
-  it('applies the global rules before a venue\'s own', () => {
+  /** A venue's own include adds to what the global ones let through. */
+  it('reads the global rules together with a venue\'s own', () => {
     expect(selects(lens({
       '*':     [{ effect: 'include', datasets: [{ dataset: 'trades' }] }],
       binance: [{ effect: 'include', datasets: [{ dataset: 'books' }] }],
@@ -183,7 +187,7 @@ describe('rules that are about every venue', () => {
     expect(problemsWith(db, lens({ '*': [{ effect: 'include' }] }))).toEqual([]);
   });
 
-  /** A venue whose first rule excludes is fine where a global included first. */
+  /** A venue with only excludes of its own is fine where a global rule includes. */
   it('does not call a venue empty when the globals fill it', () => {
     expect(problemsWith(db, lens({
       '*':     [{ effect: 'include' }],

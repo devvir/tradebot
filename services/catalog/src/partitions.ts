@@ -17,7 +17,7 @@ import type { Lens, Partition, PartitionFilter, PartitionStatements, SettledEdge
  */
 export const partitionsOf = (db: DatabaseSync, venue: string, lens: Lens | null = null): Partition[] =>
   (lens
-    ? statements(db).through.all(lens.id!, venue)
+    ? statements(db).through.all(lens.id, venue)
     : statements(db).all.all(venue)) as unknown as Partition[];
 
 /**
