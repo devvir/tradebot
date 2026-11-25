@@ -4,13 +4,12 @@
 // every other write:
 //
 //   - Storage health (global). When write failures pile up across all writes
-//     within FAILURE_WINDOW_MS, vault returns 503 to ALL clients until a
-//     canary write succeeds. This is the "the disk is broken" signal.
+//     within FAILURE_WINDOW_MS, storage is unhealthy until a canary write
+//     succeeds. This is the "the disk is broken" signal.
 //
 //   - Per-path backpressure (local). When a single file's inflight write
 //     count crosses the writer threshold, that one file's path is added to a
-//     throttled set. Routes return 429 only for requests targeting a
-//     throttled file; every other path is unaffected.
+//     throttled set; every other path is unaffected.
 //
 // `recordFailure()` counts one write failure that lost data and `isHealthy()`
 // reports the resulting storage verdict. `setBackpressure(path, busy, count)`
@@ -18,7 +17,7 @@
 // reports it.
 
 import path from 'path';
-import { appendFileSync, existsSync, unlinkSync } from 'fs';
+import { openSync, writeSync, fsyncSync, closeSync, unlinkSync } from 'fs';
 import { logger } from '@devvir/service-kit';
 import { DATA_DIR } from './paths';
 
@@ -45,16 +44,16 @@ const recentFailures: number[] = [];
 export const isHealthy        = (): boolean       => healthy;
 export const getFailureReason = (): string | null => failureReason;
 
-/** True when this specific file is currently shedding load (returns 429). */
+/** True while this specific file is throttled. */
 export const isThrottled = (table: string, filename: string): boolean => {
   return throttledPaths.has(`${table}/${filename}`);
 };
 
 /**
- * Called from the writer when a single file's inflight write count crosses
- * the busy threshold (busy=true) or drains back below the resume threshold
- * (busy=false). Throttle is per-path: only requests for that exact
- * `table/filename` are rejected with 429; other files keep flowing.
+ * Throttles `path` (a `table/filename`) when its inflight write count crosses
+ * the busy threshold (busy=true) and clears it once the count drains back
+ * below the resume threshold (busy=false). Throttle is per-path: every other
+ * file is unaffected. Setting a path to the state it is already in is a no-op.
  */
 export const setBackpressure = (path: string, busy: boolean, count: number = 0): void => {
   if (busy) {
@@ -116,9 +115,13 @@ const setHealthy = (): void => {
 // ── Recovery probe ────────────────────────────────────────────────────────────
 //
 // While unhealthy, attempt a canary write every RECOVERY_INTERVAL_MS.
-// Transitions back to healthy as soon as the probe succeeds.
+// Transitions back to healthy as soon as the probe succeeds. The canary is a
+// block of real bytes fsynced to disk, so a full disk fails the probe: an
+// empty write allocates nothing and would succeed even then.
 
-const CANARY_PATH = path.join(DATA_DIR, '.health-canary');
+const CANARY_BYTES = 4096;
+
+const canaryPath = (): string => path.join(DATA_DIR, '.health-canary');
 
 const scheduleRecovery = (): void => {
   if (recoveryTimer) return;
@@ -130,16 +133,33 @@ const scheduleRecovery = (): void => {
 };
 
 const tryRecover = (): void => {
-  try {
-    appendFileSync(CANARY_PATH, '');
+  const canary = canaryPath();
 
-    if (existsSync(CANARY_PATH)) unlinkSync(CANARY_PATH);
+  try {
+    writeCanary(canary);
+    unlinkSync(canary);
 
     setHealthy();
   } catch (err) {
     logger.warn({ err }, 'Recovery probe failed — retrying');
 
+    try { unlinkSync(canary); } catch { /* best effort: the canary may not exist */ }
+
     scheduleRecovery();
+  }
+};
+
+const writeCanary = (canary: string): void => {
+  const fd = openSync(canary, 'w');
+
+  try {
+    const written = writeSync(fd, Buffer.alloc(CANARY_BYTES));
+
+    if (written < CANARY_BYTES) throw new Error(`Canary write was short: ${written} of ${CANARY_BYTES} bytes`);
+
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
   }
 };
 

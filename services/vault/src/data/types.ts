@@ -6,7 +6,7 @@ export interface WsMessage {
   data:   Row[];
 }
 
-export interface Buffer {
+export interface LineBuffer {
   readonly table:    string;
   readonly filename: string;
 

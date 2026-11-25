@@ -52,9 +52,9 @@ afterEach(() => {
 
 describe('comma-split strategy (REST tables)', () => {
   it('yields the header then split records', async () => {
-    makeClosedFile('funding', '2023-02-01', ['timestamp,symbol', 'a,1', 'b,2']);
+    makeClosedFile('funding', '20230201', ['timestamp,symbol', 'a,1', 'b,2']);
 
-    expect(await collect('funding', '2023-02-01')).toEqual([
+    expect(await collect('funding', '20230201')).toEqual([
       ['timestamp', 'symbol'],
       ['a', '1'],
       ['b', '2'],
@@ -62,9 +62,9 @@ describe('comma-split strategy (REST tables)', () => {
   });
 
   it('skips empty lines', async () => {
-    makeClosedFile('funding', '2023-02-01', ['timestamp,symbol', 'a,1', '', 'b,2']);
+    makeClosedFile('funding', '20230201', ['timestamp,symbol', 'a,1', '', 'b,2']);
 
-    expect(await collect('funding', '2023-02-01')).toEqual([
+    expect(await collect('funding', '20230201')).toEqual([
       ['timestamp', 'symbol'],
       ['a', '1'],
       ['b', '2'],
@@ -72,16 +72,16 @@ describe('comma-split strategy (REST tables)', () => {
   });
 
   it('skip drops the first N records, header always survives', async () => {
-    makeClosedFile('funding', '2023-02-01', ['timestamp,symbol', 'a,1', 'b,2', 'c,3']);
+    makeClosedFile('funding', '20230201', ['timestamp,symbol', 'a,1', 'b,2', 'c,3']);
 
-    expect(await collect('funding', '2023-02-01', 2)).toEqual([
+    expect(await collect('funding', '20230201', 2)).toEqual([
       ['timestamp', 'symbol'],
       ['c', '3'],
     ]);
   });
 
   it('throws NotFoundError when no closed file exists', async () => {
-    await expect(collect('funding', '2023-02-01')).rejects.toThrow(NotFoundError);
+    await expect(collect('funding', '20230201')).rejects.toThrow(NotFoundError);
   });
 });
 
@@ -89,14 +89,14 @@ describe('comma-split strategy (REST tables)', () => {
 
 describe('comma-split strategy (WS tables)', () => {
   it('yields message and continuation rows as separate records', async () => {
-    makeClosedFile('orderBookL2', '2023-02-01', [
+    makeClosedFile('orderBookL2', '20230201', [
       '_date_,_action_,symbol,id',
       '2023-02-01T00:00:00Z,partial,XBTUSD,1',
       ',,XBTUSD,2',
       '2023-02-01T00:01:00Z,update,XBTUSD,3',
     ]);
 
-    expect(await collect('orderBookL2', '2023-02-01')).toEqual([
+    expect(await collect('orderBookL2', '20230201')).toEqual([
       ['_date_', '_action_', 'symbol', 'id'],
       ['2023-02-01T00:00:00Z', 'partial', 'XBTUSD', '1'],
       ['', '', 'XBTUSD', '2'],
@@ -105,7 +105,7 @@ describe('comma-split strategy (WS tables)', () => {
   });
 
   it('skip drops a message together with its continuation rows', async () => {
-    makeClosedFile('orderBookL2', '2023-02-01', [
+    makeClosedFile('orderBookL2', '20230201', [
       '_date_,_action_,symbol,id',
       '2023-02-01T00:00:00Z,partial,XBTUSD,1',
       ',,XBTUSD,2',
@@ -113,7 +113,7 @@ describe('comma-split strategy (WS tables)', () => {
       '2023-02-01T00:01:00Z,update,XBTUSD,4',
     ]);
 
-    expect(await collect('orderBookL2', '2023-02-01', 1)).toEqual([
+    expect(await collect('orderBookL2', '20230201', 1)).toEqual([
       ['_date_', '_action_', 'symbol', 'id'],
       ['2023-02-01T00:01:00Z', 'update', 'XBTUSD', '4'],
     ]);
@@ -179,14 +179,14 @@ describe('RFC 4180 strategy (free-text tables)', () => {
   it('preserves a quoted field containing newlines as a single record', async () => {
     // A quoted field with embedded newlines spans multiple physical lines on
     // disk but must read back as one record — a comma split would fragment it.
-    makeClosedFile('chat', '2023-02-01', [
+    makeClosedFile('chat', '20230201', [
       '_date_,_action_,id,message',
       '2023-02-01T00:00:00Z,insert,1,"line one',
       'line two',
       'line three"',
     ]);
 
-    const records = await collect('chat', '2023-02-01');
+    const records = await collect('chat', '20230201');
 
     expect(records).toHaveLength(2);
     expect(records[1]).toEqual([
@@ -198,12 +198,12 @@ describe('RFC 4180 strategy (free-text tables)', () => {
   });
 
   it('preserves embedded commas and doubled quotes inside a quoted field', async () => {
-    makeClosedFile('announcement', '2023-02-01', [
+    makeClosedFile('announcement', '20230201', [
       '_date_,_action_,id,title,content',
       '2023-02-01T00:00:00Z,insert,42,"Title, with comma","<a href=""https://x.test"">link</a>"',
     ]);
 
-    const records = await collect('announcement', '2023-02-01');
+    const records = await collect('announcement', '20230201');
 
     expect(records[1]).toEqual([
       '2023-02-01T00:00:00Z',
@@ -215,21 +215,21 @@ describe('RFC 4180 strategy (free-text tables)', () => {
   });
 
   it('skip drops a message together with its continuation rows', async () => {
-    makeClosedFile('chat', '2023-02-01', [
+    makeClosedFile('chat', '20230201', [
       '_date_,_action_,id,message',
       '2023-02-01T00:00:00Z,partial,1,first',
       ',,2,second',
       '2023-02-01T00:01:00Z,insert,3,third',
     ]);
 
-    expect(await collect('chat', '2023-02-01', 1)).toEqual([
+    expect(await collect('chat', '20230201', 1)).toEqual([
       ['_date_', '_action_', 'id', 'message'],
       ['2023-02-01T00:01:00Z', 'insert', '3', 'third'],
     ]);
   });
 
   it('throws NotFoundError when no closed file exists', async () => {
-    await expect(collect('chat', '2023-02-01')).rejects.toThrow(NotFoundError);
+    await expect(collect('chat', '20230201')).rejects.toThrow(NotFoundError);
   });
 });
 

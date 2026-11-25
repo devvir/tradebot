@@ -17,8 +17,8 @@ export const errorMiddleware = (
   if (err && typeof err === 'object') {
     const e = err as { type?: string; status?: number };
 
-    // Clients (journalist) occasionally drop connections mid-request when they
-    // time out and retry. Express surfaces this as a BadRequestError with
+    // Clients occasionally drop connections mid-request when they time out
+    // and retry. Express surfaces this as a BadRequestError with
     // type 'request.aborted' — not a server error.
     if (e.type === 'request.aborted') {
       if (! res.headersSent) res.status(499).end();
@@ -44,5 +44,13 @@ export const errorMiddleware = (
   }
 
   logger.error({ err }, 'Unhandled request error');
-  if (! res.headersSent) res.status(500).json({ error: 'Internal server error' });
+
+  // A response already under way cannot carry an error status any more; it is
+  // cut, so the client sees it fail rather than wait on it forever.
+  if (res.headersSent) {
+    res.destroy();
+    return;
+  }
+
+  res.status(500).json({ error: 'Internal server error' });
 };

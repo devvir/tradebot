@@ -393,14 +393,19 @@ const syncPathSync = (p: string): void => {
 };
 
 /**
- * Invoked by the zipper writer when a member fails every retry. Mirrors the
- * original split: a plain drop (truncate succeeded) counts toward storage
- * health; a truncate failure instead writes an `.error` sidecar describing the
- * unrecoverable corruption — zipper has quarantined the file and started a
- * fresh one, so writes continue regardless.
+ * Invoked by the zipper writer when a member fails every retry. A plain drop
+ * (truncate succeeded) counts toward storage health; a truncate failure is
+ * logged and writes an `.error` sidecar describing the unrecoverable
+ * corruption — zipper has quarantined the file and started a fresh one, so
+ * writes continue regardless.
  */
 const onWriteFailure = (table: string, filename: string, info: WriteFailure): void => {
   if (info.truncateError) {
+    logger.error(
+      { table, filename, err: info.error, truncateError: info.truncateError, quarantinePath: info.quarantinePath },
+      'Append failed and the file could not be truncated back — file quarantined',
+    );
+
     writeErrorSidecar(table, filename, info.lastGoodOffset, info.error, info.truncateError, info.quarantinePath);
 
     return;
@@ -413,8 +418,8 @@ const onWriteFailure = (table: string, filename: string, info: WriteFailure): vo
 
 /**
  * Writes a sidecar `.csv.gz.error` next to the data file describing the
- * unrecoverable corruption. Best-effort — if even this write fails, we do
- * nothing further (the stderr log from the writer is always emitted).
+ * unrecoverable corruption. Best-effort — if even this write fails, nothing
+ * further is done.
  */
 const writeErrorSidecar = (
   table:          string,

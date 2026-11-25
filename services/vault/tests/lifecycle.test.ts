@@ -63,6 +63,34 @@ afterEach(() => {
   if (tmpDir && existsSync(tmpDir)) rmSync(tmpDir, { recursive: true, force: true });
 });
 
+describe('rows posted, ticked to disk, closed and read back', () => {
+  const row = (price: number) => ({ timestamp: '2024-01-01T00:00:00.000Z', symbol: 'XBTUSD', price, tickDirection: 'PlusTick' });
+
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('GET returns every row, both those a tick wrote and those the close flushed', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+
+    expect((await request(app).post('/files/tick/20240101/rows').send([row(1), row(2)])).status).toBe(202);
+
+    // Past the buffer's stale threshold, a tick writes the rows to the open file.
+    vi.setSystemTime(Date.now() + 60_000);
+    _test_tick();
+    await drainAll();
+
+    expect(decode(openPath('tick', '20240101'))).toHaveLength(3);
+
+    expect((await request(app).post('/files/tick/20240101/rows').send(row(3))).status).toBe(202);
+    expect((await request(app).post('/files/tick/20240101/close')).status).toBe(202);
+    await drainAll();
+
+    const res = await request(app).get('/files/tick/20240101');
+
+    expect(res.status).toBe(200);
+    expect(res.text.trim().split('\n').map(l => JSON.parse(l).price)).toEqual([1, 2, 3]);
+  });
+});
+
 describe('tick with an unwritable table', () => {
   it('writes the other tables and records the failure instead of throwing', async () => {
     writeFileSync(path.join(tmpDir, 'funding'), 'not a directory');

@@ -39,5 +39,4 @@ const tick = (): void => {
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
-export const _test_tick    = tick;
-export const _test_TICK_MS = TICK_MS;
+export const _test_tick = tick;

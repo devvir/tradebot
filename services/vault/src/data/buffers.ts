@@ -4,7 +4,7 @@
 // encoding step happens in `data/encode.ts` before push). Strict FIFO; flushes
 // are synchronous and atomic — no interleaving is possible at the buffer level.
 
-import type { Buffer, FlushResult } from './types';
+import type { LineBuffer, FlushResult } from './types';
 
 // Both triggers in `flushReady` use these. `STALE_THRESHOLD_MS` is generous
 // (10s) so size is the leading trigger for fast tables; only quiet tables fall
@@ -12,7 +12,7 @@ import type { Buffer, FlushResult } from './types';
 const STALE_THRESHOLD_MS = 10_000;
 const BATCH_SIZE         = 10_000;
 
-const createBuffer = (table: string, filename: string): Buffer => {
+const createBuffer = (table: string, filename: string): LineBuffer => {
   const lines: string[] = [];
   let lastFlushedAt     = Date.now();
 
@@ -37,10 +37,10 @@ const createBuffer = (table: string, filename: string): Buffer => {
   };
 };
 
-const map = new Map<string, Buffer>();
+const map = new Map<string, LineBuffer>();
 
 /** Returns the buffer for a given table/filename, creating it on first access. */
-const get = (table: string, filename: string): Buffer => {
+const get = (table: string, filename: string): LineBuffer => {
   const key = `${table}/${filename}`;
 
   const existing = map.get(key);

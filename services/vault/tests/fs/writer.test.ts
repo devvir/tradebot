@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, statSync, readdirSync } from 'fs';
-import { gunzipSync, gzipSync } from 'zlib';
+import { gunzipSync, gzipSync, inflateRawSync } from 'zlib';
 import { Readable } from 'stream';
 import * as os from 'os';
 import * as path from 'path';
@@ -77,30 +77,39 @@ import { AlreadyExistsError, InvalidUploadError } from '../../src/fs/errors';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const readMembers = (filePath: string): string => {
-  // Multiple gzip members concatenated decompress as a single text stream
-  // when piped through gunzip; Node's gunzipSync handles the first member
-  // only, so we walk members manually.
-  const buf = readFileSync(filePath);
-  let offset = 0;
-  let out = '';
+/** The text of every gzip member in the file: gunzip reads concatenated members as one stream. */
+const readMembers = (filePath: string): string => gunzipSync(readFileSync(filePath)).toString('utf8');
+
+/**
+ * The text of each gzip member in the file, in order. Each member's deflate
+ * stream is inflated on its own, which reports how many bytes it used, so the
+ * next member is found without scanning the compressed bytes for a magic.
+ */
+const memberTexts = (filePath: string): string[] => {
+  const buf   = readFileSync(filePath);
+  const texts: string[] = [];
+  let offset  = 0;
 
   while (offset < buf.length) {
-    // Find the next gzip header (1f 8b) after this one
-    let next = -1;
+    expect([buf[offset], buf[offset + 1]]).toEqual([0x1f, 0x8b]);
 
-    for (let i = offset + 2; i < buf.length - 1; i++) {
-      if (buf[i] === 0x1f && buf[i + 1] === 0x8b) { next = i; break; }
-    }
+    // Skip the 10-byte fixed header and whichever optional fields FLG names.
+    const flags = buf[offset + 3]!;
+    let body    = offset + 10;
 
-    const memberEnd = next === -1 ? buf.length : next;
-    const member    = buf.subarray(offset, memberEnd);
+    if (flags & 0x04) body += 2 + buf.readUInt16LE(body);
+    if (flags & 0x08) body  = buf.indexOf(0, body) + 1;
+    if (flags & 0x10) body  = buf.indexOf(0, body) + 1;
+    if (flags & 0x02) body += 2;
 
-    out    += gunzipSync(member).toString('utf8');
-    offset  = memberEnd;
+    const { buffer, engine } = inflateRawSync(buf.subarray(body), { info: true }) as unknown as
+      { buffer: Buffer; engine: { bytesWritten: number } };
+
+    texts.push(buffer.toString('utf8'));
+    offset = body + engine.bytesWritten + 8;
   }
 
-  return out;
+  return texts;
 };
 
 const rows = (n: number): string[] => Array.from({ length: n }, (_, i) => `row-${i}`);
@@ -128,21 +137,21 @@ afterEach(() => {
 
 describe('isInitialized', () => {
   it('is false when no .csv.gz.tmp exists and no in-memory handle', () => {
-    expect(isInitialized('trade', '2023-02-01')).toBe(false);
+    expect(isInitialized('trade', '20230201')).toBe(false);
   });
 
   it('is true after a .csv.gz.tmp exists on disk (no in-memory handle yet)', () => {
     const dir = path.join(tmpDir, 'trade', '2023');
     mkdirSync(dir, { recursive: true });
-    writeFileSync(path.join(dir, '2023-02-01.csv.gz.tmp'), gzipSync('header\n'));
+    writeFileSync(path.join(dir, '20230201.csv.gz.tmp'), gzipSync('header\n'));
 
-    expect(isInitialized('trade', '2023-02-01')).toBe(true);
+    expect(isInitialized('trade', '20230201')).toBe(true);
   });
 
   it('is true after appendBatch creates the handle', async () => {
-    await appendBatch('trade', '2023-02-01', ['line1']);
+    await appendBatch('trade', '20230201', ['line1']);
 
-    expect(isInitialized('trade', '2023-02-01')).toBe(true);
+    expect(isInitialized('trade', '20230201')).toBe(true);
   });
 });
 
@@ -150,30 +159,29 @@ describe('isInitialized', () => {
 
 describe('appendBatch', () => {
   it('writes a single gzip member and produces a readable file', async () => {
-    await appendBatch('trade', '2023-02-01', ['col1,col2', '1,2']);
+    await appendBatch('trade', '20230201', ['col1,col2', '1,2']);
 
-    const tmp = openPath('trade', '2023-02-01');
+    const tmp = openPath('trade', '20230201');
     expect(existsSync(tmp)).toBe(true);
     expect(readMembers(tmp)).toBe('col1,col2\n1,2\n');
   });
 
   it('appends multiple members across calls (resulting file is multi-member gzip)', async () => {
-    await appendBatch('trade', '2023-02-01', ['col1,col2']);
-    await appendBatch('trade', '2023-02-01', ['1,2']);
-    await appendBatch('trade', '2023-02-01', ['3,4']);
+    await appendBatch('trade', '20230201', ['col1,col2']);
+    await appendBatch('trade', '20230201', ['1,2']);
+    await appendBatch('trade', '20230201', ['3,4']);
 
-    const tmp = openPath('trade', '2023-02-01');
-    expect(readMembers(tmp)).toBe('col1,col2\n1,2\n3,4\n');
+    expect(memberTexts(openPath('trade', '20230201'))).toEqual(['col1,col2\n', '1,2\n', '3,4\n']);
   });
 
   it('serialises concurrent writes (FIFO order preserved)', async () => {
-    const a = appendBatch('trade', '2023-02-01', ['line-a']);
-    const b = appendBatch('trade', '2023-02-01', ['line-b']);
-    const c = appendBatch('trade', '2023-02-01', ['line-c']);
+    const a = appendBatch('trade', '20230201', ['line-a']);
+    const b = appendBatch('trade', '20230201', ['line-b']);
+    const c = appendBatch('trade', '20230201', ['line-c']);
 
     await Promise.all([a, b, c]);
 
-    const tmp = openPath('trade', '2023-02-01');
+    const tmp = openPath('trade', '20230201');
     expect(readMembers(tmp)).toBe('line-a\nline-b\nline-c\n');
   });
 
@@ -181,21 +189,21 @@ describe('appendBatch', () => {
     // Seed the file with prior content as if vault had restarted mid-day.
     const dir = path.join(tmpDir, 'trade', '2023');
     mkdirSync(dir, { recursive: true });
-    const tmp = path.join(dir, '2023-02-01.csv.gz.tmp');
+    const tmp = path.join(dir, '20230201.csv.gz.tmp');
     writeFileSync(tmp, gzipSync('header\nold-1\n'));
 
-    await appendBatch('trade', '2023-02-01', ['new-1', 'new-2']);
+    await appendBatch('trade', '20230201', ['new-1', 'new-2']);
 
     expect(readMembers(tmp)).toBe('header\nold-1\nnew-1\nnew-2\n');
   });
 
   it('is a no-op when given an empty lines array (no member written)', async () => {
     // First write to create the file.
-    await appendBatch('trade', '2023-02-01', ['header']);
-    const tmp  = openPath('trade', '2023-02-01');
+    await appendBatch('trade', '20230201', ['header']);
+    const tmp  = openPath('trade', '20230201');
     const size = statSync(tmp).size;
 
-    await appendBatch('trade', '2023-02-01', []);
+    await appendBatch('trade', '20230201', []);
 
     expect(statSync(tmp).size).toBe(size);
   });
@@ -205,19 +213,19 @@ describe('appendBatch', () => {
 
 describe('appendBatch — seal', () => {
   it('renames .csv.gz.tmp to .csv.gz when seal=true', async () => {
-    await appendBatch('trade', '2023-02-01', ['header']);
-    await appendBatch('trade', '2023-02-01', ['data-1'], true);
+    await appendBatch('trade', '20230201', ['header']);
+    await appendBatch('trade', '20230201', ['data-1'], true);
 
-    expect(existsSync(openPath('trade', '2023-02-01'))).toBe(false);
-    expect(existsSync(closedPath('trade', '2023-02-01'))).toBe(true);
+    expect(existsSync(openPath('trade', '20230201'))).toBe(false);
+    expect(existsSync(closedPath('trade', '20230201'))).toBe(true);
   });
 
   it('writes a suffixed filename next to the bare-date file in the same year dir', async () => {
-    await appendBatch('trade', '2023-02-01',          ['bare']);
-    await appendBatch('trade', '2023-02-01.snapshot', ['snap']);
+    await appendBatch('trade', '20230201',          ['bare']);
+    await appendBatch('trade', '20230201.snapshot', ['snap']);
 
-    const bareTmp = openPath('trade', '2023-02-01');
-    const snapTmp = openPath('trade', '2023-02-01.snapshot');
+    const bareTmp = openPath('trade', '20230201');
+    const snapTmp = openPath('trade', '20230201.snapshot');
 
     expect(existsSync(bareTmp)).toBe(true);
     expect(existsSync(snapTmp)).toBe(true);
@@ -226,16 +234,16 @@ describe('appendBatch — seal', () => {
   });
 
   it('seals even when the lines array is empty (no final member written)', async () => {
-    await appendBatch('trade', '2023-02-01', ['header']);
-    await appendBatch('trade', '2023-02-01', [], true);
+    await appendBatch('trade', '20230201', ['header']);
+    await appendBatch('trade', '20230201', [], true);
 
-    expect(existsSync(closedPath('trade', '2023-02-01'))).toBe(true);
+    expect(existsSync(closedPath('trade', '20230201'))).toBe(true);
   });
 
   it('drops the in-memory handle after sealing', async () => {
-    await appendBatch('trade', '2023-02-01', ['header'], true);
+    await appendBatch('trade', '20230201', ['header'], true);
 
-    expect(isInitialized('trade', '2023-02-01')).toBe(false);
+    expect(isInitialized('trade', '20230201')).toBe(false);
   });
 });
 
@@ -529,7 +537,7 @@ describe('fsync', () => {
 
 describe('recordFailure wiring', () => {
   it('does not call recordFailure on a normal append', async () => {
-    await appendBatch('trade', '2023-02-01', ['header']);
+    await appendBatch('trade', '20230201', ['header']);
     expect(recordFailure).not.toHaveBeenCalled();
   });
 });

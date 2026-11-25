@@ -8,28 +8,28 @@ afterEach(() => vi.useRealTimers());
 
 describe('buffers.get — identity', () => {
   it('returns a buffer with the correct table and filename', () => {
-    const buf = buffers.get('trade', '2023-02-01');
+    const buf = buffers.get('trade', '20230201');
     expect(buf.table).toBe('trade');
-    expect(buf.filename).toBe('2023-02-01');
+    expect(buf.filename).toBe('20230201');
   });
 
   it('returns the same instance on subsequent calls', () => {
-    expect(buffers.get('trade', '2023-02-01')).toBe(buffers.get('trade', '2023-02-01'));
+    expect(buffers.get('trade', '20230201')).toBe(buffers.get('trade', '20230201'));
   });
 
   it('returns distinct instances for different table/filename pairs', () => {
-    const a = buffers.get('trade', '2023-02-01');
-    const b = buffers.get('quote', '2023-02-01');
-    const c = buffers.get('trade', '2023-02-02');
+    const a = buffers.get('trade', '20230201');
+    const b = buffers.get('quote', '20230201');
+    const c = buffers.get('trade', '20230202');
     expect(a).not.toBe(b);
     expect(a).not.toBe(c);
   });
 
   it('treats a suffixed filename as a separate buffer from the bare date', () => {
-    const bare     = buffers.get('trade', '2023-02-01');
-    const suffixed = buffers.get('trade', '2023-02-01.snapshot');
+    const bare     = buffers.get('trade', '20230201');
+    const suffixed = buffers.get('trade', '20230201.snapshot');
     expect(bare).not.toBe(suffixed);
-    expect(suffixed.filename).toBe('2023-02-01.snapshot');
+    expect(suffixed.filename).toBe('20230201.snapshot');
   });
 });
 
@@ -37,11 +37,11 @@ describe('buffers.get — identity', () => {
 
 describe('buffer.push / count', () => {
   it('starts empty', () => {
-    expect(buffers.get('trade', '2023-02-01').count()).toBe(0);
+    expect(buffers.get('trade', '20230201').count()).toBe(0);
   });
 
   it('counts pushed lines', () => {
-    const buf = buffers.get('trade', '2023-02-01');
+    const buf = buffers.get('trade', '20230201');
     buf.push('a,b,c');
     buf.push('d,e,f');
     expect(buf.count()).toBe(2);
@@ -50,13 +50,13 @@ describe('buffer.push / count', () => {
 
 describe('buffer.pushMany', () => {
   it('adds all lines at once', () => {
-    const buf = buffers.get('trade', '2023-02-01');
+    const buf = buffers.get('trade', '20230201');
     buf.pushMany(['a', 'b', 'c']);
     expect(buf.count()).toBe(3);
   });
 
   it('accepts a batch far larger than the call-stack argument limit', () => {
-    const buf = buffers.get('trade', '2023-02-01');
+    const buf = buffers.get('trade', '20230201');
     buf.pushMany(Array.from({ length: 200_000 }, (_, i) => `line-${i}`));
     expect(buf.count()).toBe(200_000);
     expect(buf.flush().at(-1)).toBe('line-199999');
@@ -65,32 +65,32 @@ describe('buffer.pushMany', () => {
 
 describe('buffer.flush', () => {
   it('returns all buffered lines in FIFO order', () => {
-    const buf = buffers.get('trade', '2023-02-01');
+    const buf = buffers.get('trade', '20230201');
     buf.push('a');
     buf.push('b');
     expect(buf.flush()).toEqual(['a', 'b']);
   });
 
   it('clears the buffer after flush', () => {
-    const buf = buffers.get('trade', '2023-02-01');
+    const buf = buffers.get('trade', '20230201');
     buf.push('a');
     buf.flush();
     expect(buf.count()).toBe(0);
   });
 
   it('returns an empty array when flushed with nothing buffered', () => {
-    expect(buffers.get('trade', '2023-02-01').flush()).toEqual([]);
+    expect(buffers.get('trade', '20230201').flush()).toEqual([]);
   });
 
   it('persists state across get calls', () => {
-    buffers.get('trade', '2023-02-01').push('x');
-    expect(buffers.get('trade', '2023-02-01').count()).toBe(1);
+    buffers.get('trade', '20230201').push('x');
+    expect(buffers.get('trade', '20230201').count()).toBe(1);
   });
 
   it('updates lastFlushed on flush', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2024-01-01T00:00:00Z'));
-    const buf = buffers.get('trade', '2023-02-01');
+    const buf = buffers.get('trade', '20230201');
     const t0  = buf.lastFlushed();
 
     vi.setSystemTime(new Date('2024-01-01T00:00:05Z'));
@@ -105,19 +105,19 @@ describe('buffer.flush', () => {
 
 describe('buffers.flushReady', () => {
   it('returns nothing when all buffers are empty', () => {
-    buffers.get('trade', '2023-02-01');
+    buffers.get('trade', '20230201');
     expect(buffers.flushReady()).toEqual([]);
   });
 
   it('skips non-empty buffers below the size and time thresholds', () => {
-    const buf = buffers.get('trade', '2023-02-01');
+    const buf = buffers.get('trade', '20230201');
     buf.push('a');
     expect(buffers.flushReady()).toEqual([]);
     expect(buf.count()).toBe(1);
   });
 
   it('flushes a buffer that has reached BATCH_SIZE', () => {
-    const buf  = buffers.get('trade', '2023-02-01');
+    const buf  = buffers.get('trade', '20230201');
     const size = _test_BATCH_SIZE();
 
     for (let i = 0; i < size; i++) buf.push(`row-${i}`);
@@ -125,7 +125,7 @@ describe('buffers.flushReady', () => {
     const result = buffers.flushReady();
     expect(result).toHaveLength(1);
     expect(result[0]!.table).toBe('trade');
-    expect(result[0]!.filename).toBe('2023-02-01');
+    expect(result[0]!.filename).toBe('20230201');
     expect(result[0]!.lines.length).toBe(size);
     expect(buf.count()).toBe(0);
   });
@@ -134,7 +134,7 @@ describe('buffers.flushReady', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2024-01-01T00:00:00Z'));
 
-    const buf = buffers.get('trade', '2023-02-01');
+    const buf = buffers.get('trade', '20230201');
     buf.push('a');
 
     vi.setSystemTime(Date.now() + _test_STALE_THRESHOLD() + 1);
@@ -148,7 +148,7 @@ describe('buffers.flushReady', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2024-01-01T00:00:00Z'));
 
-    const buf  = buffers.get('trade', '2023-02-01');
+    const buf  = buffers.get('trade', '20230201');
     const size = _test_BATCH_SIZE();
 
     for (let i = 0; i < size; i++) buf.push(`r${i}`);
@@ -164,16 +164,16 @@ describe('buffers.flushReady', () => {
 
 describe('buffers.flushAll', () => {
   it('returns every non-empty buffer regardless of thresholds', () => {
-    buffers.get('trade', '2023-02-01').push('a');
-    buffers.get('quote', '2023-02-01').push('b');
-    buffers.get('chat',  '2023-02-01'); // empty — should be skipped
+    buffers.get('trade', '20230201').push('a');
+    buffers.get('quote', '20230201').push('b');
+    buffers.get('chat',  '20230201'); // empty — should be skipped
 
     const result = buffers.flushAll();
-    expect(result.map(r => `${r.table}/${r.filename}`).sort()).toEqual(['quote/2023-02-01', 'trade/2023-02-01']);
+    expect(result.map(r => `${r.table}/${r.filename}`).sort()).toEqual(['quote/20230201', 'trade/20230201']);
   });
 
   it('clears the buffers it flushes', () => {
-    const buf = buffers.get('trade', '2023-02-01');
+    const buf = buffers.get('trade', '20230201');
     buf.push('a');
     buffers.flushAll();
     expect(buf.count()).toBe(0);

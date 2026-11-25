@@ -35,7 +35,7 @@ describe('REST file decoding', () => {
 
     const out: string[] = [];
 
-    for await (const line of decodeFile('funding', '2023-02-01')) {
+    for await (const line of decodeFile('funding', '20230201')) {
       out.push(line);
     }
 
@@ -49,7 +49,7 @@ describe('REST file decoding', () => {
 
     const out: string[] = [];
 
-    for await (const line of decodeFile('funding', '2023-02-01')) {
+    for await (const line of decodeFile('funding', '20230201')) {
       out.push(line);
     }
 
@@ -59,10 +59,10 @@ describe('REST file decoding', () => {
   it('forwards the table to createParser and the skip to read', async () => {
     mockRecords([['symbol', 'price']]);
 
-    for await (const _ of decodeFile('funding', '2023-02-01', 7)) { /* consume */ }
+    for await (const _ of decodeFile('funding', '20230201', 7)) { /* consume */ }
 
     expect(createParser).toHaveBeenCalledWith('funding');
-    expect(read).toHaveBeenCalledWith('2023-02-01', 7);
+    expect(read).toHaveBeenCalledWith('20230201', 7);
   });
 });
 
@@ -79,7 +79,7 @@ describe('WS file decoding', () => {
 
     const out: string[] = [];
 
-    for await (const line of decodeFile('orderBookL2', '2023-02-01')) {
+    for await (const line of decodeFile('orderBookL2', '20230201')) {
       out.push(line);
     }
 
@@ -106,7 +106,7 @@ describe('WS file decoding', () => {
 
     const out: string[] = [];
 
-    for await (const line of decodeFile('orderBookL2.secondary', '2026-07-19')) {
+    for await (const line of decodeFile('orderBookL2.secondary', '20260719')) {
       out.push(line);
     }
 
@@ -118,20 +118,28 @@ describe('WS file decoding', () => {
     expect(msg.data[0]).toMatchObject({ pool: 'Secondary' });
   });
 
-  it('handles a quoted field containing a comma', async () => {
+  it('passes field values through unchanged', async () => {
     mockRecords([
-      ['_date_', '_action_', 'symbol', 'note'],
-      ['2023-02-01T00:00:00.000Z', 'partial', 'XBTUSD', 'hello, world'],
+      ['_date_', '_action_', 'channelID', 'date', 'html', 'id', 'message', 'user', 'userColor', 'flair', 'guild'],
+      [
+        '2023-02-01T00:00:00.000Z', 'insert', '1', '2023-02-01T00:00:00.000Z',
+        '<b>hello, "world"</b>', '42', 'hello, "world"', 'trader', '#fff', '', '',
+      ],
     ]);
 
     const out: string[] = [];
 
-    for await (const line of decodeFile('orderBookL2', '2023-02-01')) {
+    for await (const line of decodeFile('chat', '20230201')) {
       out.push(line);
     }
 
     expect(out).toHaveLength(1);
-    expect(JSON.parse(out[0]!).data[0]).toMatchObject({ note: 'hello, world' });
+    expect(JSON.parse(out[0]!).data[0]).toMatchObject({
+      channelID: '1',
+      html:      '<b>hello, "world"</b>',
+      message:   'hello, "world"',
+      user:      'trader',
+    });
   });
 
   it('preserves embedded newlines inside a quoted WS field', async () => {
@@ -153,7 +161,7 @@ describe('WS file decoding', () => {
 
     const out: string[] = [];
 
-    for await (const line of decodeFile('announcement', '2023-02-01')) {
+    for await (const line of decodeFile('announcement', '20230201')) {
       out.push(line);
     }
 
