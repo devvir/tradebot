@@ -32,7 +32,19 @@ export const descend = async (
   limits:  Limits,
   read:    ReadLevel,
 ): Promise<string[]> => {
-  const scopes = [context.keyRoot];
+  /**
+   * **The key root is always expanded, whatever the lane count.** The root is
+   * the venue as a whole, which is what the job itself covers, so it is never a
+   * partition: with one lane the root's children are the partitions, not the
+   * root. A root holding a catalogable key of its own cannot be partitioned at
+   * all — that key would sit inside no child — and a root with no children and
+   * no such key has nothing to walk.
+   */
+  const root = await read(context, context.keyRoot);
+
+  if (root.files) throw new RootHoldsFiles(context.name, context.keyRoot);
+
+  const scopes = root.children.filter(child => child !== context.keyRoot);
 
   /**
    * Every prefix is expanded at most once, which is what makes this terminate
@@ -42,7 +54,7 @@ export const descend = async (
    * bound: it stops when there is enough work or when nothing is left to split,
    * and "nothing left" has to be a fact rather than a hope.
    */
-  const seen = new Set<string>();
+  const seen = new Set<string>([context.keyRoot]);
 
   while (scopes.length < limits.concurrency) {
     const unread = scopes.filter(scope => ! seen.has(scope)).slice(0, limits.concurrency - scopes.length);
@@ -85,6 +97,22 @@ export const descend = async (
 
   return scopes;
 };
+
+/**
+ * A venue's key root holds a catalogable key directly, so it cannot be split
+ * into partitions: every partition is a child prefix of the root, and a key
+ * sitting at the root itself is inside none of them.
+ */
+export class RootHoldsFiles extends Error {
+  constructor(
+    readonly venue:   string,
+    readonly keyRoot: string,
+  ) {
+    super(`${venue}: the key root '${keyRoot}' holds catalogable files of its own, so it cannot be partitioned`);
+
+    this.name = 'RootHoldsFiles';
+  }
+}
 
 /**
  * Whether a key would become a row — the same two questions the recording step

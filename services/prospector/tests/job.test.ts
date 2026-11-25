@@ -11,7 +11,8 @@ import { Refused } from '../src/http';
 import { REFUSALS_BEFORE_BLOCK, _test_paces, paceFor } from '../src/pace';
 import { _test_retryWait as retryWait, surveyVenue } from '../src/survey';
 import type { DatabaseSync } from 'node:sqlite';
-import type { Adapter, Config, Page, Scanner } from '../src/types';
+import { descend } from '../src/scanners/descend';
+import type { Adapter, Config, Level, Limits, ListingContext, Page, Scanner } from '../src/types';
 
 /**
  * What a survey does to the catalog's bookkeeping, which is the part that
@@ -115,6 +116,29 @@ describe('one clean pass', () => {
     await surveyVenue(db, venue({ 'spot/': 3 }), config);
 
     expect(db.prepare('SELECT count(*) n FROM file').get()).toMatchObject({ n: 3 });
+  });
+});
+
+/**
+ * **One lane maps the archive like any other count.** Descent splits the key
+ * root itself, so the job opens over the root's children rather than over a
+ * single partition at the root, which is the job's own scope.
+ */
+describe('a pass with a single lane', () => {
+  it('opens a job over the root\'s children and walks it', async () => {
+    const adapter = venue({ 'spot/': 1, 'futures/': 1 });
+    const root    = { name: 'fake', base: 'https://x', keyRoot: '' } as unknown as ListingContext;
+
+    const read = async (_context: ListingContext, prefix: string): Promise<Level> => prefix === ''
+      ? { children: ['spot/', 'futures/'], files: false }
+      : { children: [], files: true };
+
+    const scanner = { ...adapter.scanner, scopes: (_context: unknown, limits: Limits) => descend(root, limits, read) };
+    const id      = putVenue(db, 'fake', 'https://x', '');
+    const summary = await surveyVenue(db, { ...adapter, scanner }, { ...config, concurrency: 1 });
+
+    expect(summary).toMatchObject({ partitions: 2, failed: 0, found: 2 });
+    expect(openJob(db, id, 'walk')).toBeNull();
   });
 });
 

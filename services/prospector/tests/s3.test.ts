@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { _test_reset, _test_seed } from '../src/exclusions';
 import { fetchPage } from '../src/http';
+import { RootHoldsFiles } from '../src/scanners/descend';
 import { readPage } from '../src/scanners/pages';
 import {
   _test_accepted,
@@ -486,11 +487,38 @@ describe('mapping a level wider than one page', () => {
   /** The one that loses data: the only file at this level is on page two. */
   it('sees a file that only the second page carries', async () => {
     serving({
-      'marker=data/sub/': page(object('data/late-2025-01-01.zip')),
-      'prefix=data/&':   page(dir('data/sub/'), '<IsTruncated>true</IsTruncated>'),
+      'prefix=data/&':      page(dir('data/x/')),
+      'marker=data/x/sub/': page(object('data/x/late-2025-01-01.zip')),
+      'prefix=data/x/&':    page(dir('data/x/sub/'), '<IsTruncated>true</IsTruncated>'),
     });
 
-    expect(await _test_descend(context, limits)).toEqual(['data/']);
+    expect(await _test_descend(context, limits)).toEqual(['data/x/']);
+  });
+
+  /**
+   * **One lane still splits the root.** The root is what the job itself
+   * covers, so handing it back as the only partition would make a job that
+   * cannot be opened.
+   */
+  it('expands the root into its children with a single lane', async () => {
+    serving({ 'prefix=data/&': page(dir('data/a/') + dir('data/b/')) });
+
+    const scopes = await _test_descend(context, { concurrency: 1 });
+
+    expect(scopes).toEqual(['data/a/', 'data/b/']);
+    expect(scopes).not.toContain('data/');
+  });
+
+  it('finds nothing to walk under an empty root', async () => {
+    serving({ 'prefix=data/&': page('') });
+
+    expect(await _test_descend(context, { concurrency: 1 })).toEqual([]);
+  });
+
+  it('refuses a root that holds a catalogable file of its own', async () => {
+    serving({ 'prefix=data/&': page(dir('data/a/') + object('data/late-2025-01-01.zip')) });
+
+    await expect(_test_descend(context, limits)).rejects.toThrow(RootHoldsFiles);
   });
 
   it('collects children from every page before judging the level', async () => {

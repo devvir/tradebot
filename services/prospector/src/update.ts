@@ -1,4 +1,4 @@
-import { keyFor, grainOf, open, seriesById, seriesFor } from './catalog';
+import { isHeld, keyFor, grainOf, open, seriesById, seriesFor } from './catalog';
 import { logger } from '@devvir/service-kit';
 import { atGrain, instant, lastClosed, lastSettled, nextPeriod } from './dates';
 import type {
@@ -386,7 +386,7 @@ const keysAt = (
 
       const key = keyFor(series, at, rules.slots, part);
 
-      if (! held(db, series.venueId, key)) { out.push({ key, nextPart }); continue; }
+      if (! isHeld(db, series.venueId, key)) { out.push({ key, nextPart }); continue; }
 
       /**
        * **Held, so answered.** The part is reported present without a request,
@@ -403,12 +403,6 @@ const keysAt = (
 
   return out;
 };
-
-/** Whether this key is already a file the catalog holds, and not a withdrawn one. */
-const held = (db: DatabaseSync, venueId: number, path: string): boolean =>
-  db.prepare(
-    `SELECT 1 FROM file WHERE venue_id = ? AND path = ? AND existence <> 'absent'`,
-  ).get(venueId, path) !== undefined;
 
 // ── Test access ───────────────────────────────────────────────────────────────
 

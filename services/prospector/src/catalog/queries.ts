@@ -951,8 +951,8 @@ export const beginJob = (
   scopes:  readonly string[],
 ): Run => {
   // The job occupies the empty scope, so a partition cannot also be empty
-  // without colliding with it. Reachable only if descent hands back the venue
-  // root itself as a single partition, which also has no usable range to sweep.
+  // without colliding with it: the venue root as a whole is the job, never one
+  // of its partitions.
   if (scopes.some(scope => scope === ''))
     throw new Error('A partition cannot be the empty scope: that is the job itself');
 
@@ -1670,6 +1670,17 @@ const vacated = (
 
   return { gone, subtrees };
 };
+
+/**
+ * Whether the catalog holds this path as a file, and not as a withdrawn one.
+ *
+ * One indexed lookup on a statement prepared once per database, so it can be
+ * asked once per key across a whole period's worth of keys.
+ */
+export const isHeld = (db: DatabaseSync, venueId: number, path: string): boolean =>
+  statement(db,
+    `SELECT 1 FROM file WHERE venue_id = ? AND path = ? AND existence <> 'absent'`,
+  ).get(venueId, path) !== undefined;
 
 /** Statements prepared once per database and reused, keyed by their SQL. */
 const statement = (db: DatabaseSync, sql: string): StatementSync => {

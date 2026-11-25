@@ -1,7 +1,7 @@
 import { logger } from '@devvir/service-kit';
 import { keyFor, putFiles } from './catalog';
 import { WIDTH, lastSettled, prevPeriod } from './dates';
-import { etagOf } from './etag';
+import { metadataOf } from './etag';
 import { fetchHead } from './http';
 import { labelOf } from './pace';
 import type { Adapter, CatalogFile, Publishing } from './types';
@@ -129,18 +129,15 @@ const url = (adapter: Adapter, series: Publishing, at: string): string =>
  * rather than parked for a probe to ask about all over again.
  */
 const recorded = (series: Publishing, at: string, headers: Headers): CatalogFile => {
-  // A header that is not there is unknown, not zero, and `Number(null)` is 0 —
-  // which would record every answer as an empty file.
-  const length   = headers.get('content-length');
-  const size     = length === null ? Number.NaN : Number(length);
-  const modified = Date.parse(headers.get('last-modified') ?? '');
+  const { size, etag, modified: stated } = metadataOf(headers);
+  const modified                         = Date.parse(stated ?? '');
 
   return {
     venueId:  series.venueId,
     path:     keyFor(series, at),
     date:     at,
-    size:     Number.isFinite(size) ? size : null,
-    etag:     etagOf(headers.get('etag')),
+    size,
+    etag,
     modified: Number.isNaN(modified) ? null : new Date(modified).toISOString(),
     seriesId: series.id!,
     existence: 'confirmed',

@@ -1,7 +1,7 @@
 import { logger } from '@devvir/service-kit';
 import { fault } from './faults';
 import { dropWip, keyFor, missedFiles, parkKeys, seriesById, settleFiles } from './catalog';
-import { etagOf } from './etag';
+import { metadataOf } from './etag';
 import { blocked, fetchHead } from './http';
 import { flushCounts } from './counts';
 import { REFUSALS_BEFORE_BLOCK, describeWait, labelOf, paceFor } from './pace';
@@ -654,17 +654,14 @@ const url = (adapter: Adapter, row: Unsettled): string =>
  * uploaded in that many parts and is part of the real checksum.
  */
 const settlement = (row: Unsettled, headers: Headers): Settlement => {
-  // A header that is not there is unknown, not zero — and `Number(null)` is 0,
-  // which would quietly record every unanswered probe as an empty file.
-  const length   = headers.get('content-length');
-  const size     = length === null ? Number.NaN : Number(length);
-  const modified = Date.parse(headers.get('last-modified') ?? '');
+  const { size, etag, modified: stated } = metadataOf(headers);
+  const modified                         = Date.parse(stated ?? '');
 
   return {
     venueId:  row.venueId,
     path:     row.path,
-    size:     Number.isFinite(size) ? size : null,
-    etag:     etagOf(headers.get('etag')),
+    size,
+    etag,
     modified: Number.isNaN(modified) ? null : new Date(modified).toISOString(),
     seenAt:   new Date().toISOString(),
   };

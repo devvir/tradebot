@@ -17,6 +17,7 @@ export {
   markDownloaded,
   correctFile,
   withdrawFile,
+  isHeld,
   venueTotals,
   venueIds,
   openJob,

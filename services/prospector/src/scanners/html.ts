@@ -1,6 +1,6 @@
 import { logger } from '@devvir/service-kit';
 import { accepted, catalogable, descend } from './descend';
-import { etagOf } from '../etag';
+import { metadataOf } from '../etag';
 import { Refused } from '../http';
 import { ceiling } from '../paths';
 import type { Entries, ListingContext, Listed, ReadLevel, Scanner } from '../types';
@@ -96,14 +96,7 @@ export const html: Scanner<ListingContext> = {
 
     if (status < 200 || status > 299) return { status, headers };
 
-    const size = Number(headers.get('content-length'));
-
-    return {
-      key:      path,
-      size:     Number.isFinite(size) ? size : null,
-      etag:     etagOf(headers.get('etag')),
-      modified: headers.get('last-modified'),
-    };
+    return { key: path, ...metadataOf(headers) };
   },
 };
 

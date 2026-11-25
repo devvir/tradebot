@@ -85,6 +85,13 @@ describe('confirming a key on an HTML index venue', () => {
       modified: 'Mon, 06 Oct 2025 09:39:01 GMT',
     });
   });
+
+  /** An index serving no length has stated no size, which is not a size of zero. */
+  it('records no size where the reply states none', async () => {
+    const head = replying(200, { etag: '"9cfc390f"' });
+
+    expect(await html.confirm(listingContext({ head }), 'spot/A.zip')).toMatchObject({ size: null });
+  });
 });
 
 describe('confirming a key on a venue that can only be asked', () => {
@@ -118,5 +125,18 @@ describe('confirming a key on a venue that can only be asked', () => {
       etag:     '9cfc390f',
       modified: 'Mon, 06 Oct 2025 09:39:01 GMT',
     });
+  });
+
+  /** The same reduction a probe applies, so the two can never disagree about one file. */
+  it('reduces the ETag as every other reader of a HEAD does', async () => {
+    const head = replying(200, { 'content-length': '7', etag: '"ABC-gzip"' });
+
+    expect(await probed.confirm(context(head), 'trades/A.zip')).toMatchObject({ etag: 'abc' });
+  });
+
+  it.each(['', 'x', '-1', '1.5'])('records no size for a length of %j', async (length) => {
+    const head = replying(200, { 'content-length': length });
+
+    expect(await probed.confirm(context(head), 'trades/A.zip')).toMatchObject({ size: null });
   });
 });

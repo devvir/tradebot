@@ -1,3 +1,4 @@
+import { metadataOf } from '../etag';
 import type { ProbedContext, Scanner } from '../types';
 
 /**
@@ -26,13 +27,6 @@ export const probed: Scanner<ProbedContext> = {
 
     if (seen.status < 200 || seen.status > 299) return seen;
 
-    const size = seen.headers.get('content-length');
-
-    return {
-      key:      path,
-      size:     size === null ? null : Number(size),
-      etag:     seen.headers.get('etag')?.replace(/^"|"$/g, '').toLowerCase() ?? null,
-      modified: seen.headers.get('last-modified'),
-    };
+    return { key: path, ...metadataOf(seen.headers) };
   },
 };
