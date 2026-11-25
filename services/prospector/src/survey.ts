@@ -19,6 +19,7 @@ import {
   walkSeries,
 } from './catalog';
 import { surveying } from './context';
+import { declined } from './deliver';
 import { loadExclusions, isExcluded } from './exclusions';
 import { Refused, StoodDown, Stopped, answered, blocked } from './http';
 import { describeWait, labelOf, lanesFor, paceFor, ticketing } from './pace';
@@ -128,12 +129,25 @@ export const surveyVenue = async (
    * A block the venue's gate has latched is reported the way a walk reports
    * one, so the caller waits it out rather than asking again. Anything else —
    * a lone refusal included — is thrown, and retried like any failure.
+   *
+   * **A stop that lands while mapping waits is a pause, not a failure.** The
+   * request it interrupted was never answered, so nothing is known and nothing
+   * is lost: the pass answers paused, and the next one maps again.
    */
   let job: Run;
 
   try {
     job = open ?? await partition(db, adapter, lanes, venueId, context, kind);
   } catch (err) {
+    if (err instanceof Stopped) {
+      logger.info({ venue: labelOf(adapter) }, 'Survey paused while mapping');
+
+      return {
+        venue: labelOf(adapter), partitions: 0, requests: 0, found: 0, failed: 0,
+        blocked: false, paused: true,
+      };
+    }
+
     if (! latched(adapter, err)) throw err;
 
     logger.error({
@@ -333,6 +347,11 @@ export const surveyVenue = async (
      * partition goes back on the queue holding its cursor, is not offered for
      * splitting again this pass, and the pass carries on. A refusal the venue's
      * gate has latched stops the pass, exactly as it does on a page.
+     *
+     * **A stop that lands while the read waits is neither.** Nothing was
+     * answered, so the partition goes back as it was — still offered for
+     * splitting on a later pass — and the pause ends the pass the way it ends
+     * any other.
      */
     let children: string[];
     let files:    boolean;
@@ -360,8 +379,11 @@ export const surveyVenue = async (
 
       ({ children, files } = read);
     } catch (err) {
-      terminal.add(at.scope);
       giveBack();
+
+      if (err instanceof Stopped) return;
+
+      terminal.add(at.scope);
 
       if (latched(adapter, err)) summary.blocked = true;
 
@@ -926,9 +948,10 @@ const sweep = async (
      * repeated here, nor is a `StoodDown`: the venue is paused, and the pass
      * ends on it as on a block. A retryable status that outlasted the fetch's
      * own attempts — a 5xx, a throttling 429 — is retried like a transport
-     * error, and so is a transfer `deliver` refused. Past `PAGE_ATTEMPTS` the
-     * page is taken to be wrong in a way waiting does not mend, and the prefix
-     * is left for the next pass.
+     * error. A transfer `deliver` refused is not: the same request gets the
+     * same reply, so the page fails at once. Past `PAGE_ATTEMPTS`, or on such a
+     * refusal, the page is taken to be wrong in a way waiting does not mend, and
+     * the prefix is left for the next pass.
      */
     let read = 0;
 
@@ -1027,7 +1050,7 @@ const sweep = async (
         if (err instanceof Stopped) return { requests, found, closed: false };
 
         if ((err instanceof Refused && answered(adapter, err.status, err.headers))
-          || err instanceof StoodDown || attempt >= PAGE_ATTEMPTS)
+          || err instanceof StoodDown || declined(err) || attempt >= PAGE_ATTEMPTS)
           throw err;
 
         // Said once it is clearly more than a blip, and not again for the same page.

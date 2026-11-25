@@ -5,7 +5,8 @@ import { logger } from '@devvir/service-kit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openJob, putVenue, venueIds } from '../src/catalog';
 import { openCatalog } from '../src/database';
-import { Refused } from '../src/http';
+import { Refused, Stopped } from '../src/http';
+import { REDIRECT_REFUSED } from '../src/deliver';
 import { REFUSALS_BEFORE_BLOCK, _test_paces, paceFor } from '../src/pace';
 import { asSeries } from '../src/paths';
 import { _test_SPLIT_MS, _test_retryWait as retryWait, surveyVenue } from '../src/survey';
@@ -196,6 +197,28 @@ describe('a split whose level cannot be read', () => {
   });
 });
 
+describe('a split stopped while its level waits', () => {
+  it('gives the partition back whole and pauses, without calling it a failed split', async () => {
+    let pausing = false;
+
+    const adapter = venue({
+      pages:   { 'fat/': 50 },
+      delayMs: 2,
+      level:   async (scope) => { pausing = true; throw new Stopped(`https://x/${scope}`); },
+    });
+
+    const summary = await surveyVenue(db, adapter, lanes(2), 'full', () => pausing);
+
+    expect(summary).toMatchObject({ paused: true, failed: 0, blocked: false });
+    expect(levels).toEqual(['fat/']);
+    expect(runs()['fat/']).toMatchObject({ closed: false });
+    expect(repeated()).toEqual([]);
+
+    expect(vi.mocked(logger.warn).mock.calls.map(call => call[1]))
+      .not.toContain('Could not split a partition; continuing without splitting');
+  });
+});
+
 describe('a split that does not answer', () => {
   it('is abandoned after its time, and the partition resumes whole', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
@@ -232,6 +255,23 @@ describe('a split whose children are all behind the cursor', () => {
     expect(runs()).toEqual({ 'fat/': { closed: true, cursor: null } });
     expect(levels).toEqual(['fat/']);
     expect(asks).toHaveLength(6);
+  });
+});
+
+describe('a page whose transfer was refused', () => {
+  it('is not asked again, and the prefix is left for the next pass', async () => {
+    const adapter = venue({
+      pages: { 'deep/': 5 },
+      fails: (_scope, cursor) => (cursor === 'deep/#2'
+        ? new TypeError('fetch failed', { cause: { code: REDIRECT_REFUSED } })
+        : null),
+    });
+
+    const summary = await surveyVenue(db, adapter, lanes(1), 'full');
+
+    expect(summary).toMatchObject({ failed: 1 });
+    expect(asks).toEqual(['deep/@', 'deep/@deep/#1', 'deep/@deep/#2']);
+    expect(runs()).toEqual({ 'deep/': { closed: false, cursor: 'deep/#2' } });
   });
 });
 
@@ -291,6 +331,19 @@ describe('a mapping that is refused', () => {
     };
 
     expect(await surveyVenue(db, adapter, lanes(2), 'full')).toMatchObject({ blocked: true, failed: 1 });
+    expect(asks).toEqual([]);
+  });
+
+  it('answers paused when a stop lands while it waits', async () => {
+    let adapter = venue({ pages: {} });
+
+    adapter = {
+      ...adapter,
+      scanner: { ...adapter.scanner, scopes: async () => { throw new Stopped('https://x/'); } },
+    };
+
+    expect(await surveyVenue(db, adapter, lanes(2), 'full', () => true))
+      .toMatchObject({ paused: true, blocked: false, failed: 0 });
     expect(asks).toEqual([]);
   });
 

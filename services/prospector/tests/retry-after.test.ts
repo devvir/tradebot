@@ -2,7 +2,7 @@ import { logger } from '@devvir/service-kit';
 import { createServer } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { listing, surveyingAs } from '../src/context';
-import { REDIRECT_REFUSED, declined } from '../src/deliver';
+import { BODY_CEILING, BODY_TOO_LARGE, REDIRECT_REFUSED, declined } from '../src/deliver';
 import { StoodDown, Stopped, fetchHead, fetchPage } from '../src/http';
 import { _test_paces, paceFor } from '../src/pace';
 import type { Server } from 'node:http';
@@ -160,5 +160,27 @@ describe('a listing redirected off its host', () => {
     expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
       expect.objectContaining({ url: URL_, err: expect.stringContaining('169.254.169.254') }),
       'Redirect refused');
+  });
+});
+
+describe('a listing body past its ceiling', () => {
+  /** Endless, in chunks large enough that passing the real ceiling costs a moment. */
+  it('fails at once, without spending the attempts', async () => {
+    let sent = 0;
+
+    const fetched = vi.fn(async () => new Response(new ReadableStream({
+      pull: (c) => { sent += 1024 * 1024; c.enqueue(new Uint8Array(1024 * 1024)); },
+    })));
+
+    vi.stubGlobal('fetch', fetched);
+
+    const failure = await fetchPage(venue(), URL_, 's3').catch((err: unknown) => err);
+
+    expect(declined(failure)).toBe(BODY_TOO_LARGE);
+    expect(fetched).toHaveBeenCalledTimes(1);
+
+    // The format's own ceiling is what ended it, not some other bound.
+    expect(sent).toBeGreaterThan(BODY_CEILING.s3);
+    expect(sent).toBeLessThan(BODY_CEILING.s3 + 8 * 1024 * 1024);
   });
 });
