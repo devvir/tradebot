@@ -304,6 +304,20 @@ describe('a tar brought back', () => {
     expect(db.prepare('SELECT count(*) AS n, count(returned_at) AS back FROM eviction').get()).toEqual({ n: 1, back: 1 });
   });
 
+  it('is written down as pulled, at the version that came back, where it comes into the archives', async () => {
+    const one = partition('202001');
+    const old = partition('202001', 'quotes');
+
+    store(one);
+    store(old);
+    publish(one, { ...old, version: 'v2' });
+
+    await pull(await look());
+
+    expect(record.pulledOf(db, 'archives', 'gate').size).toBe(1);
+    expect(db.prepare('SELECT dataset, version FROM pulled').all()).toEqual([{ dataset: 'trades', version: 'v1' }]);
+  });
+
   /** The archives on another volume than cold's own directory: no rename reaches them, and a copy does. */
   it('moves what comes out into archives on another volume', async () => {
     const one = partition('202001');

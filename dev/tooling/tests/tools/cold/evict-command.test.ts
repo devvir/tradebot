@@ -9,6 +9,14 @@ import { setWatch } from '../../../src/tools/cold/options';
 vi.mock('../../../src/tools/cold/evict/archives', () => ({ runEvict: vi.fn(async () => {}) }));
 vi.mock('../../../src/tools/cold/evict/vault', () => ({ runEvictVault: vi.fn(async () => {}) }));
 
+// Each tree in turn, and nothing of cold's own files looked after around it.
+vi.mock('../../../src/tools/cold/cli', async importOriginal => ({
+  ...await importOriginal<typeof import('../../../src/tools/cold/cli')>(),
+  each: vi.fn(async (origins: readonly string[], run: (origin: string) => Promise<void>) => {
+    for (const origin of origins) await run(origin);
+  }),
+}));
+
 /** `cold evict` on the command line, before any tree is worked on. */
 
 const parse = async (...args: string[]): Promise<void> => {
@@ -37,6 +45,15 @@ describe('cold evict --cleanup', () => {
     expect(runEvict).not.toHaveBeenCalled();
     expect(runEvictVault).not.toHaveBeenCalled();
     expect(process.exitCode).toBe(1);
+  });
+});
+
+describe('cold evict --include-pulled', () => {
+  it('asks the archives to take what a pull brought back, and only where it is given', async () => {
+    await parse('cold', 'evict', 'archives', '--include-pulled');
+    await parse('cold', 'evict', 'archives');
+
+    expect(vi.mocked(runEvict).mock.calls.map(([, options]) => options.includePulled)).toEqual([true, undefined]);
   });
 });
 

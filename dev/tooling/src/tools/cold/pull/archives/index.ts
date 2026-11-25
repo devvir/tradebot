@@ -48,6 +48,9 @@ import type { Pullable, PullOptions, PullState } from '../types';
  * is there. Nothing in the archives is removed: a file there that the tar does
  * not hold stays where it is.
  *
+ * **What comes back into the archives is written down as pulled**, beside its
+ * return: it is on disk because it was asked for, and the record says so.
+ *
  * **Space is watched, not promised.** What the tars weigh is said against what
  * is free before anything starts, and a tar is not asked for while less than
  * `ARCHIVES_RESERVE_GB` is free — the run waits there until there is room.

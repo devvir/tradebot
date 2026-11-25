@@ -29,16 +29,31 @@ export const evictionsOf = (db: DatabaseSync, origin: Origin): (PartitionKey & {
       WHERE origin = ? AND returned_at IS NULL ORDER BY venue, market, dataset, variant, month`,
   ).all(origin) as unknown as (PartitionKey & { version: string })[];
 
-/** A partition was taken off the local disk. */
+/** A partition was taken off the local disk: one a pull brought back is no longer written down as pulled. */
 export const noteEviction = (
   db:      DatabaseSync,
   origin:  Origin,
   key:     PartitionKey & { version: string },
   removed: { files: number; bytes: number },
 ): void => {
-  db.prepare(
-    `INSERT INTO eviction (origin, venue, market, dataset, variant, grain, bundle, month, version, files, bytes, evicted_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(origin, key.venue, key.market, key.dataset, key.variant, key.grain, key.bundle, key.month, key.version,
-    removed.files, removed.bytes, new Date().toISOString());
+  db.exec('BEGIN IMMEDIATE');
+
+  try {
+    db.prepare(
+      `INSERT INTO eviction (origin, venue, market, dataset, variant, grain, bundle, month, version, files, bytes, evicted_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(origin, key.venue, key.market, key.dataset, key.variant, key.grain, key.bundle, key.month, key.version,
+      removed.files, removed.bytes, new Date().toISOString());
+
+    db.prepare(
+      `DELETE FROM pulled
+        WHERE origin = ? AND venue = ? AND market = ? AND dataset = ? AND variant = ? AND grain = ? AND bundle = ? AND month = ?`,
+    ).run(origin, key.venue, key.market, key.dataset, key.variant, key.grain, key.bundle, key.month);
+
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+
+    throw err;
+  }
 };

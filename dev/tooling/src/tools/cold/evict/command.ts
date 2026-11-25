@@ -12,6 +12,7 @@ export const register = (cold: Command): void => {
     .option('-n, --dry-run', 'say what would be removed, and remove nothing')
     .option('--purge', 'delete outright, where the default is the trash')
     .option('--cleanup', 'archives: also remove whatever is on disk again of partitions already evicted — not with --watch')
+    .option('--include-pulled', 'archives: also remove partitions brought back by `cold pull archives`')
     .option('--market <market>', 'vault: only this market')
     .option('--dataset <dataset>', 'vault: only this dataset')
     .option('--variant <variant>', 'vault: only this variant of it — a kline\'s interval, funding\'s kind')
@@ -41,7 +42,7 @@ export const register = (cold: Command): void => {
 
       await each(asked.origins, async chosen => {
         if (chosen === 'vault') await (await import('./vault')).runEvictVault(selection, how);
-        else await (await import('./archives')).runEvict(chosen, { venues: asked.venues, ...how, ...(options.cleanup ? { cleanup: true } : {}) });
+        else await (await import('./archives')).runEvict(chosen, { venues: asked.venues, ...how, ...(options.cleanup ? { cleanup: true } : {}), ...(options.includePulled ? { includePulled: true } : {}) });
       }, { watches: true });
     }));
 };

@@ -70,13 +70,19 @@ import type { Origin } from '../../types';
  *
  * **What was evicted and is on disk again is not looked for, unless asked.**
  * The record says a partition went, at the version it has now, and it is not
- * offered again — files brought back since, pulled from cold storage to be read
- * or fetched some other way, are nobody's to remove. `cleanup` looks: for every
- * partition that went and could still go by every rule above, it reads the
- * disk, and whatever of the partition is there goes again. Cold storage holds
- * the version the catalog has, so what is on disk is spare whatever it is — the
- * same files, older ones, or half of them. It is a look taken on purpose and
- * once: never while watching, where it would take files as they are pulled.
+ * offered again — files fetched back since by some other way are nobody's to
+ * remove. `cleanup` looks: for every partition that went and could still go by
+ * every rule above, it reads the disk, and whatever of the partition is there
+ * goes again. Cold storage holds the version the catalog has, so what is on
+ * disk is spare whatever it is — the same files, older ones, or half of them.
+ * It is a look taken on purpose and once: never while watching, where it would
+ * take files as they come back.
+ *
+ * **What `cold pull archives` brought back stays, unless asked.** The record
+ * writes such a partition down as pulled: it is on disk because someone wanted
+ * it there, so it is counted and left, though cold storage and the vault hold
+ * it. `includePulled` takes it too, by the same rules as any other; once it
+ * goes, it is no longer written down as pulled.
  *
  * **A push of the same tree may be running meanwhile**, and is not kept out:
  * each command takes a lock of its own (`lock.ts`). Push stores only what the
@@ -174,7 +180,7 @@ const pass = async (db: DatabaseSync, run: Run, first: boolean): Promise<boolean
 
   try {
     for (const venue of venues) {
-      const one = await survey(db, config, origin, venue, stocked, Date.now(), options.cleanup ? archives : undefined);
+      const one = await survey(db, config, origin, venue, stocked, Date.now(), lookOf(options, archives));
 
       found.push(one);
 
@@ -271,11 +277,17 @@ const again = async (db: DatabaseSync, run: Run, found: Evictable, archives: Arc
 
   if (! stocked || errorsIn(config.vaultRoot).length > 0) return { ...found, ready: [] };
 
-  const now   = await survey(db, config, origin, found.venue, stocked, Date.now(), options.cleanup ? archives : undefined);
+  const now   = await survey(db, config, origin, found.venue, stocked, Date.now(), lookOf(options, archives));
   const ready = new Set(now.ready.map(versionOf));
 
   return { ...found, ready: found.ready.filter(one => ready.has(versionOf(one))) };
 };
+
+/** What a survey is asked to look at besides the record, as the options say. */
+const lookOf = (options: EvictOptions, archives: Archives) => ({
+  ...(options.cleanup ? { returned: archives } : {}),
+  ...(options.includePulled ? { includePulled: true } : {}),
+});
 
 /** A partition at one version. */
 const versionOf = (one: Evictable['ready'][number]): string => `${idOf(one)}@${one.version}`;
@@ -285,6 +297,7 @@ const said = (found: Evictable): string => [
   found.ready.length > 0 ? loadOf(found.ready) : 'nothing to evict',
   ...(found.returned > 0 ? [`${found.returned.toLocaleString('en-US')} of them evicted before and on disk again`] : []),
   ...(found.gone > 0 ? [`${found.gone.toLocaleString('en-US')} already evicted`] : []),
+  ...(found.pulled > 0 ? [`${found.pulled.toLocaleString('en-US')} pulled back, kept — --include-pulled takes them`] : []),
 ].join(' · ');
 
 /** What these partitions come to, in the catalog's own counts. */

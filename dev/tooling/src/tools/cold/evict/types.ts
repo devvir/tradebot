@@ -19,6 +19,9 @@ export interface Evictable {
 
   /** Of `ready`, the ones that went already and have files on disk again. */
   returned:  number;
+
+  /** Partitions that could go and stay, because a pull brought them back. */
+  pulled:    number;
 }
 
 /** What one run of `evict` carries from one look to the next. */
@@ -46,4 +49,7 @@ export interface EvictOptions {
 
   /** Look on disk for files of partitions already evicted, and remove those too. */
   cleanup?: boolean;
+
+  /** Take partitions a pull brought back too, where they can go by every other rule. */
+  includePulled?: boolean;
 }

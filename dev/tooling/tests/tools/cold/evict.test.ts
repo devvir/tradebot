@@ -435,7 +435,7 @@ describe('where a month\'s first hours are in the files of the month before', ()
 
 describe('what was evicted and is on disk again', () => {
   const again = () =>
-    survey(db, config(), 'archives', 'gate', stockedIn(config().vaultRoot) ?? [], undefined, new Archives(config().sourceRoot));
+    survey(db, config(), 'archives', 'gate', stockedIn(config().vaultRoot) ?? [], undefined, { returned: new Archives(config().sourceRoot) });
 
   /** Asked to look, the disk is read for each partition that went, and what is there goes again. */
   it('is offered again only where it is looked for, and only where files are back', async () => {
@@ -466,6 +466,59 @@ describe('what was evicted and is on disk again', () => {
     onDisk('202001', 'monthly');
 
     expect((await again()).returned).toBe(0);
+  });
+});
+
+/** A partition `cold pull archives` brought back: written down as returned, and as pulled. */
+describe('what a pull brought back', () => {
+  const pulled = (month: string): void => {
+    record.noteReturn(db, 'archives', partition(month));
+    record.notePulled(db, 'archives', partition(month));
+  };
+
+  const including = () =>
+    survey(db, config(), 'archives', 'gate', stockedIn(config().vaultRoot) ?? [], undefined, { includePulled: true });
+
+  it('stays on disk, and is counted as pulled', async () => {
+    await evict();
+    pulled('202001');
+
+    const found = await look();
+
+    expect(found.ready).toEqual([]);
+    expect(found).toMatchObject({ pulled: 1, gone: 3 });
+  });
+
+  /** Never evicted before, and pulled over what was on disk: the pull is what keeps it. */
+  it('stays whether or not it was ever evicted', async () => {
+    pulled('202002');
+
+    expect((await look()).ready.map(one => one.month)).toEqual(['202001', '202003', '202004']);
+  });
+
+  it('is offered where pulled partitions are asked for too, by the same rules as any other', async () => {
+    await evict();
+    pulled('202001');
+    pulled('202002');
+
+    // The catalog moves one on, which cold storage does not hold: held back for that, pulled or not.
+    publish(MONTHS.map(month => partition(month, 'daily', month === '202002' ? 'v2' : 'v1')));
+
+    const found = await including();
+
+    expect(found.ready.map(one => one.month)).toEqual(['202001']);
+    expect(found.pulled).toBe(0);
+  });
+
+  it('is no longer written down as pulled once it is evicted again', async () => {
+    await evict();
+    pulled('202001');
+
+    await remove(db, config(), 'archives', await including(), new Archives(config().sourceRoot), true);
+
+    expect(fs.existsSync(path.join(dir, 'archives', 'gate/spot/trades/B/BTC_USDT/202001'))).toBe(false);
+    expect(record.pulledOf(db, 'archives', 'gate').size).toBe(0);
+    expect(await look()).toMatchObject({ ready: [], pulled: 0, gone: 4 });
   });
 });
 
@@ -568,6 +621,24 @@ describe('a pass over the archives', () => {
 
     expect(fs.readdirSync(path.join(dir, 'archives', 'gate'))).toEqual([]);
     expect(evicted().map(one => one.month)).toEqual(MONTHS);
+  });
+
+  it('leaves on disk what a pull brought back, and takes it where asked to', async () => {
+    record.notePulled(db, 'archives', partition('202002'));
+
+    expect(await pass(db, run(), true)).toBe(true);
+
+    expect(fs.existsSync(path.join(dir, 'archives', 'gate/spot/trades/B/BTC_USDT/202002'))).toBe(true);
+    expect(evicted().map(one => one.month)).toEqual(['202001', '202003', '202004']);
+
+    const asked = run();
+
+    asked.options = { ...asked.options, includePulled: true };
+
+    expect(await pass(db, asked, true)).toBe(true);
+
+    expect(fs.readdirSync(path.join(dir, 'archives', 'gate'))).toEqual([]);
+    expect(evicted().map(one => one.month)).toEqual(['202001', '202002', '202003', '202004']);
   });
 
   /** A run left watching: an instrument the dataset gained after an earlier pass is part of the partition. */

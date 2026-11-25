@@ -22,6 +22,10 @@ import type { Evictable, HeldBack } from '../types';
  * now, so that what was evicted is not offered again. The disk says nothing,
  * and is not asked — unless `returned` is given: then each partition that went
  * is looked for there, and goes again where any file of it is back.
+ *
+ * The record also says which a pull brought back into the archives. Those stay
+ * where they are, and are counted as `pulled` — unless `includePulled` says to
+ * take them too.
  */
 export const survey = async (
   db:       DatabaseSync,
@@ -30,7 +34,7 @@ export const survey = async (
   venue:    string,
   stocked:  readonly Stocked[],
   now:      number = Date.now(),
-  returned?: Archives,
+  { returned, includePulled = false }: { returned?: Archives; includePulled?: boolean } = {},
 ): Promise<Evictable> => {
   const all        = await catalog.partitions(config, venue);
   const candidates = await catalog.partitions(config, venue, { downloaded: 'true', settled: 'true' });
@@ -38,6 +42,7 @@ export const survey = async (
   const versions = new Map(all.map(one => [idOf(one), one.version]));
   const inCold   = new Map(record.storedOf(db, origin, venue).map(one => [idOf(one), one.version]));
   const evicted  = record.evictedOf(db, origin, venue);
+  const pulled   = includePulled ? new Set<string>() : record.pulledOf(db, origin, venue);
 
   /** The months each dataset has anything in, whatever the rendering. */
   const months = new Map<string, Set<string>>();
@@ -86,7 +91,7 @@ export const survey = async (
     (lines.get(`${data}|${month}`) ?? []).find(current);
 
   const out: Evictable = {
-    venue, ready: [], gone: 0, returned: 0,
+    venue, ready: [], gone: 0, returned: 0, pulled: 0,
     held: { 'not in cold storage': 0, 'not stocked': 0, 'a neighbouring month still needs it': 0 },
   };
 
@@ -99,7 +104,9 @@ export const survey = async (
       continue;
     }
 
-    if (evicted.get(idOf(one)) !== one.version) {
+    if (pulled.has(idOf(one))) {
+      out.pulled++;
+    } else if (evicted.get(idOf(one)) !== one.version) {
       out.ready.push(one);
     } else if (returned && await isBack(returned, one)) {
       out.ready.push(one);

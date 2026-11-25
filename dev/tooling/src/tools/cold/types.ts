@@ -78,6 +78,9 @@ export interface Chosen {
 
   /** Archives only: also remove what is on disk again of partitions already evicted. */
   cleanup?:     boolean;
+
+  /** `evict`, archives only: also remove partitions a pull brought back. */
+  includePulled?: boolean;
   market?:      string;
   dataset?:     string;
   variant?:     string;

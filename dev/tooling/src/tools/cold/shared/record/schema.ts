@@ -156,6 +156,23 @@ CREATE TABLE IF NOT EXISTS eviction (
 
 CREATE INDEX IF NOT EXISTS eviction_venue ON eviction (origin, venue);
 
+-- A partition brought back from cold storage into the archives by a pull, and
+-- when: the last time. It is on disk because it was asked for. Written down as
+-- taken off the disk again (an eviction row), it has no row here.
+CREATE TABLE IF NOT EXISTS pulled (
+  origin    TEXT    NOT NULL,
+  venue     TEXT    NOT NULL,
+  market    TEXT    NOT NULL,
+  dataset   TEXT    NOT NULL,
+  variant   TEXT    NOT NULL,
+  grain     TEXT    NOT NULL,
+  bundle    TEXT    NOT NULL,
+  month     TEXT    NOT NULL,
+  version   TEXT    NOT NULL,            -- the version brought back
+  pulled_at TEXT    NOT NULL,
+  PRIMARY KEY (origin, venue, market, dataset, variant, grain, bundle, month)
+) STRICT;
+
 -- One file of the vault in cold storage, or on its way there: a partition
 -- stored whole, or one instrument of a partition stored per instrument. The
 -- vault is stored as it is — the same files, at the same paths — so there is no

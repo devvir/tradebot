@@ -119,7 +119,7 @@ const asStored = async (looking: Looking, venues: ReadonlySet<string>): Promise<
   try {
     for (const venue of venues) {
       const evicted = record.evictedOf(db, origin, venue);
-      const { ready } = await catalog.once(() => survey(db, config, origin, venue, stocked, Date.now(), looking.archives));
+      const { ready } = await catalog.once(() => survey(db, config, origin, venue, stocked, Date.now(), { returned: looking.archives }));
 
       for (const one of ready) if (evicted.get(idOf(one)) === one.version) out.add(idOf(one));
     }
