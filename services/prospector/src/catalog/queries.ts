@@ -20,7 +20,12 @@ import type { CatalogFile, DirectorySpan, Edge, FinishedRun, RangeSpan, Span, La
  * that make it fast stay next to the statements that need them.
  */
 
-/** Register a venue, or update where it is served from. Returns its id. */
+/**
+ * Register a venue, or update where it is served from. Returns its id.
+ *
+ * **A fixture, not a path of the service.** A catalog's venues are the ones its
+ * migrations seed; this writes one outside them, for a catalog built by hand.
+ */
 export const putVenue = (
   db:   DatabaseSync,
   name: string,

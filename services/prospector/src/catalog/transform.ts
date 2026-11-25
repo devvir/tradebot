@@ -52,15 +52,6 @@ const registry = (db: DatabaseSync): Map<string, Transform[]> => {
   return map;
 };
 
-/** Warm the map, so the first key generated does not pay for the table. */
-export const loadTransforms = (db: DatabaseSync): number => {
-  let rows = 0;
-
-  for (const list of registry(db).values()) rows += list.length;
-
-  return rows;
-};
-
 /**
  * Everything one instrument substitutes, or undefined where it substitutes
  * nothing - which is almost every instrument of almost every venue.
@@ -115,14 +106,13 @@ export const transformFor = (
 };
 
 /**
- * Record what an instrument substitutes, and make it true for the next key
- * generated rather than for the next process.
+ * Write what an instrument substitutes, to the table and to the map.
  *
- * **The venue is what discovers these.** Bitget reassigns a directory and says
- * so only through its own search endpoint, so a preamble that meets a moved
- * instrument writes the row here and generation follows immediately.
+ * **The instrument's list is replaced, not edited.** Whatever holds a list
+ * `transformsOf` returned before this still holds the old one, and sees the row
+ * only by asking again.
  */
-export const addTransform = (db: DatabaseSync, row: Transform): void => {
+export const putTransform = (db: DatabaseSync, row: Transform): void => {
   db.prepare(
     `INSERT INTO transform (venue_id, market, symbol, dataset, kind, transform, date_from, date_to)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)

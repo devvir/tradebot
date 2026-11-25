@@ -1,11 +1,11 @@
 import { logger } from '@devvir/service-kit';
 import { atGrain, dueAt, lastClosed, lastSettled } from '../dates';
-import { transformFor, transformsOf } from './transform';
+import { putTransform, transformFor, transformsOf } from './transform';
 import { BUCKET } from '../canonical';
 import { INSTRUMENT_OF, SLICE_OF } from '../database/schema';
 import { inTransaction } from './tx';
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
-import type { Found, Grain, Publishing, Reconciled, SeriesCount, SeriesFilter, Slots } from '../types';
+import type { Found, Grain, Publishing, Reconciled, SeriesCount, SeriesFilter, Slots, Transform } from '../types';
 
 /**
  * What a venue publishes: the URL shapes, and the instruments occupying them.
@@ -326,8 +326,45 @@ export const retireSeries = (
 export const retirePattern = (db: DatabaseSync, patternId: number, at: string): void => {
   db.prepare('UPDATE pattern SET retired_at = ? WHERE id = ?').run(at, patternId);
 
-  for (const row of registry(db).byId.values())
+  const held = registry(db);
+
+  for (const row of held.byId.values())
     if (row.patternId === patternId) row.retiredAt = at;
+
+  // The shape as well as its series, since a series created on it later takes
+  // its end from here.
+  for (const shape of held.patterns.values())
+    if (shape.id === patternId) shape.retiredAt = at;
+};
+
+/**
+ * Record what an instrument substitutes, and make it true for the next key
+ * generated rather than for the next process.
+ *
+ * **Written while the process runs**, since what an instrument substitutes is
+ * learnt from the venue as it goes, and generation follows immediately.
+ *
+ * **Every series of the instrument already held is handed the new list.** A key
+ * is built from the series alone, so one left holding the list it was loaded
+ * with would generate against the old substitutions until a reload. Where the
+ * registry is not loaded yet there is nothing to hand it to: loading attaches
+ * what the table holds.
+ */
+export const addTransform = (db: DatabaseSync, row: Transform): void => {
+  putTransform(db, row);
+
+  const held = REGISTRIES.get(db);
+
+  if (! held) return;
+
+  const exceptions = transformsOf(db, row.venueId, row.market, row.symbol);
+
+  for (const one of held.byId.values()) {
+    if (one.venueId !== row.venueId || one.symbol !== row.symbol || ! same(one.market, row.market)) continue;
+
+    if (exceptions) one.transforms = exceptions;
+    else delete one.transforms;
+  }
 };
 
 /**
@@ -360,7 +397,8 @@ export const retirePattern = (db: DatabaseSync, patternId: number, at: string): 
  *
  * A series this walk *creates* is the exception, and it is an initialisation
  * rather than an update: generation refuses a series with no tip at all, so a
- * new row starts at that same edge — or at its own file, where that is newer.
+ * new row starts at that same edge — or at its own file, where that is newer,
+ * though never above the last period closed when the walk began.
  *
  * **`last` is the newest date seen and nothing more.** A walk reads an index
  * and records what it says; it is not a claim that the archive stopped there,
@@ -388,19 +426,21 @@ export const walkSeries = (
   const held  = registry(db);
   const grain = grainOf(found.pattern);
   const at    = atGrain(date, grain);
-  const floor = walkEdge(grain, since);
+  const { floor, closed } = walkEdge(grain, since);
 
   const had = registry(db).byKey.get(identity(venueId, found));
 
   /**
    * **A new series states all three from the file that found it.** The file
    * that created the row is the oldest and the newest one known of it, so both
-   * bounds are that date, and the tip starts no lower than the walk's edge.
+   * bounds are that date, and the tip starts no lower than the walk's edge and
+   * no higher than the last period closed when the walk began: a file in a
+   * period still open is not an answer for that period.
    */
   if (! had)
     return recordSeries(db, venueId, found, {
       first: at,
-      tip:   at > floor ? at : floor,
+      tip:   at > floor ? (at < closed ? at : closed) : floor,
       last:  at,
     });
 
@@ -420,26 +460,31 @@ export const walkSeries = (
 };
 
 /**
- * Where a walk's tips start, per grain, worked out once rather than per file.
+ * Where a walk's tips start, and the highest they may start at, per grain —
+ * worked out once rather than per file.
  *
- * A constant for the length of a walk, and `walkSeries` runs once per discovered
- * file — millions of them on a large venue. There is no invalidation to get
- * wrong: a walk's start does not move, and a second walk asks under its own key.
+ * `floor` is the last period settled as of the walk's start, `closed` the last
+ * period closed by then. Constants for the length of a walk, and `walkSeries`
+ * runs once per discovered file — millions of them on a large venue. There is
+ * no invalidation to get wrong: a walk's start does not move, and a second walk
+ * asks under its own key.
  */
-const walkEdge = (grain: Grain, since: Date): string => {
+const walkEdge = (grain: Grain, since: Date): Edges => {
   const key = `${grain} ${since.getTime()}`;
   const had = EDGES.get(key);
 
   if (had !== undefined) return had;
 
-  const made = lastSettled(grain, since);
+  const made = { floor: lastSettled(grain, since), closed: lastClosed(grain, since) };
 
   EDGES.set(key, made);
 
   return made;
 };
 
-const EDGES = new Map<string, string>();
+interface Edges { floor: string; closed: string }
+
+const EDGES = new Map<string, Edges>();
 
 /**
  * Record that a file of this series exists, and how old and how new it is.
@@ -776,7 +821,9 @@ export const flushTips = (db: DatabaseSync): number => {
 export const loadSeries = (db: DatabaseSync): number => {
   const had = REGISTRIES.get(db);
 
-  if (had?.timer) clearTimeout(had.timer);
+  // Bounds moved in the registry being replaced are written out first: the new
+  // one is read from disk, and would otherwise come back without them.
+  if (had) flushTips(db);
 
   const held: Registry = {
     db, byKey: new Map(), byId: new Map(), byInstrument: new Map(), patterns: new Map(),
@@ -1391,7 +1438,3 @@ const readPatterns = (db: DatabaseSync): PatternRow[] =>
             p.retired_at AS retiredAt
        FROM pattern p JOIN slice c ON c.id = p.slice_id`)
     .all() as unknown as PatternRow[];
-
-// ── Test access ───────────────────────────────────────────────────────────────
-
-export const _test_identity = identity;

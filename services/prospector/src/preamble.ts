@@ -141,11 +141,9 @@ export const preamble = async (
     }
 
     /**
-     * **Before the series, because a series carries its transforms from the
-     * moment it is written.** `insert` attaches whatever the table holds for the
-     * instrument; a row written after it would sit in the table unread until
-     * something reloaded the registry, and generation would spend that whole
-     * time building keys on the pattern's defaults.
+     * **Before the series, so a series carries its transforms from the moment
+     * it is written** rather than generating its first keys on the pattern's
+     * defaults.
      *
      * **A default that is wrong is silent.** The key it builds is well formed
      * and the venue answers that it is not there, which is what a quiet

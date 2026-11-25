@@ -25,6 +25,7 @@ let id:  number;
 
 const DAILY   = 'x/{YYYY}{MM}{DD}/{SYMBOL}.zip';
 const MONTHLY = 'x/{YYYY}{MM}/{SYMBOL}.zip';
+const HOURLY  = 'x/{YYYY}{MM}{DD}{HH}/{SYMBOL}.zip';
 
 /**
  * `urlSymbol` is deliberately not defaulted. A series is identified by the name
@@ -282,6 +283,19 @@ describe('retirement', () => {
     expect(seriesFor(db, id)).toHaveLength(1);
     expect(seriesFor(db, id, { live: true })).toHaveLength(0);
   });
+
+  /** The shape has ended, so a series first met on it afterwards is on a dead tree from its start. */
+  it('ends a series recorded on a retired pattern without a reload', () => {
+    const row = record();
+
+    retirePattern(db, row.patternId, '20240102');
+
+    const late = record({ symbol: 'ETH-USDT', urlSymbol: 'ETH-USDT' });
+
+    expect(late.patternId).toBe(row.patternId);
+    expect(late.retiredAt).toBe('20240102');
+    expect(seriesFor(db, id, { live: true })).toHaveLength(0);
+  });
 });
 
 describe('updating', () => {
@@ -505,6 +519,45 @@ describe('bounds a walk states', () => {
       seriesFor(db, id).map(one => [one.grain, one.tip]));
 
     expect(tips).toEqual({ monthly: '202606', daily: FLOOR });
+  });
+
+  /**
+   * **A file in a period still open is not an answer for that period.** The
+   * file is real, so it bounds the series; the tip stops at the last period
+   * closed when the walk began.
+   */
+  it('starts a new daily series no higher than the day before the walk began', () => {
+    sighted('20260801', SINCE);
+
+    flushTips(db);
+
+    const [held] = seriesFor(db, id);
+
+    expect(held!.first).toBe('20260801');
+    expect(held!.last).toBe('20260801');
+    expect(held!.tip).toBe('20260731');
+  });
+
+  it('starts a new hourly series no higher than the hour before the walk began', () => {
+    sighted('2026112410', new Date('2026-11-24T10:00:00Z'), { pattern: HOURLY });
+
+    flushTips(db);
+
+    const [held] = seriesFor(db, id);
+
+    expect(held!.grain).toBe('hourly');
+    expect(held!.last).toBe('2026112410');
+    expect(held!.tip).toBe('2026112409');
+  });
+
+  /** Moved in memory, not yet flushed, and the registry replaced under it. */
+  it('keeps bounds a walk moved when the registry is reloaded before a flush', () => {
+    sighted('20260720', SINCE);
+    sighted('20260718', SINCE);
+
+    loadSeries(db);
+
+    expect(seriesFor(db, id)[0]!.first).toBe('20260718');
   });
 
   it('is a no-op once the bounds already cover the sighting', () => {

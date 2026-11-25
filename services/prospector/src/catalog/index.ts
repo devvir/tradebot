@@ -1,4 +1,4 @@
-export { dropAbove, flushParked, parkSoon } from './wip';
+export { flushParked, parkSoon } from './wip';
 export { WITHDRAWALS_LOG } from './withdrawals';
 
 export {
@@ -59,15 +59,13 @@ export {
   seriesOf,
   retireSeries,
   retirePattern,
+  addTransform,
   patternsOf,
   open,
-  sawFile,
   flushTips,
   walkSeries,
   grainOf,
   keyOf as keyFor,
 } from './series';
-
-export { addTransform, loadTransforms, transformsOf } from './transform';
 
 export * as cache from './cache/partitions';
