@@ -4,6 +4,22 @@
   "description": "Shared utility functions for TradeBot services",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "default": "./dist/testing/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "typesVersions": {
+    "*": {
+      "testing": ["dist/testing/index.d.ts"]
+    }
+  },
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
@@ -14,6 +30,10 @@
   "dependencies": {
     "@devvir/service-kit": "workspace:*",
     "@devvir/rabbitmq": "workspace:*",
+    "@tradebot/types": "workspace:*",
     "csv-parse": "^6.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "~22.20.5"
   }
 }

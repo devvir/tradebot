@@ -7,7 +7,7 @@ const DOCKER_DIR = resolve(__dirname, '../../src/testing/docker');
 
 // ── Low-level ─────────────────────────────────────────────────────────────────
 
-export interface TestServicesConfig {
+interface TestServicesConfig {
   /** Absolute path to the .env file that carries credentials and host ports */
   envFile: string;
   /** Absolute paths to the docker-compose files to include */
@@ -32,7 +32,7 @@ const pause = (ms: number): void => {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 };
 
-export const startTestServices = (config: TestServicesConfig): void => {
+const startTestServices = (config: TestServicesConfig): void => {
   const timeout = config.timeout ?? 60;
   const env = { ...process.env, ...parseEnvFile(config.envFile) };
   const args = composeArgs(config, ['up', '-d', '--wait', '--wait-timeout', String(timeout)]);
@@ -50,7 +50,7 @@ export const startTestServices = (config: TestServicesConfig): void => {
   }
 };
 
-export const stopTestServices = (config: TestServicesConfig): void => {
+const stopTestServices = (config: TestServicesConfig): void => {
   const env = { ...process.env, ...parseEnvFile(config.envFile) };
 
   execFileSync('docker', composeArgs(config, ['down', '--volumes']), { stdio: 'inherit', env });

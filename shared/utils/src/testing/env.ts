@@ -39,12 +39,8 @@ export const parseEnvFile = (filePath: string): Record<string, string> => {
   return result;
 };
 
-/**
- * Load a .env file into process.env. A variable that is already set, even to
- * the empty string, keeps its value. A file that does not exist loads nothing;
- * any other read error is thrown.
- */
-export const loadEnvFile = (filePath: string): void => {
+/** Load a .env file into process.env, as `loadTestingEnv` describes. */
+const loadEnvFile = (filePath: string): void => {
   let parsed: Record<string, string>;
 
   try {
@@ -60,7 +56,9 @@ export const loadEnvFile = (filePath: string): void => {
 };
 
 /**
- * Load .env.testing from a service's tests directory into process.env.
+ * Load .env.testing from a service's tests directory into process.env. A
+ * variable that is already set, even to the empty string, keeps its value. A
+ * missing .env.testing loads nothing; any other read error is thrown.
  */
 export const loadTestingEnv = (testsDir: string): void => {
   loadEnvFile(resolve(testsDir, '.env.testing'));

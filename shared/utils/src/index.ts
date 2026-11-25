@@ -6,4 +6,3 @@ export * from './security';
 export * from './services';
 export * from './sizes';
 export * from './tables';
-export * from './testing';

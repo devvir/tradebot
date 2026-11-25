@@ -1,8 +1,8 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { loadEnvFile, parseEnvFile } from '../src/testing/env';
+import { loadTestingEnv, parseEnvFile } from '../src/testing/env';
 
 let dir: string;
 
@@ -62,29 +62,32 @@ describe('parseEnvFile', () => {
   });
 });
 
-describe('loadEnvFile', () => {
+describe('loadTestingEnv', () => {
   const KEYS = ['UTILS_ENV_TEST_A', 'UTILS_ENV_TEST_B', 'UTILS_ENV_TEST_C'];
 
   afterEach(() => {
     for (const key of KEYS) delete process.env[key];
   });
 
-  it('sets variables that are not set and keeps those that are, empty included', () => {
+  it('loads .env.testing from the directory, keeping variables that are set, empty included', () => {
     process.env.UTILS_ENV_TEST_A = 'shell';
     process.env.UTILS_ENV_TEST_B = '';
+    writeFileSync(join(dir, '.env.testing'), 'UTILS_ENV_TEST_A=file\nUTILS_ENV_TEST_B=file\nUTILS_ENV_TEST_C=file\n');
 
-    loadEnvFile(envFile('UTILS_ENV_TEST_A=file\nUTILS_ENV_TEST_B=file\nUTILS_ENV_TEST_C=file\n'));
+    loadTestingEnv(dir);
 
     expect(process.env.UTILS_ENV_TEST_A).toBe('shell');
     expect(process.env.UTILS_ENV_TEST_B).toBe('');
     expect(process.env.UTILS_ENV_TEST_C).toBe('file');
   });
 
-  it('loads nothing from a file that does not exist', () => {
-    expect(() => loadEnvFile(join(dir, 'missing.env'))).not.toThrow();
+  it('loads nothing from a directory without .env.testing', () => {
+    expect(() => loadTestingEnv(dir)).not.toThrow();
   });
 
-  it('throws when the file cannot be read', () => {
-    expect(() => loadEnvFile(dir)).toThrow();
+  it('throws when .env.testing cannot be read', () => {
+    mkdirSync(join(dir, '.env.testing'));
+
+    expect(() => loadTestingEnv(dir)).toThrow();
   });
 });

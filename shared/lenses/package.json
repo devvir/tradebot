@@ -10,5 +10,8 @@
     "test:watch": "vitest"
   },
   "private": true,
-  "keywords": ["tradebot", "lenses"]
+  "keywords": ["tradebot", "lenses"],
+  "devDependencies": {
+    "@types/node": "~22.20.5"
+  }
 }
