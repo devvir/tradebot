@@ -208,11 +208,10 @@ const read = async (
    * arriving out of that order is skipped for good — silently, and while the
    * job still closes as established.
    *
-   * Nothing exotic is needed to hit it. Bybit sorts by the bare name, while a
-   * child is compared as a path with its trailing slash, and `-` sorts before
-   * `/`: served, `BTCUSDT/` precedes `BTCUSDT-01AUG25/`, and as paths the two
-   * are the other way round. Nine such inversions in `trading/` stranded 401
-   * of its 1,882 symbols.
+   * Nothing exotic is needed to hit it. A server may sort by the bare name,
+   * while a child is compared as a path with its trailing slash, and `-` sorts
+   * before `/`: served that way, `A/` precedes `A-B/`, and as paths the two are
+   * the other way round.
    *
    * So the order is imposed rather than assumed, and no index has to promise
    * anything.

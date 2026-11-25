@@ -15,6 +15,7 @@ import { binance } from '../src/adapters/binance';
 import { htx } from '../src/adapters/htx';
 import { kucoin } from '../src/adapters/kucoin';
 import { listing } from '../src/context';
+import { byteOrder } from '../src/paths';
 import type { Adapter, ListingPage, S3Page } from '../src/types';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -586,7 +587,8 @@ describe('splitting a flat prefix by character', () => {
       const prefix = query.get('prefix') ?? '';
       const marker = honoursMarker ? query.get('marker') : null;
       const max    = Number(query.get('max-keys'));
-      const under  = keys.filter(key => key.startsWith(prefix) && (marker === null || key > marker)).sort();
+      const under  = keys.filter(key => key.startsWith(prefix) && (marker === null || byteOrder(key, marker) > 0))
+        .sort(byteOrder);
       const listed = query.has('delimiter') ? under.filter(key => ! key.slice(prefix.length).includes('/')) : under;
       const dirs   = query.has('delimiter')
         ? [...new Set(under.filter(key => key.slice(prefix.length).includes('/'))
@@ -632,6 +634,17 @@ describe('splitting a flat prefix by character', () => {
     bucket(['data/A-2025-01-01.zip', 'data/B-2025-01-01.zip'], { honoursMarker: false });
 
     expect(await _test_level(context, 'data/')).toMatchObject({ files: true });
+  });
+
+  /**
+   * S3 lists in UTF-8 byte order, where a character past the Basic Multilingual
+   * Plane sorts after one at its top — the other way round from UTF-16 units.
+   */
+  it('splits past a character that sorts differently in UTF-16', async () => {
+    bucket(['data/（A-2025-01-01.zip', 'data/\u{20000}A-2025-01-01.zip']);
+
+    expect(await _test_level(context, 'data/'))
+      .toEqual({ children: ['data/（', 'data/\u{20000}'], files: false });
   });
 
   it('still splits by directory where nothing sits directly here', async () => {
@@ -717,6 +730,18 @@ describe('a marker that does not advance', () => {
       '<IsTruncated>true</IsTruncated>')));
 
     expect((await s3.page(context, 'data/x/', 'data/x/b-2025-01-01.zip')).cursor).toBe('data/x/c-2025-01-01.zip');
+  });
+
+  /**
+   * S3 lists in UTF-8 byte order, where a character past the Basic Multilingual
+   * Plane sorts after one at its top — the other way round from UTF-16 units.
+   */
+  it('moves on where it advances in byte order but not in UTF-16 units', async () => {
+    vi.mocked(fetchPage).mockResolvedValue(parse(page(object('data/x/\u{20000}A-2025-01-01.zip'),
+      '<IsTruncated>true</IsTruncated>')));
+
+    expect((await s3.page(context, 'data/x/', 'data/x/（A-2025-01-01.zip')).cursor)
+      .toBe('data/x/\u{20000}A-2025-01-01.zip');
   });
 
   /** A level read to `IsTruncated` would otherwise never finish. */

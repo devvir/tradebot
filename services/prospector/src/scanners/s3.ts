@@ -1,4 +1,5 @@
 import { accepted, catalogable, descend } from './descend';
+import { byteOrder } from '../paths';
 import type { Limits, ListingContext, ReadLevel, S3Page, Scanner } from '../types';
 
 /**
@@ -153,7 +154,7 @@ const initials = async (context: ListingContext, prefix: string): Promise<string
 
     if (key === undefined || ! key.startsWith(prefix) || key.length === prefix.length) return found;
 
-    if (marker !== null && key <= marker) return null;
+    if (marker !== null && byteOrder(key, marker) <= 0) return null;
 
     const next = String.fromCodePoint(key.codePointAt(prefix.length)!);
 
@@ -166,7 +167,8 @@ const initials = async (context: ListingContext, prefix: string): Promise<string
 const LAST = '\u{10FFFF}';
 
 /**
- * Throw unless a page's marker sorts after the one it was asked with.
+ * Throw unless a page's marker sorts after the one it was asked with, in the
+ * UTF-8 byte order S3 lists keys in — see `byteOrder`.
  *
  * Keys come back in order and a marker names the last one read, so a marker at
  * or before the previous one means the venue did not honour it, and asking again
@@ -175,7 +177,7 @@ const LAST = '\u{10FFFF}';
  * cursor where it was.
  */
 const advanced = (asked: string, cursor: string | null, next: string | null): void => {
-  if (cursor !== null && next !== null && next <= cursor)
+  if (cursor !== null && next !== null && byteOrder(next, cursor) <= 0)
     throw new Error(`Listing marker did not advance: ${asked} gave ${next} after ${cursor}`);
 };
 

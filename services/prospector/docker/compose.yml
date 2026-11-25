@@ -43,8 +43,8 @@ services:
       # adapter; this is the one number no adapter can see, since every one of
       # them can be reasonable while their sum is not. Venues draw from it first
       # come, first served — nothing is reserved, and a venue surveying alone is
-      # limited only by its own figure. Keep below ~1,250 over HTTP/1.1; nothing
-      # enforces it.
+      # limited by the lower of its own figure and this one. Keep below ~1,250
+      # over HTTP/1.1; nothing enforces it.
       PROSPECTOR_CONCURRENCY: ${PROSPECTOR_CONCURRENCY:-200}
 
       LOG_LEVEL: ${LOG_LEVEL:-info}
