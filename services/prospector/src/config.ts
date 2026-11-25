@@ -7,8 +7,8 @@ import type { Config } from './types';
  * it is the compose mount's business, and nothing here knows or needs to know
  * where it lands.
  *
- * One directory, because the prospector owns exactly one thing: the catalog it
- * writes. The facts database belongs to the archivist and is never opened here.
+ * One directory, because the prospector stores exactly one thing: the catalog
+ * database it writes.
  */
 const CATALOG_DIR = '/data/catalog';
 

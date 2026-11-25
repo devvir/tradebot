@@ -1,7 +1,7 @@
 # Prospector Service — surveys venue archives and records what they publish.
 #
 # Owns its storage: CATALOG_DIR on the host is mounted at a fixed path in the
-# container. Pre-create it writable by uid 1000, as with vault:
+# container. Pre-create it writable by uid 1000:
 #   sudo mkdir -p /storage/tradebot/catalog && sudo chown 1000:1000 /storage/tradebot/catalog
 #
 # It downloads nothing — a survey moves kilobytes of XML while the archives it
@@ -9,7 +9,7 @@
 #
 # It surveys nothing unasked. A venue is enrolled by a request over its collector
 # API, and from then on it is kept current across restarts: coming back
-# up resumes an interrupted job from its partitions' cursors, waits out the rest
+# up resumes an interrupted job from its scopes' cursors, waits out the rest
 # of a venue's interval, and leaves paused and never-asked-for venues alone.
 #
 # So a deployment where nobody has ever started a survey is read-only, and stays
@@ -34,7 +34,8 @@ services:
       # nobody noticed.
       CATALOG_TOKEN: ${CATALOG_TOKEN:-}
 
-      # Which venues to survey (default: all known)
+      # The venues this process may survey or resume, comma-separated; empty
+      # means every registered venue. It starts nothing on its own.
       PROSPECTOR_VENUES: ${PROSPECTOR_VENUES:-}
 
       # The ceiling on requests in flight at once, across every venue. What a
@@ -42,7 +43,8 @@ services:
       # adapter; this is the one number no adapter can see, since every one of
       # them can be reasonable while their sum is not. Venues draw from it first
       # come, first served — nothing is reserved, and a venue surveying alone is
-      # limited only by its own figure.
+      # limited only by its own figure. Keep below ~1,250 over HTTP/1.1; nothing
+      # enforces it.
       PROSPECTOR_CONCURRENCY: ${PROSPECTOR_CONCURRENCY:-200}
 
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -55,8 +57,8 @@ services:
       - ../../../:/live
       - ${CATALOG_DIR:?CATALOG_DIR is not defined}:/data/catalog
 
-    # The collector and reports APIs on 8080 are reached over the shared
-    # network only: no port is published.
+    # The API on 8080 is reached over the shared network only, and health on
+    # 3000 from inside the container: no port is published.
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
       interval: 30s

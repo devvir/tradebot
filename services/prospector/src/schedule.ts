@@ -14,7 +14,7 @@ import { join, sep } from 'node:path';
  *
  * ```yaml
  * binance: 15        # walks on the 15th
- * bitget: 1,10,20    # on the 1st, the 10th and the 20th
+ * kucoin: 1,10,20    # on the 1st, the 10th and the 20th
  * gate:              # never: every update generates
  * ```
  *
@@ -38,8 +38,9 @@ export const schedulePath = (): string =>
 
 /**
  * The days each walkable venue walks on: what the file says, and the default
- * for every venue it leaves out. Throws, saying what is wrong and on which
- * line, where the file is there and cannot be taken as written.
+ * for every venue it leaves out. Throws where the file is there and cannot be
+ * taken as written, naming the line for one that cannot be read and the venue
+ * for one that does not exist or cannot be listed.
  *
  * `walkable` is every venue that can be listed, with the lowest id of its
  * servers; `known` every venue there is, so that a venue that exists and
