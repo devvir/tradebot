@@ -17,8 +17,8 @@ import type { StoredFile } from '../types';
  *
  * All of them are asked for at once: Mega keeps its own queue, which outlives
  * this command, so a run stopped here leaves them coming and the next run finds
- * them arrived. A file Mega drops without delivering is asked for again, up to
- * `ATTEMPTS` times.
+ * them arrived. A file Mega drops without delivering is asked for again: each
+ * is asked for `ATTEMPTS` times at the most in all, the first time included.
  */
 export const fetch = async (
   db:      DatabaseSync,
@@ -107,7 +107,7 @@ export const fetch = async (
 const ALL = 'all';
 const ONE = 'one';
 
-/** Times a file is asked for before it is given up on for this run. */
+/** Times a file is asked for in all, the first time included, before it is given up on for this run. */
 const ATTEMPTS = 3;
 
 // ── Test access ───────────────────────────────────────────────────────────────

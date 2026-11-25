@@ -127,8 +127,8 @@ const room = async (config: ColdConfig, pollMs: number, reserve: number, back: n
 /**
  * Ask Mega for a tar and wait until it is here: at the size it was stored at,
  * and no longer being written. One already here at that size was brought by a
- * run that stopped, and is used. Asked again where Mega drops it, up to
- * `ATTEMPTS` times.
+ * run that stopped, and is used. Asked again where Mega drops it: `ATTEMPTS`
+ * times at the most in all, the first time included.
  */
 const fetched = async (config: ColdConfig, tar: Tar, local: string, remote: Fetching, pollMs: number): Promise<boolean> => {
   const whole = (): boolean => fs.existsSync(local) && fs.statSync(local).size === tar.bytes;
@@ -212,7 +212,7 @@ const PULLED  = 'pulled';
 const ALL = 'all';
 const ONE = 'one';
 
-/** Times a tar is asked for before it is given up on for this run. */
+/** Times a tar is asked for in all, the first time included, before it is given up on for this run. */
 const ATTEMPTS = 3;
 
 // ── Test access ───────────────────────────────────────────────────────────────

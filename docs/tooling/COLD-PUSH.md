@@ -81,8 +81,8 @@ value that drifted between runs would make that shape inconsistent for no benefi
 a lens did not let through before, a dataset discovered since — go into new tars numbered after the
 month's last. Nothing already stored is repacked to make room.
 
-Measured against the catalog on 2026-10-05: 2,006 ready partitions fell into 180 tars totalling
-133 GB, the largest 5.00 GB.
+`cold stats archives` shows, venue by venue, how many tars and partitions that makes and what is
+stored.
 
 ---
 

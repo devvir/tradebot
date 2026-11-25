@@ -1,7 +1,8 @@
 # cold pull
 
 `cold pull [origin] <venues…>` brings back from cold storage. See [COLD.md](COLD.md) for the
-namespace and origins, and [COLD-PUSH.md](COLD-PUSH.md) for how things got there.
+namespace, origins, configuration and where things live, and [COLD-PUSH.md](COLD-PUSH.md) for how
+things got there.
 
 This page is how a pull is asked for, and the **archives**. What the vault does with the same
 request is in [COLD-VAULT.md](COLD-VAULT.md#cold-pull-vault).
@@ -34,9 +35,9 @@ month one way, so they are an error with `pull vault`, and say nothing to the va
 `--all-sources`.
 
 ```
-tools cold pull archives bybit --dataset trades --date 2021
-tools cold pull archives okx --partition perp/books,incremental,400/202309
-tools cold pull archives gate --partition spot/klines,1h --date 202003 --dry-run
+./tools cold pull archives bybit --dataset trades --date 2021
+./tools cold pull archives okx --partition perp/books,incremental,400/202309
+./tools cold pull archives gate --partition spot/klines,1h --date 202003 --dry-run
 ```
 
 ## The archives
@@ -70,7 +71,8 @@ the run says so as it ends. It is something to look at: nothing downstream reads
 
 One tar at a time, so no more than one tar and what comes out of it is on disk beside the archives.
 A tar already there at its stored size was brought by a run that stopped, and is used. One Mega
-drops without delivering is asked for again, three times at the most.
+drops without delivering is asked for again; each is asked for three times at the most in all, and
+the run ends by saying how many did not come back.
 
 A partition brought back into the archives is no longer one that was evicted: the record of its
 eviction is marked with when it came back and kept as history, and [`cold evict`](COLD-EVICT.md)
@@ -80,8 +82,9 @@ weighs the partition again like any other.
 
 **Watched, not promised.** What the tars weigh is said against what is free before anything starts,
 as a warning and no more — most of a tar is usually dropped, so the sum is the worst case and rarely
-the truth. No tar is asked for while less than 25 GB is free: the run waits there until there is
-room.
+the truth. No tar is asked for while less than 25 GB is free on cold's own volume: the run waits
+there until there is room. Where the archives are on another volume, it also waits until they have
+room for what comes out of the next tar, and 25 GB more.
 
 ---
 
@@ -109,8 +112,9 @@ stocks the vault does the rest by itself, as it finds the files there.
   and left: it is to be downloaded from the venue, not brought back.
 - **What it would bring is said first, with what it weighs, and then asked**; yes is the answer. A
   tar comes back whole, so the archives weigh what their tars do.
-- **No more than there is room for.** Tars are taken oldest first for as long as each, and what
-  comes out of it, leaves 25 GB free. The rest is said and left for a later run, when what was
+- **No more than there is room for**, on cold's own volume. The vault's files come first, all of
+  them or none. Then tars are taken venue by venue, oldest month first, for as long as each, and
+  what comes out of it, leaves 25 GB free. The rest is said and left for a later run, when what was
   brought has been stocked and has gone again.
 
 | | |

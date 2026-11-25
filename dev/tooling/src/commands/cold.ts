@@ -22,8 +22,9 @@ import { register as stats } from '../tools/cold/stats/command';
 /**
  * `tools cold` — everything to do with cold storage.
  *
- * Cold storage is a DX concern, not a service's job: nothing running in a
- * container reads or writes it, so it lives here and owns its own state.
+ * Cold storage runs from the host and no service calls it, so it lives here
+ * and owns its own state. It reads the vault's ledger, and writes one file
+ * into the vault, `backedup.csv` — see docs/tooling/COLD-VAULT.md#backedupcsv.
  * Every Mega call in the repo is behind this command.
  */
 export function register(program: Command): void {
