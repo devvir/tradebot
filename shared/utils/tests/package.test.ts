@@ -23,7 +23,7 @@ describe('package surface', () => {
   });
 
   it('serves the test helpers from the testing entry', () => {
-    expect(Object.keys(testing).sort()).toEqual(['loadTestingEnv', 'parseEnvFile', 'startRabbitMQ', 'stopRabbitMQ']);
+    expect(Object.keys(testing).sort()).toEqual(['loadTestingEnv', 'startRabbitMQ', 'stopRabbitMQ']);
   });
 
   it.each([

@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
-import { parseEnvFile } from './env';
+import { parseEnvFile } from '../env';
 
 // Resolved from dist/testing/ at runtime → shared/utils/src/testing/docker/
 const DOCKER_DIR = resolve(__dirname, '../../src/testing/docker');
