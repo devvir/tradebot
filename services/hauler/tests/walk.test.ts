@@ -41,7 +41,7 @@ vi.mock('node:fs/promises', async (actual) => {
 const { walkVenue, _test_safe, _test_lookAgain } = await import('../src/venue');
 const { _test_forgetRefusal } = await import('../src/store');
 const { setHosts } = await import('../src/hosts');
-const { venues } = await import('../src/catalog');
+const { halt, page, venues, _test_unhalt } = await import('../src/catalog');
 
 let server:  Server;
 let asked:   { url: string; lens: string | undefined; token: string | undefined }[];
@@ -52,6 +52,14 @@ let refused: boolean;
 let failing: number;
 let flying:  number;
 let most:    number;
+
+/** Large files answered all at once: once one more than may be in flight has arrived, or nothing more has for a while. */
+let bigHeld:  (() => void)[];
+let bigQuiet: ReturnType<typeof setTimeout> | undefined;
+
+/** How the catalog takes a report, and how often it was asked while it could not answer. */
+let reportStatus: number;
+let busyAsked:    number;
 
 /** A server turning every request away for so many seconds, how often it was asked, and requests at once of either server. */
 let outFor:   string;
@@ -69,6 +77,8 @@ let lightBefore: number | null;
 const KEYS = ['binance/a/1.zip', 'binance/a/2.zip', 'binance/b/3.zip'];
 const SIZED = ['sized/a/0.zip', 'sized/a/1.zip', 'sized/a/2.zip', 'sized/a/3.zip'];
 const DIFFERS = 'differs/a/0.zip';
+const VERDICTS = ['verdicts/a/k1.zip', 'verdicts/a/k2.zip', 'verdicts/a/k3.zip'];
+const STRAY = 'stray/a/ok.zip';
 
 beforeEach(async () => {
   cfg.archivesDir = mkdtempSync(join(tmpdir(), 'walk-'));
@@ -80,6 +90,9 @@ beforeEach(async () => {
   failing = 0;
   flying  = 0;
   most    = 0;
+  bigHeld = [];
+  reportStatus = 200;
+  busyAsked    = 0;
   outFor  = '3';
   outAsked = inFlight = peak = 0;
   heavyBegun = heavyFlying = heavyMost = lightServed = 0;
@@ -88,13 +101,24 @@ beforeEach(async () => {
   server = createServer((req, res) => {
     const url = new URL(req.url!, 'http://x');
 
-    // Large files are held a moment, so that how many are in flight at once can be seen.
+    // Large files are held until a seventh arrives or none has for 300 ms, so that every one allowed at once is seen at once.
     if (url.pathname.startsWith('/files/big/')) {
       flying++;
       most = Math.max(most, flying);
-      setTimeout(() => { flying--; res.writeHead(200); res.end('x'); }, 25);
+      bigHeld.push(() => { flying--; res.writeHead(200); res.end('x'); });
+
+      const release = () => { clearTimeout(bigQuiet); for (const answer of bigHeld.splice(0)) answer(); };
+
+      clearTimeout(bigQuiet);
+
+      if (bigHeld.length >= 7) release();
+      else bigQuiet = setTimeout(release, 300);
+
       return;
     }
+
+    if (url.pathname.startsWith('/files/missing/')) { res.writeHead(404); res.end(); return; }
+    if (url.pathname.startsWith('/files/short/')) { res.writeHead(200); res.end('short'); return; }
 
     if (url.pathname.startsWith('/files/out/')) {
       outAsked++;
@@ -128,6 +152,9 @@ beforeEach(async () => {
       req.on('data', chunk => { body += chunk; });
       req.on('end', () => {
         reports.push(JSON.parse(body));
+
+        if (reportStatus !== 200) { res.writeHead(reportStatus); res.end('no'); return; }
+
         res.writeHead(refused ? 207 : 200, { 'content-type': 'application/json' });
         res.end(JSON.stringify(refused ? { Error: [{ Key: KEYS[0], Code: 'NoSuchKey', Message: 'No file' }] } : {}));
       });
@@ -137,7 +164,7 @@ beforeEach(async () => {
     if (drops > 0) { drops--; req.socket.destroy(); return; }
 
     // A catalog that cannot answer: a server error, as while it is stuck or restarting.
-    if (failing > 0) { failing--; res.writeHead(503); res.end('busy'); return; }
+    if (failing > 0) { failing--; busyAsked++; res.writeHead(503); res.end('busy'); return; }
 
     asked.push({ url: req.url!, lens: req.headers['x-catalog-lens'] as string, token: req.headers['x-catalog-token'] as string });
 
@@ -154,18 +181,47 @@ beforeEach(async () => {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({
         Name: 'catalog', Prefix: 'big/', Marker: '', MaxKeys: 1000, IsTruncated: false,
-        Contents: Array.from({ length: 30 }, (_, at) => `big/spot/trades/B/BTC/202001/f-${at}`)
+        Contents: Array.from({ length: 18 }, (_, at) => `big/spot/trades/B/BTC/202001/f-${at}`)
           .map(Key => ({ Key, Path: `files/${Key}`, Host: '', Size: 60 * 1024 ** 2 })),
       }));
       return;
     }
 
-    // Two venues of four files each: one whose server turns everything away, one that serves.
-    for (const venue of ['out', 'quick']) if (url.searchParams.get('prefix') === `${venue}/`) {
+    // Venues of four files each: one whose server turns everything away, two that serve slowly.
+    for (const venue of ['out', 'quick', 'brisk']) if (url.searchParams.get('prefix') === `${venue}/`) {
+      const path = venue === 'out' ? 'out' : 'quick';
+
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({
         Name: 'catalog', Prefix: `${venue}/`, Marker: '', MaxKeys: 1000, IsTruncated: false,
-        Contents: [0, 1, 2, 3].map(at => ({ Key: `${venue}/spot/trades/B/BTC/202001/f-${at}`, Path: `files/${venue}/f-${at}`, Host: '' })),
+        Contents: [0, 1, 2, 3].map(at => ({ Key: `${venue}/spot/trades/B/BTC/202001/f-${at}`, Path: `files/${path}/${venue}-${at}`, Host: '' })),
+      }));
+      return;
+    }
+
+    // A listing the catalog refuses outright.
+    if (url.searchParams.get('prefix') === 'refused/') { res.writeHead(422); res.end('no such lens'); return; }
+
+    // A venue with one file of every verdict: gone, served other than listed, and fine.
+    if (url.searchParams.get('prefix') === 'verdicts/') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        Name: 'catalog', Prefix: 'verdicts/', Marker: '', MaxKeys: 1000, IsTruncated: false,
+        Contents: [
+          { Key: VERDICTS[0], Path: 'files/missing/k1', Host: '' },
+          { Key: VERDICTS[1], Path: 'files/short/k2', Host: '', Size: 8 },
+          { Key: VERDICTS[2], Path: `files/${VERDICTS[2]}`, Host: '' },
+        ],
+      }));
+      return;
+    }
+
+    // A venue listing a key that belongs to another.
+    if (url.searchParams.get('prefix') === 'stray/') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        Name: 'catalog', Prefix: 'stray/', Marker: '', MaxKeys: 1000, IsTruncated: false,
+        Contents: ['gate/x.zip', STRAY].map(Key => ({ Key, Path: `files/${Key}`, Host: '' })),
       }));
       return;
     }
@@ -385,7 +441,7 @@ describe('a walk', () => {
     try {
       const walked = await walkVenue('big', () => false);
 
-      expect(walked.listed).toBe(30);
+      expect(walked.listed).toBe(18);
       expect(most).toBe(6);
     } finally {
       cfg.concurrency = 2;
@@ -408,6 +464,39 @@ describe('a walk', () => {
     } finally {
       cfg.concurrency = 2;
     }
+  });
+
+  /** The budget is the machine's: two venues walking at once share it, and both get through. */
+  it('shares one budget between venues walking at once', async () => {
+    setHosts('quick', { '': [`${cfg.catalogApi}/`] });
+    setHosts('brisk', { '': [`${cfg.catalogApi}/`] });
+
+    const [quick, brisk] = await Promise.all([walkVenue('quick', () => false), walkVenue('brisk', () => false)]);
+
+    expect(quick).toMatchObject({ listed: 4, progressed: 4, unreached: 0 });
+    expect(brisk).toMatchObject({ listed: 4, progressed: 4, unreached: 0 });
+    expect(peak).toBeLessThanOrEqual(2);
+  });
+
+  /** Each file's verdict goes to the catalog: gone as failed, and what came instead with its size and MD5. */
+  it('reports what failed and what was served otherwise beside what was downloaded', async () => {
+    setHosts('verdicts', { '': [`${cfg.catalogApi}/`] });
+
+    expect(await walkVenue('verdicts', () => false)).toMatchObject({ listed: 3, progressed: 1, failed: 1, mismatched: 1 });
+    expect(reports).toEqual([{
+      downloaded: [VERDICTS[2]],
+      failed:     [VERDICTS[0]],
+      mismatched: [{ Key: VERDICTS[1], Size: 5, ETag: createHash('md5').update('short').digest('hex') }],
+    }]);
+  });
+
+  /** A key is where its file goes: one outside the venue's folder is never fetched, nor said anything of. */
+  it('neither fetches nor reports a key outside the venue', async () => {
+    setHosts('stray', { '': [`${cfg.catalogApi}/`] });
+
+    expect(await walkVenue('stray', () => false)).toMatchObject({ listed: 2, progressed: 1, failed: 0, mismatched: 0 });
+    expect(served).toBe(1);
+    expect(reports).toEqual([{ downloaded: [STRAY], failed: [], mismatched: [] }]);
   });
 
   it('asks only for what is owed, through the lens, with the token, resuming after the last key', async () => {
@@ -535,6 +624,35 @@ describe('a venue whose server turns every request away', () => {
     expect(walked).toMatchObject({ progressed: 0, failed: 0, mismatched: 0 });
     expect(walked.unreached).toBeGreaterThan(0);
     expect(reports).toEqual([]);
+  });
+});
+
+describe('the catalog', () => {
+  /** A `4xx` is the catalog's answer, and not one to wait out. */
+  it('refusing the listing fails the walk with what it said', async () => {
+    await expect(walkVenue('refused', () => false)).rejects.toThrow(/422/);
+  });
+
+  /** The files a lost report named are listed again on the next walk, found on disk, and reported then. */
+  it('refusing a report does not fail the walk', async () => {
+    reportStatus = 400;
+
+    expect(await walkVenue('binance', () => false)).toMatchObject({ listed: 3, progressed: 3 });
+    expect(reports).toHaveLength(2);
+  });
+
+  /** Once hauler is stopping, a catalog that cannot answer is given its attempts and not waited for. */
+  it('is asked three times, and no more, once halted', { timeout: 10_000 }, async () => {
+    failing = 99;
+    halt();
+
+    try {
+      await expect(page('binance', null)).rejects.toThrow(/503/);
+      expect(busyAsked).toBe(3);
+    } finally {
+      _test_unhalt();
+      failing = 0;
+    }
   });
 });
 

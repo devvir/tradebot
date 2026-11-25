@@ -165,3 +165,8 @@ const once = async <T>(path: string, init: RequestInit, lensed: boolean): Promis
 
   return await res.json() as T;
 };
+
+// ── Test access ───────────────────────────────────────────────────────────────
+
+/** Wait for the catalog again after `halt`. For tests: a service that halted is one that is ending. */
+export const _test_unhalt = (): void => { halted = false; };

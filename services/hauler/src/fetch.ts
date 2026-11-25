@@ -124,7 +124,6 @@ export const LARGE_BYTES = 50 * 1024 ** 2;
 
 const ATTEMPTS = 3;
 const BASE_MS  = 5_000;
-const MAX_MS   = 30_000;
 
 /** The statuses that say the file is not there to have, at once. */
 const GONE = new Set([404, 410]);
@@ -502,7 +501,7 @@ const settles = (file: Haulable, bytes: number, digest: string): boolean =>
 
 /** Exponential with full jitter, so retries across files do not synchronise. */
 const delayFor = (attempt: number): number =>
-  Math.floor(Math.random() * Math.min(BASE_MS * 2 ** (attempt - 1), MAX_MS));
+  Math.floor(Math.random() * BASE_MS * 2 ** (attempt - 1));
 
 /** How long a wait sleeps at most before it looks again at whether it is to stop. */
 const WAKE_MS = 1_000;
@@ -519,6 +518,4 @@ const reason = (err: unknown): string => {
 
 // ── Test access ───────────────────────────────────────────────────────────────
 
-export const _test_agrees   = agrees;
-export const _test_delayFor = delayFor;
 export const _test_retryAfter = retryAfter;

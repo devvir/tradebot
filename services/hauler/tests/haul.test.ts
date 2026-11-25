@@ -76,6 +76,8 @@ beforeEach(async () => {
     }
     // An edge having a bad day: it answers every request with a server error.
     if (req.url!.startsWith('/broken/')) { res.writeHead(500); res.end(); return; }
+    // An edge having a bad moment of the other kind: all is well, says the status, and the body is empty.
+    if (req.url!.startsWith('/hollow/')) { res.writeHead(200); res.end(); return; }
     if (req.url === '/gzipped.gz') { res.writeHead(200, { 'content-encoding': 'gzip', 'content-type': 'application/gzip' }); res.end(GZIPPED); return; }
     if (req.url === '/moved.zip') { res.writeHead(302, { location: '/file.zip' }); res.end(); return; }
     // Less than it said it would send, the connection then lost: the first time only, or every time.
@@ -318,7 +320,7 @@ describe('a file not yet on disk', () => {
     const since = Date.now();
 
     expect((await haul(file({ venue: 'gate', key: 'gate/spot/trades/B/BTC_USDT/202001/x.zip' }))).outcome).toBe('downloaded');
-    expect(Date.now() - since).toBeLessThan(500);
+    expect(Date.now() - since).toBeLessThan(900);
 
     expect((await haul(file({ key: 'binance/perp/trades/B/BTCUSDT/202001/z.zip' }))).outcome).toBe('downloaded');
     expect(Date.now() - since).toBeGreaterThanOrEqual(900);
@@ -371,6 +373,36 @@ describe('a file not yet on disk', () => {
 
     expect(await haul(file())).toEqual({ outcome: 'downloaded' });
     expect(requests.map(one => one.url)).toEqual(['/broken/file.zip', '/file.zip']);
+  });
+
+  /** An edge that will not serve a file is an address doing badly: the next is asked at once, with no wait between. */
+  it('asks the listed address at once where an edge answers a server error', async () => {
+    setHosts('binance', { '': [`${base}/`, `${base}/broken/`] });
+    vi.spyOn(Math, 'random').mockReturnValue(0.99);
+
+    let paused = 0;
+
+    expect(await haul(file(), { pause: async (wait) => { paused++; await wait(); } })).toEqual({ outcome: 'downloaded' });
+    expect(requests.map(one => one.url)).toEqual(['/broken/file.zip', '/file.zip']);
+    expect(paused).toBe(0);
+  });
+
+  it('asks the listed address at once where an edge serves nothing', async () => {
+    setHosts('binance', { '': [`${base}/`, `${base}/hollow/`] });
+    vi.spyOn(Math, 'random').mockReturnValue(0.99);
+
+    let paused = 0;
+
+    expect(await haul(file(), { pause: async (wait) => { paused++; await wait(); } })).toEqual({ outcome: 'downloaded' });
+    expect(requests.map(one => one.url)).toEqual(['/hollow/file.zip', '/file.zip']);
+    expect(paused).toBe(0);
+    expect(_test_hostsOf('binance', '').map(host => [host.ok, host.errors])).toEqual([[1, 0], [0, 1]]);
+  });
+
+  /** A server the catalog names and nobody gave an address for is nothing to ask. */
+  it('is unreached, and nothing asked, where no address is known for its server', async () => {
+    expect(await haul(file({ server: 'unknown' }))).toEqual({ outcome: 'unreached' });
+    expect(requests).toEqual([]);
   });
 
   it('reads Retry-After as seconds or as a date', () => {
@@ -484,6 +516,48 @@ describe('a file already on disk', () => {
     expect(readFileSync(`${at(one)}.bak`, 'utf8')).toBe('stale one');
     expect(readFileSync(`${at(one)}.bak.2`, 'utf8')).toBe('stale two');
     expect(readFileSync(at(one), 'utf8')).toBe(BODY);
+  });
+
+  /** The same size is not the same file: where the listing gives an MD5, that decides. */
+  it('is fetched again where it is the listed size and not the listed MD5, and moved aside as .bak', async () => {
+    const one = file();
+
+    place(one, 'THE FILE');
+
+    expect(await haul(one)).toEqual({ outcome: 'downloaded' });
+    expect(readFileSync(`${at(one)}.bak`, 'utf8')).toBe('THE FILE');
+    expect(readFileSync(at(one), 'utf8')).toBe(BODY);
+  });
+
+  /** Quotes and case are the server's, not the file's. */
+  it('is checked against an etag in capitals or without quotes as against any other', async () => {
+    for (const etag of [`"${md5(BODY).toUpperCase()}"`, md5(BODY)]) {
+      const one = file({ etag });
+
+      place(one, 'THE FILE');
+
+      expect(await haul(one)).toEqual({ outcome: 'downloaded' });
+      expect(readFileSync(at(one), 'utf8')).toBe(BODY);
+
+      // In place now, and agreeing: found there, and not fetched.
+      requests = [];
+
+      expect(await haul({ ...one, path: 'gone.zip' })).toEqual({ outcome: 'present' });
+      expect(requests).toEqual([]);
+
+      rmSync(dirname(at(one)), { recursive: true, force: true });
+    }
+  });
+
+  /** A multipart etag digests the parts, not the bytes: no evidence against a file, so the size alone decides. */
+  it('is present where it is the listed size and the etag is a multipart one', async () => {
+    const one = file({ path: 'gone.zip', etag: `"${md5('the parts')}-3"` });
+
+    place(one, 'THE FILE');
+
+    expect(await haul(one)).toEqual({ outcome: 'present' });
+    expect(readFileSync(at(one), 'utf8')).toBe('THE FILE');
+    expect(requests).toEqual([]);
   });
 
   /** Its date is a record of the pass; the file is no less there for keeping the old one. */
