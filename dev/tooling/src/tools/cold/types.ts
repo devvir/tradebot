@@ -44,7 +44,10 @@ export interface ColdConfig {
    */
   settledHours:  number | null;
 
+  /** Where the catalog answers from this host; empty where `catalogUnknown` says why that is not known. */
   catalogUrl:    string;
+  /** Why no catalog URL is known, which is the error asking the catalog gives; `null` where `catalogUrl` is it. */
+  catalogUnknown: string | null;
   catalogToken:  string;
 }
 

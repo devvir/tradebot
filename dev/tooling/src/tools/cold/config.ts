@@ -58,12 +58,21 @@ export const WATCH_MS = 30 * 60_000;
  *   - `DATA_VAULT_DIR`            — the vault (`<DATA_DIR>/vault`)
  *   - `COLD_QUEUE_TARGET_GB` — GB still queued before packing pauses (10)
  *   - `COLD_SETTLED_HOURS`   — hours a settled partition must also have gone unchanged (none)
- *   - `CATALOG_DIR`          — where the catalog's database is (`<DATA_DIR>/catalog`)
+ *   - `CATALOG_DIR`          — where the catalog's database is (the archives module's, else `<DATA_DIR>/catalog`)
  *   - `CATALOG_DB`           — the database itself, where it is not `catalog.db` in there
- *   - `CATALOG_URL`          — where the catalog answers from this host
- *   - `CATALOG_TOKEN`        — sent to it on every request
+ *   - `CATALOG_URL`          — where the catalog answers from this host (`http://localhost:<CATALOG_PORT>`)
+ *   - `CATALOG_TOKEN`        — sent to it on every request (the archives module's)
+ *
+ * **What the environment leaves unset of the catalog's settings is read from
+ * the archives module** (`modules/collect/archives/.env`, or `archivesEnv`),
+ * whether or not `-m` names it. Its `CATALOG_DIR` has `${NAME}` references
+ * expanded against the environment; its `CATALOG_PORT` and `CATALOG_TOKEN` are
+ * taken as written. Where the module does not set `CATALOG_PORT`, the URL is
+ * `http://localhost:9010`. Where it sets it empty (the catalog is then on a
+ * host port docker picks) or to anything but a port, the URL is not known:
+ * `catalogUnknown` says why, and is the error asking the catalog gives.
  */
-export const loadConfig = (origin: Origin): ColdConfig => {
+export const loadConfig = (origin: Origin, archivesEnv: string = ARCHIVES_ENV): ColdConfig => {
   const dataDir = requiredEnv('DATA_DIR');
   const under   = (name: string, fallback: string): string =>
     getEnv(name, '') || path.join(dataDir, fallback);
@@ -74,7 +83,9 @@ export const loadConfig = (origin: Origin): ColdConfig => {
    * at, back up, or reason about.
    */
   const coldRoot = under('SOURCES_COLD_DIR', '@cold');
-  const archives = catalogModule();
+  const archives  = parseEnvFile(archivesEnv);
+  const catalog   = catalogUrl(archives, archivesEnv);
+  const moduleDir = archives['CATALOG_DIR']?.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, name: string) => getEnv(name, '')!);
 
   return {
     sourceRoot:    under(SOURCES[origin].env, SOURCES[origin].under),
@@ -82,13 +93,13 @@ export const loadConfig = (origin: Origin): ColdConfig => {
     coldRoot,
     megaRoot:      `${requiredEnv('MEGA_ROOT').replace(/\/$/, '')}/${REMOTE[origin]}`,
     backupRoot:    `${requiredEnv('MEGA_ROOT').replace(/\/$/, '')}/@cold`,
-    catalogDb:     getEnv('CATALOG_DB', '') || path.join(under('CATALOG_DIR', 'catalog'), 'catalog.db'),
+    catalogDb:     getEnv('CATALOG_DB', '') || path.join(getEnv('CATALOG_DIR', '') || moduleDir || path.join(dataDir, 'catalog'), 'catalog.db'),
     catalogRoot:   `${requiredEnv('MEGA_ROOT').replace(/\/$/, '')}/@cold/catalog`,
     dbPath:        path.join(coldRoot, 'cold.sqlite'),
     capBytes:      CAPS[origin] * GB,
     queueTargetGb: Number(getEnv('COLD_QUEUE_TARGET_GB', '') || QUEUE_TARGET_GB),
     settledHours:  getEnv('COLD_SETTLED_HOURS', '') ? Number(getEnv('COLD_SETTLED_HOURS', '')) : null,
-    catalogUrl:    (getEnv('CATALOG_URL', '') || `http://localhost:${archives['CATALOG_PORT'] || 9010}`).replace(/\/$/, ''),
+    ...catalog,
     catalogToken:  getEnv('CATALOG_TOKEN', '') || archives['CATALOG_TOKEN'] || '',
   };
 };
@@ -148,9 +159,33 @@ const REMOTE: Record<Origin, string> = {
 };
 
 /**
- * The catalog's own settings, where this host runs it: its port and its token
- * are in the module that deploys it, and saying either a second time here
- * would be a second place for it to be wrong.
+ * The catalog's own settings, where this host runs it: its directory, its port
+ * and its token are in the module that deploys it, and saying any of them a
+ * second time here would be a second place for it to be wrong.
  */
-const catalogModule = (): Record<string, string> =>
-  parseEnvFile(path.resolve(__dirname, '../../../../../modules/collect/archives/.env'));
+const ARCHIVES_ENV = path.resolve(__dirname, '../../../../../modules/collect/archives/.env');
+
+/** Where the catalog answers from this host: `CATALOG_URL`, else the archives module's `CATALOG_PORT` on localhost. */
+const catalogUrl = (
+  archives: Record<string, string>,
+  file:     string,
+): Pick<ColdConfig, 'catalogUrl' | 'catalogUnknown'> => {
+  const url = getEnv('CATALOG_URL', '');
+
+  if (url) return { catalogUrl: url.replace(/\/$/, ''), catalogUnknown: null };
+
+  const port = archives['CATALOG_PORT'];
+
+  if (port === undefined) return { catalogUrl: `http://localhost:${DEFAULT_CATALOG_PORT}`, catalogUnknown: null };
+
+  if (/^\d+$/.test(port) && Number(port) >= 1 && Number(port) <= 65535) return { catalogUrl: `http://localhost:${port}`, catalogUnknown: null };
+
+  const why = port === ''
+    ? `CATALOG_PORT is empty in ${file}, so the catalog is on a host port docker picks`
+    : `CATALOG_PORT in ${file} is not a port: ${port}`;
+
+  return { catalogUrl: '', catalogUnknown: `${why} — set CATALOG_PORT there to the catalog's host port, or set CATALOG_URL` };
+};
+
+/** The catalog's host port where the archives module does not set `CATALOG_PORT`. */
+const DEFAULT_CATALOG_PORT = 9010;

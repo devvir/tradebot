@@ -91,8 +91,12 @@ const impatient = new AsyncLocalStorage<boolean>();
  * once as the wait begins and once as it ends. A connection that fails, a
  * `5xx`, and an answer that has not come in full within two minutes are all
  * that. Any other answer is the catalog's own, and is not asked for twice.
+ * Where the configuration does not say where the catalog is, the question
+ * fails at once with `catalogUnknown`.
  */
 const ask = async <T>(config: ColdConfig, path: string, lens: string | null = null): Promise<T> => {
+  if (config.catalogUnknown) throw new Error(config.catalogUnknown);
+
   const patient = impatient.getStore() !== true;
 
   let waited = false;

@@ -18,6 +18,7 @@ export const coldConfigFor = (dir: string, over: Partial<ColdConfig> = {}): Cold
   queueTargetGb: 10,
   settledHours:  null,
   catalogUrl:    'http://catalog.test',
+  catalogUnknown: null,
   catalogToken:  't',
   ...over,
 });
