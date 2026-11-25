@@ -4,63 +4,55 @@ Binance as a source of market data: what it publishes, where, and how it behaves
 
 ## Archives
 
-What Binance's published archive actually contains, established by asking Binance rather than by
-reading its documentation — except where the documentation says something that cannot be measured,
-which is noted as such.
+What Binance's published archive contains, established by asking the archive itself. Where
+Binance's documentation says something that was not measured, that is marked.
 
-### Publication cadence
+### Publication
 
 From [Binance Academy](https://www.binance.com/en/academy/articles/how-to-get-trading-data-via-the-binance-api):
 
 > Daily files are updated and available **the day after** trading happens, while monthly files are
 > compiled and released on the **first Monday of each month**.
 
-Both halves matter for anything deciding when a period is safe to treat as final:
+**Daily files, measured.** From the files' own `Last-Modified`, measured on 2026-09-25 over the
+457,671 files dated 2026-09-15 to 21, a day's file appears this many hours after the start of the
+day it is dated:
 
-- A day is not published until the following day, so "today" is never available and yesterday may
-  not be either, depending on the hour.
-- A month is not published on the 1st but on the **first Monday**, which can be as late as the 7th.
-  Anything expecting a month to appear at the month boundary will find a gap of up to a week and may
-  read it as missing data rather than as data not yet published.
+| p50 | p99 |
+|---|---|
+| 32.0 h | 33.6 h |
 
-Neither is verified here; both are Binance's own claim.
+A file dated D appears between about 08:00 and 09:40 UTC on the day after D.
+
+**Monthly files** are Binance's claim only: the first Monday, which can be as late as the 7th.
 
 ### Two renderings of the same period
 
 Most datasets are published **both** as monthly files and as that month's days, for the same
-history. They are the same trades in two shapes, so taking both stores everything twice.
+history: the same rows in two shapes. The distinction is a path segment — `data/spot/monthly/…`
+against `data/spot/daily/…`.
 
-The distinction is a path segment — `data/spot/monthly/…` against `data/spot/daily/…` — which is
-what the prospector's `tagOf` reads. Where a consumer draws the line between them is its own
-policy; the catalog records both and takes no view.
+Not every dataset has both: `metrics`, `bookDepth` and `liquidationSnapshot` publish days only,
+and `fundingRate` months only.
 
-Not every dataset has both: `metrics` and `bookDepth` publish days only.
+### Files carry checksums
 
-### Files carry checksums, and half of every listing is one
-
-Every `.zip` has a `.zip.CHECKSUM` beside it, SHA-256. Consequences:
-
-- A listing page of 1000 keys is only ~500 files. Anything reasoning about page counts against file
-  counts must halve one of them.
-- The sidecars are never catalogued: `.CHECKSUM` is excluded at every venue, before any venue's
-  `inspectUrl` sees the path.
+Every `.zip` has a `.zip.CHECKSUM` beside it, holding its SHA-256. A listing page of 1,000 keys is
+therefore about 500 files.
 
 ### Binance announces its own corrections
 
 The [binance-public-data](https://github.com/binance/binance-public-data/) repository keeps an
 **Updates** section:
 
-> Archived files may be updated at a later date as a result of recently discovered issues.
+> Archived files may be updated at a later date as a result of recently discovered issues. Below
+> is an exhaustive list of updates performed to the archive, containing the file path for
+> reference, and CHECKSUMs of the replaced file and the replacement file
 
-Corrections are dated and packaged — a 2022-08-08 "fixed inconsistent data", a 2022-04-21
-realignment to a change in spot aggregate trades — with the affected files published under an
-`/updates` folder as, for example, `2022-08-08_kline_updates.zip`, each with its checksums.
-
-**This is the only venue here that tells us which already-published files changed.** It is the cheap
-answer to the one case a marker-based refresh structurally cannot see: an in-place change, where the
-key stays and the bytes move. Worth using when in-place changes start mattering — treated as a hint
-rather than truth, like every venue-published index we have examined, and kept behind a generic
-"does this venue announce changes" seam rather than a branch in shared code.
+Each correction is a dated changelog file in that repository's `updates/` folder. Two are listed:
+2022-08-08 `kline_updates.zip`, "Fixed inconsistent data", and 2022-04-21
+`aggregate_trade_updates.zip`, aligning to a change in spot aggregate trades. Binance publishes
+which already-published files changed; a file corrected in place keeps its key.
 
 ### Layout
 
@@ -68,232 +60,218 @@ rather than truth, like every venue-published index we have examined, and kept b
 data/spot/{daily,monthly}/{aggTrades,klines,trades}/<SYMBOL>/[<INTERVAL>/]<SYMBOL>-…-<date>.zip
 data/futures/{um,cm}/{daily,monthly}/<dataset>/<SYMBOL>/[<INTERVAL>/]…
 data/option/daily/{BVOLIndex,EOHSummary}/<SYMBOL>/…
+data3/liquidationSnapshot/<SYMBOL>/<SYMBOL>-liquidationSnapshot-<date>.zip
 ```
-
-#### `um` and `cm` are one market and two archives
-
-**UM is USDⓈ-margined futures, CM is coin-margined** — binance's own words — and they are two
-products, not two folders for one. UM answers at `fapi`, CM at `dapi`, and **every contract is
-domiciled in exactly one of them**. The archive mirrors that split: `data/futures/um/` and
-`data/futures/cm/`.
-
-The catalog collapses both into the canonical market `perp`, which is right for answering questions:
-both are perpetual swaps, and a consumer asking for `perp` wants both. It is wrong for *creating*
-series, because the two are separate keyspaces — a contract listed by `fapi` can never have a key
-under `cm/`.
-
-So the instruments hook records **which endpoint listed a contract** as its `category`, the adapter's
-`categoryOf` reads the margin segment back out of a pattern, and the preamble refuses the pairs that
-disagree. Nothing is inferred from the symbol, and the reason is measured rather than stylistic:
-
-- **`marginAsset` does not separate them.** `ETHBTC` is a UM contract margined in BTC, a coin — so
-  "margined in a coin ⇒ CM" misclassifies it.
-- **Nor does the ticker.** CM symbols are USD-quoted (`BTCUSD_PERP`, `LTCUSD`), but 43 UM symbols end
-  in `USD` too, because BUSD does — `BTCBUSD`, `FTMBUSD`, `MATICBUSD`.
-- **The endpoint is exact and free.** It is binance's own assignment, known at the moment the
-  contract is read.
-
-Binance is [integrating CM into UM's architecture](https://developers.binance.com/en/docs/products/derivatives-trading-coin-futures/Important-CM-UM-Integration-Notice)
-— progressive from 2026-06-24, fully effective 2026-06-30 — sharing rate limits, merging market-data
-streams, and letting some endpoints accept both symbol types. The `exchangeInfo` endpoints stay
-separate and each contract keeps one domicile, but it is another reason not to pin this to a naming
-convention: conventions under active unification are exactly what breaks quietly.
-
-Left unfiltered this cost real work. The one perp listed on 2026-08-31 got **260 series — 130 of them
-under `cm/`**, describing keys that market has never held; each is a `404` a day for ever, since a
-series that has never published has no end to reach and nothing retires it.
-
-CM is also small and closed: 30 contracts over 20 base assets, all `underlyingType: COIN`. UM is 883
-and growing, spanning `COIN, EQUITY, CN_EQUITY, HK_EQUITY, KR_EQUITY, COMMODITY, INDEX, PREMARKET`
-with a `TRADIFI_PERPETUAL` contract type — equity and commodity perps live there.
-
-**Surveyed from the bucket root, and nothing is stripped.** Starting at `data/` would make
-`data3/liquidationSnapshot/` permanently invisible, and descent recovers nothing above where it is
-told to begin. Paths therefore keep their leading segment and stay self-describing, reconstructing
-as `base` + `/` + `path` — which a stripped multi-root scheme could not do, since it would not know
-which root to put back.
-
-The archive is addressed at its bucket, `s3-ap-northeast-1.amazonaws.com/data.binance.vision`, for
-listing, probing and downloading alike. `data.binance.vision` is CloudFront in front of the same
-bucket — the same files, byte for byte (MD5 = ETag on both) — and nothing here goes through it.
-
-What the adapter refuses, since surveying the root also reaches things that are not archive:
-
-```
-data2/…                 staging
-data3/<file>            a stray key directly under data3; only its subdirectories hold data
-```
-
-The browsing UI's own assets need no rule — `index.html` and friends carry no date, so they are
-declined for the same reason checksums are.
 
 Dates trail the filename — `…-2025-03-31.zip` for a day, `…-2025-03.zip` for a month — so keys sort
-by symbol first and date last, and a month's files are scattered across a walk rather than
+by symbol first and date last, and a month's files are scattered across a listing rather than
 contiguous.
+
+#### `um` and `cm` are two services and two archives
+
+**UM is USDⓈ-margined futures, CM is coin-margined** — Binance's own words — and they are two
+services: UM answers at `fapi`, CM at `dapi`, each with its own `exchangeInfo`, and **every
+contract is listed by exactly one of them**. The archive mirrors the split: a contract listed by
+`fapi` has keys under `data/futures/um/` and none under `data/futures/cm/`, and no symbol has
+directories in both.
+
+Neither the margin asset nor the ticker tells them apart:
+
+- **`marginAsset` does not.** `ETHBTC` is a UM contract margined in BTC, a coin.
+- **Nor does the ticker.** CM symbols are USD-quoted (`BTCUSD_PERP`, `LTCUSD_210326`), but 41 UM symbol
+  directories end in `USD` too, because they end in `BUSD` — `BTCBUSD`, `FTMBUSD`, `MATICBUSD`.
+
+The service that lists a contract is the only exact source.
+
+Binance has [integrated CM into UM's architecture](https://developers.binance.com/en/docs/products/derivatives-trading-coin-futures/Important-CM-UM-Integration-Notice):
+`fapi` and `dapi` count into one request-weight budget (see [Its limits](#its-limits)), while
+`exchangeInfo` stays separate per service and each contract is listed by one.
+
+As listed in 2026-08, CM held 30 contracts over 20 base assets, all `underlyingType: COIN`; UM held
+883, spanning `COIN, EQUITY, CN_EQUITY, HK_EQUITY, KR_EQUITY, COMMODITY, INDEX, PREMARKET`, with a
+`TRADIFI_PERPETUAL` contract type — equity and commodity perpetuals are UM contracts.
+
+#### The bucket and its CDN
+
+The archive is the S3 bucket `s3-ap-northeast-1.amazonaws.com/data.binance.vision`.
+`data.binance.vision` is CloudFront in front of it: the same files, byte for byte (MD5 = ETag on
+both). Only the bucket answers the S3 listing API; Binance's own browsing page lists through the
+bucket address and links each file at `data.binance.vision`.
 
 #### Prefixes outside `data/` — one of them holds data that exists nowhere else
 
-The bucket root holds more than `data/`: `data2/`, `data3/`, a `/`-prefixed variant, and the web
-assets serving the browsing UI (`index.html`, `bootstrap.min.css`, …).
+The bucket root holds `data/`, `data2/`, `data3/`, a `/`-prefixed tree, and the assets of the
+browsing page (`index.html`, `bootstrap.min.css`, `list.js`, …).
 
-The distinction that matters is **offered against merely reachable**. `data/` is what binance's own
-site presents, and carries whatever assurance an announced service implies. Everything beside it is
-publicly reachable and promised to nobody — it may be removed, rewritten or left inconsistent
-without notice. That is not a reason to ignore it; it is a reason to take it *sooner*, since nothing
-says it will be there next month.
+`data/` is what Binance's browsing page presents. Everything beside it is publicly reachable and
+promised to nobody: it may be removed, rewritten or left inconsistent without notice. Listing
+descends only from where it starts, so nothing outside `data/` shows in a listing of `data/`:
+`data3/` sits beside `data/` at the bucket root.
 
-**`data3/liquidationSnapshot/` is real, and unique.** 311 symbols, hundreds of daily files each with
-`.CHECKSUM` sidecars, back to mid-2023 — order 60k files. The symbols are USDT-margined, and the
-measurement that settles it:
+**`data3/liquidationSnapshot/` holds the only USDⓈ-margined liquidation snapshots.** 311 symbols —
+USDT- and BUSD-margined perpetuals and dated contracts such as `BTCUSDT_240329` — one daily file
+each from 2023-06-25 to 2024-03-31, with `.CHECKSUM` sidecars:
 
 | | |
 |---|---|
-| `data/futures/um/daily/liquidationSnapshot/` | **0 symbol directories — does not exist** |
-| `data/futures/cm/daily/liquidationSnapshot/` | exists, coin-margined only |
-| `data3/liquidationSnapshot/1000FLOKIUSDT/` | exists; the same symbol is absent from `data/` |
+| `data/futures/um/daily/liquidationSnapshot/` | does not exist |
+| `data/futures/cm/daily/liquidationSnapshot/` | exists, coin-margined contracts only |
+| `data3/liquidationSnapshot/1000FLOKIUSDT/` | exists; the symbol has no liquidation files under `data/` |
 
-**Every liquidation row is written twice.** The files of all three families — `data3/`, and
-coin-margined perpetuals and dated contracts under `data/futures/cm/` — share ten columns, `time, side,
-order_type, time_in_force, original_quantity, price, average_price, order_status, last_fill_quantity,
-accumulated_fill_quantity`, and hold each row twice in a row: `BTCUSDT` 2023-06-25 has 1,720 rows of
-which 860 repeat the one before, `BTCUSD_PERP` 2024-10-14 100 and 50.
+Nothing else is under `data3/`.
 
-So the USDT-margined liquidation snapshots live *only* in `data3/`. This also corrects an earlier
-note that "liquidationSnapshot exists only under `cm`" — true of `data/`, false of the bucket.
-
-### Shapes that stopped, and shapes that never started
-
-**`bookTicker` and `liquidationSnapshot` ended, cleanly and per service.** Every USDⓈ-margined
-symbol's last file is 2024-03-30 for quotes and 2024-03-31 for liquidations; every coin-margined
-one's is 2024-10-02 and 2024-10-14. A cliff shared by every symbol of a service is a product
-decision, not an outage, and nothing has been written to either tree since.
-
-**`data/option/daily/EOHSummary/` ran five months** — an end-of-hour summary of the options market,
-one file a day for each of BTCUSDT, ETHUSDT, BNBUSDT, XRPUSDT and DOGEUSDT, from 2023-05-18 to
-2023-10-23. Five series in total; no sixth underlying ever appeared.
-
-None of these is derivable from anything else binance publishes, so the files are catalogued and
-kept. What ends is the asking: their eight shapes are **seeded retired** at the dates above, because
-an instrument binance still lists otherwise keeps its dead shapes open for ever.
-
-**The `1w`, `3d` and `1mo` intervals are an abandoned experiment, and are refused outright.** They
-exist on every interval dataset — `klines`, `markPriceKlines`, `indexPriceKlines`,
-`premiumIndexKlines` — and publish nowhere reliably:
-
-- the futures daily trees stop on 2023-06-12 and then emit a single 334-byte file on 2026-06-29,
-  uploaded in July 2026;
-- spot carries them only in the monthly tree, months behind, ending on a different date for each
-  symbol and each interval — `BTCUSDT/3d` at 2026-07 while `BTCUSD/3d` stops at 2026-04;
-- spot's *daily* tree never had them at all.
-
-Every one of them is an aggregate of the `1m` variant of the same dataset, which binance publishes
-complete and this catalog holds — spot even has `1s`. `3d` is not a calendar period either: it is a
-stride from an arbitrary epoch, so it cannot be re-cut to anything else. `accepts` drops the
-interval as a path segment, which covers both trees and all four datasets in one rule.
-
-Left live they were the venue's largest single waste: 3,761 series whose tips sat frozen fifteen
-days behind the frontier, re-asking every open day, for **some 55% of the whole nightly update**.
-Refused, they are 51 patterns and 22,155 series fewer.
-
-**`data2/` is a staging area** and can be ignored: uncompressed `.csv` files sitting beside their
-own `.zip` for the same period, a `.DS_Store`, everything dated 2020-10 to 2020-12.
+**`data2/` is a staging area** for spot `aggTrades`, `klines` and `trades`: uncompressed `.csv`
+files, many of them beside a `.zip` of the same period, `.CHECKSUM` sidecars and `.DS_Store`
+files, all under `data2/data/`.
 
 ```
 data2/data/spot/klines/1INCHUSDT/12h/1INCHUSDT-12h-2020-12.csv
 data2/data/spot/klines/1INCHUSDT/12h/1INCHUSDT-12h-2020-12.zip
-data2/data/spot/trades/.DS_Store
+data2/data/spot/.DS_Store
 ```
 
-The lesson generalises past binance: **descent guarantees nothing above where it is told to
-start**, so a hardcoded root reintroduces one level up precisely the omission descent exists to
-prevent. Binance now surveys from the bucket root and filters, which is why `data3/` is visible at
-all. HTX was checked the same way and was hiding a second archive six years deep, so it surveys from
-its root too. KuCoin was checked and is clean — its bucket root holds `data/` and nothing else.
-
-#### The `/`-prefixed tree — a frozen snapshot, refused
+#### The `/`-prefixed tree is a frozen snapshot of spot
 
 **There are no directories in S3.** Keys are flat strings and `/` is a convention that
-`delimiter=/` renders as folders, so a key whose first character is a slash is perfectly legal. All
-of them group under a `CommonPrefix` of exactly `/`, which is why the bucket root appears to serve
-one alongside `data/`, `data2/` and `data3/`. It is not a folder; it is the shadow of keys that begin
-with a slash — most likely a path-join bug in whatever uploaded them.
+`delimiter=/` renders as folders, so a key whose first character is a slash is legal. All of them
+group under a `CommonPrefix` of exactly `/`, which is why the bucket root appears to hold one
+beside `data/`, `data2/` and `data3/`. The same happens inside `data/`: a stray key
+`data/spot/daily//.zip.CHECKSUM` renders as a folder `data/spot/daily//`.
 
-What is under it, measured:
+What is under `/`:
 
 ```
 /data/spot/{aggTrades,klines}/<SYMBOL>/[<INTERVAL>/]…-<yyyy-mm>.zip
-137,212 files, 86.7 GB      2017-07 → 2021-01, then nothing
+137,212 files, 86.7 GB, dated 2017-07 → 2021-01, every key written in 2021-02
 ```
 
-Both trees fetch with `200`. The reconstructed URL keeps the double slash —
-`data.binance.vision//data/spot/…` — and resolves, because the key genuinely starts with one.
+They fetch with `200`. The URL keeps the double slash — `…/data.binance.vision//data/spot/…`
+— because the key starts with one.
 
-##### Every filename is duplicated, and so is every value inside
+**Every file has a same-named counterpart under `data/spot/monthly/`, and none has the same
+bytes.** Mapping `/data/spot/X` to `data/spot/monthly/X`, a sample of 150 files found a counterpart
+for all of them and the same `etag` for none.
 
-Compared across the whole tree, mapping `/data/spot/X` to `data/spot/monthly/X`:
+**Opened, they hold the same data or less of it.** In every pair opened, each row under `/` is a
+row of its counterpart, value for value:
 
-| | |
-|---|---|
-| files under `/data/spot/` | 137,212 |
-| with a same-named counterpart under `data/spot/monthly/` | **137,212 — all of them** |
-| with the same `etag` | **0** |
+- **Identical rows in a different zip.** `ELFBTC-aggTrades-2020-12`, `LINKBTC-aggTrades-2018-06`
+  and `ETHBTC-1h-2019-03` hold byte-identical CSV; only the zip around it differs, its internal
+  timestamp earlier under `/`.
+- **Decimal padding.** `BNBBTC-aggTrades-2019-03` holds the same 2,887,541 rows, padded with
+  trailing zeros under `/` and trimmed under `data/`:
 
-Different bytes throughout, which for a long time was where the question stopped: a different
-`etag` at the same `size` is consistent with recompression, a different size is not, and nobody had
-opened a file from either tree.
+  ```
+  /data/spot/…   32350757,0.00269590,2.00000000,37276017,37276017,1551398401922,False,True
+  data/spot/…    32350757,0.0026959,2.0,37276017,37276017,1551398401922,False,True
+  ```
 
-**Opened, they turn out to hold the same data.** The bytes differ for two reasons, neither of them
-new information.
+- **Missing rows.** `BTCUSDT-1d-2020-05` holds 20 days, from 2020-05-12, against 31.
+  `1INCHBTC-1d-2021-01` holds 12 against 31, ending 2021-01-12, and its last row is a *partial*
+  candle: the same open, a lower high, under half the volume, 4,383 trades against 11,192.
 
-**Decimal padding.** Every value matches; only the rendering moved. Binance re-issued the archive in
-2021-05 — visible in the zips' own internal timestamps, 2021-01-16/17 against 2021-05-05 — and
-trimmed the trailing zeros:
+So the tree is a **snapshot of the spot archive taken around 2021-01-12**. It carries no file and
+no value that `data/spot/monthly/` lacks; where the two disagree it holds strictly less.
+
+### Headers
+
+- **Spot files have no header**, in every dataset and over the whole history: trades, aggregated
+  trades and klines from 2017-08 to today all start with a data row.
+- **Futures trades, aggregated trades, klines and the mark, index and premium klines grew a header
+  partway through.** Sampled one file a month on both services, the files are headerless until
+  2022, with scattered earlier ones carrying a header (on UM from 2020); every file carries one
+  from 2022-06 in the UM monthly trees, from 2022-07 in the CM monthly trees and from 2022-08 in
+  the daily trees. No date separates the two eras exactly; only a file's first line says which it is.
+- **Every other futures dataset has always had a header**: `bookTicker`, `bookDepth`, `metrics`,
+  `fundingRate` and `liquidationSnapshot` carry one from their first file on.
+
+### Spot timestamps change unit in 2025-01
+
+Spot `trades`, `aggTrades` and `klines` carry integer epoch **milliseconds** through the files of
+2024-12 and **microseconds** from the files of 2025-01, daily and monthly alike, with no change of
+filename or column order, and still no header:
 
 ```
-/data/spot/…   0,0.14000000,74.30000000,0,0,1553659205228,False,True
-data/spot/…    0,0.14,74.3,0,0,1553659205228,False,True
+BTCUSDT-trades-2024-12-31   4356587539,92792.05000000,0.00129000,119.70174450,1735603200213,False,True
+BTCUSDT-trades-2025-01-01   4359935386,93576.00000000,0.00136000,127.26336000,1735689600010866,True,True
+BTCUSDT-1m-2025-01          1735689600000000,93576.00000000,…,1735689659999999,…
 ```
 
-Three `aggTrades` pairs compared in full: same row counts, and **byte-identical once the padding is
-normalised**.
+A kline's close time is its open time plus the interval minus one tick, so it ends `…999` before
+the change and `…999999` after. Futures files did not change: they carry milliseconds before and after.
 
-**Truncation, where the freeze caught a month in flight.** `1INCHBTC-1d-2021-01` holds 12 rows here
-against the official 31, ending 2021-01-12 rather than 2021-01-31 — and its last row is a *partial*
-candle, same open, lower high, a third of the volume, 4,383 trades against 11,192.
+### Liquidation snapshots write every row twice
 
-So the tree is a **snapshot of the spot archive frozen around 2021-01-12**. It carries no file the
-official tree lacks and no value it lacks either; where the two disagree it holds strictly less.
+The liquidation files of all three families — `data3/`, and coin-margined perpetuals and dated
+contracts under `data/futures/cm/` — share one header of ten columns, `time, side, order_type,
+time_in_force, original_quantity, price, average_price, order_status, last_fill_quantity,
+accumulated_fill_quantity`, and hold each row twice in a row: `BTCUSDT` 2023-06-25 has 1,720 rows,
+860 of them a repeat of the row before; `BTCUSD_PERP` 2024-10-14 has 100 and 50; `BTCUSD_241227`
+2024-10-14 has 10 and 5.
 
-**It is refused, in `accepts`.** A key beginning with `/` is not surveyed, so nothing re-adds it, and
-the 137,212 rows an earlier walk recorded were deleted along with their 16 patterns and 11,239
-series. This is the rare exclusion of something that *is* historical data — earned not by the
-`etag` comparison, which says only that the bytes differ, but by reading both renderings and finding
-one to be the other with less of it.
+### Datasets that ended
+
+Each of these ended on the same date for every symbol checked; nothing has been written to these
+trees since. Checked 2026-11-25:
+
+| service | dataset | where | last daily file | last monthly file |
+|---|---|---|---|---|
+| USDⓈ-margined | `bookTicker` | `data/futures/um/` | 2024-03-30 | 2024-04 |
+| USDⓈ-margined | `liquidationSnapshot` | `data3/` | 2024-03-31 | none published |
+| coin-margined | `bookTicker` | `data/futures/cm/` | 2024-10-14 | 2024-10 |
+| coin-margined | `liquidationSnapshot` | `data/futures/cm/` | 2024-10-14 | none published |
+| options | `EOHSummary` | `data/option/daily/` | 2023-10-23 | none published |
+
+The USDⓈ-margined monthly `bookTicker` tree holds a 2024-04 file although its daily tree ends on
+2024-03-30.
+
+**`EOHSummary`**, an end-of-hour summary of the options market, has one daily file for each of
+BTCUSDT, ETHUSDT, BNBUSDT, XRPUSDT and DOGEUSDT, the first from 2023-05-18. No other underlying
+appears.
+
+None of these datasets is derivable from anything else Binance publishes.
+
+### The `1w`, `3d` and `1mo` intervals publish irregularly
+
+They exist on every interval dataset — `klines`, `markPriceKlines`, `indexPriceKlines`,
+`premiumIndexKlines` — and no tree carries them on a schedule. Checked 2026-11-25:
+
+- **Futures daily trees** stop in 2023, at different dates per symbol, dataset and interval, with
+  scattered later files: UM `BTCUSDT` `klines/1w` ends 2023-06-12 and `klines/3d` has files for
+  2023-08-16 and 2023-12-08; CM `BTCUSD_PERP` ends in 2023-09; UM `BTCUSDT` `markPriceKlines/1w`
+  has a lone file for 2026-06-29, written 2026-07-23.
+- **Futures monthly trees** end around 2024-01 (UM `BTCUSDT`), written in batches — 2023-07 to
+  2023-12 all on 2024-01-08 — with gaps and strays: CM `BTCUSD_PERP` `3d` holds 2023-06, 2023-09,
+  2023-10 and then 2024-10.
+- **Spot monthly trees** carry them late and in batches: `BTCUSDT` and `ETHBTC` hold 2026-07 to
+  2026-10, all four months written on 2026-11-10.
+- **Spot daily trees** never had them.
+
+Each is an aggregate of the `1m` file of the same dataset, which every tree publishes daily and
+complete — spot also has `1s`. `3d` is not a calendar period: it is a stride from a fixed epoch, so
+it cannot be re-cut from or into calendar months.
 
 ### Discovery
 
 A standard S3 listing: `prefix`, `marker` and `delimiter` all honoured. `max-keys` caps at **1000** —
 larger values are echoed back in `<MaxKeys>` and never applied, so a response looks like it worked.
-`NextMarker` is returned only when a `delimiter` is sent; without one, pagination continues from the
-last key of the page.
+`NextMarker` is returned only when a `delimiter` is sent; without one, the next page starts from
+the last key of the page.
 
-Ten `delimiter=/` requests map the whole archive, and doing it that way rather than listing datasets
-in code is what surfaced `option/`, `BVOLIndex`, `EOHSummary` and `aggTrades` — none of which were
-being collected.
+A handful of `delimiter=/` requests map the whole archive, down to `option/`, `BVOLIndex`,
+`EOHSummary` and `aggTrades`.
 
 ### Rate limits
 
-**None documented, and none signalled in responses.** No `x-ratelimit-*`, no `retry-after`, and
-notably no `x-mbx-used-weight` — that header and the documented 429 → 418 ban ladder belong to
-`api.binance.com`, which is a different service with its own weight accounting. The archive is an
-anonymous public S3 bucket fronted by CloudFront.
+**None documented, and none signalled in responses.** No `x-ratelimit-*`, no `retry-after`, and no
+`x-mbx-used-weight` — that header and the documented 429 → 418 ban ladder belong to the REST API
+(see [REST](#rest)), which has its own weight accounting.
 
-The [binance-public-data](https://github.com/binance/binance-public-data/) repo documents no limits,
-throttling policy or concurrency guidance either. The one relevant community report
+The [binance-public-data](https://github.com/binance/binance-public-data/) repository documents no
+limits, throttling policy or concurrency guidance either. The one relevant community report
 ([Download limits for data.binance.vision](https://dev.binance.vision/t/download-limits-for-https-data-binance-vision-data-spot/20275))
-has a user hitting `SSLEOFError` on bulk downloads which support attributed to rate limiting, but no
-Binance staff ever stated a threshold — and that was the CloudFront download host, not the S3
-listing endpoint.
+has a user hitting `SSLEOFError` on bulk downloads, which support attributed to rate limiting; no
+Binance staff ever stated a threshold, and that was the CloudFront host, not the bucket.
 
 **Measured 2026-09-29, from one machine, ramping until something gave:**
 
@@ -302,34 +280,16 @@ listing endpoint.
 | LIST (`max-keys=1`) | 1,562/s sustained | none in ~1.4 M requests | 272 ms, flat |
 | HEAD on a file | 1,788/s | none in ~290 k requests | 267 ms, flat |
 
-From a remote machine the same requests reached about 1,200 a second, with no throttling answer
-either. Every run ended at the client's own ceiling — 500 requests in flight at ~270 ms each — not at the
-bucket's. S3's published ceiling is 5,500 GET/HEAD a second per partitioned prefix.
-
-**The connect timeouts that once looked like a limit were the client.** The bucket is ~260 ms away,
-and Node's default connection behaviour gives each resolved address 250 ms before trying the next: a
-new connection abandoned seven of the bucket's eight addresses just short of their reply and took
-~2 s. With that off, a new connection takes one round trip.
-
-A limit that exists and was never reached is still possible. Transport errors and 5xx/429 are
-retried with jittered exponential backoff, so throttling would degrade into slowness rather than
-lost data.
+From a second machine the same requests reached about 1,200 a second, with no throttling answer
+either. Every run ended at the client's own ceiling — 500 requests in flight at ~270 ms each — not
+at the bucket's. S3's published ceiling is 5,500 GET/HEAD a second per partitioned prefix. A limit
+that exists and was never reached is still possible.
 
 ### Scale
 
-Order 10⁸ keys across the whole bucket, of which about half are checksum sidecars. At 1000 keys a
-listing page, that is order 10⁵ pages to walk the bucket whole — which is why it is catalogued by
-prefix walks rather than by asking each of ~3,700 symbols what it holds for each month.
-
-### Its raw cannot be reclaimed yet
-
-Binance was downloaded **symbol-first rather than month-first**, so it holds symbols complete from
-their start through 2026-07 and **no closed months at all**. Month-completeness is the unit cold
-storage works in, so none of it is packable and none of it is evictable.
-
-The files are the right files in the right paths — nothing about them is wrong and nothing about
-them should be deleted. It becomes evictable as the month-first flow closes those months one at a
-time.
+Order 10⁸ keys across the whole bucket, about half of them checksum sidecars, so order 10⁵ listing
+pages to walk it whole. In 2026-11 the spot trees held about 3,770 symbols, and the whole archive
+about 4,600.
 
 ## REST
 
@@ -481,7 +441,7 @@ more**: an older window, or `fromId=1`, is 400 `-4166` "Search window is restric
 days only". Costs 20. `GET /fapi/v1/trades` is the newest 1,000. `GET /fapi/v1/historicalTrades`
 wants a key (401 `-2014`).
 
-**Liquidations — `GET /fapi/v1/allForceOrders`**: gone; 404 with an HTML page.
+**Liquidations — `GET /fapi/v1/allForceOrders`**: 404 with an HTML page.
 
 **The listing — `GET /fapi/v1/exchangeInfo`**: `symbols[]` with `contractType`, `onboardDate`,
 `deliveryDate`, `status`. Costs 1.
@@ -563,18 +523,34 @@ under two names.
 **Options are listed by contract and filed by underlying**: the 1,862 contracts listed collapse to
 the handful of underlyings the archive holds.
 
+
 ## WebSocket
 
-Verified live on 2026-07-26, while surveying what a WebSocket collector would add to the archive.
+Verified live on 2026-07-26.
 
-**The futures endpoint is `wss://fstream.binance.com/public/ws`, and a wrong path fails silently.**
-`/public/ws` with a `SUBSCRIBE` frame streams. `/ws` with the same frame connects, acknowledges the
-subscription with `{"result":null,"id":1}`, and never sends a frame; `/stream?streams=…`,
-`/ws/btcusdt@aggTrade` and `/public/stream?streams=…` connect and send nothing either.
+**Spot streams at `wss://stream.binance.com:9443/ws`; futures at
+`wss://fstream.binance.com/public/ws`, and a wrong futures path fails silently.** `/public/ws` with
+a `SUBSCRIBE` frame streams. `/ws` with the same frame connects, acknowledges the subscription with
+`{"result":null,"id":1}`, and never sends a frame; `/stream?streams=…`, `/ws/btcusdt@aggTrade` and
+`/public/stream?streams=…` connect and send nothing either.
 
-**Binance acknowledges subscriptions it will never honour.** `btcusdt@nonsense` is answered exactly
-as a real stream is, so neither a successful connection nor an acknowledgement is evidence that
-data will flow — only counting frames is. Every other venue surveyed rejects an unknown channel.
+**Subscribing is one frame per request, acknowledged by request id alone:**
+
+```
+→ {"method":"SUBSCRIBE","params":["btcusdt@aggTrade"],"id":"btcusdt-aggTrade"}
+← {"result":null,"id":"btcusdt-aggTrade"}
+← {"e":"aggTrade","E":…,"s":"BTCUSDT",…}
+```
+
+- **The ack does not name the channel.** It carries `result` and the request's `id`, nothing else.
+- **The id must be an integer or a string matching `^[a-zA-Z0-9-_]{1,36}$`.** A raw stream name as
+  the id (`btcusdt@aggTrade`, with its `@`) closes the socket with code 1008.
+- **A subscription is not validated.** `btcusdt@nonsense` is answered exactly as a real stream is,
+  so neither a successful connection nor an acknowledgement is evidence that data will flow — only
+  frames arriving are.
+
+**Not every data frame names its event.** `bookTicker` and partial-depth frames carry no `e`, and
+`…@arr` streams send arrays.
 
 **Only summary streams cover every symbol.** `!miniTicker@arr` streams arrays across the whole
 market; `!ticker@arr` and `!bookTicker` are acknowledged and send nothing. There is no all-symbol
@@ -603,5 +579,5 @@ with the documented snapshot-plus-diff procedure:
 4. The first event applied must satisfy `U <= lastUpdateId AND u >= lastUpdateId`.
 5. Every later event's `pu` must equal the previous event's `u`; if not, start again from a snapshot.
 
-So an archive of `@depth` frames alone cannot be replayed: it needs periodic REST snapshots
-interleaved with the diffs, and `U`/`u`/`pu` kept so a reader can check continuity.
+So `@depth` frames alone do not determine a book: it takes a REST snapshot to start from, and
+`U`/`u`/`pu` to check continuity.
