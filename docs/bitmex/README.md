@@ -44,8 +44,9 @@ Four sources, each for what the one before it could not give:
 - **A name with a second part, `<yyyymmdd>.<suffix>.csv.gz`, is a source and not the day's file**: one
   collector's copy of that day, kept beside the file that was made from it. The suffixes are listed
   below.
-- **A dotted table is a slice of the table before the dot**: `orderBookL2.secondary` is the order
-  book of the Secondary pool, with `orderBookL2` holding the Primary one.
+- **A dotted table holds part of the table before the dot**, in a directory of its own:
+  `orderBookL2.secondary` is the order book of the Secondary pool, with `orderBookL2` holding the
+  Primary one.
 
 The store that wrote this layout is the vault service: [VAULT.md](../services/VAULT.md).
 
@@ -56,7 +57,7 @@ The store that wrote this layout is the vault service: [VAULT.md](../services/VA
 | `.s3` | a BitMEX S3 dump of `trade` or `quote`, rows in BitMEX's order (by symbol, then time); the day's file is the same rows ordered by time |
 | `.local` | the websocket tables as captured by the collector on the main workstation |
 | `.antel` | the websocket tables as captured by a collector on the dedicated machine `antel`, from 2026-04-10 |
-| `.mtav` | the websocket tables as captured by a collector on the dedicated machine `mtav` |
+| `.mtav` | the websocket tables from a further capture, named `mtav` |
 | `.tardis` | a Tardis free sample: the first day of a month of the websocket tables |
 | `.prepared` | an earlier merge of a day's websocket sources, standing in for them where they were lost (`instrument` on 2026-05-06) |
 | `.mongo` | rows read back from a MongoDB copy of the data (`orderBookL2` on 2026-04-09 and 2026-04-10) |

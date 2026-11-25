@@ -22,7 +22,7 @@ wrote them.
 | `orderBookL2` | `_date_`, `_action_`, `symbol`, `id`, `side`, `size`, `price`, `transactTime`, `timestamp`, `pool` |
 | `publicNotifications` | `_date_`, `_action_`, `title`, `body`, `ttl`, `closable`, `persist`, `sound` |
 
-- **A dotted name is a slice of the table before the dot**, with the same columns:
+- **A dotted name holds part of the table before the dot**, with the same columns:
   `orderBookL2.secondary` is `orderBookL2` for the Secondary pool.
 - **`_date_` and `_action_` open every table that came over the websocket.** `_date_` is when the
   message was received and is written on the first row of a message only; the rows after it, until

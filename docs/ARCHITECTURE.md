@@ -23,8 +23,8 @@ and can be read again when the understanding of it improves. Normalising on arri
 misreading permanent and undetectable.
 
 **Normalisation is a separate, repeatable pass.** One service reads the raw files and writes one
-schema per canonical table across every venue, so a consumer never learns which venue or source a
-row came from. A mistake there costs a rebuild of the vault, not a download.
+schema per canonical table across every venue, so a consumer reads a table the same way whatever
+venue, source or format its rows came from. A mistake there costs a rebuild of the vault, not a download.
 
 ## Source priority: bulk, then REST, then WebSocket
 

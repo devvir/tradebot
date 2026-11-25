@@ -15,8 +15,8 @@ raw file stays re-verifiable against its source and can be read again when the u
 improves.
 
 **Normalise.** One service, stocker, reads the archives and writes a single partitioned Parquet vault,
-with one schema per table across every venue, so a consumer never learns where a dataset came from or
-what shape it arrived in.
+with one schema per table across every venue, so a consumer reads a dataset the same way whatever
+venue, source or format it came from.
 
 → [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the stages, the boundary each owns, and which
 module runs it.
