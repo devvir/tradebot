@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import express from 'express';
+import { XMLValidator } from 'fast-xml-parser';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { catchUp, lensNamed } from '@tradebot/lenses';
 import { markDownloaded, openScratch, putFiles, putVenue, recordSeries, storeLens } from './fixture';
@@ -139,6 +140,20 @@ const call = async (path: string, init: RequestInit = {}) => {
   }
 };
 
+/** An answer as S3 clients read it: XML, as sent. */
+const xmlOf = async (path: string) => {
+  const server = app.listen(0);
+  const port   = (server.address() as { port: number }).port;
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}${path}`);
+
+    return { status: res.status, text: await res.text() };
+  } finally {
+    server.close();
+  }
+};
+
 /** Every key of a walk, page by page, as a client following `NextMarker` would collect them. */
 const walk = async (query = '', headers: Record<string, string> = {}): Promise<string[]> => {
   const keys: string[] = [];
@@ -218,12 +233,92 @@ describe('the bucket', () => {
     }
   });
 
+  it('lists only what is still owed for any spelling of yes, and everything for no', async () => {
+    markDownloaded(db, [{ venueId: binance, path: 'k/1m/20200101/BTCUSDT.zip' }], 'T2');
+
+    const owed = EXPECTED.filter(one => ! one.endsWith('klines,1m|BTCUSDT|20200101.zip'));
+
+    expect(await walk('&pending=1')).toEqual(owed);
+    expect(await walk('&pending')).toEqual(owed);
+    expect(await walk('&pending=0')).toEqual(EXPECTED);
+    expect(await walk('&pending=false')).toEqual(EXPECTED);
+    expect((await call('/listings?pending=yes')).body).toMatchObject({ Code: 'InvalidArgument' });
+  });
+
   it('answers in V2 shape when asked, resuming the same way', async () => {
     const first  = await call('/listings?list-type=2&max-keys=4');
     const second = await call(`/listings?list-type=2&max-keys=4&continuation-token=${encodeURIComponent(String(first.body['NextContinuationToken']))}`);
 
     expect(first.body['KeyCount']).toBe(4);
     expect([...first.body.Contents, ...second.body.Contents].map(one => one.Key)).toEqual(EXPECTED.slice(0, 8));
+  });
+});
+
+describe('a request it cannot answer', () => {
+  /** Given twice, a parameter is neither of its values: never read as absent, so never the whole bucket in its place. */
+  it.each(['prefix', 'marker', 'continuation-token', 'start-after', 'max-keys', 'list-type', 'pending', 'partition'])(
+    'is a 400 where %s is given more than once', async (name) => {
+      const { status, body } = await call(`/listings?${name}=a&${name}=a`);
+
+      expect(status).toBe(400);
+      expect(body).toMatchObject({ Code: 'InvalidArgument', Message: `${name} may be given once` });
+    });
+
+  it('is a 422 where the lens parameter is given more than once, never the whole bucket', async () => {
+    await storeLens(db, 'gate-only', '', '', { format: 1, venues: { gate: [{ effect: 'include' }] } } as LensDefinition);
+
+    const { status, body } = await call('/listings?lens=gate-only&lens=gate-only');
+
+    expect(status).toBe(422);
+    expect(body).toMatchObject({ Code: 'NoSuchLens' });
+    expect(body).not.toHaveProperty('Contents');
+  });
+
+  it('is a 400 for a list-type that is neither 1 nor 2', async () => {
+    expect((await call('/listings?list-type=3')).body).toMatchObject({ Code: 'InvalidArgument' });
+    expect((await call('/listings?list-type=1')).body['Marker']).toBe('');
+  });
+
+  /** Keys are listed flat: a client that groups by a delimiter is told, not handed a page it would misread. */
+  it('is a 501 for a delimiter', async () => {
+    const { status, body } = await call('/listings?delimiter=/');
+
+    expect(status).toBe(501);
+    expect(body).toMatchObject({ Code: 'NotImplemented' });
+  });
+
+  /** S3 clients send these unasked; keys are sent as they are, and no owner is named. */
+  it('ignores encoding-type and fetch-owner', async () => {
+    const { status, text } = await xmlOf('/listings?list-type=2&encoding-type=url&fetch-owner=true&max-keys=1');
+
+    expect(status).toBe(200);
+    expect(text).not.toContain('EncodingType');
+    expect(text).not.toContain('Owner');
+  });
+
+  it('is a 400 in well-formed XML for a value XML cannot carry', async () => {
+    for (const query of ['prefix=a%01', 'marker=%EF%BF%BE', 'start-after=%1F&list-type=2', 'partition=binance%7C%00']) {
+      const { status, text } = await xmlOf(`/listings?${query}`);
+
+      expect(status).toBe(400);
+      expect(XMLValidator.validate(text)).toBe(true);
+      expect(text).toContain('<Code>InvalidArgument</Code>');
+    }
+  });
+
+  it('does not echo a lens XML cannot carry', async () => {
+    const { status, text } = await xmlOf('/listings?lens=a%01b');
+
+    expect(status).toBe(422);
+    expect(XMLValidator.validate(text)).toBe(true);
+    expect(text).toContain('<Message>No such lens</Message>');
+  });
+
+  it('escapes what XML can carry', async () => {
+    const { status, text } = await xmlOf(`/listings?prefix=${encodeURIComponent('a<&')}`);
+
+    expect(status).toBe(200);
+    expect(text).toContain('<Prefix>a&lt;&amp;</Prefix>');
   });
 });
 
@@ -399,6 +494,22 @@ describe('one partition of the bucket', () => {
     const monthly = of('binance', 'perp', 'trades', '202001', false);
 
     expect(await walk(`&partition=${encodeURIComponent('binance|perp|trades|*|monthly|202001')}`)).toEqual(monthly);
+  });
+
+  /** A prefix and a partition are two filters: a key is listed only where it passes both, and the prefix is echoed as asked. */
+  it('is narrowed by a prefix, and is nothing beside one', async () => {
+    const name  = `&partition=${encodeURIComponent('binance|perp|klines,1m|*|daily|202001')}`;
+    const whole = of('binance', 'perp', 'klines,1m', '202001', true);
+
+    expect(whole.length).toBeGreaterThan(2);
+    expect(await walk(`${name}&prefix=binance/`)).toEqual(whole);
+    expect(await walk(`${name}&prefix=binance/perp/klines,1m/B/BTCUSDT/`))
+      .toEqual(whole.filter(one => one.startsWith('binance/perp/klines,1m/B/BTCUSDT/')));
+
+    const { status, body } = await call(`/listings?prefix=gate/${name}`);
+
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ Prefix: 'gate/', IsTruncated: false, Contents: [] });
   });
 
   it('is nothing through a lens that does not let it through', async () => {

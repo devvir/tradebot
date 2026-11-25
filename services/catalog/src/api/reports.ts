@@ -1,5 +1,5 @@
 import { logger } from '@devvir/service-kit';
-import { lensOf, lensSlug } from '../lenses/requested';
+import { lensOf, noSuchLens } from '../lenses/requested';
 import { MAX_REPORT, keysIn, resolveReport, settle } from '../reports';
 import { answer, failed } from './listings';
 import type { Application } from 'express';
@@ -19,7 +19,7 @@ export const mountReports = (app: Application, db: DatabaseSync): void => {
   app.post('/listings/report', async (req, res) => {
     const lens = lensOf(db, req);
 
-    if (lens === undefined) return failed(req, res, 422, 'NoSuchLens', `No such lens: ${lensSlug(req)}`);
+    if (lens === undefined) return failed(req, res, 422, 'NoSuchLens', noSuchLens(req));
 
     if (keysIn(req.body) > MAX_REPORT) return failed(req, res, 400, 'InvalidArgument', `At most ${MAX_REPORT} keys per report`);
 

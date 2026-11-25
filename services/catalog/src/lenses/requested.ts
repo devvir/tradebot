@@ -1,4 +1,5 @@
 import { lensNamed } from '@tradebot/lenses';
+import { INVALID, queryText, xmlCarries } from '../api/query';
 import { lensScope } from './scope';
 import type { Lens } from '@tradebot/lenses';
 import type { Request } from 'express';
@@ -9,11 +10,14 @@ import type { RequestedLens } from '../types';
  * The lens a request names — see `lensSlug` for where it is named.
  *
  * Null where it names none — the whole catalog. `undefined` where it names one
- * that does not exist, which every caller answers with a `422`: an unknown lens
- * is never the unfiltered catalog in its place.
+ * that does not exist, or gives the `lens` parameter more than once, which every
+ * caller answers with a `422` — see `noSuchLens`: an unknown lens is never the
+ * unfiltered catalog in its place.
  */
 export const lensOf = (db: DatabaseSync, req: Request): Lens | null | undefined => {
   const slug = lensSlug(req);
+
+  if (slug === INVALID) return undefined;
 
   return slug === null ? null : lensNamed(db, slug) ?? undefined;
 };
@@ -36,12 +40,29 @@ export const lensRequested = (db: DatabaseSync, req: Request): RequestedLens | n
  * The slug a request names: the `x-catalog-lens` header, or a `lens` query
  * parameter where there is no header — the header for clients, the parameter
  * so a browser's address bar can look through a lens too. Null where neither
- * names one.
+ * names one; `INVALID` where the parameter, read for want of a header, is given
+ * more than once.
  */
-export const lensSlug = (req: Request): string | null => {
+export const lensSlug = (req: Request): string | null | typeof INVALID => {
   const header = req.headers['x-catalog-lens'];
-  const query  = req.query['lens'];
-  const slug   = typeof header === 'string' && header.trim() !== '' ? header : typeof query === 'string' ? query : '';
 
-  return slug.trim() === '' ? null : slug.trim();
+  if (typeof header === 'string' && header.trim() !== '') return header.trim();
+
+  const query = queryText(req.query['lens']);
+
+  if (query === INVALID) return INVALID;
+
+  return query === undefined || query.trim() === '' ? null : query.trim();
+};
+
+/**
+ * Why a request's lens was not found, in words fit to answer it with: the slug
+ * it names, unless XML could not carry that slug back.
+ */
+export const noSuchLens = (req: Request): string => {
+  const slug = lensSlug(req);
+
+  if (slug === INVALID) return 'The lens parameter may be given once';
+
+  return slug !== null && xmlCarries(slug) ? `No such lens: ${slug}` : 'No such lens';
 };

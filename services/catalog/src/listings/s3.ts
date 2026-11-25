@@ -1,6 +1,7 @@
 import { XMLBuilder } from 'fast-xml-parser';
+import { INVALID, flag, queryText, xmlCarries } from '../api/query';
 import type { DatabaseSync } from 'node:sqlite';
-import type { ListingFile, ListingPage, ListingRequest, S3Body } from '../types';
+import type { ListingFile, ListingPage, ListingRefusal, ListingRequest, S3Body } from '../types';
 
 /**
  * The catalog's listing in S3's own shape: one bucket, every venue's files.
@@ -9,8 +10,12 @@ import type { ListingFile, ListingPage, ListingRequest, S3Body } from '../types'
  * asked with `list-type=2`: `continuation-token` or `start-after` in, `KeyCount`
  * and `NextContinuationToken` out. Both resume after an exact key, so they are
  * one listing with two spellings. **`prefix` narrows it**, a venue (`gate/`) or
- * anything finer. Not implemented, until something needs them: `delimiter`,
- * `encoding-type`, `fetch-owner`.
+ * anything finer.
+ *
+ * **Keys are listed flat.** A `delimiter` is answered `501 NotImplemented`, so
+ * a client that groups by one never takes a flat page for a grouped one.
+ * `encoding-type` and `fetch-owner` are ignored: keys are sent as they are,
+ * with no `EncodingType`, and no object names an owner.
  *
  * **Each object's `Path` is the file's own, below its server's address**, and
  * `Host` names the server where the venue has more than one. A server can be
@@ -24,24 +29,53 @@ export const BUCKET = 'catalog';
 /** `max-keys` is 500 unless asked, 1,000 at most. */
 export const MAX_KEYS = 1_000;
 
-/** What a listing request asks for, or why it cannot be answered. */
-export const requestOf = (query: Record<string, unknown>): ListingRequest | string => {
-  const maxKeys = keysAsked(query['max-keys']);
+/**
+ * What a listing request asks for, or why it cannot be answered: `400
+ * InvalidArgument` for a parameter given more than once, one the answer would
+ * echo holding a character XML cannot carry, or a value that is not one of the
+ * parameter's; `501 NotImplemented` for a `delimiter`.
+ */
+export const requestOf = (query: Record<string, unknown>): ListingRequest | ListingRefusal => {
+  const given: Partial<Record<Parameter, string>> = {};
 
-  if (maxKeys === null) return `max-keys must be a whole number from 1 to ${MAX_KEYS}`;
+  for (const name of PARAMETERS) {
+    const one = queryText(query[name]);
 
-  const v2    = text(query['list-type']) === '2';
-  const token = text(query['continuation-token']);
-  const start = text(query['start-after']);
+    if (one === INVALID) return invalid(`${name} may be given once`);
+    if (one !== undefined) given[name] = one;
+  }
+
+  if (given.delimiter !== undefined)
+    return { status: 501, code: 'NotImplemented', message: 'delimiter is not supported; keys are listed flat' };
+
+  const unfit = ECHOED.find(name => given[name] !== undefined && ! xmlCarries(given[name]));
+
+  if (unfit) return invalid(`${unfit} holds a character XML cannot carry`);
+
+  const maxKeys = keysAsked(given['max-keys']);
+
+  if (maxKeys === null) return invalid(`max-keys must be a whole number from 1 to ${MAX_KEYS}`);
+
+  const listType = given['list-type'];
+
+  if (listType !== undefined && listType !== '1' && listType !== '2') return invalid('list-type must be 1 or 2');
+
+  const pending = flag(query['pending']);
+
+  if (pending === 'invalid') return invalid('pending must be true or false');
+
+  const v2    = listType === '2';
+  const token = given['continuation-token'];
+  const start = given['start-after'];
 
   return {
     v2, maxKeys,
     ...(token === undefined ? {} : { token }),
     ...(start === undefined ? {} : { start }),
-    after:   (v2 ? token ?? start : text(query['marker'])) ?? null,
-    prefix:  text(query['prefix']) ?? '',
-    pending: ['true', '1'].includes(text(query['pending']) ?? ''),
-    ...(text(query['partition']) === undefined ? {} : { partition: text(query['partition'])! }),
+    after:   (v2 ? token ?? start : given.marker) ?? null,
+    prefix:  given.prefix ?? '',
+    pending: pending === true,
+    ...(given.partition === undefined ? {} : { partition: given.partition }),
   };
 };
 
@@ -94,14 +128,24 @@ export const asXml = (root: string, body: S3Body): string => xml.build({
 
 const DEFAULT_KEYS = 500;
 
+/** The parameters a listing reads, each given once or not at all. */
+const PARAMETERS = [
+  'prefix', 'marker', 'continuation-token', 'start-after', 'max-keys', 'list-type', 'pending', 'partition', 'delimiter',
+] as const;
+
+type Parameter = typeof PARAMETERS[number];
+
+/** The parameters an answer echoes, in its fields or in its error's message. */
+const ECHOED = ['prefix', 'marker', 'continuation-token', 'start-after', 'partition'] as const;
+
+const invalid = (message: string): ListingRefusal => ({ status: 400, code: 'InvalidArgument', message });
+
 const XMLNS = 'http://s3.amazonaws.com/doc/2006-03-01/';
 
 const xml = new XMLBuilder({ ignoreAttributes: false, format: true });
 
 /** `max-keys` as asked: 500 where absent, capped at 1,000, null where it is not a count. */
-const keysAsked = (raw: unknown): number | null => {
-  const given = text(raw);
-
+const keysAsked = (given: string | undefined): number | null => {
   if (given === undefined) return DEFAULT_KEYS;
 
   const count = Number(given);
@@ -122,6 +166,3 @@ const described = (file: ListingFile): Record<string, string | number> => ({
   ...(file.size === null ? {} : { Size: file.size }),
   ...(file.modified === null ? {} : { LastModified: file.modified }),
 });
-
-const text = (raw: unknown): string | undefined =>
-  (typeof raw === 'string' && raw !== '' ? raw : undefined);

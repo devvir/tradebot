@@ -1,6 +1,7 @@
 import { contentsOf, partitionsOfVenue, venueContents } from '../contents';
-import { lensRequested, lensSlug } from '../lenses/requested';
+import { lensRequested, noSuchLens } from '../lenses/requested';
 import { venueIds } from '../queries';
+import { INVALID, flag, queryText } from './query';
 import { GRAINS } from '../vocabulary';
 import type { Application, Request, Response } from 'express';
 import type { DatabaseSync } from 'node:sqlite';
@@ -12,7 +13,8 @@ import type { Bundle, ContentsAsked, Grain, RequestedLens } from '../types';
  * the instruments asked for beside them.
  *
  * **Every view can be seen through a lens** — see `lensSlug`; an unknown one is
- * a `422`, never the whole catalog in its place.
+ * a `422`, never the whole catalog in its place. A query parameter given more
+ * than once is a `400`.
  */
 export const mountContents = (app: Application, db: DatabaseSync): void => {
   app.get('/venues', (req, res) => {
@@ -40,8 +42,11 @@ export const mountContents = (app: Application, db: DatabaseSync): void => {
       return;
     }
 
-    const grain  = text(req.query['grain']);
-    const bundle = text(req.query['bundle']);
+    const asked = textsOf(req, res, ['grain', 'bundle', 'market', 'datasets', 'variant', 'settled-before']);
+
+    if (! asked) return;
+
+    const { grain, bundle } = asked;
 
     if (grain !== undefined && ! (GRAINS as readonly string[]).includes(grain)) {
       res.status(400).json({ error: `grain must be one of ${GRAINS.join(', ')}` });
@@ -55,15 +60,24 @@ export const mountContents = (app: Application, db: DatabaseSync): void => {
       return;
     }
 
+    const settled = flagOf(req, res, 'settled');
+
+    if (settled === null) return;
+
+    const downloaded = flagOf(req, res, 'downloaded');
+
+    if (downloaded === null) return;
+
+    const before = instantOf(res, asked['settled-before']);
+
+    if (before === null) return;
+
     const lens = lensed(db, req, res);
 
     if (lens === undefined) return;
 
-    const market   = text(req.query['market']);
-    const datasets = text(req.query['datasets'])?.split(',').map(one => one.trim()).filter(one => one !== '');
-    const variant  = text(req.query['variant']);
-    const before   = text(req.query['settled-before']);
-    const settled  = req.query['settled'] !== undefined && req.query['settled'] !== 'false';
+    const { market, variant } = asked;
+    const datasets = asked.datasets?.split(',').map(one => one.trim()).filter(one => one !== '');
 
     res.json({ items: partitionsOfVenue(db, name, {
       ...(market   ? { market }   : {}),
@@ -71,7 +85,7 @@ export const mountContents = (app: Application, db: DatabaseSync): void => {
       ...(variant  ? { variant }  : {}),
       ...(grain    ? { grain: grain as Grain }    : {}),
       ...(bundle   ? { bundle: bundle as Bundle } : {}),
-      ...(req.query['downloaded'] === 'true' ? { downloaded: true } : {}),
+      ...(downloaded ? { downloaded: true } : {}),
       ...(settled  ? { settled: true } : {}),
       ...(before   ? { settledBefore: before } : {}),
     }, lens) });
@@ -90,7 +104,11 @@ const venue = (db: DatabaseSync, req: Request, res: Response, give: ContentsAske
     return;
   }
 
-  const grain = text(req.query['grain']);
+  const asked = textsOf(req, res, ['grain', 'market', 'dataset', 'variant']);
+
+  if (! asked) return;
+
+  const { grain } = asked;
 
   if (grain !== undefined && ! (GRAINS as readonly string[]).includes(grain)) {
     res.status(400).json({ error: `grain must be one of ${GRAINS.join(', ')}` });
@@ -102,9 +120,8 @@ const venue = (db: DatabaseSync, req: Request, res: Response, give: ContentsAske
 
   if (lens === undefined) return;
 
-  const market  = text(req.params['market']) ?? text(req.query['market']);
-  const dataset = text(req.query['dataset']);
-  const variant = text(req.query['variant']);
+  const market  = req.params['market'] ? String(req.params['market']) : asked.market;
+  const { dataset, variant } = asked;
 
   res.json({ items: contentsOf(db, name, { give, filter: {
     ...(market  ? { market }  : {}),
@@ -118,10 +135,62 @@ const venue = (db: DatabaseSync, req: Request, res: Response, give: ContentsAske
 const lensed = (db: DatabaseSync, req: Request, res: Response): RequestedLens | null | undefined => {
   const held = lensRequested(db, req);
 
-  if (held === undefined) res.status(422).json({ error: `No such lens: ${lensSlug(req)}` });
+  if (held === undefined) res.status(422).json({ error: noSuchLens(req) });
 
   return held;
 };
 
-const text = (raw: unknown): string | undefined =>
-  (typeof raw === 'string' && raw !== '' ? raw : undefined);
+/** The query's text parameters by name, or null once one given more than once has been answered `400`. */
+const textsOf = <Name extends string>(req: Request, res: Response, names: readonly Name[]): Partial<Record<Name, string>> | null => {
+  const texts: Partial<Record<Name, string>> = {};
+
+  for (const name of names) {
+    const one = queryText(req.query[name]);
+
+    if (one === INVALID) {
+      res.status(400).json({ error: `${name} may be given once` });
+
+      return null;
+    }
+
+    if (one !== undefined) texts[name] = one;
+  }
+
+  return texts;
+};
+
+/** A yes-or-no parameter — see `flag` — false where absent, or null once anything else has been answered `400`. */
+const flagOf = (req: Request, res: Response, name: string): boolean | null => {
+  const given = flag(req.query[name]);
+
+  if (given === 'invalid') {
+    res.status(400).json({ error: `${name} must be true or false` });
+
+    return null;
+  }
+
+  return given === true;
+};
+
+/**
+ * An instant as `toISOString` writes it — in UTC, so it compares as text with
+ * the instants the catalog holds — from any ISO 8601 date, or date and time
+ * with its offset. `undefined` where none was given, null once anything else
+ * has been answered `400`.
+ */
+const instantOf = (res: Response, given: string | undefined): string | undefined | null => {
+  if (given === undefined) return undefined;
+
+  const ms = Date.parse(given);
+
+  if (Number.isNaN(ms) || ! INSTANT.test(given)) {
+    res.status(400).json({ error: 'settled-before must be an ISO 8601 instant' });
+
+    return null;
+  }
+
+  return new Date(ms).toISOString();
+};
+
+/** A date, or a date and time that says its offset: one without would be read in the server's own zone. */
+const INSTANT = /^\d{4}-\d{2}-\d{2}(T[\d:.]+(Z|[+-]\d{2}:\d{2}))?$/i;

@@ -145,6 +145,26 @@ describe('the contents through a lens', () => {
     expect((await call('/venues/binance/symbols', { headers: { 'x-catalog-lens': 'nope' } })).status)
       .toBe(422);
   });
+
+  it('is a 422 for a lens parameter given more than once, never the whole catalog', async () => {
+    await lens();
+
+    for (const path of ['/venues', '/venues/binance/symbols', '/venues/binance/partitions']) {
+      const { status, body } = await call(`${path}?lens=to-2020&lens=to-2020`);
+
+      expect(status).toBe(422);
+      expect(body.error).toBe('The lens parameter may be given once');
+    }
+  });
+});
+
+describe('a query parameter', () => {
+  it('is a 400 where it is given more than once', async () => {
+    expect(await call('/venues/binance/symbols?grain=daily&grain=daily')).toMatchObject({ status: 400, body: { error: 'grain may be given once' } });
+    expect((await call('/venues/binance/markets/perp?dataset=klines&dataset=klines')).status).toBe(400);
+    expect((await call('/venues/binance/partitions?market=perp&market=perp')).status).toBe(400);
+    expect((await call('/venues/binance/partitions?settled=true&settled=true')).status).toBe(400);
+  });
 });
 
 /**
@@ -295,6 +315,9 @@ describe('a venue\'s partitions', () => {
     db.exec(`UPDATE partition SET pending = 0 WHERE month = '202001'`);
 
     expect((await partitions('?downloaded=true'))[0]!.partitions.map(one => one.month)).toEqual(['202001']);
+    expect((await partitions('?downloaded=1'))[0]!.partitions.map(one => one.month)).toEqual(['202001']);
+    expect((await partitions('?downloaded=0'))[0]!.partitions.map(one => one.month)).toEqual(['202001', '202101']);
+    expect(await call('/venues/binance/partitions?downloaded=yes')).toMatchObject({ status: 400, body: { error: 'downloaded must be true or false' } });
   });
 
   describe('narrowed to what is settled', () => {
@@ -375,11 +398,35 @@ describe('a venue\'s partitions', () => {
       expect(await months('?settled-before=2026-10-02T00:00:00.000Z')).toEqual([]);
     });
 
+    /** An instant is compared as the catalog holds them, in UTC, whatever offset it was written with. */
+    it('takes an instant at any offset, or a bare date', async () => {
+      expect(await months('?settled-before=2026-10-01T01:00:00%2B01:00')).toEqual([]);
+      expect(await months('?settled-before=2026-10-01T00:00:01-00:00')).toEqual(['202001']);
+      expect(await months('?settled-before=2026-10-01T02:00:00%2B01:00')).toEqual(['202001']);
+      expect(await months('?settled-before=2026-10-02')).toEqual(['202001']);
+    });
+
+    it('refuses what is not an instant, or a time that does not say its offset', async () => {
+      for (const before of ['garbage', '2026-13-01', '20261001', '2026-10-02T00:00:00']) {
+        expect(await call(`/venues/binance/partitions?settled-before=${before}`))
+          .toMatchObject({ status: 400, body: { error: 'settled-before must be an ISO 8601 instant' } });
+      }
+    });
+
     it('leaves everything in for a caller that does not ask', async () => {
       run('2020-01-01T00:00:00.000Z');
 
       expect(await months('')).toEqual(['202001', '202101']);
       expect(await months('?settled=false')).toEqual(['202001', '202101']);
+      expect(await months('?settled=0')).toEqual(['202001', '202101']);
+    });
+
+    it('takes 1 for yes, and refuses what is neither yes nor no', async () => {
+      run('2026-10-03T00:00:00.000Z');
+
+      expect(await months('?settled=1')).toEqual(['202001']);
+      expect(await call('/venues/binance/partitions?settled=maybe'))
+        .toMatchObject({ status: 400, body: { error: 'settled must be true or false' } });
     });
   });
 

@@ -98,7 +98,8 @@ export interface PartitionFilter {
 
   /**
    * Only settled partitions whose version last moved before this instant — an
-   * ISO timestamp, compared as text. It implies `settled`.
+   * ISO 8601 instant in UTC, as `toISOString` writes one, compared as text. It
+   * implies `settled`.
    */
   settledBefore?: string;
 }
@@ -419,6 +420,13 @@ export interface ListingRequest {
 
   /** Only the files of this partition, by name — see `partitionNamed`. */
   partition?: string;
+}
+
+/** Why a listing request cannot be answered: a status, and S3's `Code` and `Message`. */
+export interface ListingRefusal {
+  status:  number;
+  code:    string;
+  message: string;
 }
 
 /** A body in S3's field names, before it is written as XML or JSON. */
