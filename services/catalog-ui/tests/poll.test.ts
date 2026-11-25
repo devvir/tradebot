@@ -19,6 +19,26 @@ const counting = () => {
   return { seen, ask };
 };
 
+/** An `ask` whose requests stay in flight until `answer` settles the oldest, recording each one's signal. */
+const held = () => {
+  const pending: { resolve: (n: number) => void; signal: AbortSignal }[] = [];
+  let inFlight = 0, most = 0, asked = 0;
+
+  const ask = (signal: AbortSignal): Promise<number> => new Promise(resolve => {
+    asked += 1;
+    inFlight += 1;
+    most = Math.max(most, inFlight);
+    pending.push({ signal, resolve: n => { inFlight -= 1; resolve(n); } });
+  });
+
+  return {
+    ask,
+    pending,
+    counts: () => ({ asked, inFlight, most }),
+    answer: async (n: number): Promise<void> => { pending.shift()?.resolve(n); await vi.advanceTimersByTimeAsync(0); },
+  };
+};
+
 describe('poll', () => {
   it('reads the interval at each wait: a change neither cancels nor asks early, and the next wait uses it', async () => {
     const { seen, ask } = counting();
@@ -49,7 +69,7 @@ describe('poll', () => {
     polling.stop();
   });
 
-  it('takes a fixed interval as before', async () => {
+  it('takes a fixed interval', async () => {
     const { seen, ask } = counting();
     const polling = poll(ask, 5_000, { data: () => undefined });
 
@@ -76,5 +96,80 @@ describe('poll', () => {
     expect(failures).toEqual(['502 — down', '502 — down']);
 
     polling.stop();
+  });
+  it('never has two requests in flight, however long one takes', async () => {
+    const asking = held();
+    const polling = poll(asking.ask, 1_000, { data: () => undefined });
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(asking.counts()).toEqual({ asked: 1, inFlight: 1, most: 1 });
+
+    await asking.answer(1);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(asking.counts().asked).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(asking.counts()).toEqual({ asked: 2, inFlight: 1, most: 1 });
+
+    polling.stop();
+  });
+
+  it('asks at once on now(), instead of waiting out the interval', async () => {
+    const { seen, ask } = counting();
+    const polling = poll(ask, 10_000, { data: () => undefined });
+
+    await vi.advanceTimersByTimeAsync(0);
+    polling.now();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(seen.asked).toBe(2);
+
+    // The wait starts over from that answer.
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(seen.asked).toBe(2);
+
+    polling.stop();
+  });
+
+  it('asks once more after the request in flight on now(), however often it is called', async () => {
+    const asking = held();
+    const answers: number[] = [];
+    const polling = poll(asking.ask, 10_000, { data: n => answers.push(n) });
+
+    polling.now();
+    polling.now();
+    polling.now();
+    expect(asking.counts()).toEqual({ asked: 1, inFlight: 1, most: 1 });
+
+    await asking.answer(1);
+    expect(asking.counts()).toEqual({ asked: 2, inFlight: 1, most: 1 });
+
+    await asking.answer(2);
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(asking.counts().asked).toBe(2);
+    expect(answers).toEqual([1, 2]);
+
+    polling.stop();
+  });
+
+  it('cancels the request in flight on stop(), and drops its answer', async () => {
+    const asking = held();
+    const answers: number[] = [];
+    const failures: Error[] = [];
+    const polling = poll(asking.ask, 1_000, { data: n => answers.push(n), error: err => failures.push(err) });
+
+    const inFlight = asking.pending[0]!;
+
+    polling.stop();
+    expect(inFlight.signal.aborted).toBe(true);
+
+    await asking.answer(1);
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(answers).toEqual([]);
+    expect(failures).toEqual([]);
+    expect(asking.counts().asked).toBe(1);
+
+    polling.now();
+    expect(asking.counts().asked).toBe(1);
   });
 });

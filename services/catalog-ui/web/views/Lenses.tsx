@@ -1215,7 +1215,7 @@ const Rule = ({ rule, offered, published, problems, state, busy, locked, onChang
  * the fact: four datasets use bar lengths today and the fifth will not need
  * adding anywhere.
  */
-const byPeriod = (a: string, b: string): number => {
+export const byPeriod = (a: string, b: string): number => {
   const one = seconds(a), two = seconds(b);
 
   if (one !== null && two !== null) return one - two;
@@ -1257,10 +1257,10 @@ const choices = (forms: { value: string; label: string }[], preferring: boolean)
 ];
 
 /** A rule's choice as the select's value, and back. */
-const chosenOf = (choice: Choice<string> | undefined): string =>
+export const chosenOf = (choice: Choice<string> | undefined): string =>
   (! choice || typeof choice !== 'object' ? ANY : 'only' in choice ? `only:${choice.only}` : `prefer:${choice.prefer}`);
 
-const choiceOf = (picked: string | null): Choice<string> | undefined => {
+export const choiceOf = (picked: string | null): Choice<string> | undefined => {
   if (! picked || picked === ANY) return undefined;
 
   const [how, form] = picked.split(':') as ['only' | 'prefer', string];
@@ -1269,7 +1269,7 @@ const choiceOf = (picked: string | null): Choice<string> | undefined => {
 };
 
 /** A choice kept where it takes one form alone, and dropped where it only prefers one. */
-const onlyOf = <T extends string>(choice: Choice<T> | undefined): Choice<T> | undefined =>
+export const onlyOf = <T extends string>(choice: Choice<T> | undefined): Choice<T> | undefined =>
   (choice && typeof choice === 'object' && 'only' in choice ? choice : undefined);
 
 const capital = (word: string): string => word.charAt(0).toUpperCase() + word.slice(1);

@@ -22,9 +22,9 @@ import type { Lens, Where } from './types';
  * catalog holds is still there tomorrow, while whether anything is collecting it
  * is the question somebody opens this page to answer.
  */
-type Section = 'contents' | 'surveys' | 'lenses';
+export type Section = 'contents' | 'surveys' | 'lenses';
 
-interface Route {
+export interface Route {
   section:  Section;
   venue?:   string;
   market?:  string;
@@ -137,6 +137,25 @@ export const linkTo = (route: Partial<Route>): string => {
   return lens ? `#${path}?lens=${encodeURIComponent(lens)}` : `#${path}`;
 };
 
+/** The view the hash names; anything it does not recognise is the surveys view. */
+export const readRoute = (): Route => {
+  const [path = '', query = ''] = location.hash.slice(1).split('?');
+  const [head, ...rest] = path.split('/').filter(Boolean).map(decode);
+
+  if (head === 'lenses') return { section: 'lenses', ...(rest[0] ? { lens: rest[0] } : {}) };
+
+  if (head !== 'contents') return { section: 'surveys' };
+
+  const lens = new URLSearchParams(query).get('lens');
+
+  return {
+    section: 'contents',
+    ...(rest[0] ? { venue: rest[0] } : {}),
+    ...(rest[1] ? { market: rest[1] } : {}),
+    ...(lens ? { lens } : {}),
+  };
+};
+
 /**
  * Remember the lens last opened in the lenses section, so leaving it and coming
  * back by its tab lands on the same one. Per browser, and never essential: where
@@ -173,24 +192,6 @@ const useRoute = (): Route => {
   }, []);
 
   return route;
-};
-
-const readRoute = (): Route => {
-  const [path = '', query = ''] = location.hash.slice(1).split('?');
-  const [head, ...rest] = path.split('/').filter(Boolean).map(decode);
-
-  if (head === 'lenses') return { section: 'lenses', ...(rest[0] ? { lens: rest[0] } : {}) };
-
-  if (head !== 'contents') return { section: 'surveys' };
-
-  const lens = new URLSearchParams(query).get('lens');
-
-  return {
-    section: 'contents',
-    ...(rest[0] ? { venue: rest[0] } : {}),
-    ...(rest[1] ? { market: rest[1] } : {}),
-    ...(lens ? { lens } : {}),
-  };
 };
 
 /** A path segment as written, or as it came where it was not encoded. */

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  addressIsSound, filed, forget, isUnsaved, keep, keptFor, namedLens, publishedOptions, unsavedLens, withOne, withoutVenue,
+  addressIsSound, byPeriod, choiceOf, chosenOf, filed, forget, isUnsaved, keep, keptFor, namedLens, onlyOf, publishedOptions, unsavedLens, withOne, withoutVenue,
 } from '../web/views/Lenses';
 import type { LensProblem, LensRule, RuleEntry } from '../web/types';
 
@@ -220,5 +220,39 @@ describe('what a browser keeps of a lens', () => {
     vi.stubGlobal('localStorage', { removeItem: () => { throw new Error('refused'); } });
 
     expect(() => forget(namedLens('cold', 'Cold', ''))).not.toThrow();
+  });
+});
+
+describe('a grain or bundle choice, as a select holds it', () => {
+  it.each([
+    [undefined,                  'any'],
+    [{ only: 'daily' },          'only:daily'],
+    [{ prefer: 'instrument' },   'prefer:instrument'],
+  ] as const)('writes %j as %j and reads it back', (choice, value) => {
+    expect(chosenOf(choice)).toBe(value);
+    expect(choiceOf(value)).toEqual(choice);
+  });
+
+  it('reads a cleared select as any', () => {
+    expect(choiceOf(null)).toBeUndefined();
+    expect(choiceOf('')).toBeUndefined();
+  });
+
+  it('keeps a choice of one form alone, and drops one that only prefers', () => {
+    expect(onlyOf({ only: 'daily' })).toEqual({ only: 'daily' });
+    expect(onlyOf({ prefer: 'daily' })).toBeUndefined();
+    expect(onlyOf(undefined)).toBeUndefined();
+  });
+});
+
+describe('byPeriod', () => {
+  it('orders periods by how long they are, not as text', () => {
+    expect(['1d', '10s', '1mo', '12h', '1m', '15m', '1w', '1h', '1y'].sort(byPeriod))
+      .toEqual(['10s', '1m', '15m', '1h', '12h', '1d', '1w', '1mo', '1y']);
+  });
+
+  it('puts periods ahead of anything else, and orders the rest by the alphabet', () => {
+    expect(['full', '400', '1h', 'incremental,500', '1m'].sort(byPeriod))
+      .toEqual(['1m', '1h', '400', 'full', 'incremental,500']);
   });
 });
