@@ -1,9 +1,10 @@
-import { existsSync, mkdirSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { AT_CREATION, ON_OPEN } from './schema';
 import { inTransaction } from '../catalog/tx';
-import { MIGRATIONS, SCHEMA_VERSION } from './migrations';
+import { MIGRATIONS } from './migrations';
+import type { Migration } from '../types';
 
 /**
  * Open the catalog, creating it if absent and bringing it up to date if not.
@@ -14,31 +15,41 @@ import { MIGRATIONS, SCHEMA_VERSION } from './migrations';
  * from a service deciding on its own initiative to rewrite twenty gigabytes.
  *
  * Creation is the only moment `auto_vacuum` can be set, and the only moment the
- * schema is written whole.
+ * schema is written whole. A database is fresh when it has no pages yet, which
+ * covers both a path that did not exist and an empty file already sitting there.
+ *
+ * A failure anywhere after the file is opened closes the handle before the error
+ * propagates, so a refused catalog holds no file descriptor or lock.
  */
 export const openCatalog = (
   path: string,
   { seedData = true }: { seedData?: boolean } = {},
 ): DatabaseSync => {
-  const fresh = ! existsSync(path);
-
-  if (fresh) mkdirSync(dirname(path), { recursive: true });
+  mkdirSync(dirname(path), { recursive: true });
 
   const db = new DatabaseSync(path);
 
-  // Before the schema and before WAL: `auto_vacuum` takes effect only on a
-  // database with no tables in it yet.
-  if (fresh) for (const pragma of AT_CREATION) db.exec(pragma);
+  try {
+    const fresh = (db.prepare('PRAGMA page_count').get() as { page_count: number }).page_count === 0;
 
-  for (const pragma of ON_OPEN) db.exec(pragma);
+    // Before the schema and before WAL: `auto_vacuum` takes effect only on a
+    // database with no tables in it yet.
+    if (fresh) for (const pragma of AT_CREATION) db.exec(pragma);
 
-  /**
-   * **Every database, every time, from whatever version it is at.** A fresh file
-   * reports 0 and runs the whole chain; one already at the head runs nothing.
-   * There is no path that skips it — that is the whole point of a chain, and
-   * the reason a seed can be written as a migration at all.
-   */
-  migrate(db, seedData);
+    for (const pragma of ON_OPEN) db.exec(pragma);
+
+    /**
+     * **Every database, every time, from whatever version it is at.** A fresh file
+     * reports 0 and runs the whole chain; one already at the head runs nothing.
+     * There is no path that skips it — that is the whole point of a chain, and
+     * the reason a seed can be written as a migration at all.
+     */
+    migrate(db, seedData);
+  } catch (err) {
+    db.close();
+
+    throw err;
+  }
 
   return db;
 };
@@ -53,18 +64,26 @@ export const openCatalog = (
  * A version *ahead* of this build is refused rather than ignored: it means an
  * older binary has been pointed at a newer catalog, and carrying on would write
  * rows the running code cannot describe.
+ *
+ * `chain` is the build's own migrations unless another is given; its length is
+ * the head version. Returns how many versions the database moved.
  */
-export const migrate = (db: DatabaseSync, seedData = true): number => {
+export const migrate = (
+  db: DatabaseSync,
+  seedData = true,
+  chain: readonly Migration[] = MIGRATIONS,
+): number => {
   const from = version(db);
+  const head = chain.length;
 
-  if (from > SCHEMA_VERSION)
+  if (from > head)
     throw new Error(
-      `Catalog is at schema version ${from}, but this build only knows ${SCHEMA_VERSION}. ` +
+      `Catalog is at schema version ${from}, but this build only knows ${head}. ` +
       `Run a newer build, or point this one at a different catalog.`,
     );
 
-  for (let at = from; at < SCHEMA_VERSION; at++) {
-    const migration = MIGRATIONS[at]!;
+  for (let at = from; at < head; at++) {
+    const migration = chain[at]!;
 
     /**
      * **Declined, not skipped.** The version still moves: a caller that asked
@@ -92,7 +111,7 @@ export const migrate = (db: DatabaseSync, seedData = true): number => {
     }
   }
 
-  return SCHEMA_VERSION - from;
+  return head - from;
 };
 
 export const version = (db: DatabaseSync): number =>

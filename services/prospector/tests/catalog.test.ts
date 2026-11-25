@@ -1,12 +1,11 @@
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WITHDRAWALS_LOG, advanceRun, ancestorsOf, beginJob, clearUpdate, closeRun, closeWalk, countUnsettled, establishedAt, exclusionsFor, markDownloaded, openJob, openPartitions, putFiles, putVenue, recordSeries, venueIds, settleFiles, unsettled, withdrawFile } from '../src/catalog';
 import { assertWritable, migrate, openCatalog, SCHEMA_VERSION, version } from '../src/database';
-import { MIGRATIONS } from '../src/database/migrations';
 import { _test_BREATH_MS as BREATH_MS } from '../src/catalog/queries';
-import type { CatalogFile, Migration, Run, Span } from '../src/types';
+import type { CatalogFile, Run, Span } from '../src/types';
 import { DatabaseSync } from 'node:sqlite';
 
 let dir: string;
@@ -84,15 +83,51 @@ describe('opening', () => {
     expect(version(db)).toBe(at);
   });
 
+  /**
+   * Opened read-only, so the refusal does not depend on file permissions, which
+   * a process running as root ignores.
+   */
   it('refuses a catalog it cannot write', () => {
-    chmodSync(join(dir, 'catalog.db'), 0o444);
+    const readOnly = new DatabaseSync(join(dir, 'catalog.db'), { readOnly: true });
 
-    const readOnly = openCatalog(join(dir, 'catalog.db'), { seedData: false });
+    try {
+      expect(() => assertWritable(readOnly, join(dir, 'catalog.db'))).toThrow(/read-only mount/);
+    } finally {
+      readOnly.close();
+    }
+  });
 
-    expect(() => assertWritable(readOnly, join(dir, 'catalog.db'))).toThrow(/read-only mount/);
+  /** An empty file already at the path is a new catalog, not an existing one. */
+  it('creates a catalog in an empty file it finds at the path', () => {
+    const path = join(dir, 'empty.db');
 
-    readOnly.close();
-    chmodSync(join(dir, 'catalog.db'), 0o644);
+    writeFileSync(path, '');
+
+    const fresh = openCatalog(path, { seedData: false });
+
+    try {
+      expect(fresh.prepare('PRAGMA auto_vacuum').get()).toEqual({ auto_vacuum: 2 });
+      expect(version(fresh)).toBe(SCHEMA_VERSION);
+    } finally {
+      fresh.close();
+    }
+  });
+
+  /** A catalog it refuses is closed again rather than left open behind the error. */
+  it('closes what it opened when it refuses a catalog', () => {
+    const path = join(dir, 'future.db');
+
+    openCatalog(path, { seedData: false }).close();
+
+    const stamp = new DatabaseSync(path);
+
+    stamp.exec(`PRAGMA user_version = ${SCHEMA_VERSION + 1}`);
+    stamp.close();
+
+    const close = vi.spyOn(DatabaseSync.prototype, 'close');
+
+    expect(() => openCatalog(path, { seedData: false })).toThrow(/only knows/);
+    expect(close).toHaveBeenCalledTimes(1);
   });
 
   /** A present database is never touched — no migration, no repair. */
@@ -985,35 +1020,63 @@ describe('migrations', () => {
     fresh.close();
   });
 
-  /** Opening again finds nothing left to do rather than repeating anything. */
+  /** Opening again finds nothing left to do and changes nothing. */
   it('applies nothing on a second open', () => {
-    const path = join(dir, 'twice.db');
+    const path   = join(dir, 'twice.db');
+    const schema = (on: DatabaseSync) =>
+      on.prepare('SELECT type, name, sql FROM sqlite_master ORDER BY name').all();
+    const venues = (on: DatabaseSync) => on.prepare('SELECT count(*) n FROM venue').get();
 
-    openCatalog(path, { seedData: false }).close();
+    const first  = openCatalog(path, { seedData: false });
+    const before = { schema: schema(first), venues: venues(first) };
+
+    first.close();
 
     const again = openCatalog(path, { seedData: false });
 
-    expect(migrate(again, false)).toBe(0);
+    try {
+      expect(version(again)).toBe(SCHEMA_VERSION);
+      expect({ schema: schema(again), venues: venues(again) }).toEqual(before);
+    } finally {
+      again.close();
+    }
+  });
 
-    again.close();
+  /** A migration already applied is not run again. */
+  it('runs each migration once', () => {
+    const mem   = new DatabaseSync(':memory:');
+    const chain = [{ name: 'one', run: vi.fn() }, { name: 'two', run: vi.fn() }];
+
+    try {
+      expect(migrate(mem, true, chain)).toBe(2);
+      expect(migrate(mem, true, chain)).toBe(0);
+      expect(version(mem)).toBe(2);
+
+      for (const step of chain) expect(step.run).toHaveBeenCalledTimes(1);
+    } finally {
+      mem.close();
+    }
   });
 
   /**
    * **Declining shipped rows still advances the version.** A caller that asked
-   * for schema only has what it asked for, and must not have that migration
-   * attempted again behind its back the next time the file is opened.
+   * for schema only has what it asked for, and a later open that would accept
+   * the rows does not attempt that migration again behind its back.
    */
   it('does not retry a declined seed on the next open', () => {
     const path = join(dir, 'noseed.db');
 
     openCatalog(path, { seedData: false }).close();
 
-    const again = openCatalog(path, { seedData: false });
+    const again = openCatalog(path);
 
-    expect(version(again)).toBe(SCHEMA_VERSION);
-    expect(again.prepare('SELECT count(*) n FROM series').get()).toMatchObject({ n: 0 });
-
-    again.close();
+    try {
+      expect(version(again)).toBe(SCHEMA_VERSION);
+      expect(again.prepare('SELECT count(*) n FROM series').get()).toMatchObject({ n: 0 });
+      expect(again.prepare('SELECT count(*) n FROM venue').get()).toMatchObject({ n: 0 });
+    } finally {
+      again.close();
+    }
   });
 
   /**
@@ -1027,28 +1090,52 @@ describe('migrations', () => {
   });
 
   /**
+   * **A failed migration is undone whole.** What it changed before failing is
+   * rolled back with it, earlier migrations stay applied, and the version stays
+   * at the last one that succeeded.
+   */
+  it('rolls back a migration that fails part-way', () => {
+    const mem   = new DatabaseSync(':memory:');
+    const chain = [
+      { name: 'first', sql: 'CREATE TABLE t1 (x)' },
+      { name: 'second', run: (on: DatabaseSync) => {
+        on.exec('CREATE TABLE t2 (x)');
+
+        throw new Error('boom');
+      } },
+    ];
+    const tables = () =>
+      mem.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name`).all();
+
+    try {
+      expect(() => migrate(mem, true, chain)).toThrow(/Migration 2 \(second\) failed: boom/);
+      expect(version(mem)).toBe(1);
+      expect(tables()).toEqual([{ name: 't1' }]);
+      expect(mem.isTransaction).toBe(false);
+    } finally {
+      mem.close();
+    }
+  });
+
+  /**
    * **A failed migration names its own cause**, including where SQLite has
    * already rolled the transaction back by itself, and leaves the version
    * where it was.
    */
   it('reports what made a migration fail and leaves the version alone', () => {
-    db.exec(`CREATE TABLE doomed (x);
-             CREATE TRIGGER doomed_boom BEFORE INSERT ON doomed BEGIN SELECT RAISE(ROLLBACK, 'boom'); END;`);
-    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION - 1}`);
+    const mem = new DatabaseSync(':memory:');
 
-    const chain = MIGRATIONS as Migration[];
-    const last  = chain[SCHEMA_VERSION - 1]!;
-
-    chain[SCHEMA_VERSION - 1] = { name: 'explodes', sql: 'INSERT INTO doomed VALUES (1)' };
+    mem.exec(`CREATE TABLE doomed (x);
+              CREATE TRIGGER doomed_boom BEFORE INSERT ON doomed BEGIN SELECT RAISE(ROLLBACK, 'boom'); END;`);
 
     try {
-      expect(() => migrate(db)).toThrow(`Migration ${SCHEMA_VERSION} (explodes) failed: boom`);
+      expect(() => migrate(mem, true, [{ name: 'explodes', sql: 'INSERT INTO doomed VALUES (1)' }]))
+        .toThrow('Migration 1 (explodes) failed: boom');
+      expect(version(mem)).toBe(0);
+      expect(mem.isTransaction).toBe(false);
     } finally {
-      chain[SCHEMA_VERSION - 1] = last;
+      mem.close();
     }
-
-    expect(version(db)).toBe(SCHEMA_VERSION - 1);
-    expect(db.isTransaction).toBe(false);
   });
 });
 
