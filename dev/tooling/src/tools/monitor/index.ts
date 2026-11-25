@@ -1,4 +1,5 @@
 import Dockerode from 'dockerode';
+import { terminalSafe } from '../../shared/utils/terminal';
 import { fetchContainerRows } from './docker';
 import { discoverRabbitInstances, fetchQueueRows } from './rabbitmq';
 import { buildOutput } from './render';
@@ -101,6 +102,6 @@ export async function run(options: { interval?: number | string } = {}): Promise
   };
 
   startLoop(tick, interval * 1000, (err) => {
-    process.stdout.write(`\n \x1b[31m⚠  Refresh failed: ${(err as Error)?.message ?? String(err)}\x1b[0m\n`);
+    process.stdout.write(`\n \x1b[31m⚠  Refresh failed: ${terminalSafe((err as Error)?.message ?? String(err))}\x1b[0m\n`);
   });
 }

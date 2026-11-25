@@ -283,3 +283,35 @@ describe('discoverRabbitInstances', () => {
     expect(rows[0].publishRate).toBe('1.5/s');
   });
 });
+
+describe('buildOutput', () => {
+  const row = (name: string, project: string) => ({
+    project, id: 'abc123def456', name, status: 'running', health: '—', uptime: '1m 0s',
+    cpu: '0.00%', mem: '- / -', restarts: '0', lastLog: 'N/A',
+  });
+
+  it('escapes control characters in names and errors from Docker and the brokers, keeping its own colours', async () => {
+    const { buildOutput } = await import('../../src/tools/monitor/render');
+
+    const output = buildOutput(
+      [row('svc\x1b]0;pwned\x07', 'proj\x1b[2J')],
+      new Map([['rabbit\x1b[H', [{
+        instance: 'rabbit\x1b[H', name: 'q\x1b[31m', vhost: '/\x9b', ready: 0, unacked: 0, total: 0,
+        consumers: 0, publishRate: '0.0/s', deliverRate: '0.0/s', state: 'f\x1b[K',
+      }]]]),
+      new Map([['broken\x1b[H', 'boom\x1b[2J']]),
+      new Map(),
+      3,
+      new Date(),
+      'docker\x1b[2J',
+    );
+
+    for (const shown of ['svc\\x1b]0;pwned\\x07', 'proj\\x1b[2J', 'rabbit\\x1b[H', 'q\\x1b[31m', '/\\x9b',
+      'f\\x1b[K', 'broken\\x1b[H', 'boom\\x1b[2J', 'docker\\x1b[2J']) {
+      expect(output).toContain(shown);
+    }
+
+    expect(output).not.toMatch(/\x1b\[(2J|H|K)|\x1b\]0|\x07|\x9b/);
+    expect(output).toContain('\x1b[1m TradeBot Monitor\x1b[0m');
+  });
+});

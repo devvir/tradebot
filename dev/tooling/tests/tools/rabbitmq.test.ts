@@ -199,6 +199,19 @@ describe('rabbitmq tool', () => {
       expect(printed()).toContain('"event": "test"');
     });
 
+    it('escapes control characters in a message body, so it cannot drive the terminal', async () => {
+      mockChannel.get
+        .mockResolvedValueOnce({ content: Buffer.from('line one\n\x1b]0;pwned\x07\x1b[2Jline two'), fields: {} })
+        .mockResolvedValueOnce(message({ note: 'csi\u009b2J' }))
+        .mockResolvedValueOnce(false);
+
+      await run('my-queue', {});
+
+      expect(printed()).toContain('line one\n\\x1b]0;pwned\\x07\\x1b[2Jline two');
+      expect(printed()).toContain('"note": "csi\\x9b2J"');
+      expect(printed()).not.toMatch(/\x07|\x9b|\x1b\]0|\x1b\[2J/);
+    });
+
     it('refuses a stream queue without reading it', async () => {
       mgmt({ [QUEUE_PATH]: { name: 'my-queue', type: 'stream' } });
 
@@ -395,6 +408,15 @@ describe('rabbitmq tool', () => {
       expect(printed()).toContain('q1');
       expect(mockChannel.close).toHaveBeenCalled();
       expect(mockConnection.close).toHaveBeenCalled();
+    });
+
+    it('escapes control characters in queue names from the broker', async () => {
+      mgmt({ '/queues': [{ name: 'evil\x1b[2J\x1b]0;t\x07', messages: 0, messages_ready: 0, consumers: 0 }] });
+
+      await run(undefined, { list: true });
+
+      expect(printed()).toContain('evil\\x1b[2J\\x1b]0;t\\x07');
+      expect(printed()).not.toContain('\x1b[2J');
     });
 
     it('reports why there is no management API instead of fetching', async () => {

@@ -1,5 +1,6 @@
 import Table from 'cli-table3';
 import { C } from '../../shared/utils/colors';
+import { terminalSafe } from '../../shared/utils/terminal';
 import type { ContainerRow, QueueRow, RabbitInstance } from './types';
 
 function colorQueueCount(n: number): string {
@@ -36,6 +37,11 @@ function colorCpu(cpu: string): string {
   return cpu;
 }
 
+/**
+ * One frame of the monitor. Text that comes from Docker or the brokers — project, container, queue,
+ * vhost and state names, and error messages — is shown with its control characters escaped, so it
+ * cannot drive the terminal; the frame's own colours and links are added around it.
+ */
 export function buildOutput(
   containerRows: ContainerRow[],
   queuesByInstance: Map<string, QueueRow[]>,
@@ -52,7 +58,7 @@ export function buildOutput(
   );
 
   if (errorMsg) {
-    lines.push(`\n ${C.red}⚠  ${errorMsg}${C.reset}`);
+    lines.push(`\n ${C.red}⚠  ${terminalSafe(errorMsg)}${C.reset}`);
   }
 
   lines.push('');
@@ -68,7 +74,7 @@ export function buildOutput(
     lines.push(`  ${C.dim}No running containers${C.reset}`);
   } else {
     for (const [project, rows] of [...byProject.entries()].sort()) {
-      lines.push(`${C.bold}${C.blue} ▸ ${project}${C.reset}`);
+      lines.push(`${C.bold}${C.blue} ▸ ${terminalSafe(project)}${C.reset}`);
 
       const t = new Table({
         head: ['ID', 'NAME', 'HEALTH', 'UPTIME', 'CPU', 'MEMORY', 'RESTARTS', 'LAST LOG'],
@@ -87,7 +93,7 @@ export function buildOutput(
 
         t.push([
           `${C.dim}${row.id}${C.reset}`,
-          `${statusDot} ${row.name}`,
+          `${statusDot} ${terminalSafe(row.name)}`,
           row.health,
           row.uptime,
           colorCpu(row.cpu),
@@ -113,7 +119,7 @@ export function buildOutput(
     const mgmtUrl = inst ? `${inst.mgmtUrl}/` : null;
     const linkPart = mgmtUrl ? `  ${C.dim}${osc8Link(mgmtUrl, mgmtUrl)}${C.reset}` : '';
 
-    lines.push(`${C.bold}${C.blue} ▸ RabbitMQ · ${instanceName}${C.reset}${linkPart}`);
+    lines.push(`${C.bold}${C.blue} ▸ RabbitMQ · ${terminalSafe(instanceName)}${C.reset}${linkPart}`);
 
     if (rows.length === 0) {
       lines.push(`  ${C.dim}No queues${C.reset}`);
@@ -127,15 +133,15 @@ export function buildOutput(
 
       for (const q of rows.sort((a, b) => a.name.localeCompare(b.name))) {
         qt.push([
-          q.name,
-          `${C.dim}${q.vhost}${C.reset}`,
+          terminalSafe(q.name),
+          `${C.dim}${terminalSafe(String(q.vhost))}${C.reset}`,
           colorQueueCount(q.ready),
           colorQueueCount(q.unacked),
           q.total > 0 ? String(q.total) : `${C.dim}0${C.reset}`,
           String(q.consumers),
           q.publishRate,
           q.deliverRate,
-          q.state === 'running' ? `${C.green}${q.state}${C.reset}` : `${C.yellow}${q.state}${C.reset}`,
+          q.state === 'running' ? `${C.green}${q.state}${C.reset}` : `${C.yellow}${terminalSafe(String(q.state))}${C.reset}`,
         ]);
       }
 
@@ -150,8 +156,8 @@ export function buildOutput(
     const mgmtUrl = inst ? `${inst.mgmtUrl}/` : null;
     const linkPart = mgmtUrl ? `  ${C.dim}${osc8Link(mgmtUrl, mgmtUrl)}${C.reset}` : '';
 
-    lines.push(`${C.bold}${C.blue} ▸ RabbitMQ · ${instanceName}${C.reset}${linkPart}`);
-    lines.push(`  ${C.red}⚠ ${err}${C.reset}`);
+    lines.push(`${C.bold}${C.blue} ▸ RabbitMQ · ${terminalSafe(instanceName)}${C.reset}${linkPart}`);
+    lines.push(`  ${C.red}⚠ ${terminalSafe(err)}${C.reset}`);
     lines.push('');
   }
 

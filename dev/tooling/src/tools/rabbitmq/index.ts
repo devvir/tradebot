@@ -1,6 +1,7 @@
 import type { ConsumeMessage, GetMessage } from 'amqplib';
 import { connectRabbit, type RabbitConnection } from '../../shared/connections/rabbitmq';
 import { info, success, section, table, spacer, warn } from '../../shared/ui/logger';
+import { terminalSafe } from '../../shared/utils/terminal';
 
 interface RabbitOptions {
   list?: boolean;
@@ -33,6 +34,9 @@ interface Binding {
  *   exchanges with the same keys and reads that, so the queue itself and its consumers are never
  *   touched; messages published straight to the queue through the default exchange are not seen.
  *   A stream queue is read from its next offset, which leaves the stream as it is.
+ *
+ * What the broker supplies — message bodies, queue and exchange names, routing keys — is printed
+ * with its control characters escaped, so it cannot drive the terminal.
  *
  * Errors, including a queue list that cannot be fetched, are thrown, not printed; a watched queue
  * bound to no exchange is a warning, not an error. The connection is closed whatever happens.
@@ -94,7 +98,7 @@ async function listQueues(rabbit: RabbitConnection): Promise<void> {
 
   table(
     queues.map((q: any) => ({
-      Name: q.name,
+      Name: terminalSafe(String(q.name)),
       Messages: q.messages || 0,
       Ready: q.messages_ready || 0,
       Consumers: q.consumers || 0,
@@ -198,7 +202,7 @@ async function watch(
 
   info(isStream
     ? `Watching stream ${queue} from its next offset...`
-    : `Watching what is published to ${queue} through ${bindings.map(b => `${b.source} (${b.routing_key || '*'})`).join(', ')}...`);
+    : `Watching what is published to ${queue} through ${bindings.map(b => `${terminalSafe(b.source)} (${terminalSafe(b.routing_key) || '*'})`).join(', ')}...`);
   info(limit === null ? 'Press Ctrl+C to stop' : `Stopping after ${limit} messages, or on Ctrl+C`);
   spacer();
 
@@ -241,7 +245,9 @@ async function watch(
 
       seen++;
 
-      const route = msg.fields?.exchange ? ` ${msg.fields.exchange} ${msg.fields.routingKey}` : '';
+      const route = msg.fields?.exchange
+        ? ` ${terminalSafe(msg.fields.exchange)} ${terminalSafe(String(msg.fields.routingKey ?? ''))}`
+        : '';
       section(`Message #${seen} [${new Date().toISOString()}]${route}`);
       printContent(msg.content);
 
@@ -266,14 +272,18 @@ async function watch(
   });
 }
 
+/** A message body, pretty-printed when it is JSON, with its control characters escaped. */
 function printContent(content: Buffer): void {
   const text = content.toString();
+  let shown: string;
 
   try {
-    console.log(JSON.stringify(JSON.parse(text), null, 2));
+    shown = JSON.stringify(JSON.parse(text), null, 2);
   } catch {
-    console.log(text);
+    shown = text;
   }
+
+  console.log(terminalSafe(shown, { multiline: true }));
 }
 
 /** The queue's type from the management API, or undefined when that cannot be read. */
