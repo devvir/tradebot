@@ -35,7 +35,7 @@ collection works, and collection can change without any consumer noticing.
 
 **A lens is a consumer's choice of what to read**, which collection neither knows nor acts on: it is
 defined and checked through the catalog, and prospector stores it like every other row (see
-[PROSPECTOR.md](../services/PROSPECTOR.md#storage)).
+[PROSPECTOR-STORAGE.md](../services/PROSPECTOR-STORAGE.md#one-file-one-writer)).
 
 **One database, two processes, one host.** SQLite in WAL mode lets the catalog read while prospector
 writes, but only through shared memory, so the two must mount the same directory on the same machine.

@@ -317,7 +317,7 @@ Updates find instruments listed later through bitget's v3 instruments endpoint, 
 `USDT-FUTURES`, `COIN-FUTURES` and `USDC-FUTURES` categories, and give each new one a series under
 every live shape of its market. Instruments the v3 listing does not name are reached only through
 the seed. How the service handles bitget is in
-[PROSPECTOR.md](../../../../../../docs/services/PROSPECTOR.md#bitget).
+[PROSPECTOR-VENUES.md](../../../../../../docs/services/PROSPECTOR-VENUES.md#bitget).
 
 ### Rebuilding it
 

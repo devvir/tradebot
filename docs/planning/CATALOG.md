@@ -16,7 +16,7 @@ An instrument is a row of its own — `(venue, market, symbol)` — rather than 
 its series repeats. Its properties are stated once, and series inherit them.
 
 The entity, the link and the state are built — see
-[PROSPECTOR.md](../services/PROSPECTOR.md#storage). What is left:
+[PROSPECTOR-SERIES.md](../services/PROSPECTOR-SERIES.md#instruments). What is left:
 
 **Properties.** `margin` (`linear`/`inverse`/`quanto`), `base`, `quote`, `settle`,
 `contract_size`, `expiry`, listed and delisted dates, and one `sources` column — a comma-separated
@@ -28,7 +28,7 @@ Stocker then asks the catalog for margining, and its own symbol rules go.
 
 ## Slices and partitions
 
-Built — see [PROSPECTOR.md](../services/PROSPECTOR.md#storage), [CATALOG.md](../services/CATALOG.md)
+Built — see [PROSPECTOR-STORAGE.md](../services/PROSPECTOR-STORAGE.md#slices-and-partitions), [CATALOG.md](../services/CATALOG.md)
 and [CATALOG-API.md](../modules/CATALOG-API.md#contents). What is left:
 
 **The live database is a backup, not a catalog.** It is kept as it stands so there is an honest

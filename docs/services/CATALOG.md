@@ -10,7 +10,7 @@ venue under its own prefix), and which part of it a consumer wants (lenses). Eve
 
 **The database is prospector's, and prospector is the only thing that writes it.** It creates
 `catalog.db`, migrates it, and writes every row of every table, lenses included (see
-[PROSPECTOR.md](PROSPECTOR.md#storage)). The catalog opens the same file from the same host directory
+[PROSPECTOR-STORAGE.md](PROSPECTOR-STORAGE.md#one-file-one-writer)). The catalog opens the same file from the same host directory
 **read-only**: a statement that tries to write is refused by SQLite itself, so the rule holds whatever
 the code does. A lock met for a moment, while prospector recovers or checkpoints the log, is waited on
 for up to two seconds.

@@ -10,7 +10,7 @@ It is how a reader of the catalog says what it wants without the catalog changin
 
 The catalog opens its database read-only: a lens written through its API is checked there and stored by
 prospector through its private API; prospector also keeps `lens_member` current (see
-[PROSPECTOR.md](../services/PROSPECTOR.md#storage)).
+[PROSPECTOR.md](../services/PROSPECTOR.md#lenses)).
 
 ## The definition
 
