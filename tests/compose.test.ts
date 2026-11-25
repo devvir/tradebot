@@ -2,10 +2,10 @@
  * What `docker compose config` makes of every compose file: where each port is
  * published, which credentials the broker and the cache refuse to start
  * without, where the data directories are mounted from, which project each
- * module and pack is, how logs rotate, which Host names catalog-ui is told to
- * serve, which settings the router is given, and which DuckDB
- * extensions stocker's image is built with. Skipped where docker compose is
- * not installed.
+ * module and pack is, which hostnames the packs serve, how logs rotate, which
+ * Host names catalog-ui is told to serve, which settings the router is given,
+ * and which DuckDB extensions stocker's image is built with. Skipped where
+ * docker compose is not installed.
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -41,6 +41,8 @@ const required = {
 interface Port { host_ip?: string; target: number; published?: string }
 interface Service {
   image?: string;
+  hostname?: string;
+  container_name?: string;
   build?: { dockerfile?: string; args?: Record<string, string> };
   ports?: Port[];
   command?: string[];
@@ -176,12 +178,28 @@ describe.skipIf(!hasCompose)('compose files', () => {
     expect(new Set(names).size).toBe(modules.length);
   });
 
-  it.each(files.filter((file) => file.startsWith('modules/infra/')))('%s serves any cache as `cache`', (file) => {
-    const caches = Object.entries(services(file, required))
-      .filter(([, service]) => service.image?.startsWith('redis:'))
-      .map(([name]) => name);
+  describe('the infra packs\' services', () => {
+    /** `host → image prefix` for each URL the root .env.example gives: amqp at a RabbitMQ image, redis at a Redis one. */
+    const urls = Object.fromEntries([...readFileSync(join(root, '.env.example'), 'utf8')
+      .matchAll(/^[A-Z_]+_URL=(amqp|redis):\/\/[^@\s]*@([a-z0-9-]+):\d+$/gm)]
+      .map((match) => [match[2], match[1] === 'amqp' ? 'rabbitmq:' : 'redis:']));
 
-    expect(caches).toEqual(caches.length ? ['cache'] : []);
+    it('are reached through the root URLs at `queue` and `cache`', () => {
+      expect(urls).toEqual({ queue: 'rabbitmq:', cache: 'redis:' });
+    });
+
+    const packs = files.filter((file) => file.startsWith('modules/infra/'));
+
+    it.each(packs)('in %s are each one a root URL reaches, named for its host', (file) => {
+      const defined = Object.entries(services(file, required));
+
+      expect(defined.length).toBeGreaterThan(0);
+      for (const [name, service] of defined) {
+        expect(urls).toHaveProperty(name);
+        expect(service.image?.startsWith(urls[name])).toBe(true);
+        expect([service.hostname, service.container_name]).toEqual([name, name]);
+      }
+    });
   });
 
   it('opens one port without opening the others', () => {
@@ -292,9 +310,16 @@ describe.skipIf(!hasCompose)('compose files', () => {
     const packs = files.filter((file) => file.startsWith('modules/infra/'));
 
     it.each(['QUEUE_USER', 'QUEUE_PASS'])('refuses to render without %s', (name) => {
-      const rendered = render('modules/infra/bootcamp/compose.yml', { ...required, [name]: '' });
+      const rendered = render('modules/infra/store/compose.yml', { ...required, [name]: '' });
 
       expect(rendered.ok ? '' : rendered.error).toContain(`${name} is required`);
+    });
+
+    it.each(packs)('in %s runs an exact 4.x release', (file) => {
+      const images = Object.values(services(file, required))
+        .map((service) => service.image ?? '').filter((image) => image.startsWith('rabbitmq:'));
+
+      for (const image of images) expect(image).toMatch(/^rabbitmq:4\.\d+\.\d+-management-alpine$/);
     });
 
     it.each(packs)('in %s adds its config beside the image\'s own, never over conf.d', (file) => {

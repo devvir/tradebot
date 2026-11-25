@@ -4,7 +4,7 @@
 
 services:
   rabbitmq:
-    image: rabbitmq:3.12-management-alpine
+    image: rabbitmq:4.3.8-management-alpine
 
     environment:
       # Required. The broker creates this user on first start, and guest only

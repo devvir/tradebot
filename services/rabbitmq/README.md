@@ -1,9 +1,9 @@
 # RabbitMQ
 
-A RabbitMQ 3.12 message broker with the management plugin (`rabbitmq:3.12-management-alpine`).
+A RabbitMQ 4.3 message broker with the management plugin (`rabbitmq:4.3.8-management-alpine`).
 
-Deployed by: the `local`, `store`, `market`, `bootcamp` and `shuttle` infra packs, as `queue` and
-`queue-rt` (see [modules/infra](../../modules/infra/README.md) for which pack defines which).
+Deployed by: the `store`, `market` and `shuttle` infra packs, as `queue` (see
+[modules/infra](../../modules/infra/README.md)).
 
 ## Files
 

@@ -2,7 +2,6 @@
 #
 # Defines, on the shared network ${PROJECT_NAME}-network:
 #   queue      — RabbitMQ (services/rabbitmq/docker/base.yml)
-#   queue-rt   — RabbitMQ (services/rabbitmq/docker/base.yml)
 
 name: store
 
@@ -19,21 +18,8 @@ services:
     volumes:
       - queue-data:/var/lib/rabbitmq
 
-  queue-rt:
-    extends:
-      file: ../../../services/rabbitmq/docker/base.yml
-      service: rabbitmq
-    hostname: queue-rt
-    container_name: queue-rt
-    ports:
-      - "${QUEUE_RT_BIND:-127.0.0.1}:${QUEUE_RT_PORT:-}:5672"
-      - "${QUEUE_RT_MGMT_BIND:-127.0.0.1}:${QUEUE_RT_MGMT_PORT:-}:15672"
-    volumes:
-      - queue-rt-data:/var/lib/rabbitmq
-
 volumes:
   queue-data:
-  queue-rt-data:
 
 networks:
   default:
