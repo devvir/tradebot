@@ -3,12 +3,21 @@ import type { TopologySpec } from '@devvir/rabbitmq';
 import type { ServerResponse } from 'node:http';
 
 const MESSAGE_LOG_INTERVAL = 20_000;
-const HEALTH_INACTIVITY_MS = 30_000;
+
+/**
+ * Health limits of a message-tracking service.
+ *   - inactivityMs:   the longest gap since the last message that is still healthy (default 30 s)
+ *   - startupGraceMs: how long after start the first message may take to arrive (default 60 s)
+ */
+export interface MessageTracking {
+  inactivityMs?:   number;
+  startupGraceMs?: number;
+}
 
 interface SKFactorySpec extends Spec {
   rabbitmq?:      boolean | { topology?: TopologySpec };
   redis?:         boolean;
-  trackMessages?: boolean;
+  trackMessages?: boolean | MessageTracking;
 }
 
 /**
@@ -16,7 +25,10 @@ interface SKFactorySpec extends Spec {
  *   - Standard provider URLs from QUEUE_URL / CACHE_URL env vars
  *   - RabbitMQ always in Broker mode (useBroker: true)
  *   - Health check on port 3000
- *   - Optional message tracking with activity-based health (trackMessages: true)
+ *   - Optional message tracking with activity-based health (trackMessages: true, or the limits
+ *     of MessageTracking). The service counts a message on each 'message' event. It answers 503
+ *     when no message arrived within startupGraceMs of the 'started' event, or when inactivityMs
+ *     passed since the last one; 200 otherwise.
  *
  * Accepts any valid SK spec field directly (name, state, config, etc.).
  * The shortcut keys (rabbitmq, redis, trackMessages) are translated
@@ -55,7 +67,8 @@ export const SKFactory = (factorySpec: SKFactorySpec): ServiceKit => {
     };
   }
 
-  const trackState = trackMessages ? { messages: 0, lastMessageAt: null } : {};
+  const tracking   = typeof trackMessages === 'object' ? trackMessages : {};
+  const trackState = trackMessages ? { messages: 0, startedAt: null, lastMessageAt: null } : {};
 
   const spec: Spec = {
     ...passthroughSpec,
@@ -69,6 +82,13 @@ export const SKFactory = (factorySpec: SKFactorySpec): ServiceKit => {
   const bindings: Bindings = {};
 
   if (trackMessages) {
+    const inactivityMs   = tracking.inactivityMs ?? 30_000;
+    const startupGraceMs = tracking.startupGraceMs ?? 60_000;
+
+    bindings.onStarted = (service: Service) => {
+      service.setState('startedAt', Date.now());
+    };
+
     bindings.onMessage = async (service: Service) => {
       service.increment('messages');
       service.setState('lastMessageAt', Date.now());
@@ -83,12 +103,15 @@ export const SKFactory = (factorySpec: SKFactorySpec): ServiceKit => {
     };
 
     bindings.onHealthCheck = (service: Service, res: ServerResponse) => {
+      const startedAt     = service.state('startedAt') as number;
       const lastMessageAt = service.state('lastMessageAt') as number | null;
       const messages      = service.state('messages') as number;
-      const healthy       = lastMessageAt === null || (Date.now() - lastMessageAt < HEALTH_INACTIVITY_MS);
+      const since         = lastMessageAt ?? startedAt;
+      const limit         = lastMessageAt === null ? startupGraceMs : inactivityMs;
+      const healthy       = Date.now() - since < limit;
 
       res.writeHead(healthy ? 200 : 503, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ healthy, messages, lastMessageAt }));
+      res.end(JSON.stringify({ healthy, messages, startedAt, lastMessageAt }));
     };
   }
 
