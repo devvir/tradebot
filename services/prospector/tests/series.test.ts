@@ -836,6 +836,42 @@ describe('removing what holds nothing', () => {
     expect(stored()).toBe(3);
     expect(symbols()).toEqual(['A', 'B', 'C']);
   });
+
+  /**
+   * **The stretch's own error is the one that surfaces.** Its corrected bounds
+   * are owed to disk, and owing enough of them would ordinarily write them at
+   * once; done while the failure unwinds, that write meets the same broken disk
+   * and its error would stand in for the reason the stretch failed.
+   */
+  it('reports the failed stretch, not a flush run while it unwinds', async () => {
+    const rows: Publishing[] = [];
+
+    for (let n = 0; n < 999; n++) rows.push(record({ symbol: `S${n}` }));
+    const boom = record({ symbol: 'BOOM' });
+    const late = record({ symbol: 'LATE' });
+
+    for (const row of rows) await catalogued(row, '20240310', `p/${row.symbol}`);
+    flushTips(db);
+
+    // One series already owed, so the stretch's 999 corrections reach the count.
+    await catalogued(late, '20240310', 'p/LATE');
+
+    db.exec(`CREATE TRIGGER series_boom BEFORE DELETE ON series WHEN old.id = ${boom.id}
+               BEGIN SELECT RAISE(ABORT, 'boom'); END`);
+    db.exec(`CREATE TRIGGER series_full BEFORE UPDATE ON series
+               BEGIN SELECT RAISE(ABORT, 'full'); END`);
+
+    await expect(reconcile(db, id, NOW)).rejects.toThrow(/^boom$/);
+
+    expect(db.isTransaction).toBe(false);
+
+    db.exec('DROP TRIGGER series_full');
+    flushTips(db);
+
+    expect(seriesFor(db, id).find(row => row.id === rows[0]!.id)!.first).toBe('20240310');
+    expect((db.prepare('SELECT first FROM series WHERE id = ?').get(rows[0]!.id!) as { first: string }).first)
+      .toBe('20240310');
+  });
 });
 
 describe('where a series starts', () => {

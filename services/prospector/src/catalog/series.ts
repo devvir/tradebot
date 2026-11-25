@@ -745,17 +745,27 @@ export const reconcile = async (
 
     const moved:   Publishing[] = [];
     const dropped: Publishing[] = [];
+    let   settled = false;
 
     try {
       inTransaction(db, () => {
         for (const row of rows.slice(at, at + YIELD_EVERY)) settle(row, moved, dropped);
       });
 
+      settled = true;
+
       for (const row of dropped) forget(held, row);
 
       summary.removed += dropped.length;
     } finally {
-      for (const row of moved) if (held.byId.has(row.id!)) touch(held, row);
+      /**
+       * **A stretch that failed marks its bounds owed and writes nothing.** The
+       * rows in memory were corrected before the transaction gave way, so they
+       * are still owed to disk; but a flush run while that failure unwinds would
+       * meet whatever broke the stretch, and its error would replace the one
+       * that says why. The timer, or the next flush to succeed, writes them.
+       */
+      for (const row of moved) if (held.byId.has(row.id!)) touch(held, row, settled);
     }
   }
 
@@ -1224,11 +1234,14 @@ const setState = (
  *
  * One dirty set for all three bounds, because one statement writes them: a
  * second would be a second thing to forget to flush.
+ *
+ * `flushNow` false only marks and schedules: the count never triggers a write
+ * from here, which is what a caller unwinding a failure needs.
  */
-const touch = (held: Registry, row: Publishing): void => {
+const touch = (held: Registry, row: Publishing, flushNow = true): void => {
   held.moved.add(row.id!);
 
-  if (held.moved.size >= FLUSH_AT) {
+  if (flushNow && held.moved.size >= FLUSH_AT) {
     flushTips(held.db);
 
     return;
