@@ -149,7 +149,7 @@ trusted for them, and no single-symbol shape reads them.
 ### The three naming eras
 
 The same series is published under different shapes over time. Both boundaries are exact and apply
-across the archive, not per symbol.
+across the archive, not per symbol; the exceptions are the kline keys described below.
 
 | era | from | to |
 |---|---|---|
@@ -220,8 +220,9 @@ Twenty-six shapes cover the archive, counting the monthly trees. **Every one of 
 them, with no ambiguity and nothing unmatched** — measured by anchoring each shape as a regular
 expression and testing every URL against the shapes of its own market and dataset.
 
-`{TOKEN}` is `UMCBL`, `CMCBL` or `DMCBL` and appears **only in perp trades**. Which token a file
-takes depends on the *series*, not only the market:
+**The margin token varies only in futures trades**, which take `UMCBL`, `DMCBL` or `CMCBL`; every
+other series has one fixed token. Which token a file takes depends on the *series*, not only the
+market:
 
 | series | token |
 |---|---|
@@ -325,7 +326,8 @@ in `fileUrl`. From 2026-08-19 some rows carry `<displayName>-<real basename>` in
   were in the archive all along, at full strength and under the shapes already known. The newest
   date it returns is a lower bound on what exists, never the archive's end. Observed in August 2026.
 
-**The REST APIs — two of them, and they are different systems.** See below.
+**The REST APIs — two of them, and they are different systems.** See
+[the two REST APIs are two account systems](#the-two-rest-apis-are-two-account-systems).
 
 **The trading platform search.** `POST /v1/mix/index/search/trade/coin` with
 `{searchContent, showOpenTime, languageType}`, returning `spot`, `margin` and `contract` buckets.
@@ -521,7 +523,8 @@ kline/TRXUSDT/RUNEUSDT_UMCBL_1min_20221117.zip
 ```
 
 Both are served. In era-1 naming the symbol appears twice — directory and filename — and in these two
-keys they disagree. They are the only two in 5,055,779 paths.
+keys they disagree. They are the only two era-1 keys like this in 5,055,779 paths; the books have
+their own case, [374 keys on four dates](#depth-is-two-datasets-and-one-of-them-is-invisible-without-a-parameter).
 
 No single-symbol shape reads them. `RUNEUSDT`'s day exists only at this key; `TRXETH`'s has a
 byte-identical copy at its proper key.
@@ -563,7 +566,6 @@ The cadence slips: on 2026-08-21 the file for the 18th was still absent, 21 hour
 
 - Why 809 depth streams stop on 2026-08-17, the last day of era 2, with nothing taking over — probing
   every filename digit on later dates answers `403` for all of them.
-
 - What the two rows per timestamp in a depth file are.
 - Which depth stream is the instrument's while two are written: LIQUIDIUMUSDT, MRSOONUSDT and
   VELOUSDC each have depth under two spellings for an overlapping period.

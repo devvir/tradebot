@@ -415,8 +415,8 @@ $ curl -X PUT https://static.okx.com/cdn/okex/traderecords/zzz
 
 **Objects are publicly readable there**, for the `okex/traderecords/` and `okx/match/orderbook/L2/`
 keys but not for `pro/L2/` (see [the two prefixes](#the-books-sit-on-two-clouds-at-two-prefixes)).
-The same key returns
-`200` with identical `Content-Length` and `ETag`, from `Server: AliyunOSS` with no CDN in the path:
+The same key returns `200` with identical `Content-Length` and `ETag`, from `Server: AliyunOSS`
+with no CDN in the path:
 
 ```
 static.okx.com                           3740179  "3170CA8595A3AE1ABC66C27A94D01374"
@@ -426,12 +426,11 @@ okg-pub-hk.oss-cn-hongkong.aliyuncs.com  3740179  "3170CA8595A3AE1ABC66C27A94D01
 A request to the origin does not pass through CloudFront, where
 [the refusals](#what-the-cdn-tolerates-and-how-it-refuses) come from.
 
-**Listing is denied everywhere.** `ListObjects` at
-the origin answers `AccessDenied — The bucket you access does not belong to you`; the
-`oss-website-…` endpoint does not resolve; `/cdn/` is a zero-byte directory marker rather than an
-index. There is no listable surface at any layer.
+**Listing is denied everywhere.** `ListObjects` at the origin answers `AccessDenied — The bucket
+you access does not belong to you`; the `oss-website-…` endpoint does not resolve; `/cdn/` is a
+zero-byte directory marker rather than an index. There is no listable surface at any layer.
 
-**A 404 tells you nothing, because it is a file.** The `NoSuchKey` body served through the edge
+**A 404's body says nothing about the origin, because it is a file.** The `NoSuchKey` body served through the edge
 carries its own `etag`, `content-md5` and a `last-modified` of December 2023, with an `age` of
 months — it is a stored error document, not a live OSS error, which is why it holds a bare `<Code>`
 and never a `BucketName`.
@@ -459,10 +458,9 @@ Five years of one symbol's history is some 260 daily calls, and 20 monthly ones 
 call. Each mode enumerates only its own rendering, so **the mode
 asked for is what says which rendering came back**.
 
-**An empty `instIdList` returns the venue-wide files** rather than an error —
-`allspot-trades-2025-07-02.zip`, 52 MB, every spot instrument in one file. Daily only: the same
-query with `monthly` returns nothing. This is the same shape `SWAP` answers with whatever it is
-given.
+**An empty `instIdList` returns the venue-wide files** rather than an error, daily only (see
+[what the parameters select](#what-the-parameters-select)): the same query with `monthly` returns
+nothing.
 
 #### The dated markets are selected by family, and asking wrongly answers anyway
 
@@ -738,6 +736,7 @@ start of the dated day to publication:
 | 24.0 h | 24.5 h |
 
 ### Not yet established
+
 - Where between three and six months the monthly window of the index ends.
 - How far below 2023-04-03 the 400-level books of the futures chains reach.
 - Where borrowing rates get their universe. They key on a currency rather than an instrument, so
