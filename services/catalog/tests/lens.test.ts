@@ -3,8 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { dropLens, lensNamed, lensOptions, lensSize, lenses, problemsWith, resolveSlices } from '@tradebot/lenses';
-import { changeLens, markDownloaded, putFiles, putVenue, recordSeries, storeLens, venueIdOf } from './fixture';
+import { changeLens, markDownloaded, putFiles, putVenue, recordSeries, storeLens } from './fixture';
 import { openScratch } from './fixture';
+import type { LensRule } from '@tradebot/lenses';
 import type { LensDefinition } from '../src/types';
 import type { DatabaseSync } from 'node:sqlite';
 
@@ -121,9 +122,9 @@ describe('what a lens lets through', () => {
    * overlaps — a carve-back is a narrower exclude, not a later include.
    */
   it('lets an exclude win over every include it overlaps, wherever either sits', () => {
-    const everything = { effect: 'include' } as const;
-    const noKlines   = { effect: 'exclude', datasets: [{ dataset: 'klines' }] } as const;
-    const oneKline   = { effect: 'include', datasets: [{ dataset: 'klines', variant: '1m' }] } as const;
+    const everything: LensRule = { effect: 'include' };
+    const noKlines:   LensRule = { effect: 'exclude', datasets: [{ dataset: 'klines' }] };
+    const oneKline:   LensRule = { effect: 'include', datasets: [{ dataset: 'klines', variant: '1m' }] };
 
     const without = selects(lens({ binance: [everything, noKlines] }));
 
