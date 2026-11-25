@@ -15,25 +15,23 @@ import type {
 const GLOBAL = '*';
 
 /**
- * Lenses: named ways of looking at the catalog.
+ * Lenses: named selections of the catalog, and the editor for their rules.
  *
  * **Where a lens is in force, what it lets through is the catalog**, as far as
  * whoever looks through it is concerned. So this page is not a shopping list — it
  * is the definition of a view, and the thing it has to make obvious is what that
- * view leaves out.
- *
- * **Includes minus excludes, in no order.** A lens lets through what any include
- * matches, less what any exclude matches; where a rule sits never changes that.
+ * view leaves out. How rules combine is the catalog's, in
+ * docs/modules/CATALOG-LENSES.md.
  *
  * **A rule is confirmed on its own.** Writing one sends nothing; Confirm stores
  * the lens with that rule, Drop stores it without, and Save is for the name and
  * the note alone — so a half-written rule never costs the catalog a request, and
  * each change that reaches it is one somebody meant.
  *
- * **A rule states only what it constrains.** Every dimension left empty means all
- * of it, which is shown as `every` rather than as a blank — because the
- * difference between "all datasets" and "no datasets chosen yet" is the whole
- * meaning of the rule.
+ * **A rule states only what it constrains**, and a dimension left alone is shown
+ * as All (markets, datasets), Any (grain, bundle) or Open (a month) rather than as
+ * a blank — because the difference between "all datasets" and "no datasets chosen
+ * yet" is the whole meaning of the rule.
  */
 export const Lenses = ({ slug }: { slug?: string | undefined }) => {
   const [lenses, setLenses] = useState<Lens[] | null>(null);
@@ -409,7 +407,7 @@ const Editing = ({ lens, onStored, onFailed, onGone }: {
   /**
    * **Every venue has a block, whether or not it has rules.** A lens is written
    * by reading down the venues and saying what each one contributes, so the
-   * question "what does bitget give this lens?" should be answerable by looking
+   * question "what does this venue give the lens?" should be answerable by looking
    * rather than by finding a venue in a dropdown first — and "nothing" is an
    * answer the empty block gives and a missing block does not.
    *
@@ -976,8 +974,8 @@ const Picker = ({ label, w, placeholder, data, value, error, onChange, tip }: {
  * it is narrowed by. Six controls in a line read as six equal choices, when one
  * of them decides what the other five mean.
  *
- * **Every list left empty is shown as `every`**, because a rule that constrains
- * nothing is the common case and an empty box reads as unfinished.
+ * **A list left empty says All**, because a rule that constrains nothing is the
+ * common case and an empty box reads as unfinished.
  */
 const Rule = ({ rule, offered, published, problems, state, busy, locked, onChanged, onConfirm, onDrop, onDiscard }: {
   /** What every venue publishes: what a market or a dataset is found in is read off it. */

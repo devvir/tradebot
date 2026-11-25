@@ -18,8 +18,9 @@ How it works, the proxy and what every column means: [docs/services/CATALOG-UI.m
   market publishes. Symbol lists at venue and market level, asked for rather than loaded.
 - **surveys** — what every venue is doing, polled every ten seconds, with Start per venue and
   pause/resume, update-now and refresh beside it, and start/pause across all of them.
-- **lenses** — named selections of the catalog. Each lens is edited as rules per venue; the catalog
-  refuses a malformed rule, and a saved lens shows its size and how much of it is downloaded.
+- **lenses** — named selections of the catalog (sets of whole partitions), each edited as rules per
+  venue and for all venues at once. A rule the catalog refuses is shown with its problems; a saved
+  lens shows its exact size and how much of it is downloaded.
 
 ## Running it
 

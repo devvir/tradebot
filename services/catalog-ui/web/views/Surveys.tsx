@@ -136,7 +136,7 @@ export const Surveys = () => {
                  * Stacking the two buys the width back for the column that
                  * needed it: what a venue last did is a handful of characters
                  * that never change length, while the schedule beside it is a
-                 * sentence and a timestamp and was wrapping every row.
+                 * sentence and a timestamp and would wrap every row.
                  *
                  * It also settles the row height without a rule about it. Every
                  * row is two lines because every row has a name and a badge, so
@@ -266,7 +266,7 @@ export const Surveys = () => {
                       **One slot for the two opposite things**, because they are
                       opposite: a venue going is stopped here and a stopped one
                       is started again here, and no venue is ever both. Two slots
-                      meant one of them greyed out on every row and a reader
+                      would mean one of them greyed out on every row and a reader
                       working out which.
 
                       Resuming is the same request as starting, so the colour
@@ -897,8 +897,8 @@ const useSaid = () => {
  * Ask again on a timer, and on demand.
  *
  * **A survey runs for hours and reports nothing when it starts**, so a view of
- * it that only loaded once would show "Idle" for as long as somebody left it
- * open. Ten seconds is often enough to watch a venue change state and rare
+ * it that only loaded once would show a state long since left for as long as
+ * somebody left it open. Ten seconds is often enough to watch a venue change state and rare
  * enough to be free.
  */
 const usePolled = <T,>(path: string, ask: (path: string, signal: AbortSignal) => Promise<T>, everyMs = POLL_MS) => {
