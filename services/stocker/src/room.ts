@@ -1,3 +1,4 @@
+import { sizeOf } from '@tradebot/utils';
 import config from './config';
 import { MOST, needsExtracting, weightsOf } from './containers';
 import { freeGb } from './vault';
@@ -38,5 +39,12 @@ export class NoRoom extends Error {
     super(`extracting needs ${(short.needs / GB).toFixed(1)} GB and the vault volume has ${(short.free / GB).toFixed(1)} GB free`);
   }
 }
+
+/** How a want of room is written in a log line. */
+export const roomIn = (short: Short): Record<string, string> =>
+  ({ needs: sizeOf(short.needs), free: sizeOf(short.free), keeps: `${config.minFreeGb} GB` });
+
+/** What a partition passed over for want of room to extract it is logged as. */
+export const NO_ROOM = 'Not enough space to extract — partition skipped';
 
 const GB = 1024 ** 3;

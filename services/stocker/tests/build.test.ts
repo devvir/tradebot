@@ -9,7 +9,7 @@ import { PIECES, buildBatch, buildGroup, bundleStaged, finishPiece, finishedPiec
 import config from '../src/config';
 import { SCRATCH } from '../src/containers';
 import { parseKey } from '../src/keys';
-import { _test_pieceAt as pieceAt, _test_piecedOf as piecedOf, _test_tasksOf as tasksOf } from '../src/scan';
+import { _test_pieceAt as pieceAt, piecedOf, tasksOf } from '../src/tasks';
 import type { DiskFile, VaultKey } from '../src/types';
 
 /**

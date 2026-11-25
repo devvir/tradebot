@@ -15,9 +15,9 @@ import { _test_held as held } from '../src/prepare';
 import * as disk from '../src/disk';
 import * as room from '../src/room';
 import * as vault from '../src/vault';
-import {
-  _test_aloneAt as aloneAt, _test_directAt as directAt, _test_pieceAt as pieceAt, _test_splitAt as splitAt, sweep,
-} from '../src/scan';
+import { _test_aloneAt as aloneAt, sweep } from '../src/scan';
+import { _test_splitAt as splitAt } from '../src/stock';
+import { _test_directAt as directAt, _test_pieceAt as pieceAt } from '../src/tasks';
 import type { DuckDBConnection } from '@duckdb/node-api';
 import type { ListedSlice, Summary } from '../src/types';
 

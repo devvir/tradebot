@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseKey } from '../src/keys';
-import { _test_groupsOf as groupsOf, _test_sideGroupsOf as sideGroupsOf } from '../src/scan';
+import { groupsOf, sideGroupsOf } from '../src/tasks';
 import { clipFor, reachOf } from '../src/spill';
 import type { DiskFile, Series, Spill } from '../src/types';
 
