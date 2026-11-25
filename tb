@@ -1,6 +1,7 @@
 #!/bin/bash
 
-# Entry point for dx: runs dx/dx.js with DX_EXECUTOR set to this script name
+# Entry point for dx: makes sure the shared docker network exists, then runs dx/dx.js with
+# DX_EXECUTOR set to this script name
 
 # Update path if DX is not mounted on ./dx
 DX_DIR="$(dirname "$0")/dx"
@@ -10,6 +11,38 @@ DX_DIR="$(dirname "$0")/dx"
 # Uncomment and update as needed:
 # export DX_SERVICES_DIR="$(dirname "$0")/services"
 # export DX_MODULES_DIR="$(dirname "$0")/modules"
+
+# Every module and pack joins the external network "${PROJECT_NAME}-network", which compose
+# never creates. PROJECT_NAME comes from the environment, else from the root .env, else tradebot.
+# The .env is read line by line, never sourced, so none of its contents run.
+if [ -z "${PROJECT_NAME+set}" ] && [ -f "$(dirname "$0")/.env" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      PROJECT_NAME=*) value="${line#PROJECT_NAME=}" ;;
+      *) continue ;;
+    esac
+    value="${value%$'\r'}"
+    case "$value" in
+      \"*) value="${value#\"}"; value="${value%%\"*}" ;;
+      \'*) value="${value#\'}"; value="${value%%\'*}" ;;
+      *)
+        # An unquoted value ends at a whitespace-# comment; surrounding whitespace is dropped.
+        value="${value%%[[:space:]]#*}"
+        value="${value#"${value%%[![:space:]]*}"}"
+        value="${value%"${value##*[![:space:]]}"}"
+        case "$value" in \#*) value="" ;; esac
+        ;;
+    esac
+    # An empty or comment-only value sets nothing.
+    [ -n "$value" ] && PROJECT_NAME="$value"
+  done < "$(dirname "$0")/.env"
+fi
+PROJECT_NAME="${PROJECT_NAME:-tradebot}"
+
+if command -v docker >/dev/null 2>&1; then
+  docker network inspect "${PROJECT_NAME}-network" >/dev/null 2>&1 \
+    || docker network create "${PROJECT_NAME}-network" >/dev/null
+fi
 
 cd "$DX_DIR" || exit 1
 
