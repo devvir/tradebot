@@ -1,7 +1,7 @@
 # Hauler
 
 Hauler brings catalogued venue files to disk under canonical names. It walks each venue's listing over
-the [catalog API](../modules/CATALOG-API.md), fetches what the listing says is still owed, verifies it,
+the [catalog API](CATALOG-API.md), fetches what the listing says is still owed, verifies it,
 and reports what became of it.
 
 Everything it does follows from one division: **the catalog says what exists and what is owed, and
@@ -27,7 +27,7 @@ and every report, and on nothing else: the venue list is asked for without it. T
 only what the lens lets through, and settles a report only for what it lets through, so hauler
 filters nothing itself. An unknown slug is refused by the catalog, and each walk fails loudly rather
 than hauling everything. What a lens is and how it selects is in
-[CATALOG-LENSES.md](../modules/CATALOG-LENSES.md).
+[shared/lenses/README.md](../../shared/lenses/README.md).
 
 **Several haulers split the work by disjoint lenses.** Pending is a property of the file, not of the
 lens it was listed through: a file one hauler reports downloaded is no longer pending for any other.
@@ -47,7 +47,7 @@ container `<archives>` is `/data/archives`, so a file lands at, for example:
 ```
 
 The key grammar, including the letter folder `F` and the market bundle (`@`), is the catalog's:
-[CATALOG-API.md](../modules/CATALOG-API.md#listings). A key that is not under the venue being walked,
+[CATALOG-API.md](CATALOG-API.md#listings). A key that is not under the venue being walked,
 or that has an empty, `.` or `..` segment, is logged and skipped rather than written.
 
 ## Walking a listing

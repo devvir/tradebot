@@ -106,11 +106,12 @@ through a lens. Built.
 **Download** — [hauler](../services/HAULER.md) fetches what the catalog lists as still owed, through
 a lens. Built.
 
-**This is the phase in progress**, and [CATALOG.md](CATALOG.md) holds its open work — hauler's under
-[Hauler](CATALOG.md#hauler), prospector's under [Prospector](CATALOG.md#prospector). Beyond those:
+**This is the phase in progress**, and its open work is beside this plan: the catalog's in
+[CATALOG.md](CATALOG.md), prospector's in [PROSPECTOR.md](PROSPECTOR.md), hauler's in
+[HAULER.md](HAULER.md). Beyond those:
 
 **okx's `'drop'` on 404** (its adapter's `ruleOnFailure`): whether and when it goes is in
-[CATALOG.md](CATALOG.md#prospector).
+[PROSPECTOR.md](PROSPECTOR.md#open-work).
 
 **Deciding what to do about data we do not want.** Venues publish the same month several ways — okx
 trades monthly *and* daily, binance most periods both ways — and the catalog records all of it, by
@@ -239,4 +240,4 @@ those would replace the wait with a fact. A survey, not a change.
 ## Not in this line of work
 
 **The bot app** — signal, strategy and execution above the exchange layer — is out of scope until
-replay exists; no current plan. What was written about it is under [archived/](archived/README.md).
+replay exists; no current plan.

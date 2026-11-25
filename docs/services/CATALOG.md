@@ -3,8 +3,8 @@
 The catalog service is the public API over what prospector has catalogued. It answers three kinds of
 question: what each venue publishes (contents), which files there are (one S3-style bucket, every
 venue under its own prefix), and which part of it a consumer wants (lenses). Every endpoint is in
-[CATALOG-API.md](../modules/CATALOG-API.md); lenses are in
-[CATALOG-LENSES.md](../modules/CATALOG-LENSES.md). This page is how it is built.
+[CATALOG-API.md](CATALOG-API.md); lenses are in
+[shared/lenses/README.md](../../shared/lenses/README.md). This page is how it is built.
 
 ## One database, one writer
 
@@ -21,7 +21,7 @@ What it keeps for itself is everything that only reads: checking a lens's defini
 saying what it selects.
 
 **A lens is checked here and stored there.** A write's slug, name and note are checked, and its
-definition as [CATALOG-LENSES.md](../modules/CATALOG-LENSES.md#what-is-refused) says; what is wrong is
+definition as [shared/lenses/README.md](../../shared/lenses/README.md#what-is-refused) says; what is wrong is
 answered, and only a write that holds is handed over. Prospector's answer is relayed as it is, status
 and body; an answer that is not JSON is logged and answered with an error of the same status, or `502`
 where prospector failed.
@@ -80,14 +80,14 @@ reading a file. A venue's markets, shapes and instruments under a lens keep only
 inside the lens's months, each dated by the oldest and newest file it holds there: two indexed reads of
 `file` for a series the lens cuts (more where a span it reaches holds none of its files), none for one
 the lens holds whole. Which figures are the lens's is in
-[CATALOG-LENSES.md](../modules/CATALOG-LENSES.md#reading-through-a-lens).
+[CATALOG-API.md](CATALOG-API.md#reading-through-a-lens).
 
 **A venue's partitions are their own view**: each slice once, with its months inside it. Through a lens
 it is the partitions joined to the lens's `lens_member` rows, and no others. It is a read of a few
 thousand rows, so it is not paged.
 
 **Settled is worked out when it is asked about, and only then**; what it means is in
-[CATALOG-API.md](../modules/CATALOG-API.md#partitions). It takes two facts that are not on the
+[CATALOG-API.md](CATALOG-API.md#partitions). It takes two facts that are not on the
 partition: today's date, against which a month must have ended more than 15 days ago (`SETTLE_DAYS`),
 and the start of the venue's open run. A run is the venue's, whichever hosts it reaches, and the `run`
 table holds it as several unfinished rows, one per host and part of the tree; its start is the
@@ -98,7 +98,7 @@ read once per request, and not at all for a caller that asks for neither.
 ## Listings
 
 **One bucket, every venue's files, keyed by what each file is**; the key is in
-[CATALOG-API.md](../modules/CATALOG-API.md#the-key). It leads with the series' prefix
+[CATALOG-API.md](CATALOG-API.md#the-key). It leads with the series' prefix
 (`venue/market/dataset[,variant]/F/symbol/`, or `venue/market/dataset[,variant]/@/` for the
 market-bundle file), then the month, then a name ending in the date and any part. So keys sort by
 prefix, then date, then part, and that is exactly how the rows are indexed.
@@ -133,7 +133,7 @@ listed once, so paging still ends; a report naming that key settles the first.
 ## Lenses
 
 **A lens is read as what it lets through**: rows of `lens_member`, one per partition (see
-[CATALOG-LENSES.md](../modules/CATALOG-LENSES.md#resolving-one)). The listing, the contents, the size and
+[shared/lenses/README.md](../../shared/lenses/README.md#resolving-one)). The listing, the contents, the size and
 a report's check all read those rows, so they agree and none of them evaluates a rule. Only a
 definition being edited, which has no rows yet, is resolved as it stands.
 
@@ -152,7 +152,7 @@ Most of what the catalog answers is read when it is asked. Three things are held
   a venue can have a hundred thousand. So a venue's markets, shapes and instruments, and a venue's
   series count under a lens, can be up to a minute behind prospector.
 - **The lens options, for five minutes**, held by `@tradebot/lenses` (see
-  [CATALOG-LENSES.md](../modules/CATALOG-LENSES.md#the-definition)).
+  [shared/lenses/README.md](../../shared/lenses/README.md#the-definition)).
 - **A lens's scope**, its slices and the months of each as read off `lens_member`, until the lens is
   saved again or its `partitions_through` moves. Each request reads the lens's `updated_at` and
   `partitions_through` and reads the scope again where either differs from what was held.

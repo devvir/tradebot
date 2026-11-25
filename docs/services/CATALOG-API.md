@@ -6,8 +6,8 @@ rather than restating it**, so an endpoint cannot be described in two places and
 Containers on the shared network reach it as `catalog:8080`; the host reaches it on `CATALOG_PORT`,
 bound to `CATALOG_BIND` (`127.0.0.1` unless set). It reads the catalog prospector writes, and hands
 every write it is sent to prospector. Prospector's own API (starting and pausing surveys, settling
-reports, storing lenses) is private to the [archives module](ARCHIVES.md) and documented in
-[PROSPECTOR.md](../services/PROSPECTOR.md#the-api).
+reports, storing lenses) is private to the [archives module](../modules/ARCHIVES.md) and documented in
+[PROSPECTOR.md](PROSPECTOR.md#the-api).
 
 ## Conventions
 
@@ -27,7 +27,7 @@ file is on.
 **Canonical names, never the venue's own.** `market`, `dataset` and `variant` are the catalog's
 vocabulary (`perp`, `klines`, `1m`); the translation from a venue's own naming, such as gate's
 `futures_usdt/candlesticks_1m`, is prospector's and ends there. See
-[PROSPECTOR.md](../services/PROSPECTOR.md).
+[PROSPECTOR.md](PROSPECTOR.md).
 
 **`variant` is the level below the dataset, whatever that level happens to be.** For klines it is the
 bar length; for books it is the kind and the depth. It is stored as one string, the levels' values
@@ -57,7 +57,7 @@ the same data both monthly and daily, so `grain` is what tells the two rendering
 listing, reports and `/venues/*` answer only what it lets through. The header wins where both are sent.
 Naming none is the whole catalog. An unknown slug, or a `lens` parameter given more than once, is a
 `422`, never the whole catalog in its place. What a lens changes in each answer is in
-[CATALOG-LENSES.md](CATALOG-LENSES.md#reading-through-a-lens).
+[Reading through a lens](#reading-through-a-lens).
 
 **Collections answer `{ "items": [...] }`.** Single resources answer the object itself. Errors answer
 `{ "error": "..." }` with a fitting status. The listing and its report answer their own refusals in
@@ -88,7 +88,7 @@ A venue row carries `venue`, `firstMonth`, `lastMonth`, `files`, `bytes`, `pendi
 `withdrawn`, `series` (`withFiles` out of `total`) and `hosts`. Every venue the catalog knows is
 listed, with or without files. Under a lens, a venue the lens lets no file through from is left out,
 and the figures are read off the lens's stored partitions; which of them are the lens's is in
-[CATALOG-LENSES.md](CATALOG-LENSES.md#reading-through-a-lens).
+[Reading through a lens](#reading-through-a-lens).
 
 `hosts` is where the venue's files are served from, by server: `{ "": [address, …] }`, or one entry for
 each of `primary` and `secondary` where a venue has two. The first address of each is the one
@@ -377,12 +377,13 @@ reported again. Nothing ties a report to a download made from a listing, so a fi
 downloaded whenever a client holds it, however it came to.
 
 How prospector rules on a failure or a mismatch is in
-[PROSPECTOR.md](../services/PROSPECTOR.md#reports).
+[PROSPECTOR.md](PROSPECTOR.md#reports).
 
 ## Lenses
 
-A **lens** is a named selection of the catalog. What one is, what is refused, and how it resolves is in
-[CATALOG-LENSES.md](CATALOG-LENSES.md).
+A **lens** is a named selection of the catalog: where one is named, what it lets through is the
+catalog as far as that request is concerned. What one is, what is refused, and how it resolves is
+the `@tradebot/lenses` package, in [shared/lenses/README.md](../../shared/lenses/README.md).
 
 | | |
 |---|---|
@@ -404,11 +405,64 @@ hyphens, two to 64 characters, not starting with a hyphen, and not `options`, `s
 `check`, `size` and `resolve` take the definition as the body, or under `definition` in it. A
 definition that does not hold is a `400` with `error` and `problems`, each naming the venue, the
 rule's position and what is wrong — see
-[CATALOG-LENSES.md](CATALOG-LENSES.md#what-is-refused).
+[What is refused](../../shared/lenses/README.md#what-is-refused).
 
 **Writes are stored by prospector.** A write that passes the catalog's checks is handed on, and the
 answer is prospector's own status and body: the lens, or its refusal (`404`, `409`) as it is. Where
 prospector does not answer, the write is a `502`.
+
+### What a lens costs
+
+Nobody fetches everything, so the figure that decides a lens is its size, and it answers while
+somebody is still choosing. **It is always exact, and never reads a file**: every partition carries its
+own files, bytes and what is still pending, kept in step with every write, and a lens is a list of
+partitions.
+
+- **A saved lens** (`GET /lenses/:slug/size`) is one query: its `lens_member` rows joined to their
+  partitions and summed. It says too whether the lens is `updating`, in which case the figures are of
+  the rules before.
+- **A definition being edited** (`POST /lenses/size`) has no rows yet, so it is resolved as it stands,
+  against the venues' slices and partitions, and the partitions it lets through are summed.
+
+The date bounds are part of the price: a lens letting one year of a ten-year slice through is sized
+at one year.
+
+**Progress comes from the same road.** The size carries `pending` and `pendingBytes` — the files not
+yet downloaded — beside the totals, so a lens's progress never disagrees with its size.
+
+### Reading through a lens
+
+How a request names its lens is under [Conventions](#conventions). What it changes in each answer:
+
+**The listing** lists only what the lens lets through — see [Listings](#listings). Its walk takes
+each series in key order and reads only those of a slice the lens holds a partition of, and of those
+only the files in the months it lets through. A partition asked for by name that the lens does not
+let through lists nothing.
+
+**A report** through a lens settles only what the lens lets through; a key outside it is answered
+`AccessDenied` and goes no further. See [Reporting](#reporting).
+
+**The contents** — `/venues` and everything under it — narrow to the lens too:
+
+- **Only series with a file inside the lens.** A seeded series nothing has been found for offers
+  nothing. A venue's markets, shapes and instruments are those of these series alone, and a shape's
+  `symbols` and `buckets` (its count of market-bundle files, `@`) count only them.
+- **A shape's dates are its files', not the lens's.** A series the lens cuts reports the oldest and
+  newest file it actually holds inside it, read off the file index, so a shape under a lens ending
+  `202012` says where its data stops rather than claiming the lens's last day.
+- **The venue list is the lens's figures, for every venue at once**: `files`, `bytes`, `pending`,
+  `pendingBytes` and `withdrawn` are summed over the lens's partitions at that venue, and
+  `firstMonth` and `lastMonth` are the first and last month it holds a file in — one query for every
+  venue, grouped by venue. A venue the lens holds no file of is not listed. `series` counts the
+  series dated inside the months the lens lets through for their slice, judged by their first and
+  last dates alone, so `withFiles` and `total` are the same number. `hosts` stays the whole venue's.
+- **A venue's partitions are the lens's partitions**, and no others.
+
+**Pending is the file's, not the lens's.** A file reported downloaded through any lens is no longer
+pending through any other, nor without one.
+
+**A lens never scopes collection.** It narrows what is read through the catalog; what the catalog
+holds is the same whatever lenses exist.
 
 ## Errors
 

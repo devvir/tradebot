@@ -8,7 +8,7 @@ It surveys nothing, downloads nothing and writes nothing. It opens the `catalog.
 forwards to prospector, the database's only writer.
 
 It serves venue contents, the bucket listing and lenses; every endpoint is in
-[CATALOG-API.md](../../docs/modules/CATALOG-API.md).
+[CATALOG-API.md](../../docs/services/CATALOG-API.md).
 
 Deployed by: archives module (`modules/collect/archives/compose.yml`).
 How it works: [docs/services/CATALOG.md](../../docs/services/CATALOG.md).

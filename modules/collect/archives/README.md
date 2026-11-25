@@ -24,7 +24,7 @@ tb ps archives             # Check status
 ```
 
 Consumers outside the module reach the catalog on `CATALOG_PORT`; every endpoint is in
-[CATALOG-API.md](../../../docs/modules/CATALOG-API.md).
+[CATALOG-API.md](../../../docs/services/CATALOG-API.md).
 
 ## Configuration
 

@@ -375,7 +375,7 @@ it ([PROSPECTOR-TRANSPORT.md](PROSPECTOR-TRANSPORT.md#pacing-one-gate-per-venue-
 **Private to the archives module.** Prospector publishes no host port: it is reachable only over the
 deployment's shared Docker network, on `8080`. It starts, pauses and reports on surveys, settles reports of what became
 of listed files, and stores lenses. What the catalog holds is served by the catalog service — see
-[CATALOG-API.md](../modules/CATALOG-API.md).
+[CATALOG-API.md](CATALOG-API.md).
 
 **Authenticated with one shared secret**, `CATALOG_TOKEN`, carried in `x-catalog-token`; a wrong or
 missing token is a `401`, the two answered alike. An empty `CATALOG_TOKEN` turns the check off, and
@@ -580,7 +580,7 @@ either a client bug or a file that changed twice in a minute.
 
 A lens is a named selection of the catalog, stored here because storing it is a write. What a lens is
 and how its members are decided is the `@tradebot/lenses` package, which this service calls and does
-not own; how lenses are read is the catalog's (see [CATALOG-LENSES.md](../modules/CATALOG-LENSES.md)).
+not own; how lenses are read is the catalog's (see [CATALOG-API.md](CATALOG-API.md#reading-through-a-lens)).
 
 | | |
 |---|---|

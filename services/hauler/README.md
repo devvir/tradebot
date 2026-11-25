@@ -3,7 +3,7 @@
 Brings catalogued venue files to disk, under canonical names.
 
 The catalog serves every venue as one S3-style bucket over the
-[catalog API](../../docs/modules/CATALOG-API.md), each venue under its own prefix. Hauler walks each
+[catalog API](../../docs/services/CATALOG-API.md), each venue under its own prefix. Hauler walks each
 venue's prefix, fetches what is still owed, and writes each object at `<archives>/<key>`. It never
 discovers, never learns how a venue structures its archive, and never names a file.
 
@@ -21,7 +21,7 @@ How it works: [docs/services/HAULER.md](../../docs/services/HAULER.md).
   and is then moved to `<name>.bak` (or `.bak.2`, `.bak.3`, ...). Hauler never deletes an archive
   file.
 - **Reports each page by Key**: downloaded, failed or mismatched. The catalog rules on failed and
-  mismatched files ([catalog API](../../docs/modules/CATALOG-API.md)).
+  mismatched files ([catalog API](../../docs/services/CATALOG-API.md)).
 - **Reports a file failed only on the venue's word**: a `404` or `410` from every address in
   rotation, the listed address among them, or a `403` from the listed address on every attempt.
   A timeout, a `5xx`, a `429` or a short body leaves the file unreported and owed, to come round on

@@ -327,7 +327,7 @@ front of whoever looks next: nothing removes `ERROR.log` but a person.
 ### Providers
 
 **The catalog** says what exists and what is ready
-([CATALOG-API.md](../modules/CATALOG-API.md#partitions)). A sweep asks it once per venue in scope —
+([CATALOG-API.md](CATALOG-API.md#partitions)). A sweep asks it once per venue in scope —
 those of `STOCKER_VENUES`, or every venue the series map declares, alphabetically:
 
 ```

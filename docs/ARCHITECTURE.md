@@ -71,7 +71,7 @@ the same database read-only and answers what each venue publishes, which files t
 S3-style bucket, every venue under its own prefix) and which part of it a consumer wants: a lens, a
 named selection of the catalog that a consumer reads through. What it is sent to store, a lens or a
 download report, it forwards to prospector. Every endpoint is in
-[CATALOG-API.md](modules/CATALOG-API.md); lenses are in [CATALOG-LENSES.md](modules/CATALOG-LENSES.md).
+[CATALOG-API.md](services/CATALOG-API.md); lenses are in [shared/lenses/README.md](../shared/lenses/README.md).
 [Catalog UI](services/CATALOG-UI.md) is a page over both services for reading the catalog, editing
 lenses, and starting and pausing surveys; nothing depends on it.
 
@@ -110,7 +110,7 @@ No module deploys these services:
 
 - **hoarder**, the WebSocket collector above ([README](../services/hoarder/README.md));
 - **router**, which republishes RabbitMQ messages to the destinations its rules give
-  ([ROUTER.md](services/ROUTER.md));
+  ([README](../services/router/README.md));
 - **pipe**, which declares RabbitMQ exchange-to-exchange bindings and exits
   ([README](../services/pipe/README.md));
 - **the UI stub**, a trading dashboard kept as a stub ([README](../services/_stub/ui/README.md)).

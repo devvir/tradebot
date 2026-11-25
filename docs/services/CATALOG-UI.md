@@ -64,7 +64,7 @@ Only the requests the page makes. Each `:param` is one path segment, anything bu
 Any other method or path under `/api/catalog` or `/api/prospector` answers `404`
 `{"error":"Not forwarded"}` without leaving the process, and so does a path whose dot segments (`..`,
 `%2e%2e`) would resolve outside what was matched. What each route does is the service's own: see
-[CATALOG-API.md](../modules/CATALOG-API.md) and [PROSPECTOR.md](PROSPECTOR.md#the-api).
+[CATALOG-API.md](CATALOG-API.md) and [PROSPECTOR.md](PROSPECTOR.md#the-api).
 
 ### What is refused first
 
@@ -136,7 +136,7 @@ is what tells a reader to fetch both.
 count below it to what the lens lets through, by sending its slug as `x-catalog-lens`, so the page
 shows what a reader through that lens is offered. The lens is part of the address, so it follows a
 click from a venue into a market and survives a reload; cleared, it is the whole catalog. What changes
-under a lens is in [CATALOG-LENSES.md](../modules/CATALOG-LENSES.md#reading-through-a-lens).
+under a lens is in [CATALOG-API.md](CATALOG-API.md#reading-through-a-lens).
 
 ### Surveys
 
@@ -232,7 +232,7 @@ page says *resumed where it stopped*.
 ### Lenses
 
 What a lens is and how its rules combine is in
-[CATALOG-LENSES.md](../modules/CATALOG-LENSES.md#the-definition). This section is the editor.
+[shared/lenses/README.md](../../shared/lenses/README.md#the-definition). This section is the editor.
 
 **A lens is picked from a bar**, beside **New Lens**, and opened at `#lenses/:slug`. An address that
 names no lens opens the first one instead.
@@ -273,14 +273,14 @@ There is one unsaved lens at a time: naming another replaces it, after asking.
 **The catalog decides what can be stored.** A confirm the catalog refuses comes back with its
 problems, each shown on the field of the rule it names, and the rule stays a draft. A problem about no
 particular rule is shown above the blocks; a refusal with no problems is shown as the request's
-failure. What is refused is in [CATALOG-LENSES.md](../modules/CATALOG-LENSES.md#what-is-refused).
+failure. What is refused is in [shared/lenses/README.md](../../shared/lenses/README.md#what-is-refused).
 
 **The saved lens carries what it costs**: its size, from `GET /lenses/:slug/size`, asked again thirty
 seconds after each answer and at once after every confirm, drop or clear, and every two seconds while
 the catalog reports the lens `updating` (shown as *Updating…*). Under it, a bar shows the share
 already downloaded by weight, not by count: files run from kilobytes to gigabytes, so a count says
 little about the wait. A draft is never sized here. What the figures mean is in
-[CATALOG-LENSES.md](../modules/CATALOG-LENSES.md#what-a-lens-costs-and-how-far-along-it-is).
+[CATALOG-API.md](CATALOG-API.md#what-a-lens-costs).
 
 **A half-written lens survives a reload.** Drafts of rules, name and note are kept in `localStorage`
 per lens, tagged with the version they were written from, so a lens saved somewhere else replaces them

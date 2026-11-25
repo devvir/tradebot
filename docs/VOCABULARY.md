@@ -92,7 +92,7 @@ withdraw or publish late, and the partition's version changes when it does.
 
 **Canonical key.** A file's key in the platform's own terms, built from what the file is (venue,
 market, dataset and variant, symbol or `@`, period) rather than from where the venue put it. Its
-layout is in [CATALOG-API.md](modules/CATALOG-API.md#the-key).
+layout is in [CATALOG-API.md](services/CATALOG-API.md#the-key).
 
 **Letter folder.** The level of a canonical key holding the symbol's first letter, written `F`. The
 market bundle has none.

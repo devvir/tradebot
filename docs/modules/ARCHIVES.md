@@ -17,8 +17,8 @@ lens, and reports back what it fetched. [catalog-ui](../services/CATALOG-UI.md) 
 the catalog, editing lenses and starting and pausing surveys; it holds nothing, and no other service
 depends on it.
 
-Going deeper: every public endpoint is [CATALOG-API.md](CATALOG-API.md), and lenses (the named
-selections a consumer reads through) are [CATALOG-LENSES.md](CATALOG-LENSES.md).
+Going deeper: every public endpoint is [CATALOG-API.md](../services/CATALOG-API.md), and lenses (the named
+selections a consumer reads through) are [shared/lenses/README.md](../../shared/lenses/README.md).
 
 ## Why it is split this way
 

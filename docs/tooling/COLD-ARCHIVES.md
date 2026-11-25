@@ -43,7 +43,7 @@ settled.** That is asked of the catalog directly, venue by venue — the partiti
 `downloaded=true` and `settled=true` — so nothing here decides what finished means. A partition a
 run is still adding to can be complete at every moment and still be a fraction of itself, and only
 the catalog knows which; what it takes as settled is in
-[CATALOG-API.md](../modules/CATALOG-API.md#partitions).
+[CATALOG-API.md](../services/CATALOG-API.md#partitions).
 
 `COLD_SETTLED_HOURS`, where set, asks for quiet on top: the request carries `settled-before` that
 many hours ago in place of `settled`, and a settled partition that changed since is left for a
@@ -300,7 +300,7 @@ from what is settled:
 - **A month the catalog holds that is not stocked yet** will, and its neighbour's files stay.
 - **A month whose files hold the first hours of the month after, where that month is not in the
   catalog**, waits until the month after could have been settled and still is not there. A month
-  can be settled 15 days after it ends ([CATALOG-API.md](../modules/CATALOG-API.md#partitions)), so
+  can be settled 15 days after it ends ([CATALOG-API.md](../services/CATALOG-API.md#partitions)), so
   until then the venue has simply not published it. One whose following month has had its time and
   never came is the last month of a dataset the venue stopped publishing, and goes.
 

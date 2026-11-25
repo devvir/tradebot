@@ -27,7 +27,7 @@ const GLOBAL = '*';
  * whoever looks through it is concerned. So this page is not a shopping list — it
  * is the definition of a view, and the thing it has to make obvious is what that
  * view leaves out. How rules combine is the catalog's, in
- * docs/modules/CATALOG-LENSES.md.
+ * shared/lenses/README.md.
  *
  * **A rule is confirmed on its own.** Writing one sends nothing; Confirm stores
  * the lens with that rule, Drop stores it without, and Save is for the name and

@@ -5,7 +5,7 @@ RabbitMQ exactly as it was received.
 
 Deployed by: no module.
 
-One instance can collect one venue, several, or all of them — selected with `HOARDER_VENUES`, so deployments can be split per venue or consolidated without code changes.
+One instance can collect one venue, several, or all of them — selected with `HOARDER_VENUES`, so deployments can be split per venue or consolidated without code changes. The compose file runs one instance. Every instance publishes into the same exchange and queue, so two instances given the same venue publish each of its frames twice; instances that split the venues between them are given disjoint `HOARDER_VENUES`.
 
 "Venue" means a trading exchange (Binance, OKX, …) everywhere in this service. "Exchange" unqualified means the AMQP exchange, and nothing else.
 
@@ -17,6 +17,8 @@ One instance can collect one venue, several, or all of them — selected with `H
 - **Multi-venue WebSocket connections** — one socket per (venue, endpoint, socket key), opened when its first channel is subscribed
 - **Byte-faithful relay** — a frame is parsed only to ask its venue whether it is market data; what is published is the received buffer, so number text, escapes and whitespace stay as the venue sent them. Control frames (acks, heartbeats, status) are logged, not published; a frame that is not JSON is logged and dropped
 - **Venue routing keys** — the routing key is the venue name (`okx`). Anything finer is venue-local vocabulary a binding cannot express portably, and it is already in the payload
+- **A capped durable queue** — every frame is published into one durable queue bound to the exchange for every routing key, so frames published while no consumer is attached wait there. The queue holds at most `HOARDER_QUEUE_MAX_LENGTH` frames; once it is full, each new frame pushes out the oldest (`drop-head`), so a consumer away too long loses the start of the gap and the broker's disk stays bounded
+- **Connection ids** — each frame carries the id of the socket that read it, so a change of id marks a reconnect, and with it a possible gap in the stream
 - **Subscriptions** — each socket sends one subscribe at a time and waits for its ack (5 s, not counting time the socket is paused). An unconfirmed subscribe is retried on the same socket, from 1 s doubling to 60 s; a channel the venue refuses is logged and dropped. Every socket that opens, a reconnected replacement included, subscribes every channel assigned to it that has not been refused
 - **Reconnection** — only a socket's close schedules its replacement, after a backoff from 200 ms doubling to 15 s (±20% jitter), reset once a socket has stayed open for 30 s; a handshake refused with HTTP 418 or 429 backs off at 15 s at once. A handshake must complete within 10 s, and an open socket that sends nothing in the 30 s after a ping is terminated (a paused socket is not judged)
 - **Backpressure** — while the AMQP channel's write buffer is full, every socket stops reading, including one that opens meanwhile, and resumes when it drains. A paused socket answers no ping from its venue; a pause lasting over 30 s is logged as a warning
@@ -60,17 +62,27 @@ Requires RabbitMQ — see [infra packs](../../modules/infra/README.md).
 |---|---|---|---|
 | `HOARDER_VENUES` | No | _(all known)_ | Comma-separated venues to collect — `binance`, `bybit`, `kraken`, `okx`. Unknown names fail at startup |
 | `QUEUE_URL` | Yes | — | RabbitMQ connection URL |
+| `HOARDER_QUEUE` | No | `hoarder.raw` | The durable queue every frame is published into |
+| `HOARDER_QUEUE_MAX_LENGTH` | No | `1000000` | The most frames the queue holds before the oldest are dropped; a positive integer |
+
+RabbitMQ refuses to declare an existing queue again with a different cap, so changing the cap of a
+queue that already exists means deleting that queue first.
 
 **What each venue subscribes to is not configurable** — the lists live in [src/venues/channels.ts](src/venues/channels.ts). They change rarely and never per host, so a rebuild is the right cost for changing them, and the collected set stays legible in one file instead of spread across deployment envs.
 
 ## Message Envelope
 
-Every market-data frame is published to the topic exchange `hoarder`, which hoarder declares at
-startup, with the venue name as routing key, `contentType` `application/json`, persistent, and the
-frame as received as body.
+Every market-data frame is published to the topic exchange `hoarder`, with the venue name as routing
+key, `contentType` `application/json`, persistent, and the frame as received as body. At startup
+hoarder declares the exchange and the queue `HOARDER_QUEUE`, durable, capped at
+`HOARDER_QUEUE_MAX_LENGTH` frames with `drop-head` overflow, and bound with `#`.
+
+**Best effort.** Publishes are not confirmed by the broker, so a frame the broker loses before
+enqueueing it is lost without notice.
 
 | Header | Meaning |
 |---|---|
 | `x-venue` | Which venue the frame arrived from |
-| `x-hoarder-uuid` | Collector instance, so several collectors can share one AMQP exchange |
+| `x-hoarder-uuid` | Collector instance, one per process, so several collectors can share one AMQP exchange |
+| `x-connection-id` | The socket that read the frame, one per connection: a new id marks a reconnect and a possible gap |
 | `x-collected-at` | When the collector received it |

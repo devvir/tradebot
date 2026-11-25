@@ -4,13 +4,17 @@ Small helpers shared by the services of this repo.
 
 | Module | Exports |
 |---|---|
+| `env` | `parseEnv` reads the text of a `.env` file by docker compose's grammar for `KEY=value` lines; `parseEnvFile` reads a file and expands its `${VAR}` references |
+| `retry` | `backoffDelay`, the wait after a number of failures (exponential, capped, with a chosen jitter); `retry`, which calls a function until it resolves or its attempts are spent |
 | `routes` | `parseRules`, the parser of the [rule grammar](#rule-grammar) |
 | `security` | `redactUrl` masks the credentials of a URL for logging |
 | `services` | `SKFactory`, a service-kit factory with RabbitMQ (`QUEUE_URL`) and Redis (`CACHE_URL`, `CACHE_PASS`) providers, a health check on port 3000, and optional message tracking |
 | `sizes` | `sizeOf` writes a byte count as `912 B`, `18.1 MB`, `2.4 GB` |
 
-The `@tradebot/utils/testing` subpath holds test helpers: `.env` parsing (`parseEnvFile`,
-`loadTestingEnv`) and a throwaway RabbitMQ under docker compose (`startRabbitMQ`, `stopRabbitMQ`).
+The root entry serves every module above. `@tradebot/utils/env` and `@tradebot/utils/retry` serve
+one module each, and load nothing else. The `@tradebot/utils/testing` subpath holds test helpers:
+`loadTestingEnv`, which loads a tests directory's `.env.testing` into `process.env`, and a throwaway
+RabbitMQ under docker compose (`startRabbitMQ`, `stopRabbitMQ`).
 
 ## Rule grammar
 
