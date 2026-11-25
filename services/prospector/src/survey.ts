@@ -905,6 +905,9 @@ const sweep = async (
   let withdrawn = 0;
   let spoke     = Date.now();
 
+  /** What generating a key takes is fixed for the partition, so it is read once — see `rulesFor`. */
+  const rules = kind === 'update' ? rulesFor(db, venueId, adapter) : null;
+
   do {
     /**
      * **Hand the event loop back between pages, every time.**
@@ -941,7 +944,7 @@ const sweep = async (
     for (let attempt = 1; ; attempt++) {
       try {
         const page = kind === 'update'
-          ? updatePage(db, venueId, short, cursor, rulesFor(db, venueId, adapter))
+          ? updatePage(db, venueId, short, cursor, rules!)
           : await adapter.scanner.page(context, scope, cursor);
 
         read = performance.now();

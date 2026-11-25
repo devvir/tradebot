@@ -868,7 +868,11 @@ export interface Pacing {
    */
   perSecond:   number;
 
-  /** How many requests may be waiting at once. A bound on the queue, not the rate. */
+  /**
+   * How many requests may be in flight to this venue at once, reached after a
+   * short ramp from cold (see `Pace.allowed`). A bound on concurrency, not on the
+   * rate.
+   */
   concurrency: number;
 
   /** The longest a stand-down may grow to, however often a venue keeps refusing. */
@@ -2264,6 +2268,18 @@ export interface Lane {
   waiting:   Map<number, Waiting>;
   outbox:    Parcel[];
   scheduled: boolean;
+}
+
+/** A place for one transport worker, and how it has been faring there. */
+export interface Slot {
+  /** The worker serving here; `null` while a replacement waits, or once none is started. */
+  lane:   Lane | null;
+
+  /** Exits in a row of workers that died before they had settled — see `transport.ts`. */
+  exits:  number;
+
+  /** The file a worker here runs. */
+  worker: string;
 }
 
 /** A venue's reply as `http.ts` weighs it: `Carried`, with its headers readable again. */

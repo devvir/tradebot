@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   Pace, REFUSALS_BEFORE_BLOCK, STEADY, capacity, paceFor, reopenGradually, ticketing, _test_paces, _test_pool,
+  _test_tickets,
 } from '../src/pace';
 import { bybitPrimary as bybit } from '../src/adapters/bybit.primary';
 import { htx } from '../src/adapters/htx';
@@ -362,6 +363,92 @@ describe('the rate over minutes and hours', () => {
   });
 });
 
+/**
+ * **The window is exact over any run of sends.** Checked against the plainest
+ * possible count — every send time kept, every window counted by scanning all
+ * of them — over long enough that the kept history turns over several times.
+ */
+describe('the sliding second, over a long run', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    _test_pool(1000);
+  });
+
+  afterEach(() => vi.useRealTimers());
+
+  it('counts, peaks and waits exactly as a full count of every send says', async () => {
+    const cap  = 50;
+    const pace = new Pace('long', { ...pacing, perSecond: cap, concurrency: 1_000_000 });
+    const sent: number[] = [];
+
+    const within  = (from: number): number => sent.filter(at => at >= from).length;
+    /** The first millisecond at or after `from` with room in the window, by brute force. */
+    const opensAt = (from: number): number => {
+      let at = from;
+
+      while (within(at - 1000) >= cap) at++;
+
+      return at;
+    };
+
+    let seed = 7;
+    let peak = 0;
+    let held = 0;
+
+    for (let i = 0; i < 2_000; i++) {
+      seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+
+      // Bursts that hit the cap, between stretches well under it.
+      const gap = i % 300 < 70 ? 0 : seed % 41;
+
+      await vi.advanceTimersByTimeAsync(gap);
+
+      const asked  = Date.now();
+      const target = opensAt(asked);
+
+      let out = false;
+
+      const going = pace.slot().then(() => { out = true; });
+
+      if (target > asked) {
+        held++;
+
+        await vi.advanceTimersByTimeAsync(target - asked - 1);
+
+        expect(out).toBe(false);
+
+        await vi.advanceTimersByTimeAsync(1);
+      }
+
+      await going;
+
+      expect(Date.now()).toBe(target);
+
+      sent.push(Date.now());
+      pace.done();
+
+      peak = Math.max(peak, within(Date.now() - 1000));
+
+      if (i % 50 === 0) {
+        const now   = Date.now();
+        const rates = pace.rates();
+
+        expect(rates.lastSecond).toBe(within(now - 1_000));
+        expect(rates.last5Seconds).toBe(Math.round(within(now - 5_000) / 5));
+        expect(rates.last10Seconds).toBe(Math.round(within(now - 10_000) / 10));
+      }
+    }
+
+    // The run did reach the cap, and did outlast the kept history.
+    expect(held).toBeGreaterThan(0);
+    expect(sent.at(-1)! - sent[0]!).toBeGreaterThan(30_000);
+
+    expect(pace.rates().peakPerSecond).toBe(peak);
+    expect(peak).toBe(cap);
+  }, 30_000);
+});
+
 /** A venue with no opinion gets the timid default rather than a guess. */
 describe('a venue that states nothing', () => {
   it('is paced by STEADY', () => {
@@ -585,6 +672,79 @@ describe('the machine-wide ceiling', () => {
     capacity(40);
 
     expect(ticketing().limit).toBe(40);
+  });
+
+  /**
+   * **A shrink holds while lanes are queued.** With more out than the new
+   * ceiling, a returned ticket goes back to the pool rather than to the next in
+   * line, until what is out is down to the ceiling.
+   */
+  it('reaches a lowered ceiling as tickets come back, whoever is queued', async () => {
+    _test_pool(300);
+
+    const pool = _test_tickets();
+
+    for (let i = 0; i < 300; i++) pool.take();
+
+    let woken = 0;
+
+    for (let i = 0; i < 50; i++) void (pool.take() as Promise<void>).then(() => { woken++; });
+
+    pool.resize(100);
+
+    for (let i = 0; i < 200; i++) pool.give();
+
+    await Promise.resolve();
+
+    expect(ticketing()).toMatchObject({ limit: 100, outstanding: 100, queued: 50 });
+    expect(woken).toBe(0);
+
+    // At the ceiling, a ticket given back is a ticket handed on.
+    for (let i = 0; i < 20; i++) pool.give();
+
+    await Promise.resolve();
+
+    expect(ticketing()).toMatchObject({ outstanding: 100, queued: 30 });
+    expect(woken).toBe(20);
+  });
+
+  /** After the gate lets go, the pool is held at the restart and then opens with the answers. */
+  it('holds a reopened pool at a hundred, then widens it again with the answers', async () => {
+    capacity(3_000);
+
+    const host = roomy();
+
+    await answer(host, 2_000);
+
+    for (let i = 0; i < 300; i++) await host.slot();
+
+    let woken = 0;
+
+    for (let i = 0; i < 50; i++) void host.slot().then(() => { woken++; });
+
+    reopenGradually();
+
+    for (let i = 0; i < 200; i++) host.done();
+
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(ticketing()).toMatchObject({ limit: 100, outstanding: 100, queued: 50 });
+    expect(woken).toBe(0);
+
+    // From the ceiling on, every answer lets one more in.
+    for (let i = 0; i < 50; i++) host.done();
+
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(ticketing()).toMatchObject({ limit: 100, outstanding: 100, queued: 0 });
+    expect(woken).toBe(50);
+
+    for (let i = 0; i < 100; i++) host.done();
+
+    // 350 answered since the reopen; 650 more make the thousand that widens it.
+    await answer(host, 650);
+
+    expect(ticketing()).toMatchObject({ limit: 200, outstanding: 0 });
   });
 });
 

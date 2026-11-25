@@ -148,6 +148,11 @@ const hostOf = (url: string): string => {
  * next waiter keeps the count exact: were it given back to the pool first, a
  * caller arriving in the gap could take it while the woken waiter also believed
  * it had one, and the ceiling would drift upward by one every time that raced.
+ *
+ * **Except while more are out than the ceiling allows.** After a shrink, a
+ * ticket that comes back goes to the pool, and nobody is woken, until what is
+ * out is down to the new ceiling; from there tickets transfer again. A shrink is
+ * reached as tickets come back, whoever is queued.
  */
 class Tickets {
   #limit:   number;
@@ -169,20 +174,27 @@ class Tickets {
     return new Promise<void>(release => this.#waiting.push(release));
   }
 
-  /** Done with it. The next in line gets it before the pool does. */
+  /**
+   * Done with it. The next in line gets it before the pool does — unless more
+   * are out than the ceiling allows, when it goes back to the pool.
+   */
   give(): void {
-    const next = this.#waiting.shift();
+    if (this.#taken > this.#limit || this.#waiting.length === 0) {
+      this.#taken--;
 
-    if (next) next();
-    else this.#taken--;
+      return;
+    }
+
+    this.#waiting.shift()!();
   }
 
   /**
    * Resize the pool.
    *
    * Only ever grows or shrinks the ceiling: tickets already out stay out, so a
-   * shrink is reached by attrition rather than by taking anything back, and a
-   * growth releases whoever is already queued for the room that just appeared.
+   * shrink is reached as they come back (see `give`) rather than by taking
+   * anything back, and a growth releases whoever is already queued for the room
+   * that just appeared.
    */
   resize(limit: number): void {
     this.#limit = limit;
@@ -240,7 +252,9 @@ export const capacity = (limit: number): void => {
  *
  * For when the network gate lets go of everything it held: the same moment as a
  * start, with every lane released at once and the connections they held gone.
- * Tickets already out stay out; the pool shrinks by attrition.
+ * Tickets already out stay out, and the pool shrinks as they come back: a ticket
+ * returned while more are out than the new ceiling wakes nobody. Lanes the gate
+ * holds hold no tickets, so they wait for the ceiling like any other arrival.
  */
 export const reopenGradually = (): void => {
   if (ramp.ceiling > 0) capacity(ramp.ceiling);
@@ -294,8 +308,15 @@ export class Pace {
     readonly pacing: Pacing,
   ) {}
 
-  /** When requests went out, newest last, trimmed to `HISTORY_MS`. */
+  /**
+   * When requests went out, oldest first, from `head` on: everything before
+   * `head` is older than `HISTORY_MS` and is only kept until the next
+   * compaction — see `trim`.
+   */
   private readonly sent: number[] = [];
+
+  /** The first entry of `sent` still inside `HISTORY_MS`. */
+  private head = 0;
 
   /**
    * Lanes waiting for one of this host's in-flight slots.
@@ -542,14 +563,15 @@ export class Pace {
    * a socket timed out costs hours of surveying and buys nothing — the venue was
    * never objecting, and there is nobody to appease.
    *
-   * What it does do is say so, once per run of them, with the reason unwrapped
-   * from `cause` — because "some timeouts in the log" is worth being able to see
-   * and count, and a silent one is how a genuine outage looked like a hang.
+   * What it does do is say so, once every `FAULTS_PER_WARNING` in a row, with
+   * the reason unwrapped from `cause` — because "some timeouts in the log" is
+   * worth being able to see and count, and a silent one is how a genuine outage
+   * looked like a hang.
    */
   faulted(url: string, err: unknown): void {
     this.faults++;
 
-    if (this.faults % this.pacing.giveUpAfter !== 0) return;
+    if (this.faults % FAULTS_PER_WARNING !== 0) return;
 
     logger.warn({
       venue: this.venue, url, err: faultLine(err), inARow: this.faults, ...this.rates(),
@@ -697,15 +719,23 @@ export class Pace {
     this.paused = 0;
   }
 
-  /** Drop what has aged out. The list is time-ordered, so this is a prefix. */
+  /**
+   * Drop what has aged out. The list is time-ordered, so this is a prefix.
+   *
+   * **Skipped over first, removed later.** `head` moves past the stale prefix
+   * on every call, and the array is compacted only once that prefix is more
+   * than half of it, so a venue sending thousands a second does not shift the
+   * whole list on every request.
+   */
   private trim(now: number): void {
     const cut = now - HISTORY_MS;
 
-    let stale = 0;
+    while (this.head < this.sent.length && this.sent[this.head]! < cut) this.head++;
 
-    while (stale < this.sent.length && this.sent[stale]! < cut) stale++;
-
-    if (stale > 0) this.sent.splice(0, stale);
+    if (this.head > this.sent.length >>> 1) {
+      this.sent.splice(0, this.head);
+      this.head = 0;
+    }
   }
 
   /**
@@ -731,13 +761,22 @@ export class Pace {
     this.perMinute[minute % 60]! += by;
   }
 
-  /** How many requests went out at or after `from`. */
+  /**
+   * How many requests went out at or after `from`, among those `trim` kept.
+   * A binary search, since the list is time-ordered.
+   */
   private since(from: number): number {
-    let count = 0;
+    let low  = this.head;
+    let high = this.sent.length;
 
-    for (let at = this.sent.length - 1; at >= 0 && this.sent[at]! >= from; at--) count++;
+    while (low < high) {
+      const mid = (low + high) >>> 1;
 
-    return count;
+      if (this.sent[mid]! < from) low = mid + 1;
+      else high = mid;
+    }
+
+    return this.sent.length - low;
   }
 }
 
@@ -808,6 +847,9 @@ const RAMP_FLOOR = 4;
  * taken up promptly, and only ever paid during those first seconds.
  */
 const RAMP_POLL_MS = 100;
+
+/** Consecutive requests that never reached a venue between one warning about them and the next. */
+const FAULTS_PER_WARNING = 50;
 
 /** Quiet for this long since the last refusal before the doubling is forgotten. */
 const EASE_AFTER_MS = 30 * 60_000;
