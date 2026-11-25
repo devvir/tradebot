@@ -1,6 +1,6 @@
 import type { ConsumeMessage, GetMessage } from 'amqplib';
 import { connectRabbit, type RabbitConnection } from '../../shared/connections/rabbitmq';
-import { info, success, section, table, spacer, warn, error } from '../../shared/ui/logger';
+import { info, success, section, table, spacer, warn } from '../../shared/ui/logger';
 
 interface RabbitOptions {
   list?: boolean;
@@ -34,7 +34,8 @@ interface Binding {
  *   touched; messages published straight to the queue through the default exchange are not seen.
  *   A stream queue is read from its next offset, which leaves the stream as it is.
  *
- * Errors are thrown, not printed; the connection is closed whatever happens.
+ * Errors, including a queue list that cannot be fetched, are thrown, not printed; a watched queue
+ * bound to no exchange is a warning, not an error. The connection is closed whatever happens.
  */
 export async function run(queueArg?: string, options: RabbitOptions = {}): Promise<void> {
   section('RabbitMQ Monitoring Tool');
@@ -80,8 +81,7 @@ async function listQueues(rabbit: RabbitConnection): Promise<void> {
   section('Available Queues');
 
   if (! rabbit.mgmtUrl) {
-    error(`Cannot list queues without the management API: ${rabbit.mgmtUnavailable}`);
-    return;
+    throw new Error(`Cannot list queues without the management API: ${rabbit.mgmtUnavailable}`);
   }
 
   let queues: any[];
@@ -89,8 +89,7 @@ async function listQueues(rabbit: RabbitConnection): Promise<void> {
   try {
     queues = await mgmtGet(rabbit, '/queues');
   } catch (err) {
-    warn(`Could not fetch the queue list from the management API: ${(err as Error).message}`);
-    return;
+    throw new Error(`Could not fetch the queue list from the management API: ${(err as Error).message}`);
   }
 
   table(

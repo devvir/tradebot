@@ -407,10 +407,19 @@ describe('rabbitmq tool', () => {
       } as any);
       global.fetch = vi.fn() as any;
 
-      await run(undefined, { list: true });
+      await expect(run(undefined, { list: true })).rejects.toThrow(
+        /Cannot list queues without the management API: .*does not publish the management port 15672/,
+      );
 
       expect(global.fetch).not.toHaveBeenCalled();
-      expect(printedErr()).toContain('does not publish the management port 15672');
+      expect(mockConnection.close).toHaveBeenCalled();
+    });
+
+    it('throws when the management API cannot give the queue list', async () => {
+      mgmt({});
+
+      await expect(run(undefined, { list: true })).rejects.toThrow(/Could not fetch the queue list/);
+
       expect(mockConnection.close).toHaveBeenCalled();
     });
 

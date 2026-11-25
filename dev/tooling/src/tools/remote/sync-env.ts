@@ -105,7 +105,9 @@ export async function run(root: string = rootDir): Promise<void> {
 
     try {
       execFileSync('ssh', ['--', dest.userHost, `umask 077 && mkdir -p -- ${shq(remoteDir)}`], { stdio: 'pipe' });
-      // The scp target is not shell-quoted: scp transfers over SFTP, which takes the path as is.
+      // The scp target is not shell-quoted. That assumes an OpenSSH 9.0+ client, whose scp
+      // transfers over SFTP and takes the path as is; an older client's legacy protocol hands the
+      // target to the remote shell, which splits a path with spaces into words.
       execFileSync('scp', ['-q', '--', file, `${dest.userHost}:${remoteFile}`], { stdio: 'pipe' });
       execFileSync('ssh', ['--', dest.userHost, `chmod 600 -- ${shq(remoteFile)}`], { stdio: 'pipe' });
       success(relative);

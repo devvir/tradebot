@@ -95,8 +95,23 @@ describe('parseRemoteDest', () => {
     expect(() => parseRemoteDest('u@h:~bob/x')).toThrow(/~\/dir/);
   });
 
-  it.each(['u@h:', 'u@h:/', 'u@h://'])('refuses %s as the filesystem root', (dest) => {
-    expect(() => parseRemoteDest(dest)).toThrow(/filesystem root/);
+  it.each(['u@h:', 'u@h:/', 'u@h://', 'u@h:/.', 'u@h:/./', 'u@h:/..', 'u@h:/tmp/..', 'u@h:/tmp/../'])(
+    'refuses %s as the filesystem root',
+    (dest) => {
+      expect(() => parseRemoteDest(dest)).toThrow(/filesystem root/);
+    },
+  );
+
+  it.each(['u@h:~/.', 'u@h:~/..', 'u@h:~/a/../..', 'u@h:.', 'u@h:../x'])(
+    'refuses %s as naming no directory under the home',
+    (dest) => {
+      expect(() => parseRemoteDest(dest)).toThrow(/no directory under the home/);
+    },
+  );
+
+  it('normalises . and .. segments', () => {
+    expect(parseRemoteDest('u@h:/srv/./a/../tradebot/').path).toBe('/srv/tradebot');
+    expect(parseRemoteDest('u@h:~/a/../tradebot').path).toBe('tradebot');
   });
 
   it('rejects a user@host that ssh would read as an option', () => {

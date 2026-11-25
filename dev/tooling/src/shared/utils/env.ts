@@ -98,6 +98,12 @@ function readEnvFile(filePath: string): EnvFile {
  * lines whose first non-blank character is `#`, and lines of any other form are skipped. A key set
  * twice takes its last value. `parseValue` gives the rules for quoting and inline comments.
  * `${VAR}` references are left as written.
+ *
+ * This is a parser of its own rather than `@tradebot/utils`' `parseEnvFile`, because the files it
+ * reads are the ones docker compose reads, and a value must come out as compose gives it to the
+ * containers. The two grammars differ on inline comments: here only ` #` starts one in an unquoted
+ * value (so `KEY=x<tab># c` keeps `x<tab># c`), and a `#` may follow a closing quote directly
+ * (`KEY="a"#c` sets `a`).
  */
 function parseEnvFile(filePath: string): Record<string, string> {
   return readEnvFile(filePath).values;
@@ -172,8 +178,9 @@ export interface EnvDirs {
  *
  * `${VAR}` references in values that come from the files are expanded against the merged
  * variables, recursively; a reference to an unset variable becomes empty and is warned about
- * once. Values the shell exported, and single-quoted values, are used as given. A reference that
- * leads back to itself is left as written.
+ * once. Values the shell exported, and single-quoted values, are used as given. A key whose
+ * references lead back to itself, directly or through other keys, keeps its value as written, as
+ * does every other key on that cycle; a key that only refers to one of them takes that value.
  */
 export function loadEnv(
   additionalEnvPath: string | null = null,
@@ -235,18 +242,29 @@ export function loadEnv(
 
   const resolved = new Map<string, string>();
   const unresolved = new Set<string>();
+  /** The keys being expanded, outermost first. */
+  const resolving: string[] = [];
+  /** Keys whose references lead back to themselves; each keeps its value as written. */
+  const cyclic = new Set<string>();
 
-  const resolve = (key: string, resolving: Set<string>): string => {
+  const resolve = (key: string): string => {
     if (! expandable.has(key)) return merged[key];
 
     const done = resolved.get(key);
 
     if (done !== undefined) return done;
 
-    resolving.add(key);
+    resolving.push(key);
 
-    const value = merged[key].replace(/\$\{([^}]+)\}/g, (match, name: string) => {
-      if (resolving.has(name)) return match;
+    const expanded = merged[key].replace(/\$\{([^}]+)\}/g, (match, name: string) => {
+      const open = resolving.indexOf(name);
+
+      if (open !== -1) {
+        // Every key from `name` down to this one is on the cycle.
+        for (const k of resolving.slice(open)) cyclic.add(k);
+
+        return match;
+      }
 
       if (! (name in merged)) {
         if (! unresolved.has(name)) warn(`\${${name}} is not set; it expands to an empty string`);
@@ -255,16 +273,19 @@ export function loadEnv(
         return '';
       }
 
-      return resolve(name, resolving);
+      return resolve(name);
     });
 
-    resolving.delete(key);
+    resolving.pop();
+
+    const value = cyclic.has(key) ? merged[key] : expanded;
+
     resolved.set(key, value);
 
     return value;
   };
 
-  for (const key of expandable) merged[key] = resolve(key, new Set());
+  for (const key of expandable) merged[key] = resolve(key);
 
   loadedEnv = {};
 

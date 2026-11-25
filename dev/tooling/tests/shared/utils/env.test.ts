@@ -255,14 +255,22 @@ describe('loadEnv ${VAR} expansion', () => {
     expect([env.XLIT, env.XA]).toEqual(['ab${XC}', 'ab${XC}']);
   });
 
-  it('leaves a cycle as written instead of hanging', () => {
-    write('root/.env', 'XA=${XB}\nXB=${XA}\nXD=${XD}x\n');
+  it('leaves every key on a cycle as written instead of hanging', () => {
+    write('root/.env', 'XA=${XB}\nXB=${XA}\nXD=${XD}x\nXE=${XA}/e\nXF=${XG}\nXG=${XH}\nXH=${XF}${XN}\nXN=/n\n');
 
     const env = loadEnv(null, null, dirs);
 
-    expect(env.XA).toContain('${X');
-    expect(env.XB).toContain('${X');
-    expect(env.XD).toBe('${XD}x');
+    expect([env.XA, env.XB, env.XD]).toEqual(['${XB}', '${XA}', '${XD}x']);
+    expect([env.XF, env.XG, env.XH]).toEqual(['${XG}', '${XH}', '${XF}${XN}']);
+    expect([env.XE, env.XN]).toEqual(['${XB}/e', '/n']);
+  });
+
+  it('gives a cycle the same values whichever key comes first', () => {
+    write('root/.env', 'XE=${XA}/e\nXB=${XA}\nXA=${XB}\n');
+
+    const env = loadEnv(null, null, dirs);
+
+    expect([env.XA, env.XB, env.XE]).toEqual(['${XB}', '${XA}', '${XB}/e']);
   });
 
   it('expands again from the file on a second load, not from the first result', () => {

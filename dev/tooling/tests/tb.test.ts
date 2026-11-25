@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,6 +6,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 // The ./tb wrapper runs from a copy in a scratch root, with a stand-in dx.js and a fake docker on
 // PATH that records its calls. `docker network inspect` fails until the network has been created.
+// A `daemon-down` file in the scratch root makes every docker call fail as a CLI without a daemon does.
 
 const TB = path.resolve(__dirname, '../../../tb');
 
@@ -33,6 +34,8 @@ beforeEach(() => {
     [
       '#!/bin/bash',
       `echo "$*" >> "${calls}"`,
+      `if [ -f "${root}/daemon-down" ]; then echo "failed to connect to the docker API" >&2; exit 1; fi`,
+      `if [ "$1" = "info" ]; then exit 0; fi`,
       `if [ "$1 $2" = "network inspect" ]; then [ -f "${root}/created-$3" ]; exit; fi`,
       `if [ "$1 $2" = "network create" ]; then touch "${root}/created-$3" 2>/dev/null; echo "network-id"; fi`,
       '',
@@ -65,7 +68,21 @@ function writeEnv(content: string): void {
 describe('./tb', () => {
   it('creates tradebot-network when no PROJECT_NAME is set anywhere', () => {
     runTb();
-    expect(dockerCalls()).toEqual(['network inspect tradebot-network', 'network create tradebot-network']);
+    expect(dockerCalls()).toEqual(['network inspect tradebot-network', 'info', 'network create tradebot-network']);
+  });
+
+  it('skips the network, silently, when the Docker daemon is not reachable', () => {
+    fs.writeFileSync(path.join(root, 'daemon-down'), '');
+    const base = { ...process.env };
+    delete base.PROJECT_NAME;
+    const result = spawnSync(path.join(root, 'tb'), ['--help'], {
+      env: { ...base, PATH: `${bin}${path.delimiter}${process.env.PATH}` },
+      encoding: 'utf8',
+    });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(JSON.parse(result.stdout)).toEqual({ executor: 'tb', args: ['--help'] });
+    expect(dockerCalls()).toEqual(['network inspect tradebot-network', 'info']);
   });
 
   it('leaves an existing network alone', () => {

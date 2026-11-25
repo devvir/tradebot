@@ -39,9 +39,11 @@ if [ -z "${PROJECT_NAME+set}" ] && [ -f "$(dirname "$0")/.env" ]; then
 fi
 PROJECT_NAME="${PROJECT_NAME:-tradebot}"
 
-if command -v docker >/dev/null 2>&1; then
-  docker network inspect "${PROJECT_NAME}-network" >/dev/null 2>&1 \
-    || docker network create "${PROJECT_NAME}-network" >/dev/null
+# Without a reachable Docker daemon there is no network to create, and nothing to say about it.
+if command -v docker >/dev/null 2>&1 \
+  && ! docker network inspect "${PROJECT_NAME}-network" >/dev/null 2>&1 \
+  && docker info >/dev/null 2>&1; then
+  docker network create "${PROJECT_NAME}-network" >/dev/null
 fi
 
 cd "$DX_DIR" || exit 1

@@ -1,9 +1,12 @@
+import path from 'node:path';
+
 export interface RemoteDest {
   /** `user@host` as ssh and scp take it, brackets included for an IPv6 host. */
   userHost: string;
   /**
-   * The remote base directory without trailing slashes: absolute, or relative to the login home
-   * (a leading `~/` is dropped, since ssh and scp both resolve relative paths against the home).
+   * The remote base directory, normalised (no `.` or `..` segments, no trailing slashes): absolute,
+   * or relative to the login home (a leading `~/` is dropped, since ssh and scp both resolve
+   * relative paths against the home).
    */
   path: string;
 }
@@ -55,8 +58,14 @@ export function parseRemoteDest(raw: string): RemoteDest {
     throw new Error(`Invalid destination "${raw}": name a directory under the home as ~/dir, or give an absolute path`);
   }
 
+  if (remotePath !== '') remotePath = path.posix.normalize(remotePath).replace(/\/+$/, '');
+
   if (remotePath === '') {
     throw new Error(`Invalid destination "${raw}": refusing to sync to the filesystem root, name a remote directory`);
+  }
+
+  if (remotePath === '.' || remotePath === '..' || remotePath.startsWith('../')) {
+    throw new Error(`Invalid destination "${raw}": the path leaves no directory under the home, name one as ~/dir`);
   }
 
   return { userHost, path: remotePath };
