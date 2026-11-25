@@ -25,84 +25,55 @@ process.on('warning', (warning) => {
   console.warn(`${warning.name}: ${warning.message}`);
 });
 
-import { Command } from 'commander';
-import { loadEnv } from './shared/utils/env';
-import { selectTool } from './shared/ui/prompts';
+import { buildProgram } from './program';
+import { menuArgs } from './menu';
+import { selectTool, selectFromList } from './shared/ui/prompts';
 import { heading, spacer } from './shared/ui/logger';
-
-import { register as registerRabbit, DESCRIPTION as RABBIT_DESCRIPTION } from './commands/rabbit';
-import { register as registerMonitor } from './commands/monitor';
-import { register as registerCold } from './commands/cold';
-import { register as registerRemote } from './commands/remote';
+import { DESCRIPTION as RABBIT_DESCRIPTION } from './commands/rabbit';
 
 interface Tool {
   id: string;
   name: string;
   description: string;
+  /** The command does nothing on its own: the menu asks which of its commands to run. */
+  pickSubcommand?: boolean;
 }
 
 const tools: Tool[] = [
   { id: 'rabbit', name: 'RabbitMQ', description: RABBIT_DESCRIPTION },
   { id: 'monitor', name: 'Monitor', description: 'Live dashboard: Docker containers and RabbitMQ queues' },
-  { id: 'cold', name: 'Cold', description: 'Cold storage: pack, upload, and account for backups' },
+  { id: 'cold', name: 'Cold', description: 'Cold storage: pack, upload, and account for backups', pickSubcommand: true },
   { id: 'remote', name: 'Remote', description: 'Remote server operations (sync-env)' },
 ];
 
 async function main(): Promise<void> {
-  const program = new Command();
+  const program = buildProgram();
+  const args = process.argv.slice(2);
+  const kept = menuArgs(args, Boolean(process.stdin.isTTY));
 
-  program
-    .name('tools')
-    .version('1.0.0')
-    .description('TradeBot development tools and utilities')
-    .option('-e, --env <path>', 'Additional .env file to load (overrides every other .env file)')
-    .option('-m, --module <name>', 'Load this module\'s .env: modules/<group>/<name>/.env, or just <name>')
-    .option('-v, --verbose', 'Verbose output')
-    .hook('preAction', (thisCommand) => {
-      const opts = thisCommand.opts() as any;
-
-      loadEnv(opts.env ?? null, opts.module ?? null);
-
-      if (opts.verbose) {
-        process.env.DEBUG = '1';
-      }
-    });
-
-  registerRabbit(program);
-  registerMonitor(program);
-  registerCold(program);
-  registerRemote(program);
-
-  // Show interactive menu when no subcommand is given.
-  // Preserve any global flags (-e, --env, -v, --verbose) so they survive the
-  // menu selection and are still applied when the chosen command runs.
-  const rawArgs = process.argv.slice(2);
-  const commandNames = new Set(program.commands.flatMap(cmd => [cmd.name(), ...cmd.aliases()]));
-  const hasSubcommand = rawArgs.some(arg => commandNames.has(arg));
-
-  if (! hasSubcommand) {
+  if (kept !== null) {
     heading('TradeBot Dev Tools');
     spacer();
 
-    const selectedTool = await selectTool(tools);
+    const id = await selectTool(tools);
+    const tool = tools.find(t => t.id === id)!;
+    const chosen = [tool.id];
 
-    // Extract global options to preserve them alongside the selected subcommand
-    const globalArgs: string[] = [];
-    const flagsWithValues = new Set(['-e', '--env', '-m', '--module']);
+    if (tool.pickSubcommand) {
+      const command = program.commands.find(c => c.name() === tool.id)!;
+      const sub = await selectFromList(
+        command.commands.map(c => ({ name: `${c.name()} - ${c.description()}`, value: c.name() })),
+        `Select a ${tool.name.toLowerCase()} command:`,
+      );
 
-    for (let i = 0; i < rawArgs.length; i++) {
-      if (flagsWithValues.has(rawArgs[i])) {
-        globalArgs.push(rawArgs[i], rawArgs[i + 1]);
-        i++;
-      } else if (rawArgs[i] === '-v' || rawArgs[i] === '--verbose') {
-        globalArgs.push(rawArgs[i]);
-      }
+      if (sub !== null) chosen.push(sub);
     }
 
-    process.argv = ['node', 'tools', ...globalArgs, selectedTool];
+    await program.parseAsync([...kept, ...chosen], { from: 'user' });
+    return;
   }
 
-  program.parse();
+  await program.parseAsync();
 }
 
 main().catch(err => {

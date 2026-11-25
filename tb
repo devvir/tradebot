@@ -1,13 +1,6 @@
 #!/bin/bash
 
-# *****************************************************************************
-# COPY THIS FILE TO THE ROOT OF YOUR PROJECT WITH ANY NAME OF YOUR CHOOSING
-#
-# EDIT ENV VARS DEFINED BELOW AS NEEDED (ONLY IF YOU DO NOT USE DEFAULT PATHS)
-# *****************************************************************************
-
-# Infrastructure orchestration entry point
-# Delegates to npm script `dx` for actual logic
+# Entry point for dx: runs dx/dx.js with DX_EXECUTOR set to this script name
 
 # Update path if DX is not mounted on ./dx
 DX_DIR="$(dirname "$0")/dx"

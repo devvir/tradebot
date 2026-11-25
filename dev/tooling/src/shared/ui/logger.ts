@@ -1,24 +1,6 @@
-import fs from 'node:fs';
 import { C } from '../utils/colors';
 
-let debugStream: fs.WriteStream | null = null;
-
 let prefix = '';
-
-export function openDebugLog(filePath: string): void {
-  debugStream = fs.createWriteStream(filePath, { flags: 'a' });
-}
-
-export function closeDebugLog(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (! debugStream) { resolve(); return; }
-
-    debugStream.end((err?: Error | null) => {
-      debugStream = null;
-      if (err) reject(err); else resolve();
-    });
-  });
-}
 
 /**
  * A word put in front of every line from here on, dimmed and in brackets — for
@@ -48,7 +30,6 @@ export function error(message: string): void {
 export function debug(message: string): void {
   if (process.env.LOG_LEVEL === 'debug') {
     console.log(`${C.dim}${message}${C.reset}`);
-    debugStream?.write(message + '\n');
   }
 }
 

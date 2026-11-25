@@ -1,18 +1,26 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const entry = path.join(__dirname, 'dev/tooling/dist/index.js');
 
+if (! fs.existsSync(entry)) {
+  console.error('dev/tooling is not built - run: pnpm --filter @tradebot/tooling build');
+  process.exit(1);
+}
+
 const child = spawn(process.execPath, [entry, ...process.argv.slice(2)], {
   cwd: __dirname,
   stdio: 'inherit',
-  env: { ...process.env, WORKSPACE_ROOT: __dirname },
 });
 
 process.on('SIGINT', () => child.kill('SIGINT'));
 process.on('SIGTERM', () => child.kill('SIGTERM'));
-child.on('exit', (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
+
+// A child killed by a signal exits the way a shell reports it: 128 + the signal's number.
+child.on('exit', (code, signal) => process.exit(code ?? (signal ? 128 + (os.constants.signals[signal] ?? 0) : 0)));
