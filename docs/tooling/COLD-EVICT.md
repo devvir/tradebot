@@ -1,16 +1,21 @@
 # cold evict
 
-`cold evict [origin] [venues…]` removes from the local disk what no longer has to be there. See
-[COLD.md](COLD.md) for the namespace and origins, and [COLD-PUSH.md](COLD-PUSH.md) for how things
-got into cold storage.
+`cold evict archives [venues…]` removes from the local disk what no longer has to be there. See
+[COLD.md](COLD.md) for the namespace, origins and configuration, and [COLD-PUSH.md](COLD-PUSH.md)
+for how things got into cold storage.
 
 This page is the **archives**. The vault is evicted on request, by a selection, and brought back
-again as a matter of routine: [COLD-VAULT.md](COLD-VAULT.md).
+again as a matter of routine: [COLD-VAULT.md](COLD-VAULT.md#cold-evict-vault).
 
-**This is the only command in the family that removes anything.** It says what it would remove,
-venue by venue, and asks before removing anything; the answer defaults to yes, since removing is
-what it was run to do. What it removes goes to
-the trash. `--dry-run` stops after saying.
+It says what it would remove, venue by venue, and asks before removing anything; the answer
+defaults to yes, since removing is what it was run to do. What it removes goes to the trash unless
+`--purge` is given. `--dry-run` stops after saying.
+
+| | |
+|---|---|
+| `-n`, `--dry-run` | say what would be removed, and remove nothing |
+| `--purge` | delete outright, where the default is the trash |
+| `--cleanup` | also remove what is on disk again of partitions already evicted; see [below](#what-was-evicted-and-is-on-disk-again) |
 
 ## What can go
 
@@ -22,7 +27,7 @@ things, and stays unless all three hold:
 
 | | |
 |---|---|
-| **It is in cold storage at the catalog's version** | a tar that is stored holds it, at the version the catalog has now |
+| **It is in cold storage at the catalog's version** | a tar that is stored holds it, at the version the catalog has now, with no change noted of it |
 | **It is stocked** | the vault's ledger has it — or another rendering of the same data — at versions that are still the catalog's, and what was stocked is still held: in cold storage, or on disk in the vault |
 | **No neighbouring month still needs it** | where its files hold the first or last hours of the month next door, that month has them in the vault |
 
@@ -30,9 +35,10 @@ What is left is removed, unless the record says it already was at the version it
 
 **Nothing of the archives is looked at to decide.** Whatever they hold of a partition that passes —
 the same files, older ones, or only some — goes, so no answer their disk could give would change
-anything. Deciding is two requests to the catalog per venue, the record and the vault's ledger — and,
-for a vault partition that is not in cold storage, a look for its files in the vault. The file and
-byte counts shown are the catalog's.
+anything. A look is two requests to the catalog per venue (the downloaded and settled partitions,
+and every partition it holds), the record and the vault's ledger — and, for a vault partition that
+is not in cold storage, a look for its files in the vault. The file and byte counts shown are the
+catalog's.
 
 ### In cold storage
 
@@ -40,36 +46,34 @@ That a partition was checked against the disk and proven inside its tar is what 
 ([COLD-PUSH.md](COLD-PUSH.md)), so nothing is compared again here: the record says which version a
 stored tar holds, and that version is the catalog's or it is not. A partition in a tar that is
 planned, packed or on its way is not in cold storage yet. Neither is one whose tar is waiting to be
-corrected.
+corrected, nor one whose change is noted.
 
 ### Stocked
 
-The vault keeps a ledger of what it holds, a line per partition, saying which partition of the
-archives it was stocked from and at which catalog version — and, for each side a neighbouring month
-holds of it, that month's version, or `missing` where that month was not there to be read. A line
-counts while every version it names is still the catalog's.
+The ledger and what its marks mean are [STOCKER.md](../services/STOCKER.md#the-ledger)'s; what
+follows is what cold concludes from it.
+
+**A partition is stocked by the last line the ledger has for it.** A line counts while every version
+it names — its own, and a neighbouring month's where it names one — is still the catalog's. A
+partition whose last line says `updating` or `outdated` is not taken as stocked.
 
 **A month stocked without a neighbour's hours is stocked.** Its own files have given the vault
-everything they hold; what it lacks is in the neighbour's files. A partition whose ledger line says
-`updating` is having its files changed and is not stocked; one that says `outdated` is waiting to be
-stocked again from these very archives, and is not stocked either.
+everything they hold; what it lacks is in the neighbour's files, which stay until it has them (see
+[below](#no-neighbouring-month-still-needs-it)).
 
-**A partition that can be completed is helped to it.** A month stocked without the hours a
-neighbouring month holds of it gets them once that month's archives are on disk — built beside the
-month's own files in the vault. Where those files have been moved to cold storage since, the hours cannot be added until they are
-back, and until they are added the neighbour's archives cannot be evicted either. Eviction brings
-nothing back itself: it says that the vault waits for files in cold storage, and
+**What the vault waits for is not brought back here.** Where what it needs to finish a partition is
+in cold storage — its own files for a month that can now be completed, or the archives an outdated
+partition is stocked again from — the first look says so, and
 [`cold pull needed`](COLD-PULL.md#cold-pull-needed) is what brings them.
 
 **Any rendering will do.** The same data is often published at more than one grain, or per
-instrument and as a market's bundle, and the vault is built from one of them. Which one is the
-vault's business. What matters here is that none of them is needed any more, so once a month of a
-dataset is stocked from any rendering, every rendering of it is taken as stocked.
+instrument and as the market bundle (`@`). Once a month of a dataset is stocked from any rendering,
+every rendering of it is taken as stocked.
 
 **What was stocked has to be held somewhere still.** The record is asked first: a vault partition it
 has stored, at the revision the ledger names, is held. Only one it does not have stored is looked for
-on disk in the vault, where its files have to be. A ledger line whose partition is neither is not
-taken as stocked, and what it was stocked from stays.
+on disk in the vault. A ledger line whose partition is neither is not taken as stocked, and what it
+was stocked from stays.
 
 ### No neighbouring month still needs it
 
@@ -94,19 +98,27 @@ from what is settled:
 - **A month the catalog holds that is not stocked yet** will, and its neighbour's files stay.
 - **A month whose files hold the first hours of the month after, where that month is not in the
   catalog**, waits until the month after could have been settled and still is not there. A month
-  can be settled 15 days after it ends, so until then the venue has simply not published it. One
-  whose following month has had its time and never came is the last month of a dataset the venue
-  stopped publishing, and goes.
+  can be settled 15 days after it ends ([CATALOG-API.md](../modules/CATALOG-API.md#partitions)), so
+  until then the venue has simply not published it.
+  One whose following month has had its time and never came is the last month of a dataset the
+  venue stopped publishing, and goes.
 
 ## A vault that reports a loss stops everything
 
 The vault writes `ERROR.log` when it finds that its ledger says something its disk does not bear
 out. Eviction trusts the ledger, so while that file exists nothing is evicted: the command says what
-the file holds and ends. It runs again once the cause is understood and the file removed.
+the file holds and ends, with a failing exit code. It runs again once the cause is understood and
+the file removed. The file is read again right before each venue's removal too.
 
 Without a ledger at all, nothing can be said to be stocked, and the command ends the same way.
 
 ## What it does
+
+**Each venue is looked at again just before its files go.** Between the first look and the removal
+there is the question, and every venue removed before this one, which can be hours. Only what the
+second look still finds ready, at the same version, goes; and only while the record still has it in
+a stored tar at that version, with no change noted. The rest is left for the next look, and the run
+says how many.
 
 Each evictable partition is moved to the trash, a month's directory at a time. A directory under an
 instrument holds every rendering of that month side by side, and each rendering is a partition of
@@ -132,11 +144,10 @@ Every check above has to be right for a removal to be safe, and the one thing no
 a mistake in the checks themselves. Moving to the host's trash costs nothing and turns that class of
 mistake from permanent into a restore.
 
-**It lands on the same filesystem**, which is what makes it viable at this size:
-`<volume>/.Trash-$uid/` for a file on that volume, so it is a rename and not a copy of the tree into
-`$HOME`. `gio` selects that per-volume trash itself and writes the record holding where each file
-came from, which is what makes putting one back possible — so the trash is only ever handled
-through `gio`, never by moving files into `.Trash-*` by hand.
+**It lands on the same filesystem**, which is what makes it viable at this size. Removal goes
+through `gio trash`, which picks the trash of the volume a file is on, so the move is a rename and
+not a copy of the tree, and writes the record of where each file came from, which is what makes
+putting one back possible. Files are never moved into a `.Trash-*` directory by hand.
 
 **It frees no space until the trash is emptied**, and the command says so. Emptying is the chance to
 look at what was taken before it goes, and belongs to a file manager: the trash holds other things
@@ -149,7 +160,8 @@ run stops at that partition, which is not written down as evicted.
 
 **The catalog goes on saying the files are downloaded**, which is what keeps them from being
 downloaded again. If a partition changes after it was evicted, only the files that changed are
-downloaded, and the partition is on disk in part until the rest is brought back from cold storage.
+downloaded, and the partition is on disk in part until its tar is corrected
+([COLD-PUSH.md](COLD-PUSH.md#a-partition-that-changed)).
 
 Removal goes a partition at a time, and a line per venue says how far it is.
 
@@ -166,34 +178,30 @@ holds the version the catalog has, so what is on disk is spare whatever it is, t
 ones or part of them. A partition whose version has moved on since it went is left alone, like any
 other that cold storage does not hold as it is now.
 
-It is a look taken on purpose and once. With `--watch` it is refused: a run left going would take
-files as they are pulled. It honours `--dry-run` and `--purge`, and is for the archives only — asked
-of the vault, it changes nothing.
+It is a look taken on purpose and once, so it is refused with `-w`: a run left going would take
+files as they are pulled. It honours `--dry-run` and `--purge`, and is for the archives only —
+asked of the vault, it changes nothing.
 
 ## Watching
 
-`--watch`, one of the options every `cold` command shares ([COLD.md](COLD.md)), keeps the run going
-and looks again every 30 minutes. What can go changes as partitions are stored and stocked, so a run
-left going removes each as it becomes removable.
+With `-w` ([COLD.md](COLD.md#watching)) the run keeps going and looks again every 30 minutes. What
+can go changes as partitions are stored and stocked, so a run left going removes each as it becomes
+removable.
 
 It asks before the first removal of the run and not again. A later look says only what it is about
 to remove; one that finds nothing says once that it is waiting, and is then quiet until there is
-something. The vault's `ERROR.log` is read on every look, and ends the run when it appears. A catalog
-that does not answer costs that look and nothing else.
+something. A look that finds the vault's `ERROR.log`, or no ledger, removes nothing, and the next
+look reads it again. An error from the catalog after the first look costs that look and nothing
+else.
 
 Left watching without `--purge`, what is removed gathers in the trash: nothing is freed until that is
 emptied.
 
 ## Running it alongside a push
 
-`evict` and `push` hold separate locks and can run at once. They do not meet: `push` reads the
-archives for partitions that are not stored yet, or whose version changed, and `evict` removes only
-what is stored at the catalog's version.
-
-## Environment
-
-As [COLD-PUSH.md](COLD-PUSH.md), and:
-
-| | | |
-|---|---|---|
-| `DATA_VAULT_DIR` | `<DATA_DIR>/vault` | the vault whose ledger says what is stocked |
+`evict` and `push` hold separate locks ([COLD.md](COLD.md#locks)) and run side by side. They act on
+different partitions: `push` reads the archives only for partitions the record does not hold at the
+catalog's version — new ones, and changed ones whose tar is being corrected — and `evict` removes
+only partitions in a stored tar at the catalog's version with no change noted, and looks at the
+catalog and the record again right before each venue's removal. Both write the record, and SQLite
+keeps those writes apart.

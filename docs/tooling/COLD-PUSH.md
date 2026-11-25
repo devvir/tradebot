@@ -1,8 +1,12 @@
 # cold push
 
-`cold push [origin] [venues…] [--lens [slug]]` stores every partition that is ready and not in cold
-storage yet: it packs them into tars, uploads the tars to Mega, and records which partitions each
-tar holds. See [COLD.md](COLD.md) for the namespace, origins and where things live.
+`cold push archives [venues…] [-l, --lens [slug]]` stores every partition of the archives that is
+ready and not in cold storage yet: it packs them into tars, uploads the tars to Mega, and records
+which partitions each tar holds. See [COLD.md](COLD.md) for the namespace, origins, configuration
+and where things live.
+
+This page is the **archives**. The vault: [COLD-VAULT.md](COLD-VAULT.md#cold-push-vault); the
+catalog's copy: [COLD-CATALOG.md](COLD-CATALOG.md).
 
 **The link is the constraint.** Uploading is hours per tar while packing one is minutes, so this
 does not pack everything and then upload it — that would fill the disk with tars waiting on a week
@@ -10,18 +14,25 @@ of bandwidth. It keeps just enough packed to keep Mega's queue fed.
 
 Every step is resumable, because a run measured in days will be interrupted.
 
+**`-n` and the snapshot options are `push catalog`'s.** On a tree nothing reads them:
+`cold push archives -n` packs and uploads like any other run. A lens narrows the archives only:
+`cold push vault`, and the vault's half of `cold push all`, push the whole vault whatever lens is
+given.
+
 ---
 
 ## What is ready
 
 **A partition is ready when the catalog says nothing of it is left to download and that it is
 settled.** That is asked of the catalog directly, venue by venue — the partitions endpoint, with
-`downloaded=true` and `settled` — so nothing here decides what finished means. A partition a run is
-still adding to can be complete at every moment and still be a fraction of itself, and only the
-catalog knows which; what it takes as settled is in [CATALOG.md](../services/CATALOG.md).
+`downloaded=true` and `settled=true` — so nothing here decides what finished means. A partition a
+run is still adding to can be complete at every moment and still be a fraction of itself, and only
+the catalog knows which; what it takes as settled is in
+[CATALOG-API.md](../modules/CATALOG-API.md#partitions).
 
 `COLD_SETTLED_HOURS`, where set, asks for quiet on top: the request carries `settled-before` that
-many hours ago, and a settled partition that changed since is left for a later run.
+many hours ago in place of `settled`, and a settled partition that changed since is left for a
+later run.
 
 **Every partition the catalog holds, unless a lens is asked for.** `--lens <slug>` reads the catalog
 through that lens; `--lens` with no value lists the catalog's lenses to pick one from. A lens only
@@ -29,6 +40,9 @@ narrows what this run considers: a partition stored on an earlier run and outsid
 left exactly as it is.
 
 **Venues after the origin narrow it further**: `cold push archives gate htx`.
+
+Before anything is packed, the run says what it found and asks to go ahead; the answer defaults to
+yes.
 
 ---
 
@@ -38,10 +52,16 @@ What the catalog answers is set against the record, one venue at a time:
 
 - **A partition the record does not have** is planned into a new tar of its venue-month.
 - **A tar planned and never made is dropped first.** The plan is redrawn on every run from what the
-  catalog says is ready now, so a partition that was ready once and no longer is leaves the plan.
+  catalog says is ready now, so a partition that was ready once and no longer is leaves the plan. A
+  tar Mega once held keeps its partitions, since the record is the only thing that knows them.
 - **One it has at the same version** needs nothing.
 - **One it has at another version** has changed since it was stored — see
   [a partition that changed](#a-partition-that-changed).
+- **One whose change is noted, where the catalog is back at the version cold storage holds**, has
+  the change taken back while its tar has not been brought back yet; once it has, the correction is
+  made to the version the catalog holds.
+- **A partition the catalog does not answer with** is left exactly as it is: it is outside the lens,
+  still downloading or still changing, and none of those is a reason to touch what is stored.
 
 A plan is written before any tar exists, so a run that stops after planning finds the plan and
 makes the tars, and one that stops before it plans again.
@@ -53,7 +73,9 @@ anything else: one that weighs fifty gigabytes is a tar of fifty gigabytes.
 
 The 5 GB cap is where a clean cut is looked for among the rest. Partitions are taken heaviest first,
 each into the first tar of the month that still has room for it; one heavier than the cap gets a tar
-of its own. That lands near the cap, and nothing downstream needs it to be exact.
+of its own. That lands near the cap, and nothing downstream needs it to be exact. The cap is
+hardcoded rather than configured, because it decides the shape of what lands in cold storage and a
+value that drifted between runs would make that shape inconsistent for no benefit.
 
 **A month gains tars as more of it becomes ready.** Partitions that turn up on a later run — a slice
 a lens did not let through before, a dataset discovered since — go into new tars numbered after the
@@ -95,40 +117,27 @@ A run stopped part way picks up at the step it was on:
 
 An `.unverified` tar is kept only where it lists exactly the members its plan now holds; the plan is
 redrawn every run, so one written for other partitions is written again. One that fails the
-comparison is removed.
+comparison is removed. A `packed` tar that is no longer on disk goes back to `planned`, or, where
+Mega holds an older one, to being corrected.
 
-**Confirmed by finding it in Mega, and by nothing else** — not an exit code, and not having left
-Mega's queue, which is as true of a file that was dropped. Mega lists a file only once it is
-complete, and keeps the file's own modification time to the second: the tar found at its path, at
-the size and the modification time of the one on disk, is the tar that was sent. The handle Mega
-gives the object is recorded with it, and the staging tar is deleted. The queue is asked only
-whether a tar is still on its way, to know whether to hand it over again.
+**Confirmed by finding it in Mega**, at the size and modification time of the tar on disk, as
+[COLD.md](COLD.md#how-mega-is-trusted) sets out. Mega's handle is recorded with it, and the staging
+tar is deleted. A queued tar Mega no longer has in its queue and does not list is handed over
+again.
 
 **Packing waits on the queue, not on any one upload.** No tar is made while Mega's upload queue
-holds more than `COLD_QUEUE_TARGET_GB`. The queue is read whole, not filtered to this run's
+holds more than `COLD_QUEUE_TARGET_GB`, or while the queue cannot be read, and one tar is made at a
+time before the queue is asked again. The queue is read whole, not filtered to this run's
 transfers: there is one link, and anything already queued is in front of the next tar.
 
 **One tar failing does not end the run.** It keeps its state and its turn comes round on the next
-one; the run ends by saying how many were left behind.
+run, or at the next asking of a run left watching; the run ends by saying how many were left
+behind.
 
----
-
-### A second look at what was just stored
-
-**A tar is written down as stored the moment Mega shows it**, with the identifier Mega gave it
-then. That can be overtaken. Mega is slow to show a transfer it has accepted, and for a moment after
-one finishes it is in neither the queue nor the listing — so a tar can be handed over twice, and
-is then stored twice, the second replacing the first under another identifier.
-
-Handing over twice is harmless: Mega recognises the same bytes and sends nothing again. What it
-leaves is a record naming an identifier that is no longer the current one. So:
-
-- **Each round begins by taking second transfers of the same tar out of the queue.** The one being
-  sent is kept, else the first asked for. Only what this command queued is looked at: the queue is
-  shared with whatever else is uploading.
-- **Once everything found has been sent, what was stored since the last such look is asked of Mega
-  again.** Another identifier at the size sent is written down. Another size, or nothing there, is
-  written down as not stored, and the run sends it again before it rests.
+**What was stored is looked at once more** once everything found has been sent, since a tar can be
+handed over twice and stored under another handle. That second look, and taking second transfers
+out of the queue at the start of each round, are in
+[COLD.md](COLD.md#how-mega-is-trusted).
 
 ## A partition that changed
 
@@ -144,6 +153,10 @@ again — and it shares its tar with others that have not changed. So the tar is
 then the out-of-date partition's files are taken out of the tar and its current files put in, and
 the tar is `packed` again and goes the ordinary way: queued, and stored under the same name, where
 Mega keeps it as a new version of the same file.
+
+**A tar on its way when one of its partitions changes keeps going.** What it was made with is
+written down as stored once Mega confirms it, and the change, still noted, then sends it back to be
+corrected.
 
 **The download runs beside everything else.** A tar coming back uses the link's download side, so
 other tars go on being packed and uploaded while it does.
@@ -172,9 +185,10 @@ between a month's tars when one changes.
 
 ## Watching
 
-`--watch`, one of the options every `cold` command shares ([COLD.md](COLD.md)), keeps the run going once everything ready is stored, and asks the catalog again every 30
-minutes. Each asking redraws the plan as a new run would, and whatever is newly ready joins the tars
-already in hand. A tar that could not be moved on is tried again at each asking.
+With `-w` ([COLD.md](COLD.md#watching)) the run keeps going once everything ready is stored, and
+asks the catalog again every 30 minutes. Each asking redraws the plan as a new run would, and
+whatever is newly ready joins the tars already in hand. A tar that could not be moved on is tried
+again at each asking.
 
 What an asking shows depends on what the run was doing:
 
@@ -183,29 +197,5 @@ What an asking shows depends on what the run was doing:
 | waiting, with nothing to push | the asking, and each venue's answer |
 | packing or uploading | nothing, unless it found something: then one line saying how many partitions |
 
-Between askings, a run with nothing to push says once that it is waiting. A catalog that does not
-answer costs that asking and nothing else.
-
-A run ends by saying which way it ended: that everything ready was pushed, or, when it is
-interrupted, that it stopped and resumes on the next run.
-
-## Environment
-
-Read from `dev/tooling/.env`.
-
-| variable | default | |
-|---|---|---|
-| `DATA_DIR` | — | the data root the rest hang off |
-| `MEGA_ROOT` | — | where this project's trees live in Mega |
-| `SOURCES_COLD_DIR` | `<DATA_DIR>/@cold` | staging tars, the locks, and the record |
-| `DATA_ARCHIVES_DIR` | `<DATA_DIR>/archives` | the tree the `archives` origin backs up |
-| `COLD_QUEUE_TARGET_GB` | `10` | GB still queued for upload before packing pauses |
-| `COLD_SETTLED_HOURS` | _(none)_ | hours a settled partition must also have gone unchanged before it is stored |
-| `CATALOG_URL` | `http://localhost:<port>` | where the catalog answers from this host |
-| `CATALOG_TOKEN` | the catalog's own | sent to the catalog on every request |
-
-**The catalog's address and token default to its own settings**, read from the module that deploys
-it on this host, so neither is said a second time here.
-
-The cap is **hardcoded rather than configured**, because it decides the shape of what lands in cold
-storage and a value that drifted between runs would make that shape inconsistent for no benefit.
+Between askings, a run with nothing to push says once that it is waiting. An asking gives the
+catalog 15 seconds; one it does not answer in that time costs that asking and nothing else.
