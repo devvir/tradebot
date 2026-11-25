@@ -2,8 +2,6 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "ignore": [
     "**/.deprecated/**",
-    "dev/tooling/src/tools/cold/legacy/**",
-    "dev/tooling/tests/tools/cold/legacy/**",
     ".github/skills/**"
   ],
   "ignoreWorkspaces": ["packages/*", "dx"],

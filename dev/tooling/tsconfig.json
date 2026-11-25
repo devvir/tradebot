@@ -7,5 +7,5 @@
     "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo"
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "tests", "src/tools/cold/legacy"]
+  "exclude": ["node_modules", "dist", "tests"]
 }
