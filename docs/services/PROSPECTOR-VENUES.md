@@ -88,6 +88,10 @@ pass is an update over series declared by migration `004-bitget` from `seeds/bit
 [seeds README](../../services/prospector/src/database/migrations/seeds/README.md#the-bitget-seed)).
 Facts: [BITGET.md](../venues/BITGET.md).
 
+**Its shapes follow bitget's three naming eras, and the seed carries the first two retired**: the
+era-1 shapes at 2024-04-18 and the era-2 shapes at 2026-08-17, with era 3 live (see [the
+eras](../../services/prospector/src/database/migrations/seeds/README.md#the-eras)).
+
 **Discovery reads the v3 instruments listing, for `SPOT`, `USDT-FUTURES`, `COIN-FUTURES` and
 `USDC-FUTURES` only**, one request a category (`bitgetInstruments`). Everything it names is live. What
 only the v2 listings name — the classic coin-margined line, v2 delivery contracts, the demo product
@@ -204,8 +208,8 @@ the period alone: a day's 24 hours, or a snapshot tree's epoch stamps across a m
 `spot_index`, a minute apart in `options_ticker`). For a series with no `first` it asks about all of
 them at once, since an instrument's first day begins mid-period. Otherwise it asks about the first
 part and, only if that is there, all the rest in one reply — gate publishes a day of books whole or
-not at all (over 40 hourly series, 753 of 769 middle days carried all 24 hours and 767 carried hour
-00, while none of forty first days carried hour 00), so a quiet day costs one request rather than 24.
+not at all, and an instrument's first day from the hour it was listed
+([GATE.md](../venues/GATE.md#layout)), so a quiet day costs one request rather than 24.
 See [a period published in parts](PROSPECTOR-SERIES.md#a-period-published-in-parts).
 
 **Tradfi's `status` is not read.** `/api/v4/tradfi/symbols` reports the exchange session, which is
@@ -282,6 +286,11 @@ an update over series declared by migration `003-okx` from `seeds/okx/`. Facts:
 [a shape with no symbol](PROSPECTOR-SERIES.md#a-shape-with-no-symbol-cannot-be-branched-by-symbol). A
 dated chain's `futureschain` or `optionchain` belongs to its pattern, so an instrument is named by its
 family ([a decoration around the symbol](PROSPECTOR-SERIES.md#a-decoration-around-the-symbol-belongs-in-the-pattern)).
+
+**Its order books are two generations of shape.** The seed carries the eight `okx/match/orderbook/L2/`
+shapes retired at 2026-08-04, beside the `okx/match/orderbook/pro/L2/` shapes that are live — a moved
+URL is two patterns, the old one carrying the day it stopped
+([retired patterns](PROSPECTOR-SERIES.md#retired-patterns)).
 
 **Instruments are read from the v5 instruments listing**, a market at a time and options an
 underlying at a time. A family is the instrument, live while any of its contracts is. **A `preopen`

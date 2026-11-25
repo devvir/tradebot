@@ -3,11 +3,11 @@
 ## What it is
 
 **Prospector establishes what each venue publishes as files, and keeps that current.** It writes
-what it establishes to the catalog database, and it is that database's only writer. It is not its
-only reader: the catalog service opens the same file read-only and serves the listings (see
-[CATALOG.md](CATALOG.md)). Prospector serves no listing. Its own API, private to the archives
-module, starts and pauses surveys, reports where each venue stands, settles reports of what became
-of listed files and stores lenses — see [the API](#the-api).
+what it establishes to the catalog database, and it is that database's only writer; anything else
+opens the file read-only. Prospector serves no listing of it (for the service that does, see
+[CATALOG.md](CATALOG.md)). Its own API, private to the archives module, starts and pauses surveys,
+reports where each venue stands, settles reports of what became of listed files and stores lenses —
+see [the API](#the-api).
 
 **Every venue publishes its history as files, and no two of them agree about anything else.** The
 trees differ, and so do the names inside them. One venue exposes a complete index; another indexes
