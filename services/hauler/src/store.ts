@@ -11,9 +11,8 @@ import type { Readable } from 'node:stream';
  *
  * **Nothing appears at its final path until it has been checked.** Every
  * download lands as a partial and is renamed only once its size and etag agree
- * with what the catalog said. Verifying after the rename would leave a
- * truncated file sitting at the real path, where every later pass would see it
- * present and skip it — permanently, and silently.
+ * with what the catalog said, so an interrupted download leaves a partial and
+ * never a truncated file at the real path.
  *
  * **What is given its path is on the disk when `commit` returns.** A partial is
  * flushed before it is answered for, and the directory a file is renamed into —

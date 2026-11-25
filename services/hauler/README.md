@@ -13,8 +13,8 @@ How it works: [docs/services/HAULER.md](../../docs/services/HAULER.md).
 ## What it does
 
 - **Walks every venue on its own loop**, asking only for files still owed, through the lens named in
-  `HAULER_LENS` when one is set. A walk that reported any file downloaded runs again 5 minutes later;
-  any other walk runs again after 30 minutes.
+  `HAULER_LENS` when one is set. A walk that brought any file to disk, and did not end for want of
+  space, runs again 5 minutes later; any other walk runs again after 30 minutes.
 - **Checks every file against the size and ETag the listing carries.** A file already on disk and
   correct is touched (its modification time becomes the time of the walk) and reported as
   downloaded. A file on disk that differs stays where it is until a verified replacement is in hand,

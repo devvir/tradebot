@@ -90,16 +90,16 @@ answered, and what each page came to.
 
 The volume is looked at before each file, at most once a second. It is low below `HAULER_MIN_FREE_GB`
 of free space, with fewer free inodes than 10,000 or half a percent of all (whichever is more), or
-for a minute after a write
-was refused for want of room (`ENOSPC`, `EDQUOT`), which also catches a quota no look at the volume
-sees. While it is low no new file is taken, the ones in flight finish and are reported, and the walk
+for a minute after a write was refused for want of room (`ENOSPC`, `EDQUOT`), which also catches a
+quota no look at the volume sees. While it is low no new file is taken, the ones in flight finish and are reported, and the walk
 ends saying so. The venue is walked again after the long wait, so freeing space is all it takes.
 
 ### When it walks again
 
 Each venue walks on its own loop. After a walk that brought any file to disk, fetched or found there
-already, the next one starts **5 minutes** later: a backfill in progress keeps cataloguing more. After
-any other walk (nothing to do, the volume low, or a failure, which is logged), **30 minutes**.
+already, and did not end for want of space, the next one starts **5 minutes** later: a backfill in
+progress keeps cataloguing more. After any other walk (nothing to do, the volume low, or a failure,
+which is logged), **30 minutes**.
 
 ## Verifying what was fetched
 
@@ -132,8 +132,8 @@ by a stop or a low volume.
 **Nothing appears at its final path until it has been checked.** A download lands in `.hauler-tmp`
 at the archives' root, under a name that is a digest of its destination, and is renamed into place
 only once it agrees with the listing. The file is flushed before the rename and its directory after
-it, so a file at its path survives a power cut. Verifying after the rename would leave a truncated
-file at the real path, where every later walk would see it present and skip it.
+it, so a file at its path survives a power cut. An interrupted download leaves only a partial, never
+a truncated file at the real path.
 
 **What the disk will not do leaves the file owed**: a download that cannot be written, or a file that
 cannot be read, moved aside or given its place, is left out of the report and comes round again.
@@ -185,8 +185,8 @@ be asked, the file stays owed.
 **Otherwise only the listed address speaks for the venue.** Another address that refuses a file or
 fails is marked down, and the file is asked of one not yet tried for it; once none is left, of the
 listed address. A file is given three attempts in all; a `404` or `410` that leaves another address
-to ask does not count as one. After an error status from an alternative the next attempt goes at
-once; otherwise it waits a random time up to 5, then up to 10 seconds.
+to ask does not count as one. After an error status or a short body from an alternative the next
+attempt goes at once; otherwise it waits a random time up to 5, then up to 10 seconds.
 
 Hauler sets no request rate of its own; a venue that keeps refusing is a sign to lower
 `HAULER_CONCURRENCY`.

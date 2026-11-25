@@ -9,7 +9,7 @@ lens selects. How the pieces fit and why they are split this way is in
 | Service | Role |
 |---------|------|
 | **prospector** | Surveys venue archives and writes `catalog.db`. Its API is private to the module and publishes no port |
-| **catalog** | The public API over the catalog: S3-style listings, contents, lenses |
+| **catalog** | The public API over `catalog.db`: S3-style listings, contents, lenses |
 | **hauler** | Walks each venue's listing (only what is still owed, through `HAULER_LENS` when set) and writes the files |
 | **catalog-ui** | The page a person uses to read the catalog, edit lenses, and start or pause surveys |
 

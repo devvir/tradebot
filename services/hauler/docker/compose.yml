@@ -1,8 +1,9 @@
 # Hauler Service — brings catalogued venue files to disk under canonical names.
 #
-# The catalog serves every venue as a bucket; hauler walks each one — only what
-# is still owed, through HAULER_LENS where one is set — fetches what it lists
-# from the venue, and reports. It discovers nothing and serves only its health
+# The catalog serves one S3-style bucket, each venue under its own prefix;
+# hauler walks each venue's prefix — only what is still owed, through
+# HAULER_LENS where one is set — fetches what it lists from the venue, and
+# reports. It discovers nothing and serves only its health
 # check.
 #
 # Files are written to DATA_ARCHIVES_DIR on the host, mounted at a fixed path in
