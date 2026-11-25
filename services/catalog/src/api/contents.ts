@@ -1,7 +1,7 @@
 import { contentsOf, partitionsOfVenue, venueContents } from '../contents';
 import { lensRequested, noSuchLens } from '../lenses/requested';
 import { venueIds } from '../queries';
-import { INVALID, flag, queryText } from './query';
+import { INVALID, flag, grainOf, queryText } from './query';
 import { GRAINS } from '../vocabulary';
 import type { Application, Request, Response } from 'express';
 import type { DatabaseSync } from 'node:sqlite';
@@ -46,13 +46,11 @@ export const mountContents = (app: Application, db: DatabaseSync): void => {
 
     if (! asked) return;
 
-    const { grain, bundle } = asked;
+    const grain = grainIn(res, asked.grain);
 
-    if (grain !== undefined && ! (GRAINS as readonly string[]).includes(grain)) {
-      res.status(400).json({ error: `grain must be one of ${GRAINS.join(', ')}` });
+    if (grain === null) return;
 
-      return;
-    }
+    const { bundle } = asked;
 
     if (bundle !== undefined && bundle !== 'instrument' && bundle !== 'market') {
       res.status(400).json({ error: 'bundle must be instrument or market' });
@@ -83,7 +81,7 @@ export const mountContents = (app: Application, db: DatabaseSync): void => {
       ...(market   ? { market }   : {}),
       ...(datasets ? { datasets } : {}),
       ...(variant  ? { variant }  : {}),
-      ...(grain    ? { grain: grain as Grain }    : {}),
+      ...(grain    ? { grain }    : {}),
       ...(bundle   ? { bundle: bundle as Bundle } : {}),
       ...(downloaded ? { downloaded: true } : {}),
       ...(settled  ? { settled: true } : {}),
@@ -108,13 +106,9 @@ const venue = (db: DatabaseSync, req: Request, res: Response, give: ContentsAske
 
   if (! asked) return;
 
-  const { grain } = asked;
+  const grain = grainIn(res, asked.grain);
 
-  if (grain !== undefined && ! (GRAINS as readonly string[]).includes(grain)) {
-    res.status(400).json({ error: `grain must be one of ${GRAINS.join(', ')}` });
-
-    return;
-  }
+  if (grain === null) return;
 
   const lens = lensed(db, req, res);
 
@@ -127,7 +121,7 @@ const venue = (db: DatabaseSync, req: Request, res: Response, give: ContentsAske
     ...(market  ? { market }  : {}),
     ...(dataset ? { dataset } : {}),
     ...(variant ? { variant } : {}),
-    ...(grain   ? { grain: grain as Grain } : {}),
+    ...(grain   ? { grain }   : {}),
   } }, lens) });
 };
 
@@ -157,6 +151,19 @@ const textsOf = <Name extends string>(req: Request, res: Response, names: readon
   }
 
   return texts;
+};
+
+/** A grain — see `grainOf` — `undefined` where none was given, or null once anything else has been answered `400`. */
+const grainIn = (res: Response, given: string | undefined): Grain | undefined | null => {
+  const grain = grainOf(given);
+
+  if (grain === 'invalid') {
+    res.status(400).json({ error: `grain must be one of ${GRAINS.join(', ')}` });
+
+    return null;
+  }
+
+  return grain;
 };
 
 /** A yes-or-no parameter — see `flag` — false where absent, or null once anything else has been answered `400`. */

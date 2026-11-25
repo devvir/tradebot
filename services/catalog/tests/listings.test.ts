@@ -12,10 +12,6 @@ import type { Application } from 'express';
 import type { SeriesSpec as Found } from './types';
 import type { DatabaseSync } from 'node:sqlite';
 
-const cfg = vi.hoisted(() => ({ port: 0, dbPath: '', token: '', prospectorApi: '' }));
-
-vi.mock('../src/config', () => ({ default: cfg }));
-
 // The real scope, watched: a listing reads a lens's members itself and never builds the contents' scope.
 vi.mock('../src/lenses/scope', async original => {
   const real = await original<typeof import('../src/lenses/scope')>();
@@ -24,6 +20,7 @@ vi.mock('../src/lenses/scope', async original => {
 });
 
 const { mount } = await import('../src/api');
+const { default: cfg } = await import('../src/config');
 const { lensScope } = await import('../src/lenses/scope');
 
 /**
@@ -525,8 +522,12 @@ describe('one partition of the bucket', () => {
 });
 
 describe('a report', () => {
-  /** A stand-in prospector, recording what it was asked to settle; it can drop the first connections it gets. */
-  const prospector = async (status = 200, drops = 0) => {
+  /**
+   * A stand-in prospector, recording what it was asked to settle and answering
+   * `status` with `answer`; it can drop the first connections it gets, and with
+   * a status of 0 never answers at all.
+   */
+  const prospector = async (status = 200, drops = 0, answer: unknown = {}) => {
     const got: unknown[] = [];
     const server = createServer((req, res) => {
       if (drops > 0) { drops--; req.socket.destroy(); return; }
@@ -536,15 +537,18 @@ describe('a report', () => {
       req.on('data', chunk => { body += chunk; });
       req.on('end', () => {
         got.push({ url: req.url, body: JSON.parse(body) });
+
+        if (status === 0) return;
+
         res.writeHead(status, { 'content-type': 'application/json' });
-        res.end('{}');
+        res.end(JSON.stringify(answer));
       });
     });
 
     await new Promise<void>(ready => server.listen(0, '127.0.0.1', ready));
     cfg.prospectorApi = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 
-    return { got, close: () => new Promise(done => server.close(done)) };
+    return { got, close: () => new Promise(done => { server.closeAllConnections(); server.close(done); }) };
   };
 
   const report = (body: unknown, headers: Record<string, string> = {}) =>
@@ -638,6 +642,53 @@ describe('a report', () => {
     expect((await report({ downloaded: Array.from({ length: 10_001 }, (_, n) => `k${n}`) })).status).toBe(400);
   });
 
+  it('refuses a body that is not JSON', async () => {
+    const { status, body } = await call('/listings/report', {
+      method: 'POST', body: 'downloaded', headers: { 'content-type': 'text/plain' },
+    });
+
+    expect(status).toBe(400);
+    expect(body['Code']).toBe('MalformedReport');
+  });
+
+  it('refuses a mismatch whose Size is not a whole number or whose ETag is not text', async () => {
+    const Key = EXPECTED[0];
+
+    for (const one of [{ Key, ETag: 5 }, { Key, Size: '506' }, { Key, Size: 1.5 }, { Key, Size: -1 }, Key, [Key]]) {
+      const { status, body } = await report({ mismatched: [one] });
+
+      expect(status).toBe(400);
+      expect(body['Code']).toBe('MalformedReport');
+    }
+  });
+
+  it('forwards a mismatch\'s Size and ETag as they were sent, and nothing else of it', async () => {
+    const stand = await prospector();
+
+    try {
+      const Key = EXPECTED.find(one => one.endsWith('quotes|BTCUSDT|20200101.zip'))!;
+
+      expect((await report({ mismatched: [{ Key, Size: 506, ETag: '"abc"', Owner: 'me' }] })).status).toBe(200);
+      expect(stand.got).toEqual([{ url: '/reports', body: {
+        downloaded: [], failed: [], mismatched: [{ FileId: idOf('q/20200101/BTCUSDT.zip'), Size: 506, ETag: '"abc"' }],
+      } }]);
+    } finally {
+      await stand.close();
+    }
+  });
+
+  it('asks nothing of prospector where nothing is left to settle', async () => {
+    const stand = await prospector();
+
+    try {
+      expect((await report({})).status).toBe(200);
+      expect((await report({ downloaded: ['binance/nope'] })).status).toBe(207);
+      expect(stand.got).toEqual([]);
+    } finally {
+      await stand.close();
+    }
+  });
+
   it('is a 422 through a lens that does not exist', async () => {
     expect((await report({ downloaded: [] }, { 'x-catalog-lens': 'nope' })).status).toBe(422);
   });
@@ -654,9 +705,78 @@ describe('a report', () => {
     }
   });
 
+  it('tries a dropped connection three times in all, then says the collector is not answering', async () => {
+    const twice = await prospector(200, 2);
+
+    try {
+      expect((await report({ downloaded: [EXPECTED[0]] })).status).toBe(200);
+      expect(twice.got).toHaveLength(1);
+    } finally {
+      await twice.close();
+    }
+
+    const always = await prospector(200, 3);
+
+    try {
+      const { status, body } = await report({ downloaded: [EXPECTED[0]] });
+
+      expect([status, body['Code']]).toEqual([502, 'ServiceUnavailable']);
+      expect(always.got).toEqual([]);
+    } finally {
+      await always.close();
+    }
+  });
+
   it('says the collector is not answering rather than failing', async () => {
     cfg.prospectorApi = 'http://127.0.0.1:1';
 
-    expect((await report({ downloaded: [EXPECTED[0]] })).status).toBe(502);
+    const { status, body } = await report({ downloaded: [EXPECTED[0]] });
+
+    expect([status, body['Code']]).toEqual([502, 'ServiceUnavailable']);
+  });
+
+  it('gives up on a settlement that is not answered in time, and does not send it again', async () => {
+    const stand  = await prospector(0);
+    const waited = cfg.settleMs;
+
+    cfg.settleMs = 50;
+
+    try {
+      const { status, body } = await report({ downloaded: [EXPECTED[0]] });
+
+      expect([status, body['Code']]).toEqual([502, 'ServiceUnavailable']);
+      expect(stand.got).toHaveLength(1);
+    } finally {
+      cfg.settleMs = waited;
+      await stand.close();
+    }
+  });
+
+  /** A report prospector refuses is refused again however often it is sent: the downloader is told so, not to retry. */
+  it('relays a report prospector refuses as a 400, with what it said, asked once', async () => {
+    const stand = await prospector(400, 0, { error: 'At most 10000 files per report' });
+
+    try {
+      const { status, body } = await report({ downloaded: [EXPECTED[0]] });
+
+      expect(status).toBe(400);
+      expect(body).toMatchObject({ Code: 'ReportRefused', Message: 'At most 10000 files per report' });
+      expect(stand.got).toHaveLength(1);
+    } finally {
+      await stand.close();
+    }
+  });
+
+  it('answers 502 where prospector fails settling a report, asked once', async () => {
+    const stand = await prospector(500, 0, { error: 'Internal error' });
+
+    try {
+      const { status, body } = await report({ downloaded: [EXPECTED[0]] });
+
+      expect([status, body['Code']]).toEqual([502, 'CollectorError']);
+      expect(stand.got).toHaveLength(1);
+    } finally {
+      await stand.close();
+    }
   });
 });

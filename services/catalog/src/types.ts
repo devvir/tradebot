@@ -24,6 +24,15 @@ export type Config = {
 
   /** Where prospector answers, for the reports this service forwards. */
   prospectorApi: string;
+
+  /** How long a call to prospector waits for its answer before it is given up. */
+  prospectorMs:  number;
+
+  /** How long a report's settlement waits for prospector's answer before it is given up. */
+  settleMs:      number;
+
+  /** The wait before a call to prospector is tried again, longer by as much each time. */
+  retryMs:       number;
 };
 
 /**

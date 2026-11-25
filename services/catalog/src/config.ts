@@ -22,12 +22,28 @@ const CONTAINER_PORT = 8080;
  */
 const PROSPECTOR_API = 'http://prospector:8080';
 
+/** How long a call to prospector waits for its answer. */
+const PROSPECTOR_MS = 15_000;
+
+/**
+ * How long a report's settlement waits for prospector's answer: prospector
+ * confirms each failed or mismatched file with its venue before it answers, one
+ * after another, so a long report takes minutes.
+ */
+const SETTLE_MS = 300_000;
+
+/** The wait before a call to prospector is tried again, longer by as much each time. */
+const RETRY_MS = 500;
+
 const loadConfig = (): Config => {
   const config: Config = {
     port:          CONTAINER_PORT,
     dbPath:        process.env['CATALOG_DB'] ?? CATALOG_DB,
     token:         (process.env['CATALOG_TOKEN'] ?? '').trim(),
     prospectorApi: PROSPECTOR_API,
+    prospectorMs:  PROSPECTOR_MS,
+    settleMs:      SETTLE_MS,
+    retryMs:       RETRY_MS,
   };
 
   // The token is the one value that must not reach a log.

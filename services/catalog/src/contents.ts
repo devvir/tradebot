@@ -2,7 +2,7 @@ import { lensFigures } from './lenses/figures';
 import { partitionContents } from './partitions';
 import { throughLens } from './lenses/scope';
 import { seriesFor, venueIds, venueTotals } from './queries';
-import { BUCKET, levelsOf } from './vocabulary';
+import { VENUE_WIDE, levelsOf } from './vocabulary';
 import type { DatabaseSync } from 'node:sqlite';
 import type {
   ContentsAsked, MarketContents, PartitionFilter, RequestedLens, Series, SeriesCount, SeriesCountRow, Shape,
@@ -128,7 +128,7 @@ export const intoShapes = (rows: readonly Series[]): Shape[] => {
       first: null as string | null, last: null as string | null,
     };
 
-    if (one.symbol === BUCKET) found.buckets++;
+    if (one.symbol === VENUE_WIDE) found.buckets++;
     else found.symbols++;
 
     if (one.first && (found.first === null || one.first < found.first)) found.first = one.first;
@@ -180,7 +180,7 @@ export const intoMarkets = (rows: readonly Series[]): MarketContents[] => {
    * shapes, so summing a shape's `symbols` would count it once per bar length.
    */
   for (const one of rows) {
-    if (one.symbol === BUCKET) continue;
+    if (one.symbol === VENUE_WIDE) continue;
 
     const held = symbols.get(one.market) ?? new Set<string>();
 
@@ -219,7 +219,7 @@ export const intoMarkets = (rows: readonly Series[]): MarketContents[] => {
  * by somebody deciding what to fetch rather than in a loop.
  */
 export const intoSymbols = (rows: readonly Series[]): string[] =>
-  [...new Set(rows.filter(one => one.symbol !== BUCKET).map(one => one.symbol))].sort();
+  [...new Set(rows.filter(one => one.symbol !== VENUE_WIDE).map(one => one.symbol))].sort();
 
 /**
  * A venue's servers and the addresses each is reached at: the one the catalog

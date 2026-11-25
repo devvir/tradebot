@@ -1,5 +1,6 @@
 import config from './config';
 import { filesOfKeys } from './listings/keys';
+import { send } from './prospector';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Lens, ReportError, ReportedById, ReportedByKey } from './types';
 
@@ -17,16 +18,45 @@ import type { Lens, ReportError, ReportedById, ReportedByKey } from './types';
 /** Most keys one report may name. */
 export const MAX_REPORT = 10_000;
 
-/** The ids to settle, and the keys that could not be. Null where the body is not a report. */
+/**
+ * The report a body states, or null where it is not one: `downloaded` and
+ * `failed`, each a list of keys, and `mismatched`, a list of `{ Key, Size, ETag
+ * }` — Size a whole number and ETag a string, each optional. A list left out is
+ * empty, and nothing else a body holds is kept.
+ */
+export const reportOf = (body: unknown): ReportedByKey | null => {
+  if (! isRecord(body)) return null;
+
+  const keys = (raw: unknown): string[] | null =>
+    (raw === undefined ? [] : Array.isArray(raw) && raw.every(one => typeof one === 'string') ? raw : null);
+
+  const downloaded = keys(body['downloaded']);
+  const failed     = keys(body['failed']);
+  const mismatched = body['mismatched'] === undefined ? [] : body['mismatched'];
+
+  if (! downloaded || ! failed || ! Array.isArray(mismatched) || ! mismatched.every(isMismatch)) return null;
+
+  return {
+    downloaded,
+    failed,
+    mismatched: mismatched.map(({ Key, Size, ETag }) => ({
+      Key,
+      ...(Size === undefined ? {} : { Size }),
+      ...(ETag === undefined ? {} : { ETag }),
+    })),
+  };
+};
+
+/** How many keys a report names — what `MAX_REPORT` bounds. */
+export const keysIn = (asked: ReportedByKey): number =>
+  asked.downloaded.length + asked.failed.length + asked.mismatched.length;
+
+/** The ids to settle, and the keys that could not be. */
 export const resolveReport = (
-  db:   DatabaseSync,
-  body: unknown,
-  lens: Lens | null,
-): { settle: ReportedById; errors: ReportError[] } | null => {
-  const asked = shapeOf(body);
-
-  if (! asked) return null;
-
+  db:    DatabaseSync,
+  asked: ReportedByKey,
+  lens:  Lens | null,
+): { settle: ReportedById; errors: ReportError[] } => {
   const settle: ReportedById = { downloaded: [], failed: [], mismatched: [] };
   const errors: ReportError[] = [];
 
@@ -70,72 +100,47 @@ export const resolveReport = (
 };
 
 /**
- * Hand prospector the ids to settle. Throws where prospector does not settle
- * them, which the caller answers `502`.
+ * Hand prospector the ids to settle; nothing is sent where there are none.
+ * Throws `Refused` where prospector answers that it does not settle them, and
+ * whatever `send` throws where it does not answer, or not in time.
  *
- * **A connection that fails is tried again**, three times with a short wait
- * between: prospector closes idle keep-alive connections, so a request now and
- * then lands on one just as it goes (`ECONNRESET`). An answer is never retried —
- * a status is prospector's verdict. Settling twice is harmless: a download is
- * recorded once, and a failure or a mismatch is asked of the venue again.
+ * **Settling is idempotent**, so a connection that fails is tried again as
+ * `send` tries any idempotent request: a download is recorded once, and a
+ * failure or a mismatch is asked of the venue again. An answer is never retried.
  */
 export const settle = async (ids: ReportedById): Promise<void> => {
-  for (let attempt = 1; ; attempt++) {
-    try {
-      const answer = await fetch(`${config.prospectorApi}/reports`, {
-        method:  'POST',
-        headers: {
-          'content-type': 'application/json',
-          ...(config.token ? { 'x-catalog-token': config.token } : {}),
-        },
-        body: JSON.stringify(ids),
-      });
+  if (ids.downloaded.length === 0 && ids.failed.length === 0 && ids.mismatched.length === 0) return;
 
-      if (! answer.ok) throw new Refused(`Prospector answered ${answer.status}: ${(await answer.text()).slice(0, 200)}`);
+  const answer = await send('POST', '/reports', ids, { timeoutMs: config.settleMs, idempotent: true });
 
-      return;
-    } catch (err) {
-      if (err instanceof Refused || attempt >= ATTEMPTS) throw err;
+  if (answer.status < 200 || answer.status >= 300) throw new Refused(answer.status, messageOf(answer.body));
+};
 
-      await new Promise(done => setTimeout(done, RETRY_MS * attempt));
-    }
+/** Prospector's own answer, refusing a report: its status and what it said. */
+export class Refused extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
   }
-};
-
-/** How many keys a report names — what `MAX_REPORT` bounds. */
-export const keysIn = (body: unknown): number => {
-  const asked = shapeOf(body);
-
-  return asked ? asked.downloaded.length + asked.failed.length + asked.mismatched.length : 0;
-};
+}
 
 // ── Internals ─────────────────────────────────────────────────────────────────
-
-const ATTEMPTS = 3;
-const RETRY_MS = 500;
-
-/** Prospector's own answer, refusing a report — never retried. */
-class Refused extends Error {}
 
 const MESSAGES: Record<'NoSuchKey' | 'AccessDenied', string> = {
   NoSuchKey:    'No catalogued file has this key',
   AccessDenied: 'The lens this report reads through does not let this file through',
 };
 
-/** The report a body states, or null where it is not one: three lists, of keys. */
-const shapeOf = (body: unknown): ReportedByKey | null => {
-  const given = (body ?? {}) as Record<string, unknown>;
-  const keys  = (raw: unknown): string[] | null =>
-    (raw === undefined ? [] : Array.isArray(raw) && raw.every(one => typeof one === 'string') ? raw : null);
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && ! Array.isArray(value);
 
-  const downloaded = keys(given['downloaded']);
-  const failed     = keys(given['failed']);
-  const mismatched = given['mismatched'] === undefined ? [] : given['mismatched'];
+/** A mismatched file as a report states it: its Key, and the Size and ETag the downloader found, where it says. */
+const isMismatch = (one: unknown): one is ReportedByKey['mismatched'][number] =>
+  isRecord(one)
+  && typeof one['Key'] === 'string'
+  && (one['Size'] === undefined || (Number.isSafeInteger(one['Size']) && (one['Size'] as number) >= 0))
+  && (one['ETag'] === undefined || typeof one['ETag'] === 'string');
 
-  if (! downloaded || ! failed || ! Array.isArray(mismatched)) return null;
-
-  if (! mismatched.every(one => one && typeof one === 'object' && typeof (one as { Key?: unknown }).Key === 'string'))
-    return null;
-
-  return { downloaded, failed, mismatched: mismatched as ReportedByKey['mismatched'] };
-};
+/** What prospector said in refusing: its `error`, or the start of whatever else it answered. */
+const messageOf = (body: unknown): string =>
+  (isRecord(body) && typeof body['error'] === 'string' ? body['error'] : String(body ?? '').slice(0, 200))
+  || 'Prospector refused the report';

@@ -7,6 +7,7 @@ import { dropLens, lensNamed } from '@tradebot/lenses';
 import { changeLens, putFiles, putVenue, recordSeries, storeLens } from './fixture';
 import { openScratch } from './fixture';
 import { mountLenses } from '../src/api/lenses';
+import config from '../src/config';
 import type { Application } from 'express';
 import type { Lens, LensDefinition, LensProblem, LensWrite } from '../src/types';
 import type { DatabaseSync } from 'node:sqlite';
@@ -237,5 +238,79 @@ describe('storing a lens', () => {
     const made = await ask<{ error: string }>('POST', '/lenses', { slug: 'cold-store' });
 
     expect(made.status).toBe(502);
+  });
+});
+
+/**
+ * What is tried again, and what never is: a connection that failed before
+ * prospector could act on it, never an answer or a call that timed out.
+ */
+describe('a call prospector does not answer', () => {
+  /** Every call to prospector fails as `fail` says, and is counted. */
+  const failing = (fail: (init?: RequestInit) => Promise<Response>): { calls: number } => {
+    const real    = globalThis.fetch;
+    const counted = { calls: 0 };
+
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      if (! String(url).startsWith('http://prospector:8080')) return real(url, init);
+
+      counted.calls++;
+
+      return fail(init);
+    });
+
+    return counted;
+  };
+
+  /** A fetch failing as undici fails it, over a connection that failed with `code`. */
+  const dropped = (code: string) => async (): Promise<Response> => {
+    throw new TypeError('fetch failed', { cause: Object.assign(new Error(code), { code }) });
+  };
+
+  it('tries an idempotent write three times over a connection that is reset, then answers 502', async () => {
+    const counted = failing(dropped('ECONNRESET'));
+
+    expect((await ask('PUT', '/lenses/cold-store', { note: 'what is old' })).status).toBe(502);
+    expect(counted.calls).toBe(3);
+  });
+
+  it('does not try a create again over a connection reset, which prospector may have acted on', async () => {
+    const counted = failing(dropped('ECONNRESET'));
+
+    expect((await ask('POST', '/lenses', { slug: 'cold-store' })).status).toBe(502);
+    expect(counted.calls).toBe(1);
+  });
+
+  it('tries a create again over a connection refused, which never reached prospector', async () => {
+    const counted = failing(dropped('ECONNREFUSED'));
+
+    expect((await ask('POST', '/lenses', { slug: 'cold-store' })).status).toBe(502);
+    expect(counted.calls).toBe(3);
+  });
+
+  it('relays an answer as it is, asked once', async () => {
+    for (const status of [409, 500]) {
+      const counted = failing(async () => new Response(JSON.stringify({ error: 'no' }), { status }));
+      const answer  = await ask<{ error: string }>('PUT', '/lenses/cold-store', { note: 'what is old' });
+
+      expect(answer).toEqual({ status, body: { error: 'no' } });
+      expect(counted.calls).toBe(1);
+    }
+  });
+
+  it('gives up on a write that is not answered in time, and does not send it again', async () => {
+    const waited = config.prospectorMs;
+
+    config.prospectorMs = 20;
+
+    try {
+      const counted = failing(init => new Promise((_, refuse) =>
+        init?.signal?.addEventListener('abort', () => refuse(init.signal!.reason))));
+
+      expect((await ask('DELETE', '/lenses/cold-store')).status).toBe(502);
+      expect(counted.calls).toBe(1);
+    } finally {
+      config.prospectorMs = waited;
+    }
   });
 });

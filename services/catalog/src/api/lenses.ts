@@ -143,7 +143,8 @@ export const mountLenses = (app: Application, db: DatabaseSync): void => {
 
 /**
  * Have prospector store what was asked, and answer with what it said: its
- * status and its body, as they are. `502` where it does not answer at all.
+ * status and its body, as they are. `502` where it does not answer, or not in
+ * time — see `send` for what is tried again first.
  */
 const stored = async (res: Response, method: string, path: string, body?: unknown): Promise<void> => {
   try {

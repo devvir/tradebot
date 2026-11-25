@@ -24,7 +24,7 @@ import type { ListingFile, ListingPage, ListingRefusal, ListingRequest, S3Body }
  */
 
 /** The bucket's name, as S3 answers it. */
-export const BUCKET = 'catalog';
+export const BUCKET_NAME = 'catalog';
 
 /** `max-keys` is 500 unless asked, 1,000 at most. */
 export const MAX_KEYS = 1_000;
@@ -93,7 +93,7 @@ export const resultOf = (db: DatabaseSync, asked: ListingRequest, page: ListingP
 
   return asked.v2
     ? {
-      Name:        BUCKET,
+      Name:        BUCKET_NAME,
       Prefix:      asked.prefix,
       MaxKeys:     asked.maxKeys,
       KeyCount:    contents.length,
@@ -104,7 +104,7 @@ export const resultOf = (db: DatabaseSync, asked: ListingRequest, page: ListingP
       Contents:    contents,
     }
     : {
-      Name:        BUCKET,
+      Name:        BUCKET_NAME,
       Prefix:      asked.prefix,
       Marker:      asked.after ?? '',
       MaxKeys:     asked.maxKeys,

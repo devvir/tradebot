@@ -1,4 +1,5 @@
 import { logger } from '@devvir/service-kit';
+import { VENUE_WIDE } from '../vocabulary';
 import { extensionOf } from './shape';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Keyed, KeyedFile, Lens } from '../types';
@@ -23,7 +24,7 @@ import type { Keyed, KeyedFile, Lens } from '../types';
  */
 export const keyOf = (prefix: string, pattern: string, file: { date: string; path: string }): string => {
   const [venue, market, dataset, letter, named] = prefix.split('/');
-  const symbol = letter === BUCKET ? BUCKET : named;
+  const symbol = letter === VENUE_WIDE ? VENUE_WIDE : named;
   const part = partOf(file.path, pattern);
 
   return `${prefix}${file.date.slice(0, 6)}/${venue}|${market}|${dataset}|${symbol}|${file.date}`
@@ -128,7 +129,7 @@ export const filesOfKeys = (db: DatabaseSync, keys: readonly string[], lens: Len
  * what follows, whatever the symbol holds.
  */
 export const nameStartOf = (parts: readonly string[], depth: number): string =>
-  `${parts.slice(0, 3).join('|')}|${depth === 4 ? BUCKET : parts[4]}|`;
+  `${parts.slice(0, 3).join('|')}|${depth === 4 ? VENUE_WIDE : parts[4]}|`;
 
 /**
  * How many segments of a key are its series prefix: five —
@@ -136,12 +137,9 @@ export const nameStartOf = (parts: readonly string[], depth: number): string =>
  * venue-wide file, which has no letter folder. `@` is never anything else, so
  * the key alone says which.
  */
-export const depthOf = (parts: readonly string[]): number => (parts[3] === BUCKET ? 4 : 5);
+export const depthOf = (parts: readonly string[]): number => (parts[3] === VENUE_WIDE ? 4 : 5);
 
 // ── Internals ─────────────────────────────────────────────────────────────────
-
-/** The venue-wide file's symbol, and its folder. */
-const BUCKET = '@';
 
 /**
  * Which of a period's files this one is, where the pattern splits a period:
