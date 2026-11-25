@@ -16,7 +16,8 @@ export interface Config {
    *
    * Blank where the catalog is open. Either way the page never sees it: the
    * browser talks to this service, and this service talks to the catalog and
-   * to prospector, which check the same one.
+   * to prospector, which check the same one. Every request this service
+   * forwards carries it, so whoever reaches this service acts with it.
    */
   catalogToken:  string;
 

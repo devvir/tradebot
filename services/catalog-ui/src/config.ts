@@ -13,8 +13,10 @@ const CONTAINER_PORT = 8080;
 const CATALOG_API = 'http://catalog:8080';
 
 /**
- * Where prospector's collector API answers. Private to the module network, so
- * it is a constant: nothing outside the module reaches it.
+ * Where prospector's collector API answers: inside the module network, at a
+ * fixed name, so it is a constant. The requests this service allows are
+ * forwarded there with `CATALOG_TOKEN`, so whoever reaches this service acts
+ * on prospector with that token.
  */
 const PROSPECTOR_API = 'http://prospector:8080';
 
