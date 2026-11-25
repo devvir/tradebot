@@ -13,7 +13,7 @@ import type { Lens, Where } from './types';
  * Three sections, and where you are inside one of them.
  *
  * `contents` is what the catalog holds; `surveys` is what is being done about
- * it; `lenses` is how a consumer sees a slice of it. They are separate
+ * it; `lenses` holds the named selections of it. They are separate
  * because they answer different questions and change on different clocks — one
  * is a fact to read, one a thing to act on, and one a decision that stays until
  * it is changed.
