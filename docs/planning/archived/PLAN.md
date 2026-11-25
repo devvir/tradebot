@@ -15,7 +15,7 @@ Subscribes to public WS streams, accumulates order book and trade state, and pub
 ### `executor` — Order abstraction layer
 The bot's interface to order management. The bot publishes a list of desired orders; the executor computes the diff against live state and performs the minimum set of REST calls (amend, create, cancel) to make reality match intent. All WS private streams, REST API details, and order CRUD complexity live here — the bot knows none of it.
 
-→ [EXECUTOR.md](EXECUTOR.md)
+→ EXECUTOR.md (never written)
 
 ### `bot` — Strategy framework
 Consumes `MarketState` from RabbitMQ and account state from private WS streams, runs a pluggable strategy, and publishes `DesiredState` to RabbitMQ. The bot knows what orders it wants, not how to create them.
