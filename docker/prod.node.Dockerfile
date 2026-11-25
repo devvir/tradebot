@@ -63,6 +63,20 @@ EXPOSE 3000
 # Run as the image's unprivileged user (uid 1000)
 USER node
 
+# DuckDB extensions to install into the image (space-separated, default none),
+# into the runtime user's extension directory (~/.duckdb/extensions) with the
+# DuckDB the service itself resolves. A service that loads them then finds them
+# locally and needs no network at run time. The build fails when one cannot be
+# installed.
+ARG DUCKDB_EXTENSIONS=""
+RUN if [ -n "$DUCKDB_EXTENSIONS" ]; then \
+      node --input-type=module -e " \
+        const { DuckDBInstance } = await import('@duckdb/node-api'); \
+        const conn = await (await DuckDBInstance.create()).connect(); \
+        for (const extension of process.argv.slice(1)) await conn.run('INSTALL ' + extension + '; LOAD ' + extension); \
+      " $DUCKDB_EXTENSIONS; \
+    fi
+
 # Use dumb-init for proper signal handling
 ENTRYPOINT ["dumb-init", "--"]
 

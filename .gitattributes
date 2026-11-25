@@ -1,0 +1,5 @@
+# CSVs are LF in the repository and in every checkout, whatever the platform.
+*.csv text eol=lf
+
+# Venue samples are kept byte for byte, line endings included.
+services/stocker/tests/fixtures/** -text

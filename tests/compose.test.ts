@@ -1,8 +1,9 @@
 /**
  * What `docker compose config` makes of every compose file: where each port is
  * published, which credentials the broker and the cache refuse to start
- * without, which project each module and pack is, and how logs rotate. Skipped
- * where docker compose is not installed.
+ * without, which project each module and pack is, how logs rotate, and which
+ * DuckDB extensions stocker's image is built with. Skipped where docker compose
+ * is not installed.
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -40,6 +41,7 @@ const required = {
 interface Port { host_ip?: string; target: number; published?: string }
 interface Service {
   image?: string;
+  build?: { args?: Record<string, string> };
   ports?: Port[];
   command?: string[];
   healthcheck?: { test?: string[] };
@@ -170,6 +172,18 @@ describe.skipIf(!hasCompose)('compose files', () => {
       expect(cache?.command).toEqual(expect.arrayContaining(['--requirepass', required.CACHE_PASS]));
       expect(cache?.healthcheck?.test?.join(' ')).not.toContain(required.CACHE_PASS);
     });
+  });
+
+  it('builds stocker\'s image with every DuckDB extension its formats load', () => {
+    const formats = join(root, 'services/stocker/src/formats');
+    const loaded = readdirSync(formats)
+      .flatMap((file) => [...readFileSync(join(formats, file), 'utf8').matchAll(/^\s*extensions:\s*\[([^\]]*)\]/gm)])
+      .flatMap((match) => [...match[1].matchAll(/'([^']+)'/g)].map((name) => name[1]));
+    const installed = (services('services/stocker/docker/compose.yml', required).stocker.build?.args?.DUCKDB_EXTENSIONS ?? '')
+      .split(/\s+/).filter(Boolean);
+
+    expect(loaded).toContain('excel');
+    expect(installed).toEqual(expect.arrayContaining(loaded));
   });
 
   describe('the broker', () => {

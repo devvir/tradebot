@@ -23,6 +23,11 @@ services:
         # which keeps its own memory — see STOCKER_ENGINE_MEMORY_GB.
         NODE_MEMORY_MB: 4096
 
+        # Installed into the prod image: xlsx series are read with DuckDB's excel
+        # extension, which stocker would otherwise fetch from DuckDB's extension
+        # repository the first time a run reads one.
+        DUCKDB_EXTENSIONS: excel
+
     container_name: stocker
 
     environment:
