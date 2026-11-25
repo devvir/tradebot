@@ -110,8 +110,8 @@ on spot and `lv150` on futures.
 #### Where they ran together: `2026-02-01` to `2026-08-04`
 
 Both ends of the span are declared by HTX: the portal's sentence above, and the shutdown notice. The
-figures below were measured over the whole overlap. `data/` no longer changes, and the spot checks
-made on `2026-11-25` still held.
+figures below were measured over the whole overlap. `data/` has not been written since `2026-08-05`,
+and the spot checks made on `2026-11-25` still held.
 
 **Where both trees carry a day they agree on its values, but they do not carry the same days.**
 `historical_data/` holds **10,608 instrument-days that `data/` does not**, across 6,334 series.
@@ -459,12 +459,12 @@ clawback_ratio, settlement_type, …}`. **Reaches 90 days**: 270 records for BTC
 Four endpoints on two hosts, because htx files its markets separately: spot on the exchange API,
 and each derivative family on its own service of `api.hbdm.com`.
 
-| market | endpoint | htx answers | the archive spells | checked |
+| market | endpoint | htx answers | `historical_data/` spells | checked |
 |---|---|---|---|---|
 | spot | `api.huobi.pro/v2/settings/common/symbols` | `btcusdt`, with `bc` and `qc` | `BTC-USDT` | 609 of 609 |
 | dated futures | `api.hbdm.com/api/v1/contract_contract_info` | `BTC` and `20260828` | `BTC-USD-260828` | 8 of 8 |
-| coin swap | `api.hbdm.com/swap-api/v1/swap_contract_info` | `BTC-USD` | `BTC-USD` | |
-| linear swap | `api.hbdm.com/linear-swap-api/v1/swap_contract_info` | `BTC-USDT` | `BTC-USDT` | 301 of 303, the two missing listed that day |
+| coin swap | `api.hbdm.com/swap-api/v1/swap_contract_info` | `BTC-USD` | `BTC-USD-PERP` | |
+| linear swap | `api.hbdm.com/linear-swap-api/v1/swap_contract_info` | `BTC-USDT` | `BTC-USDT-PERP` | 301 of 303, the two missing listed that day |
 
 **Spot's base and quote are read, not parsed.** `btcusdt` does not say where the base ends; `bc` and
 `qc` do. A dated contract's delivery day likewise comes from its own field.

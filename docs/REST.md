@@ -192,7 +192,7 @@ is HTTP 200**; the error is in the body.
 
 | venue | budget | reported | spent | back after |
 |---|---|---|---|---|
-| binance | weight a minute for each service | used so far | 429 + `Retry-After` | the minute's turn |
+| binance | weight a minute: spot, both futures services together, options | used so far | 429 + `Retry-After` | the minute's turn |
 | bybit | 600 calls / 5 s, whole host | nothing | 403 | the next call |
 | okx | each endpoint, per 2 s | nothing | 429 | 1 to 2 s |
 | gate | 200 calls / 10 s, each endpoint | remaining | 429 | 2 s |

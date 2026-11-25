@@ -58,10 +58,6 @@ listing API. Measured 2026-09-29, the bucket answered HEAD at up to 1,781/s and 
 1,710/s, flat at ~270 ms, without a single throttling answer — the ceiling was the client's. From a
 remote machine the same requests reached about 1,190 a second.
 
-Gate's public API carries each contract's `launch_time` / `create_time`
-([REST](#endpoints-and-how-far-back-each-goes)). The download portal's own symbol list sits in a
-Next.js chunk (`/cdn/fe/_next/static/chunks/pages/developer/historical_quotes-*.js`).
-
 ### The trees, and which are dead
 
 Thirteen top-level trees. Seven are gate.com's live market data — `spot/`, `futures_usdt/`,
@@ -131,7 +127,9 @@ The bucket's own floors, its first month directory per dataset (2026-11-25):
 | `tradfi/candlesticks_1d/` | 202107; the other TradFi intervals from 202401, `10s` from 202603 |
 
 A download form is evidence that data exists from a date, never evidence that nothing older is
-served.
+served. The portal's own symbol list sits in a Next.js chunk
+(`/cdn/fe/_next/static/chunks/pages/developer/historical_quotes-*.js`); the API's contract listings
+carry each contract's `create_time` and `launch_time` ([REST](#endpoints-and-how-far-back-each-goes)).
 
 ### Layout
 
@@ -252,10 +250,10 @@ It is one flat namespace of equities, leveraged ETFs, FX pairs, indices, metals 
 
 `/api/v4/tradfi/symbols` reports `status: open | closed` per symbol, meaning **the exchange
 session**. These are tokenised equities and ETFs on US market hours; the payload carries
-`open_time`, `close_time` and `next_open_time` beside the status. Measured on a Monday at 16:18 UTC:
-646 open, 34 closed, of 680. Outside 14:30–21:00 UTC — seventeen and a half hours of every weekday, every
-weekend, every market holiday — **all of them report `closed`**. A symbol is listed while it appears in that
-list.
+`open_time`, `close_time` and `next_open_time` beside the status. Measured on a Monday at 16:18
+UTC: 646 open, 34 closed, of 680. Outside 14:30–21:00 UTC — seventeen and a half hours of every
+weekday, every weekend, every market holiday — **all of them report `closed`**. A symbol is listed
+while it appears in that list.
 
 Gate's other markets carry listing state of their own: when asked, spot's `trade_status` was 2,232
 tradable against 2 untradable, and `in_delisting` was false for all 981 contracts.

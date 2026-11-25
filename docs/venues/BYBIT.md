@@ -112,7 +112,7 @@ the five names `id, timestamp, price, volume, side`. `BTCUSDT-2025-03` mixes the
 rows of five values, then 15,401,750 of six from 2025-03-13 00:00 UTC. In `BTCUSDT-2025-04`, every
 row but the header has six. The monthly files of 2025-06, 2025-12 and 2026-06 are the same.
 
-### The 2021 expiries are abandoned, and are refused
+### The 2021 expiries are abandoned
 
 `trading/` holds 44 dated futures directories. Forty of them — every expiry from 2022 on — carry
 197 to 205 daily files each, a contiguous history. **The four 2021 ones do not**, and bybit's own

@@ -32,8 +32,8 @@ Most datasets are published **both** as monthly files and as that month's days, 
 history: the same rows in two shapes. The distinction is a path segment — `data/spot/monthly/…`
 against `data/spot/daily/…`.
 
-Not every dataset has both: `metrics`, `bookDepth` and `liquidationSnapshot` publish days only,
-and `fundingRate` months only.
+Not every dataset has both: `metrics`, `bookDepth`, `liquidationSnapshot` and the two options datasets
+publish days only, and `fundingRate` months only.
 
 ### Files carry checksums
 
