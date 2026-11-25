@@ -4,12 +4,10 @@ Small helpers shared by the services of this repo.
 
 | Module | Exports |
 |---|---|
-| `csv` | `rowToCsv` writes one CSV line, quoting a field only when it holds `,`, `"`, `\n` or `\r`; `createCsvParser` is a `csv-parse` stream that reads what `rowToCsv` writes |
 | `routes` | `parseRules`, the parser of the [rule grammar](#rule-grammar) |
 | `security` | `redactUrl` masks the credentials of a URL for logging |
 | `services` | `SKFactory`, a service-kit factory with RabbitMQ (`QUEUE_URL`) and Redis (`CACHE_URL`, `CACHE_PASS`) providers, a health check on port 3000, and optional message tracking |
 | `sizes` | `sizeOf` writes a byte count as `912 B`, `18.1 MB`, `2.4 GB` |
-| `tables` | `TABLE_SPECS` and the BitMEX table sets `WS_TABLES` and `FREE_TEXT_TABLES`, with `baseTable` |
 
 The `@tradebot/utils/testing` subpath holds test helpers: `.env` parsing (`parseEnvFile`,
 `loadTestingEnv`) and a throwaway RabbitMQ under docker compose (`startRabbitMQ`, `stopRabbitMQ`).

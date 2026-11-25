@@ -5,9 +5,6 @@
     ".github/skills/**",
     "services/prospector/src/scanners/none.ts"
   ],
-  "ignoreIssues": {
-    "shared/types/src/**": ["exports", "types"]
-  },
   "ignoreWorkspaces": ["packages/*", "dx"],
   "ignoreBinaries": ["truncate"],
   "ignoreDependencies": ["nx"],

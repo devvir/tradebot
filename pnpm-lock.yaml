@@ -564,8 +564,6 @@ importers:
         specifier: ~22.20.5
         version: 22.20.5
 
-  shared/types: {}
-
   shared/utils:
     dependencies:
       '@devvir/rabbitmq':
@@ -574,12 +572,6 @@ importers:
       '@devvir/service-kit':
         specifier: workspace:*
         version: link:../../packages/service-kit
-      '@tradebot/types':
-        specifier: workspace:*
-        version: link:../types
-      csv-parse:
-        specifier: ^6.2.1
-        version: 6.2.1
     devDependencies:
       '@types/node':
         specifier: ~22.20.5
@@ -2312,9 +2304,6 @@ packages:
 
   csstype@3.2.3:
     resolution: {integrity: sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==}
-
-  csv-parse@6.2.1:
-    resolution: {integrity: sha512-LRLMV+UCyfMokp8Wb411duBf1gaBKJfOfBWU9eHMJ+b+cJYZsNu3AFmjJf3+yPGd59Exz1TsMjaSFyxnYB9+IQ==}
 
   d@1.0.2:
     resolution: {integrity: sha512-MOqHvMWF9/9MX6nza0KgvFH4HpMU0EF5uUDXqX/BtxtU8NfB0QzRtJ8Oe/6SuS4kbhyzVJwjd97EA4PKrzJ8bw==}
@@ -5663,8 +5652,6 @@ snapshots:
       rrweb-cssom: 0.8.0
 
   csstype@3.2.3: {}
-
-  csv-parse@6.2.1: {}
 
   d@1.0.2:
     dependencies:

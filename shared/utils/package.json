@@ -30,9 +30,7 @@
   "keywords": ["tradebot", "utils"],
   "dependencies": {
     "@devvir/service-kit": "workspace:*",
-    "@devvir/rabbitmq": "workspace:*",
-    "@tradebot/types": "workspace:*",
-    "csv-parse": "^6.2.1"
+    "@devvir/rabbitmq": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "~22.20.5"

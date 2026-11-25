@@ -24,7 +24,6 @@
     "noFallthroughCasesInSwitch": true
   },
   "references": [
-    { "path": "shared/types" },
     { "path": "shared/lenses" },
     { "path": "shared/utils" },
     { "path": "packages/rabbitmq" },
