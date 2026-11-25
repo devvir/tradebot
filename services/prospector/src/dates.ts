@@ -127,29 +127,31 @@ export const WIDTH: Record<Grain, number> = { monthly: 6, daily: 8, hourly: 10, 
 /**
  * How long after a period closes a missing file is still merely late.
  *
- * **Fifteen days, against a longest documented wait of one to seven.** Gate
- * publishes a month's files on the first Monday of the next one, which is the
- * slowest promise any venue here makes; the lags actually measured are hours for
- * dailies and days for monthlies. Fifteen is twice the worst of those and still
- * short enough that a venue's ordinary lateness is never mistaken for absence.
+ * **Fifteen days, against a longest documented wait of seven.** Binance
+ * publishes a month's files on the first Monday of the next one, which can be
+ * as late as the 7th, and gate generates its 7d candles on the 7th (see
+ * `docs/venues/BINANCE.md` and `docs/venues/GATE.md`). Fifteen is twice that
+ * and still short enough that a venue's ordinary lateness is never mistaken for
+ * absence.
  *
- * **Being wrong here is cheap in the direction it fails.** A file that turns up
- * on the sixteenth day is found by the next full refresh, which re-reads the
- * keyspace and owes nothing to any tip. Waiting longer instead costs a probe per
- * gap per pass, on every series that has one, for as long as the wait lasts.
+ * **Being wrong here is cheap in the direction it fails.** A late file on a
+ * listable venue is found by its next walk, which reads the index and owes
+ * nothing to any tip. Waiting longer instead costs a probe per gap per pass, on
+ * every series that has one, for as long as the wait lasts.
  *
- * **One number, three readers**, all asking the same question — *is this late,
- * or is it never?* — so none of them may answer it differently:
+ * **One number, read through `lastSettled` wherever the question is *is this
+ * late, or is it never?***, so no reader may answer it differently:
  *
  * - reconciliation lifts every tip to `TODAY - OVERDUE_DAYS`, which is what
  *   retires an absence for good
- * - the preamble starts a new or relisted series `OVERDUE_DAYS` below the
- *   newest date the last completed update covered
+ * - a walk starts the tip of a series it creates at that same edge, as of the
+ *   walk's start (`walkEdge`)
+ * - the preamble and the backfill start a new or relisted series
+ *   `OVERDUE_DAYS` below the newest date the last completed update covered
  * - a first pass over a seeded venue stops leaving out the span a seed proved
  *   empty `OVERDUE_DAYS` below the day that seed was built
- *
- * A walk has no use for it. A walk read the index, so an absence it saw is a
- * fact rather than a wait.
+ * - `open` keeps a series that is delisted or of a retired shape generating
+ *   while its `last` is within `OVERDUE_DAYS` of its tip
  */
 export const OVERDUE_DAYS = 15;
 
@@ -172,10 +174,7 @@ export const dueAt = (at: string, grain: Grain): number =>
  * URL it owed and drained its queue, so an absence it saw is real — except at
  * the very edge, where a period may simply not have been published yet. This is
  * where that edge falls, and lifting every tip to it is what retires an absence
- * for good.
- *
- * A walk has no use for it: a walk read the index, so its absences are settled
- * the moment it sees them.
+ * for good. Every other reader of `OVERDUE_DAYS` goes through here too.
  */
 export const lastSettled = (grain: Grain, asOf: Date): string =>
   lastClosed(grain, new Date(asOf.getTime() - OVERDUE_DAYS * 86_400_000));

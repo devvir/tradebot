@@ -12,9 +12,9 @@ import type { Surveys } from '../types';
  *
  * **`venue` is optional, and leaving it out means all of them**: a name, several
  * names, or none. `/venues/:venue/surveys` is the same request with the venue
- * named in the path. Named venues are checked against the registry, never the
- * `venue` table — that table is written by a survey, so on a fresh database no
- * first survey could otherwise start.
+ * named in the path. Named venues are checked against `Surveys.venues`, the
+ * venues this deployment surveys, which come from the adapter registry rather
+ * than the catalog's `venue` table.
  */
 export const mountCollector = (app: Application, db: DatabaseSync, surveys: Surveys): void => {
   app.post('/surveys', (req, res) => start(db, req, res, surveys));

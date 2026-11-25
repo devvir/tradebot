@@ -335,22 +335,18 @@ export interface ListingContext {
 }
 
 /**
- * Why a context is being built, and therefore how much an adapter may do to
- * build it.
+ * Why a context is being built: what a caller passes to `getContext`, and the
+ * kind of pass a survey runs.
  *
- * - `'full'` — walk the venue's whole keyspace. The adapter goes back to the
- *   venue and brings its own knowledge up to date, however long that takes.
- * - `'partial'` — find what has appeared since. It still reconciles, because
- *   that is the only way a new symbol is ever discovered: probing can only ask
- *   about series it already knows.
+ * - `'full'` — a walk: read the venue's whole keyspace.
+ * - `'partial'` — an update: generate and probe what may have appeared since.
  * - `'lookup'` — **reach no venue at all.** This is what an HTTP handler passes
  *   to confirm a single key inside a request; an adapter that fetched here would
  *   turn one confirmation into an unbounded call in a request handler. It is not
  *   a kind of survey and never starts one.
  *
- * **Decided by the request, not by the state.** An earlier version inferred it
- * from whether a job happened to be open, which made "continue where you left
- * off" mean "re-establish everything" for any venue whose job had closed.
+ * No adapter's `getContext` contacts its venue for any of them. Which pass a
+ * survey runs is `passFor`'s decision in `sync.ts`.
  */
 export type Occasion = 'full' | 'partial' | 'lookup';
 
@@ -703,14 +699,13 @@ export interface Adapter<S extends Scanner<any> = Scanner<any>> {
    *
    * **The core renders a calendar; a venue's oddities render themselves.**
    * `{YYYY}` `{MM}` `{DD}` `{HH}` `{MI}` are what every archive here is built
-   * from, and generating a key is slicing a stamp into them. Two venues want
-   * something else — bybit names a month by both its ends, gate names a file by
-   * the instant it covers in Unix seconds — and neither is a shape worth
-   * teaching every venue about.
+   * from, and generating a key is slicing a stamp into them. bybit wants
+   * something else — it names a month by both its ends — and that is not a
+   * shape worth teaching every venue about.
    *
    * Given the stamp, returns the slots to fill and what to fill them with. A
-   * slot's name ends in the grain it steps at, so `{EPOCH_HH}` is read as hourly
-   * by the same rule that reads `{HH}` — which is how a venue can invent a slot
+   * slot whose name ends in a grain (`HH}`, `DD}`, `MI}`) is read at that grain
+   * by the same rule that reads `{HH}`, which is how a venue can invent a slot
    * without the catalog having to be told its cadence separately.
    */
   slotsFor?(at: string): Record<string, string>;
@@ -1660,9 +1655,9 @@ export interface Surveys {
    * Every venue that can be surveyed at all.
    *
    * **From the registry, not the catalog.** Which venues exist is a property of
-   * the code; the catalog's `venue` table is written *by* a survey, so on a
-   * fresh database it is empty — and validating a request against it would mean
-   * no first survey could ever be started.
+   * the code: the adapters with a scanner, narrowed by `PROSPECTOR_VENUES`. The
+   * catalog's `venue` rows come from the core migration and are absent from a
+   * database built without seed data.
    */
   venues(): string[];
 
@@ -2043,9 +2038,10 @@ export interface Series {
  * its grain, and two fields that can disagree about that are worse than one that
  * cannot.
  *
- * Four, because four is what these venues publish: a month, a day, an hour —
- * gate's order books are 24 files a day — and a minute, which is gate's options
- * ticker and nothing else so far.
+ * Four, one per calendar slot below the year. A venue that splits a period into
+ * several files — gate's hourly books, its once-a-minute snapshots — keeps the
+ * period's grain and names the files as parts (`{PART}`), which declare no
+ * grain.
  */
 export type Grain = 'monthly' | 'daily' | 'hourly' | 'minutely';
 
@@ -2054,7 +2050,7 @@ export type Grain = 'monthly' | 'daily' | 'hourly' | 'minutely';
  * and what to replace it with.
  *
  * The escape hatch for a venue whose paths are not simply a calendar — see
- * `Adapter.slotsFor`, which is where the two that need it are explained.
+ * `Adapter.slotsFor`, which is where the one that needs it is explained.
  */
 export type Slots = (at: string) => Record<string, string>;
 

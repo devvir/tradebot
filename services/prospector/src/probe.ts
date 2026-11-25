@@ -202,12 +202,12 @@ export const probeFiles = async (
    * is nothing to conclude and no count to run down. The row stays in `wip`
    * and the pass does not finish — which is exactly what should happen, and
    * what makes a venue answering nonsense visible rather than quietly worked
-   * around. Every venue here is S3, OSS, or a known CDN in front of one; if
-   * that stops being true it will be a venue with a name, and it can have a
-   * rule of its own then.
+   * around. Every venue here is S3, OSS, or a known CDN in front of one.
    *
-   * **Nothing here settles a period by the clock.** `OVERDUE_DAYS` acts once,
-   * in reconciliation, over a pass that finished.
+   * **Nothing here settles a period by the clock.** Where the clock matters,
+   * `OVERDUE_DAYS` decides it through `lastSettled` (see `dates.ts`):
+   * reconciliation's floor, the starting tip of a new or relisted series, the
+   * seeded skip span and `open`'s patience.
    */
   const judge = (
     row:     Unsettled,
@@ -607,8 +607,8 @@ const REPORTED = 3;
  * **Not a retry budget** — it is the difference between a moment and a fact. A
  * key probed the instant before it was published answers `404` truthfully and is
  * wrong about the archive; reconciliation then retires the whole period on a
- * pass that never asked again. Three attempts across a pass' sweeps closes that
- * window at a cost of two extra requests per key that really is absent.
+ * pass that never asked again. Asking again across a pass' sweeps closes that
+ * window, at the cost of those extra requests for a key that really is absent.
  *
  * It applies to absence and to nothing else. A status that says nothing about
  * the file has no count to run down: the row simply stays — see `judge`.

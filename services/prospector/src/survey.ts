@@ -97,7 +97,7 @@ export const surveyVenue = async (
   /**
    * **One run, reached two ways.** A full survey walks the venue's keyspace; a
    * partial one generates the dates each series is missing and probes them.
-   * Everything after the scopes exist is identical — the same partitions, the
+   * Everything after the scopes exist is identical — the same scopes, the
    * same cursors committed page by page, the same job that stays open until each
    * is exhausted — which is what makes both stoppable and resumable by the same
    * code.
@@ -116,11 +116,9 @@ export const surveyVenue = async (
    * open and still needs it — a context lives in memory, so a restart mid-walk
    * arrives with nothing.
    *
-   * **Built from what was asked for, not from what happens to be open.** A
-   * resume works from what is already known and asks the venue nothing; only a
-   * refresh sends an adapter back to establish its own knowledge. Inferred from
-   * an open job, every resume of a closed-but-incomplete venue would be a full
-   * re-establishment.
+   * **Built from the pass being run**, which `passFor` chose before this was
+   * called. No adapter's `getContext` contacts its venue, so a resume costs
+   * nothing here.
    */
   const context = await adapter.getContext(db, occasion);
 
@@ -1191,9 +1189,9 @@ const catalogued = (
      * anyway would put a plausible row naming a directory as though it were an
      * instrument into the catalog, and a wrong series is not visible afterwards.
      *
-     * The file is still catalogued if it carries a date, so nothing is lost
-     * while the shape waits to be read — it simply has no series, which is what
-     * `unreadable` is the list of.
+     * Its path goes to `unreadable` instead of `file`, so nothing is lost
+     * while the shape waits for a reader: a walk after the adapter's
+     * `inspectUrl` learns the shape catalogues it.
      */
     if (seen?.of === 'unknown') unread.push({ path, reason: 'unread' });
 

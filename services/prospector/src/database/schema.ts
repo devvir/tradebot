@@ -215,7 +215,7 @@ CREATE TABLE IF NOT EXISTS survey (
   paused_at   TEXT
 ) STRICT;
 
--- One pass over a venue: a row at the empty scope plus one row per partition,
+-- One pass over a venue (a job): a row at the empty scope plus one row per scope,
 -- written together and sharing one "started".
 CREATE TABLE IF NOT EXISTS run (
   id        INTEGER PRIMARY KEY,
@@ -238,15 +238,15 @@ CREATE TABLE IF NOT EXISTS run (
   completed TEXT,
 
   -- Requests this job needed: one per key probed, one per listing page read.
-  -- What compares a walk against an update. Kept on the job row only;
-  -- partitions stay at zero.
+  -- What compares a walk against an update. Kept on the job row only; scope
+  -- rows stay at zero.
   asked     INTEGER NOT NULL DEFAULT 0,
 
   -- The same requests as they actually went out, every retry included.
   sent      INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 
--- One open run per scope, so two collectors cannot both claim a partition and
+-- One open run per scope, so two collectors cannot both claim a scope and
 -- two jobs cannot be open over one venue at once.
 CREATE UNIQUE INDEX IF NOT EXISTS run_open ON run (venue_id, kind, scope) WHERE completed IS NULL;
 
@@ -370,11 +370,14 @@ CREATE TABLE IF NOT EXISTS pattern (
   --   {YYYY}    year          {DD}  day of the month
   --   {MM}      month         {HH}  hour        {MI}  minute
   --
-  -- three that an adapter fills itself, through its own slotsFor:
+  -- one that an adapter fills itself, through its own slotsFor:
   --
   --   {MONTH_LAST_DAY}  bybit, which names a month by both its ends
-  --   {EPOCH_HH}        gate, which names a file by the instant it covers
-  --   {EPOCH_MI}        in Unix seconds and carries no date at all
+  --
+  -- one that names a file within a period, filled from the adapter's
+  -- expandParts (gate, bitget):
+  --
+  --   {PART}
   --
   -- and one that reads a table, for the part of a URL no rule reaches:
   --

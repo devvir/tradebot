@@ -204,12 +204,13 @@ const headOverH1 = (url: string): Promise<Carried> =>
   });
 
 /**
- * One pool per protocol. How many are in use at once is `wired`'s to say.
+ * One pool per protocol. How many are in use at once is the machine-wide
+ * ticket pool's to say (`Tickets` in `pace.ts`).
  *
  * **Idle ones are kept, all of them.** By default an agent keeps 256 idle
  * connections per host and destroys the rest, and a host given 600 at once
- * passes 256 idle between any two requests — so connections were torn down
- * only to be opened again, each paying a TLS handshake on this thread. A
+ * passes 256 idle between any two requests — so connections would be torn
+ * down only to be opened again, each paying a TLS handshake on this thread. A
  * handshake is the expensive part of a request here: measured 2026-10-01 on
  * loopback, with no network at all, 3,000 lanes opening connections at once
  * missed their deadlines by the hundred and reopened them by the thousand.

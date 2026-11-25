@@ -500,9 +500,8 @@ const EDGES = new Map<string, Edges>();
  * bounds from every file it reads; an update states none, because a generated
  * key is a guess until something answers for it. This is where it stops being a
  * guess: a probe that found the file is a sighting as good as a listing's, and
- * without it neither bound ever moved on a venue that cannot be walked — which
- * is what left okx and bitget with files going back months under a NULL
- * `first`, waiting on a reconciliation to notice.
+ * without it neither bound would move on a venue that cannot be walked until a
+ * reconciliation noticed.
  *
  * **Writing `first` here cannot strand the range below it**, which is the thing
  * to check before believing that. `first` floors *generation*, and the keys
@@ -651,8 +650,8 @@ export const reconcile = async (
      *
      * **A file is proof, and proof outranks patience.** Where a series' newest
      * file is above the floor there is nothing left to wait for below it: the
-     * archive answered. Holding the tip down to the floor there is what made an
-     * update re-ask the whole window every night for periods it already held.
+     * archive answered. Holding the tip down to the floor there would make an
+     * update re-ask the whole window every night for periods it already holds.
      *
      * **But never past a period that has not closed.** A walk catalogues what the
      * index offers, and an index offers today: a file dated today is proof of

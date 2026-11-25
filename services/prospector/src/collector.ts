@@ -20,12 +20,13 @@ import type { PauseAnswer, SurveyAnswer, SurveyState, Surveys, VenueStatus } fro
 /**
  * Which venues a request is about: the ones it names, or all of them.
  *
- * **Named venues are checked against the registry, never against the catalog's
- * `venue` table**, which is written *by* a survey — on a fresh database it is
- * empty, and validating against it would mean no first survey could ever start.
+ * **Named venues are checked against `known`, never against the catalog's
+ * `venue` table**: the adapter registry defines what a venue is. The `venue`
+ * rows come from the core migration, and a database built without seed data
+ * has none.
  *
- * Answers `null` once it has already replied, so a caller returns rather than
- * deciding again what went wrong.
+ * Naming none means every known venue. Answers `{ unknown }`, listing the names
+ * that are not known, when any is not.
  */
 export const venuesAsked = (named: unknown, known: readonly string[]): string[] | { unknown: string[] } => {
   const asked = named === undefined || named === null ? []
