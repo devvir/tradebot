@@ -79,10 +79,10 @@ describe('.env.example files', () => {
       expect(resolve(['.env.example'], {}).DATA_DIR).toBe('');
     });
 
-    it('puts the catalog, archives and vault under DATA_DIR', () => {
-      expect(env.CATALOG_DIR).toBe(`${dataDir}/catalog`);
-      expect(env.DATA_ARCHIVES_DIR).toBe(`${dataDir}/archives`);
-      expect(env.DATA_VAULT_DIR).toBe(`${dataDir}/vault`);
+    it('leaves the catalog, archives and vault to their defaults under DATA_DIR', () => {
+      expect(env.CATALOG_DIR).toBeUndefined();
+      expect(env.DATA_ARCHIVES_DIR).toBeUndefined();
+      expect(env.DATA_VAULT_DIR).toBeUndefined();
     });
   });
 });

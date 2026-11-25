@@ -1,7 +1,8 @@
 # Prospector Service — surveys venue archives and records what they publish.
 #
-# Owns its storage: CATALOG_DIR on the host is mounted at a fixed path in the
-# container. Pre-create it writable by uid 1000:
+# Owns its storage: CATALOG_DIR on the host (default: ${DATA_DIR}/catalog) is
+# mounted at a fixed path in the container. Compose refuses to start it while
+# neither variable is set. Pre-create it writable by uid 1000:
 #   sudo mkdir -p /storage/tradebot/catalog && sudo chown 1000:1000 /storage/tradebot/catalog
 #
 # It downloads nothing — a survey moves kilobytes of XML while the archives it
@@ -54,7 +55,7 @@ services:
 
     volumes:
       - ../../../:/live
-      - ${CATALOG_DIR:?CATALOG_DIR is not defined}:/data/catalog
+      - ${CATALOG_DIR:-${DATA_DIR:?DATA_DIR is not defined}/catalog}:/data/catalog
 
     # The API on 8080 is reached over the shared network only, and health on
     # 3000 from inside the container: no port is published.

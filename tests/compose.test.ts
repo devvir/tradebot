@@ -1,8 +1,9 @@
 /**
  * What `docker compose config` makes of every compose file: where each port is
  * published, which credentials the broker and the cache refuse to start
- * without, which project each module and pack is, how logs rotate, and which
- * DuckDB extensions stocker's image is built with. Skipped where docker compose
+ * without, where the data directories are mounted from, which project each
+ * module and pack is, how logs rotate, and which DuckDB extensions stocker's
+ * image is built with. Skipped where docker compose
  * is not installed.
  */
 import { spawnSync } from 'node:child_process';
@@ -30,9 +31,7 @@ const files = [
 
 /** What the operator must set for any file to render. */
 const required = {
-  DATA_ARCHIVES_DIR: '/srv/tradebot/archives',
-  CATALOG_DIR:       '/srv/tradebot/catalog',
-  DATA_VAULT_DIR:    '/srv/tradebot/vault',
+  DATA_DIR:          '/srv/tradebot',
   QUEUE_USER:        'tradebot',
   QUEUE_PASS:        'queue-secret',
   CACHE_PASS:        'cache-secret',
@@ -184,6 +183,38 @@ describe.skipIf(!hasCompose)('compose files', () => {
 
     expect(loaded).toContain('excel');
     expect(installed).toEqual(expect.arrayContaining(loaded));
+  });
+
+  describe.each([
+    ['services/hauler/docker/compose.yml',     'hauler',     { DATA_ARCHIVES_DIR: '/data/archives' }],
+    ['services/stocker/docker/compose.yml',    'stocker',    { DATA_ARCHIVES_DIR: '/data/archives', DATA_VAULT_DIR: '/data/vault' }],
+    ['services/catalog/docker/compose.yml',    'catalog',    { CATALOG_DIR: '/data/catalog' }],
+    ['services/prospector/docker/compose.yml', 'prospector', { CATALOG_DIR: '/data/catalog' }],
+  ])('the data mounts of %s', (file, name, mounts: Record<string, string>) => {
+    /** Host path → container path of every mount under /data. */
+    const mounted = (env: Record<string, string | undefined>): Record<string, string> =>
+      Object.fromEntries((services(file, env)[name].volumes ?? [])
+        .filter((volume) => volume.target.startsWith('/data/'))
+        .map((volume) => [volume.target, volume.source ?? '']));
+
+    it.each([['unset', undefined], ['empty', '']])('refuses to render with DATA_DIR %s', (_label, value) => {
+      const rendered = render(file, { ...required, DATA_DIR: value });
+
+      expect(rendered.ok).toBe(false);
+      expect(rendered.ok ? '' : rendered.error).toContain('DATA_DIR is not defined');
+    });
+
+    it('defaults each under DATA_DIR', () => {
+      expect(mounted(required)).toEqual(Object.fromEntries(Object.values(mounts)
+        .map((target) => [target, `${required.DATA_DIR}/${target.slice('/data/'.length)}`])));
+    });
+
+    it('takes each from its own variable, which needs no DATA_DIR', () => {
+      const own = Object.fromEntries(Object.keys(mounts).map((variable) => [variable, `/elsewhere/${variable}`]));
+
+      expect(mounted({ ...required, DATA_DIR: '', ...own })).toEqual(Object.fromEntries(Object.entries(mounts)
+        .map(([variable, target]) => [target, `/elsewhere/${variable}`])));
+    });
   });
 
   describe('the broker', () => {

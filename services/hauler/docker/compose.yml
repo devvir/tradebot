@@ -6,9 +6,12 @@
 # reports. It discovers nothing and serves only its health
 # check.
 #
-# Files are written to DATA_ARCHIVES_DIR on the host, mounted at a fixed path in
-# the container. Pre-create it writable by uid 1000:
-#   sudo mkdir -p "$DATA_ARCHIVES_DIR" && sudo chown 1000:1000 "$DATA_ARCHIVES_DIR"
+# Files are written to DATA_ARCHIVES_DIR on the host (default:
+# ${DATA_DIR}/archives), mounted at a fixed path in the container. Compose
+# refuses to start it while neither variable is set. Pre-create it writable by
+# uid 1000:
+#   dir="${DATA_ARCHIVES_DIR:-$DATA_DIR/archives}"
+#   sudo mkdir -p "$dir" && sudo chown 1000:1000 "$dir"
 
 services:
   hauler:
@@ -46,7 +49,7 @@ services:
 
     volumes:
       - ../../../:/live
-      - ${DATA_ARCHIVES_DIR:?DATA_ARCHIVES_DIR is not defined}:/data/archives
+      - ${DATA_ARCHIVES_DIR:-${DATA_DIR:?DATA_DIR is not defined}/archives}:/data/archives
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]

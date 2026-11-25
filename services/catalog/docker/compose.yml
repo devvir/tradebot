@@ -1,7 +1,8 @@
 # Catalog Service — the public API over what prospector has catalogued.
 #
-# Opens the catalog.db prospector writes, read-only: CATALOG_DIR on the host is
-# mounted at the same fixed path. It writes nothing; every write it is sent —
+# Opens the catalog.db prospector writes, read-only: CATALOG_DIR on the host
+# (default: ${DATA_DIR}/catalog; compose refuses to start it while neither is
+# set) is mounted at the same fixed path. It writes nothing; every write it is sent —
 # lenses, and reports of what was downloaded — is forwarded to prospector's
 # private API. Prospector owns the database: it stores lenses and keeps what
 # each lets through (`lens_member`) current (docs/services/PROSPECTOR.md).
@@ -37,7 +38,7 @@ services:
 
     volumes:
       - ../../../:/live
-      - ${CATALOG_DIR:?CATALOG_DIR is not defined}:/data/catalog
+      - ${CATALOG_DIR:-${DATA_DIR:?DATA_DIR is not defined}/catalog}:/data/catalog
 
     ports:
       # The catalog API, on CATALOG_PORT or, left empty, a free port docker

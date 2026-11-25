@@ -7,8 +7,13 @@
 # What exists, and whether it is all downloaded, is asked of the catalog over
 # the shared network — through a lens, where one is set.
 #
+# The host paths are DATA_ARCHIVES_DIR and DATA_VAULT_DIR, by default
+# ${DATA_DIR}/archives and ${DATA_DIR}/vault; compose refuses to start it while
+# DATA_DIR is unset and either of the two is too.
+#
 # Pre-create the vault for uid 1000:
-#   sudo mkdir -p "$DATA_VAULT_DIR" && sudo chown 1000:1000 "$DATA_VAULT_DIR"
+#   dir="${DATA_VAULT_DIR:-$DATA_DIR/vault}"
+#   sudo mkdir -p "$dir" && sudo chown 1000:1000 "$dir"
 
 services:
   stocker:
@@ -63,8 +68,8 @@ services:
 
     volumes:
       - ../../../:/live
-      - ${DATA_ARCHIVES_DIR:?DATA_ARCHIVES_DIR is not defined}:/data/archives:ro
-      - ${DATA_VAULT_DIR:?DATA_VAULT_DIR is not defined}:/data/vault
+      - ${DATA_ARCHIVES_DIR:-${DATA_DIR:?DATA_DIR is not defined}/archives}:/data/archives:ro
+      - ${DATA_VAULT_DIR:-${DATA_DIR:?DATA_DIR is not defined}/vault}:/data/vault
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
