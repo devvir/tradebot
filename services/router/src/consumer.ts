@@ -1,9 +1,13 @@
 import { logger, RabbitMQ } from '@devvir/service-kit';
-import type { Route, RoutingKeyConfig, Config } from './types';
+import type { Route, RouteDestination, RoutingKeyConfig, Config } from './types';
+import { formatRoute } from './routes';
 
 // ── Public ────────────────────────────────────────────────────────────────────
 
-/** For each source queue, consume messages and republish them to every configured destination. */
+/**
+ * For each source queue, consume messages and republish them to every distinct destination of
+ * the rules on that queue: rules that share a queue and name the same destination publish once.
+ */
 export const consumeAndRepublish = async (
   consumer: RabbitMQ.Broker,
   publisher: RabbitMQ.Broker,
@@ -47,7 +51,7 @@ export const consumeAndRepublish = async (
 
     logger.info({
       source: queueName,
-      destinations: routes.map(formatDestination),
+      routes: routes.map(formatRoute),
     }, 'Route established');
   }
 };
@@ -76,9 +80,7 @@ const groupBySource = (routes: Route[]): Map<string, Route[]> => {
 };
 
 const resolveTargets = (broker: RabbitMQ.Broker, channel: any, routes: Route[]): Target[] => {
-  return routes.map((route) => {
-    const dest = route.destination;
-
+  return distinctDestinations(routes).map((dest) => {
     if (dest.exchange) {
       const exchange = broker.getExchange(dest.exchange.name);
 
@@ -96,17 +98,30 @@ const resolveTargets = (broker: RabbitMQ.Broker, channel: any, routes: Route[]):
   });
 };
 
+/**
+ * The destinations of the routes, once each: two destinations are the same when they publish to
+ * the same exchange (or bare queue) with the same key setting and headers.
+ */
+const distinctDestinations = (routes: Route[]): RouteDestination[] => {
+  const byKey = new Map<string, RouteDestination>();
+
+  for (const { destination: d } of routes) {
+    const key = JSON.stringify([
+      d.exchange ? `@${d.exchange.name}` : d.queue,
+      d.routingKey ?? null,
+      Object.entries(d.headers ?? {}).sort(([a], [b]) => a.localeCompare(b)),
+    ]);
+
+    if (! byKey.has(key)) byKey.set(key, d);
+  }
+
+  return [...byKey.values()];
+};
+
 const resolveRoutingKey = (config: RoutingKeyConfig | undefined, incoming: string): string => {
   if (! config) return incoming;
 
   if (config.replace !== undefined) return incoming.replace(config.value, config.replace);
 
   return config.value;
-};
-
-const formatDestination = (route: Route): string => {
-  const d = route.destination;
-  const q = d.queue || '';
-  const ex = d.exchange ? `@${d.exchange.type || 'default'}:${d.exchange.name}` : '';
-  return `${q}${ex}`;
 };

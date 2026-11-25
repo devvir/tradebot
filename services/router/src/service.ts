@@ -5,5 +5,4 @@ export default SKFactory({
   name: 'router',
   rabbitmq: true,
   config,
-  state: { counter: 0 },
 });

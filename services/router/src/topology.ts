@@ -1,5 +1,6 @@
-import { RabbitMQ } from '@devvir/service-kit';
-import type { Exchange, Route, Config } from './types';
+import type { RabbitMQ } from '@devvir/service-kit';
+import type { Route, Config } from './types';
+import { ensureExchange, bindQueue, sourceBindingKey, destinationBindingKey } from './routes';
 
 // ── Public ────────────────────────────────────────────────────────────────────
 
@@ -10,83 +11,68 @@ export const declareConsumerTopology = async (
   broker: RabbitMQ.Broker,
   config: Config,
 ): Promise<void> => {
-  const topology = buildConsumerTopology(config.routes) as RabbitMQ.TopologySpec;
-
-  await broker.declares(topology);
+  await broker.declares(buildConsumerTopology(config.routes));
 };
 
 /**
- * Declare destination exchanges on the publisher broker.
+ * Declare destination queues/exchanges on the publisher broker.
  */
 export const declarePublisherTopology = async (
   broker: RabbitMQ.Broker,
   config: Config,
 ): Promise<void> => {
-  const topology = buildPublisherTopology(config.routes) as RabbitMQ.TopologySpec;
-
-  await broker.declares(topology);
+  await broker.declares(buildPublisherTopology(config.routes));
 };
 
 /**
  * Builds topology for the consumer broker: source queues and their exchange bindings.
+ * A source queue on an exchange is bound with every binding key its routes give it
+ * (see sourceBindingKey).
  */
 export const buildConsumerTopology = (routes: Route[]): RabbitMQ.TopologySpec => {
   const exchanges: NonNullable<RabbitMQ.TopologySpec['exchanges']> = {};
   const queues: NonNullable<RabbitMQ.TopologySpec['queues']> = {};
 
-  const ensureExchange = (ex: Exchange) => {
-    if (exchanges[ex.name]) return;
-    const type = ex.type === 'default' ? 'direct' : (ex.type || 'fanout');
-    exchanges[ex.name] = { type, queues: {} };
-  };
-
   for (const { source } of routes) {
     if (source.exchange) {
-      ensureExchange(source.exchange);
-      const exType = exchanges[source.exchange.name].type;
-      const bindingKey =
-        source.bindingKey || (exType === 'topic' || exType === 'direct' ? '#' : undefined);
-      exchanges[source.exchange.name].queues![source.queue] = {
-        durable: true,
-        ...(bindingKey ? { routingKey: bindingKey } : {}),
-      };
+      bindQueue(ensureExchange(exchanges, source.exchange), source.queue, sourceBindingKey(source));
     } else {
       queues[source.queue] = { durable: true };
     }
   }
 
-  return {
-    ...(Object.keys(exchanges).length > 0 ? { exchanges } : {}),
-    ...(Object.keys(queues).length > 0 ? { queues } : {}),
-  };
+  return withEntries(exchanges, queues);
 };
 
 /**
- * Builds topology for the publisher broker: destination exchanges only.
+ * Builds topology for the publisher broker: destination exchanges, and destination queues
+ * bound so that they receive what the router publishes (see destinationBindingKey).
  */
 export const buildPublisherTopology = (routes: Route[]): RabbitMQ.TopologySpec => {
   const exchanges: NonNullable<RabbitMQ.TopologySpec['exchanges']> = {};
   const queues: NonNullable<RabbitMQ.TopologySpec['queues']> = {};
 
-  const ensureExchange = (ex: Exchange) => {
-    if (exchanges[ex.name]) return;
-    const type = ex.type === 'default' ? 'direct' : (ex.type || 'fanout');
-    exchanges[ex.name] = { type, queues: {} };
-  };
-
   for (const { destination } of routes) {
-    if (destination.exchange) {
-      ensureExchange(destination.exchange);
-      if (destination.queue) {
-        exchanges[destination.exchange.name].queues![destination.queue] = { durable: true };
-      }
-    } else if (destination.queue) {
-      queues[destination.queue] = { durable: true };
+    const { exchange, queue } = destination;
+
+    if (exchange) {
+      const entry = ensureExchange(exchanges, exchange);
+
+      if (queue) bindQueue(entry, queue, destinationBindingKey({ ...destination, exchange, queue }));
+    } else if (queue) {
+      queues[queue] = { durable: true };
     }
   }
 
-  return {
-    ...(Object.keys(exchanges).length > 0 ? { exchanges } : {}),
-    ...(Object.keys(queues).length > 0 ? { queues } : {}),
-  };
+  return withEntries(exchanges, queues);
 };
+
+// ── Private ───────────────────────────────────────────────────────────────────
+
+const withEntries = (
+  exchanges: NonNullable<RabbitMQ.TopologySpec['exchanges']>,
+  queues: NonNullable<RabbitMQ.TopologySpec['queues']>,
+): RabbitMQ.TopologySpec => ({
+  ...(Object.keys(exchanges).length > 0 ? { exchanges } : {}),
+  ...(Object.keys(queues).length > 0 ? { queues } : {}),
+});

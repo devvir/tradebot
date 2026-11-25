@@ -1,16 +1,23 @@
 import { logger } from '@devvir/service-kit';
 import { sanitizeUrl, redactUrl, parseRules } from '@tradebot/utils';
-import type { ParsedItem } from '@tradebot/utils';
-import type { Config, Route, RouteSource, RouteDestination, Exchange, RoutingKeyConfig } from './types';
+import type { ParsedItem, ParsedRule } from '@tradebot/utils';
+import type { Config, Route, RouteSource, RouteDestination, Exchange } from './types';
+import type { ExchangeMap } from './routes';
+import {
+  ensureExchange, resolveExchangeType, sourceBindingKey, destinationBindingKey, formatRoute, formatDestination,
+} from './routes';
 
 export const loadConfig = (): Config => {
+  const rules  = parseRules(process.env.ROUTER_RULES || '');
+  const typeOf = resolveTypes(rules);
+
   const config: Config = {
     rabbitmqUrl: sanitizeUrl(process.env.QUEUE_URL || ''),
-    routes: parseRules(process.env.ROUTER_RULES || '').map((p) => ({
-      source: toSource(p.source),
-      destination: toDestination(p.destination),
+    routes: rules.map((p) => ({
+      source:      toSource(p.source, typeOf),
+      destination: toDestination(p.destination, typeOf),
     })),
-    maxReady:    parseInt(process.env.ROUTER_MAX_READY    || '0'),
+    maxReady:    parseNonNegativeInt('ROUTER_MAX_READY', 0),
     watchQueues: (process.env.ROUTER_WATCH_QUEUES || '').split(',').map((s) => s.trim()).filter(Boolean),
   };
 
@@ -19,68 +26,192 @@ export const loadConfig = (): Config => {
   logger.info({
     ...config,
     rabbitmqUrl: redactUrl(config.rabbitmqUrl),
+    routes:      config.routes.map(formatRoute),
   }, 'Configuration loaded and validated!');
 
   return config;
 };
 
+// ── Environment values ────────────────────────────────────────────────────────
+
+/**
+ * Read a non-negative integer from an environment variable; the fallback when it is unset or
+ * empty. Anything else that is not a whole number of at least 0 throws.
+ */
+const parseNonNegativeInt = (name: string, fallback: number): number => {
+  const raw = process.env[name]?.trim();
+
+  if (! raw) return fallback;
+
+  const n = Number(raw);
+
+  if (! Number.isInteger(n) || n < 0)
+    throw new Error(`${name} must be a non-negative integer, got "${raw}"`);
+
+  return n;
+};
+
+// ── Validation ────────────────────────────────────────────────────────────────
+
+/** Check the whole configuration, and throw every problem found in one error. */
 const validateConfig = (config: Config): void => {
   if (! config.rabbitmqUrl) throw new Error('QUEUE_URL is required');
   if (! config.routes.length) throw new Error('Router rules are required');
-  if (config.maxReady > 0 && config.watchQueues.length === 0) throw new Error('ROUTER_WATCH_QUEUES is required when ROUTER_MAX_READY is set');
+
+  const errors: string[] = [];
+
+  if (config.maxReady > 0 && config.watchQueues.length === 0)
+    errors.push('ROUTER_WATCH_QUEUES is required when ROUTER_MAX_READY is set');
+  if (config.maxReady === 0 && config.watchQueues.length > 0)
+    errors.push('ROUTER_MAX_READY is required when ROUTER_WATCH_QUEUES is set');
+
+  const seen = new Set<string>();
+
+  for (const route of config.routes) {
+    const formatted = formatRoute(route);
+
+    if (seen.has(formatted)) errors.push(`Route "${formatted}" is given more than once`);
+    seen.add(formatted);
+
+    errors.push(...routeErrors(route));
+  }
+
+  errors.push(...sharedQueueErrors(config.routes));
+
+  if (errors.length)
+    throw new Error(`Invalid router configuration:\n  - ${errors.join('\n  - ')}`);
+};
+
+const routeErrors = (route: Route): string[] => {
+  const { source: s, destination: d } = route;
+  const formatted = formatRoute(route);
+  const errors: string[] = [];
+
+  if (! s.exchange && s.bindingKey !== undefined)
+    errors.push(`A bare source queue takes no (key:...); bind it with queue@type:exchange(key:...): "${formatted}"`);
+
+  if (! d.exchange && d.routingKey)
+    errors.push(`A bare destination queue is published to under its own name, so it takes no (key:...): "${formatted}"`);
+
+  if (d.queue === s.queue)
+    errors.push(`Route "${formatted}" delivers into its own source queue "${s.queue}"`);
+
+  if (d.exchange && s.exchange && d.exchange.name === s.exchange.name)
+    errors.push(`Route "${formatted}" publishes into its own source exchange "${s.exchange.name}"`);
+
+  collectError(errors, () => sourceBindingKey(s));
+
+  const { exchange, queue } = d;
+
+  if (exchange && queue) collectError(errors, () => destinationBindingKey({ ...d, exchange, queue }));
+
+  return errors;
+};
+
+/**
+ * Every rule on a source queue receives every message of that queue. Rules may share a queue
+ * when they read it from the same exchange, and either bind it with the same key or deliver to
+ * the same destinations (their keys then add up to the queue's bindings).
+ */
+const sharedQueueErrors = (routes: Route[]): string[] => {
+  const byQueue = new Map<string, Route[]>();
+
+  for (const route of routes) {
+    const group = byQueue.get(route.source.queue) ?? [];
+
+    group.push(route);
+    byQueue.set(route.source.queue, group);
+  }
+
+  const errors: string[] = [];
+
+  for (const [queue, group] of byQueue) {
+    const exchanges = new Set(group.map(({ source: s }) => (s.exchange ? `${resolveExchangeType(s.exchange)}:${s.exchange.name}` : '')));
+
+    if (exchanges.size > 1) {
+      errors.push(`Source queue "${queue}" is read from different exchanges by different rules; use distinct source queues`);
+      continue;
+    }
+
+    const destinationsByKey = new Map<string, Set<string>>();
+
+    for (const { source, destination } of group) {
+      const key = tryOrUndefined(() => JSON.stringify(sourceBindingKey(source) ?? null));
+
+      if (key === undefined) continue; // reported by routeErrors
+
+      const destinations = destinationsByKey.get(key) ?? new Set<string>();
+
+      destinations.add(formatDestination(destination));
+      destinationsByKey.set(key, destinations);
+    }
+
+    const destinationSets = new Set([...destinationsByKey.values()].map((set) => [...set].sort().join(' & ')));
+
+    if (destinationSets.size > 1) {
+      errors.push(
+        `Source queue "${queue}" is bound differently by rules with different destinations; ` +
+        'a queue cannot filter per rule — use distinct source queues',
+      );
+    }
+  }
+
+  return errors;
+};
+
+const collectError = (errors: string[], check: () => unknown): void => {
+  try {
+    check();
+  } catch (err) {
+    errors.push((err as Error).message);
+  }
+};
+
+const tryOrUndefined = <T>(fn: () => T): T | undefined => {
+  try {
+    return fn();
+  } catch {
+    return undefined;
+  }
 };
 
 // ── Source / destination mapping ──────────────────────────────────────────────
 
-const toSource = (item: ParsedItem): RouteSource => {
+/**
+ * One type per exchange name across every rule, source and destination alike. Throws when two
+ * mentions give one name different types; a name that is never typed is fanout.
+ */
+const resolveTypes = (rules: ParsedRule[]): ((name: string) => NonNullable<Exchange['type']>) => {
+  const declared: ExchangeMap = {};
+
+  for (const { source, destination } of rules) {
+    for (const { exchange } of [source, destination]) {
+      if (exchange?.type) ensureExchange(declared, exchange);
+    }
+  }
+
+  return (name) => declared[name]?.type ?? 'fanout';
+};
+
+const toSource = (item: ParsedItem, typeOf: (name: string) => Exchange['type']): RouteSource => {
   if (! item.queue) throw new Error('Source must have a queue name');
   if (item.routingKey?.replace !== undefined)
     throw new Error('(key:match:replace) is only valid on destinations');
+  if (item.exchange?.type === 'default')
+    throw new Error(`The default exchange cannot be bound; use a bare queue name: "${item.queue}@default:${item.exchange.name}"`);
 
   return {
     queue: item.queue,
-    exchange: item.exchange as Exchange | undefined,
-    ...(item.routingKey?.value && item.exchange
-      ? { bindingKey: item.routingKey.value }
-      : {}),
+    ...(item.exchange   ? { exchange: { name: item.exchange.name, type: typeOf(item.exchange.name) } } : {}),
+    ...(item.routingKey ? { bindingKey: item.routingKey.value }                                       : {}),
   };
 };
 
-const toDestination = (item: ParsedItem): RouteDestination => ({
-  queue:    item.queue,
-  exchange: item.exchange as Exchange | undefined,
-  ...(item.routingKey ? { routingKey: item.routingKey as RoutingKeyConfig } : {}),
-  ...(item.headers    ? { headers: item.headers }                          : {}),
+const toDestination = (item: ParsedItem, typeOf: (name: string) => Exchange['type']): RouteDestination => ({
+  ...(item.queue      ? { queue: item.queue }                                                       : {}),
+  ...(item.exchange   ? { exchange: { name: item.exchange.name, type: typeOf(item.exchange.name) } } : {}),
+  ...(item.routingKey ? { routingKey: item.routingKey }                                             : {}),
+  ...(item.headers    ? { headers: item.headers }                                                   : {}),
 });
-
-// ── Formatting ────────────────────────────────────────────────────────────────
-
-const formatItem = (queue?: string, exchange?: Exchange, keySuffix?: string): string => {
-  const q  = queue || '';
-  const ex = exchange
-    ? `@${exchange.type ? exchange.type + ':' : ''}${exchange.name}`
-    : '';
-  return `${q}${ex}${keySuffix || ''}`;
-};
-
-export const formatRoute = (route: Route): string => {
-  const { source: s, destination: d } = route;
-  const srcKey = s.bindingKey ? `(key:${s.bindingKey})` : '';
-
-  const dstParts: string[] = [];
-  if (d.routingKey) {
-    dstParts.push(
-      `key:${d.routingKey.value}${d.routingKey.replace !== undefined ? ':' + d.routingKey.replace : ''}`,
-    );
-  }
-  if (d.headers) {
-    for (const [name, value] of Object.entries(d.headers)) {
-      dstParts.push(`header:${name}=${value}`);
-    }
-  }
-  const dstKey = dstParts.length ? `(${dstParts.join(',')})` : '';
-
-  return `${formatItem(s.queue, s.exchange, srcKey)} > ${formatItem(d.queue, d.exchange, dstKey)}`;
-};
 
 export default loadConfig();

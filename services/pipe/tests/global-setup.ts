@@ -1,5 +1,5 @@
 import { resolve } from 'node:path';
-import { startRabbitMQ, stopRabbitMQ } from '@tradebot/utils';
+import { startRabbitMQ, stopRabbitMQ } from '@tradebot/utils/testing';
 
 const envFile = resolve(__dirname, '.env.testing');
 

@@ -1,5 +1,3 @@
-import type { RabbitMQ } from '@devvir/service-kit';
-
 export interface Exchange {
   name: string;
   type?: 'fanout' | 'topic' | 'headers' | 'direct' | 'default';
@@ -29,15 +27,10 @@ export interface Route {
   destination: RouteDestination;
 }
 
-export interface Config {
+/** Router configuration. A type alias, so that it fits the service spec's `config` record. */
+export type Config = {
   rabbitmqUrl: string;
   routes: Route[];
   maxReady: number;      // Max messages in any watched queue before pausing (0 = disabled)
-  watchQueues: string[]; // Queues to monitor for backpressure (required when maxReady > 0)
-  [key: string]: unknown;
-}
-
-export interface RouterResources {
-  broker: RabbitMQ.Broker;
-  routes: Route[];
-}
+  watchQueues: string[]; // Queues to monitor for backpressure (set exactly when maxReady > 0)
+};

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { logger } from '@devvir/service-kit';
 import { consumeAndRepublish } from '../src/consumer';
 import type { Route } from '../src/types';
 
@@ -185,6 +186,52 @@ describe('consumeAndRepublish', () => {
     expect(mockRepublish).toHaveBeenCalledTimes(3);
     const keys = mockRepublish.mock.calls.map((c: any[]) => c[1].routingKey);
     expect(keys).toEqual(expect.arrayContaining(['dst1', 'dst2', 'dst3']));
+  });
+
+  it('publishes once to a destination that several rules on the queue share', async () => {
+    const { consumer, publisher, deliver } = makeBrokers();
+
+    // The expansion of `src@topic:in(key:a) & src@topic:in(key:b) > @topic:out & dst`.
+    const routes: Route[] = ['a', 'b'].flatMap((bindingKey): Route[] => [
+      { source: { queue: 'src', exchange: { name: 'in', type: 'topic' }, bindingKey }, destination: { exchange: { name: 'out', type: 'topic' } } },
+      { source: { queue: 'src', exchange: { name: 'in', type: 'topic' }, bindingKey }, destination: { queue: 'dst' } },
+    ]);
+
+    await consumeAndRepublish(consumer as any, publisher as any, config(routes), null);
+
+    await deliver('src', makeMsg({}, 'a'));
+
+    expect(mockRepublish).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps destinations apart that differ in key or headers', async () => {
+    const { consumer, publisher, deliver } = makeBrokers();
+
+    const routes: Route[] = [
+      { source: { queue: 'src' }, destination: { exchange: { name: 'out', type: 'topic' }, routingKey: { value: 'x' } } },
+      { source: { queue: 'src' }, destination: { exchange: { name: 'out', type: 'topic' }, routingKey: { value: 'y' } } },
+      { source: { queue: 'src' }, destination: { queue: 'dst', headers: { 'x-a': '1' } } },
+      { source: { queue: 'src' }, destination: { queue: 'dst', headers: { 'x-a': '2' } } },
+    ];
+
+    await consumeAndRepublish(consumer as any, publisher as any, config(routes), null);
+
+    await deliver('src', makeMsg({}, 'k'));
+
+    expect(mockRepublish).toHaveBeenCalledTimes(4);
+  });
+
+  it('logs each route with its exchange types resolved', async () => {
+    const { consumer, publisher } = makeBrokers();
+
+    const routes: Route[] = [{ source: { queue: 'src' }, destination: { exchange: { name: 'out' } } }];
+
+    await consumeAndRepublish(consumer as any, publisher as any, config(routes), null);
+
+    expect(logger.info).toHaveBeenCalledWith(
+      { source: 'src', routes: ['src > @fanout:out'] },
+      'Route established',
+    );
   });
 
   it('acks message after successful delivery', async () => {
