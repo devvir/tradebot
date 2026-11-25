@@ -218,3 +218,31 @@ describe('a file reported as undownloadable', () => {
     expect(await failed()).toMatchObject({ withdrawn: 1 });
   });
 });
+
+/**
+ * A file reported as mismatched is asked of the venue, and what the venue says
+ * is recorded. The claim is input: a wrongly typed part of it is no claim.
+ */
+describe('a file reported as mismatched', () => {
+  const binance = (): Adapter => adaptersForVenue('binance').find(one => ! one.host)!;
+
+  const etag = (path: string): string | null =>
+    (db.prepare('SELECT etag FROM file WHERE path = ?').get(path) as { etag: string | null }).etag;
+
+  beforeEach(() => {
+    vi.spyOn(binance(), 'getContext').mockResolvedValue({} as never);
+    vi.spyOn(binance().scanner, 'confirm').mockResolvedValue({ key: 'b.zip', size: 10, etag: 'f', modified: null });
+  });
+
+  it('is settled on what the venue says where its ETag is not a string, and the rest of the report stands', async () => {
+    const { status, body } = await report({
+      downloaded: [idOf('a.zip')],
+      mismatched: [{ FileId: idOf('b.zip'), ETag: 5 }],
+    });
+
+    expect(status).toBe(200);
+    expect(body).toEqual({ recorded: 1, withdrawn: 0, corrected: 1, unknown: 0 });
+    expect(downloadedAt('a.zip')).not.toBeNull();
+    expect(etag('b.zip')).toBe('f');
+  });
+});

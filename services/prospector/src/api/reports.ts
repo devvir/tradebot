@@ -5,8 +5,8 @@ import type { ReportedById } from '../types';
 
 /**
  * The reports API: what became of the files a downloader was listed, by file
- * id — the row's own number, which is how this service names a file. Private:
- * the catalog resolves the keys a downloader reports by, and forwards the ids.
+ * id — the row's own number, which is how this service names a file. Ids are
+ * all it takes: turning the keys a downloader knows into ids is not this API's.
  */
 export const mountReports = (app: Application, db: DatabaseSync): void => {
   app.post('/reports', async (req, res) => {

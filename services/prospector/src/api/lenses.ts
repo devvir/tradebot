@@ -8,10 +8,9 @@ import type { LensWrite } from '@tradebot/lenses';
  * Storing a lens: making one, replacing one, removing one.
  *
  * **Here because it is a write**, and this service is the only writer of the
- * catalog database. Private like the rest of this API: the catalog service is
- * where a lens is asked for, checked and described, and it forwards here only
- * what has passed. So nothing is validated again, and what is answered is what
- * the catalog relays to whoever asked.
+ * catalog database. Checking and describing a lens is not this API's: beyond
+ * the slug it is addressed by, a lens is stored as it is sent, and what is
+ * answered is what the store says.
  *
  * **A write answers as soon as the lens is stored.** What its rules let through
  * is worked out afterwards, in the background (`lensesChanged`), and the lens

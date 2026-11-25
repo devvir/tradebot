@@ -5,7 +5,10 @@ import type { Surveys } from '../types';
 
 /**
  * The collector API: start, continue or pause the surveys, and see how every
- * venue stands. Private — reached only from inside the module, by catalog-ui.
+ * venue stands. Guarded by the API's shared token and nothing else (see
+ * `requireToken`): whatever sends the token may start, refresh and pause every
+ * venue's survey, and a service that adds the token to what it forwards hands
+ * that same power to whoever can reach it.
  *
  * **`venue` is optional, and leaving it out means all of them**: a name, several
  * names, or none. `/venues/:venue/surveys` is the same request with the venue

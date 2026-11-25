@@ -20,7 +20,8 @@ export const MAX_REPORT = 10_000;
 /**
  * A report by file id, settled. An id that names no confirmed file is counted in
  * `unknown` and otherwise ignored: ids arrive from outside and are input, not
- * facts.
+ * facts. For the same reason an ETag that is not a string is no claim at all,
+ * and the file is settled on what the venue says alone.
  */
 export const settleById = async (db: DatabaseSync, body: Partial<ReportedById>): Promise<Reported> => {
   const downloaded = Array.isArray(body.downloaded) ? body.downloaded : [];
@@ -49,7 +50,7 @@ export const settleById = async (db: DatabaseSync, body: Partial<ReportedById>):
         return file
           ? { file, claimed: {
             ...(one.Size === undefined ? {} : { size: one.Size }),
-            ...(one.ETag === undefined ? {} : { etag: etagOf(one.ETag) }),
+            ...(typeof one.ETag === 'string' ? { etag: etagOf(one.ETag) } : {}),
           } }
           : null;
       })

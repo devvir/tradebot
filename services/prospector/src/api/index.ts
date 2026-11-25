@@ -8,10 +8,10 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { Surveys } from '../types';
 
 /**
- * Prospector's private API — the collector, the reports and the storing of
- * lenses — mounted on the server service-kit already runs. Nothing outside the
- * module reaches it: the catalog service is the public face, and forwards here
- * whatever it is sent to be stored.
+ * Prospector's API — the collector, the reports and the storing of lenses —
+ * mounted on the server service-kit already runs. One shared token is all that
+ * guards it: a request that carries the token may do anything here, and so may
+ * anyone a token-holder forwards requests for.
  *
  * Body parsing, request logging, `/ping` and rate limiting come with that
  * server, so what is added here is the two things it cannot know about: who is
