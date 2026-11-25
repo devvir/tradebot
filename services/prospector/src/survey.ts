@@ -745,7 +745,7 @@ const PROGRESS_EVERY = 25;
 /**
  * How often one page is asked before its prefix is left for the next pass, and
  * the wait before asking again: doubled each time, up to a minute. Twelve
- * attempts are a little under seven minutes of waiting — longer than a lock or
+ * attempts are eleven waits, 422 seconds: just over seven minutes — longer than a lock or
  * a bad moment on the link lasts, and short enough that a page that can never
  * be read does not hold a lane for the afternoon.
  */

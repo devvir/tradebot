@@ -25,7 +25,7 @@ import type { LensWrite } from '@tradebot/lenses';
  * `BEGIN` to its `COMMIT`, so nothing is ever half way through one when a
  * handler runs — and the queue can be seconds deep while a venue is walked,
  * which is no time to keep somebody waiting to be told a lens was saved. The
- * working out is the long part, and that does take its turn there.
+ * working out that follows does not wait in it either (`lensesChanged`).
  */
 export const mountLenses = (app: Application, db: DatabaseSync): void => {
   app.post('/lenses', (req, res) => {
