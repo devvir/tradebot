@@ -1,9 +1,9 @@
 # Catalog Service — the public API over what prospector has catalogued.
 #
-# Reads the same catalog.db prospector writes: CATALOG_DIR on the host is
-# mounted at the same fixed path. It writes only lenses; every other row is
-# prospector's. Reports of what was downloaded are forwarded to prospector,
-# which owns a file's state.
+# Opens the catalog.db prospector writes, read-only: CATALOG_DIR on the host is
+# mounted at the same fixed path. It writes nothing; every write it is sent —
+# lenses, and reports of what was downloaded — is forwarded to prospector, which
+# owns the database.
 #
 # It creates nothing: on a fresh deployment it waits for prospector to build the
 # database.
@@ -20,7 +20,7 @@ services:
 
     environment:
       # The shared secret every request must carry in `x-catalog-token`; the same
-      # one prospector checks, and sent on to it with every forwarded report.
+      # one prospector checks, and sent on to it with every forwarded write.
       #
       # Empty is allowed and means the check is off — every request is let
       # through, which is what makes the read endpoints answerable from a browser

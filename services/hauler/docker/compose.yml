@@ -1,14 +1,13 @@
 # Hauler Service — brings catalogued venue files to disk under canonical names.
 #
-# Walks each venue the catalog serves as a bucket and writes to
-# DATA_ARCHIVES_DIR on the host, mounted at a fixed path in the container.
-# Pre-create it writable by uid 1000:
-#   sudo mkdir -p "$DATA_ARCHIVES_DIR" && sudo chown 1000:1000 "$DATA_ARCHIVES_DIR"
+# The catalog serves every venue as a bucket; hauler walks each one — only what
+# is still owed, through HAULER_LENS where one is set — fetches what it lists
+# from the venue, and reports. It discovers nothing and serves only its health
+# check.
 #
-# It discovers nothing and serves nothing. Prospector establishes what every
-# venue publishes; this fetches what the catalog lists — only what is still
-# owed, through HAULER_LENS where one is set — so the two can run on different
-# machines: the surveying where the link is good, the hauling where the disk is.
+# Files are written to DATA_ARCHIVES_DIR on the host, mounted at a fixed path in
+# the container. Pre-create it writable by uid 1000:
+#   sudo mkdir -p "$DATA_ARCHIVES_DIR" && sudo chown 1000:1000 "$DATA_ARCHIVES_DIR"
 
 services:
   hauler:
@@ -30,8 +29,11 @@ services:
       # The catalog lens to haul through (default: none — every catalogued file)
       HAULER_LENS:        ${HAULER_LENS:-}
 
-      # Files in flight across every venue together; one budget for the link
+      # Fetches in flight across every venue together
       HAULER_CONCURRENCY: ${HAULER_CONCURRENCY:-100}
+
+      # Free space on the archives' volume, in GB, below which no new file is
+      # taken and the walk ends
       HAULER_MIN_FREE_GB: ${HAULER_MIN_FREE_GB:-25}
 
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -52,9 +54,9 @@ services:
       start_period: 10s
 
     # A stop is answered within half a minute, whatever is downloading. Files
-    # in flight that finish in that time are reported; one that does not is cut
-    # short and leaves a .part, which the next start removes, and the file is
-    # fetched again.
+    # still downloading after 15 s are given up and their partials removed. A
+    # container killed before then leaves partials in .hauler-tmp, which the
+    # next start removes. Either way the file stays owed.
     stop_grace_period: 30s
 
     # Rotated: at most five files of 50 MB each.
