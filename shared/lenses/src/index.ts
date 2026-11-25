@@ -4,4 +4,5 @@ export { admit, catchUp, rebuild } from './members';
 export {
   lensNameIsSound, lensOptions, lensSize, problemsWith, resolve, resolveSlices, resolvedSummary,
 } from './draft';
+export { BUNDLES, GRAINS } from './vocabulary';
 export type * from './types';

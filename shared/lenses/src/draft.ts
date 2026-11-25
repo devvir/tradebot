@@ -1,5 +1,6 @@
 import { GLOBAL, groupSiblings, letThrough, rulesFor, spansFor, venuesIn } from './rules';
 import { venueNames } from './venues';
+import { BUNDLES, GRAINS } from './vocabulary';
 import type { DatabaseSync } from 'node:sqlite';
 import type {
   Choice, LensDefinition, LensOption, LensPartition, LensProblem, LensResolved, LensRule, LensSize, LensSlice, Slice,
@@ -99,11 +100,11 @@ export const lensOptions = (db: DatabaseSync): LensOption[] => {
  * Why a lens cannot be stored, in a person's words.
  *
  * **Only what is not a rule at all is refused**: a definition that is not one
- * document of venues each with a list of rules, a rule that is not shaped as
- * one, a venue that does not exist, a grain or a bundle that is not one, an
- * exclude that prefers, a bound that is not a month, a range that ends before it
- * starts. Whatever is sent, the answer is a list of problems and never an
- * exception.
+ * document of venues each with a list of rules, a format other than the one
+ * there is, a rule that is not shaped as one, a venue that does not exist, a
+ * grain or a bundle that is not one, an exclude that prefers, a bound that is
+ * not a month, a range that ends before it starts. Whatever is sent, the
+ * answer is a list of problems and never an exception.
  *
  * **What a rule matches is never weighed.** A rule that selects nothing today,
  * or a form taken alone that only part of what the rule names is published in,
@@ -116,14 +117,17 @@ export const problemsWith = (db: DatabaseSync, definition: unknown): LensProblem
   if (! plain(definition))
     return [{ venue: '', rule: -1, message: 'A definition is a document of venues, each with its rules.' }];
 
+  const out: LensProblem[] = [];
+
+  if (definition['format'] !== undefined && definition['format'] !== FORMAT)
+    out.push({ venue: '', rule: -1, message: `A definition is written in format ${FORMAT}; leave it out to mean that.` });
+
   const venues = definition['venues'];
 
-  if (venues === undefined) return [];
+  if (venues === undefined) return out;
 
   if (! plain(venues))
-    return [{ venue: '', rule: -1, message: 'The venues of a definition are named, each with its rules.' }];
-
-  const out: LensProblem[] = [];
+    return [...out, { venue: '', rule: -1, message: 'The venues of a definition are named, each with its rules.' }];
 
   const known = new Set(venueNames(db));
 
@@ -249,14 +253,14 @@ export const lensNameIsSound = (slug: string): boolean => /^[a-z0-9][a-z0-9-]{1,
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
-const GRAINS  = ['monthly', 'daily', 'hourly', 'minutely'] as const;
-const BUNDLES = ['instrument', 'market'] as const;
+/** The one set of rules a definition can be written under. */
+const FORMAT = 1;
 
 /** Every part a rule can have. */
 const RULE_KEYS = ['effect', 'markets', 'datasets', 'grain', 'bundle', 'from', 'to'] as const;
 
 const GRAIN_IS  = `A grain is only one of ${GRAINS.join(', ')}, or prefers one; leave it out for any.`;
-const BUNDLE_IS = 'A bundle is only instrument or market, or prefers one; leave it out for either.';
+const BUNDLE_IS = `A bundle is only ${BUNDLES.join(' or ')}, or prefers one; leave it out for either.`;
 const BOUND_IS  = 'Bounds are written yyyymm.';
 
 /** A problem with one rule, before it is placed at its venue and position. */
@@ -276,9 +280,9 @@ const kind = (one: unknown): boolean =>
   && (one['variant'] === undefined || typeof one['variant'] === 'string')
   && Object.keys(one).every(key => key === 'dataset' || key === 'variant');
 
-/** Whether a grain or a bundle is written as a `Choice`: one of `only` and `prefer`, and nothing else. */
+/** Whether a grain or a bundle is written as a `Choice`: one of `only` and `prefer`, naming a form, and nothing else. */
 const choice = (one: unknown): boolean =>
-  plain(one) && Object.keys(one).length === 1 && ('only' in one || 'prefer' in one);
+  plain(one) && Object.keys(one).length === 1 && typeof (one['only'] ?? one['prefer']) === 'string';
 
 /**
  * What each venue offers, as last counted. Counting is a read of every series a

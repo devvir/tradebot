@@ -1,3 +1,5 @@
+import type { BUNDLES, GRAINS } from './vocabulary';
+
 /**
  * How often a series publishes a file.
  *
@@ -8,10 +10,10 @@
  * `monthly` is a file a month, `daily` a file a day, `hourly` a file an hour
  * and `minutely` a file a minute.
  */
-export type Grain = 'monthly' | 'daily' | 'hourly' | 'minutely';
+export type Grain = typeof GRAINS[number];
 
 /** How many instruments one file holds: one, or all of a market's. */
-export type Bundle = 'instrument' | 'market';
+export type Bundle = typeof BUNDLES[number];
 
 /**
  * A named way of looking at the catalog.

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { problemsWith } from '../src/draft';
+import { BUNDLES, GRAINS, problemsWith } from '../src';
 import { scratch } from './db';
 import type { DatabaseSync } from 'node:sqlite';
 
@@ -36,12 +36,35 @@ describe('a definition of the right shape', () => {
     expect(problemsWith(db, { format: 1 })).toEqual([]);
     expect(problemsWith(db, { format: 1, venues: {} })).toEqual([]);
   });
+
+  it('has none where it leaves the format out', () => {
+    expect(problemsWith(db, { venues: { binance: [{ effect: 'include' }] } })).toEqual([]);
+  });
+
+  it('takes every grain and every bundle there is, only or preferred', () => {
+    for (const grain of GRAINS)
+      expect(problemsWith(db, one({ effect: 'include', grain: { only: grain } }))).toEqual([]);
+
+    for (const bundle of BUNDLES)
+      expect(problemsWith(db, one({ effect: 'include', bundle: { prefer: bundle } }))).toEqual([]);
+  });
 });
 
 describe('a definition that is not one', () => {
   it('refuses one that is not a document', () => {
     for (const definition of [null, 'x', 5, []])
       expect(problemsWith(db, definition)).toMatchObject([{ venue: '', rule: -1 }]);
+  });
+
+  it('refuses a format other than the one there is', () => {
+    for (const format of [2, 0, '1', null])
+      expect(problemsWith(db, { format, venues: {} })).toMatchObject([{ venue: '', rule: -1 }]);
+
+    // The rules are still weighed beside it.
+    expect(problemsWith(db, { format: 2, venues: { binance: [{ effect: 'drop' }] } })).toMatchObject([
+      { venue: '', rule: -1 },
+      { venue: 'binance', rule: 0, field: 'effect' },
+    ]);
   });
 
   it('refuses venues that are not named', () => {
@@ -92,6 +115,8 @@ describe('a rule that is not one', () => {
       .toMatchObject([{ field: 'grain' }]);
     expect(problemsWith(db, one({ effect: 'include', bundle: {} }))).toMatchObject([{ field: 'bundle' }]);
     expect(problemsWith(db, one({ effect: 'include', bundle: null }))).toMatchObject([{ field: 'bundle' }]);
+    expect(problemsWith(db, one({ effect: 'include', grain: { only: 5 } }))).toMatchObject([{ field: 'grain' }]);
+    expect(problemsWith(db, one({ effect: 'include', bundle: { prefer: ['market'] } }))).toMatchObject([{ field: 'bundle' }]);
   });
 
   /** A number would pass a pattern by being turned into a string, and then could not be read as a month. */
@@ -124,5 +149,45 @@ describe('a rule of the right shape', () => {
     expect(problemsWith(db, one({ effect: 'exclude', bundle: { prefer: 'market' } }))).toMatchObject([{ field: 'bundle' }]);
     expect(problemsWith(db, one({ effect: 'include', from: '202101', to: '202012' }))).toMatchObject([{ field: 'to' }]);
     expect(problemsWith(db, rules('nowhere', [{ effect: 'include' }]))).toMatchObject([{ venue: 'nowhere', rule: -1 }]);
+  });
+});
+
+describe('whatever is sent', () => {
+  /** Every malformed shape a sender can make, each at the depth it goes wrong at. */
+  const malformed: unknown[] = [
+    undefined, null, 'junk', 12, true, [], [1],
+    { format: 'one' },
+    { format: 1, venues: 'binance' },
+    { format: 1, venues: [1] },
+    { format: 1, venues: { binance: 'abc' } },
+    { format: 1, venues: { binance: { rules: [null] } } },
+    rules('binance', [null]),
+    rules('binance', [[]]),
+    rules('binance', ['include']),
+    rules('*', [{ effect: 'drop' }]),
+    one({ effect: 'include', markets: 'spotx' }),
+    one({ effect: 'include', markets: [null] }),
+    one({ effect: 'include', datasets: 'klines' }),
+    one({ effect: 'include', datasets: [null] }),
+    one({ effect: 'include', datasets: [{ dataset: 5 }] }),
+    one({ effect: 'include', datasets: [{ dataset: 'klines', variant: null }] }),
+    one({ effect: 'include', grain: 'daily' }),
+    one({ effect: 'include', grain: { only: null } }),
+    one({ effect: 'include', grain: { only: { prefer: 'daily' } } }),
+    one({ effect: 'include', bundle: [] }),
+    one({ effect: 'include', from: 202001 }),
+    one({ effect: 'include', from: ['202001'] }),
+    one({ effect: 'include', to: { month: '202001' } }),
+    one({ effect: 'include', from: '2020-01' }),
+    one({ effect: 'include', note: 'x' }),
+  ];
+
+  it('is answered with problems, never with an exception', () => {
+    for (const definition of malformed) {
+      let problems: unknown;
+
+      expect(() => { problems = problemsWith(db, definition); }, JSON.stringify(definition)).not.toThrow();
+      expect(problems, JSON.stringify(definition)).not.toEqual([]);
+    }
   });
 });
