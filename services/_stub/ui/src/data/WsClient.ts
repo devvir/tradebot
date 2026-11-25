@@ -5,33 +5,44 @@ type ChannelHandler<T = unknown> = (action: WsAction, data: T[]) => void;
 /**
  * Manages a single WebSocket connection with ref-counted per-channel subscriptions.
  *
- * `destroy()` closes the connection but is not terminal — a subsequent
- * `subscribe()` will reopen. This keeps the client tolerant of React
- * StrictMode's double-mount, where the same instance gets destroyed then
- * re-used.
+ * The connection opens on the first `subscribe()`. While any listener remains,
+ * a closed connection reopens after an exponential backoff (1 s, doubling to a
+ * 30 s cap, back to 1 s once a connection opens), and the new connection
+ * subscribes every registered channel. Events are acted on only when they come
+ * from the socket the client currently owns.
+ *
+ * `destroy()` closes the connection, cancels a pending reconnect and drops the
+ * socket's handlers. It is not terminal: listeners stay registered, and the
+ * next `subscribe()` opens a new connection.
  */
 export class WsClient {
   private ws:             WebSocket | null = null;
   private listeners:      Map<string, Set<ChannelHandler>> = new Map();
   private connected:      boolean = false;
   private reconnectDelay: number  = 1_000;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly url: string) {}
 
   /**
-   * Subscribe to a channel. Sends the WS subscribe op if this is the first
-   * listener for this channel. Returns a cleanup function that removes the
-   * listener and sends unsubscribe when the last listener is gone.
+   * Subscribe to a channel. When connected, sends the WS subscribe op if this
+   * is the first listener for the channel; otherwise opens the connection,
+   * which subscribes every channel once open. Returns a cleanup function that
+   * removes the listener and sends unsubscribe when the last listener is gone.
    */
   subscribe<T>(channel: string, handler: ChannelHandler<T>): () => void {
-    if (! this.listeners.has(channel)) {
+    const isNew = ! this.listeners.has(channel);
+
+    if (isNew) {
       this.listeners.set(channel, new Set());
     }
 
     this.listeners.get(channel)!.add(handler as ChannelHandler);
 
     if (this.connected) {
-      this.send({ op: 'subscribe', args: [channel] });
+      if (isNew) {
+        this.send({ op: 'subscribe', args: [channel] });
+      }
     } else {
       this.connect();
     }
@@ -40,8 +51,21 @@ export class WsClient {
   }
 
   destroy() {
-    this.ws?.close();
-    this.ws = null;
+    this.clearReconnect();
+
+    const ws = this.ws;
+
+    if (ws) {
+      ws.onopen    = null;
+      ws.onmessage = null;
+      ws.onclose   = null;
+      ws.onerror   = null;
+      ws.close();
+    }
+
+    this.ws             = null;
+    this.connected      = false;
+    this.reconnectDelay = 1_000;
   }
 
   private remove(channel: string, handler: ChannelHandler) {
@@ -63,13 +87,21 @@ export class WsClient {
   }
 
   private connect() {
-    if (this.ws) {
+    if (this.ws || this.listeners.size === 0) {
       return;
     }
 
-    this.ws = new WebSocket(this.url);
+    this.clearReconnect();
 
-    this.ws.onopen = () => {
+    const ws = new WebSocket(this.url);
+
+    this.ws = ws;
+
+    ws.onopen = () => {
+      if (this.ws !== ws) {
+        return;
+      }
+
       this.connected      = true;
       this.reconnectDelay = 1_000;
 
@@ -80,7 +112,11 @@ export class WsClient {
       }
     };
 
-    this.ws.onmessage = (event: MessageEvent) => {
+    ws.onmessage = (event: MessageEvent) => {
+      if (this.ws !== ws) {
+        return;
+      }
+
       try {
         const msg = JSON.parse(event.data as string);
 
@@ -129,19 +165,37 @@ export class WsClient {
       }
     };
 
-    this.ws.onclose = () => {
+    ws.onclose = () => {
+      if (this.ws !== ws) {
+        return;
+      }
+
       this.connected = false;
       this.ws        = null;
 
       if (this.listeners.size > 0) {
-        setTimeout(() => this.connect(), this.reconnectDelay);
+        this.reconnectTimer = setTimeout(() => {
+          this.reconnectTimer = null;
+          this.connect();
+        }, this.reconnectDelay);
         this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30_000);
       }
     };
 
-    this.ws.onerror = () => {
-      this.ws?.close();
+    ws.onerror = () => {
+      if (this.ws !== ws) {
+        return;
+      }
+
+      ws.close();
     };
+  }
+
+  private clearReconnect() {
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
   }
 
   private send(msg: object) {

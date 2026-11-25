@@ -30,9 +30,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
     [env],
   );
 
-  /** Close the WS when this provider unmounts (e.g. env-switch via `key`).
-   *  `WsClient.destroy()` is idempotent, so StrictMode's double-mount won't
-   *  poison the instance. */
+  /** Close the client's WS when this provider unmounts (e.g. env-switch via
+   *  `key`). `destroy()` leaves the client usable — a later subscribe opens a
+   *  new connection — so an effect re-run that keeps the memoised client, as
+   *  StrictMode's development double-mount does, keeps streaming. */
   useEffect(() => () => bitmex.destroy(), [bitmex]);
 
   return (
