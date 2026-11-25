@@ -54,7 +54,7 @@ own and read the root `.env`.
 | `docs/VOCABULARY.md` | What each platform term means |
 | `docs/services/` | One technical reference per documented service: architecture, algorithms, data flow |
 | `docs/modules/` | The archives module, and the references for the catalog's API and its lenses |
-| `docs/tooling/` | `./tools cold`, the cold-storage command of the `./tools` developer CLI ([dev/tooling](dev/tooling/README.md)) |
+| `docs/tooling/` | The `./tb` and `./tools` command-line tools ([index](docs/tooling/README.md)), and `./tools cold`, the cold-storage command, one page per tree |
 | `docs/venues/` | One document per venue: its archives, its APIs, its quirks |
 | `docs/REST.md` | What the venues' public REST APIs serve of the past, side by side |
 | `docs/planning/` | Plans and open work; [ROADMAP.md](docs/planning/ROADMAP.md) is the map |
