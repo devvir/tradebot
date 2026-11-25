@@ -73,7 +73,7 @@ afterEach(() => vi.clearAllMocks());
 // ── poolKey ───────────────────────────────────────────────────────────────────
 
 describe('poolKey', () => {
-  it('keys on exchange and endpoint, with an empty socket segment by default', () => {
+  it('keys on venue and endpoint, with an empty socket segment by default', () => {
     expect(poolKey('twin', 'realtime')).toBe('twin:realtime:');
     expect(poolKey('twin', 'platform')).toBe('twin:platform:');
   });

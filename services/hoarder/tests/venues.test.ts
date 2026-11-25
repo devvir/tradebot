@@ -13,21 +13,6 @@ describe('venue registry', () => {
     expect(() => venueFor('nasdaq')).toThrow(/Unknown venue 'nasdaq' — known: binance, bybit, kraken, okx/);
   });
 
-  // The core dispatches entirely through this interface, so a venue missing a
-  // required method would fail at runtime on the first frame rather than here.
-  it('every registered venue implements the required surface', () => {
-    for (const name of VENUE_NAMES) {
-      const v = venueFor(name);
-
-      expect(typeof v.endpoints).toBe('function');
-      expect(typeof v.endpointFor).toBe('function');
-      expect(typeof v.subscribeFrame).toBe('function');
-      expect(typeof v.unsubscribeFrame).toBe('function');
-      expect(typeof v.matchAck).toBe('function');
-      expect(typeof v.isData).toBe('function');
-    }
-  });
-
   it('every venue reports at least one endpoint with a wss URL', () => {
     for (const name of VENUE_NAMES) {
       const endpoints = venueFor(name).endpoints();

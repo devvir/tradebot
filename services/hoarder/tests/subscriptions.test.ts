@@ -366,6 +366,32 @@ describe('subscribe: unconfirmed', () => {
     expect(ws.send).toHaveBeenCalledOnce();
   });
 
+  // Venues interleave data and other frames with acks; only an ack settles a subscribe.
+  it('waits through frames that are not JSON, before the deadline and during the backoff', async () => {
+    const { service } = makeService();
+    const ws = makeMockWs();
+
+    mockConnect.mockReturnValue(ws);
+
+    const pending = subscribe('twin', 'trade', service as any, vi.fn());
+    const settled = vi.fn();
+
+    pending.then(settled, settled);
+
+    await flush();
+    expect(ws.send).toHaveBeenCalledOnce();
+
+    ws.emit('message', Buffer.from('not json'));
+    await vi.advanceTimersByTimeAsync(5_500);   // timed out; retry due at 6s
+    ws.emit('message', Buffer.from('still not json'));
+    await flush();
+
+    expect(settled).not.toHaveBeenCalled();
+
+    reply(ws, { subscribe: 'trade', success: true });
+    await expect(pending).resolves.toBeUndefined();
+  });
+
   it('rejects when the venue answers success: false', async () => {
     const { service } = makeService();
     const ws = makeMockWs();
@@ -575,6 +601,39 @@ describe('subscribe: reconnect', () => {
     await flush();
 
     expect(sent(next).map(f => `${f.params.channel}:${f.params.symbol.join(',')}`)).toEqual(channels);
+  });
+
+  // OKX takes one channel per request too, each ack echoing the channel and instId.
+  it('resubscribes all of a real venue\'s channels on its shared socket (okx)', async () => {
+    const { service } = makeService();
+    const first    = connectingWs();
+    const next     = connectingWs();
+    const channels = ['trades:BTC-USDT', 'books:BTC-USDT', 'trades:ETH-USDT', 'books:ETH-USDT'];
+
+    const okxAcks = (ws: MockWs): void => {
+      ws.send.mockImplementation((raw: string) => {
+        const [arg] = JSON.parse(raw).args;
+
+        process.nextTick(() => reply(ws, { event: 'subscribe', arg, connId: 'c0ffee' }));
+      });
+    };
+
+    okxAcks(first);
+    mockConnect.mockReturnValue(first);
+
+    const pending = channels.map(c => subscribe('okx', c, service as any, vi.fn()));
+
+    open(first);
+    await Promise.all(pending);
+    expect(mockConnect).toHaveBeenCalledOnce();
+
+    close(first);
+    reconnect(next);
+    okxAcks(next);
+    open(next);
+    await flush();
+
+    expect(sent(next).map(f => `${f.args[0].channel}:${f.args[0].instId}`)).toEqual(channels);
   });
 });
 

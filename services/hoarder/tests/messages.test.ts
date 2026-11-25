@@ -23,8 +23,8 @@ const makeService = (stateOverrides: Partial<State> = {}) => {
   const broker   = { getExchange: vi.fn(() => exchange) };
 
   const service = {
-    state:     (key?: string) => (key !== undefined ? (state as Record<string, unknown>)[key] : state),
-    setState:  (key: string, value: unknown) => { (state as Record<string, unknown>)[key] = value; return value; },
+    state:     (key?: string) => (key !== undefined ? (state as unknown as Record<string, unknown>)[key] : state),
+    setState:  (key: string, value: unknown) => { (state as unknown as Record<string, unknown>)[key] = value; return value; },
     config:    () => config,
     providers: { get: vi.fn(() => broker) },
     shutdown:  vi.fn().mockResolvedValue(undefined),

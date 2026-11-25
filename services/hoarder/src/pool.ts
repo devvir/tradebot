@@ -93,8 +93,6 @@ export const getOrConnect = (
     socketKey,
     signal: stopping.signal,
     onReconnect: (newWs) => {
-      if (pool.get(key) !== entry) return;
-
       entry.ws = newWs;
       watchOpen(newWs);
     },

@@ -183,21 +183,28 @@ describe('all venues', () => {
     for (const n of names) expect(channelsFor(n).length).toBeGreaterThan(0);
   });
 
-  // A subscribe frame must be valid JSON and name every part of its channel
-  // (OKX and Kraken split `<channel>:<instrument>`), or the venue is sent
-  // something other than what was asked for.
-  it('produces a JSON subscribe frame naming every part of the channel', () => {
-    for (const n of names) {
-      const v = venueFor(n);
+  // What each venue's subscribe frame must carry for a configured channel,
+  // written from the channel syntax the venue's channel list uses.
+  const expected: Record<string, (channel: string) => unknown> = {
+    binance: channel => ({ method: 'SUBSCRIBE', params: [channel] }),
+    bybit:   channel => ({ op: 'subscribe', args: [channel] }),
+    okx:     channel => {
+      const [name, instId] = channel.split(':');
 
-      for (const channel of channelsFor(n)) {
-        const frame = v.subscribeFrame(channel);
+      return { op: 'subscribe', args: [{ channel: name, instId }] };
+    },
+    kraken:  channel => {
+      const [name, symbol] = channel.split(':');
 
-        expect(() => JSON.parse(frame)).not.toThrow();
+      return { method: 'subscribe', params: { channel: name, symbol: [symbol] } };
+    },
+  };
 
-        for (const part of channel.split(':')) expect(frame).toContain(JSON.stringify(part));
-      }
-    }
+  it.each(names)('subscribes %s to exactly the channel asked for', n => {
+    const v = venueFor(n);
+
+    for (const channel of channelsFor(n))
+      expect(JSON.parse(v.subscribeFrame(channel))).toMatchObject(expected[n]!(channel) as object);
   });
 
   // Each channel gets a frame of its own, so no two channels' frames coincide.

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import WebSocket from 'ws';
 import { logger } from '@devvir/service-kit';
 import { connect } from '../src/websocket';
-import type { State, Config, EndpointDefinition } from '../src/types';
+import type { State, EndpointDefinition } from '../src/types';
 
 // ── WebSocket mock ────────────────────────────────────────────────────────────
 
@@ -50,16 +50,13 @@ vi.mock('ws', async () => {
 
 const makeService = (stateOverrides: Partial<State> = {}) => {
   const state: State = {
-    realtime:        null,
-    platform:        null,
-    isShuttingDown:  false,
-    apiVersion:      null,
+    isShuttingDown: false,
     ...stateOverrides,
   };
 
   const service = {
-    state:    (key?: string) => (key !== undefined ? (state as Record<string, unknown>)[key] : state),
-    setState: (key: string, value: unknown) => { (state as Record<string, unknown>)[key] = value; return value; },
+    state:    (key?: string) => (key !== undefined ? (state as unknown as Record<string, unknown>)[key] : state),
+    setState: (key: string, value: unknown) => { (state as unknown as Record<string, unknown>)[key] = value; return value; },
     config:   () => ({}),
   };
 
@@ -72,28 +69,17 @@ const endpoint = (overrides: Partial<EndpointDefinition> = {}): EndpointDefiniti
   ...overrides,
 });
 
-const ws = (state: State, name: 'realtime' | 'platform'): any => state[name];
-
 // ── URL construction ──────────────────────────────────────────────────────────
 
 describe('URL construction', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it('uses the plain endpoint URL when no credentials are provided', () => {
+  // A socket key tells sockets of one endpoint apart; it never changes the URL.
+  it('connects every socket to the endpoint URL unchanged', () => {
     const { service } = makeService();
 
-    const result = connect(endpoint(), 'twin', service as any, vi.fn());
-
-    expect(result.url).toBe('wss://twin.test/realtime');
-  });
-
-  // Hoarder collects public market data only, so a URL is never decorated with
-  // credentials — there is no authenticated connection path to build one.
-  it('uses the endpoint URL verbatim for every socket', () => {
-    const { service } = makeService();
-
-    const result = connect(endpoint(), 'twin', service as any, vi.fn(), { socketKey: 'Primary' });
+    const result = connect(endpoint(), 'twin', service as any, vi.fn(), { socketKey: 'Primary' })!;
 
     expect(result.url).toBe('wss://twin.test/realtime');
   });
@@ -116,7 +102,7 @@ describe('open event', () => {
   it('starts a heartbeat interval on open', () => {
     const { service } = makeService();
 
-    const result = connect(endpoint(), 'twin', service as any, vi.fn());
+    const result = connect(endpoint(), 'twin', service as any, vi.fn())!;
 
     result.emit('open');
 
@@ -136,7 +122,7 @@ describe('ping and message events', () => {
   it('leaves answering a ping to ws', () => {
     const { service } = makeService();
 
-    const result = connect(endpoint(), 'twin', service as any, vi.fn());
+    const result = connect(endpoint(), 'twin', service as any, vi.fn())!;
 
     result.emit('open');
     result.emit('ping', Buffer.from('payload'));
@@ -148,7 +134,7 @@ describe('ping and message events', () => {
     const { service } = makeService();
     const onMessage = vi.fn().mockResolvedValue(undefined);
 
-    const result = connect(endpoint(), 'twin', service as any, onMessage);
+    const result = connect(endpoint(), 'twin', service as any, onMessage)!;
 
     const payload = Buffer.from('{"table":"trade","action":"insert","data":[]}');
 
@@ -158,12 +144,12 @@ describe('ping and message events', () => {
   });
 
   // The relay looks the venue up by this tag to route the frame, so every
-  // message must carry the exchange it arrived on — not the socket key.
+  // message must carry the venue it arrived on — not the socket key.
   it('tags every frame with its venue', () => {
     const { service } = makeService();
     const onMessage = vi.fn().mockResolvedValue(undefined);
 
-    const result = connect(endpoint(), 'binance', service as any, onMessage, { socketKey: 'shard-1' });
+    const result = connect(endpoint(), 'binance', service as any, onMessage, { socketKey: 'shard-1' })!;
 
     const payload = Buffer.from('{"stream":"btcusdt@aggTrade"}');
 
@@ -204,7 +190,7 @@ describe('heartbeat', () => {
   it('pings the server every 30 seconds while the connection is open', () => {
     const { service } = makeService();
 
-    const result = connect(endpoint(), 'twin', service as any, vi.fn());
+    const result = connect(endpoint(), 'twin', service as any, vi.fn())!;
 
     result.emit('open');
 
@@ -227,7 +213,7 @@ describe('liveness', () => {
   it('bounds the opening handshake', () => {
     const { service } = makeService();
 
-    const result = connect(endpoint(), 'twin', service as any, vi.fn());
+    const result = connect(endpoint(), 'twin', service as any, vi.fn())!;
 
     expect((result as any).options).toMatchObject({ handshakeTimeout: 10_000 });
   });
@@ -328,7 +314,7 @@ describe('reconnection', () => {
     const { service } = makeService();
     const onReconnect = vi.fn();
 
-    const original = connect(endpoint(), 'twin', service as any, vi.fn(), { onReconnect });
+    const original = connect(endpoint(), 'twin', service as any, vi.fn(), { onReconnect })!;
 
     original.emit('error', new Error('ECONNREFUSED'));
 
@@ -342,7 +328,7 @@ describe('reconnection', () => {
     const { service } = makeService();
     const onReconnect = vi.fn();
 
-    const original = connect(endpoint(), 'twin', service as any, vi.fn(), { onReconnect });
+    const original = connect(endpoint(), 'twin', service as any, vi.fn(), { onReconnect })!;
 
     original.emit('close', 1006, Buffer.from('abnormal'));
 
@@ -404,7 +390,7 @@ describe('reconnection', () => {
     const { service, state } = makeService();
     const onReconnect = vi.fn();
 
-    const original = connect(endpoint(), 'twin', service as any, vi.fn(), { onReconnect });
+    const original = connect(endpoint(), 'twin', service as any, vi.fn(), { onReconnect })!;
 
     (state as any).isShuttingDown = true;
 
@@ -418,7 +404,7 @@ describe('reconnection', () => {
   it('clears the heartbeat interval when the connection closes', () => {
     const { service } = makeService();
 
-    const result = connect(endpoint(), 'twin', service as any, vi.fn());
+    const result = connect(endpoint(), 'twin', service as any, vi.fn())!;
 
     result.emit('open');
 
@@ -437,7 +423,7 @@ describe('reconnection', () => {
     const { service } = makeService();
     const onReconnect = vi.fn();
 
-    const original = connect(endpoint(), 'twin', service as any, vi.fn(), { onReconnect });
+    const original = connect(endpoint(), 'twin', service as any, vi.fn(), { onReconnect })!;
 
     // A real connection failure emits both events — they must collapse into one attempt.
     original.emit('error', new Error('ECONNREFUSED'));
@@ -452,7 +438,7 @@ describe('reconnection', () => {
     const { service } = makeService();
     const onReconnect = vi.fn();
 
-    const original = connect(endpoint(), 'twin', service as any, vi.fn(), { onReconnect });
+    const original = connect(endpoint(), 'twin', service as any, vi.fn(), { onReconnect })!;
 
     original.emit('error', new Error('Unexpected server response: 429'));
 
@@ -595,7 +581,7 @@ describe('reconnection', () => {
     const { service } = makeService();
     const onReconnect = vi.fn();
 
-    const original = connect(endpoint(), 'twin', service as any, vi.fn(), { onReconnect });
+    const original = connect(endpoint(), 'twin', service as any, vi.fn(), { onReconnect })!;
 
     original.emit('error', new Error('Unexpected server response: 418'));
 
@@ -604,5 +590,54 @@ describe('reconnection', () => {
 
     vi.advanceTimersByTime(1);
     expect(onReconnect).toHaveBeenCalledOnce();
+  });
+});
+
+// ── Error logging ─────────────────────────────────────────────────────────────
+
+describe('error logging', () => {
+  beforeEach(() => { vi.useFakeTimers(); vi.clearAllMocks(); });
+  afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
+
+  const fail = (err: Error): void => {
+    const { service } = makeService();
+
+    connect(endpoint(), 'twin', service as any, vi.fn())!.emit('error', err);
+  };
+
+  // Routine connection failures are one warning line each, with no stack.
+  it.each([
+    ['a network failure', Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }), 'network unavailable (ECONNRESET)'],
+    ['an HTTP status on the handshake', new Error('Unexpected server response: 503'), 'server returned HTTP 503'],
+    ['a rate-limit status', new Error('Unexpected server response: 429'), 'rate limited (HTTP 429) — backing off'],
+    ['a hang-up', new Error('socket hang up'), 'socket hang up'],
+  ])('warns about %s in one line', (_, err, text) => {
+    fail(err);
+
+    expect(logger.warn).toHaveBeenCalledWith(`realtime WebSocket (twin): ${text}`);
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('logs an unexpected error in full', () => {
+    const err = new Error('Invalid WebSocket frame: invalid opcode 5');
+
+    fail(err);
+
+    expect(logger.error).toHaveBeenCalledWith({ err }, 'realtime WebSocket error (twin)');
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('logs an error only at debug once stopping', () => {
+    const stop = new AbortController();
+    const { service } = makeService();
+    const ws  = connect(endpoint(), 'twin', service as any, vi.fn(), { signal: stop.signal })!;
+    const err = new Error('Invalid WebSocket frame: invalid opcode 5');
+
+    stop.abort();
+    ws.emit('error', err);
+
+    expect(logger.debug).toHaveBeenCalledWith({ err }, expect.stringContaining('while stopping'));
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(logger.error).not.toHaveBeenCalled();
   });
 });
