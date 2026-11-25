@@ -44,17 +44,36 @@ describe('a file\'s extension', () => {
 
     /** Never a bare compressor: a stream that does not say what it is, is text. */
     it('takes a compressed stream for text, and says so', () => {
-      expect(extensionOf('x/something.gz')).toBe('.txt.gz');
-      expect(extensionOf('x/BRK.B-202605.gz')).toBe('.txt.gz');
-      expect(extensionOf('x/BTC_USDT-2021.08.gz')).toBe('.txt.gz');
+      expect(extensionOf('gz/1/something.gz')).toBe('.txt.gz');
+      expect(extensionOf('gz/2/BRK.B-202605.gz')).toBe('.txt.gz');
+      expect(extensionOf('gz/3/BTC_USDT-2021.08.gz')).toBe('.txt.gz');
       expect(warned).toHaveBeenCalledTimes(3);
     });
 
     it('takes a file with no extension for text, and says so', () => {
-      expect(extensionOf('x/plain')).toBe('.txt');
+      expect(extensionOf('plain/1/plain')).toBe('.txt');
       expect(extensionOf('a.b/c/plain')).toBe('.txt');
-      expect(extensionOf('x/BTC_USDT-2021.08')).toBe('.txt');
-      expect(warned).toHaveBeenCalledTimes(3);
+      expect(extensionOf('plain/2/BTC_USDT-2021.08')).toBe('.txt');
+      expect(extensionOf('plain')).toBe('.txt');
+      expect(warned).toHaveBeenCalledTimes(4);
+    });
+
+    /** A directory of thousands alike is one thing to say, not thousands. */
+    it('says so once for each directory', () => {
+      expect(extensionOf('once/a/first')).toBe('.txt');
+      expect(extensionOf('once/a/second')).toBe('.txt');
+      expect(extensionOf('once/a/second')).toBe('.txt');
+      expect(warned).toHaveBeenCalledTimes(1);
+
+      expect(extensionOf('once/b/first')).toBe('.txt');
+      expect(warned).toHaveBeenCalledTimes(2);
+    });
+
+    it('says so again in the same directory for an ending it has not assumed there', () => {
+      expect(extensionOf('mixed/plain')).toBe('.txt');
+      expect(extensionOf('mixed/stream.gz')).toBe('.txt.gz');
+      expect(extensionOf('mixed/other.gz')).toBe('.txt.gz');
+      expect(warned).toHaveBeenCalledTimes(2);
     });
 
     it('says nothing of a file it names by a rule', () => {

@@ -19,9 +19,9 @@ import { logger } from '@devvir/service-kit';
  *
  * **Where a venue gives none, or a wrong one, it is put right here**, so that
  * nobody reading a listing has to. The files known to be so are named for what
- * they hold — see `KNOWN`. One nobody has met is taken for text and said aloud,
- * every time it is listed: `.txt`, or `.txt.gz` for a compressed stream that
- * does not say what it is.
+ * they hold — see `KNOWN`. One nobody has met is taken for text — `.txt`, or
+ * `.txt.gz` for a compressed stream that does not say what it is — and said
+ * aloud once per directory per process.
  */
 export const extensionOf = (path: string): string => {
   const known = KNOWN.find(one => one.paths.test(path));
@@ -60,9 +60,25 @@ const KNOWN: { paths: RegExp; ending: string }[] = [
   { paths: /(?:^|\/)slice_[a-z_]+_\d+$/,                  ending: '.txt' },
 ];
 
-/** An ending given to a file whose own says nothing usable. Said each time, so that it is met early. */
+/**
+ * An ending given to a file whose own says nothing usable. Said once per
+ * directory per process, so that it is met early without one warning for each
+ * file of a directory that holds thousands alike.
+ */
 const assumed = (path: string, ending: string): string => {
-  logger.warn({ path, ending }, 'A file with no usable extension — named as text');
+  const said = `${path.slice(0, Math.max(path.lastIndexOf('/'), 0))}|${ending}`;
+
+  if (! SAID.has(said)) {
+    if (SAID.size >= SAID_AT_MOST) SAID.clear();
+    SAID.add(said);
+    logger.warn({ path, ending }, 'A file with no usable extension — named as text');
+  }
 
   return ending;
 };
+
+/** The directories, with the ending assumed there, already warned of. */
+const SAID = new Set<string>();
+
+/** How many `SAID` holds before it starts over, so that a process listing without end stays bounded. */
+const SAID_AT_MOST = 1_000;
