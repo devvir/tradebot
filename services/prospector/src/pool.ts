@@ -35,7 +35,3 @@ export const pool = async <T>(
   if (failed.length > 0)
     throw new AggregateError(failed, `${failed.length} of ${items.length} items failed`);
 };
-
-// ── Test access ───────────────────────────────────────────────────────────────
-
-export const _test_pool = pool;

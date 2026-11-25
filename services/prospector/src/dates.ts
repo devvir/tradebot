@@ -40,11 +40,6 @@ export const yesterday = (now = new Date()): string => {
   return at.toISOString().slice(0, 10).replace(/-/g, '');
 };
 
-/** The month a `yyyymmdd` falls in. */
-export const monthOf = (ymd: string): string => ymd.slice(0, 6);
-
-export const dash = (ym: string): string => `${ym.slice(0, 4)}-${ym.slice(4)}`;
-
 export const nextMonth = (ym: string): string => shift(ym, 1);
 export const prevMonth = (ym: string): string => shift(ym, -1);
 
@@ -52,12 +47,6 @@ const shift = (ym: string, by: number): string => {
   const at = new Date(Date.UTC(Number(ym.slice(0, 4)), Number(ym.slice(4)) - 1 + by, 1));
 
   return `${at.getUTCFullYear()}${String(at.getUTCMonth() + 1).padStart(2, '0')}`;
-};
-
-export const daysIn = (ym: string): string[] => {
-  const last = new Date(Date.UTC(Number(ym.slice(0, 4)), Number(ym.slice(4)), 0)).getUTCDate();
-
-  return Array.from({ length: last }, (_v, i) => String(i + 1).padStart(2, '0'));
 };
 
 // ── Grains ───────────────────────────────────────────────────────────────────

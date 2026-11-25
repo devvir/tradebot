@@ -42,7 +42,6 @@ export {
   enrol,
   pauseSurvey,
   resumeSurvey,
-  unenrol,
   resetRuns,
   exclusionsFor,
   ancestorsOf,

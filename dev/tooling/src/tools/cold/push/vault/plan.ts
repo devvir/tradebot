@@ -75,7 +75,3 @@ export const plan = (db: DatabaseSync, config: ColdConfig, venues: readonly stri
 export const pendingOf = (db: DatabaseSync, venues: readonly string[]): StoredFile[] =>
   record.vaultFilesPending(db).filter(file =>
     venues.length === 0 || venues.includes(locate(file.partition).levels['venue'] ?? ''));
-
-// ── Test access ───────────────────────────────────────────────────────────────
-
-export const _test_plan  = plan;

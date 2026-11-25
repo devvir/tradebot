@@ -368,5 +368,4 @@ const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
 
 // ── Test access ───────────────────────────────────────────────────────────────
 
-export const _test_delayFor     = delayFor;
 export const _test_retryAfterMs = retryAfterMs;

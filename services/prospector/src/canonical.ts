@@ -1,5 +1,3 @@
-import type { Grain } from './types';
-
 /**
  * The vocabulary the catalog speaks, and the one thing every adapter needs to
  * translate into it.
@@ -10,57 +8,10 @@ import type { Grain } from './types';
  * trade or a bar. A consumer asks for `perp` `klines` at `1m` and is answered;
  * that a venue writes `candlesticks_1m` is this service's business.
  *
- * What lives here is only what is genuinely shared: the names themselves, and
- * the rule for reading a bar length. The mapping from one venue's words to these
- * is that venue's, and lives in its adapter.
+ * What lives here is only what is genuinely shared: the symbol for a whole
+ * market, and the rule for reading a bar length. The mapping from one venue's
+ * words to these is that venue's, and lives in its adapter.
  */
-
-/**
- * A market as the catalog names it.
- *
- * **Margining is not a market.** Bybit's `linear` and `inverse`, htx's `swap`
- * and `linear-swap`, binance's `futures-um` and `futures-cm` are all perpetual
- * swaps differing in what collateralises them — a property of the instrument,
- * readable from its symbol, and not a reason for a consumer to look in two
- * places for one kind of series.
- *
- * `tradfi` is gate's equities and metals feed. It is not crypto and does not
- * pretend to be one of the others.
- */
-export const MARKETS = ['spot', 'perp', 'future', 'option', 'tradfi'] as const;
-
-/**
- * A dataset as the catalog names it — the table, without its variants.
- *
- * Deliberately the vocabulary stocker already reads into the vault: a second set
- * of names for one series would have to be reconciled by every consumer of both.
- *
- * **A venue's name for a rendering is not a dataset.** Binance publishes trades
- * twice, raw and aggregated, and calls the second `aggTrades` — but aggregation
- * is a property of *those trades*, exactly as a book's depth is a property of
- * that book. So it is a variant of `trades`, and a consumer asking for trades
- * finds both renderings rather than having to know one venue's word for one of
- * them.
- */
-export const DATASETS = [
-  'trades', 'klines', 'markPrice', 'indexPrice',
-  'premiumIndex', 'funding', 'borrowing', 'quotes',
-  'openInterest', 'liquidations', 'books', 'volatilityIndex',
-  'optionSummary', 'optionTicker',
-] as const;
-
-/**
- * How often a shape publishes, as a caller may ask for it.
- *
- * **The vocabulary's answer to one dataset published twice.** A venue that files
- * its trades both monthly and daily offers the same month in two renderings, and
- * a consumer that knows which it wants should be able to say so rather than
- * fetch both and throw one away.
- *
- * `satisfies` rather than a cast, so a name that is not a `Grain` is a compile
- * error here. The type itself stays in `types.ts`, where every type lives.
- */
-export const GRAINS = ['monthly', 'daily', 'hourly', 'minutely'] as const satisfies readonly Grain[];
 
 /**
  * The symbol standing for "every instrument of this market at once".
@@ -174,7 +125,3 @@ const finest = (seconds: number): string => {
 
   return `${seconds}s`;
 };
-
-// ── Test access ───────────────────────────────────────────────────────────────
-
-export const _test_secondsOf = secondsOf;

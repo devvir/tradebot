@@ -173,7 +173,3 @@ const settlable = (now: number): string => {
 
 /** The data a partition holds, whatever the rendering: its venue, market, dataset and variant. */
 const dataOf = (key: PartitionKey): string => [key.venue, key.market, key.dataset, key.variant].join('|');
-
-// ── Test access ───────────────────────────────────────────────────────────────
-
-export const _test_survey = survey;

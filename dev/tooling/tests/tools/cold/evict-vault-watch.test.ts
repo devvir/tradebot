@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WATCH_MS } from '../../../src/tools/cold/config';
 import { runEvictVault } from '../../../src/tools/cold/evict/vault';
 import { setWatch } from '../../../src/tools/cold/options';
-import { _test_plan as plan } from '../../../src/tools/cold/push/vault/plan';
+import { plan } from '../../../src/tools/cold/push/vault/plan';
 import * as record from '../../../src/tools/cold/shared/record';
 import { confirm } from '../../../src/shared/ui/prompts';
 import { info } from '../../../src/shared/ui/logger';

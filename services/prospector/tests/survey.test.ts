@@ -4,8 +4,8 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { putVenue, venues } from '../src/catalog';
 import { openCatalog } from '../src/database';
-import { _test_relative } from '../src/paths';
-import { _test_pool } from '../src/pool';
+import { relative } from '../src/paths';
+import { pool } from '../src/pool';
 import { _test_catalogued } from '../src/survey';
 import { binance } from '../src/adapters/binance';
 import { htx } from '../src/adapters/htx';
@@ -133,17 +133,17 @@ describe('turning listed keys into catalog rows', () => {
 
 describe('stripping the root', () => {
   it('removes it when present', () => {
-    expect(_test_relative(kucoin, 'data/spot/x.zip')).toBe('spot/x.zip');
+    expect(relative(kucoin, 'data/spot/x.zip')).toBe('spot/x.zip');
   });
 
   /** An empty root strips nothing, so the path is the key. */
   it('leaves the key whole when the venue has no root', () => {
-    expect(_test_relative(binance, 'data/spot/x.zip')).toBe('data/spot/x.zip');
+    expect(relative(binance, 'data/spot/x.zip')).toBe('data/spot/x.zip');
   });
 
   /** A key that does not start with the root is left alone rather than mangled. */
   it('leaves an unexpected key untouched', () => {
-    expect(_test_relative(kucoin, 'other/x.zip')).toBe('other/x.zip');
+    expect(relative(kucoin, 'other/x.zip')).toBe('other/x.zip');
   });
 
   /**
@@ -151,9 +151,9 @@ describe('stripping the root', () => {
    * path says which tree a file came from.
    */
   it('keeps both of a venue\'s trees distinguishable', () => {
-    expect(_test_relative(htx, 'historical_data/spot/daily/trades/A/x.zip'))
+    expect(relative(htx, 'historical_data/spot/daily/trades/A/x.zip'))
       .toBe('historical_data/spot/daily/trades/A/x.zip');
-    expect(_test_relative(htx, 'data/trades/spot/daily/A/x.zip'))
+    expect(relative(htx, 'data/trades/spot/daily/A/x.zip'))
       .toBe('data/trades/spot/daily/A/x.zip');
   });
 });
@@ -162,7 +162,7 @@ describe('the partition pool', () => {
   it('runs every item', async () => {
     const seen: number[] = [];
 
-    await _test_pool([1, 2, 3, 4, 5], 2, async (n) => { seen.push(n); });
+    await pool([1, 2, 3, 4, 5], 2, async (n) => { seen.push(n); });
 
     expect(seen.sort()).toEqual([1, 2, 3, 4, 5]);
   });
@@ -171,7 +171,7 @@ describe('the partition pool', () => {
     let running = 0;
     let peak    = 0;
 
-    await _test_pool([1, 2, 3, 4, 5, 6], 2, async () => {
+    await pool([1, 2, 3, 4, 5, 6], 2, async () => {
       running++;
       peak = Math.max(peak, running);
       await new Promise(r => setTimeout(r, 1));
@@ -188,7 +188,7 @@ describe('the partition pool', () => {
   it('carries on when an item throws', async () => {
     const done: number[] = [];
 
-    await _test_pool([1, 2, 3], 2, async (n) => {
+    await pool([1, 2, 3], 2, async (n) => {
       if (n === 2) throw new Error('listing failed');
 
       done.push(n);
@@ -205,7 +205,7 @@ describe('the partition pool', () => {
   it('reports the failures once every lane has drained', async () => {
     const done: number[] = [];
 
-    const run = _test_pool([1, 2, 3, 4], 2, async (n) => {
+    const run = pool([1, 2, 3, 4], 2, async (n) => {
       if (n % 2 === 0) throw new Error(`item ${n} failed`);
 
       done.push(n);

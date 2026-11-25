@@ -5,7 +5,7 @@ import { bybitSecondary } from '../src/adapters/bybit.secondary';
 import { gate } from '../src/adapters/gate';
 import { htx } from '../src/adapters/htx';
 import { kucoin } from '../src/adapters/kucoin';
-import { _test_patternise as patternise, _test_excluded as excludedAnywhere } from '../src/paths';
+import { excludedAnywhere, patternise } from '../src/paths';
 import { keyFor } from '../src/catalog';
 import type { Inspection, Publishing, Slots } from '../src/types';
 

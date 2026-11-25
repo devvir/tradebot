@@ -1121,11 +1121,6 @@ export const resumeSurvey = (db: DatabaseSync, venue: string): boolean =>
   db.prepare('UPDATE survey SET paused_at = NULL WHERE venue = ? AND paused_at IS NOT NULL')
     .run(venue).changes > 0;
 
-/** Forget a venue entirely — the resting state, as though it had never been asked for. */
-export const unenrol = (db: DatabaseSync, venue: string): void => {
-  db.prepare('DELETE FROM survey WHERE venue = ?').run(venue);
-};
-
 /**
  * Whether this venue is one this deployment keeps current, and where it got to.
  *

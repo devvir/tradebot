@@ -214,7 +214,3 @@ const ONE = 'one';
 
 /** Times a tar is asked for in all, the first time included, before it is given up on for this run. */
 const ATTEMPTS = 3;
-
-// ── Test access ───────────────────────────────────────────────────────────────
-
-export const _test_bring  = bring;

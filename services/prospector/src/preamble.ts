@@ -463,7 +463,3 @@ const coveredTo = (held: readonly Publishing[], now: Date): Date => {
 
   return newest === 0 ? now : new Date(newest);
 };
-
-// ── Test access ───────────────────────────────────────────────────────────────
-
-export const _test_coveredTo = coveredTo;

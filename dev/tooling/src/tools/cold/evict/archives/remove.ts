@@ -133,7 +133,3 @@ const prune = (root: string, dir: string): void => {
 
 /** A partition at one version. */
 const versionOf = (one: PartitionKey & { version: string }): string => `${idOf(one)}@${one.version}`;
-
-// ── Test access ───────────────────────────────────────────────────────────────
-
-export const _test_remove = remove;

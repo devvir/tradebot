@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { _test_plan as plan } from '../../../src/tools/cold/push/archives/plan';
+import { plan } from '../../../src/tools/cold/push/archives/plan';
 import { _test_scan as scan } from '../../../src/tools/cold/push/archives/work';
 import type { PushProgress } from '../../../src/tools/cold/push/progress';
 import * as record from '../../../src/tools/cold/shared/record';

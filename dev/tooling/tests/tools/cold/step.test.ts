@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { step } from '../../../src/tools/cold/push/archives/step';
-import { _test_plan as plan } from '../../../src/tools/cold/push/archives/plan';
+import { plan } from '../../../src/tools/cold/push/archives/plan';
 import { Archives } from '../../../src/tools/cold/shared/disk';
 import * as record from '../../../src/tools/cold/shared/record';
 import { sizedMembersOf } from '../../../src/tools/cold/shared/tar';

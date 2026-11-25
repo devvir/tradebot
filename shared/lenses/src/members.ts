@@ -68,17 +68,6 @@ export const catchUp = (db: DatabaseSync, lens: Lens, most: number): boolean => 
 };
 
 /**
- * Have a lens worked out again from the first partition, as saving its rules
- * asks. The next `catchUp` works the whole lens out in one pass and writes the
- * difference in one transaction, so until that commits the lens reads as the
- * old rules let it through, and from then on as the new ones do — never partly
- * one and partly the other.
- */
-export const rebuild = (db: DatabaseSync, lensId: number): void => {
-  db.prepare('UPDATE lens SET partitions_through = 0, rebuilding = 1 WHERE id = ?').run(lensId);
-};
-
-/**
  * Take a partition that has just been made into every lens it belongs in — in
  * the transaction that made it, which is the caller's.
  *

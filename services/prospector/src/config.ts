@@ -81,9 +81,3 @@ const parsePositiveInt = (raw: string | undefined, fallback: number): number => 
 };
 
 export default loadConfig();
-
-// ── Test access ───────────────────────────────────────────────────────────────
-
-export const _test_loadConfig      = loadConfig;
-export const _test_parseVenues     = parseVenues;
-export const _test_parsePositiveInt = parsePositiveInt;

@@ -112,7 +112,3 @@ export const loadOf = (db: DatabaseSync, tars: readonly Tar[]): string => {
     + `(${files.toLocaleString('en-US')} file${files === 1 ? '' : 's'} · `
     + `${tars.length} tar${tars.length === 1 ? '' : 's'} · ${fmtBytes(bytes)})`;
 };
-
-// ── Test access ───────────────────────────────────────────────────────────────
-
-export const _test_plan = plan;

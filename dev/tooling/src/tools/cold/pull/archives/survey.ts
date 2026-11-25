@@ -40,7 +40,3 @@ export const survey = async (
 
   return found;
 };
-
-// ── Test access ───────────────────────────────────────────────────────────────
-
-export const _test_survey = survey;

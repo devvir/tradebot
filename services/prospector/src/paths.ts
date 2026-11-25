@@ -232,9 +232,3 @@ export const asSeries = (path: string, of: Reading): Inspection => {
     },
   };
 };
-
-// ── Test access ───────────────────────────────────────────────────────────────
-
-export const _test_relative   = relative;
-export const _test_excluded   = excludedAnywhere;
-export const _test_patternise = patternise;
