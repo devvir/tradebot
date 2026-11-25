@@ -26,9 +26,9 @@ export interface Sending {
  * make. The answer is prospector's own — its status and its body — for the
  * caller to relay or to read. Throws where no answer came, or none in time.
  *
- * **A connection that fails is tried up to three times**, with a short wait
- * between: prospector closes idle keep-alive connections, so a request now and
- * then lands on one just as it goes. An idempotent request is tried again on a
+ * **A connection that fails is tried again, up to three attempts in all**,
+ * with a short wait between: prospector closes idle keep-alive connections, so
+ * a request now and then lands on one just as it goes. An idempotent request is tried again on a
  * connection refused, reset or closed; any other only on a connection refused,
  * which it certainly never reached prospector over. An answer is never retried
  * — a status is prospector's verdict — and neither is a call that timed out,

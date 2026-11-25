@@ -7,9 +7,7 @@ anything.
 
 Everything it does follows from one rule: **it renders what the API said, and
 adds nothing.** No reshaping, no defaults, no computed fields, no second opinion.
-That is not modesty about scope — it is what makes the page worth having. A
-question this cannot answer is a question the catalog cannot answer, and finding
-that out costs a page load rather than an afternoon.
+A question this cannot answer is one the catalog cannot answer.
 
 ## What it is not
 
@@ -38,10 +36,6 @@ be reachable from whichever browser is open.
 is set, a page calling the catalog itself has to carry it — which means shipping
 the secret in the bundle and sending it from wherever the page is open. Here it
 stays on the server, added to each forwarded request, and the page never sees it.
-
-CORS is a consequence of that arrangement rather than a reason for it: the
-catalog sends no such headers today, so a browser could not call it across
-origins anyway — but that could be changed, and it is not what decides this.
 
 ```
 browser ── /api/catalog/*    ──▶ catalog-ui ── x-catalog-token ──▶ catalog     (CATALOG_API)

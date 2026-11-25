@@ -105,8 +105,9 @@ export const resolveReport = (
  * whatever `send` throws where it does not answer, or not in time.
  *
  * **Settling is idempotent**, so a connection that fails is tried again as
- * `send` tries any idempotent request: a download is recorded once, and a
- * failure or a mismatch is asked of the venue again. An answer is never retried.
+ * `send` tries any idempotent request, up to three attempts in all: a download
+ * is recorded once, and a failure or a mismatch is asked of the venue again. An
+ * answer is never retried.
  */
 export const settle = async (ids: ReportedById): Promise<void> => {
   if (ids.downloaded.length === 0 && ids.failed.length === 0 && ids.mismatched.length === 0) return;
