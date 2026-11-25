@@ -1,13 +1,17 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
 vi.mock('node:child_process', () => ({
-  execSync: vi.fn(),
+  execFileSync: vi.fn(),
 }));
 
 vi.mock('../../src/shared/ui/prompts', () => ({
   input: vi.fn(),
+  confirm: vi.fn(),
 }));
 
 vi.mock('../../src/shared/ui/logger', () => ({
@@ -18,10 +22,34 @@ vi.mock('../../src/shared/ui/logger', () => ({
   section: vi.fn(),
 }));
 
-import { execSync } from 'node:child_process';
-import { input } from '../../src/shared/ui/prompts';
+import { execFileSync } from 'node:child_process';
+import { confirm, input } from '../../src/shared/ui/prompts';
+import { error, success } from '../../src/shared/ui/logger';
 import { parseRemoteDest } from '../../src/tools/remote/types';
 import { _test_findEnvFiles, run as runSyncEnv } from '../../src/tools/remote/sync-env';
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+let root: string;
+
+function touch(rel: string, content = 'A=1\n'): void {
+  const file = path.join(root, rel);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, content);
+}
+
+function calls(): Array<[string, string[]]> {
+  return vi.mocked(execFileSync).mock.calls.map(([cmd, args]) => [cmd as string, args as string[]]);
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  root = fs.mkdtempSync(path.join(os.tmpdir(), 'tooling-sync-env-'));
+});
+
+afterEach(() => {
+  fs.rmSync(root, { recursive: true, force: true });
+});
 
 // ── Tests: parseRemoteDest ────────────────────────────────────────────────────
 
@@ -33,8 +61,9 @@ describe('parseRemoteDest', () => {
     });
   });
 
-  it('strips trailing slash', () => {
-    expect(parseRemoteDest('user@host:/remote/path/')!.path).toBe('/remote/path');
+  it('strips trailing slashes', () => {
+    expect(parseRemoteDest('user@host:/remote/path/').path).toBe('/remote/path');
+    expect(parseRemoteDest('user@host:/remote/path///').path).toBe('/remote/path');
   });
 
   it('preserves deep path with subdirectories', () => {
@@ -44,55 +73,95 @@ describe('parseRemoteDest', () => {
     });
   });
 
-  it('returns null when no colon separator', () => {
-    expect(parseRemoteDest('user@host/path')).toBeNull();
+  it('accepts a path with spaces', () => {
+    expect(parseRemoteDest('u@h:/a b')).toEqual({ userHost: 'u@h', path: '/a b' });
   });
 
-  it('returns null when no @ in host part', () => {
-    expect(parseRemoteDest('host:/path')).toBeNull();
+  it('splits a bracketed IPv6 host after the closing bracket', () => {
+    expect(parseRemoteDest('u@[::1]:/p')).toEqual({ userHost: 'u@[::1]', path: '/p' });
   });
 
-  it('returns null for empty string', () => {
-    expect(parseRemoteDest('')).toBeNull();
+  it('rejects an unclosed IPv6 bracket', () => {
+    expect(() => parseRemoteDest('u@[::1/p')).toThrow(/IPv6/);
+  });
+
+  it('takes a ~/ path as relative to the login home', () => {
+    expect(parseRemoteDest('u@h:~/tradebot').path).toBe('tradebot');
+  });
+
+  it('rejects ~ alone and ~user paths', () => {
+    expect(() => parseRemoteDest('u@h:~')).toThrow(/~\/dir/);
+    expect(() => parseRemoteDest('u@h:~/')).toThrow(/~\/dir/);
+    expect(() => parseRemoteDest('u@h:~bob/x')).toThrow(/~\/dir/);
+  });
+
+  it.each(['u@h:', 'u@h:/', 'u@h://'])('refuses %s as the filesystem root', (dest) => {
+    expect(() => parseRemoteDest(dest)).toThrow(/filesystem root/);
+  });
+
+  it('rejects a user@host that ssh would read as an option', () => {
+    expect(() => parseRemoteDest('-oProxyCommand=x@h:/p')).toThrow(/must not start with "-"/);
+    expect(() => parseRemoteDest('-oX@h:/p')).toThrow(/must not start with "-"/);
+  });
+
+  it('rejects a user@host containing whitespace', () => {
+    expect(() => parseRemoteDest('u@h x:/p')).toThrow(/whitespace/);
+  });
+
+  it('rejects input without a colon separator', () => {
+    expect(() => parseRemoteDest('user@host/path')).toThrow(/expected user@host/);
+  });
+
+  it('rejects input without a user', () => {
+    expect(() => parseRemoteDest('host:/path')).toThrow(/expected user@host/);
+    expect(() => parseRemoteDest('@host:/path')).toThrow(/expected user@host/);
+  });
+
+  it('rejects input without a host', () => {
+    expect(() => parseRemoteDest('user@:/path')).toThrow(/expected user@host/);
+  });
+
+  it('rejects an empty string', () => {
+    expect(() => parseRemoteDest('')).toThrow(/expected user@host/);
   });
 });
 
 // ── Tests: findEnvFiles ───────────────────────────────────────────────────────
 
 describe('findEnvFiles', () => {
-  beforeEach(() => vi.clearAllMocks());
+  it('returns every .env file, sorted', () => {
+    touch('services/vault/.env');
+    touch('.env');
+    touch('dev/tooling/.env');
 
-  it('returns a sorted list of .env paths', () => {
-    vi.mocked(execSync).mockReturnValue('/root/.env\n/root/services/vault/.env\n/root/dev/tooling/.env\n' as any);
-
-    expect(_test_findEnvFiles()).toEqual([
-      '/root/.env',
-      '/root/dev/tooling/.env',
-      '/root/services/vault/.env',
+    expect(_test_findEnvFiles(root)).toEqual([
+      path.join(root, '.env'),
+      path.join(root, 'dev/tooling/.env'),
+      path.join(root, 'services/vault/.env'),
     ]);
   });
 
-  it('filters empty lines from find output', () => {
-    vi.mocked(execSync).mockReturnValue('\n/root/.env\n\n' as any);
+  it('skips node_modules, dist and dot-directories', () => {
+    touch('.env');
+    touch('node_modules/pkg/.env');
+    touch('services/x/dist/.env');
+    touch('.git/.env');
+    touch('.deprecated/old/.env');
+    touch('.cache/.env');
 
-    expect(_test_findEnvFiles()).toEqual(['/root/.env']);
+    expect(_test_findEnvFiles(root)).toEqual([path.join(root, '.env')]);
   });
 
-  it('returns empty array when find produces no output', () => {
-    vi.mocked(execSync).mockReturnValue('' as any);
+  it('ignores files merely named like .env and directories named .env', () => {
+    touch('.env.example');
+    touch('a/.env.local');
+    fs.mkdirSync(path.join(root, 'b/.env'), { recursive: true });
 
-    expect(_test_findEnvFiles()).toEqual([]);
+    expect(_test_findEnvFiles(root)).toEqual([]);
   });
 
-  it('passes EXCLUDE directories to find command', () => {
-    vi.mocked(execSync).mockReturnValue('' as any);
-    _test_findEnvFiles();
-
-    const cmd = String(vi.mocked(execSync).mock.calls[0][0]);
-
-    expect(cmd).toContain('node_modules');
-    expect(cmd).toContain('dist');
-    expect(cmd).toContain('.git');
+  it('returns an empty array when there are none', () => {
+    expect(_test_findEnvFiles(root)).toEqual([]);
   });
 });
 
@@ -100,69 +169,127 @@ describe('findEnvFiles', () => {
 
 describe('sync-env run()', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    vi.spyOn(process, 'exit').mockImplementation(((code: number) => {
-      throw new Error(`process.exit(${code})`);
-    }) as any);
     vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.mocked(confirm).mockResolvedValue(true);
+    vi.mocked(execFileSync).mockReturnValue(undefined as any);
   });
 
   afterEach(() => {
+    process.exitCode = undefined;
     vi.restoreAllMocks();
   });
 
-  it('rejects with process.exit(1) for an invalid destination format', async () => {
+  it('rejects an invalid destination before touching the remote', async () => {
+    touch('.env');
     vi.mocked(input).mockResolvedValue('notvalid');
 
-    await expect(runSyncEnv()).rejects.toThrow('process.exit(1)');
+    await expect(runSyncEnv(root)).rejects.toThrow(/expected user@host/);
+    expect(execFileSync).not.toHaveBeenCalled();
   });
 
-  it('SCPs one file per found .env file', async () => {
-    vi.mocked(input).mockResolvedValue('user@host:/remote/base');
-    vi.mocked(execSync)
-      .mockReturnValueOnce('/root/.env\n/root/services/vault/.env\n' as any)
-      .mockReturnValue(undefined as any);
+  it('refuses the filesystem root before touching the remote', async () => {
+    touch('.env');
+    vi.mocked(input).mockResolvedValue('u@h:/');
 
-    await runSyncEnv();
-
-    const scpCalls = vi.mocked(execSync).mock.calls.filter(([cmd]) => String(cmd).startsWith('scp'));
-
-    expect(scpCalls).toHaveLength(2);
+    await expect(runSyncEnv(root)).rejects.toThrow(/filesystem root/);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(execFileSync).not.toHaveBeenCalled();
   });
 
-  it('includes the remote base path in each scp destination', async () => {
-    vi.mocked(input).mockResolvedValue('user@host:/remote/base');
-    vi.mocked(execSync)
-      .mockReturnValueOnce('/root/services/vault/.env\n' as any)
-      .mockReturnValue(undefined as any);
+  it('runs mkdir under umask 077, scp, then chmod 600 for each file, as argv arrays', async () => {
+    touch('services/vault/.env');
+    vi.mocked(input).mockResolvedValue('u@h:/remote/base');
 
-    await runSyncEnv();
+    await runSyncEnv(root);
 
-    const scpCall = String(vi.mocked(execSync).mock.calls.find(([cmd]) => String(cmd).startsWith('scp'))![0]);
+    const local = path.join(root, 'services/vault/.env');
 
-    expect(scpCall).toContain('user@host:/remote/base/');
+    expect(calls()).toEqual([
+      ['ssh', ['--', 'u@h', "umask 077 && mkdir -p -- '/remote/base/services/vault'"]],
+      ['scp', ['-q', '--', local, 'u@h:/remote/base/services/vault/.env']],
+      ['ssh', ['--', 'u@h', "chmod 600 -- '/remote/base/services/vault/.env'"]],
+    ]);
   });
 
-  it('stops after find when no .env files are found', async () => {
-    vi.mocked(input).mockResolvedValue('user@host:/remote/base');
-    vi.mocked(execSync).mockReturnValueOnce('' as any);
+  it('quotes a remote path with spaces and quotes as one shell word', async () => {
+    touch('.env');
+    vi.mocked(input).mockResolvedValue("u@h:/a b/it's");
 
-    await runSyncEnv();
+    await runSyncEnv(root);
 
-    // Only the find call — no ssh mkdir or scp
-    expect(execSync).toHaveBeenCalledTimes(1);
+    expect(calls()[0]).toEqual(['ssh', ['--', 'u@h', `umask 077 && mkdir -p -- '/a b/it'\\''s'`]]);
+    expect(calls()[1][1][3]).toBe("u@h:/a b/it's/.env");
+    expect(calls()[2]).toEqual(['ssh', ['--', 'u@h', `chmod 600 -- '/a b/it'\\''s/.env'`]]);
   });
 
-  it('creates the remote directory before each scp', async () => {
-    vi.mocked(input).mockResolvedValue('user@host:/remote/base');
-    vi.mocked(execSync)
-      .mockReturnValueOnce('/root/.env\n' as any)
-      .mockReturnValue(undefined as any);
+  it('passes a bracketed IPv6 user@host through unchanged', async () => {
+    touch('.env');
+    vi.mocked(input).mockResolvedValue('u@[::1]:/p');
 
-    await runSyncEnv();
+    await runSyncEnv(root);
 
-    const sshCall = String(vi.mocked(execSync).mock.calls.find(([cmd]) => String(cmd).startsWith('ssh'))![0]);
+    expect(calls()[0][1][1]).toBe('u@[::1]');
+    expect(calls()[1][1][3]).toBe('u@[::1]:/p/.env');
+  });
 
-    expect(sshCall).toContain('mkdir -p');
+  it('copies one file per found .env file', async () => {
+    touch('.env');
+    touch('services/vault/.env');
+    vi.mocked(input).mockResolvedValue('u@h:/remote/base');
+
+    await runSyncEnv(root);
+
+    expect(calls().filter(([cmd]) => cmd === 'scp')).toHaveLength(2);
+  });
+
+  it('asks before copying and makes no ssh or scp call when declined', async () => {
+    touch('.env');
+    vi.mocked(input).mockResolvedValue('u@h:/remote/base');
+    vi.mocked(confirm).mockResolvedValue(false);
+
+    await runSyncEnv(root);
+
+    expect(confirm).toHaveBeenCalledWith('Overwrite 1 .env file(s) on u@h under /remote/base?', false);
+    expect(execFileSync).not.toHaveBeenCalled();
+  });
+
+  it('stops without asking when no .env files are found', async () => {
+    vi.mocked(input).mockResolvedValue('u@h:/remote/base');
+
+    await runSyncEnv(root);
+
+    expect(confirm).not.toHaveBeenCalled();
+    expect(execFileSync).not.toHaveBeenCalled();
+  });
+
+  it('reports success and leaves the exit code alone when every file is copied', async () => {
+    touch('.env');
+    vi.mocked(input).mockResolvedValue('u@h:/remote/base');
+
+    await runSyncEnv(root);
+
+    expect(success).toHaveBeenLastCalledWith('Done. 1 file(s) synced to u@h:/remote/base.');
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it('keeps going after a failed file, names it in the summary and sets exit code 1', async () => {
+    touch('.env');
+    touch('services/vault/.env');
+    vi.mocked(input).mockResolvedValue('u@h:/remote/base');
+    vi.mocked(execFileSync).mockImplementation(((cmd: string, args: string[]) => {
+      if (cmd === 'scp' && args[3].endsWith('/services/vault/.env')) {
+        throw new Error('Permission denied');
+      }
+      return undefined;
+    }) as any);
+
+    await runSyncEnv(root);
+
+    expect(calls().filter(([cmd]) => cmd === 'scp')).toHaveLength(2);
+    expect(error).toHaveBeenLastCalledWith(
+      'Synced 1 of 2 file(s) to u@h:/remote/base; failed: services/vault/.env',
+    );
+    expect(success).not.toHaveBeenCalledWith(expect.stringMatching(/^Done\./));
+    expect(process.exitCode).toBe(1);
   });
 });
