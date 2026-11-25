@@ -1,7 +1,14 @@
 # UI Service - React SPA (Vite)
+#
+# A development service only: it runs the Vite dev server from the repository
+# mounted at /live, so it always takes the dev fragment whatever APP_ENV says.
 
 services:
   ui:
+    extends:
+      file: ../../../../docker/dev.node.compose.yml
+      service: node
+
     build:
       context: ../../../..
       dockerfile: docker/dev.node.Dockerfile
@@ -13,8 +20,5 @@ services:
     ports:
       # Published on 127.0.0.1 unless UI_BIND names another address.
       - "${UI_BIND:-127.0.0.1}:${UI_PORT:-3000}:3000"
-
-    volumes:
-      - ../../../../:/live
 
     restart: unless-stopped
